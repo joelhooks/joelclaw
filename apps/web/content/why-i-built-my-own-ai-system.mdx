@@ -1,0 +1,55 @@
+---
+title: "Why I Built My Own AI System Instead of Deploying OpenClaw"
+date: "2026-02-14"
+description: "OpenClaw is impressive — 100+ skills, multi-channel messaging, built-in memory. But after building the infrastructure, I realized I'd already gone deeper than what it provides. Here's the architectural inflection point."
+---
+
+There's a moment in every infrastructure project where you stop and ask: _do I still need the thing I thought I was building toward?_
+
+For me, that thing was [OpenClaw](https://github.com/nichochar/open-claw) — Nick Steinberger's self-hosted AI assistant framework. The vision is compelling: an agent-as-OS with messaging integration, 100+ skills, and a unified gateway. I was planning to deploy it as the orchestration layer for my personal AI system.
+
+Then I looked at what I'd already built.
+
+## The infrastructure we didn't plan
+
+Six sessions of "setting up infrastructure" produced something unexpected. Not a deployment target for OpenClaw — a system that had already gone deeper in every overlapping layer:
+
+| Layer             | What we built                                                      | What OpenClaw provides  |
+| ----------------- | ------------------------------------------------------------------ | ----------------------- |
+| **Event bus**     | Inngest — durable workflows, event chains, step functions, retries | Basic job queue         |
+| **Search**        | Qdrant — hybrid dense + sparse + BM25, RRF fusion                  | SQLite + vectors        |
+| **State**         | Redis — persistent cache, dedup, pub/sub                           | No equivalent           |
+| **Observability** | slog + igs — Effect CLIs, HATEOAS JSON                             | JSONL transcripts       |
+| **Network**       | Tailscale mesh + Caddy HTTPS                                       | localhost + SSH tunnels |
+| **Pipelines**     | Video download → transcript → summarize (event chain)              | No media pipeline       |
+
+The gap wasn't "we need to catch up to OpenClaw." It was "deploying OpenClaw would mean running two of everything."
+
+## The black box problem
+
+OpenClaw's Gateway owns the agent loop. When something breaks, you're reading _their_ code, not yours. Every layer should be inspectable with tools you built.
+
+This isn't an indictment of OpenClaw — it's an observation about architectural fit. When your observability tools (`slog`, `igs`) are designed for _your_ infrastructure, adding someone else's orchestrator means your tools go blind in the most critical layer.
+
+## Memory is the moat
+
+The real differentiator isn't the infrastructure. It's the memory architecture.
+
+OpenClaw has `MEMORY.md` and basic vector search. That's a starting point. What we designed is a 4-layer system:
+
+1. **Session recall** (kuato-style) — what happened in recent conversations
+2. **Playbook** (lamarck-style) — patterns extracted from repeated work
+3. **Timeline** (andy-style) — narrative history of what was built and why
+4. **Soul** — identity, values, personality that persists across everything
+
+Each layer is backed by Qdrant hybrid search (dense + BM25 + RRF). Each layer writes to the PDS as typed records. None of this fits inside OpenClaw's memory model.
+
+## Credit where it's due
+
+OpenClaw shaped the vision. The idea of a self-hosted agent-as-OS with messaging as the primary interface — that's Nick Steinberger's contribution, and it's the right vision.
+
+The implementation is ours. That's not a criticism. It's an architectural decision.
+
+---
+
+_This is the first in a series about building a personal AI operating system from scratch. Next: [AT Protocol as the bedrock for personal AI](/at-protocol-as-bedrock)._

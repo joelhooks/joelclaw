@@ -1,0 +1,65 @@
+---
+title: "AT Protocol as the Bedrock for Personal AI"
+date: "2026-02-13"
+description: "Every record — messages, memory, logs, events — lives on a Personal Data Server. AT Protocol isn't a feature of joelclaw. It's the substrate everything else grows on."
+---
+
+Most personal AI projects start with a database. PostgreSQL, SQLite, maybe a vector store. You model your data, build an API, wire up auth.
+
+We started there too. Then we asked a different question: _what if each person in the system owns their own data server?_
+
+## The substrate, not a feature
+
+AT Protocol wasn't originally designed for agent systems. It was built for social networking — Bluesky runs on it. But the primitives are exactly what a personal AI system needs:
+
+- **PDS (Personal Data Server)** — each person gets their own, sovereign data store
+- **DID identity** — cryptographic, portable, no passwords
+- **Lexicons** — typed schemas for every record type
+- **Firehose** — real-time stream of all changes
+- **Federation** — servers talk to each other by design
+
+The key insight: **the PDS _is_ the database**. Everything else indexes or acts on PDS data.
+
+## What lives on the PDS
+
+We defined custom Lexicons under `dev.joelclaw.*`:
+
+```
+dev.joelclaw.agent.*    — messages, threads, tool calls
+dev.joelclaw.memory.*   — sessions, playbook, timeline, soul
+dev.joelclaw.system.*   — events, logs, health, config
+dev.joelclaw.family.*   — lists, reminders, shared context
+dev.joelclaw.loop.*     — coding iterations, PRD state
+```
+
+Every record in the system is typed, stored on the PDS, and accessible via XRPC. The agent runtime (Inngest functions) subscribes to the firehose, processes events, and writes results back.
+
+## Two halves of truth
+
+The PDS holds agent data — structured, typed, federated. But there's a second half: the Obsidian Vault holds human knowledge — prose, wikilinks, architecture decisions, project notes.
+
+Neither replaces the other. Qdrant indexes both. The agent reads from both. But they serve different purposes:
+
+- **PDS**: machine-written, machine-read, structured, versioned
+- **Vault**: human-written, human-read, narrative, browseable
+
+## Why federation matters for families
+
+The endgame isn't one person with one agent. It's a family network:
+
+- Joel's PDS — the primary agent system
+- Partner's PDS — their own agent, their own data
+- Kids' PDSs — simplified agents, parental controls via Lexicon permissions
+- Family relay — aggregates all PDS firehoses
+
+Each person owns their data. Each person's agent can be as simple or complex as they want. And because it's AT Protocol, anyone can move their PDS to different hardware. The identity follows.
+
+## The bet
+
+We're repurposing a social media protocol as a personal operating system data layer. That's a bet. The ecosystem is immature for this use case. The Swift AT Protocol client libraries are thin. Running multiple PDS instances on one Mac Mini needs careful resource management.
+
+But the alternative — building custom auth, custom sync, custom federation, custom identity — is rebuilding what the protocol already provides. And doing it worse.
+
+---
+
+_Previous: [Why I built my own AI system](/why-i-built-my-own-ai-system). Next: the 4-layer memory architecture._
