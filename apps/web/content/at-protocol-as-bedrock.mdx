@@ -1,26 +1,30 @@
 ---
-title: "AT Protocol as the Bedrock for Personal AI"
+title: "Playing with AT Protocol as a Data Layer"
 date: "2026-02-13"
-description: "Every record — messages, memory, logs, events — lives on a Personal Data Server. AT Protocol isn't a feature of joelclaw. It's the substrate everything else grows on."
+description: "What happens when you use a social networking protocol as the foundation for a personal AI system? I'm not sure yet, but the identity and trust primitives are fascinating."
 ---
 
 Most personal AI projects start with a database. PostgreSQL, SQLite, maybe a vector store. You model your data, build an API, wire up auth.
 
-I started there too. Then I asked a different question: _what if I own my own data server?_
+I started there too. Then I got curious about something: _what if there was already a protocol that handled identity, typed data, and real-time events?_
 
-## The substrate, not a feature
+Turns out there is. It's just... designed for social networking.
 
-AT Protocol wasn't originally designed for agent systems. It was built for social networking — Bluesky runs on it. But the primitives are exactly what a personal AI system needs:
+## Why AT Protocol?
 
-- **PDS (Personal Data Server)** — your own sovereign data store
-- **DID identity** — cryptographic, portable, no passwords
+AT Protocol is what Bluesky runs on. It wasn't built for agent systems. But the primitives are weirdly relevant:
+
+- **PDS (Personal Data Server)** — each entity gets its own data store
+- **DID identity** — cryptographic identity that works for humans _and_ agents
 - **Lexicons** — typed schemas for every record type
 - **Firehose** — real-time stream of all changes
 - **Federation** — servers talk to each other by design
 
-Here's the thing that clicked for me: **the PDS _is_ the database**. You don't build an API in front of it. You don't bolt on auth. It already has identity, schema enforcement, and a real-time event stream baked in. Everything else just indexes or acts on PDS data.
+The thing that clicked for me: **the PDS _is_ the database**. You don't build an API in front of it. You don't bolt on auth. It already has identity, schema enforcement, and a real-time event stream baked in.
 
-## Everything gets a record
+Is this the right tool for the job? Honestly, I'm not sure yet. There are simpler approaches — mTLS with JWTs, ActivityPub, just running everything on localhost. But I'm curious whether a protocol designed for trust relationships between entities on a network could work for trust relationships between agents and humans. That feels worth exploring.
+
+## What I'm storing
 
 I defined custom Lexicons under `dev.joelclaw.*`:
 
@@ -32,44 +36,35 @@ dev.joelclaw.family.*   — lists, reminders, shared context
 dev.joelclaw.loop.*     — coding iterations, PRD state
 ```
 
-Every record in the system is typed, stored on the PDS, and accessible via XRPC. The agent runtime (Inngest functions) subscribes to the firehose, processes events, and writes results back.
+Every record is typed, stored on the PDS, and accessible via XRPC. The agent runtime (Inngest functions) subscribes to the firehose, processes events, and writes results back.
 
-Is it overkill for one person's AI system? Maybe. But I've been burned enough times by "just throw it in a database and figure out the schema later." This way every piece of data has a type, a home, and a history from day one.
+Is it overkill? Almost certainly. But I've been burned enough times by "just throw it in a database and figure out the schema later." And honestly, the Lexicon system is fun to work with. Defining schemas for your own data feels like building with Lego. 😅
 
 ## Two halves of truth
 
 The PDS holds agent data — structured, typed, federated. But there's a second half: the Obsidian Vault holds human knowledge — prose, wikilinks, architecture decisions, project notes.
 
-Neither replaces the other. Qdrant indexes both. The agent reads from both. But they serve fundamentally different purposes:
+Neither replaces the other. Qdrant indexes both. The agent reads from both. But they serve different purposes:
 
 - **PDS**: machine-written, machine-read, structured, versioned
 - **Vault**: human-written, human-read, narrative, browseable
 
-I need both. The agent needs both. Trying to shove everything into one system is how you end up with a junk drawer that nothing can actually reason over.
+I need both. The agent needs both. Whether the PDS is the right tool for the machine half is part of the experiment.
 
-## Why federation matters for families
+## The trust thing
 
-This is where it gets really interesting to me.
+Here's what actually interests me about AT Protocol for this: trust and identity in a mixed network.
 
-The endgame isn't one person with one agent. It's a family network:
+When you have agents and humans interacting on the same system, you need to know _who_ is doing _what_ and _whether they're allowed to_. DIDs give every entity — human or agent — the same identity primitives. Lexicons define what each entity can read, write, and act on. The protocol already has a model for "this entity is trusted to do these things."
 
-- My PDS — the primary agent system
-- My partner's PDS — their own agent, their own data
-- Kids' PDSs — simplified agents, parental controls via Lexicon permissions
-- Family relay — aggregates all PDS firehoses
+That's interesting for families too. Not as a product roadmap — I'm nowhere near that — but as a thought experiment. What if each family member had their own PDS with their own agent, and trust relationships defined what each agent could see and do? The protocol has the primitives for that built in. Whether it's the right way to do it... I'll find out.
 
-Each person owns their data. **Each person's agent can be as simple or complex as they want.** And because it's AT Protocol, anyone can move their PDS to different hardware. The identity follows. No vendor lock-in, no "one asshole" who can take it all away.
+## Honest tradeoffs
 
-That's the whole point of sovereignty. Not just for social media. For your family's AI. 🔥
+The ecosystem is immature for this use case. The Swift AT Protocol client libraries are thin. Running multiple PDS instances on one Mac Mini is going to be a pain in the ass. I might end up ripping all of this out and using something simpler.
 
-## The bet
-
-I'm repurposing a social media protocol as a personal operating system data layer. That's a bet. The ecosystem is immature for this use case. The Swift AT Protocol client libraries are thin. Running multiple PDS instances on one Mac Mini is going to be a pain in the ass to manage.
-
-But the alternative — building custom auth, custom sync, custom federation, custom identity — is rebuilding what the protocol already provides. And doing it worse.
-
-I'd rather wrestle with an immature ecosystem that has the right primitives than build the wrong thing from scratch. That's a bet I'm comfortable making.
+But that's fine. This is a learning project. If I spend three months with AT Protocol and decide it's the wrong tool, I'll have learned a ton about federated identity, typed record systems, and real-time event streams. That knowledge transfers no matter what I end up using.
 
 ---
 
-_Previous: [Why I built my own AI system](/why-i-built-my-own-ai-system). Next: the 4-layer memory architecture._
+_Previous: [Why I'm building my own AI system (for fun)](/why-i-built-my-own-ai-system). Next: the 4-layer memory architecture._
