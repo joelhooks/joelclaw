@@ -6,23 +6,23 @@ description: "Every record — messages, memory, logs, events — lives on a Per
 
 Most personal AI projects start with a database. PostgreSQL, SQLite, maybe a vector store. You model your data, build an API, wire up auth.
 
-We started there too. Then we asked a different question: _what if each person in the system owns their own data server?_
+I started there too. Then I asked a different question: _what if I own my own data server?_
 
 ## The substrate, not a feature
 
 AT Protocol wasn't originally designed for agent systems. It was built for social networking — Bluesky runs on it. But the primitives are exactly what a personal AI system needs:
 
-- **PDS (Personal Data Server)** — each person gets their own, sovereign data store
+- **PDS (Personal Data Server)** — your own sovereign data store
 - **DID identity** — cryptographic, portable, no passwords
 - **Lexicons** — typed schemas for every record type
 - **Firehose** — real-time stream of all changes
 - **Federation** — servers talk to each other by design
 
-The key insight: **the PDS _is_ the database**. Everything else indexes or acts on PDS data.
+Here's the thing that clicked for me: **the PDS _is_ the database**. You don't build an API in front of it. You don't bolt on auth. It already has identity, schema enforcement, and a real-time event stream baked in. Everything else just indexes or acts on PDS data.
 
-## What lives on the PDS
+## Everything gets a record
 
-We defined custom Lexicons under `dev.joelclaw.*`:
+I defined custom Lexicons under `dev.joelclaw.*`:
 
 ```
 dev.joelclaw.agent.*    — messages, threads, tool calls
@@ -34,31 +34,41 @@ dev.joelclaw.loop.*     — coding iterations, PRD state
 
 Every record in the system is typed, stored on the PDS, and accessible via XRPC. The agent runtime (Inngest functions) subscribes to the firehose, processes events, and writes results back.
 
+Is it overkill for one person's AI system? Maybe. But I've been burned enough times by "just throw it in a database and figure out the schema later." This way every piece of data has a type, a home, and a history from day one.
+
 ## Two halves of truth
 
 The PDS holds agent data — structured, typed, federated. But there's a second half: the Obsidian Vault holds human knowledge — prose, wikilinks, architecture decisions, project notes.
 
-Neither replaces the other. Qdrant indexes both. The agent reads from both. But they serve different purposes:
+Neither replaces the other. Qdrant indexes both. The agent reads from both. But they serve fundamentally different purposes:
 
 - **PDS**: machine-written, machine-read, structured, versioned
 - **Vault**: human-written, human-read, narrative, browseable
 
+I need both. The agent needs both. Trying to shove everything into one system is how you end up with a junk drawer that nothing can actually reason over.
+
 ## Why federation matters for families
+
+This is where it gets really interesting to me.
 
 The endgame isn't one person with one agent. It's a family network:
 
-- Joel's PDS — the primary agent system
-- Partner's PDS — their own agent, their own data
+- My PDS — the primary agent system
+- My partner's PDS — their own agent, their own data
 - Kids' PDSs — simplified agents, parental controls via Lexicon permissions
 - Family relay — aggregates all PDS firehoses
 
-Each person owns their data. Each person's agent can be as simple or complex as they want. And because it's AT Protocol, anyone can move their PDS to different hardware. The identity follows.
+Each person owns their data. **Each person's agent can be as simple or complex as they want.** And because it's AT Protocol, anyone can move their PDS to different hardware. The identity follows. No vendor lock-in, no "one asshole" who can take it all away.
+
+That's the whole point of sovereignty. Not just for social media. For your family's AI. 🔥
 
 ## The bet
 
-We're repurposing a social media protocol as a personal operating system data layer. That's a bet. The ecosystem is immature for this use case. The Swift AT Protocol client libraries are thin. Running multiple PDS instances on one Mac Mini needs careful resource management.
+I'm repurposing a social media protocol as a personal operating system data layer. That's a bet. The ecosystem is immature for this use case. The Swift AT Protocol client libraries are thin. Running multiple PDS instances on one Mac Mini is going to be a pain in the ass to manage.
 
 But the alternative — building custom auth, custom sync, custom federation, custom identity — is rebuilding what the protocol already provides. And doing it worse.
+
+I'd rather wrestle with an immature ecosystem that has the right primitives than build the wrong thing from scratch. That's a bet I'm comfortable making.
 
 ---
 
