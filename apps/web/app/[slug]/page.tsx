@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import { getPost, getPostSlugs } from "../../lib/posts";
 import { mdxComponents } from "../../lib/mdx";
+import { remarkPlugins, rehypePlugins } from "../../lib/mdx-plugins";
 import { blogPostingJsonLd, breadcrumbJsonLd } from "../../lib/jsonld";
 import { SITE_URL, SITE_NAME } from "../../lib/constants";
 
@@ -81,7 +82,11 @@ export default async function PostPage({ params }: Props) {
         </time>
       </header>
       <div className="prose-joelclaw">
-        <MDXRemote source={content} components={mdxComponents} />
+        <MDXRemote
+              source={content}
+              components={mdxComponents}
+              options={{ mdxOptions: { remarkPlugins, rehypePlugins } }}
+            />
       </div>
     </article>
   );
