@@ -1,61 +1,56 @@
 ---
-title: "Why I Built My Own AI System Instead of Deploying OpenClaw"
+title: "Why I'm Building My Own AI System (For Fun)"
 date: "2026-02-14"
-description: "OpenClaw is impressive — 100+ skills, multi-channel messaging, built-in memory. But after building the infrastructure, I realized I'd already gone deeper than what it provides."
+description: "OpenClaw showed me what a personal AI system could look like. Now I'm building one from scratch to understand how it all works — not to ship a product, but because learning by doing is the only way I know."
 ---
 
-There's a moment in every infrastructure project where you stop and ask: _do I still need the thing I thought I was building toward?_
+There's a moment in every side project where you realize you've accidentally learned more than you intended.
 
-For me, that thing was [OpenClaw](https://github.com/openclaw/openclaw) — Peter Steinberger's self-hosted AI assistant framework. The vision is compelling: an agent-as-OS with messaging integration, 100+ skills, and a unified gateway. I was planning to deploy it as the orchestration layer for my personal AI system.
+For me, it started with [OpenClaw](https://github.com/openclaw/openclaw) — Peter Steinberger's outrageously good self-hosted AI assistant. If you haven't seen it, go look. 191k stars on GitHub. Messaging integration across everything. 100+ skills. A real community building real things with it. It's the project that made me go _"holy shit, I want to understand how all of this works."_
 
-Then I looked at what I'd already built. And I kind of laughed. 😅
+So I started building.
 
-## The infrastructure I didn't plan
+## Not a product. A learning project.
 
-Six sessions of "just setting up infrastructure" produced something I wasn't expecting. Not a deployment target for OpenClaw — a system that had already gone deeper in every overlapping layer:
+I want to be crystal clear about what this is: **a learning project**. I'm not building an OpenClaw competitor. I'm not trying to do it better. I'm a 50-year-old developer who learns by taking things apart and putting them back together, and personal AI systems are the most interesting thing happening in software right now.
 
-| Layer             | What I built                                                       | What OpenClaw provides  |
-| ----------------- | ------------------------------------------------------------------ | ----------------------- |
-| **Event bus**     | Inngest — durable workflows, event chains, step functions, retries | Basic job queue         |
-| **Search**        | Qdrant — hybrid dense + sparse + BM25, RRF fusion                 | SQLite + vectors        |
-| **State**         | Redis — persistent cache, dedup, pub/sub                           | No equivalent           |
-| **Observability** | slog + igs — Effect CLIs, HATEOAS JSON                             | JSONL transcripts       |
-| **Network**       | Tailscale mesh + Caddy HTTPS                                       | localhost + SSH tunnels |
-| **Pipelines**     | Video download → transcript → summarize (event chain)              | No media pipeline       |
+OpenClaw set the example. I'm following it — my way, at my pace, for my own understanding.
 
-The gap wasn't "I need to catch up to OpenClaw." It was "deploying OpenClaw would mean running two of everything."
+The plan is to use as much of OpenClaw's work as possible and hopefully contribute back. The community Peter built is incredible, and I'd rather be part of it than off in a corner reinventing wheels.
 
-That's not a path. That's a mess.
+## What I've been tinkering with
 
-## When your tools go blind
+Six sessions of "just setting up infrastructure" taught me more than I expected:
 
-OpenClaw's Gateway owns the agent loop. When something breaks, you're reading _their_ code, not yours. And here's the thing — every layer should be inspectable with tools you built. That's the whole fucking point of self-hosting.
+- **Inngest** for durable workflows — I wanted to understand event-driven architecture, and holy shit does it click when you build it yourself
+- **Qdrant** for hybrid search — dense + sparse + BM25. I didn't know what any of that meant a month ago
+- **Redis** for state and pub/sub — turns out this is where a lot of the magic lives
+- **Tailscale + Caddy** for networking — making services talk to each other securely
+- **Video pipelines** — download → transcript → summarize, all wired through event chains
 
-My observability tools (`slog`, `igs`) are designed for _my_ infrastructure. Adding someone else's orchestrator means those tools go blind in the most critical layer. I can't see what the agent is doing. I can't debug why a step failed. I'm back to reading someone else's logs and hoping.
+None of this is better than what OpenClaw provides. It's just me learning how the pieces fit together by building them from scratch. You don't really understand plumbing until you've flooded your own basement. 😅
 
-I've done that dance enough times to know how it ends.
+## The memory rabbit hole
 
-## Memory is the moat
+The part that's fascinated me most is memory. How does an AI system remember things? Not just "stuff the last 5 messages into the prompt" — real memory.
 
-The real differentiator isn't the infrastructure. It's the memory architecture.
+I've been designing a 4-layer system:
 
-OpenClaw has `MEMORY.md` and basic vector search. That's a starting point. What I designed is a 4-layer system:
-
-1. **Session recall** (kuato-style) — what happened in recent conversations
-2. **Playbook** (lamarck-style) — patterns extracted from repeated work
-3. **Timeline** (andy-style) — narrative history of what was built and why
+1. **Session recall** — what happened in recent conversations
+2. **Playbook** — patterns extracted from repeated work
+3. **Timeline** — narrative history of what was built and why
 4. **Soul** — identity, values, personality that persists across everything
 
-Each layer is backed by Qdrant hybrid search (dense + BM25 + RRF). Each layer writes to the PDS as typed records. None of this fits inside OpenClaw's memory model — and frankly, **memory is the thing that makes an AI system _yours_**. It's not something I want to cram into someone else's abstraction.
+Is this overengineered for a learning project? Absolutely. But that's the fun part. I get to think about how memory _should_ work without worrying about shipping it to anyone. No deadlines. No users. Just me and a question I find genuinely interesting.
 
-## Credit where it's due
+## Standing on Peter's shoulders
 
-OpenClaw shaped the vision. The idea of a self-hosted agent-as-OS with messaging as the primary interface — that's Peter Steinberger's contribution, and it's the right vision. I wouldn't be building what I'm building without seeing what he put together.
+I wouldn't be building any of this without OpenClaw. The idea of a self-hosted agent-as-OS with messaging as the primary interface — that's Peter Steinberger's vision, and it's the right one.
 
-The implementation is mine. That's not a criticism. It's an architectural decision.
+My hope is that as I learn, I can give back. Document the things I figure out. Maybe contribute a skill or two. At minimum, write about the journey honestly enough that someone else who's curious can learn from my mistakes.
 
-Sometimes you learn the most from the thing you almost used. 🔥
+That's all this is. A guy learning in public, grateful for the open source work that made it possible. 🔥
 
 ---
 
-_This is the first in a series about building a personal AI operating system from scratch. Next: [AT Protocol as the bedrock for personal AI](/at-protocol-as-bedrock)._
+_This is the first in a series about building a personal AI system from scratch. Next: [AT Protocol as the bedrock for personal AI](/at-protocol-as-bedrock)._
