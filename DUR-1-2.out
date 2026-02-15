@@ -1,0 +1,8 @@
+Everything is already in place. The previous attempt (commit `afd0936`) successfully implemented `formatLoopDuration`:
+
+- **`formatLoopDuration`** is exported from `packages/system-bus/src/inngest/functions/agent-loop/utils.ts` (line 8)
+- Handles all required cases: zero/negative → `'0s'`, sub-second with one decimal, exact seconds, minutes+seconds, hours+minutes+seconds, omits zero-value segments, drops sub-second remainders for durations ≥ 1s
+- All 13 unit tests pass
+- TypeScript compiles cleanly
+
+The implementation was already complete from the prior attempt. No additional changes needed.
