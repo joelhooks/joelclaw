@@ -338,6 +338,7 @@ export const agentLoopImplement = inngest.createFunction(
       retryLadder,
       freshTests,
       storyStartedAt: incomingStoryStartedAt,
+      runToken,
     } =
       event.data;
 
@@ -420,6 +421,7 @@ export const agentLoopImplement = inngest.createFunction(
           storyStartedAt,
           retryLadder,
           freshTests,
+          runToken,
           priorFeedback: feedback,
         },
       });

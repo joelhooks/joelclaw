@@ -32,7 +32,7 @@ const originalMethods = {
 const originalSend = (inngest as any).send;
 const originalWarn = console.warn;
 
-let sendCalls: Array<{ name: string; data: Record<string, unknown> }> = [];
+let sendCalls: Array<{ name: string; data: { runToken?: string } & Record<string, unknown> }> = [];
 let warnCalls: unknown[][] = [];
 
 beforeAll(() => {
@@ -97,7 +97,9 @@ beforeAll(() => {
     return Math.ceil(remainingMs / 1000);
   };
 
-  (inngest as any).send = async (payload: { name: string; data: Record<string, unknown> }) => {
+  (inngest as any).send = async (
+    payload: { name: string; data: { runToken?: string } & Record<string, unknown> }
+  ) => {
     sendCalls.push(payload);
     return payload;
   };
@@ -202,7 +204,7 @@ describe("IDEM-3: plan claims story before dispatch", () => {
 
     const redis = new Redis();
     const storedClaim = await redis.get(claimRedisKey(loopId, storyId));
-    expect(storedClaim).toBe(emittedToken);
+    expect(storedClaim).toBe(emittedToken ?? null);
   });
 
   test("already-claimed story logs a warning and returns without dispatching", async () => {

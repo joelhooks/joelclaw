@@ -318,6 +318,7 @@ export const agentLoopReview = inngest.createFunction(
       storyStartedAt,
       retryLadder,
       priorFeedback,
+      runToken,
     } = event.data;
 
     // Step 0: Check cancellation
@@ -381,6 +382,7 @@ export const agentLoopReview = inngest.createFunction(
           storyStartedAt,
           retryLadder,
           priorFeedback,
+          runToken,
           story,
           tool: "claude",
         },

@@ -287,6 +287,7 @@ export const agentLoopJudge = inngest.createFunction(
       priorFeedback,
       story,
       tool,
+      runToken,
     } = event.data;
 
     // Step 0: Check cancellation
@@ -433,6 +434,7 @@ export const agentLoopJudge = inngest.createFunction(
             retryLadder,
             storyStartedAt,
             freshTests,
+            runToken,
           },
         });
         return { event: "agent/loop.implement", storyId, attempt: nextAttempt, tool: retryTool, freshTests };

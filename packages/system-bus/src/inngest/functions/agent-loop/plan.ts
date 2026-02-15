@@ -1,7 +1,7 @@
 import { inngest } from "../../client";
 import { $ } from "bun";
 import { join } from "node:path";
-import { appendProgress, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput } from "./utils";
+import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput } from "./utils";
 
 const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
 
@@ -372,6 +372,28 @@ export const agentLoopPlan = inngest.createFunction(
         ? event.data.maxRetries ?? 2
         : (event.data as any).maxRetries ?? 2;
 
+    const runToken = await step.run("derive-run-token", () => {
+      const eventId = (event as { id?: string }).id;
+      return eventId ? `event:${eventId}` : crypto.randomUUID();
+    });
+
+    const claimedRunToken = await step.run("claim-story", () =>
+      claimStory(loopId, next.id, runToken)
+    );
+
+    if (!claimedRunToken) {
+      console.warn(
+        `[agent-loop-plan] story already claimed, skipping dispatch loopId=${loopId} storyId=${next.id}`
+      );
+      return {
+        status: "already-claimed",
+        loopId,
+        storyId: next.id,
+        remaining: remaining.length,
+        maxIterations,
+      };
+    }
+
     await step.run("emit-test", async () => {
       await inngest.send({
         name: "agent/loop.test",
@@ -385,6 +407,7 @@ export const agentLoopPlan = inngest.createFunction(
           maxRetries,
           maxIterations,
           retryLadder,
+          runToken: claimedRunToken,
         },
       });
     });

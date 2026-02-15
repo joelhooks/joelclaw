@@ -146,6 +146,7 @@ export const agentLoopTestWriter = inngest.createFunction(
       maxIterations,
       storyStartedAt,
       retryLadder,
+      runToken,
     } = event.data;
 
     const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
@@ -190,6 +191,7 @@ export const agentLoopTestWriter = inngest.createFunction(
           maxIterations,
           storyStartedAt,
           retryLadder,
+          runToken,
           testFiles,
         },
       });

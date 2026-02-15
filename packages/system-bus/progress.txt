@@ -295,3 +295,9 @@ Stories: 6
 - Tool: claude
 - Tests passed: 201
 - Typecheck: ✅ | Lint: ✅
+
+### 2026-02-15T08:02:31.777Z
+**Story IDEM-2: Add seedPrd NX guard to prevent state clobber** — PASSED (attempt 1)
+- Tool: claude
+- Tests passed: 203
+- Typecheck: ✅ | Lint: ✅
