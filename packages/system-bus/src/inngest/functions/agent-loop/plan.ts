@@ -1,9 +1,131 @@
 import { inngest } from "../../client";
 import { $ } from "bun";
 import { join } from "node:path";
-import { appendProgress, isCancelled, readPrd, seedPrd, markStoryRechecked } from "./utils";
+import { appendProgress, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked } from "./utils";
 
 const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+
+/**
+ * Generate a PRD from a goal description + context files.
+ * ADR-0012: Planner generates PRD.
+ */
+async function generatePrd(
+  goal: string,
+  project: string,
+  contextPaths?: string[],
+  maxStories: number = 6
+): Promise<{ title: string; adr?: string; stories: any[] }> {
+  // Read project structure
+  let projectStructure = "";
+  try {
+    const top = await $`cd ${project} && ls -1`.quiet();
+    projectStructure = top.text().trim();
+    try {
+      const src = await $`cd ${project} && find src -maxdepth 3 -type f 2>/dev/null`.quiet();
+      if (src.text().trim()) projectStructure += "\n\nsrc/ files:\n" + src.text().trim();
+    } catch { /* no src/ */ }
+  } catch { /* empty project */ }
+
+  // Read CLAUDE.md / AGENTS.md
+  let projectInstructions = "";
+  for (const f of ["CLAUDE.md", "AGENTS.md", ".agents/AGENTS.md"]) {
+    try {
+      const content = await Bun.file(join(project, f)).text();
+      projectInstructions += `\n\n## ${f}\n${content.slice(0, 2000)}`;
+    } catch { /* not found */ }
+  }
+
+  // Read context files (ADRs, docs)
+  let contextContent = "";
+  if (contextPaths) {
+    for (const p of contextPaths) {
+      try {
+        const content = await Bun.file(p).text();
+        contextContent += `\n\n## ${p.split("/").pop()}\n${content}`;
+      } catch { /* not found */ }
+    }
+  }
+
+  const prompt = `You are a technical project planner. Generate a PRD (Product Requirements Document) as JSON for an agent coding loop.
+
+## Goal
+${goal}
+
+## Project Structure
+${projectStructure}
+${projectInstructions}
+
+## Context Files
+${contextContent || "(none provided)"}
+
+## Instructions
+Generate ${maxStories} or fewer small, focused stories. Each story must be completable by a single AI coding tool (codex or claude) in one invocation.
+
+Output ONLY valid JSON matching this schema — no markdown, no commentary:
+{
+  "title": "short PRD title",
+  "stories": [
+    {
+      "id": "SHORT-1",
+      "title": "short title",
+      "description": "detailed description of what to implement",
+      "acceptance_criteria": ["criterion 1", "criterion 2", "TypeScript compiles cleanly: bunx tsc --noEmit"],
+      "priority": 1,
+      "passes": false
+    }
+  ]
+}
+
+Rules:
+- Stories should be ordered by dependency (earlier stories are prerequisites)
+- Each story MUST include "TypeScript compiles cleanly: bunx tsc --noEmit" in acceptance_criteria
+- acceptance_criteria must be verifiable by reading source code, running typecheck, or running tests
+- IDs should be short uppercase prefixes with numbers (e.g., GUARD-1, MEM-1)
+- descriptions should include specific file paths and function names when known
+- Keep stories small — one logical change per story`;
+
+  const proc = Bun.spawn(
+    ["claude", "-p", prompt, "--output-format", "json"],
+    { cwd: project, stdout: "pipe", stderr: "pipe" }
+  );
+
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  await proc.exited;
+
+  if (proc.exitCode !== 0) {
+    throw new Error(`PRD generation failed (exit ${proc.exitCode}): ${stderr.slice(0, 500)}`);
+  }
+
+  // Parse JSON — claude --output-format json wraps in {result: ...}
+  let parsed: any;
+  try {
+    const raw = JSON.parse(stdout);
+    parsed = raw.result ? JSON.parse(raw.result) : raw;
+  } catch {
+    // Try extracting JSON from markdown code block
+    const jsonMatch = stdout.match(/```json?\s*([\s\S]*?)```/) || stdout.match(/(\{[\s\S]*\})/);
+    if (!jsonMatch) throw new Error(`Failed to parse PRD JSON: ${stdout.slice(0, 500)}`);
+    parsed = JSON.parse(jsonMatch[1]!);
+  }
+
+  // Validate shape
+  if (!parsed.stories || !Array.isArray(parsed.stories) || parsed.stories.length === 0) {
+    throw new Error(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
+  }
+
+  // Cap stories
+  if (parsed.stories.length > maxStories) {
+    parsed.stories = parsed.stories.slice(0, maxStories);
+  }
+
+  // Ensure all stories have passes: false
+  for (const s of parsed.stories) {
+    s.passes = false;
+  }
+
+  return parsed;
+}
 
 async function runRecheckSuite(project: string): Promise<{
   passed: boolean;
@@ -57,6 +179,9 @@ export const agentLoopPlan = inngest.createFunction(
   [{ event: "agent/loop.start" }, { event: "agent/loop.plan" }],
   async ({ event, step }) => {
     const { loopId, project, prdPath } = event.data;
+    const goal = (event.data as any).goal as string | undefined;
+    const contextFiles = (event.data as any).context as string[] | undefined;
+    const maxStories = (event.data as any).maxStories as number | undefined;
 
     // Read maxIterations from start event or re-entry plan event (default 100)
     const maxIterations =
@@ -91,12 +216,37 @@ export const agentLoopPlan = inngest.createFunction(
     const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
     if (cancelled) return { status: "cancelled", loopId };
 
-    // Step 1: Read PRD — seed to Redis on first run, read from Redis on re-entry
-    const prd = await step.run("read-prd", () =>
-      isStartEvent
-        ? seedPrd(loopId, project, prdPath)
-        : readPrd(project, prdPath, loopId)
-    );
+    // Step 1: Read or generate PRD
+    // ADR-0012: If goal is provided, generate PRD from goal + context files
+    const prd = await step.run("read-prd", async () => {
+      if (!isStartEvent) {
+        return readPrd(project, prdPath, loopId);
+      }
+
+      if (goal) {
+        // Generate PRD from goal
+        const generated = await generatePrd(goal, project, contextFiles, maxStories ?? 6);
+
+        // Write to disk for human review
+        const diskPath = join(project, prdPath ?? "prd.json");
+        await Bun.write(diskPath, JSON.stringify(generated, null, 2) + "\n");
+
+        // Log to progress.txt
+        await appendProgress(project, [
+          `## PRD Generated from Goal`,
+          `Goal: ${goal}`,
+          `Context: ${contextFiles?.join(", ") ?? "none"}`,
+          `Stories: ${generated.stories.length}`,
+          ...generated.stories.map((s: any) => `- ${s.id}: ${s.title}`),
+        ].join("\n"));
+
+        // Seed to Redis
+        return seedPrdFromData(loopId, generated);
+      }
+
+      // Default: read from disk
+      return seedPrd(loopId, project, prdPath);
+    });
 
     // Count attempted stories (passed + skipped) for maxIterations enforcement
     const attemptedStories = prd.stories.filter(

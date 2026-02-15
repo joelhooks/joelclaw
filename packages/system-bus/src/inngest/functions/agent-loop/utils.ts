@@ -175,7 +175,8 @@ export interface Story {
 
 export interface Prd {
   title: string;
-  description: string;
+  description?: string;
+  adr?: string;
   stories: Story[];
 }
 
@@ -195,6 +196,20 @@ export async function seedPrd(
   const redis = getRedis();
   await redis.set(prdKey(loopId), JSON.stringify(prd));
   // TTL: 7 days — loops shouldn't last longer than that
+  await redis.expire(prdKey(loopId), 7 * 24 * 60 * 60);
+  return prd;
+}
+
+/**
+ * Seed PRD into Redis from in-memory data (no disk file).
+ * Used when planner generates PRD from goal (ADR-0012).
+ */
+export async function seedPrdFromData(
+  loopId: string,
+  prd: Prd
+): Promise<Prd> {
+  const redis = getRedis();
+  await redis.set(prdKey(loopId), JSON.stringify(prd));
   await redis.expire(prdKey(loopId), 7 * 24 * 60 * 60);
   return prd;
 }
