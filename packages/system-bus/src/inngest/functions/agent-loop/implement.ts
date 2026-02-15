@@ -228,7 +228,7 @@ async function spawnToolHost(
       cmd = ["codex", "exec", "--full-auto", prompt];
       break;
     case "claude":
-      cmd = ["claude", "-p", prompt, "--output-format", "text"];
+      cmd = ["claude", "-p", prompt, "--output-format", "text", "--dangerously-skip-permissions"];
       break;
     case "pi":
       cmd = ["pi", "--prompt", prompt, "--no-tui"];
