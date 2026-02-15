@@ -5,6 +5,8 @@ import {
   writePidFile,
   cleanupPid,
   TOOL_TIMEOUTS,
+  guardStory,
+  renewLease,
 } from "./utils";
 
 function buildTestWriterPrompt(story: {
@@ -147,6 +149,11 @@ export const agentLoopTestWriter = inngest.createFunction(
       storyStartedAt,
       retryLadder,
     } = event.data;
+    const runToken = event.data.runToken;
+    if (!runToken) {
+      console.log(`[agent-loop-test-writer] missing runToken for ${storyId}`);
+      return { status: "blocked", loopId, storyId, reason: "missing_run_token" };
+    }
 
     const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
     if (cancelled) return { status: "cancelled", loopId, storyId };
@@ -155,10 +162,22 @@ export const agentLoopTestWriter = inngest.createFunction(
       listUntrackedFiles(project)
     );
 
-    await step.run("write-tests", async () => {
+    const writeResult = await step.run("write-tests", async () => {
+      const guard = await guardStory(loopId, storyId, runToken);
+      if (!guard.ok) {
+        console.log(
+          `[agent-loop-test-writer] guard blocked write-tests for ${storyId}: ${guard.reason}`
+        );
+        return { blocked: true as const, reason: guard.reason };
+      }
       const prompt = buildTestWriterPrompt(story);
-      return spawnReviewer(tool, prompt, project, loopId);
+      const result = await spawnReviewer(tool, prompt, project, loopId);
+      await renewLease(loopId, storyId, runToken);
+      return { blocked: false as const, result };
     });
+    if (writeResult.blocked) {
+      return { status: "blocked", loopId, storyId, reason: writeResult.reason };
+    }
 
     const testFiles = await step.run("collect-new-test-files", async () => {
       const beforeSet = new Set(untrackedBefore);
@@ -175,8 +194,16 @@ export const agentLoopTestWriter = inngest.createFunction(
     await step.run("commit-new-test-files", () =>
       commitNewTestFiles(project, loopId, storyId, testFiles)
     );
+    await renewLease(loopId, storyId, runToken);
 
-    await step.run("emit-implement", async () => {
+    const emitResult = await step.run("emit-implement", async () => {
+      const guard = await guardStory(loopId, storyId, runToken);
+      if (!guard.ok) {
+        console.log(
+          `[agent-loop-test-writer] guard blocked emit-implement for ${storyId}: ${guard.reason}`
+        );
+        return { blocked: true as const, reason: guard.reason };
+      }
       await inngest.send({
         name: "agent/loop.implement",
         data: {
@@ -190,10 +217,16 @@ export const agentLoopTestWriter = inngest.createFunction(
           maxIterations,
           storyStartedAt,
           retryLadder,
+          runToken,
           testFiles,
         },
       });
+      await renewLease(loopId, storyId, runToken);
+      return { blocked: false as const };
     });
+    if (emitResult.blocked) {
+      return { status: "blocked", loopId, storyId, reason: emitResult.reason };
+    }
 
     return {
       status: "tests-written",

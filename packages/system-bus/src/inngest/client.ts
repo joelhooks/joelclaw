@@ -114,6 +114,7 @@ type Events = {
       loopId: string;
       project: string;
       storyId: string;
+      runToken?: string;
       tool: "codex" | "claude" | "pi";
       attempt: number;
       story: {
@@ -133,6 +134,7 @@ type Events = {
       loopId: string;
       project: string;
       storyId: string;
+      runToken?: string;
       tool: "codex" | "claude" | "pi";
       attempt: number;
       feedback?: string;
@@ -155,6 +157,7 @@ type Events = {
       loopId: string;
       project: string;
       storyId: string;
+      runToken?: string;
       commitSha: string;
       attempt: number;
       tool: "claude" | "pi";
@@ -178,6 +181,7 @@ type Events = {
       project: string;
       prdPath: string;
       storyId: string;
+      runToken?: string;
       testResults: {
         testsPassed: number;
         testsFailed: number;

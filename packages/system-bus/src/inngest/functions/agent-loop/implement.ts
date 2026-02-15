@@ -14,6 +14,10 @@ import {
   getHeadSha,
   isDockerAvailable,
   spawnInContainer,
+  guardStory,
+  renewLease,
+  readRecommendations,
+  readPatterns,
 } from "./utils";
 
 /**
@@ -27,31 +31,18 @@ async function readFileIfExists(path: string): Promise<string> {
   }
 }
 
-/**
- * Extract the "## Codebase Patterns" section from progress.txt.
- */
-function extractCodebasePatterns(progressText: string): string {
-  if (!progressText) return "";
-  const marker = "## Codebase Patterns";
-  const idx = progressText.indexOf(marker);
-  if (idx === -1) return "";
-  // Find the next ## heading or end of file
-  const rest = progressText.slice(idx);
-  const nextHeading = rest.indexOf("\n## ", marker.length);
-  const section = nextHeading === -1 ? rest : rest.slice(0, nextHeading);
-  return section.trim();
-}
-
-function formatRecommendationsContext(raw: string): string {
+function formatRecommendationsContext(
+  raw: string | {
+    toolRankings?: Array<{ tool?: string; passRate?: number; avgAttempts?: number }>;
+    retryPatterns?: string[];
+    suggestedRetryLadder?: string[];
+    lastUpdated?: string;
+    sourceLoopId?: string;
+  } | null
+): string {
   if (!raw) return "";
   try {
-    const parsed = JSON.parse(raw) as {
-      toolRankings?: Array<{ tool?: string; passRate?: number; avgAttempts?: number }>;
-      retryPatterns?: string[];
-      suggestedRetryLadder?: string[];
-      lastUpdated?: string;
-      sourceLoopId?: string;
-    };
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
 
     const lines: string[] = [];
     if (parsed.sourceLoopId) lines.push(`Source loop: ${parsed.sourceLoopId}`);
@@ -82,6 +73,14 @@ function formatRecommendationsContext(raw: string): string {
     return "";
   }
 }
+
+type RecommendationsContext = {
+  toolRankings?: Array<{ tool?: string; passRate?: number; avgAttempts?: number }>;
+  retryPatterns?: string[];
+  suggestedRetryLadder?: string[];
+  lastUpdated?: string;
+  sourceLoopId?: string;
+};
 
 /**
  * Get a brief file listing of the project (top-level + src/ if exists).
@@ -154,11 +153,8 @@ async function buildPrompt(
   const coreText = coreParts.join("\n");
 
   // Context sections (truncatable, in priority order)
-  const progressRaw = await readFileIfExists(`${project}/progress.txt`);
-  const patterns = extractCodebasePatterns(progressRaw);
-  const recommendationsRaw = await readFileIfExists(
-    `${project}/.agent-loop-recommendations.json`
-  );
+  const patterns = await readPatterns(project);
+  const recommendationsRaw = await readRecommendations<RecommendationsContext>(project);
   const recommendations = formatRecommendationsContext(recommendationsRaw);
 
   const fileListing = await getFileListing(project);
@@ -170,7 +166,7 @@ async function buildPrompt(
   const contextSections: { label: string; content: string; priority: number }[] = [];
 
   if (patterns) {
-    contextSections.push({ label: "## Codebase Patterns (from progress.txt)", content: patterns, priority: 1 });
+    contextSections.push({ label: "## Codebase Patterns", content: patterns, priority: 1 });
   }
   if (recommendations) {
     contextSections.push({
@@ -340,6 +336,11 @@ export const agentLoopImplement = inngest.createFunction(
       storyStartedAt: incomingStoryStartedAt,
     } =
       event.data;
+    const runToken = event.data.runToken;
+    if (!runToken) {
+      console.log(`[agent-loop-implement] missing runToken for ${storyId}`);
+      return { status: "blocked", loopId, storyId, reason: "missing_run_token" };
+    }
 
     // Record story start time for duration tracking
     const storyStartedAt = await step.run("record-start-time", () =>
@@ -374,37 +375,71 @@ export const agentLoopImplement = inngest.createFunction(
       const outPath = outputPath(loopId, storyId, attempt);
       const prompt = await buildPrompt(story, project, feedback);
 
-      const exitCode = await step.run("run-tool", () =>
-        spawnTool(tool, prompt, project, loopId, outPath)
-      );
+      const runToolResult = await step.run("run-tool", async () => {
+        const guard = await guardStory(loopId, storyId, runToken);
+        if (!guard.ok) {
+          console.log(
+            `[agent-loop-implement] guard blocked run-tool for ${storyId}: ${guard.reason}`
+          );
+          return { blocked: true as const, reason: guard.reason };
+        }
+        const exitCode = await spawnTool(tool, prompt, project, loopId, outPath);
+        await renewLease(loopId, storyId, runToken);
+        return { blocked: false as const, exitCode };
+      });
+      if (runToolResult.blocked) {
+        return { status: "blocked", loopId, storyId, reason: runToolResult.reason };
+      }
 
       // Step 3: Smart commit — detect if tool already committed
-      sha = await step.run("git-commit", async () => {
+      const commitResult = await step.run("git-commit", async () => {
+        const guard = await guardStory(loopId, storyId, runToken);
+        if (!guard.ok) {
+          console.log(
+            `[agent-loop-implement] guard blocked git-commit for ${storyId}: ${guard.reason}`
+          );
+          return { blocked: true as const, reason: guard.reason, sha: "" };
+        }
         const headAfter = await getHeadSha(project);
         const toolCommitted = headAfter !== headBefore;
         const uncommitted = await hasUncommittedChanges(project);
 
         if (toolCommitted && !uncommitted) {
           // Tool already committed and no remaining changes — use its sha
-          return headAfter;
+          await renewLease(loopId, storyId, runToken);
+          return { blocked: false as const, sha: headAfter };
         }
 
         if (!uncommitted) {
           // No tool commit AND no changes — nothing happened, return HEAD
-          return headAfter;
+          await renewLease(loopId, storyId, runToken);
+          return { blocked: false as const, sha: headAfter };
         }
 
         // There are uncommitted changes — make the harness commit
         const msg = commitMessage(loopId, storyId, attempt, story.title);
-        return gitCommit(project, msg);
+        const sha = await gitCommit(project, msg);
+        await renewLease(loopId, storyId, runToken);
+        return { blocked: false as const, sha };
       });
+      if (commitResult.blocked) {
+        return { status: "blocked", loopId, storyId, reason: commitResult.reason };
+      }
+      sha = commitResult.sha;
     }
 
     // Step 3: Determine reviewer tool (default: claude)
     const reviewerTool = "claude" as const;
 
     // Step 4: Emit review event
-    await step.run("emit-review", async () => {
+    const emitResult = await step.run("emit-review", async () => {
+      const guard = await guardStory(loopId, storyId, runToken);
+      if (!guard.ok) {
+        console.log(
+          `[agent-loop-implement] guard blocked emit-review for ${storyId}: ${guard.reason}`
+        );
+        return { blocked: true as const, reason: guard.reason };
+      }
       await inngest.send({
         name: "agent/loop.review",
         data: {
@@ -420,11 +455,16 @@ export const agentLoopImplement = inngest.createFunction(
           storyStartedAt,
           retryLadder,
           freshTests,
+          runToken,
           priorFeedback: feedback,
         },
       });
+      await renewLease(loopId, storyId, runToken);
       return { event: "agent/loop.review", storyId, sha: sha.slice(0, 8), reviewer: reviewerTool };
     });
+    if ("blocked" in emitResult && emitResult.blocked) {
+      return { status: "blocked", loopId, storyId, reason: emitResult.reason };
+    }
 
     return { status: "implemented", loopId, storyId, attempt, sha, tool };
   }

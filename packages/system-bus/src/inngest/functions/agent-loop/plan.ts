@@ -1,7 +1,7 @@
 import { inngest } from "../../client";
 import { $ } from "bun";
 import { join } from "node:path";
-import { appendProgress, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput } from "./utils";
+import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput } from "./utils";
 
 const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
 
@@ -225,8 +225,7 @@ export const agentLoopPlan = inngest.createFunction(
         const diskPath = join(project, prdPath ?? "prd.json");
         await Bun.write(diskPath, JSON.stringify(generated, null, 2) + "\n");
 
-        // Log to progress.txt
-        await appendProgress(project, [
+        await appendProgress(loopId, [
           `## PRD Generated from Goal`,
           `Goal: ${goal}`,
           `Context: ${contextFiles?.join(", ") ?? "none"}`,
@@ -292,7 +291,7 @@ export const agentLoopPlan = inngest.createFunction(
           await step.run(`recheck-pass-${skippedStory.id}`, async () => {
             await markStoryRechecked(project, prdPath, skippedStory.id, loopId);
             await appendProgress(
-              project,
+              loopId,
               [
                 `**Story ${skippedStory.id}: ${skippedStory.title}** — RECHECK PASS`,
                 "- Recheck result: typecheck + tests now pass",
@@ -304,7 +303,7 @@ export const agentLoopPlan = inngest.createFunction(
         } else {
           await step.run(`recheck-still-failing-${skippedStory.id}`, async () => {
             await appendProgress(
-              project,
+              loopId,
               [
                 `**Story ${skippedStory.id}: ${skippedStory.title}** — RECHECK STILL FAILING`,
                 "- Recheck result: still failing typecheck/tests",
@@ -372,6 +371,28 @@ export const agentLoopPlan = inngest.createFunction(
         ? event.data.maxRetries ?? 2
         : (event.data as any).maxRetries ?? 2;
 
+    const runToken = await step.run("derive-run-token", () => {
+      const eventId = (event as { id?: string }).id;
+      return eventId ? `event:${eventId}` : crypto.randomUUID();
+    });
+
+    const claimedRunToken = await step.run("claim-story", () =>
+      claimStory(loopId, next.id, runToken)
+    );
+
+    if (!claimedRunToken) {
+      console.warn(
+        `[agent-loop-plan] story already claimed, skipping dispatch loopId=${loopId} storyId=${next.id}`
+      );
+      return {
+        status: "already-claimed",
+        loopId,
+        storyId: next.id,
+        remaining: remaining.length,
+        maxIterations,
+      };
+    }
+
     await step.run("emit-test", async () => {
       await inngest.send({
         name: "agent/loop.test",
@@ -385,6 +406,7 @@ export const agentLoopPlan = inngest.createFunction(
           maxRetries,
           maxIterations,
           retryLadder,
+          runToken: claimedRunToken,
         },
       });
     });
