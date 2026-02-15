@@ -16,3 +16,15 @@ Output must be valid XML using these tags:
 - <suggested-response> (optional): a concise greeting/context suggestion for the next session
 
 Return XML only.`;
+
+export const OBSERVER_USER_PROMPT = (
+  messages: string,
+  trigger: string,
+  sessionName?: string
+): string => `Analyze the session transcript and extract observations.
+
+Trigger: ${trigger}
+${sessionName ? `Session: ${sessionName}\n` : ""}Please follow the system prompt format exactly.
+
+Transcript:
+${messages}`;
