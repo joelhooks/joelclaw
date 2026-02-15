@@ -293,16 +293,25 @@ export const agentLoopJudge = inngest.createFunction(
     const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
     if (cancelled) return { status: "cancelled", loopId, storyId };
 
-    // Step 1: Make judgment
-    const mechanicalGateFailures: string[] = [];
-    if (!testResults.typecheckOk) mechanicalGateFailures.push("Typecheck failed.");
-    if (!testResults.lintOk) mechanicalGateFailures.push("Lint failed.");
-    if (testResults.testsFailed > 0) {
-      mechanicalGateFailures.push(`${testResults.testsFailed} test(s) failed.`);
-    }
-    const mechanicalGatesPass = mechanicalGateFailures.length === 0;
-
-    const reviewerRedFlags = buildReviewerRedFlags(reviewerNotes);
+    // Step 1: Check mechanical gates
+    const { mechanicalGatesPass, mechanicalGateFailures, reviewerRedFlags } = await step.run("check-gates", () => {
+      const failures: string[] = [];
+      if (!testResults.typecheckOk) failures.push("Typecheck failed.");
+      if (!testResults.lintOk) failures.push("Lint failed.");
+      if (testResults.testsFailed > 0) {
+        failures.push(`${testResults.testsFailed} test(s) failed.`);
+      }
+      const flags = buildReviewerRedFlags(reviewerNotes);
+      return {
+        mechanicalGatesPass: failures.length === 0,
+        mechanicalGateFailures: failures,
+        reviewerRedFlags: flags,
+        typecheck: testResults.typecheckOk,
+        lint: testResults.lintOk,
+        tests: `${testResults.testsPassed}✓ ${testResults.testsFailed}✗`,
+        ...(failures.length > 0 ? { blocked: failures } : {}),
+      };
+    });
 
     let llmResult: { verdict: "pass" | "fail"; reasoning: string } | undefined;
     if (mechanicalGatesPass) {

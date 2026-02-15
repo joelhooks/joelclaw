@@ -63,6 +63,74 @@ function prdKey(loopId: string): string {
   return `agent-loop:prd:${loopId}`;
 }
 
+function claimKey(loopId: string, storyId: string): string {
+  return `agent-loop:claim:${loopId}:${storyId}`;
+}
+
+const CLAIM_LEASE_SECONDS = 1800;
+
+export async function claimStory(
+  loopId: string,
+  storyId: string,
+  runToken: string
+): Promise<string | null> {
+  const redis = getRedis();
+  const result = await redis.set(
+    claimKey(loopId, storyId),
+    runToken,
+    "EX",
+    CLAIM_LEASE_SECONDS,
+    "NX"
+  );
+  return result === "OK" ? runToken : null;
+}
+
+export async function guardStory(
+  loopId: string,
+  storyId: string,
+  runToken: string
+): Promise<
+  | { ok: true }
+  | { ok: false; reason: "already_claimed" | "already_passed" | "lease_expired" }
+> {
+  const redis = getRedis();
+  const claim = await redis.get(claimKey(loopId, storyId));
+  if (!claim) return { ok: false, reason: "lease_expired" };
+  if (claim !== runToken) return { ok: false, reason: "already_claimed" };
+
+  const prdData = await redis.get(prdKey(loopId));
+  if (prdData) {
+    const prd = JSON.parse(prdData) as { stories?: Array<{ id?: string; passes?: boolean }> };
+    const story = prd.stories?.find((s) => s.id === storyId);
+    if (story?.passes === true) {
+      return { ok: false, reason: "already_passed" };
+    }
+  }
+
+  return { ok: true };
+}
+
+export async function renewLease(
+  loopId: string,
+  storyId: string,
+  runToken: string
+): Promise<boolean> {
+  const redis = getRedis();
+  const key = claimKey(loopId, storyId);
+  const claim = await redis.get(key);
+  if (!claim || claim !== runToken) return false;
+  await redis.expire(key, CLAIM_LEASE_SECONDS);
+  return true;
+}
+
+export async function releaseClaim(
+  loopId: string,
+  storyId: string
+): Promise<void> {
+  const redis = getRedis();
+  await redis.del(claimKey(loopId, storyId));
+}
+
 // ── Directory helpers ────────────────────────────────────────────────
 
 export function loopDir(loopId: string): string {
@@ -233,9 +301,19 @@ export async function seedPrd(
   const fullPath = join(project, prdPath);
   const prd = JSON.parse(await Bun.file(fullPath).text()) as Prd;
   const redis = getRedis();
-  await redis.set(prdKey(loopId), JSON.stringify(prd));
-  // TTL: 7 days — loops shouldn't last longer than that
-  await redis.expire(prdKey(loopId), 7 * 24 * 60 * 60);
+  const key = prdKey(loopId);
+  const value = JSON.stringify(prd);
+  const ttlSeconds = 7 * 24 * 60 * 60;
+
+  // First writer wins: avoid clobbering loop state when duplicate start events arrive.
+  const setResult = await redis.set(key, value, "EX", ttlSeconds, "NX");
+  if (setResult === null) {
+    const existing = await redis.get(key);
+    if (existing) {
+      return JSON.parse(existing) as Prd;
+    }
+  }
+
   return prd;
 }
 
@@ -416,10 +494,18 @@ export async function gitCommit(
 
 export async function getStoryDiff(project: string): Promise<string> {
   try {
-    const result = await $`git -C ${project} diff HEAD~1 HEAD`.quiet();
+    // Diff against main to capture both test and implementation commits
+    // (TDD flow: test-writer commits tests, then implement commits code)
+    const result = await $`git -C ${project} diff main...HEAD`.quiet();
     return result.text();
   } catch {
-    return "";
+    try {
+      // Fallback: single commit diff
+      const result = await $`git -C ${project} diff HEAD~1 HEAD`.quiet();
+      return result.text();
+    } catch {
+      return "";
+    }
   }
 }
 
