@@ -19,6 +19,8 @@ function buildTestWriterPrompt(story: {
     "You are writing acceptance tests for this story.",
     "Focus on observable behavior and product intent only.",
     "Do NOT test internal structure, private functions, or implementation details.",
+    "Do NOT use source code string matching (indexOf, regex on source text) to verify behavior.",
+    "Instead, import the module and test its exports, return values, and side effects.",
     "",
     "## Story Description",
     story.description,
