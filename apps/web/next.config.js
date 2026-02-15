@@ -17,6 +17,11 @@ const nextConfig = {
         destination: "/building-my-own-openclaw",
         permanent: true,
       },
+      {
+        source: "/teaching-my-system-to-remember",
+        destination: "/observation-pipeline-persistent-ai-memory",
+        permanent: true,
+      },
     ];
   },
 };
