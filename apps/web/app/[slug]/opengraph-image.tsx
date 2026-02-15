@@ -58,7 +58,10 @@ export default async function Image({
           style={{
             display: "flex",
             alignItems: "center",
+            justifyContent: "flex-end",
             gap: "16px",
+            paddingRight: "20px",
+            paddingBottom: "10px",
           }}
         >
           {clawSvg(40)}
