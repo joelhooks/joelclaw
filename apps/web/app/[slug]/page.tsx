@@ -76,10 +76,17 @@ export default async function PostPage({ params }: Props) {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbs) }}
       />
       <header className="mb-10">
+        {meta.type === "note" && (
+          <span className="inline-block text-[11px] font-medium uppercase tracking-wider text-neutral-500 border border-neutral-800 rounded px-1.5 py-0.5 mb-3">
+            note
+          </span>
+        )}
         <h1 className="text-3xl font-bold tracking-tight">{meta.title}</h1>
-        <time dateTime={meta.date} className="mt-2 block text-sm text-neutral-500">
-          {formatDate(meta.date)}
-        </time>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-neutral-500">
+          <time dateTime={meta.date}>{formatDate(meta.date)}</time>
+          {meta.channel && <span>· {meta.channel}</span>}
+          {meta.duration && <span>· {meta.duration}</span>}
+        </div>
       </header>
       <div className="prose-joelclaw">
         <MDXRemote

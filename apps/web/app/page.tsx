@@ -23,9 +23,16 @@ export default function Home() {
         {posts.map((post) => (
           <li key={post.slug}>
             <Link href={`/${post.slug}`} className="group block">
-              <h2 className="text-xl font-semibold tracking-tight group-hover:text-white transition-colors">
-                {post.title}
-              </h2>
+              <div className="flex items-center gap-2">
+                {post.type === "note" && (
+                  <span className="shrink-0 text-[11px] font-medium uppercase tracking-wider text-neutral-500 border border-neutral-800 rounded px-1.5 py-0.5">
+                    note
+                  </span>
+                )}
+                <h2 className="text-xl font-semibold tracking-tight group-hover:text-white transition-colors">
+                  {post.title}
+                </h2>
+              </div>
               {post.description && (
                 <p className="mt-1.5 text-neutral-400 leading-relaxed">{post.description}</p>
               )}

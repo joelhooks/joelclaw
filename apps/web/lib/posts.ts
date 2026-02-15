@@ -2,11 +2,17 @@ import fs from "fs";
 import path from "path";
 import matter from "gray-matter";
 
+export type ContentType = "article" | "note";
+
 export type PostMeta = {
   title: string;
   date: string;
   description: string;
   slug: string;
+  type: ContentType;
+  source?: string;
+  channel?: string;
+  duration?: string;
 };
 
 const contentDir = path.join(process.cwd(), "content");
@@ -24,6 +30,10 @@ export function getAllPosts(): PostMeta[] {
         date: data.date ?? "",
         description: data.description ?? "",
         slug: filename.replace(/\.mdx$/, ""),
+        type: (data.type as ContentType) ?? "article",
+        source: data.source,
+        channel: data.channel,
+        duration: data.duration,
       };
     })
     .sort((a, b) => (a.date > b.date ? -1 : 1));
@@ -42,6 +52,10 @@ export function getPost(slug: string) {
       date: data.date ?? "",
       description: data.description ?? "",
       slug,
+      type: (data.type as ContentType) ?? "article",
+      source: data.source,
+      channel: data.channel,
+      duration: data.duration,
     } satisfies PostMeta,
     content,
   };
