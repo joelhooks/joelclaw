@@ -13,7 +13,7 @@ import { Inngest, EventSchemas } from "inngest";
  */
 
 // System event types
-type Events = {
+export type Events = {
   // --- Video pipeline ---
   "pipeline/video.requested": {
     data: {
@@ -347,6 +347,56 @@ type Events = {
         codebasePatterns?: string;
         totalDurationEstimate?: number;
       };
+    };
+  };
+
+  // --- Memory ---
+  "memory/session.compaction.pending": {
+    data: {
+      sessionId: string;
+      dedupeKey: string;
+      trigger: "compaction";
+      messages: string;
+      messageCount: number;
+      tokensBefore: number;
+      filesRead: string[];
+      filesModified: string[];
+      capturedAt: string;
+      schemaVersion: 1;
+    };
+  };
+  "memory/session.ended": {
+    data: {
+      sessionId: string;
+      dedupeKey: string;
+      trigger: "shutdown";
+      messages: string;
+      messageCount: number;
+      userMessageCount: number;
+      duration: number;
+      sessionName?: string;
+      filesRead: string[];
+      filesModified: string[];
+      capturedAt: string;
+      schemaVersion: 1;
+    };
+  };
+  "memory/observations.accumulated": {
+    data: {
+      date: string;
+      totalTokens: number;
+      observationCount: number;
+      capturedAt: string;
+    };
+  };
+  "memory/observations.reflected": {
+    data: {
+      date: string;
+      inputTokens: number;
+      outputTokens: number;
+      compressionRatio: number;
+      proposalCount: number;
+      capturedAt: string;
     };
   };
 
