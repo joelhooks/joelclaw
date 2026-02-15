@@ -1,7 +1,6 @@
 "use client";
 
-import { useQueryState, parseAsArrayOf, parseAsString } from "nuqs";
-import type { AdrMeta } from "../../lib/adrs";
+import { useState, useEffect, useCallback } from "react";
 
 const STATUS_CONFIG: Record<
   string,
@@ -39,34 +38,51 @@ const STATUS_CONFIG: Record<
   },
 };
 
-export function useAdrFilters(allStatuses: string[]) {
-  const [included, setIncluded] = useQueryState(
-    "status",
-    parseAsArrayOf(parseAsString, ",").withOptions({ shallow: true })
+function readUrlFilters(allStatuses: string[]): Set<string> {
+  if (typeof window === "undefined") return new Set(allStatuses);
+  const params = new URLSearchParams(window.location.search);
+  const raw = params.get("status");
+  if (!raw) return new Set(allStatuses);
+  const parsed = raw.split(",").filter((s) => allStatuses.includes(s));
+  return parsed.length > 0 ? new Set(parsed) : new Set(allStatuses);
+}
+
+function writeUrl(active: Set<string>, allStatuses: string[]) {
+  const url = new URL(window.location.href);
+  if (active.size === allStatuses.length) {
+    url.searchParams.delete("status");
+  } else {
+    url.searchParams.set("status", [...active].join(","));
+  }
+  window.history.replaceState(null, "", url.toString());
+}
+
+export function useStatusFilter(allStatuses: string[]) {
+  const [active, setActive] = useState<Set<string>>(
+    () => new Set(allStatuses)
   );
 
-  // null = all shown (default). Array = only those shown.
-  const active = included ?? allStatuses;
+  // Sync from URL on mount
+  useEffect(() => {
+    setActive(readUrlFilters(allStatuses));
+  }, [allStatuses]);
 
-  const toggle = (status: string) => {
-    const isActive = active.includes(status);
-
-    if (isActive) {
-      // Turning off — show remaining active ones in URL
-      const next = active.filter((s) => s !== status);
-      if (next.length === 0) return; // Can't exclude everything
-      setIncluded(next);
-    } else {
-      // Turning on — add it back
-      const next = [...active, status];
-      // If all are now active, clear the URL param
-      if (next.length >= allStatuses.length) {
-        setIncluded(null);
-      } else {
-        setIncluded(next);
-      }
-    }
-  };
+  const toggle = useCallback(
+    (status: string) => {
+      setActive((prev) => {
+        const next = new Set(prev);
+        if (next.has(status)) {
+          if (next.size <= 1) return prev; // Can't empty
+          next.delete(status);
+        } else {
+          next.add(status);
+        }
+        writeUrl(next, allStatuses);
+        return next;
+      });
+    },
+    [allStatuses]
+  );
 
   return { active, toggle };
 }
@@ -74,23 +90,25 @@ export function useAdrFilters(allStatuses: string[]) {
 export function AdrFilterBar({
   counts,
   allStatuses,
+  active,
+  onToggle,
 }: {
   counts: Record<string, number>;
   allStatuses: string[];
+  active: Set<string>;
+  onToggle: (status: string) => void;
 }) {
-  const { active, toggle } = useAdrFilters(allStatuses);
-
   return (
     <div className="mt-4 flex flex-wrap gap-2">
       {allStatuses.map((status) => {
-        const isActive = active.includes(status);
+        const isActive = active.has(status);
         const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.proposed!;
         const count = counts[status] ?? 0;
 
         return (
           <button
             key={status}
-            onClick={() => toggle(status)}
+            onClick={() => onToggle(status)}
             className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition-all cursor-pointer ${
               isActive
                 ? `${cfg.color} ${cfg.bg} ${cfg.border} ${cfg.glow}`
@@ -107,9 +125,4 @@ export function AdrFilterBar({
       })}
     </div>
   );
-}
-
-export function useFilteredAdrs(adrs: AdrMeta[], allStatuses: string[]) {
-  const { active } = useAdrFilters(allStatuses);
-  return adrs.filter((a) => active.includes(a.status));
 }
