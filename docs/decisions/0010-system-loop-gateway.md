@@ -17,3 +17,30 @@ The OpenClaw architecture calls for a central LLM session loop that continuously
 The unresolved problem is how to introduce this gateway while balancing key drivers: whether operation should be always-on or scheduled/cron-triggered, how safety boundaries and kill-switch controls are enforced, how cost is bounded as loop frequency grows, and how human oversight remains explicit for high-impact decisions. This ADR proposes framing and constraints for that orchestration layer.
 
 Related: [ADR-0005 — Durable multi-agent coding loops](0005-durable-multi-agent-coding-loops.md), [ADR-0007 — Agent loop v2 improvements](0007-agent-loop-v2-improvements.md), [ADR-0008 — Loop retrospective and skill evolution](0008-loop-retrospective-and-skill-evolution.md)
+
+## Decision Drivers
+
+- Autonomous action capability: the system should move routine work forward without waiting for manual triage each time.
+- Safety and human oversight: high-impact actions must remain reviewable, interruptible, and bounded by explicit guardrails.
+- Cost control (LLM calls): loop execution frequency and model usage must be predictable and capped to avoid runaway spend.
+- State awareness: routing decisions should use current backlog, recent loop outcomes, and system health, not stale assumptions.
+- Composability with existing pipelines: the gateway should dispatch into current coding, media, notes, and retrospective flows without rewriting them.
+- Graceful degradation: when model, network, or downstream systems fail, the gateway should fall back to safe no-op, defer, or human escalation behavior.
+
+## Considered Options
+
+### Option A: No system loop — keep human as gateway
+
+In this model, Joel continues to interpret events and manually trigger follow-on workflows. The architecture stays simple and transparent, but throughput remains constrained by human availability and attention.
+
+### Option B: Cron-triggered heartbeat — Inngest cron function that runs every N minutes and checks state
+
+A scheduled Inngest function wakes up on a fixed cadence, evaluates system state, and decides whether to dispatch work. This creates predictable execution windows and easier cost controls, but it can introduce latency between events and action.
+
+### Option C: Event-driven reactive loop — function triggered by terminal events (`loop.complete`, note captured, etc.) that evaluates next action
+
+Each relevant event triggers a lightweight evaluation function that decides the next safe step immediately from fresh context. This improves responsiveness and reduces idle polling, but requires careful deduplication and reentrancy controls to avoid cascades.
+
+### Option D: Always-on LLM session — persistent context window that receives all events
+
+A long-lived LLM session continuously consumes events and decides actions in near real time. It offers strong continuity of context, but increases operational complexity, safety risk surface, and ongoing token cost pressure.
