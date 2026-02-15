@@ -1,0 +1,551 @@
+Implemented `formatLoopDuration` as a named export in `src/inngest/functions/agent-loop/utils.ts:8`.
+
+Behavior implemented:
+- `<= 0` or non-finite -> `"0s"`
+- `< 1000ms` -> decimal seconds with trimmed trailing zeros (e.g. `500 -> "0.5s"`)
+- `>= 1000ms` -> whole-second formatting:
+  - seconds only: `"Xs"`
+  - minutes/seconds: `"Xm Ys"`
+  - hours/minutes/seconds: `"Xh Ym Zs"`
+
+Validation:
+- Ran `bunx tsc --noEmit` -> fails due to many pre-existing repo type/dependency issues unrelated to this change.
+- Ran `bun test src/inngest/functions/agent-loop/formatLoopDuration.test.ts` -> fails before tests execute because `ioredis` is not installed/resolvable from `utils.ts` imports.
+
+
+--- STDERR ---
+OpenAI Codex v0.101.0 (research preview)
+--------
+workdir: /private/tmp/agent-loop/loop-mlo4u7n4-r8f52f/packages/system-bus
+model: gpt-5.3-codex
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: auto
+session id: 019c62c1-eb18-7e42-a612-20ac44b27271
+--------
+user
+
+
+## Project File Listing
+
+docker
+prd-v3-recovery.json
+prd-adr-0010.json
+progress.txt
+prd-retro.json
+bun.lock
+README.md
+__tests__
+package.json
+tsconfig.json
+docker-compose.yml
+prd-v2.json
+index.ts
+CONTINUATION.md
+prd.json
+CLAUDE.md
+prd-cli-migration.json
+src
+CONTINUATION-ADR.md
+
+# src/ files:
+src/inngest/client.ts
+src/serve.ts
+
+## Project Instructions (CLAUDE.md)
+
+
+## Agent Loop Architecture (ADR-0015)
+
+This project runs automated coding loops with 5 separated roles:
+- **Planner**: generates PRD from goal, picks next story
+- **Test Writer**: writes acceptance tests BEFORE implementation (TDD)
+- **Implementor**: writes code to pass the tests
+- **Reviewer**: evaluates implementation with 4 questions (no test writing)
+- **Judge**: mechanical gates + reviewer notes + LLM verdict
+
+When working as an implementor: implement the story, don't write tests.
+When working as a test writer: write tests from acceptance criteria only, don't read implementation.
+Tests should verify observable behavior and public API — NOT internal structure.
+Do NOT use source code string matching (indexOf, regex on source) to verify behavior.
+Commit nothing — the harness handles git.
+
+## Bun Runtime
+
+Default to using Bun instead of Node.js.
+
+- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
+- Use `bun test` instead of `jest` or `vitest`
+- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
+- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
+- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
+- Use `bunx <package> <command>` instead of `npx <package> <command>`
+- Bun automatically loads .env, so don't use dotenv.
+
+## APIs
+
+- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
+- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
+- `Bun.redis` for Redis. Don't use `ioredis`.
+- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
+- `WebSocket` is built-in. Don't use `ws`.
+- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
+- Bun.$`ls` instead of execa.
+
+## Testing
+
+Use `bun test` to run tests.
+
+```ts#index.test.ts
+import { test, expect } from "bun:test";
+
+test("hello world", () => {
+  expect(1).toBe(1);
+});
+```
+
+## Frontend
+
+Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, C
+
+---
+
+## Story: Implement and export formatLoopDuration (DUR-1)
+
+Create the file src/inngest/functions/agent-loop/utils.ts and implement a pure function `formatLoopDuration(ms: number): string` that converts milliseconds into a human-readable duration string. The function should handle: sub-second values (500 → '0.5s'), exact seconds (5000 → '5s'), minutes and seconds (65000 → '1m 5s'), hours, minutes, and seconds (3661000 → '1h 1m 1s'), zero (0 → '0s'), and negative values (any negative number → '0s'). The function must be exported as a named export. No external dependencies — pure arithmetic and string formatting only.
+
+## Acceptance Criteria
+- File src/inngest/functions/agent-loop/utils.ts exists and exports a named function formatLoopDuration
+- formatLoopDuration(0) returns '0s'
+- formatLoopDuration(-100) returns '0s'
+- formatLoopDuration(500) returns '0.5s'
+- formatLoopDuration(5000) returns '5s'
+- formatLoopDuration(65000) returns '1m 5s'
+- formatLoopDuration(3661000) returns '1h 1m 1s'
+- formatLoopDuration(1000) returns '1s'
+- formatLoopDuration(60000) returns '1m 0s'
+- formatLoopDuration(3600000) returns '1h 0m 0s'
+- Function is pure with no side effects or external dependencies
+- TypeScript compiles cleanly: bunx tsc --noEmit
+
+## Instructions
+Implement the story above. Do NOT write tests — a separate reviewer will handle testing.
+Make clean, focused changes. Commit nothing — the harness handles git.
+mcp startup: no servers
+2026-02-15T19:23:21.831880Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5eca-bff9-7772-83bf-5daab07b9959
+2026-02-15T19:23:21.871558Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5ffd-d51d-7a13-b1fa-342be02f164b
+2026-02-15T19:23:21.914512Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6275-d69e-7b53-bb28-583bfe07e70c
+2026-02-15T19:23:21.992568Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5d40-288c-78b2-af66-36e0fae54073
+2026-02-15T19:23:22.064042Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6031-b7fb-7120-85b5-8abf34324910
+2026-02-15T19:23:22.111266Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fe2-872d-7e93-87a3-71d37d75a127
+2026-02-15T19:23:22.189963Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e50-6bc5-7861-a0a0-f77d68ec073f
+2026-02-15T19:23:22.254678Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6022-8a12-7ba0-b7e8-9c265e8ec17e
+2026-02-15T19:23:22.320827Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fbb-e145-7c40-9913-218548629e57
+2026-02-15T19:23:22.397455Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e21-7a30-7ed1-b686-e02ac2da8157
+2026-02-15T19:23:22.437445Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fed-5e04-78c0-9a4e-9fddc7af084e
+
+thinking
+**Planning minimal file inspection**
+codex
+Implementing `DUR-1` now by adding `src/inngest/functions/agent-loop/utils.ts` with a pure named export `formatLoopDuration(ms: number)` and then validating with TypeScript compilation. I’ll quickly inspect the current `src/inngest` layout first so the path and export style match the repo.
+exec
+/bin/zsh -lc 'rg --files src/inngest' in /private/tmp/agent-loop/loop-mlo4u7n4-r8f52f/packages/system-bus succeeded in 51ms:
+src/inngest/functions/transcript-process.ts
+src/inngest/functions/index.ts
+src/inngest/functions/video-download.ts
+src/inngest/functions/summarize.ts
+src/inngest/functions/system-logger.ts
+src/inngest/functions/agent-loop/plan.ts
+src/inngest/functions/agent-loop/llmEvaluate.test.ts
+src/inngest/functions/agent-loop/judge.test.ts
+src/inngest/functions/agent-loop/test-writer.test.ts
+src/inngest/functions/agent-loop/test-writer.ts
+src/inngest/functions/agent-loop/formatLoopDuration.test.ts
+src/inngest/functions/agent-loop/review.test.ts
+src/inngest/functions/agent-loop/index.ts
+src/inngest/functions/agent-loop/getStoryDiff.test.ts
+src/inngest/functions/agent-loop/parseClaudeOutput.test.ts
+src/inngest/functions/agent-loop/review.ts
+src/inngest/functions/agent-loop/utils.ts
+src/inngest/functions/agent-loop/judge.ts
+src/inngest/functions/agent-loop/implement.ts
+src/inngest/functions/agent-loop/complete.ts
+
+thinking
+**Inspecting existing utility implementation**
+codex
+I found that `src/inngest/functions/agent-loop/utils.ts` already exists, so I’m checking its current implementation and adjusting it only if needed to satisfy the required behavior exactly.
+exec
+/bin/zsh -lc "sed -n '1,260p' src/inngest/functions/agent-loop/formatLoopDuration.test.ts" in /private/tmp/agent-loop/loop-mlo4u7n4-r8f52f/packages/system-busexec
+/bin/zsh -lc "sed -n '1,220p' src/inngest/functions/agent-loop/utils.ts" in /private/tmp/agent-loop/loop-mlo4u7n4-r8f52f/packages/system-busexec
+/bin/zsh -lc "sed -n '1,220p' src/inngest/functions/agent-loop/index.ts" in /private/tmp/agent-loop/loop-mlo4u7n4-r8f52f/packages/system-bus succeeded in 51ms:
+export { agentLoopPlan } from "./plan";
+export { agentLoopTestWriter } from "./test-writer";
+export { agentLoopImplement } from "./implement";
+export { agentLoopReview } from "./review";
+export { agentLoopJudge } from "./judge";
+export { agentLoopComplete } from "./complete";
+export { agentLoopRetro } from "./retro";
+ succeeded in 51ms:
+import { $ } from "bun";
+import { existsSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import Redis from "ioredis";
+
+const LOOP_TMP = "/tmp/agent-loop";
+
+// ── Claude output parsing ────────────────────────────────────────────
+
+/**
+ * Parse JSON from claude CLI output.
+ * Handles --output-format json (envelope with {result: string})
+ * and --output-format text (raw markdown/text).
+ */
+export function parseClaudeOutput(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  try {
+    const envelope = JSON.parse(trimmed);
+ succeeded in 51ms:
+import { describe, expect, test } from "bun:test";
+import { formatLoopDuration } from "./utils.ts";
+
+describe("DUR-1: formatLoopDuration acceptance tests", () => {
+  test("AC-1: utils.ts exports named function formatLoopDuration", async () => {
+    const utils = await import("./utils.ts");
+    expect(utils.formatLoopDuration).toBeDefined();
+    expect(typeof utils.formatLoopDuration).toBe("function");
+  });
+
+  test("AC-2: formatLoopDuration(0) returns '0s'", () => {
+    expect(formatLoopDuration(0)).toBe("0s");
+  });
+
+  test("AC-3: negative values return '0s'", () => {
+    expect(formatLoopDuration(-100)).toBe("0s");
+    expect(formatLoopDuration(-1)).toBe("0s");
+  });
+
+  test("AC-4: sub-second values are formatted in seconds", () => {
+
+thinking
+**Investigating utility function location**
+exec
+/bin/zsh -lc 'rg -n "formatLoopDuration|export function" src/inngest/functions/agent-loop/utils.ts' in /private/tmp/agent-loop/loop-mlo4u7n4-r8f52f/packages/system-bus succeeded in 52ms:
+15:export function parseClaudeOutput(raw: string): unknown {
+166:export function loopDir(loopId: string): string {
+174:export function cancelPath(loopId: string): string {
+178:export function isCancelled(loopId: string): boolean {
+188:export function pidPath(loopId: string): string {
+293:export function outputPath(
+533:export function commitMessage(
+
+thinking
+**Designing pure time-formatting function**
+codex
+I confirmed `formatLoopDuration` is not currently defined in `utils.ts`, so I’m adding it as a pure named export in that file with exact boundary behavior for seconds, minutes, and hours. After editing, I’ll run `bunx tsc --noEmit` to verify compilation.
+file update
+M /private/tmp/agent-loop/loop-mlo4u7n4-r8f52f/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -7,2 +7,20 @@
+ 
++export function formatLoopDuration(ms: number): string {
++  if (!Number.isFinite(ms) || ms <= 0) return "0s";
++
++  if (ms < 1000) {
++    const seconds = (ms / 1000).toFixed(3).replace(/\.?0+$/, "");
++    return `${seconds}s`;
++  }
++
++  const totalSeconds = Math.floor(ms / 1000);
++  const hours = Math.floor(totalSeconds / 3600);
++  const minutes = Math.floor((totalSeconds % 3600) / 60);
++  const seconds = totalSeconds % 60;
++
++  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
++  if (minutes > 0) return `${minutes}m ${seconds}s`;
++  return `${seconds}s`;
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+apply_patch(auto_approved=true) exited 0 in 35ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/utils.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index 22332c6e5e9372181e5922f50c284b157cce10b2..175747bdea8992caa535c9671669777fb3c76b3f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -5,6 +5,24 @@
+ 
+ const LOOP_TMP = "/tmp/agent-loop";
+ 
++export function formatLoopDuration(ms: number): string {
++  if (!Number.isFinite(ms) || ms <= 0) return "0s";
++
++  if (ms < 1000) {
++    const seconds = (ms / 1000).toFixed(3).replace(/\.?0+$/, "");
++    return `${seconds}s`;
++  }
++
++  const totalSeconds = Math.floor(ms / 1000);
++  const hours = Math.floor(totalSeconds / 3600);
++  const minutes = Math.floor((totalSeconds % 3600) / 60);
++  const seconds = totalSeconds % 60;
++
++  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
++  if (minutes > 0) return `${minutes}m ${seconds}s`;
++  return `${seconds}s`;
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index 22332c6e5e9372181e5922f50c284b157cce10b2..175747bdea8992caa535c9671669777fb3c76b3f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -5,6 +5,24 @@
+ 
+ const LOOP_TMP = "/tmp/agent-loop";
+ 
++export function formatLoopDuration(ms: number): string {
++  if (!Number.isFinite(ms) || ms <= 0) return "0s";
++
++  if (ms < 1000) {
++    const seconds = (ms / 1000).toFixed(3).replace(/\.?0+$/, "");
++    return `${seconds}s`;
++  }
++
++  const totalSeconds = Math.floor(ms / 1000);
++  const hours = Math.floor(totalSeconds / 3600);
++  const minutes = Math.floor((totalSeconds % 3600) / 60);
++  const seconds = totalSeconds % 60;
++
++  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
++  if (minutes > 0) return `${minutes}m ${seconds}s`;
++  return `${seconds}s`;
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+
+thinking
+**Running TypeScript compilation**
+exec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlo4u7n4-r8f52f/packages/system-bus exited 2 in 289ms:
+__tests__/adr-0010-story-1.test.ts(1,40): error TS2307: Cannot find module 'bun:test' or its corresponding type declarations.
+__tests__/adr-0010-story-1.test.ts(2,28): error TS2307: Cannot find module 'node:fs' or its corresponding type declarations.
+__tests__/adr-0010-story-1.test.ts(3,25): error TS2307: Cannot find module 'node:path' or its corresponding type declarations.
+__tests__/adr-0010-story-1.test.ts(6,3): error TS2580: Cannot find name 'process'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node`.
+__tests__/adr-0010-story-1.test.ts(17,10): error TS2867: Cannot find name 'Bun'. Do you need to install type definitions for Bun? Try `npm i --save-dev @types/bun`.
+__tests__/adr-0010-story-1.test.ts(116,7): error TS2584: Cannot find name 'console'. Do you need to change your target library? Try changing the 'lib' compiler option to include 'dom'.
+__tests__/adr-0010-story-1.test.ts(224,20): error TS2867: Cannot find name 'Bun'. Do you need to install type definitions for Bun? Try `npm i --save-dev @types/bun`.
+__tests__/adr-0010-story-1.test.ts(227,34): error TS2339: Property 'dir' does not exist on type 'ImportMeta'.
+__tests__/adr-0010-story-1.test.ts(233,34): error TS2304: Cannot find name 'Response'.
+__tests__/adr-0010-story-1.test.ts(234,34): error TS2304: Cannot find name 'Response'.
+__tests__/adr-0010-story-1.test.ts(235,9): error TS2584: Cannot find name 'console'. Do you need to change your target library? Try changing the 'lib' compiler option to include 'dom'.
+__tests__/adr-0010-story-1.test.ts(236,9): error TS2584: Cannot find name 'console'. Do you need to change your target library? Try changing the 'lib' compiler option to include 'dom'.
+__tests__/idem-2-seed-prd-nx.test.ts(1,73): error TS2307: Cannot find module 'bun:test' or its corresponding type declarations.
+__tests__/idem-2-seed-prd-nx.test.ts(2,29): error TS2307: Cannot find module 'node:fs' or its corresponding type declarations.
+__tests__/idem-2-seed-prd-nx.test.ts(3,24): error TS2307: Cannot find module 'node:os' or its corresponding type declarations.
+__tests__/idem-2-seed-prd-nx.test.ts(4,22): error TS2307: Cannot find module 'node:path' or its corresponding type declarations.
+__tests__/idem-2-seed-prd-nx.test.ts(5,19): error TS2307: Cannot find module 'ioredis' or its corresponding type declarations.
+__tests__/idem-2-seed-prd-nx.test.ts(127,11): error TS2867: Cannot find name 'Bun'. Do you need to install type definitions for Bun? Try `npm i --save-dev @types/bun`.
+__tests__/idem-2-seed-prd-nx.test.ts(128,11): error TS2867: Cannot find name 'Bun'. Do you need to install type definitions for Bun? Try `npm i --save-dev @types/bun`.
+__tests__/idem-2-seed-prd-nx.test.ts(154,20): error TS2867: Cannot find name 'Bun'. Do you need to install type definitions for Bun? Try `npm i --save-dev @types/bun`.
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index 22332c6e5e9372181e5922f50c284b157cce10b2..175747bdea8992caa535c9671669777fb3c76b3f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -5,6 +5,24 @@
+ 
+ const LOOP_TMP = "/tmp/agent-loop";
+ 
++export function formatLoopDuration(ms: number): string {
++  if (!Number.isFinite(ms) || ms <= 0) return "0s";
++
++  if (ms < 1000) {
++    const seconds = (ms / 1000).toFixed(3).replace(/\.?0+$/, "");
++    return `${seconds}s`;
++  }
++
++  const totalSeconds = Math.floor(ms / 1000);
++  const hours = Math.floor(totalSeconds / 3600);
++  const minutes = Math.floor((totalSeconds % 3600) / 60);
++  const seconds = totalSeconds % 60;
++
++  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
++  if (minutes > 0) return `${minutes}m ${seconds}s`;
++  return `${seconds}s`;
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+
+thinking
+**Considering targeted test run**
+codex
+The implementation is in place. I ran the requested TypeScript compile command, but this repo currently has many pre-existing type/dependency errors unrelated to this story; I’ll run the focused duration test to verify this function’s behavior directly.
+exec
+/bin/zsh -lc 'bun test src/inngest/functions/agent-loop/formatLoopDuration.test.ts' in /private/tmp/agent-loop/loop-mlo4u7n4-r8f52f/packages/system-bus exited 1 in 52ms:
+bun test v1.3.9 (cf6cdbbb)
+
+src/inngest/functions/agent-loop/formatLoopDuration.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+error: Cannot find package 'ioredis' from '/private/tmp/agent-loop/loop-mlo4u7n4-r8f52f/packages/system-bus/src/inngest/functions/agent-loop/utils.ts'
+-------------------------------
+
+
+ 0 pass
+ 1 fail
+ 1 error
+Ran 1 test across 1 file. [6.00ms]
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index 22332c6e5e9372181e5922f50c284b157cce10b2..175747bdea8992caa535c9671669777fb3c76b3f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -5,6 +5,24 @@
+ 
+ const LOOP_TMP = "/tmp/agent-loop";
+ 
++export function formatLoopDuration(ms: number): string {
++  if (!Number.isFinite(ms) || ms <= 0) return "0s";
++
++  if (ms < 1000) {
++    const seconds = (ms / 1000).toFixed(3).replace(/\.?0+$/, "");
++    return `${seconds}s`;
++  }
++
++  const totalSeconds = Math.floor(ms / 1000);
++  const hours = Math.floor(totalSeconds / 3600);
++  const minutes = Math.floor((totalSeconds % 3600) / 60);
++  const seconds = totalSeconds % 60;
++
++  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
++  if (minutes > 0) return `${minutes}m ${seconds}s`;
++  return `${seconds}s`;
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+
+thinking
+**Confirming dependency presence**
+exec
+/bin/zsh -lc "nl -ba src/inngest/functions/agent-loop/utils.ts | sed -n '1,45p'" in /private/tmp/agent-loop/loop-mlo4u7n4-r8f52f/packages/system-bus succeeded in 52ms:
+     1	import { $ } from "bun";
+     2	import { existsSync, mkdirSync } from "node:fs";
+     3	import { join, dirname } from "node:path";
+     4	import Redis from "ioredis";
+     5	
+     6	const LOOP_TMP = "/tmp/agent-loop";
+     7	
+     8	export function formatLoopDuration(ms: number): string {
+     9	  if (!Number.isFinite(ms) || ms <= 0) return "0s";
+    10	
+    11	  if (ms < 1000) {
+    12	    const seconds = (ms / 1000).toFixed(3).replace(/\.?0+$/, "");
+    13	    return `${seconds}s`;
+    14	  }
+    15	
+    16	  const totalSeconds = Math.floor(ms / 1000);
+    17	  const hours = Math.floor(totalSeconds / 3600);
+    18	  const minutes = Math.floor((totalSeconds % 3600) / 60);
+    19	  const seconds = totalSeconds % 60;
+    20	
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index 22332c6e5e9372181e5922f50c284b157cce10b2..175747bdea8992caa535c9671669777fb3c76b3f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -5,6 +5,24 @@
+ 
+ const LOOP_TMP = "/tmp/agent-loop";
+ 
++export function formatLoopDuration(ms: number): string {
++  if (!Number.isFinite(ms) || ms <= 0) return "0s";
++
++  if (ms < 1000) {
++    const seconds = (ms / 1000).toFixed(3).replace(/\.?0+$/, "");
++    return `${seconds}s`;
++  }
++
++  const totalSeconds = Math.floor(ms / 1000);
++  const hours = Math.floor(totalSeconds / 3600);
++  const minutes = Math.floor((totalSeconds % 3600) / 60);
++  const seconds = totalSeconds % 60;
++
++  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
++  if (minutes > 0) return `${minutes}m ${seconds}s`;
++  return `${seconds}s`;
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+
+thinking
+**Summarizing verification results**
+codex
+Implemented `formatLoopDuration` as a named export in `src/inngest/functions/agent-loop/utils.ts:8`.
+
+Behavior implemented:
+- `<= 0` or non-finite -> `"0s"`
+- `< 1000ms` -> decimal seconds with trimmed trailing zeros (e.g. `500 -> "0.5s"`)
+- `>= 1000ms` -> whole-second formatting:
+  - seconds only: `"Xs"`
+  - minutes/seconds: `"Xm Ys"`
+  - hours/minutes/seconds: `"Xh Ym Zs"`
+
+Validation:
+- Ran `bunx tsc --noEmit` -> fails due to many pre-existing repo type/dependency issues unrelated to this change.
+- Ran `bun test src/inngest/functions/agent-loop/formatLoopDuration.test.ts` -> fails before tests execute because `ioredis` is not installed/resolvable from `utils.ts` imports.
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index 22332c6e5e9372181e5922f50c284b157cce10b2..175747bdea8992caa535c9671669777fb3c76b3f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -5,6 +5,24 @@
+ 
+ const LOOP_TMP = "/tmp/agent-loop";
+ 
++export function formatLoopDuration(ms: number): string {
++  if (!Number.isFinite(ms) || ms <= 0) return "0s";
++
++  if (ms < 1000) {
++    const seconds = (ms / 1000).toFixed(3).replace(/\.?0+$/, "");
++    return `${seconds}s`;
++  }
++
++  const totalSeconds = Math.floor(ms / 1000);
++  const hours = Math.floor(totalSeconds / 3600);
++  const minutes = Math.floor((totalSeconds % 3600) / 60);
++  const seconds = totalSeconds % 60;
++
++  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
++  if (minutes > 0) return `${minutes}m ${seconds}s`;
++  return `${seconds}s`;
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+tokens used
+66,647

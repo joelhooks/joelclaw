@@ -5,6 +5,24 @@ import Redis from "ioredis";
 
 const LOOP_TMP = "/tmp/agent-loop";
 
+export function formatLoopDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "0s";
+
+  if (ms < 1000) {
+    const seconds = (ms / 1000).toFixed(3).replace(/\.?0+$/, "");
+    return `${seconds}s`;
+  }
+
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
 // ── Claude output parsing ────────────────────────────────────────────
 
 /**
