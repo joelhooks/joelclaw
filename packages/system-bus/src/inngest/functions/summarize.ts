@@ -39,7 +39,7 @@ export const summarize = inngest.createFunction(
     concurrency: { limit: 1 },
     retries: 1,
   },
-  { event: "content/summarize" },
+  { event: "content/summarize.requested" },
   async ({ event, step }) => {
     const { vaultPath, prompt } = event.data;
     const summaryPrompt = prompt ?? DEFAULT_PROMPT;

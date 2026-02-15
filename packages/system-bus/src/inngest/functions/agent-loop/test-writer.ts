@@ -135,7 +135,7 @@ export const agentLoopTestWriter = inngest.createFunction(
     },
     retries: 0,
   },
-  [{ event: "agent/loop.test" }],
+  [{ event: "agent/loop.story.dispatched" }],
   async ({ event, step }) => {
     const {
       loopId,
@@ -205,7 +205,7 @@ export const agentLoopTestWriter = inngest.createFunction(
         return { blocked: true as const, reason: guard.reason };
       }
       await inngest.send({
-        name: "agent/loop.implement",
+        name: "agent/loop.tests.written",
         data: {
           loopId,
           project,

@@ -11,7 +11,7 @@ export const agentLoopComplete = inngest.createFunction(
     id: "agent-loop-complete",
     retries: 2,
   },
-  [{ event: "agent/loop.complete" }],
+  [{ event: "agent/loop.completed" }],
   async ({ event, step }) => {
     const { loopId, project, branchName, storiesCompleted, storiesFailed } = event.data;
 

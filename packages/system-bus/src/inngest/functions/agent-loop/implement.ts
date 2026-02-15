@@ -329,7 +329,7 @@ export const agentLoopImplement = inngest.createFunction(
     },
     retries: 0, // retries handled by JUDGE loop, not Inngest
   },
-  [{ event: "agent/loop.implement" }],
+  [{ event: "agent/loop.tests.written" }, { event: "agent/loop.story.retried" }],
   async ({ event, step }) => {
     const {
       loopId,
@@ -451,7 +451,7 @@ export const agentLoopImplement = inngest.createFunction(
         return { blocked: true as const, reason: guard.reason };
       }
       await inngest.send({
-        name: "agent/loop.review",
+        name: "agent/loop.code.committed",
         data: {
           loopId,
           project,
@@ -470,7 +470,7 @@ export const agentLoopImplement = inngest.createFunction(
         },
       });
       await renewLease(loopId, storyId, runToken);
-      return { event: "agent/loop.review", storyId, sha: sha.slice(0, 8), reviewer: reviewerTool };
+      return { event: "agent/loop.code.committed", storyId, sha: sha.slice(0, 8), reviewer: reviewerTool };
     });
     if ("blocked" in emitResult && emitResult.blocked) {
       return { status: "blocked", loopId, storyId, reason: emitResult.reason };

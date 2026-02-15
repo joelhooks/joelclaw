@@ -35,12 +35,12 @@ app.get("/", (c) =>
       "agent-loop-retro",
     ],
     events: {
-      "pipeline/video.download": "Download video + NAS transfer → emits transcript.process",
-      "pipeline/video.ingest": "Legacy alias → same as video.download",
-      "pipeline/transcript.process":
-        "Transcribe audio or accept text → vault note → emits content/summarize",
-      "content/summarize": "Enrich any vault note with pi + web research",
-      "system/log": "Write canonical log entry",
+      "pipeline/video.requested": "Download video + NAS transfer → emits transcript.requested",
+      
+      "pipeline/transcript.requested":
+        "Transcribe audio or accept text → vault note → emits content/summarize.requested",
+      "content/summarize.requested": "Enrich any vault note with pi + web research",
+      "system/log.written": "Write canonical log entry",
     },
   })
 );

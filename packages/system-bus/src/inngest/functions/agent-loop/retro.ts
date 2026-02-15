@@ -239,7 +239,7 @@ export const agentLoopRetro = inngest.createFunction(
     },
     retries: 1,
   },
-  [{ event: "agent/loop.complete" }],
+  [{ event: "agent/loop.completed" }],
   async ({ event, step }) => {
     const {
       loopId,
@@ -375,7 +375,7 @@ export const agentLoopRetro = inngest.createFunction(
 
     await step.run("emit-retro-complete", async () => {
       await inngest.send({
-        name: "agent/loop.retro.complete",
+        name: "agent/loop.retro.completed",
         data: {
           loopId,
           project,

@@ -15,7 +15,7 @@ function makeStory(overrides: Partial<{
     description: overrides.description ?? "Writes acceptance tests from story criteria",
     acceptance_criteria: overrides.acceptance_criteria ?? [
       "test-writer.ts exists and exports agentLoopTestWriter",
-      "Listens on agent/loop.test event",
+      "Listens on agent/loop.story.dispatched event",
       "Spawns tool with prompt focused on acceptance criteria",
     ],
   };
@@ -88,16 +88,16 @@ describe("AC-1: test-writer.ts exists and exports agentLoopTestWriter", () => {
   });
 });
 
-// ── AC-2: Listens on agent/loop.test event ──────────────────────────────
-describe("AC-2: Listens on agent/loop.test event", () => {
-  test("function is configured to trigger on agent/loop.test", async () => {
+// ── AC-2: Listens on agent/loop.story.dispatched event ──────────────────────────────
+describe("AC-2: Listens on agent/loop.story.dispatched event", () => {
+  test("function is configured to trigger on agent/loop.story.dispatched", async () => {
     const mod = await import("./test-writer.ts");
     const fn = mod.agentLoopTestWriter as any;
 
     // Inngest createFunction stores config in fn.opts
     const triggers = fn.opts?.triggers ?? [];
     const eventNames = triggers.map((t: any) => t.event);
-    expect(eventNames).toContain("agent/loop.test");
+    expect(eventNames).toContain("agent/loop.story.dispatched");
   });
 
   test("function id contains 'test-writer' or 'test'", async () => {
@@ -195,14 +195,14 @@ describe("AC-4: Commits test files before emitting implement", () => {
   });
 });
 
-// ── AC-5: Emits agent/loop.implement after committing tests ─────────────
-describe("AC-5: Emits agent/loop.implement after committing tests", () => {
-  test("function emits agent/loop.implement event", async () => {
+// ── AC-5: Emits agent/loop.tests.written after committing tests ─────────────
+describe("AC-5: Emits agent/loop.tests.written after committing tests", () => {
+  test("function emits agent/loop.tests.written event", async () => {
     const source = await Bun.file(
       new URL("./test-writer.ts", import.meta.url).pathname
     ).text();
 
-    expect(source).toContain("agent/loop.implement");
+    expect(source).toContain("agent/loop.tests.written");
   });
 
   test("emitted event includes loop state fields", async () => {
