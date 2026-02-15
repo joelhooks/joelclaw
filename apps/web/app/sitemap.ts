@@ -16,7 +16,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
 
   const adrEntries = adrs.map((adr) => ({
     url: `${SITE_URL}/adrs/${adr.slug}`,
-    lastModified: new Date(adr.date),
+    lastModified: adr.date ? new Date(adr.date) : new Date(),
     changeFrequency: "monthly" as const,
     priority: 0.5,
   }));
