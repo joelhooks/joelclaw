@@ -71,5 +71,8 @@
       "priority": 4,
       "passes": false
     }
+  ],
+  "checks": [
+    "test"
   ]
 }

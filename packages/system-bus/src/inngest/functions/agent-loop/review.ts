@@ -114,9 +114,11 @@ async function spawnReviewer(
 }
 
 /**
- * Run typecheck, lint, and tests. Returns structured results.
+ * Run checks based on what the PRD requests. Default: all.
+ * checks param: ["typecheck", "lint", "test"] or subset.
+ * For document/ADR projects, pass ["test"] to skip typecheck/lint.
  */
-async function runChecks(project: string): Promise<{
+async function runChecks(project: string, checks?: string[]): Promise<{
   typecheckOk: boolean;
   typecheckOutput: string;
   lintOk: boolean;
@@ -125,33 +127,39 @@ async function runChecks(project: string): Promise<{
   testsFailed: number;
   testOutput: string;
 }> {
+  const enabledChecks = checks ?? ["typecheck", "lint", "test"];
+
   // Typecheck
   let typecheckOk = true;
   let typecheckOutput = "";
-  try {
-    const tc = await $`cd ${project} && bunx tsc --noEmit 2>&1`.quiet();
-    typecheckOutput = tc.text().trim();
-    typecheckOk = tc.exitCode === 0;
-  } catch (e: any) {
-    typecheckOk = false;
-    typecheckOutput = e?.stdout?.toString() ?? e?.message ?? "typecheck failed";
+  if (enabledChecks.includes("typecheck")) {
+    try {
+      const tc = await $`cd ${project} && bunx tsc --noEmit 2>&1`.quiet();
+      typecheckOutput = tc.text().trim();
+      typecheckOk = tc.exitCode === 0;
+    } catch (e: any) {
+      typecheckOk = false;
+      typecheckOutput = e?.stdout?.toString() ?? e?.message ?? "typecheck failed";
+    }
   }
 
   // Lint (try biome, then eslint, then skip)
   let lintOk = true;
   let lintOutput = "";
-  try {
-    const lint = await $`cd ${project} && bunx biome check --no-errors-on-unmatched . 2>&1`.quiet();
-    lintOutput = lint.text().trim();
-    lintOk = lint.exitCode === 0;
-  } catch {
+  if (enabledChecks.includes("lint")) {
     try {
-      const lint = await $`cd ${project} && bunx eslint . 2>&1`.quiet();
+      const lint = await $`cd ${project} && bunx biome check --no-errors-on-unmatched . 2>&1`.quiet();
       lintOutput = lint.text().trim();
       lintOk = lint.exitCode === 0;
     } catch {
-      lintOk = true; // no linter configured
-      lintOutput = "No linter configured";
+      try {
+        const lint = await $`cd ${project} && bunx eslint . 2>&1`.quiet();
+        lintOutput = lint.text().trim();
+        lintOk = lint.exitCode === 0;
+      } catch {
+        lintOk = true; // no linter configured
+        lintOutput = "No linter configured";
+      }
     }
   }
 
@@ -204,6 +212,7 @@ export const agentLoopReview = inngest.createFunction(
       retryLadder,
       freshTests,
       priorFeedback,
+      checks,
     } =
       event.data;
 
@@ -233,7 +242,7 @@ export const agentLoopReview = inngest.createFunction(
     });
 
     // Step 3: Run checks (typecheck + lint + tests)
-    const results = await step.run("run-checks", () => runChecks(project));
+    const results = await step.run("run-checks", () => runChecks(project, checks as string[] | undefined));
 
     // Step 4: Build structured feedback
     const feedback = await step.run("build-feedback", async () => {
@@ -284,6 +293,7 @@ export const agentLoopReview = inngest.createFunction(
           attempt,
           maxRetries,
           maxIterations,
+          checks,
           storyStartedAt,
           retryLadder,
           priorFeedback,

@@ -88,6 +88,7 @@ type Events = {
       prdPath: string;
       maxRetries?: number;
       maxIterations?: number;
+      checks?: string[];
       retryLadder?: ("codex" | "claude" | "pi")[];
       push?: boolean;
       toolAssignments?: Record<
@@ -105,6 +106,7 @@ type Events = {
       project: string;
       prdPath: string;
       maxIterations?: number;
+      checks?: string[];
       maxRetries?: number;
       retryLadder?: ("codex" | "claude" | "pi")[];
     };
@@ -125,6 +127,7 @@ type Events = {
       };
       maxRetries: number;
       maxIterations?: number;
+      checks?: string[];
       retryLadder?: ("codex" | "claude" | "pi")[];
       freshTests?: boolean;
       storyStartedAt?: number;
@@ -146,6 +149,7 @@ type Events = {
       };
       maxRetries: number;
       maxIterations?: number;
+      checks?: string[];
       storyStartedAt?: number;
       retryLadder?: ("codex" | "claude" | "pi")[];
       freshTests?: boolean;
@@ -169,6 +173,7 @@ type Events = {
       attempt: number;
       maxRetries: number;
       maxIterations?: number;
+      checks?: string[];
       storyStartedAt?: number;
       retryLadder?: ("codex" | "claude" | "pi")[];
       priorFeedback?: string;

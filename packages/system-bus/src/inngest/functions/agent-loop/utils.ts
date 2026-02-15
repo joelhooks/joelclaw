@@ -177,6 +177,8 @@ export interface Prd {
   title: string;
   description: string;
   stories: Story[];
+  /** What checks the reviewer runs. Default: all (typecheck + lint + test) */
+  checks?: ("typecheck" | "lint" | "test")[];
 }
 
 // ── PRD storage (Redis-backed, seeded from disk) ─────────────────────

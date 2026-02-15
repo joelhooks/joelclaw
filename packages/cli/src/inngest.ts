@@ -1,6 +1,11 @@
 import { Effect } from "effect"
 import { loadConfig } from "./config"
 
+const cfg = loadConfig()
+const GQL = `${cfg.inngestUrl}/v0/gql`
+const EVENT_API = `${cfg.inngestUrl}/e/${cfg.eventKey}`
+const WORKER = cfg.workerUrl
+
 // ── Errors ───────────────────────────────────────────────────────────
 
 class InngestError {
@@ -8,32 +13,27 @@ class InngestError {
   constructor(readonly message: string, readonly cause?: unknown) {}
 }
 
+// ── GQL helper ───────────────────────────────────────────────────────
+
+const gql = (query: string) =>
+  Effect.tryPromise({
+    try: async () => {
+      const res = await fetch(GQL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+      })
+      const json = await res.json()
+      if (json.errors?.length) throw new Error(json.errors[0].message)
+      return json.data
+    },
+    catch: (e) => new InngestError("GQL request failed", e),
+  })
+
 // ── Service ──────────────────────────────────────────────────────────
 
 export class Inngest extends Effect.Service<Inngest>()("igs/Inngest", {
   sync: () => {
-    const cfg = loadConfig()
-    const GQL = `${cfg.inngestUrl}/v0/gql`
-    const EVENT_API = `${cfg.inngestUrl}/e/${cfg.eventKey}`
-    const WORKER = cfg.workerUrl
-
-    // ── GQL helper ───────────────────────────────────────────────────
-
-    const gql = (query: string) =>
-      Effect.tryPromise({
-        try: async () => {
-          const res = await fetch(GQL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query }),
-          })
-          const json = await res.json()
-          if (json.errors?.length) throw new Error(json.errors[0].message)
-          return json.data
-        },
-        catch: (e) => new InngestError("GQL request failed", e),
-      })
-
     // ── send event ─────────────────────────────────────────────────
 
     const send = Effect.fn("Inngest.send")(function* (
