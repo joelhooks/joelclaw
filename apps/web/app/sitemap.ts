@@ -1,15 +1,24 @@
 import type { MetadataRoute } from "next";
 import { getAllPosts } from "../lib/posts";
+import { getAllAdrs } from "../lib/adrs";
 import { SITE_URL } from "../lib/constants";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const posts = getAllPosts();
+  const adrs = getAllAdrs();
 
   const postEntries = posts.map((post) => ({
     url: `${SITE_URL}/${post.slug}`,
     lastModified: new Date(post.date),
     changeFrequency: "monthly" as const,
     priority: 0.8,
+  }));
+
+  const adrEntries = adrs.map((adr) => ({
+    url: `${SITE_URL}/adrs/${adr.slug}`,
+    lastModified: new Date(adr.date),
+    changeFrequency: "monthly" as const,
+    priority: 0.5,
   }));
 
   return [
@@ -20,5 +29,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 1,
     },
     ...postEntries,
+    {
+      url: `${SITE_URL}/adrs`,
+      lastModified: new Date(),
+      changeFrequency: "weekly",
+      priority: 0.6,
+    },
+    ...adrEntries,
   ];
 }
