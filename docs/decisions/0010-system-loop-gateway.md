@@ -17,3 +17,30 @@ The OpenClaw architecture defines the missing control plane as a central LLM ses
 This decision is driven by four system-level concerns: whether the loop should run always-on versus cron-triggered, how safety boundaries and failure containment are enforced, how runtime and model cost are controlled, and how human oversight remains explicit at key control points without requiring Joel to be the constant manual router for all loop activity.
 
 Related decisions: ADR-0005 (durable coding loops), ADR-0007 (loop v2 improvements), ADR-0008 (retrospective and skill evolution).
+
+## Decision Drivers
+
+- Autonomous action capability: the system should select and trigger useful next actions without requiring Joel to manually route every transition.
+- Safety and human oversight: the gateway must keep explicit human approval and override paths for destructive or high-impact actions.
+- Cost control (LLM calls): orchestration cadence and model usage need hard limits so routine operation stays within budget.
+- State awareness: loop decisions must reflect live state from runs, note queues, retrospectives, and recent event outcomes.
+- Composability with existing pipelines: the loop should orchestrate current Inngest and coding-loop infrastructure instead of replacing proven execution paths.
+- Graceful degradation: if one trigger mechanism is down or delayed, the system should continue with a safer fallback mode.
+
+## Considered Options
+
+### Option A: No system loop (human gateway only)
+
+Keep Joel as the gateway that evaluates state and manually starts loops, retries failures, and decides priorities. Automation remains execution-only, while all orchestration logic and sequencing decisions stay human-mediated.
+
+### Option B: Cron-triggered heartbeat
+
+Create an Inngest cron function that runs every N minutes, gathers current state, and decides whether to dispatch one of the allowed next actions. The model only reasons on a schedule, which keeps behavior predictable and gives straightforward levers for cost and rate control.
+
+### Option C: Event-driven reactive loop
+
+Trigger an orchestration function from terminal events such as `loop.complete`, note capture events, retrospective completion events, and failure signals, then evaluate the next action immediately. The loop reacts close to real time as state changes, while safety is enforced by a constrained action set and idempotent event handling.
+
+### Option D: Always-on LLM session
+
+Run a persistent LLM context window that continuously ingests all relevant events and updates the working state as signals arrive. It can make fast, context-rich orchestration decisions, but requires stronger guardrails and cost controls because inference is effectively continuous.

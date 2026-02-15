@@ -1,0 +1,6 @@
+
+### 2026-02-15T01:09:17.434Z
+**Story ADR10-1: Frontmatter + Context and Problem Statement** — FAILED (skipped after 3 attempts)
+- Tool: claude
+- Last results: 1 test failures, typecheck: ❌, lint: ✅
+- ⚠️ NEEDS HUMAN REVIEW
