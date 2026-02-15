@@ -52,71 +52,24 @@ Chosen option: **Hybrid of Option C + Option B**. The gateway will use an event-
 This approach is selected because it combines low-latency action on fresh system signals with bounded reliability backstops. It preserves responsiveness for autonomous orchestration without requiring a fully always-on session model.
 
 ### Consequences
+Good: Autonomous action improves and feedback loops are faster because the system routes follow-on work immediately after terminal events. Bad: LLM call cost increases during event bursts and sweeps, runaway action risk grows if deduplication or rate limits are misconfigured, and operational complexity rises from coordinating two trigger paths. Neutral: Human operators can still override, pause, or cancel execution flows, so control remains available even with higher autonomy.
 
-Good:
-- Autonomous action improves because the system can route and dispatch follow-on work immediately after terminal events.
-- Feedback loops are faster because loop outcomes and retrospectives can trigger next actions without waiting for manual polling windows.
-- The note queue gets processed more consistently because the fallback heartbeat sweep closes event-delivery gaps.
-
-Bad:
-- LLM call volume can increase, especially during event bursts and periodic sweeps, which raises operating cost.
-- Runaway action risk increases if deduplication, reentrancy guards, or rate limits are misconfigured.
-- Operational complexity increases because two trigger paths (event and cron) must be coordinated and observed.
-
-Neutral:
-- Human operators can still override, pause, or cancel execution flows when needed, so control remains available even with higher autonomy.
-
-Safety constraints for this decision:
-- Human override and cancel controls remain mandatory for high-impact or uncertain actions.
-- Action limits are enforced per cycle and per time window to prevent cascade behavior.
-- Cost caps (daily/weekly budget and per-run token ceilings) are enforced before dispatching new work.
+The note queue gets processed more consistently because the fallback heartbeat sweep closes event-delivery gaps. The risk of cascade behavior is mitigated by enforcing action limits per cycle and per time window. Safety constraints for this decision include: human override and cancel controls remain mandatory for high-impact or uncertain actions; action limits are enforced per cycle and per time window to prevent cascade behavior; and cost caps (daily/weekly budget and per-run token ceilings) are enforced before dispatching new work.
 
 ## Pros and Cons of the Options
 
 ### Option A: No system loop — keep human as gateway
-
-Pros:
-- Lowest technical complexity and implementation risk.
-- Full human judgment on every orchestration decision.
-- Minimal incremental LLM and infrastructure cost.
-
-Cons:
-- Throughput remains bottlenecked by human availability.
-- Slower feedback loops and delayed reaction to events.
-- Higher risk of missed follow-ups during busy periods.
+- Pro: Lowest technical complexity, full human judgment on every decision, and minimal incremental LLM cost. Con: Throughput bottlenecked by human availability, slower feedback loops, and higher risk of missed follow-ups during busy periods.
+- Pro: Simplest operational model with no automation risk. Con: System responsiveness is entirely constrained by manual attention windows.
 
 ### Option B: Cron-triggered heartbeat — Inngest cron function that runs every N minutes and checks state
-
-Pros:
-- Predictable cadence simplifies budgeting, monitoring, and cost controls.
-- Straightforward recovery path for missed or dropped events.
-- Easier to reason about execution windows and rate limiting.
-
-Cons:
-- Adds latency between event occurrence and action.
-- Can perform unnecessary polling when no meaningful work is pending.
-- Coarser-grained responsiveness for time-sensitive follow-up tasks.
+- Pro: Predictable cadence simplifies budgeting and cost controls, with straightforward recovery for missed events. Con: Adds latency between event occurrence and action, and can perform unnecessary polling when no meaningful work is pending.
+- Pro: Easier to reason about execution windows and rate limiting. Con: Coarser-grained responsiveness for time-sensitive follow-up tasks.
 
 ### Option C: Event-driven reactive loop — function triggered by terminal events (`loop.complete`, note captured, etc.) that evaluates next action
-
-Pros:
-- Fast reaction to fresh system signals and completed workflows.
-- Avoids idle polling by running when meaningful events occur.
-- Better alignment with existing event-bus architecture.
-
-Cons:
-- Requires robust deduplication and idempotency controls.
-- Higher risk of event storms causing action cascades without strict guards.
-- More complex observability for tracing cross-event orchestration chains.
+- Pro: Fast reaction to fresh system signals, avoids idle polling, and aligns with existing event-bus architecture. Con: Requires robust deduplication and idempotency controls, with higher risk of event storms causing action cascades.
+- Pro: Better alignment with the reactive dispatch model already in use. Con: More complex observability for tracing cross-event orchestration chains.
 
 ### Option D: Always-on LLM session — persistent context window that receives all events
-
-Pros:
-- Strong continuity of context across many related events.
-- Near real-time decisioning with minimal trigger latency.
-- Centralized orchestration logic in one long-lived control loop.
-
-Cons:
-- Highest ongoing token and runtime cost profile.
-- Largest safety and operational risk surface if control logic drifts.
-- Harder to implement and operate reliably than event-triggered functions.
+- Pro: Strong context continuity across related events, near real-time decisioning, and centralized orchestration logic. Con: Highest ongoing token and runtime cost profile, with largest safety and operational risk surface.
+- Pro: Minimal trigger latency for time-critical decisions. Con: Harder to implement and operate reliably than event-triggered functions, and control logic drift increases over long sessions.
