@@ -225,8 +225,7 @@ export const agentLoopPlan = inngest.createFunction(
         const diskPath = join(project, prdPath ?? "prd.json");
         await Bun.write(diskPath, JSON.stringify(generated, null, 2) + "\n");
 
-        // Log to progress.txt
-        await appendProgress(project, [
+        await appendProgress(loopId, [
           `## PRD Generated from Goal`,
           `Goal: ${goal}`,
           `Context: ${contextFiles?.join(", ") ?? "none"}`,
@@ -292,7 +291,7 @@ export const agentLoopPlan = inngest.createFunction(
           await step.run(`recheck-pass-${skippedStory.id}`, async () => {
             await markStoryRechecked(project, prdPath, skippedStory.id, loopId);
             await appendProgress(
-              project,
+              loopId,
               [
                 `**Story ${skippedStory.id}: ${skippedStory.title}** — RECHECK PASS`,
                 "- Recheck result: typecheck + tests now pass",
@@ -304,7 +303,7 @@ export const agentLoopPlan = inngest.createFunction(
         } else {
           await step.run(`recheck-still-failing-${skippedStory.id}`, async () => {
             await appendProgress(
-              project,
+              loopId,
               [
                 `**Story ${skippedStory.id}: ${skippedStory.title}** — RECHECK STILL FAILING`,
                 "- Recheck result: still failing typecheck/tests",

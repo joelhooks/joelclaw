@@ -313,3 +313,9 @@ Stories: 6
 - Tool: claude
 - Last results: 1 test failures, typecheck: ✅, lint: ✅
 - ⚠️ NEEDS HUMAN REVIEW
+
+### 2026-02-15T08:27:51.739Z
+**Story IDEM-5: Wire guardStory into review.ts and judge.ts with release** — FAILED (skipped after 2 attempts)
+- Tool: claude
+- Last results: 1 test failures, typecheck: ✅, lint: ✅
+- ⚠️ NEEDS HUMAN REVIEW

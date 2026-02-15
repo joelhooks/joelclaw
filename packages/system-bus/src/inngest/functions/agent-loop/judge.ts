@@ -258,7 +258,7 @@ function buildFailureFeedback(params: {
 /**
  * JUDGE — Reads test results + feedback. Routes to next story or retry.
  *
- * PASS → update prd.json, append progress.txt, emit plan
+ * PASS → update prd.json, append progress, emit plan
  * FAIL (retries left) → emit implement with feedback
  * FAIL (max retries) → skip story, emit plan for next story
  */
@@ -379,7 +379,7 @@ export const agentLoopJudge = inngest.createFunction(
       });
 
       await step.run("append-progress", async () => {
-        await appendProgress(project, [
+        await appendProgress(loopId, [
           `**Story ${storyId}: ${story.title}** — PASSED (attempt ${attempt})`,
           `- Tool: ${tool}`,
           `- Tests passed: ${testResults.testsPassed}`,
@@ -499,7 +499,7 @@ export const agentLoopJudge = inngest.createFunction(
     });
 
     await step.run("append-progress-fail", async () => {
-      await appendProgress(project, [
+      await appendProgress(loopId, [
         `**Story ${storyId}: ${story.title}** — FAILED (skipped after ${attempt} attempts)`,
         `- Tool: ${tool}`,
         `- Last results: ${testResults.testsFailed} test failures, typecheck: ${testResults.typecheckOk ? "✅" : "❌"}, lint: ${testResults.lintOk ? "✅" : "❌"}`,

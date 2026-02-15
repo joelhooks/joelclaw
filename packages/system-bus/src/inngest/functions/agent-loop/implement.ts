@@ -16,6 +16,8 @@ import {
   spawnInContainer,
   guardStory,
   renewLease,
+  readRecommendations,
+  readPatterns,
 } from "./utils";
 
 /**
@@ -29,31 +31,18 @@ async function readFileIfExists(path: string): Promise<string> {
   }
 }
 
-/**
- * Extract the "## Codebase Patterns" section from progress.txt.
- */
-function extractCodebasePatterns(progressText: string): string {
-  if (!progressText) return "";
-  const marker = "## Codebase Patterns";
-  const idx = progressText.indexOf(marker);
-  if (idx === -1) return "";
-  // Find the next ## heading or end of file
-  const rest = progressText.slice(idx);
-  const nextHeading = rest.indexOf("\n## ", marker.length);
-  const section = nextHeading === -1 ? rest : rest.slice(0, nextHeading);
-  return section.trim();
-}
-
-function formatRecommendationsContext(raw: string): string {
+function formatRecommendationsContext(
+  raw: string | {
+    toolRankings?: Array<{ tool?: string; passRate?: number; avgAttempts?: number }>;
+    retryPatterns?: string[];
+    suggestedRetryLadder?: string[];
+    lastUpdated?: string;
+    sourceLoopId?: string;
+  } | null
+): string {
   if (!raw) return "";
   try {
-    const parsed = JSON.parse(raw) as {
-      toolRankings?: Array<{ tool?: string; passRate?: number; avgAttempts?: number }>;
-      retryPatterns?: string[];
-      suggestedRetryLadder?: string[];
-      lastUpdated?: string;
-      sourceLoopId?: string;
-    };
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
 
     const lines: string[] = [];
     if (parsed.sourceLoopId) lines.push(`Source loop: ${parsed.sourceLoopId}`);
@@ -84,6 +73,14 @@ function formatRecommendationsContext(raw: string): string {
     return "";
   }
 }
+
+type RecommendationsContext = {
+  toolRankings?: Array<{ tool?: string; passRate?: number; avgAttempts?: number }>;
+  retryPatterns?: string[];
+  suggestedRetryLadder?: string[];
+  lastUpdated?: string;
+  sourceLoopId?: string;
+};
 
 /**
  * Get a brief file listing of the project (top-level + src/ if exists).
@@ -156,11 +153,8 @@ async function buildPrompt(
   const coreText = coreParts.join("\n");
 
   // Context sections (truncatable, in priority order)
-  const progressRaw = await readFileIfExists(`${project}/progress.txt`);
-  const patterns = extractCodebasePatterns(progressRaw);
-  const recommendationsRaw = await readFileIfExists(
-    `${project}/.agent-loop-recommendations.json`
-  );
+  const patterns = await readPatterns(project);
+  const recommendationsRaw = await readRecommendations<RecommendationsContext>(project);
   const recommendations = formatRecommendationsContext(recommendationsRaw);
 
   const fileListing = await getFileListing(project);
@@ -172,7 +166,7 @@ async function buildPrompt(
   const contextSections: { label: string; content: string; priority: number }[] = [];
 
   if (patterns) {
-    contextSections.push({ label: "## Codebase Patterns (from progress.txt)", content: patterns, priority: 1 });
+    contextSections.push({ label: "## Codebase Patterns", content: patterns, priority: 1 });
   }
   if (recommendations) {
     contextSections.push({
