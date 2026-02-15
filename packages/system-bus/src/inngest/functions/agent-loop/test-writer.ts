@@ -91,13 +91,13 @@ async function spawnReviewer(
       cmd = ["codex", "exec", "--full-auto", prompt];
       break;
     case "claude":
-      cmd = ["claude", "-p", prompt, "--output-format", "text"];
+      cmd = ["claude", "-p", prompt, "--output-format", "text", "--dangerously-skip-permissions"];
       break;
     case "pi":
       cmd = ["pi", "--prompt", prompt, "--no-tui"];
       break;
     default:
-      cmd = ["claude", "-p", prompt, "--output-format", "text"];
+      cmd = ["claude", "-p", prompt, "--output-format", "text", "--dangerously-skip-permissions"];
   }
 
   const timeout = TOOL_TIMEOUTS[tool] ?? 20 * 60 * 1000;
