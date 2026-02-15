@@ -1,166 +1,92 @@
 {
-  "title": "ADR-0021 Phase 1 Loop A: Memory Event Types + Observer Prompt + Parser",
+  "title": "ADR-0021 Nuum: Segment-aware distillation for observer prompt and parser",
   "stories": [
     {
-      "id": "MEM-1",
-      "title": "Add memory event types to client.ts",
-      "description": "Add 4 new memory event types to the Events type in src/inngest/client.ts, following the existing pattern for event type declarations. Add these events:\n\n1. \"memory/session.compaction.pending\" with data: { sessionId: string, dedupeKey: string, trigger: \"compaction\", messages: string, messageCount: number, tokensBefore: number, filesRead: string[], filesModified: string[], capturedAt: string, schemaVersion: 1 }\n\n2. \"memory/session.ended\" with data: { sessionId: string, dedupeKey: string, trigger: \"shutdown\", messages: string, messageCount: number, userMessageCount: number, duration: number, sessionName?: string, filesRead: string[], filesModified: string[], capturedAt: string, schemaVersion: 1 }\n\n3. \"memory/observations.accumulated\" with data: { date: string, totalTokens: number, observationCount: number, capturedAt: string }\n\n4. \"memory/observations.reflected\" with data: { date: string, inputTokens: number, outputTokens: number, compressionRatio: number, proposalCount: number, capturedAt: string }\n\nThe schemaVersion fields on the session events must be literal type 1 (not number). Follow the exact naming and structure conventions already used in the file.",
+      "id": "NUUM-1",
+      "title": "Rewrite OBSERVER_SYSTEM_PROMPT for segment-aware distillation",
+      "description": "Rewrite the OBSERVER_SYSTEM_PROMPT in src/inngest/functions/observe-prompt.ts to instruct the LLM to perform segment-aware distillation instead of flat observation extraction. The new prompt should instruct the model to: (1) identify coherent conversation segments — groups of related messages about one topic (debugging a bug, implementing a feature, making a decision), using topic shifts, natural breakpoints, and temporal clustering as boundaries. (2) For each segment, produce TWO distillates: an 'operational context' (1-3 sentences explaining what happened — the narrative) and 'retained facts' (bullet list of specific file paths, values, decisions with rationale, gotchas, error messages and fixes, user preferences discovered). The output format wraps each segment in <segment> tags inside the existing <observations> tag, with <narrative> and <facts> sub-tags. Keep <current-task> and <suggested-response> tags unchanged. Preserve the priority markers (🔴/🟡/🟢) on individual facts within segments. Credit: Segment-aware distillation pattern from Nuum (Simen Svale / Sanity).",
       "acceptance_criteria": [
-        "src/inngest/client.ts exports Events type containing 'memory/session.compaction.pending' with all specified data fields",
-        "src/inngest/client.ts exports Events type containing 'memory/session.ended' with all specified data fields including optional sessionName",
-        "src/inngest/client.ts exports Events type containing 'memory/observations.accumulated' with all specified data fields",
-        "src/inngest/client.ts exports Events type containing 'memory/observations.reflected' with all specified data fields",
-        "schemaVersion fields on session events are literal type 1, not number",
+        "observe-prompt.ts OBSERVER_SYSTEM_PROMPT instructs segment identification before extraction",
+        "Prompt specifies operational context (1-3 sentence narrative) per segment via <narrative> tag",
+        "Prompt specifies retained facts (bullet list with specifics) per segment via <facts> tag",
+        "Prompt preserves 🔴/🟡/🟢 priority markers on individual facts",
+        "Output format uses <segment> tags within <observations>",
+        "<current-task> and <suggested-response> tags remain unchanged",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 1,
-      "passes": true
-    },
-    {
-      "id": "MEM-2",
-      "title": "Create observer system prompt constant",
-      "description": "Create src/inngest/functions/observe-prompt.ts exporting OBSERVER_SYSTEM_PROMPT as a string constant. The prompt instructs an LLM to act as a session observer that extracts structured observations from Claude Code session transcripts. The prompt must specify:\n\n- Role: silent observer extracting reusable knowledge from session transcripts\n- Priority markers: 🔴 (high — corrections, user preferences, system facts), 🟡 (medium — patterns, repeated actions), 🟢 (low — minor notes)\n- Temporal anchoring: each observation group prefixed with 'Date: YYYY-MM-DD'\n- Output format: XML with three tags:\n  - <observations> (required) — the extracted observations with priority emoji markers, one per line\n  - <current-task> (optional) — what the user is currently working on\n  - <suggested-response> (optional) — a suggested greeting/context for next session\n- Instructions to focus on facts over opinions, prefer specific over vague, and deduplicate\n\nThis file should have no dependencies beyond standard TypeScript.",
-      "acceptance_criteria": [
-        "src/inngest/functions/observe-prompt.ts exists and exports OBSERVER_SYSTEM_PROMPT as a string constant",
-        "OBSERVER_SYSTEM_PROMPT contains instructions for 🔴 high, 🟡 medium, 🟢 low priority markers",
-        "OBSERVER_SYSTEM_PROMPT specifies XML output format with <observations>, <current-task>, <suggested-response> tags",
-        "OBSERVER_SYSTEM_PROMPT includes temporal anchoring with 'Date: YYYY-MM-DD' instruction",
-        "TypeScript compiles cleanly: bunx tsc --noEmit"
-      ],
-      "priority": 2,
-      "passes": true
-    },
-    {
-      "id": "MEM-3",
-      "title": "Create observer user prompt function",
-      "description": "In src/inngest/functions/observe-prompt.ts, add and export OBSERVER_USER_PROMPT as a function with signature: (messages: string, trigger: string, sessionName?: string) => string.\n\nThe function should return a prompt that:\n- Includes the trigger type (e.g., 'compaction' or 'shutdown') so the observer knows context\n- Includes the optional sessionName if provided\n- Embeds the messages string as the transcript to analyze\n- Asks the observer to extract observations following the system prompt format\n\nKeep the template simple and clear. The messages parameter contains the raw session transcript.",
-      "acceptance_criteria": [
-        "src/inngest/functions/observe-prompt.ts exports OBSERVER_USER_PROMPT as a function",
-        "OBSERVER_USER_PROMPT accepts (messages: string, trigger: string, sessionName?: string) and returns string",
-        "Returned string includes the trigger value",
-        "Returned string includes sessionName when provided",
-        "Returned string embeds the messages content",
-        "TypeScript compiles cleanly: bunx tsc --noEmit"
-      ],
-      "priority": 3,
-      "passes": true
-    },
-    {
-      "id": "MEM-4",
-      "title": "Create ObserverOutput interface and parseObserverOutput function",
-      "description": "Create src/inngest/functions/observe-parser.ts exporting:\n\n1. interface ObserverOutput { observations: string; currentTask: string | null; suggestedResponse: string | null; parsed: boolean }\n\n2. parseObserverOutput(raw: string): ObserverOutput — Parses LLM output that may contain XML tags. Logic:\n   - Try to extract content from <observations>...</observations>, <current-task>...</current-task>, <suggested-response>...</suggested-response> XML tags\n   - If <observations> tag is found, set parsed=true and extract available tags (currentTask and suggestedResponse may be absent)\n   - If no XML tags found, fall back: check if lines contain 🔴, 🟡, or 🟢 emoji markers. If so, use the full raw text as observations, set parsed=true\n   - If nothing matches (malformed/random text), return { observations: raw, currentTask: null, suggestedResponse: null, parsed: false }\n   - Empty/whitespace input returns { observations: '', currentTask: null, suggestedResponse: null, parsed: false }\n   - Trim whitespace from extracted content",
-      "acceptance_criteria": [
-        "src/inngest/functions/observe-parser.ts exports ObserverOutput interface with observations (string), currentTask (string | null), suggestedResponse (string | null), parsed (boolean)",
-        "src/inngest/functions/observe-parser.ts exports parseObserverOutput function",
-        "parseObserverOutput extracts content from XML tags when present",
-        "parseObserverOutput falls back to emoji-marker detection when no XML tags found",
-        "parseObserverOutput returns raw text with parsed=false for unrecognized input",
-        "parseObserverOutput returns empty observations with parsed=false for empty input",
-        "TypeScript compiles cleanly: bunx tsc --noEmit"
-      ],
-      "priority": 4,
-      "passes": true
-    },
-    {
-      "id": "MEM-5",
-      "title": "Create optimizeForContext function",
-      "description": "In src/inngest/functions/observe-parser.ts, add and export:\n\noptimizeForContext(observations: string): string — Filters observation text to keep only high-priority items for context-window efficiency. Logic:\n- Split input into lines\n- Keep only lines that start with or contain 🔴 (high priority marker) OR lines that start with 'Date:' (temporal headers)\n- Discard all lines with 🟡 or 🟢 markers and any other lines\n- Join remaining lines with newline\n- Trim the result\n- Empty input returns empty string",
-      "acceptance_criteria": [
-        "src/inngest/functions/observe-parser.ts exports optimizeForContext function",
-        "optimizeForContext keeps lines containing 🔴 emoji",
-        "optimizeForContext keeps lines starting with 'Date:'",
-        "optimizeForContext removes lines containing 🟡 or 🟢",
-        "optimizeForContext returns empty string for empty input",
-        "TypeScript compiles cleanly: bunx tsc --noEmit"
-      ],
-      "priority": 5,
-      "passes": true
-    },
-    {
-      "id": "MEM-6",
-      "title": "Write tests for observe-parser",
-      "description": "Create src/inngest/functions/observe-parser.test.ts with tests using bun:test (import { test, expect, describe } from 'bun:test'). Test cases:\n\n1. parseObserverOutput — XML extraction: input with all 3 XML tags (<observations>, <current-task>, <suggested-response>) returns parsed=true with all fields extracted and trimmed\n2. parseObserverOutput — Partial XML: input with only <observations> tag returns parsed=true, currentTask=null, suggestedResponse=null\n3. parseObserverOutput — Fallback: input with no XML but lines containing 🔴🟡🟢 markers returns parsed=true, observations=raw text\n4. parseObserverOutput — Malformed: random text with no markers returns parsed=false, observations=raw text\n5. parseObserverOutput — Empty input: returns observations='', currentTask=null, suggestedResponse=null, parsed=false\n6. optimizeForContext — Mixed priorities: input with 🔴, 🟡, 🟢 lines and Date: headers → only 🔴 and Date: lines survive\n7. optimizeForContext — Empty input: returns empty string\n\nAll tests must pass with: bun test src/inngest/functions/observe-parser.test.ts",
-      "acceptance_criteria": [
-        "src/inngest/functions/observe-parser.test.ts exists with all 7 test cases",
-        "Tests import from ./observe-parser (relative import)",
-        "Tests use bun:test (import { test, expect, describe } from 'bun:test')",
-        "All tests pass: bun test src/inngest/functions/observe-parser.test.ts",
-        "Tests verify observable behavior, not implementation details",
-        "TypeScript compiles cleanly: bunx tsc --noEmit"
-      ],
-      "priority": 6,
       "passes": false
     },
     {
-      "id": "MEM-2",
-      "title": "Create observer system prompt constant",
-      "description": "Create src/inngest/functions/observe-prompt.ts exporting OBSERVER_SYSTEM_PROMPT as a string constant. The prompt instructs an LLM to act as a session observer that extracts structured observations from Claude Code session transcripts. The prompt must specify:\n\n- Role: silent observer extracting reusable knowledge from session transcripts\n- Priority markers: 🔴 (high — corrections, user preferences, system facts), 🟡 (medium — patterns, repeated actions), 🟢 (low — minor notes)\n- Temporal anchoring: each observation group prefixed with 'Date: YYYY-MM-DD'\n- Output format: XML with three tags:\n  - <observations> (required) — the extracted observations with priority emoji markers, one per line\n  - <current-task> (optional) — what the user is currently working on\n  - <suggested-response> (optional) — a suggested greeting/context for next session\n- Instructions to focus on facts over opinions, prefer specific over vague, and deduplicate\n\nThis file should have no dependencies beyond standard TypeScript.",
+      "id": "NUUM-2",
+      "title": "Add DistilledSegment interface and parseSegments function",
+      "description": "In src/inngest/functions/observe-parser.ts, add a new exported interface DistilledSegment with fields: narrative (string) and facts (string[]). Add a new exported function parseSegments(observations: string): DistilledSegment[] that extracts <segment> blocks from the observations text, parsing <narrative> content as the narrative string and <facts> bullet items as the facts array. Each bullet should be trimmed. If no <segment> tags are found, return an empty array.",
       "acceptance_criteria": [
-        "src/inngest/functions/observe-prompt.ts exists and exports OBSERVER_SYSTEM_PROMPT as a string constant",
-        "OBSERVER_SYSTEM_PROMPT contains instructions for 🔴 high, 🟡 medium, 🟢 low priority markers",
-        "OBSERVER_SYSTEM_PROMPT specifies XML output format with <observations>, <current-task>, <suggested-response> tags",
-        "OBSERVER_SYSTEM_PROMPT includes temporal anchoring with 'Date: YYYY-MM-DD' instruction",
+        "observe-parser.ts exports DistilledSegment interface with narrative (string) and facts (string[])",
+        "observe-parser.ts exports parseSegments function with signature (observations: string) => DistilledSegment[]",
+        "parseSegments correctly extracts narrative and facts from <segment> blocks",
+        "parseSegments returns empty array when no <segment> tags are present",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 2,
       "passes": false
     },
     {
-      "id": "MEM-3",
-      "title": "Create observer user prompt function",
-      "description": "In src/inngest/functions/observe-prompt.ts, add and export OBSERVER_USER_PROMPT as a function with signature: (messages: string, trigger: string, sessionName?: string) => string.\n\nThe function should return a prompt that:\n- Includes the trigger type (e.g., 'compaction' or 'shutdown') so the observer knows context\n- Includes the optional sessionName if provided\n- Embeds the messages string as the transcript to analyze\n- Asks the observer to extract observations following the system prompt format\n\nKeep the template simple and clear. The messages parameter contains the raw session transcript.",
+      "id": "NUUM-3",
+      "title": "Update ObserverOutput and parseObserverOutput for segments",
+      "description": "In src/inngest/functions/observe-parser.ts, add a segments: DistilledSegment[] field to the ObserverOutput interface. Update parseObserverOutput to call parseSegments on the extracted observations text and populate the segments field. When <segment> tags are present, segments is populated with parsed data. When no <segment> tags exist (flat format), segments is an empty array — preserving full backward compatibility. The existing observations string field continues to contain the raw text between <observations> tags.",
       "acceptance_criteria": [
-        "src/inngest/functions/observe-prompt.ts exports OBSERVER_USER_PROMPT as a function",
-        "OBSERVER_USER_PROMPT accepts (messages: string, trigger: string, sessionName?: string) and returns string",
-        "Returned string includes the trigger value",
-        "Returned string includes sessionName when provided",
-        "Returned string embeds the messages content",
+        "ObserverOutput interface includes segments: DistilledSegment[] field",
+        "parseObserverOutput returns populated segments when <segment> tags are present in observations",
+        "parseObserverOutput returns empty segments array for flat-format input (backward compat)",
+        "Existing observations, currentTask, suggestedResponse fields still work correctly",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 3,
       "passes": false
     },
     {
-      "id": "MEM-4",
-      "title": "Create ObserverOutput interface and parseObserverOutput function",
-      "description": "Create src/inngest/functions/observe-parser.ts exporting:\n\n1. interface ObserverOutput { observations: string; currentTask: string | null; suggestedResponse: string | null; parsed: boolean }\n\n2. parseObserverOutput(raw: string): ObserverOutput — Parses LLM output that may contain XML tags. Logic:\n   - Try to extract content from <observations>...</observations>, <current-task>...</current-task>, <suggested-response>...</suggested-response> XML tags\n   - If <observations> tag is found, set parsed=true and extract available tags (currentTask and suggestedResponse may be absent)\n   - If no XML tags found, fall back: check if lines contain 🔴, 🟡, or 🟢 emoji markers. If so, use the full raw text as observations, set parsed=true\n   - If nothing matches (malformed/random text), return { observations: raw, currentTask: null, suggestedResponse: null, parsed: false }\n   - Empty/whitespace input returns { observations: '', currentTask: null, suggestedResponse: null, parsed: false }\n   - Trim whitespace from extracted content",
+      "id": "NUUM-4",
+      "title": "Update optimizeForContext for segment-aware format",
+      "description": "In src/inngest/functions/observe-parser.ts, refactor optimizeForContext to handle both formats. When the input contains <segment> tags (detected via parseSegments returning non-empty): keep all narratives and only 🔴-marked facts, dropping 🟡 and 🟢 facts. When no segments are found (flat format): keep existing behavior (lines with 🔴 or 'Date:' prefix). The function signature remains unchanged — it takes a string and returns a string.",
       "acceptance_criteria": [
-        "src/inngest/functions/observe-parser.ts exports ObserverOutput interface with observations (string), currentTask (string | null), suggestedResponse (string | null), parsed (boolean)",
-        "src/inngest/functions/observe-parser.ts exports parseObserverOutput function",
-        "parseObserverOutput extracts content from XML tags when present",
-        "parseObserverOutput falls back to emoji-marker detection when no XML tags found",
-        "parseObserverOutput returns raw text with parsed=false for unrecognized input",
-        "parseObserverOutput returns empty observations with parsed=false for empty input",
+        "optimizeForContext handles segment-aware input: keeps all narratives + only 🔴 facts",
+        "optimizeForContext drops 🟡 and 🟢 facts from segment-aware input",
+        "optimizeForContext still works with flat-format input unchanged (backward compat)",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 4,
       "passes": false
     },
     {
-      "id": "MEM-5",
-      "title": "Create optimizeForContext function",
-      "description": "In src/inngest/functions/observe-parser.ts, add and export:\n\noptimizeForContext(observations: string): string — Filters observation text to keep only high-priority items for context-window efficiency. Logic:\n- Split input into lines\n- Keep only lines that start with or contain 🔴 (high priority marker) OR lines that start with 'Date:' (temporal headers)\n- Discard all lines with 🟡 or 🟢 markers and any other lines\n- Join remaining lines with newline\n- Trim the result\n- Empty input returns empty string",
+      "id": "NUUM-5",
+      "title": "Add formatSegmentsForLog export",
+      "description": "In src/inngest/functions/observe-parser.ts, add a new exported function formatSegmentsForLog(segments: DistilledSegment[]): string that renders segments as markdown suitable for a daily log. Each segment becomes a subsection with the narrative rendered in italics (wrapped in *...*) followed by fact bullets (each prefixed with '- '). Segments are separated by blank lines. Returns empty string for empty array input.",
       "acceptance_criteria": [
-        "src/inngest/functions/observe-parser.ts exports optimizeForContext function",
-        "optimizeForContext keeps lines containing 🔴 emoji",
-        "optimizeForContext keeps lines starting with 'Date:'",
-        "optimizeForContext removes lines containing 🟡 or 🟢",
-        "optimizeForContext returns empty string for empty input",
+        "observe-parser.ts exports formatSegmentsForLog function",
+        "formatSegmentsForLog renders narrative in italics (*narrative*)",
+        "formatSegmentsForLog renders facts as markdown bullet list (- fact)",
+        "formatSegmentsForLog returns empty string for empty segments array",
+        "Segments are separated by blank lines in output",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 5,
       "passes": false
     },
     {
-      "id": "MEM-6",
-      "title": "Write tests for observe-parser",
-      "description": "Create src/inngest/functions/observe-parser.test.ts with tests using bun:test (import { test, expect, describe } from 'bun:test'). Test cases:\n\n1. parseObserverOutput — XML extraction: input with all 3 XML tags (<observations>, <current-task>, <suggested-response>) returns parsed=true with all fields extracted and trimmed\n2. parseObserverOutput — Partial XML: input with only <observations> tag returns parsed=true, currentTask=null, suggestedResponse=null\n3. parseObserverOutput — Fallback: input with no XML but lines containing 🔴🟡🟢 markers returns parsed=true, observations=raw text\n4. parseObserverOutput — Malformed: random text with no markers returns parsed=false, observations=raw text\n5. parseObserverOutput — Empty input: returns observations='', currentTask=null, suggestedResponse=null, parsed=false\n6. optimizeForContext — Mixed priorities: input with 🔴, 🟡, 🟢 lines and Date: headers → only 🔴 and Date: lines survive\n7. optimizeForContext — Empty input: returns empty string\n\nAll tests must pass with: bun test src/inngest/functions/observe-parser.test.ts",
+      "id": "NUUM-6",
+      "title": "Add tests for segment-aware parsing",
+      "description": "In src/inngest/functions/observe-parser.test.ts, add test cases covering the new segment-aware functionality: (1) parseSegments with valid <segment> blocks containing <narrative> and <facts> returns correct DistilledSegment[], (2) parseSegments with no segment tags returns [], (3) parseObserverOutput with segment-format input populates segments array, (4) parseObserverOutput with flat-format input returns empty segments array (backward compat), (5) optimizeForContext with segment input keeps narratives + 🔴 facts only, (6) optimizeForContext with flat input still works, (7) formatSegmentsForLog renders segments as markdown with italic narratives and bullet facts, (8) formatSegmentsForLog returns empty string for empty array. All existing tests must continue to pass.",
       "acceptance_criteria": [
-        "src/inngest/functions/observe-parser.test.ts exists with all 7 test cases",
-        "Tests import from ./observe-parser (relative import)",
-        "Tests use bun:test (import { test, expect, describe } from 'bun:test')",
-        "All tests pass: bun test src/inngest/functions/observe-parser.test.ts",
-        "Tests verify observable behavior, not implementation details",
+        "Tests cover parseSegments with valid segment XML including narrative and facts",
+        "Tests cover parseSegments with empty/no-segment input returning []",
+        "Tests cover parseObserverOutput segment population with segment-format input",
+        "Tests cover parseObserverOutput backward compat with flat-format input",
+        "Tests cover optimizeForContext with segment-aware input (narratives + 🔴 only)",
+        "Tests cover optimizeForContext backward compat with flat-format input",
+        "Tests cover formatSegmentsForLog output format",
+        "All existing tests still pass",
+        "bun test passes",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 6,
