@@ -8,6 +8,7 @@ import {
   llmEvaluate,
   guardStory,
   releaseClaim,
+  readPatterns,
 } from "./utils";
 
 const DEFAULT_RETRY_LADDER: ("codex" | "claude" | "pi")[] = [
@@ -117,17 +118,6 @@ async function readTestFilesFromDisk(project: string, files: string[]): Promise<
   return chunks.join("\n\n");
 }
 
-function extractCodebasePatterns(progressText: string): string {
-  if (!progressText) return "";
-  const marker = "## Codebase Patterns";
-  const idx = progressText.indexOf(marker);
-  if (idx === -1) return "";
-  const rest = progressText.slice(idx);
-  const nextHeading = rest.indexOf("\n## ", marker.length);
-  const section = nextHeading === -1 ? rest : rest.slice(0, nextHeading);
-  return section.trim();
-}
-
 async function getProjectConventions(project: string): Promise<string> {
   const parts: string[] = [];
 
@@ -137,9 +127,8 @@ async function getProjectConventions(project: string): Promise<string> {
   } catch { /* ignore */ }
 
   try {
-    const progressTxt = await Bun.file(`${project}/progress.txt`).text();
-    const patterns = extractCodebasePatterns(progressTxt);
-    if (patterns) parts.push(`progress.txt\n${patterns}`);
+    const patterns = await readPatterns(project);
+    if (patterns) parts.push(`## Codebase Patterns\n${patterns}`);
   } catch { /* ignore */ }
 
   return parts.join("\n\n");
