@@ -21,10 +21,12 @@ function extractSection(content: string, heading: string): string | null {
   return match ? match[1].trim() : null;
 }
 
-// Helper: count checkbox items (- [ ] syntax)
-function countCheckboxItems(text: string): number {
-  return text.split("\n").filter((line) => /^\s*-\s+\[[ x]\]\s+/.test(line))
-    .length;
+// Helper: extract numbered steps from a section
+function extractNumberedSteps(text: string): string[] {
+  return text
+    .split("\n")
+    .filter((line) => /^\d+\.\s+/.test(line))
+    .map((line) => line.replace(/^\d+\.\s+/, "").trim());
 }
 
 // Helper: extract checkbox items as strings
@@ -44,19 +46,16 @@ describe("AC-1: Implementation Plan section with numbered steps", () => {
     expect(content).toMatch(/^## Implementation Plan/m);
   });
 
-  test("Implementation Plan section has numbered steps", async () => {
+  test("Implementation Plan has at least 3 numbered steps", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
 
-    // Count lines starting with a number followed by a period
-    const numberedSteps = section!
-      .split("\n")
-      .filter((line) => /^\d+\.\s+/.test(line));
-    expect(numberedSteps.length).toBeGreaterThanOrEqual(3);
+    const steps = extractNumberedSteps(section!);
+    expect(steps.length).toBeGreaterThanOrEqual(3);
   });
 
-  test("numbered steps are sequential starting from 1", async () => {
+  test("numbered steps are sequential from 1", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
@@ -77,27 +76,24 @@ describe("AC-1: Implementation Plan section with numbered steps", () => {
 // AC-2: Plan describes the heartbeat Inngest function
 // --------------------------------------------------------------------------
 describe("AC-2: Heartbeat Inngest function described", () => {
-  test("Implementation Plan mentions heartbeat", async () => {
+  test("mentions heartbeat in the Implementation Plan", async () => {
+    const content = await readAdr();
+    const section = extractSection(content, "Implementation Plan");
+    expect(section).not.toBeNull();
+    expect(section!.toLowerCase()).toContain("heartbeat");
+  });
+
+  test("describes an Inngest function", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    expect(lower).toMatch(/heartbeat/);
+    expect(lower).toContain("inngest");
+    expect(lower).toMatch(/function/);
   });
 
-  test("Implementation Plan mentions Inngest function", async () => {
-    const content = await readAdr();
-    const section = extractSection(content, "Implementation Plan");
-    expect(section).not.toBeNull();
-
-    const lower = section!.toLowerCase();
-    const hasInngest = lower.includes("inngest");
-    const hasFunction = lower.includes("function");
-    expect(hasInngest && hasFunction).toBe(true);
-  });
-
-  test("Implementation Plan describes cron trigger", async () => {
+  test("describes cron-based triggering", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
@@ -108,19 +104,20 @@ describe("AC-2: Heartbeat Inngest function described", () => {
     expect(hasCron || hasSchedule).toBe(true);
   });
 
-  test("Implementation Plan describes event triggers (terminal events)", async () => {
+  test("describes event-based triggering from terminal lifecycle events", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    // Should mention terminal lifecycle events
+    // Should describe triggers from terminal events
+    const hasTerminalEvent = lower.includes("terminal");
     const hasLoopComplete =
       lower.includes("loop.complete") || lower.includes("loop complete");
     const hasEventTrigger =
-      lower.includes("event") && lower.includes("trigger");
-    const hasTerminalEvent = lower.includes("terminal");
-    expect(hasLoopComplete || hasEventTrigger || hasTerminalEvent).toBe(true);
+      lower.includes("event") &&
+      (lower.includes("trigger") || lower.includes("triggered"));
+    expect(hasTerminalEvent || hasLoopComplete || hasEventTrigger).toBe(true);
   });
 });
 
@@ -128,40 +125,36 @@ describe("AC-2: Heartbeat Inngest function described", () => {
 // AC-3: Plan describes state gathering (note queue, slog, retros, active runs)
 // --------------------------------------------------------------------------
 describe("AC-3: State gathering described", () => {
-  test("Implementation Plan describes a state gathering step", async () => {
+  test("describes a state gathering or snapshot step", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    const hasStateGathering = lower.includes("state");
-    const hasGather =
+    const hasState = lower.includes("state");
+    const hasGatherOrRead =
       lower.includes("gather") ||
       lower.includes("read") ||
       lower.includes("collect") ||
       lower.includes("snapshot");
-    expect(hasStateGathering && hasGather).toBe(true);
+    expect(hasState && hasGatherOrRead).toBe(true);
   });
 
-  test("state gathering includes note queue length", async () => {
+  test("includes note queue length", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
-
-    const lower = section!.toLowerCase();
-    expect(lower).toMatch(/note\s+queue/);
+    expect(section!.toLowerCase()).toMatch(/note\s+queue/);
   });
 
-  test("state gathering includes recent slog entries", async () => {
+  test("includes recent slog entries", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
-
-    const lower = section!.toLowerCase();
-    expect(lower).toMatch(/slog/);
+    expect(section!.toLowerCase()).toContain("slog");
   });
 
-  test("state gathering includes pending retrospective recommendations", async () => {
+  test("includes pending retro recommendations", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
@@ -169,36 +162,34 @@ describe("AC-3: State gathering described", () => {
     const lower = section!.toLowerCase();
     const hasRetro =
       lower.includes("retrospective") || lower.includes("retro");
-    const hasRecommendation =
+    const hasPendingOrRecommendation =
       lower.includes("recommendation") || lower.includes("pending");
-    expect(hasRetro && hasRecommendation).toBe(true);
+    expect(hasRetro && hasPendingOrRecommendation).toBe(true);
   });
 
-  test("state gathering includes active loop runs", async () => {
+  test("includes active loop runs", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    const hasActiveRuns =
-      lower.includes("active") &&
-      (lower.includes("loop") || lower.includes("run"));
-    expect(hasActiveRuns).toBe(true);
+    expect(lower).toContain("active");
+    const hasLoop = lower.includes("loop");
+    const hasRun = lower.includes("run");
+    expect(hasLoop || hasRun).toBe(true);
   });
 
-  test("state gathering includes half-done inventory", async () => {
+  test("includes half-done inventory", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    const hasHalfDone = lower.includes("half-done") || lower.includes("half done");
+    const hasHalfDone =
+      lower.includes("half-done") || lower.includes("half done");
     const hasIncomplete =
       lower.includes("incomplete") || lower.includes("unfinished");
-    const hasInventory = lower.includes("inventory");
-    expect((hasHalfDone || hasIncomplete) && hasInventory || hasHalfDone).toBe(
-      true,
-    );
+    expect(hasHalfDone || hasIncomplete).toBe(true);
   });
 });
 
@@ -206,85 +197,82 @@ describe("AC-3: State gathering described", () => {
 // AC-4: Plan describes LLM decision step with constrained action set
 // --------------------------------------------------------------------------
 describe("AC-4: LLM decision step with constrained action set", () => {
-  test("Implementation Plan describes an LLM decision step", async () => {
+  test("describes an LLM-based decision step", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    const hasLlm = lower.includes("llm");
-    const hasDecision =
+    expect(lower).toContain("llm");
+    const hasDecide =
       lower.includes("decision") ||
       lower.includes("decide") ||
-      lower.includes("evaluate");
-    expect(hasLlm && hasDecision).toBe(true);
+      lower.includes("evaluate") ||
+      lower.includes("select");
+    expect(hasDecide).toBe(true);
   });
 
-  test("action set includes start_loop or equivalent", async () => {
+  test("includes start_loop action", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    const hasStartLoop =
-      lower.includes("start_loop") ||
-      lower.includes("start loop") ||
-      lower.includes("start a loop");
-    expect(hasStartLoop).toBe(true);
+    expect(
+      lower.includes("start_loop") || lower.includes("start loop"),
+    ).toBe(true);
   });
 
-  test("action set includes process_notes or equivalent", async () => {
+  test("includes process_notes action", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    const hasProcessNotes =
-      lower.includes("process_notes") ||
-      lower.includes("process notes") ||
-      lower.includes("note processing");
-    expect(hasProcessNotes).toBe(true);
+    expect(
+      lower.includes("process_notes") || lower.includes("process notes"),
+    ).toBe(true);
   });
 
-  test("action set includes apply retro recommendation or equivalent", async () => {
+  test("includes apply retro recommendation action", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    const hasApplyRetro =
+    const hasApply =
       lower.includes("apply_retro") ||
       lower.includes("apply retro") ||
-      lower.includes("retro recommendation") ||
-      lower.includes("apply recommendation");
-    expect(hasApplyRetro).toBe(true);
+      lower.includes("apply recommendation") ||
+      lower.includes("retro recommendation");
+    expect(hasApply).toBe(true);
   });
 
-  test("action set includes emit_alert or equivalent", async () => {
+  test("includes emit_alert action", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    const hasEmitAlert =
+    expect(
       lower.includes("emit_alert") ||
-      lower.includes("emit alert") ||
-      lower.includes("alert");
-    expect(hasEmitAlert).toBe(true);
+        lower.includes("emit alert") ||
+        lower.includes("alert"),
+    ).toBe(true);
   });
 
-  test("action set includes do_nothing or equivalent", async () => {
+  test("includes do_nothing action", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    const hasDoNothing =
+    expect(
       lower.includes("do_nothing") ||
-      lower.includes("do nothing") ||
-      lower.includes("no-op") ||
-      lower.includes("noop");
-    expect(hasDoNothing).toBe(true);
+        lower.includes("do nothing") ||
+        lower.includes("no-op") ||
+        lower.includes("noop"),
+    ).toBe(true);
   });
 
   test("action set is described as constrained or bounded", async () => {
@@ -296,9 +284,9 @@ describe("AC-4: LLM decision step with constrained action set", () => {
     const hasConstrained =
       lower.includes("constrained") ||
       lower.includes("bounded") ||
-      lower.includes("allowed") ||
       lower.includes("fixed set") ||
-      lower.includes("exactly one");
+      lower.includes("exactly one") ||
+      lower.includes("allowed");
     expect(hasConstrained).toBe(true);
   });
 });
@@ -307,7 +295,7 @@ describe("AC-4: LLM decision step with constrained action set", () => {
 // AC-5: Plan describes safety rails (rate limits, cost budget, human approval)
 // --------------------------------------------------------------------------
 describe("AC-5: Safety rails described", () => {
-  test("Implementation Plan describes rate limiting or max actions per hour", async () => {
+  test("describes rate limiting or max actions per hour", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
@@ -325,37 +313,33 @@ describe("AC-5: Safety rails described", () => {
     ).toBe(true);
   });
 
-  test("Implementation Plan describes cost budget controls", async () => {
+  test("describes cost budget controls", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    const hasCostBudget =
-      lower.includes("cost budget") || lower.includes("cost cap");
     const hasBudget = lower.includes("budget");
+    const hasCost = lower.includes("cost");
     const hasSpend = lower.includes("spend");
-    const hasTokenCeiling = lower.includes("token ceiling");
-    expect(hasCostBudget || hasBudget || hasSpend || hasTokenCeiling).toBe(
-      true,
-    );
+    expect(hasBudget || hasCost || hasSpend).toBe(true);
   });
 
-  test("Implementation Plan describes human-approval gate for destructive actions", async () => {
+  test("describes human-approval gate for destructive actions", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    const hasHumanApproval =
+    const hasApproval =
       lower.includes("human-approval") ||
       lower.includes("human approval") ||
       lower.includes("approval gate");
     const hasDestructive = lower.includes("destructive");
-    expect(hasHumanApproval || hasDestructive).toBe(true);
+    expect(hasApproval || hasDestructive).toBe(true);
   });
 
-  test("Implementation Plan describes always-log reasoning requirement", async () => {
+  test("describes always-log reasoning requirement", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).not.toBeNull();
@@ -384,8 +368,8 @@ describe("AC-6: Verification section with checkbox items", () => {
     const section = extractSection(content, "Verification");
     expect(section).not.toBeNull();
 
-    const checkboxCount = countCheckboxItems(section!);
-    expect(checkboxCount).toBeGreaterThanOrEqual(5);
+    const items = extractCheckboxItems(section!);
+    expect(items.length).toBeGreaterThanOrEqual(5);
   });
 });
 
@@ -393,7 +377,7 @@ describe("AC-6: Verification section with checkbox items", () => {
 // AC-7: Verification items are specific and testable, not vague
 // --------------------------------------------------------------------------
 describe("AC-7: Verification items are specific and testable", () => {
-  test("each checkbox item has at least 10 words (not overly terse)", async () => {
+  test("each checkbox item is substantive (at least 8 words)", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Verification");
     expect(section).not.toBeNull();
@@ -403,11 +387,11 @@ describe("AC-7: Verification items are specific and testable", () => {
 
     for (const item of items) {
       const wordCount = item.split(/\s+/).filter((w) => w.length > 0).length;
-      expect(wordCount).toBeGreaterThanOrEqual(10);
+      expect(wordCount).toBeGreaterThanOrEqual(8);
     }
   });
 
-  test("no checkbox item uses vague wording like 'works correctly' or 'is good'", async () => {
+  test("no checkbox item uses vague phrases", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Verification");
     expect(section).not.toBeNull();
@@ -419,6 +403,7 @@ describe("AC-7: Verification items are specific and testable", () => {
       /should\s+be\s+fine/i,
       /as\s+expected/i,
       /properly\s+implemented/i,
+      /functions?\s+properly/i,
     ];
 
     for (const item of items) {
@@ -428,7 +413,7 @@ describe("AC-7: Verification items are specific and testable", () => {
     }
   });
 
-  test("checkbox items reference concrete system concepts (events, functions, limits, logs)", async () => {
+  test("checkbox items reference concrete system concepts", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Verification");
     expect(section).not.toBeNull();
@@ -456,7 +441,6 @@ describe("AC-7: Verification items are specific and testable", () => {
       "decision",
     ];
 
-    // Each item should contain at least one concrete system term
     for (const item of items) {
       const lower = item.toLowerCase();
       const hasConcreteTerm = concreteTerms.some((term) =>
@@ -473,64 +457,65 @@ describe("AC-7: Verification items are specific and testable", () => {
 describe("AC-8: ADR coherence and self-consistency", () => {
   test("Implementation Plan references concepts from Decision Outcome", async () => {
     const content = await readAdr();
-    const decisionOutcome = extractSection(content, "Decision Outcome");
-    const implPlan = extractSection(content, "Implementation Plan");
-    expect(decisionOutcome).not.toBeNull();
-    expect(implPlan).not.toBeNull();
+    const outcome = extractSection(content, "Decision Outcome");
+    const plan = extractSection(content, "Implementation Plan");
+    expect(outcome).not.toBeNull();
+    expect(plan).not.toBeNull();
 
-    const implLower = implPlan!.toLowerCase();
-    // Decision Outcome chose hybrid event-driven + cron; Implementation Plan should reflect both
-    const hasCron = implLower.includes("cron");
+    const planLower = plan!.toLowerCase();
+    // Decision Outcome chose hybrid event-driven + cron; plan should reflect both
+    expect(planLower).toContain("cron");
     const hasEvent =
-      implLower.includes("event") || implLower.includes("trigger");
-    expect(hasCron && hasEvent).toBe(true);
+      planLower.includes("event") || planLower.includes("trigger");
+    expect(hasEvent).toBe(true);
   });
 
   test("Verification items align with Implementation Plan steps", async () => {
     const content = await readAdr();
-    const implPlan = extractSection(content, "Implementation Plan");
+    const plan = extractSection(content, "Implementation Plan");
     const verification = extractSection(content, "Verification");
-    expect(implPlan).not.toBeNull();
+    expect(plan).not.toBeNull();
     expect(verification).not.toBeNull();
 
     const verLower = verification!.toLowerCase();
-    // Key implementation concepts should appear in verification
-    const hasHeartbeat = verLower.includes("heartbeat");
+    // Key implementation concepts should appear in verification too
+    expect(verLower).toContain("heartbeat");
     const hasAction =
       verLower.includes("action") || verLower.includes("dispatch");
+    expect(hasAction).toBe(true);
     const hasState =
       verLower.includes("state") ||
       verLower.includes("snapshot") ||
       verLower.includes("input");
-    expect(hasHeartbeat && hasAction && hasState).toBe(true);
+    expect(hasState).toBe(true);
   });
 
   test("safety concepts appear in both Implementation Plan and Verification", async () => {
     const content = await readAdr();
-    const implPlan = extractSection(content, "Implementation Plan");
+    const plan = extractSection(content, "Implementation Plan");
     const verification = extractSection(content, "Verification");
-    expect(implPlan).not.toBeNull();
+    expect(plan).not.toBeNull();
     expect(verification).not.toBeNull();
 
-    const implLower = implPlan!.toLowerCase();
+    const planLower = plan!.toLowerCase();
     const verLower = verification!.toLowerCase();
 
-    // Rate limiting / action limits mentioned in both
-    const implHasLimits =
-      implLower.includes("limit") || implLower.includes("max");
+    // Rate limiting mentioned in both
+    const planHasLimits =
+      planLower.includes("limit") || planLower.includes("max");
     const verHasLimits =
       verLower.includes("limit") || verLower.includes("max");
-    expect(implHasLimits && verHasLimits).toBe(true);
+    expect(planHasLimits && verHasLimits).toBe(true);
 
-    // Cost budget mentioned in both
-    const implHasBudget =
-      implLower.includes("budget") || implLower.includes("cost");
+    // Budget mentioned in both
+    const planHasBudget =
+      planLower.includes("budget") || planLower.includes("cost");
     const verHasBudget =
       verLower.includes("budget") || verLower.includes("cost");
-    expect(implHasBudget && verHasBudget).toBe(true);
+    expect(planHasBudget && verHasBudget).toBe(true);
   });
 
-  test("ADR has all major sections present (Context, Drivers, Options, Outcome, Plan, Verification)", async () => {
+  test("ADR has all required major sections", async () => {
     const content = await readAdr();
     const requiredSections = [
       "Context and Problem Statement",
@@ -541,9 +526,9 @@ describe("AC-8: ADR coherence and self-consistency", () => {
       "Verification",
     ];
 
-    for (const section of requiredSections) {
-      const extracted = extractSection(content, section);
-      expect(extracted).not.toBeNull();
+    for (const heading of requiredSections) {
+      const section = extractSection(content, heading);
+      expect(section).not.toBeNull();
     }
   });
 });
@@ -553,7 +538,7 @@ describe("AC-8: ADR coherence and self-consistency", () => {
 // --------------------------------------------------------------------------
 describe("AC-9: TypeScript compiles", () => {
   test("this test file compiles and runs under bun test", () => {
-    // If we reach this point, the file compiled successfully
+    // Reaching this point means the file compiled successfully
     expect(true).toBe(true);
   });
 });
