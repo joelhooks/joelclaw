@@ -22,6 +22,29 @@
   @apply px-4 -mx-4;
 }
 
+/* Custom scrollbars for code blocks */
+[data-rehype-pretty-code-figure] pre {
+  scrollbar-width: thin;
+  scrollbar-color: #404040 transparent;
+}
+
+[data-rehype-pretty-code-figure] pre::-webkit-scrollbar {
+  height: 6px;
+}
+
+[data-rehype-pretty-code-figure] pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+[data-rehype-pretty-code-figure] pre::-webkit-scrollbar-thumb {
+  background: #404040;
+  border-radius: 3px;
+}
+
+[data-rehype-pretty-code-figure] pre::-webkit-scrollbar-thumb:hover {
+  background: #525252;
+}
+
 /* Inline code */
 :not(pre) > code {
   font-family: var(--font-code);
