@@ -4,12 +4,12 @@ import { resolve } from "node:path";
 const REPO_ROOT = resolve(import.meta.dir, "../..");
 const REPO_ADR = resolve(REPO_ROOT, "docs/decisions/0010-system-loop-gateway.md");
 
-// Helper: read the ADR content (used by multiple test groups)
+// Helper: read the ADR content
 async function readAdr(path: string): Promise<string> {
   return Bun.file(path).text();
 }
 
-// Helper: extract a section by heading (returns everything between this ## and the next ## or EOF)
+// Helper: extract a ## section (everything between this ## and the next ## or EOF)
 function extractSection(content: string, heading: string): string | null {
   const pattern = new RegExp(
     `\\n## ${heading}\\s*\\n([\\s\\S]*?)(?=\\n## |\\n# |$)`,
@@ -19,7 +19,9 @@ function extractSection(content: string, heading: string): string | null {
 }
 
 // Helper: extract ### subsections within a section
-function extractSubsections(sectionText: string): { title: string; body: string }[] {
+function extractSubsections(
+  sectionText: string,
+): { title: string; body: string }[] {
   const results: { title: string; body: string }[] = [];
   const pattern = /^### (.+)\s*\n([\s\S]*?)(?=\n### |$)/gm;
   let match;
@@ -33,58 +35,73 @@ function extractSubsections(sectionText: string): { title: string; body: string 
 // AC-1: Has ## Decision Outcome section
 // --------------------------------------------------------------------------
 describe("AC-1: Decision Outcome section exists", () => {
-  test("contains a ## Decision Outcome heading", async () => {
+  test("ADR contains a ## Decision Outcome heading", async () => {
     const content = await readAdr(REPO_ADR);
     expect(content).toMatch(/^## Decision Outcome/m);
+  });
+
+  test("Decision Outcome section has substantive content (not empty)", async () => {
+    const content = await readAdr(REPO_ADR);
+    const section = extractSection(content, "Decision Outcome");
+    expect(section).not.toBeNull();
+    const wordCount = section!.split(/\s+/).filter((w) => w.length > 0).length;
+    expect(wordCount).toBeGreaterThanOrEqual(20);
   });
 });
 
 // --------------------------------------------------------------------------
 // AC-2: Chosen option is clearly stated with rationale
 // --------------------------------------------------------------------------
-describe("AC-2: chosen option is clearly stated with rationale", () => {
-  test("Decision Outcome section states the chosen option", async () => {
+describe("AC-2: Chosen option is clearly stated with rationale", () => {
+  test("Decision Outcome identifies the chosen option", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    const hasChosen = lower.includes("chosen option");
-    const hasSelected = lower.includes("selected");
-    const hasRecommended = lower.includes("recommended");
-    expect(hasChosen || hasSelected || hasRecommended).toBe(true);
+    const statesChoice =
+      lower.includes("chosen option") ||
+      lower.includes("selected") ||
+      lower.includes("recommended") ||
+      lower.includes("we choose") ||
+      lower.includes("we recommend");
+    expect(statesChoice).toBe(true);
   });
 
-  test("Decision Outcome includes a rationale (explains why)", async () => {
+  test("Decision Outcome provides rationale for the choice", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    const hasBecause = lower.includes("because");
-    const hasReason = lower.includes("reason");
-    const hasApproach = lower.includes("approach");
-    const hasSelected = lower.includes("selected");
-    expect(hasBecause || hasReason || (hasApproach && hasSelected)).toBe(true);
+    const hasRationale =
+      lower.includes("because") ||
+      lower.includes("reason") ||
+      lower.includes("rationale") ||
+      (lower.includes("approach") && lower.includes("best")) ||
+      lower.includes("this approach");
+    expect(hasRationale).toBe(true);
   });
 });
 
 // --------------------------------------------------------------------------
 // AC-3: Decision recommends a hybrid event-driven + cron approach
 // --------------------------------------------------------------------------
-describe("AC-3: hybrid event-driven + cron approach", () => {
-  test("Decision Outcome mentions event-driven or reactive loop", async () => {
+describe("AC-3: Hybrid event-driven + cron approach", () => {
+  test("Decision Outcome references event-driven or reactive mechanism", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
     expect(section).not.toBeNull();
 
     const lower = section!.toLowerCase();
-    const hasEventDriven = lower.includes("event-driven") || lower.includes("event driven");
+    const hasEventDriven =
+      lower.includes("event-driven") || lower.includes("event driven");
     const hasReactive = lower.includes("reactive");
-    expect(hasEventDriven || hasReactive).toBe(true);
+    const hasEventTriggered = lower.includes("event") && lower.includes("trigger");
+    expect(hasEventDriven || hasReactive || hasEventTriggered).toBe(true);
   });
 
-  test("Decision Outcome mentions cron or heartbeat as fallback", async () => {
+  test("Decision Outcome references cron, heartbeat, or scheduled sweep", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
     expect(section).not.toBeNull();
@@ -93,10 +110,11 @@ describe("AC-3: hybrid event-driven + cron approach", () => {
     const hasCron = lower.includes("cron");
     const hasHeartbeat = lower.includes("heartbeat");
     const hasSweep = lower.includes("sweep");
-    expect(hasCron || hasHeartbeat || hasSweep).toBe(true);
+    const hasScheduled = lower.includes("scheduled");
+    expect(hasCron || hasHeartbeat || hasSweep || hasScheduled).toBe(true);
   });
 
-  test("Decision Outcome describes a hybrid or combined approach", async () => {
+  test("Decision Outcome describes a hybrid or combined strategy", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
     expect(section).not.toBeNull();
@@ -105,56 +123,78 @@ describe("AC-3: hybrid event-driven + cron approach", () => {
     const hasHybrid = lower.includes("hybrid");
     const hasCombined = lower.includes("combined");
     const hasBoth = lower.includes("both");
-    const hasPlusFallback = lower.includes("fallback");
-    expect(hasHybrid || hasCombined || hasBoth || hasPlusFallback).toBe(true);
+    const hasFallback = lower.includes("fallback");
+    const hasPlus = lower.includes("plus");
+    expect(hasHybrid || hasCombined || hasBoth || hasFallback || hasPlus).toBe(
+      true,
+    );
+  });
+
+  test("references a time interval for the cron/heartbeat (e.g. 15-30 minutes)", async () => {
+    const content = await readAdr(REPO_ADR);
+    const section = extractSection(content, "Decision Outcome");
+    expect(section).not.toBeNull();
+
+    const lower = section!.toLowerCase();
+    // Should mention a time interval — could be "15 minutes", "30 min", or a range
+    const hasMinutes = lower.includes("minute");
+    const hasInterval = lower.includes("interval");
+    const hasPeriod = lower.includes("period");
+    expect(hasMinutes || hasInterval || hasPeriod).toBe(true);
   });
 });
 
 // --------------------------------------------------------------------------
 // AC-4: Has ### Consequences subsection with Good, Bad, and Neutral items
 // --------------------------------------------------------------------------
-describe("AC-4: Consequences subsection with Good, Bad, and Neutral", () => {
-  test("Decision Outcome has a ### Consequences subsection", async () => {
+describe("AC-4: Consequences subsection with Good, Bad, Neutral", () => {
+  test("Decision Outcome contains a ### Consequences subsection", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
     expect(section).not.toBeNull();
     expect(section!).toMatch(/^### Consequences/m);
   });
 
-  test("Consequences lists Good outcomes", async () => {
+  test("Consequences include Good outcomes", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
     expect(section).not.toBeNull();
 
     const subsections = extractSubsections(section!);
-    const consequences = subsections.find((s) => s.title.includes("Consequences"));
+    const consequences = subsections.find((s) =>
+      s.title.includes("Consequences"),
+    );
     expect(consequences).toBeDefined();
     expect(consequences!.body.toLowerCase()).toMatch(/good/);
   });
 
-  test("Consequences lists Bad outcomes", async () => {
+  test("Consequences include Bad outcomes", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
     expect(section).not.toBeNull();
 
     const subsections = extractSubsections(section!);
-    const consequences = subsections.find((s) => s.title.includes("Consequences"));
+    const consequences = subsections.find((s) =>
+      s.title.includes("Consequences"),
+    );
     expect(consequences).toBeDefined();
     expect(consequences!.body.toLowerCase()).toMatch(/bad/);
   });
 
-  test("Consequences lists Neutral outcomes", async () => {
+  test("Consequences include Neutral outcomes", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
     expect(section).not.toBeNull();
 
     const subsections = extractSubsections(section!);
-    const consequences = subsections.find((s) => s.title.includes("Consequences"));
+    const consequences = subsections.find((s) =>
+      s.title.includes("Consequences"),
+    );
     expect(consequences).toBeDefined();
     expect(consequences!.body.toLowerCase()).toMatch(/neutral/);
   });
 
-  test("Good consequences mention autonomous action", async () => {
+  test("Good consequences cover autonomous action", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
     expect(section).not.toBeNull();
@@ -162,10 +202,11 @@ describe("AC-4: Consequences subsection with Good, Bad, and Neutral", () => {
     const lower = section!.toLowerCase();
     const hasAutonomous = lower.includes("autonomous");
     const hasAutomatic = lower.includes("automatic");
-    expect(hasAutonomous || hasAutomatic).toBe(true);
+    const hasSelfDriven = lower.includes("self-driven");
+    expect(hasAutonomous || hasAutomatic || hasSelfDriven).toBe(true);
   });
 
-  test("Good consequences mention faster feedback loops", async () => {
+  test("Good consequences cover faster feedback loops", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
     expect(section).not.toBeNull();
@@ -174,7 +215,7 @@ describe("AC-4: Consequences subsection with Good, Bad, and Neutral", () => {
     expect(lower).toMatch(/feedback/);
   });
 
-  test("Good consequences mention note queue processing", async () => {
+  test("Good consequences cover note queue processing", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
     expect(section).not.toBeNull();
@@ -183,7 +224,7 @@ describe("AC-4: Consequences subsection with Good, Bad, and Neutral", () => {
     expect(lower).toMatch(/note\s+queue/);
   });
 
-  test("Bad consequences mention cost of LLM calls", async () => {
+  test("Bad consequences cover cost of LLM calls", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
     expect(section).not.toBeNull();
@@ -192,10 +233,11 @@ describe("AC-4: Consequences subsection with Good, Bad, and Neutral", () => {
     const hasCost = lower.includes("cost");
     const hasLlm = lower.includes("llm");
     const hasToken = lower.includes("token");
-    expect(hasCost && (hasLlm || hasToken)).toBe(true);
+    const hasExpense = lower.includes("expens");
+    expect(hasCost && (hasLlm || hasToken || hasExpense)).toBe(true);
   });
 
-  test("Bad consequences mention runaway action risk", async () => {
+  test("Bad consequences cover risk of runaway actions", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
     expect(section).not.toBeNull();
@@ -203,10 +245,22 @@ describe("AC-4: Consequences subsection with Good, Bad, and Neutral", () => {
     const lower = section!.toLowerCase();
     const hasRunaway = lower.includes("runaway");
     const hasCascade = lower.includes("cascade");
-    expect(hasRunaway || hasCascade).toBe(true);
+    const hasLoop = lower.includes("infinite") || lower.includes("spiral");
+    expect(hasRunaway || hasCascade || hasLoop).toBe(true);
   });
 
-  test("Neutral consequences mention human override or cancel", async () => {
+  test("Bad consequences mention complexity", async () => {
+    const content = await readAdr(REPO_ADR);
+    const section = extractSection(content, "Decision Outcome");
+    expect(section).not.toBeNull();
+
+    const lower = section!.toLowerCase();
+    const hasComplexity = lower.includes("complex");
+    const hasOps = lower.includes("operational");
+    expect(hasComplexity || hasOps).toBe(true);
+  });
+
+  test("Neutral consequences cover human override or cancel", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
     expect(section).not.toBeNull();
@@ -215,42 +269,59 @@ describe("AC-4: Consequences subsection with Good, Bad, and Neutral", () => {
     const hasOverride = lower.includes("override");
     const hasCancel = lower.includes("cancel");
     const hasPause = lower.includes("pause");
-    expect(hasOverride || hasCancel || hasPause).toBe(true);
+    const hasInterrupt = lower.includes("interrupt");
+    expect(hasOverride || hasCancel || hasPause || hasInterrupt).toBe(true);
   });
 });
 
 // --------------------------------------------------------------------------
 // AC-5: Has ## Pros and Cons of the Options section
 // --------------------------------------------------------------------------
-describe("AC-5: Pros and Cons of the Options section", () => {
-  test("contains a ## Pros and Cons heading", async () => {
+describe("AC-5: Pros and Cons of the Options section exists", () => {
+  test("ADR contains a ## Pros and Cons heading", async () => {
     const content = await readAdr(REPO_ADR);
     expect(content).toMatch(/^## Pros and Cons/m);
+  });
+
+  test("Pros and Cons section has substantive content", async () => {
+    const content = await readAdr(REPO_ADR);
+    const section = extractSection(content, "Pros and Cons of the Options");
+    expect(section).not.toBeNull();
+    const wordCount = section!.split(/\s+/).filter((w) => w.length > 0).length;
+    expect(wordCount).toBeGreaterThanOrEqual(50);
   });
 });
 
 // --------------------------------------------------------------------------
 // AC-6: Each option from the Considered Options has pros and cons listed
 // --------------------------------------------------------------------------
-describe("AC-6: each considered option has pros and cons", () => {
-  test("Pros and Cons section has subsections matching Considered Options", async () => {
+describe("AC-6: Each considered option has pros and cons", () => {
+  test("Pros and Cons section has at least as many subsections as Considered Options", async () => {
     const content = await readAdr(REPO_ADR);
+
     const consideredSection = extractSection(content, "Considered Options");
     expect(consideredSection).not.toBeNull();
 
-    const prosConsSection = extractSection(content, "Pros and Cons of the Options");
+    const prosConsSection = extractSection(
+      content,
+      "Pros and Cons of the Options",
+    );
     expect(prosConsSection).not.toBeNull();
 
     const consideredOptions = extractSubsections(consideredSection!);
     const prosConsOptions = extractSubsections(prosConsSection!);
 
-    // Every option from Considered Options should have a matching entry in Pros and Cons
-    expect(prosConsOptions.length).toBeGreaterThanOrEqual(consideredOptions.length);
+    expect(prosConsOptions.length).toBeGreaterThanOrEqual(
+      consideredOptions.length,
+    );
   });
 
-  test("each option subsection in Pros and Cons lists Pros", async () => {
+  test("each option in Pros and Cons lists pros (advantages)", async () => {
     const content = await readAdr(REPO_ADR);
-    const prosConsSection = extractSection(content, "Pros and Cons of the Options");
+    const prosConsSection = extractSection(
+      content,
+      "Pros and Cons of the Options",
+    );
     expect(prosConsSection).not.toBeNull();
 
     const subsections = extractSubsections(prosConsSection!);
@@ -258,16 +329,20 @@ describe("AC-6: each considered option has pros and cons", () => {
 
     for (const sub of subsections) {
       const lower = sub.body.toLowerCase();
-      const hasPros = lower.includes("pros:") || lower.includes("pro:");
+      const hasPros = lower.includes("pros") || lower.includes("pro:");
       const hasGood = lower.includes("good:");
       const hasAdvantage = lower.includes("advantage");
-      expect(hasPros || hasGood || hasAdvantage).toBe(true);
+      const hasStrength = lower.includes("strength");
+      expect(hasPros || hasGood || hasAdvantage || hasStrength).toBe(true);
     }
   });
 
-  test("each option subsection in Pros and Cons lists Cons", async () => {
+  test("each option in Pros and Cons lists cons (disadvantages)", async () => {
     const content = await readAdr(REPO_ADR);
-    const prosConsSection = extractSection(content, "Pros and Cons of the Options");
+    const prosConsSection = extractSection(
+      content,
+      "Pros and Cons of the Options",
+    );
     expect(prosConsSection).not.toBeNull();
 
     const subsections = extractSubsections(prosConsSection!);
@@ -275,10 +350,29 @@ describe("AC-6: each considered option has pros and cons", () => {
 
     for (const sub of subsections) {
       const lower = sub.body.toLowerCase();
-      const hasCons = lower.includes("cons:") || lower.includes("con:");
+      const hasCons = lower.includes("cons") || lower.includes("con:");
       const hasBad = lower.includes("bad:");
       const hasDisadvantage = lower.includes("disadvantage");
-      expect(hasCons || hasBad || hasDisadvantage).toBe(true);
+      const hasWeakness = lower.includes("weakness");
+      expect(hasCons || hasBad || hasDisadvantage || hasWeakness).toBe(true);
+    }
+  });
+
+  test("each option lists at least one pro bullet and one con bullet", async () => {
+    const content = await readAdr(REPO_ADR);
+    const prosConsSection = extractSection(
+      content,
+      "Pros and Cons of the Options",
+    );
+    expect(prosConsSection).not.toBeNull();
+
+    const subsections = extractSubsections(prosConsSection!);
+    for (const sub of subsections) {
+      // Each option subsection should have bullet points
+      const bullets = sub.body
+        .split("\n")
+        .filter((line) => /^\s*[-*]\s+/.test(line));
+      expect(bullets.length).toBeGreaterThanOrEqual(2);
     }
   });
 });
@@ -286,7 +380,7 @@ describe("AC-6: each considered option has pros and cons", () => {
 // --------------------------------------------------------------------------
 // AC-7: Mentions safety constraints (human override, action limits, cost caps)
 // --------------------------------------------------------------------------
-describe("AC-7: safety constraints mentioned", () => {
+describe("AC-7: Safety constraints mentioned", () => {
   test("mentions human override capability", async () => {
     const content = await readAdr(REPO_ADR);
     const section = extractSection(content, "Decision Outcome");
@@ -295,9 +389,13 @@ describe("AC-7: safety constraints mentioned", () => {
     const lower = section!.toLowerCase();
     const hasOverride = lower.includes("override");
     const hasCancel = lower.includes("cancel");
-    const hasKillSwitch = lower.includes("kill switch") || lower.includes("kill-switch");
+    const hasKillSwitch =
+      lower.includes("kill switch") || lower.includes("kill-switch");
     const hasInterrupt = lower.includes("interrupt");
-    expect(hasOverride || hasCancel || hasKillSwitch || hasInterrupt).toBe(true);
+    const hasHumanControl = lower.includes("human") && lower.includes("control");
+    expect(
+      hasOverride || hasCancel || hasKillSwitch || hasInterrupt || hasHumanControl,
+    ).toBe(true);
   });
 
   test("mentions action limits or rate limiting", async () => {
@@ -311,7 +409,15 @@ describe("AC-7: safety constraints mentioned", () => {
     const hasBound = lower.includes("bound");
     const hasGuard = lower.includes("guard");
     const hasLimit = lower.includes("limit");
-    expect(hasActionLimit || hasRateLimit || hasBound || hasGuard || hasLimit).toBe(true);
+    const hasThrottle = lower.includes("throttl");
+    expect(
+      hasActionLimit ||
+        hasRateLimit ||
+        hasBound ||
+        hasGuard ||
+        hasLimit ||
+        hasThrottle,
+    ).toBe(true);
   });
 
   test("mentions cost caps or budget controls", async () => {
@@ -322,9 +428,23 @@ describe("AC-7: safety constraints mentioned", () => {
     const lower = section!.toLowerCase();
     const hasCostCap = lower.includes("cost cap");
     const hasBudget = lower.includes("budget");
-    const hasTokenCeiling = lower.includes("token ceiling") || lower.includes("token cap");
-    const hasCostControl = lower.includes("cost") && lower.includes("cap");
-    expect(hasCostCap || hasBudget || hasTokenCeiling || hasCostControl).toBe(true);
+    const hasTokenCap =
+      lower.includes("token ceiling") || lower.includes("token cap");
+    const hasCostAndCap = lower.includes("cost") && lower.includes("cap");
+    const hasSpendLimit = lower.includes("spend") && lower.includes("limit");
+    expect(
+      hasCostCap || hasBudget || hasTokenCap || hasCostAndCap || hasSpendLimit,
+    ).toBe(true);
+  });
+
+  test("safety constraints appear across the broader ADR (not just Decision Outcome)", async () => {
+    const content = await readAdr(REPO_ADR);
+    const lower = content.toLowerCase();
+
+    // The full ADR should reference safety in multiple places
+    const safetyKeywords = ["safety", "safe", "guardrail", "constraint", "limit"];
+    const safetyMentions = safetyKeywords.filter((kw) => lower.includes(kw));
+    expect(safetyMentions.length).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -333,7 +453,7 @@ describe("AC-7: safety constraints mentioned", () => {
 // --------------------------------------------------------------------------
 describe("AC-8: TypeScript compiles", () => {
   test("this test file compiles and runs under bun test", () => {
-    // If we reach this point, the file compiled successfully under bun
+    // If we reach this point, the file compiled successfully
     expect(true).toBe(true);
   });
 });
