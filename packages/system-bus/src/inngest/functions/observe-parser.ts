@@ -5,6 +5,11 @@ export interface ObserverOutput {
   parsed: boolean;
 }
 
+export interface DistilledSegment {
+  narrative: string;
+  facts: string[];
+}
+
 export function optimizeForContext(observations: string): string {
   if (observations.trim().length === 0) {
     return "";
@@ -37,6 +42,28 @@ function hasObserverEmojiMarkers(raw: string): boolean {
   return raw
     .split(/\r?\n/)
     .some((line) => line.includes("🔴") || line.includes("🟡") || line.includes("🟢"));
+}
+
+export function parseSegments(observations: string): DistilledSegment[] {
+  const segmentPattern = /<segment>([\s\S]*?)<\/segment>/gi;
+  const segments = observations.matchAll(segmentPattern);
+  const parsed: DistilledSegment[] = [];
+
+  for (const segmentMatch of segments) {
+    const segmentBody = segmentMatch[1] ?? "";
+    const narrative = (extractTagContent(segmentBody, "narrative") ?? "").trim();
+    const factsBody = extractTagContent(segmentBody, "facts") ?? "";
+    const facts = factsBody
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => line.replace(/^[-*•]\s*/, "").trim())
+      .filter((line) => line.length > 0);
+
+    parsed.push({ narrative, facts });
+  }
+
+  return parsed;
 }
 
 export function parseObserverOutput(raw: string): ObserverOutput {
