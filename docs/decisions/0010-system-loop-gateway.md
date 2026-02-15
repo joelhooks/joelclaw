@@ -115,7 +115,21 @@ This option best satisfies the decision drivers. It preserves near-real-time aut
 - Highest cost profile and hardest model budget control.
 - Largest safety and reliability surface, including persistent-context failure modes.
 
-## Implementation Notes
+## Implementation Plan
 
-This ADR intentionally chooses the hybrid trigger model for orchestration policy.
-Execution details should preserve existing pipeline boundaries in ADR-0005, ADR-0007, and ADR-0008.
+1. Add a new Inngest orchestration function, `system/heartbeat`, that can start from two trigger paths: a cron schedule (every 15-30 minutes) and terminal workflow events (`agent/loop.complete`, `agent/loop.retro.complete`, `system/note`, and failure events). Both trigger paths route into the same decision pipeline to keep behavior consistent.
+2. Implement a state-gathering step that assembles a compact snapshot before any decision is made. The snapshot must read: note queue length, recent slog entries, pending retro recommendations, active loop runs, and half-done inventory. The step should return typed fields with timestamps so stale or partial state is detectable.
+3. Add an LLM decision step that evaluates the state snapshot and selects exactly one action from a constrained action set: `start_loop`, `process_notes`, `apply_retro_recommendation`, `emit_alert`, `do_nothing`. The prompt and response schema must reject actions outside this set.
+4. Implement an action execution step that maps the chosen action to a single Inngest event emission (or no event for `do_nothing`). Event payloads should include decision metadata (`decisionId`, `reasoningSummary`, `stateHash`, `triggerSource`) for traceability and deduplication.
+5. Enforce safety rails before emitting actions: maximum actions per hour per action type, model cost budget checks, human approval gate for destructive actions, and mandatory reasoning logs on every decision (including `do_nothing`) written to slog for auditability.
+
+## Verification
+
+- [ ] Triggering `system/heartbeat` by cron and by a terminal event executes the same decision pipeline and records the correct `triggerSource` in logs.
+- [ ] The state-gathering step output includes all required fields (`noteQueueLength`, `recentSlogEntries`, `pendingRetroRecommendations`, `activeLoopRuns`, `halfDoneInventory`) and each field has a timestamp.
+- [ ] The LLM decision output is schema-validated and never emits an action outside `start_loop`, `process_notes`, `apply_retro_recommendation`, `emit_alert`, `do_nothing`.
+- [ ] Each non-`do_nothing` decision emits exactly one expected Inngest event with `decisionId`, `reasoningSummary`, and `stateHash` in the payload.
+- [ ] Rate limiting blocks actions after the configured max-per-hour threshold and logs a guardrail hit instead of emitting the blocked event.
+- [ ] Cost budget enforcement prevents action emission when the orchestration budget is exhausted and logs a budget-denied decision.
+- [ ] Destructive actions require explicit human approval; without approval, the function emits no destructive event and records `approvalRequired=true`.
+- [ ] Every decision path, including `do_nothing`, writes a reasoning entry to slog that can be queried by `decisionId`.
