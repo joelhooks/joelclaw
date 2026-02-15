@@ -58,7 +58,8 @@ export function remarkAdrLinks() {
 
       while ((match = ADR_REF.exec(text)) !== null) {
         const num = match[1];
-        const slug: string | undefined = map.get(num);
+        if (!num) continue;
+        const slug = map.get(num);
         if (!slug) continue;
 
         // Text before the match
