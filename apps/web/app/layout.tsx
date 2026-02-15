@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import Link from "next/link";
-import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, AUTHOR } from "../lib/constants";
+import { SITE_URL, SITE_NAME, SITE_TAGLINE, SITE_DESCRIPTION, AUTHOR } from "../lib/constants";
 import { personJsonLd } from "../lib/jsonld";
 import "./globals.css";
 
@@ -73,8 +73,13 @@ export default function RootLayout({
       >
         <div className="mx-auto max-w-2xl px-6 py-16">
           <header className="mb-16">
-            <Link href="/" className="text-lg font-semibold hover:text-white transition-colors">
-              {SITE_NAME}
+            <Link href="/" className="group block">
+              <span className="text-lg font-semibold group-hover:text-white transition-colors">
+                {SITE_NAME}
+              </span>
+              <span className="block text-sm text-neutral-500 mt-0.5">
+                {SITE_TAGLINE}
+              </span>
             </Link>
           </header>
           <main>{children}</main>
