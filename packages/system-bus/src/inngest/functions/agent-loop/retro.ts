@@ -179,20 +179,25 @@ function parseStoryDetails(
   const byId: Record<string, Partial<StoryDetail>> = {};
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    const m = line.match(
+    const line = lines[i];
+    if (!line) continue;
+    const trimmedLine = line.trim();
+    const m = trimmedLine.match(
       /^\*\*Story\s+([^:]+):\s+(.+?)\*\*\s+—\s+(PASSED|FAILED|RECHECK PASS|RECHECK STILL FAILING)(?:\s+\(attempt\s+(\d+)\))?/i
     );
     if (!m) continue;
 
     const storyId = m[1]?.trim();
+    if (!storyId) continue;
     const storyTitle = m[2]?.trim();
     const outcome = (m[3] ?? "").toUpperCase();
     const attempt = parseInt(m[4] ?? "1", 10);
 
     let tool = byId[storyId]?.tool ?? "unknown";
     for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
-      const toolMatch = lines[j].trim().match(/^- Tool:\s+(.+)$/i);
+      const candidate = lines[j];
+      if (!candidate) continue;
+      const toolMatch = candidate.trim().match(/^- Tool:\s+(.+)$/i);
       if (toolMatch?.[1]) {
         tool = toolMatch[1].trim();
         break;

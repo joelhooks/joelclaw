@@ -208,6 +208,14 @@ export const agentLoopPlan = inngest.createFunction(
 
     // Step 4: Dispatch next story
     const next = remaining[0];
+    if (!next) {
+      return {
+        status: "complete",
+        loopId,
+        storiesCompleted: prd.stories.filter((s) => s.passes).length,
+        recheckResults: [],
+      };
+    }
     const story = {
       id: next.id,
       title: next.title,
