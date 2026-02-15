@@ -4,17 +4,19 @@
     {
       "id": "DUR-1",
       "title": "Implement and export formatLoopDuration",
-      "description": "Create the file src/inngest/functions/agent-loop/utils.ts and implement a pure function formatLoopDuration(ms: number): string that converts milliseconds into a human-readable duration string. The function should handle hours, minutes, and seconds. It must be exported as a named export.\n\nBehavior:\n- 0 → '0s'\n- Negative values → '0s'\n- Sub-second values: 500 → '0.5s'\n- Whole seconds: 5000 → '5s'\n- Minutes and seconds: 65000 → '1m 5s'\n- Hours, minutes, and seconds: 3661000 → '1h 1m 1s'\n- When a component is zero, omit it: 3600000 → '1h', 60000 → '1m'\n- Fractional seconds only appear when total duration is under 60 seconds\n\nFile path: src/inngest/functions/agent-loop/utils.ts",
+      "description": "Create the file src/inngest/functions/agent-loop/utils.ts and implement a pure function `formatLoopDuration(ms: number): string` that converts milliseconds into a human-readable duration string. The function should handle: sub-second values (500 → '0.5s'), exact seconds (5000 → '5s'), minutes and seconds (65000 → '1m 5s'), hours, minutes, and seconds (3661000 → '1h 1m 1s'), zero (0 → '0s'), and negative values (any negative number → '0s'). The function must be exported as a named export. No external dependencies — pure arithmetic and string formatting only.",
       "acceptance_criteria": [
-        "File src/inngest/functions/agent-loop/utils.ts exists and exports formatLoopDuration as a named export",
+        "File src/inngest/functions/agent-loop/utils.ts exists and exports a named function formatLoopDuration",
         "formatLoopDuration(0) returns '0s'",
         "formatLoopDuration(-100) returns '0s'",
         "formatLoopDuration(500) returns '0.5s'",
         "formatLoopDuration(5000) returns '5s'",
         "formatLoopDuration(65000) returns '1m 5s'",
         "formatLoopDuration(3661000) returns '1h 1m 1s'",
-        "formatLoopDuration(3600000) returns '1h'",
-        "Function is pure — no side effects, no external dependencies",
+        "formatLoopDuration(1000) returns '1s'",
+        "formatLoopDuration(60000) returns '1m 0s'",
+        "formatLoopDuration(3600000) returns '1h 0m 0s'",
+        "Function is pure with no side effects or external dependencies",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 1,
