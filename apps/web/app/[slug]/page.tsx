@@ -6,6 +6,7 @@ import { mdxComponents } from "../../lib/mdx";
 import { remarkPlugins, rehypePlugins } from "../../lib/mdx-plugins";
 import { blogPostingJsonLd, breadcrumbJsonLd } from "../../lib/jsonld";
 import { SITE_URL, SITE_NAME } from "../../lib/constants";
+import { RelativeTime } from "../../lib/relative-time";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -44,13 +45,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
-function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-}
 
 export default async function PostPage({ params }: Props) {
   const { slug } = await params;
@@ -83,7 +77,7 @@ export default async function PostPage({ params }: Props) {
         )}
         <h1 className="text-3xl font-bold tracking-tight">{meta.title}</h1>
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-neutral-500">
-          <time dateTime={meta.date}>{formatDate(meta.date)}</time>
+          <RelativeTime date={meta.date} />
           {meta.channel && <span>· {meta.channel}</span>}
           {meta.duration && <span>· {meta.duration}</span>}
         </div>

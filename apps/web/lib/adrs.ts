@@ -26,8 +26,9 @@ function extractDescription(content: string): string {
   const ctx = content.match(
     /## Context and Problem Statement\s+(.+?)(?:\n\n|\n##)/s
   );
-  if (ctx) {
-    const first = ctx[1].split("\n\n")[0].trim();
+  const match = ctx?.[1];
+  if (match) {
+    const first = (match.split("\n\n")[0] ?? "").trim();
     return first.length > 200 ? first.slice(0, 197) + "…" : first;
   }
   return "";

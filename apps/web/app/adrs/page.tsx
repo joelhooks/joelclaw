@@ -41,7 +41,7 @@ const STATUS_CONFIG: Record<
 };
 
 function StatusBadge({ status }: { status: string }) {
-  const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.proposed;
+  const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.proposed!;
   return (
     <span
       className={`inline-flex text-[10px] font-medium uppercase tracking-widest border rounded-sm px-2 py-0.5 ${cfg.color} ${cfg.bg} ${cfg.border}`}
