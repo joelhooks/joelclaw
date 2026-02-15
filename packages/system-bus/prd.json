@@ -15,7 +15,11 @@
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 1,
+<<<<<<< Updated upstream
       "passes": true
+=======
+      "passes": false
+>>>>>>> Stashed changes
     },
     {
       "id": "NUUM-2",
@@ -29,7 +33,11 @@
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 2,
+<<<<<<< Updated upstream
       "passes": true
+=======
+      "passes": false
+>>>>>>> Stashed changes
     },
     {
       "id": "NUUM-3",
@@ -43,8 +51,12 @@
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 3,
+<<<<<<< Updated upstream
       "passes": false,
       "skipped": true
+=======
+      "passes": false
+>>>>>>> Stashed changes
     },
     {
       "id": "NUUM-4",
@@ -57,8 +69,12 @@
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 4,
+<<<<<<< Updated upstream
       "passes": false,
       "skipped": true
+=======
+      "passes": false
+>>>>>>> Stashed changes
     },
     {
       "id": "NUUM-5",
@@ -73,8 +89,12 @@
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 5,
+<<<<<<< Updated upstream
       "passes": false,
       "skipped": true
+=======
+      "passes": false
+>>>>>>> Stashed changes
     },
     {
       "id": "NUUM-6",

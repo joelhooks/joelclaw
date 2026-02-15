@@ -153,6 +153,7 @@ OpenClaw has a **layered AGENTS.md** at its repo root (`~/Code/openclaw/openclaw
 | Tailscale | 1.94.1 | homebrew | Mesh VPN + SSH access (running, SSH enabled) |
 | tsgo | — | npm | TypeScript 7 native compiler |
 | slog | 0.2.0 | bun link | System log CLI (Effect, agent-first HATEOAS JSON, ~/Code/joelhooks/slog/) |
+| Docker Sandbox | 0.11.0 | docker desktop | Isolated agent execution (claude, codex in sandboxes) |
 | Bun | 1.3.9 | homebrew | JS runtime & package manager |
 | Node | 24.13.1 | fnm | JS runtime |
 | yt-dlp | 2026.02.04 | homebrew | Video downloader (YouTube + many sites) |

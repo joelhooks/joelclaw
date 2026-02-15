@@ -1,5 +1,0 @@
-All 8 tests pass, including the previously failing AC-4 test and the tsc --noEmit gate.
-
-**Summary of changes:**
-
-Single-line edit in `src/inngest/functions/observe-prompt.ts:15` — changed "For each retained fact line, add exactly one priority marker:" to "Tag individual facts with exactly one priority marker:". This ensures the prompt contains the phrase "individual facts" that the test at line 70 asserts, while preserving the same semantic meaning. The `bun install` was also needed to restore `node_modules` so `tsc --noEmit` passes.
