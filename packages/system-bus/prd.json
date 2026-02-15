@@ -1,0 +1,147 @@
+{
+  "title": "Durable Multi-Agent Coding Loops via Inngest",
+  "description": "Implement ADR-0005: 4-role Inngest pipeline (PLANNER\u2192IMPLEMENTOR\u2192REVIEWER\u2192JUDGE) for durable autonomous coding loops. Each role is a separate Inngest function run, event-chained, with subprocess spawning of codex/claude/pi.",
+  "stories": [
+    {
+      "id": "S1",
+      "title": "Event schema and client types",
+      "description": "Add all agent/loop.* event types to the Inngest client (client.ts). Include loopId, storyId, attempt fields per ADR spec.",
+      "acceptance_criteria": [
+        "client.ts exports typed events: agent/loop.start, agent/loop.plan, agent/loop.implement, agent/loop.review, agent/loop.judge, agent/loop.cancel, agent/loop.complete, agent/loop.story.pass, agent/loop.story.fail",
+        "Event data types match the ADR event schema exactly",
+        "TypeScript compiles with no errors"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "S2",
+      "title": "Shared loop utilities",
+      "description": "Create src/inngest/functions/agent-loop/utils.ts with: parseToolOutput(), isCancelled(), writePidFile(), cleanupPid(), claimCheck read/write helpers. These are used by all 4 role functions.",
+      "acceptance_criteria": [
+        "parseToolOutput(tool, outputPath) returns { success, output, tokensUsed? }",
+        "isCancelled(loopId) checks /tmp/agent-loop/{loopId}/cancelled",
+        "writePidFile(loopId, pid) writes to /tmp/agent-loop/{loopId}/pid",
+        "claimCheck write: saves large output to /tmp/agent-loop/{loopId}/{name}.json, returns path",
+        "claimCheck read: loads from path",
+        "All functions exported and type-safe"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "S3",
+      "title": "PLANNER function (agent-loop-plan)",
+      "description": "Inngest function triggered by agent/loop.start and agent/loop.plan. Reads prd.json, finds next unpassed story by priority, emits agent/loop.implement. If no stories remain, emits agent/loop.complete.",
+      "acceptance_criteria": [
+        "Function registered with id 'agent-loop-plan'",
+        "Triggered by agent/loop.start and agent/loop.plan events",
+        "Checks cancellation at entry",
+        "Reads prd.json from event.data.project + event.data.prdPath",
+        "Finds first story where passes===false, ordered by priority",
+        "Emits agent/loop.implement with storyId, tool from toolAssignments or default 'codex'",
+        "If no stories remain, emits agent/loop.complete with summary",
+        "Concurrency key: agent-loop/{{ event.data.project }}, limit 1"
+      ],
+      "priority": 3,
+      "passes": true
+    },
+    {
+      "id": "S4",
+      "title": "IMPLEMENTOR function (agent-loop-implement)",
+      "description": "Inngest function triggered by agent/loop.implement. Spawns the assigned tool (codex/claude/pi) with the story prompt. Captures output. Commits changes. Emits agent/loop.review.",
+      "acceptance_criteria": [
+        "Function registered with id 'agent-loop-implement'",
+        "Triggered by agent/loop.implement",
+        "Checks cancellation at entry",
+        "Spawns tool subprocess (codex exec, claude -p, or pi) with story context",
+        "Writes PID file for cancellation support",
+        "Captures stdout to /tmp/agent-loop/{loopId}/{storyId}-{attempt}.out",
+        "On success: git add + commit with message including loopId, storyId, attempt",
+        "Idempotency: skips if commit with matching message already exists",
+        "Emits agent/loop.review with commitSha",
+        "Tool-specific timeouts: codex 15min, claude 20min, pi 20min"
+      ],
+      "priority": 4,
+      "passes": true
+    },
+    {
+      "id": "S5",
+      "title": "REVIEWER function (agent-loop-review)",
+      "description": "Inngest function triggered by agent/loop.review. Writes tests from acceptance criteria WITHOUT reading implementation code (AgentCoder insight). Then runs typecheck + lint + tests. Produces structured feedback. Emits agent/loop.judge.",
+      "acceptance_criteria": [
+        "Function registered with id 'agent-loop-review'",
+        "Triggered by agent/loop.review",
+        "Checks cancellation at entry",
+        "Reads story acceptance criteria from prd.json (NOT from implementation code)",
+        "Spawns reviewer tool to write tests based on acceptance criteria text only",
+        "Runs typecheck (bun tsc --noEmit or equivalent), lint, and tests",
+        "Produces structured feedback: { testsPassed, testsFailed, typecheckOk, lintOk, details }",
+        "Uses claim-check for large feedback (writes to file, passes path)",
+        "Emits agent/loop.judge with testResults and feedback"
+      ],
+      "priority": 5,
+      "passes": true
+    },
+    {
+      "id": "S6",
+      "title": "JUDGE function (agent-loop-judge)",
+      "description": "Inngest function triggered by agent/loop.judge. Reads test results + feedback. On PASS: updates prd.json, appends progress.txt, slog write, emits agent/loop.plan. On FAIL: emits agent/loop.implement with feedback (up to maxRetries).",
+      "acceptance_criteria": [
+        "Function registered with id 'agent-loop-judge'",
+        "Triggered by agent/loop.judge",
+        "Checks cancellation at entry",
+        "PASS path: updates prd.json (passes: true), appends progress.txt, slog write, emits agent/loop.story.pass + agent/loop.plan",
+        "FAIL path (attempt < maxRetries): emits agent/loop.implement with feedback from reviewer",
+        "FAIL path (attempt >= maxRetries): skips story, emits agent/loop.story.fail + agent/loop.plan",
+        "slog write on every decision with action, tool, detail, reason"
+      ],
+      "priority": 6,
+      "passes": true
+    },
+    {
+      "id": "S7",
+      "title": "Register functions and wire serve.ts",
+      "description": "Export all 4 agent-loop functions from the functions index and register them in serve.ts. Verify they appear in igs functions.",
+      "acceptance_criteria": [
+        "All 4 functions exported from src/inngest/functions/index.ts",
+        "All 4 functions registered in serve.ts inngestServe() call",
+        "serve.ts root JSON includes agent-loop functions in the functions list",
+        "Worker starts without errors (bun run src/serve.ts)",
+        "igs functions shows all 4 agent-loop functions"
+      ],
+      "priority": 7,
+      "passes": true
+    },
+    {
+      "id": "S8",
+      "title": "igs loop CLI subcommands",
+      "description": "Add 'igs loop start', 'igs loop status', and 'igs loop cancel' subcommands to the igs CLI.",
+      "acceptance_criteria": [
+        "igs loop start --project PATH --prd PATH sends agent/loop.start event",
+        "igs loop status [loopId] shows loop state from recent runs",
+        "igs loop cancel LOOP_ID sends agent/loop.cancel, writes cancel flag, kills subprocess",
+        "All commands return HATEOAS JSON with next_actions",
+        "igs help shows loop subcommands"
+      ],
+      "priority": 8,
+      "passes": true
+    },
+    {
+      "id": "S9",
+      "title": "End-to-end smoke test",
+      "description": "Create a minimal test project with a 1-story prd.json. Send agent/loop.start and verify the full pipeline: PLAN\u2192IMPLEMENT\u2192REVIEW\u2192JUDGE\u2192PASS\u2192COMPLETE. All steps traceable via igs.",
+      "acceptance_criteria": [
+        "Test project exists at /tmp/agent-loop-test/ with a trivial 1-story prd.json",
+        "Sending agent/loop.start triggers the full 4-step pipeline",
+        "Each step visible as separate run in igs runs",
+        "prd.json updated with passes: true after judge passes",
+        "progress.txt created with story completion entry",
+        "slog entry written for the story",
+        "agent/loop.complete event emitted at end"
+      ],
+      "priority": 9,
+      "passes": true
+    }
+  ]
+}

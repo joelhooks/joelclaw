@@ -1,0 +1,56 @@
+{
+  "title": "Agent Loop Retrospective (ADR-0008 Phase 1)",
+  "description": "Post-loop retrospective function. After agent/loop.complete fires, analyze what happened and produce (1) a structured reflection note in Vault, (2) a machine-readable recommendation file that PLANNER consumes on the next loop run. This is the minimal bridge from loop execution to system learning.",
+  "stories": [
+    {
+      "id": "RETRO-1",
+      "title": "agent-loop-retro Inngest function",
+      "description": "Create src/inngest/functions/agent-loop/retro.ts. Triggered by agent/loop.complete. Collects loop artifacts: reads progress.txt from the project, reads the PRD from Redis (using loopId), and gathers story outcomes (pass/fail/skip counts, attempt counts, tools used). Normalizes everything into a single retrospective object. Emits agent/loop.retro.complete with the retrospective data. Register in serve.ts and index.ts.",
+      "acceptance_criteria": [
+        "retro.ts exports agentLoopRetro Inngest function triggered by agent/loop.complete",
+        "Function reads progress.txt from project directory",
+        "Function reads PRD from Redis via readPrd(project, prdPath, loopId)",
+        "Builds a retrospective object with: loopId, project, storiesCompleted, storiesFailed, storiesSkipped, storyDetails (array of {id, title, passed, skipped, attempts, tool}), codebasePatterns (extracted from progress.txt), totalDurationEstimate",
+        "Emits agent/loop.retro.complete event with the retrospective data",
+        "Add agent/loop.retro.complete event type to client.ts",
+        "Function is exported from index.ts and registered in serve.ts",
+        "TypeScript compiles with no errors"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "RETRO-2",
+      "title": "Write structured reflection note to Vault",
+      "description": "In the retro function, after building the retrospective object, write a structured markdown reflection note to ~/Vault/system/retrospectives/{loopId}.md. Include: loop summary, per-story outcomes with attempt counts, codebase patterns learned, what worked (stories that passed on attempt 1), what struggled (stories that needed retries or were skipped), and recommendations. Use frontmatter with loopId, project, date, and outcome counts. Create the directory if it doesn't exist.",
+      "acceptance_criteria": [
+        "Reflection note written to ~/Vault/system/retrospectives/{loopId}.md",
+        "Directory ~/Vault/system/retrospectives/ created if it doesn't exist",
+        "Note has YAML frontmatter with: loopId, project, date, storiesCompleted, storiesFailed, storiesSkipped",
+        "Note has sections: ## Summary, ## Story Outcomes (table), ## Codebase Patterns, ## What Worked, ## What Struggled, ## Recommendations",
+        "Story outcomes table includes: id, title, result (pass/skip/fail), attempts, tool",
+        "Codebase patterns section extracted from progress.txt",
+        "slog entry written with action 'retro-complete'",
+        "TypeScript compiles with no errors"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "RETRO-3",
+      "title": "Machine-readable planner recommendations file",
+      "description": "In the retro function, generate a JSON recommendations file at the project root: .agent-loop-recommendations.json. Contains: tool effectiveness rankings (which tool had best pass rate by attempt), retry risk patterns (story characteristics that correlated with retries), and suggested retryLadder for next run. PLANNER should read this file if it exists and include relevant recommendations in the implement event's prompt context. Update buildPrompt in implement.ts to check for and include recommendations.",
+      "acceptance_criteria": [
+        "Retro writes .agent-loop-recommendations.json to the project root",
+        "File contains: toolRankings (array of {tool, passRate, avgAttempts}), retryPatterns (array of strings describing what caused retries), suggestedRetryLadder (array of tool names)",
+        "File contains lastUpdated ISO timestamp and sourceLoopId",
+        "buildPrompt in implement.ts reads .agent-loop-recommendations.json if it exists",
+        "Recommendations included in prompt under '## Prior Loop Recommendations' section",
+        "If file doesn't exist, prompt is unchanged (backward compatible)",
+        "TypeScript compiles with no errors"
+      ],
+      "priority": 3,
+      "passes": true
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "title": "ADR-0007 v3: Skipped Story Recovery",
+  "description": "Three improvements to how the agent loop handles failing stories. Discovered during joelclaw-notes loop run where NOTE-3 was skipped but its tests actually pass after NOTE-4 landed. Root cause: three distinct failure modes (bad impl, bad tests, implicit dependency) were all treated the same way (retry same model, same tests, then skip).",
+  "stories": [
+    {
+      "id": "V3-1",
+      "title": "Recheck skipped stories after all stories processed",
+      "description": "After PLANNER has attempted all stories (no remaining unpassed/unskipped stories), do a 'recheck pass' on skipped stories before emitting loop.complete. For each skipped story: run the test suite (bun test + typecheck). If all checks pass now, mark the story as passed and unskip it. This catches the case where later stories fixed the underlying issue. The recheck should NOT re-implement or re-review — just run existing tests.",
+      "acceptance_criteria": [
+        "When no remaining stories exist, PLANNER checks for skipped stories before completing",
+        "For each skipped story, PLANNER runs typecheck + bun test in a step",
+        "If all checks pass, story is marked passes=true and skipped=false in prd.json",
+        "If checks still fail, story remains skipped (no retry)",
+        "Recheck results are logged to progress.txt",
+        "slog entry written for each recheck result (recheck-pass or recheck-still-failing)",
+        "Loop complete summary includes recheck results",
+        "TypeScript compiles with no errors"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "V3-2",
+      "title": "Model escalation ladder on retry",
+      "description": "Instead of retrying with the same model, escalate through different models on each attempt. Default ladder: attempt 1 = codex, attempt 2 = claude, attempt 3 = pi. This gives each attempt a genuinely different perspective. The JUDGE already decides the retry — update it to select the next model from the ladder instead of hardcoding 'codex'. The ladder should be configurable via toolAssignments in agent/loop.start but have a sensible default.",
+      "acceptance_criteria": [
+        "JUDGE selects the implementor model for retry based on attempt number",
+        "Default ladder: attempt 1 = codex, attempt 2 = claude, attempt 3 = codex (or pi if available)",
+        "The escalation ladder is configurable via a new 'retryLadder' field in agent/loop.start event data",
+        "retryLadder defaults to ['codex', 'claude', 'codex'] if not provided",
+        "JUDGE emits agent/loop.implement with the correct tool from the ladder",
+        "Event type in client.ts updated to include retryLadder field",
+        "TypeScript compiles with no errors"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "V3-3",
+      "title": "Stale test detection in JUDGE with fresh-eyes reviewer directive",
+      "description": "When the JUDGE sees the same story fail on attempt N and attempt N-1, and the failing test names are the same, the problem is likely the tests, not the implementation. In this case, JUDGE should include a 'freshTests' directive in the feedback sent back to IMPLEMENTOR, which gets forwarded to the next REVIEWER. The REVIEWER should detect this directive and rewrite tests from scratch instead of inheriting the previous test files. Implementation: JUDGE compares current testResults.details with prior attempt feedback to detect repeated test names. Add a 'freshTests' boolean to the implement event.",
+      "acceptance_criteria": [
+        "JUDGE detects when the same test names fail on consecutive attempts",
+        "When detected, JUDGE adds 'freshTests: true' to the feedback/implement event",
+        "agent/loop.implement event type updated with optional freshTests boolean",
+        "REVIEWER checks for freshTests flag in the review event data",
+        "When freshTests is true, REVIEWER deletes existing test files before writing new ones",
+        "The fresh-eyes prompt includes instruction to NOT look at prior test files",
+        "TypeScript compiles with no errors"
+      ],
+      "priority": 3,
+      "passes": true
+    }
+  ]
+}

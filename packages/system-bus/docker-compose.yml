@@ -1,0 +1,56 @@
+services:
+  inngest:
+    image: inngest/inngest
+    command: >
+      inngest start
+      --sdk-url http://host.docker.internal:3111/api/inngest
+      --poll-interval 5
+      --verbose
+    ports:
+      - "8288:8288" # API + Dashboard
+      - "8289:8289" # Connect WebSocket gateway
+    env_file:
+      - ~/.config/system-bus.env
+    environment:
+      - INNGEST_SQLITE_DIR=/data
+    volumes:
+      - inngest_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8288/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  qdrant:
+    image: qdrant/qdrant
+    ports:
+      - "6333:6333" # REST API + Dashboard
+      - "6334:6334" # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  inngest_data:
+  qdrant_data:
+  redis_data:
