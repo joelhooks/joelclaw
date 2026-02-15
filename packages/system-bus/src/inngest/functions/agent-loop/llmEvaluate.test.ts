@@ -150,12 +150,12 @@ describe("AC-4: Calls claude CLI with structured prompt", () => {
     expect(cmd).toContain("-p");
   });
 
-  test("requests json output format", async () => {
+  test("requests text output format", async () => {
     await llmEvaluate(makeOpts());
     const cmd = spawnCalls[0]!.cmd;
     const outputFmtIdx = cmd.indexOf("--output-format");
     expect(outputFmtIdx).toBeGreaterThan(-1);
-    expect(cmd[outputFmtIdx + 1]).toBe("json");
+    expect(cmd[outputFmtIdx + 1]).toBe("text");
   });
 });
 

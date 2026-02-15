@@ -486,7 +486,7 @@ export async function llmEvaluate(opts: {
 
   try {
     const proc = Bun.spawn(
-      ["claude", "-p", prompt, "--output-format", "json"],
+      ["claude", "-p", prompt, "--output-format", "text"],
       { stdout: "pipe", stderr: "pipe" }
     );
 
@@ -522,11 +522,24 @@ export async function llmEvaluate(opts: {
 
     if (exitCode !== 0) return LLM_EVAL_FALLBACK;
 
-    const parsed = JSON.parse(stdout) as {
-      verdict?: unknown;
-      reasoning?: unknown;
-      result?: unknown;
-    };
+    // Parse JSON from text output
+    let parsed: any;
+    try {
+      parsed = JSON.parse(stdout.trim());
+    } catch {
+      const jsonMatch = stdout.match(/```json?\s*\n([\s\S]*?)\n```/);
+      if (jsonMatch) {
+        parsed = JSON.parse(jsonMatch[1]!);
+      } else {
+        const braceStart = stdout.indexOf("{");
+        const braceEnd = stdout.lastIndexOf("}");
+        if (braceStart !== -1 && braceEnd !== -1) {
+          parsed = JSON.parse(stdout.slice(braceStart, braceEnd + 1));
+        } else {
+          return LLM_EVAL_FALLBACK;
+        }
+      }
+    }
 
     const payload = (
       parsed.result && typeof parsed.result === "object"
