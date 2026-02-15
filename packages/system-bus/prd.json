@@ -1,104 +1,25 @@
 {
-  "title": "ADR-0016: Idempotency Guards for Loop Event Chain",
+  "title": "Add formatLoopDuration utility function",
   "stories": [
     {
-      "id": "IDEM-1",
-      "title": "Add lease-based claim helpers to utils.ts",
-      "description": "Add four new exported functions to src/inngest/functions/agent-loop/utils.ts: claimStory, guardStory, renewLease, and releaseClaim. These use the existing Redis client (Bun.redis or the project's redis instance) with the key schema agent-loop:claim:{loopId}:{storyId}. claimStory uses SET NX EX 1800 to atomically claim a story with a runToken, returning the token on success or null if already claimed. guardStory reads both the claim key and the PRD from Redis — returns { ok: true } if the lease matches our token AND the story status is not 'passed'/'skipped', otherwise returns { ok: false, reason } with one of 'already_claimed', 'already_passed', or 'lease_expired'. renewLease verifies the token matches then resets TTL to 1800s, returning boolean success. releaseClaim deletes the claim key unconditionally. All functions should be pure utility functions with no side effects beyond Redis calls. Add unit tests in __tests__/idempotency.test.ts that verify: SETNX semantics (second claim fails), guardStory detects mismatched token, guardStory detects passed story, renewLease extends TTL, releaseClaim removes key.",
+      "id": "DUR-1",
+      "title": "Implement and export formatLoopDuration",
+      "description": "Add and export a pure function `formatLoopDuration(ms: number): string` to `src/inngest/functions/agent-loop/utils.ts`. The function converts a millisecond duration into a human-readable string with the following rules:\n\n1. Negative values and zero return `'0s'`\n2. Sub-second values show one decimal place: `500` → `'0.5s'`\n3. Exact seconds with no higher units: `5000` → `'5s'`\n4. Minutes and seconds: `65000` → `'1m 5s'`\n5. Hours, minutes, and seconds: `3661000` → `'1h 1m 1s'`\n6. Zero-value segments in the middle or end are omitted: `3600000` → `'1h'`, `3660000` → `'1h 1m'`\n7. Sub-second remainders are dropped once the duration is ≥ 1 second (no mixing `1m 5.3s`)\n\nThe function must be a named export so other modules can import it. Add unit tests in a colocated test file `src/inngest/functions/agent-loop/utils.test.ts` (create if it doesn't exist, append if it does) covering all cases listed above plus edge cases: very large values like `86400000` (24h), fractional ms like `1` → `'0s'` (rounds down sub-100ms), and `999` → `'1s'` (rounds to nearest tenth).",
       "acceptance_criteria": [
-        "claimStory exported from utils.ts, uses SET NX EX 1800 on key agent-loop:claim:{loopId}:{storyId}",
-        "guardStory exported from utils.ts, checks both claim key ownership and story passes/skipped status from PRD",
-        "renewLease exported from utils.ts, verifies token match before resetting TTL",
-        "releaseClaim exported from utils.ts, deletes the claim key",
-        "Unit tests in __tests__/idempotency.test.ts cover: duplicate claim rejection, token mismatch detection, passed-story detection, lease renewal, claim release",
+        "formatLoopDuration is exported from src/inngest/functions/agent-loop/utils.ts",
+        "formatLoopDuration(0) returns '0s'",
+        "formatLoopDuration(-100) returns '0s'",
+        "formatLoopDuration(500) returns '0.5s'",
+        "formatLoopDuration(5000) returns '5s'",
+        "formatLoopDuration(65000) returns '1m 5s'",
+        "formatLoopDuration(3661000) returns '1h 1m 1s'",
+        "formatLoopDuration(3600000) returns '1h'",
+        "Zero-value segments are omitted (no '0m' or '0s' padding)",
+        "All unit tests pass: bun test src/inngest/functions/agent-loop/utils.test.ts",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 1,
-      "passes": true,
-      "status": "passed"
-    },
-    {
-      "id": "IDEM-2",
-      "title": "Add seedPrd NX guard to prevent state clobber",
-      "description": "Modify the seedPrd function in src/inngest/functions/agent-loop/utils.ts (or wherever seedPrd is defined) to use SET NX when writing the PRD to Redis. Currently seedPrd unconditionally writes the PRD JSON to agent-loop:prd:{loopId}, which clobbers existing state on duplicate agent/loop.start events. Change it to: attempt SET with NX flag first. If NX returns null (key already exists), read and return the existing PRD from Redis instead of overwriting. Keep the existing EX 604800 (7-day TTL). This is a small surgical change to one function. Add a test that verifies: calling seedPrd twice with different PRD data returns the first PRD's data on the second call.",
-      "acceptance_criteria": [
-        "seedPrd uses SET NX EX when writing PRD to Redis — does not overwrite existing key",
-        "When PRD key already exists, seedPrd reads and returns the existing PRD data",
-        "Test verifies duplicate seedPrd calls preserve original PRD state",
-        "TypeScript compiles cleanly: bunx tsc --noEmit"
-      ],
-      "priority": 2,
-      "passes": true,
-      "status": "passed"
-    },
-    {
-      "id": "IDEM-3",
-      "title": "Wire claimStory into plan.ts before dispatching",
-      "description": "Modify src/inngest/functions/agent-loop/plan.ts to call claimStory before dispatching work for a story. After the planner selects the next pending story, call claimStory(loopId, storyId, runToken) where runToken is derived from the Inngest step run ID or a generated identifier. If claimStory returns null (already claimed), log a warning and return early without dispatching — do not throw. Pass the runToken through the emitted event data so downstream functions can use it for guardStory calls. The runToken should be added to the event payload as event.data.runToken.",
-      "acceptance_criteria": [
-        "plan.ts calls claimStory before dispatching a story",
-        "If claimStory returns null, plan.ts returns early without dispatching and logs a warning",
-        "runToken is included in the emitted event data as event.data.runToken",
-        "runToken is derived from the Inngest run ID or a generated ULID/unique identifier",
-        "TypeScript compiles cleanly: bunx tsc --noEmit"
-      ],
-      "priority": 3,
-      "passes": true,
-      "skipped": true,
-      "status": "passed"
-    },
-    {
-      "id": "IDEM-4",
-      "title": "Wire guardStory into test-writer.ts and implement.ts",
-      "description": "Modify src/inngest/functions/agent-loop/test-writer.ts and src/inngest/functions/agent-loop/implement.ts to call guardStory at side-effect boundaries. In each file, extract runToken from event.data.runToken. Add guardStory calls: (1) before spawning the Claude/Codex tool subprocess, (2) before committing (implement.ts already has a commitExists check — add guardStory alongside it), (3) before emitting the next event in the chain. If guardStory returns { ok: false }, log the reason and return early from the step without performing the side effect. Also call renewLease after each successful step completion to prevent lease expiry during long runs.",
-      "acceptance_criteria": [
-        "test-writer.ts calls guardStory before tool spawn and before emitting next event",
-        "implement.ts calls guardStory before tool spawn, before commit, and before emitting next event",
-        "Both files extract runToken from event.data.runToken",
-        "Both files return early with a log message when guardStory returns { ok: false }",
-        "Both files call renewLease after successful step completion",
-        "TypeScript compiles cleanly: bunx tsc --noEmit"
-      ],
-      "priority": 4,
-      "passes": true,
-      "skipped": true,
-      "status": "passed"
-    },
-    {
-      "id": "IDEM-5",
-      "title": "Wire guardStory into review.ts and judge.ts with release",
-      "description": "Modify src/inngest/functions/agent-loop/review.ts and src/inngest/functions/agent-loop/judge.ts. In review.ts: add guardStory check before spawning the review tool and before emitting the review result event. Extract runToken from event.data.runToken. In judge.ts: add guardStory check before writing the verdict to the PRD and before emitting the next event (loop continuation or completion). After judge marks a story as passed or skipped, call releaseClaim(loopId, storyId) to free the lease for potential retries of other stories. If guardStory fails at any point, return early with a log. Also call renewLease in review.ts after the review tool completes.",
-      "acceptance_criteria": [
-        "review.ts calls guardStory before tool spawn and before emitting review result",
-        "judge.ts calls guardStory before writing verdict and before emitting next event",
-        "judge.ts calls releaseClaim after marking a story as passed or skipped",
-        "Both files extract runToken from event.data.runToken",
-        "Both files return early with a log message when guardStory returns { ok: false }",
-        "review.ts calls renewLease after successful review completion",
-        "TypeScript compiles cleanly: bunx tsc --noEmit"
-      ],
-      "priority": 5,
-      "passes": true,
-      "skipped": true,
-      "status": "passed"
-    },
-    {
-      "id": "IDEM-6",
-      "title": "Move progress tracking from filesystem to Redis",
-      "description": "Replace progress.txt filesystem writes with Redis list operations. Create or update helpers in utils.ts: appendProgress(loopId, message) which does RPUSH to agent-loop:progress:{loopId} with a timestamped entry, and readProgress(loopId) which does LRANGE 0 -1. Find all locations that write to progress.txt (grep for 'progress.txt' or 'progress' file writes across src/inngest/functions/agent-loop/) and replace them with appendProgress calls. Move .agent-loop-recommendations.json reads/writes to Redis key agent-loop:recommendations:{project} using JSON string get/set. Move codebase patterns (if stored on disk) to agent-loop:patterns:{project}. Update buildPrompt in implement.ts to read recommendations and patterns from Redis instead of disk. Remove or deprecate the filesystem-based progress.txt usage. The Redis keys for recommendations and patterns should NOT use NX since they're meant to be updated.",
-      "acceptance_criteria": [
-        "appendProgress and readProgress functions exported from utils.ts, using RPUSH/LRANGE on agent-loop:progress:{loopId}",
-        "All former progress.txt write sites now call appendProgress instead",
-        "Recommendations stored at agent-loop:recommendations:{project} in Redis, read/write helpers exist",
-        "Patterns stored at agent-loop:patterns:{project} in Redis, read/write helpers exist",
-        "buildPrompt in implement.ts reads recommendations and patterns from Redis, not filesystem",
-        "No remaining references to progress.txt, .agent-loop-recommendations.json for active writes",
-        "TypeScript compiles cleanly: bunx tsc --noEmit"
-      ],
-      "priority": 6,
-      "passes": true,
-      "skipped": true,
-      "status": "passed"
+      "passes": false
     }
   ]
 }

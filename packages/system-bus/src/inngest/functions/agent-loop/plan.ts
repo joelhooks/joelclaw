@@ -213,11 +213,15 @@ export const agentLoopPlan = inngest.createFunction(
     if (isStartEvent) {
       await step.run("create-worktree", async () => {
         await $`mkdir -p ${worktreeBase}`.quiet();
+        // Compute relative path from git root to project (e.g. "packages/system-bus")
+        const gitRoot = (await $`cd ${project} && git rev-parse --show-toplevel`.quiet()).text().trim();
+        const relPath = project.startsWith(gitRoot) ? project.slice(gitRoot.length + 1) : "";
         // Create worktree on a new branch from current HEAD
         await $`cd ${project} && git worktree add ${worktreePath} -b ${branchName}`.quiet();
-        // Copy PRD into worktree if it exists
+        // Copy PRD into the subpath where the project lives
+        const worktreeProject = relPath ? join(worktreePath, relPath) : worktreePath;
         const prdFile = join(project, prdPath ?? "prd.json");
-        const worktreePrd = join(worktreePath, prdPath ?? "prd.json");
+        const worktreePrd = join(worktreeProject, prdPath ?? "prd.json");
         if (await Bun.file(prdFile).exists()) {
           await $`cp ${prdFile} ${worktreePrd}`.quiet();
         }
@@ -232,9 +236,13 @@ export const agentLoopPlan = inngest.createFunction(
       });
     }
 
-    // All downstream operations use worktreePath as the working directory.
-    // `project` stays as canonical path for Redis keys and PRD references.
-    const workDir = worktreePath;
+    // Compute workDir: worktree root + relative subpath to the actual project
+    // e.g. /tmp/agent-loop/{loopId}/packages/system-bus
+    const workDir = await step.run("resolve-workdir", async () => {
+      const gitRoot = (await $`cd ${project} && git rev-parse --show-toplevel`.quiet()).text().trim();
+      const relPath = project.startsWith(gitRoot) ? project.slice(gitRoot.length + 1) : "";
+      return relPath ? join(worktreePath, relPath) : worktreePath;
+    });
 
     // Step 0: Check cancellation
     const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
