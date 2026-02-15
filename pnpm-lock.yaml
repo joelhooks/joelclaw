@@ -57,6 +57,9 @@ importers:
       '@repo/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@types/mdast':
+        specifier: ^4.0.4
+        version: 4.0.4
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
@@ -99,6 +102,9 @@ importers:
       shiki:
         specifier: ^3.22.0
         version: 3.22.0
+      unist-util-visit:
+        specifier: ^5.1.0
+        version: 5.1.0
     devDependencies:
       '@repo/typescript-config':
         specifier: workspace:*
