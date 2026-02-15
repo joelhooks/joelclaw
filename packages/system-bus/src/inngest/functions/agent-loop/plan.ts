@@ -42,7 +42,7 @@ async function runRecheckSuite(project: string): Promise<{
 // markStoryPassedFromRecheck is now markStoryRechecked in utils.ts
 
 /**
- * PLANNER — Reads prd.json, finds next unpassed story, emits implement.
+ * PLANNER — Reads prd.json, finds next unpassed story, emits test.
  * If no stories remain, emits complete.
  */
 export const agentLoopPlan = inngest.createFunction(
@@ -129,7 +129,6 @@ export const agentLoopPlan = inngest.createFunction(
         status: "max_iterations_reached",
         loopId,
         maxIterations,
-          checks: prd.checks,
         attemptedStories,
         storiesCompleted: completed,
       };
@@ -156,7 +155,6 @@ export const agentLoopPlan = inngest.createFunction(
                 "- Action: unskipped and marked passes=true",
               ].join("\n")
             );
-            await $`slog write --action "recheck-pass" --tool "agent-loop" --detail "${skippedStory.title} (${skippedStory.id}) passed on planner recheck" --reason "Previously skipped story now passes typecheck and bun test"`.quiet();
           });
           recheckResults.push({ storyId: skippedStory.id, status: "passed" });
         } else {
@@ -168,7 +166,6 @@ export const agentLoopPlan = inngest.createFunction(
                 "- Recheck result: still failing typecheck/tests",
               ].join("\n")
             );
-            await $`slog write --action "recheck-still-failing" --tool "agent-loop" --detail "${skippedStory.title} (${skippedStory.id}) still failing on planner recheck" --reason "Typecheck/test failures remain after all stories processed"`.quiet();
           });
           recheckResults.push({ storyId: skippedStory.id, status: "still-failing" });
         }
@@ -209,12 +206,7 @@ export const agentLoopPlan = inngest.createFunction(
     // Step 4: Dispatch next story
     const next = remaining[0];
     if (!next) {
-      return {
-        status: "complete",
-        loopId,
-        storiesCompleted: prd.stories.filter((s) => s.passes).length,
-        recheckResults: [],
-      };
+      throw new Error("No remaining story to dispatch");
     }
     const story = {
       id: next.id,
@@ -236,9 +228,9 @@ export const agentLoopPlan = inngest.createFunction(
         ? event.data.maxRetries ?? 2
         : (event.data as any).maxRetries ?? 2;
 
-    await step.run("emit-implement", async () => {
+    await step.run("emit-test", async () => {
       await inngest.send({
-        name: "agent/loop.implement",
+        name: "agent/loop.test",
         data: {
           loopId,
           project,
@@ -248,7 +240,6 @@ export const agentLoopPlan = inngest.createFunction(
           story,
           maxRetries,
           maxIterations,
-          checks: prd.checks,
           retryLadder,
         },
       });
@@ -261,7 +252,6 @@ export const agentLoopPlan = inngest.createFunction(
       tool: implTool,
       remaining: remaining.length,
       maxIterations,
-          checks: prd.checks,
     };
   }
 );

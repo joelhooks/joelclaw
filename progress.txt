@@ -1,0 +1,24 @@
+
+### 2026-02-15T04:00:23.719Z
+**Story ADR10-1: Frontmatter + Context and Problem Statement** — PASSED (attempt 2)
+- Tool: claude
+- Tests passed: 34
+- Typecheck: ✅ | Lint: ✅
+
+### 2026-02-15T04:02:36.170Z
+**Story ADR10-2: Decision Drivers + Considered Options** — PASSED (attempt 1)
+- Tool: claude
+- Tests passed: 46
+- Typecheck: ✅ | Lint: ✅
+
+### 2026-02-15T04:07:59.271Z
+**Story ADR10-3: Decision Outcome + Consequences + Pros/Cons** — PASSED (attempt 1)
+- Tool: claude
+- Tests passed: 69
+- Typecheck: ✅ | Lint: ✅
+
+### 2026-02-15T04:12:13.221Z
+**Story ADR10-4: Implementation Plan + Verification Criteria** — PASSED (attempt 1)
+- Tool: claude
+- Tests passed: 105
+- Typecheck: ✅ | Lint: ✅

@@ -150,6 +150,32 @@ Always name people and link to their work. Alex Hillman, Amy Hoy, Kathy Sierra, 
 
 ---
 
+## The Fabrication Rule — NEVER Make Things Up
+
+**This is the single most important rule in this skill.**
+
+When writing in Joel's voice, you are putting words in a real person's mouth. Every claim, anecdote, experience, and opinion must be **verifiably true** or **explicitly flagged as a placeholder for Joel to fill in**.
+
+### What counts as fabrication:
+- Inventing personal anecdotes Joel never lived ("I tried X for a week and it broke")
+- Claiming specific experiences ("here's what happened in my last 24 hours")
+- Putting opinions in Joel's mouth that he never expressed
+- Fabricating conversations, reactions, or emotional responses
+- Inventing links to posts or resources that don't exist
+- Making up metrics, timelines, or results
+- Writing endorsements or testimonials Joel never gave
+
+### What to do instead:
+- **Describe the system factually.** "The pipeline does X" not "I spent three days building X and here's what I learned"
+- **Use verifiable facts.** Read the actual code, configs, logs, and git history. Cite what's real.
+- **Flag gaps honestly.** If you don't know Joel's opinion on something, write `[TODO: Joel's take on X]` — don't guess.
+- **Attribute the source.** If an architectural detail comes from an ADR or code comment, that's a fact. If you're inferring Joel's feelings about it, that's fabrication.
+- **Stick to third-person for uncertain claims.** "The system does X" is always safe. "I love how X works" requires Joel to have actually said that.
+
+Writing in someone's voice is a privilege. The moment you invent experiences they never had, you're not writing *for* them — you're putting words in their mouth. That's not a style problem. That's a trust problem.
+
+---
+
 ## Anti-Patterns — What Joel Never Does
 
 | Never | Instead |
@@ -221,5 +247,7 @@ Before publishing, run this pass:
 - [ ] Does it connect to a human outcome, not just a technical fact?
 - [ ] Is the ending natural, not forced?
 - [ ] Would Joel actually publish this on his site?
+- [ ] Is every claim, anecdote, and experience **verifiably true**? (No fabricated stories, fake metrics, or invented opinions)
+- [ ] Are there `[TODO]` placeholders for anything you're uncertain Joel would say?
 
-The last question is the only one that truly matters.
+The fabrication check is the one that truly matters. Everything else is style. Getting the facts wrong is a trust violation.

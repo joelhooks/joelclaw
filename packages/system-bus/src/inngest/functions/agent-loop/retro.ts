@@ -179,25 +179,21 @@ function parseStoryDetails(
   const byId: Record<string, Partial<StoryDetail>> = {};
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line) continue;
-    const trimmedLine = line.trim();
-    const m = trimmedLine.match(
+    const line = lines[i]?.trim() ?? "";
+    const m = line.match(
       /^\*\*Story\s+([^:]+):\s+(.+?)\*\*\s+—\s+(PASSED|FAILED|RECHECK PASS|RECHECK STILL FAILING)(?:\s+\(attempt\s+(\d+)\))?/i
     );
     if (!m) continue;
 
     const storyId = m[1]?.trim();
-    if (!storyId) continue;
     const storyTitle = m[2]?.trim();
+    if (!storyId) continue;
     const outcome = (m[3] ?? "").toUpperCase();
     const attempt = parseInt(m[4] ?? "1", 10);
 
     let tool = byId[storyId]?.tool ?? "unknown";
     for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
-      const candidate = lines[j];
-      if (!candidate) continue;
-      const toolMatch = candidate.trim().match(/^- Tool:\s+(.+)$/i);
+      const toolMatch = (lines[j] ?? "").trim().match(/^- Tool:\s+(.+)$/i);
       if (toolMatch?.[1]) {
         tool = toolMatch[1].trim();
         break;
@@ -301,10 +297,6 @@ export const agentLoopRetro = inngest.createFunction(
       });
       await Bun.write(retroPath, markdown);
       return retroPath;
-    });
-
-    await step.run("slog-retro", async () => {
-      await $`slog write --action "retro-complete" --tool "agent-loop" --detail "Loop ${loopId} retrospective written" --reason "${storiesCompleted} completed, ${storiesFailed} failed, ${storiesSkipped} skipped"`.quiet();
     });
 
     await step.run("write-planner-recommendations", async () => {

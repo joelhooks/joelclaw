@@ -88,7 +88,6 @@ type Events = {
       prdPath: string;
       maxRetries?: number;
       maxIterations?: number;
-      checks?: string[];
       retryLadder?: ("codex" | "claude" | "pi")[];
       push?: boolean;
       toolAssignments?: Record<
@@ -106,9 +105,27 @@ type Events = {
       project: string;
       prdPath: string;
       maxIterations?: number;
-      checks?: string[];
       maxRetries?: number;
       retryLadder?: ("codex" | "claude" | "pi")[];
+    };
+  };
+  "agent/loop.test": {
+    data: {
+      loopId: string;
+      project: string;
+      storyId: string;
+      tool: "codex" | "claude" | "pi";
+      attempt: number;
+      story: {
+        id: string;
+        title: string;
+        description: string;
+        acceptance_criteria: string[];
+      };
+      maxRetries: number;
+      maxIterations?: number;
+      retryLadder?: ("codex" | "claude" | "pi")[];
+      storyStartedAt?: number;
     };
   };
   "agent/loop.implement": {
@@ -127,10 +144,10 @@ type Events = {
       };
       maxRetries: number;
       maxIterations?: number;
-      checks?: string[];
       retryLadder?: ("codex" | "claude" | "pi")[];
       freshTests?: boolean;
       storyStartedAt?: number;
+      testFiles?: string[];
     };
   };
   "agent/loop.review": {
@@ -149,7 +166,6 @@ type Events = {
       };
       maxRetries: number;
       maxIterations?: number;
-      checks?: string[];
       storyStartedAt?: number;
       retryLadder?: ("codex" | "claude" | "pi")[];
       freshTests?: boolean;
@@ -170,10 +186,25 @@ type Events = {
         details: string;
       };
       feedback: string;
+      reviewerNotes?: {
+        questions: Array<{
+          id: string;
+          answer: boolean;
+          evidence: string;
+        }>;
+        testResults: {
+          typecheckOk: boolean;
+          typecheckOutput: string;
+          lintOk: boolean;
+          lintOutput: string;
+          testsPassed: number;
+          testsFailed: number;
+          testOutput: string;
+        };
+      };
       attempt: number;
       maxRetries: number;
       maxIterations?: number;
-      checks?: string[];
       storyStartedAt?: number;
       retryLadder?: ("codex" | "claude" | "pi")[];
       priorFeedback?: string;

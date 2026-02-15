@@ -4,90 +4,148 @@ import {
   isCancelled,
   writePidFile,
   cleanupPid,
-  claimCheckWrite,
+  getStoryDiff,
   TOOL_TIMEOUTS,
 } from "./utils";
+import { join } from "node:path";
 
-/**
- * Build prompt for the reviewer to write tests from acceptance criteria.
- * Key insight from AgentCoder: reviewer should NOT read implementation code
- * when designing tests — this avoids bias.
- */
-function buildTestPrompt(
-  story: { id: string; title: string; description: string; acceptance_criteria: string[] },
-  freshTests = false
-): string {
+const TEST_FILE_PATTERN = /(?:^|\/)\S+\.test\.[^/]+$/;
+
+interface ReviewerQuestion {
+  id: string;
+  answer: boolean;
+  evidence: string;
+}
+
+interface ReviewerNotes {
+  questions: ReviewerQuestion[];
+  testResults: {
+    typecheckOk: boolean;
+    typecheckOutput: string;
+    lintOk: boolean;
+    lintOutput: string;
+    testsPassed: number;
+    testsFailed: number;
+    testOutput: string;
+  };
+}
+
+function extractNewTestFilesFromDiff(diff: string): string[] {
+  const newFiles: string[] = [];
+  let currentPath: string | null = null;
+  let currentIsNewFile = false;
+
+  const commitIfMatch = () => {
+    if (currentPath && currentIsNewFile && TEST_FILE_PATTERN.test(currentPath)) {
+      newFiles.push(currentPath);
+    }
+  };
+
+  for (const line of diff.split("\n")) {
+    const fileMatch = line.match(/^diff --git a\/(.+) b\/(.+)$/);
+    if (fileMatch?.[2]) {
+      commitIfMatch();
+      currentPath = fileMatch[2];
+      currentIsNewFile = false;
+      continue;
+    }
+
+    if (line.startsWith("new file mode ")) {
+      currentIsNewFile = true;
+    }
+  }
+
+  commitIfMatch();
+  return Array.from(new Set(newFiles)).sort();
+}
+
+async function readTestFilesFromDisk(
+  project: string,
+  files: string[]
+): Promise<Array<{ path: string; content: string }>> {
+  const out: Array<{ path: string; content: string }> = [];
+
+  for (const file of files) {
+    const fullPath = join(project, file);
+    const bunFile = Bun.file(fullPath);
+    if (!(await bunFile.exists())) continue;
+
+    out.push({ path: file, content: await bunFile.text() });
+  }
+
+  return out;
+}
+
+function buildEvaluationPrompt(params: {
+  story: { id: string; title: string; description: string; acceptance_criteria: string[] };
+  diff: string;
+  testFiles: Array<{ path: string; content: string }>;
+}): string {
+  const testFileSection = params.testFiles.length > 0
+    ? params.testFiles
+      .map((file) => `### ${file.path}\n\`\`\`ts\n${file.content}\n\`\`\``)
+      .join("\n\n")
+    : "(No new test files found in this diff.)";
+
   return [
-    `## Write Tests for: ${story.title} (${story.id})`,
+    `## Evaluate Story Implementation: ${params.story.title} (${params.story.id})`,
     "",
-    "You are a test engineer. Write tests for the following story based ONLY on the",
-    "acceptance criteria below. Do NOT read or examine the implementation code first.",
-    freshTests
-      ? "Treat this as a fresh-eyes rewrite: do NOT look at any prior test files."
-      : "Design tests that verify the criteria are met from the outside.",
+    "You are reviewing implementation quality and test integrity.",
+    "Answer only questions q2, q3, q4 using the provided implementation diff and test files.",
+    "Return ONLY valid JSON.",
     "",
-    "## Story Description",
-    story.description,
+    "Required JSON shape:",
+    '{"questions":[{"id":"q2","answer":true,"evidence":"..."},{"id":"q3","answer":true,"evidence":"..."},{"id":"q4","answer":true,"evidence":"..."}]}',
     "",
-    "## Acceptance Criteria",
-    ...story.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`),
+    "Question definitions:",
+    "q2: Do tests exercise real implementations (not stubs/mocks replacing core behavior)?",
+    "q3: Are tests truthful and not gaming the checks?",
+    "q4: Do test + implementation accomplish the story intent from the ADR?",
     "",
-    "## Instructions",
-    "1. Write test files that verify each acceptance criterion",
-    "2. Use the project's existing test framework (bun test)",
-    "3. Put tests in a sensible location (e.g. __tests__/ or alongside source)",
-    "4. Tests should be runnable with `bun test`",
-    "5. After writing tests, do NOT run them — the harness runs them separately",
-    freshTests
-      ? "6. Fresh-eyes mode: do NOT reference or recover previous test files."
-      : "",
+    "Story intent:",
+    params.story.description,
+    "",
+    "Acceptance criteria:",
+    ...params.story.acceptance_criteria.map((criterion, index) => `${index + 1}. ${criterion}`),
+    "",
+    "Implementation diff (HEAD~1..HEAD):",
+    params.diff || "(empty diff)",
+    "",
+    "New test files content:",
+    testFileSection,
+    "",
+    "Rules:",
+    "- Use concrete evidence from diff and tests.",
+    "- If evidence is missing, answer false.",
+    "- Keep evidence concise and specific.",
   ].join("\n");
 }
 
-async function findExistingTestFiles(project: string): Promise<string[]> {
+function parseJsonFromOutput(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
   try {
-    const files = await $`cd ${project} && rg --files -g "**/*.test.ts" -g "**/*.test.tsx" -g "**/*.test.js" -g "**/*.test.jsx" -g "**/*.spec.ts" -g "**/*.spec.tsx" -g "**/*.spec.js" -g "**/*.spec.jsx" -g "**/__tests__/**" -g "!node_modules/**" -g "!.git/**"`.quiet();
-    return files
-      .text()
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
+    return JSON.parse(trimmed);
   } catch {
-    return [];
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (!fenced?.[1]) return null;
+
+    try {
+      return JSON.parse(fenced[1]);
+    } catch {
+      return null;
+    }
   }
 }
 
-async function deleteExistingTestFiles(project: string): Promise<number> {
-  const files = await findExistingTestFiles(project);
-  for (const file of files) {
-    await $`cd ${project} && rm -f ${file}`.quiet();
-  }
-  return files.length;
-}
-
-/**
- * Spawn reviewer tool to write tests.
- */
-async function spawnReviewer(
-  tool: string,
+async function evaluateQuestionsWithClaude(
   prompt: string,
   project: string,
   loopId: string
-): Promise<{ exitCode: number; output: string }> {
-  let cmd: string[];
-
-  switch (tool) {
-    case "claude":
-      cmd = ["claude", "-p", prompt, "--output-format", "text"];
-      break;
-    case "pi":
-      cmd = ["pi", "--prompt", prompt, "--no-tui"];
-      break;
-    default:
-      cmd = ["claude", "-p", prompt, "--output-format", "text"];
-  }
-
-  const timeout = TOOL_TIMEOUTS[tool] ?? 20 * 60 * 1000;
+): Promise<ReviewerQuestion[]> {
+  const timeout = TOOL_TIMEOUTS.claude ?? 20 * 60 * 1000;
+  const cmd = ["claude", "-p", prompt, "--output-format", "json"];
 
   const proc = Bun.spawn(cmd, {
     cwd: project,
@@ -99,7 +157,11 @@ async function spawnReviewer(
   await writePidFile(loopId, proc.pid);
 
   const timeoutId = setTimeout(() => {
-    try { proc.kill("SIGTERM"); } catch { /* ignore */ }
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+      // ignore
+    }
   }, timeout);
 
   const stdout = await new Response(proc.stdout).text();
@@ -107,18 +169,79 @@ async function spawnReviewer(
   clearTimeout(timeoutId);
   await cleanupPid(loopId);
 
-  return {
-    exitCode: proc.exitCode ?? 1,
-    output: stdout + (stderr ? `\n--- STDERR ---\n${stderr}` : ""),
-  };
+  const output = stdout + (stderr ? `\n--- STDERR ---\n${stderr}` : "");
+  const parsed = parseJsonFromOutput(output) as
+    | { questions?: Array<{ id?: unknown; answer?: unknown; evidence?: unknown }>; result?: unknown }
+    | null;
+
+  const payload = (
+    parsed &&
+    typeof parsed === "object" &&
+    parsed.result &&
+    typeof parsed.result === "object"
+      ? parsed.result
+      : parsed
+  ) as { questions?: Array<{ id?: unknown; answer?: unknown; evidence?: unknown }> } | null;
+
+  const questions = payload?.questions;
+  if (!Array.isArray(questions)) {
+    return [
+      { id: "q2", answer: false, evidence: "Claude output was not valid structured JSON." },
+      { id: "q3", answer: false, evidence: "Claude output was not valid structured JSON." },
+      { id: "q4", answer: false, evidence: "Claude output was not valid structured JSON." },
+    ];
+  }
+
+  const byId = new Map<string, ReviewerQuestion>();
+  for (const q of questions) {
+    if (typeof q?.id !== "string") continue;
+    if (q.id !== "q2" && q.id !== "q3" && q.id !== "q4") continue;
+
+    byId.set(q.id, {
+      id: q.id,
+      answer: q.answer === true,
+      evidence: typeof q.evidence === "string" ? q.evidence : "No evidence provided.",
+    });
+  }
+
+  return [
+    byId.get("q2") ?? { id: "q2", answer: false, evidence: "Claude did not return q2." },
+    byId.get("q3") ?? { id: "q3", answer: false, evidence: "Claude did not return q3." },
+    byId.get("q4") ?? { id: "q4", answer: false, evidence: "Claude did not return q4." },
+  ];
+}
+
+function buildReviewerFeedback(notes: ReviewerNotes): string {
+  const failedQuestions = notes.questions.filter((q) => !q.answer);
+  const parts: string[] = [];
+
+  if (!notes.testResults.typecheckOk) {
+    parts.push(`Typecheck failed:\n${notes.testResults.typecheckOutput.slice(0, 3000)}`);
+  }
+  if (!notes.testResults.lintOk) {
+    parts.push(`Lint failed:\n${notes.testResults.lintOutput.slice(0, 3000)}`);
+  }
+  if (notes.testResults.testsFailed > 0) {
+    parts.push(`Tests failed:\n${notes.testResults.testOutput.slice(0, 5000)}`);
+  }
+
+  if (failedQuestions.length > 0) {
+    parts.push(
+      `Reviewer questions failed:\n${failedQuestions.map((q) => `${q.id}: ${q.evidence}`).join("\n")}`
+    );
+  }
+
+  if (parts.length === 0) {
+    return "Reviewer evaluation passed all checks and questions.";
+  }
+
+  return parts.join("\n\n");
 }
 
 /**
- * Run checks based on what the PRD requests. Default: all.
- * checks param: ["typecheck", "lint", "test"] or subset.
- * For document/ADR projects, pass ["test"] to skip typecheck/lint.
+ * Run typecheck, lint, and tests. Returns structured results.
  */
-async function runChecks(project: string, checks?: string[]): Promise<{
+async function runChecks(project: string): Promise<{
   typecheckOk: boolean;
   typecheckOutput: string;
   lintOk: boolean;
@@ -127,39 +250,33 @@ async function runChecks(project: string, checks?: string[]): Promise<{
   testsFailed: number;
   testOutput: string;
 }> {
-  const enabledChecks = checks ?? ["typecheck", "lint", "test"];
-
   // Typecheck
   let typecheckOk = true;
   let typecheckOutput = "";
-  if (enabledChecks.includes("typecheck")) {
-    try {
-      const tc = await $`cd ${project} && bunx tsc --noEmit 2>&1`.quiet();
-      typecheckOutput = tc.text().trim();
-      typecheckOk = tc.exitCode === 0;
-    } catch (e: any) {
-      typecheckOk = false;
-      typecheckOutput = e?.stdout?.toString() ?? e?.message ?? "typecheck failed";
-    }
+  try {
+    const tc = await $`cd ${project} && bunx tsc --noEmit 2>&1`.quiet();
+    typecheckOutput = tc.text().trim();
+    typecheckOk = tc.exitCode === 0;
+  } catch (e: any) {
+    typecheckOk = false;
+    typecheckOutput = e?.stdout?.toString() ?? e?.message ?? "typecheck failed";
   }
 
   // Lint (try biome, then eslint, then skip)
   let lintOk = true;
   let lintOutput = "";
-  if (enabledChecks.includes("lint")) {
+  try {
+    const lint = await $`cd ${project} && bunx biome check --no-errors-on-unmatched . 2>&1`.quiet();
+    lintOutput = lint.text().trim();
+    lintOk = lint.exitCode === 0;
+  } catch {
     try {
-      const lint = await $`cd ${project} && bunx biome check --no-errors-on-unmatched . 2>&1`.quiet();
+      const lint = await $`cd ${project} && bunx eslint . 2>&1`.quiet();
       lintOutput = lint.text().trim();
       lintOk = lint.exitCode === 0;
     } catch {
-      try {
-        const lint = await $`cd ${project} && bunx eslint . 2>&1`.quiet();
-        lintOutput = lint.text().trim();
-        lintOk = lint.exitCode === 0;
-      } catch {
-        lintOk = true; // no linter configured
-        lintOutput = "No linter configured";
-      }
+      lintOk = true; // no linter configured
+      lintOutput = "No linter configured";
     }
   }
 
@@ -185,7 +302,7 @@ async function runChecks(project: string, checks?: string[]): Promise<{
 }
 
 /**
- * REVIEWER — Writes tests from acceptance criteria, then runs checks.
+ * REVIEWER — Evaluates implementation quality and test integrity.
  */
 export const agentLoopReview = inngest.createFunction(
   {
@@ -202,76 +319,51 @@ export const agentLoopReview = inngest.createFunction(
       loopId,
       project,
       storyId,
-      commitSha,
       attempt,
-      tool,
       story,
       maxRetries,
       maxIterations,
       storyStartedAt,
       retryLadder,
-      freshTests,
       priorFeedback,
-      checks,
-    } =
-      event.data;
+    } = event.data;
 
     // Step 0: Check cancellation
     const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
     if (cancelled) return { status: "cancelled", loopId, storyId };
 
-    if (freshTests) {
-      await step.run("delete-existing-tests", () => deleteExistingTestFiles(project));
-    }
+    // Step 1: Run checks (typecheck + lint + tests)
+    const results = await step.run("run-checks", () => runChecks(project));
 
-    // Step 1: Write tests (independent of implementation — AgentCoder insight)
-    await step.run("write-tests", async () => {
-      const prompt = buildTestPrompt(story, Boolean(freshTests));
-      return await spawnReviewer(tool, prompt, project, loopId);
+    // Step 2: Read implementation diff
+    const diff = await step.run("get-story-diff", () => getStoryDiff(project));
+
+    // Step 3: Question 1 + test files from disk
+    const { q1, testFiles } = await step.run("collect-test-files", async () => {
+      const newTestFiles = extractNewTestFilesFromDiff(diff);
+      const fileContents = await readTestFilesFromDisk(project, newTestFiles);
+      const q1: ReviewerQuestion = {
+        id: "q1",
+        answer: newTestFiles.length > 0,
+        evidence: newTestFiles.length > 0
+          ? `New test files in diff: ${newTestFiles.join(", ")}`
+          : "No new *.test.* files detected in git diff.",
+      };
+      return { q1, testFiles: fileContents };
     });
 
-    // Step 2: Commit test files
-    await step.run("commit-tests", async () => {
-      await $`cd ${project} && git add -A`.quiet();
-      try {
-        await $`cd ${project} && git diff --cached --quiet`.quiet();
-        // No new test files — that's ok
-      } catch {
-        await $`cd ${project} && git commit -m "test: [${loopId}] [${storyId}] attempt-${attempt} — reviewer tests"`.quiet();
-      }
+    // Step 4: Questions 2-4 via Claude
+    const q2to4 = await step.run("evaluate-with-claude", async () => {
+      const prompt = buildEvaluationPrompt({ story, diff, testFiles });
+      return evaluateQuestionsWithClaude(prompt, project, loopId);
     });
 
-    // Step 3: Run checks (typecheck + lint + tests)
-    const results = await step.run("run-checks", () => runChecks(project, checks as string[] | undefined));
+    const reviewerNotes: ReviewerNotes = {
+      questions: [q1, ...q2to4],
+      testResults: results,
+    };
 
-    // Step 4: Build structured feedback
-    const feedback = await step.run("build-feedback", async () => {
-      const parts: string[] = [];
-
-      if (!results.typecheckOk) {
-        parts.push(`## Typecheck Failures\n${results.typecheckOutput.slice(0, 5000)}`);
-      }
-      if (!results.lintOk) {
-        parts.push(`## Lint Issues\n${results.lintOutput.slice(0, 3000)}`);
-      }
-      if (results.testsFailed > 0) {
-        parts.push(`## Test Failures\n${results.testOutput.slice(0, 10000)}`);
-      }
-      if (parts.length === 0) {
-        parts.push("All checks passed. Typecheck clean, lint clean, all tests pass.");
-      }
-
-      const feedbackText = parts.join("\n\n");
-
-      // Use claim-check if feedback is large
-      if (feedbackText.length > 10000) {
-        return await claimCheckWrite(loopId, `review-${storyId}-${attempt}`, {
-          feedback: feedbackText,
-          results,
-        });
-      }
-      return feedbackText;
-    });
+    const feedback = buildReviewerFeedback(reviewerNotes);
 
     // Step 5: Emit judge event
     await step.run("emit-judge", async () => {
@@ -290,15 +382,15 @@ export const agentLoopReview = inngest.createFunction(
             details: results.testOutput.slice(0, 5000),
           },
           feedback,
+          reviewerNotes,
           attempt,
           maxRetries,
           maxIterations,
-          checks,
           storyStartedAt,
           retryLadder,
           priorFeedback,
           story,
-          tool,
+          tool: "claude",
         },
       });
     });
@@ -308,6 +400,7 @@ export const agentLoopReview = inngest.createFunction(
       loopId,
       storyId,
       attempt,
+      reviewerNotes,
       testsPassed: results.testsPassed,
       testsFailed: results.testsFailed,
       typecheckOk: results.typecheckOk,
