@@ -343,19 +343,20 @@ export const agentLoopJudge = inngest.createFunction(
       // ── PASS ─────────────────────────────────────────────────────
 
       // Update PRD (Redis + disk)
-      await step.run("update-prd", () =>
-        updateStoryPass(project, prdPath, storyId, loopId)
-      );
+      await step.run("update-prd", async () => {
+        await updateStoryPass(project, prdPath, storyId, loopId);
+        return { storyId, action: "marked-passed" };
+      });
 
-      // Append progress.txt
-      await step.run("append-progress", () =>
-        appendProgress(project, [
+      await step.run("append-progress", async () => {
+        await appendProgress(project, [
           `**Story ${storyId}: ${story.title}** — PASSED (attempt ${attempt})`,
           `- Tool: ${tool}`,
           `- Tests passed: ${testResults.testsPassed}`,
           `- Typecheck: ✅ | Lint: ✅`,
-        ].join("\n"))
-      );
+        ].join("\n"));
+        return { storyId, verdict: "pass", attempt, tool };
+      });
 
       // Emit story pass event with duration
       const durationMs = storyStartedAt ? Date.now() - storyStartedAt : 0;
@@ -365,14 +366,14 @@ export const agentLoopJudge = inngest.createFunction(
           data: {
             loopId,
             storyId,
-            commitSha: "", // could be passed through but not critical
+            commitSha: "",
             attempt,
             duration: durationMs,
           },
         });
+        return { event: "agent/loop.story.pass", storyId, durationMs };
       });
 
-      // Emit plan for next story
       await step.run("emit-next-plan", async () => {
         await inngest.send({
           name: "agent/loop.plan",
@@ -385,6 +386,7 @@ export const agentLoopJudge = inngest.createFunction(
             retryLadder,
           },
         });
+        return { event: "agent/loop.plan", next: "pick-next-story" };
       });
 
       return { status: "passed", loopId, storyId, attempt };
@@ -419,6 +421,7 @@ export const agentLoopJudge = inngest.createFunction(
             freshTests,
           },
         });
+        return { event: "agent/loop.implement", storyId, attempt: nextAttempt, tool: retryTool, freshTests };
       });
 
       return {
@@ -435,18 +438,20 @@ export const agentLoopJudge = inngest.createFunction(
     // Max retries exhausted — skip story
 
     // Mark story as skipped so planner doesn't re-pick it
-    await step.run("mark-skipped", () =>
-      markStorySkipped(project, prdPath, storyId, loopId)
-    );
+    await step.run("mark-skipped", async () => {
+      await markStorySkipped(project, prdPath, storyId, loopId);
+      return { storyId, action: "marked-skipped", attempts: attempt };
+    });
 
-    await step.run("append-progress-fail", () =>
-      appendProgress(project, [
+    await step.run("append-progress-fail", async () => {
+      await appendProgress(project, [
         `**Story ${storyId}: ${story.title}** — FAILED (skipped after ${attempt} attempts)`,
         `- Tool: ${tool}`,
         `- Last results: ${testResults.testsFailed} test failures, typecheck: ${testResults.typecheckOk ? "✅" : "❌"}, lint: ${testResults.lintOk ? "✅" : "❌"}`,
         `- ⚠️ NEEDS HUMAN REVIEW`,
-      ].join("\n"))
-    );
+      ].join("\n"));
+      return { storyId, verdict: "skipped", attempts: attempt };
+    });
 
     // Emit story fail event with duration
     const failDurationMs = storyStartedAt ? Date.now() - storyStartedAt : 0;
@@ -461,9 +466,9 @@ export const agentLoopJudge = inngest.createFunction(
           duration: failDurationMs,
         },
       });
+      return { event: "agent/loop.story.fail", storyId, attempts: attempt, durationMs: failDurationMs };
     });
 
-    // Continue to next story
     await step.run("emit-next-plan-after-fail", async () => {
       await inngest.send({
         name: "agent/loop.plan",
@@ -476,6 +481,7 @@ export const agentLoopJudge = inngest.createFunction(
           retryLadder,
         },
       });
+      return { event: "agent/loop.plan", next: "pick-next-story" };
     });
 
     return { status: "skipped", loopId, storyId, attempts: attempt };

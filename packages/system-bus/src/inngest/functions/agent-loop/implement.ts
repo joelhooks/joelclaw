@@ -423,6 +423,7 @@ export const agentLoopImplement = inngest.createFunction(
           priorFeedback: feedback,
         },
       });
+      return { event: "agent/loop.review", storyId, sha: sha.slice(0, 8), reviewer: reviewerTool };
     });
 
     return { status: "implemented", loopId, storyId, attempt, sha, tool };

@@ -364,7 +364,7 @@ export const agentLoopReview = inngest.createFunction(
         data: {
           loopId,
           project,
-          prdPath: "prd.json", // canonical location
+          prdPath: "prd.json",
           storyId,
           testResults: {
             testsPassed: results.testsPassed,
@@ -385,6 +385,14 @@ export const agentLoopReview = inngest.createFunction(
           tool: "claude",
         },
       });
+      return {
+        event: "agent/loop.judge",
+        storyId,
+        typecheck: results.typecheckOk,
+        lint: results.lintOk,
+        tests: `${results.testsPassed}✓ ${results.testsFailed}✗`,
+        reviewerFlags: reviewerNotes.questions.filter(q => !q.answer).map(q => q.id),
+      };
     });
 
     return {
