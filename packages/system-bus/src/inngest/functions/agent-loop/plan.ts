@@ -205,9 +205,7 @@ export const agentLoopPlan = inngest.createFunction(
     // Worktree isolation: each loop gets its own working directory.
     // Main repo working tree is NEVER touched by loop operations.
     const worktreeBase = `/tmp/agent-loop`;
-    const worktreePath = isStartEvent
-      ? `${worktreeBase}/${loopId}`
-      : (event.data as any).workDir ?? `${worktreeBase}/${loopId}`;
+    const worktreePath = `${worktreeBase}/${loopId}`;  // Always the worktree root
     const branchName = `agent-loop/${loopId}`;
 
     if (isStartEvent) {
