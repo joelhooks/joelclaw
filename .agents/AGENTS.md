@@ -49,15 +49,16 @@ This is Joel's always-on Mac Mini — a prototype personal AI assistant, copilot
 
 ## Active Projects
 
-0. **Agent Identity** (`~/Vault/Projects/00-agent-identity/`) — System soul, identity, personality
+0. **Agent Identity** (`~/Vault/Projects/00-agent-identity/`) — System soul, identity, personality ✅ bootstrapped
 1. **System Setup** (`~/Vault/Projects/01-system-setup/`) — Bootstrap this machine (~97%)
-2. **OpenClaw Deployment** (`~/Vault/Projects/02-openclaw-deployment/`) — Get OpenClaw running
+2. ~~**OpenClaw Deployment**~~ — Superseded by Project 09 (joelclaw)
 3. **Vault Design** (`~/Vault/Projects/03-vault-design/`) — Refine vault structure & conventions
 4. **pi-tools Fixes** (`~/Vault/Projects/04-pi-tools-fixes/`) — PR upstream fixes for install/load issues
-5. **QMD Setup** (`~/Vault/Projects/05-qmd-setup/`) — Install QMD local hybrid search for vault
-6. **Video Ingest** (`~/Vault/Projects/06-video-ingest/`) — Composable event-chain pipeline (download → transcribe → enrich)
-7. **Event Bus** (`~/Vault/Projects/07-event-bus/`) — Inngest server + worker + functions
-8. **Memory System** (`~/Vault/Projects/08-memory-system/`) — Session recall, playbook reflection, timeline, QMD search layer
+5. **Search & State** (`~/Vault/Projects/05-search-and-state/`) — Qdrant + Redis (running)
+6. **Video Ingest** (`~/Vault/Projects/06-video-ingest/`) — Durable pipeline (download → transcribe → enrich) ✅ proven
+7. **Event Bus** (`~/Vault/Projects/07-event-bus/`) — Inngest server + worker + agent loop functions
+8. **Memory System** (`~/Vault/Projects/08-memory-system/`) — 4-layer architecture (designed, not yet implemented)
+9. **joelclaw** (`~/Vault/Projects/09-joelclaw/`) — Personal AI OS: AT Proto bedrock, agent loops, blog-as-book
 
 ## Agent Conventions
 

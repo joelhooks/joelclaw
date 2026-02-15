@@ -301,3 +301,9 @@ Stories: 6
 - Tool: claude
 - Tests passed: 203
 - Typecheck: ✅ | Lint: ✅
+
+### 2026-02-15T08:10:49.181Z
+**Story IDEM-3: Wire claimStory into plan.ts before dispatching** — FAILED (skipped after 2 attempts)
+- Tool: claude
+- Last results: 1 test failures, typecheck: ✅, lint: ✅
+- ⚠️ NEEDS HUMAN REVIEW

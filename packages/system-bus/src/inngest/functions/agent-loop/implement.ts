@@ -14,6 +14,8 @@ import {
   getHeadSha,
   isDockerAvailable,
   spawnInContainer,
+  guardStory,
+  renewLease,
 } from "./utils";
 
 /**
@@ -338,9 +340,13 @@ export const agentLoopImplement = inngest.createFunction(
       retryLadder,
       freshTests,
       storyStartedAt: incomingStoryStartedAt,
-      runToken,
     } =
       event.data;
+    const runToken = event.data.runToken;
+    if (!runToken) {
+      console.log(`[agent-loop-implement] missing runToken for ${storyId}`);
+      return { status: "blocked", loopId, storyId, reason: "missing_run_token" };
+    }
 
     // Record story start time for duration tracking
     const storyStartedAt = await step.run("record-start-time", () =>
@@ -375,37 +381,71 @@ export const agentLoopImplement = inngest.createFunction(
       const outPath = outputPath(loopId, storyId, attempt);
       const prompt = await buildPrompt(story, project, feedback);
 
-      const exitCode = await step.run("run-tool", () =>
-        spawnTool(tool, prompt, project, loopId, outPath)
-      );
+      const runToolResult = await step.run("run-tool", async () => {
+        const guard = await guardStory(loopId, storyId, runToken);
+        if (!guard.ok) {
+          console.log(
+            `[agent-loop-implement] guard blocked run-tool for ${storyId}: ${guard.reason}`
+          );
+          return { blocked: true as const, reason: guard.reason };
+        }
+        const exitCode = await spawnTool(tool, prompt, project, loopId, outPath);
+        await renewLease(loopId, storyId, runToken);
+        return { blocked: false as const, exitCode };
+      });
+      if (runToolResult.blocked) {
+        return { status: "blocked", loopId, storyId, reason: runToolResult.reason };
+      }
 
       // Step 3: Smart commit — detect if tool already committed
-      sha = await step.run("git-commit", async () => {
+      const commitResult = await step.run("git-commit", async () => {
+        const guard = await guardStory(loopId, storyId, runToken);
+        if (!guard.ok) {
+          console.log(
+            `[agent-loop-implement] guard blocked git-commit for ${storyId}: ${guard.reason}`
+          );
+          return { blocked: true as const, reason: guard.reason, sha: "" };
+        }
         const headAfter = await getHeadSha(project);
         const toolCommitted = headAfter !== headBefore;
         const uncommitted = await hasUncommittedChanges(project);
 
         if (toolCommitted && !uncommitted) {
           // Tool already committed and no remaining changes — use its sha
-          return headAfter;
+          await renewLease(loopId, storyId, runToken);
+          return { blocked: false as const, sha: headAfter };
         }
 
         if (!uncommitted) {
           // No tool commit AND no changes — nothing happened, return HEAD
-          return headAfter;
+          await renewLease(loopId, storyId, runToken);
+          return { blocked: false as const, sha: headAfter };
         }
 
         // There are uncommitted changes — make the harness commit
         const msg = commitMessage(loopId, storyId, attempt, story.title);
-        return gitCommit(project, msg);
+        const sha = await gitCommit(project, msg);
+        await renewLease(loopId, storyId, runToken);
+        return { blocked: false as const, sha };
       });
+      if (commitResult.blocked) {
+        return { status: "blocked", loopId, storyId, reason: commitResult.reason };
+      }
+      sha = commitResult.sha;
     }
 
     // Step 3: Determine reviewer tool (default: claude)
     const reviewerTool = "claude" as const;
 
     // Step 4: Emit review event
-    await step.run("emit-review", async () => {
+    const emitResult = await step.run("emit-review", async () => {
+      const guard = await guardStory(loopId, storyId, runToken);
+      if (!guard.ok) {
+        console.log(
+          `[agent-loop-implement] guard blocked emit-review for ${storyId}: ${guard.reason}`
+        );
+        return { blocked: true as const, reason: guard.reason };
+      }
       await inngest.send({
         name: "agent/loop.review",
         data: {
@@ -425,8 +465,12 @@ export const agentLoopImplement = inngest.createFunction(
           priorFeedback: feedback,
         },
       });
+      await renewLease(loopId, storyId, runToken);
       return { event: "agent/loop.review", storyId, sha: sha.slice(0, 8), reviewer: reviewerTool };
     });
+    if ("blocked" in emitResult && emitResult.blocked) {
+      return { status: "blocked", loopId, storyId, reason: emitResult.reason };
+    }
 
     return { status: "implemented", loopId, storyId, attempt, sha, tool };
   }
