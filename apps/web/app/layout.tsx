@@ -3,6 +3,7 @@ import localFont from "next/font/local";
 import Link from "next/link";
 import { SITE_URL, SITE_NAME, SITE_TAGLINE, SITE_DESCRIPTION, AUTHOR } from "../lib/constants";
 import { personJsonLd } from "../lib/jsonld";
+import { CLAW_PATH } from "../lib/claw";
 import "./globals.css";
 
 const geistSans = localFont({
@@ -73,13 +74,18 @@ export default function RootLayout({
       >
         <div className="mx-auto max-w-2xl px-6 py-16">
           <header className="mb-16">
-            <Link href="/" className="group block">
-              <span className="text-lg font-semibold group-hover:text-white transition-colors">
-                {SITE_NAME}
-              </span>
-              <span className="block text-sm text-neutral-500 mt-0.5">
-                {SITE_TAGLINE}
-              </span>
+            <Link href="/" className="group flex items-center gap-3">
+              <svg viewBox="0 0 512 512" className="w-8 h-8 shrink-0 text-claw transition-transform group-hover:rotate-[-8deg]" aria-hidden="true">
+                <path fill="currentColor" d={CLAW_PATH} />
+              </svg>
+              <div>
+                <span className="text-lg font-semibold group-hover:text-white transition-colors">
+                  {SITE_NAME}
+                </span>
+                <span className="block text-sm text-neutral-500 mt-0.5">
+                  {SITE_TAGLINE}
+                </span>
+              </div>
             </Link>
           </header>
           <main>{children}</main>
