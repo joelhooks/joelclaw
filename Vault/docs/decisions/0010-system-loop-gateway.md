@@ -43,4 +43,74 @@ A persistent LLM context window runs continuously, ingesting all relevant events
 
 ## Decision Outcome
 
-*To be determined after evaluation of options against decision drivers.*
+Adopt a hybrid orchestration model: use an event-driven reactive loop as the primary mechanism, with a cron heartbeat sweep as fallback. Concretely, the gateway reacts immediately to terminal signals such as `agent/loop.complete`, `agent/loop.retro.complete`, `system/note`, and failure events, and also runs a periodic heartbeat every 15-30 minutes to reconcile state and catch missed work.
+
+This option best satisfies the decision drivers. It preserves near-real-time autonomous action and faster feedback loops while providing graceful degradation if event delivery is delayed, dropped, or partially processed. Safety constraints remain mandatory: human override via cancel is always available, the gateway enforces action limits per time window, and model usage is bounded by explicit cost caps.
+
+### Consequences
+
+#### Good
+
+- Autonomous action increases because the system can dispatch next steps without waiting for manual routing.
+- Feedback loops are faster because terminal events can trigger immediate follow-up actions.
+- The note queue is processed more reliably because heartbeat sweeps catch backlog and missed triggers.
+
+#### Bad
+
+- LLM call volume and operating cost increase relative to a human-only gateway.
+- A poorly constrained event policy can create runaway action chains without strict limits.
+- Operational complexity rises due to combined event and cron trigger paths, deduplication, and observability needs.
+
+#### Neutral
+
+- Human control remains explicit: operators can still cancel or override gateway decisions when needed.
+
+## Pros and Cons of the Options
+
+### Option A: No system loop (human gateway only)
+
+**Pros**
+
+- Maximum human oversight and low automation risk.
+- Minimal implementation complexity and predictable model spend.
+
+**Cons**
+
+- Orchestration throughput is limited by human availability and attention.
+- Slower reaction to events and higher chance of queue buildup during off-hours.
+
+### Option B: Cron-triggered heartbeat
+
+**Pros**
+
+- Predictable cadence, straightforward budgeting, and easy rate limiting.
+- Simple failure model and easier operational debugging.
+
+**Cons**
+
+- Latency between signal and action can be high between cron ticks.
+- Time-sensitive follow-ups may be delayed and context can stale between sweeps.
+
+### Option C: Event-driven reactive loop
+
+**Pros**
+
+- Near-real-time reactions to workflow outcomes and note arrivals.
+- Efficient when idle because inference runs mainly on meaningful events.
+
+**Cons**
+
+- Requires strong idempotency and loop guards to prevent cascades.
+- Harder to reason about under bursty event conditions without robust observability.
+
+### Option D: Always-on LLM session
+
+**Pros**
+
+- Highest responsiveness and continuous contextual awareness.
+- Can keep richer ongoing reasoning state across related decisions.
+
+**Cons**
+
+- Highest cost profile and hardest model budget control.
+- Largest safety and reliability surface, including persistent-context failure modes.

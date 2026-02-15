@@ -4,3 +4,9 @@
 - Tool: claude
 - Last results: 1 test failures, typecheck: ❌, lint: ✅
 - ⚠️ NEEDS HUMAN REVIEW
+
+### 2026-02-15T01:22:43.534Z
+**Story ADR10-2: Decision Drivers + Considered Options** — FAILED (skipped after 3 attempts)
+- Tool: claude
+- Last results: 1 test failures, typecheck: ❌, lint: ✅
+- ⚠️ NEEDS HUMAN REVIEW
