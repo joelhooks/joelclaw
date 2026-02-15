@@ -40,7 +40,10 @@ This is Joel's always-on Mac Mini — a prototype personal AI assistant, copilot
 | `~/Vault/docs/decisions/` | Architecture Decision Records |
 | `~/Vault/Projects/` | Active projects (PARA) |
 | `~/Vault/Resources/tools/` | Tool inventory — one note per tool with frontmatter |
-| `~/Code/openclaw/openclaw/` | OpenClaw agent framework (codebase, not knowledge) |
+| `~/Code/joelhooks/joelclaw/` | joelclaw monorepo (system-bus, web, .agents/) |
+| `~/Code/system-bus-worker/` | Dedicated worker clone (launchd runs from here) |
+| `~/Code/openclaw/openclaw/` | OpenClaw agent framework (reference, not deployed) |
+| `~/.joelclaw/workspace/` | Agent memory workspace (MEMORY.md, daily logs) |
 | `~/Projects/` | Code projects directory |
 | `joel@three-body:/volume1/home/joel/video/` | NAS video archive (SSH, by year) |
 | `~/Vault/Resources/videos/` | Video notes — summaries, transcripts, concept tags |
