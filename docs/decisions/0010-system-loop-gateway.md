@@ -120,3 +120,23 @@ Cons:
 - Highest ongoing token and runtime cost profile.
 - Largest safety and operational risk surface if control logic drifts.
 - Harder to implement and operate reliably than event-triggered functions.
+
+## Implementation Plan
+
+1. Build a new Inngest gateway function `system/heartbeat` that can be invoked from two trigger paths: (a) cron schedule every 15-30 minutes and (b) terminal events such as `agent/loop.complete`, `agent/loop.retro.complete`, and `system/note`.
+2. Add a deterministic state-gathering step that collects current orchestration inputs before any LLM call: note queue length, recent `slog` entries for the last execution window, pending retro recommendations, active loop runs, and a half-done inventory of interrupted or partially completed work.
+3. Add an LLM decision step that receives only the gathered state and must choose exactly one action from a constrained action set: `start_loop`, `process_notes`, `apply_retro_recommendation`, `emit_alert`, or `do_nothing`.
+4. Implement an action execution step that maps the selected action to a single Inngest event emit: `agent/loop.requested` for `start_loop`, `system/note.process.requested` for `process_notes`, `agent/loop.retro.apply.requested` for `apply_retro_recommendation`, `system/alert.requested` for `emit_alert`, and no dispatch for `do_nothing`.
+5. Enforce safety rails in the gateway runtime: max actions per hour, LLM/token cost budget checks before dispatch, a human-approval gate for destructive actions, and always-log reasoning with state snapshot plus chosen action for auditability.
+6. Add observability and replay hooks so each gateway run records trigger source (`cron` vs `event`), decision payload hash, action outcome, and safety-rail decisions, enabling post-incident replay and drift checks.
+
+## Verification
+
+- [ ] Triggering `system/heartbeat` from cron and from a terminal event both execute the same decision pipeline and produce a run log with the trigger source.
+- [ ] State-gathering logs include note queue length, recent `slog` summary, pending retro recommendation count, active loop run count, and half-done inventory count for every run.
+- [ ] The decision step rejects any action outside `start_loop|process_notes|apply_retro_recommendation|emit_alert|do_nothing` and records a validation error.
+- [ ] For each allowed action except `do_nothing`, the gateway emits the expected Inngest event name exactly once per decision.
+- [ ] Hourly rate-limit configuration blocks actions after the configured max and emits a safety alert instead of dispatching work.
+- [ ] Budget checks prevent action dispatch when token or cost limits are exceeded and log the blocked reason.
+- [ ] Destructive actions are blocked without explicit human approval and are only executed after approval state is present.
+- [ ] Every run writes a structured reasoning log containing state summary, chosen action, and safety-rail decisions.
