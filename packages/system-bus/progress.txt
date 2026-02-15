@@ -219,3 +219,12 @@ PRD-in-Redis → Docker isolation → real branch push → PR workflow
 - Added `## Prior Loop Recommendations` context section with priority immediately after codebase patterns
 - Backward compatible behavior preserved: if file is missing or invalid JSON, prompt assembly remains unchanged
 - Verification: `bunx tsc --noEmit src/serve.ts src/inngest/client.ts src/inngest/functions/agent-loop/*.ts` passed
+
+## Notes for Later
+
+- **Monorepo migration plan**: system-bus is in joelhooks/joelclaw/packages/system-bus. Still need to migrate:
+  - igs CLI → packages/cli (rename to @joelclaw/cli, ADR-0009)
+  - joelclaw-notes → packages/notes (rename to @joelclaw/notes)
+  - Deprecate ~/Code/system-bus, ~/Code/joelhooks/igs, ~/Code/joelclaw-notes as standalone
+  - Update all hardcoded paths in launchd plists, skills, continuation docs
+- **Old ~/Code/system-bus still exists** — codex wrote retro there, we synced. Should eventually rm or symlink.
