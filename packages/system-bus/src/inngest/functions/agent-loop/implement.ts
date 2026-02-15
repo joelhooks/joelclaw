@@ -16,6 +16,7 @@ import {
   spawnInContainer,
   guardStory,
   renewLease,
+  readLessons,
   readRecommendations,
   readPatterns,
 } from "./utils";
@@ -156,6 +157,7 @@ async function buildPrompt(
   const patterns = await readPatterns(project);
   const recommendationsRaw = await readRecommendations<RecommendationsContext>(project);
   const recommendations = formatRecommendationsContext(recommendationsRaw);
+  const lessons = await readLessons(project);
 
   const fileListing = await getFileListing(project);
 
@@ -172,6 +174,14 @@ async function buildPrompt(
     contextSections.push({
       label: "## Prior Loop Recommendations",
       content: recommendations.slice(0, 2000),
+      priority: 2,
+    });
+  }
+  if (lessons.length > 0) {
+    const lessonsText = lessons.slice(-5).reverse().join("\n\n");
+    contextSections.push({
+      label: "## Lessons from Prior Loops",
+      content: lessonsText.slice(0, 3000),
       priority: 2,
     });
   }
