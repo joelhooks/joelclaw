@@ -1,0 +1,618 @@
+Implemented the story by rewriting `OBSERVER_SYSTEM_PROMPT` in `src/inngest/functions/observe-prompt.ts` to enforce segment-aware distillation.
+
+What changed in `src/inngest/functions/observe-prompt.ts`:
+- Added explicit instruction to identify coherent segments first (topic shifts, natural breakpoints, temporal clustering).
+- Required two outputs per segment:
+  - `<narrative>`: 1-3 sentence operational context.
+  - `<facts>`: bullet list of retained specifics.
+- Kept priority markers on individual facts (`🔴/🟡/🟢`).
+- Updated output schema to nest `<segment>` blocks inside `<observations>`.
+- Left `<current-task>` and `<suggested-response>` semantics unchanged.
+
+Validation:
+- Ran `bunx tsc --noEmit`.
+- It does **not** compile cleanly due to many pre-existing repo/environment TypeScript issues (missing Bun/Node/inngest type resolution and existing strict-type errors across multiple files), not due to this prompt-only change.
+
+
+--- STDERR ---
+OpenAI Codex v0.101.0 (research preview)
+--------
+workdir: /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-bus
+model: gpt-5.3-codex
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: auto
+session id: 019c62e4-af88-7d51-88fa-6263808a4abe
+--------
+user
+
+
+## Project File Listing
+
+docker
+prd-v3-recovery.json
+prd-adr-0010.json
+progress.txt
+prd-retro.json
+bun.lock
+README.md
+__tests__
+package.json
+tsconfig.json
+docker-compose.yml
+prd-v2.json
+index.ts
+CONTINUATION.md
+prd.json
+CLAUDE.md
+prd-cli-migration.json
+src
+CONTINUATION-ADR.md
+
+# src/ files:
+src/inngest/client.ts
+src/serve.ts
+
+## Project Instructions (CLAUDE.md)
+
+
+## Agent Loop Architecture (ADR-0015)
+
+This project runs automated coding loops with 5 separated roles:
+- **Planner**: generates PRD from goal, picks next story
+- **Test Writer**: writes acceptance tests BEFORE implementation (TDD)
+- **Implementor**: writes code to pass the tests
+- **Reviewer**: evaluates implementation with 4 questions (no test writing)
+- **Judge**: mechanical gates + reviewer notes + LLM verdict
+
+When working as an implementor: implement the story, don't write tests.
+When working as a test writer: write tests from acceptance criteria only, don't read implementation.
+Tests should verify observable behavior and public API — NOT internal structure.
+Do NOT use source code string matching (indexOf, regex on source) to verify behavior.
+Commit nothing — the harness handles git.
+
+## Bun Runtime
+
+Default to using Bun instead of Node.js.
+
+- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
+- Use `bun test` instead of `jest` or `vitest`
+- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
+- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
+- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
+- Use `bunx <package> <command>` instead of `npx <package> <command>`
+- Bun automatically loads .env, so don't use dotenv.
+
+## APIs
+
+- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
+- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
+- `Bun.redis` for Redis. Don't use `ioredis`.
+- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
+- `WebSocket` is built-in. Don't use `ws`.
+- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
+- Bun.$`ls` instead of execa.
+
+## Testing
+
+Use `bun test` to run tests.
+
+```ts#index.test.ts
+import { test, expect } from "bun:test";
+
+test("hello world", () => {
+  expect(1).toBe(1);
+});
+```
+
+## Frontend
+
+Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, C
+
+---
+
+## Story: Rewrite OBSERVER_SYSTEM_PROMPT for segment-aware distillation (NUUM-1)
+
+Rewrite the OBSERVER_SYSTEM_PROMPT in src/inngest/functions/observe-prompt.ts to instruct the LLM to perform segment-aware distillation instead of flat observation extraction. The new prompt should instruct the model to: (1) identify coherent conversation segments — groups of related messages about one topic (debugging a bug, implementing a feature, making a decision), using topic shifts, natural breakpoints, and temporal clustering as boundaries. (2) For each segment, produce TWO distillates: an 'operational context' (1-3 sentences explaining what happened — the narrative) and 'retained facts' (bullet list of specific file paths, values, decisions with rationale, gotchas, error messages and fixes, user preferences discovered). The output format wraps each segment in <segment> tags inside the existing <observations> tag, with <narrative> and <facts> sub-tags. Keep <current-task> and <suggested-response> tags unchanged. Preserve the priority markers (🔴/🟡/🟢) on individual facts within segments. Credit: Segment-aware distillation pattern from Nuum (Simen Svale / Sanity).
+
+## Acceptance Criteria
+- observe-prompt.ts OBSERVER_SYSTEM_PROMPT instructs segment identification before extraction
+- Prompt specifies operational context (1-3 sentence narrative) per segment via <narrative> tag
+- Prompt specifies retained facts (bullet list with specifics) per segment via <facts> tag
+- Prompt preserves 🔴/🟡/🟢 priority markers on individual facts
+- Output format uses <segment> tags within <observations>
+- <current-task> and <suggested-response> tags remain unchanged
+- TypeScript compiles cleanly: bunx tsc --noEmit
+
+## Instructions
+Implement the story above. Do NOT write tests — a separate reviewer will handle testing.
+Make clean, focused changes. Commit nothing — the harness handles git.
+mcp startup: no servers
+2026-02-15T20:01:20.340735Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5eca-bff9-7772-83bf-5daab07b9959
+2026-02-15T20:01:20.397322Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5ffd-d51d-7a13-b1fa-342be02f164b
+2026-02-15T20:01:20.476535Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6275-d69e-7b53-bb28-583bfe07e70c
+2026-02-15T20:01:20.547107Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5d40-288c-78b2-af66-36e0fae54073
+2026-02-15T20:01:20.611223Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6031-b7fb-7120-85b5-8abf34324910
+2026-02-15T20:01:20.681456Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fe2-872d-7e93-87a3-71d37d75a127
+2026-02-15T20:01:20.728196Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e50-6bc5-7861-a0a0-f77d68ec073f
+2026-02-15T20:01:20.802121Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6022-8a12-7ba0-b7e8-9c265e8ec17e
+2026-02-15T20:01:20.877334Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fbb-e145-7c40-9913-218548629e57
+2026-02-15T20:01:20.943225Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e21-7a30-7ed1-b686-e02ac2da8157
+2026-02-15T20:01:20.972557Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fed-5e04-78c0-9a4e-9fddc7af084e
+
+thinking
+**Planning deeper file inspection**
+codex
+I’m implementing the prompt rewrite in `src/inngest/functions/observe-prompt.ts` to switch from flat extraction to segment-aware distillation while preserving the existing `current-task` and `suggested-response` sections. I’ll inspect the current prompt text first, then patch it and run `bunx tsc --noEmit` to verify compile cleanliness.
+exec
+/bin/zsh -lc 'rg --files' in /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-busexec
+/bin/zsh -lc 'rg -n "OBSERVER_SYSTEM_PROMPT|observations|current-task|suggested-response" src' in /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-bus succeeded in 52ms:
+CONTINUATION-ADR.md
+src/serve.ts
+src/inngest/functions/transcript-process.ts
+src/inngest/functions/index.ts
+src/inngest/functions/video-download.ts
+src/inngest/functions/summarize.ts
+src/inngest/functions/observe-parser.ts
+src/inngest/functions/system-logger.ts
+src/inngest/functions/agent-loop/plan.ts
+src/inngest/functions/agent-loop/llmEvaluate.test.ts
+src/inngest/functions/agent-loop/judge.test.ts
+src/inngest/functions/agent-loop/test-writer.test.ts
+src/inngest/functions/agent-loop/test-writer.ts
+src/inngest/functions/agent-loop/formatLoopDuration.test.ts
+src/inngest/functions/agent-loop/review.test.ts
+src/inngest/functions/agent-loop/index.ts
+src/inngest/functions/agent-loop/getStoryDiff.test.ts
+src/inngest/functions/agent-loop/parseClaudeOutput.test.ts
+src/inngest/functions/agent-loop/review.ts
+src/inngest/functions/agent-loop/utils.ts
+ succeeded in 51ms:
+src/inngest/functions/observe-parser.ts:2:  observations: string;
+src/inngest/functions/observe-parser.ts:8:export function optimizeForContext(observations: string): string {
+src/inngest/functions/observe-parser.ts:9:  if (observations.trim().length === 0) {
+src/inngest/functions/observe-parser.ts:13:  return observations
+src/inngest/functions/observe-parser.ts:46:      observations: "",
+src/inngest/functions/observe-parser.ts:53:  const observations = extractTagContent(raw, "observations");
+src/inngest/functions/observe-parser.ts:54:  if (observations !== null) {
+src/inngest/functions/observe-parser.ts:56:      observations,
+src/inngest/functions/observe-parser.ts:57:      currentTask: extractTagContent(raw, "current-task"),
+src/inngest/functions/observe-parser.ts:58:      suggestedResponse: extractTagContent(raw, "suggested-response"),
+src/inngest/functions/observe-parser.ts:65:      observations: raw,
+src/inngest/functions/observe-parser.ts:73:    observations: raw,
+src/inngest/functions/agent-loop/retro.ts:293:        "whether acceptance criteria were well-scoped, test quality observations, tool effectiveness.",
+src/inngest/functions/observe-parser.test.ts:7:<observations>
+src/inngest/functions/observe-parser.test.ts:10:</observations>
+src/inngest/functions/observe-parser.test.ts:11:<current-task>
+src/inngest/functions/observe-parser.test.ts:13:</current-task>
+src/inngest/functions/observe-parser.test.ts:14:<suggested-response>
+src/inngest/functions/observe-parser.test.ts:16:</suggested-response>
+src/inngest/functions/observe-parser.test.ts:20:      observations: "🔴 Primary issue detected\n  🟡 Secondary signal",
+
+thinking
+**Assessing potential test impact**
+codex
+I found the target prompt and will now patch just that file, updating instructions and output schema to use `<segment>` with `<narrative>` and `<facts>` while leaving `<current-task>` and `<suggested-response>` intact.
+exec
+/bin/zsh -lc "sed -n '1,220p' src/inngest/functions/observe-prompt.ts" in /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-bus succeeded in 52ms:
+export const OBSERVER_SYSTEM_PROMPT = `You are a silent session observer. Your job is to extract reusable knowledge from Claude Code session transcripts.
+
+Focus on objective facts over opinions. Prefer specific details over vague summaries. Deduplicate repeated information.
+
+For each observation, add exactly one priority marker:
+- 🔴 High: corrections, explicit user preferences, system facts, constraints, hard requirements
+- 🟡 Medium: recurring patterns, repeated actions, consistent workflows
+- 🟢 Low: minor notes, incidental context, low-impact details
+
+Group observations by date. Prefix each group with:
+Date: YYYY-MM-DD
+
+Output must be valid XML using these tags:
+- <observations> (required): extracted observations, one per line, each line prefixed with a priority marker
+- <current-task> (optional): what the user is currently working on
+- <suggested-response> (optional): a concise greeting/context suggestion for the next session
+
+Return XML only.`;
+
+export const OBSERVER_USER_PROMPT = (
+
+thinking
+**Adjusting prompt text and tests**
+file update
+M /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-bus/src/inngest/functions/observe-prompt.ts
+@@ -4,3 +4,13 @@
+ 
+-For each observation, add exactly one priority marker:
++First, identify coherent conversation segments before extracting anything. A segment is a contiguous group of related messages about one topic (for example: debugging a specific bug, implementing one feature, or making one decision).
++Use these segment boundaries:
++- Topic shifts
++- Natural breakpoints (task completion, decision finalized, handoff to a new task)
++- Temporal clustering (messages close in time and context stay together)
++
++For each segment, produce TWO distillates:
++1) <narrative>: operational context in 1-3 sentences explaining what happened in that segment.
++2) <facts>: retained facts as bullet lines with concrete specifics (file paths, values, decisions with rationale, gotchas, error messages and fixes, user preferences discovered).
++
++For each retained fact line, add exactly one priority marker:
+ - 🔴 High: corrections, explicit user preferences, system facts, constraints, hard requirements
+@@ -8,8 +18,8 @@
+ - 🟢 Low: minor notes, incidental context, low-impact details
+-
+-Group observations by date. Prefix each group with:
+-Date: YYYY-MM-DD
+ 
+ Output must be valid XML using these tags:
+-- <observations> (required): extracted observations, one per line, each line prefixed with a priority marker
++- <observations> (required): container for segment-aware distillation
++- <segment>: one coherent segment
++- <narrative>: operational context for that segment (1-3 sentences)
++- <facts>: bullet list of retained facts for that segment, each bullet prefixed with 🔴/🟡/🟢
+ - <current-task> (optional): what the user is currently working on
+@@ -17,2 +27,16 @@
+ 
++Use this structure:
++<observations>
++  <segment>
++    <narrative>...</narrative>
++    <facts>
++      - 🔴 ...
++      - 🟡 ...
++      - 🟢 ...
++    </facts>
++  </segment>
++</observations>
++<current-task>...</current-task>
++<suggested-response>...</suggested-response>
++
+ Return XML only.`;
+apply_patch(auto_approved=true) exited 0 in 36ms:
+Success. Updated the following files:
+M src/inngest/functions/observe-prompt.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-prompt.ts b/packages/system-bus/src/inngest/functions/observe-prompt.ts
+index 196349e3980f4ea596fb9695174dd1aadb445e5c..1e47be64a960549d84302cc8c4e8195d2d4b6115
+--- a/packages/system-bus/src/inngest/functions/observe-prompt.ts
++++ b/packages/system-bus/src/inngest/functions/observe-prompt.ts
+@@ -2,19 +2,43 @@
+ 
+ Focus on objective facts over opinions. Prefer specific details over vague summaries. Deduplicate repeated information.
+ 
+-For each observation, add exactly one priority marker:
++First, identify coherent conversation segments before extracting anything. A segment is a contiguous group of related messages about one topic (for example: debugging a specific bug, implementing one feature, or making one decision).
++Use these segment boundaries:
++- Topic shifts
++- Natural breakpoints (task completion, decision finalized, handoff to a new task)
++- Temporal clustering (messages close in time and context stay together)
++
++For each segment, produce TWO distillates:
++1) <narrative>: operational context in 1-3 sentences explaining what happened in that segment.
++2) <facts>: retained facts as bullet lines with concrete specifics (file paths, values, decisions with rationale, gotchas, error messages and fixes, user preferences discovered).
++
++For each retained fact line, add exactly one priority marker:
+ - 🔴 High: corrections, explicit user preferences, system facts, constraints, hard requirements
+ - 🟡 Medium: recurring patterns, repeated actions, consistent workflows
+ - 🟢 Low: minor notes, incidental context, low-impact details
+-
+-Group observations by date. Prefix each group with:
+-Date: YYYY-MM-DD
+ 
+ Output must be valid XML using these tags:
+-- <observations> (required): extracted observations, one per line, each line prefixed with a priority marker
++- <observations> (required): container for segment-aware distillation
++- <segment>: one coherent segment
++- <narrative>: operational context for that segment (1-3 sentences)
++- <facts>: bullet list of retained facts for that segment, each bullet prefixed with 🔴/🟡/🟢
+ - <current-task> (optional): what the user is currently working on
+ - <suggested-response> (optional): a concise greeting/context suggestion for the next session
+ 
++Use this structure:
++<observations>
++  <segment>
++    <narrative>...</narrative>
++    <facts>
++      - 🔴 ...
++      - 🟡 ...
++      - 🟢 ...
++    </facts>
++  </segment>
++</observations>
++<current-task>...</current-task>
++<suggested-response>...</suggested-response>
++
+ Return XML only.`;
+ 
+ export const OBSERVER_USER_PROMPT = (
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-prompt.ts b/packages/system-bus/src/inngest/functions/observe-prompt.ts
+index 196349e3980f4ea596fb9695174dd1aadb445e5c..1e47be64a960549d84302cc8c4e8195d2d4b6115
+--- a/packages/system-bus/src/inngest/functions/observe-prompt.ts
++++ b/packages/system-bus/src/inngest/functions/observe-prompt.ts
+@@ -2,19 +2,43 @@
+ 
+ Focus on objective facts over opinions. Prefer specific details over vague summaries. Deduplicate repeated information.
+ 
+-For each observation, add exactly one priority marker:
++First, identify coherent conversation segments before extracting anything. A segment is a contiguous group of related messages about one topic (for example: debugging a specific bug, implementing one feature, or making one decision).
++Use these segment boundaries:
++- Topic shifts
++- Natural breakpoints (task completion, decision finalized, handoff to a new task)
++- Temporal clustering (messages close in time and context stay together)
++
++For each segment, produce TWO distillates:
++1) <narrative>: operational context in 1-3 sentences explaining what happened in that segment.
++2) <facts>: retained facts as bullet lines with concrete specifics (file paths, values, decisions with rationale, gotchas, error messages and fixes, user preferences discovered).
++
++For each retained fact line, add exactly one priority marker:
+ - 🔴 High: corrections, explicit user preferences, system facts, constraints, hard requirements
+ - 🟡 Medium: recurring patterns, repeated actions, consistent workflows
+ - 🟢 Low: minor notes, incidental context, low-impact details
+-
+-Group observations by date. Prefix each group with:
+-Date: YYYY-MM-DD
+ 
+ Output must be valid XML using these tags:
+-- <observations> (required): extracted observations, one per line, each line prefixed with a priority marker
++- <observations> (required): container for segment-aware distillation
++- <segment>: one coherent segment
++- <narrative>: operational context for that segment (1-3 sentences)
++- <facts>: bullet list of retained facts for that segment, each bullet prefixed with 🔴/🟡/🟢
+ - <current-task> (optional): what the user is currently working on
+ - <suggested-response> (optional): a concise greeting/context suggestion for the next session
+ 
++Use this structure:
++<observations>
++  <segment>
++    <narrative>...</narrative>
++    <facts>
++      - 🔴 ...
++      - 🟡 ...
++      - 🟢 ...
++    </facts>
++  </segment>
++</observations>
++<current-task>...</current-task>
++<suggested-response>...</suggested-response>
++
+ Return XML only.`;
+ 
+ export const OBSERVER_USER_PROMPT = (
+
+codex
+The prompt text has been updated. I’m running the TypeScript compile check now to confirm there are no regressions.
+exec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-bus exited 2 in 287ms:
+index.ts(1,1): error TS2584: Cannot find name 'console'. Do you need to change your target library? Try changing the 'lib' compiler option to include 'dom'.
+src/inngest/client.ts(1,39): error TS2307: Cannot find module 'inngest' or its corresponding type declarations.
+src/inngest/functions/agent-loop/complete.ts(2,19): error TS2307: Cannot find module 'bun' or its corresponding type declarations.
+src/inngest/functions/agent-loop/complete.ts(15,12): error TS7031: Binding element 'event' implicitly has an 'any' type.
+src/inngest/functions/agent-loop/complete.ts(15,19): error TS7031: Binding element 'step' implicitly has an 'any' type.
+src/inngest/functions/agent-loop/event-chain.test.ts(1,40): error TS2307: Cannot find module 'bun:test' or its corresponding type declarations.
+src/inngest/functions/agent-loop/event-chain.test.ts(23,26): error TS2867: Cannot find name 'Bun'. Do you need to install type definitions for Bun? Try `npm i --save-dev @types/bun`.
+src/inngest/functions/agent-loop/event-chain.test.ts(24,11): error TS2304: Cannot find name 'URL'.
+src/inngest/functions/agent-loop/event-chain.test.ts(24,40): error TS2339: Property 'url' does not exist on type 'ImportMeta'.
+src/inngest/functions/agent-loop/event-chain.test.ts(30,26): error TS2867: Cannot find name 'Bun'. Do you need to install type definitions for Bun? Try `npm i --save-dev @types/bun`.
+src/inngest/functions/agent-loop/event-chain.test.ts(31,11): error TS2304: Cannot find name 'URL'.
+src/inngest/functions/agent-loop/event-chain.test.ts(31,40): error TS2339: Property 'url' does not exist on type 'ImportMeta'.
+src/inngest/functions/agent-loop/event-chain.test.ts(48,26): error TS2867: Cannot find name 'Bun'. Do you need to install type definitions for Bun? Try `npm i --save-dev @types/bun`.
+src/inngest/functions/agent-loop/event-chain.test.ts(49,11): error TS2304: Cannot find name 'URL'.
+src/inngest/functions/agent-loop/event-chain.test.ts(49,47): error TS2339: Property 'url' does not exist on type 'ImportMeta'.
+src/inngest/functions/agent-loop/event-chain.test.ts(67,26): error TS2867: Cannot find name 'Bun'. Do you need to install type definitions for Bun? Try `npm i --save-dev @types/bun`.
+src/inngest/functions/agent-loop/event-chain.test.ts(68,11): error TS2304: Cannot find name 'URL'.
+src/inngest/functions/agent-loop/event-chain.test.ts(68,45): error TS2339: Property 'url' does not exist on type 'ImportMeta'.
+src/inngest/functions/agent-loop/event-chain.test.ts(85,26): error TS2867: Cannot find name 'Bun'. Do you need to install type definitions for Bun? Try `npm i --save-dev @types/bun`.
+src/inngest/functions/agent-loop/event-chain.test.ts(86,11): error TS2304: Cannot find name 'URL'.
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-prompt.ts b/packages/system-bus/src/inngest/functions/observe-prompt.ts
+index 196349e3980f4ea596fb9695174dd1aadb445e5c..1e47be64a960549d84302cc8c4e8195d2d4b6115
+--- a/packages/system-bus/src/inngest/functions/observe-prompt.ts
++++ b/packages/system-bus/src/inngest/functions/observe-prompt.ts
+@@ -2,19 +2,43 @@
+ 
+ Focus on objective facts over opinions. Prefer specific details over vague summaries. Deduplicate repeated information.
+ 
+-For each observation, add exactly one priority marker:
++First, identify coherent conversation segments before extracting anything. A segment is a contiguous group of related messages about one topic (for example: debugging a specific bug, implementing one feature, or making one decision).
++Use these segment boundaries:
++- Topic shifts
++- Natural breakpoints (task completion, decision finalized, handoff to a new task)
++- Temporal clustering (messages close in time and context stay together)
++
++For each segment, produce TWO distillates:
++1) <narrative>: operational context in 1-3 sentences explaining what happened in that segment.
++2) <facts>: retained facts as bullet lines with concrete specifics (file paths, values, decisions with rationale, gotchas, error messages and fixes, user preferences discovered).
++
++For each retained fact line, add exactly one priority marker:
+ - 🔴 High: corrections, explicit user preferences, system facts, constraints, hard requirements
+ - 🟡 Medium: recurring patterns, repeated actions, consistent workflows
+ - 🟢 Low: minor notes, incidental context, low-impact details
+-
+-Group observations by date. Prefix each group with:
+-Date: YYYY-MM-DD
+ 
+ Output must be valid XML using these tags:
+-- <observations> (required): extracted observations, one per line, each line prefixed with a priority marker
++- <observations> (required): container for segment-aware distillation
++- <segment>: one coherent segment
++- <narrative>: operational context for that segment (1-3 sentences)
++- <facts>: bullet list of retained facts for that segment, each bullet prefixed with 🔴/🟡/🟢
+ - <current-task> (optional): what the user is currently working on
+ - <suggested-response> (optional): a concise greeting/context suggestion for the next session
+ 
++Use this structure:
++<observations>
++  <segment>
++    <narrative>...</narrative>
++    <facts>
++      - 🔴 ...
++      - 🟡 ...
++      - 🟢 ...
++    </facts>
++  </segment>
++</observations>
++<current-task>...</current-task>
++<suggested-response>...</suggested-response>
++
+ Return XML only.`;
+ 
+ export const OBSERVER_USER_PROMPT = (
+
+
+thinking
+**Noting build environment limits**
+codex
+I completed the prompt rewrite, and the compile check is currently blocked by pre-existing project/environment TypeScript issues unrelated to this story (missing Bun/Node/inngest types and many baseline TS errors across the repo). I’ll quickly capture the exact file diff for your review.
+exec
+/bin/zsh -lc 'git diff -- src/inngest/functions/observe-prompt.ts' in /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-bus succeeded in 51ms:
+diff --git a/packages/system-bus/src/inngest/functions/observe-prompt.ts b/packages/system-bus/src/inngest/functions/observe-prompt.ts
+index 196349e..1e47be6 100644
+--- a/packages/system-bus/src/inngest/functions/observe-prompt.ts
++++ b/packages/system-bus/src/inngest/functions/observe-prompt.ts
+@@ -2,19 +2,43 @@ export const OBSERVER_SYSTEM_PROMPT = `You are a silent session observer. Your j
+ 
+ Focus on objective facts over opinions. Prefer specific details over vague summaries. Deduplicate repeated information.
+ 
+-For each observation, add exactly one priority marker:
++First, identify coherent conversation segments before extracting anything. A segment is a contiguous group of related messages about one topic (for example: debugging a specific bug, implementing one feature, or making one decision).
++Use these segment boundaries:
++- Topic shifts
++- Natural breakpoints (task completion, decision finalized, handoff to a new task)
++- Temporal clustering (messages close in time and context stay together)
++
++For each segment, produce TWO distillates:
++1) <narrative>: operational context in 1-3 sentences explaining what happened in that segment.
++2) <facts>: retained facts as bullet lines with concrete specifics (file paths, values, decisions with rationale, gotchas, error messages and fixes, user preferences discovered).
++
++For each retained fact line, add exactly one priority marker:
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-prompt.ts b/packages/system-bus/src/inngest/functions/observe-prompt.ts
+index 196349e3980f4ea596fb9695174dd1aadb445e5c..1e47be64a960549d84302cc8c4e8195d2d4b6115
+--- a/packages/system-bus/src/inngest/functions/observe-prompt.ts
++++ b/packages/system-bus/src/inngest/functions/observe-prompt.ts
+@@ -2,19 +2,43 @@
+ 
+ Focus on objective facts over opinions. Prefer specific details over vague summaries. Deduplicate repeated information.
+ 
+-For each observation, add exactly one priority marker:
++First, identify coherent conversation segments before extracting anything. A segment is a contiguous group of related messages about one topic (for example: debugging a specific bug, implementing one feature, or making one decision).
++Use these segment boundaries:
++- Topic shifts
++- Natural breakpoints (task completion, decision finalized, handoff to a new task)
++- Temporal clustering (messages close in time and context stay together)
++
++For each segment, produce TWO distillates:
++1) <narrative>: operational context in 1-3 sentences explaining what happened in that segment.
++2) <facts>: retained facts as bullet lines with concrete specifics (file paths, values, decisions with rationale, gotchas, error messages and fixes, user preferences discovered).
++
++For each retained fact line, add exactly one priority marker:
+ - 🔴 High: corrections, explicit user preferences, system facts, constraints, hard requirements
+ - 🟡 Medium: recurring patterns, repeated actions, consistent workflows
+ - 🟢 Low: minor notes, incidental context, low-impact details
+-
+-Group observations by date. Prefix each group with:
+-Date: YYYY-MM-DD
+ 
+ Output must be valid XML using these tags:
+-- <observations> (required): extracted observations, one per line, each line prefixed with a priority marker
++- <observations> (required): container for segment-aware distillation
++- <segment>: one coherent segment
++- <narrative>: operational context for that segment (1-3 sentences)
++- <facts>: bullet list of retained facts for that segment, each bullet prefixed with 🔴/🟡/🟢
+ - <current-task> (optional): what the user is currently working on
+ - <suggested-response> (optional): a concise greeting/context suggestion for the next session
+ 
++Use this structure:
++<observations>
++  <segment>
++    <narrative>...</narrative>
++    <facts>
++      - 🔴 ...
++      - 🟡 ...
++      - 🟢 ...
++    </facts>
++  </segment>
++</observations>
++<current-task>...</current-task>
++<suggested-response>...</suggested-response>
++
+ Return XML only.`;
+ 
+ export const OBSERVER_USER_PROMPT = (
+
+
+thinking
+**Summarizing compile failure with file reference**
+codex
+Implemented the story by rewriting `OBSERVER_SYSTEM_PROMPT` in `src/inngest/functions/observe-prompt.ts` to enforce segment-aware distillation.
+
+What changed in `src/inngest/functions/observe-prompt.ts`:
+- Added explicit instruction to identify coherent segments first (topic shifts, natural breakpoints, temporal clustering).
+- Required two outputs per segment:
+  - `<narrative>`: 1-3 sentence operational context.
+  - `<facts>`: bullet list of retained specifics.
+- Kept priority markers on individual facts (`🔴/🟡/🟢`).
+- Updated output schema to nest `<segment>` blocks inside `<observations>`.
+- Left `<current-task>` and `<suggested-response>` semantics unchanged.
+
+Validation:
+- Ran `bunx tsc --noEmit`.
+- It does **not** compile cleanly due to many pre-existing repo/environment TypeScript issues (missing Bun/Node/inngest type resolution and existing strict-type errors across multiple files), not due to this prompt-only change.
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-prompt.ts b/packages/system-bus/src/inngest/functions/observe-prompt.ts
+index 196349e3980f4ea596fb9695174dd1aadb445e5c..1e47be64a960549d84302cc8c4e8195d2d4b6115
+--- a/packages/system-bus/src/inngest/functions/observe-prompt.ts
++++ b/packages/system-bus/src/inngest/functions/observe-prompt.ts
+@@ -2,19 +2,43 @@
+ 
+ Focus on objective facts over opinions. Prefer specific details over vague summaries. Deduplicate repeated information.
+ 
+-For each observation, add exactly one priority marker:
++First, identify coherent conversation segments before extracting anything. A segment is a contiguous group of related messages about one topic (for example: debugging a specific bug, implementing one feature, or making one decision).
++Use these segment boundaries:
++- Topic shifts
++- Natural breakpoints (task completion, decision finalized, handoff to a new task)
++- Temporal clustering (messages close in time and context stay together)
++
++For each segment, produce TWO distillates:
++1) <narrative>: operational context in 1-3 sentences explaining what happened in that segment.
++2) <facts>: retained facts as bullet lines with concrete specifics (file paths, values, decisions with rationale, gotchas, error messages and fixes, user preferences discovered).
++
++For each retained fact line, add exactly one priority marker:
+ - 🔴 High: corrections, explicit user preferences, system facts, constraints, hard requirements
+ - 🟡 Medium: recurring patterns, repeated actions, consistent workflows
+ - 🟢 Low: minor notes, incidental context, low-impact details
+-
+-Group observations by date. Prefix each group with:
+-Date: YYYY-MM-DD
+ 
+ Output must be valid XML using these tags:
+-- <observations> (required): extracted observations, one per line, each line prefixed with a priority marker
++- <observations> (required): container for segment-aware distillation
++- <segment>: one coherent segment
++- <narrative>: operational context for that segment (1-3 sentences)
++- <facts>: bullet list of retained facts for that segment, each bullet prefixed with 🔴/🟡/🟢
+ - <current-task> (optional): what the user is currently working on
+ - <suggested-response> (optional): a concise greeting/context suggestion for the next session
+ 
++Use this structure:
++<observations>
++  <segment>
++    <narrative>...</narrative>
++    <facts>
++      - 🔴 ...
++      - 🟡 ...
++      - 🟢 ...
++    </facts>
++  </segment>
++</observations>
++<current-task>...</current-task>
++<suggested-response>...</suggested-response>
++
+ Return XML only.`;
+ 
+ export const OBSERVER_USER_PROMPT = (
+
+tokens used
+68,422
