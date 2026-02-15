@@ -129,6 +129,7 @@ export const agentLoopPlan = inngest.createFunction(
         status: "max_iterations_reached",
         loopId,
         maxIterations,
+          checks: prd.checks,
         attemptedStories,
         storiesCompleted: completed,
       };
@@ -239,6 +240,7 @@ export const agentLoopPlan = inngest.createFunction(
           story,
           maxRetries,
           maxIterations,
+          checks: prd.checks,
           retryLadder,
         },
       });
@@ -251,6 +253,7 @@ export const agentLoopPlan = inngest.createFunction(
       tool: implTool,
       remaining: remaining.length,
       maxIterations,
+          checks: prd.checks,
     };
   }
 );
