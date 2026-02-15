@@ -5,6 +5,7 @@ import {
   writePidFile,
   cleanupPid,
   getStoryDiff,
+  parseClaudeOutput,
   TOOL_TIMEOUTS,
 } from "./utils";
 import { join } from "node:path";
@@ -170,18 +171,9 @@ async function evaluateQuestionsWithClaude(
   await cleanupPid(loopId);
 
   const output = stdout + (stderr ? `\n--- STDERR ---\n${stderr}` : "");
-  const parsed = parseJsonFromOutput(output) as
-    | { questions?: Array<{ id?: unknown; answer?: unknown; evidence?: unknown }>; result?: unknown }
+  const payload = parseClaudeOutput(output) as
+    | { questions?: Array<{ id?: unknown; answer?: unknown; evidence?: unknown }> }
     | null;
-
-  const payload = (
-    parsed &&
-    typeof parsed === "object" &&
-    parsed.result &&
-    typeof parsed.result === "object"
-      ? parsed.result
-      : parsed
-  ) as { questions?: Array<{ id?: unknown; answer?: unknown; evidence?: unknown }> } | null;
 
   const questions = payload?.questions;
   if (!Array.isArray(questions)) {

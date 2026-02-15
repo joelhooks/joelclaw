@@ -5,6 +5,45 @@ import Redis from "ioredis";
 
 const LOOP_TMP = "/tmp/agent-loop";
 
+// ── Claude output parsing ────────────────────────────────────────────
+
+/**
+ * Parse JSON from claude CLI output.
+ * Handles --output-format json (envelope with {result: string})
+ * and --output-format text (raw markdown/text).
+ */
+export function parseClaudeOutput(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  try {
+    const envelope = JSON.parse(trimmed);
+    if (typeof envelope.result === "string") {
+      return extractJson(envelope.result);
+    }
+    return envelope;
+  } catch {
+    return extractJson(trimmed);
+  }
+}
+
+function extractJson(content: string): unknown {
+  try { return JSON.parse(content.trim()); } catch {}
+
+  const fenced = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  if (fenced?.[1]) {
+    try { return JSON.parse(fenced[1]); } catch {}
+  }
+
+  const start = content.indexOf("{");
+  const end = content.lastIndexOf("}");
+  if (start !== -1 && end > start) {
+    try { return JSON.parse(content.slice(start, end + 1)); } catch {}
+  }
+
+  return null;
+}
+
 // ── Redis client (singleton) ─────────────────────────────────────────
 
 let _redis: Redis | null = null;
@@ -486,7 +525,7 @@ export async function llmEvaluate(opts: {
 
   try {
     const proc = Bun.spawn(
-      ["claude", "-p", prompt, "--output-format", "text"],
+      ["claude", "-p", prompt, "--output-format", "json"],
       { stdout: "pipe", stderr: "pipe" }
     );
 
@@ -522,34 +561,10 @@ export async function llmEvaluate(opts: {
 
     if (exitCode !== 0) return LLM_EVAL_FALLBACK;
 
-    // Parse JSON from text output
-    let parsed: any;
-    try {
-      parsed = JSON.parse(stdout.trim());
-    } catch {
-      const jsonMatch = stdout.match(/```json?\s*\n([\s\S]*?)\n```/);
-      if (jsonMatch) {
-        parsed = JSON.parse(jsonMatch[1]!);
-      } else {
-        const braceStart = stdout.indexOf("{");
-        const braceEnd = stdout.lastIndexOf("}");
-        if (braceStart !== -1 && braceEnd !== -1) {
-          parsed = JSON.parse(stdout.slice(braceStart, braceEnd + 1));
-        } else {
-          return LLM_EVAL_FALLBACK;
-        }
-      }
-    }
+    const parsed = parseClaudeOutput(stdout) as { verdict?: unknown; reasoning?: unknown } | null;
+    if (!parsed) return LLM_EVAL_FALLBACK;
 
-    const payload = (
-      parsed.result && typeof parsed.result === "object"
-        ? parsed.result
-        : parsed
-    ) as { verdict?: unknown; reasoning?: unknown };
-
-    const verdict = payload.verdict;
-    const reasoning = payload.reasoning;
-
+    const { verdict, reasoning } = parsed;
     if ((verdict === "pass" || verdict === "fail") && typeof reasoning === "string") {
       return { verdict, reasoning };
     }
