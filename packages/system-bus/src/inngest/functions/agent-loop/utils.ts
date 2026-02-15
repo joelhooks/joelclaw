@@ -79,6 +79,10 @@ function patternsKey(project: string): string {
   return `agent-loop:patterns:${project}`;
 }
 
+function lessonsKey(project: string): string {
+  return `agent-loop:lessons:${project}`;
+}
+
 const CLAIM_LEASE_SECONDS = 1800;
 
 export async function claimStory(
@@ -506,6 +510,22 @@ export async function writePatterns(
 export async function readPatterns(project: string): Promise<string> {
   const redis = getRedis();
   return (await redis.get(patternsKey(project))) ?? "";
+}
+
+// ── Lessons learned (cross-loop memory) ─────────────────────────────
+
+export async function appendLessons(
+  project: string,
+  entry: string
+): Promise<void> {
+  const redis = getRedis();
+  const timestamp = new Date().toISOString();
+  await redis.rpush(lessonsKey(project), `[${timestamp}] ${entry}`);
+}
+
+export async function readLessons(project: string): Promise<string[]> {
+  const redis = getRedis();
+  return await redis.lrange(lessonsKey(project), 0, -1);
 }
 
 // ── Git helpers ──────────────────────────────────────────────────────
