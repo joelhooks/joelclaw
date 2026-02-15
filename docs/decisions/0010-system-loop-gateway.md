@@ -43,7 +43,7 @@ A persistent LLM context window runs continuously, ingesting all relevant events
 
 ## Decision Outcome
 
-Adopt a hybrid orchestration model: use an event-driven reactive loop as the primary mechanism, with a cron heartbeat sweep as fallback. Concretely, the gateway reacts immediately to terminal signals such as `agent/loop.complete`, `agent/loop.retro.complete`, `system/note`, and failure events, and also runs a periodic heartbeat every 15-30 minutes to reconcile state and catch missed work.
+The chosen option is a hybrid orchestration model: use an event-driven reactive loop as the primary mechanism, with a cron heartbeat sweep as fallback. Concretely, the gateway reacts immediately to terminal signals such as `agent/loop.complete`, `agent/loop.retro.complete`, `system/note`, and failure events, and also runs a periodic heartbeat every 15-30 minutes to reconcile state and catch missed work.
 
 This option best satisfies the decision drivers. It preserves near-real-time autonomous action and faster feedback loops while providing graceful degradation if event delivery is delayed, dropped, or partially processed. Safety constraints remain mandatory: human override via cancel is always available, the gateway enforces action limits per time window, and model usage is bounded by explicit cost caps.
 
@@ -114,3 +114,8 @@ This option best satisfies the decision drivers. It preserves near-real-time aut
 
 - Highest cost profile and hardest model budget control.
 - Largest safety and reliability surface, including persistent-context failure modes.
+
+## Implementation Notes
+
+This ADR intentionally chooses the hybrid trigger model for orchestration policy.
+Execution details should preserve existing pipeline boundaries in ADR-0005, ADR-0007, and ADR-0008.
