@@ -12,7 +12,7 @@ For each segment, produce TWO distillates:
 1) <narrative>: operational context in 1-3 sentences explaining what happened in that segment.
 2) <facts>: retained facts as bullet lines with concrete specifics (file paths, values, decisions with rationale, gotchas, error messages and fixes, user preferences discovered).
 
-For each retained fact line, add exactly one priority marker:
+Tag individual facts with exactly one priority marker:
 - 🔴 High: corrections, explicit user preferences, system facts, constraints, hard requirements
 - 🟡 Medium: recurring patterns, repeated actions, consistent workflows
 - 🟢 Low: minor notes, incidental context, low-impact details
