@@ -9,9 +9,12 @@ export const metadata: Metadata = {
     "Architecture Decision Records — how this system is built and why.",
 };
 
-export const dynamic = "force-static";
+type Props = {
+  searchParams: Promise<{ status?: string }>;
+};
 
-export default function AdrsPage() {
+export default async function AdrsPage({ searchParams }: Props) {
+  const { status: statusParam } = await searchParams;
   const allAdrs = getAllAdrs();
 
   const counts = allAdrs.reduce(
@@ -25,6 +28,11 @@ export default function AdrsPage() {
   const allStatuses = Object.entries(counts)
     .sort(([, a], [, b]) => b - a)
     .map(([status]) => status);
+
+  // Parse URL filter — null means all active
+  const activeStatuses = statusParam
+    ? statusParam.split(",").filter((s) => allStatuses.includes(s))
+    : allStatuses;
 
   return (
     <>
@@ -41,6 +49,7 @@ export default function AdrsPage() {
         adrs={allAdrs}
         counts={counts}
         allStatuses={allStatuses}
+        initialActive={activeStatuses}
       />
     </>
   );
