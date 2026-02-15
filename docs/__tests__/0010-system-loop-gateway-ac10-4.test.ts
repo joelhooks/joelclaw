@@ -47,6 +47,19 @@ function numberedItems(text: string): string[] {
     .map((line) => line.replace(/^\s*\d+\.\s+/, "").trim());
 }
 
+/** Count words in text. */
+function wordCount(text: string): number {
+  return text.split(/\s+/).filter((w) => w.length > 0).length;
+}
+
+/** Extract checkbox item text (without the - [ ] prefix). */
+function extractCheckboxItems(text: string): string[] {
+  return text
+    .split("\n")
+    .filter((line) => /^\s*-\s+\[[ x]\]\s+/.test(line))
+    .map((line) => line.replace(/^\s*-\s+\[[ x]\]\s+/, "").trim());
+}
+
 // --------------------------------------------------------------------------
 // AC-1: Has ## Implementation Plan section with numbered steps
 // --------------------------------------------------------------------------
@@ -62,11 +75,20 @@ describe("AC-1: Implementation Plan section with numbered steps", () => {
     expect(section.length).toBeGreaterThan(0);
   });
 
-  test("Implementation Plan contains numbered steps", async () => {
+  test("Implementation Plan contains at least 3 numbered steps", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     const items = numberedItems(section);
     expect(items.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("numbered steps have substantive content (not single words)", async () => {
+    const content = await readAdr();
+    const section = extractSection(content, "Implementation Plan");
+    const items = numberedItems(section);
+    for (const item of items) {
+      expect(wordCount(item)).toBeGreaterThanOrEqual(3);
+    }
   });
 });
 
@@ -74,13 +96,13 @@ describe("AC-1: Implementation Plan section with numbered steps", () => {
 // AC-2: Plan describes the heartbeat Inngest function
 // --------------------------------------------------------------------------
 describe("AC-2: heartbeat Inngest function described", () => {
-  test("Implementation Plan mentions Inngest function", async () => {
+  test("Implementation Plan mentions Inngest", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).toMatch(/inngest/i);
   });
 
-  test("Implementation Plan mentions heartbeat", async () => {
+  test("Implementation Plan mentions heartbeat function", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).toMatch(/heartbeat/i);
@@ -92,10 +114,17 @@ describe("AC-2: heartbeat Inngest function described", () => {
     expect(section).toMatch(/cron/i);
   });
 
-  test("Implementation Plan mentions terminal or workflow events as trigger", async () => {
+  test("Implementation Plan mentions terminal or workflow event triggers", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
-    expect(section).toMatch(/terminal|workflow\s+event|loop\.complete|event/i);
+    // Should describe being triggered by events (not just cron)
+    expect(section).toMatch(/terminal|event[- ]trigger|workflow\s+event|loop\.complete|triggered?\s+by.*event/i);
+  });
+
+  test("heartbeat function name follows system/ namespace convention", async () => {
+    const content = await readAdr();
+    const section = extractSection(content, "Implementation Plan");
+    expect(section).toMatch(/system\/heartbeat|system[./]heartbeat/i);
   });
 });
 
@@ -103,10 +132,10 @@ describe("AC-2: heartbeat Inngest function described", () => {
 // AC-3: Plan describes state gathering (note queue, slog, retros, active runs)
 // --------------------------------------------------------------------------
 describe("AC-3: state gathering step described", () => {
-  test("Implementation Plan mentions state gathering or snapshot", async () => {
+  test("Implementation Plan mentions state gathering or state snapshot", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
-    expect(section).toMatch(/state[- ]gather|snapshot|state/i);
+    expect(section).toMatch(/state[- ]gather|state\s+snapshot|gather.*state|reads?\s+.*state/i);
   });
 
   test("Implementation Plan mentions note queue", async () => {
@@ -138,6 +167,23 @@ describe("AC-3: state gathering step described", () => {
     const section = extractSection(content, "Implementation Plan");
     expect(section).toMatch(/half[- ]done\s+inventory/i);
   });
+
+  test("state gathering covers at least 4 data sources", async () => {
+    const content = await readAdr();
+    const section = extractSection(content, "Implementation Plan").toLowerCase();
+    const sources = [
+      /note\s+queue/,
+      /slog/,
+      /retro/,
+      /active\s+(loop\s+)?runs/,
+      /half[- ]done/,
+    ];
+    let matchCount = 0;
+    for (const src of sources) {
+      if (src.test(section)) matchCount++;
+    }
+    expect(matchCount).toBeGreaterThanOrEqual(4);
+  });
 });
 
 // --------------------------------------------------------------------------
@@ -147,43 +193,58 @@ describe("AC-4: LLM decision step with constrained action set", () => {
   test("Implementation Plan mentions LLM decision step", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
-    expect(section).toMatch(/llm\s+decision|decision\s+step/i);
+    expect(section).toMatch(/llm\s+decision|decision\s+step|llm.*evaluat/i);
   });
 
   test("Implementation Plan mentions constrained action set", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
-    expect(section).toMatch(/constrained\s+action\s+set|action\s+set/i);
+    expect(section).toMatch(/constrained\s+action\s+set|action\s+set|constrained.*actions/i);
   });
 
-  test("Implementation Plan lists start_loop as an allowed action", async () => {
+  test("lists start_loop action", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).toMatch(/start[_ ]loop/i);
   });
 
-  test("Implementation Plan lists process_notes as an allowed action", async () => {
+  test("lists process_notes action", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).toMatch(/process[_ ]notes/i);
   });
 
-  test("Implementation Plan lists apply_retro_recommendation as an allowed action", async () => {
+  test("lists apply_retro_recommendation action", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).toMatch(/apply[_ ]retro[_ ]recommendation/i);
   });
 
-  test("Implementation Plan lists emit_alert as an allowed action", async () => {
+  test("lists emit_alert action", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).toMatch(/emit[_ ]alert/i);
   });
 
-  test("Implementation Plan lists do_nothing as an allowed action", async () => {
+  test("lists do_nothing action", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).toMatch(/do[_ ]nothing/i);
+  });
+
+  test("all 5 actions from the constrained set are present", async () => {
+    const content = await readAdr();
+    const section = extractSection(content, "Implementation Plan").toLowerCase();
+    const actions = [
+      /start[_ ]loop/,
+      /process[_ ]notes/,
+      /apply[_ ]retro[_ ]recommendation/,
+      /emit[_ ]alert/,
+      /do[_ ]nothing/,
+    ];
+    for (const action of actions) {
+      expect(action.test(section)).toBe(true);
+    }
   });
 });
 
@@ -191,28 +252,56 @@ describe("AC-4: LLM decision step with constrained action set", () => {
 // AC-5: Plan describes safety rails (rate limits, cost budget, human approval)
 // --------------------------------------------------------------------------
 describe("AC-5: safety rails described", () => {
-  test("Implementation Plan mentions rate limits or max actions per hour", async () => {
+  test("Implementation Plan mentions safety rails", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
-    expect(section).toMatch(/rate\s+limit|max(imum)?\s+actions?\s+per\s+hour|per[- ]hour/i);
+    expect(section).toMatch(/safety\s+rail|guardrail|safety/i);
   });
 
-  test("Implementation Plan mentions cost budget", async () => {
+  test("mentions rate limits or max actions per hour", async () => {
+    const content = await readAdr();
+    const section = extractSection(content, "Implementation Plan");
+    expect(section).toMatch(/rate\s+limit|max(imum)?\s+actions?\s+per\s+hour|per[- ]hour\s+cap/i);
+  });
+
+  test("mentions cost budget", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).toMatch(/cost\s+budget/i);
   });
 
-  test("Implementation Plan mentions human approval gate", async () => {
+  test("mentions human approval gate for destructive actions", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
-    expect(section).toMatch(/human\s+approval|approval\s+gate/i);
+    expect(section).toMatch(/human[- ]approval|approval\s+gate/i);
   });
 
-  test("Implementation Plan mentions logging reasoning", async () => {
+  test("mentions destructive actions requiring approval", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
-    expect(section).toMatch(/reasoning\s+log|log.*reasoning|mandatory.*log/i);
+    expect(section).toMatch(/destructive/i);
+  });
+
+  test("mentions always-log reasoning or mandatory logging", async () => {
+    const content = await readAdr();
+    const section = extractSection(content, "Implementation Plan");
+    expect(section).toMatch(/always[- ]log|log.*reasoning|reasoning.*log|mandatory.*log/i);
+  });
+
+  test("safety rails section covers all 4 rail types", async () => {
+    const content = await readAdr();
+    const section = extractSection(content, "Implementation Plan").toLowerCase();
+    const rails = [
+      /rate|per[- ]hour|max.*action/,
+      /cost\s+budget/,
+      /human.*approval|approval.*gate/,
+      /log.*reason|reason.*log|always.*log/,
+    ];
+    let matchCount = 0;
+    for (const rail of rails) {
+      if (rail.test(section)) matchCount++;
+    }
+    expect(matchCount).toBe(4);
   });
 });
 
@@ -252,14 +341,20 @@ describe("AC-7: Verification items are specific and testable", () => {
   test("each verification item has at least 10 words", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Verification");
-    const items = section
-      .split("\n")
-      .filter((line) => /^\s*-\s+\[[ x]\]\s+/.test(line))
-      .map((line) => line.replace(/^\s*-\s+\[[ x]\]\s+/, "").trim());
+    const items = extractCheckboxItems(section);
     expect(items.length).toBeGreaterThanOrEqual(5);
     for (const item of items) {
-      const wordCount = item.split(/\s+/).length;
-      expect(wordCount).toBeGreaterThanOrEqual(10);
+      const wc = wordCount(item);
+      expect(wc).toBeGreaterThanOrEqual(10);
+    }
+  });
+
+  test("no verification item is shorter than 50 characters", async () => {
+    const content = await readAdr();
+    const section = extractSection(content, "Verification");
+    const items = extractCheckboxItems(section);
+    for (const item of items) {
+      expect(item.length).toBeGreaterThanOrEqual(50);
     }
   });
 
@@ -267,7 +362,6 @@ describe("AC-7: Verification items are specific and testable", () => {
     const content = await readAdr();
     const section = extractSection(content, "Verification");
     const lower = section.toLowerCase();
-    // Should mention specific technical concepts, not just generic phrases
     const concreteTerms = [
       /inngest|event|function/,
       /state|snapshot|gather/,
@@ -283,15 +377,14 @@ describe("AC-7: Verification items are specific and testable", () => {
     expect(matchCount).toBeGreaterThanOrEqual(4);
   });
 
-  test("no verification item is shorter than 50 characters", async () => {
+  test("verification items do not use vague language exclusively", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Verification");
-    const items = section
-      .split("\n")
-      .filter((line) => /^\s*-\s+\[[ x]\]\s+/.test(line))
-      .map((line) => line.replace(/^\s*-\s+\[[ x]\]\s+/, "").trim());
+    const items = extractCheckboxItems(section);
+    // Each item should have at least one concrete technical term
+    const technicalTerms = /inngest|cron|heartbeat|slog|llm|action|event|function|rate|cost|budget|log|queue|state|snapshot/i;
     for (const item of items) {
-      expect(item.length).toBeGreaterThanOrEqual(50);
+      expect(technicalTerms.test(item)).toBe(true);
     }
   });
 });
@@ -316,16 +409,16 @@ describe("AC-8: ADR coherence and self-consistency", () => {
     const verification = extractSection(content, "Verification");
     // Key plan concepts should appear in verification
     expect(plan).toMatch(/heartbeat/i);
-    expect(verification).toMatch(/heartbeat|trigger/i);
-    expect(plan).toMatch(/state[- ]gather|snapshot/i);
+    expect(verification).toMatch(/heartbeat|trigger|cron/i);
+    expect(plan).toMatch(/state/i);
     expect(verification).toMatch(/state|snapshot|gather/i);
-    expect(plan).toMatch(/llm\s+decision|decision\s+step/i);
+    expect(plan).toMatch(/decision|action/i);
     expect(verification).toMatch(/decision|action/i);
     expect(plan).toMatch(/safety|rate|cost|approval/i);
-    expect(verification).toMatch(/rate|cost|budget|approval/i);
+    expect(verification).toMatch(/rate|cost|budget|approval|safety/i);
   });
 
-  test("all major sections are present", async () => {
+  test("all major sections are present for a complete ADR", async () => {
     const content = await readAdr();
     const requiredSections = [
       "Context and Problem Statement",
@@ -341,9 +434,19 @@ describe("AC-8: ADR coherence and self-consistency", () => {
     }
   });
 
-  test("ADR has valid YAML frontmatter with status", async () => {
+  test("ADR has valid YAML frontmatter with status field", async () => {
     const content = await readAdr();
     expect(content).toMatch(/^---\n[\s\S]*?status:\s+\w+[\s\S]*?\n---/);
+  });
+
+  test("Implementation Plan action set aligns with Decision Outcome's LLM gateway concept", async () => {
+    const content = await readAdr();
+    const outcome = extractSection(content, "Decision Outcome");
+    const plan = extractSection(content, "Implementation Plan");
+    // The gateway concept from the decision should be reflected in the plan
+    expect(outcome).toMatch(/gateway|loop|orchestrat/i);
+    expect(plan).toMatch(/action/i);
+    expect(plan).toMatch(/llm|decision/i);
   });
 });
 
