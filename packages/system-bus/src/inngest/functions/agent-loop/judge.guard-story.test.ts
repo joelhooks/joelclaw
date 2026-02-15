@@ -112,7 +112,7 @@ async function loadModule(params: {
     opLog.push("progress");
   });
 
-  const releaseClaim = mock(async () => {
+  const releaseClaim = mock(async (...args: [string, string]) => {
     opLog.push("release");
   });
 

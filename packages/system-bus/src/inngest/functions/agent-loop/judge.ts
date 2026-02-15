@@ -6,6 +6,8 @@ import {
   appendProgress,
   getStoryDiff,
   llmEvaluate,
+  guardStory,
+  releaseClaim,
 } from "./utils";
 
 const DEFAULT_RETRY_LADDER: ("codex" | "claude" | "pi")[] = [
@@ -287,8 +289,12 @@ export const agentLoopJudge = inngest.createFunction(
       priorFeedback,
       story,
       tool,
-      runToken,
     } = event.data;
+    const runToken = event.data.runToken;
+    if (!runToken) {
+      console.log(`[agent-loop-judge] missing runToken for ${storyId}`);
+      return { status: "missing-run-token", loopId, storyId };
+    }
 
     // Step 0: Check cancellation
     const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
@@ -356,6 +362,15 @@ export const agentLoopJudge = inngest.createFunction(
 
     if (allPassed) {
       // ── PASS ─────────────────────────────────────────────────────
+      const writeGuard = await step.run("guard-before-verdict-write", () =>
+        guardStory(loopId, storyId, runToken)
+      );
+      if (!writeGuard.ok) {
+        console.log(
+          `[agent-loop-judge] guard blocked verdict write for ${storyId}: ${writeGuard.reason}`
+        );
+        return { status: "blocked", loopId, storyId, reason: writeGuard.reason };
+      }
 
       // Update PRD (Redis + disk)
       await step.run("update-prd", async () => {
@@ -389,6 +404,16 @@ export const agentLoopJudge = inngest.createFunction(
         return { event: "agent/loop.story.pass", storyId, durationMs };
       });
 
+      const emitGuard = await step.run("guard-before-loop-continue-emit", () =>
+        guardStory(loopId, storyId, runToken)
+      );
+      if (!emitGuard.ok) {
+        console.log(
+          `[agent-loop-judge] guard blocked loop continuation emit for ${storyId}: ${emitGuard.reason}`
+        );
+        return { status: "blocked", loopId, storyId, reason: emitGuard.reason };
+      }
+
       await step.run("emit-next-plan", async () => {
         await inngest.send({
           name: "agent/loop.plan",
@@ -402,6 +427,11 @@ export const agentLoopJudge = inngest.createFunction(
           },
         });
         return { event: "agent/loop.plan", next: "pick-next-story" };
+      });
+
+      await step.run("release-claim-pass", async () => {
+        await releaseClaim(loopId, storyId);
+        return { storyId, action: "released-claim" };
       });
 
       return { status: "passed", loopId, storyId, attempt };
@@ -452,6 +482,15 @@ export const agentLoopJudge = inngest.createFunction(
     }
 
     // Max retries exhausted — skip story
+    const writeGuard = await step.run("guard-before-verdict-write", () =>
+      guardStory(loopId, storyId, runToken)
+    );
+    if (!writeGuard.ok) {
+      console.log(
+        `[agent-loop-judge] guard blocked verdict write for ${storyId}: ${writeGuard.reason}`
+      );
+      return { status: "blocked", loopId, storyId, reason: writeGuard.reason };
+    }
 
     // Mark story as skipped so planner doesn't re-pick it
     await step.run("mark-skipped", async () => {
@@ -485,6 +524,16 @@ export const agentLoopJudge = inngest.createFunction(
       return { event: "agent/loop.story.fail", storyId, attempts: attempt, durationMs: failDurationMs };
     });
 
+    const emitGuard = await step.run("guard-before-loop-continue-emit", () =>
+      guardStory(loopId, storyId, runToken)
+    );
+    if (!emitGuard.ok) {
+      console.log(
+        `[agent-loop-judge] guard blocked loop continuation emit for ${storyId}: ${emitGuard.reason}`
+      );
+      return { status: "blocked", loopId, storyId, reason: emitGuard.reason };
+    }
+
     await step.run("emit-next-plan-after-fail", async () => {
       await inngest.send({
         name: "agent/loop.plan",
@@ -498,6 +547,11 @@ export const agentLoopJudge = inngest.createFunction(
         },
       });
       return { event: "agent/loop.plan", next: "pick-next-story" };
+    });
+
+    await step.run("release-claim-skip", async () => {
+      await releaseClaim(loopId, storyId);
+      return { storyId, action: "released-claim" };
     });
 
     return { status: "skipped", loopId, storyId, attempts: attempt };

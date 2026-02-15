@@ -7,6 +7,8 @@ import {
   getStoryDiff,
   parseClaudeOutput,
   TOOL_TIMEOUTS,
+  guardStory,
+  renewLease,
 } from "./utils";
 import { join } from "node:path";
 
@@ -318,8 +320,12 @@ export const agentLoopReview = inngest.createFunction(
       storyStartedAt,
       retryLadder,
       priorFeedback,
-      runToken,
     } = event.data;
+    const runToken = event.data.runToken;
+    if (!runToken) {
+      console.log(`[agent-loop-review] missing runToken for ${storyId}`);
+      return { status: "missing-run-token", loopId, storyId };
+    }
 
     // Step 0: Check cancellation
     const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
@@ -346,10 +352,24 @@ export const agentLoopReview = inngest.createFunction(
     });
 
     // Step 4: Questions 2-4 via Claude
-    const q2to4 = await step.run("evaluate-with-claude", async () => {
+    const q2to4Result = await step.run("evaluate-with-claude", async () => {
+      const guard = await guardStory(loopId, storyId, runToken);
+      if (!guard.ok) {
+        console.log(
+          `[agent-loop-review] guard blocked evaluate-with-claude for ${storyId}: ${guard.reason}`
+        );
+        return { blocked: true as const, reason: guard.reason };
+      }
+
       const prompt = buildEvaluationPrompt({ story, diff, testFiles });
-      return evaluateQuestionsWithClaude(prompt, project, loopId);
+      const questions = await evaluateQuestionsWithClaude(prompt, project, loopId);
+      await renewLease(loopId, storyId, runToken);
+      return { blocked: false as const, questions };
     });
+    if (q2to4Result.blocked) {
+      return { status: "blocked", loopId, storyId, reason: q2to4Result.reason };
+    }
+    const q2to4 = q2to4Result.questions;
 
     const reviewerNotes: ReviewerNotes = {
       questions: [q1, ...q2to4],
@@ -359,7 +379,15 @@ export const agentLoopReview = inngest.createFunction(
     const feedback = buildReviewerFeedback(reviewerNotes);
 
     // Step 5: Emit judge event
-    await step.run("emit-judge", async () => {
+    const emitResult = await step.run("emit-judge", async () => {
+      const guard = await guardStory(loopId, storyId, runToken);
+      if (!guard.ok) {
+        console.log(
+          `[agent-loop-review] guard blocked emit-judge for ${storyId}: ${guard.reason}`
+        );
+        return { blocked: true as const, reason: guard.reason };
+      }
+
       await inngest.send({
         name: "agent/loop.judge",
         data: {
@@ -396,6 +424,9 @@ export const agentLoopReview = inngest.createFunction(
         reviewerFlags: reviewerNotes.questions.filter(q => !q.answer).map(q => q.id),
       };
     });
+    if ("blocked" in emitResult && emitResult.blocked) {
+      return { status: "blocked", loopId, storyId, reason: emitResult.reason };
+    }
 
     return {
       status: "reviewed",
