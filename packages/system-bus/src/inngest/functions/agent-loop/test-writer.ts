@@ -33,10 +33,11 @@ function buildTestWriterPrompt(story: {
     "## Instructions",
     "1. Write tests that directly validate each acceptance criterion through public behavior.",
     "2. Prefer end-to-end or integration-style assertions when possible.",
-    "3. Use the existing project test framework and conventions.",
-    "4. Keep tests readable and focused on intent.",
-    "5. Do not modify implementation code.",
-    "6. Do not run tests.",
+    "3. Use `expect(result).toMatchObject({...})` for structural assertions, not `toEqual`. This makes tests resilient to interface evolution — new fields don't break old tests.",
+    "4. Use the existing project test framework and conventions.",
+    "5. Keep tests readable and focused on intent.",
+    "6. Do not modify implementation code.",
+    "7. Do not run tests.",
   ].join("\n");
 }
 

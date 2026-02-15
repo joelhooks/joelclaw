@@ -149,6 +149,7 @@ async function buildPrompt(
     "## Instructions",
     "Implement the story above. Do NOT write tests — a separate reviewer will handle testing.",
     "Make clean, focused changes. Commit nothing — the harness handles git.",
+    "If your changes break existing tests (not just the ones for this story), fix those tests to match the new interface. Changing a type or adding a required field means updating all consumers.",
   );
 
   const coreText = coreParts.join("\n");
