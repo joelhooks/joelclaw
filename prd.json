@@ -1,78 +1,25 @@
 {
-  "title": "Write ADR-0010: System Loop (OpenClaw Gateway)",
-  "description": "Use the agent loop to write ADR-0010, which designs the always-on system loop (SENSE→ORIENT→DECIDE→ACT→LEARN). The ADR goes in ~/Vault/docs/decisions/0010-system-loop-gateway.md. Each story builds one section of the ADR. The implementor writes markdown, the reviewer tests structural/content requirements. Context: we have a working coding loop (ADR-0005/0007), event bus (Inngest), note queue (Redis), retrospective system, and slog. What's missing is the autonomous orchestration layer that decides what to work on.",
+  "title": "Add formatLoopDuration utility function",
   "stories": [
     {
-      "id": "ADR10-1",
-      "title": "Frontmatter + Context and Problem Statement",
-      "description": "Create ~/Vault/docs/decisions/0010-system-loop-gateway.md (IMPORTANT: also copy the file to docs/decisions/0010-system-loop-gateway.md in the current working directory so both paths stay in sync). Add YAML frontmatter with UNQUOTED values (status: proposed, date: 2026-02-14, decision-makers: Joel Hooks). Do NOT quote YAML values — write status: proposed not status: \"proposed\". Write the Context and Problem Statement section. It should explain: (1) the current system has execution capabilities (coding loops via ADR-0005/0007, video/transcript pipelines, note queue, retrospective) but no autonomous orchestration layer, (2) Joel is currently the gateway — he decides what loops to run, what to prioritize, what to fix, (3) the OpenClaw architecture calls for a central LLM session loop that senses events, orients on state, decides actions, executes via pipelines, and learns from outcomes, (4) the decision drivers around always-on vs cron, safety, cost, and human oversight. Reference ADR-0005, ADR-0007, ADR-0008 as related decisions.",
+      "id": "DUR-1",
+      "title": "Implement and export formatLoopDuration",
+      "description": "Add and export a pure function `formatLoopDuration(ms: number): string` to `src/inngest/functions/agent-loop/utils.ts`. The function converts a millisecond duration into a human-readable string with the following rules:\n\n1. Negative values and zero return `'0s'`\n2. Sub-second values show one decimal place: `500` → `'0.5s'`\n3. Exact seconds with no higher units: `5000` → `'5s'`\n4. Minutes and seconds: `65000` → `'1m 5s'`\n5. Hours, minutes, and seconds: `3661000` → `'1h 1m 1s'`\n6. Zero-value segments in the middle or end are omitted: `3600000` → `'1h'`, `3660000` → `'1h 1m'`\n7. Sub-second remainders are dropped once the duration is ≥ 1 second (no mixing `1m 5.3s`)\n\nThe function must be a named export so other modules can import it. Add unit tests in a colocated test file `src/inngest/functions/agent-loop/utils.test.ts` (create if it doesn't exist, append if it does) covering all cases listed above plus edge cases: very large values like `86400000` (24h), fractional ms like `1` → `'0s'` (rounds down sub-100ms), and `999` → `'1s'` (rounds to nearest tenth).",
       "acceptance_criteria": [
-        "File exists at ~/Vault/docs/decisions/0010-system-loop-gateway.md AND also at docs/decisions/0010-system-loop-gateway.md (repo-local)",
-        "Has YAML frontmatter with status: proposed",
-        "Has ## Context and Problem Statement section",
-        "Context section is at least 200 words",
-        "References ADR-0005 (coding loops) and ADR-0007 (v2 improvements)",
-        "Describes the SENSE→ORIENT→DECIDE→ACT→LEARN pattern",
-        "Explains that Joel is currently the manual gateway",
-        "Mentions existing capabilities: coding loop, event bus, note queue, retrospective",
-        "TypeScript compiles with no errors (bun test on the test file)"
+        "formatLoopDuration is exported from src/inngest/functions/agent-loop/utils.ts",
+        "formatLoopDuration(0) returns '0s'",
+        "formatLoopDuration(-100) returns '0s'",
+        "formatLoopDuration(500) returns '0.5s'",
+        "formatLoopDuration(5000) returns '5s'",
+        "formatLoopDuration(65000) returns '1m 5s'",
+        "formatLoopDuration(3661000) returns '1h 1m 1s'",
+        "formatLoopDuration(3600000) returns '1h'",
+        "Zero-value segments are omitted (no '0m' or '0s' padding)",
+        "All unit tests pass: bun test src/inngest/functions/agent-loop/utils.test.ts",
+        "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 1,
-      "passes": true
-    },
-    {
-      "id": "ADR10-2",
-      "title": "Decision Drivers + Considered Options",
-      "description": "Add ## Decision Drivers and ## Considered Options sections to the ADR. Decision drivers should include: autonomous action capability, safety and human oversight, cost control (LLM calls), state awareness, composability with existing pipelines, graceful degradation. Considered Options should include at least 3 options: (A) No system loop — keep human as gateway, (B) Cron-triggered heartbeat — Inngest cron function that runs every N minutes and checks state, (C) Event-driven reactive loop — function triggered by terminal events (loop.complete, note captured, etc) that evaluates next action, (D) Always-on LLM session — persistent context window that receives all events. Each option should have a brief description of how it works.",
-      "acceptance_criteria": [
-        "Has ## Decision Drivers section with at least 5 bullet points",
-        "Has ## Considered Options section",
-        "At least 3 options are described, each as ### Option subsections",
-        "Options include a cron/heartbeat approach and an event-driven approach",
-        "Each option has at least 2 sentences describing how it works",
-        "Decision drivers mention safety, cost, and human oversight",
-        "TypeScript compiles with no errors (bun test on the test file)"
-      ],
-      "priority": 2,
-      "passes": true
-    },
-    {
-      "id": "ADR10-3",
-      "title": "Decision Outcome + Consequences + Pros/Cons",
-      "description": "Add ## Decision Outcome and ## Pros and Cons sections. The recommended decision should be a hybrid approach: event-driven reactive loop as the primary mechanism (triggered by agent/loop.complete, agent/loop.retro.complete, system/note, etc.) PLUS a cron heartbeat as a fallback sweep (every 15-30 minutes). This gives real-time reactivity to events while ensuring nothing falls through the cracks. The consequences section should cover: good (autonomous action, faster feedback loops, note queue gets processed), bad (cost of LLM calls, risk of runaway actions, complexity), neutral (human can still override via cancel). Add Pros and Cons for each considered option.",
-      "acceptance_criteria": [
-        "Has ## Decision Outcome section",
-        "Chosen option is clearly stated with rationale",
-        "Decision recommends a hybrid event-driven + cron approach",
-        "Has ### Consequences subsection with Good, Bad, and Neutral items",
-        "Has ## Pros and Cons of the Options section",
-        "Each option from the Considered Options has pros and cons listed",
-        "Mentions safety constraints (human override, action limits, cost caps)",
-        "TypeScript compiles with no errors (bun test on the test file)"
-      ],
-      "priority": 3,
-      "passes": true
-    },
-    {
-      "id": "ADR10-4",
-      "title": "Implementation Plan + Verification Criteria",
-      "description": "Add ## Implementation Plan and ## Verification sections. The implementation plan should describe: (1) new Inngest function system/heartbeat triggered by cron AND by terminal events, (2) state gathering step that reads: note queue length, recent slog entries, pending retro recommendations, active loop runs, half-done inventory, (3) LLM decision step that evaluates state and picks next action from a constrained action set (start loop, process notes, apply retro recommendation, emit alert, do nothing), (4) action execution step that emits the appropriate Inngest event, (5) safety rails: max actions per hour, cost budget, human-approval gate for destructive actions, always-log reasoning. The verification section should have testable checkbox items.",
-      "acceptance_criteria": [
-        "Has ## Implementation Plan section with numbered steps",
-        "Plan describes the heartbeat Inngest function",
-        "Plan describes state gathering (note queue, slog, retros, active runs)",
-        "Plan describes LLM decision step with constrained action set",
-        "Plan describes safety rails (rate limits, cost budget, human approval gate)",
-        "Has ## Verification section with at least 5 checkbox items using - [ ] syntax",
-        "Verification items are specific and testable, not vague",
-        "Overall ADR is coherent and self-consistent across all sections",
-        "TypeScript compiles with no errors (bun test on the test file)"
-      ],
-      "priority": 4,
-      "passes": true
+      "passes": false
     }
-  ],
-  "checks": [
-    "test"
   ]
 }
