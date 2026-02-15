@@ -393,15 +393,12 @@ export const agentLoopJudge = inngest.createFunction(
         return { event: "agent/loop.story.pass", storyId, durationMs };
       });
 
-      const emitGuard = await step.run("guard-before-loop-continue-emit", () =>
-        guardStory(loopId, storyId, runToken)
-      );
-      if (!emitGuard.ok) {
-        console.log(
-          `[agent-loop-judge] guard blocked loop continuation emit for ${storyId}: ${emitGuard.reason}`
-        );
-        return { status: "blocked", loopId, storyId, reason: emitGuard.reason };
-      }
+      // Release claim BEFORE continuation — story is already passed in PRD,
+      // so guardStory would return "already_passed" and block us.
+      await step.run("release-claim-pass", async () => {
+        await releaseClaim(loopId, storyId);
+        return { storyId, action: "released-claim" };
+      });
 
       await step.run("emit-next-plan", async () => {
         await inngest.send({
@@ -416,11 +413,6 @@ export const agentLoopJudge = inngest.createFunction(
           },
         });
         return { event: "agent/loop.plan", next: "pick-next-story" };
-      });
-
-      await step.run("release-claim-pass", async () => {
-        await releaseClaim(loopId, storyId);
-        return { storyId, action: "released-claim" };
       });
 
       return { status: "passed", loopId, storyId, attempt };
@@ -513,15 +505,12 @@ export const agentLoopJudge = inngest.createFunction(
       return { event: "agent/loop.story.fail", storyId, attempts: attempt, durationMs: failDurationMs };
     });
 
-    const emitGuard = await step.run("guard-before-loop-continue-emit", () =>
-      guardStory(loopId, storyId, runToken)
-    );
-    if (!emitGuard.ok) {
-      console.log(
-        `[agent-loop-judge] guard blocked loop continuation emit for ${storyId}: ${emitGuard.reason}`
-      );
-      return { status: "blocked", loopId, storyId, reason: emitGuard.reason };
-    }
+    // Release claim BEFORE continuation — story is already skipped in PRD,
+    // so guardStory would return "already_passed" and block us.
+    await step.run("release-claim-skip", async () => {
+      await releaseClaim(loopId, storyId);
+      return { storyId, action: "released-claim" };
+    });
 
     await step.run("emit-next-plan-after-fail", async () => {
       await inngest.send({
@@ -536,11 +525,6 @@ export const agentLoopJudge = inngest.createFunction(
         },
       });
       return { event: "agent/loop.plan", next: "pick-next-story" };
-    });
-
-    await step.run("release-claim-skip", async () => {
-      await releaseClaim(loopId, storyId);
-      return { storyId, action: "released-claim" };
     });
 
     return { status: "skipped", loopId, storyId, attempts: attempt };
