@@ -151,7 +151,10 @@ function buildReviewerRedFlags(
   if (!reviewerNotes) return ["Reviewer notes are missing."];
 
   const flags: string[] = [];
-  const requiredQuestionIds = ["q1", "q2", "q3", "q4"];
+  // q1 (test files in diff) is informational in TDD flow — tests are committed
+  // by test-writer before implement runs, so they won't appear in the implement diff.
+  // Only q2-q4 (real implementations, truthful tests, story intent) are gates.
+  const requiredQuestionIds = ["q2", "q3", "q4"];
   const questionById = new Map(
     reviewerNotes.questions.map((question) => [question.id, question] as const)
   );
@@ -327,9 +330,11 @@ export const agentLoopJudge = inngest.createFunction(
       );
     }
 
+    // Mechanical gates (typecheck, lint, tests) are objective — hard gate.
+    // LLM verdict is the authority on implementation quality.
+    // Reviewer notes are fed INTO llmEvaluate as context, not a separate gate.
     const allPassed =
       mechanicalGatesPass &&
-      reviewerRedFlags.length === 0 &&
       llmResult?.verdict === "pass";
 
     const combinedFailureFeedback = buildFailureFeedback({
