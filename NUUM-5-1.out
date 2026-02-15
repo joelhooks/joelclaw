@@ -1,0 +1,529 @@
+Implemented NUUM-5 in `src/inngest/functions/observe-parser.ts:89` by adding:
+
+- `export function formatSegmentsForLog(segments: DistilledSegment[]): string`
+- Empty input handling (`[]` => `""`)
+- Per-segment markdown rendering:
+  - narrative as italics: `*...*`
+  - facts as bullets: `- ...`
+- Segment separation with a blank line (`\n\n`)
+
+Validation run:
+
+- `bunx tsc --noEmit` (passes)
+- `bun test __tests__/nuum-5-format-segments-for-log.test.ts` (5/5 passing)
+
+
+--- STDERR ---
+OpenAI Codex v0.101.0 (research preview)
+--------
+workdir: /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-bus
+model: gpt-5.3-codex
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: auto
+session id: 019c62ed-825c-7200-ab74-87db3905271c
+--------
+user
+
+
+## Project File Listing
+
+docker
+prd-v3-recovery.json
+prd-adr-0010.json
+progress.txt
+node_modules
+prd-retro.json
+bun.lock
+README.md
+__tests__
+package.json
+tsconfig.json
+docker-compose.yml
+prd-v2.json
+index.ts
+CONTINUATION.md
+prd.json
+CLAUDE.md
+prd-cli-migration.json
+src
+CONTINUATION-ADR.md
+
+# src/ files:
+src/inngest/client.ts
+src/serve.ts
+
+## Project Instructions (CLAUDE.md)
+
+
+## Agent Loop Architecture (ADR-0015)
+
+This project runs automated coding loops with 5 separated roles:
+- **Planner**: generates PRD from goal, picks next story
+- **Test Writer**: writes acceptance tests BEFORE implementation (TDD)
+- **Implementor**: writes code to pass the tests
+- **Reviewer**: evaluates implementation with 4 questions (no test writing)
+- **Judge**: mechanical gates + reviewer notes + LLM verdict
+
+When working as an implementor: implement the story, don't write tests.
+When working as a test writer: write tests from acceptance criteria only, don't read implementation.
+Tests should verify observable behavior and public API — NOT internal structure.
+Do NOT use source code string matching (indexOf, regex on source) to verify behavior.
+Commit nothing — the harness handles git.
+
+## Bun Runtime
+
+Default to using Bun instead of Node.js.
+
+- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
+- Use `bun test` instead of `jest` or `vitest`
+- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
+- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
+- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
+- Use `bunx <package> <command>` instead of `npx <package> <command>`
+- Bun automatically loads .env, so don't use dotenv.
+
+## APIs
+
+- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
+- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
+- `Bun.redis` for Redis. Don't use `ioredis`.
+- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
+- `WebSocket` is built-in. Don't use `ws`.
+- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
+- Bun.$`ls` instead of execa.
+
+## Testing
+
+Use `bun test` to run tests.
+
+```ts#index.test.ts
+import { test, expect } from "bun:test";
+
+test("hello world", () => {
+  expect(1).toBe(1);
+});
+```
+
+## Frontend
+
+Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, C
+
+---
+
+## Story: Add formatSegmentsForLog export (NUUM-5)
+
+In src/inngest/functions/observe-parser.ts, add a new exported function formatSegmentsForLog(segments: DistilledSegment[]): string that renders segments as markdown suitable for a daily log. Each segment becomes a subsection with the narrative rendered in italics (wrapped in *...*) followed by fact bullets (each prefixed with '- '). Segments are separated by blank lines. Returns empty string for empty array input.
+
+## Acceptance Criteria
+- observe-parser.ts exports formatSegmentsForLog function
+- formatSegmentsForLog renders narrative in italics (*narrative*)
+- formatSegmentsForLog renders facts as markdown bullet list (- fact)
+- formatSegmentsForLog returns empty string for empty segments array
+- Segments are separated by blank lines in output
+- TypeScript compiles cleanly: bunx tsc --noEmit
+
+## Instructions
+Implement the story above. Do NOT write tests — a separate reviewer will handle testing.
+Make clean, focused changes. Commit nothing — the harness handles git.
+mcp startup: no servers
+2026-02-15T20:10:58.550725Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5eca-bff9-7772-83bf-5daab07b9959
+2026-02-15T20:10:58.614187Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5ffd-d51d-7a13-b1fa-342be02f164b
+2026-02-15T20:10:58.670976Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6275-d69e-7b53-bb28-583bfe07e70c
+2026-02-15T20:10:58.758687Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5d40-288c-78b2-af66-36e0fae54073
+2026-02-15T20:10:58.843301Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6031-b7fb-7120-85b5-8abf34324910
+2026-02-15T20:10:58.924127Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fe2-872d-7e93-87a3-71d37d75a127
+2026-02-15T20:10:58.987126Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e50-6bc5-7861-a0a0-f77d68ec073f
+2026-02-15T20:10:59.073133Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6022-8a12-7ba0-b7e8-9c265e8ec17e
+2026-02-15T20:10:59.156257Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fbb-e145-7c40-9913-218548629e57
+2026-02-15T20:10:59.238337Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e21-7a30-7ed1-b686-e02ac2da8157
+2026-02-15T20:10:59.298348Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fed-5e04-78c0-9a4e-9fddc7af084e
+
+thinking
+**Preparing project inspection**
+codex
+I’m implementing NUUM-5 by locating `observe-parser.ts`, adding the new `formatSegmentsForLog` export with the required markdown formatting, then running TypeScript compile checks with `bunx tsc --noEmit`.
+exec
+/bin/zsh -lc 'rg --files' in /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-busexec
+/bin/zsh -lc 'rg -n "DistilledSegment|observe-parser" src' in /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-bus succeeded in 52ms:
+CONTINUATION-ADR.md
+src/serve.ts
+src/inngest/functions/transcript-process.ts
+src/inngest/functions/index.ts
+src/inngest/functions/video-download.ts
+src/inngest/functions/summarize.ts
+src/inngest/functions/observe-parser.ts
+src/inngest/functions/system-logger.ts
+src/inngest/functions/agent-loop/plan.ts
+src/inngest/functions/agent-loop/llmEvaluate.test.ts
+src/inngest/functions/agent-loop/judge.test.ts
+src/inngest/functions/agent-loop/test-writer.test.ts
+src/inngest/functions/agent-loop/test-writer.ts
+src/inngest/functions/agent-loop/formatLoopDuration.test.ts
+src/inngest/functions/agent-loop/review.test.ts
+src/inngest/functions/agent-loop/index.ts
+src/inngest/functions/agent-loop/getStoryDiff.test.ts
+src/inngest/functions/agent-loop/parseClaudeOutput.test.ts
+src/inngest/functions/agent-loop/review.ts
+src/inngest/functions/agent-loop/utils.ts
+ succeeded in 50ms:
+src/inngest/functions/observe-parser.ts:3:  segments: DistilledSegment[];
+src/inngest/functions/observe-parser.ts:9:export interface DistilledSegment {
+src/inngest/functions/observe-parser.ts:67:export function parseSegments(observations: string): DistilledSegment[] {
+src/inngest/functions/observe-parser.ts:70:  const parsed: DistilledSegment[] = [];
+src/inngest/functions/observe-parser.test.ts:2:import { optimizeForContext, parseObserverOutput } from "./observe-parser";
+
+thinking
+**Reviewing file and tests for issues**
+codex
+I found the target file and confirmed `DistilledSegment` already exists there. Next I’ll patch just that file with the new export and keep formatting deterministic.
+exec
+/bin/zsh -lc "sed -n '1,220p' src/inngest/functions/observe-parser.ts" in /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-bus succeeded in 52ms:
+export interface ObserverOutput {
+  observations: string;
+  segments: DistilledSegment[];
+  currentTask: string | null;
+  suggestedResponse: string | null;
+  parsed: boolean;
+}
+
+export interface DistilledSegment {
+  narrative: string;
+  facts: string[];
+}
+
+export function optimizeForContext(observations: string): string {
+  if (observations.trim().length === 0) {
+    return "";
+  }
+
+  const segments = parseSegments(observations);
+  if (segments.length > 0) {
+
+thinking
+**Inspecting test files for formatting**
+exec
+/bin/zsh -lc "sed -n '1,260p' __tests__/nuum-5-format-segments-for-log.test.ts" in /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-bus succeeded in 51ms:
+import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+async function loadObserveParserModule() {
+  return import("../src/inngest/functions/observe-parser.ts");
+}
+
+describe("NUUM-5: formatSegmentsForLog export contract", () => {
+  test("AC-1: observe-parser.ts exports formatSegmentsForLog", async () => {
+    const mod = await loadObserveParserModule();
+
+    expect("formatSegmentsForLog" in mod).toBe(true);
+    expect(typeof mod.formatSegmentsForLog).toBe("function");
+  });
+
+  test("AC-1: exported function type accepts DistilledSegment[] and returns string", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "nuum-5-typecheck-"));
+    try {
+
+thinking
+**Defining segment rendering logic**
+codex
+I’m now editing `src/inngest/functions/observe-parser.ts` to add `formatSegmentsForLog` as a named export, matching the expected markdown shape and empty-input behavior.
+file update
+M /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-bus/src/inngest/functions/observe-parser.ts
+@@ -88,2 +88,23 @@
+ 
++export function formatSegmentsForLog(segments: DistilledSegment[]): string {
++  if (segments.length === 0) {
++    return "";
++  }
++
++  return segments
++    .map((segment) => {
++      const lines = [`*${segment.narrative.trim()}*`];
++
++      for (const fact of segment.facts) {
++        const trimmedFact = fact.trim();
++        if (trimmedFact.length > 0) {
++          lines.push(`- ${trimmedFact}`);
++        }
++      }
++
++      return lines.join("\n");
++    })
++    .join("\n\n");
++}
++
+ export function parseObserverOutput(raw: string): ObserverOutput {
+apply_patch(auto_approved=true) exited 0 in 31ms:
+Success. Updated the following files:
+M /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-bus/src/inngest/functions/observe-parser.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-parser.ts b/packages/system-bus/src/inngest/functions/observe-parser.ts
+index 18d0f2a40ef61101d34975ab68427ae868c502c6..578d04726e41ac257274c66483b5d1dae1a610db
+--- a/packages/system-bus/src/inngest/functions/observe-parser.ts
++++ b/packages/system-bus/src/inngest/functions/observe-parser.ts
+@@ -86,6 +86,27 @@
+   return parsed;
+ }
+ 
++export function formatSegmentsForLog(segments: DistilledSegment[]): string {
++  if (segments.length === 0) {
++    return "";
++  }
++
++  return segments
++    .map((segment) => {
++      const lines = [`*${segment.narrative.trim()}*`];
++
++      for (const fact of segment.facts) {
++        const trimmedFact = fact.trim();
++        if (trimmedFact.length > 0) {
++          lines.push(`- ${trimmedFact}`);
++        }
++      }
++
++      return lines.join("\n");
++    })
++    .join("\n\n");
++}
++
+ export function parseObserverOutput(raw: string): ObserverOutput {
+   const trimmed = raw.trim();
+   if (trimmed.length === 0) {
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-parser.ts b/packages/system-bus/src/inngest/functions/observe-parser.ts
+index 18d0f2a40ef61101d34975ab68427ae868c502c6..578d04726e41ac257274c66483b5d1dae1a610db
+--- a/packages/system-bus/src/inngest/functions/observe-parser.ts
++++ b/packages/system-bus/src/inngest/functions/observe-parser.ts
+@@ -86,6 +86,27 @@
+   return parsed;
+ }
+ 
++export function formatSegmentsForLog(segments: DistilledSegment[]): string {
++  if (segments.length === 0) {
++    return "";
++  }
++
++  return segments
++    .map((segment) => {
++      const lines = [`*${segment.narrative.trim()}*`];
++
++      for (const fact of segment.facts) {
++        const trimmedFact = fact.trim();
++        if (trimmedFact.length > 0) {
++          lines.push(`- ${trimmedFact}`);
++        }
++      }
++
++      return lines.join("\n");
++    })
++    .join("\n\n");
++}
++
+ export function parseObserverOutput(raw: string): ObserverOutput {
+   const trimmed = raw.trim();
+   if (trimmed.length === 0) {
+
+
+thinking
+**Adding TypeScript compilation check**
+codex
+The function is in place; next I’m running the TypeScript compile gate (`bunx tsc --noEmit`) to verify AC-6 and catch any typing issues.
+exec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-bus succeeded in 700ms:
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-parser.ts b/packages/system-bus/src/inngest/functions/observe-parser.ts
+index 18d0f2a40ef61101d34975ab68427ae868c502c6..578d04726e41ac257274c66483b5d1dae1a610db
+--- a/packages/system-bus/src/inngest/functions/observe-parser.ts
++++ b/packages/system-bus/src/inngest/functions/observe-parser.ts
+@@ -86,6 +86,27 @@
+   return parsed;
+ }
+ 
++export function formatSegmentsForLog(segments: DistilledSegment[]): string {
++  if (segments.length === 0) {
++    return "";
++  }
++
++  return segments
++    .map((segment) => {
++      const lines = [`*${segment.narrative.trim()}*`];
++
++      for (const fact of segment.facts) {
++        const trimmedFact = fact.trim();
++        if (trimmedFact.length > 0) {
++          lines.push(`- ${trimmedFact}`);
++        }
++      }
++
++      return lines.join("\n");
++    })
++    .join("\n\n");
++}
++
+ export function parseObserverOutput(raw: string): ObserverOutput {
+   const trimmed = raw.trim();
+   if (trimmed.length === 0) {
+
+
+thinking
+**Considering targeted test run**
+exec
+/bin/zsh -lc 'bun test __tests__/nuum-5-format-segments-for-log.test.ts' in /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-bus succeeded in 1.06s:
+(pass) NUUM-5: formatSegmentsForLog export contract > AC-1: exported function type accepts DistilledSegment[] and returns string [355.85ms]
+(pass) NUUM-5: formatSegmentsForLog markdown rendering > AC-2, AC-3, AC-5: renders italic narratives, bullet facts, and blank-line-separated segments [0.22ms]
+(pass) NUUM-5: formatSegmentsForLog markdown rendering > AC-4: returns empty string for empty segments array [0.03ms]
+(pass) NUUM-5: TypeScript compile gate > AC-6: bunx tsc --noEmit succeeds [738.13ms]
+
+ 5 pass
+ 0 fail
+ 6 expect() calls
+Ran 5 tests across 1 file. [1102.00ms]
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-parser.ts b/packages/system-bus/src/inngest/functions/observe-parser.ts
+index 18d0f2a40ef61101d34975ab68427ae868c502c6..578d04726e41ac257274c66483b5d1dae1a610db
+--- a/packages/system-bus/src/inngest/functions/observe-parser.ts
++++ b/packages/system-bus/src/inngest/functions/observe-parser.ts
+@@ -86,6 +86,27 @@
+   return parsed;
+ }
+ 
++export function formatSegmentsForLog(segments: DistilledSegment[]): string {
++  if (segments.length === 0) {
++    return "";
++  }
++
++  return segments
++    .map((segment) => {
++      const lines = [`*${segment.narrative.trim()}*`];
++
++      for (const fact of segment.facts) {
++        const trimmedFact = fact.trim();
++        if (trimmedFact.length > 0) {
++          lines.push(`- ${trimmedFact}`);
++        }
++      }
++
++      return lines.join("\n");
++    })
++    .join("\n\n");
++}
++
+ export function parseObserverOutput(raw: string): ObserverOutput {
+   const trimmed = raw.trim();
+   if (trimmed.length === 0) {
+
+exec
+/bin/zsh -lc "nl -ba src/inngest/functions/observe-parser.ts | sed -n '60,140p'" in /private/tmp/agent-loop/loop-mlo6625k-jfz7xc/packages/system-bus succeeded in 52ms:
+    60	
+    61	function hasObserverEmojiMarkers(raw: string): boolean {
+    62	  return raw
+    63	    .split(/\r?\n/)
+    64	    .some((line) => line.includes("🔴") || line.includes("🟡") || line.includes("🟢"));
+    65	}
+    66	
+    67	export function parseSegments(observations: string): DistilledSegment[] {
+    68	  const segmentPattern = /<segment>([\s\S]*?)<\/segment>/gi;
+    69	  const segments = observations.matchAll(segmentPattern);
+    70	  const parsed: DistilledSegment[] = [];
+    71	
+    72	  for (const segmentMatch of segments) {
+    73	    const segmentBody = segmentMatch[1] ?? "";
+    74	    const narrative = (extractTagContent(segmentBody, "narrative") ?? "").trim();
+    75	    const factsBody = extractTagContent(segmentBody, "facts") ?? "";
+    76	    const facts = factsBody
+    77	      .split(/\r?\n/)
+    78	      .map((line) => line.trim())
+    79	      .filter((line) => line.length > 0)
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-parser.ts b/packages/system-bus/src/inngest/functions/observe-parser.ts
+index 18d0f2a40ef61101d34975ab68427ae868c502c6..578d04726e41ac257274c66483b5d1dae1a610db
+--- a/packages/system-bus/src/inngest/functions/observe-parser.ts
++++ b/packages/system-bus/src/inngest/functions/observe-parser.ts
+@@ -86,6 +86,27 @@
+   return parsed;
+ }
+ 
++export function formatSegmentsForLog(segments: DistilledSegment[]): string {
++  if (segments.length === 0) {
++    return "";
++  }
++
++  return segments
++    .map((segment) => {
++      const lines = [`*${segment.narrative.trim()}*`];
++
++      for (const fact of segment.facts) {
++        const trimmedFact = fact.trim();
++        if (trimmedFact.length > 0) {
++          lines.push(`- ${trimmedFact}`);
++        }
++      }
++
++      return lines.join("\n");
++    })
++    .join("\n\n");
++}
++
+ export function parseObserverOutput(raw: string): ObserverOutput {
+   const trimmed = raw.trim();
+   if (trimmed.length === 0) {
+
+
+thinking
+**Confirming no skills used**
+codex
+Implemented NUUM-5 in `src/inngest/functions/observe-parser.ts:89` by adding:
+
+- `export function formatSegmentsForLog(segments: DistilledSegment[]): string`
+- Empty input handling (`[]` => `""`)
+- Per-segment markdown rendering:
+  - narrative as italics: `*...*`
+  - facts as bullets: `- ...`
+- Segment separation with a blank line (`\n\n`)
+
+Validation run:
+
+- `bunx tsc --noEmit` (passes)
+- `bun test __tests__/nuum-5-format-segments-for-log.test.ts` (5/5 passing)
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-parser.ts b/packages/system-bus/src/inngest/functions/observe-parser.ts
+index 18d0f2a40ef61101d34975ab68427ae868c502c6..578d04726e41ac257274c66483b5d1dae1a610db
+--- a/packages/system-bus/src/inngest/functions/observe-parser.ts
++++ b/packages/system-bus/src/inngest/functions/observe-parser.ts
+@@ -86,6 +86,27 @@
+   return parsed;
+ }
+ 
++export function formatSegmentsForLog(segments: DistilledSegment[]): string {
++  if (segments.length === 0) {
++    return "";
++  }
++
++  return segments
++    .map((segment) => {
++      const lines = [`*${segment.narrative.trim()}*`];
++
++      for (const fact of segment.facts) {
++        const trimmedFact = fact.trim();
++        if (trimmedFact.length > 0) {
++          lines.push(`- ${trimmedFact}`);
++        }
++      }
++
++      return lines.join("\n");
++    })
++    .join("\n\n");
++}
++
+ export function parseObserverOutput(raw: string): ObserverOutput {
+   const trimmed = raw.trim();
+   if (trimmed.length === 0) {
+
+tokens used
+26,321
