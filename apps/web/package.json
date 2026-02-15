@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@repo/ui": "workspace:*",
+    "@types/mdast": "^4.0.4",
     "gray-matter": "^4.0.3",
     "next": "16.1.5",
     "next-mdx-remote": "^6.0.0",
@@ -24,7 +25,8 @@
     "rehype-unwrap-images": "^1.0.0",
     "remark-gfm": "^4.0.1",
     "remark-smartypants": "^3.0.2",
-    "shiki": "^3.22.0"
+    "shiki": "^3.22.0",
+    "unist-util-visit": "^5.1.0"
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",

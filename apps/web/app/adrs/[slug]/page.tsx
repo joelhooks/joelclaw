@@ -4,6 +4,7 @@ import { MDXRemote } from "next-mdx-remote/rsc";
 import { getAdr, getAdrSlugs } from "../../../lib/adrs";
 import { mdxComponents } from "../../../lib/mdx";
 import { remarkPlugins, rehypePlugins } from "../../../lib/mdx-plugins";
+import { remarkAdrLinks } from "../../../lib/remark-adr-links";
 import { SITE_URL, SITE_NAME } from "../../../lib/constants";
 
 type Props = { params: Promise<{ slug: string }> };
@@ -82,7 +83,7 @@ export default async function AdrPage({ params }: Props) {
         <MDXRemote
           source={content}
           components={mdxComponents}
-          options={{ mdxOptions: { remarkPlugins, rehypePlugins, format: "md" } }}
+          options={{ mdxOptions: { remarkPlugins: [...remarkPlugins, remarkAdrLinks], rehypePlugins, format: "md" } }}
         />
       </div>
     </article>
