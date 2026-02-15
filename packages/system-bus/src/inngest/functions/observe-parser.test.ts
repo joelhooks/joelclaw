@@ -18,6 +18,7 @@ describe("parseObserverOutput", () => {
 
     expect(parseObserverOutput(input)).toEqual({
       observations: "🔴 Primary issue detected\n  🟡 Secondary signal",
+      segments: [],
       currentTask: "Stabilize queue processing",
       suggestedResponse: "I identified the bottleneck and will apply the fix next.",
       parsed: true,
@@ -29,6 +30,7 @@ describe("parseObserverOutput", () => {
 
     expect(parseObserverOutput(input)).toEqual({
       observations: "🔴 Only observations present",
+      segments: [],
       currentTask: null,
       suggestedResponse: null,
       parsed: true,
@@ -45,6 +47,7 @@ describe("parseObserverOutput", () => {
 
     expect(parseObserverOutput(input)).toEqual({
       observations: input,
+      segments: [],
       currentTask: null,
       suggestedResponse: null,
       parsed: true,
@@ -56,6 +59,7 @@ describe("parseObserverOutput", () => {
 
     expect(parseObserverOutput(input)).toEqual({
       observations: input,
+      segments: [],
       currentTask: null,
       suggestedResponse: null,
       parsed: false,
@@ -65,6 +69,7 @@ describe("parseObserverOutput", () => {
   test("Empty input: returns empty observations and parsed=false", () => {
     expect(parseObserverOutput("")).toEqual({
       observations: "",
+      segments: [],
       currentTask: null,
       suggestedResponse: null,
       parsed: false,
