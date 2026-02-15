@@ -8,6 +8,7 @@
   "type": "module",
   "private": true,
   "devDependencies": {
+    "@inngest/test": "^0.1.9",
     "@types/bun": "latest"
   },
   "peerDependencies": {

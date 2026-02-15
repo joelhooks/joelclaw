@@ -67,6 +67,18 @@ function claimKey(loopId: string, storyId: string): string {
   return `agent-loop:claim:${loopId}:${storyId}`;
 }
 
+function progressKey(loopId: string): string {
+  return `agent-loop:progress:${loopId}`;
+}
+
+function recommendationsKey(project: string): string {
+  return `agent-loop:recommendations:${project}`;
+}
+
+function patternsKey(project: string): string {
+  return `agent-loop:patterns:${project}`;
+}
+
 const CLAIM_LEASE_SECONDS = 1800;
 
 export async function claimStory(
@@ -100,9 +112,23 @@ export async function guardStory(
 
   const prdData = await redis.get(prdKey(loopId));
   if (prdData) {
-    const prd = JSON.parse(prdData) as { stories?: Array<{ id?: string; passes?: boolean }> };
+    type GuardStoryPrd = {
+      stories?: Array<{
+        id?: string;
+        status?: string;
+        passes?: boolean;
+        skipped?: boolean;
+      }>;
+    };
+
+    const prd = JSON.parse(prdData) as GuardStoryPrd;
     const story = prd.stories?.find((s) => s.id === storyId);
-    if (story?.passes === true) {
+    if (
+      story?.status === "passed" ||
+      story?.status === "skipped" ||
+      story?.passes === true ||
+      story?.skipped === true
+    ) {
       return { ok: false, reason: "already_passed" };
     }
   }
@@ -431,20 +457,55 @@ export async function markStoryRechecked(
   }
 }
 
-// ── Progress file ────────────────────────────────────────────────────
+// ── Progress + loop context (Redis-backed) ──────────────────────────
 
 export async function appendProgress(
-  project: string,
+  loopId: string,
   entry: string
-) {
-  const progressPath = join(project, "progress.txt");
-  let existing = "";
-  try {
-    existing = await Bun.file(progressPath).text();
-  } catch { /* file doesn't exist yet */ }
+): Promise<void> {
+  const redis = getRedis();
   const timestamp = new Date().toISOString();
-  const newEntry = `\n### ${timestamp}\n${entry}\n`;
-  await Bun.write(progressPath, existing + newEntry);
+  const newEntry = `### ${timestamp}\n${entry}`;
+  await redis.rpush(progressKey(loopId), newEntry);
+}
+
+export async function readProgress(loopId: string): Promise<string[]> {
+  const redis = getRedis();
+  return await redis.lrange(progressKey(loopId), 0, -1);
+}
+
+export async function writeRecommendations(
+  project: string,
+  recommendations: unknown
+): Promise<void> {
+  const redis = getRedis();
+  await redis.set(recommendationsKey(project), JSON.stringify(recommendations));
+}
+
+export async function readRecommendations<T = unknown>(
+  project: string
+): Promise<T | null> {
+  const redis = getRedis();
+  const raw = await redis.get(recommendationsKey(project));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+export async function writePatterns(
+  project: string,
+  patterns: string
+): Promise<void> {
+  const redis = getRedis();
+  await redis.set(patternsKey(project), patterns);
+}
+
+export async function readPatterns(project: string): Promise<string> {
+  const redis = getRedis();
+  return (await redis.get(patternsKey(project))) ?? "";
 }
 
 // ── Git helpers ──────────────────────────────────────────────────────

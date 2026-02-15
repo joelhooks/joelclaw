@@ -273,3 +273,71 @@ Needs an ADR.
 - Tool: claude
 - Tests passed: 105
 - Typecheck: ✅ | Lint: ✅
+
+### 2026-02-15T07:56:56.531Z
+## PRD Generated from Goal
+Goal: Implement ADR-0016: Add idempotency guards to the loop event chain. Two parts:
+
+Part A — Idempotency guards: Add Redis SETNX lease-based story claims (claimStory, guardStory, renewLease, releaseClaim in utils.ts). Wire claimStory into plan.ts before dispatching. Wire guardStory into implement.ts, test-writer.ts, review.ts, judge.ts at every side-effect boundary (before tool spawn, before commit, before emit). Wire releaseClaim into judge.ts on pass/skip. Add seedPrd NX guard to prevent state clobber on duplicate start.
+
+Part B — Move progress tracking from filesystem to Redis: Replace progress.txt with Redis key agent-loop:progress:{loopId} (append-only list). Move codebase patterns to agent-loop:patterns:{project} (persists across loops). Move .agent-loop-recommendations.json to agent-loop:recommendations:{project}. Update buildPrompt in implement.ts to read from Redis instead of disk.
+Context: /Users/joel/Vault/docs/decisions/0016-loop-idempotency-guards.md, ~/Vault/docs/decisions/0011-redis-backed-loop-state.md
+Stories: 6
+- IDEM-1: Add lease-based claim helpers to utils.ts
+- IDEM-2: Add seedPrd NX guard to prevent state clobber
+- IDEM-3: Wire claimStory into plan.ts before dispatching
+- IDEM-4: Wire guardStory into test-writer.ts and implement.ts
+- IDEM-5: Wire guardStory into review.ts and judge.ts with release
+- IDEM-6: Move progress tracking from filesystem to Redis
+
+### 2026-02-15T08:00:24.877Z
+**Story IDEM-1: Add lease-based claim helpers to utils.ts** — PASSED (attempt 1)
+- Tool: claude
+- Tests passed: 201
+- Typecheck: ✅ | Lint: ✅
+
+### 2026-02-15T08:02:31.777Z
+**Story IDEM-2: Add seedPrd NX guard to prevent state clobber** — PASSED (attempt 1)
+- Tool: claude
+- Tests passed: 203
+- Typecheck: ✅ | Lint: ✅
+
+### 2026-02-15T08:10:49.181Z
+**Story IDEM-3: Wire claimStory into plan.ts before dispatching** — FAILED (skipped after 2 attempts)
+- Tool: claude
+- Last results: 1 test failures, typecheck: ✅, lint: ✅
+- ⚠️ NEEDS HUMAN REVIEW
+
+### 2026-02-15T08:19:34.639Z
+**Story IDEM-4: Wire guardStory into test-writer.ts and implement.ts** — FAILED (skipped after 2 attempts)
+- Tool: claude
+- Last results: 1 test failures, typecheck: ✅, lint: ✅
+- ⚠️ NEEDS HUMAN REVIEW
+
+### 2026-02-15T08:27:51.739Z
+**Story IDEM-5: Wire guardStory into review.ts and judge.ts with release** — FAILED (skipped after 2 attempts)
+- Tool: claude
+- Last results: 1 test failures, typecheck: ✅, lint: ✅
+- ⚠️ NEEDS HUMAN REVIEW
+
+### 2026-02-15T08:43:33.294Z
+**Story IDEM-6: Move progress tracking from filesystem to Redis** — FAILED (skipped after 2 attempts)
+- Tool: claude
+- Last results: 1 test failures, typecheck: ✅, lint: ✅
+- ⚠️ NEEDS HUMAN REVIEW
+
+### 2026-02-15T08:43:39.450Z
+**Story IDEM-3: Wire claimStory into plan.ts before dispatching** — RECHECK STILL FAILING
+- Recheck result: still failing typecheck/tests
+
+### 2026-02-15T08:43:44.704Z
+**Story IDEM-4: Wire guardStory into test-writer.ts and implement.ts** — RECHECK STILL FAILING
+- Recheck result: still failing typecheck/tests
+
+### 2026-02-15T08:43:49.941Z
+**Story IDEM-5: Wire guardStory into review.ts and judge.ts with release** — RECHECK STILL FAILING
+- Recheck result: still failing typecheck/tests
+
+### 2026-02-15T08:43:55.207Z
+**Story IDEM-6: Move progress tracking from filesystem to Redis** — RECHECK STILL FAILING
+- Recheck result: still failing typecheck/tests

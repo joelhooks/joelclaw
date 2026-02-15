@@ -6,6 +6,9 @@ import {
   appendProgress,
   getStoryDiff,
   llmEvaluate,
+  guardStory,
+  releaseClaim,
+  readPatterns,
 } from "./utils";
 
 const DEFAULT_RETRY_LADDER: ("codex" | "claude" | "pi")[] = [
@@ -115,17 +118,6 @@ async function readTestFilesFromDisk(project: string, files: string[]): Promise<
   return chunks.join("\n\n");
 }
 
-function extractCodebasePatterns(progressText: string): string {
-  if (!progressText) return "";
-  const marker = "## Codebase Patterns";
-  const idx = progressText.indexOf(marker);
-  if (idx === -1) return "";
-  const rest = progressText.slice(idx);
-  const nextHeading = rest.indexOf("\n## ", marker.length);
-  const section = nextHeading === -1 ? rest : rest.slice(0, nextHeading);
-  return section.trim();
-}
-
 async function getProjectConventions(project: string): Promise<string> {
   const parts: string[] = [];
 
@@ -135,9 +127,8 @@ async function getProjectConventions(project: string): Promise<string> {
   } catch { /* ignore */ }
 
   try {
-    const progressTxt = await Bun.file(`${project}/progress.txt`).text();
-    const patterns = extractCodebasePatterns(progressTxt);
-    if (patterns) parts.push(`progress.txt\n${patterns}`);
+    const patterns = await readPatterns(project);
+    if (patterns) parts.push(`## Codebase Patterns\n${patterns}`);
   } catch { /* ignore */ }
 
   return parts.join("\n\n");
@@ -256,7 +247,7 @@ function buildFailureFeedback(params: {
 /**
  * JUDGE — Reads test results + feedback. Routes to next story or retry.
  *
- * PASS → update prd.json, append progress.txt, emit plan
+ * PASS → update prd.json, append progress, emit plan
  * FAIL (retries left) → emit implement with feedback
  * FAIL (max retries) → skip story, emit plan for next story
  */
@@ -288,6 +279,11 @@ export const agentLoopJudge = inngest.createFunction(
       story,
       tool,
     } = event.data;
+    const runToken = event.data.runToken;
+    if (!runToken) {
+      console.log(`[agent-loop-judge] missing runToken for ${storyId}`);
+      return { status: "missing-run-token", loopId, storyId };
+    }
 
     // Step 0: Check cancellation
     const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
@@ -355,6 +351,15 @@ export const agentLoopJudge = inngest.createFunction(
 
     if (allPassed) {
       // ── PASS ─────────────────────────────────────────────────────
+      const writeGuard = await step.run("guard-before-verdict-write", () =>
+        guardStory(loopId, storyId, runToken)
+      );
+      if (!writeGuard.ok) {
+        console.log(
+          `[agent-loop-judge] guard blocked verdict write for ${storyId}: ${writeGuard.reason}`
+        );
+        return { status: "blocked", loopId, storyId, reason: writeGuard.reason };
+      }
 
       // Update PRD (Redis + disk)
       await step.run("update-prd", async () => {
@@ -363,7 +368,7 @@ export const agentLoopJudge = inngest.createFunction(
       });
 
       await step.run("append-progress", async () => {
-        await appendProgress(project, [
+        await appendProgress(loopId, [
           `**Story ${storyId}: ${story.title}** — PASSED (attempt ${attempt})`,
           `- Tool: ${tool}`,
           `- Tests passed: ${testResults.testsPassed}`,
@@ -388,6 +393,16 @@ export const agentLoopJudge = inngest.createFunction(
         return { event: "agent/loop.story.pass", storyId, durationMs };
       });
 
+      const emitGuard = await step.run("guard-before-loop-continue-emit", () =>
+        guardStory(loopId, storyId, runToken)
+      );
+      if (!emitGuard.ok) {
+        console.log(
+          `[agent-loop-judge] guard blocked loop continuation emit for ${storyId}: ${emitGuard.reason}`
+        );
+        return { status: "blocked", loopId, storyId, reason: emitGuard.reason };
+      }
+
       await step.run("emit-next-plan", async () => {
         await inngest.send({
           name: "agent/loop.plan",
@@ -401,6 +416,11 @@ export const agentLoopJudge = inngest.createFunction(
           },
         });
         return { event: "agent/loop.plan", next: "pick-next-story" };
+      });
+
+      await step.run("release-claim-pass", async () => {
+        await releaseClaim(loopId, storyId);
+        return { storyId, action: "released-claim" };
       });
 
       return { status: "passed", loopId, storyId, attempt };
@@ -433,6 +453,7 @@ export const agentLoopJudge = inngest.createFunction(
             retryLadder,
             storyStartedAt,
             freshTests,
+            runToken,
           },
         });
         return { event: "agent/loop.implement", storyId, attempt: nextAttempt, tool: retryTool, freshTests };
@@ -450,6 +471,15 @@ export const agentLoopJudge = inngest.createFunction(
     }
 
     // Max retries exhausted — skip story
+    const writeGuard = await step.run("guard-before-verdict-write", () =>
+      guardStory(loopId, storyId, runToken)
+    );
+    if (!writeGuard.ok) {
+      console.log(
+        `[agent-loop-judge] guard blocked verdict write for ${storyId}: ${writeGuard.reason}`
+      );
+      return { status: "blocked", loopId, storyId, reason: writeGuard.reason };
+    }
 
     // Mark story as skipped so planner doesn't re-pick it
     await step.run("mark-skipped", async () => {
@@ -458,7 +488,7 @@ export const agentLoopJudge = inngest.createFunction(
     });
 
     await step.run("append-progress-fail", async () => {
-      await appendProgress(project, [
+      await appendProgress(loopId, [
         `**Story ${storyId}: ${story.title}** — FAILED (skipped after ${attempt} attempts)`,
         `- Tool: ${tool}`,
         `- Last results: ${testResults.testsFailed} test failures, typecheck: ${testResults.typecheckOk ? "✅" : "❌"}, lint: ${testResults.lintOk ? "✅" : "❌"}`,
@@ -483,6 +513,16 @@ export const agentLoopJudge = inngest.createFunction(
       return { event: "agent/loop.story.fail", storyId, attempts: attempt, durationMs: failDurationMs };
     });
 
+    const emitGuard = await step.run("guard-before-loop-continue-emit", () =>
+      guardStory(loopId, storyId, runToken)
+    );
+    if (!emitGuard.ok) {
+      console.log(
+        `[agent-loop-judge] guard blocked loop continuation emit for ${storyId}: ${emitGuard.reason}`
+      );
+      return { status: "blocked", loopId, storyId, reason: emitGuard.reason };
+    }
+
     await step.run("emit-next-plan-after-fail", async () => {
       await inngest.send({
         name: "agent/loop.plan",
@@ -496,6 +536,11 @@ export const agentLoopJudge = inngest.createFunction(
         },
       });
       return { event: "agent/loop.plan", next: "pick-next-story" };
+    });
+
+    await step.run("release-claim-skip", async () => {
+      await releaseClaim(loopId, storyId);
+      return { storyId, action: "released-claim" };
     });
 
     return { status: "skipped", loopId, storyId, attempts: attempt };

@@ -1,5 +1,5 @@
 import { inngest } from "../../client";
-import { readPrd } from "./utils";
+import { readPrd, readProgress, writeRecommendations } from "./utils";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
@@ -137,7 +137,7 @@ function buildRetroMarkdown(input: {
     rows || "| - | - | - | - | - |",
     "",
     "## Codebase Patterns",
-    codebasePatterns || "No codebase patterns found in progress.txt.",
+    codebasePatterns || "No codebase patterns found in Redis progress context.",
     "",
     "## What Worked",
     worked.length > 0
@@ -252,11 +252,8 @@ export const agentLoopRetro = inngest.createFunction(
     } = event.data;
 
     const progressText = await step.run("read-progress", async () => {
-      try {
-        return await Bun.file(`${project}/progress.txt`).text();
-      } catch {
-        return "";
-      }
+      const entries = await readProgress(loopId);
+      return entries.join("\n\n");
     });
 
     const prd = await step.run("read-prd", () => readPrd(project, "prd.json", loopId));
@@ -306,9 +303,16 @@ export const agentLoopRetro = inngest.createFunction(
         lastUpdated: new Date().toISOString(),
         sourceLoopId: loopId,
       };
-      const recommendationsPath = join(project, ".agent-loop-recommendations.json");
-      await Bun.write(recommendationsPath, JSON.stringify(payload, null, 2) + "\n");
-      return recommendationsPath;
+      await writeRecommendations(project, payload);
+      return { project, sourceLoopId: loopId };
+    });
+
+    await step.run("write-codebase-patterns", async () => {
+      const utils = await import("./utils");
+      if (typeof utils.writePatterns === "function") {
+        await utils.writePatterns(project, codebasePatterns ?? "");
+      }
+      return { project, hasPatterns: Boolean(codebasePatterns) };
     });
 
     await step.run("emit-retro-complete", async () => {
