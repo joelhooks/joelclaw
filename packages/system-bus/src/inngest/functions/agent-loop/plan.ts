@@ -178,7 +178,8 @@ export const agentLoopPlan = inngest.createFunction(
   },
   [{ event: "agent/loop.start" }, { event: "agent/loop.plan" }],
   async ({ event, step }) => {
-    const { loopId, project, prdPath } = event.data;
+    const { loopId, project } = event.data;
+    const prdPath = event.data.prdPath ?? "prd.json";
     const goal = (event.data as any).goal as string | undefined;
     const contextFiles = (event.data as any).context as string[] | undefined;
     const maxStories = (event.data as any).maxStories as number | undefined;
