@@ -100,7 +100,7 @@ export function AdrListWithFilters({
   counts: Record<string, number>;
   allStatuses: string[];
 }) {
-  const filtered = useFilteredAdrs(adrs);
+  const filtered = useFilteredAdrs(adrs, allStatuses);
 
   return (
     <>

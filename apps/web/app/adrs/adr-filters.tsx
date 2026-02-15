@@ -39,11 +39,36 @@ const STATUS_CONFIG: Record<
   },
 };
 
-export function useAdrFilters() {
-  return useQueryState(
+export function useAdrFilters(allStatuses: string[]) {
+  const [included, setIncluded] = useQueryState(
     "status",
     parseAsArrayOf(parseAsString, ",").withOptions({ shallow: true })
   );
+
+  // null = all shown (default). Array = only those shown.
+  const active = included ?? allStatuses;
+
+  const toggle = (status: string) => {
+    const isActive = active.includes(status);
+
+    if (isActive) {
+      // Turning off — show remaining active ones in URL
+      const next = active.filter((s) => s !== status);
+      if (next.length === 0) return; // Can't exclude everything
+      setIncluded(next);
+    } else {
+      // Turning on — add it back
+      const next = [...active, status];
+      // If all are now active, clear the URL param
+      if (next.length >= allStatuses.length) {
+        setIncluded(null);
+      } else {
+        setIncluded(next);
+      }
+    }
+  };
+
+  return { active, toggle };
 }
 
 export function AdrFilterBar({
@@ -53,29 +78,12 @@ export function AdrFilterBar({
   counts: Record<string, number>;
   allStatuses: string[];
 }) {
-  const [excluded, setExcluded] = useAdrFilters();
-
-  // No URL param = all shown. URL param lists excluded statuses.
-  const toggle = (status: string) => {
-    const current = excluded ?? [];
-    const isExcluded = current.includes(status);
-
-    if (isExcluded) {
-      // Re-include it
-      const next = current.filter((s) => s !== status);
-      setExcluded(next.length > 0 ? next : null);
-    } else {
-      // Exclude it — but don't allow excluding everything
-      const next = [...current, status];
-      if (next.length >= allStatuses.length) return;
-      setExcluded(next);
-    }
-  };
+  const { active, toggle } = useAdrFilters(allStatuses);
 
   return (
     <div className="mt-4 flex flex-wrap gap-2">
       {allStatuses.map((status) => {
-        const active = !(excluded ?? []).includes(status);
+        const isActive = active.includes(status);
         const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.proposed!;
         const count = counts[status] ?? 0;
 
@@ -84,13 +92,13 @@ export function AdrFilterBar({
             key={status}
             onClick={() => toggle(status)}
             className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition-all cursor-pointer ${
-              active
+              isActive
                 ? `${cfg.color} ${cfg.bg} ${cfg.border} ${cfg.glow}`
                 : "text-neutral-600 border-neutral-800/50 opacity-40"
             }`}
           >
             <span
-              className={`w-1.5 h-1.5 rounded-full ${active ? "bg-current" : "bg-neutral-700"} border ${cfg.border}`}
+              className={`w-1.5 h-1.5 rounded-full ${isActive ? "bg-current" : "bg-neutral-700"} border ${cfg.border}`}
             />
             <span className="tabular-nums">{count}</span>
             <span>{status}</span>
@@ -101,8 +109,7 @@ export function AdrFilterBar({
   );
 }
 
-export function useFilteredAdrs(adrs: AdrMeta[]) {
-  const [excluded] = useAdrFilters();
-  if (!excluded || excluded.length === 0) return adrs;
-  return adrs.filter((a) => !excluded.includes(a.status));
+export function useFilteredAdrs(adrs: AdrMeta[], allStatuses: string[]) {
+  const { active } = useAdrFilters(allStatuses);
+  return adrs.filter((a) => active.includes(a.status));
 }
