@@ -1,0 +1,871 @@
+Implemented `MEM-4` in `src/inngest/functions/observe-parser.ts`.
+
+### What I added
+- `ObserverOutput` interface with:
+  - `observations: string`
+  - `currentTask: string | null`
+  - `suggestedResponse: string | null`
+  - `parsed: boolean`
+- `parseObserverOutput(raw: string): ObserverOutput` with behavior:
+  - Empty/whitespace input -> empty observations, null optional fields, `parsed: false`
+  - XML parsing for:
+    - `<observations>...</observations>` (required to treat as parsed XML)
+    - `<current-task>...</current-task>` (optional)
+    - `<suggested-response>...</suggested-response>` (optional)
+  - Trims extracted XML content
+  - Emoji fallback (lines containing `🔴`, `🟡`, or `🟢`) -> uses full raw text, `parsed: true`
+  - Unrecognized text -> returns raw text with `parsed: false`
+
+### Validation
+- Ran `bunx tsc --noEmit` successfully (passes).
+
+
+--- STDERR ---
+OpenAI Codex v0.101.0 (research preview)
+--------
+workdir: /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-bus
+model: gpt-5.3-codex
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: auto
+session id: 019c62dc-7a39-7d52-bad2-985b09063c86
+--------
+user
+
+
+## Project File Listing
+
+docker
+prd-v3-recovery.json
+prd-adr-0010.json
+progress.txt
+node_modules
+prd-retro.json
+bun.lock
+README.md
+__tests__
+package.json
+tsconfig.json
+docker-compose.yml
+prd-v2.json
+index.ts
+CONTINUATION.md
+prd.json
+CLAUDE.md
+prd-cli-migration.json
+src
+CONTINUATION-ADR.md
+
+# src/ files:
+src/inngest/client.ts
+src/serve.ts
+
+## Project Instructions (CLAUDE.md)
+
+
+## Agent Loop Architecture (ADR-0015)
+
+This project runs automated coding loops with 5 separated roles:
+- **Planner**: generates PRD from goal, picks next story
+- **Test Writer**: writes acceptance tests BEFORE implementation (TDD)
+- **Implementor**: writes code to pass the tests
+- **Reviewer**: evaluates implementation with 4 questions (no test writing)
+- **Judge**: mechanical gates + reviewer notes + LLM verdict
+
+When working as an implementor: implement the story, don't write tests.
+When working as a test writer: write tests from acceptance criteria only, don't read implementation.
+Tests should verify observable behavior and public API — NOT internal structure.
+Do NOT use source code string matching (indexOf, regex on source) to verify behavior.
+Commit nothing — the harness handles git.
+
+## Bun Runtime
+
+Default to using Bun instead of Node.js.
+
+- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
+- Use `bun test` instead of `jest` or `vitest`
+- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
+- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
+- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
+- Use `bunx <package> <command>` instead of `npx <package> <command>`
+- Bun automatically loads .env, so don't use dotenv.
+
+## APIs
+
+- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
+- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
+- `Bun.redis` for Redis. Don't use `ioredis`.
+- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
+- `WebSocket` is built-in. Don't use `ws`.
+- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
+- Bun.$`ls` instead of execa.
+
+## Testing
+
+Use `bun test` to run tests.
+
+```ts#index.test.ts
+import { test, expect } from "bun:test";
+
+test("hello world", () => {
+  expect(1).toBe(1);
+});
+```
+
+## Frontend
+
+Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, C
+
+---
+
+## Story: Create ObserverOutput interface and parseObserverOutput function (MEM-4)
+
+Create src/inngest/functions/observe-parser.ts exporting:
+
+1. interface ObserverOutput { observations: string; currentTask: string | null; suggestedResponse: string | null; parsed: boolean }
+
+2. parseObserverOutput(raw: string): ObserverOutput — Parses LLM output that may contain XML tags. Logic:
+   - Try to extract content from <observations>...</observations>, <current-task>...</current-task>, <suggested-response>...</suggested-response> XML tags
+   - If <observations> tag is found, set parsed=true and extract available tags (currentTask and suggestedResponse may be absent)
+   - If no XML tags found, fall back: check if lines contain 🔴, 🟡, or 🟢 emoji markers. If so, use the full raw text as observations, set parsed=true
+   - If nothing matches (malformed/random text), return { observations: raw, currentTask: null, suggestedResponse: null, parsed: false }
+   - Empty/whitespace input returns { observations: '', currentTask: null, suggestedResponse: null, parsed: false }
+   - Trim whitespace from extracted content
+
+## Acceptance Criteria
+- src/inngest/functions/observe-parser.ts exports ObserverOutput interface with observations (string), currentTask (string | null), suggestedResponse (string | null), parsed (boolean)
+- src/inngest/functions/observe-parser.ts exports parseObserverOutput function
+- parseObserverOutput extracts content from XML tags when present
+- parseObserverOutput falls back to emoji-marker detection when no XML tags found
+- parseObserverOutput returns raw text with parsed=false for unrecognized input
+- parseObserverOutput returns empty observations with parsed=false for empty input
+- TypeScript compiles cleanly: bunx tsc --noEmit
+
+## Instructions
+Implement the story above. Do NOT write tests — a separate reviewer will handle testing.
+Make clean, focused changes. Commit nothing — the harness handles git.
+mcp startup: no servers
+2026-02-15T19:52:22.386650Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5eca-bff9-7772-83bf-5daab07b9959
+2026-02-15T19:52:22.446145Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5ffd-d51d-7a13-b1fa-342be02f164b
+2026-02-15T19:52:22.486295Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6275-d69e-7b53-bb28-583bfe07e70c
+2026-02-15T19:52:22.535588Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5d40-288c-78b2-af66-36e0fae54073
+2026-02-15T19:52:22.566434Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6031-b7fb-7120-85b5-8abf34324910
+2026-02-15T19:52:22.593955Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fe2-872d-7e93-87a3-71d37d75a127
+2026-02-15T19:52:22.614464Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e50-6bc5-7861-a0a0-f77d68ec073f
+2026-02-15T19:52:22.664456Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6022-8a12-7ba0-b7e8-9c265e8ec17e
+2026-02-15T19:52:22.749593Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fbb-e145-7c40-9913-218548629e57
+2026-02-15T19:52:22.823966Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e21-7a30-7ed1-b686-e02ac2da8157
+2026-02-15T19:52:22.906118Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fed-5e04-78c0-9a4e-9fddc7af084e
+
+thinking
+**Reviewing repo structure**
+codex
+I’m implementing `MEM-4` by adding `src/inngest/functions/observe-parser.ts` with the `ObserverOutput` interface and `parseObserverOutput(raw)` logic, then I’ll run `bunx tsc --noEmit` to verify the build.
+exec
+/bin/zsh -lc 'rg --files' in /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-busexec
+/bin/zsh -lc 'ls -la src && ls -la src/inngest && ls -la src/inngest/functions' in /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-bus succeeded in 51ms:
+CONTINUATION-ADR.md
+src/serve.ts
+src/inngest/functions/transcript-process.ts
+src/inngest/functions/index.ts
+src/inngest/functions/video-download.ts
+src/inngest/functions/summarize.ts
+src/inngest/functions/system-logger.ts
+src/inngest/functions/agent-loop/plan.ts
+src/inngest/functions/agent-loop/llmEvaluate.test.ts
+src/inngest/functions/agent-loop/judge.test.ts
+src/inngest/functions/agent-loop/test-writer.test.ts
+src/inngest/functions/agent-loop/test-writer.ts
+src/inngest/functions/agent-loop/formatLoopDuration.test.ts
+src/inngest/functions/agent-loop/review.test.ts
+src/inngest/functions/agent-loop/index.ts
+src/inngest/functions/agent-loop/getStoryDiff.test.ts
+src/inngest/functions/agent-loop/parseClaudeOutput.test.ts
+src/inngest/functions/agent-loop/review.ts
+src/inngest/functions/agent-loop/utils.ts
+src/inngest/functions/agent-loop/judge.ts
+ succeeded in 51ms:
+total 8
+drwxr-xr-x   4 joel  wheel   128 Feb 15 11:43 .
+drwxr-xr-x  24 joel  wheel   768 Feb 15 11:46 ..
+drwxr-xr-x   4 joel  wheel   128 Feb 15 11:43 inngest
+-rw-r--r--   1 joel  wheel  2090 Feb 15 11:43 serve.ts
+total 24
+drwxr-xr-x  4 joel  wheel    128 Feb 15 11:43 .
+drwxr-xr-x  4 joel  wheel    128 Feb 15 11:43 ..
+-rw-r--r--  1 joel  wheel  10081 Feb 15 11:45 client.ts
+drwxr-xr-x  9 joel  wheel    288 Feb 15 11:48 functions
+total 64
+drwxr-xr-x   9 joel  wheel   288 Feb 15 11:48 .
+drwxr-xr-x   4 joel  wheel   128 Feb 15 11:43 ..
+drwxr-xr-x  19 joel  wheel   608 Feb 15 11:43 agent-loop
+-rw-r--r--   1 joel  wheel   367 Feb 15 11:43 index.ts
+-rw-r--r--   1 joel  wheel  1288 Feb 15 11:50 observe-prompt.ts
+-rw-r--r--   1 joel  wheel  3222 Feb 15 11:43 summarize.ts
+-rw-r--r--   1 joel  wheel  1417 Feb 15 11:43 system-logger.ts
+-rw-r--r--   1 joel  wheel  7329 Feb 15 11:43 transcript-process.ts
+-rw-r--r--   1 joel  wheel  4888 Feb 15 11:43 video-download.ts
+
+thinking
+**Preparing test and export review**
+codex
+I found an existing `__tests__/mem-4-observe-parser.test.ts`, so I’ll quickly align implementation details to expected behavior and project style before editing.
+exec
+/bin/zsh -lc "sed -n '1,220p' src/inngest/functions/agent-loop/parseClaudeOutput.test.ts" in /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-busexec
+/bin/zsh -lc "sed -n '1,220p' __tests__/mem-4-observe-parser.test.ts" in /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-busexec
+/bin/zsh -lc "sed -n '1,220p' src/inngest/functions/index.ts" in /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-bus succeeded in 51ms:
+export { videoDownload } from "./video-download";
+export { transcriptProcess } from "./transcript-process";
+export { summarize } from "./summarize";
+export { systemLogger } from "./system-logger";
+export {
+  agentLoopPlan,
+  agentLoopTestWriter,
+  agentLoopImplement,
+  agentLoopReview,
+  agentLoopJudge,
+  agentLoopComplete,
+  agentLoopRetro,
+} from "./agent-loop";
+ succeeded in 51ms:
+import { describe, test, expect } from "bun:test";
+import { parseClaudeOutput } from "./utils";
+
+describe("parseClaudeOutput", () => {
+  test("parses --output-format json envelope with fenced result", () => {
+    const envelope = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: '```json\n{"verdict":"pass","reasoning":"looks good"}\n```',
+    });
+    const result = parseClaudeOutput(envelope) as any;
+    expect(result.verdict).toBe("pass");
+    expect(result.reasoning).toBe("looks good");
+  });
+
+  test("parses --output-format json envelope with raw JSON result", () => {
+    const envelope = JSON.stringify({
+      type: "result",
+      result: '{"verdict":"fail","reasoning":"bad"}',
+    });
+ succeeded in 51ms:
+import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+async function loadObserveParserModule() {
+  return import("../src/inngest/functions/observe-parser.ts");
+}
+
+describe("MEM-4: observe-parser exports", () => {
+  test("AC-1 and AC-2: module exports ObserverOutput type contract and parseObserverOutput function", async () => {
+    const mod = await loadObserveParserModule();
+
+    expect("parseObserverOutput" in mod).toBe(true);
+    expect(typeof mod.parseObserverOutput).toBe("function");
+
+    const tempDir = await mkdtemp(join(tmpdir(), "mem-4-typecheck-"));
+    try {
+      const typecheckFile = join(tempDir, "observer-output-shape.ts");
+      await writeFile(
+
+thinking
+**Defining observation extraction logic**
+codex
+I’ve confirmed expected behavior from the acceptance test file; next I’m adding the new parser module with XML extraction, emoji fallback, and raw-text fallback exactly as specified.
+file update
+A /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-bus/src/inngest/functions/observe-parser.ts
+export interface ObserverOutput {
+  observations: string;
+  currentTask: string | null;
+  suggestedResponse: string | null;
+  parsed: boolean;
+}
+
+function extractTagContent(raw: string, tagName: string): string | null {
+  const pattern = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, "i");
+  const match = raw.match(pattern);
+  if (!match) {
+    return null;
+  }
+
+  return match[1].trim();
+}
+
+function hasObserverEmojiMarkers(raw: string): boolean {
+  return raw
+    .split(/\r?\n/)
+    .some((line) => line.includes("🔴") || line.includes("🟡") || line.includes("🟢"));
+}
+
+export function parseObserverOutput(raw: string): ObserverOutput {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return {
+      observations: "",
+      currentTask: null,
+      suggestedResponse: null,
+      parsed: false,
+    };
+  }
+
+  const observations = extractTagContent(raw, "observations");
+  if (observations !== null) {
+    return {
+      observations,
+      currentTask: extractTagContent(raw, "current-task"),
+      suggestedResponse: extractTagContent(raw, "suggested-response"),
+      parsed: true,
+    };
+  }
+
+  if (hasObserverEmojiMarkers(raw)) {
+    return {
+      observations: raw,
+      currentTask: null,
+      suggestedResponse: null,
+      parsed: true,
+    };
+  }
+
+  return {
+    observations: raw,
+    currentTask: null,
+    suggestedResponse: null,
+    parsed: false,
+  };
+}
+apply_patch(auto_approved=true) exited 0 in 56ms:
+Success. Updated the following files:
+A src/inngest/functions/observe-parser.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-parser.ts b/packages/system-bus/src/inngest/functions/observe-parser.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..fe55fa17ea94459afe3997a55a685aea4f4eba25
+--- /dev/null
++++ b/packages/system-bus/src/inngest/functions/observe-parser.ts
+@@ -0,0 +1,60 @@
++export interface ObserverOutput {
++  observations: string;
++  currentTask: string | null;
++  suggestedResponse: string | null;
++  parsed: boolean;
++}
++
++function extractTagContent(raw: string, tagName: string): string | null {
++  const pattern = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, "i");
++  const match = raw.match(pattern);
++  if (!match) {
++    return null;
++  }
++
++  return match[1].trim();
++}
++
++function hasObserverEmojiMarkers(raw: string): boolean {
++  return raw
++    .split(/\r?\n/)
++    .some((line) => line.includes("🔴") || line.includes("🟡") || line.includes("🟢"));
++}
++
++export function parseObserverOutput(raw: string): ObserverOutput {
++  const trimmed = raw.trim();
++  if (trimmed.length === 0) {
++    return {
++      observations: "",
++      currentTask: null,
++      suggestedResponse: null,
++      parsed: false,
++    };
++  }
++
++  const observations = extractTagContent(raw, "observations");
++  if (observations !== null) {
++    return {
++      observations,
++      currentTask: extractTagContent(raw, "current-task"),
++      suggestedResponse: extractTagContent(raw, "suggested-response"),
++      parsed: true,
++    };
++  }
++
++  if (hasObserverEmojiMarkers(raw)) {
++    return {
++      observations: raw,
++      currentTask: null,
++      suggestedResponse: null,
++      parsed: true,
++    };
++  }
++
++  return {
++    observations: raw,
++    currentTask: null,
++    suggestedResponse: null,
++    parsed: false,
++  };
++}
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-parser.ts b/packages/system-bus/src/inngest/functions/observe-parser.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..fe55fa17ea94459afe3997a55a685aea4f4eba25
+--- /dev/null
++++ b/packages/system-bus/src/inngest/functions/observe-parser.ts
+@@ -0,0 +1,60 @@
++export interface ObserverOutput {
++  observations: string;
++  currentTask: string | null;
++  suggestedResponse: string | null;
++  parsed: boolean;
++}
++
++function extractTagContent(raw: string, tagName: string): string | null {
++  const pattern = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, "i");
++  const match = raw.match(pattern);
++  if (!match) {
++    return null;
++  }
++
++  return match[1].trim();
++}
++
++function hasObserverEmojiMarkers(raw: string): boolean {
++  return raw
++    .split(/\r?\n/)
++    .some((line) => line.includes("🔴") || line.includes("🟡") || line.includes("🟢"));
++}
++
++export function parseObserverOutput(raw: string): ObserverOutput {
++  const trimmed = raw.trim();
++  if (trimmed.length === 0) {
++    return {
++      observations: "",
++      currentTask: null,
++      suggestedResponse: null,
++      parsed: false,
++    };
++  }
++
++  const observations = extractTagContent(raw, "observations");
++  if (observations !== null) {
++    return {
++      observations,
++      currentTask: extractTagContent(raw, "current-task"),
++      suggestedResponse: extractTagContent(raw, "suggested-response"),
++      parsed: true,
++    };
++  }
++
++  if (hasObserverEmojiMarkers(raw)) {
++    return {
++      observations: raw,
++      currentTask: null,
++      suggestedResponse: null,
++      parsed: true,
++    };
++  }
++
++  return {
++    observations: raw,
++    currentTask: null,
++    suggestedResponse: null,
++    parsed: false,
++  };
++}
+
+
+thinking
+**Running TypeScript noEmit check**
+codex
+The parser file is in place; I’m running the TypeScript compile gate now to ensure `bunx tsc --noEmit` passes cleanly.
+exec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-bus exited 2 in 688ms:
+src/inngest/functions/observe-parser.ts(15,10): error TS2532: Object is possibly 'undefined'.
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-parser.ts b/packages/system-bus/src/inngest/functions/observe-parser.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..fe55fa17ea94459afe3997a55a685aea4f4eba25
+--- /dev/null
++++ b/packages/system-bus/src/inngest/functions/observe-parser.ts
+@@ -0,0 +1,60 @@
++export interface ObserverOutput {
++  observations: string;
++  currentTask: string | null;
++  suggestedResponse: string | null;
++  parsed: boolean;
++}
++
++function extractTagContent(raw: string, tagName: string): string | null {
++  const pattern = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, "i");
++  const match = raw.match(pattern);
++  if (!match) {
++    return null;
++  }
++
++  return match[1].trim();
++}
++
++function hasObserverEmojiMarkers(raw: string): boolean {
++  return raw
++    .split(/\r?\n/)
++    .some((line) => line.includes("🔴") || line.includes("🟡") || line.includes("🟢"));
++}
++
++export function parseObserverOutput(raw: string): ObserverOutput {
++  const trimmed = raw.trim();
++  if (trimmed.length === 0) {
++    return {
++      observations: "",
++      currentTask: null,
++      suggestedResponse: null,
++      parsed: false,
++    };
++  }
++
++  const observations = extractTagContent(raw, "observations");
++  if (observations !== null) {
++    return {
++      observations,
++      currentTask: extractTagContent(raw, "current-task"),
++      suggestedResponse: extractTagContent(raw, "suggested-response"),
++      parsed: true,
++    };
++  }
++
++  if (hasObserverEmojiMarkers(raw)) {
++    return {
++      observations: raw,
++      currentTask: null,
++      suggestedResponse: null,
++      parsed: true,
++    };
++  }
++
++  return {
++    observations: raw,
++    currentTask: null,
++    suggestedResponse: null,
++    parsed: false,
++  };
++}
+
+
+thinking
+**Fixing optional match handling**
+codex
+TypeScript flagged a strict-null issue in tag extraction; I’m applying a tiny fix to make the capture group handling explicit and rerunning compile.
+file update
+M /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-bus/src/inngest/functions/observe-parser.ts
+@@ -14,3 +14,3 @@
+ 
+-  return match[1].trim();
++  return (match[1] ?? "").trim();
+ }
+apply_patch(auto_approved=true) exited 0 in 35ms:
+Success. Updated the following files:
+M src/inngest/functions/observe-parser.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-parser.ts b/packages/system-bus/src/inngest/functions/observe-parser.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..fdd4c864efffbc6a6e5fe0560f2c6b12c6615a7e
+--- /dev/null
++++ b/packages/system-bus/src/inngest/functions/observe-parser.ts
+@@ -0,0 +1,60 @@
++export interface ObserverOutput {
++  observations: string;
++  currentTask: string | null;
++  suggestedResponse: string | null;
++  parsed: boolean;
++}
++
++function extractTagContent(raw: string, tagName: string): string | null {
++  const pattern = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, "i");
++  const match = raw.match(pattern);
++  if (!match) {
++    return null;
++  }
++
++  return (match[1] ?? "").trim();
++}
++
++function hasObserverEmojiMarkers(raw: string): boolean {
++  return raw
++    .split(/\r?\n/)
++    .some((line) => line.includes("🔴") || line.includes("🟡") || line.includes("🟢"));
++}
++
++export function parseObserverOutput(raw: string): ObserverOutput {
++  const trimmed = raw.trim();
++  if (trimmed.length === 0) {
++    return {
++      observations: "",
++      currentTask: null,
++      suggestedResponse: null,
++      parsed: false,
++    };
++  }
++
++  const observations = extractTagContent(raw, "observations");
++  if (observations !== null) {
++    return {
++      observations,
++      currentTask: extractTagContent(raw, "current-task"),
++      suggestedResponse: extractTagContent(raw, "suggested-response"),
++      parsed: true,
++    };
++  }
++
++  if (hasObserverEmojiMarkers(raw)) {
++    return {
++      observations: raw,
++      currentTask: null,
++      suggestedResponse: null,
++      parsed: true,
++    };
++  }
++
++  return {
++    observations: raw,
++    currentTask: null,
++    suggestedResponse: null,
++    parsed: false,
++  };
++}
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-parser.ts b/packages/system-bus/src/inngest/functions/observe-parser.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..fdd4c864efffbc6a6e5fe0560f2c6b12c6615a7e
+--- /dev/null
++++ b/packages/system-bus/src/inngest/functions/observe-parser.ts
+@@ -0,0 +1,60 @@
++export interface ObserverOutput {
++  observations: string;
++  currentTask: string | null;
++  suggestedResponse: string | null;
++  parsed: boolean;
++}
++
++function extractTagContent(raw: string, tagName: string): string | null {
++  const pattern = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, "i");
++  const match = raw.match(pattern);
++  if (!match) {
++    return null;
++  }
++
++  return (match[1] ?? "").trim();
++}
++
++function hasObserverEmojiMarkers(raw: string): boolean {
++  return raw
++    .split(/\r?\n/)
++    .some((line) => line.includes("🔴") || line.includes("🟡") || line.includes("🟢"));
++}
++
++export function parseObserverOutput(raw: string): ObserverOutput {
++  const trimmed = raw.trim();
++  if (trimmed.length === 0) {
++    return {
++      observations: "",
++      currentTask: null,
++      suggestedResponse: null,
++      parsed: false,
++    };
++  }
++
++  const observations = extractTagContent(raw, "observations");
++  if (observations !== null) {
++    return {
++      observations,
++      currentTask: extractTagContent(raw, "current-task"),
++      suggestedResponse: extractTagContent(raw, "suggested-response"),
++      parsed: true,
++    };
++  }
++
++  if (hasObserverEmojiMarkers(raw)) {
++    return {
++      observations: raw,
++      currentTask: null,
++      suggestedResponse: null,
++      parsed: true,
++    };
++  }
++
++  return {
++    observations: raw,
++    currentTask: null,
++    suggestedResponse: null,
++    parsed: false,
++  };
++}
+
+exec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-bus succeeded in 671ms:
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-parser.ts b/packages/system-bus/src/inngest/functions/observe-parser.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..fdd4c864efffbc6a6e5fe0560f2c6b12c6615a7e
+--- /dev/null
++++ b/packages/system-bus/src/inngest/functions/observe-parser.ts
+@@ -0,0 +1,60 @@
++export interface ObserverOutput {
++  observations: string;
++  currentTask: string | null;
++  suggestedResponse: string | null;
++  parsed: boolean;
++}
++
++function extractTagContent(raw: string, tagName: string): string | null {
++  const pattern = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, "i");
++  const match = raw.match(pattern);
++  if (!match) {
++    return null;
++  }
++
++  return (match[1] ?? "").trim();
++}
++
++function hasObserverEmojiMarkers(raw: string): boolean {
++  return raw
++    .split(/\r?\n/)
++    .some((line) => line.includes("🔴") || line.includes("🟡") || line.includes("🟢"));
++}
++
++export function parseObserverOutput(raw: string): ObserverOutput {
++  const trimmed = raw.trim();
++  if (trimmed.length === 0) {
++    return {
++      observations: "",
++      currentTask: null,
++      suggestedResponse: null,
++      parsed: false,
++    };
++  }
++
++  const observations = extractTagContent(raw, "observations");
++  if (observations !== null) {
++    return {
++      observations,
++      currentTask: extractTagContent(raw, "current-task"),
++      suggestedResponse: extractTagContent(raw, "suggested-response"),
++      parsed: true,
++    };
++  }
++
++  if (hasObserverEmojiMarkers(raw)) {
++    return {
++      observations: raw,
++      currentTask: null,
++      suggestedResponse: null,
++      parsed: true,
++    };
++  }
++
++  return {
++    observations: raw,
++    currentTask: null,
++    suggestedResponse: null,
++    parsed: false,
++  };
++}
+
+
+thinking
+**Summarizing final changes and results**
+codex
+Implemented `MEM-4` in `src/inngest/functions/observe-parser.ts`.
+
+### What I added
+- `ObserverOutput` interface with:
+  - `observations: string`
+  - `currentTask: string | null`
+  - `suggestedResponse: string | null`
+  - `parsed: boolean`
+- `parseObserverOutput(raw: string): ObserverOutput` with behavior:
+  - Empty/whitespace input -> empty observations, null optional fields, `parsed: false`
+  - XML parsing for:
+    - `<observations>...</observations>` (required to treat as parsed XML)
+    - `<current-task>...</current-task>` (optional)
+    - `<suggested-response>...</suggested-response>` (optional)
+  - Trims extracted XML content
+  - Emoji fallback (lines containing `🔴`, `🟡`, or `🟢`) -> uses full raw text, `parsed: true`
+  - Unrecognized text -> returns raw text with `parsed: false`
+
+### Validation
+- Ran `bunx tsc --noEmit` successfully (passes).
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe-parser.ts b/packages/system-bus/src/inngest/functions/observe-parser.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..fdd4c864efffbc6a6e5fe0560f2c6b12c6615a7e
+--- /dev/null
++++ b/packages/system-bus/src/inngest/functions/observe-parser.ts
+@@ -0,0 +1,60 @@
++export interface ObserverOutput {
++  observations: string;
++  currentTask: string | null;
++  suggestedResponse: string | null;
++  parsed: boolean;
++}
++
++function extractTagContent(raw: string, tagName: string): string | null {
++  const pattern = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, "i");
++  const match = raw.match(pattern);
++  if (!match) {
++    return null;
++  }
++
++  return (match[1] ?? "").trim();
++}
++
++function hasObserverEmojiMarkers(raw: string): boolean {
++  return raw
++    .split(/\r?\n/)
++    .some((line) => line.includes("🔴") || line.includes("🟡") || line.includes("🟢"));
++}
++
++export function parseObserverOutput(raw: string): ObserverOutput {
++  const trimmed = raw.trim();
++  if (trimmed.length === 0) {
++    return {
++      observations: "",
++      currentTask: null,
++      suggestedResponse: null,
++      parsed: false,
++    };
++  }
++
++  const observations = extractTagContent(raw, "observations");
++  if (observations !== null) {
++    return {
++      observations,
++      currentTask: extractTagContent(raw, "current-task"),
++      suggestedResponse: extractTagContent(raw, "suggested-response"),
++      parsed: true,
++    };
++  }
++
++  if (hasObserverEmojiMarkers(raw)) {
++    return {
++      observations: raw,
++      currentTask: null,
++      suggestedResponse: null,
++      parsed: true,
++    };
++  }
++
++  return {
++    observations: raw,
++    currentTask: null,
++    suggestedResponse: null,
++    parsed: false,
++  };
++}
+
+tokens used
+37,120
