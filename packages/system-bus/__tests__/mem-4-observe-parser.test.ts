@@ -23,6 +23,7 @@ describe("MEM-4: observe-parser exports", () => {
 
 const sample: ObserverOutput = {
   observations: "note",
+  segments: [],
   currentTask: null,
   suggestedResponse: null,
   parsed: true,
@@ -81,6 +82,7 @@ describe("MEM-4: parseObserverOutput behavior", () => {
 
     expect(result).toEqual({
       observations: "🔴 Database connection retries exceeded",
+      segments: [],
       currentTask: "Investigate Redis timeout handling",
       suggestedResponse: "I found repeated Redis connection failures and can add retry backoff.",
       parsed: true,
@@ -96,6 +98,7 @@ describe("MEM-4: parseObserverOutput behavior", () => {
 
     expect(result).toEqual({
       observations: "🟡 Memory usage growing over several loops",
+      segments: [],
       currentTask: null,
       suggestedResponse: null,
       parsed: true,
@@ -111,6 +114,7 @@ describe("MEM-4: parseObserverOutput behavior", () => {
 
     expect(result).toEqual({
       observations: raw,
+      segments: [],
       currentTask: null,
       suggestedResponse: null,
       parsed: true,
@@ -125,6 +129,7 @@ describe("MEM-4: parseObserverOutput behavior", () => {
 
     expect(result).toEqual({
       observations: raw,
+      segments: [],
       currentTask: null,
       suggestedResponse: null,
       parsed: false,
@@ -136,6 +141,7 @@ describe("MEM-4: parseObserverOutput behavior", () => {
 
     expect(parseObserverOutput("")).toEqual({
       observations: "",
+      segments: [],
       currentTask: null,
       suggestedResponse: null,
       parsed: false,
@@ -143,6 +149,7 @@ describe("MEM-4: parseObserverOutput behavior", () => {
 
     expect(parseObserverOutput("   \n\t  ")).toEqual({
       observations: "",
+      segments: [],
       currentTask: null,
       suggestedResponse: null,
       parsed: false,
