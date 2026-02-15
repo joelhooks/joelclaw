@@ -74,7 +74,7 @@
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 5,
-      "passes": false
+      "passes": true
     },
     {
       "id": "MEM-6",
