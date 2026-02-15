@@ -78,6 +78,11 @@ export default async function PostPage({ params }: Props) {
         <h1 className="text-3xl font-bold tracking-tight">{meta.title}</h1>
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-neutral-500">
           <RelativeTime date={meta.date} />
+          {meta.updated && (
+            <span>
+              · updated <RelativeTime date={meta.updated} />
+            </span>
+          )}
           {meta.channel && <span>· {meta.channel}</span>}
           {meta.duration && <span>· {meta.duration}</span>}
         </div>

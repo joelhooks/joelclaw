@@ -7,6 +7,7 @@ export type ContentType = "article" | "note";
 export type PostMeta = {
   title: string;
   date: string;
+  updated?: string;
   description: string;
   slug: string;
   type: ContentType;
@@ -28,6 +29,7 @@ export function getAllPosts(): PostMeta[] {
       return {
         title: data.title ?? "Untitled",
         date: data.date ?? "",
+        updated: data.updated,
         description: data.description ?? "",
         slug: filename.replace(/\.mdx$/, ""),
         type: (data.type as ContentType) ?? "article",
@@ -50,6 +52,7 @@ export function getPost(slug: string) {
     meta: {
       title: data.title ?? "Untitled",
       date: data.date ?? "",
+      updated: data.updated,
       description: data.description ?? "",
       slug,
       type: (data.type as ContentType) ?? "article",
