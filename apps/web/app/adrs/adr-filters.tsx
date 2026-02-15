@@ -1,42 +1,31 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useQueryStates } from "nuqs";
+import { adrSearchParams } from "./search-params";
 import { STATUS_CONFIG } from "./status-config";
 
-function writeUrl(active: Set<string>, allStatuses: string[]) {
-  const url = new URL(window.location.href);
-  if (active.size === allStatuses.length) {
-    url.searchParams.delete("status");
-  } else {
-    url.searchParams.set("status", [...active].join(","));
-  }
-  window.history.replaceState(null, "", url.toString());
-}
+export function useStatusFilter(allStatuses: string[]) {
+  const [{ status: included }, setParams] = useQueryStates(adrSearchParams, {
+    shallow: true,
+  });
 
-export function useStatusFilter(
-  allStatuses: string[],
-  initialActive: string[]
-) {
-  const [active, setActive] = useState<Set<string>>(
-    () => new Set(initialActive)
-  );
+  // null = all active (no URL param). Array = only those active.
+  const active = new Set(included ?? allStatuses);
 
-  const toggle = useCallback(
-    (status: string) => {
-      setActive((prev) => {
-        const next = new Set(prev);
-        if (next.has(status)) {
-          if (next.size <= 1) return prev;
-          next.delete(status);
-        } else {
-          next.add(status);
-        }
-        writeUrl(next, allStatuses);
-        return next;
-      });
-    },
-    [allStatuses]
-  );
+  const toggle = (status: string) => {
+    const next = new Set(active);
+    if (next.has(status)) {
+      if (next.size <= 1) return; // Can't empty
+      next.delete(status);
+    } else {
+      next.add(status);
+    }
+    // All active = clear param. Otherwise set included list.
+    const arr = [...next];
+    setParams({
+      status: arr.length >= allStatuses.length ? null : arr,
+    });
+  };
 
   return { active, toggle };
 }

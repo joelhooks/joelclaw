@@ -65,14 +65,12 @@ export function AdrListWithFilters({
   adrs,
   counts,
   allStatuses,
-  initialActive,
 }: {
   adrs: AdrMeta[];
   counts: Record<string, number>;
   allStatuses: string[];
-  initialActive: string[];
 }) {
-  const { active, toggle } = useStatusFilter(allStatuses, initialActive);
+  const { active, toggle } = useStatusFilter(allStatuses);
 
   return (
     <>
@@ -84,11 +82,7 @@ export function AdrListWithFilters({
       />
       <ul className="mt-8 border-t border-neutral-800/50">
         {adrs.map((adr) => (
-          <AdrRow
-            key={adr.slug}
-            adr={adr}
-            hidden={!active.has(adr.status)}
-          />
+          <AdrRow key={adr.slug} adr={adr} hidden={!active.has(adr.status)} />
         ))}
       </ul>
     </>

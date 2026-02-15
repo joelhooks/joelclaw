@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import type { SearchParams } from "nuqs/server";
 import { getAllAdrs } from "../../lib/adrs";
 import { SITE_NAME } from "../../lib/constants";
+import { loadAdrSearchParams } from "./search-params";
 import { AdrListWithFilters } from "./adr-list";
 
 export const metadata: Metadata = {
@@ -10,11 +12,11 @@ export const metadata: Metadata = {
 };
 
 type Props = {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<SearchParams>;
 };
 
 export default async function AdrsPage({ searchParams }: Props) {
-  const { status: statusParam } = await searchParams;
+  const { status } = await loadAdrSearchParams(searchParams);
   const allAdrs = getAllAdrs();
 
   const counts = allAdrs.reduce(
@@ -27,12 +29,7 @@ export default async function AdrsPage({ searchParams }: Props) {
 
   const allStatuses = Object.entries(counts)
     .sort(([, a], [, b]) => b - a)
-    .map(([status]) => status);
-
-  // Parse URL filter — null means all active
-  const activeStatuses = statusParam
-    ? statusParam.split(",").filter((s) => allStatuses.includes(s))
-    : allStatuses;
+    .map(([s]) => s);
 
   return (
     <>
@@ -49,7 +46,6 @@ export default async function AdrsPage({ searchParams }: Props) {
         adrs={allAdrs}
         counts={counts}
         allStatuses={allStatuses}
-        initialActive={activeStatuses}
       />
     </>
   );
