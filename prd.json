@@ -34,7 +34,7 @@
         "TypeScript compiles with no errors (bun test on the test file)"
       ],
       "priority": 2,
-      "passes": false
+      "passes": true
     },
     {
       "id": "ADR10-3",
