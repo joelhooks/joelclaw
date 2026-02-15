@@ -1,0 +1,18 @@
+{
+  "name": "@joelclaw/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "joelclaw": "src/cli.ts"
+  },
+  "dependencies": {
+    "@effect/cli": "^0.73.2",
+    "@effect/platform": "^0.94.5",
+    "@effect/platform-bun": "^0.87.1",
+    "effect": "^3.19.17"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
