@@ -1,7 +1,7 @@
 import { inngest } from "../../client";
 import { $ } from "bun";
 import { join } from "node:path";
-import { appendProgress, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked } from "./utils";
+import { appendProgress, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput } from "./utils";
 
 const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
 
@@ -85,7 +85,7 @@ Rules:
 - Keep stories small — one logical change per story`;
 
   const proc = Bun.spawn(
-    ["claude", "-p", prompt, "--output-format", "text"],
+    ["claude", "-p", prompt, "--output-format", "json"],
     { cwd: project, stdout: "pipe", stderr: "pipe" }
   );
 
@@ -97,25 +97,9 @@ Rules:
     throw new Error(`PRD generation failed (exit ${proc.exitCode}): ${stderr.slice(0, 500)}`);
   }
 
-  // Parse JSON from Claude's text output
-  let parsed: any;
-  try {
-    // Try direct JSON parse first
-    parsed = JSON.parse(stdout.trim());
-  } catch {
-    // Extract JSON from markdown code block or find the JSON object
-    const jsonMatch = stdout.match(/```json?\s*\n([\s\S]*?)\n```/);
-    if (jsonMatch) {
-      parsed = JSON.parse(jsonMatch[1]!);
-    } else {
-      // Find the first { ... } block that looks like PRD
-      const braceStart = stdout.indexOf("{");
-      const braceEnd = stdout.lastIndexOf("}");
-      if (braceStart === -1 || braceEnd === -1) {
-        throw new Error(`No JSON found in PRD output: ${stdout.slice(0, 500)}`);
-      }
-      parsed = JSON.parse(stdout.slice(braceStart, braceEnd + 1));
-    }
+  const parsed = parseClaudeOutput(stdout) as any;
+  if (!parsed) {
+    throw new Error(`Failed to parse PRD JSON from claude output: ${stdout.slice(0, 500)}`);
   }
 
   // Validate shape
