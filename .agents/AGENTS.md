@@ -94,6 +94,32 @@ After completing work:
 4. Write an ADR if an architecture decision was made
 5. Update this AGENTS.md if projects, conventions, or tool inventory changed
 
+### Testing Strategy
+
+**Test behavior, not implementation.** Over-specified tests that mock internal step names, assert call counts, or pattern-match source code are worse than no tests — they break on every refactor and give false negatives.
+
+**What to test:**
+- **Observable outcomes** — function returns the right status, Redis has the right state, events are emitted
+- **Utility functions directly** — pure functions with mocked dependencies (Redis in-memory, etc.)
+- **TypeScript compilation** — `bunx tsc --noEmit` catches wiring errors cheaply
+- **Structural contracts** — verify functions import and use required utilities (guards, claims)
+
+**What NOT to test:**
+- Internal step names or step.run call order
+- That specific mock handlers were invoked N times
+- Source code string matching (regex on .ts files to verify behavior)
+- Full function execution when it requires mocking 5+ external systems
+
+**Tools:**
+- `@inngest/test` (`InngestTestEngine`) for Inngest function execution — handles step lifecycle properly, supports step mocking by ID
+- `bun:test` as runner (migration to vitest planned — see backlog)
+- In-memory Redis mock via `Redis.prototype` patching (scoped per test file with `beforeAll`/`afterAll` restore)
+
+**Anti-patterns learned the hard way:**
+- Hand-rolled `step.run` mocks that return `undefined` for unknown step names → every new step breaks every test
+- Global `Redis.prototype` patching without cleanup → test pollution across files (29 false failures)
+- Agent-generated acceptance tests that assert implementation details → 100% failure rate on review
+
 ### Architecture Decisions
 
 Any decision that changes how the system is built → write an ADR in `~/Vault/docs/decisions/`. Follow the [ADR skill](~/.agents/skills/adr-skill/SKILL.md) workflow. Reference ADRs in code with `ADR-NNNN` comments.
