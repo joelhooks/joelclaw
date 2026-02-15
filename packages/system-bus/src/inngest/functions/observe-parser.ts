@@ -16,6 +16,25 @@ export function optimizeForContext(observations: string): string {
     return "";
   }
 
+  const segments = parseSegments(observations);
+  if (segments.length > 0) {
+    const optimized: string[] = [];
+
+    for (const segment of segments) {
+      if (segment.narrative.trim().length > 0) {
+        optimized.push(segment.narrative);
+      }
+
+      for (const fact of segment.facts) {
+        if (fact.includes("🔴")) {
+          optimized.push(fact);
+        }
+      }
+    }
+
+    return optimized.join("\n").trim();
+  }
+
   return observations
     .split(/\r?\n/)
     .filter((line) => {
