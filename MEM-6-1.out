@@ -1,0 +1,285 @@
+No code changes were needed.
+
+The required test file already exists at `src/inngest/functions/observe-parser.test.ts` and contains all 7 requested `bun:test` cases with relative import from `./observe-parser`.
+
+Validation passed:
+
+1. `bun test src/inngest/functions/observe-parser.test.ts`  
+Result: 7 passed, 0 failed.
+
+2. `bunx tsc --noEmit`  
+Result: completed successfully with no TypeScript errors.
+
+
+--- STDERR ---
+OpenAI Codex v0.101.0 (research preview)
+--------
+workdir: /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-bus
+model: gpt-5.3-codex
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: auto
+session id: 019c62e0-0bd1-7b83-8e77-dd8589182512
+--------
+user
+
+
+## Project File Listing
+
+docker
+prd-v3-recovery.json
+prd-adr-0010.json
+progress.txt
+node_modules
+prd-retro.json
+bun.lock
+README.md
+__tests__
+package.json
+tsconfig.json
+docker-compose.yml
+prd-v2.json
+index.ts
+CONTINUATION.md
+prd.json
+CLAUDE.md
+prd-cli-migration.json
+src
+CONTINUATION-ADR.md
+
+# src/ files:
+src/inngest/client.ts
+src/serve.ts
+
+## Project Instructions (CLAUDE.md)
+
+
+## Agent Loop Architecture (ADR-0015)
+
+This project runs automated coding loops with 5 separated roles:
+- **Planner**: generates PRD from goal, picks next story
+- **Test Writer**: writes acceptance tests BEFORE implementation (TDD)
+- **Implementor**: writes code to pass the tests
+- **Reviewer**: evaluates implementation with 4 questions (no test writing)
+- **Judge**: mechanical gates + reviewer notes + LLM verdict
+
+When working as an implementor: implement the story, don't write tests.
+When working as a test writer: write tests from acceptance criteria only, don't read implementation.
+Tests should verify observable behavior and public API — NOT internal structure.
+Do NOT use source code string matching (indexOf, regex on source) to verify behavior.
+Commit nothing — the harness handles git.
+
+## Bun Runtime
+
+Default to using Bun instead of Node.js.
+
+- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
+- Use `bun test` instead of `jest` or `vitest`
+- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
+- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
+- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
+- Use `bunx <package> <command>` instead of `npx <package> <command>`
+- Bun automatically loads .env, so don't use dotenv.
+
+## APIs
+
+- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
+- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
+- `Bun.redis` for Redis. Don't use `ioredis`.
+- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
+- `WebSocket` is built-in. Don't use `ws`.
+- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
+- Bun.$`ls` instead of execa.
+
+## Testing
+
+Use `bun test` to run tests.
+
+```ts#index.test.ts
+import { test, expect } from "bun:test";
+
+test("hello world", () => {
+  expect(1).toBe(1);
+});
+```
+
+## Frontend
+
+Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, C
+
+---
+
+## Story: Write tests for observe-parser (MEM-6)
+
+Create src/inngest/functions/observe-parser.test.ts with tests using bun:test (import { test, expect, describe } from 'bun:test'). Test cases:
+
+1. parseObserverOutput — XML extraction: input with all 3 XML tags (<observations>, <current-task>, <suggested-response>) returns parsed=true with all fields extracted and trimmed
+2. parseObserverOutput — Partial XML: input with only <observations> tag returns parsed=true, currentTask=null, suggestedResponse=null
+3. parseObserverOutput — Fallback: input with no XML but lines containing 🔴🟡🟢 markers returns parsed=true, observations=raw text
+4. parseObserverOutput — Malformed: random text with no markers returns parsed=false, observations=raw text
+5. parseObserverOutput — Empty input: returns observations='', currentTask=null, suggestedResponse=null, parsed=false
+6. optimizeForContext — Mixed priorities: input with 🔴, 🟡, 🟢 lines and Date: headers → only 🔴 and Date: lines survive
+7. optimizeForContext — Empty input: returns empty string
+
+All tests must pass with: bun test src/inngest/functions/observe-parser.test.ts
+
+## Acceptance Criteria
+- src/inngest/functions/observe-parser.test.ts exists with all 7 test cases
+- Tests import from ./observe-parser (relative import)
+- Tests use bun:test (import { test, expect, describe } from 'bun:test')
+- All tests pass: bun test src/inngest/functions/observe-parser.test.ts
+- Tests verify observable behavior, not implementation details
+- TypeScript compiles cleanly: bunx tsc --noEmit
+
+## Instructions
+Implement the story above. Do NOT write tests — a separate reviewer will handle testing.
+Make clean, focused changes. Commit nothing — the harness handles git.
+mcp startup: no servers
+2026-02-15T19:56:16.264098Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5eca-bff9-7772-83bf-5daab07b9959
+2026-02-15T19:56:16.326187Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5ffd-d51d-7a13-b1fa-342be02f164b
+2026-02-15T19:56:16.399686Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6275-d69e-7b53-bb28-583bfe07e70c
+2026-02-15T19:56:16.467606Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5d40-288c-78b2-af66-36e0fae54073
+2026-02-15T19:56:16.502452Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6031-b7fb-7120-85b5-8abf34324910
+2026-02-15T19:56:16.533033Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fe2-872d-7e93-87a3-71d37d75a127
+2026-02-15T19:56:16.605502Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e50-6bc5-7861-a0a0-f77d68ec073f
+2026-02-15T19:56:16.674416Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6022-8a12-7ba0-b7e8-9c265e8ec17e
+2026-02-15T19:56:16.713339Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fbb-e145-7c40-9913-218548629e57
+2026-02-15T19:56:16.787765Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e21-7a30-7ed1-b686-e02ac2da8157
+2026-02-15T19:56:16.830741Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fed-5e04-78c0-9a4e-9fddc7af084e
+
+thinking
+**Clarifying test implementation approach**
+codex
+I’m going to inspect the current `observe-parser` implementation and project state first, then make only the code changes needed so the specified test scenarios would pass without adding new tests.
+exec
+/bin/zsh -lc 'rg --files' in /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-busexec
+/bin/zsh -lc 'rg -n "observe-parser|parseObserverOutput|optimizeForContext" src __tests__ index.ts' in /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-bus succeeded in 51ms:
+CONTINUATION-ADR.md
+src/serve.ts
+src/inngest/functions/transcript-process.ts
+src/inngest/functions/index.ts
+src/inngest/functions/video-download.ts
+src/inngest/functions/summarize.ts
+src/inngest/functions/observe-parser.ts
+src/inngest/functions/system-logger.ts
+src/inngest/functions/agent-loop/plan.ts
+src/inngest/functions/agent-loop/llmEvaluate.test.ts
+src/inngest/functions/agent-loop/judge.test.ts
+src/inngest/functions/agent-loop/test-writer.test.ts
+src/inngest/functions/agent-loop/test-writer.ts
+src/inngest/functions/agent-loop/formatLoopDuration.test.ts
+src/inngest/functions/agent-loop/review.test.ts
+src/inngest/functions/agent-loop/index.ts
+src/inngest/functions/agent-loop/getStoryDiff.test.ts
+src/inngest/functions/agent-loop/parseClaudeOutput.test.ts
+src/inngest/functions/agent-loop/review.ts
+src/inngest/functions/agent-loop/utils.ts
+ succeeded in 51ms:
+__tests__/mem-5-optimize-for-context.test.ts:4:  return import("../src/inngest/functions/observe-parser.ts");
+__tests__/mem-5-optimize-for-context.test.ts:7:describe("MEM-5: optimizeForContext export", () => {
+__tests__/mem-5-optimize-for-context.test.ts:8:  test("AC-1: src/inngest/functions/observe-parser.ts exports optimizeForContext", async () => {
+__tests__/mem-5-optimize-for-context.test.ts:11:    expect("optimizeForContext" in mod).toBe(true);
+__tests__/mem-5-optimize-for-context.test.ts:12:    expect(typeof mod.optimizeForContext).toBe("function");
+__tests__/mem-5-optimize-for-context.test.ts:16:describe("MEM-5: optimizeForContext behavior", () => {
+__tests__/mem-5-optimize-for-context.test.ts:18:    const { optimizeForContext } = await loadObserveParserModule();
+__tests__/mem-5-optimize-for-context.test.ts:31:    const result = optimizeForContext(observations);
+__tests__/mem-5-optimize-for-context.test.ts:45:    const { optimizeForContext } = await loadObserveParserModule();
+__tests__/mem-5-optimize-for-context.test.ts:47:    expect(optimizeForContext("")).toBe("");
+__tests__/mem-4-observe-parser.test.ts:7:  return import("../src/inngest/functions/observe-parser.ts");
+__tests__/mem-4-observe-parser.test.ts:10:describe("MEM-4: observe-parser exports", () => {
+__tests__/mem-4-observe-parser.test.ts:11:  test("AC-1 and AC-2: module exports ObserverOutput type contract and parseObserverOutput function", async () => {
+__tests__/mem-4-observe-parser.test.ts:14:    expect("parseObserverOutput" in mod).toBe(true);
+__tests__/mem-4-observe-parser.test.ts:15:    expect(typeof mod.parseObserverOutput).toBe("function");
+__tests__/mem-4-observe-parser.test.ts:22:        `import type { ObserverOutput } from "${join(process.cwd(), "src/inngest/functions/observe-parser.ts")}";
+__tests__/mem-4-observe-parser.test.ts:74:describe("MEM-4: parseObserverOutput behavior", () => {
+__tests__/mem-4-observe-parser.test.ts:76:    const { parseObserverOutput } = await loadObserveParserModule();
+__tests__/mem-4-observe-parser.test.ts:80:    const result = parseObserverOutput(raw);
+__tests__/mem-4-observe-parser.test.ts:91:    const { parseObserverOutput } = await loadObserveParserModule();
+
+thinking
+**Reviewing existing tests and compiling**
+codex
+I found `src/inngest/functions/observe-parser.test.ts` already present, along with the parser implementation. Next I’ll verify behavior by running the exact test command and TypeScript compile check.
+exec
+/bin/zsh -lc "sed -n '1,220p' src/inngest/functions/observe-parser.test.ts" in /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-busexec
+/bin/zsh -lc "sed -n '1,220p' src/inngest/functions/observe-parser.ts" in /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-busexec
+/bin/zsh -lc 'bun test src/inngest/functions/observe-parser.test.ts' in /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-bus succeeded in 51ms:
+export interface ObserverOutput {
+  observations: string;
+  currentTask: string | null;
+  suggestedResponse: string | null;
+  parsed: boolean;
+}
+
+export function optimizeForContext(observations: string): string {
+  if (observations.trim().length === 0) {
+    return "";
+  }
+
+  return observations
+    .split(/\r?\n/)
+    .filter((line) => {
+      if (line.includes("🟡") || line.includes("🟢")) {
+        return false;
+      }
+
+      return line.includes("🔴") || line.startsWith("Date:");
+ succeeded in 51ms:
+import { describe, expect, test } from "bun:test";
+import { optimizeForContext, parseObserverOutput } from "./observe-parser";
+
+describe("parseObserverOutput", () => {
+  test("XML extraction: all three tags are extracted and trimmed", () => {
+    const input = `
+<observations>
+  🔴 Primary issue detected
+  🟡 Secondary signal
+</observations>
+<current-task>
+  Stabilize queue processing
+</current-task>
+<suggested-response>
+  I identified the bottleneck and will apply the fix next.
+</suggested-response>
+`;
+
+    expect(parseObserverOutput(input)).toEqual({
+      observations: "🔴 Primary issue detected\n  🟡 Secondary signal",
+ succeeded in 51ms:
+bun test v1.3.9 (cf6cdbbb)
+
+src/inngest/functions/observe-parser.test.ts:
+(pass) parseObserverOutput > XML extraction: all three tags are extracted and trimmed
+(pass) parseObserverOutput > Partial XML: observations-only input sets optional fields to null [0.45ms]
+(pass) parseObserverOutput > Fallback: no XML but emoji marker lines returns parsed=true with raw observations [0.02ms]
+(pass) parseObserverOutput > Malformed text: no XML and no markers returns parsed=false with raw observations [0.20ms]
+(pass) parseObserverOutput > Empty input: returns empty observations and parsed=false [0.03ms]
+(pass) optimizeForContext > Mixed priorities: keeps only 🔴 and Date: lines
+(pass) optimizeForContext > Empty input: returns empty string [0.06ms]
+
+ 7 pass
+ 0 fail
+ 7 expect() calls
+Ran 7 tests across 1 file. [6.00ms]
+exec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlo5knbo-3wmqht/packages/system-bus succeeded in 653ms:
+
+
+thinking
+**Confirming no changes needed**
+codex
+No code changes were needed.
+
+The required test file already exists at `src/inngest/functions/observe-parser.test.ts` and contains all 7 requested `bun:test` cases with relative import from `./observe-parser`.
+
+Validation passed:
+
+1. `bun test src/inngest/functions/observe-parser.test.ts`  
+Result: 7 passed, 0 failed.
+
+2. `bunx tsc --noEmit`  
+Result: completed successfully with no TypeScript errors.
+tokens used
+12,688
