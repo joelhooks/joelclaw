@@ -4,6 +4,7 @@ import { getAllAdrs } from "../../lib/adrs";
 import { SITE_NAME } from "../../lib/constants";
 import { loadAdrSearchParams } from "./search-params";
 import { AdrListWithFilters } from "./adr-list";
+import { CodeBlock } from "../../components/copy-button";
 
 export const metadata: Metadata = {
   title: `ADRs — ${SITE_NAME}`,
@@ -48,9 +49,9 @@ export default async function AdrsPage({ searchParams }: Props) {
           </a>{" "}
           for Claude Code and Pi.
         </p>
-        <pre className="mt-3 text-xs text-neutral-600 bg-neutral-900/50 border border-neutral-800 rounded-lg px-3 py-2 overflow-x-auto">
-          <code>npx skills add skillrecordings/adr-skill --skill adr-skill --yes --global</code>
-        </pre>
+        <CodeBlock className="mt-3">
+          npx skills add skillrecordings/adr-skill --skill adr-skill --yes --global
+        </CodeBlock>
       </header>
       <AdrListWithFilters
         adrs={allAdrs}
