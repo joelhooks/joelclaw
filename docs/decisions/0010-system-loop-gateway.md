@@ -73,3 +73,37 @@ The note queue gets processed more consistently because the fallback heartbeat s
 ### Option D: Always-on LLM session — persistent context window that receives all events
 - Pro: Strong context continuity across related events, near real-time decisioning, and centralized orchestration logic. Con: Highest ongoing token and runtime cost profile, with largest safety and operational risk surface.
 - Pro: Minimal trigger latency for time-critical decisions. Con: Harder to implement and operate reliably than event-triggered functions, and control logic drift increases over long sessions.
+
+## Implementation Plan
+
+1. Introduce a system heartbeat orchestration function in Inngest with dual triggers: cron (`*/15 * * * *`) and terminal lifecycle events (`agent/loop.complete`, `agent/loop.retro.complete`, `system/note`, `system/heartbeat.requested`). Both trigger paths route into the same idempotent function body to keep decision logic centralized.
+2. Add a state-gathering step at function start that reads a single decision snapshot containing:
+   - note queue length from the note queue store;
+   - recent `slog` entries for the prior 60 minutes (errors, skips, retries, completions);
+   - pending retrospective recommendations not yet applied;
+   - active loop runs (in-progress or queued);
+   - half-done inventory (items started but not finished).
+3. Add an LLM decision step that consumes only the normalized snapshot and selects exactly one action from a constrained set: `start_loop`, `process_notes`, `apply_retro_recommendation`, `emit_alert`, `do_nothing`. The model output must be schema-validated, include a short reason string, and default to `do_nothing` on validation failure.
+4. Implement an action execution step that maps each allowed action to a specific Inngest event emission:
+   - `start_loop` -> emit `agent/loop.requested`;
+   - `process_notes` -> emit `system/notes.process.requested`;
+   - `apply_retro_recommendation` -> emit `agent/loop.retro.apply.requested`;
+   - `emit_alert` -> emit `system/alert.requested`;
+   - `do_nothing` -> emit no downstream action event.
+5. Enforce safety rails before dispatch:
+   - max actions per hour (global limiter across heartbeat triggers);
+   - cost budget guard (skip action when run/day spend threshold is exceeded);
+   - human-approval gate for destructive actions (any cancel/delete/reset operation requires explicit approval event);
+   - always-log reasoning (trigger source, snapshot summary, chosen action, rejected alternatives, limiter/budget status).
+6. Add observability and replay controls: persist decision records with correlation IDs, expose a dashboard query for action rate and no-op rate, and provide a manual `system/heartbeat.requested` event for deterministic replay during incident response.
+
+## Verification
+
+- [ ] A single Inngest function exists for the system heartbeat and is triggerable by both cron and terminal events (`agent/loop.complete`, `agent/loop.retro.complete`, `system/note`, `system/heartbeat.requested`).
+- [ ] The state snapshot includes all required inputs (note queue length, recent slog entries, pending retro recommendations, active loop runs, half-done inventory) and logs a structured payload each run.
+- [ ] LLM output is schema-validated and constrained to `start_loop | process_notes | apply_retro_recommendation | emit_alert | do_nothing`; invalid output is converted to `do_nothing`.
+- [ ] Each non-noop action emits the expected Inngest event name, and `do_nothing` emits none.
+- [ ] Max-actions-per-hour limiter prevents dispatch when threshold is exceeded and records a `rate_limited` decision log entry.
+- [ ] Cost budget guard prevents dispatch when spend threshold is exceeded and records a `budget_blocked` decision log entry.
+- [ ] Destructive actions are blocked without a human approval event, and approved actions record approver identity in logs.
+- [ ] Decision logs always include trigger source, snapshot hash or summary, selected action, and reasoning text for auditability.
