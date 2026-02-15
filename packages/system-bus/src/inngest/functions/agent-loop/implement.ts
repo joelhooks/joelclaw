@@ -361,7 +361,7 @@ export const agentLoopImplement = inngest.createFunction(
       sha = await step.run("get-existing-sha", async () => {
         const result =
           await $`cd ${project} && git log --oneline --all --grep="[${loopId}] [${storyId}] attempt-${attempt}" --format="%H"`.quiet();
-        return result.text().trim().split("\n")[0];
+        return result.text().trim().split("\n")[0] ?? "";
       });
     } else {
       // Step 1: Record HEAD before tool runs (to detect tool auto-commits)

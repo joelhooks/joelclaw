@@ -173,8 +173,8 @@ async function runChecks(project: string, checks?: string[]): Promise<{
     // Parse bun test output for pass/fail counts
     const passMatch = testOutput.match(/(\d+) pass/);
     const failMatch = testOutput.match(/(\d+) fail/);
-    testsPassed = passMatch ? parseInt(passMatch[1], 10) : 0;
-    testsFailed = failMatch ? parseInt(failMatch[1], 10) : 0;
+    testsPassed = passMatch ? parseInt(passMatch[1] ?? "0", 10) : 0;
+    testsFailed = failMatch ? parseInt(failMatch[1] ?? "0", 10) : 0;
     if (test.exitCode !== 0) testsFailed = Math.max(testsFailed, 1);
   } catch (e: any) {
     testsFailed = 1;

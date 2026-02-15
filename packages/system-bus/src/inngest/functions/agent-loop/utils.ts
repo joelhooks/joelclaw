@@ -116,6 +116,9 @@ export async function parseToolOutput(
     try {
       const lines = raw.trim().split("\n");
       const lastLine = lines[lines.length - 1];
+      if (!lastLine) {
+        throw new Error("No JSON payload line found");
+      }
       const parsed = JSON.parse(lastLine);
       if (parsed.result) {
         return {

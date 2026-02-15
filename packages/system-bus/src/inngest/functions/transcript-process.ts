@@ -120,7 +120,7 @@ export const transcriptProcess = inngest.createFunction(
       if (publishedDate) fm.published = publishedDate;
       if (duration) fm.duration = `"${duration}"`;
       if (nasPath) fm.nas_path = nasPath;
-      fm.transcribed = new Date().toISOString().split("T")[0];
+      fm.transcribed = new Date().toISOString().split("T")[0] ?? new Date().toISOString();
 
       const frontmatter = Object.entries(fm)
         .map(([k, v]) => `${k}: ${v}`)
