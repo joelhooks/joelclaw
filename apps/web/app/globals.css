@@ -3,5 +3,27 @@
 @theme {
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-code: var(--font-dank-mono), var(--font-geist-mono), ui-monospace, monospace;
   --color-claw: #ff1493;
+}
+
+/* Code blocks — Dank Mono + Catppuccin Macchiato */
+[data-rehype-pretty-code-figure] pre {
+  @apply rounded-lg border border-neutral-800 px-4 py-3 text-sm leading-relaxed overflow-x-auto;
+  font-family: var(--font-code);
+}
+
+[data-rehype-pretty-code-figure] code {
+  font-family: var(--font-code);
+  font-variant-ligatures: contextual;
+}
+
+[data-rehype-pretty-code-figure] [data-line] {
+  @apply px-4 -mx-4;
+}
+
+/* Inline code */
+:not(pre) > code {
+  font-family: var(--font-code);
+  @apply text-sm bg-neutral-800/60 rounded px-1.5 py-0.5 text-claw;
 }
