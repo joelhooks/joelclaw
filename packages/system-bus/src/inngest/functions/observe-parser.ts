@@ -1,5 +1,6 @@
 export interface ObserverOutput {
   observations: string;
+  segments: DistilledSegment[];
   currentTask: string | null;
   suggestedResponse: string | null;
   parsed: boolean;
@@ -71,6 +72,7 @@ export function parseObserverOutput(raw: string): ObserverOutput {
   if (trimmed.length === 0) {
     return {
       observations: "",
+      segments: [],
       currentTask: null,
       suggestedResponse: null,
       parsed: false,
@@ -81,6 +83,7 @@ export function parseObserverOutput(raw: string): ObserverOutput {
   if (observations !== null) {
     return {
       observations,
+      segments: parseSegments(observations),
       currentTask: extractTagContent(raw, "current-task"),
       suggestedResponse: extractTagContent(raw, "suggested-response"),
       parsed: true,
@@ -90,6 +93,7 @@ export function parseObserverOutput(raw: string): ObserverOutput {
   if (hasObserverEmojiMarkers(raw)) {
     return {
       observations: raw,
+      segments: [],
       currentTask: null,
       suggestedResponse: null,
       parsed: true,
@@ -98,6 +102,7 @@ export function parseObserverOutput(raw: string): ObserverOutput {
 
   return {
     observations: raw,
+    segments: [],
     currentTask: null,
     suggestedResponse: null,
     parsed: false,
