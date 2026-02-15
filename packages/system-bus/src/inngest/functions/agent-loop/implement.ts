@@ -261,8 +261,8 @@ async function spawnToolHost(
 }
 
 /**
- * Spawn a tool — delegates to Docker container when AGENT_LOOP_DOCKER=1,
- * falls back to host-mode execution otherwise.
+ * Spawn a tool — defaults to Docker container execution.
+ * Falls back to host-mode when AGENT_LOOP_HOST=1 or Docker is unavailable.
  */
 async function spawnTool(
   tool: string,
@@ -272,37 +272,39 @@ async function spawnTool(
   outPath: string,
   branchName?: string
 ): Promise<number> {
-  const useDocker = process.env.AGENT_LOOP_DOCKER === "1";
+  const forceHost = process.env.AGENT_LOOP_HOST === "1";
 
-  if (useDocker && (await isDockerAvailable())) {
+  if (!forceHost && (await isDockerAvailable())) {
     // Resolve repo URL from git remote
     const { $ } = await import("bun");
-    let repoUrl: string;
+    let repoUrl: string | null = null;
     try {
       const remote = await $`cd ${project} && git remote get-url origin`.quiet();
-      repoUrl = remote.text().trim();
+      repoUrl = remote.text()?.trim() ?? "";
       // Convert SSH to HTTPS if needed
       if (repoUrl.startsWith("git@github.com:")) {
         repoUrl = repoUrl.replace("git@github.com:", "https://github.com/");
       }
       if (!repoUrl.endsWith(".git")) repoUrl += ".git";
     } catch {
-      // No remote — fall back to host mode
-      return spawnToolHost(tool, prompt, project, loopId, outPath);
+      // No remote — fall through to host-mode fallback
+      repoUrl = null;
     }
 
-    const branch = branchName ?? `agent-loop/${loopId}`;
-    const result = await spawnInContainer(
-      tool as "codex" | "claude" | "pi",
-      prompt,
-      repoUrl,
-      branch,
-      loopId,
-      "impl"
-    );
+    if (repoUrl) {
+      const branch = branchName ?? `agent-loop/${loopId}`;
+      const result = await spawnInContainer(
+        tool as "codex" | "claude" | "pi",
+        prompt,
+        repoUrl,
+        branch,
+        loopId,
+        "impl"
+      );
 
-    await Bun.write(Bun.file(outPath), result.output);
-    return result.exitCode;
+      await Bun.write(Bun.file(outPath), result.output);
+      return result.exitCode;
+    }
   }
 
   // Host-mode fallback
@@ -333,7 +335,6 @@ export const agentLoopImplement = inngest.createFunction(
       story,
       maxRetries,
       maxIterations,
-          checks,
       retryLadder,
       freshTests,
       storyStartedAt: incomingStoryStartedAt,
@@ -416,7 +417,6 @@ export const agentLoopImplement = inngest.createFunction(
           story,
           maxRetries,
           maxIterations,
-          checks,
           storyStartedAt,
           retryLadder,
           freshTests,

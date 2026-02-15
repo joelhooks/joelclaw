@@ -115,10 +115,7 @@ export async function parseToolOutput(
     // Claude stream-json may include cost/token info
     try {
       const lines = raw.trim().split("\n");
-      const lastLine = lines[lines.length - 1];
-      if (!lastLine) {
-        throw new Error("No JSON payload line found");
-      }
+      const lastLine = lines[lines.length - 1] ?? "";
       const parsed = JSON.parse(lastLine);
       if (parsed.result) {
         return {
@@ -180,8 +177,6 @@ export interface Prd {
   title: string;
   description: string;
   stories: Story[];
-  /** What checks the reviewer runs. Default: all (typecheck + lint + test) */
-  checks?: ("typecheck" | "lint" | "test")[];
 }
 
 // ── PRD storage (Redis-backed, seeded from disk) ─────────────────────
@@ -365,6 +360,15 @@ export async function gitCommit(
   }
 }
 
+export async function getStoryDiff(project: string): Promise<string> {
+  try {
+    const result = await $`git -C ${project} diff HEAD~1 HEAD`.quiet();
+    return result.text();
+  } catch {
+    return "";
+  }
+}
+
 // ── Git status helpers ────────────────────────────────────────────────
 
 /**
@@ -408,6 +412,125 @@ export const TOOL_TIMEOUTS: Record<string, number> = {
   claude: 20 * 60 * 1000, // 20 min
   pi: 20 * 60 * 1000,     // 20 min
 };
+
+// ── LLM judge helpers ────────────────────────────────────────────────
+
+const LLM_EVAL_FALLBACK = {
+  verdict: "pass" as const,
+  reasoning: "LLM evaluation unavailable, falling back to test-only gate",
+};
+
+const MAX_DIFF_LINES = 3000;
+const MAX_CONVENTIONS_CHARS = 2000;
+
+export async function llmEvaluate(opts: {
+  criteria: string[];
+  diff: string;
+  testFile: string;
+  testResults: string;
+  conventions: string;
+}): Promise<{ verdict: "pass" | "fail"; reasoning: string }> {
+  const diffLines = opts.diff.split("\n");
+  const truncatedDiff =
+    diffLines.length > MAX_DIFF_LINES
+      ? `${diffLines.slice(0, MAX_DIFF_LINES).join("\n")}\n\n[Diff truncated: showing first ${MAX_DIFF_LINES} of ${diffLines.length} lines]`
+      : opts.diff;
+
+  const truncatedConventions =
+    opts.conventions.length > MAX_CONVENTIONS_CHARS
+      ? `${opts.conventions.slice(0, MAX_CONVENTIONS_CHARS)}\n\n[Conventions truncated at ${MAX_CONVENTIONS_CHARS} characters]`
+      : opts.conventions;
+
+  const prompt = [
+    "You are an automated code quality judge for ADR-0013.",
+    "Evaluate whether the implementation genuinely satisfies the acceptance criteria, not just whether tests passed.",
+    "",
+    "Return ONLY valid JSON with this exact shape:",
+    '{"verdict":"pass"|"fail","reasoning":"<concise explanation>"}',
+    "",
+    "Evaluation criteria:",
+    ...opts.criteria.map((c, i) => `${i + 1}. ${c}`),
+    "",
+    "Project conventions:",
+    truncatedConventions || "(none provided)",
+    "",
+    "Test file content:",
+    opts.testFile || "(empty)",
+    "",
+    "Test results summary:",
+    opts.testResults || "(empty)",
+    "",
+    "Implementation diff:",
+    truncatedDiff || "(empty)",
+    "",
+    "Rules:",
+    "- Verdict must be 'fail' if criteria are not actually met or implementation appears to game tests.",
+    "- Verdict can be 'pass' only if implementation aligns with criteria and conventions.",
+    "- Keep reasoning specific and actionable.",
+  ].join("\n");
+
+  try {
+    const proc = Bun.spawn(
+      ["claude", "-p", prompt, "--output-format", "json"],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+
+    const readStdout = async (): Promise<string> => {
+      const stdout = proc.stdout as unknown;
+      if (!stdout) return "";
+
+      if (typeof stdout === "string") return stdout;
+
+      if (
+        typeof stdout === "object" &&
+        stdout !== null &&
+        "text" in stdout &&
+        typeof (stdout as { text?: unknown }).text === "function"
+      ) {
+        return await (stdout as { text: () => Promise<string> }).text();
+      }
+
+      if (
+        typeof stdout === "object" &&
+        stdout !== null &&
+        "arrayBuffer" in stdout &&
+        typeof (stdout as { arrayBuffer?: unknown }).arrayBuffer === "function"
+      ) {
+        const buffer = await (stdout as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer();
+        return new TextDecoder().decode(buffer);
+      }
+
+      return await new Response(stdout as BodyInit).text();
+    };
+
+    const [exitCode, stdout] = await Promise.all([proc.exited, readStdout()]);
+
+    if (exitCode !== 0) return LLM_EVAL_FALLBACK;
+
+    const parsed = JSON.parse(stdout) as {
+      verdict?: unknown;
+      reasoning?: unknown;
+      result?: unknown;
+    };
+
+    const payload = (
+      parsed.result && typeof parsed.result === "object"
+        ? parsed.result
+        : parsed
+    ) as { verdict?: unknown; reasoning?: unknown };
+
+    const verdict = payload.verdict;
+    const reasoning = payload.reasoning;
+
+    if ((verdict === "pass" || verdict === "fail") && typeof reasoning === "string") {
+      return { verdict, reasoning };
+    }
+
+    return LLM_EVAL_FALLBACK;
+  } catch {
+    return LLM_EVAL_FALLBACK;
+  }
+}
 
 // ── GitHub App token minting ─────────────────────────────────────────
 

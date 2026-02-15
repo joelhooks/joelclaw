@@ -49,12 +49,6 @@ export const agentLoopComplete = inngest.createFunction(
       }
     });
 
-    // Log the result
-    await step.run("slog-push", async () => {
-      const action = pushResult === "pushed" ? "branch-pushed" : "branch-push-failed";
-      await $`slog write --action ${action} --tool "agent-loop" --detail "Branch ${branchName} for loop ${loopId}: ${pushResult}" --reason "${storiesCompleted} stories completed, ${storiesFailed} failed"`.quiet();
-    });
-
     return {
       status: pushResult === "pushed" ? "pushed" : "push-failed",
       loopId,

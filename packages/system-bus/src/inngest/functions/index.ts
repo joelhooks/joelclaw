@@ -4,6 +4,7 @@ export { summarize } from "./summarize";
 export { systemLogger } from "./system-logger";
 export {
   agentLoopPlan,
+  agentLoopTestWriter,
   agentLoopImplement,
   agentLoopReview,
   agentLoopJudge,

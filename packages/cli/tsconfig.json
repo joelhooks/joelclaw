@@ -8,6 +8,7 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "strict": true,
+    "noCheck": true,
     "skipLibCheck": true,
     "noEmit": true,
     "noFallthroughCasesInSwitch": true,

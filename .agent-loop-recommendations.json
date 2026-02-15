@@ -1,0 +1,17 @@
+{
+  "toolRankings": [
+    {
+      "tool": "claude",
+      "passRate": 1,
+      "avgAttempts": 1.25
+    }
+  ],
+  "retryPatterns": [
+    "1 story(ies) needed retries (attempts > 1); high-complexity changes should get early review checkpoints."
+  ],
+  "suggestedRetryLadder": [
+    "claude"
+  ],
+  "lastUpdated": "2026-02-15T04:12:14.869Z",
+  "sourceLoopId": "loop-1771127699-adr10-v3"
+}

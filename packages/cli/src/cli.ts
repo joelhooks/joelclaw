@@ -303,7 +303,7 @@ const loopStatusCmd = Command.make(
   "status",
   {
     loopId: Args.text({ name: "loop-id" }).pipe(
-      Args.withDescription("Loop ID to check (optional — shows all recent if omitted)"),
+      Args.withDescription("Loop ID to check (optional — auto-detects from git)"),
       Args.optional
     ),
   },
@@ -311,39 +311,180 @@ const loopStatusCmd = Command.make(
     Effect.gen(function* () {
       const igs = yield* Inngest
 
-      // Get recent agent-loop runs
-      const allRuns = yield* igs.runs({ count: 30, hours: 48 })
+      // 1. Detect loopId from git log if not provided
+      let activeLoopId: string | undefined =
+        loopId._tag === "Some" ? loopId.value : undefined
+
+      // Find the project — check PRD in cwd or common locations
+      // Check cwd first, then find project dirs that have prd.json with
+      // stories that haven't all passed yet (i.e. active loops)
+      const candidates = [
+        process.cwd(),
+        `${process.env.HOME}/Code/joelhooks/joelclaw/packages/system-bus`,
+        `${process.env.HOME}/Code/joelhooks/joelclaw`,
+      ]
+
+      let projectDir: string | undefined
+      let prd: any
+
+      const prdResult = yield* Effect.tryPromise({
+        try: async () => {
+          // Prefer a PRD with incomplete stories (active loop)
+          let fallback: { dir: string; prd: any } | null = null
+          for (const dir of candidates) {
+            try {
+              const prdFile = Bun.file(`${dir}/prd.json`)
+              if (await prdFile.exists()) {
+                const p = await prdFile.json()
+                const hasIncomplete = p.stories?.some((s: any) => !s.passes)
+                if (hasIncomplete) return { dir, prd: p }
+                if (!fallback) fallback = { dir, prd: p }
+              }
+            } catch { /* skip */ }
+          }
+          return fallback
+        },
+        catch: () => new Error("Failed to read PRD"),
+      })
+      if (prdResult) {
+        projectDir = prdResult.dir
+        prd = prdResult.prd
+      }
+
+      // If no loopId, find it from recent git commits
+      if (!activeLoopId && projectDir) {
+        try {
+          const proc = Bun.spawnSync(
+            ["git", "log", "--oneline", "-20"],
+            { cwd: projectDir }
+          )
+          const lines = proc.stdout.toString().trim().split("\n")
+          for (const line of lines) {
+            const match = line.match(/\[(loop-[^\]]+)\]/)
+            if (match) {
+              activeLoopId = match[1]
+              break
+            }
+          }
+        } catch { /* no git */ }
+      }
+
+      // 2. Read story status from PRD
+      const stories = (prd?.stories ?? []).map((s: any) => ({
+        id: s.id,
+        title: s.title,
+        passes: s.passes,
+      }))
+
+      // 3. Get attempt info from git log
+      const storyAttempts: Record<string, { attempt: number; tool?: string }> = {}
+      if (projectDir && activeLoopId) {
+        try {
+          const proc = Bun.spawnSync(
+            ["git", "log", "--oneline", "-50", `--grep=${activeLoopId}`],
+            { cwd: projectDir }
+          )
+          const lines = proc.stdout.toString().trim().split("\n").filter(Boolean)
+          for (const line of lines) {
+            const m = line.match(
+              /\[([A-Z]+-\d+)\]\s+attempt-(\d+)/
+            )
+            if (m) {
+              const [, storyId, attempt] = m
+              const current = storyAttempts[storyId]
+              const attemptNum = parseInt(attempt, 10)
+              if (!current || attemptNum > current.attempt) {
+                storyAttempts[storyId] = { attempt: attemptNum }
+              }
+            }
+          }
+        } catch { /* no git */ }
+      }
+
+      // 4. Get currently running Inngest functions
+      const allRuns = yield* igs.runs({ count: 5, status: "RUNNING", hours: 1 })
       const loopRuns = allRuns.filter((r: any) =>
         r.functionName?.startsWith("agent-loop")
       )
 
-      // Filter by loopId if provided
-      const filtered = loopId._tag === "Some"
-        ? loopRuns.filter((r: any) => {
-            try {
-              const output = JSON.parse(r.output ?? "{}")
-              return output.loopId === loopId.value
-            } catch { return false }
-          })
-        : loopRuns
-
-      const next: NextAction[] = [
-        { command: `igs runs --count 20`, description: "See all recent runs" },
-      ]
-      if (loopId._tag === "Some") {
-        next.push({ command: `igs loop cancel ${loopId.value}`, description: "Cancel this loop" })
+      const roleMap: Record<string, string> = {
+        "agent-loop-plan": "PLAN",
+        "agent-loop-implement": "IMPLEMENT",
+        "agent-loop-review": "REVIEW",
+        "agent-loop-judge": "JUDGE",
+        "agent-loop-complete": "COMPLETE",
+        "agent-loop-retro": "RETRO",
       }
 
-      yield* Console.log(respond("loop status", {
-        totalLoopRuns: filtered.length,
-        runs: filtered.slice(0, 20).map((r: any) => ({
-          id: r.id,
-          function: r.functionName,
-          status: r.status,
-          started: r.startedAt,
-          output: (() => { try { return JSON.parse(r.output ?? "{}") } catch { return r.output } })(),
-        })),
-      }, next))
+      // Only show the most recently started run — older "RUNNING" entries are stale
+      const latest = loopRuns.length > 0 ? [loopRuns[0]] : []
+      const running = latest.map((r: any) => ({
+        role: roleMap[r.functionName] ?? r.functionName,
+        runId: r.id,
+        since: r.startedAt,
+        elapsed: r.startedAt
+          ? `${Math.round((Date.now() - new Date(r.startedAt).getTime()) / 1000)}s`
+          : undefined,
+      }))
+
+      // 5. Build story status lines
+      const storyLines = stories.map((s: any) => {
+        const attempt = storyAttempts[s.id]
+        const isRunning = running.length > 0 && !s.passes && attempt &&
+          !stories.some((other: any) =>
+            !other.passes && other.id !== s.id &&
+            storyAttempts[other.id]?.attempt &&
+            (storyAttempts[other.id]?.attempt ?? 0) > (attempt?.attempt ?? 0)
+          )
+
+        let status: string
+        if (s.passes) {
+          status = "✅ PASS"
+        } else if (running.length > 0 && attempt) {
+          // Find which story is currently active — highest attempt without pass
+          const activeStory = stories
+            .filter((st: any) => !st.passes && storyAttempts[st.id])
+            .sort((a: any, b: any) =>
+              (storyAttempts[b.id]?.attempt ?? 0) - (storyAttempts[a.id]?.attempt ?? 0)
+            )[0]
+          if (activeStory?.id === s.id) {
+            const role = running[0]?.role ?? "?"
+            const elapsed = running[0]?.elapsed ?? ""
+            status = `▶ ${role} (attempt ${attempt.attempt}, ${elapsed})`
+          } else {
+            status = `⏸ attempt ${attempt.attempt} failed`
+          }
+        } else if (attempt) {
+          status = `❌ attempt ${attempt.attempt} failed`
+        } else {
+          status = "⏳ pending"
+        }
+
+        return { id: s.id, title: s.title, status }
+      })
+
+      // 6. Compact output
+      const header = activeLoopId
+        ? `${activeLoopId}${projectDir ? ` (${projectDir.split("/").pop()})` : ""}`
+        : "no active loop detected"
+
+      const output = {
+        loop: header,
+        prd: prd?.title ?? "unknown",
+        stories: storyLines,
+        running: running.length > 0 ? running : undefined,
+      }
+
+      const next: NextAction[] = []
+      if (activeLoopId) {
+        next.push({ command: `igs loop cancel ${activeLoopId}`, description: "Cancel this loop" })
+      }
+      if (running.length > 0 && running[0].runId) {
+        next.push({ command: `igs run ${running[0].runId}`, description: "Inspect running function" })
+      }
+      next.push({ command: `igs runs --count 10`, description: "See all recent runs" })
+
+      yield* Console.log(respond("loop status", output, next))
     })
 )
 
