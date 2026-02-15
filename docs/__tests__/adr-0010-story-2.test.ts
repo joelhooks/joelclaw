@@ -12,8 +12,7 @@ async function readAdr(path: string): Promise<string> {
 // Helper: extract a section by heading (returns everything between this ## and the next ## or EOF)
 function extractSection(content: string, heading: string): string | null {
   const pattern = new RegExp(
-    `^## ${heading}\\s*\\n([\\s\\S]*?)(?=\\n## |\\n# |$)`,
-    "m",
+    `\\n## ${heading}\\s*\\n([\\s\\S]*?)(?=\\n## |\\n# |$)`,
   );
   const match = content.match(pattern);
   return match ? match[1].trim() : null;
