@@ -16,6 +16,15 @@ const geistMono = localFont({
   variable: "--font-geist-mono",
 });
 
+const dankMono = localFont({
+  src: [
+    { path: "./fonts/DankMono-Regular.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/DankMono-Italic.woff2", weight: "400", style: "italic" },
+    { path: "./fonts/DankMono-Bold.woff2", weight: "700", style: "normal" },
+  ],
+  variable: "--font-dank-mono",
+});
+
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: { default: SITE_NAME, template: `%s — ${SITE_NAME}` },
@@ -70,7 +79,7 @@ export default function RootLayout({
         />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} font-sans bg-neutral-950 text-neutral-100 antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${dankMono.variable} font-sans bg-neutral-950 text-neutral-100 antialiased`}
       >
         <div className="mx-auto max-w-2xl px-6 py-16">
           <header className="mb-16">
