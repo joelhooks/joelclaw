@@ -9,28 +9,51 @@ export type AdrMeta = {
   slug: string;
   number: string;
   supersededBy?: string;
+  description?: string;
 };
 
 const adrDir = path.join(process.cwd(), "content", "adrs");
 
+/** Extract title from frontmatter, falling back to the first H1 in the body */
+function extractTitle(data: Record<string, unknown>, content: string): string {
+  if (data.title && typeof data.title === "string") return data.title;
+  const h1 = content.match(/^#\s+(?:ADR-\d+:\s*)?(.+)$/m);
+  return h1?.[1]?.trim() ?? "Untitled";
+}
+
+/** Pull a one-liner from the Context section or first paragraph */
+function extractDescription(content: string): string {
+  const ctx = content.match(
+    /## Context and Problem Statement\s+(.+?)(?:\n\n|\n##)/s
+  );
+  if (ctx) {
+    const first = ctx[1].split("\n\n")[0].trim();
+    return first.length > 200 ? first.slice(0, 197) + "…" : first;
+  }
+  return "";
+}
+
 export function getAllAdrs(): AdrMeta[] {
   if (!fs.existsSync(adrDir)) return [];
-  const files = fs.readdirSync(adrDir).filter((f) => f.endsWith(".md") && f !== "README.md");
+  const files = fs
+    .readdirSync(adrDir)
+    .filter((f) => f.endsWith(".md") && f !== "README.md");
 
   return files
     .map((filename) => {
       const raw = fs.readFileSync(path.join(adrDir, filename), "utf-8");
-      const { data } = matter(raw);
+      const { data, content } = matter(raw);
       const slug = filename.replace(/\.md$/, "");
       const number = slug.match(/^(\d+)/)?.[1] ?? "";
 
       return {
-        title: data.title ?? "Untitled",
+        title: extractTitle(data, content),
         date: data.date ?? "",
         status: data.status ?? "proposed",
         slug,
         number,
         supersededBy: data["superseded-by"],
+        description: extractDescription(content),
       };
     })
     .sort((a, b) => (a.number > b.number ? -1 : 1));
@@ -46,12 +69,13 @@ export function getAdr(slug: string) {
 
   return {
     meta: {
-      title: data.title ?? "Untitled",
+      title: extractTitle(data, content),
       date: data.date ?? "",
       status: data.status ?? "proposed",
       slug,
       number,
       supersededBy: data["superseded-by"],
+      description: extractDescription(content),
     } satisfies AdrMeta,
     content,
   };
