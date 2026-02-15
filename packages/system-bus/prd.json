@@ -1,88 +1,83 @@
 {
-  "title": "ADR-0015: TDD loop architecture with separated roles",
-  "description": "Restructure the agent loop from implement→test→judge to test→implement→review→judge. Five roles: planner (existing), test writer (new), implementor (existing, reordered), reviewer (rewritten as evaluator), judge (rewritten to consume reviewer notes + LLM evaluation). The llmEvaluate and getStoryDiff helpers already exist in utils.ts from the prior loop.",
+  "title": "ADR-0016: Idempotency guards for loop event chain",
+  "adr": "0016-loop-idempotency-guards.md",
   "stories": [
     {
-      "id": "LOOP-1",
-      "title": "Create test writer Inngest function (agent/loop.test)",
-      "description": "Create a new file `src/inngest/functions/agent-loop/test-writer.ts` with an Inngest function listening on `agent/loop.test`. It receives: loopId, project, storyId, story (with acceptance_criteria), tool, attempt, maxRetries, maxIterations, storyStartedAt, retryLadder. The function: (1) checks cancellation, (2) builds a prompt that instructs the agent to write acceptance tests from the story's criteria — tests should verify observable behavior and intent, NOT internal structure, (3) spawns the tool (claude/codex) with the prompt in the project directory, (4) commits any new test files with message 'test: [{loopId}] [{storyId}] acceptance tests', (5) emits `agent/loop.implement` with all loop state plus the test file paths. Use the same spawnReviewer pattern from review.ts for spawning. Register the function in index.ts exports.",
+      "id": "GUARD-1",
+      "title": "seedPrd NX guard — prevent state clobber on duplicate start",
+      "description": "Change seedPrd() in utils.ts to use Redis SET NX (set-if-not-exists). If the key already exists, read and return the existing PRD instead of overwriting. This prevents a duplicate agent/loop.start event from clobbering passed/skipped state from an in-flight loop.",
       "acceptance_criteria": [
-        "test-writer.ts exists and exports agentLoopTestWriter",
-        "Listens on agent/loop.test event",
-        "Spawns tool with prompt focused on acceptance criteria (not implementation details)",
-        "Commits test files before emitting implement",
-        "Emits agent/loop.implement after committing tests",
-        "Registered in index.ts",
+        "seedPrd uses SET NX EX (not unconditional SET) when writing to Redis",
+        "If key already exists, seedPrd returns the existing PRD from Redis (not disk)",
+        "Existing behavior preserved: first call seeds from disk, sets 7-day TTL",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 1,
-      "status": "passed",
-      "passes": true
+      "passes": false
     },
     {
-      "id": "LOOP-2",
-      "title": "Restructure event chain: plan→test→implement→review→judge",
-      "description": "Update the event chain so the flow is: plan emits `agent/loop.test` (not implement), test-writer emits `agent/loop.implement`, implement emits `agent/loop.review` (unchanged), review emits `agent/loop.judge` (unchanged). Changes needed: (1) In plan.ts, change the emitted event from `agent/loop.implement` to `agent/loop.test`, passing the same data. (2) In implement.ts, verify it still emits `agent/loop.review` after committing. (3) Ensure the retry path in judge.ts emits `agent/loop.implement` (not test) — on retry, tests already exist, only the implementation needs to be redone.",
+      "id": "GUARD-2",
+      "title": "Add claimStory/guardStory/renewLease/releaseClaim helpers to utils.ts",
+      "description": "Add four new functions to utils.ts: (1) claimStory(loopId, storyId, runToken) — uses Redis SET NX EX to atomically claim a story. Returns token if claimed, null if already claimed. Key: agent-loop:claim:{loopId}:{storyId}, TTL 1800s. (2) guardStory(loopId, storyId, runToken) — reads claim key and PRD, returns {ok:true} if we still hold the lease and story isn't passed, or {ok:false, reason} otherwise. (3) renewLease(loopId, storyId, runToken) — refreshes TTL if we still own the key. (4) releaseClaim(loopId, storyId) — deletes the claim key.",
       "acceptance_criteria": [
-        "plan.ts emits agent/loop.test instead of agent/loop.implement",
-        "test-writer.ts emits agent/loop.implement after writing tests",
-        "implement.ts still emits agent/loop.review",
-        "review.ts still emits agent/loop.judge",
-        "Judge retry emits agent/loop.implement (skips test writing on retry)",
+        "claimStory uses SET NX EX with 1800s TTL",
+        "claimStory returns runToken on success, null if key already exists",
+        "guardStory returns {ok:false, reason:'already_claimed'} if different token holds the key",
+        "guardStory returns {ok:false, reason:'already_passed'} if story.passes is true in Redis PRD",
+        "guardStory returns {ok:false, reason:'lease_expired'} if claim key doesn't exist",
+        "renewLease refreshes TTL only if current token matches",
+        "releaseClaim deletes the claim key",
+        "All functions exported from utils.ts",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 2,
-      "status": "pending",
-      "passes": true
+      "passes": false
     },
     {
-      "id": "LOOP-3",
-      "title": "Rewrite reviewer as 4-question evaluator",
-      "description": "Rewrite review.ts so the reviewer NO LONGER writes tests. Instead, it evaluates the implementation by answering four questions: (1) Are there new test files? (check git diff for *.test.* files), (2) Do tests test real implementations, not stubs? (LLM reads test code), (3) Are tests truthful, not gaming? (LLM reads implementation + tests), (4) Does test + implementation accomplish the story intent from the ADR? The reviewer: (a) runs typecheck + lint + tests (keep existing runChecks), (b) reads the diff via getStoryDiff, (c) reads test files from disk, (d) calls claude with a structured evaluation prompt for questions 2-4, (e) outputs structured JSON notes: { questions: [{id, answer: boolean, evidence: string}], testResults: {...} }, (f) emits agent/loop.judge with the notes. Remove all test-writing code (buildTestPrompt, spawnReviewer for test writing, deleteExistingTestFiles).",
+      "id": "GUARD-3",
+      "title": "Wire claimStory into plan.ts",
+      "description": "In plan.ts, after selecting the next story and before emitting agent/loop.test, call claimStory(loopId, storyId, runToken) where runToken is a generated ULID. If claim fails (returns null), skip this story and try the next pending one. If no stories can be claimed, emit agent/loop.complete. Pass the runToken through the event data so downstream functions can use guardStory.",
       "acceptance_criteria": [
-        "review.ts no longer writes test files",
-        "review.ts runs checks (typecheck, lint, tests) — keeps runChecks",
-        "review.ts evaluates 4 questions with structured output",
-        "Outputs JSON notes with question answers and evidence",
-        "Emits agent/loop.judge with reviewer notes attached",
-        "buildTestPrompt removed or replaced with evaluation prompt",
+        "plan.ts calls claimStory before emitting agent/loop.test",
+        "If claimStory returns null, plan skips to next pending story",
+        "If no stories can be claimed, plan emits agent/loop.complete",
+        "runToken is included in the emitted event data",
+        "Existing cancellation and maxIterations logic preserved",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 3,
-      "status": "pending",
-      "passes": true
+      "passes": false
     },
     {
-      "id": "LOOP-4",
-      "title": "Rewrite judge to consume reviewer notes + LLM verdict",
-      "description": "Rewrite judge.ts to: (1) receive reviewer notes (4-question evaluation) from the review event data, (2) check mechanical gates first (typecheckOk, lintOk, testsFailed === 0), (3) if mechanical gates pass, call llmEvaluate (already in utils.ts) with the story acceptance criteria, diff (from getStoryDiff), test file content, test results summary, and project conventions, (4) combine the LLM verdict with reviewer notes to make a final decision, (5) PASS only if: mechanical gates pass AND reviewer notes show no red flags AND LLM verdict is pass, (6) on FAIL, include specific reasoning from reviewer notes + LLM reasoning in the feedback sent to implementor for retry. Keep the existing retry ladder and skip-after-max-retries logic.",
+      "id": "GUARD-4",
+      "title": "Wire guardStory into implement.ts, test-writer.ts, review.ts, judge.ts",
+      "description": "Add guardStory checks at key side-effect boundaries in all downstream functions: (1) test-writer.ts: guard before spawning tool, (2) implement.ts: guard before spawning tool AND before git commit AND before emitting review, (3) review.ts: guard before evaluation, (4) judge.ts: guard before writing verdict. Each guard reads runToken from event.data. If guard fails, return early with status indicating why (already_claimed, already_passed, lease_expired). Also call renewLease after each successful step to prevent TTL expiry during long runs.",
       "acceptance_criteria": [
-        "judge.ts receives and uses reviewer notes from event data",
-        "Checks mechanical gates first (typecheck, lint, tests)",
-        "Calls llmEvaluate when mechanical gates pass",
-        "Combines reviewer notes + LLM verdict for final decision",
-        "FAIL if reviewer flags issues even when tests pass",
-        "Feedback to implementor includes specific reasoning",
-        "Retry ladder and skip logic preserved",
+        "test-writer.ts calls guardStory before spawning tool",
+        "implement.ts calls guardStory before tool spawn, before commit, and before emit",
+        "review.ts calls guardStory before evaluation",
+        "judge.ts calls guardStory before writing verdict",
+        "All functions read runToken from event.data",
+        "All functions call renewLease after successful steps",
+        "Guard failure returns early with descriptive status object",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 4,
-      "status": "pending"
+      "passes": false
     },
     {
-      "id": "LOOP-5",
-      "title": "Integration: end-to-end event chain with all roles",
-      "description": "Verify the full chain works by checking: (1) all five functions are registered in index.ts (plan, test-writer, implement, review, judge), (2) the event types flow correctly (plan→test→implement→review→judge), (3) no circular imports between the files, (4) the existing llmEvaluate.test.ts and getStoryDiff.test.ts still pass, (5) no leftover test-writing code in review.ts. This is a wiring verification story, not a new feature. Fix any import errors or type mismatches introduced by LOOP-1 through LOOP-4.",
+      "id": "GUARD-5",
+      "title": "Wire releaseClaim into judge.ts on pass/skip",
+      "description": "In judge.ts, after marking a story as passed (updateStoryPass) or skipped (markStorySkipped), call releaseClaim(loopId, storyId) to free the lease. This allows retried or parallel chains to detect the story is done via guardStory (which checks PRD passes status).",
       "acceptance_criteria": [
-        "All 5 functions exported from index.ts",
-        "No circular imports between agent-loop files",
-        "Existing tests pass: bun test src/inngest/functions/agent-loop/",
-        "No test-writing code remains in review.ts",
-        "TypeScript compiles cleanly: bunx tsc --noEmit",
-        "Event chain: plan emits test, test emits implement, implement emits review, review emits judge"
+        "judge.ts calls releaseClaim after updateStoryPass",
+        "judge.ts calls releaseClaim after markStorySkipped",
+        "releaseClaim is called before emitting agent/loop.plan for next story",
+        "Existing retry ladder and skip logic preserved",
+        "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 5,
-      "status": "pending"
+      "passes": false
     }
   ]
 }
