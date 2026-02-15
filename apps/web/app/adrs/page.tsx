@@ -108,23 +108,23 @@ function AdrRow({ adr }: { adr: AdrMeta }) {
             {adr.number.padStart(4, "0")}
           </span>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-3 flex-wrap">
-              <h2
-                className={`text-base font-medium tracking-tight group-hover:text-white transition-colors ${isSuperseded ? "line-through decoration-neutral-600" : ""}`}
-              >
-                {adr.title}
-              </h2>
-              <StatusBadge status={adr.status} />
-            </div>
+            <h2
+              className={`text-base font-medium tracking-tight group-hover:text-white transition-colors ${isSuperseded ? "line-through decoration-neutral-600" : ""}`}
+            >
+              {adr.title}
+            </h2>
             {adr.description && (
-              <p className="mt-1 text-sm text-neutral-500 leading-relaxed line-clamp-2">
+              <p className="mt-1.5 text-sm text-neutral-500 leading-relaxed line-clamp-2">
                 {adr.description}
               </p>
             )}
+            <div className="mt-2 flex items-center gap-3">
+              <StatusBadge status={adr.status} />
+              <time className="text-xs text-neutral-600 tabular-nums">
+                {formatDate(adr.date)}
+              </time>
+            </div>
           </div>
-          <time className="shrink-0 text-xs text-neutral-600 pt-1 tabular-nums hidden sm:block">
-            {formatDate(adr.date)}
-          </time>
         </div>
       </Link>
     </li>
