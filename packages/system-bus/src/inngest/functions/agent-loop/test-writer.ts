@@ -149,6 +149,7 @@ export const agentLoopTestWriter = inngest.createFunction(
       storyStartedAt,
       retryLadder,
     } = event.data;
+    const workDir = event.data.workDir ?? project;
     const runToken = event.data.runToken;
     if (!runToken) {
       console.log(`[agent-loop-test-writer] missing runToken for ${storyId}`);
@@ -159,7 +160,7 @@ export const agentLoopTestWriter = inngest.createFunction(
     if (cancelled) return { status: "cancelled", loopId, storyId };
 
     const untrackedBefore = await step.run("snapshot-untracked-before", () =>
-      listUntrackedFiles(project)
+      listUntrackedFiles(workDir)
     );
 
     const writeResult = await step.run("write-tests", async () => {
@@ -171,7 +172,7 @@ export const agentLoopTestWriter = inngest.createFunction(
         return { blocked: true as const, reason: guard.reason };
       }
       const prompt = buildTestWriterPrompt(story);
-      const result = await spawnReviewer(tool, prompt, project, loopId);
+      const result = await spawnReviewer(tool, prompt, workDir, loopId);
       await renewLease(loopId, storyId, runToken);
       return { blocked: false as const, result };
     });
@@ -181,7 +182,7 @@ export const agentLoopTestWriter = inngest.createFunction(
 
     const testFiles = await step.run("collect-new-test-files", async () => {
       const beforeSet = new Set(untrackedBefore);
-      const untrackedAfter = await listUntrackedFiles(project);
+      const untrackedAfter = await listUntrackedFiles(workDir);
       const files: string[] = [];
       for (const path of untrackedAfter) {
         if (!beforeSet.has(path) && isTestFilePath(path)) {
@@ -192,7 +193,7 @@ export const agentLoopTestWriter = inngest.createFunction(
     });
 
     await step.run("commit-new-test-files", () =>
-      commitNewTestFiles(project, loopId, storyId, testFiles)
+      commitNewTestFiles(workDir, loopId, storyId, testFiles)
     );
     await renewLease(loopId, storyId, runToken);
 
@@ -209,6 +210,7 @@ export const agentLoopTestWriter = inngest.createFunction(
         data: {
           loopId,
           project,
+          workDir,
           storyId,
           tool,
           attempt,

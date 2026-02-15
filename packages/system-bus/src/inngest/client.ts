@@ -99,6 +99,7 @@ type Events = {
     data: {
       loopId: string;
       project: string;
+      workDir?: string;
       prdPath: string;
       maxRetries?: number;
       maxIterations?: number;
@@ -119,6 +120,7 @@ type Events = {
     data: {
       loopId: string;
       project: string;
+      workDir?: string;
       storyId: string;
       runToken?: string;
       tool: "codex" | "claude" | "pi";
@@ -141,6 +143,7 @@ type Events = {
     data: {
       loopId: string;
       project: string;
+      workDir?: string;
       storyId: string;
       runToken?: string;
       tool: "codex" | "claude" | "pi";
@@ -166,6 +169,7 @@ type Events = {
     data: {
       loopId: string;
       project: string;
+      workDir?: string;
       storyId: string;
       runToken?: string;
       commitSha: string;
@@ -191,6 +195,7 @@ type Events = {
     data: {
       loopId: string;
       project: string;
+      workDir?: string;
       prdPath: string;
       storyId: string;
       runToken?: string;
@@ -239,6 +244,7 @@ type Events = {
     data: {
       loopId: string;
       project: string;
+      workDir?: string;
       prdPath: string;
       storyId: string;
       commitSha: string;
@@ -255,6 +261,7 @@ type Events = {
     data: {
       loopId: string;
       project: string;
+      workDir?: string;
       prdPath: string;
       storyId: string;
       reason: string;
@@ -271,6 +278,7 @@ type Events = {
     data: {
       loopId: string;
       project: string;
+      workDir?: string;
       storyId: string;
       runToken?: string;
       tool: "codex" | "claude" | "pi";
@@ -304,6 +312,7 @@ type Events = {
     data: {
       loopId: string;
       project: string;
+      workDir?: string;
       summary: string;
       storiesCompleted: number;
       storiesFailed: number;

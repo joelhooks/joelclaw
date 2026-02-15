@@ -321,6 +321,7 @@ export const agentLoopReview = inngest.createFunction(
       retryLadder,
       priorFeedback,
     } = event.data;
+    const workDir = event.data.workDir ?? project;
     const runToken = event.data.runToken;
     if (!runToken) {
       console.log(`[agent-loop-review] missing runToken for ${storyId}`);
@@ -332,15 +333,15 @@ export const agentLoopReview = inngest.createFunction(
     if (cancelled) return { status: "cancelled", loopId, storyId };
 
     // Step 1: Run checks (typecheck + lint + tests)
-    const results = await step.run("run-checks", () => runChecks(project));
+    const results = await step.run("run-checks", () => runChecks(workDir));
 
     // Step 2: Read implementation diff
-    const diff = await step.run("get-story-diff", () => getStoryDiff(project));
+    const diff = await step.run("get-story-diff", () => getStoryDiff(workDir));
 
     // Step 3: Question 1 + test files from disk
     const { q1, testFiles } = await step.run("collect-test-files", async () => {
       const newTestFiles = extractNewTestFilesFromDiff(diff);
-      const fileContents = await readTestFilesFromDisk(project, newTestFiles);
+      const fileContents = await readTestFilesFromDisk(workDir, newTestFiles);
       const q1: ReviewerQuestion = {
         id: "q1",
         answer: newTestFiles.length > 0,
@@ -362,7 +363,7 @@ export const agentLoopReview = inngest.createFunction(
       }
 
       const prompt = buildEvaluationPrompt({ story, diff, testFiles });
-      const questions = await evaluateQuestionsWithClaude(prompt, project, loopId);
+      const questions = await evaluateQuestionsWithClaude(prompt, workDir, loopId);
       await renewLease(loopId, storyId, runToken);
       return { blocked: false as const, questions };
     });
@@ -393,6 +394,7 @@ export const agentLoopReview = inngest.createFunction(
         data: {
           loopId,
           project,
+          workDir,
           prdPath: "prd.json",
           storyId,
           testResults: {

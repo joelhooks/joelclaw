@@ -123,7 +123,7 @@ describe("AC-3: Calls llmEvaluate when mechanical gates pass", () => {
 
   test("llmEvaluate is called with diff from getStoryDiff", async () => {
     const source = await readSource();
-    expect(source).toMatch(/getStoryDiff\s*\(\s*project\s*\)/);
+    expect(source).toMatch(/getStoryDiff\s*\(\s*workDir\s*\)/);
     // diff should be passed to llmEvaluate
     expect(source).toMatch(/diff[,\s]/);
   });

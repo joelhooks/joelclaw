@@ -187,12 +187,41 @@ export const agentLoopPlan = inngest.createFunction(
         ? event.data.retryLadder ?? [...DEFAULT_RETRY_LADDER]
         : (event.data as any).retryLadder ?? [...DEFAULT_RETRY_LADDER];
 
-    // Work on whatever branch is currently checked out (typically main).
-    // No branch creation or checkout — loops commit directly.
     const isStartEvent = event.name === "agent/loop.started";
-    const branchName = await step.run("read-current-branch", async () => {
-      return (await $`cd ${project} && git rev-parse --abbrev-ref HEAD`.quiet()).text().trim();
-    });
+
+    // Worktree isolation: each loop gets its own working directory.
+    // Main repo working tree is NEVER touched by loop operations.
+    const worktreeBase = `/tmp/agent-loop`;
+    const worktreePath = isStartEvent
+      ? `${worktreeBase}/${loopId}`
+      : (event.data as any).workDir ?? `${worktreeBase}/${loopId}`;
+    const branchName = `agent-loop/${loopId}`;
+
+    if (isStartEvent) {
+      await step.run("create-worktree", async () => {
+        await $`mkdir -p ${worktreeBase}`.quiet();
+        // Create worktree on a new branch from current HEAD
+        await $`cd ${project} && git worktree add ${worktreePath} -b ${branchName}`.quiet();
+        // Copy PRD into worktree if it exists
+        const prdFile = join(project, prdPath ?? "prd.json");
+        const worktreePrd = join(worktreePath, prdPath ?? "prd.json");
+        if (await Bun.file(prdFile).exists()) {
+          await $`cp ${prdFile} ${worktreePrd}`.quiet();
+        }
+      });
+    } else {
+      // Re-entry: verify worktree still exists
+      await step.run("verify-worktree", async () => {
+        const exists = await Bun.file(`${worktreePath}/.git`).exists();
+        if (!exists) {
+          throw new Error(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
+        }
+      });
+    }
+
+    // All downstream operations use worktreePath as the working directory.
+    // `project` stays as canonical path for Redis keys and PRD references.
+    const workDir = worktreePath;
 
     // Step 0: Check cancellation
     const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
@@ -202,14 +231,16 @@ export const agentLoopPlan = inngest.createFunction(
     // ADR-0012: If goal is provided, generate PRD from goal + context files
     const prd = await step.run("read-prd", async () => {
       if (!isStartEvent) {
-        return readPrd(project, prdPath, loopId);
+        return readPrd(workDir, prdPath, loopId);
       }
 
       if (goal) {
-        // Generate PRD from goal
-        const generated = await generatePrd(goal, project, contextFiles, maxStories ?? 6);
+        // Generate PRD from goal (reads project structure from worktree)
+        const generated = await generatePrd(goal, workDir, contextFiles, maxStories ?? 6);
 
-        // Write to disk for human review
+        // Write to worktree for tool access + canonical project for human review
+        const worktreePrdPath = join(workDir, prdPath ?? "prd.json");
+        await Bun.write(worktreePrdPath, JSON.stringify(generated, null, 2) + "\n");
         const diskPath = join(project, prdPath ?? "prd.json");
         await Bun.write(diskPath, JSON.stringify(generated, null, 2) + "\n");
 
@@ -225,8 +256,8 @@ export const agentLoopPlan = inngest.createFunction(
         return seedPrdFromData(loopId, generated);
       }
 
-      // Default: read from disk
-      return seedPrd(loopId, project, prdPath);
+      // Default: read from worktree disk
+      return seedPrd(loopId, workDir, prdPath);
     });
 
     // Count attempted stories (passed + skipped) for maxIterations enforcement
@@ -248,6 +279,7 @@ export const agentLoopPlan = inngest.createFunction(
           data: {
             loopId,
             project,
+            workDir,
             summary: `max_iterations_reached (${maxIterations}). ${completed} completed, ${skipped} skipped.`,
             storiesCompleted: completed,
             storiesFailed: skipped,
@@ -272,12 +304,12 @@ export const agentLoopPlan = inngest.createFunction(
 
       for (const skippedStory of skippedStories) {
         const checks = await step.run(`recheck-suite-${skippedStory.id}`, () =>
-          runRecheckSuite(project)
+          runRecheckSuite(workDir)
         );
 
         if (checks.passed) {
           await step.run(`recheck-pass-${skippedStory.id}`, async () => {
-            await markStoryRechecked(project, prdPath, skippedStory.id, loopId);
+            await markStoryRechecked(workDir, prdPath, skippedStory.id, loopId);
             await appendProgress(
               loopId,
               [
@@ -303,7 +335,7 @@ export const agentLoopPlan = inngest.createFunction(
       }
 
       const finalPrd = await step.run("read-prd-post-recheck", () =>
-        readPrd(project, prdPath, loopId)
+        readPrd(workDir, prdPath, loopId)
       );
       const completed = finalPrd.stories.filter((s) => s.passes).length;
       const failed = finalPrd.stories.filter((s) => (s as any).skipped).length;
@@ -318,6 +350,7 @@ export const agentLoopPlan = inngest.createFunction(
           data: {
             loopId,
             project,
+            workDir,
             summary: `All stories processed. ${completed} completed, ${failed} skipped. Recheck: ${recovered} recovered, ${stillFailing} still failing.`,
             storiesCompleted: completed,
             storiesFailed: failed,
@@ -387,6 +420,7 @@ export const agentLoopPlan = inngest.createFunction(
         data: {
           loopId,
           project,
+          workDir,
           storyId: next.id,
           tool: implTool,
           attempt: 1,

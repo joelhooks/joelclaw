@@ -134,17 +134,14 @@ afterEach(() => {
 });
 
 async function makePlanEngine(loopId: string, extraSteps?: InngestTestEngine.Options["steps"]) {
-  // Pre-create the loop branch so verify-branch succeeds
-  const branchName = `agent-loop/${loopId}`;
-  await $`cd ${tmpProject} && git checkout -b ${branchName}`.quiet();
-
   return new InngestTestEngine({
     function: agentLoopPlan,
     events: [{
-      name: "agent/loop.plan" as const,
-      data: { loopId, project: tmpProject, maxIterations: 10, maxRetries: 2, retryLadder: ["codex", "claude"] },
+      name: "agent/loop.story.passed" as const,
+      data: { loopId, project: tmpProject, workDir: tmpProject, prdPath: "prd.json", storyId: "prev", commitSha: "abc", attempt: 1, duration: 0, maxIterations: 10, maxRetries: 2, retryLadder: ["codex", "claude"] },
     }],
     steps: [
+      { id: "verify-worktree", handler: () => {} },
       { id: "check-cancel", handler: () => false },
       { id: "read-prd", handler: () => PRD },
       ...(extraSteps ?? []),
