@@ -1,7 +1,7 @@
 ---
-status: "proposed"
+status: proposed
 date: 2026-02-14
-decision-makers: "Joel Hooks"
+decision-makers: Joel Hooks
 ---
 
 # Establish a central system loop gateway for autonomous orchestration
