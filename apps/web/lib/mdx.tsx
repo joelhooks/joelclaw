@@ -1,4 +1,5 @@
 import type { MDXComponents } from "mdx/types";
+import { CodeBlockCopyButton } from "../components/copy-button";
 
 function YouTube({ id }: { id: string }) {
   return (
@@ -12,6 +13,18 @@ function YouTube({ id }: { id: string }) {
       />
     </div>
   );
+}
+
+/** Extract plain text from nested React children */
+function extractText(children: React.ReactNode): string {
+  if (typeof children === "string") return children;
+  if (typeof children === "number") return String(children);
+  if (!children) return "";
+  if (Array.isArray(children)) return children.map(extractText).join("");
+  if (typeof children === "object" && "props" in children) {
+    return extractText(children.props.children);
+  }
+  return "";
 }
 
 export const mdxComponents: MDXComponents = {
@@ -60,7 +73,15 @@ export const mdxComponents: MDXComponents = {
   // rehype-pretty-code wraps blocks in <figure data-rehype-pretty-code-figure>
   figure: (props) => {
     if (props["data-rehype-pretty-code-figure"] !== undefined) {
-      return <figure className="my-6 not-prose" {...props} />;
+      const text = extractText(props.children);
+      return (
+        <figure className="group/code relative my-6 not-prose" {...props}>
+          {props.children}
+          <div className="absolute top-2 right-2 opacity-0 group-hover/code:opacity-100 transition-opacity">
+            <CodeBlockCopyButton text={text} />
+          </div>
+        </figure>
+      );
     }
     return <figure {...props} />;
   },
