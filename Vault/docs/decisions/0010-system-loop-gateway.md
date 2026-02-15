@@ -44,3 +44,79 @@ Each relevant event triggers a lightweight evaluation function that decides the 
 ### Option D: Always-on LLM session — persistent context window that receives all events
 
 A long-lived LLM session continuously consumes events and decides actions in near real time. It offers strong continuity of context, but increases operational complexity, safety risk surface, and ongoing token cost pressure.
+
+## Decision Outcome
+
+Chosen option: **Hybrid of Option C + Option B**. The gateway will use an event-driven reactive loop as the primary control path, triggered by high-signal events such as `agent/loop.complete`, `agent/loop.retro.complete`, and `system/note`. A cron heartbeat sweep every 15-30 minutes will run as a fallback to catch missed events, reconcile drift, and unblock stuck work.
+
+This approach is selected because it combines low-latency action on fresh system signals with bounded reliability backstops. It preserves responsiveness for autonomous orchestration without requiring a fully always-on session model.
+
+### Consequences
+
+Good:
+- Autonomous action improves because the system can route and dispatch follow-on work immediately after terminal events.
+- Feedback loops are faster because loop outcomes and retrospectives can trigger next actions without waiting for manual polling windows.
+- The note queue gets processed more consistently because the fallback heartbeat sweep closes event-delivery gaps.
+
+Bad:
+- LLM call volume can increase, especially during event bursts and periodic sweeps, which raises operating cost.
+- Runaway action risk increases if deduplication, reentrancy guards, or rate limits are misconfigured.
+- Operational complexity increases because two trigger paths (event and cron) must be coordinated and observed.
+
+Neutral:
+- Human operators can still override, pause, or cancel execution flows when needed, so control remains available even with higher autonomy.
+
+Safety constraints for this decision:
+- Human override and cancel controls remain mandatory for high-impact or uncertain actions.
+- Action limits are enforced per cycle and per time window to prevent cascade behavior.
+- Cost caps (daily/weekly budget and per-run token ceilings) are enforced before dispatching new work.
+
+## Pros and Cons of the Options
+
+### Option A: No system loop — keep human as gateway
+
+Pros:
+- Lowest technical complexity and implementation risk.
+- Full human judgment on every orchestration decision.
+- Minimal incremental LLM and infrastructure cost.
+
+Cons:
+- Throughput remains bottlenecked by human availability.
+- Slower feedback loops and delayed reaction to events.
+- Higher risk of missed follow-ups during busy periods.
+
+### Option B: Cron-triggered heartbeat — Inngest cron function that runs every N minutes and checks state
+
+Pros:
+- Predictable cadence simplifies budgeting, monitoring, and cost controls.
+- Straightforward recovery path for missed or dropped events.
+- Easier to reason about execution windows and rate limiting.
+
+Cons:
+- Adds latency between event occurrence and action.
+- Can perform unnecessary polling when no meaningful work is pending.
+- Coarser-grained responsiveness for time-sensitive follow-up tasks.
+
+### Option C: Event-driven reactive loop — function triggered by terminal events (`loop.complete`, note captured, etc.) that evaluates next action
+
+Pros:
+- Fast reaction to fresh system signals and completed workflows.
+- Avoids idle polling by running when meaningful events occur.
+- Better alignment with existing event-bus architecture.
+
+Cons:
+- Requires robust deduplication and idempotency controls.
+- Higher risk of event storms causing action cascades without strict guards.
+- More complex observability for tracing cross-event orchestration chains.
+
+### Option D: Always-on LLM session — persistent context window that receives all events
+
+Pros:
+- Strong continuity of context across many related events.
+- Near real-time decisioning with minimal trigger latency.
+- Centralized orchestration logic in one long-lived control loop.
+
+Cons:
+- Highest ongoing token and runtime cost profile.
+- Largest safety and operational risk surface if control logic drifts.
+- Harder to implement and operate reliably than event-triggered functions.
