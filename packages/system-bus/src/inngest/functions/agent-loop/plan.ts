@@ -187,24 +187,12 @@ export const agentLoopPlan = inngest.createFunction(
         ? event.data.retryLadder ?? [...DEFAULT_RETRY_LADDER]
         : (event.data as any).retryLadder ?? [...DEFAULT_RETRY_LADDER];
 
-    // Branch lifecycle: create on start, verify on re-entry
-    const branchName = `agent-loop/${loopId}`;
+    // Work on whatever branch is currently checked out (typically main).
+    // No branch creation or checkout — loops commit directly.
     const isStartEvent = event.name === "agent/loop.started";
-
-    if (isStartEvent) {
-      // Create and checkout feature branch
-      await step.run("create-branch", async () => {
-        await $`cd ${project} && git checkout -b ${branchName}`.quiet();
-      });
-    } else {
-      // Re-entry: verify branch is checked out
-      await step.run("verify-branch", async () => {
-        const currentBranch = (await $`cd ${project} && git rev-parse --abbrev-ref HEAD`.quiet()).text().trim();
-        if (currentBranch !== branchName) {
-          await $`cd ${project} && git checkout ${branchName}`.quiet();
-        }
-      });
-    }
+    const branchName = await step.run("read-current-branch", async () => {
+      return (await $`cd ${project} && git rev-parse --abbrev-ref HEAD`.quiet()).text().trim();
+    });
 
     // Step 0: Check cancellation
     const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
