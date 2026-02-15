@@ -82,10 +82,11 @@ describe("AC-1: Implementation Plan section with numbered steps", () => {
     expect(items.length).toBeGreaterThanOrEqual(3);
   });
 
-  test("numbered steps have substantive content (not single words)", async () => {
+  test("numbered steps have substantive content (at least 3 words each)", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     const items = numberedItems(section);
+    expect(items.length).toBeGreaterThanOrEqual(1);
     for (const item of items) {
       expect(wordCount(item)).toBeGreaterThanOrEqual(3);
     }
@@ -117,7 +118,6 @@ describe("AC-2: heartbeat Inngest function described", () => {
   test("Implementation Plan mentions terminal or workflow event triggers", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
-    // Should describe being triggered by events (not just cron)
     expect(section).toMatch(/terminal|event[- ]trigger|workflow\s+event|loop\.complete|triggered?\s+by.*event/i);
   });
 
@@ -168,7 +168,7 @@ describe("AC-3: state gathering step described", () => {
     expect(section).toMatch(/half[- ]done\s+inventory/i);
   });
 
-  test("state gathering covers at least 4 data sources", async () => {
+  test("state gathering covers at least 4 of the 5 expected data sources", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan").toLowerCase();
     const sources = [
@@ -246,13 +246,19 @@ describe("AC-4: LLM decision step with constrained action set", () => {
       expect(action.test(section)).toBe(true);
     }
   });
+
+  test("describes action execution emitting Inngest events", async () => {
+    const content = await readAdr();
+    const section = extractSection(content, "Implementation Plan");
+    expect(section).toMatch(/emit.*event|inngest\s+event|event\s+emit/i);
+  });
 });
 
 // --------------------------------------------------------------------------
 // AC-5: Plan describes safety rails (rate limits, cost budget, human approval)
 // --------------------------------------------------------------------------
 describe("AC-5: safety rails described", () => {
-  test("Implementation Plan mentions safety rails", async () => {
+  test("Implementation Plan mentions safety rails or guardrails", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).toMatch(/safety\s+rail|guardrail|safety/i);
@@ -270,7 +276,7 @@ describe("AC-5: safety rails described", () => {
     expect(section).toMatch(/cost\s+budget/i);
   });
 
-  test("mentions human approval gate for destructive actions", async () => {
+  test("mentions human approval gate", async () => {
     const content = await readAdr();
     const section = extractSection(content, "Implementation Plan");
     expect(section).toMatch(/human[- ]approval|approval\s+gate/i);
@@ -344,8 +350,7 @@ describe("AC-7: Verification items are specific and testable", () => {
     const items = extractCheckboxItems(section);
     expect(items.length).toBeGreaterThanOrEqual(5);
     for (const item of items) {
-      const wc = wordCount(item);
-      expect(wc).toBeGreaterThanOrEqual(10);
+      expect(wordCount(item)).toBeGreaterThanOrEqual(10);
     }
   });
 
@@ -373,7 +378,6 @@ describe("AC-7: Verification items are specific and testable", () => {
     for (const term of concreteTerms) {
       if (term.test(lower)) matchCount++;
     }
-    // At least 4 of 5 concrete concept categories should appear
     expect(matchCount).toBeGreaterThanOrEqual(4);
   });
 
@@ -381,7 +385,6 @@ describe("AC-7: Verification items are specific and testable", () => {
     const content = await readAdr();
     const section = extractSection(content, "Verification");
     const items = extractCheckboxItems(section);
-    // Each item should have at least one concrete technical term
     const technicalTerms = /inngest|cron|heartbeat|slog|llm|action|event|function|rate|cost|budget|log|queue|state|snapshot/i;
     for (const item of items) {
       expect(technicalTerms.test(item)).toBe(true);
@@ -397,7 +400,6 @@ describe("AC-8: ADR coherence and self-consistency", () => {
     const content = await readAdr();
     const outcome = extractSection(content, "Decision Outcome");
     const plan = extractSection(content, "Implementation Plan");
-    // Decision Outcome chose hybrid; Implementation Plan should reflect both triggers
     expect(outcome).toMatch(/hybrid|event[- ]driven.*cron|cron.*event[- ]driven/i);
     expect(plan).toMatch(/cron/i);
     expect(plan).toMatch(/event/i);
@@ -443,10 +445,23 @@ describe("AC-8: ADR coherence and self-consistency", () => {
     const content = await readAdr();
     const outcome = extractSection(content, "Decision Outcome");
     const plan = extractSection(content, "Implementation Plan");
-    // The gateway concept from the decision should be reflected in the plan
     expect(outcome).toMatch(/gateway|loop|orchestrat/i);
     expect(plan).toMatch(/action/i);
     expect(plan).toMatch(/llm|decision/i);
+  });
+
+  test("Decision Drivers themes are addressed by Implementation Plan", async () => {
+    const content = await readAdr();
+    const drivers = extractSection(content, "Decision Drivers").toLowerCase();
+    const plan = extractSection(content, "Implementation Plan").toLowerCase();
+    // Safety driver → safety rails in plan
+    if (drivers.includes("safety")) {
+      expect(plan).toMatch(/safety|guardrail|rail/);
+    }
+    // Cost driver → cost budget in plan
+    if (drivers.includes("cost")) {
+      expect(plan).toMatch(/cost/);
+    }
   });
 });
 
