@@ -277,22 +277,80 @@ export const agentLoopRetro = inngest.createFunction(
       totalDurationEstimate,
     };
 
+    // LLM reflection — structured analysis + narrative postmortem
+    const reflection = await step.run("llm-reflection", async () => {
+      const mechanicalSummary = buildRetroMarkdown({
+        loopId, project, summary, storiesCompleted, storiesFailed,
+        storiesSkipped, storyDetails, codebasePatterns,
+      });
+
+      const prompt = [
+        "You are a senior engineering lead reviewing an automated coding loop's results.",
+        "Given the mechanical summary below, write TWO sections:",
+        "",
+        "## Analysis",
+        "Structured insights: why stories passed/failed/needed retries, patterns in the failures,",
+        "whether acceptance criteria were well-scoped, test quality observations, tool effectiveness.",
+        "Be specific — reference story IDs and concrete evidence. 3-7 bullet points.",
+        "",
+        "## Narrative",
+        "A 2-4 paragraph postmortem written for a human reading this tomorrow morning.",
+        "What happened, what went well, what to watch out for next time.",
+        "Write like a thoughtful teammate, not a report generator.",
+        "",
+        "---",
+        "MECHANICAL SUMMARY:",
+        mechanicalSummary,
+        "---",
+        "PROGRESS LOG:",
+        progressText.slice(0, 6000),
+      ].join("\n");
+
+      try {
+        const proc = Bun.spawn(
+          ["claude", "-p", prompt, "--output-format", "text"],
+          { stdout: "pipe", stderr: "pipe", timeout: 120_000 }
+        );
+        const stdout = await new Response(proc.stdout).text();
+        const exitCode = await proc.exited;
+        if (exitCode !== 0 || !stdout.trim()) {
+          return { analysis: "", narrative: "", error: `claude exit ${exitCode}` };
+        }
+        // Split on ## headers
+        const analysisMatch = stdout.match(/## Analysis\s*\n([\s\S]*?)(?=\n## Narrative|$)/i);
+        const narrativeMatch = stdout.match(/## Narrative\s*\n([\s\S]*?)$/i);
+        return {
+          analysis: analysisMatch?.[1]?.trim() ?? "",
+          narrative: narrativeMatch?.[1]?.trim() ?? stdout.trim(),
+          error: null,
+        };
+      } catch (err) {
+        return { analysis: "", narrative: "", error: String(err) };
+      }
+    });
+
     await step.run("write-retrospective-note", async () => {
       const vaultPath = process.env.VAULT_PATH ?? `${process.env.HOME}/Vault`;
       const retroDir = join(vaultPath, "system", "retrospectives");
       mkdirSync(retroDir, { recursive: true });
       const retroPath = join(retroDir, `${loopId}.md`);
-      const markdown = buildRetroMarkdown({
-        loopId,
-        project,
-        summary,
-        storiesCompleted,
-        storiesFailed,
-        storiesSkipped,
-        storyDetails,
-        codebasePatterns,
+      const mechanical = buildRetroMarkdown({
+        loopId, project, summary, storiesCompleted, storiesFailed,
+        storiesSkipped, storyDetails, codebasePatterns,
       });
-      await Bun.write(retroPath, markdown);
+      // Append LLM reflection after mechanical summary
+      const reflectionSection = reflection.analysis || reflection.narrative
+        ? [
+            "",
+            "## Analysis",
+            reflection.analysis || "_No analysis generated._",
+            "",
+            "## Narrative",
+            reflection.narrative || "_No narrative generated._",
+            "",
+          ].join("\n")
+        : "";
+      await Bun.write(retroPath, mechanical + reflectionSection);
       return retroPath;
     });
 
