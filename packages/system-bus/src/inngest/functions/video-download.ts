@@ -35,7 +35,7 @@ export const videoDownload = inngest.createFunction(
     concurrency: { limit: 1 },
     retries: 2,
   },
-  [{ event: "pipeline/video.requested" }, { event: "pipeline/video.requested" }],
+  [{ event: "pipeline/video.requested" }],
   async ({ event, step }) => {
     // Step 1: Download with yt-dlp
     const download = await step.run("download", async () => {
