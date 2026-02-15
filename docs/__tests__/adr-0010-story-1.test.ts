@@ -107,6 +107,11 @@ describe("AC-5: references ADR-0005 and ADR-0007", () => {
     const content = await readAdr(REPO_ADR);
     expect(content).toMatch(/ADR[-\s]?0007/i);
   });
+
+  test("references ADR-0008", async () => {
+    const content = await readAdr(REPO_ADR);
+    expect(content).toMatch(/ADR[-\s]?0008/i);
+  });
 });
 
 // --------------------------------------------------------------------------
@@ -189,11 +194,8 @@ describe("AC-8: mentions existing capabilities", () => {
 // AC-9: TypeScript compiles with no errors (bun test on the test file)
 // --------------------------------------------------------------------------
 describe("AC-9: TypeScript compiles", () => {
-  test(
-    "this test file compiles and runs under bun test",
-    () => {
-      // If we reach this point, the file compiled successfully under bun
-      expect(true).toBe(true);
-    },
-  );
+  test("this test file compiles and runs under bun test", () => {
+    // If we reach this point, the file compiled successfully under bun
+    expect(true).toBe(true);
+  });
 });
