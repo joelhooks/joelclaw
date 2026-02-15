@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { AdrMeta } from "../../lib/adrs";
-import { AdrFilterBar, useFilteredAdrs } from "./adr-filters";
+import { AdrFilterBar, useStatusFilter } from "./adr-filters";
 
 const STATUS_CONFIG: Record<
   string,
@@ -55,12 +55,12 @@ function formatDate(dateStr: string) {
   });
 }
 
-function AdrRow({ adr }: { adr: AdrMeta }) {
+function AdrRow({ adr, hidden }: { adr: AdrMeta; hidden: boolean }) {
   const isSuperseded = adr.status === "superseded";
 
   return (
     <li
-      className={`group border-b border-neutral-800/50 last:border-0 ${isSuperseded ? "opacity-50" : ""}`}
+      className={`group border-b border-neutral-800/50 last:border-0 ${isSuperseded ? "opacity-50" : ""} ${hidden ? "hidden" : ""}`}
     >
       <Link href={`/adrs/${adr.slug}`} className="block py-4 sm:py-5">
         <div className="flex items-start gap-4">
@@ -100,14 +100,23 @@ export function AdrListWithFilters({
   counts: Record<string, number>;
   allStatuses: string[];
 }) {
-  const filtered = useFilteredAdrs(adrs, allStatuses);
+  const { active, toggle } = useStatusFilter(allStatuses);
 
   return (
     <>
-      <AdrFilterBar counts={counts} allStatuses={allStatuses} />
+      <AdrFilterBar
+        counts={counts}
+        allStatuses={allStatuses}
+        active={active}
+        onToggle={toggle}
+      />
       <ul className="mt-8 border-t border-neutral-800/50">
-        {filtered.map((adr) => (
-          <AdrRow key={adr.slug} adr={adr} />
+        {adrs.map((adr) => (
+          <AdrRow
+            key={adr.slug}
+            adr={adr}
+            hidden={!active.has(adr.status)}
+          />
         ))}
       </ul>
     </>

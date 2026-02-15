@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Suspense } from "react";
 import { getAllAdrs } from "../../lib/adrs";
 import { SITE_NAME } from "../../lib/constants";
 import { AdrListWithFilters } from "./adr-list";
@@ -9,6 +8,8 @@ export const metadata: Metadata = {
   description:
     "Architecture Decision Records — how this system is built and why.",
 };
+
+export const dynamic = "force-static";
 
 export default function AdrsPage() {
   const allAdrs = getAllAdrs();
@@ -36,13 +37,11 @@ export default function AdrsPage() {
           architecture gets written down.
         </p>
       </header>
-      <Suspense>
-        <AdrListWithFilters
-          adrs={allAdrs}
-          counts={counts}
-          allStatuses={allStatuses}
-        />
-      </Suspense>
+      <AdrListWithFilters
+        adrs={allAdrs}
+        counts={counts}
+        allStatuses={allStatuses}
+      />
     </>
   );
 }
