@@ -39,8 +39,18 @@ export default async function AdrsPage({ searchParams }: Props) {
         </h1>
         <p className="mt-2 text-sm text-neutral-500">
           How this system is built and why. Every decision that changes the
-          architecture gets written down.
+          architecture gets written down. Generated with the{" "}
+          <a
+            href="https://github.com/skillrecordings/adr-skill"
+            className="text-claw hover:underline"
+          >
+            adr-skill
+          </a>{" "}
+          for Claude Code and Pi.
         </p>
+        <pre className="mt-3 text-xs text-neutral-600 bg-neutral-900/50 border border-neutral-800 rounded-lg px-3 py-2 overflow-x-auto">
+          <code>npx skills add skillrecordings/adr-skill --skill adr-skill --yes --global</code>
+        </pre>
       </header>
       <AdrListWithFilters
         adrs={allAdrs}
