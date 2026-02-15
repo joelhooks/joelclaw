@@ -86,6 +86,27 @@ export function parseSegments(observations: string): DistilledSegment[] {
   return parsed;
 }
 
+export function formatSegmentsForLog(segments: DistilledSegment[]): string {
+  if (segments.length === 0) {
+    return "";
+  }
+
+  return segments
+    .map((segment) => {
+      const lines = [`*${segment.narrative.trim()}*`];
+
+      for (const fact of segment.facts) {
+        const trimmedFact = fact.trim();
+        if (trimmedFact.length > 0) {
+          lines.push(`- ${trimmedFact}`);
+        }
+      }
+
+      return lines.join("\n");
+    })
+    .join("\n\n");
+}
+
 export function parseObserverOutput(raw: string): ObserverOutput {
   const trimmed = raw.trim();
   if (trimmed.length === 0) {

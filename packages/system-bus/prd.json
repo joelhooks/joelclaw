@@ -57,7 +57,8 @@
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 4,
-      "passes": false
+      "passes": false,
+      "skipped": true
     },
     {
       "id": "NUUM-5",
