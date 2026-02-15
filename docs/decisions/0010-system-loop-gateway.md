@@ -30,17 +30,17 @@ Related decisions: ADR-0005 (durable coding loops), ADR-0007 (loop v2 improvemen
 ## Considered Options
 
 ### Option A: No system loop (human gateway only)
-
-Keep Joel as the gateway that evaluates state and manually starts loops, retries failures, and decides priorities. Automation remains execution-only, while all orchestration logic and sequencing decisions stay human-mediated.
+Keep Joel as the sole gateway who evaluates system state, manually prioritizes work, starts loops, retries failures, and sequences transitions between pipelines. Automation remains execution-only — the system runs what Joel tells it to run, but never decides on its own what to do next. This approach maximizes safety and human oversight but does not scale beyond what Joel can personally supervise and organize.
 
 ### Option B: Cron-triggered heartbeat
-
-Create an Inngest cron function that runs every N minutes, gathers current state, and decides whether to dispatch one of the allowed next actions. The model only reasons on a schedule, which keeps behavior predictable and gives straightforward levers for cost and rate control.
+An Inngest cron function runs on a fixed schedule (every N minutes), gathers current system state from runs, note queues, and recent events, then uses an LLM call to decide whether to dispatch one of the allowed next actions. The model only reasons at scheduled intervals, which keeps behavior predictable and gives straightforward levers for cost and rate control. If the cron fires and there is nothing actionable, the function exits without dispatching, which minimizes wasted inference and keeps the system idle when appropriate.
 
 ### Option C: Event-driven reactive loop
-
-Trigger an orchestration function from terminal events such as `loop.complete`, note capture events, retrospective completion events, and failure signals, then evaluate the next action immediately. The loop reacts close to real time as state changes, while safety is enforced by a constrained action set and idempotent event handling.
+An orchestration function is triggered by terminal events — `loop.complete`, note capture, retrospective completion, failure signals — and immediately evaluates what action to take next. The loop reacts in near real-time as system state changes, while safety is enforced through a constrained action set and idempotent event handling that recognize duplicate or conflicting signals. This approach optimizes for responsiveness and avoids polling overhead, but requires careful design to prevent cascading triggers or runaway event chains.
 
 ### Option D: Always-on LLM session
+A persistent LLM context window runs continuously, ingesting all relevant events and updating its working state as signals arrive in real time. It can synthesize context-rich orchestration decisions without delay, but requires robust guardrails and cost controls because inference is effectively continuous. This option maximizes responsiveness and contextual awareness at the expense of significantly higher model cost and greater complexity in failure isolation.
 
-Run a persistent LLM context window that continuously ingests all relevant events and updates the working state as signals arrive. It can make fast, context-rich orchestration decisions, but requires stronger guardrails and cost controls because inference is effectively continuous.
+## Decision Outcome
+
+*To be determined after evaluation of options against decision drivers.*
