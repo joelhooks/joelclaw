@@ -99,13 +99,13 @@ function extractTestFilesFromDiff(diff: string): string[] {
   return Array.from(files);
 }
 
-async function readTestFilesFromDisk(project: string, files: string[]): Promise<string> {
+async function readTestFilesFromDisk(workDir: string, files: string[]): Promise<string> {
   if (files.length === 0) return "";
   const chunks: string[] = [];
 
   for (const path of files.slice(0, 10)) {
     try {
-      const content = await Bun.file(`${project}/${path}`).text();
+      const content = await Bun.file(`${workDir}/${path}`).text();
       const snippet = content.length > 4000
         ? `${content.slice(0, 4000)}\n\n[Truncated at 4000 characters]`
         : content;
@@ -279,6 +279,7 @@ export const agentLoopJudge = inngest.createFunction(
       story,
       tool,
     } = event.data;
+    const workDir = event.data.workDir ?? project;
     const runToken = event.data.runToken;
     if (!runToken) {
       console.log(`[agent-loop-judge] missing runToken for ${storyId}`);
@@ -311,13 +312,13 @@ export const agentLoopJudge = inngest.createFunction(
 
     let llmResult: { verdict: "pass" | "fail"; reasoning: string } | undefined;
     if (mechanicalGatesPass) {
-      const diff = await step.run("get-story-diff", () => getStoryDiff(project));
+      const diff = await step.run("get-story-diff", () => getStoryDiff(workDir));
       const testFilePaths = extractTestFilesFromDiff(diff);
       const testFileContent = await step.run("read-test-files", () =>
-        readTestFilesFromDisk(project, testFilePaths)
+        readTestFilesFromDisk(workDir, testFilePaths)
       );
       const conventions = await step.run("read-project-conventions", () =>
-        getProjectConventions(project)
+        getProjectConventions(workDir)
       );
       const testResultsSummary = buildTestResultsSummary({
         testResults,
@@ -363,7 +364,7 @@ export const agentLoopJudge = inngest.createFunction(
 
       // Update PRD (Redis + disk)
       await step.run("update-prd", async () => {
-        await updateStoryPass(project, prdPath, storyId, loopId);
+        await updateStoryPass(workDir, prdPath, storyId, loopId);
         return { storyId, action: "marked-passed" };
       });
 
@@ -392,6 +393,7 @@ export const agentLoopJudge = inngest.createFunction(
           data: {
             loopId,
             project,
+            workDir,
             prdPath,
             storyId,
             commitSha: "HEAD",
@@ -426,6 +428,7 @@ export const agentLoopJudge = inngest.createFunction(
           data: {
             loopId,
             project,
+            workDir,
             storyId,
             tool: retryTool,
             attempt: nextAttempt,
@@ -466,7 +469,7 @@ export const agentLoopJudge = inngest.createFunction(
 
     // Mark story as skipped so planner doesn't re-pick it
     await step.run("mark-skipped", async () => {
-      await markStorySkipped(project, prdPath, storyId, loopId);
+      await markStorySkipped(workDir, prdPath, storyId, loopId);
       return { storyId, action: "marked-skipped", attempts: attempt };
     });
 
@@ -489,6 +492,7 @@ export const agentLoopJudge = inngest.createFunction(
         data: {
           loopId,
           project,
+          workDir,
           prdPath,
           storyId,
           reason: `Failed after ${attempt} attempts. ${(combinedFailureFeedback || testResults.details).slice(0, 500)}`,

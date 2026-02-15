@@ -346,6 +346,7 @@ export const agentLoopImplement = inngest.createFunction(
       storyStartedAt: incomingStoryStartedAt,
     } =
       event.data;
+    const workDir = event.data.workDir ?? project;
     const runToken = event.data.runToken;
     if (!runToken) {
       console.log(`[agent-loop-implement] missing runToken for ${storyId}`);
@@ -363,7 +364,7 @@ export const agentLoopImplement = inngest.createFunction(
 
     // Step 0.5: Idempotency — check if commit already exists
     const alreadyDone = await step.run("check-idempotency", () =>
-      commitExists(project, loopId, storyId, attempt)
+      commitExists(workDir, loopId, storyId, attempt)
     );
 
     let sha: string;
@@ -372,18 +373,18 @@ export const agentLoopImplement = inngest.createFunction(
       // Skip re-execution, get existing commit sha
       sha = await step.run("get-existing-sha", async () => {
         const result =
-          await $`cd ${project} && git log --oneline --all --grep="[${loopId}] [${storyId}] attempt-${attempt}" --format="%H"`.quiet();
+          await $`cd ${workDir} && git log --oneline --all --grep="[${loopId}] [${storyId}] attempt-${attempt}" --format="%H"`.quiet();
         return result.text().trim().split("\n")[0] ?? "";
       });
     } else {
       // Step 1: Record HEAD before tool runs (to detect tool auto-commits)
       const headBefore = await step.run("record-head-before", () =>
-        getHeadSha(project)
+        getHeadSha(workDir)
       );
 
       // Step 2: Spawn tool
       const outPath = outputPath(loopId, storyId, attempt);
-      const prompt = await buildPrompt(story, project, feedback);
+      const prompt = await buildPrompt(story, workDir, feedback);
 
       const runToolResult = await step.run("run-tool", async () => {
         const guard = await guardStory(loopId, storyId, runToken);
@@ -393,7 +394,7 @@ export const agentLoopImplement = inngest.createFunction(
           );
           return { blocked: true as const, reason: guard.reason };
         }
-        const exitCode = await spawnTool(tool, prompt, project, loopId, outPath);
+        const exitCode = await spawnTool(tool, prompt, workDir, loopId, outPath);
         await renewLease(loopId, storyId, runToken);
         return { blocked: false as const, exitCode };
       });
@@ -410,9 +411,9 @@ export const agentLoopImplement = inngest.createFunction(
           );
           return { blocked: true as const, reason: guard.reason, sha: "" };
         }
-        const headAfter = await getHeadSha(project);
+        const headAfter = await getHeadSha(workDir);
         const toolCommitted = headAfter !== headBefore;
-        const uncommitted = await hasUncommittedChanges(project);
+        const uncommitted = await hasUncommittedChanges(workDir);
 
         if (toolCommitted && !uncommitted) {
           // Tool already committed and no remaining changes — use its sha
@@ -428,7 +429,7 @@ export const agentLoopImplement = inngest.createFunction(
 
         // There are uncommitted changes — make the harness commit
         const msg = commitMessage(loopId, storyId, attempt, story.title);
-        const sha = await gitCommit(project, msg);
+        const sha = await gitCommit(workDir, msg);
         await renewLease(loopId, storyId, runToken);
         return { blocked: false as const, sha };
       });
@@ -455,6 +456,7 @@ export const agentLoopImplement = inngest.createFunction(
         data: {
           loopId,
           project,
+          workDir,
           storyId,
           commitSha: sha,
           attempt,
