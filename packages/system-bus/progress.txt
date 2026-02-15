@@ -289,3 +289,9 @@ Stories: 6
 - IDEM-4: Wire guardStory into test-writer.ts and implement.ts
 - IDEM-5: Wire guardStory into review.ts and judge.ts with release
 - IDEM-6: Move progress tracking from filesystem to Redis
+
+### 2026-02-15T08:00:24.877Z
+**Story IDEM-1: Add lease-based claim helpers to utils.ts** — PASSED (attempt 1)
+- Tool: claude
+- Tests passed: 201
+- Typecheck: ✅ | Lint: ✅
