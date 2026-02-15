@@ -2,38 +2,8 @@
 
 import Link from "next/link";
 import type { AdrMeta } from "../../lib/adrs";
+import { STATUS_CONFIG } from "./status-config";
 import { AdrFilterBar, useStatusFilter } from "./adr-filters";
-
-const STATUS_CONFIG: Record<
-  string,
-  { color: string; bg: string; border: string }
-> = {
-  accepted: {
-    color: "text-green-400",
-    bg: "bg-green-950/40",
-    border: "border-green-800/50",
-  },
-  proposed: {
-    color: "text-yellow-400",
-    bg: "bg-yellow-950/30",
-    border: "border-yellow-800/50",
-  },
-  superseded: {
-    color: "text-neutral-500",
-    bg: "bg-neutral-900/40",
-    border: "border-neutral-700/50",
-  },
-  implemented: {
-    color: "text-claw",
-    bg: "bg-pink-950/20",
-    border: "border-pink-800/40",
-  },
-  deprecated: {
-    color: "text-red-400",
-    bg: "bg-red-950/30",
-    border: "border-red-800/50",
-  },
-};
 
 function StatusBadge({ status }: { status: string }) {
   const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.proposed!;
