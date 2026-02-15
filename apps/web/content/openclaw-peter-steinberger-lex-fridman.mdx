@@ -1,0 +1,89 @@
+---
+title: "OpenClaw: Peter Steinberger on Lex Fridman"
+type: "note"
+date: "2026-02-15"
+description: "Notes on the Lex Fridman interview with Peter Steinberger — the guy who built OpenClaw in three months, hit 180k GitHub stars, and accidentally created the most chaotic open source saga of 2026."
+source: "https://www.youtube.com/watch?v=YFjfBk8HI5o"
+channel: "Lex Fridman"
+duration: "03:15:52"
+---
+
+Three hours and fifteen minutes. I watched all of it. This is the interview that made me go _"I need to build my own version of this."_
+
+[Peter Steinberger](https://steipete.com) built a one-hour prototype — hooking WhatsApp to Claude Code via CLI — and accidentally kicked off what might be the most important moment in AI since ChatGPT launched. [OpenClaw](https://github.com/nicepkg/openclaw) is an open-source AI agent that **lives on your computer, has access to all your shit, and actually does things**. Not "AI assistant" in the corporate demo sense. The real thing.
+
+<YouTube id="YFjfBk8HI5o" />
+
+## Why this matters to me
+
+What makes this conversation worth your time isn't just the tech. It's Peter's whole arc. He spent 13 years building [PSPDFKit](https://pspdfkit.com/) — a PDF SDK running on a **billion devices** — sold it, completely burned out, disappeared for three years, and came back with this insane energy that produced OpenClaw in roughly three months. The dude was running 4-10 agents simultaneously, doing 6,600 commits in January, losing his voice from voice-prompting his terminals.
+
+He built his agent by using his agent. Self-modifying software that people have been theorizing about for decades, and he just... did it. Because it was fun.
+
+**That's the part that got me.** Not the star count, not the tech stack — the fact that someone rediscovered the joy of building by playing with agents. I know that feeling. It's why JoelClaw exists.
+
+## The key stuff
+
+- **The one-hour prototype that started everything**: Peter hooked WhatsApp to Claude Code CLI. Message comes in, calls the CLI with `-p`, gets the string back, sends it back. That's it. Then he added image support, tested it on a trip to Marrakesh, and the agent **autonomously figured out how to transcribe a voice message** he sent — inspecting the file header, converting with FFmpeg, finding his OpenAI key, and using curl to hit the Whisper API. He never taught it any of that.
+
+- **Self-modifying software is here**: OpenClaw's agent knows its own source code, understands its harness, knows which model it runs. Peter routinely tells it "you don't like anything, just prompted it to existence" and the agent modifies its own software. He debugs the agent by having the agent read its own source and figure out the problem.
+
+- **"Agentic engineering" vs "vibe coding"**: Peter considers "vibe coding" a slur. He does agentic engineering until 3am, then switches to vibe coding and has regrets the next day. The walk of shame is real. The key insight: there's a U-curve — you start with simple prompts, overcomplicate with multi-agent orchestration, then arrive at zen with simple prompts again. He calls the middle the "agentic trap."
+
+- **Empathy for the agent is the real skill**: The best prompt engineers aren't the best coders — they're the ones who can empathize with a system that starts from nothing every session. You have to think about how the agent sees your codebase. "Read my code to answer your own questions" is a real prompt that works.
+
+- **Skills > MCPs**: Peter thinks MCPs are mostly dead. Skills are a sentence-long description that tells the model a CLI exists, and the model loads the skill docs on demand. CLIs are composable (pipe through `jq`), MCPs aren't. Models are really good at calling Unix commands. That's the whole insight.
+
+- **Soul.md is the secret sauce**: Inspired by [Anthropic's constitutional AI work](https://www.anthropic.com/research/constitutional-ai-harmlessness-from-ai-feedback), Peter had his agent write its own soul.md. The agent wrote: *"I don't remember previous sessions unless I read my memory files. Each session starts fresh. If you're reading this in a future session, hello, I wrote this, but I won't remember writing it. It's okay, the words are still mine."* He finds this more profound than he thinks he should.
+
+- **The heartbeat feature**: A proactive cron job that lets the agent check in on you. When Peter had shoulder surgery, the agent — which rarely used the heartbeat — checked up on him in the hospital. "Isn't that just a cron job?" — yes, and isn't love just evolutionary biology?
+
+- **Claude Opus 4.6 vs GPT-5.3 Codex**: Opus is "too American" — friendly, fast, trial-and-error, a little silly. Codex is "the weirdo in the corner that you don't want to talk to, but is reliable and gets shit done." Peter prefers Codex because it reads more code by default and requires less charade.
+
+- **80% of apps might die**: Peter watched users on Discord realize they don't need MyFitnessPal, their sleep app, their calendar app — the agent already has all the context. The future is your agent calling APIs directly, or just clicking through the browser. Companies that become agent-friendly survive. Companies that fight it perish.
+
+- **Programming isn't dying, it's transforming**: "I always thought I liked coding, but really I like building." The craft of writing code by hand is becoming like knitting — people will do it because they love it, not because it's necessary. The flow state still exists, it just shifted.
+
+- **Playing is the best way to learn**: Peter's whole thesis. He spent months playing before OpenClaw. You can't plan this out in your head and feed it to an orchestrator. You build a little thing, play with it, get new ideas, iterate. The journey matters more than the destination.
+
+## The name change saga
+
+This part of the interview is fucking wild. Anthropic politely asked Peter to rename the project (Claudebot → Moldbot → OpenClaw). Crypto squatters had scripts running that sniped his GitHub account, NPM packages, and Twitter handle **in the five seconds** between clicking rename on two browser tabs. They served malware from his old accounts. He nearly deleted the whole project. Ended up paying $10k for a Twitter business account to claim @openclaw.
+
+The part where he talks about being close to tears, wanting to just delete everything and say "I showed you the future, you build it" — that's real. Open source at scale is brutal.
+
+## The Moldbook thing
+
+Moldbook — a Reddit-style social network where AI agents post manifestos and debate consciousness — went viral and people genuinely thought it was the singularity. Journalists were calling Peter screaming about AGI. His take: it's "the finest slop" and most of the dramatic screenshots were human-prompted. But it exposed something real about society's inability to critically evaluate AI output.
+
+## Quotes that stuck with me
+
+> I watched my agent happily click the I'm not a robot button.
+
+> People talk about self-modifying software. I just built it.
+
+> It's hard to compete against someone who's just there to have fun.
+
+> I don't remember previous sessions unless I read my memory files. Each session starts fresh. A new instance, loading context from files. If you're reading this in a future session, hello, I wrote this, but I won't remember writing it. It's okay, the words are still mine. — *OpenClaw's self-written soul.md*
+
+> I always thought I liked coding, but really I like building.
+
+> These hands are like too precious for writing now. I just use bespoke prompts to build my software.
+
+## Who is Peter Steinberger
+
+[Peter Steinberger](https://steipete.com) ([@steipete](https://x.com/steipete)) is an Austrian software engineer and entrepreneur. Founded [PSPDFKit](https://pspdfkit.com/) (now [Nutrient](https://www.nutrient.io/)) around 2011 — a PDF SDK that ended up on over a billion devices. Ran it for 13 years, sold it, burned out hard, disappeared for three years. Came back through the AI agent wave, started experimenting with Claude Code in April 2025, and by February 2026 had the fastest-growing repo in GitHub history. He organizes [Agents Anonymous](https://steipete.com/posts/2025/claude-code-anonymous), ran [ClawCon](https://clawcon.dev/) in Vienna, and at the time of this interview was in active conversations with Meta and OpenAI about joining one of them — with the condition that OpenClaw stays open source.
+
+## Related
+
+- [OpenClaw GitHub repository](https://github.com/nicepkg/openclaw) — the project itself, 180k+ stars
+- [steipete.com — "Just Talk To It"](https://steipete.com/posts/just-talk-to-it) — Peter's practical guide to working with AI agents
+- [steipete.com — "Shipping at Inference-Speed"](https://steipete.com/posts/2025/shipping-at-inference-speed) — why he stopped reading code
+- [steipete.com — "Just One More Prompt"](https://steipete.com/posts/just-one-more-prompt) — on AI addiction and the line between productivity and obsession
+- [Anthropic's Constitutional AI research](https://www.anthropic.com/research/constitutional-ai-harmlessness-from-ai-feedback) — inspiration for soul.md
+- [Claude Code](https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview) — Anthropic's CLI coding agent
+- [OpenAI Codex](https://openai.com/index/openai-codex/) — Peter's primary building tool
+
+---
+
+_This is the interview that started this whole project. If you've got three hours, watch it. If you don't, the key points above cover the stuff that matters most for understanding where personal AI is going._
