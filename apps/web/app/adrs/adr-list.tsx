@@ -95,12 +95,14 @@ export function AdrListWithFilters({
   adrs,
   counts,
   allStatuses,
+  initialActive,
 }: {
   adrs: AdrMeta[];
   counts: Record<string, number>;
   allStatuses: string[];
+  initialActive: string[];
 }) {
-  const { active, toggle } = useStatusFilter(allStatuses);
+  const { active, toggle } = useStatusFilter(allStatuses, initialActive);
 
   return (
     <>

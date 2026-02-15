@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 
 const STATUS_CONFIG: Record<
   string,
@@ -38,15 +38,6 @@ const STATUS_CONFIG: Record<
   },
 };
 
-function readUrlFilters(allStatuses: string[]): Set<string> {
-  if (typeof window === "undefined") return new Set(allStatuses);
-  const params = new URLSearchParams(window.location.search);
-  const raw = params.get("status");
-  if (!raw) return new Set(allStatuses);
-  const parsed = raw.split(",").filter((s) => allStatuses.includes(s));
-  return parsed.length > 0 ? new Set(parsed) : new Set(allStatuses);
-}
-
 function writeUrl(active: Set<string>, allStatuses: string[]) {
   const url = new URL(window.location.href);
   if (active.size === allStatuses.length) {
@@ -57,22 +48,20 @@ function writeUrl(active: Set<string>, allStatuses: string[]) {
   window.history.replaceState(null, "", url.toString());
 }
 
-export function useStatusFilter(allStatuses: string[]) {
+export function useStatusFilter(
+  allStatuses: string[],
+  initialActive: string[]
+) {
   const [active, setActive] = useState<Set<string>>(
-    () => new Set(allStatuses)
+    () => new Set(initialActive)
   );
-
-  // Sync from URL on mount
-  useEffect(() => {
-    setActive(readUrlFilters(allStatuses));
-  }, [allStatuses]);
 
   const toggle = useCallback(
     (status: string) => {
       setActive((prev) => {
         const next = new Set(prev);
         if (next.has(status)) {
-          if (next.size <= 1) return prev; // Can't empty
+          if (next.size <= 1) return prev;
           next.delete(status);
         } else {
           next.add(status);
