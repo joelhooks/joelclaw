@@ -100,9 +100,23 @@ export async function guardStory(
 
   const prdData = await redis.get(prdKey(loopId));
   if (prdData) {
-    const prd = JSON.parse(prdData) as { stories?: Array<{ id?: string; passes?: boolean }> };
+    type GuardStoryPrd = {
+      stories?: Array<{
+        id?: string;
+        status?: string;
+        passes?: boolean;
+        skipped?: boolean;
+      }>;
+    };
+
+    const prd = JSON.parse(prdData) as GuardStoryPrd;
     const story = prd.stories?.find((s) => s.id === storyId);
-    if (story?.passes === true) {
+    if (
+      story?.status === "passed" ||
+      story?.status === "skipped" ||
+      story?.passes === true ||
+      story?.skipped === true
+    ) {
       return { ok: false, reason: "already_passed" };
     }
   }

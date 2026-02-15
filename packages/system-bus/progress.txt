@@ -273,3 +273,19 @@ Needs an ADR.
 - Tool: claude
 - Tests passed: 105
 - Typecheck: ✅ | Lint: ✅
+
+### 2026-02-15T07:56:56.531Z
+## PRD Generated from Goal
+Goal: Implement ADR-0016: Add idempotency guards to the loop event chain. Two parts:
+
+Part A — Idempotency guards: Add Redis SETNX lease-based story claims (claimStory, guardStory, renewLease, releaseClaim in utils.ts). Wire claimStory into plan.ts before dispatching. Wire guardStory into implement.ts, test-writer.ts, review.ts, judge.ts at every side-effect boundary (before tool spawn, before commit, before emit). Wire releaseClaim into judge.ts on pass/skip. Add seedPrd NX guard to prevent state clobber on duplicate start.
+
+Part B — Move progress tracking from filesystem to Redis: Replace progress.txt with Redis key agent-loop:progress:{loopId} (append-only list). Move codebase patterns to agent-loop:patterns:{project} (persists across loops). Move .agent-loop-recommendations.json to agent-loop:recommendations:{project}. Update buildPrompt in implement.ts to read from Redis instead of disk.
+Context: /Users/joel/Vault/docs/decisions/0016-loop-idempotency-guards.md, ~/Vault/docs/decisions/0011-redis-backed-loop-state.md
+Stories: 6
+- IDEM-1: Add lease-based claim helpers to utils.ts
+- IDEM-2: Add seedPrd NX guard to prevent state clobber
+- IDEM-3: Wire claimStory into plan.ts before dispatching
+- IDEM-4: Wire guardStory into test-writer.ts and implement.ts
+- IDEM-5: Wire guardStory into review.ts and judge.ts with release
+- IDEM-6: Move progress tracking from filesystem to Redis
