@@ -36,7 +36,7 @@ export function getAllPosts(): PostMeta[] {
         duration: data.duration,
       };
     })
-    .sort((a, b) => (a.date > b.date ? -1 : 1));
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
 
 export function getPost(slug: string) {
