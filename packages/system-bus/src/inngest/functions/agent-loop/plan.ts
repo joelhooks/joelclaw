@@ -61,6 +61,8 @@ ${contextContent || "(none provided)"}
 ## Instructions
 Generate ${maxStories} or fewer small, focused stories. Each story must be completable by a single AI coding tool (codex or claude) in one invocation.
 
+IMPORTANT: Output the JSON directly to stdout. Do NOT write any files. Do NOT use any tools. Just output the raw JSON and nothing else.
+
 Output ONLY valid JSON matching this schema — no markdown, no commentary:
 {
   "title": "short PRD title",
@@ -97,7 +99,18 @@ Rules:
     throw new Error(`PRD generation failed (exit ${proc.exitCode}): ${stderr.slice(0, 500)}`);
   }
 
-  const parsed = parseClaudeOutput(stdout) as any;
+  let parsed = parseClaudeOutput(stdout) as any;
+
+  // Fallback: Claude may have written the PRD to a file instead of stdout
+  if (!parsed) {
+    try {
+      const prdFile = await Bun.file(`${project}/prd.json`).text();
+      parsed = JSON.parse(prdFile);
+      console.log("[generatePrd] parsed PRD from file fallback");
+    } catch {
+      // noop
+    }
+  }
   if (!parsed) {
     throw new Error(`Failed to parse PRD JSON from claude output: ${stdout.slice(0, 500)}`);
   }
