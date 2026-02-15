@@ -1,0 +1,122 @@
+---
+title: "Teaching My System to Remember"
+date: "2026-02-15"
+description: "Every AI session on my machine starts from zero. The system knows who I am but not what happened yesterday. Here's how I'm building an observation pipeline to fix that — stolen shamelessly from four open-source projects and one very clever pattern from Mastra."
+---
+
+Every AI session on my machine starts from zero.
+
+The system knows who I am — there's an `AGENTS.md`, a `SOUL.md`, identity files that tell it how to behave. But it doesn't know what happened yesterday. It doesn't know I spent three hours debugging an Inngest worker path issue and finally fixed it by running `bootout` + `bootstrap` instead of `kickstart`. It doesn't know I said "slog is for infrastructure only" in four different sessions.
+
+It doesn't *remember*.
+
+## The problem is compaction
+
+Pi (my primary coding agent) has a context window. When a session gets long enough, it compacts — summarizes older messages to make room for new ones. The summary is fine for continuing the current conversation. Goal, progress, decisions, next steps.
+
+But it's optimized for *right now*, not for *next week*. The debugging insight gets compressed into "fixed worker path issue." The hard rule I stated about slog gets folded into a generic "discussed system conventions." The nuance evaporates.
+
+I looked at 23 sessions over my first 24 hours with this system. Four hit compaction. Those four lost the most interesting stuff — the preferences I stated, the root causes I discovered, the architectural decisions I made with full rationale. All flattened into summaries that future sessions can't really learn from.
+
+## What I found: four projects and a pattern
+
+I didn't start from scratch. That would be stupid.
+
+**[Alex Hillman](https://github.com/alexknowshtml)** built three projects for his personal AI system (Andy) that each solve a piece of this. [kuato](https://github.com/alexknowshtml/kuato) parses session histories and makes them searchable — his core insight is that **user messages are the signal**, not full transcripts. [andy-timeline](https://github.com/alexknowshtml/andy-timeline) writes the system's history as narrative chapters, like institutional memory in markdown. [defib](https://github.com/alexknowshtml/defib) monitors system health and auto-recovers — conservative defaults, human-in-the-loop for anything risky.
+
+**[John Lindquist](https://github.com/johnlindquist)** built [lamarck](https://github.com/johnlindquist/lamarck) — Lamarckian evolution for agents. Sessions get reflected on by an LLM, distilled into playbook bullets that get promoted from `candidate` to `established` to `proven` over time. Experience acquired during sessions gets inherited by future sessions. The blacksmith's children inherit strong arms.
+
+And then there's **[Mastra's Observational Memory](https://github.com/mastra-ai/mastra)** — an MIT-licensed pattern inside their agent framework that I think is the missing piece.
+
+## The Observer/Reflector pattern
+
+Mastra's approach is elegant. Two background LLM agents running against your conversations:
+
+The **Observer** watches sessions and extracts structured observations. Not summaries — *observations*. Timestamped, prioritized facts about what happened:
+
+```
+* 🔴 (09:17) Joel stated: "igs send is the transport abstraction. Hard rule."
+* 🔴 (09:19) Worker now runs from monorepo (replacing standalone ~/Code/system-bus/)
+* 🟡 (09:25) Modified session-lifecycle extension to emit events on compaction
+* 🟢 (09:30) Considered Qdrant for observation search — decided to dual-write from Phase 1
+```
+
+The priority levels matter. 🔴 is stuff that's true next month — preferences, rules, decisions. 🟡 is working context — files changed, tools configured. 🟢 is ephemeral — questions asked, options explored.
+
+The **Reflector** runs less often (daily), reads accumulated observations, and condenses them. Older observations get compressed more aggressively. Recent ones stay detailed. The output is proposed updates to the system's long-term memory.
+
+The result is a three-tier context window: raw recent messages → structured observations → condensed reflections. Each tier is more compressed than the last but covers more time.
+
+## How it maps to my system
+
+I'm not importing Mastra. The pattern is MIT-licensed and that's what I'm taking — the architecture, not the dependency. My system already has the infrastructure:
+
+- **Inngest** handles the durable execution. The Observer is an Inngest function, not an in-process background thread. Events fire, functions run whenever the worker picks them up. Retries are automatic.
+- **Redis** stores hot observations. `RPUSH memory:observations:2026-02-15` with JSON entries. 30-day TTL. `SETNX` for deduplication.
+- **Qdrant** stores vector embeddings for semantic search. "What do we know about Inngest debugging?" actually returns relevant observations. [TODO: Joel's take on how well this works in practice — spike showed 0.454 similarity for related queries vs 0.004 for unrelated, but real-world quality is TBD]
+- **Pi itself** runs the LLM calls. The worker already shells out to `pi -p --no-session` for content enrichment. Same pattern — Haiku 4.5 for the Observer (cheap, mechanical extraction), Sonnet 4.5 for the Reflector (needs judgment about what to condense).
+- **Daily logs** in `~/.joelclaw/workspace/memory/` get the human-readable version. Always written first. If Redis is down, at least the daily log has it.
+
+The pi extension (`session-lifecycle` in [pi-tools](https://github.com/joelhooks/pi-tools)) triggers the whole thing. When pi is about to compact, the extension serializes the messages being summarized and fires an event via `igs send`. When a session shuts down with 5+ user messages, same thing. Fire-and-forget — never blocks the session.
+
+## The review loop
+
+The Reflector doesn't write directly to `MEMORY.md`. That felt wrong. Memory should be curated, not auto-generated.
+
+Instead, it stages proposals in a `REVIEW.md` file:
+
+```markdown
+## Proposed for: Hard Rules
+- [ ] `p-20260215-001` **Events follow past-tense naming** — established via ADR-0019
+- [ ] `p-20260215-002` **igs send is the transport abstraction** — stated in 3 sessions
+
+## Proposed for: Patterns
+- [ ] `p-20260215-003` **Dedupe via Redis SETNX with TTL** — proven in observation pipeline
+```
+
+Next session start, the briefing tells me proposals are waiting. I check the boxes, the approved ones get promoted to `MEMORY.md`, rejected ones get archived in the daily log. Eventually, once I trust the pipeline, high-confidence proposals could auto-promote. But not yet.
+
+## Friction analysis: the self-healing part
+
+This is the piece I'm most interested in and haven't built yet.
+
+The Observer sees one session at a time. But the interesting patterns are **across** sessions. If I've corrected the agent about the same thing in four different sessions, that's a friction signal. If the same debugging loop keeps appearing, that's infrastructure that needs fixing. If a skill keeps getting invoked incorrectly, the skill needs updating.
+
+A daily Inngest cron queries Qdrant for the past week of observations, clusters them by semantic similarity, and looks for repeated corrections, recurring failures, and tool misuse patterns. The output is concrete fix proposals — not "improve the system" but "add this line to AGENTS.md because Joel has stated this rule 4 times and the agent keeps forgetting."
+
+That's the endgame. A system that watches itself struggle and proposes its own fixes, with a human reviewing the proposals.
+
+## What's real and what isn't
+
+I want to be honest about the status here.
+
+**What's real today:**
+- The memory workspace (`MEMORY.md` + daily logs) exists and is used every session
+- The session-lifecycle extension handles briefing, compaction flush, and shutdown handoff
+- Redis, Qdrant, and Inngest are running
+- I spiked every component in the pipeline and they all work individually
+
+**What's designed but not built:**
+- The Observer Inngest function
+- The Reflector + review workflow
+- Local embeddings via `nomic-embed-text`
+- The friction analysis cron
+
+**What's aspirational:**
+- Lamarck-style bullet lifecycle with maturity levels and feedback decay
+- Weekly narrative timeline chapters
+- Auto-promotion of trusted proposals
+
+The full design lives in [ADR-0021](https://github.com/joelhooks/joelclaw) with implementation phases, event schemas, prompts, and verification criteria. It supersedes two earlier ADRs that each tried to solve a piece of this separately.
+
+## Credits
+
+This design stands on other people's work.
+
+**Alex Hillman** ([@alexknowshtml](https://github.com/alexknowshtml)) — kuato, andy-timeline, defib. The "user messages are the signal" insight and the narrative memory format come directly from his work on Andy. Alex co-founded [Indy Hall](https://indyhall.org) and [Stacking the Bricks](https://stackingthebricks.com).
+
+**John Lindquist** ([@johnlindquist](https://github.com/johnlindquist)) — lamarck. The Lamarckian inheritance metaphor, the reflection pipeline, and bullet lifecycle are his. John co-founded [egghead.io](https://egghead.io) and built [Script Kit](https://scriptkit.com).
+
+**Mastra AI** ([@mastra-ai](https://github.com/mastra-ai/mastra)) — the Observational Memory pattern. Observer/Reflector architecture, priority-based extraction, compression guidance. MIT licensed.
+
+I'm not building anything novel here. I'm wiring together patterns that smart people already figured out, on infrastructure I already have running. That's the whole point.
