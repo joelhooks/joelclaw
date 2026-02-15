@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import Link from "next/link";
+import { NuqsAdapter } from "nuqs/adapters/next";
 import { SITE_URL, SITE_NAME, SITE_TAGLINE, SITE_DESCRIPTION, AUTHOR } from "../lib/constants";
 import { personJsonLd } from "../lib/jsonld";
 import { CLAW_PATH } from "../lib/claw";
@@ -107,7 +108,9 @@ export default function RootLayout({
               </nav>
             </div>
           </header>
-          <main>{children}</main>
+          <NuqsAdapter>
+            <main>{children}</main>
+          </NuqsAdapter>
           <footer className="mt-24 pt-8 border-t border-neutral-800 text-sm text-neutral-500">
             <p>
               © {new Date().getFullYear()} {AUTHOR.name}
