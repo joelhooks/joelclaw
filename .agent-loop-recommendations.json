@@ -1,0 +1,17 @@
+{
+  "toolRankings": [
+    {
+      "tool": "claude",
+      "passRate": 0,
+      "avgAttempts": 1
+    }
+  ],
+  "retryPatterns": [
+    "4 story(ies) ended skipped; add stricter decomposition and narrower acceptance slices on next loop."
+  ],
+  "suggestedRetryLadder": [
+    "claude"
+  ],
+  "lastUpdated": "2026-02-15T01:51:08.056Z",
+  "sourceLoopId": "loop-mln1ehr9-yvhpy8"
+}
