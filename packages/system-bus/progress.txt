@@ -1,0 +1,221 @@
+## Codebase Patterns
+
+- Bun runtime, NOT Node.js. Use Bun.$ for shell, Bun.file for fs, bun test for testing
+- Inngest v3 SDK with typed events via EventSchemas().fromRecord<Events>()
+- Functions use step.run() for retryable steps, inngest.send() for event emission
+- HATEOAS JSON responses throughout (igs CLI pattern)
+- Effect-based CLI (igs) with BunRuntime
+- Config from ~/.config/system-bus.env (INNGEST_EVENT_KEY, INNGEST_URL, etc.)
+- Worker serves on port 3111 via Hono
+- Inngest server at localhost:8288
+- slog for structured logging
+- All functions in src/inngest/functions/, exported via index.ts
+
+## Progress
+
+### 2026-02-14T22:17:00Z — S1: Event schema and client types
+- Added all agent/loop.* event types to client.ts
+- 9 event types with full TypeScript typing
+- Compiles clean
+
+### 2026-02-14T22:19:00Z — S2: Shared loop utilities
+- Created src/inngest/functions/agent-loop/utils.ts
+- Helpers: isCancelled, writePidFile, parseToolOutput, claimCheck, readPrd, updateStoryPass, appendProgress, commitExists, gitCommit
+- All type-safe, compiles clean
+
+### 2026-02-14T22:20:00Z — S3: PLANNER function
+- Created agent-loop-plan.ts
+- Reads PRD, finds next unpassed story by priority, emits implement or complete
+- Concurrency keyed on event.data.project (CEL expression, not template syntax)
+
+### 2026-02-14T22:21:00Z — S4: IMPLEMENTOR function
+- Created agent-loop-implement.ts
+- Spawns tool subprocess (codex/claude/pi), captures output, commits, emits review
+- Idempotency check via commit message grep
+- PID file for cancellation support
+
+### 2026-02-14T22:22:00Z — S5: REVIEWER function
+- Created agent-loop-review.ts
+- Writes tests from acceptance criteria WITHOUT reading implementation (AgentCoder insight)
+- Runs typecheck + lint + bun test
+- Produces structured feedback, uses claim-check for large output
+
+### 2026-02-14T22:23:00Z — S6: JUDGE function
+- Created agent-loop-judge.ts
+- PASS: updates prd.json, appends progress.txt, slog write, emits plan
+- FAIL (retries left): emits implement with feedback
+- FAIL (max retries): skips story, flags for human review, emits plan
+
+### 2026-02-14T22:24:00Z — S7: Register functions + wire serve.ts
+- All 4 functions exported from index.ts, registered in serve.ts
+- Worker starts, reports 8 functions
+- All 8 visible in igs functions
+- Key learning: Inngest concurrency keys use CEL (event.data.X), NOT {{ }} templates. "loop" is reserved in CEL.
+
+### 2026-02-14T22:28:00Z — S8: igs loop CLI subcommands
+- Added igs loop start/status/cancel to igs CLI
+- Start sends agent/loop.start with generated loopId
+- Status filters runs by agent-loop function names
+- Cancel writes flag, kills subprocess, sends cancel event
+- All return HATEOAS JSON
+
+### 2026-02-14T22:33:00Z — S9: End-to-end smoke test
+- Created test project at /tmp/agent-loop-test with 1-story prd.json
+- Full pipeline: PLAN→IMPLEMENT(codex)→REVIEW(claude)→JUDGE→PASS
+- Codex correctly added farewell() function
+- Claude wrote 3-4 tests from acceptance criteria independently
+- Judge saw all green, updated prd.json, wrote progress.txt, logged to slog
+- Each step visible as separate run in igs runs
+- Bugs fixed during testing:
+  - codex exec doesn't accept -q flag (removed)
+  - Inngest concurrency key uses CEL (event.data.X), not {{ }} templates
+  - "loop" is reserved in CEL — renamed concurrency prefix
+  - Judge must markStorySkipped to prevent planner re-picking failed stories
+
+### 2026-02-14T22:59:00Z — V2-1: Enforce maxIterations in PLANNER
+- Added maxIterations (optional, default 100) to agent/loop.plan, implement, review, judge event types
+- PLANNER counts attemptedStories (passes===true OR skipped===true) and stops at maxIterations
+- Emits agent/loop.complete with summary containing 'max_iterations_reached'
+- maxIterations threaded through entire event chain: plan→implement→review→judge→plan
+- maxRetries also now threaded through judge→plan re-entry
+- Pattern: use (event.data as any).fieldName for fields that differ between union triggers
+
+### 2026-02-14T23:02:00Z — V2-2: Double-commit prevention in IMPLEMENTOR
+- Added hasUncommittedChanges() and getHeadSha() helpers to utils.ts
+- IMPLEMENTOR records HEAD before tool runs, compares after
+- Three cases: (1) tool committed + no remaining changes → use tool's sha, (2) no changes at all → use HEAD, (3) uncommitted changes → harness commits
+- No duplicate commits when codex auto-commits in --full-auto mode
+- Pattern: record headBefore/headAfter to detect tool auto-commits
+
+### 2026-02-14T23:05:00Z — V2-3: Duration tracking across the pipeline
+- IMPLEMENTOR records storyStartedAt = Date.now() in first step
+- storyStartedAt threaded: implement → review → judge
+- JUDGE calculates durationMs = Date.now() - storyStartedAt
+- Both agent/loop.story.pass and agent/loop.story.fail events include duration
+- Added storyStartedAt to review and judge event types in client.ts
+- Added duration to story.fail event type (story.pass already had it)
+
+### 2026-02-14T23:08:00Z — V2-4: Rich implementor prompt assembly
+- buildPrompt() now async, reads project context: progress.txt patterns, CLAUDE.md, AGENTS.md, file listing
+- extractCodebasePatterns() pulls "## Codebase Patterns" section from progress.txt
+- getFileListing() shows top-level + src/ files, capped at 50 lines
+- Total prompt capped at ~8000 chars with deterministic truncation order:
+  patterns (highest priority) > file listing > CLAUDE.md > AGENTS.md (lowest)
+- Context sections placed BEFORE story core for better LLM attention
+- Pattern: use Bun.file(path).text() in try/catch for optional file reads
+
+### 2026-02-14T23:11:00Z — V2-5: Feature branch lifecycle in PLANNER
+- On agent/loop.start: PLANNER creates and checks out branch agent-loop/{loopId}
+- On agent/loop.plan (re-entry): verifies branch, switches to it if needed
+- agent/loop.complete events now include branchName field
+- All story commits land on feature branch, not default branch
+- Pattern: git checkout -b for creation, git rev-parse --abbrev-ref HEAD for verification
+
+### 2026-02-14T23:12:00Z — V2-6: Dockerfile for agent-loop-runner
+- Created docker/agent-loop-runner/Dockerfile (debian:bookworm-slim based)
+- Image contains: Node.js 22, bun, git, codex CLI, claude CLI (all verified)
+- Entrypoint accepts REPO_URL, BRANCH, GITHUB_TOKEN, WORK_DIR env vars
+- Clones with token auth (x-access-token), configures git identity as joelclawgithub[bot]
+- Image size: 1.02GB (under 2GB target)
+- Pattern: codex/claude CLIs need Node.js, not just bun (#!/usr/bin/env node shebang)
+- Pattern: install node via nodesource deb repo for Debian
+
+### 2026-02-14T23:15:00Z — V2-7: Container runner utility
+- Added mintGitHubToken() to utils.ts — shells out to github-token.sh
+- Added isDockerAvailable() and spawnInContainer() to utils.ts
+- spawnInContainer: mints token, starts agent-loop-runner container, clones repo, runs tool, captures output
+- Passes OPENAI_API_KEY and ANTHROPIC_API_KEY from host env into container
+- Docker timeout via docker kill on container name
+- spawnTool() in implement.ts now delegates to Docker when AGENT_LOOP_DOCKER=1 env set
+- Falls back to host execution when Docker unavailable or no git remote
+- SSH-to-HTTPS conversion for git remote URLs
+- Pattern: containerName includes loopId+storyId+timestamp for uniqueness
+
+### 2026-02-14T23:18:00Z — V2-8: Push branch on loop completion
+- Created agent-loop-complete.ts — new Inngest function triggered by agent/loop.complete
+- Mints GitHub App token, pushes feature branch to origin via HTTPS with x-access-token
+- Push failure is logged but not fatal — loop still completes successfully
+- slog entry written on push success or failure
+- Added push?: boolean to agent/loop.start event type
+- igs loop start now accepts --push flag (default: true)
+- Added pushResult to agent/loop.complete event type
+- Total function count now 9 (was 8)
+- Pattern: after adding new function, may need to force re-registration via PUT /api/inngest
+- Pattern: SSH→HTTPS conversion for git remote URLs
+
+## Notes for Later
+
+- **PRD in Redis**: PRD state (stories, passes, skipped) should live in Redis/KV instead of mutating a JSON file on disk. Eliminates race conditions, enables multi-agent reads, better for Docker-isolated execution where container can't write back to host PRD.
+- **"Note for later" skill/trigger for igs**: Quick capture command (e.g. `igs note "thought"`) that writes to a queue. System heartbeat picks up notes and routes them — could become todos, ADRs, PRD stories, or just logs. Inbox pattern for agent-generated ideas mid-task.
+
+## Notes for Later
+
+- **joelclaw rename**: igs should be renamed to joelclaw, live in joelhooks/joelclaw/packages. The CLI is the system identity, not just an Inngest wrapper.
+- **PRD in Redis**: PRD state should move from JSON files to Redis. Eliminates race conditions, enables multi-agent reads, better for Docker isolation.
+- **"Note for later" igs integration**: Wire joelclaw-notes Redis queue into igs as `igs note "thought"` subcommand. Emit Inngest event on capture.
+- **NOTE-3 listNotes fix**: The skipped story's code and tests actually work now (62 pass). Just needs the prd.json entry un-skipped. The recheck pass (V3-1) would have caught this automatically.
+
+### 2026-02-15T00:10:47Z — V3 Recovery: V3-1, V3-2, V3-3
+- V3-1 (PLANNER recheck pass): `plan.ts` now rechecks skipped stories when no remaining stories exist, running `bunx tsc --noEmit` + `bun test` per skipped story before loop completion.
+- V3-1: successful rechecks unskip and mark `passes=true` in PRD; failing rechecks remain skipped. Added `progress.txt` entries + `slog` actions (`recheck-pass`, `recheck-still-failing`) and included recheck counts in loop complete summary.
+- V3-2 (retry ladder): added optional `retryLadder` to agent loop event schemas and threaded it through start/plan/implement/review/judge/plan re-entry.
+- V3-2: JUDGE retry tool selection now uses ladder-by-attempt (default `['codex', 'claude', 'codex']`) instead of hardcoded `codex`.
+- V3-3 (stale tests): JUDGE detects repeated failing test names across consecutive attempts (current `testResults.details` vs prior attempt feedback) and emits `freshTests: true` on retry implement events.
+- V3-3: added optional `freshTests` to implement/review event types; REVIEWER now deletes existing test files before writing new tests when `freshTests` is true and uses a strict fresh-eyes prompt instruction.
+- Metadata threading: `storyStartedAt` now persists across retries by passing through implement retry events instead of resetting on each attempt.
+- Verification: `bunx tsc --noEmit src/serve.ts src/inngest/client.ts src/inngest/functions/agent-loop/*.ts` passed.
+
+## System State Snapshot — 2026-02-14T16:24:00-08:00
+
+### Running & Tested
+- Agent loop v2+v3: 9 functions, 3 successful loop runs today
+- igs CLI: full subcommand set, Effect-based, HATEOAS JSON
+- system-bus worker: Hono on 3111, launchd managed
+- Docker: Inngest server, Redis (6379), Qdrant (6333) all healthy
+- agent-loop-runner image: 1GB, bun/git/codex/claude verified
+- slog: structured logging active
+
+### Built but barely used (1 run each)
+- video-download, transcript-process, content-summarize pipelines
+- Qdrant running but 0 collections (no vectors stored)
+
+### Code exists, never exercised
+- Docker-isolated loop execution (AGENT_LOOP_DOCKER never set, blocked on PRD-in-Redis)
+- Branch push on completion (no real repo with remote tested)
+- vault-log-sync launchd agent (not running)
+
+### ADRs proposed, zero implementation
+- ADR-0006: Observability (Prometheus+Grafana)
+- ADR-0008: Loop retrospective/skill evolution
+- ADR-0009: igs → joelclaw rename
+
+### Blocking dependency chain
+PRD-in-Redis → Docker isolation → real branch push → PR workflow
+
+### 2026-02-15T00:32:14Z — RETRO-1: agent-loop-retro Inngest function
+- Added `src/inngest/functions/agent-loop/retro.ts` triggered by `agent/loop.complete`
+- Reads `progress.txt` from project and PRD from Redis via `readPrd(project, "prd.json", loopId)`
+- Builds retrospective object with `loopId`, `project`, `storiesCompleted`, `storiesFailed`, `storiesSkipped`, `storyDetails`, `codebasePatterns`, `totalDurationEstimate`
+- Emits `agent/loop.retro.complete` with retrospective payload
+- Added `agent/loop.retro.complete` event type to `src/inngest/client.ts` (optional fields for compatibility)
+- Wired retro function through `src/inngest/functions/agent-loop/index.ts`, `src/inngest/functions/index.ts`, and `src/serve.ts`
+- Verification: `bunx tsc --noEmit src/serve.ts src/inngest/client.ts src/inngest/functions/agent-loop/*.ts` passed
+
+### 2026-02-15T00:32:54Z — RETRO-2: Structured reflection note in Vault
+- Extended `agent-loop-retro` to write `~/Vault/system/retrospectives/{loopId}.md`
+- Uses `VAULT_PATH` env with fallback: `${HOME}/Vault`
+- Creates directory via `mkdirSync(..., { recursive: true })`
+- Writes note via `Bun.write` with YAML frontmatter: `loopId`, `project`, `date`, `storiesCompleted`, `storiesFailed`, `storiesSkipped`
+- Added sections: `## Summary`, `## Story Outcomes`, `## Codebase Patterns`, `## What Worked`, `## What Struggled`, `## Recommendations`
+- Story outcomes rendered as markdown table: `id`, `title`, `result`, `attempts`, `tool`
+- Added `slog` entry with action `retro-complete`
+- Verification: `bunx tsc --noEmit src/serve.ts src/inngest/client.ts src/inngest/functions/agent-loop/*.ts` passed
+
+### 2026-02-15T00:33:36Z — RETRO-3: Planner recommendations file + prompt integration
+- Extended `agent-loop-retro` to write `${project}/.agent-loop-recommendations.json`
+- Recommendations payload contains: `toolRankings` (`tool`, `passRate`, `avgAttempts`), `retryPatterns`, `suggestedRetryLadder`, `lastUpdated`, `sourceLoopId`
+- Added recommendation synthesis from `storyDetails` (tool effectiveness and retry/skip correlation)
+- Updated `buildPrompt` in `src/inngest/functions/agent-loop/implement.ts` to read `.agent-loop-recommendations.json` when present
+- Added `## Prior Loop Recommendations` context section with priority immediately after codebase patterns
+- Backward compatible behavior preserved: if file is missing or invalid JSON, prompt assembly remains unchanged
+- Verification: `bunx tsc --noEmit src/serve.ts src/inngest/client.ts src/inngest/functions/agent-loop/*.ts` passed

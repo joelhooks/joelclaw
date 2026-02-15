@@ -1,0 +1,21 @@
+{
+  "name": "@joelclaw/system-bus",
+  "module": "src/serve.ts",
+  "scripts": {
+    "dev": "bun run --watch src/serve.ts",
+    "start": "bun run src/serve.ts"
+  },
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "hono": "^4.11.9",
+    "inngest": "^3.52.0",
+    "ioredis": "^5.9.3"
+  }
+}
