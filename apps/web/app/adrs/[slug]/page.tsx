@@ -82,7 +82,7 @@ export default async function AdrPage({ params }: Props) {
         <MDXRemote
           source={content}
           components={mdxComponents}
-          options={{ mdxOptions: { remarkPlugins, rehypePlugins } }}
+          options={{ mdxOptions: { remarkPlugins, rehypePlugins, format: "md" } }}
         />
       </div>
     </article>
