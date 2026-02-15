@@ -5,6 +5,24 @@ export interface ObserverOutput {
   parsed: boolean;
 }
 
+export function optimizeForContext(observations: string): string {
+  if (observations.trim().length === 0) {
+    return "";
+  }
+
+  return observations
+    .split(/\r?\n/)
+    .filter((line) => {
+      if (line.includes("🟡") || line.includes("🟢")) {
+        return false;
+      }
+
+      return line.includes("🔴") || line.startsWith("Date:");
+    })
+    .join("\n")
+    .trim();
+}
+
 function extractTagContent(raw: string, tagName: string): string | null {
   const pattern = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, "i");
   const match = raw.match(pattern);
