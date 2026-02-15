@@ -228,3 +228,18 @@ PRD-in-Redis → Docker isolation → real branch push → PR workflow
   - Deprecate ~/Code/system-bus, ~/Code/joelhooks/igs, ~/Code/joelclaw-notes as standalone
   - Update all hardcoded paths in launchd plists, skills, continuation docs
 - **Old ~/Code/system-bus still exists** — codex wrote retro there, we synced. Should eventually rm or symlink.
+
+## Priority: System Loop (OpenClaw Gateway)
+
+The coding loop (PLANNER→IMPLEMENTOR→REVIEWER→JUDGE) is a task executor. It needs a higher-level system loop that:
+1. **SENSE** — watches: note queue, slog, Inngest events, retro outputs, Vault changes
+2. **ORIENT** — builds: current system state, half-done inventory, blockers, opportunities
+3. **DECIDE** — picks: next action, priority, routing (which pipeline, which tool)
+4. **ACT** — fires: coding loops, video pipelines, note processing, system maintenance
+5. **LEARN** — feeds: retro recommendations back into decision model, skill evolution
+
+This is the "heartbeat" that processes the note queue, the thing that turns retrospectives into system improvements, the autonomous judgment layer. Without it, Joel is the gateway.
+
+Candidate Inngest pattern: a cron-triggered `system/heartbeat` function that runs every N minutes, reads the state of the world, and emits events. Or: an always-on LLM session that receives all terminal events and maintains context.
+
+Needs an ADR.
