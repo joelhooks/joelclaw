@@ -133,3 +133,7 @@ This option best satisfies the decision drivers. It preserves near-real-time aut
 - [ ] Cost budget enforcement prevents action emission when the orchestration budget is exhausted and logs a budget-denied decision.
 - [ ] Destructive actions require explicit human approval; without approval, the function emits no destructive event and records `approvalRequired=true`.
 - [ ] Every decision path, including `do_nothing`, writes a reasoning entry to slog that can be queried by `decisionId`.
+
+## Notes
+
+This ADR is intentionally implementation-oriented so the gateway behavior is testable and auditable.
