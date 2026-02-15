@@ -164,17 +164,17 @@ describe("AC-4: Outputs JSON notes with question answers and evidence", () => {
   });
 });
 
-// ── AC-5: Emits agent/loop.judge with reviewer notes attached ────────────────
-describe("AC-5: Emits agent/loop.judge with reviewer notes attached", () => {
-  test("emits agent/loop.judge event", async () => {
+// ── AC-5: Emits agent/loop.checks.completed with reviewer notes attached ────────────────
+describe("AC-5: Emits agent/loop.checks.completed with reviewer notes attached", () => {
+  test("emits agent/loop.checks.completed event", async () => {
     const source = await readSource();
-    expect(source).toContain('"agent/loop.judge"');
+    expect(source).toContain('"agent/loop.checks.completed"');
   });
 
   test("judge event data includes reviewerNotes field", async () => {
     const source = await readSource();
     const judgeBlock = source.match(
-      /name:\s*["']agent\/loop\.judge["'][\s\S]*?data:\s*\{([\s\S]*?)\}\s*,?\s*\}/
+      /name:\s*["']agent\/loop\.checks\.completed["'][\s\S]*?data:\s*\{([\s\S]*?)\}\s*,?\s*\}/
     );
     expect(judgeBlock).not.toBeNull();
     expect(judgeBlock![1]).toContain("reviewerNotes");
@@ -183,7 +183,7 @@ describe("AC-5: Emits agent/loop.judge with reviewer notes attached", () => {
   test("judge event data includes testResults field", async () => {
     const source = await readSource();
     const judgeBlock = source.match(
-      /name:\s*["']agent\/loop\.judge["'][\s\S]*?data:\s*\{([\s\S]*?)\}\s*,?\s*\}/
+      /name:\s*["']agent\/loop\.checks\.completed["'][\s\S]*?data:\s*\{([\s\S]*?)\}\s*,?\s*\}/
     );
     expect(judgeBlock).not.toBeNull();
     expect(judgeBlock![1]).toContain("testResults");
@@ -194,7 +194,7 @@ describe("AC-5: Emits agent/loop.judge with reviewer notes attached", () => {
     expect(source).toContain("emit-judge");
   });
 
-  test("review.ts does NOT emit agent/loop.implement or agent/loop.test", async () => {
+  test("review.ts does NOT emit agent/loop.tests.written or agent/loop.story.dispatched", async () => {
     const source = await readSource();
     const sends = [...source.matchAll(/name:\s*["']agent\/loop\.(\w+)["']/g)];
     const emittedEvents = sends.map((m) => m[1]);
@@ -205,7 +205,7 @@ describe("AC-5: Emits agent/loop.judge with reviewer notes attached", () => {
   test("judge event includes story and attempt data for retry support", async () => {
     const source = await readSource();
     const judgeBlock = source.match(
-      /name:\s*["']agent\/loop\.judge["'][\s\S]*?data:\s*\{([\s\S]*?)\}\s*,?\s*\}/
+      /name:\s*["']agent\/loop\.checks\.completed["'][\s\S]*?data:\s*\{([\s\S]*?)\}\s*,?\s*\}/
     );
     expect(judgeBlock).not.toBeNull();
     expect(judgeBlock![1]).toContain("attempt");
@@ -270,12 +270,12 @@ describe("AC-7: TypeScript compiles cleanly (partial check)", () => {
     expect(fn.opts?.id).toBe("agent-loop-review");
   });
 
-  test("agentLoopReview triggers on agent/loop.review", async () => {
+  test("agentLoopReview triggers on agent/loop.code.committed", async () => {
     const mod = await import("./review.ts");
     const fn = mod.agentLoopReview as any;
     const triggers = fn.opts?.triggers ?? [];
     const eventNames = triggers.map((t: any) => t.event);
-    expect(eventNames).toContain("agent/loop.review");
+    expect(eventNames).toContain("agent/loop.code.committed");
   });
 
   test("agentLoopReview has retries set to 0", async () => {

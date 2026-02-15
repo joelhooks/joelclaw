@@ -307,7 +307,7 @@ export const agentLoopReview = inngest.createFunction(
     },
     retries: 0,
   },
-  [{ event: "agent/loop.review" }],
+  [{ event: "agent/loop.code.committed" }],
   async ({ event, step }) => {
     const {
       loopId,
@@ -389,7 +389,7 @@ export const agentLoopReview = inngest.createFunction(
       }
 
       await inngest.send({
-        name: "agent/loop.judge",
+        name: "agent/loop.checks.completed",
         data: {
           loopId,
           project,
@@ -416,7 +416,7 @@ export const agentLoopReview = inngest.createFunction(
         },
       });
       return {
-        event: "agent/loop.judge",
+        event: "agent/loop.checks.completed",
         storyId,
         typecheck: results.typecheckOk,
         lint: results.lintOk,

@@ -260,7 +260,7 @@ export const agentLoopJudge = inngest.createFunction(
     },
     retries: 1,
   },
-  [{ event: "agent/loop.judge" }],
+  [{ event: "agent/loop.checks.completed" }],
   async ({ event, step }) => {
     const {
       loopId,
@@ -377,42 +377,32 @@ export const agentLoopJudge = inngest.createFunction(
         return { storyId, verdict: "pass", attempt, tool };
       });
 
-      // Emit story pass event with duration
       const durationMs = storyStartedAt ? Date.now() - storyStartedAt : 0;
-      await step.run("emit-story-pass", async () => {
-        await inngest.send({
-          name: "agent/loop.story.pass",
-          data: {
-            loopId,
-            storyId,
-            commitSha: "",
-            attempt,
-            duration: durationMs,
-          },
-        });
-        return { event: "agent/loop.story.pass", storyId, durationMs };
-      });
 
-      // Release claim BEFORE continuation — story is already passed in PRD,
-      // so guardStory would return "already_passed" and block us.
+      // Release claim BEFORE emitting — story is already passed in PRD
       await step.run("release-claim-pass", async () => {
         await releaseClaim(loopId, storyId);
         return { storyId, action: "released-claim" };
       });
 
-      await step.run("emit-next-plan", async () => {
+      // ADR-0019: story.passed carries planner re-entry data (no separate plan emit)
+      await step.run("emit-story-pass", async () => {
         await inngest.send({
-          name: "agent/loop.plan",
+          name: "agent/loop.story.passed",
           data: {
             loopId,
             project,
             prdPath,
+            storyId,
+            commitSha: "HEAD",
+            attempt,
+            duration: durationMs,
             maxIterations,
             maxRetries,
             retryLadder,
           },
         });
-        return { event: "agent/loop.plan", next: "pick-next-story" };
+        return { event: "agent/loop.story.passed", storyId, durationMs };
       });
 
       return { status: "passed", loopId, storyId, attempt };
@@ -429,9 +419,10 @@ export const agentLoopJudge = inngest.createFunction(
         priorFeedback
       );
 
+      // ADR-0019: story.retried → triggers implementor (skips test-writer on retry)
       await step.run("emit-retry-implement", async () => {
         await inngest.send({
-          name: "agent/loop.implement",
+          name: "agent/loop.story.retried",
           data: {
             loopId,
             project,
@@ -448,7 +439,7 @@ export const agentLoopJudge = inngest.createFunction(
             runToken,
           },
         });
-        return { event: "agent/loop.implement", storyId, attempt: nextAttempt, tool: retryTool, freshTests };
+        return { event: "agent/loop.story.retried", storyId, attempt: nextAttempt, tool: retryTool, freshTests };
       });
 
       return {
@@ -493,38 +484,28 @@ export const agentLoopJudge = inngest.createFunction(
     const failDurationMs = storyStartedAt ? Date.now() - storyStartedAt : 0;
     await step.run("emit-story-fail", async () => {
       await inngest.send({
-        name: "agent/loop.story.fail",
-        data: {
-          loopId,
-          storyId,
-          reason: `Failed after ${attempt} attempts. ${(combinedFailureFeedback || testResults.details).slice(0, 500)}`,
-          attempts: attempt,
-          duration: failDurationMs,
-        },
-      });
-      return { event: "agent/loop.story.fail", storyId, attempts: attempt, durationMs: failDurationMs };
-    });
-
-    // Release claim BEFORE continuation — story is already skipped in PRD,
-    // so guardStory would return "already_passed" and block us.
-    await step.run("release-claim-skip", async () => {
-      await releaseClaim(loopId, storyId);
-      return { storyId, action: "released-claim" };
-    });
-
-    await step.run("emit-next-plan-after-fail", async () => {
-      await inngest.send({
-        name: "agent/loop.plan",
+        // ADR-0019: story.failed carries planner re-entry data (no separate plan emit)
+        name: "agent/loop.story.failed",
         data: {
           loopId,
           project,
           prdPath,
+          storyId,
+          reason: `Failed after ${attempt} attempts. ${(combinedFailureFeedback || testResults.details).slice(0, 500)}`,
+          attempts: attempt,
+          duration: failDurationMs,
           maxIterations,
           maxRetries,
           retryLadder,
         },
       });
-      return { event: "agent/loop.plan", next: "pick-next-story" };
+      return { event: "agent/loop.story.failed", storyId, attempts: attempt, durationMs: failDurationMs };
+    });
+
+    // Release claim AFTER emit — story already skipped in PRD
+    await step.run("release-claim-skip", async () => {
+      await releaseClaim(loopId, storyId);
+      return { storyId, action: "released-claim" };
     });
 
     return { status: "skipped", loopId, storyId, attempts: attempt };

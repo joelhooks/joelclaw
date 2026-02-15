@@ -21,7 +21,7 @@ export const transcriptProcess = inngest.createFunction(
     concurrency: { limit: 1 },
     retries: 2,
   },
-  { event: "pipeline/transcript.process" },
+  { event: "pipeline/transcript.requested" },
   async ({ event, step }) => {
     const {
       source,
@@ -214,7 +214,7 @@ date: ${today}
           },
         },
         {
-          name: "content/summarize",
+          name: "content/summarize.requested",
           data: { vaultPath },
         },
       ]);

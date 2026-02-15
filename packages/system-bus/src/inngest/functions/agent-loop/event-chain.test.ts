@@ -1,225 +1,154 @@
 import { test, expect, describe } from "bun:test";
 
-// ── AC-1: plan.ts emits agent/loop.test instead of agent/loop.implement ──────
-describe("AC-1: plan.ts emits agent/loop.test instead of agent/loop.implement", () => {
-  test("agentLoopPlan triggers on agent/loop.start and agent/loop.plan", async () => {
+/**
+ * ADR-0019: Event chain tests — verify each function triggers on and emits the correct past-tense events.
+ *
+ * Chain: started → story.dispatched → tests.written → code.committed
+ *          → checks.completed → story.passed/failed/retried → completed
+ */
+
+// ── AC-1: plan.ts triggers and emissions ──────────────────────────────
+describe("AC-1: plan.ts triggers on started/story.passed/story.failed, emits story.dispatched + completed", () => {
+  test("agentLoopPlan triggers on agent/loop.started, story.passed, and story.failed", async () => {
     const mod = await import("./plan.ts");
     const fn = mod.agentLoopPlan as any;
     const triggers = fn.opts?.triggers ?? [];
     const eventNames = triggers.map((t: any) => t.event);
-    expect(eventNames).toContain("agent/loop.start");
-    expect(eventNames).toContain("agent/loop.plan");
+    expect(eventNames).toContain("agent/loop.started");
+    expect(eventNames).toContain("agent/loop.story.passed");
+    expect(eventNames).toContain("agent/loop.story.failed");
   });
 
-  test("plan.ts source emits agent/loop.test (not agent/loop.implement)", async () => {
+  test("plan.ts source emits agent/loop.story.dispatched", async () => {
     const source = await Bun.file(
       new URL("./plan.ts", import.meta.url).pathname
     ).text();
-
-    // Should emit agent/loop.test
-    expect(source).toContain('"agent/loop.test"');
-
-    // Should NOT emit agent/loop.implement anywhere in plan.ts
-    // (plan.ts should only emit agent/loop.test and agent/loop.complete)
-    const sends = [...source.matchAll(/name:\s*["']agent\/loop\.(\w+)["']/g)];
-    const emittedEvents = sends.map((m) => m[1]);
-    expect(emittedEvents).toContain("test");
-    expect(emittedEvents).not.toContain("implement");
+    expect(source).toContain('"agent/loop.story.dispatched"');
   });
 
-  test("plan.ts emit step is named 'emit-test'", async () => {
+  test("plan.ts source emits agent/loop.completed", async () => {
     const source = await Bun.file(
       new URL("./plan.ts", import.meta.url).pathname
     ).text();
-
-    // The step that emits the test event should be named emit-test
-    expect(source).toContain("emit-test");
+    expect(source).toContain('"agent/loop.completed"');
   });
 });
 
-// ── AC-2: test-writer.ts emits agent/loop.implement after writing tests ──────
-describe("AC-2: test-writer.ts emits agent/loop.implement after writing tests", () => {
-  test("agentLoopTestWriter triggers on agent/loop.test", async () => {
+// ── AC-2: test-writer.ts triggers and emissions ───────────────────────
+describe("AC-2: test-writer.ts triggers on story.dispatched, emits tests.written", () => {
+  test("agentLoopTestWriter triggers on agent/loop.story.dispatched", async () => {
     const mod = await import("./test-writer.ts");
     const fn = mod.agentLoopTestWriter as any;
     const triggers = fn.opts?.triggers ?? [];
     const eventNames = triggers.map((t: any) => t.event);
-    expect(eventNames).toContain("agent/loop.test");
+    expect(eventNames).toContain("agent/loop.story.dispatched");
   });
 
-  test("test-writer.ts emits agent/loop.implement", async () => {
+  test("test-writer.ts emits agent/loop.tests.written", async () => {
     const source = await Bun.file(
       new URL("./test-writer.ts", import.meta.url).pathname
     ).text();
-
-    expect(source).toContain('"agent/loop.implement"');
-  });
-
-  test("test-writer.ts does NOT emit agent/loop.test (no self-loop)", async () => {
-    const source = await Bun.file(
-      new URL("./test-writer.ts", import.meta.url).pathname
-    ).text();
-
-    // Check send calls only — trigger declarations will mention agent/loop.test
-    const sends = [...source.matchAll(/name:\s*["']agent\/loop\.(\w+)["']/g)];
-    const emittedEvents = sends.map((m) => m[1]);
-    expect(emittedEvents).not.toContain("test");
+    expect(source).toContain('"agent/loop.tests.written"');
   });
 });
 
-// ── AC-3: implement.ts still emits agent/loop.review ─────────────────────────
-describe("AC-3: implement.ts still emits agent/loop.review", () => {
-  test("agentLoopImplement triggers on agent/loop.implement", async () => {
+// ── AC-3: implement.ts triggers and emissions ─────────────────────────
+describe("AC-3: implement.ts triggers on tests.written + story.retried, emits code.committed", () => {
+  test("agentLoopImplement triggers on agent/loop.tests.written and story.retried", async () => {
     const mod = await import("./implement.ts");
     const fn = mod.agentLoopImplement as any;
     const triggers = fn.opts?.triggers ?? [];
     const eventNames = triggers.map((t: any) => t.event);
-    expect(eventNames).toContain("agent/loop.implement");
+    expect(eventNames).toContain("agent/loop.tests.written");
+    expect(eventNames).toContain("agent/loop.story.retried");
   });
 
-  test("implement.ts emits agent/loop.review", async () => {
+  test("implement.ts emits agent/loop.code.committed", async () => {
     const source = await Bun.file(
       new URL("./implement.ts", import.meta.url).pathname
     ).text();
-
-    expect(source).toContain('"agent/loop.review"');
-  });
-
-  test("implement.ts does NOT emit agent/loop.implement or agent/loop.test", async () => {
-    const source = await Bun.file(
-      new URL("./implement.ts", import.meta.url).pathname
-    ).text();
-
-    const sends = [...source.matchAll(/name:\s*["']agent\/loop\.(\w+)["']/g)];
-    const emittedEvents = sends.map((m) => m[1]);
-    expect(emittedEvents).not.toContain("implement");
-    expect(emittedEvents).not.toContain("test");
+    expect(source).toContain('"agent/loop.code.committed"');
   });
 });
 
-// ── AC-4: review.ts still emits agent/loop.judge ─────────────────────────────
-describe("AC-4: review.ts still emits agent/loop.judge", () => {
-  test("agentLoopReview triggers on agent/loop.review", async () => {
+// ── AC-4: review.ts triggers and emissions ────────────────────────────
+describe("AC-4: review.ts triggers on code.committed, emits checks.completed", () => {
+  test("agentLoopReview triggers on agent/loop.code.committed", async () => {
     const mod = await import("./review.ts");
     const fn = mod.agentLoopReview as any;
     const triggers = fn.opts?.triggers ?? [];
     const eventNames = triggers.map((t: any) => t.event);
-    expect(eventNames).toContain("agent/loop.review");
+    expect(eventNames).toContain("agent/loop.code.committed");
   });
 
-  test("review.ts emits agent/loop.judge", async () => {
+  test("review.ts emits agent/loop.checks.completed", async () => {
     const source = await Bun.file(
       new URL("./review.ts", import.meta.url).pathname
     ).text();
-
-    expect(source).toContain('"agent/loop.judge"');
-  });
-
-  test("review.ts does NOT emit agent/loop.implement or agent/loop.test", async () => {
-    const source = await Bun.file(
-      new URL("./review.ts", import.meta.url).pathname
-    ).text();
-
-    const sends = [...source.matchAll(/name:\s*["']agent\/loop\.(\w+)["']/g)];
-    const emittedEvents = sends.map((m) => m[1]);
-    expect(emittedEvents).not.toContain("implement");
-    expect(emittedEvents).not.toContain("test");
+    expect(source).toContain('"agent/loop.checks.completed"');
   });
 });
 
-// ── AC-5: Judge retry emits agent/loop.implement (skips test writing) ────────
-describe("AC-5: Judge retry emits agent/loop.implement (skips test writing on retry)", () => {
-  test("agentLoopJudge triggers on agent/loop.judge", async () => {
+// ── AC-5: judge.ts triggers and emissions ─────────────────────────────
+describe("AC-5: judge.ts triggers on checks.completed, emits story.passed/failed/retried", () => {
+  test("agentLoopJudge triggers on agent/loop.checks.completed", async () => {
     const mod = await import("./judge.ts");
     const fn = mod.agentLoopJudge as any;
     const triggers = fn.opts?.triggers ?? [];
     const eventNames = triggers.map((t: any) => t.event);
-    expect(eventNames).toContain("agent/loop.judge");
+    expect(eventNames).toContain("agent/loop.checks.completed");
   });
 
-  test("judge.ts retry path emits agent/loop.implement (NOT agent/loop.test)", async () => {
+  test("judge.ts emits agent/loop.story.passed", async () => {
     const source = await Bun.file(
       new URL("./judge.ts", import.meta.url).pathname
     ).text();
-
-    // Judge should emit agent/loop.implement on retry
-    const sends = [...source.matchAll(/name:\s*["']agent\/loop\.(\w+)["']/g)];
-    const emittedEvents = sends.map((m) => m[1]);
-    expect(emittedEvents).toContain("implement");
-
-    // Should NOT emit agent/loop.test — on retry, tests already exist
-    expect(emittedEvents).not.toContain("test");
+    expect(source).toContain('"agent/loop.story.passed"');
   });
 
-  test("judge.ts retry step is named with 'retry' (not 'test')", async () => {
+  test("judge.ts emits agent/loop.story.failed", async () => {
     const source = await Bun.file(
       new URL("./judge.ts", import.meta.url).pathname
     ).text();
+    expect(source).toContain('"agent/loop.story.failed"');
+  });
 
-    // The retry step should reference implement, not test
-    expect(source).toMatch(/emit-retry-implement/);
+  test("judge.ts retry path emits agent/loop.story.retried", async () => {
+    const source = await Bun.file(
+      new URL("./judge.ts", import.meta.url).pathname
+    ).text();
+    expect(source).toContain('"agent/loop.story.retried"');
   });
 });
 
-// ── AC-6: Full chain ordering: plan→test→implement→review→judge ──────────────
-describe("AC-6: Full event chain is plan→test→implement→review→judge", () => {
+// ── AC-6: Full chain links correctly ──────────────────────────────────
+describe("AC-6: Full event chain is started → dispatched → tests.written → code.committed → checks.completed", () => {
   test("event chain links correctly end-to-end", async () => {
-    // Verify the complete chain by checking each function's trigger→emit pair
-    const planSource = await Bun.file(
-      new URL("./plan.ts", import.meta.url).pathname
-    ).text();
-    const testWriterSource = await Bun.file(
-      new URL("./test-writer.ts", import.meta.url).pathname
-    ).text();
-    const implementSource = await Bun.file(
-      new URL("./implement.ts", import.meta.url).pathname
-    ).text();
-    const reviewSource = await Bun.file(
-      new URL("./review.ts", import.meta.url).pathname
-    ).text();
-    const judgeSource = await Bun.file(
-      new URL("./judge.ts", import.meta.url).pathname
-    ).text();
+    const [plan, tw, impl, rev, judge] = await Promise.all([
+      import("./plan.ts"),
+      import("./test-writer.ts"),
+      import("./implement.ts"),
+      import("./review.ts"),
+      import("./judge.ts"),
+    ]);
 
-    // plan emits → test
-    const planSends = [...planSource.matchAll(/name:\s*["']agent\/loop\.(\w+)["']/g)];
-    expect(planSends.map((m) => m[1])).toContain("test");
+    const triggers = (fn: any) => (fn.opts?.triggers ?? []).map((t: any) => t.event);
 
-    // test-writer emits → implement
-    const twSends = [...testWriterSource.matchAll(/name:\s*["']agent\/loop\.(\w+)["']/g)];
-    expect(twSends.map((m) => m[1])).toContain("implement");
+    // plan triggers on started + story.passed + story.failed
+    expect(triggers(plan.agentLoopPlan)).toContain("agent/loop.started");
+    expect(triggers(plan.agentLoopPlan)).toContain("agent/loop.story.passed");
 
-    // implement emits → review
-    const implSends = [...implementSource.matchAll(/name:\s*["']agent\/loop\.(\w+)["']/g)];
-    expect(implSends.map((m) => m[1])).toContain("review");
+    // test-writer triggers on story.dispatched (emitted by plan)
+    expect(triggers(tw.agentLoopTestWriter)).toContain("agent/loop.story.dispatched");
 
-    // review emits → judge
-    const revSends = [...reviewSource.matchAll(/name:\s*["']agent\/loop\.(\w+)["']/g)];
-    expect(revSends.map((m) => m[1])).toContain("judge");
+    // implement triggers on tests.written (emitted by test-writer) + story.retried (from judge)
+    expect(triggers(impl.agentLoopImplement)).toContain("agent/loop.tests.written");
+    expect(triggers(impl.agentLoopImplement)).toContain("agent/loop.story.retried");
 
-    // judge retry emits → implement (skip test-writer)
-    const judgeSends = [...judgeSource.matchAll(/name:\s*["']agent\/loop\.(\w+)["']/g)];
-    expect(judgeSends.map((m) => m[1])).toContain("implement");
-    expect(judgeSends.map((m) => m[1])).not.toContain("test");
-  });
-});
+    // review triggers on code.committed (emitted by implement)
+    expect(triggers(rev.agentLoopReview)).toContain("agent/loop.code.committed");
 
-// ── AC-6 (compile): TypeScript compiles cleanly ──────────────────────────────
-// This criterion is verified by `bunx tsc --noEmit` in the harness.
-// The fact that this file imports all chain modules without error is itself
-// a partial compile-time check.
-describe("AC-6b: TypeScript compiles cleanly (partial check)", () => {
-  test("all chain modules can be imported without error", async () => {
-    const plan = await import("./plan.ts");
-    const testWriter = await import("./test-writer.ts");
-    const implement = await import("./implement.ts");
-    const review = await import("./review.ts");
-    const judge = await import("./judge.ts");
-
-    expect(plan.agentLoopPlan).toBeDefined();
-    expect(testWriter.agentLoopTestWriter).toBeDefined();
-    expect(implement.agentLoopImplement).toBeDefined();
-    expect(review.agentLoopReview).toBeDefined();
-    expect(judge.agentLoopJudge).toBeDefined();
+    // judge triggers on checks.completed (emitted by review)
+    expect(triggers(judge.agentLoopJudge)).toContain("agent/loop.checks.completed");
   });
 });

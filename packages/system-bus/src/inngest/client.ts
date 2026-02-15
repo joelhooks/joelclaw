@@ -1,9 +1,21 @@
 import { Inngest, EventSchemas } from "inngest";
 
+/**
+ * ADR-0019: Event names describe what happened (past-tense), not commands.
+ *
+ * Agent Loop chain:
+ *   started → story.dispatched → tests.written → code.committed
+ *     → checks.completed → story.passed/failed/retried → completed
+ *
+ * Pipeline chain:
+ *   video.requested → video.downloaded → transcript.requested
+ *     → transcript.processed → summarize.requested → summarized
+ */
+
 // System event types
 type Events = {
   // --- Video pipeline ---
-  "pipeline/video.download": {
+  "pipeline/video.requested": {
     data: {
       url: string;
       maxQuality?: string;
@@ -23,7 +35,7 @@ type Events = {
   };
 
   // --- Transcript pipeline (multi-source) ---
-  "pipeline/transcript.process": {
+  "pipeline/transcript.requested": {
     data: {
       /** "youtube" | "granola" | "fathom" | "podcast" | "manual" */
       source: string;
@@ -52,7 +64,7 @@ type Events = {
   };
 
   // --- Content enrichment ---
-  "content/summarize": {
+  "content/summarize.requested": {
     data: {
       vaultPath: string;
       prompt?: string;
@@ -80,8 +92,10 @@ type Events = {
     };
   };
 
-  // --- Agent Loop pipeline (ADR-0005) ---
-  "agent/loop.start": {
+  // --- Agent Loop pipeline (ADR-0005, ADR-0019) ---
+
+  /** CLI started a loop → triggers planner */
+  "agent/loop.started": {
     data: {
       loopId: string;
       project: string;
@@ -99,17 +113,9 @@ type Events = {
       >;
     };
   };
-  "agent/loop.plan": {
-    data: {
-      loopId: string;
-      project: string;
-      prdPath: string;
-      maxIterations?: number;
-      maxRetries?: number;
-      retryLadder?: ("codex" | "claude" | "pi")[];
-    };
-  };
-  "agent/loop.test": {
+
+  /** Planner picked next story → triggers test-writer */
+  "agent/loop.story.dispatched": {
     data: {
       loopId: string;
       project: string;
@@ -129,7 +135,9 @@ type Events = {
       storyStartedAt?: number;
     };
   };
-  "agent/loop.implement": {
+
+  /** Test-writer committed tests → triggers implementor */
+  "agent/loop.tests.written": {
     data: {
       loopId: string;
       project: string;
@@ -152,7 +160,9 @@ type Events = {
       testFiles?: string[];
     };
   };
-  "agent/loop.review": {
+
+  /** Implementor committed code → triggers reviewer */
+  "agent/loop.code.committed": {
     data: {
       loopId: string;
       project: string;
@@ -175,7 +185,9 @@ type Events = {
       priorFeedback?: string;
     };
   };
-  "agent/loop.judge": {
+
+  /** Reviewer ran checks + eval → triggers judge */
+  "agent/loop.checks.completed": {
     data: {
       loopId: string;
       project: string;
@@ -221,13 +233,74 @@ type Events = {
       tool: "codex" | "claude" | "pi";
     };
   };
-  "agent/loop.cancel": {
+
+  /** Judge approved story → triggers planner (next story) */
+  "agent/loop.story.passed": {
+    data: {
+      loopId: string;
+      project: string;
+      prdPath: string;
+      storyId: string;
+      commitSha: string;
+      attempt: number;
+      duration: number;
+      maxIterations?: number;
+      maxRetries?: number;
+      retryLadder?: ("codex" | "claude" | "pi")[];
+    };
+  };
+
+  /** Judge rejected story (max retries) → triggers planner (next story) */
+  "agent/loop.story.failed": {
+    data: {
+      loopId: string;
+      project: string;
+      prdPath: string;
+      storyId: string;
+      reason: string;
+      attempts: number;
+      duration?: number;
+      maxIterations?: number;
+      maxRetries?: number;
+      retryLadder?: ("codex" | "claude" | "pi")[];
+    };
+  };
+
+  /** Judge wants retry → triggers implementor */
+  "agent/loop.story.retried": {
+    data: {
+      loopId: string;
+      project: string;
+      storyId: string;
+      runToken?: string;
+      tool: "codex" | "claude" | "pi";
+      attempt: number;
+      feedback?: string;
+      story: {
+        id: string;
+        title: string;
+        description: string;
+        acceptance_criteria: string[];
+      };
+      maxRetries: number;
+      maxIterations?: number;
+      retryLadder?: ("codex" | "claude" | "pi")[];
+      freshTests?: boolean;
+      storyStartedAt?: number;
+      testFiles?: string[];
+    };
+  };
+
+  /** User cancelled loop → all functions check */
+  "agent/loop.cancelled": {
     data: {
       loopId: string;
       reason: string;
     };
   };
-  "agent/loop.complete": {
+
+  /** All stories done → triggers complete + retro */
+  "agent/loop.completed": {
     data: {
       loopId: string;
       project: string;
@@ -239,25 +312,9 @@ type Events = {
       pushResult?: string;
     };
   };
-  "agent/loop.story.pass": {
-    data: {
-      loopId: string;
-      storyId: string;
-      commitSha: string;
-      attempt: number;
-      duration: number;
-    };
-  };
-  "agent/loop.story.fail": {
-    data: {
-      loopId: string;
-      storyId: string;
-      reason: string;
-      attempts: number;
-      duration?: number;
-    };
-  };
-  "agent/loop.retro.complete": {
+
+  /** Retro completed */
+  "agent/loop.retro.completed": {
     data: {
       loopId?: string;
       project?: string;
@@ -285,7 +342,7 @@ type Events = {
   };
 
   // --- System ---
-  "system/log": {
+  "system/log.written": {
     data: {
       action: string;
       tool: string;
@@ -299,13 +356,7 @@ type Events = {
     };
   };
 
-  // --- Legacy (forwards to pipeline/video.download) ---
-  "pipeline/video.ingest": {
-    data: {
-      url: string;
-      maxQuality?: string;
-    };
-  };
+  // --- Legacy ---
   "pipeline/video.ingested": {
     data: {
       slug: string;

@@ -333,10 +333,10 @@ describe("AC-7: Retry ladder and skip logic preserved", () => {
     expect(source).toMatch(/attempt\s*<\s*maxRetries/);
   });
 
-  test("retry path emits agent/loop.implement", async () => {
+  test("retry path emits agent/loop.story.retried", async () => {
     const source = await readSource();
     expect(source).toContain("emit-retry-implement");
-    expect(source).toContain('"agent/loop.implement"');
+    expect(source).toContain('"agent/loop.story.retried"');
   });
 
   test("max retries exhausted path marks story as skipped", async () => {
@@ -345,16 +345,20 @@ describe("AC-7: Retry ladder and skip logic preserved", () => {
     expect(source).toContain("mark-skipped");
   });
 
-  test("max retries exhausted path emits agent/loop.plan for next story", async () => {
+  test("story.passed carries planner re-entry data (no separate plan emit)", async () => {
     const source = await readSource();
-    expect(source).toContain("emit-next-plan-after-fail");
-    expect(source).toContain('"agent/loop.plan"');
+    // ADR-0019: story.passed event now carries project/prdPath for planner re-entry
+    expect(source).toContain("emit-story-pass");
+    expect(source).toContain('"agent/loop.story.passed"');
+    // No separate emit-next-plan step — planner triggers on story.passed directly
+    expect(source).not.toContain("emit-next-plan");
   });
 
-  test("pass path emits agent/loop.plan for next story", async () => {
+  test("story.failed carries planner re-entry data (no separate plan emit)", async () => {
     const source = await readSource();
-    expect(source).toContain("emit-next-plan");
-    expect(source).toContain('"agent/loop.plan"');
+    expect(source).toContain("emit-story-fail");
+    expect(source).toContain('"agent/loop.story.failed"');
+    expect(source).not.toContain("emit-next-plan-after-fail");
   });
 
   test("hasSameConsecutiveFailures is used for stale retry detection", async () => {
@@ -374,12 +378,12 @@ describe("AC-7: Retry ladder and skip logic preserved", () => {
 
   test("skip path emits agent/loop.story.fail event", async () => {
     const source = await readSource();
-    expect(source).toContain('"agent/loop.story.fail"');
+    expect(source).toContain('"agent/loop.story.failed"');
   });
 
   test("pass path emits agent/loop.story.pass event", async () => {
     const source = await readSource();
-    expect(source).toContain('"agent/loop.story.pass"');
+    expect(source).toContain('"agent/loop.story.passed"');
   });
 
   test("retry event data includes story, maxRetries, and retryLadder for continuation", async () => {
@@ -412,12 +416,12 @@ describe("AC-8: TypeScript compiles cleanly (partial check)", () => {
     expect(fn.opts?.id).toBe("agent-loop-judge");
   });
 
-  test("agentLoopJudge triggers on agent/loop.judge", async () => {
+  test("agentLoopJudge triggers on agent/loop.checks.completed", async () => {
     const mod = await import("./judge.ts");
     const fn = mod.agentLoopJudge as any;
     const triggers = fn.opts?.triggers ?? [];
     const eventNames = triggers.map((t: any) => t.event);
-    expect(eventNames).toContain("agent/loop.judge");
+    expect(eventNames).toContain("agent/loop.checks.completed");
   });
 
   test("agentLoopJudge has retries configured", async () => {

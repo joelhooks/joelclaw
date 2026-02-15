@@ -15,7 +15,7 @@ export const systemLogger = inngest.createFunction(
     { event: "pipeline/transcript.processed" },
     { event: "content/summarized" },
     { event: "pipeline/book.downloaded" },
-    { event: "system/log" },
+    { event: "system/log.written" },
   ],
   async ({ event }) => {
     const logPath = `${VAULT}/system/system-log.jsonl`;

@@ -169,7 +169,7 @@ export const agentLoopPlan = inngest.createFunction(
     },
     retries: 1,
   },
-  [{ event: "agent/loop.start" }, { event: "agent/loop.plan" }],
+  [{ event: "agent/loop.started" }, { event: "agent/loop.story.passed" }, { event: "agent/loop.story.failed" }],
   async ({ event, step }) => {
     const { loopId, project } = event.data;
     const prdPath = event.data.prdPath ?? "prd.json";
@@ -179,17 +179,17 @@ export const agentLoopPlan = inngest.createFunction(
 
     // Read maxIterations from start event or re-entry plan event (default 100)
     const maxIterations =
-      event.name === "agent/loop.start"
+      event.name === "agent/loop.started"
         ? event.data.maxIterations ?? 100
         : (event.data as any).maxIterations ?? 100;
     const retryLadder =
-      event.name === "agent/loop.start"
+      event.name === "agent/loop.started"
         ? event.data.retryLadder ?? [...DEFAULT_RETRY_LADDER]
         : (event.data as any).retryLadder ?? [...DEFAULT_RETRY_LADDER];
 
     // Branch lifecycle: create on start, verify on re-entry
     const branchName = `agent-loop/${loopId}`;
-    const isStartEvent = event.name === "agent/loop.start";
+    const isStartEvent = event.name === "agent/loop.started";
 
     if (isStartEvent) {
       // Create and checkout feature branch
@@ -256,7 +256,7 @@ export const agentLoopPlan = inngest.createFunction(
       const skipped = prd.stories.filter((s) => (s as any).skipped).length;
       await step.run("emit-complete-max-iterations", async () => {
         await inngest.send({
-          name: "agent/loop.complete",
+          name: "agent/loop.completed",
           data: {
             loopId,
             project,
@@ -326,7 +326,7 @@ export const agentLoopPlan = inngest.createFunction(
 
       await step.run("emit-complete", async () => {
         await inngest.send({
-          name: "agent/loop.complete",
+          name: "agent/loop.completed",
           data: {
             loopId,
             project,
@@ -360,14 +360,14 @@ export const agentLoopPlan = inngest.createFunction(
 
     // Determine tool assignment
     const toolAssignments =
-      event.name === "agent/loop.start"
+      event.name === "agent/loop.started"
         ? event.data.toolAssignments
         : undefined;
 
     const assignment = toolAssignments?.[next.id];
     const implTool = assignment?.implementor ?? "codex";
     const maxRetries =
-      event.name === "agent/loop.start"
+      event.name === "agent/loop.started"
         ? event.data.maxRetries ?? 2
         : (event.data as any).maxRetries ?? 2;
 
@@ -395,7 +395,7 @@ export const agentLoopPlan = inngest.createFunction(
 
     await step.run("emit-test", async () => {
       await inngest.send({
-        name: "agent/loop.test",
+        name: "agent/loop.story.dispatched",
         data: {
           loopId,
           project,
