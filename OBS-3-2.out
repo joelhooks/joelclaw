@@ -1,0 +1,35 @@
+Excellent! TypeScript compilation passes cleanly. Now let me verify the implementation matches all acceptance criteria:
+
+## Implementation Summary
+
+The `parse-observations` step has been fully implemented in `/private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus/src/inngest/functions/observe.ts` (lines 130-163):
+
+### Acceptance Criteria Status:
+
+✅ **AC-1: Imports parseObserverOutput from observe-parser.ts**
+- Line 2: `import { parseObserverOutput } from "./observe-parser";`
+
+✅ **AC-2: Receives output from call-observer-llm step**  
+- Line 132: `const parsed = parseObserverOutput(llmOutput);`
+- The `llmOutput` variable contains the result from the previous `call-observer-llm` step
+
+✅ **AC-3: Returns structured observation data (segments, concepts, facts)**
+- Lines 133-143: Extracts facts from segments and builds a concepts array
+- Lines 145-149: Returns object with `...parsed`, `concepts`, and `facts` fields
+- The returned structure includes:
+  - `segments`: Array of `DistilledSegment[]` from parser
+  - `concepts`: Array derived from currentTask and segment narratives
+  - `facts`: Flattened array from all segment facts
+
+✅ **AC-4: Includes error handling for malformed LLM output**
+- Lines 150-162: Try-catch wrapper around parsing logic
+- On error, returns a safe fallback object with:
+  - Empty segments/concepts/facts arrays
+  - `parsed: false` flag
+  - Error message captured
+  - Original `llmOutput` preserved in `observations` field
+
+✅ **AC-5: TypeScript compiles cleanly**
+- Verified: `bunx tsc --noEmit` passes with no errors
+
+The implementation is complete and meets all acceptance criteria.

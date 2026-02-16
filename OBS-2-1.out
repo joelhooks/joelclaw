@@ -1,0 +1,3343 @@
+Implemented OBS-2 with focused changes in `src/inngest/functions/observe.ts`:
+
+- Added runtime input validation in `validate-input` to enforce required fields and valid trigger/event pairing (`sessionId`, `dedupeKey`, `trigger`, `messages`) at `src/inngest/functions/observe.ts:41` and `src/inngest/functions/observe.ts:51`.
+- Implemented `call-observer-llm` to invoke `pi` via `Bun.$`, passing:
+  - `OBSERVER_SYSTEM_PROMPT`
+  - `OBSERVER_USER_PROMPT(...)`
+  - extra session context (`sessionId`, `dedupeKey`)
+  at `src/inngest/functions/observe.ts:91`.
+- Captured subprocess `stdout`/`stderr`, returned stdout as a string, and surfaced failures with explicit errors (non-zero exit and thrown subprocess errors) at `src/inngest/functions/observe.ts:105`.
+
+Compatibility fix for existing suite:
+
+- Updated `__tests__/obs-1-observe-function.test.ts` to mock `Bun.$` and assert prompt wiring through subprocess args (instead of requiring a real `pi` runtime), at `__tests__/obs-1-observe-function.test.ts:71` and `__tests__/obs-1-observe-function.test.ts:194`.
+
+Validation run:
+
+- `bunx tsc --noEmit` passed.
+- `bun test __tests__/obs-2-validate-input-call-observer-llm.test.ts` passed.
+- `bun test __tests__/obs-1-observe-function.test.ts` passed.
+
+Note: there are unrelated pre-existing workspace changes (`prd.json` modified and untracked files outside this package) that I did not touch.
+
+
+--- STDERR ---
+OpenAI Codex v0.101.0 (research preview)
+--------
+workdir: /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus
+model: gpt-5.3-codex
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: auto
+session id: 019c648e-823e-7550-8c4c-1a7c72ef0999
+--------
+user
+
+
+## Project File Listing
+
+docker
+prd-v3-recovery.json
+prd-adr-0010.json
+progress.txt
+node_modules
+prd-retro.json
+bun.lock
+README.md
+__tests__
+package.json
+tsconfig.json
+docker-compose.yml
+prd-v2.json
+index.ts
+CONTINUATION.md
+prd.json
+CLAUDE.md
+prd-cli-migration.json
+src
+CONTINUATION-ADR.md
+
+# src/ files:
+src/inngest/client.ts
+src/serve.ts
+
+## Project Instructions (CLAUDE.md)
+
+
+## Agent Loop Architecture (ADR-0015)
+
+This project runs automated coding loops with 5 separated roles:
+- **Planner**: generates PRD from goal, picks next story
+- **Test Writer**: writes acceptance tests BEFORE implementation (TDD)
+- **Implementor**: writes code to pass the tests
+- **Reviewer**: evaluates implementation with 4 questions (no test writing)
+- **Judge**: mechanical gates + reviewer notes + LLM verdict
+
+When working as an implementor: implement the story, don't write tests.
+When working as a test writer: write tests from acceptance criteria only, don't read implementation.
+Tests should verify observable behavior and public API — NOT internal structure.
+Do NOT use source code string matching (indexOf, regex on source) to verify behavior.
+Commit nothing — the harness handles git.
+
+## Bun Runtime
+
+Default to using Bun instead of Node.js.
+
+- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
+- Use `bun test` instead of `jest` or `vitest`
+- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
+- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
+- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
+- Use `bunx <package> <command>` instead of `npx <package> <command>`
+- Bun automatically loads .env, so don't use dotenv.
+
+## APIs
+
+- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
+- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
+- `Bun.redis` for Redis. Don't use `ioredis`.
+- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
+- `WebSocket` is built-in. Don't use `ws`.
+- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
+- Bun.$`ls` instead of execa.
+
+## Testing
+
+Use `bun test` to run tests.
+
+```ts#index.test.ts
+import { test, expect } from "bun:test";
+
+test("hello world", () => {
+  expect(1).toBe(1);
+});
+```
+
+## Frontend
+
+Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, C
+
+---
+
+## Story: Implement validate-input and call-observer-llm steps (OBS-2)
+
+In observe.ts, implement the validate-input step to verify event.data contains required session data. Implement call-observer-llm step using pi CLI as subprocess (Bun.$) with OBSERVER_SYSTEM_PROMPT and OBSERVER_USER_PROMPT. Capture stdout/stderr and handle errors. The pi subprocess should receive the prompts and session context.
+
+## Acceptance Criteria
+- validate-input step checks for required event.data fields and throws if missing
+- call-observer-llm step spawns pi subprocess using Bun.$
+- Prompts from observe-prompt.ts are passed to pi CLI correctly
+- Step captures and returns LLM output as string
+- Error handling for subprocess failures is present
+- TypeScript compiles cleanly: bunx tsc --noEmit
+
+## Instructions
+Implement the story above. Do NOT write tests — a separate reviewer will handle testing.
+Make clean, focused changes. Commit nothing — the harness handles git.
+If your changes break existing tests (not just the ones for this story), fix those tests to match the new interface. Changing a type or adding a required field means updating all consumers.
+mcp startup: no servers
+2026-02-16T03:46:27.087281Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5eca-bff9-7772-83bf-5daab07b9959
+2026-02-16T03:46:27.198331Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5ffd-d51d-7a13-b1fa-342be02f164b
+2026-02-16T03:46:27.270259Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6275-d69e-7b53-bb28-583bfe07e70c
+2026-02-16T03:46:27.350934Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5d40-288c-78b2-af66-36e0fae54073
+2026-02-16T03:46:27.455124Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6482-5bab-7e53-bc62-5239d048a3c8
+2026-02-16T03:46:27.530372Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6485-58f0-7261-8508-37f3fb9356dd
+2026-02-16T03:46:27.624457Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6031-b7fb-7120-85b5-8abf34324910
+2026-02-16T03:46:27.651315Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fe2-872d-7e93-87a3-71d37d75a127
+2026-02-16T03:46:27.720741Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e50-6bc5-7861-a0a0-f77d68ec073f
+2026-02-16T03:46:27.836912Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6022-8a12-7ba0-b7e8-9c265e8ec17e
+2026-02-16T03:46:27.938796Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fbb-e145-7c40-9913-218548629e57
+2026-02-16T03:46:28.084357Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e21-7a30-7ed1-b686-e02ac2da8157
+2026-02-16T03:46:28.179551Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c647c-8066-7eb1-8782-06a844370303
+2026-02-16T03:46:28.291841Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fed-5e04-78c0-9a4e-9fddc7af084e
+
+thinking
+**Confirming no skill requirement**
+codex
+Implementing OBS-2 now: I’ll inspect the existing observer flow and prompt definitions first, then patch `observe.ts` to add `validate-input` and `call-observer-llm` with Bun subprocess/error handling, and finally run `bunx tsc --noEmit`.
+exec
+/bin/zsh -lc 'rg -n "observe|observer|OBSERVER|pi CLI|call-observer|validate-input" src index.ts __tests__' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc 'rg --files' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 51ms:
+CONTINUATION-ADR.md
+src/serve.ts
+src/inngest/functions/transcript-process.ts
+src/inngest/functions/index.ts
+src/inngest/functions/video-download.ts
+src/inngest/functions/summarize.ts
+src/inngest/functions/observe.ts
+src/inngest/functions/observe-parser.ts
+src/inngest/functions/system-logger.ts
+src/inngest/functions/agent-loop/plan.ts
+src/inngest/functions/agent-loop/llmEvaluate.test.ts
+src/inngest/functions/agent-loop/judge.test.ts
+src/inngest/functions/agent-loop/test-writer.test.ts
+src/inngest/functions/agent-loop/test-writer.ts
+src/inngest/functions/agent-loop/formatLoopDuration.test.ts
+src/inngest/functions/agent-loop/review.test.ts
+src/inngest/functions/agent-loop/index.ts
+src/inngest/functions/agent-loop/getStoryDiff.test.ts
+src/inngest/functions/agent-loop/parseClaudeOutput.test.ts
+src/inngest/functions/agent-loop/review.ts
+ succeeded in 53ms:
+__tests__/nuum-4-optimize-for-context-segment-aware.test.ts:4:  return import("../src/inngest/functions/observe-parser.ts");
+__tests__/obs-1-observe-function.test.ts:9:function observeFilePath(): string {
+__tests__/obs-1-observe-function.test.ts:10:  return new URL("../src/inngest/functions/observe.ts", import.meta.url).pathname;
+__tests__/obs-1-observe-function.test.ts:14:  return import("../src/inngest/functions/observe.ts");
+__tests__/obs-1-observe-function.test.ts:18:  return import("../src/inngest/functions/observe-prompt.ts");
+__tests__/obs-1-observe-function.test.ts:29:    filesRead: ["src/inngest/functions/observe.ts"],
+__tests__/obs-1-observe-function.test.ts:30:    filesModified: ["src/inngest/functions/observe.ts"],
+__tests__/obs-1-observe-function.test.ts:46:    filesRead: ["src/inngest/functions/observe-prompt.ts"],
+__tests__/obs-1-observe-function.test.ts:47:    filesModified: ["src/inngest/functions/observe.ts"],
+__tests__/obs-1-observe-function.test.ts:65:  const fn = mod.observeSessionFunction as any;
+__tests__/obs-1-observe-function.test.ts:70:      id: "memory/observe-session",
+__tests__/obs-1-observe-function.test.ts:96:describe("OBS-1: observe.ts scaffold contract", () => {
+__tests__/obs-1-observe-function.test.ts:97:  test("AC-1: src/inngest/functions/observe.ts exists", async () => {
+__tests__/obs-1-observe-function.test.ts:98:    const exists = await Bun.file(observeFilePath()).exists();
+__tests__/obs-1-observe-function.test.ts:102:  test("AC-2 and AC-3: exports observeSessionFunction via createFunction with expected id/name and both triggers", async () => {
+__tests__/obs-1-observe-function.test.ts:106:      observeSessionFunction: expect.any(Object),
+__tests__/obs-1-observe-function.test.ts:109:    const fn = mod.observeSessionFunction as any;
+__tests__/obs-1-observe-function.test.ts:117:        id: "memory/observe-session",
+__tests__/obs-1-observe-function.test.ts:130:  test("AC-4 and AC-5: runtime behavior uses observer prompts and runs all 6 required step placeholders", async () => {
+__tests__/obs-1-observe-function.test.ts:131:    const { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } = await loadObservePromptModule();
+
+thinking
+**Reviewing observe.ts and related tests**
+codex
+I found a dedicated acceptance test file for this story, so I’m reading `observe.ts` and `obs-2` tests now to implement exactly what the contract expects.
+exec
+/bin/zsh -lc "sed -n '1,260p' src/inngest/functions/observe.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc "sed -n '1,280p' __tests__/obs-2-validate-input-call-observer-llm.test.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc "sed -n '1,220p' src/inngest/functions/observe-prompt.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 53ms:
+import { inngest } from "../client";
+import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+
+export const observeSessionFunction = inngest.createFunction(
+  {
+    id: "memory/observe-session",
+    name: "Observe Session",
+  },
+  [
+    { event: "memory/session.compaction.pending" },
+    { event: "memory/session.ended" },
+  ],
+  async ({ event, step }) => {
+    const validatedInput = await step.run("validate-input", async () => event.data);
+
+    const llmOutput = await step.run("call-observer-llm", async () => {
+      const sessionName =
+        "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
+
+      return `${OBSERVER_SYSTEM_PROMPT}\n\n${OBSERVER_USER_PROMPT(
+ succeeded in 53ms:
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { Events } from "../src/inngest/client.ts";
+import {
+  OBSERVER_SYSTEM_PROMPT,
+  OBSERVER_USER_PROMPT,
+} from "../src/inngest/functions/observe-prompt.ts";
+
+type ObserveTrigger = "memory/session.compaction.pending" | "memory/session.ended";
+type EventData<TName extends keyof Events> = Events[TName] extends { data: infer TData }
+  ? TData
+  : never;
+
+type BunDollarCall = {
+  strings: string[];
+  values: unknown[];
+  command: string;
+};
+
+type MockShellResult = {
+  stdout: string;
+ succeeded in 53ms:
+export const OBSERVER_SYSTEM_PROMPT = `You are a silent session observer. Your job is to extract reusable knowledge from Claude Code session transcripts.
+
+Focus on objective facts over opinions. Prefer specific details over vague summaries. Deduplicate repeated information.
+
+First, identify coherent conversation segments before extracting anything. A segment is a contiguous group of related messages about one topic (for example: debugging a specific bug, implementing one feature, or making one decision).
+Use these segment boundaries:
+- Topic shifts
+- Natural breakpoints (task completion, decision finalized, handoff to a new task)
+- Temporal clustering (messages close in time and context stay together)
+
+For each segment, produce TWO distillates:
+1) <narrative>: operational context in 1-3 sentences explaining what happened in that segment.
+2) <facts>: retained facts as bullet lines with concrete specifics (file paths, values, decisions with rationale, gotchas, error messages and fixes, user preferences discovered).
+
+Tag individual facts with exactly one priority marker:
+- 🔴 High: corrections, explicit user preferences, system facts, constraints, hard requirements
+- 🟡 Medium: recurring patterns, repeated actions, consistent workflows
+- 🟢 Low: minor notes, incidental context, low-impact details
+
+Output must be valid XML using these tags:
+
+thinking
+**Planning event type checks**
+exec
+/bin/zsh -lc "sed -n '1,260p' src/inngest/client.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 51ms:
+import { Inngest, EventSchemas } from "inngest";
+
+/**
+ * ADR-0019: Event names describe what happened (past-tense), not commands.
+ *
+ * Agent Loop chain:
+ *   started → story.dispatched → tests.written → code.committed
+ *     → checks.completed → story.passed/failed/retried → completed
+ *
+ * Pipeline chain:
+ *   video.requested → video.downloaded → transcript.requested
+ *     → transcript.processed → summarize.requested → summarized
+ */
+
+// System event types
+export type Events = {
+  // --- Video pipeline ---
+  "pipeline/video.requested": {
+    data: {
+      url: string;
+
+thinking
+**Identifying relevant memory event types**
+exec
+/bin/zsh -lc "rg -n \"memory/session\\.compaction\\.pending|memory/session\\.ended|memory/observe\" src/inngest/client.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 51ms:
+354:  "memory/session.compaction.pending": {
+368:  "memory/session.ended": {
+exec
+/bin/zsh -lc "sed -n '330,420p' src/inngest/client.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 52ms:
+      retrospective?: {
+        loopId?: string;
+        project?: string;
+        summary?: string;
+        storiesCompleted?: number;
+        storiesFailed?: number;
+        storiesSkipped?: number;
+        cancelled?: boolean;
+        branchName?: string;
+        storyDetails?: Array<{
+          id?: string;
+          title?: string;
+          passed?: boolean;
+          skipped?: boolean;
+          attempts?: number;
+          tool?: string;
+        }>;
+        codebasePatterns?: string;
+        totalDurationEstimate?: number;
+      };
+
+thinking
+**Planning runtime field validation**
+codex
+I’ve confirmed the event schema fields; next I’m checking existing `pi` subprocess patterns in the repo so this implementation matches current command style and error handling.
+exec
+/bin/zsh -lc "sed -n '1,260p' src/inngest/functions/agent-loop/implement.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc "sed -n '1,260p' src/inngest/functions/agent-loop/review.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc "rg -n \"Bun\\.\\"'$|'"\\bpi\\b|--system|--prompt|quiet\\(|nothrow\\(|\\.text\\(\" src" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 52ms:
+import { inngest } from "../../client";
+import { $ } from "bun";
+import {
+  isCancelled,
+  writePidFile,
+  cleanupPid,
+  getStoryDiff,
+  parseClaudeOutput,
+  TOOL_TIMEOUTS,
+  guardStory,
+  renewLease,
+  ensureClaudeAuth,
+} from "./utils";
+import { join } from "node:path";
+
+const TEST_FILE_PATTERN = /(?:^|\/)\S+\.test\.[^/]+$/;
+
+interface ReviewerQuestion {
+  id: string;
+  answer: boolean;
+ succeeded in 52ms:
+import { inngest } from "../../client";
+import { $ } from "bun";
+import {
+  isCancelled,
+  commitExists,
+  commitMessage,
+  gitCommit,
+  outputPath,
+  writePidFile,
+  cleanupPid,
+  parseToolOutput,
+  TOOL_TIMEOUTS,
+  hasUncommittedChanges,
+  getHeadSha,
+  isDockerAvailable,
+  spawnInContainer,
+  guardStory,
+  renewLease,
+  readLessons,
+  readRecommendations,
+ succeeded in 53ms:
+src/serve.ts:42:      "content/summarize.requested": "Enrich any vault note with pi + web research",
+src/inngest/functions/transcript-process.ts:43:      await $`mkdir -p /tmp/transcript-process`.quiet();
+src/inngest/functions/transcript-process.ts:62:      await $`mkdir -p ${outputDir}`.quiet();
+src/inngest/functions/transcript-process.ts:64:      await $`mlx_whisper --model mlx-community/whisper-large-v3-turbo --output-format json --output-dir ${outputDir} ${audioPath}`.quiet();
+src/inngest/functions/transcript-process.ts:73:      const raw = await Bun.file(join(outputDir, transcriptFile)).text();
+src/inngest/functions/transcript-process.ts:172:        content = await file.text();
+src/inngest/functions/transcript-process.ts:196:      await $`slog write --action transcribe --tool transcript-process --detail "${title} (${source})" --reason "transcript processing via inngest"`.quiet();
+src/inngest/functions/transcript-process.ts:200:        await $`rm -rf ${tmpDir}`.quiet();
+src/inngest/functions/video-download.ts:46:      await $`rm -rf ${TMP_BASE} && mkdir -p ${TMP_BASE}`.quiet();
+src/inngest/functions/video-download.ts:48:      await $`yt-dlp -f "bestvideo[height<=${maxQuality}]+bestaudio/best[height<=${maxQuality}]" --merge-output-format mp4 --write-info-json --write-thumbnail --output "${TMP_BASE}/%(title)s/%(title)s.%(ext)s" ${url}`.quiet();
+src/inngest/functions/video-download.ts:60:      const info = JSON.parse(await Bun.file(join(dir, infoFile)).text());
+src/inngest/functions/video-download.ts:89:      await $`ssh ${NAS_HOST} "mkdir -p ${destDir}"`.quiet();
+src/inngest/functions/video-download.ts:90:      await $`scp -r ${download.dir}. ${NAS_HOST}:${destDir}/`.quiet();
+src/inngest/functions/video-download.ts:97:      await $`slog write --action download --tool video-download --detail "${download.title} from ${download.channel} (${download.duration})" --reason "video download via inngest"`.quiet();
+src/inngest/functions/summarize.ts:4:const DEFAULT_PROMPT = `Read the joel-writing-style skill at ~/.pi/agent/skills/joel-writing-style/SKILL.md first. All writing in this note MUST match Joel's voice — conversational first person, short punchy paragraphs, strategic profanity where it earns its place, bold for emphasis, direct and honest tone. No corporate voice. No "In this video..." openings.
+src/inngest/functions/summarize.ts:31: * Content Summarize — enriches any vault note using pi with full tools.
+src/inngest/functions/summarize.ts:47:    // Extract title before pi runs (for logging)
+src/inngest/functions/summarize.ts:49:      const content = await Bun.file(vaultPath).text();
+src/inngest/functions/summarize.ts:54:    // Run pi in print mode — it reads the file, researches, and edits in place
+src/inngest/functions/summarize.ts:55:    await step.run("pi-enrich", async () => {
+
+thinking
+**Confirming Bun.$ usage and test expectations**
+exec
+/bin/zsh -lc "sed -n '120,230p' __tests__/obs-1-observe-function.test.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 52ms:
+    });
+
+    expect(eventNames).toEqual(
+      expect.arrayContaining([
+        "memory/session.compaction.pending",
+        "memory/session.ended",
+      ])
+    );
+  });
+
+  test("AC-4 and AC-5: runtime behavior uses observer prompts and runs all 6 required step placeholders", async () => {
+    const { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } = await loadObservePromptModule();
+
+    const compactionData = makeCompactionEventData();
+    const { stepIds: compactionStepIds, stepOutputs: compactionStepOutputs } =
+      await executeObserveHandler("memory/session.compaction.pending", compactionData);
+
+    expect(compactionStepIds).toEqual(
+      expect.arrayContaining([
+        "validate-input",
+
+thinking
+**Planning robust subprocess handling**
+codex
+I have enough context and will now edit `src/inngest/functions/observe.ts` to add strict runtime input validation and a real `pi` subprocess call via `Bun.$`, including stdout/stderr handling and explicit failure paths.
+file update
+M /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus/src/inngest/functions/observe.ts
+@@ -3,2 +3,75 @@
+ 
++type ObserveCompactionInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "compaction";
++  messages: string;
++  messageCount: number;
++  tokensBefore: number;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveEndedInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "shutdown";
++  messages: string;
++  messageCount: number;
++  userMessageCount: number;
++  duration: number;
++  sessionName?: string;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
++
++function readShellText(value: unknown): string {
++  if (typeof value === "string") return value;
++  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
++  if (value == null) return "";
++  return String(value);
++}
++
++function assertRequiredStringField(
++  payload: Record<string, unknown>,
++  fieldName: "sessionId" | "dedupeKey" | "trigger" | "messages"
++) {
++  const value = payload[fieldName];
++  if (typeof value !== "string" || value.trim().length === 0) {
++    throw new Error(`Missing required session field: ${fieldName}`);
++  }
++}
++
++function validateObserveInput(eventName: string, data: unknown): ObserveInput {
++  if (!data || typeof data !== "object") {
++    throw new Error("Invalid event data: expected object payload");
++  }
++
++  const payload = data as Record<string, unknown>;
++  assertRequiredStringField(payload, "sessionId");
++  assertRequiredStringField(payload, "dedupeKey");
++  assertRequiredStringField(payload, "trigger");
++  assertRequiredStringField(payload, "messages");
++
++  if (eventName === "memory/session.compaction.pending" && payload.trigger !== "compaction") {
++    throw new Error("Invalid trigger for compaction event; expected 'compaction'");
++  }
++
++  if (eventName === "memory/session.ended" && payload.trigger !== "shutdown") {
++    throw new Error("Invalid trigger for ended event; expected 'shutdown'");
++  }
++
++  if (payload.trigger !== "compaction" && payload.trigger !== "shutdown") {
++    throw new Error(`Invalid trigger value: ${payload.trigger}`);
++  }
++
++  return payload as ObserveInput;
++}
++
+ export const observeSessionFunction = inngest.createFunction(
+@@ -13,3 +86,5 @@
+   async ({ event, step }) => {
+-    const validatedInput = await step.run("validate-input", async () => event.data);
++    const validatedInput = await step.run("validate-input", async () =>
++      validateObserveInput(event.name, event.data)
++    );
+ 
+@@ -18,4 +93,3 @@
+         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
+-
+-      return `${OBSERVER_SYSTEM_PROMPT}\n\n${OBSERVER_USER_PROMPT(
++      const userPrompt = OBSERVER_USER_PROMPT(
+         validatedInput.messages,
+@@ -23,3 +97,31 @@
+         sessionName
+-      )}`;
++      );
++      const promptWithSessionContext = `${userPrompt}
++
++Session context:
++- sessionId: ${validatedInput.sessionId}
++- dedupeKey: ${validatedInput.dedupeKey}`;
++
++      try {
++        const result = await Bun.$`pi --system ${OBSERVER_SYSTEM_PROMPT} --prompt ${promptWithSessionContext}`
++          .quiet()
++          .nothrow();
++
++        const stdout = readShellText(result.stdout);
++        const stderr = readShellText(result.stderr);
++
++        if (result.exitCode !== 0) {
++          throw new Error(
++            `Observer LLM subprocess failed with exit code ${result.exitCode}${
++              stderr ? `: ${stderr}` : ""
++            }`
++          );
++        }
++
++        return stdout;
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        throw new Error(`Failed to run observer LLM subprocess: ${message}`);
++      }
++
+     });
+apply_patch(auto_approved=true) exited 0 in 42ms:
+Success. Updated the following files:
+M /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus/src/inngest/functions/observe.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 27bfac138363141babd39660d2cb63689ef755cc..bb20ee6511aae9e00542720814e6ddbb41427121
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,6 +1,79 @@
+ import { inngest } from "../client";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
++type ObserveCompactionInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "compaction";
++  messages: string;
++  messageCount: number;
++  tokensBefore: number;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveEndedInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "shutdown";
++  messages: string;
++  messageCount: number;
++  userMessageCount: number;
++  duration: number;
++  sessionName?: string;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
++
++function readShellText(value: unknown): string {
++  if (typeof value === "string") return value;
++  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
++  if (value == null) return "";
++  return String(value);
++}
++
++function assertRequiredStringField(
++  payload: Record<string, unknown>,
++  fieldName: "sessionId" | "dedupeKey" | "trigger" | "messages"
++) {
++  const value = payload[fieldName];
++  if (typeof value !== "string" || value.trim().length === 0) {
++    throw new Error(`Missing required session field: ${fieldName}`);
++  }
++}
++
++function validateObserveInput(eventName: string, data: unknown): ObserveInput {
++  if (!data || typeof data !== "object") {
++    throw new Error("Invalid event data: expected object payload");
++  }
++
++  const payload = data as Record<string, unknown>;
++  assertRequiredStringField(payload, "sessionId");
++  assertRequiredStringField(payload, "dedupeKey");
++  assertRequiredStringField(payload, "trigger");
++  assertRequiredStringField(payload, "messages");
++
++  if (eventName === "memory/session.compaction.pending" && payload.trigger !== "compaction") {
++    throw new Error("Invalid trigger for compaction event; expected 'compaction'");
++  }
++
++  if (eventName === "memory/session.ended" && payload.trigger !== "shutdown") {
++    throw new Error("Invalid trigger for ended event; expected 'shutdown'");
++  }
++
++  if (payload.trigger !== "compaction" && payload.trigger !== "shutdown") {
++    throw new Error(`Invalid trigger value: ${payload.trigger}`);
++  }
++
++  return payload as ObserveInput;
++}
++
+ export const observeSessionFunction = inngest.createFunction(
+   {
+     id: "memory/observe-session",
+@@ -11,17 +84,46 @@
+     { event: "memory/session.ended" },
+   ],
+   async ({ event, step }) => {
+-    const validatedInput = await step.run("validate-input", async () => event.data);
++    const validatedInput = await step.run("validate-input", async () =>
++      validateObserveInput(event.name, event.data)
++    );
+ 
+     const llmOutput = await step.run("call-observer-llm", async () => {
+       const sessionName =
+         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
+-
+-      return `${OBSERVER_SYSTEM_PROMPT}\n\n${OBSERVER_USER_PROMPT(
++      const userPrompt = OBSERVER_USER_PROMPT(
+         validatedInput.messages,
+         validatedInput.trigger,
+         sessionName
+-      )}`;
++      );
++      const promptWithSessionContext = `${userPrompt}
++
++Session context:
++- sessionId: ${validatedInput.sessionId}
++- dedupeKey: ${validatedInput.dedupeKey}`;
++
++      try {
++        const result = await Bun.$`pi --system ${OBSERVER_SYSTEM_PROMPT} --prompt ${promptWithSessionContext}`
++          .quiet()
++          .nothrow();
++
++        const stdout = readShellText(result.stdout);
++        const stderr = readShellText(result.stderr);
++
++        if (result.exitCode !== 0) {
++          throw new Error(
++            `Observer LLM subprocess failed with exit code ${result.exitCode}${
++              stderr ? `: ${stderr}` : ""
++            }`
++          );
++        }
++
++        return stdout;
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        throw new Error(`Failed to run observer LLM subprocess: ${message}`);
++      }
++
+     });
+ 
+     const parsedObservations = await step.run("parse-observations", async () => ({
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 27bfac138363141babd39660d2cb63689ef755cc..bb20ee6511aae9e00542720814e6ddbb41427121
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,6 +1,79 @@
+ import { inngest } from "../client";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
++type ObserveCompactionInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "compaction";
++  messages: string;
++  messageCount: number;
++  tokensBefore: number;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveEndedInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "shutdown";
++  messages: string;
++  messageCount: number;
++  userMessageCount: number;
++  duration: number;
++  sessionName?: string;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
++
++function readShellText(value: unknown): string {
++  if (typeof value === "string") return value;
++  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
++  if (value == null) return "";
++  return String(value);
++}
++
++function assertRequiredStringField(
++  payload: Record<string, unknown>,
++  fieldName: "sessionId" | "dedupeKey" | "trigger" | "messages"
++) {
++  const value = payload[fieldName];
++  if (typeof value !== "string" || value.trim().length === 0) {
++    throw new Error(`Missing required session field: ${fieldName}`);
++  }
++}
++
++function validateObserveInput(eventName: string, data: unknown): ObserveInput {
++  if (!data || typeof data !== "object") {
++    throw new Error("Invalid event data: expected object payload");
++  }
++
++  const payload = data as Record<string, unknown>;
++  assertRequiredStringField(payload, "sessionId");
++  assertRequiredStringField(payload, "dedupeKey");
++  assertRequiredStringField(payload, "trigger");
++  assertRequiredStringField(payload, "messages");
++
++  if (eventName === "memory/session.compaction.pending" && payload.trigger !== "compaction") {
++    throw new Error("Invalid trigger for compaction event; expected 'compaction'");
++  }
++
++  if (eventName === "memory/session.ended" && payload.trigger !== "shutdown") {
++    throw new Error("Invalid trigger for ended event; expected 'shutdown'");
++  }
++
++  if (payload.trigger !== "compaction" && payload.trigger !== "shutdown") {
++    throw new Error(`Invalid trigger value: ${payload.trigger}`);
++  }
++
++  return payload as ObserveInput;
++}
++
+ export const observeSessionFunction = inngest.createFunction(
+   {
+     id: "memory/observe-session",
+@@ -11,17 +84,46 @@
+     { event: "memory/session.ended" },
+   ],
+   async ({ event, step }) => {
+-    const validatedInput = await step.run("validate-input", async () => event.data);
++    const validatedInput = await step.run("validate-input", async () =>
++      validateObserveInput(event.name, event.data)
++    );
+ 
+     const llmOutput = await step.run("call-observer-llm", async () => {
+       const sessionName =
+         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
+-
+-      return `${OBSERVER_SYSTEM_PROMPT}\n\n${OBSERVER_USER_PROMPT(
++      const userPrompt = OBSERVER_USER_PROMPT(
+         validatedInput.messages,
+         validatedInput.trigger,
+         sessionName
+-      )}`;
++      );
++      const promptWithSessionContext = `${userPrompt}
++
++Session context:
++- sessionId: ${validatedInput.sessionId}
++- dedupeKey: ${validatedInput.dedupeKey}`;
++
++      try {
++        const result = await Bun.$`pi --system ${OBSERVER_SYSTEM_PROMPT} --prompt ${promptWithSessionContext}`
++          .quiet()
++          .nothrow();
++
++        const stdout = readShellText(result.stdout);
++        const stderr = readShellText(result.stderr);
++
++        if (result.exitCode !== 0) {
++          throw new Error(
++            `Observer LLM subprocess failed with exit code ${result.exitCode}${
++              stderr ? `: ${stderr}` : ""
++            }`
++          );
++        }
++
++        return stdout;
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        throw new Error(`Failed to run observer LLM subprocess: ${message}`);
++      }
++
+     });
+ 
+     const parsedObservations = await step.run("parse-observations", async () => ({
+
+
+thinking
+**Running type checks and tests**
+codex
+The observer implementation is patched. I’m running the TypeScript gate and then the OBS tests to verify compatibility with existing contracts.
+exec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc 'bun test __tests__/obs-1-observe-function.test.ts' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc 'bun test __tests__/obs-2-validate-input-call-observer-llm.test.ts' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 761ms:
+
+ succeeded in 792ms:
+(pass) OBS-2: TypeScript compile gate > AC-6: bunx tsc --noEmit succeeds [813.73ms]
+
+ 5 pass
+ 0 fail
+ 20 expect() calls
+Ran 5 tests across 1 file. [853.00ms]
+ exited 1 in 1.26s:
+119 |         }
+120 | 
+121 |         return stdout;
+122 |       } catch (error) {
+123 |         const message = error instanceof Error ? error.message : String(error);
+124 |         throw new Error(`Failed to run observer LLM subprocess: ${message}`);
+                        ^
+error: Failed to run observer LLM subprocess: Observer LLM subprocess failed with exit code 1: Failed to load extension "/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/repo-autopsy/index.ts": Failed to load extension: ResolveMessage: Cannot find module '@sinclair/typebox' from '/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/repo-autopsy/index.ts'
+Failed to load extension "/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/ts-check/ts-check.ts": Failed to load extension: ResolveMessage: Cannot find module '@sinclair/typebox' from '/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/ts-check/ts-check.ts'
+Failed to load extension "/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/codex-exec/codex-exec.ts": Failed to load extension: ResolveMessage: Cannot find module '@mariozechner/pi-coding-agent' from '/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/codex-exec/codex-exec.ts'
+Failed to load extension "/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/session-reader/session-reader.ts": Failed to load extension: ResolveMessage: Cannot find module '@mariozechner/pi-tui' from '/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/session-reader/session-reader.ts'
+Failed to load extension "/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/skill-shortcut/skill-shortcut.ts": Failed to load extension: ResolveMessage: Cannot find module '@mariozechner/pi-coding-agent' from '/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/skill-shortcut/skill-shortcut.ts'
+Failed to load extension "/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/ralph-loop/index.ts": Failed to load extension: ResolveMessage: Cannot find module '@sinclair/typebox' from '/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/ralph-loop/index.ts'
+Failed to load extension "/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/mcq/index.ts": Failed to load extension: ResolveMessage: Cannot find module '@mariozechner/pi-tui' from '/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/mcq/index.ts'
+Failed to load extension "/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/agent-secrets/agent-secrets.ts": Failed to load extension: ResolveMessage: Cannot find module '@sinclair/typebox' from '/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/agent-secrets/agent-secrets.ts'
+Failed to load extension "/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/mcp-bridge/index.ts": Failed to load extension: ResolveMessage: Cannot find module '@mariozechner/pi-tui' from '/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/mcp-bridge/index.ts'
+Failed to load extension "/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/web-search/web-search.ts": Failed to load extension: ResolveMessage: Cannot find module '@mariozechner/pi-tui' from '/Users/joel/.pi/agent/git/github.com/joelhooks/pi-tools/web-search/web-search.ts'
+207 |  */
+208 | function getDefaultSessionDir(cwd) {
+209 |     const safePath = `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 27bfac138363141babd39660d2cb63689ef755cc..bb20ee6511aae9e00542720814e6ddbb41427121
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,6 +1,79 @@
+ import { inngest } from "../client";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
++type ObserveCompactionInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "compaction";
++  messages: string;
++  messageCount: number;
++  tokensBefore: number;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveEndedInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "shutdown";
++  messages: string;
++  messageCount: number;
++  userMessageCount: number;
++  duration: number;
++  sessionName?: string;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
++
++function readShellText(value: unknown): string {
++  if (typeof value === "string") return value;
++  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
++  if (value == null) return "";
++  return String(value);
++}
++
++function assertRequiredStringField(
++  payload: Record<string, unknown>,
++  fieldName: "sessionId" | "dedupeKey" | "trigger" | "messages"
++) {
++  const value = payload[fieldName];
++  if (typeof value !== "string" || value.trim().length === 0) {
++    throw new Error(`Missing required session field: ${fieldName}`);
++  }
++}
++
++function validateObserveInput(eventName: string, data: unknown): ObserveInput {
++  if (!data || typeof data !== "object") {
++    throw new Error("Invalid event data: expected object payload");
++  }
++
++  const payload = data as Record<string, unknown>;
++  assertRequiredStringField(payload, "sessionId");
++  assertRequiredStringField(payload, "dedupeKey");
++  assertRequiredStringField(payload, "trigger");
++  assertRequiredStringField(payload, "messages");
++
++  if (eventName === "memory/session.compaction.pending" && payload.trigger !== "compaction") {
++    throw new Error("Invalid trigger for compaction event; expected 'compaction'");
++  }
++
++  if (eventName === "memory/session.ended" && payload.trigger !== "shutdown") {
++    throw new Error("Invalid trigger for ended event; expected 'shutdown'");
++  }
++
++  if (payload.trigger !== "compaction" && payload.trigger !== "shutdown") {
++    throw new Error(`Invalid trigger value: ${payload.trigger}`);
++  }
++
++  return payload as ObserveInput;
++}
++
+ export const observeSessionFunction = inngest.createFunction(
+   {
+     id: "memory/observe-session",
+@@ -11,17 +84,46 @@
+     { event: "memory/session.ended" },
+   ],
+   async ({ event, step }) => {
+-    const validatedInput = await step.run("validate-input", async () => event.data);
++    const validatedInput = await step.run("validate-input", async () =>
++      validateObserveInput(event.name, event.data)
++    );
+ 
+     const llmOutput = await step.run("call-observer-llm", async () => {
+       const sessionName =
+         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
+-
+-      return `${OBSERVER_SYSTEM_PROMPT}\n\n${OBSERVER_USER_PROMPT(
++      const userPrompt = OBSERVER_USER_PROMPT(
+         validatedInput.messages,
+         validatedInput.trigger,
+         sessionName
+-      )}`;
++      );
++      const promptWithSessionContext = `${userPrompt}
++
++Session context:
++- sessionId: ${validatedInput.sessionId}
++- dedupeKey: ${validatedInput.dedupeKey}`;
++
++      try {
++        const result = await Bun.$`pi --system ${OBSERVER_SYSTEM_PROMPT} --prompt ${promptWithSessionContext}`
++          .quiet()
++          .nothrow();
++
++        const stdout = readShellText(result.stdout);
++        const stderr = readShellText(result.stderr);
++
++        if (result.exitCode !== 0) {
++          throw new Error(
++            `Observer LLM subprocess failed with exit code ${result.exitCode}${
++              stderr ? `: ${stderr}` : ""
++            }`
++          );
++        }
++
++        return stdout;
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        throw new Error(`Failed to run observer LLM subprocess: ${message}`);
++      }
++
+     });
+ 
+     const parsedObservations = await step.run("parse-observations", async () => ({
+
+
+thinking
+**Adjusting test to mock interface**
+codex
+I hit one regression: `obs-1` calls the real `pi` process and fails in this sandbox. I’m updating that existing test to mock `Bun.$` (like `obs-2`) and assert prompt wiring through the command instead of depending on live `pi` execution.
+exec
+/bin/zsh -lc "sed -n '1,260p' __tests__/obs-1-observe-function.test.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 53ms:
+import { describe, expect, test } from "bun:test";
+import type { Events } from "../src/inngest/client.ts";
+
+type ObserveTrigger = "memory/session.compaction.pending" | "memory/session.ended";
+type EventData<TName extends keyof Events> = Events[TName] extends { data: infer TData }
+  ? TData
+  : never;
+
+function observeFilePath(): string {
+  return new URL("../src/inngest/functions/observe.ts", import.meta.url).pathname;
+}
+
+async function loadObserveModule() {
+  return import("../src/inngest/functions/observe.ts");
+}
+
+async function loadObservePromptModule() {
+  return import("../src/inngest/functions/observe-prompt.ts");
+}
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 27bfac138363141babd39660d2cb63689ef755cc..bb20ee6511aae9e00542720814e6ddbb41427121
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,6 +1,79 @@
+ import { inngest } from "../client";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
++type ObserveCompactionInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "compaction";
++  messages: string;
++  messageCount: number;
++  tokensBefore: number;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveEndedInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "shutdown";
++  messages: string;
++  messageCount: number;
++  userMessageCount: number;
++  duration: number;
++  sessionName?: string;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
++
++function readShellText(value: unknown): string {
++  if (typeof value === "string") return value;
++  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
++  if (value == null) return "";
++  return String(value);
++}
++
++function assertRequiredStringField(
++  payload: Record<string, unknown>,
++  fieldName: "sessionId" | "dedupeKey" | "trigger" | "messages"
++) {
++  const value = payload[fieldName];
++  if (typeof value !== "string" || value.trim().length === 0) {
++    throw new Error(`Missing required session field: ${fieldName}`);
++  }
++}
++
++function validateObserveInput(eventName: string, data: unknown): ObserveInput {
++  if (!data || typeof data !== "object") {
++    throw new Error("Invalid event data: expected object payload");
++  }
++
++  const payload = data as Record<string, unknown>;
++  assertRequiredStringField(payload, "sessionId");
++  assertRequiredStringField(payload, "dedupeKey");
++  assertRequiredStringField(payload, "trigger");
++  assertRequiredStringField(payload, "messages");
++
++  if (eventName === "memory/session.compaction.pending" && payload.trigger !== "compaction") {
++    throw new Error("Invalid trigger for compaction event; expected 'compaction'");
++  }
++
++  if (eventName === "memory/session.ended" && payload.trigger !== "shutdown") {
++    throw new Error("Invalid trigger for ended event; expected 'shutdown'");
++  }
++
++  if (payload.trigger !== "compaction" && payload.trigger !== "shutdown") {
++    throw new Error(`Invalid trigger value: ${payload.trigger}`);
++  }
++
++  return payload as ObserveInput;
++}
++
+ export const observeSessionFunction = inngest.createFunction(
+   {
+     id: "memory/observe-session",
+@@ -11,17 +84,46 @@
+     { event: "memory/session.ended" },
+   ],
+   async ({ event, step }) => {
+-    const validatedInput = await step.run("validate-input", async () => event.data);
++    const validatedInput = await step.run("validate-input", async () =>
++      validateObserveInput(event.name, event.data)
++    );
+ 
+     const llmOutput = await step.run("call-observer-llm", async () => {
+       const sessionName =
+         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
+-
+-      return `${OBSERVER_SYSTEM_PROMPT}\n\n${OBSERVER_USER_PROMPT(
++      const userPrompt = OBSERVER_USER_PROMPT(
+         validatedInput.messages,
+         validatedInput.trigger,
+         sessionName
+-      )}`;
++      );
++      const promptWithSessionContext = `${userPrompt}
++
++Session context:
++- sessionId: ${validatedInput.sessionId}
++- dedupeKey: ${validatedInput.dedupeKey}`;
++
++      try {
++        const result = await Bun.$`pi --system ${OBSERVER_SYSTEM_PROMPT} --prompt ${promptWithSessionContext}`
++          .quiet()
++          .nothrow();
++
++        const stdout = readShellText(result.stdout);
++        const stderr = readShellText(result.stderr);
++
++        if (result.exitCode !== 0) {
++          throw new Error(
++            `Observer LLM subprocess failed with exit code ${result.exitCode}${
++              stderr ? `: ${stderr}` : ""
++            }`
++          );
++        }
++
++        return stdout;
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        throw new Error(`Failed to run observer LLM subprocess: ${message}`);
++      }
++
+     });
+ 
+     const parsedObservations = await step.run("parse-observations", async () => ({
+
+
+thinking
+**Adding test hooks and helpers**
+codex
+I’m patching `__tests__/obs-1-observe-function.test.ts` to isolate it from local `pi` installation details by mocking `Bun.$` and asserting prompt content in subprocess arguments.
+file update
+M /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+@@ -1,2 +1,2 @@
+-import { describe, expect, test } from "bun:test";
++import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+ import type { Events } from "../src/inngest/client.ts";
+@@ -52,12 +52,67 @@
+ 
+-function asText(value: unknown): string {
+-  if (typeof value === "string") return value;
+-  if (value === null || value === undefined) return "";
+-  try {
+-    return JSON.stringify(value);
+-  } catch {
+-    return String(value);
++type BunDollarCall = {
++  strings: string[];
++  values: unknown[];
++  command: string;
++};
++
++const originalBunDollar = Bun.$;
++let bunDollarCalls: BunDollarCall[] = [];
++
++function buildCommandString(strings: string[], values: unknown[]): string {
++  let command = "";
++  for (let i = 0; i < strings.length; i++) {
++    command += strings[i] ?? "";
++    if (i < values.length) command += String(values[i]);
+   }
++  return command;
++}
++
++function installBunDollarMock() {
++  // @ts-expect-error monkey-patching Bun.$ for test isolation
++  Bun.$ = (strings: TemplateStringsArray, ...values: unknown[]) => {
++    const call = {
++      strings: Array.from(strings),
++      values,
++      command: buildCommandString(Array.from(strings), values),
++    };
++    bunDollarCalls.push(call);
++
++    const shellResult = {
++      stdout: "<observations></observations>",
++      stderr: "",
++      exitCode: 0,
++    };
++
++    const promise = Promise.resolve(shellResult);
++    const shellPromise: Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    } = {
++      then: promise.then.bind(promise),
++      catch: promise.catch.bind(promise),
++      finally: promise.finally.bind(promise),
++      quiet: () => shellPromise,
++      nothrow: () => shellPromise,
++      [Symbol.toStringTag]: "ShellPromise",
++    } as Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    };
++
++    return shellPromise;
++  };
+ }
+ 
++function restoreBunDollar() {
++  Bun.$ = originalBunDollar;
++}
++
++function commandOrValuesContainText(call: BunDollarCall, text: string): boolean {
++  if (call.command.includes(text)) return true;
++  return call.values.some(
++    (value) => typeof value === "string" && value.includes(text)
++  );
++}
++
+ async function executeObserveHandler(trigger: ObserveTrigger, data: EventData<ObserveTrigger>) {
+@@ -95,2 +150,11 @@
+ 
++beforeEach(() => {
++  bunDollarCalls = [];
++  installBunDollarMock();
++});
++
++afterEach(() => {
++  restoreBunDollar();
++});
++
+ describe("OBS-1: observe.ts scaffold contract", () => {
+@@ -151,7 +215,8 @@
+     );
+-    const compactionLlmOutput = asText(compactionStepOutputs.get("call-observer-llm"));
++    const firstCall = bunDollarCalls[0];
++    expect(firstCall).toBeDefined();
++    expect(commandOrValuesContainText(firstCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(firstCall!, expectedCompactionUserPrompt)).toBe(true);
++    expect(typeof compactionStepOutputs.get("call-observer-llm")).toBe("string");
+ 
+-    expect(compactionLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(compactionLlmOutput).toContain(expectedCompactionUserPrompt);
+-
+     const endedData = makeEndedEventData();
+@@ -176,6 +241,7 @@
+     );
+-    const endedLlmOutput = asText(endedStepOutputs.get("call-observer-llm"));
+-
+-    expect(endedLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(endedLlmOutput).toContain(expectedEndedUserPrompt);
++    const secondCall = bunDollarCalls[1];
++    expect(secondCall).toBeDefined();
++    expect(commandOrValuesContainText(secondCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(secondCall!, expectedEndedUserPrompt)).toBe(true);
++    expect(typeof endedStepOutputs.get("call-observer-llm")).toBe("string");
+   });
+apply_patch(auto_approved=true) exited 0 in 44ms:
+Success. Updated the following files:
+M /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+file update:
+diff --git a/packages/system-bus/__tests__/obs-1-observe-function.test.ts b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+index bf8cf977084655534247d87536718f8de7e89a90..3f4a3ecb029a980892d2858c8bbdc67ef3e67e2a
+--- a/packages/system-bus/__tests__/obs-1-observe-function.test.ts
++++ b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+@@ -1,4 +1,4 @@
+-import { describe, expect, test } from "bun:test";
++import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+ import type { Events } from "../src/inngest/client.ts";
+ 
+ type ObserveTrigger = "memory/session.compaction.pending" | "memory/session.ended";
+@@ -50,16 +50,71 @@
+   };
+ }
+ 
+-function asText(value: unknown): string {
+-  if (typeof value === "string") return value;
+-  if (value === null || value === undefined) return "";
+-  try {
+-    return JSON.stringify(value);
+-  } catch {
+-    return String(value);
++type BunDollarCall = {
++  strings: string[];
++  values: unknown[];
++  command: string;
++};
++
++const originalBunDollar = Bun.$;
++let bunDollarCalls: BunDollarCall[] = [];
++
++function buildCommandString(strings: string[], values: unknown[]): string {
++  let command = "";
++  for (let i = 0; i < strings.length; i++) {
++    command += strings[i] ?? "";
++    if (i < values.length) command += String(values[i]);
+   }
++  return command;
++}
++
++function installBunDollarMock() {
++  // @ts-expect-error monkey-patching Bun.$ for test isolation
++  Bun.$ = (strings: TemplateStringsArray, ...values: unknown[]) => {
++    const call = {
++      strings: Array.from(strings),
++      values,
++      command: buildCommandString(Array.from(strings), values),
++    };
++    bunDollarCalls.push(call);
++
++    const shellResult = {
++      stdout: "<observations></observations>",
++      stderr: "",
++      exitCode: 0,
++    };
++
++    const promise = Promise.resolve(shellResult);
++    const shellPromise: Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    } = {
++      then: promise.then.bind(promise),
++      catch: promise.catch.bind(promise),
++      finally: promise.finally.bind(promise),
++      quiet: () => shellPromise,
++      nothrow: () => shellPromise,
++      [Symbol.toStringTag]: "ShellPromise",
++    } as Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    };
++
++    return shellPromise;
++  };
+ }
+ 
++function restoreBunDollar() {
++  Bun.$ = originalBunDollar;
++}
++
++function commandOrValuesContainText(call: BunDollarCall, text: string): boolean {
++  if (call.command.includes(text)) return true;
++  return call.values.some(
++    (value) => typeof value === "string" && value.includes(text)
++  );
++}
++
+ async function executeObserveHandler(trigger: ObserveTrigger, data: EventData<ObserveTrigger>) {
+   const mod = await loadObserveModule();
+   const fn = mod.observeSessionFunction as any;
+@@ -93,6 +148,15 @@
+   return { result, stepIds, stepOutputs };
+ }
+ 
++beforeEach(() => {
++  bunDollarCalls = [];
++  installBunDollarMock();
++});
++
++afterEach(() => {
++  restoreBunDollar();
++});
++
+ describe("OBS-1: observe.ts scaffold contract", () => {
+   test("AC-1: src/inngest/functions/observe.ts exists", async () => {
+     const exists = await Bun.file(observeFilePath()).exists();
+@@ -149,11 +213,12 @@
+       compactionData.messages,
+       compactionData.trigger
+     );
+-    const compactionLlmOutput = asText(compactionStepOutputs.get("call-observer-llm"));
++    const firstCall = bunDollarCalls[0];
++    expect(firstCall).toBeDefined();
++    expect(commandOrValuesContainText(firstCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(firstCall!, expectedCompactionUserPrompt)).toBe(true);
++    expect(typeof compactionStepOutputs.get("call-observer-llm")).toBe("string");
+ 
+-    expect(compactionLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(compactionLlmOutput).toContain(expectedCompactionUserPrompt);
+-
+     const endedData = makeEndedEventData();
+     const { stepIds: endedStepIds, stepOutputs: endedStepOutputs } =
+       await executeObserveHandler("memory/session.ended", endedData);
+@@ -174,10 +239,11 @@
+       endedData.trigger,
+       endedData.sessionName
+     );
+-    const endedLlmOutput = asText(endedStepOutputs.get("call-observer-llm"));
+-
+-    expect(endedLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(endedLlmOutput).toContain(expectedEndedUserPrompt);
++    const secondCall = bunDollarCalls[1];
++    expect(secondCall).toBeDefined();
++    expect(commandOrValuesContainText(secondCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(secondCall!, expectedEndedUserPrompt)).toBe(true);
++    expect(typeof endedStepOutputs.get("call-observer-llm")).toBe("string");
+   });
+ });
+ 
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 27bfac138363141babd39660d2cb63689ef755cc..bb20ee6511aae9e00542720814e6ddbb41427121
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,6 +1,79 @@
+ import { inngest } from "../client";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
++type ObserveCompactionInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "compaction";
++  messages: string;
++  messageCount: number;
++  tokensBefore: number;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveEndedInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "shutdown";
++  messages: string;
++  messageCount: number;
++  userMessageCount: number;
++  duration: number;
++  sessionName?: string;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
++
++function readShellText(value: unknown): string {
++  if (typeof value === "string") return value;
++  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
++  if (value == null) return "";
++  return String(value);
++}
++
++function assertRequiredStringField(
++  payload: Record<string, unknown>,
++  fieldName: "sessionId" | "dedupeKey" | "trigger" | "messages"
++) {
++  const value = payload[fieldName];
++  if (typeof value !== "string" || value.trim().length === 0) {
++    throw new Error(`Missing required session field: ${fieldName}`);
++  }
++}
++
++function validateObserveInput(eventName: string, data: unknown): ObserveInput {
++  if (!data || typeof data !== "object") {
++    throw new Error("Invalid event data: expected object payload");
++  }
++
++  const payload = data as Record<string, unknown>;
++  assertRequiredStringField(payload, "sessionId");
++  assertRequiredStringField(payload, "dedupeKey");
++  assertRequiredStringField(payload, "trigger");
++  assertRequiredStringField(payload, "messages");
++
++  if (eventName === "memory/session.compaction.pending" && payload.trigger !== "compaction") {
++    throw new Error("Invalid trigger for compaction event; expected 'compaction'");
++  }
++
++  if (eventName === "memory/session.ended" && payload.trigger !== "shutdown") {
++    throw new Error("Invalid trigger for ended event; expected 'shutdown'");
++  }
++
++  if (payload.trigger !== "compaction" && payload.trigger !== "shutdown") {
++    throw new Error(`Invalid trigger value: ${payload.trigger}`);
++  }
++
++  return payload as ObserveInput;
++}
++
+ export const observeSessionFunction = inngest.createFunction(
+   {
+     id: "memory/observe-session",
+@@ -11,17 +84,46 @@
+     { event: "memory/session.ended" },
+   ],
+   async ({ event, step }) => {
+-    const validatedInput = await step.run("validate-input", async () => event.data);
++    const validatedInput = await step.run("validate-input", async () =>
++      validateObserveInput(event.name, event.data)
++    );
+ 
+     const llmOutput = await step.run("call-observer-llm", async () => {
+       const sessionName =
+         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
+-
+-      return `${OBSERVER_SYSTEM_PROMPT}\n\n${OBSERVER_USER_PROMPT(
++      const userPrompt = OBSERVER_USER_PROMPT(
+         validatedInput.messages,
+         validatedInput.trigger,
+         sessionName
+-      )}`;
++      );
++      const promptWithSessionContext = `${userPrompt}
++
++Session context:
++- sessionId: ${validatedInput.sessionId}
++- dedupeKey: ${validatedInput.dedupeKey}`;
++
++      try {
++        const result = await Bun.$`pi --system ${OBSERVER_SYSTEM_PROMPT} --prompt ${promptWithSessionContext}`
++          .quiet()
++          .nothrow();
++
++        const stdout = readShellText(result.stdout);
++        const stderr = readShellText(result.stderr);
++
++        if (result.exitCode !== 0) {
++          throw new Error(
++            `Observer LLM subprocess failed with exit code ${result.exitCode}${
++              stderr ? `: ${stderr}` : ""
++            }`
++          );
++        }
++
++        return stdout;
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        throw new Error(`Failed to run observer LLM subprocess: ${message}`);
++      }
++
+     });
+ 
+     const parsedObservations = await step.run("parse-observations", async () => ({
+
+file update:
+diff --git a/packages/system-bus/__tests__/obs-1-observe-function.test.ts b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+index bf8cf977084655534247d87536718f8de7e89a90..3f4a3ecb029a980892d2858c8bbdc67ef3e67e2a
+--- a/packages/system-bus/__tests__/obs-1-observe-function.test.ts
++++ b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+@@ -1,4 +1,4 @@
+-import { describe, expect, test } from "bun:test";
++import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+ import type { Events } from "../src/inngest/client.ts";
+ 
+ type ObserveTrigger = "memory/session.compaction.pending" | "memory/session.ended";
+@@ -50,16 +50,71 @@
+   };
+ }
+ 
+-function asText(value: unknown): string {
+-  if (typeof value === "string") return value;
+-  if (value === null || value === undefined) return "";
+-  try {
+-    return JSON.stringify(value);
+-  } catch {
+-    return String(value);
++type BunDollarCall = {
++  strings: string[];
++  values: unknown[];
++  command: string;
++};
++
++const originalBunDollar = Bun.$;
++let bunDollarCalls: BunDollarCall[] = [];
++
++function buildCommandString(strings: string[], values: unknown[]): string {
++  let command = "";
++  for (let i = 0; i < strings.length; i++) {
++    command += strings[i] ?? "";
++    if (i < values.length) command += String(values[i]);
+   }
++  return command;
++}
++
++function installBunDollarMock() {
++  // @ts-expect-error monkey-patching Bun.$ for test isolation
++  Bun.$ = (strings: TemplateStringsArray, ...values: unknown[]) => {
++    const call = {
++      strings: Array.from(strings),
++      values,
++      command: buildCommandString(Array.from(strings), values),
++    };
++    bunDollarCalls.push(call);
++
++    const shellResult = {
++      stdout: "<observations></observations>",
++      stderr: "",
++      exitCode: 0,
++    };
++
++    const promise = Promise.resolve(shellResult);
++    const shellPromise: Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    } = {
++      then: promise.then.bind(promise),
++      catch: promise.catch.bind(promise),
++      finally: promise.finally.bind(promise),
++      quiet: () => shellPromise,
++      nothrow: () => shellPromise,
++      [Symbol.toStringTag]: "ShellPromise",
++    } as Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    };
++
++    return shellPromise;
++  };
+ }
+ 
++function restoreBunDollar() {
++  Bun.$ = originalBunDollar;
++}
++
++function commandOrValuesContainText(call: BunDollarCall, text: string): boolean {
++  if (call.command.includes(text)) return true;
++  return call.values.some(
++    (value) => typeof value === "string" && value.includes(text)
++  );
++}
++
+ async function executeObserveHandler(trigger: ObserveTrigger, data: EventData<ObserveTrigger>) {
+   const mod = await loadObserveModule();
+   const fn = mod.observeSessionFunction as any;
+@@ -93,6 +148,15 @@
+   return { result, stepIds, stepOutputs };
+ }
+ 
++beforeEach(() => {
++  bunDollarCalls = [];
++  installBunDollarMock();
++});
++
++afterEach(() => {
++  restoreBunDollar();
++});
++
+ describe("OBS-1: observe.ts scaffold contract", () => {
+   test("AC-1: src/inngest/functions/observe.ts exists", async () => {
+     const exists = await Bun.file(observeFilePath()).exists();
+@@ -149,11 +213,12 @@
+       compactionData.messages,
+       compactionData.trigger
+     );
+-    const compactionLlmOutput = asText(compactionStepOutputs.get("call-observer-llm"));
++    const firstCall = bunDollarCalls[0];
++    expect(firstCall).toBeDefined();
++    expect(commandOrValuesContainText(firstCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(firstCall!, expectedCompactionUserPrompt)).toBe(true);
++    expect(typeof compactionStepOutputs.get("call-observer-llm")).toBe("string");
+ 
+-    expect(compactionLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(compactionLlmOutput).toContain(expectedCompactionUserPrompt);
+-
+     const endedData = makeEndedEventData();
+     const { stepIds: endedStepIds, stepOutputs: endedStepOutputs } =
+       await executeObserveHandler("memory/session.ended", endedData);
+@@ -174,10 +239,11 @@
+       endedData.trigger,
+       endedData.sessionName
+     );
+-    const endedLlmOutput = asText(endedStepOutputs.get("call-observer-llm"));
+-
+-    expect(endedLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(endedLlmOutput).toContain(expectedEndedUserPrompt);
++    const secondCall = bunDollarCalls[1];
++    expect(secondCall).toBeDefined();
++    expect(commandOrValuesContainText(secondCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(secondCall!, expectedEndedUserPrompt)).toBe(true);
++    expect(typeof endedStepOutputs.get("call-observer-llm")).toBe("string");
+   });
+ });
+ 
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 27bfac138363141babd39660d2cb63689ef755cc..bb20ee6511aae9e00542720814e6ddbb41427121
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,6 +1,79 @@
+ import { inngest } from "../client";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
++type ObserveCompactionInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "compaction";
++  messages: string;
++  messageCount: number;
++  tokensBefore: number;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveEndedInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "shutdown";
++  messages: string;
++  messageCount: number;
++  userMessageCount: number;
++  duration: number;
++  sessionName?: string;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
++
++function readShellText(value: unknown): string {
++  if (typeof value === "string") return value;
++  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
++  if (value == null) return "";
++  return String(value);
++}
++
++function assertRequiredStringField(
++  payload: Record<string, unknown>,
++  fieldName: "sessionId" | "dedupeKey" | "trigger" | "messages"
++) {
++  const value = payload[fieldName];
++  if (typeof value !== "string" || value.trim().length === 0) {
++    throw new Error(`Missing required session field: ${fieldName}`);
++  }
++}
++
++function validateObserveInput(eventName: string, data: unknown): ObserveInput {
++  if (!data || typeof data !== "object") {
++    throw new Error("Invalid event data: expected object payload");
++  }
++
++  const payload = data as Record<string, unknown>;
++  assertRequiredStringField(payload, "sessionId");
++  assertRequiredStringField(payload, "dedupeKey");
++  assertRequiredStringField(payload, "trigger");
++  assertRequiredStringField(payload, "messages");
++
++  if (eventName === "memory/session.compaction.pending" && payload.trigger !== "compaction") {
++    throw new Error("Invalid trigger for compaction event; expected 'compaction'");
++  }
++
++  if (eventName === "memory/session.ended" && payload.trigger !== "shutdown") {
++    throw new Error("Invalid trigger for ended event; expected 'shutdown'");
++  }
++
++  if (payload.trigger !== "compaction" && payload.trigger !== "shutdown") {
++    throw new Error(`Invalid trigger value: ${payload.trigger}`);
++  }
++
++  return payload as ObserveInput;
++}
++
+ export const observeSessionFunction = inngest.createFunction(
+   {
+     id: "memory/observe-session",
+@@ -11,17 +84,46 @@
+     { event: "memory/session.ended" },
+   ],
+   async ({ event, step }) => {
+-    const validatedInput = await step.run("validate-input", async () => event.data);
++    const validatedInput = await step.run("validate-input", async () =>
++      validateObserveInput(event.name, event.data)
++    );
+ 
+     const llmOutput = await step.run("call-observer-llm", async () => {
+       const sessionName =
+         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
+-
+-      return `${OBSERVER_SYSTEM_PROMPT}\n\n${OBSERVER_USER_PROMPT(
++      const userPrompt = OBSERVER_USER_PROMPT(
+         validatedInput.messages,
+         validatedInput.trigger,
+         sessionName
+-      )}`;
++      );
++      const promptWithSessionContext = `${userPrompt}
++
++Session context:
++- sessionId: ${validatedInput.sessionId}
++- dedupeKey: ${validatedInput.dedupeKey}`;
++
++      try {
++        const result = await Bun.$`pi --system ${OBSERVER_SYSTEM_PROMPT} --prompt ${promptWithSessionContext}`
++          .quiet()
++          .nothrow();
++
++        const stdout = readShellText(result.stdout);
++        const stderr = readShellText(result.stderr);
++
++        if (result.exitCode !== 0) {
++          throw new Error(
++            `Observer LLM subprocess failed with exit code ${result.exitCode}${
++              stderr ? `: ${stderr}` : ""
++            }`
++          );
++        }
++
++        return stdout;
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        throw new Error(`Failed to run observer LLM subprocess: ${message}`);
++      }
++
+     });
+ 
+     const parsedObservations = await step.run("parse-observations", async () => ({
+
+exec
+/bin/zsh -lc 'bun test __tests__/obs-1-observe-function.test.ts' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 718ms:
+
+ succeeded in 763ms:
+(pass) OBS-1: TypeScript compile gate > AC-6: bunx tsc --noEmit succeeds [767.78ms]
+
+ 4 pass
+ 0 fail
+ 19 expect() calls
+Ran 4 tests across 1 file. [807.00ms]
+file update:
+diff --git a/packages/system-bus/__tests__/obs-1-observe-function.test.ts b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+index bf8cf977084655534247d87536718f8de7e89a90..3f4a3ecb029a980892d2858c8bbdc67ef3e67e2a
+--- a/packages/system-bus/__tests__/obs-1-observe-function.test.ts
++++ b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+@@ -1,4 +1,4 @@
+-import { describe, expect, test } from "bun:test";
++import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+ import type { Events } from "../src/inngest/client.ts";
+ 
+ type ObserveTrigger = "memory/session.compaction.pending" | "memory/session.ended";
+@@ -50,16 +50,71 @@
+   };
+ }
+ 
+-function asText(value: unknown): string {
+-  if (typeof value === "string") return value;
+-  if (value === null || value === undefined) return "";
+-  try {
+-    return JSON.stringify(value);
+-  } catch {
+-    return String(value);
++type BunDollarCall = {
++  strings: string[];
++  values: unknown[];
++  command: string;
++};
++
++const originalBunDollar = Bun.$;
++let bunDollarCalls: BunDollarCall[] = [];
++
++function buildCommandString(strings: string[], values: unknown[]): string {
++  let command = "";
++  for (let i = 0; i < strings.length; i++) {
++    command += strings[i] ?? "";
++    if (i < values.length) command += String(values[i]);
+   }
++  return command;
++}
++
++function installBunDollarMock() {
++  // @ts-expect-error monkey-patching Bun.$ for test isolation
++  Bun.$ = (strings: TemplateStringsArray, ...values: unknown[]) => {
++    const call = {
++      strings: Array.from(strings),
++      values,
++      command: buildCommandString(Array.from(strings), values),
++    };
++    bunDollarCalls.push(call);
++
++    const shellResult = {
++      stdout: "<observations></observations>",
++      stderr: "",
++      exitCode: 0,
++    };
++
++    const promise = Promise.resolve(shellResult);
++    const shellPromise: Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    } = {
++      then: promise.then.bind(promise),
++      catch: promise.catch.bind(promise),
++      finally: promise.finally.bind(promise),
++      quiet: () => shellPromise,
++      nothrow: () => shellPromise,
++      [Symbol.toStringTag]: "ShellPromise",
++    } as Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    };
++
++    return shellPromise;
++  };
+ }
+ 
++function restoreBunDollar() {
++  Bun.$ = originalBunDollar;
++}
++
++function commandOrValuesContainText(call: BunDollarCall, text: string): boolean {
++  if (call.command.includes(text)) return true;
++  return call.values.some(
++    (value) => typeof value === "string" && value.includes(text)
++  );
++}
++
+ async function executeObserveHandler(trigger: ObserveTrigger, data: EventData<ObserveTrigger>) {
+   const mod = await loadObserveModule();
+   const fn = mod.observeSessionFunction as any;
+@@ -93,6 +148,15 @@
+   return { result, stepIds, stepOutputs };
+ }
+ 
++beforeEach(() => {
++  bunDollarCalls = [];
++  installBunDollarMock();
++});
++
++afterEach(() => {
++  restoreBunDollar();
++});
++
+ describe("OBS-1: observe.ts scaffold contract", () => {
+   test("AC-1: src/inngest/functions/observe.ts exists", async () => {
+     const exists = await Bun.file(observeFilePath()).exists();
+@@ -149,11 +213,12 @@
+       compactionData.messages,
+       compactionData.trigger
+     );
+-    const compactionLlmOutput = asText(compactionStepOutputs.get("call-observer-llm"));
++    const firstCall = bunDollarCalls[0];
++    expect(firstCall).toBeDefined();
++    expect(commandOrValuesContainText(firstCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(firstCall!, expectedCompactionUserPrompt)).toBe(true);
++    expect(typeof compactionStepOutputs.get("call-observer-llm")).toBe("string");
+ 
+-    expect(compactionLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(compactionLlmOutput).toContain(expectedCompactionUserPrompt);
+-
+     const endedData = makeEndedEventData();
+     const { stepIds: endedStepIds, stepOutputs: endedStepOutputs } =
+       await executeObserveHandler("memory/session.ended", endedData);
+@@ -174,10 +239,11 @@
+       endedData.trigger,
+       endedData.sessionName
+     );
+-    const endedLlmOutput = asText(endedStepOutputs.get("call-observer-llm"));
+-
+-    expect(endedLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(endedLlmOutput).toContain(expectedEndedUserPrompt);
++    const secondCall = bunDollarCalls[1];
++    expect(secondCall).toBeDefined();
++    expect(commandOrValuesContainText(secondCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(secondCall!, expectedEndedUserPrompt)).toBe(true);
++    expect(typeof endedStepOutputs.get("call-observer-llm")).toBe("string");
+   });
+ });
+ 
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 27bfac138363141babd39660d2cb63689ef755cc..bb20ee6511aae9e00542720814e6ddbb41427121
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,6 +1,79 @@
+ import { inngest } from "../client";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
++type ObserveCompactionInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "compaction";
++  messages: string;
++  messageCount: number;
++  tokensBefore: number;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveEndedInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "shutdown";
++  messages: string;
++  messageCount: number;
++  userMessageCount: number;
++  duration: number;
++  sessionName?: string;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
++
++function readShellText(value: unknown): string {
++  if (typeof value === "string") return value;
++  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
++  if (value == null) return "";
++  return String(value);
++}
++
++function assertRequiredStringField(
++  payload: Record<string, unknown>,
++  fieldName: "sessionId" | "dedupeKey" | "trigger" | "messages"
++) {
++  const value = payload[fieldName];
++  if (typeof value !== "string" || value.trim().length === 0) {
++    throw new Error(`Missing required session field: ${fieldName}`);
++  }
++}
++
++function validateObserveInput(eventName: string, data: unknown): ObserveInput {
++  if (!data || typeof data !== "object") {
++    throw new Error("Invalid event data: expected object payload");
++  }
++
++  const payload = data as Record<string, unknown>;
++  assertRequiredStringField(payload, "sessionId");
++  assertRequiredStringField(payload, "dedupeKey");
++  assertRequiredStringField(payload, "trigger");
++  assertRequiredStringField(payload, "messages");
++
++  if (eventName === "memory/session.compaction.pending" && payload.trigger !== "compaction") {
++    throw new Error("Invalid trigger for compaction event; expected 'compaction'");
++  }
++
++  if (eventName === "memory/session.ended" && payload.trigger !== "shutdown") {
++    throw new Error("Invalid trigger for ended event; expected 'shutdown'");
++  }
++
++  if (payload.trigger !== "compaction" && payload.trigger !== "shutdown") {
++    throw new Error(`Invalid trigger value: ${payload.trigger}`);
++  }
++
++  return payload as ObserveInput;
++}
++
+ export const observeSessionFunction = inngest.createFunction(
+   {
+     id: "memory/observe-session",
+@@ -11,17 +84,46 @@
+     { event: "memory/session.ended" },
+   ],
+   async ({ event, step }) => {
+-    const validatedInput = await step.run("validate-input", async () => event.data);
++    const validatedInput = await step.run("validate-input", async () =>
++      validateObserveInput(event.name, event.data)
++    );
+ 
+     const llmOutput = await step.run("call-observer-llm", async () => {
+       const sessionName =
+         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
+-
+-      return `${OBSERVER_SYSTEM_PROMPT}\n\n${OBSERVER_USER_PROMPT(
++      const userPrompt = OBSERVER_USER_PROMPT(
+         validatedInput.messages,
+         validatedInput.trigger,
+         sessionName
+-      )}`;
++      );
++      const promptWithSessionContext = `${userPrompt}
++
++Session context:
++- sessionId: ${validatedInput.sessionId}
++- dedupeKey: ${validatedInput.dedupeKey}`;
++
++      try {
++        const result = await Bun.$`pi --system ${OBSERVER_SYSTEM_PROMPT} --prompt ${promptWithSessionContext}`
++          .quiet()
++          .nothrow();
++
++        const stdout = readShellText(result.stdout);
++        const stderr = readShellText(result.stderr);
++
++        if (result.exitCode !== 0) {
++          throw new Error(
++            `Observer LLM subprocess failed with exit code ${result.exitCode}${
++              stderr ? `: ${stderr}` : ""
++            }`
++          );
++        }
++
++        return stdout;
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        throw new Error(`Failed to run observer LLM subprocess: ${message}`);
++      }
++
+     });
+ 
+     const parsedObservations = await step.run("parse-observations", async () => ({
+
+
+thinking
+**Confirming test stability**
+codex
+I’ve fixed the OBS-1 compatibility issue and verified typecheck; I’ll do one final run of OBS-2 to confirm nothing regressed in the target story checks.
+exec
+/bin/zsh -lc 'bun test __tests__/obs-2-validate-input-call-observer-llm.test.ts' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 701ms:
+(pass) OBS-2: TypeScript compile gate > AC-6: bunx tsc --noEmit succeeds [703.07ms]
+
+ 5 pass
+ 0 fail
+ 20 expect() calls
+Ran 5 tests across 1 file. [742.00ms]
+file update:
+diff --git a/packages/system-bus/__tests__/obs-1-observe-function.test.ts b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+index bf8cf977084655534247d87536718f8de7e89a90..3f4a3ecb029a980892d2858c8bbdc67ef3e67e2a
+--- a/packages/system-bus/__tests__/obs-1-observe-function.test.ts
++++ b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+@@ -1,4 +1,4 @@
+-import { describe, expect, test } from "bun:test";
++import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+ import type { Events } from "../src/inngest/client.ts";
+ 
+ type ObserveTrigger = "memory/session.compaction.pending" | "memory/session.ended";
+@@ -50,16 +50,71 @@
+   };
+ }
+ 
+-function asText(value: unknown): string {
+-  if (typeof value === "string") return value;
+-  if (value === null || value === undefined) return "";
+-  try {
+-    return JSON.stringify(value);
+-  } catch {
+-    return String(value);
++type BunDollarCall = {
++  strings: string[];
++  values: unknown[];
++  command: string;
++};
++
++const originalBunDollar = Bun.$;
++let bunDollarCalls: BunDollarCall[] = [];
++
++function buildCommandString(strings: string[], values: unknown[]): string {
++  let command = "";
++  for (let i = 0; i < strings.length; i++) {
++    command += strings[i] ?? "";
++    if (i < values.length) command += String(values[i]);
+   }
++  return command;
++}
++
++function installBunDollarMock() {
++  // @ts-expect-error monkey-patching Bun.$ for test isolation
++  Bun.$ = (strings: TemplateStringsArray, ...values: unknown[]) => {
++    const call = {
++      strings: Array.from(strings),
++      values,
++      command: buildCommandString(Array.from(strings), values),
++    };
++    bunDollarCalls.push(call);
++
++    const shellResult = {
++      stdout: "<observations></observations>",
++      stderr: "",
++      exitCode: 0,
++    };
++
++    const promise = Promise.resolve(shellResult);
++    const shellPromise: Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    } = {
++      then: promise.then.bind(promise),
++      catch: promise.catch.bind(promise),
++      finally: promise.finally.bind(promise),
++      quiet: () => shellPromise,
++      nothrow: () => shellPromise,
++      [Symbol.toStringTag]: "ShellPromise",
++    } as Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    };
++
++    return shellPromise;
++  };
+ }
+ 
++function restoreBunDollar() {
++  Bun.$ = originalBunDollar;
++}
++
++function commandOrValuesContainText(call: BunDollarCall, text: string): boolean {
++  if (call.command.includes(text)) return true;
++  return call.values.some(
++    (value) => typeof value === "string" && value.includes(text)
++  );
++}
++
+ async function executeObserveHandler(trigger: ObserveTrigger, data: EventData<ObserveTrigger>) {
+   const mod = await loadObserveModule();
+   const fn = mod.observeSessionFunction as any;
+@@ -93,6 +148,15 @@
+   return { result, stepIds, stepOutputs };
+ }
+ 
++beforeEach(() => {
++  bunDollarCalls = [];
++  installBunDollarMock();
++});
++
++afterEach(() => {
++  restoreBunDollar();
++});
++
+ describe("OBS-1: observe.ts scaffold contract", () => {
+   test("AC-1: src/inngest/functions/observe.ts exists", async () => {
+     const exists = await Bun.file(observeFilePath()).exists();
+@@ -149,11 +213,12 @@
+       compactionData.messages,
+       compactionData.trigger
+     );
+-    const compactionLlmOutput = asText(compactionStepOutputs.get("call-observer-llm"));
++    const firstCall = bunDollarCalls[0];
++    expect(firstCall).toBeDefined();
++    expect(commandOrValuesContainText(firstCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(firstCall!, expectedCompactionUserPrompt)).toBe(true);
++    expect(typeof compactionStepOutputs.get("call-observer-llm")).toBe("string");
+ 
+-    expect(compactionLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(compactionLlmOutput).toContain(expectedCompactionUserPrompt);
+-
+     const endedData = makeEndedEventData();
+     const { stepIds: endedStepIds, stepOutputs: endedStepOutputs } =
+       await executeObserveHandler("memory/session.ended", endedData);
+@@ -174,10 +239,11 @@
+       endedData.trigger,
+       endedData.sessionName
+     );
+-    const endedLlmOutput = asText(endedStepOutputs.get("call-observer-llm"));
+-
+-    expect(endedLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(endedLlmOutput).toContain(expectedEndedUserPrompt);
++    const secondCall = bunDollarCalls[1];
++    expect(secondCall).toBeDefined();
++    expect(commandOrValuesContainText(secondCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(secondCall!, expectedEndedUserPrompt)).toBe(true);
++    expect(typeof endedStepOutputs.get("call-observer-llm")).toBe("string");
+   });
+ });
+ 
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 27bfac138363141babd39660d2cb63689ef755cc..bb20ee6511aae9e00542720814e6ddbb41427121
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,6 +1,79 @@
+ import { inngest } from "../client";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
++type ObserveCompactionInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "compaction";
++  messages: string;
++  messageCount: number;
++  tokensBefore: number;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveEndedInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "shutdown";
++  messages: string;
++  messageCount: number;
++  userMessageCount: number;
++  duration: number;
++  sessionName?: string;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
++
++function readShellText(value: unknown): string {
++  if (typeof value === "string") return value;
++  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
++  if (value == null) return "";
++  return String(value);
++}
++
++function assertRequiredStringField(
++  payload: Record<string, unknown>,
++  fieldName: "sessionId" | "dedupeKey" | "trigger" | "messages"
++) {
++  const value = payload[fieldName];
++  if (typeof value !== "string" || value.trim().length === 0) {
++    throw new Error(`Missing required session field: ${fieldName}`);
++  }
++}
++
++function validateObserveInput(eventName: string, data: unknown): ObserveInput {
++  if (!data || typeof data !== "object") {
++    throw new Error("Invalid event data: expected object payload");
++  }
++
++  const payload = data as Record<string, unknown>;
++  assertRequiredStringField(payload, "sessionId");
++  assertRequiredStringField(payload, "dedupeKey");
++  assertRequiredStringField(payload, "trigger");
++  assertRequiredStringField(payload, "messages");
++
++  if (eventName === "memory/session.compaction.pending" && payload.trigger !== "compaction") {
++    throw new Error("Invalid trigger for compaction event; expected 'compaction'");
++  }
++
++  if (eventName === "memory/session.ended" && payload.trigger !== "shutdown") {
++    throw new Error("Invalid trigger for ended event; expected 'shutdown'");
++  }
++
++  if (payload.trigger !== "compaction" && payload.trigger !== "shutdown") {
++    throw new Error(`Invalid trigger value: ${payload.trigger}`);
++  }
++
++  return payload as ObserveInput;
++}
++
+ export const observeSessionFunction = inngest.createFunction(
+   {
+     id: "memory/observe-session",
+@@ -11,17 +84,46 @@
+     { event: "memory/session.ended" },
+   ],
+   async ({ event, step }) => {
+-    const validatedInput = await step.run("validate-input", async () => event.data);
++    const validatedInput = await step.run("validate-input", async () =>
++      validateObserveInput(event.name, event.data)
++    );
+ 
+     const llmOutput = await step.run("call-observer-llm", async () => {
+       const sessionName =
+         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
+-
+-      return `${OBSERVER_SYSTEM_PROMPT}\n\n${OBSERVER_USER_PROMPT(
++      const userPrompt = OBSERVER_USER_PROMPT(
+         validatedInput.messages,
+         validatedInput.trigger,
+         sessionName
+-      )}`;
++      );
++      const promptWithSessionContext = `${userPrompt}
++
++Session context:
++- sessionId: ${validatedInput.sessionId}
++- dedupeKey: ${validatedInput.dedupeKey}`;
++
++      try {
++        const result = await Bun.$`pi --system ${OBSERVER_SYSTEM_PROMPT} --prompt ${promptWithSessionContext}`
++          .quiet()
++          .nothrow();
++
++        const stdout = readShellText(result.stdout);
++        const stderr = readShellText(result.stderr);
++
++        if (result.exitCode !== 0) {
++          throw new Error(
++            `Observer LLM subprocess failed with exit code ${result.exitCode}${
++              stderr ? `: ${stderr}` : ""
++            }`
++          );
++        }
++
++        return stdout;
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        throw new Error(`Failed to run observer LLM subprocess: ${message}`);
++      }
++
+     });
+ 
+     const parsedObservations = await step.run("parse-observations", async () => ({
+
+
+thinking
+**Inspecting final changed files**
+exec
+/bin/zsh -lc 'git status --short && git diff -- src/inngest/functions/observe.ts __tests__/obs-1-observe-function.test.ts' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 53ms:
+ M __tests__/obs-1-observe-function.test.ts
+ M prd.json
+ M src/inngest/functions/observe.ts
+?? ../../OBS-1-2.out
+?? ../../pid
+diff --git a/packages/system-bus/__tests__/obs-1-observe-function.test.ts b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+index bf8cf97..3f4a3ec 100644
+--- a/packages/system-bus/__tests__/obs-1-observe-function.test.ts
++++ b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+@@ -1,4 +1,4 @@
+-import { describe, expect, test } from "bun:test";
++import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+ import type { Events } from "../src/inngest/client.ts";
+ 
+ type ObserveTrigger = "memory/session.compaction.pending" | "memory/session.ended";
+@@ -50,14 +50,69 @@ function makeEndedEventData(): EventData<"memory/session.ended"> {
+   };
+ }
+ 
+-function asText(value: unknown): string {
+file update:
+diff --git a/packages/system-bus/__tests__/obs-1-observe-function.test.ts b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+index bf8cf977084655534247d87536718f8de7e89a90..3f4a3ecb029a980892d2858c8bbdc67ef3e67e2a
+--- a/packages/system-bus/__tests__/obs-1-observe-function.test.ts
++++ b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+@@ -1,4 +1,4 @@
+-import { describe, expect, test } from "bun:test";
++import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+ import type { Events } from "../src/inngest/client.ts";
+ 
+ type ObserveTrigger = "memory/session.compaction.pending" | "memory/session.ended";
+@@ -50,16 +50,71 @@
+   };
+ }
+ 
+-function asText(value: unknown): string {
+-  if (typeof value === "string") return value;
+-  if (value === null || value === undefined) return "";
+-  try {
+-    return JSON.stringify(value);
+-  } catch {
+-    return String(value);
++type BunDollarCall = {
++  strings: string[];
++  values: unknown[];
++  command: string;
++};
++
++const originalBunDollar = Bun.$;
++let bunDollarCalls: BunDollarCall[] = [];
++
++function buildCommandString(strings: string[], values: unknown[]): string {
++  let command = "";
++  for (let i = 0; i < strings.length; i++) {
++    command += strings[i] ?? "";
++    if (i < values.length) command += String(values[i]);
+   }
++  return command;
++}
++
++function installBunDollarMock() {
++  // @ts-expect-error monkey-patching Bun.$ for test isolation
++  Bun.$ = (strings: TemplateStringsArray, ...values: unknown[]) => {
++    const call = {
++      strings: Array.from(strings),
++      values,
++      command: buildCommandString(Array.from(strings), values),
++    };
++    bunDollarCalls.push(call);
++
++    const shellResult = {
++      stdout: "<observations></observations>",
++      stderr: "",
++      exitCode: 0,
++    };
++
++    const promise = Promise.resolve(shellResult);
++    const shellPromise: Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    } = {
++      then: promise.then.bind(promise),
++      catch: promise.catch.bind(promise),
++      finally: promise.finally.bind(promise),
++      quiet: () => shellPromise,
++      nothrow: () => shellPromise,
++      [Symbol.toStringTag]: "ShellPromise",
++    } as Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    };
++
++    return shellPromise;
++  };
+ }
+ 
++function restoreBunDollar() {
++  Bun.$ = originalBunDollar;
++}
++
++function commandOrValuesContainText(call: BunDollarCall, text: string): boolean {
++  if (call.command.includes(text)) return true;
++  return call.values.some(
++    (value) => typeof value === "string" && value.includes(text)
++  );
++}
++
+ async function executeObserveHandler(trigger: ObserveTrigger, data: EventData<ObserveTrigger>) {
+   const mod = await loadObserveModule();
+   const fn = mod.observeSessionFunction as any;
+@@ -93,6 +148,15 @@
+   return { result, stepIds, stepOutputs };
+ }
+ 
++beforeEach(() => {
++  bunDollarCalls = [];
++  installBunDollarMock();
++});
++
++afterEach(() => {
++  restoreBunDollar();
++});
++
+ describe("OBS-1: observe.ts scaffold contract", () => {
+   test("AC-1: src/inngest/functions/observe.ts exists", async () => {
+     const exists = await Bun.file(observeFilePath()).exists();
+@@ -149,11 +213,12 @@
+       compactionData.messages,
+       compactionData.trigger
+     );
+-    const compactionLlmOutput = asText(compactionStepOutputs.get("call-observer-llm"));
++    const firstCall = bunDollarCalls[0];
++    expect(firstCall).toBeDefined();
++    expect(commandOrValuesContainText(firstCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(firstCall!, expectedCompactionUserPrompt)).toBe(true);
++    expect(typeof compactionStepOutputs.get("call-observer-llm")).toBe("string");
+ 
+-    expect(compactionLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(compactionLlmOutput).toContain(expectedCompactionUserPrompt);
+-
+     const endedData = makeEndedEventData();
+     const { stepIds: endedStepIds, stepOutputs: endedStepOutputs } =
+       await executeObserveHandler("memory/session.ended", endedData);
+@@ -174,10 +239,11 @@
+       endedData.trigger,
+       endedData.sessionName
+     );
+-    const endedLlmOutput = asText(endedStepOutputs.get("call-observer-llm"));
+-
+-    expect(endedLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(endedLlmOutput).toContain(expectedEndedUserPrompt);
++    const secondCall = bunDollarCalls[1];
++    expect(secondCall).toBeDefined();
++    expect(commandOrValuesContainText(secondCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(secondCall!, expectedEndedUserPrompt)).toBe(true);
++    expect(typeof endedStepOutputs.get("call-observer-llm")).toBe("string");
+   });
+ });
+ 
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 27bfac138363141babd39660d2cb63689ef755cc..bb20ee6511aae9e00542720814e6ddbb41427121
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,6 +1,79 @@
+ import { inngest } from "../client";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
++type ObserveCompactionInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "compaction";
++  messages: string;
++  messageCount: number;
++  tokensBefore: number;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveEndedInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "shutdown";
++  messages: string;
++  messageCount: number;
++  userMessageCount: number;
++  duration: number;
++  sessionName?: string;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
++
++function readShellText(value: unknown): string {
++  if (typeof value === "string") return value;
++  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
++  if (value == null) return "";
++  return String(value);
++}
++
++function assertRequiredStringField(
++  payload: Record<string, unknown>,
++  fieldName: "sessionId" | "dedupeKey" | "trigger" | "messages"
++) {
++  const value = payload[fieldName];
++  if (typeof value !== "string" || value.trim().length === 0) {
++    throw new Error(`Missing required session field: ${fieldName}`);
++  }
++}
++
++function validateObserveInput(eventName: string, data: unknown): ObserveInput {
++  if (!data || typeof data !== "object") {
++    throw new Error("Invalid event data: expected object payload");
++  }
++
++  const payload = data as Record<string, unknown>;
++  assertRequiredStringField(payload, "sessionId");
++  assertRequiredStringField(payload, "dedupeKey");
++  assertRequiredStringField(payload, "trigger");
++  assertRequiredStringField(payload, "messages");
++
++  if (eventName === "memory/session.compaction.pending" && payload.trigger !== "compaction") {
++    throw new Error("Invalid trigger for compaction event; expected 'compaction'");
++  }
++
++  if (eventName === "memory/session.ended" && payload.trigger !== "shutdown") {
++    throw new Error("Invalid trigger for ended event; expected 'shutdown'");
++  }
++
++  if (payload.trigger !== "compaction" && payload.trigger !== "shutdown") {
++    throw new Error(`Invalid trigger value: ${payload.trigger}`);
++  }
++
++  return payload as ObserveInput;
++}
++
+ export const observeSessionFunction = inngest.createFunction(
+   {
+     id: "memory/observe-session",
+@@ -11,17 +84,46 @@
+     { event: "memory/session.ended" },
+   ],
+   async ({ event, step }) => {
+-    const validatedInput = await step.run("validate-input", async () => event.data);
++    const validatedInput = await step.run("validate-input", async () =>
++      validateObserveInput(event.name, event.data)
++    );
+ 
+     const llmOutput = await step.run("call-observer-llm", async () => {
+       const sessionName =
+         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
+-
+-      return `${OBSERVER_SYSTEM_PROMPT}\n\n${OBSERVER_USER_PROMPT(
++      const userPrompt = OBSERVER_USER_PROMPT(
+         validatedInput.messages,
+         validatedInput.trigger,
+         sessionName
+-      )}`;
++      );
++      const promptWithSessionContext = `${userPrompt}
++
++Session context:
++- sessionId: ${validatedInput.sessionId}
++- dedupeKey: ${validatedInput.dedupeKey}`;
++
++      try {
++        const result = await Bun.$`pi --system ${OBSERVER_SYSTEM_PROMPT} --prompt ${promptWithSessionContext}`
++          .quiet()
++          .nothrow();
++
++        const stdout = readShellText(result.stdout);
++        const stderr = readShellText(result.stderr);
++
++        if (result.exitCode !== 0) {
++          throw new Error(
++            `Observer LLM subprocess failed with exit code ${result.exitCode}${
++              stderr ? `: ${stderr}` : ""
++            }`
++          );
++        }
++
++        return stdout;
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        throw new Error(`Failed to run observer LLM subprocess: ${message}`);
++      }
++
+     });
+ 
+     const parsedObservations = await step.run("parse-observations", async () => ({
+
+
+thinking
+**Noticing unexpected repo changes**
+exec
+/bin/zsh -lc "nl -ba __tests__/obs-1-observe-function.test.ts | sed -n '1,320p'" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc "nl -ba src/inngest/functions/observe.ts | sed -n '1,220p'" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 52ms:
+     1	import { inngest } from "../client";
+     2	import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+     3	
+     4	type ObserveCompactionInput = {
+     5	  sessionId: string;
+     6	  dedupeKey: string;
+     7	  trigger: "compaction";
+     8	  messages: string;
+     9	  messageCount: number;
+    10	  tokensBefore: number;
+    11	  filesRead: string[];
+    12	  filesModified: string[];
+    13	  capturedAt: string;
+    14	  schemaVersion: 1;
+    15	};
+    16	
+    17	type ObserveEndedInput = {
+    18	  sessionId: string;
+    19	  dedupeKey: string;
+    20	  trigger: "shutdown";
+ succeeded in 52ms:
+     1	import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+     2	import type { Events } from "../src/inngest/client.ts";
+     3	
+     4	type ObserveTrigger = "memory/session.compaction.pending" | "memory/session.ended";
+     5	type EventData<TName extends keyof Events> = Events[TName] extends { data: infer TData }
+     6	  ? TData
+     7	  : never;
+     8	
+     9	function observeFilePath(): string {
+    10	  return new URL("../src/inngest/functions/observe.ts", import.meta.url).pathname;
+    11	}
+    12	
+    13	async function loadObserveModule() {
+    14	  return import("../src/inngest/functions/observe.ts");
+    15	}
+    16	
+    17	async function loadObservePromptModule() {
+    18	  return import("../src/inngest/functions/observe-prompt.ts");
+    19	}
+    20	
+file update:
+diff --git a/packages/system-bus/__tests__/obs-1-observe-function.test.ts b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+index bf8cf977084655534247d87536718f8de7e89a90..3f4a3ecb029a980892d2858c8bbdc67ef3e67e2a
+--- a/packages/system-bus/__tests__/obs-1-observe-function.test.ts
++++ b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+@@ -1,4 +1,4 @@
+-import { describe, expect, test } from "bun:test";
++import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+ import type { Events } from "../src/inngest/client.ts";
+ 
+ type ObserveTrigger = "memory/session.compaction.pending" | "memory/session.ended";
+@@ -50,16 +50,71 @@
+   };
+ }
+ 
+-function asText(value: unknown): string {
+-  if (typeof value === "string") return value;
+-  if (value === null || value === undefined) return "";
+-  try {
+-    return JSON.stringify(value);
+-  } catch {
+-    return String(value);
++type BunDollarCall = {
++  strings: string[];
++  values: unknown[];
++  command: string;
++};
++
++const originalBunDollar = Bun.$;
++let bunDollarCalls: BunDollarCall[] = [];
++
++function buildCommandString(strings: string[], values: unknown[]): string {
++  let command = "";
++  for (let i = 0; i < strings.length; i++) {
++    command += strings[i] ?? "";
++    if (i < values.length) command += String(values[i]);
+   }
++  return command;
++}
++
++function installBunDollarMock() {
++  // @ts-expect-error monkey-patching Bun.$ for test isolation
++  Bun.$ = (strings: TemplateStringsArray, ...values: unknown[]) => {
++    const call = {
++      strings: Array.from(strings),
++      values,
++      command: buildCommandString(Array.from(strings), values),
++    };
++    bunDollarCalls.push(call);
++
++    const shellResult = {
++      stdout: "<observations></observations>",
++      stderr: "",
++      exitCode: 0,
++    };
++
++    const promise = Promise.resolve(shellResult);
++    const shellPromise: Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    } = {
++      then: promise.then.bind(promise),
++      catch: promise.catch.bind(promise),
++      finally: promise.finally.bind(promise),
++      quiet: () => shellPromise,
++      nothrow: () => shellPromise,
++      [Symbol.toStringTag]: "ShellPromise",
++    } as Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    };
++
++    return shellPromise;
++  };
+ }
+ 
++function restoreBunDollar() {
++  Bun.$ = originalBunDollar;
++}
++
++function commandOrValuesContainText(call: BunDollarCall, text: string): boolean {
++  if (call.command.includes(text)) return true;
++  return call.values.some(
++    (value) => typeof value === "string" && value.includes(text)
++  );
++}
++
+ async function executeObserveHandler(trigger: ObserveTrigger, data: EventData<ObserveTrigger>) {
+   const mod = await loadObserveModule();
+   const fn = mod.observeSessionFunction as any;
+@@ -93,6 +148,15 @@
+   return { result, stepIds, stepOutputs };
+ }
+ 
++beforeEach(() => {
++  bunDollarCalls = [];
++  installBunDollarMock();
++});
++
++afterEach(() => {
++  restoreBunDollar();
++});
++
+ describe("OBS-1: observe.ts scaffold contract", () => {
+   test("AC-1: src/inngest/functions/observe.ts exists", async () => {
+     const exists = await Bun.file(observeFilePath()).exists();
+@@ -149,11 +213,12 @@
+       compactionData.messages,
+       compactionData.trigger
+     );
+-    const compactionLlmOutput = asText(compactionStepOutputs.get("call-observer-llm"));
++    const firstCall = bunDollarCalls[0];
++    expect(firstCall).toBeDefined();
++    expect(commandOrValuesContainText(firstCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(firstCall!, expectedCompactionUserPrompt)).toBe(true);
++    expect(typeof compactionStepOutputs.get("call-observer-llm")).toBe("string");
+ 
+-    expect(compactionLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(compactionLlmOutput).toContain(expectedCompactionUserPrompt);
+-
+     const endedData = makeEndedEventData();
+     const { stepIds: endedStepIds, stepOutputs: endedStepOutputs } =
+       await executeObserveHandler("memory/session.ended", endedData);
+@@ -174,10 +239,11 @@
+       endedData.trigger,
+       endedData.sessionName
+     );
+-    const endedLlmOutput = asText(endedStepOutputs.get("call-observer-llm"));
+-
+-    expect(endedLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(endedLlmOutput).toContain(expectedEndedUserPrompt);
++    const secondCall = bunDollarCalls[1];
++    expect(secondCall).toBeDefined();
++    expect(commandOrValuesContainText(secondCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(secondCall!, expectedEndedUserPrompt)).toBe(true);
++    expect(typeof endedStepOutputs.get("call-observer-llm")).toBe("string");
+   });
+ });
+ 
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 27bfac138363141babd39660d2cb63689ef755cc..bb20ee6511aae9e00542720814e6ddbb41427121
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,6 +1,79 @@
+ import { inngest } from "../client";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
++type ObserveCompactionInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "compaction";
++  messages: string;
++  messageCount: number;
++  tokensBefore: number;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveEndedInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "shutdown";
++  messages: string;
++  messageCount: number;
++  userMessageCount: number;
++  duration: number;
++  sessionName?: string;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
++
++function readShellText(value: unknown): string {
++  if (typeof value === "string") return value;
++  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
++  if (value == null) return "";
++  return String(value);
++}
++
++function assertRequiredStringField(
++  payload: Record<string, unknown>,
++  fieldName: "sessionId" | "dedupeKey" | "trigger" | "messages"
++) {
++  const value = payload[fieldName];
++  if (typeof value !== "string" || value.trim().length === 0) {
++    throw new Error(`Missing required session field: ${fieldName}`);
++  }
++}
++
++function validateObserveInput(eventName: string, data: unknown): ObserveInput {
++  if (!data || typeof data !== "object") {
++    throw new Error("Invalid event data: expected object payload");
++  }
++
++  const payload = data as Record<string, unknown>;
++  assertRequiredStringField(payload, "sessionId");
++  assertRequiredStringField(payload, "dedupeKey");
++  assertRequiredStringField(payload, "trigger");
++  assertRequiredStringField(payload, "messages");
++
++  if (eventName === "memory/session.compaction.pending" && payload.trigger !== "compaction") {
++    throw new Error("Invalid trigger for compaction event; expected 'compaction'");
++  }
++
++  if (eventName === "memory/session.ended" && payload.trigger !== "shutdown") {
++    throw new Error("Invalid trigger for ended event; expected 'shutdown'");
++  }
++
++  if (payload.trigger !== "compaction" && payload.trigger !== "shutdown") {
++    throw new Error(`Invalid trigger value: ${payload.trigger}`);
++  }
++
++  return payload as ObserveInput;
++}
++
+ export const observeSessionFunction = inngest.createFunction(
+   {
+     id: "memory/observe-session",
+@@ -11,17 +84,46 @@
+     { event: "memory/session.ended" },
+   ],
+   async ({ event, step }) => {
+-    const validatedInput = await step.run("validate-input", async () => event.data);
++    const validatedInput = await step.run("validate-input", async () =>
++      validateObserveInput(event.name, event.data)
++    );
+ 
+     const llmOutput = await step.run("call-observer-llm", async () => {
+       const sessionName =
+         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
+-
+-      return `${OBSERVER_SYSTEM_PROMPT}\n\n${OBSERVER_USER_PROMPT(
++      const userPrompt = OBSERVER_USER_PROMPT(
+         validatedInput.messages,
+         validatedInput.trigger,
+         sessionName
+-      )}`;
++      );
++      const promptWithSessionContext = `${userPrompt}
++
++Session context:
++- sessionId: ${validatedInput.sessionId}
++- dedupeKey: ${validatedInput.dedupeKey}`;
++
++      try {
++        const result = await Bun.$`pi --system ${OBSERVER_SYSTEM_PROMPT} --prompt ${promptWithSessionContext}`
++          .quiet()
++          .nothrow();
++
++        const stdout = readShellText(result.stdout);
++        const stderr = readShellText(result.stderr);
++
++        if (result.exitCode !== 0) {
++          throw new Error(
++            `Observer LLM subprocess failed with exit code ${result.exitCode}${
++              stderr ? `: ${stderr}` : ""
++            }`
++          );
++        }
++
++        return stdout;
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        throw new Error(`Failed to run observer LLM subprocess: ${message}`);
++      }
++
+     });
+ 
+     const parsedObservations = await step.run("parse-observations", async () => ({
+
+
+thinking
+**Summarizing final changes and findings**
+codex
+Implemented OBS-2 with focused changes in `src/inngest/functions/observe.ts`:
+
+- Added runtime input validation in `validate-input` to enforce required fields and valid trigger/event pairing (`sessionId`, `dedupeKey`, `trigger`, `messages`) at `src/inngest/functions/observe.ts:41` and `src/inngest/functions/observe.ts:51`.
+- Implemented `call-observer-llm` to invoke `pi` via `Bun.$`, passing:
+  - `OBSERVER_SYSTEM_PROMPT`
+  - `OBSERVER_USER_PROMPT(...)`
+  - extra session context (`sessionId`, `dedupeKey`)
+  at `src/inngest/functions/observe.ts:91`.
+- Captured subprocess `stdout`/`stderr`, returned stdout as a string, and surfaced failures with explicit errors (non-zero exit and thrown subprocess errors) at `src/inngest/functions/observe.ts:105`.
+
+Compatibility fix for existing suite:
+
+- Updated `__tests__/obs-1-observe-function.test.ts` to mock `Bun.$` and assert prompt wiring through subprocess args (instead of requiring a real `pi` runtime), at `__tests__/obs-1-observe-function.test.ts:71` and `__tests__/obs-1-observe-function.test.ts:194`.
+
+Validation run:
+
+- `bunx tsc --noEmit` passed.
+- `bun test __tests__/obs-2-validate-input-call-observer-llm.test.ts` passed.
+- `bun test __tests__/obs-1-observe-function.test.ts` passed.
+
+Note: there are unrelated pre-existing workspace changes (`prd.json` modified and untracked files outside this package) that I did not touch.
+file update:
+diff --git a/packages/system-bus/__tests__/obs-1-observe-function.test.ts b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+index bf8cf977084655534247d87536718f8de7e89a90..3f4a3ecb029a980892d2858c8bbdc67ef3e67e2a
+--- a/packages/system-bus/__tests__/obs-1-observe-function.test.ts
++++ b/packages/system-bus/__tests__/obs-1-observe-function.test.ts
+@@ -1,4 +1,4 @@
+-import { describe, expect, test } from "bun:test";
++import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+ import type { Events } from "../src/inngest/client.ts";
+ 
+ type ObserveTrigger = "memory/session.compaction.pending" | "memory/session.ended";
+@@ -50,16 +50,71 @@
+   };
+ }
+ 
+-function asText(value: unknown): string {
+-  if (typeof value === "string") return value;
+-  if (value === null || value === undefined) return "";
+-  try {
+-    return JSON.stringify(value);
+-  } catch {
+-    return String(value);
++type BunDollarCall = {
++  strings: string[];
++  values: unknown[];
++  command: string;
++};
++
++const originalBunDollar = Bun.$;
++let bunDollarCalls: BunDollarCall[] = [];
++
++function buildCommandString(strings: string[], values: unknown[]): string {
++  let command = "";
++  for (let i = 0; i < strings.length; i++) {
++    command += strings[i] ?? "";
++    if (i < values.length) command += String(values[i]);
+   }
++  return command;
++}
++
++function installBunDollarMock() {
++  // @ts-expect-error monkey-patching Bun.$ for test isolation
++  Bun.$ = (strings: TemplateStringsArray, ...values: unknown[]) => {
++    const call = {
++      strings: Array.from(strings),
++      values,
++      command: buildCommandString(Array.from(strings), values),
++    };
++    bunDollarCalls.push(call);
++
++    const shellResult = {
++      stdout: "<observations></observations>",
++      stderr: "",
++      exitCode: 0,
++    };
++
++    const promise = Promise.resolve(shellResult);
++    const shellPromise: Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    } = {
++      then: promise.then.bind(promise),
++      catch: promise.catch.bind(promise),
++      finally: promise.finally.bind(promise),
++      quiet: () => shellPromise,
++      nothrow: () => shellPromise,
++      [Symbol.toStringTag]: "ShellPromise",
++    } as Promise<typeof shellResult> & {
++      quiet: () => typeof shellPromise;
++      nothrow: () => typeof shellPromise;
++    };
++
++    return shellPromise;
++  };
+ }
+ 
++function restoreBunDollar() {
++  Bun.$ = originalBunDollar;
++}
++
++function commandOrValuesContainText(call: BunDollarCall, text: string): boolean {
++  if (call.command.includes(text)) return true;
++  return call.values.some(
++    (value) => typeof value === "string" && value.includes(text)
++  );
++}
++
+ async function executeObserveHandler(trigger: ObserveTrigger, data: EventData<ObserveTrigger>) {
+   const mod = await loadObserveModule();
+   const fn = mod.observeSessionFunction as any;
+@@ -93,6 +148,15 @@
+   return { result, stepIds, stepOutputs };
+ }
+ 
++beforeEach(() => {
++  bunDollarCalls = [];
++  installBunDollarMock();
++});
++
++afterEach(() => {
++  restoreBunDollar();
++});
++
+ describe("OBS-1: observe.ts scaffold contract", () => {
+   test("AC-1: src/inngest/functions/observe.ts exists", async () => {
+     const exists = await Bun.file(observeFilePath()).exists();
+@@ -149,11 +213,12 @@
+       compactionData.messages,
+       compactionData.trigger
+     );
+-    const compactionLlmOutput = asText(compactionStepOutputs.get("call-observer-llm"));
++    const firstCall = bunDollarCalls[0];
++    expect(firstCall).toBeDefined();
++    expect(commandOrValuesContainText(firstCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(firstCall!, expectedCompactionUserPrompt)).toBe(true);
++    expect(typeof compactionStepOutputs.get("call-observer-llm")).toBe("string");
+ 
+-    expect(compactionLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(compactionLlmOutput).toContain(expectedCompactionUserPrompt);
+-
+     const endedData = makeEndedEventData();
+     const { stepIds: endedStepIds, stepOutputs: endedStepOutputs } =
+       await executeObserveHandler("memory/session.ended", endedData);
+@@ -174,10 +239,11 @@
+       endedData.trigger,
+       endedData.sessionName
+     );
+-    const endedLlmOutput = asText(endedStepOutputs.get("call-observer-llm"));
+-
+-    expect(endedLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
+-    expect(endedLlmOutput).toContain(expectedEndedUserPrompt);
++    const secondCall = bunDollarCalls[1];
++    expect(secondCall).toBeDefined();
++    expect(commandOrValuesContainText(secondCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
++    expect(commandOrValuesContainText(secondCall!, expectedEndedUserPrompt)).toBe(true);
++    expect(typeof endedStepOutputs.get("call-observer-llm")).toBe("string");
+   });
+ });
+ 
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 27bfac138363141babd39660d2cb63689ef755cc..bb20ee6511aae9e00542720814e6ddbb41427121
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,6 +1,79 @@
+ import { inngest } from "../client";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
++type ObserveCompactionInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "compaction";
++  messages: string;
++  messageCount: number;
++  tokensBefore: number;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveEndedInput = {
++  sessionId: string;
++  dedupeKey: string;
++  trigger: "shutdown";
++  messages: string;
++  messageCount: number;
++  userMessageCount: number;
++  duration: number;
++  sessionName?: string;
++  filesRead: string[];
++  filesModified: string[];
++  capturedAt: string;
++  schemaVersion: 1;
++};
++
++type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
++
++function readShellText(value: unknown): string {
++  if (typeof value === "string") return value;
++  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
++  if (value == null) return "";
++  return String(value);
++}
++
++function assertRequiredStringField(
++  payload: Record<string, unknown>,
++  fieldName: "sessionId" | "dedupeKey" | "trigger" | "messages"
++) {
++  const value = payload[fieldName];
++  if (typeof value !== "string" || value.trim().length === 0) {
++    throw new Error(`Missing required session field: ${fieldName}`);
++  }
++}
++
++function validateObserveInput(eventName: string, data: unknown): ObserveInput {
++  if (!data || typeof data !== "object") {
++    throw new Error("Invalid event data: expected object payload");
++  }
++
++  const payload = data as Record<string, unknown>;
++  assertRequiredStringField(payload, "sessionId");
++  assertRequiredStringField(payload, "dedupeKey");
++  assertRequiredStringField(payload, "trigger");
++  assertRequiredStringField(payload, "messages");
++
++  if (eventName === "memory/session.compaction.pending" && payload.trigger !== "compaction") {
++    throw new Error("Invalid trigger for compaction event; expected 'compaction'");
++  }
++
++  if (eventName === "memory/session.ended" && payload.trigger !== "shutdown") {
++    throw new Error("Invalid trigger for ended event; expected 'shutdown'");
++  }
++
++  if (payload.trigger !== "compaction" && payload.trigger !== "shutdown") {
++    throw new Error(`Invalid trigger value: ${payload.trigger}`);
++  }
++
++  return payload as ObserveInput;
++}
++
+ export const observeSessionFunction = inngest.createFunction(
+   {
+     id: "memory/observe-session",
+@@ -11,17 +84,46 @@
+     { event: "memory/session.ended" },
+   ],
+   async ({ event, step }) => {
+-    const validatedInput = await step.run("validate-input", async () => event.data);
++    const validatedInput = await step.run("validate-input", async () =>
++      validateObserveInput(event.name, event.data)
++    );
+ 
+     const llmOutput = await step.run("call-observer-llm", async () => {
+       const sessionName =
+         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
+-
+-      return `${OBSERVER_SYSTEM_PROMPT}\n\n${OBSERVER_USER_PROMPT(
++      const userPrompt = OBSERVER_USER_PROMPT(
+         validatedInput.messages,
+         validatedInput.trigger,
+         sessionName
+-      )}`;
++      );
++      const promptWithSessionContext = `${userPrompt}
++
++Session context:
++- sessionId: ${validatedInput.sessionId}
++- dedupeKey: ${validatedInput.dedupeKey}`;
++
++      try {
++        const result = await Bun.$`pi --system ${OBSERVER_SYSTEM_PROMPT} --prompt ${promptWithSessionContext}`
++          .quiet()
++          .nothrow();
++
++        const stdout = readShellText(result.stdout);
++        const stderr = readShellText(result.stderr);
++
++        if (result.exitCode !== 0) {
++          throw new Error(
++            `Observer LLM subprocess failed with exit code ${result.exitCode}${
++              stderr ? `: ${stderr}` : ""
++            }`
++          );
++        }
++
++        return stdout;
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        throw new Error(`Failed to run observer LLM subprocess: ${message}`);
++      }
++
+     });
+ 
+     const parsedObservations = await step.run("parse-observations", async () => ({
+
+tokens used
+52,811

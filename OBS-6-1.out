@@ -1,0 +1,632 @@
+Implemented OBS-6 by wiring `observeSessionFunction` into both registration points.
+
+### Changes made
+- Added barrel export in `src/inngest/functions/index.ts:5`
+  - `export { observeSessionFunction } from "./observe";`
+- Updated server import + registration in `src/serve.ts:9` and `src/serve.ts:62`
+  - Imported `observeSessionFunction` from `./inngest/functions`
+  - Added it to `inngestServe({ functions: [...] })`
+- Kept function list output consistent in `src/serve.ts:30` and `src/serve.ts:83`
+  - Added `"memory/observe-session"` to the reported function names/log output
+
+### Validation
+- Ran `bunx tsc --noEmit` successfully (no TypeScript errors).
+- Checked registrations:
+  - Function defined once in `src/inngest/functions/observe.ts:158`
+  - Trigger events are declared once there (`memory/session.compaction.pending`, `memory/session.ended`)
+  - Function is now referenced once in barrel + once in serve registration, with no duplicate function registration in `serve.ts`.
+
+
+--- STDERR ---
+OpenAI Codex v0.101.0 (research preview)
+--------
+workdir: /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus
+model: gpt-5.3-codex
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: auto
+session id: 019c64ae-905e-75b1-92ea-96cdb50f4466
+--------
+user
+
+
+## Project File Listing
+
+docker
+prd-v3-recovery.json
+prd-adr-0010.json
+progress.txt
+node_modules
+prd-retro.json
+bun.lock
+README.md
+__tests__
+package.json
+tsconfig.json
+docker-compose.yml
+prd-v2.json
+index.ts
+CONTINUATION.md
+prd.json
+CLAUDE.md
+prd-cli-migration.json
+src
+CONTINUATION-ADR.md
+
+# src/ files:
+src/inngest/client.ts
+src/serve.ts
+
+## Project Instructions (CLAUDE.md)
+
+
+## Agent Loop Architecture (ADR-0015)
+
+This project runs automated coding loops with 5 separated roles:
+- **Planner**: generates PRD from goal, picks next story
+- **Test Writer**: writes acceptance tests BEFORE implementation (TDD)
+- **Implementor**: writes code to pass the tests
+- **Reviewer**: evaluates implementation with 4 questions (no test writing)
+- **Judge**: mechanical gates + reviewer notes + LLM verdict
+
+When working as an implementor: implement the story, don't write tests.
+When working as a test writer: write tests from acceptance criteria only, don't read implementation.
+Tests should verify observable behavior and public API — NOT internal structure.
+Do NOT use source code string matching (indexOf, regex on source) to verify behavior.
+Commit nothing — the harness handles git.
+
+## Bun Runtime
+
+Default to using Bun instead of Node.js.
+
+- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
+- Use `bun test` instead of `jest` or `vitest`
+- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
+- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
+- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
+- Use `bunx <package> <command>` instead of `npx <package> <command>`
+- Bun automatically loads .env, so don't use dotenv.
+
+## APIs
+
+- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
+- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
+- `Bun.redis` for Redis. Don't use `ioredis`.
+- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
+- `WebSocket` is built-in. Don't use `ws`.
+- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
+- Bun.$`ls` instead of execa.
+
+## Testing
+
+Use `bun test` to run tests.
+
+```ts#index.test.ts
+import { test, expect } from "bun:test";
+
+test("hello world", () => {
+  expect(1).toBe(1);
+});
+```
+
+## Frontend
+
+Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, C
+
+---
+
+## Story: Register observeSessionFunction in index.ts and serve.ts (OBS-6)
+
+Import observeSessionFunction from ./observe.ts into both src/inngest/functions/index.ts and src/serve.ts. Add to the functions array in both files. Ensure no duplicate event trigger registrations. Verify the function is properly exported and available for Inngest server.
+
+## Acceptance Criteria
+- src/inngest/functions/index.ts imports and exports observeSessionFunction
+- src/serve.ts imports and includes observeSessionFunction in serve() call
+- No duplicate event trigger warnings or errors
+- Function appears in both registration locations
+- TypeScript compiles cleanly: bunx tsc --noEmit
+
+## Instructions
+Implement the story above. Do NOT write tests — a separate reviewer will handle testing.
+Make clean, focused changes. Commit nothing — the harness handles git.
+If your changes break existing tests (not just the ones for this story), fix those tests to match the new interface. Changing a type or adding a required field means updating all consumers.
+mcp startup: no servers
+2026-02-16T04:21:27.860860Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5eca-bff9-7772-83bf-5daab07b9959
+2026-02-16T04:21:27.909240Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5ffd-d51d-7a13-b1fa-342be02f164b
+2026-02-16T04:21:27.949264Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6275-d69e-7b53-bb28-583bfe07e70c
+2026-02-16T04:21:28.057994Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5d40-288c-78b2-af66-36e0fae54073
+2026-02-16T04:21:28.092813Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6482-5bab-7e53-bc62-5239d048a3c8
+2026-02-16T04:21:28.203322Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6485-58f0-7261-8508-37f3fb9356dd
+2026-02-16T04:21:28.343483Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6031-b7fb-7120-85b5-8abf34324910
+2026-02-16T04:21:28.417983Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fe2-872d-7e93-87a3-71d37d75a127
+2026-02-16T04:21:28.553350Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e50-6bc5-7861-a0a0-f77d68ec073f
+2026-02-16T04:21:28.651705Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6022-8a12-7ba0-b7e8-9c265e8ec17e
+2026-02-16T04:21:28.776380Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fbb-e145-7c40-9913-218548629e57
+2026-02-16T04:21:28.907904Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e21-7a30-7ed1-b686-e02ac2da8157
+2026-02-16T04:21:29.030923Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c647c-8066-7eb1-8782-06a844370303
+2026-02-16T04:21:29.137010Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fed-5e04-78c0-9a4e-9fddc7af084e
+
+thinking
+**Planning implementation steps**
+codex
+Implementing OBS-6 now: I’ll inspect `src/inngest/functions/index.ts`, `src/serve.ts`, and related `observe.ts` exports, then patch both registration points and run TypeScript compile checks.
+exec
+/bin/zsh -lc 'rg --files src' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc 'ls -la src/inngest/functions' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 52ms:
+src/serve.ts
+src/inngest/functions/transcript-process.ts
+src/inngest/functions/index.ts
+src/inngest/functions/video-download.ts
+src/inngest/functions/summarize.ts
+src/inngest/functions/observe.ts
+src/inngest/functions/observe-parser.ts
+src/inngest/functions/system-logger.ts
+src/inngest/functions/agent-loop/plan.ts
+src/inngest/functions/agent-loop/llmEvaluate.test.ts
+src/inngest/functions/agent-loop/judge.test.ts
+src/inngest/functions/agent-loop/test-writer.test.ts
+src/inngest/functions/agent-loop/test-writer.ts
+src/inngest/functions/agent-loop/formatLoopDuration.test.ts
+src/inngest/functions/agent-loop/review.test.ts
+src/inngest/functions/agent-loop/index.ts
+src/inngest/functions/agent-loop/getStoryDiff.test.ts
+src/inngest/functions/agent-loop/parseClaudeOutput.test.ts
+src/inngest/functions/agent-loop/review.ts
+src/inngest/functions/agent-loop/utils.ts
+ succeeded in 51ms:
+total 112
+drwxr-xr-x@ 12 joel  wheel    384 Feb 15 20:17 .
+drwxr-xr-x@  4 joel  wheel    128 Feb 15 19:37 ..
+drwxr-xr-x@ 19 joel  wheel    608 Feb 15 19:37 agent-loop
+-rw-r--r--@  1 joel  wheel    367 Feb 15 19:37 index.ts
+-rw-r--r--@  1 joel  wheel   6865 Feb 15 19:37 observe-parser.test.ts
+-rw-r--r--@  1 joel  wheel   3686 Feb 15 19:37 observe-parser.ts
+-rw-r--r--@  1 joel  wheel   2397 Feb 15 19:37 observe-prompt.ts
+-rw-r--r--@  1 joel  wheel  11460 Feb 15 20:17 observe.ts
+-rw-r--r--@  1 joel  wheel   3222 Feb 15 19:37 summarize.ts
+-rw-r--r--@  1 joel  wheel   1417 Feb 15 19:37 system-logger.ts
+-rw-r--r--@  1 joel  wheel   7329 Feb 15 19:37 transcript-process.ts
+-rw-r--r--@  1 joel  wheel   4888 Feb 15 19:37 video-download.ts
+codex
+I found `observe.ts` already exists, so next I’m checking current registration in both files to add it without introducing duplicate function/event wiring.
+exec
+/bin/zsh -lc "sed -n '1,260p' src/serve.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc "sed -n '1,260p' src/inngest/functions/observe.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc "sed -n '1,220p' src/inngest/functions/index.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 53ms:
+export { videoDownload } from "./video-download";
+export { transcriptProcess } from "./transcript-process";
+export { summarize } from "./summarize";
+export { systemLogger } from "./system-logger";
+export {
+  agentLoopPlan,
+  agentLoopTestWriter,
+  agentLoopImplement,
+  agentLoopReview,
+  agentLoopJudge,
+  agentLoopComplete,
+  agentLoopRetro,
+} from "./agent-loop";
+ succeeded in 53ms:
+import { Hono } from "hono";
+import { serve as inngestServe } from "inngest/hono";
+import { inngest } from "./inngest/client";
+import {
+  videoDownload,
+  transcriptProcess,
+  summarize,
+  systemLogger,
+  agentLoopPlan,
+  agentLoopTestWriter,
+  agentLoopImplement,
+  agentLoopReview,
+  agentLoopJudge,
+  agentLoopComplete,
+  agentLoopRetro,
+} from "./inngest/functions";
+
+const app = new Hono();
+
+app.get("/", (c) =>
+ succeeded in 53ms:
+import { inngest } from "../client.ts";
+import { QdrantClient } from "@qdrant/js-client-rest";
+import Redis from "ioredis";
+import { parseObserverOutput } from "./observe-parser";
+import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+
+type ObserveCompactionInput = {
+  sessionId: string;
+  dedupeKey: string;
+  trigger: "compaction";
+  messages: string;
+  messageCount: number;
+  tokensBefore: number;
+  filesRead: string[];
+  filesModified: string[];
+  capturedAt: string;
+  schemaVersion: 1;
+};
+
+type ObserveEndedInput = {
+
+thinking
+**Refining function exports and imports**
+codex
+I’ve confirmed `observeSessionFunction` is already defined in `observe.ts`; I’m now patching the barrel export and `serve.ts` registrations so it’s wired in exactly once.
+file update
+M /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus/src/inngest/functions/index.ts
+@@ -4,2 +4,3 @@
+ export { systemLogger } from "./system-logger";
++export { observeSessionFunction } from "./observe";
+ export {
+apply_patch(auto_approved=true) exited 0 in 22ms:
+Success. Updated the following files:
+M src/inngest/functions/index.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/index.ts b/packages/system-bus/src/inngest/functions/index.ts
+index e762903e46d7a28b4e51793e0c889e2bfc42b575..264e1b6283e3ff8626185fd4d350d7d0f1d4f22c
+--- a/packages/system-bus/src/inngest/functions/index.ts
++++ b/packages/system-bus/src/inngest/functions/index.ts
+@@ -2,6 +2,7 @@
+ export { transcriptProcess } from "./transcript-process";
+ export { summarize } from "./summarize";
+ export { systemLogger } from "./system-logger";
++export { observeSessionFunction } from "./observe";
+ export {
+   agentLoopPlan,
+   agentLoopTestWriter,
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/index.ts b/packages/system-bus/src/inngest/functions/index.ts
+index e762903e46d7a28b4e51793e0c889e2bfc42b575..264e1b6283e3ff8626185fd4d350d7d0f1d4f22c
+--- a/packages/system-bus/src/inngest/functions/index.ts
++++ b/packages/system-bus/src/inngest/functions/index.ts
+@@ -2,6 +2,7 @@
+ export { transcriptProcess } from "./transcript-process";
+ export { summarize } from "./summarize";
+ export { systemLogger } from "./system-logger";
++export { observeSessionFunction } from "./observe";
+ export {
+   agentLoopPlan,
+   agentLoopTestWriter,
+
+
+thinking
+**Patching function registration imports**
+file update
+M /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus/src/serve.ts
+@@ -8,2 +8,3 @@
+   systemLogger,
++  observeSessionFunction,
+   agentLoopPlan,
+@@ -28,2 +29,3 @@
+       "system-logger",
++      "memory/observe-session",
+       "agent-loop-plan",
+@@ -59,2 +61,3 @@
+       systemLogger,
++      observeSessionFunction,
+       agentLoopPlan,
+@@ -79,3 +82,3 @@
+ console.log(
+-  "📋 Functions: video-download, transcript-process, content-summarize, system-logger"
++  "📋 Functions: video-download, transcript-process, content-summarize, system-logger, memory/observe-session"
+ );
+apply_patch(auto_approved=true) exited 0 in 47ms:
+Success. Updated the following files:
+M src/serve.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/index.ts b/packages/system-bus/src/inngest/functions/index.ts
+index e762903e46d7a28b4e51793e0c889e2bfc42b575..264e1b6283e3ff8626185fd4d350d7d0f1d4f22c
+--- a/packages/system-bus/src/inngest/functions/index.ts
++++ b/packages/system-bus/src/inngest/functions/index.ts
+@@ -2,6 +2,7 @@
+ export { transcriptProcess } from "./transcript-process";
+ export { summarize } from "./summarize";
+ export { systemLogger } from "./system-logger";
++export { observeSessionFunction } from "./observe";
+ export {
+   agentLoopPlan,
+   agentLoopTestWriter,
+diff --git a/packages/system-bus/src/serve.ts b/packages/system-bus/src/serve.ts
+index 5acb8e6f30c9290cebf0beb031a799975a51498b..831904a10ce7328e8ab291b7133607d36461400d
+--- a/packages/system-bus/src/serve.ts
++++ b/packages/system-bus/src/serve.ts
+@@ -6,6 +6,7 @@
+   transcriptProcess,
+   summarize,
+   systemLogger,
++  observeSessionFunction,
+   agentLoopPlan,
+   agentLoopTestWriter,
+   agentLoopImplement,
+@@ -26,6 +27,7 @@
+       "transcript-process",
+       "content-summarize",
+       "system-logger",
++      "memory/observe-session",
+       "agent-loop-plan",
+       "agent-loop-test-writer",
+       "agent-loop-implement",
+@@ -57,6 +59,7 @@
+       transcriptProcess,
+       summarize,
+       systemLogger,
++      observeSessionFunction,
+       agentLoopPlan,
+       agentLoopTestWriter,
+       agentLoopImplement,
+@@ -77,5 +80,5 @@
+ console.log("🚌 system-bus worker running on http://localhost:3111");
+ console.log("📡 Inngest endpoint: http://localhost:3111/api/inngest");
+ console.log(
+-  "📋 Functions: video-download, transcript-process, content-summarize, system-logger"
++  "📋 Functions: video-download, transcript-process, content-summarize, system-logger, memory/observe-session"
+ );
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/index.ts b/packages/system-bus/src/inngest/functions/index.ts
+index e762903e46d7a28b4e51793e0c889e2bfc42b575..264e1b6283e3ff8626185fd4d350d7d0f1d4f22c
+--- a/packages/system-bus/src/inngest/functions/index.ts
++++ b/packages/system-bus/src/inngest/functions/index.ts
+@@ -2,6 +2,7 @@
+ export { transcriptProcess } from "./transcript-process";
+ export { summarize } from "./summarize";
+ export { systemLogger } from "./system-logger";
++export { observeSessionFunction } from "./observe";
+ export {
+   agentLoopPlan,
+   agentLoopTestWriter,
+diff --git a/packages/system-bus/src/serve.ts b/packages/system-bus/src/serve.ts
+index 5acb8e6f30c9290cebf0beb031a799975a51498b..831904a10ce7328e8ab291b7133607d36461400d
+--- a/packages/system-bus/src/serve.ts
++++ b/packages/system-bus/src/serve.ts
+@@ -6,6 +6,7 @@
+   transcriptProcess,
+   summarize,
+   systemLogger,
++  observeSessionFunction,
+   agentLoopPlan,
+   agentLoopTestWriter,
+   agentLoopImplement,
+@@ -26,6 +27,7 @@
+       "transcript-process",
+       "content-summarize",
+       "system-logger",
++      "memory/observe-session",
+       "agent-loop-plan",
+       "agent-loop-test-writer",
+       "agent-loop-implement",
+@@ -57,6 +59,7 @@
+       transcriptProcess,
+       summarize,
+       systemLogger,
++      observeSessionFunction,
+       agentLoopPlan,
+       agentLoopTestWriter,
+       agentLoopImplement,
+@@ -77,5 +80,5 @@
+ console.log("🚌 system-bus worker running on http://localhost:3111");
+ console.log("📡 Inngest endpoint: http://localhost:3111/api/inngest");
+ console.log(
+-  "📋 Functions: video-download, transcript-process, content-summarize, system-logger"
++  "📋 Functions: video-download, transcript-process, content-summarize, system-logger, memory/observe-session"
+ );
+
+
+thinking
+**Checking compilation without emit**
+codex
+Edits are in place; next I’m running the requested TypeScript compile check to verify clean registration and imports.
+exec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 686ms:
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/index.ts b/packages/system-bus/src/inngest/functions/index.ts
+index e762903e46d7a28b4e51793e0c889e2bfc42b575..264e1b6283e3ff8626185fd4d350d7d0f1d4f22c
+--- a/packages/system-bus/src/inngest/functions/index.ts
++++ b/packages/system-bus/src/inngest/functions/index.ts
+@@ -2,6 +2,7 @@
+ export { transcriptProcess } from "./transcript-process";
+ export { summarize } from "./summarize";
+ export { systemLogger } from "./system-logger";
++export { observeSessionFunction } from "./observe";
+ export {
+   agentLoopPlan,
+   agentLoopTestWriter,
+diff --git a/packages/system-bus/src/serve.ts b/packages/system-bus/src/serve.ts
+index 5acb8e6f30c9290cebf0beb031a799975a51498b..831904a10ce7328e8ab291b7133607d36461400d
+--- a/packages/system-bus/src/serve.ts
++++ b/packages/system-bus/src/serve.ts
+@@ -6,6 +6,7 @@
+   transcriptProcess,
+   summarize,
+   systemLogger,
++  observeSessionFunction,
+   agentLoopPlan,
+   agentLoopTestWriter,
+   agentLoopImplement,
+@@ -26,6 +27,7 @@
+       "transcript-process",
+       "content-summarize",
+       "system-logger",
++      "memory/observe-session",
+       "agent-loop-plan",
+       "agent-loop-test-writer",
+       "agent-loop-implement",
+@@ -57,6 +59,7 @@
+       transcriptProcess,
+       summarize,
+       systemLogger,
++      observeSessionFunction,
+       agentLoopPlan,
+       agentLoopTestWriter,
+       agentLoopImplement,
+@@ -77,5 +80,5 @@
+ console.log("🚌 system-bus worker running on http://localhost:3111");
+ console.log("📡 Inngest endpoint: http://localhost:3111/api/inngest");
+ console.log(
+-  "📋 Functions: video-download, transcript-process, content-summarize, system-logger"
++  "📋 Functions: video-download, transcript-process, content-summarize, system-logger, memory/observe-session"
+ );
+
+
+thinking
+**Checking git diff output**
+codex
+TypeScript compilation passed. I’ll do a quick diff check to confirm only the intended OBS-6 wiring changed.
+exec
+/bin/zsh -lc 'git diff -- src/inngest/functions/index.ts src/serve.ts' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc "rg -n \"observeSessionFunction|memory/session\\.compaction\\.pending|memory/session\\.ended\" src/inngest/functions src/serve.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 52ms:
+diff --git a/packages/system-bus/src/inngest/functions/index.ts b/packages/system-bus/src/inngest/functions/index.ts
+index e762903..264e1b6 100644
+--- a/packages/system-bus/src/inngest/functions/index.ts
++++ b/packages/system-bus/src/inngest/functions/index.ts
+@@ -2,6 +2,7 @@ export { videoDownload } from "./video-download";
+ export { transcriptProcess } from "./transcript-process";
+ export { summarize } from "./summarize";
+ export { systemLogger } from "./system-logger";
++export { observeSessionFunction } from "./observe";
+ export {
+   agentLoopPlan,
+   agentLoopTestWriter,
+diff --git a/packages/system-bus/src/serve.ts b/packages/system-bus/src/serve.ts
+index 5acb8e6..831904a 100644
+--- a/packages/system-bus/src/serve.ts
++++ b/packages/system-bus/src/serve.ts
+@@ -6,6 +6,7 @@ import {
+   transcriptProcess,
+   summarize,
+   systemLogger,
+ succeeded in 52ms:
+src/serve.ts:9:  observeSessionFunction,
+src/serve.ts:62:      observeSessionFunction,
+src/inngest/functions/index.ts:5:export { observeSessionFunction } from "./observe";
+src/inngest/functions/observe.ts:143:  if (eventName === "memory/session.compaction.pending" && payload.trigger !== "compaction") {
+src/inngest/functions/observe.ts:147:  if (eventName === "memory/session.ended" && payload.trigger !== "shutdown") {
+src/inngest/functions/observe.ts:158:export const observeSessionFunction = inngest.createFunction(
+src/inngest/functions/observe.ts:164:    { event: "memory/session.compaction.pending" },
+src/inngest/functions/observe.ts:165:    { event: "memory/session.ended" },
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/index.ts b/packages/system-bus/src/inngest/functions/index.ts
+index e762903e46d7a28b4e51793e0c889e2bfc42b575..264e1b6283e3ff8626185fd4d350d7d0f1d4f22c
+--- a/packages/system-bus/src/inngest/functions/index.ts
++++ b/packages/system-bus/src/inngest/functions/index.ts
+@@ -2,6 +2,7 @@
+ export { transcriptProcess } from "./transcript-process";
+ export { summarize } from "./summarize";
+ export { systemLogger } from "./system-logger";
++export { observeSessionFunction } from "./observe";
+ export {
+   agentLoopPlan,
+   agentLoopTestWriter,
+diff --git a/packages/system-bus/src/serve.ts b/packages/system-bus/src/serve.ts
+index 5acb8e6f30c9290cebf0beb031a799975a51498b..831904a10ce7328e8ab291b7133607d36461400d
+--- a/packages/system-bus/src/serve.ts
++++ b/packages/system-bus/src/serve.ts
+@@ -6,6 +6,7 @@
+   transcriptProcess,
+   summarize,
+   systemLogger,
++  observeSessionFunction,
+   agentLoopPlan,
+   agentLoopTestWriter,
+   agentLoopImplement,
+@@ -26,6 +27,7 @@
+       "transcript-process",
+       "content-summarize",
+       "system-logger",
++      "memory/observe-session",
+       "agent-loop-plan",
+       "agent-loop-test-writer",
+       "agent-loop-implement",
+@@ -57,6 +59,7 @@
+       transcriptProcess,
+       summarize,
+       systemLogger,
++      observeSessionFunction,
+       agentLoopPlan,
+       agentLoopTestWriter,
+       agentLoopImplement,
+@@ -77,5 +80,5 @@
+ console.log("🚌 system-bus worker running on http://localhost:3111");
+ console.log("📡 Inngest endpoint: http://localhost:3111/api/inngest");
+ console.log(
+-  "📋 Functions: video-download, transcript-process, content-summarize, system-logger"
++  "📋 Functions: video-download, transcript-process, content-summarize, system-logger, memory/observe-session"
+ );
+
+
+thinking
+**Finalizing summary with criteria**
+codex
+Implemented OBS-6 by wiring `observeSessionFunction` into both registration points.
+
+### Changes made
+- Added barrel export in `src/inngest/functions/index.ts:5`
+  - `export { observeSessionFunction } from "./observe";`
+- Updated server import + registration in `src/serve.ts:9` and `src/serve.ts:62`
+  - Imported `observeSessionFunction` from `./inngest/functions`
+  - Added it to `inngestServe({ functions: [...] })`
+- Kept function list output consistent in `src/serve.ts:30` and `src/serve.ts:83`
+  - Added `"memory/observe-session"` to the reported function names/log output
+
+### Validation
+- Ran `bunx tsc --noEmit` successfully (no TypeScript errors).
+- Checked registrations:
+  - Function defined once in `src/inngest/functions/observe.ts:158`
+  - Trigger events are declared once there (`memory/session.compaction.pending`, `memory/session.ended`)
+  - Function is now referenced once in barrel + once in serve registration, with no duplicate function registration in `serve.ts`.
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/index.ts b/packages/system-bus/src/inngest/functions/index.ts
+index e762903e46d7a28b4e51793e0c889e2bfc42b575..264e1b6283e3ff8626185fd4d350d7d0f1d4f22c
+--- a/packages/system-bus/src/inngest/functions/index.ts
++++ b/packages/system-bus/src/inngest/functions/index.ts
+@@ -2,6 +2,7 @@
+ export { transcriptProcess } from "./transcript-process";
+ export { summarize } from "./summarize";
+ export { systemLogger } from "./system-logger";
++export { observeSessionFunction } from "./observe";
+ export {
+   agentLoopPlan,
+   agentLoopTestWriter,
+diff --git a/packages/system-bus/src/serve.ts b/packages/system-bus/src/serve.ts
+index 5acb8e6f30c9290cebf0beb031a799975a51498b..831904a10ce7328e8ab291b7133607d36461400d
+--- a/packages/system-bus/src/serve.ts
++++ b/packages/system-bus/src/serve.ts
+@@ -6,6 +6,7 @@
+   transcriptProcess,
+   summarize,
+   systemLogger,
++  observeSessionFunction,
+   agentLoopPlan,
+   agentLoopTestWriter,
+   agentLoopImplement,
+@@ -26,6 +27,7 @@
+       "transcript-process",
+       "content-summarize",
+       "system-logger",
++      "memory/observe-session",
+       "agent-loop-plan",
+       "agent-loop-test-writer",
+       "agent-loop-implement",
+@@ -57,6 +59,7 @@
+       transcriptProcess,
+       summarize,
+       systemLogger,
++      observeSessionFunction,
+       agentLoopPlan,
+       agentLoopTestWriter,
+       agentLoopImplement,
+@@ -77,5 +80,5 @@
+ console.log("🚌 system-bus worker running on http://localhost:3111");
+ console.log("📡 Inngest endpoint: http://localhost:3111/api/inngest");
+ console.log(
+-  "📋 Functions: video-download, transcript-process, content-summarize, system-logger"
++  "📋 Functions: video-download, transcript-process, content-summarize, system-logger, memory/observe-session"
+ );
+
+tokens used
+15,294
