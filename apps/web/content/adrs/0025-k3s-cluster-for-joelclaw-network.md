@@ -357,7 +357,21 @@ A Service named `inngest` causes k8s to inject `INNGEST_PORT=tcp://10.43.x.x:828
 
 k3d works on this Mac Mini with negligible overhead. The migration path from Docker Compose is mechanical — same images, same health checks, StatefulSets with PVCs for persistence. The cluster is running alongside Docker Compose right now with both stacks operational.
 
-**Decision: keep the cluster running.** Manifests in `k8s/`. Will migrate the worker (launchd → k8s Deployment) as a follow-up, then cut over from Docker Compose entirely.
+**Decision: keep the cluster, cut over immediately.**
+
+### Migration (same session)
+
+After the spike validated feasibility, we completed the full migration:
+
+1. Deleted spike cluster, recreated with host port mappings (`6379`, `6333`, `6334`, `8288`, `8289` on `server:0`)
+2. Needed `--kube-apiserver-arg=service-node-port-range=80-32767` — k8s default NodePort range is 30000-32767
+3. k3d cluster config is **immutable after creation** — ports, k3s args, everything. Plan before `cluster create`.
+4. Deployed all three services as NodePort StatefulSets on the original ports
+5. Worker (still on launchd) re-registered with Inngest — 14 functions confirmed
+6. Smoke test: sent `content/updated` event, `content-sync` completed successfully
+7. `docker compose down` — Docker Compose decommissioned
+
+**Final state**: k3d cluster `joelclaw` is the production service layer. 916 MB total. Worker stays on launchd (needs host filesystem access for git, Vault, whisper). Manifests in `k8s/`.
 
 ## What Stays Outside Any Cluster
 
