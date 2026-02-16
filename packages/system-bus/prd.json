@@ -30,7 +30,7 @@
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 2,
-      "passes": false
+      "passes": true
     },
     {
       "id": "OBS-3",

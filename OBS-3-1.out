@@ -1,0 +1,667 @@
+Implemented OBS-3 in `src/inngest/functions/observe.ts:1` and `src/inngest/functions/observe.ts:130`.
+
+### What changed
+- Added parser import:
+  - `src/inngest/functions/observe.ts:2` now imports `parseObserverOutput` from `./observe-parser`.
+- Replaced placeholder parse step:
+  - `src/inngest/functions/observe.ts:130` now parses the `call-observer-llm` output with `parseObserverOutput(llmOutput)`.
+- Added structured return shape from `parse-observations`:
+  - `segments` from parser output
+  - `facts` flattened from all segment facts
+  - `concepts` derived from `currentTask` + segment narratives (deduped)
+- Added graceful error handling:
+  - If parsing throws, step returns a safe fallback object with empty `segments`/`concepts`/`facts`, `parsed: false`, and `error` message instead of failing the function.
+
+### Verification
+- `bun test __tests__/obs-3-parse-observations.test.ts` passed (4/4).
+- `bunx tsc --noEmit` succeeded.
+
+
+--- STDERR ---
+OpenAI Codex v0.101.0 (research preview)
+--------
+workdir: /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus
+model: gpt-5.3-codex
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: auto
+session id: 019c6492-982c-71a2-9a84-a574577f5cbd
+--------
+user
+
+
+## Project File Listing
+
+docker
+prd-v3-recovery.json
+prd-adr-0010.json
+progress.txt
+node_modules
+prd-retro.json
+bun.lock
+README.md
+__tests__
+package.json
+tsconfig.json
+docker-compose.yml
+prd-v2.json
+index.ts
+CONTINUATION.md
+prd.json
+CLAUDE.md
+prd-cli-migration.json
+src
+CONTINUATION-ADR.md
+
+# src/ files:
+src/inngest/client.ts
+src/serve.ts
+
+## Project Instructions (CLAUDE.md)
+
+
+## Agent Loop Architecture (ADR-0015)
+
+This project runs automated coding loops with 5 separated roles:
+- **Planner**: generates PRD from goal, picks next story
+- **Test Writer**: writes acceptance tests BEFORE implementation (TDD)
+- **Implementor**: writes code to pass the tests
+- **Reviewer**: evaluates implementation with 4 questions (no test writing)
+- **Judge**: mechanical gates + reviewer notes + LLM verdict
+
+When working as an implementor: implement the story, don't write tests.
+When working as a test writer: write tests from acceptance criteria only, don't read implementation.
+Tests should verify observable behavior and public API — NOT internal structure.
+Do NOT use source code string matching (indexOf, regex on source) to verify behavior.
+Commit nothing — the harness handles git.
+
+## Bun Runtime
+
+Default to using Bun instead of Node.js.
+
+- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
+- Use `bun test` instead of `jest` or `vitest`
+- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
+- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
+- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
+- Use `bunx <package> <command>` instead of `npx <package> <command>`
+- Bun automatically loads .env, so don't use dotenv.
+
+## APIs
+
+- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
+- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
+- `Bun.redis` for Redis. Don't use `ioredis`.
+- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
+- `WebSocket` is built-in. Don't use `ws`.
+- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
+- Bun.$`ls` instead of execa.
+
+## Testing
+
+Use `bun test` to run tests.
+
+```ts#index.test.ts
+import { test, expect } from "bun:test";
+
+test("hello world", () => {
+  expect(1).toBe(1);
+});
+```
+
+## Frontend
+
+Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, C
+
+---
+
+## Story: Implement parse-observations step using observe-parser (OBS-3)
+
+In observe.ts, implement parse-observations step using parseObserverOutput from ./observe-parser.ts. Pass the LLM output from call-observer-llm step to parser. Handle parsing errors gracefully and return structured observations including segments, concepts, and facts.
+
+## Acceptance Criteria
+- parse-observations step imports and calls parseObserverOutput from ./observe-parser.ts
+- Step receives output from previous call-observer-llm step
+- Returns structured observation data (segments, concepts, facts)
+- Includes error handling for malformed LLM output
+- TypeScript compiles cleanly: bunx tsc --noEmit
+
+## Instructions
+Implement the story above. Do NOT write tests — a separate reviewer will handle testing.
+Make clean, focused changes. Commit nothing — the harness handles git.
+If your changes break existing tests (not just the ones for this story), fix those tests to match the new interface. Changing a type or adding a required field means updating all consumers.
+mcp startup: no servers
+2026-02-16T03:50:54.843917Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5eca-bff9-7772-83bf-5daab07b9959
+2026-02-16T03:50:54.876626Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5ffd-d51d-7a13-b1fa-342be02f164b
+2026-02-16T03:50:54.925932Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6275-d69e-7b53-bb28-583bfe07e70c
+2026-02-16T03:50:55.000815Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5d40-288c-78b2-af66-36e0fae54073
+2026-02-16T03:50:55.109826Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6482-5bab-7e53-bc62-5239d048a3c8
+2026-02-16T03:50:55.157233Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6485-58f0-7261-8508-37f3fb9356dd
+2026-02-16T03:50:55.266916Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6031-b7fb-7120-85b5-8abf34324910
+2026-02-16T03:50:55.306852Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fe2-872d-7e93-87a3-71d37d75a127
+2026-02-16T03:50:55.408435Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e50-6bc5-7861-a0a0-f77d68ec073f
+2026-02-16T03:50:55.494761Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6022-8a12-7ba0-b7e8-9c265e8ec17e
+2026-02-16T03:50:55.604594Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fbb-e145-7c40-9913-218548629e57
+2026-02-16T03:50:55.691800Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e21-7a30-7ed1-b686-e02ac2da8157
+2026-02-16T03:50:55.776916Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c647c-8066-7eb1-8782-06a844370303
+2026-02-16T03:50:55.860073Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fed-5e04-78c0-9a4e-9fddc7af084e
+
+thinking
+**Planning file inspection**
+codex
+Implementing OBS-3 now. I’ll inspect `observe.ts` and `observe-parser.ts` first, then wire the `parse-observations` step to consume `call-observer-llm` output with graceful parse error handling and verify with `bunx tsc --noEmit`.
+exec
+/bin/zsh -lc 'rg --files' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc 'rg -n "parse-observations|call-observer-llm|observe-parser|parseObserverOutput|observe" src index.ts __tests__' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 52ms:
+CONTINUATION-ADR.md
+src/serve.ts
+src/inngest/functions/transcript-process.ts
+src/inngest/functions/index.ts
+src/inngest/functions/video-download.ts
+src/inngest/functions/summarize.ts
+src/inngest/functions/observe.ts
+src/inngest/functions/observe-parser.ts
+src/inngest/functions/system-logger.ts
+src/inngest/functions/agent-loop/plan.ts
+src/inngest/functions/agent-loop/llmEvaluate.test.ts
+src/inngest/functions/agent-loop/judge.test.ts
+src/inngest/functions/agent-loop/test-writer.test.ts
+src/inngest/functions/agent-loop/test-writer.ts
+src/inngest/functions/agent-loop/formatLoopDuration.test.ts
+src/inngest/functions/agent-loop/review.test.ts
+src/inngest/functions/agent-loop/index.ts
+src/inngest/functions/agent-loop/getStoryDiff.test.ts
+src/inngest/functions/agent-loop/parseClaudeOutput.test.ts
+src/inngest/functions/agent-loop/review.ts
+ succeeded in 52ms:
+__tests__/nuum-4-optimize-for-context-segment-aware.test.ts:4:  return import("../src/inngest/functions/observe-parser.ts");
+__tests__/obs-1-observe-function.test.ts:9:function observeFilePath(): string {
+__tests__/obs-1-observe-function.test.ts:10:  return new URL("../src/inngest/functions/observe.ts", import.meta.url).pathname;
+__tests__/obs-1-observe-function.test.ts:14:  return import("../src/inngest/functions/observe.ts");
+__tests__/obs-1-observe-function.test.ts:18:  return import("../src/inngest/functions/observe-prompt.ts");
+__tests__/obs-1-observe-function.test.ts:29:    filesRead: ["src/inngest/functions/observe.ts"],
+__tests__/obs-1-observe-function.test.ts:30:    filesModified: ["src/inngest/functions/observe.ts"],
+__tests__/obs-1-observe-function.test.ts:46:    filesRead: ["src/inngest/functions/observe-prompt.ts"],
+__tests__/obs-1-observe-function.test.ts:47:    filesModified: ["src/inngest/functions/observe.ts"],
+__tests__/obs-1-observe-function.test.ts:120:  const fn = mod.observeSessionFunction as any;
+__tests__/obs-1-observe-function.test.ts:125:      id: "memory/observe-session",
+__tests__/obs-1-observe-function.test.ts:160:describe("OBS-1: observe.ts scaffold contract", () => {
+__tests__/obs-1-observe-function.test.ts:161:  test("AC-1: src/inngest/functions/observe.ts exists", async () => {
+__tests__/obs-1-observe-function.test.ts:162:    const exists = await Bun.file(observeFilePath()).exists();
+__tests__/obs-1-observe-function.test.ts:166:  test("AC-2 and AC-3: exports observeSessionFunction via createFunction with expected id/name and both triggers", async () => {
+__tests__/obs-1-observe-function.test.ts:170:      observeSessionFunction: expect.any(Object),
+__tests__/obs-1-observe-function.test.ts:173:    const fn = mod.observeSessionFunction as any;
+__tests__/obs-1-observe-function.test.ts:181:        id: "memory/observe-session",
+__tests__/obs-1-observe-function.test.ts:194:  test("AC-4 and AC-5: runtime behavior uses observer prompts and runs all 6 required step placeholders", async () => {
+__tests__/obs-1-observe-function.test.ts:204:        "call-observer-llm",
+
+thinking
+**Preparing to explore key files**
+codex
+I found an existing `observe.ts` scaffold and dedicated `obs-3` acceptance tests. Next I’m reading `observe.ts`, parser types, and the OBS-3 test expectations before editing.
+exec
+/bin/zsh -lc "sed -n '1,280p' src/inngest/functions/observe-parser.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc "sed -n '1,240p' src/inngest/functions/observe.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc "sed -n '1,280p' __tests__/obs-3-parse-observations.test.ts" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 53ms:
+import { inngest } from "../client";
+import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+
+type ObserveCompactionInput = {
+  sessionId: string;
+  dedupeKey: string;
+  trigger: "compaction";
+  messages: string;
+  messageCount: number;
+  tokensBefore: number;
+  filesRead: string[];
+  filesModified: string[];
+  capturedAt: string;
+  schemaVersion: 1;
+};
+
+type ObserveEndedInput = {
+  sessionId: string;
+  dedupeKey: string;
+  trigger: "shutdown";
+ succeeded in 53ms:
+export interface ObserverOutput {
+  observations: string;
+  segments: DistilledSegment[];
+  currentTask: string | null;
+  suggestedResponse: string | null;
+  parsed: boolean;
+}
+
+export interface DistilledSegment {
+  narrative: string;
+  facts: string[];
+}
+
+export function optimizeForContext(observations: string): string {
+  if (observations.trim().length === 0) {
+    return "";
+  }
+
+  const segments = parseSegments(observations);
+  if (segments.length > 0) {
+ succeeded in 53ms:
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { Events } from "../src/inngest/client.ts";
+import { parseObserverOutput } from "../src/inngest/functions/observe-parser.ts";
+
+type ObserveTrigger = "memory/session.compaction.pending" | "memory/session.ended";
+type EventData<TName extends keyof Events> = Events[TName] extends { data: infer TData }
+  ? TData
+  : never;
+
+type MockShellResult = {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+};
+
+const originalBunDollar = Bun.$;
+
+let mockShellResult: MockShellResult = {
+  stdout: "<observations></observations>",
+  stderr: "",
+
+thinking
+**Extending parse output with concepts and facts**
+codex
+I’ve confirmed the gap: `parse-observations` currently just returns `{ raw }`. I’m editing `src/inngest/functions/observe.ts` to call `parseObserverOutput`, derive `concepts`/`facts`, and fall back safely if parsing fails.
+file update
+M /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,2 +1,3 @@
+ import { inngest } from "../client";
++import { parseObserverOutput } from "./observe-parser";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+@@ -128,5 +129,36 @@
+ 
+-    const parsedObservations = await step.run("parse-observations", async () => ({
+-      raw: llmOutput,
+-    }));
++    const parsedObservations = await step.run("parse-observations", async () => {
++      try {
++        const parsed = parseObserverOutput(llmOutput);
++        const facts = parsed.segments
++          .flatMap((segment) => segment.facts)
++          .map((fact) => fact.trim())
++          .filter((fact) => fact.length > 0);
++        const concepts = [
++          ...new Set(
++            [parsed.currentTask, ...parsed.segments.map((segment) => segment.narrative)]
++              .map((concept) => (concept ?? "").trim())
++              .filter((concept) => concept.length > 0)
++          ),
++        ];
++
++        return {
++          ...parsed,
++          concepts,
++          facts,
++        };
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        return {
++          observations: llmOutput,
++          segments: [],
++          currentTask: null,
++          suggestedResponse: null,
++          parsed: false,
++          concepts: [],
++          facts: [],
++          error: message,
++        };
++      }
++    });
+ 
+apply_patch(auto_approved=true) exited 0 in 36ms:
+Success. Updated the following files:
+M /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus/src/inngest/functions/observe.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index bb20ee6511aae9e00542720814e6ddbb41427121..16cd27a32b8e7b429217e98ba92de59e7c00ed87
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { parseObserverOutput } from "./observe-parser";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
+ type ObserveCompactionInput = {
+@@ -126,9 +127,40 @@
+ 
+     });
+ 
+-    const parsedObservations = await step.run("parse-observations", async () => ({
+-      raw: llmOutput,
+-    }));
++    const parsedObservations = await step.run("parse-observations", async () => {
++      try {
++        const parsed = parseObserverOutput(llmOutput);
++        const facts = parsed.segments
++          .flatMap((segment) => segment.facts)
++          .map((fact) => fact.trim())
++          .filter((fact) => fact.length > 0);
++        const concepts = [
++          ...new Set(
++            [parsed.currentTask, ...parsed.segments.map((segment) => segment.narrative)]
++              .map((concept) => (concept ?? "").trim())
++              .filter((concept) => concept.length > 0)
++          ),
++        ];
++
++        return {
++          ...parsed,
++          concepts,
++          facts,
++        };
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        return {
++          observations: llmOutput,
++          segments: [],
++          currentTask: null,
++          suggestedResponse: null,
++          parsed: false,
++          concepts: [],
++          facts: [],
++          error: message,
++        };
++      }
++    });
+ 
+     const qdrantStoreResult = await step.run("store-to-qdrant", async () => ({
+       stored: false,
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index bb20ee6511aae9e00542720814e6ddbb41427121..16cd27a32b8e7b429217e98ba92de59e7c00ed87
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { parseObserverOutput } from "./observe-parser";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
+ type ObserveCompactionInput = {
+@@ -126,9 +127,40 @@
+ 
+     });
+ 
+-    const parsedObservations = await step.run("parse-observations", async () => ({
+-      raw: llmOutput,
+-    }));
++    const parsedObservations = await step.run("parse-observations", async () => {
++      try {
++        const parsed = parseObserverOutput(llmOutput);
++        const facts = parsed.segments
++          .flatMap((segment) => segment.facts)
++          .map((fact) => fact.trim())
++          .filter((fact) => fact.length > 0);
++        const concepts = [
++          ...new Set(
++            [parsed.currentTask, ...parsed.segments.map((segment) => segment.narrative)]
++              .map((concept) => (concept ?? "").trim())
++              .filter((concept) => concept.length > 0)
++          ),
++        ];
++
++        return {
++          ...parsed,
++          concepts,
++          facts,
++        };
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        return {
++          observations: llmOutput,
++          segments: [],
++          currentTask: null,
++          suggestedResponse: null,
++          parsed: false,
++          concepts: [],
++          facts: [],
++          error: message,
++        };
++      }
++    });
+ 
+     const qdrantStoreResult = await step.run("store-to-qdrant", async () => ({
+       stored: false,
+
+
+thinking
+**Running compilation and targeted tests**
+codex
+The parser wiring is in place. I’m running the OBS-3 acceptance test and TypeScript compile check to verify behavior and ensure no regressions in this story area.
+exec
+/bin/zsh -lc 'bun test __tests__/obs-3-parse-observations.test.ts' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-busexec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 742ms:
+
+ succeeded in 777ms:
+(pass) OBS-3: TypeScript compile gate > AC-5: bunx tsc --noEmit succeeds [777.74ms]
+
+ 4 pass
+ 0 fail
+ 8 expect() calls
+Ran 4 tests across 1 file. [820.00ms]
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index bb20ee6511aae9e00542720814e6ddbb41427121..16cd27a32b8e7b429217e98ba92de59e7c00ed87
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { parseObserverOutput } from "./observe-parser";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
+ type ObserveCompactionInput = {
+@@ -126,9 +127,40 @@
+ 
+     });
+ 
+-    const parsedObservations = await step.run("parse-observations", async () => ({
+-      raw: llmOutput,
+-    }));
++    const parsedObservations = await step.run("parse-observations", async () => {
++      try {
++        const parsed = parseObserverOutput(llmOutput);
++        const facts = parsed.segments
++          .flatMap((segment) => segment.facts)
++          .map((fact) => fact.trim())
++          .filter((fact) => fact.length > 0);
++        const concepts = [
++          ...new Set(
++            [parsed.currentTask, ...parsed.segments.map((segment) => segment.narrative)]
++              .map((concept) => (concept ?? "").trim())
++              .filter((concept) => concept.length > 0)
++          ),
++        ];
++
++        return {
++          ...parsed,
++          concepts,
++          facts,
++        };
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        return {
++          observations: llmOutput,
++          segments: [],
++          currentTask: null,
++          suggestedResponse: null,
++          parsed: false,
++          concepts: [],
++          facts: [],
++          error: message,
++        };
++      }
++    });
+ 
+     const qdrantStoreResult = await step.run("store-to-qdrant", async () => ({
+       stored: false,
+
+
+thinking
+**Considering line number referencing**
+exec
+/bin/zsh -lc "nl -ba src/inngest/functions/observe.ts | sed -n '1,240p'" in /private/tmp/agent-loop/loop-mlomizdc-saexvm/packages/system-bus succeeded in 52ms:
+     1	import { inngest } from "../client";
+     2	import { parseObserverOutput } from "./observe-parser";
+     3	import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+     4	
+     5	type ObserveCompactionInput = {
+     6	  sessionId: string;
+     7	  dedupeKey: string;
+     8	  trigger: "compaction";
+     9	  messages: string;
+    10	  messageCount: number;
+    11	  tokensBefore: number;
+    12	  filesRead: string[];
+    13	  filesModified: string[];
+    14	  capturedAt: string;
+    15	  schemaVersion: 1;
+    16	};
+    17	
+    18	type ObserveEndedInput = {
+    19	  sessionId: string;
+    20	  dedupeKey: string;
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index bb20ee6511aae9e00542720814e6ddbb41427121..16cd27a32b8e7b429217e98ba92de59e7c00ed87
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { parseObserverOutput } from "./observe-parser";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
+ type ObserveCompactionInput = {
+@@ -126,9 +127,40 @@
+ 
+     });
+ 
+-    const parsedObservations = await step.run("parse-observations", async () => ({
+-      raw: llmOutput,
+-    }));
++    const parsedObservations = await step.run("parse-observations", async () => {
++      try {
++        const parsed = parseObserverOutput(llmOutput);
++        const facts = parsed.segments
++          .flatMap((segment) => segment.facts)
++          .map((fact) => fact.trim())
++          .filter((fact) => fact.length > 0);
++        const concepts = [
++          ...new Set(
++            [parsed.currentTask, ...parsed.segments.map((segment) => segment.narrative)]
++              .map((concept) => (concept ?? "").trim())
++              .filter((concept) => concept.length > 0)
++          ),
++        ];
++
++        return {
++          ...parsed,
++          concepts,
++          facts,
++        };
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        return {
++          observations: llmOutput,
++          segments: [],
++          currentTask: null,
++          suggestedResponse: null,
++          parsed: false,
++          concepts: [],
++          facts: [],
++          error: message,
++        };
++      }
++    });
+ 
+     const qdrantStoreResult = await step.run("store-to-qdrant", async () => ({
+       stored: false,
+
+
+thinking
+**Confirming no skill usage**
+codex
+Implemented OBS-3 in `src/inngest/functions/observe.ts:1` and `src/inngest/functions/observe.ts:130`.
+
+### What changed
+- Added parser import:
+  - `src/inngest/functions/observe.ts:2` now imports `parseObserverOutput` from `./observe-parser`.
+- Replaced placeholder parse step:
+  - `src/inngest/functions/observe.ts:130` now parses the `call-observer-llm` output with `parseObserverOutput(llmOutput)`.
+- Added structured return shape from `parse-observations`:
+  - `segments` from parser output
+  - `facts` flattened from all segment facts
+  - `concepts` derived from `currentTask` + segment narratives (deduped)
+- Added graceful error handling:
+  - If parsing throws, step returns a safe fallback object with empty `segments`/`concepts`/`facts`, `parsed: false`, and `error` message instead of failing the function.
+
+### Verification
+- `bun test __tests__/obs-3-parse-observations.test.ts` passed (4/4).
+- `bunx tsc --noEmit` succeeded.
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index bb20ee6511aae9e00542720814e6ddbb41427121..16cd27a32b8e7b429217e98ba92de59e7c00ed87
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { parseObserverOutput } from "./observe-parser";
+ import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+ 
+ type ObserveCompactionInput = {
+@@ -126,9 +127,40 @@
+ 
+     });
+ 
+-    const parsedObservations = await step.run("parse-observations", async () => ({
+-      raw: llmOutput,
+-    }));
++    const parsedObservations = await step.run("parse-observations", async () => {
++      try {
++        const parsed = parseObserverOutput(llmOutput);
++        const facts = parsed.segments
++          .flatMap((segment) => segment.facts)
++          .map((fact) => fact.trim())
++          .filter((fact) => fact.length > 0);
++        const concepts = [
++          ...new Set(
++            [parsed.currentTask, ...parsed.segments.map((segment) => segment.narrative)]
++              .map((concept) => (concept ?? "").trim())
++              .filter((concept) => concept.length > 0)
++          ),
++        ];
++
++        return {
++          ...parsed,
++          concepts,
++          facts,
++        };
++      } catch (error) {
++        const message = error instanceof Error ? error.message : String(error);
++        return {
++          observations: llmOutput,
++          segments: [],
++          currentTask: null,
++          suggestedResponse: null,
++          parsed: false,
++          concepts: [],
++          facts: [],
++          error: message,
++        };
++      }
++    });
+ 
+     const qdrantStoreResult = await step.run("store-to-qdrant", async () => ({
+       stored: false,
+
+tokens used
+21,896
