@@ -27,7 +27,7 @@ k3s is Linux-only. My Mac runs macOS. The options:
 | **OrbStack** | Could replace Docker Desktop entirely + run k8s natively |
 | **Colima + kind** | Lightweight Docker replacement + k8s-in-Docker |
 
-k3d wins because Docker Desktop is already running. One dependency I already pay for. No new VMs, no new abstractions. Benchmarks confirm k3d has the fastest startup of all the local k8s options. microk8s would've meant running Multipass alongside Docker Desktop — two VMs, more overhead, slower startup, for no benefit on macOS.
+k3d wins because Docker Desktop is already running. No new VMs, no new abstractions. Benchmarks confirm k3d has the fastest startup of all the local k8s options. microk8s would've meant running Multipass alongside Docker Desktop — two VMs, more overhead, slower startup, for no benefit on macOS.
 
 ```bash
 k3d cluster create joelclaw \
