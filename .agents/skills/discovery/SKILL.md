@@ -1,11 +1,11 @@
 ---
 name: discovery
-description: "Capture interesting finds (repos, articles, tools, ideas, papers) to the Vault via Inngest. Triggers when the user shares a URL, repo, or idea with signal words like \"interesting\", \"cool\", \"neat\", \"check this out\", \"look at this\", \"came across\", or when sharing content with minimal context that implies it should be remembered. Also triggers on bare URL drops with no explicit ask. Fires a discovery/noted event and continues the conversation — the system-bus worker handles investigation and vault note creation in the background."
+description: "Capture interesting finds to the Vault via Inngest. Triggers when the user shares a URL, repo, or idea with signal words like \"interesting\", \"cool\", \"neat\", \"check this out\", \"look at this\", \"came across\", or when sharing content with minimal context that implies it should be remembered. Also triggers on bare URL drops with no explicit ask. Fires a discovery/noted event and continues the conversation — the pipeline handles everything else."
 ---
 
 # Discovery — Capture What's Interesting
 
-When Joel flags something as interesting, fire an Inngest event and keep moving. The system-bus worker investigates and writes the vault note in the background.
+When Joel flags something as interesting, fire a minimal Inngest event and keep moving. The pipeline does all the investigation, tagging, and vault note writing in the background.
 
 ## Trigger Detection
 
@@ -20,11 +20,9 @@ Signal words/patterns (case-insensitive):
 
 ## Workflow
 
-### 1. Quick investigation in main thread
+### 1. Fire the event with minimal data
 
-Do a brief scan so you can respond intelligently — clone the repo/read the page, give Joel the gist. This is the natural conversation part.
-
-### 2. Fire the Inngest event
+Just the URL and whatever Joel said. Don't classify, don't tag, don't summarize — the pipeline's pi invocation handles all of that.
 
 ```bash
 curl -s -X POST "http://localhost:8288/e/37aa349b89692d657d276a40e0e47a15" \
@@ -33,68 +31,31 @@ curl -s -X POST "http://localhost:8288/e/37aa349b89692d657d276a40e0e47a15" \
     "name": "discovery/noted",
     "data": {
       "url": "https://github.com/simonw/showboat",
-      "topic": "showboat — executable demo documents for agents",
-      "context": "Simon Willison tool. CLI for agents to build markdown docs with executed code blocks and captured output. Verify re-runs all blocks and diffs. Relevant to agent loop proof-of-work.",
-      "depth": "medium",
-      "tags": ["repo", "cli", "ai", "agent-tooling"]
+      "context": "interesting"
     }
   }'
 ```
 
-### 3. Continue conversation
+Include `context` only if Joel said something specific beyond the signal word. The pipeline figures out the rest.
 
-Don't wait for the background task. Joel flagged something and moved on — match that energy.
+### 2. Continue conversation
+
+Don't wait. Joel flagged something and moved on — match that energy.
 
 ## Event Schema
 
 ```typescript
 "discovery/noted": {
   data: {
-    url?: string;          // URL to investigate (repo, article, etc.)
-    topic: string;         // Short title/description
-    context?: string;      // What Joel said / agent's quick take
-    depth?: "quick" | "medium" | "deep";  // Default: medium
-    tags?: string[];       // Source type + domain tags
+    url?: string;       // URL to investigate
+    context?: string;   // What Joel said (if anything beyond the signal word)
   };
 };
 ```
 
-## What the Worker Does
+## What the Pipeline Does (handled by system-bus worker)
 
-The `discovery-capture` Inngest function:
-
-1. **Investigate** — clone repos (git), extract articles (defuddle-cli), or use provided context
-2. **Summarize** — generate vault note via pi (joel-writing-style voice)
-3. **Write** — save to `~/Vault/Resources/discoveries/{slug}.md`
-4. **Log** — `slog write --action noted --tool discovery --detail "{topic}" --reason "vault:Resources/discoveries/{slug}.md"`
-
-## Vault Note Format
-
-```markdown
----
-type: discovery
-source: {url}
-discovered: {ISO date}
-tags: [{tags}]
-relevance: {one-line on why this matters}
----
-
-# {Title}
-
-{2-4 paragraph summary — direct, connect to Joel's system where relevant}
-
-## Key Ideas
-
-- {Notable concepts, patterns, features}
-
-## Links
-
-- {Source URL}
-- {Related references}
-```
-
-## Depth Levels
-
-- **quick**: Use provided context only, minimal note
-- **medium** (default): Clone/read, summarize key ideas, note relevance to Joel's system
-- **deep**: Cross-reference active Vault projects, check ADRs, note integration points, suggest next steps
+1. **Investigate** — clone repos, extract articles, read content
+2. **Analyze via pi** — tags, relevance, summary all decided by the LLM in Joel's voice
+3. **Write** — vault note to `~/Vault/Resources/discoveries/{slug}.md`
+4. **Log** — `slog write --action noted --tool discovery`
