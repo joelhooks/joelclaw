@@ -47,10 +47,10 @@ Bad titles are just names or descriptions:
 
 The title should make someone want to open the note six months from now. It's the hook.
 
-### 2. Slug (filename)
+### 2. Filename
 
-Derive a short kebab-case slug from the title for the filename. Keep it under 50 chars.
-Example: "executable-documents-agent-proof-of-work"
+Use the title as the filename — readable, not a slug. Obsidian uses the filename as the note name in the sidebar, wikilinks, and graph view.
+Example: "Executable Documents as Agent Proof-of-Work.md" NOT "executable-docs-agent-proof-of-work.md"
 
 ### 3. Tags
 
@@ -84,7 +84,7 @@ Source URL + any related references you discover.
 
 ## Output
 
-Write the file to ${opts.vaultDir}/{slug}.md using this exact format:
+Write the file to ${opts.vaultDir}/{Title}.md (use the exact title as the filename) using this format:
 
 ---
 type: discovery
@@ -106,7 +106,7 @@ relevance: "your specific one-liner"
 
 - {links}
 
-After writing the file, print ONLY: DISCOVERY_WRITTEN:{slug}
+After writing the file, print ONLY: DISCOVERY_WRITTEN:{exact filename without .md extension}
 Do NOT print anything else after that line.
 
 IMPORTANT: Write the file with the write tool. Do not ask questions. Just do it.`;

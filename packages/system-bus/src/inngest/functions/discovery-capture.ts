@@ -74,12 +74,12 @@ export const discoveryCapture = inngest.createFunction(
         .env({ ...process.env, TERM: "dumb" })
         .text();
 
-      // Extract slug from pi's output
+      // Extract filename from pi's output
       const match = output.match(/DISCOVERY_WRITTEN:(.+)/);
-      const slug = match?.[1]?.trim() ?? `discovery-${today}`;
-      const vaultPath = `${VAULT_DISCOVERIES}/${slug}.md`;
+      const noteName = match?.[1]?.trim() ?? `Discovery ${today}`;
+      const vaultPath = `${VAULT_DISCOVERIES}/${noteName}.md`;
 
-      return { slug, vaultPath, piOutput: output.slice(-200) };
+      return { noteName, vaultPath, piOutput: output.slice(-200) };
     });
 
     // Step 3: Verify + slog
@@ -93,9 +93,9 @@ export const discoveryCapture = inngest.createFunction(
       // Read title from the written file
       const content = await Bun.file(result.vaultPath).text();
       const titleMatch = content.match(/^# (.+)$/m);
-      const title = titleMatch?.[1] ?? result.slug;
+      const title = titleMatch?.[1] ?? result.noteName;
 
-      await $`slog write --action noted --tool discovery --detail "${title}" --reason "vault:Resources/discoveries/${result.slug}.md"`.quiet();
+      await $`slog write --action noted --tool discovery --detail "${title}" --reason "vault:Resources/discoveries/${result.noteName}.md"`.quiet();
     });
 
     return { status: "captured", ...result };
