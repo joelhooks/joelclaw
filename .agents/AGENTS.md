@@ -44,6 +44,7 @@ This is Joel's always-on Mac Mini — a prototype personal AI assistant, copilot
 | `~/Code/system-bus-worker/` | Dedicated worker clone (launchd runs from here) |
 | `~/Code/openclaw/openclaw/` | OpenClaw agent framework (reference, not deployed) |
 | `~/.joelclaw/workspace/` | Agent memory workspace (MEMORY.md, daily logs) |
+| `~/.joelclaw/NEIGHBORHOOD.md` | Network topology — machines, IPs, services, access patterns (semi-private, not committed) |
 | `~/Projects/` | Code projects directory |
 | `joel@three-body:/volume1/home/joel/video/` | NAS video archive (SSH, by year) |
 | `~/Vault/Resources/videos/` | Video notes — summaries, transcripts, concept tags |

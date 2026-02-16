@@ -35,9 +35,9 @@ Events (HTTP POST or inngest.send())
                           └────────────────────┘
 ```
 
-Inngest server runs in Docker with `restart: unless-stopped` and SQLite persistence. The worker is a Bun + Hono app managed by launchd with `KeepAlive: true`. Both survive reboots. Caddy terminates TLS via Tailscale certs so I can hit the dashboard from my phone.
+Inngest server runs as a k8s StatefulSet in a [k3d cluster](/from-docker-compose-to-k3s) with persistent volume claims. The worker is a Bun + Hono app managed by launchd with `KeepAlive: true`. Both survive reboots. Caddy terminates TLS via Tailscale certs so I can hit the dashboard from my phone.
 
-Ten functions. Two pipelines. One event bus.
+Fourteen functions. Two pipelines. One event bus.
 
 ## Pipeline 1: Video ingest
 

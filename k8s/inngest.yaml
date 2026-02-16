@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: inngest
+  namespace: joelclaw
+spec:
+  serviceName: inngest
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inngest
+  template:
+    metadata:
+      labels:
+        app: inngest
+    spec:
+      containers:
+        - name: inngest
+          image: inngest/inngest
+          args:
+            - inngest
+            - start
+            # Worker runs on the host — k3d resolves host.k3d.internal
+            - --sdk-url
+            - http://host.k3d.internal:3111/api/inngest
+            - --poll-interval
+            - "5"
+            - --verbose
+          ports:
+            - containerPort: 8288
+              name: api
+            - containerPort: 8289
+              name: ws
+          envFrom:
+            - secretRef:
+                name: system-bus-env
+          env:
+            - name: INNGEST_SQLITE_DIR
+              value: /data
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8288
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8288
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
+---
+# Named inngest-svc to avoid k8s injecting INNGEST_PORT env var
+# (collides with inngest binary's own env parsing — see spike notes)
+apiVersion: v1
+kind: Service
+metadata:
+  name: inngest-svc
+  namespace: joelclaw
+spec:
+  type: NodePort
+  selector:
+    app: inngest
+  ports:
+    - name: api
+      port: 8288
+      targetPort: 8288
+      nodePort: 8288
+    - name: ws
+      port: 8289
+      targetPort: 8289
+      nodePort: 8289

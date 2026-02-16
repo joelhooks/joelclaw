@@ -12,6 +12,7 @@ type NodeSpec = {
 };
 
 const clusterOverview = [
+  { label: "Orchestration", value: "k3s (v1.33.6) via k3d" },
   { label: "Total unified memory", value: "192+ GB" },
   { label: "Total VRAM", value: "48 GB" },
   { label: "CPU cores", value: "30+" },
@@ -29,12 +30,14 @@ const nodes: NodeSpec[] = [
     name: "Hub",
     status: "Active",
     specs: ["Apple M4 Pro", "14-core CPU", "20-core GPU", "64 GB unified memory"],
-    role: "Control plane, event bus, vector search, state management",
+    role: "Control plane, event bus, vector search, state management — running k3s single-node cluster",
     services: [
-      "Event orchestration (Inngest)",
-      "Vector database (Qdrant)",
-      "Cache/state (Redis)",
-      "HTTPS proxy",
+      "k3s control plane (k3d)",
+      "Event orchestration (Inngest — k8s StatefulSet)",
+      "Vector database (Qdrant — k8s StatefulSet)",
+      "Cache/state (Redis — k8s StatefulSet)",
+      "System-bus worker (14 Inngest functions)",
+      "HTTPS proxy (Caddy + Tailscale TLS)",
     ],
   },
   {
@@ -63,7 +66,7 @@ const nodes: NodeSpec[] = [
       "10 Gb Ethernet",
       "Thunderbolt 5",
     ],
-    role: "Primary compute hub — local LLM inference (70B-235B models), GPU-accelerated embedding, tensor parallel with Hub via TB5 RDMA",
+    role: "Primary compute — local LLM inference (70B-235B models), GPU-accelerated embedding. Joins as k3s agent, becomes control plane.",
   },
   {
     name: "Forge",
@@ -74,15 +77,15 @@ const nodes: NodeSpec[] = [
       "48 GB VRAM (24 GB x 2)",
       "~1600 FP4 TOPS combined",
     ],
-    role: "CUDA inference server — high-throughput batch processing, embedding at GPU speed, video transcription",
+    role: "CUDA inference server — joins as k3s agent with NVIDIA device plugin for GPU-scheduled workloads",
   },
 ];
 
 const architectureLayers = [
   "Layer 5: Inference     — Local LLMs (exo + vLLM), 192 GB unified + 48 GB VRAM",
   "Layer 4: Orchestration — k3s cluster, declarative scheduling across nodes",
-  "Layer 3: Services      — Event bus, vector search, cache, observability",
-  "Layer 2: Pipelines     — Memory extraction, session indexing, taxonomy sync",
+  "Layer 3: Services      — Inngest, Qdrant, Redis as k8s StatefulSets",
+  "Layer 2: Pipelines     — Video ingest, content sync, coding loops, memory",
   "Layer 1: Agents        — AI coding assistants with full recall + local inference",
   "Layer 0: Data          — Vault, system log, sessions, 64 TB archive, SKOS taxonomy",
 ];
@@ -90,7 +93,7 @@ const architectureLayers = [
 export const metadata: Metadata = {
   title: `Network — ${SITE_NAME}`,
   description:
-    "The joelclaw network — nodes, capabilities, and architecture across local AI compute and storage.",
+    "The joelclaw network — k3s-orchestrated nodes, capabilities, and architecture across local AI compute and storage.",
 };
 
 function StatusBadge({ status }: { status: NodeStatus }) {
@@ -117,8 +120,8 @@ export default function NetworkPage() {
         <h1 className="text-2xl font-bold tracking-tight">Network</h1>
         <p className="mt-2 text-sm text-neutral-400 leading-relaxed">
           The <span className="text-claw">joelclaw network</span> — a personal AI
-          compute fabric spanning Apple Silicon, NVIDIA Blackwell, and 64TB of
-          archival storage. Orchestrated by Inngest, connected via encrypted mesh.
+          compute fabric orchestrated by k3s, spanning Apple Silicon, NVIDIA Blackwell,
+          and 64TB of archival storage. Connected via encrypted WireGuard mesh.
         </p>
       </header>
 
@@ -174,13 +177,13 @@ export default function NetworkPage() {
         <h2 className="text-lg font-semibold tracking-tight text-neutral-100">Interconnect</h2>
         <div className="border border-neutral-800 rounded-lg p-4">
           <p className="text-sm text-neutral-400 leading-relaxed">
-            An encrypted WireGuard mesh connects all nodes. Thunderbolt 5 RDMA
-            links Apple Silicon nodes for tensor-parallel inference. All traffic
-            is encrypted end-to-end.
+            An encrypted WireGuard mesh connects all nodes via Tailscale.
+            k3s handles service discovery and scheduling within the cluster.
+            Thunderbolt 5 RDMA links Apple Silicon nodes for tensor-parallel inference.
+            All traffic is encrypted end-to-end.
           </p>
         </div>
       </section>
     </div>
   );
 }
-
