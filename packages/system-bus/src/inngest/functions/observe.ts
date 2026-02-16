@@ -1,4 +1,5 @@
 import { inngest } from "../client";
+import { parseObserverOutput } from "./observe-parser";
 import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
 
 type ObserveCompactionInput = {
@@ -126,9 +127,40 @@ Session context:
 
     });
 
-    const parsedObservations = await step.run("parse-observations", async () => ({
-      raw: llmOutput,
-    }));
+    const parsedObservations = await step.run("parse-observations", async () => {
+      try {
+        const parsed = parseObserverOutput(llmOutput);
+        const facts = parsed.segments
+          .flatMap((segment) => segment.facts)
+          .map((fact) => fact.trim())
+          .filter((fact) => fact.length > 0);
+        const concepts = [
+          ...new Set(
+            [parsed.currentTask, ...parsed.segments.map((segment) => segment.narrative)]
+              .map((concept) => (concept ?? "").trim())
+              .filter((concept) => concept.length > 0)
+          ),
+        ];
+
+        return {
+          ...parsed,
+          concepts,
+          facts,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          observations: llmOutput,
+          segments: [],
+          currentTask: null,
+          suggestedResponse: null,
+          parsed: false,
+          concepts: [],
+          facts: [],
+          error: message,
+        };
+      }
+    });
 
     const qdrantStoreResult = await step.run("store-to-qdrant", async () => ({
       stored: false,
