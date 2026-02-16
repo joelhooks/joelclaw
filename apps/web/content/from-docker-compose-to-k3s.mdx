@@ -8,26 +8,26 @@ Three Docker Compose services. Redis, Qdrant, Inngest. Running on a Mac Mini for
 
 So why change anything?
 
-## The trigger wasn't pain
+## The honest answer
 
-The honest answer: I'm about to buy a Mac Studio. 128 GB unified memory. When it arrives, I want to run local LLM inference on it while the Mini handles everything else. Two machines, services on both. That's a scheduling problem, and Kubernetes solves scheduling problems.
+Docker Compose works until it doesn't. Three containers is fine. But the moment I want to add a health check cron, or schedule a batch embedding job, or run a service on a different machine — I'm writing shell scripts and launchd plists and hoping they don't drift apart.
 
-But I don't want to learn Kubernetes under pressure on the day the Studio arrives. So I spiked it. Time-boxed experiment: can k3s run on this Mac Mini, what's the overhead, and how mechanical is the migration?
+Kubernetes solves scheduling. It solves health checks. It solves "what's running where." The question was never *if* I'd move — it was whether the overhead was worth it on a single machine.
 
-The spike worked. So I kept going.
+So I spiked it.
 
-## k3d, not k3s
+## k3d, not k3s, not microk8s
 
 k3s is Linux-only. My Mac runs macOS. The options:
 
 | Approach | What it means |
 |---|---|
 | **k3d** | k3s inside Docker (already running Docker Desktop) |
-| OrbStack | Lightweight alternative to Docker Desktop |
-| Lima VM | Separate Linux VM to manage |
-| Control plane on a Linux box | Mac is agent-only |
+| **microk8s** | Multipass VM (separate from Docker Desktop) — two VMs running |
+| **OrbStack** | Could replace Docker Desktop entirely + run k8s natively |
+| **Colima + kind** | Lightweight Docker replacement + k8s-in-Docker |
 
-k3d wins because Docker Desktop is already running. One dependency I already pay for. No new VMs, no new abstractions.
+k3d wins because Docker Desktop is already running. One dependency I already pay for. No new VMs, no new abstractions. Benchmarks confirm k3d has the fastest startup of all the local k8s options. microk8s would've meant running Multipass alongside Docker Desktop — two VMs, more overhead, slower startup, for no benefit on macOS.
 
 ```bash
 k3d cluster create joelclaw \
@@ -50,7 +50,7 @@ First deploy. Redis comes up. Qdrant comes up. Inngest crashes immediately.
 strconv.Atoi: parsing "tcp://10.43.53.131:8288": invalid syntax
 ```
 
-This is a classic Kubernetes gotcha that nobody warns you about. When you create a Service named `inngest`, Kubernetes auto-injects environment variables into every pod in the namespace:
+Classic Kubernetes gotcha that nobody warns you about. When you create a Service named `inngest`, Kubernetes auto-injects environment variables into every pod in the namespace:
 
 ```
 INNGEST_SERVICE_HOST=10.43.53.131
@@ -61,7 +61,7 @@ The Inngest binary has its own `INNGEST_PORT` env var — expects an integer. Ge
 
 **Fix**: name the Service `inngest-svc`. The env vars become `INNGEST_SVC_PORT` and the collision disappears. Two characters, thirty minutes of debugging.
 
-[TODO: Joel — was this actually frustrating or more of an "oh, that's interesting" moment?]
+**Rule**: never name a k8s Service the same as the binary it runs, if that binary reads its own name as an env var prefix. This probably bites every project that runs a service named after its own software.
 
 ## The NodePort range gotcha
 
@@ -71,9 +71,9 @@ Kubernetes default NodePort range is 30000-32767. My services need ports 6379, 6
 --kube-apiserver-arg=service-node-port-range=80-32767
 ```
 
-And here's the thing about k3d: **cluster config is immutable after creation.** Port mappings, k3s args, everything is locked at `cluster create` time. If you forget a port or a flag, you delete the cluster and start over.
+And here's the thing about k3d: **cluster config is immutable after creation.** Port mappings, k3s args, everything is locked at `cluster create` time. Forget a port or a flag, you delete the cluster and start over.
 
-Plan your ports before you create.
+I deleted and recreated the cluster three times during this migration. Plan your ports before you create.
 
 ## The manifests are boring (that's the point)
 
@@ -87,7 +87,7 @@ Each Docker Compose service became a StatefulSet + NodePort Service. Same images
 | `restart: unless-stopped` | StatefulSet (always restarts) |
 | `healthcheck` | `livenessProbe` + `readinessProbe` |
 
-StatefulSets because all three services need stable storage. Deployments would work for stateless things, but Redis with AOF, Qdrant with its index, and Inngest with SQLite all need their data to survive pod restarts.
+StatefulSets because all three services need stable storage. Redis with AOF, Qdrant with its vector index, Inngest with SQLite — they all need data to survive pod restarts.
 
 ## The overhead
 
@@ -99,7 +99,7 @@ StatefulSets because all three services need stable storage. Deployments would w
 | Inngest pod | 46 MB |
 | **Total** | **~915 MB** |
 
-For comparison, Docker Compose was 536 MB for the same three services. The k8s tax is ~380 MB — the control plane, CoreDNS, metrics-server, the local-path provisioner. On a 64 GB machine that's 0.6% overhead for a real orchestrator.
+Docker Compose was 536 MB for the same three services. The k8s tax is ~380 MB — the control plane, CoreDNS, metrics-server, the local-path provisioner. On a 64 GB machine that's 0.6% overhead for a real orchestrator.
 
 The pods themselves actually use *less* memory inside k3s than they did in Docker Compose. Not sure why. Didn't investigate.
 
@@ -126,23 +126,21 @@ Caddy stays on launchd too. It terminates TLS with Tailscale certificates that l
 
 Both are fine where they are. Not everything needs to be in a cluster.
 
-## What this unlocks
+## What this gets me
 
-When the Mac Studio arrives:
+`kubectl get pods -n joelclaw` shows everything. Health checks are built in — liveness probes restart crashed services, readiness probes gate traffic. Adding a new service is a manifest, not a shell script.
 
-```bash
-# On the Studio
-k3d cluster create joelclaw --servers 1 ...
-# Join the Mini as an agent
-k3d cluster create ... --agents 1 ...
+```
+NAME        READY   STATUS    RESTARTS   AGE
+inngest-0   1/1     Running   0          2h
+qdrant-0    1/1     Running   0          2h
+redis-0     1/1     Running   0          2h
 ```
 
-[TODO: Joel — the actual multi-node k3d setup is more nuanced than this, might want to revisit when it's real]
+Three services, three StatefulSets, persistent storage, health monitoring. 915 MB on a 64 GB machine. The [network page](/network) shows the current state, and [ADR-0025](/adrs/0025-k3s-cluster-for-joelclaw-network) has the full decision and spike results.
 
-Two nodes. `kubectl get pods -A` shows everything running across both machines. Health checks, restarts, scheduling — handled. The [ADR-0025](/adrs/0025-k3s-cluster-for-joelclaw-network) lays out the full phased plan.
-
-For now it's one Mac Mini running a single-node k3s cluster with three StatefulSets. Simple. But the migration path to two nodes, then three, then a GPU box — it's all just `kubectl apply`.
+The whole migration — spike, gotcha debugging, manifest writing, cutover, smoke test — was one session.
 
 ---
 
-*This is part of a series about building a personal AI system. Previous: [Inngest is the Nervous System](/inngest-is-the-nervous-system). The [network page](/network) shows the current cluster state.*
+*This is part of a series about building a personal AI system. Previous: [Inngest is the Nervous System](/inngest-is-the-nervous-system).*
