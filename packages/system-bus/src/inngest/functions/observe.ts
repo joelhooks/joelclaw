@@ -1,5 +1,6 @@
-import { inngest } from "../client";
+import { inngest } from "../client.ts";
 import { QdrantClient } from "@qdrant/js-client-rest";
+import Redis from "ioredis";
 import { parseObserverOutput } from "./observe-parser";
 import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
 
@@ -42,6 +43,28 @@ type QdrantPointPayload = {
 const QDRANT_COLLECTION = "memory_observations";
 const QDRANT_VECTOR_DIMENSIONS = 768;
 const QDRANT_ZERO_VECTOR = Array.from({ length: QDRANT_VECTOR_DIMENSIONS }, () => 0);
+let redisClient: Redis | null = null;
+
+function getRedisClient(): Redis {
+  if (!redisClient) {
+    redisClient = new Redis({
+      host: process.env.REDIS_HOST ?? "localhost",
+      port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+      lazyConnect: true,
+    });
+  }
+  return redisClient;
+}
+
+function isoDateFromTimestamp(value: string | undefined): string {
+  if (typeof value === "string") {
+    const date = value.slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return date;
+    }
+  }
+  return new Date().toISOString().slice(0, 10);
+}
 
 function createObservationItems(parsedObservations: {
   observations: string;
@@ -272,17 +295,90 @@ Session context:
       }
     });
 
-    const redisStateResult = await step.run("update-redis-state", async () => ({
-      updated: false,
-      dedupeKey: validatedInput.dedupeKey,
-      qdrantStoreResult,
-    }));
+    const observationItems = createObservationItems(parsedObservations);
+    const observationCount = observationItems.length;
+    const observationSummary =
+      parsedObservations.observations.trim() ||
+      observationItems.map((item) => item.observation).join("\n");
+    const capturedAt = validatedInput.capturedAt ?? new Date().toISOString();
+    const date = isoDateFromTimestamp(capturedAt);
+    const redisKey = `memory:latest:${date}`;
+    const totalTokens =
+      validatedInput.trigger === "compaction" ? validatedInput.tokensBefore : validatedInput.messageCount;
 
-    const accumulatedEvent = await step.run("emit-accumulated", async () => ({
-      emitted: false,
-      trigger: validatedInput.trigger,
-      redisStateResult,
-    }));
+    const redisStateResult = await step.run("update-redis-state", async () => {
+      const redisPayload = {
+        summary: observationSummary,
+        metadata: {
+          session_id: validatedInput.sessionId,
+          dedupe_key: validatedInput.dedupeKey,
+          trigger: validatedInput.trigger,
+          observation_count: observationCount,
+          message_count: validatedInput.messageCount,
+          captured_at: capturedAt,
+          date,
+          qdrant: qdrantStoreResult,
+        },
+      };
+
+      try {
+        await getRedisClient().set(redisKey, JSON.stringify(redisPayload));
+        return {
+          updated: true,
+          key: redisKey,
+          observationCount,
+          summaryLength: observationSummary.length,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          updated: false,
+          key: redisKey,
+          error: message,
+          observationCount,
+        };
+      }
+    });
+
+    const accumulatedEvent = await step.run("emit-accumulated", async () => {
+      const accumulatedData = {
+        session_id: validatedInput.sessionId,
+        sessionId: validatedInput.sessionId,
+        date,
+        totalTokens,
+        observationCount,
+        observation_count: observationCount,
+        capturedAt,
+      };
+      const normalizedAccumulatedData = JSON.parse(
+        JSON.stringify(accumulatedData)
+      ) as typeof accumulatedData;
+
+      try {
+        await inngest.send({
+          name: "memory/observations.accumulated",
+          data: normalizedAccumulatedData,
+        });
+
+        return {
+          emitted: true,
+          name: "memory/observations.accumulated",
+          data: normalizedAccumulatedData,
+          observationCount,
+          redisUpdated: redisStateResult,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          emitted: false,
+          name: "memory/observations.accumulated",
+          data: normalizedAccumulatedData,
+          error: message,
+          observationCount,
+          redisUpdated: redisStateResult,
+        };
+      }
+    });
 
     return {
       sessionId: validatedInput.sessionId,
