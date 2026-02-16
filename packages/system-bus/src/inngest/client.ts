@@ -407,10 +407,7 @@ export type Events = {
   "discovery/noted": {
     data: {
       url?: string;
-      topic: string;
       context?: string;
-      depth?: "quick" | "medium" | "deep";
-      tags?: string[];
     };
   };
   "discovery/captured": {
