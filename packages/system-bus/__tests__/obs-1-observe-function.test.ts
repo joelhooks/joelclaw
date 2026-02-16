@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Events } from "../src/inngest/client.ts";
 
 type ObserveTrigger = "memory/session.compaction.pending" | "memory/session.ended";
@@ -50,14 +50,69 @@ function makeEndedEventData(): EventData<"memory/session.ended"> {
   };
 }
 
-function asText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (value === null || value === undefined) return "";
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
+type BunDollarCall = {
+  strings: string[];
+  values: unknown[];
+  command: string;
+};
+
+const originalBunDollar = Bun.$;
+let bunDollarCalls: BunDollarCall[] = [];
+
+function buildCommandString(strings: string[], values: unknown[]): string {
+  let command = "";
+  for (let i = 0; i < strings.length; i++) {
+    command += strings[i] ?? "";
+    if (i < values.length) command += String(values[i]);
   }
+  return command;
+}
+
+function installBunDollarMock() {
+  // @ts-expect-error monkey-patching Bun.$ for test isolation
+  Bun.$ = (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const call = {
+      strings: Array.from(strings),
+      values,
+      command: buildCommandString(Array.from(strings), values),
+    };
+    bunDollarCalls.push(call);
+
+    const shellResult = {
+      stdout: "<observations></observations>",
+      stderr: "",
+      exitCode: 0,
+    };
+
+    const promise = Promise.resolve(shellResult);
+    const shellPromise: Promise<typeof shellResult> & {
+      quiet: () => typeof shellPromise;
+      nothrow: () => typeof shellPromise;
+    } = {
+      then: promise.then.bind(promise),
+      catch: promise.catch.bind(promise),
+      finally: promise.finally.bind(promise),
+      quiet: () => shellPromise,
+      nothrow: () => shellPromise,
+      [Symbol.toStringTag]: "ShellPromise",
+    } as Promise<typeof shellResult> & {
+      quiet: () => typeof shellPromise;
+      nothrow: () => typeof shellPromise;
+    };
+
+    return shellPromise;
+  };
+}
+
+function restoreBunDollar() {
+  Bun.$ = originalBunDollar;
+}
+
+function commandOrValuesContainText(call: BunDollarCall, text: string): boolean {
+  if (call.command.includes(text)) return true;
+  return call.values.some(
+    (value) => typeof value === "string" && value.includes(text)
+  );
 }
 
 async function executeObserveHandler(trigger: ObserveTrigger, data: EventData<ObserveTrigger>) {
@@ -92,6 +147,15 @@ async function executeObserveHandler(trigger: ObserveTrigger, data: EventData<Ob
 
   return { result, stepIds, stepOutputs };
 }
+
+beforeEach(() => {
+  bunDollarCalls = [];
+  installBunDollarMock();
+});
+
+afterEach(() => {
+  restoreBunDollar();
+});
 
 describe("OBS-1: observe.ts scaffold contract", () => {
   test("AC-1: src/inngest/functions/observe.ts exists", async () => {
@@ -149,10 +213,11 @@ describe("OBS-1: observe.ts scaffold contract", () => {
       compactionData.messages,
       compactionData.trigger
     );
-    const compactionLlmOutput = asText(compactionStepOutputs.get("call-observer-llm"));
-
-    expect(compactionLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
-    expect(compactionLlmOutput).toContain(expectedCompactionUserPrompt);
+    const firstCall = bunDollarCalls[0];
+    expect(firstCall).toBeDefined();
+    expect(commandOrValuesContainText(firstCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
+    expect(commandOrValuesContainText(firstCall!, expectedCompactionUserPrompt)).toBe(true);
+    expect(typeof compactionStepOutputs.get("call-observer-llm")).toBe("string");
 
     const endedData = makeEndedEventData();
     const { stepIds: endedStepIds, stepOutputs: endedStepOutputs } =
@@ -174,10 +239,11 @@ describe("OBS-1: observe.ts scaffold contract", () => {
       endedData.trigger,
       endedData.sessionName
     );
-    const endedLlmOutput = asText(endedStepOutputs.get("call-observer-llm"));
-
-    expect(endedLlmOutput).toContain(OBSERVER_SYSTEM_PROMPT);
-    expect(endedLlmOutput).toContain(expectedEndedUserPrompt);
+    const secondCall = bunDollarCalls[1];
+    expect(secondCall).toBeDefined();
+    expect(commandOrValuesContainText(secondCall!, OBSERVER_SYSTEM_PROMPT)).toBe(true);
+    expect(commandOrValuesContainText(secondCall!, expectedEndedUserPrompt)).toBe(true);
+    expect(typeof endedStepOutputs.get("call-observer-llm")).toBe("string");
   });
 });
 
