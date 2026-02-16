@@ -88,6 +88,7 @@ Write the file to ${opts.vaultDir}/{Title}.md (use the exact title as the filena
 
 ---
 type: discovery
+slug: {kebab-case-slug}
 source: "${opts.url ?? "conversation"}"
 discovered: "${opts.today}"
 tags: [your-chosen-tags]
