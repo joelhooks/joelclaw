@@ -5,7 +5,7 @@ description: "Capture interesting finds to the Vault via Inngest. Triggers when 
 
 # Discovery — Capture What's Interesting
 
-When Joel flags something as interesting, fire a minimal Inngest event and keep moving. The pipeline does all the investigation, tagging, and vault note writing in the background.
+When Joel flags something as interesting, fire it into the pipeline and keep moving.
 
 ## Trigger Detection
 
@@ -20,42 +20,23 @@ Signal words/patterns (case-insensitive):
 
 ## Workflow
 
-### 1. Fire the event with minimal data
-
-Just the URL and whatever Joel said. Don't classify, don't tag, don't summarize — the pipeline's pi invocation handles all of that.
+### 1. Fire `igs discover`
 
 ```bash
-curl -s -X POST "http://localhost:8288/e/37aa349b89692d657d276a40e0e47a15" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "discovery/noted",
-    "data": {
-      "url": "https://github.com/simonw/showboat",
-      "context": "interesting"
-    }
-  }'
+igs discover <url>
+# or with context if Joel said something specific:
+igs discover <url> -c "what Joel said about it"
 ```
 
-Include `context` only if Joel said something specific beyond the signal word. The pipeline figures out the rest.
+That's it. The pipeline handles investigation, titling, tagging, writing, and slogging.
 
 ### 2. Continue conversation
 
 Don't wait. Joel flagged something and moved on — match that energy.
 
-## Event Schema
+## What the Pipeline Does (background, in system-bus worker)
 
-```typescript
-"discovery/noted": {
-  data: {
-    url?: string;       // URL to investigate
-    context?: string;   // What Joel said (if anything beyond the signal word)
-  };
-};
-```
-
-## What the Pipeline Does (handled by system-bus worker)
-
-1. **Investigate** — clone repos, extract articles, read content
-2. **Analyze via pi** — tags, relevance, summary all decided by the LLM in Joel's voice
+1. **Investigate** — clone repos, extract articles via defuddle, read content
+2. **Analyze via pi** — decides title, tags, relevance, writes summary in Joel's voice
 3. **Write** — vault note to `~/Vault/Resources/discoveries/{slug}.md`
 4. **Log** — `slog write --action noted --tool discovery`
