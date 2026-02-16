@@ -105,6 +105,9 @@ export default function RootLayout({
                 <Link href="/adrs" className="hover:text-white transition-colors">
                   ADRs
                 </Link>
+                <Link href="/network" className="hover:text-white transition-colors">
+                  Network
+                </Link>
               </nav>
             </div>
           </header>

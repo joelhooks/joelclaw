@@ -7,6 +7,7 @@ import {
   summarize,
   systemLogger,
   observeSessionFunction,
+  adrSync,
   agentLoopPlan,
   agentLoopTestWriter,
   agentLoopImplement,
@@ -28,6 +29,7 @@ app.get("/", (c) =>
       "content-summarize",
       "system-logger",
       "memory/observe-session",
+      "system/adr-sync",
       "agent-loop-plan",
       "agent-loop-test-writer",
       "agent-loop-implement",
@@ -42,6 +44,7 @@ app.get("/", (c) =>
       "pipeline/transcript.requested":
         "Transcribe audio or accept text → vault note → emits content/summarize.requested",
       "content/summarize.requested": "Enrich any vault note with pi + web research",
+      "system/adr.sync.requested": "Manually trigger ADR sync from Vault to website",
       "system/log.written": "Write canonical log entry",
     },
   })
@@ -60,6 +63,7 @@ app.on(
       summarize,
       systemLogger,
       observeSessionFunction,
+      adrSync,
       agentLoopPlan,
       agentLoopTestWriter,
       agentLoopImplement,
@@ -80,5 +84,5 @@ export default {
 console.log("🚌 system-bus worker running on http://localhost:3111");
 console.log("📡 Inngest endpoint: http://localhost:3111/api/inngest");
 console.log(
-  "📋 Functions: video-download, transcript-process, content-summarize, system-logger, memory/observe-session"
+  "📋 Functions: video-download, transcript-process, content-summarize, system-logger, memory/observe-session, system/adr-sync"
 );
