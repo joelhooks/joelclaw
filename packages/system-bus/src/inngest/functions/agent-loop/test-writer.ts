@@ -137,7 +137,7 @@ export const agentLoopTestWriter = inngest.createFunction(
       key: "event.data.project",
       limit: 1,
     },
-    retries: 0,
+    retries: 1, // 1 Inngest retry for infra errors (ENOENT, git, network); story retries via ladder
   },
   [{ event: "agent/loop.story.dispatched" }],
   async ({ event, step }) => {
