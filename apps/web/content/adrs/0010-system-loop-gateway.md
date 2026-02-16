@@ -1,6 +1,8 @@
 ---
-status: proposed
+status: superseded
+superseded-by: "[ADR-0018 — Pi-native gateway with Redis event bridge](0018-pi-native-gateway-redis-event-bridge.md)"
 date: 2026-02-14
+updated: 2026-02-16
 decision-makers: Joel Hooks
 ---
 

@@ -1,6 +1,7 @@
 ---
-status: "proposed"
+status: "implemented"
 date: 2026-02-14
+implemented: 2026-02-15
 decision-makers: "Joel Hooks"
 consulted: "Codex (drafting), Alex Hillman patterns (kuato, andy-timeline), John Lindquist patterns (lamarck)"
 informed: "All agents operating on this system"

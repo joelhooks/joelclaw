@@ -1,6 +1,8 @@
 ---
-status: "proposed"
+status: "superseded"
+superseded-by: "[ADR-0015 — TDD flow with separated roles](0015-loop-architecture-tdd-roles.md), [ADR-0016 — Idempotency guards](0016-loop-idempotency-guards.md), [ADR-0023 — Docker sandbox](0023-docker-sandbox-for-agent-loops.md)"
 date: 2026-02-14
+updated: 2026-02-16
 decision-makers: "Joel Hooks"
 consulted: "Claude (pi session 2026-02-14), Codex (implementation review)"
 informed: "All agents operating on this system"
