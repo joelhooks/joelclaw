@@ -13,6 +13,7 @@
     "@repo/ui": "workspace:*",
     "@types/mdast": "^4.0.4",
     "gray-matter": "^4.0.3",
+    "lucide-react": "^0.564.0",
     "next": "16.1.5",
     "next-mdx-remote": "^6.0.0",
     "nuqs": "^2.8.8",

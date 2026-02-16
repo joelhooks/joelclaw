@@ -5,6 +5,7 @@ import { NuqsAdapter } from "nuqs/adapters/next";
 import { SITE_URL, SITE_NAME, SITE_TAGLINE, SITE_DESCRIPTION, AUTHOR } from "../lib/constants";
 import { personJsonLd } from "../lib/jsonld";
 import { CLAW_PATH } from "../lib/claw";
+import { Github } from "lucide-react";
 import "./globals.css";
 
 const geistSans = localFont({
@@ -102,6 +103,9 @@ export default function RootLayout({
                 <Link href="/" className="hover:text-white transition-colors">
                   Writing
                 </Link>
+                <Link href="/cool" className="hover:text-white transition-colors">
+                  Cool
+                </Link>
                 <Link href="/adrs" className="hover:text-white transition-colors">
                   ADRs
                 </Link>
@@ -115,9 +119,20 @@ export default function RootLayout({
             <main>{children}</main>
           </NuqsAdapter>
           <footer className="mt-24 pt-8 border-t border-neutral-800 text-sm text-neutral-500">
-            <p>
-              © {new Date().getFullYear()} {AUTHOR.name}
-            </p>
+            <div className="flex items-center justify-between">
+              <p>
+                © {new Date().getFullYear()} {AUTHOR.name}
+              </p>
+              <a
+                href="https://github.com/joelhooks/joelclaw"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-white transition-colors"
+                aria-label="GitHub"
+              >
+                <Github className="w-4 h-4" />
+              </a>
+            </div>
           </footer>
         </div>
       </body>
