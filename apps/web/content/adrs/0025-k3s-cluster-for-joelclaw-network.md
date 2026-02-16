@@ -326,6 +326,39 @@ If pdf-brain is the only thing running there and it's stable, a systemd service 
 
 This is Phase 3+ at earliest. 128 GB handles Llama 70B and most frontier models comfortably. exo matters when 235B+ models become the standard, or when you want to run multiple large models simultaneously.
 
+## Spike Results (2026-02-16)
+
+Time-boxed investigation to validate Phase 1 feasibility on the current Mac Mini before committing.
+
+### What we tested
+
+- k3d v5.8.3 (k3s v1.33.6 inside Docker) — single server, no agents, traefik disabled
+- Migrated all three Docker Compose services (Redis, Qdrant, Inngest) to k8s StatefulSets
+- All three pods running and healthy with liveness/readiness probes
+
+### Findings
+
+| Metric | Docker Compose | k8s (inside k3d) | k3s overhead |
+|--------|---------------|-------------------|--------------|
+| Redis | 21 MB | 9 MB | — |
+| Qdrant | 340 MB | 273 MB | — |
+| Inngest | 175 MB | 46 MB | — |
+| **Services total** | **536 MB** | **328 MB** | — |
+| k3s control plane + LB | — | — | **~587 MB** |
+| **Grand total** | **536 MB** | — | **~915 MB** |
+
+k8s pods actually use less memory than Docker Compose equivalents (328 vs 536 MB). The overhead is the k3s control plane (~587 MB). Total ~915 MB — still under 2% of 64 GB.
+
+### Gotcha: k8s service naming collision
+
+A Service named `inngest` causes k8s to inject `INNGEST_PORT=tcp://10.43.x.x:8288` into all pods in the namespace. The Inngest binary tries to parse this as a port number → crash. **Fix**: name the Service `inngest-svc` to avoid the `INNGEST_` env prefix collision.
+
+### Verdict
+
+k3d works on this Mac Mini with negligible overhead. The migration path from Docker Compose is mechanical — same images, same health checks, StatefulSets with PVCs for persistence. The cluster is running alongside Docker Compose right now with both stacks operational.
+
+**Decision: keep the cluster running.** Manifests in `k8s/`. Will migrate the worker (launchd → k8s Deployment) as a follow-up, then cut over from Docker Compose entirely.
+
 ## What Stays Outside Any Cluster
 
 Some things don't belong in an orchestrator:
