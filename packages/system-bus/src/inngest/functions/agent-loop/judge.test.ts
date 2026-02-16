@@ -424,10 +424,11 @@ describe("AC-8: TypeScript compiles cleanly (partial check)", () => {
     expect(eventNames).toContain("agent/loop.checks.completed");
   });
 
-  test("agentLoopJudge has retries configured", async () => {
+  test("agentLoopJudge uses Inngest default retries", async () => {
     const mod = await import("./judge.ts");
     const fn = mod.agentLoopJudge as any;
-    expect(fn.opts?.retries).toBeDefined();
+    // No explicit retries config — Inngest defaults to 4 retries (5 total attempts)
+    expect(fn.opts?.retries).toBeUndefined();
   });
 
   test("judge.ts exports only the inngest function (no internal leaks)", async () => {
