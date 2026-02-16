@@ -237,7 +237,6 @@ export const agentLoopRetro = inngest.createFunction(
       key: "event.data.project",
       limit: 1,
     },
-    retries: 3,
   },
   [{ event: "agent/loop.completed" }],
   async ({ event, step }) => {

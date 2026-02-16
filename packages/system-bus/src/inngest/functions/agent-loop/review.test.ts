@@ -278,9 +278,4 @@ describe("AC-7: TypeScript compiles cleanly (partial check)", () => {
     expect(eventNames).toContain("agent/loop.code.committed");
   });
 
-  test("agentLoopReview has retries set to 1", async () => {
-    const mod = await import("./review.ts");
-    const fn = mod.agentLoopReview as any;
-    expect(fn.opts?.retries).toBe(3);
-  });
 });

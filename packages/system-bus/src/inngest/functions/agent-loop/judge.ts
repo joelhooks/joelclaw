@@ -258,7 +258,6 @@ export const agentLoopJudge = inngest.createFunction(
       key: "event.data.project",
       limit: 1,
     },
-    retries: 3,
   },
   [{ event: "agent/loop.checks.completed" }],
   async ({ event, step }) => {

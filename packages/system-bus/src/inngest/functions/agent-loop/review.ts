@@ -307,7 +307,6 @@ export const agentLoopReview = inngest.createFunction(
       key: "event.data.project",
       limit: 1,
     },
-    retries: 3,
   },
   [{ event: "agent/loop.code.committed" }],
   async ({ event, step }) => {

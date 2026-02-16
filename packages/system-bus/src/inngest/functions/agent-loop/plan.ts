@@ -181,7 +181,6 @@ export const agentLoopPlan = inngest.createFunction(
       key: "event.data.project",
       limit: 1,
     },
-    retries: 3,
   },
   [{ event: "agent/loop.started" }, { event: "agent/loop.story.passed" }, { event: "agent/loop.story.failed" }],
   async ({ event, step }) => {
