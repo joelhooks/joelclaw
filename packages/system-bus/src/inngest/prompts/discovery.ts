@@ -73,14 +73,15 @@ One line connecting this to Joel's system. Be specific:
 - Connect to Joel's system where natural — don't force it
 - Bold for emphasis, short paragraphs
 - Do NOT fabricate Joel's opinions — describe and analyze
+- **Hyperlink EVERYTHING** — people, projects, companies, repos, concepts, related tools. Every proper noun and every reference should be a link. Internal links to joelclaw.com where relevant (ADRs at /adrs/{slug}, other discoveries at /cool/{slug}). External links to GitHub repos, personal sites, docs, etc. The note should be a web of connections, not an island.
 
 ### 6. Key Ideas
 
-Bullet the notable concepts. Each bullet should be self-contained.
+Bullet the notable concepts. Each bullet should be self-contained. Include links in bullets where relevant.
 
 ### 7. Links
 
-Source URL + any related references you discover.
+Source URL + any related references you discover. Be thorough — dig up the author's site, related repos, blog posts, talks.
 
 ## Output
 
