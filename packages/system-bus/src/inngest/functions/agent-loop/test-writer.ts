@@ -7,6 +7,7 @@ import {
   TOOL_TIMEOUTS,
   guardStory,
   renewLease,
+  ensureClaudeAuth,
 } from "./utils";
 
 function buildTestWriterPrompt(story: {
@@ -92,12 +93,14 @@ async function spawnReviewer(
       cmd = ["codex", "exec", "--full-auto", prompt];
       break;
     case "claude":
+      ensureClaudeAuth();
       cmd = ["claude", "-p", prompt, "--output-format", "text", "--dangerously-skip-permissions"];
       break;
     case "pi":
       cmd = ["pi", "--prompt", prompt, "--no-tui"];
       break;
     default:
+      ensureClaudeAuth();
       cmd = ["claude", "-p", prompt, "--output-format", "text", "--dangerously-skip-permissions"];
   }
 

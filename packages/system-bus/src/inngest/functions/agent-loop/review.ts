@@ -9,6 +9,7 @@ import {
   TOOL_TIMEOUTS,
   guardStory,
   renewLease,
+  ensureClaudeAuth,
 } from "./utils";
 import { join } from "node:path";
 
@@ -147,6 +148,7 @@ async function evaluateQuestionsWithClaude(
   project: string,
   loopId: string
 ): Promise<ReviewerQuestion[]> {
+  ensureClaudeAuth();
   const timeout = TOOL_TIMEOUTS.claude ?? 20 * 60 * 1000;
   const cmd = ["claude", "-p", prompt, "--output-format", "json"];
 

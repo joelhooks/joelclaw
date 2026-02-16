@@ -1,7 +1,7 @@
 import { inngest } from "../../client";
 import { $ } from "bun";
 import { join } from "node:path";
-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput } from "./utils";
+import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
 
 const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
 
@@ -86,6 +86,7 @@ Rules:
 - descriptions should include specific file paths and function names when known
 - Keep stories small — one logical change per story`;
 
+  ensureClaudeAuth();
   const proc = Bun.spawn(
     ["claude", "-p", prompt, "--output-format", "json"],
     { cwd: project, stdout: "pipe", stderr: "pipe" }

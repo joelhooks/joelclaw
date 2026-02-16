@@ -93,7 +93,7 @@ export default function RootLayout({
                   <span className="text-lg font-semibold group-hover:text-white transition-colors">
                     {SITE_NAME}
                   </span>
-                  <span className="block text-sm text-neutral-500 mt-0.5">
+                  <span className="hidden sm:block text-sm text-neutral-500 mt-0.5">
                     {SITE_TAGLINE}
                   </span>
                 </div>
