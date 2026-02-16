@@ -8,26 +8,15 @@ I deployed Kubernetes to run three containers on a Mac Mini in my office.
 
 Three. Redis, Qdrant, Inngest. They were running fine in Docker Compose. Nobody asked for this.
 
-But I want to add more machines to the network and distribute workloads across them. Docker Compose doesn't do that. The moment you want to schedule a job on a different node, or health-check services across machines, or add a GPU box and route inference workloads to it — you need an orchestrator. That's what Kubernetes is.
+But I want to add more machines to the network and distribute workloads across them. Docker Compose doesn't do that. The moment you want to schedule a job on a different node, or health-check services across machines, or route inference to a GPU box — you need an orchestrator. That's what Kubernetes is.
 
 Whether three containers on a single machine justifies Kubernetes is a question I've decided not to think too hard about. The manifests are the same whether it's one node or five.
 
-I spiked it. The spike worked. So I kept going. The whole migration — spike, debugging, manifests, cutover — was one session.
+I spiked it. The spike worked. So I kept going. The whole migration was one session.
 
-## k3d on Mac, k3s on Linux
+## Nineteen seconds to a cluster
 
-k3s is Linux-only. On a Mac, you need a way to run it. The options:
-
-| Approach | What it means |
-|---|---|
-| **k3d** | k3s inside Docker (Docker Desktop is already running) |
-| **microk8s** | Multipass VM (separate from Docker Desktop) — two VMs |
-| **OrbStack** | Could replace Docker Desktop + run k8s natively |
-| **Colima + kind** | Lightweight Docker replacement + k8s-in-Docker |
-
-k3d wins because Docker Desktop is already running — free for personal use. No new VMs, no new abstractions. Benchmarks confirm k3d has the fastest startup of all the local k8s options. microk8s would've meant running Multipass alongside Docker Desktop — two VMs, more overhead, slower startup, for zero benefit on macOS.
-
-On Linux, none of this matters. k3s runs natively — one curl command, no Docker needed, no wrapper. The portable layer is the k8s manifests. Same `kubectl apply -f k8s/` on both platforms, different on-ramp to get there.
+k3s is Linux-only. On macOS, k3d runs it inside Docker — which is already running on this machine. No new VMs, no new dependencies. On Linux, k3s installs natively with one curl command. The portable layer is the k8s manifests — same `kubectl apply` on both platforms, different on-ramp.
 
 ```bash
 k3d cluster create joelclaw \
@@ -40,149 +29,74 @@ k3d cluster create joelclaw \
   --wait
 ```
 
-Nineteen seconds to a running cluster.
+Nineteen seconds. Three StatefulSets later, everything's running.
 
-## The INNGEST_PORT collision
+## The gotchas nobody warns you about
 
-First deploy. Redis comes up. Qdrant comes up. Inngest crashes immediately.
+**The service naming collision.** First deploy — Redis comes up, Qdrant comes up, Inngest crashes:
 
 ```
 strconv.Atoi: parsing "tcp://10.43.53.131:8288": invalid syntax
 ```
 
-Classic Kubernetes gotcha that nobody warns you about. When you create a Service named `inngest`, Kubernetes auto-injects environment variables into every pod in the namespace:
+Kubernetes auto-injects environment variables based on Service names. A Service named `inngest` creates `INNGEST_PORT=tcp://10.43.x.x:8288`. The Inngest binary has its own `INNGEST_PORT` — expects an integer. Gets a URL. Crash. Fix: name the Service `inngest-svc`. Two characters, thirty minutes of debugging.
 
-```
-INNGEST_SERVICE_HOST=10.43.53.131
-INNGEST_PORT=tcp://10.43.53.131:8288
-```
+Never name a k8s Service the same as the binary it runs.
 
-The Inngest binary has its own `INNGEST_PORT` env var — expects an integer. Gets a URL. Crash.
+**The NodePort range.** Default is 30000-32767. My services need 6379, 6333, 8288. You set `--service-node-port-range=80-32767` at cluster creation.
 
-**Fix**: name the Service `inngest-svc`. The env vars become `INNGEST_SVC_PORT` and the collision disappears. Two characters, thirty minutes of debugging.
-
-**Rule**: never name a k8s Service the same as the binary it runs, if that binary reads its own name as an env var prefix. This probably bites every project that runs a service named after its own software.
-
-## The NodePort range gotcha
-
-Kubernetes default NodePort range is 30000-32767. My services need ports 6379, 6333, and 8288. You have to tell k3s at cluster creation:
-
-```
---kube-apiserver-arg=service-node-port-range=80-32767
-```
-
-And here's the thing about k3d: **cluster config is immutable after creation.** Port mappings, k3s args, everything is locked at `cluster create` time. Forget a port or a flag, you delete the cluster and start over.
-
-I deleted and recreated the cluster three times during this migration. Plan your ports before you create.
-
-## The manifests are boring (that's the point)
-
-Each Docker Compose service became a StatefulSet + NodePort Service. Same images, same commands, same health checks. The translation is mechanical:
-
-| Docker Compose | k8s |
-|---|---|
-| `image: redis:7-alpine` | `image: redis:7-alpine` |
-| `volumes: redis_data:/data` | `volumeClaimTemplates` with PVC |
-| `ports: "6379:6379"` | NodePort service on 6379 |
-| `restart: unless-stopped` | StatefulSet (always restarts) |
-| `healthcheck` | `livenessProbe` + `readinessProbe` |
-
-StatefulSets because all three services need stable storage. Redis with AOF, Qdrant with its vector index, Inngest with SQLite — they all need data to survive pod restarts.
+**k3d is immutable after creation.** Port mappings, k3s args — all locked at `cluster create` time. Forget a port, delete the cluster, start over. I recreated it three times. Plan your ports first.
 
 ## The overhead
 
-| What | Memory |
-|---|---|
-| k3s control plane + system services | ~587 MB |
-| Redis pod | 9 MB |
-| Qdrant pod | 273 MB |
-| Inngest pod | 46 MB |
-| **Total** | **~915 MB** |
+The k8s tax is ~380 MB for the control plane, CoreDNS, metrics-server, and the storage provisioner. Total for everything — control plane plus all three services — is about 915 MB. Docker Compose was 536 MB for the same three services. On a 64 GB machine that's 0.6% overhead for a real orchestrator.
 
-Docker Compose was 536 MB for the same three services. The k8s tax is ~380 MB — the control plane, CoreDNS, metrics-server, the local-path provisioner. On a 64 GB machine that's 0.6% overhead for a real orchestrator.
+The cutover was anticlimactic. Stop Compose, deploy manifests, restart the worker. The worker still connects to `localhost:6379`, `localhost:6333`, `localhost:8288` — same as before. The ports are just served by k8s NodePorts now instead of Docker port bindings. `docker compose down`. Done.
 
-The pods themselves actually use *less* memory inside k3s than they did in Docker Compose. Not sure why. Didn't investigate.
+Not everything moved. The system-bus worker stays on launchd — it needs the host filesystem for git, Whisper transcription, and writing all over the machine. Caddy stays too. Not everything needs to be in a cluster.
 
-## The cutover
+## Why k3s
 
-The spike ran alongside Docker Compose — different ports, both stacks operational. Once everything checked out:
+I looked at the homelab landscape before committing.
 
-1. Stop Docker Compose (free the ports)
-2. Recreate k3d cluster with production port mappings
-3. Deploy manifests
-4. Restart the worker (still runs on the host via launchd)
-5. Re-register worker with the new Inngest instance
-6. Smoke test: send an event, watch it complete
+**k3s** is the homelab default. Lightweight, single binary, built-in storage and load balancer, ARM + x86 mixed clusters. Biggest community, most battle-tested at small scale. Mac nodes via k3d, Linux nodes via a one-line curl install.
 
-The worker didn't need a single config change. It still connects to `localhost:6379`, `localhost:6333`, `localhost:8288` — same as before. The ports are just served by k8s NodePorts instead of Docker port bindings.
+**Talos Linux** is the rising star — an immutable OS that *is* the cluster. No SSH, no package manager, API-driven. Compelling for dedicated Linux nodes but replaces the entire OS, which doesn't work alongside macOS.
 
-`docker compose down`. Done.
+**Nomad** by HashiCorp was interesting until they relicensed it to BSL. The community is migrating away.
 
-## What stays on launchd
+**microk8s** runs in a Multipass VM on macOS — a second VM alongside Docker Desktop for zero benefit.
 
-The system-bus worker runs on the host, not in k8s. It needs direct filesystem access — git operations on the Vault, Whisper transcription using the Mac's GPU, reading and writing to paths all over the machine. Containerizing it would mean mounting half the filesystem into a pod.
-
-Caddy stays on launchd too. It terminates TLS with Tailscale certificates that live on the host.
-
-Both are fine where they are. Not everything needs to be in a cluster.
-
-## Why k3s and not something else
-
-I looked at the homelab landscape before committing. The options:
-
-**k3s** is lightweight Kubernetes by Rancher. Single binary, built-in storage provisioner and load balancer, ARM + x86 support. The homelab default — biggest community, most battle-tested at small scale. It's what k3d runs under the hood.
-
-**Talos Linux** is the rising star. It's an immutable operating system that *is* the Kubernetes cluster. No SSH, no package manager, everything managed via API. If you're building dedicated Linux nodes for k8s, Talos is compelling. But it replaces the entire OS — can't run it alongside macOS on the Mac.
-
-**Nomad** by HashiCorp is simpler than Kubernetes and supports containers, VMs, and batch jobs. It was interesting until they relicensed it to BSL (not open source). The community is migrating away.
-
-**microk8s** by Canonical has a nice addon system but runs in a Multipass VM on macOS. Heavier, slower startup, second VM alongside Docker Desktop for no benefit.
-
-k3s wins for a mixed cluster. Mac nodes via k3d, Linux nodes via a one-line curl install. Same manifests on both. When a Linux box joins the cluster, it's one command:
+k3s wins for a mixed cluster. When a Linux box joins, it's one command:
 
 ```bash
 curl -sfL https://get.k3s.io | K3S_URL=https://<control-plane>:6443 K3S_TOKEN=<token> sh -
 ```
 
-NVIDIA device plugin for GPU nodes is well-documented with k3s. The ecosystem is there.
+Same manifests, same `kubectl`. The [network page](/network) shows the current state.
 
-## What this gets me
+## Appendix: does it have to be Kubernetes
 
-`kubectl get pods -n joelclaw` shows everything. Health checks are built in — liveness probes restart crashed services, readiness probes gate traffic. Adding a new service is a manifest, not a shell script.
+No. Here's the real landscape:
 
-```
-NAME        READY   STATUS    RESTARTS   AGE
-inngest-0   1/1     Running   0          2h
-qdrant-0    1/1     Running   0          2h
-redis-0     1/1     Running   0          2h
-```
+| Approach | Good at | Bad at |
+|---|---|---|
+| **k3s / k8s** | Automatic scheduling, health checks, GPU routing, self-healing | YAML, complexity, learning curve |
+| **Kamal** (37signals) | Dead simple deploys, zero-downtime | You're the scheduler — you decide what runs where |
+| **Ansible + Docker Compose** | Familiar, idempotent, no runtime daemon | No live scheduling, no cross-node failover |
+| **Nomad** | Simpler than k8s, containers + VMs + batch | BSL licensed, community leaving, needs Consul + Vault |
+| **systemd + Podman** | Zero overhead, OS-native | No cross-machine anything |
+| **Docker Swarm** | Built into Docker | Basically abandoned |
+| **Talos Linux** | No OS to manage, API-driven | Replaces the entire OS |
+| **NixOS** | Reproducible machine state, atomic rollbacks | Different paradigm entirely |
 
-Three services, three StatefulSets, persistent storage, health monitoring. 915 MB on a 64 GB machine. The [network page](/network) shows the current state, and [ADR-0025](/adrs/0025-k3s-cluster-for-joelclaw-network) has the full decision and spike results.
+The real question: do you need a **runtime scheduler** or **declarative deployment**?
 
-The whole migration — spike, gotcha debugging, manifest writing, cutover, smoke test — was one session.
+A runtime scheduler — k8s, Nomad — decides where things run. "This pod needs a GPU, figure it out." Handles failures automatically.
 
-## Appendix: why not something other than Kubernetes
+Declarative deployment — Kamal, Ansible — puts things where you tell it. Simpler, but you're the scheduler.
 
-Kubernetes isn't the only way to distribute workloads across machines. It might not even be the simplest. Here's the full landscape I considered:
-
-| Approach | What it is | Good at | Bad at |
-|---|---|---|---|
-| **k3s / k8s** | Container orchestrator with scheduling | Automatic placement, health checks, GPU routing, self-healing | YAML, complexity, learning curve |
-| **Kamal** | Docker deploy tool (37signals / DHH) | Dead simple deploys, zero-downtime, `kamal deploy` and done | You're the scheduler — you decide what runs where |
-| **Ansible + Docker Compose** | Config management + per-machine Compose files | Familiar, idempotent, no runtime daemon | No live scheduling, no cross-node restart on failure |
-| **Nomad** | HashiCorp orchestrator | Simpler than k8s, supports containers + VMs + batch | BSL licensed (not open source), community migrating away, needs Consul + Vault |
-| **systemd + Podman** | Native Linux services + rootless containers | Zero overhead, OS-native | macOS uses launchd, no cross-machine anything |
-| **Docker Swarm** | Docker-native clustering | Built into Docker, simple syntax | Basically abandoned |
-| **Talos Linux** | Immutable OS that is the k8s cluster | No OS to manage, API-driven, very clean | Replaces the entire OS — not an option alongside macOS |
-| **NixOS** | Declarative system configuration | Entire machine state is reproducible, atomic rollbacks | Steep learning curve, different paradigm entirely |
-
-The real question is whether you need a **runtime scheduler** or **declarative deployment**.
-
-A runtime scheduler — k8s, Nomad — decides where things run based on available resources. "This pod needs a GPU, figure it out." It handles failures and restarts automatically across machines.
-
-Declarative deployment — Kamal, Ansible — puts things where you tell it. "Run this on server 2." Simpler, but you're the scheduler. When a machine goes down, you notice and fix it.
-
-For three services on one machine, Kamal or even Ansible would work fine. The moment you want heterogeneous nodes — route GPU jobs to the GPU box, keep stateful services on the Mac, schedule batch work wherever there's capacity — you need a scheduler. That's the bet.
+For three services on one machine, Kamal works fine. The moment you want heterogeneous nodes — GPU jobs to the GPU box, stateful services on the Mac, batch work wherever there's capacity — you need a scheduler. That's the bet.
 
 Kamal is the off-ramp if this ever feels like too much.
 
