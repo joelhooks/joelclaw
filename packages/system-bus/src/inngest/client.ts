@@ -417,6 +417,12 @@ export type Events = {
       component?: string;
     };
   };
+  "system/adr.sync.requested": {
+    data: {
+      reason?: string;
+      requestedBy?: string;
+    };
+  };
 
   // --- Legacy ---
   "pipeline/video.ingested": {
