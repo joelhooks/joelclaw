@@ -1,7 +1,8 @@
 ---
 title: "Loop architecture: TDD flow with separated roles"
-status: proposed
+status: implemented
 date: 2026-02-14
+implemented: 2026-02-15
 deciders: Joel Hooks
 supersedes: ADR-0013
 ---

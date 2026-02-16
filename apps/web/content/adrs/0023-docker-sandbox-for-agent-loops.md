@@ -1,9 +1,14 @@
-# ADR-0023: Docker Sandbox for Agent Loops
+---
+title: Docker Sandbox for Agent Loops
+status: accepted
+date: 2026-02-15
+deciders: Joel Hooks
+related:
+  - "[ADR-0015 — Loop architecture TDD roles](0015-loop-architecture-tdd-roles.md)"
+  - "[ADR-0019 — Event naming past tense](0019-event-naming-past-tense.md)"
+---
 
-**Status**: accepted
-**Date**: 2026-02-15
-**Deciders**: Joel
-**Related**: ADR-0013 (agent loop architecture), ADR-0019 (event naming)
+# ADR-0023: Docker Sandbox for Agent Loops
 
 ## Context and Problem Statement
 
