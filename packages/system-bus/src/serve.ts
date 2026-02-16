@@ -6,6 +6,7 @@ import {
   transcriptProcess,
   summarize,
   systemLogger,
+  observeSessionFunction,
   agentLoopPlan,
   agentLoopTestWriter,
   agentLoopImplement,
@@ -26,6 +27,7 @@ app.get("/", (c) =>
       "transcript-process",
       "content-summarize",
       "system-logger",
+      "memory/observe-session",
       "agent-loop-plan",
       "agent-loop-test-writer",
       "agent-loop-implement",
@@ -57,6 +59,7 @@ app.on(
       transcriptProcess,
       summarize,
       systemLogger,
+      observeSessionFunction,
       agentLoopPlan,
       agentLoopTestWriter,
       agentLoopImplement,
@@ -77,5 +80,5 @@ export default {
 console.log("🚌 system-bus worker running on http://localhost:3111");
 console.log("📡 Inngest endpoint: http://localhost:3111/api/inngest");
 console.log(
-  "📋 Functions: video-download, transcript-process, content-summarize, system-logger"
+  "📋 Functions: video-download, transcript-process, content-summarize, system-logger, memory/observe-session"
 );
