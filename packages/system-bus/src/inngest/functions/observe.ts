@@ -1,4 +1,5 @@
 import { inngest } from "../client";
+import { QdrantClient } from "@qdrant/js-client-rest";
 import { parseObserverOutput } from "./observe-parser";
 import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
 
@@ -31,6 +32,62 @@ type ObserveEndedInput = {
 };
 
 type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
+type QdrantPointPayload = {
+  session_id: string;
+  timestamp: string;
+  observation_type: string;
+  observation: string;
+};
+
+const QDRANT_COLLECTION = "memory_observations";
+const QDRANT_VECTOR_DIMENSIONS = 768;
+const QDRANT_ZERO_VECTOR = Array.from({ length: QDRANT_VECTOR_DIMENSIONS }, () => 0);
+
+function createObservationItems(parsedObservations: {
+  observations: string;
+  segments: unknown[];
+}) {
+  const items: Array<{ observationType: string; observation: string }> = [];
+
+  for (const rawSegment of parsedObservations.segments) {
+    const segment = rawSegment as { narrative?: unknown; facts?: unknown };
+    const narrative = typeof segment.narrative === "string" ? segment.narrative.trim() : "";
+    if (narrative.length > 0) {
+      items.push({
+        observationType: "segment_narrative",
+        observation: narrative,
+      });
+    }
+
+    const facts = Array.isArray(segment.facts) ? segment.facts : [];
+    for (const fact of facts) {
+      if (typeof fact !== "string") {
+        continue;
+      }
+      const trimmedFact = fact.trim();
+      if (trimmedFact.length > 0) {
+        items.push({
+          observationType: "segment_fact",
+          observation: trimmedFact,
+        });
+      }
+    }
+  }
+
+  if (items.length > 0) {
+    return items;
+  }
+
+  const fallbackObservation = parsedObservations.observations.trim();
+  if (fallbackObservation.length > 0) {
+    items.push({
+      observationType: "observation_text",
+      observation: fallbackObservation,
+    });
+  }
+
+  return items;
+}
 
 function readShellText(value: unknown): string {
   if (typeof value === "string") return value;
@@ -127,46 +184,93 @@ Session context:
 
     });
 
-    const parsedObservations = await step.run("parse-observations", async () => {
+    const parsedObservations = await step.run(
+      "parse-observations",
+      async () => {
+        try {
+          const parsed = parseObserverOutput(llmOutput);
+          const facts = parsed.segments
+            .flatMap((segment) => segment.facts)
+            .map((fact) => fact.trim())
+            .filter((fact) => fact.length > 0);
+          const concepts = [
+            ...new Set(
+              [parsed.currentTask, ...parsed.segments.map((segment) => segment.narrative)]
+                .map((concept) => (concept ?? "").trim())
+                .filter((concept) => concept.length > 0)
+            ),
+          ];
+
+          return {
+            ...parsed,
+            concepts,
+            facts,
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            observations: llmOutput,
+            segments: [],
+            currentTask: null,
+            suggestedResponse: null,
+            parsed: false,
+            concepts: [],
+            facts: [],
+            error: message,
+          };
+        }
+      }
+    );
+
+    const qdrantStoreResult = await step.run("store-to-qdrant", async () => {
       try {
-        const parsed = parseObserverOutput(llmOutput);
-        const facts = parsed.segments
-          .flatMap((segment) => segment.facts)
-          .map((fact) => fact.trim())
-          .filter((fact) => fact.length > 0);
-        const concepts = [
-          ...new Set(
-            [parsed.currentTask, ...parsed.segments.map((segment) => segment.narrative)]
-              .map((concept) => (concept ?? "").trim())
-              .filter((concept) => concept.length > 0)
-          ),
-        ];
+        const qdrantClient = new QdrantClient({
+          host: "localhost",
+          port: 6333,
+        });
+
+        await qdrantClient.getCollections();
+
+        const observationItems = createObservationItems(parsedObservations);
+        if (observationItems.length === 0) {
+          return {
+            stored: true,
+            count: 0,
+            sourceSessionId: validatedInput.sessionId,
+          };
+        }
+
+        const timestamp = validatedInput.capturedAt ?? new Date().toISOString();
+        const points = observationItems.map((item, index) => ({
+          id: `${validatedInput.sessionId}-${index + 1}-${Date.now()}`,
+          vector: QDRANT_ZERO_VECTOR,
+          payload: {
+            session_id: validatedInput.sessionId,
+            timestamp,
+            observation_type: item.observationType,
+            observation: item.observation,
+          } satisfies QdrantPointPayload,
+        }));
+
+        await qdrantClient.upsert(QDRANT_COLLECTION, {
+          wait: true,
+          points,
+        });
 
         return {
-          ...parsed,
-          concepts,
-          facts,
+          stored: true,
+          count: points.length,
+          sourceSessionId: validatedInput.sessionId,
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {
-          observations: llmOutput,
-          segments: [],
-          currentTask: null,
-          suggestedResponse: null,
-          parsed: false,
-          concepts: [],
-          facts: [],
+          stored: false,
+          sourceSessionId: validatedInput.sessionId,
           error: message,
         };
       }
     });
-
-    const qdrantStoreResult = await step.run("store-to-qdrant", async () => ({
-      stored: false,
-      sourceSessionId: validatedInput.sessionId,
-      parsedObservations,
-    }));
 
     const redisStateResult = await step.run("update-redis-state", async () => ({
       updated: false,
