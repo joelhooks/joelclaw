@@ -403,6 +403,24 @@ export type Events = {
     };
   };
 
+  // --- Discovery ---
+  "discovery/noted": {
+    data: {
+      url?: string;
+      topic: string;
+      context?: string;
+      depth?: "quick" | "medium" | "deep";
+      tags?: string[];
+    };
+  };
+  "discovery/captured": {
+    data: {
+      vaultPath: string;
+      topic: string;
+      slug: string;
+    };
+  };
+
   // --- System ---
   "system/log.written": {
     data: {
