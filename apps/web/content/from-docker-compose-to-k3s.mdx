@@ -4,17 +4,13 @@ date: "2026-02-16"
 description: "Three containers and a spike that turned into a production migration. Why I moved my personal AI infrastructure to Kubernetes — and the gotchas nobody warns you about."
 ---
 
-Three Docker Compose services. Redis, Qdrant, Inngest. Running on a Mac Mini for months. Working fine.
+I deployed Kubernetes to run three containers on a Mac Mini in my office.
 
-So why change anything?
+Three. Redis, Qdrant, Inngest. They were running fine in Docker Compose. Nobody asked for this.
 
-## The honest answer
+But here's the thing — Docker Compose works until it doesn't. The moment I want to add a health check, or schedule a batch job, or run a service on a different machine, I'm writing shell scripts and launchd plists and hoping they don't drift apart. Kubernetes solves that. Whether three containers on a personal machine justifies Kubernetes is a question I've decided not to think too hard about.
 
-Docker Compose works until it doesn't. Three containers is fine. But the moment I want to add a health check cron, or schedule a batch embedding job, or run a service on a different machine — I'm writing shell scripts and launchd plists and hoping they don't drift apart.
-
-Kubernetes solves scheduling. It solves health checks. It solves "what's running where." The question was never *if* I'd move — it was whether the overhead was worth it on a single machine.
-
-So I spiked it.
+I spiked it. The spike worked. So I kept going. The whole migration — spike, debugging, manifests, cutover — was one session. This is what happened.
 
 ## k3d on Mac, k3s on Linux
 
