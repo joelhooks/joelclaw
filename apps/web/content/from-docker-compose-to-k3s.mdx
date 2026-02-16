@@ -8,9 +8,11 @@ I deployed Kubernetes to run three containers on a Mac Mini in my office.
 
 Three. Redis, Qdrant, Inngest. They were running fine in Docker Compose. Nobody asked for this.
 
-But here's the thing — Docker Compose works until it doesn't. The moment I want to add a health check, or schedule a batch job, or run a service on a different machine, I'm writing shell scripts and launchd plists and hoping they don't drift apart. Kubernetes solves that. Whether three containers on a personal machine justifies Kubernetes is a question I've decided not to think too hard about.
+But I want to add more machines to the network and distribute workloads across them. Docker Compose doesn't do that. The moment you want to schedule a job on a different node, or health-check services across machines, or add a GPU box and route inference workloads to it — you need an orchestrator. That's what Kubernetes is.
 
-I spiked it. The spike worked. So I kept going. The whole migration — spike, debugging, manifests, cutover — was one session. This is what happened.
+Whether three containers on a single machine justifies Kubernetes is a question I've decided not to think too hard about. The manifests are the same whether it's one node or five.
+
+I spiked it. The spike worked. So I kept going. The whole migration — spike, debugging, manifests, cutover — was one session.
 
 ## k3d on Mac, k3s on Linux
 
@@ -123,6 +125,26 @@ The system-bus worker runs on the host, not in k8s. It needs direct filesystem a
 Caddy stays on launchd too. It terminates TLS with Tailscale certificates that live on the host.
 
 Both are fine where they are. Not everything needs to be in a cluster.
+
+## Why k3s and not something else
+
+I looked at the homelab landscape before committing. The options:
+
+**k3s** is lightweight Kubernetes by Rancher. Single binary, built-in storage provisioner and load balancer, ARM + x86 support. The homelab default — biggest community, most battle-tested at small scale. It's what k3d runs under the hood.
+
+**Talos Linux** is the rising star. It's an immutable operating system that *is* the Kubernetes cluster. No SSH, no package manager, everything managed via API. If you're building dedicated Linux nodes for k8s, Talos is compelling. But it replaces the entire OS — can't run it alongside macOS on the Mac.
+
+**Nomad** by HashiCorp is simpler than Kubernetes and supports containers, VMs, and batch jobs. It was interesting until they relicensed it to BSL (not open source). The community is migrating away.
+
+**microk8s** by Canonical has a nice addon system but runs in a Multipass VM on macOS. Heavier, slower startup, second VM alongside Docker Desktop for no benefit.
+
+k3s wins for a mixed cluster. Mac nodes via k3d, Linux nodes via a one-line curl install. Same manifests on both. When a Linux box joins the cluster, it's one command:
+
+```bash
+curl -sfL https://get.k3s.io | K3S_URL=https://<control-plane>:6443 K3S_TOKEN=<token> sh -
+```
+
+NVIDIA device plugin for GPU nodes is well-documented with k3s. The ecosystem is there.
 
 ## What this gets me
 
