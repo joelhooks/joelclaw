@@ -161,6 +161,31 @@ Three services, three StatefulSets, persistent storage, health monitoring. 915 M
 
 The whole migration — spike, gotcha debugging, manifest writing, cutover, smoke test — was one session.
 
+## Appendix: why not something other than Kubernetes
+
+Kubernetes isn't the only way to distribute workloads across machines. It might not even be the simplest. Here's the full landscape I considered:
+
+| Approach | What it is | Good at | Bad at |
+|---|---|---|---|
+| **k3s / k8s** | Container orchestrator with scheduling | Automatic placement, health checks, GPU routing, self-healing | YAML, complexity, learning curve |
+| **Kamal** | Docker deploy tool (37signals / DHH) | Dead simple deploys, zero-downtime, `kamal deploy` and done | You're the scheduler — you decide what runs where |
+| **Ansible + Docker Compose** | Config management + per-machine Compose files | Familiar, idempotent, no runtime daemon | No live scheduling, no cross-node restart on failure |
+| **Nomad** | HashiCorp orchestrator | Simpler than k8s, supports containers + VMs + batch | BSL licensed (not open source), community migrating away, needs Consul + Vault |
+| **systemd + Podman** | Native Linux services + rootless containers | Zero overhead, OS-native | macOS uses launchd, no cross-machine anything |
+| **Docker Swarm** | Docker-native clustering | Built into Docker, simple syntax | Basically abandoned |
+| **Talos Linux** | Immutable OS that is the k8s cluster | No OS to manage, API-driven, very clean | Replaces the entire OS — not an option alongside macOS |
+| **NixOS** | Declarative system configuration | Entire machine state is reproducible, atomic rollbacks | Steep learning curve, different paradigm entirely |
+
+The real question is whether you need a **runtime scheduler** or **declarative deployment**.
+
+A runtime scheduler — k8s, Nomad — decides where things run based on available resources. "This pod needs a GPU, figure it out." It handles failures and restarts automatically across machines.
+
+Declarative deployment — Kamal, Ansible — puts things where you tell it. "Run this on server 2." Simpler, but you're the scheduler. When a machine goes down, you notice and fix it.
+
+For three services on one machine, Kamal or even Ansible would work fine. The moment you want heterogeneous nodes — route GPU jobs to the GPU box, keep stateful services on the Mac, schedule batch work wherever there's capacity — you need a scheduler. That's the bet.
+
+Kamal is the off-ramp if this ever feels like too much.
+
 ---
 
 *This is part of a series about building a personal AI system. Previous: [Inngest is the Nervous System](/inngest-is-the-nervous-system).*
