@@ -55,7 +55,7 @@ export const adrSync = inngest.createFunction(
     id: "system/adr-sync",
     retries: 1,
   },
-  [{ cron: "0 * * * *" }, { event: "system/adr.sync.requested" }],
+  [{ cron: "0 * * * *" }, { event: "system/adr.edited" }],
   async ({ event, step }) => {
     console.log(
       `[adr-sync] started via ${event.name} at ${new Date().toISOString()}`
