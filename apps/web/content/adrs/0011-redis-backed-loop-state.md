@@ -1,7 +1,8 @@
 ---
 title: Redis-Backed PRD State for Agent Loops
-status: accepted
+status: implemented
 date: 2026-02-14
+implemented: 2026-02-15
 deciders: Joel Hooks
 consulted: none
 informed: none

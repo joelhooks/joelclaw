@@ -1,7 +1,8 @@
 ---
 title: LLM-powered judge evaluation
-status: proposed
+status: implemented
 date: 2026-02-14
+implemented: 2026-02-15
 deciders: Joel Hooks
 ---
 
