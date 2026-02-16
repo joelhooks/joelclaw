@@ -1,5 +1,5 @@
 ---
-title: Adopt k3s cluster to orchestrate the joelclaw network
+title: "Network architecture: start with what works, grow as needed"
 status: proposed
 date: 2026-02-16
 deciders: Joel Hooks
@@ -10,527 +10,346 @@ related:
   - "[ADR-0005 — Durable multi-agent coding loops](0005-durable-multi-agent-coding-loops.md)"
   - "[ADR-0006 — Observability: Prometheus + Grafana](0006-observability-prometheus-grafana.md)"
   - "[ADR-0010 — System loop gateway](0010-system-loop-gateway.md)"
-  - "[ADR-0018 — Pi-native gateway with Redis event bridge](0018-pi-native-gateway-redis-event-bridge.md)"
   - "[ADR-0022 — Webhook-to-system-event pipeline](0022-webhook-to-system-event-pipeline.md)"
   - "[ADR-0023 — Docker sandbox for agent loops](0023-docker-sandbox-for-agent-loops.md)"
   - "[ADR-0024 — Taxonomy-enhanced session search](0024-taxonomy-enhanced-session-search.md)"
 ---
 
-# ADR-0025: Adopt k3s Cluster to Orchestrate the joelclaw Network
+# ADR-0025: Network Architecture — Start with What Works, Grow as Needed
 
-## Context and Problem Statement
+## Guiding Principle
 
-The joelclaw system has grown from "a Mac Mini with some Docker containers" to a multi-machine, multi-service architecture described across 24 ADRs. The services are managed by three unrelated mechanisms — Docker Compose, launchd plists, and manual SSH — with no unified view, no cross-machine scheduling, and no declarative infrastructure.
+This system is not a lab experiment. Joel's family is going to use it and rely on it. Every change must make things **more reliable**, not more interesting. Add complexity only when the current setup can't handle a real workload — not because the architecture diagram would look cooler with more boxes.
 
-### Current infrastructure state
+## What Exists Today (February 2026)
+
+One Mac Mini runs everything. It works. Here's the full picture:
 
 ```
-panda (Mac Mini M4 Pro — 64 GB RAM, 14 cores, 839 GB free)
-├── Docker Compose
-│   ├── inngest    (177 MB, 28% CPU — event bus + dashboard)
-│   ├── qdrant     (331 MB, 0.1% CPU — vector search)
-│   └── redis      (21 MB, 0.5% CPU — state + cache)
-├── launchd
-│   ├── caddy      (HTTPS proxy, TLS termination)
-│   ├── system-bus-worker  (Bun — 12 Inngest functions)
-│   └── vault-log-sync     (JSONL → markdown watcher)
-├── Manual / ad-hoc
+panda (Mac Mini M4 Pro — 64 GB RAM, 14 CPU cores, 20 GPU cores, 839 GB free disk)
+├── Docker Compose (docker-compose.yml in ~/Code/joelhooks/joelclaw/packages/system-bus/)
+│   ├── inngest/inngest     (event bus + dashboard, :8288/:8289, ~177 MB RAM)
+│   ├── qdrant/qdrant       (vector search, :6333/:6334, ~331 MB RAM)
+│   └── redis:7-alpine      (state + cache, :6379, ~21 MB RAM)
+│
+├── launchd services (~/Library/LaunchAgents/)
+│   ├── com.joel.system-bus-worker   (Bun → serve.ts, :3111, 13 Inngest functions)
+│   ├── com.joel.caddy               (HTTPS proxy + TLS, :443/:3443/:6443/:8290)
+│   ├── com.joel.vault-log-sync      (FSEvents watcher → system-log.jsonl → markdown)
+│   └── com.joel.adr-sync-watcher    (WatchPaths → fires system/adr.edited event)
+│
+├── Always running
+│   ├── Tailscale (mesh VPN, SSH access from any device)
+│   ├── Docker Desktop (container runtime)
+│   └── Obsidian (vault UI, iCloud sync)
+│
+├── On-demand
 │   ├── pi sessions (primary agent interface)
-│   ├── agent-secrets daemon
-│   └── Docker sandbox (per-loop, ephemeral)
-└── Total usage: ~2 GB RAM / 64 GB available (3%)
-
-clanker-001 (Linux — specs unknown)
-└── pdf-brain-api :3847  (700 docs, 393k chunks, embedding search)
-    └── Managed by: unknown (systemd? manual?)
-
-three-body (NAS — Intel Atom C3538, 8 GB RAM, 64 TB disk)
-├── 57 TB free storage
-├── No Docker, no containers
-└── SSH accessible via Tailscale
-
-Linux GPU Box (specs TBD — not yet on Tailscale?)
-├── 2× NVIDIA RTX PRO 4500 Blackwell (24 GB GDDR7 each = 48 GB VRAM)
-├── Blackwell architecture: FP4 tensor cores, ~1600 TOPS combined
-└── Managed by: TBD
-
-nightmare-router (Linux — exit node)
-└── Idle
-
-dark-wizard, triangle-2, joels-macbook-pro-2 (Macs — intermittent)
-└── Offline
+│   ├── agent-secrets daemon (TTL-based secret leasing)
+│   └── Docker sandbox (ephemeral per agent-loop, /tmp/agent-loop/)
+│
+└── Resource usage: ~2 GB RAM of 64 GB (3%), 15 GB disk of 926 GB (2%)
 ```
 
-### What hurts today
-
-1. **No unified service view.** `docker ps` shows 3 containers. `launchctl list | grep joel` shows 3 plists. pdf-brain on clanker-001 is invisible unless you SSH and check. There's no single command that shows "what's running across the joelclaw network."
-
-2. **Worker crashes are silent.** The system-bus worker crashed because `bun install` wasn't run after a dependency change. We patched `start.sh` to self-heal, but the real problem is: launchd restarts the process, nobody is alerted, and the first sign of failure is "why didn't my Inngest function run?"
-
-3. **Cross-machine work is manual.** pdf-brain runs on clanker-001 because someone put it there. Embedding 34k session chunks (ADR-0024) will need compute. There's no way to say "run this on whichever machine has capacity."
-
-4. **Growing service count.** ADR-0024 adds 3 Inngest functions (session indexer, taxonomy sync, TTL cleanup). ADR-0006 adds Prometheus + Grafana. ADR-0022 adds webhook endpoints. ADR-0010 adds a system loop gateway. Each one is another service to start, monitor, and restart.
-
-5. **Config drift.** Docker Compose YAML, launchd plists, Caddy config, `.env` files, `start.sh` scripts — infrastructure config is scattered across 5+ formats in 5+ locations. Changes aren't version-controlled as a unit.
-
-6. **The 64 GB elephant.** The Mac Mini has 64 GB RAM and uses 3%. It's architecturally positioned as the hub (ADR-0002, ADR-0005), but it's running as if it were a Raspberry Pi.
-
-### What k3s is
-
-k3s is a lightweight, certified Kubernetes distribution designed for edge, IoT, and resource-constrained environments. It packages the Kubernetes API server, scheduler, controller, and etcd into a single ~70 MB binary. It supports ARM64 and x86_64, runs on Linux, and can form multi-node clusters over any network (including Tailscale).
-
-Key properties:
-- Single binary, ~70 MB, ~512 MB RAM footprint for the server
-- Built-in: Traefik ingress, CoreDNS, local-path storage, Flannel CNI
-- Supports Helm charts, standard Kubernetes manifests, CRDs
-- `kubectl` compatible — same API as full Kubernetes
-- Can run in Docker via **k3d** (k3s-in-Docker, no VM required)
-
-## Decision Drivers
-
-- **Unified orchestration**: One system to manage all services across all machines
-- **Declarative infrastructure**: All service definitions as version-controlled YAML manifests
-- **Cross-machine scheduling**: Workloads run where capacity exists, not where someone SSH'd
-- **Health + restart**: Built-in liveness/readiness probes, automatic restart on failure
-- **Observability foundation**: Kubernetes service discovery makes ADR-0006 (Prometheus) trivial
-- **Operational simplicity**: Must not make the system harder to operate day-to-day
-- **macOS reality**: k3s is Linux-only; the Mac Mini needs a compatibility strategy
-- **Prototype stage**: This is a personal system, not a production cluster. Reversibility matters.
-
-## Considered Options
-
-### Option 1: k3d on Mac Mini as control plane + Linux nodes as agents
-
-Run k3s inside Docker containers on the Mac Mini via **k3d** (no VM, no Lima, uses Docker Desktop's existing runtime). Mac Mini is the server node. clanker-001 and optionally three-body join as k3s agents over Tailscale.
+Other machines on the Tailscale mesh:
 
 ```
-panda (k3d server — k3s control plane in Docker)
-├── k3s server (API, scheduler, etcd) — ~512 MB
-├── Workloads: inngest, qdrant, redis, caddy, worker, prometheus, grafana
-│   (same as today, now as Deployments/StatefulSets)
-├── Agent loop Jobs (ephemeral, scheduled by k8s)
-└── ADR-0024 pipeline (session indexer, taxonomy sync, TTL cron)
-         │
-         │ Tailscale (WireGuard mesh)
-         │
-clanker-001 (k3s agent)
-├── pdf-brain (Deployment)
-├── Embedding workers (can offload from panda)
-└── Future: additional compute workloads
-         │
-three-body (k3s agent — storage-only node)
-├── NFS/Longhorn persistent volumes (64 TB)
-├── Labeled: node-role=storage
-└── No compute workloads (Intel Atom, 8 GB RAM)
+clanker-001 (Linux, 100.95.167.75)
+└── pdf-brain-api :3847  (700 docs, 393k chunks, semantic + hybrid search)
+    └── Managed by: unknown — no health checks, no alerting, no restart policy
+
+three-body (NAS — Intel Atom C3538, 8 GB RAM, 64 TB disk, 57 TB free)
+├── SSH accessible via Tailscale
+├── Video archive (by year), book library
+└── No containers, no services — pure storage
+
+nightmare-router (Linux, 100.107.12.80)
+└── Idle — offers Tailscale exit node, nothing else
+
+dark-wizard, joels-macbook-pro-2 (Macs — intermittent/offline)
+iphone-15-pro-max, iphone181 (iOS — mobile access)
 ```
 
-**Pros:**
-- Mac Mini stays the brain — control plane + primary workloads
-- k3d is the lightest path on macOS: no VM, uses existing Docker
-- clanker-001 gets a real identity: it's a k3s agent, workloads are scheduled to it declaratively
-- three-body becomes a persistent volume provider — NAS storage accessible as PVCs
-- `kubectl get pods -A` = one command to see everything across all machines
-- Health checks, auto-restart, rolling updates — all built in
-- Helm charts for Prometheus, Grafana, Loki — one `helm install` replaces ADR-0006's manual Docker Compose
-- Agent loop sandboxes (ADR-0023) could become k8s Jobs with resource limits
-- All infrastructure as manifests in `~/Code/joelhooks/joelclaw/k8s/` — version controlled
+A Linux GPU box exists (2× NVIDIA RTX PRO 4500 Blackwell, 48 GB VRAM total) but is **not on the network** — dormant, not identified on Tailscale.
 
-**Cons:**
-- k3d adds a Docker-in-Docker layer (k3s runs inside Docker containers, which run your containers)
-- Networking: k3s uses Flannel CNI internally + Docker network externally + Tailscale for cross-machine. Three network layers.
-- Three-body has an Intel Atom with 8 GB RAM — k3s agent alone takes ~256 MB, leaving little for workloads. Storage-only node is fine, but needs careful resource limits.
-- Multi-arch: Mac Mini is ARM64, clanker-001 and three-body are x86_64. All images need multi-arch builds or architecture-specific scheduling.
-- Operational surface area: etcd, certificates, RBAC, ingress controller, PV provisioner — each is a new thing to understand and debug.
-- Current Docker Compose + launchd works. It's messy, but it works.
+### Registered Inngest functions (13)
 
-### Option 2: Docker Desktop Kubernetes (built-in)
+| Function | Trigger | Purpose |
+|----------|---------|---------|
+| video-download | event | yt-dlp → NAS pipeline |
+| transcript-process | event | mlx-whisper transcription |
+| content-summarize | event | LLM summary of transcripts |
+| system-logger | event | Structured system logging |
+| memory/observe-session | event | Session observation extraction |
+| system/adr-sync | cron (hourly) + `system/adr.edited` | Sync ADRs to joelclaw.com |
+| agent-loop-plan | event | PRD → story breakdown |
+| agent-loop-test-writer | event | Write tests for a story |
+| agent-loop-implement | event | Implement against tests |
+| agent-loop-review | event | Review implementation |
+| agent-loop-judge | event | Accept/reject review |
+| agent-loop-complete | event | Finalize story |
+| agent-loop-retro | event | Loop retrospective |
 
-Enable Kubernetes in Docker Desktop settings. Single-node cluster on the Mac Mini only. No cross-machine orchestration.
+### What's version-controlled
 
-**Pros:**
-- Zero install — toggle one setting in Docker Desktop
-- kubectl already works (confirmed: v1.34.1 available)
-- Single node avoids all cross-machine networking complexity
-- Familiar Docker Desktop UX for debugging
+- Docker Compose: `packages/system-bus/docker-compose.yml` ✅
+- Inngest functions: `packages/system-bus/src/inngest/functions/` ✅
+- Caddy config: **not version-controlled** ❌
+- launchd plists: **not version-controlled** ❌
+- worker start.sh: `packages/system-bus/start.sh` ✅
+- pdf-brain on clanker-001: **not version-controlled, not documented** ❌
 
-**Cons:**
-- Single node only — clanker-001 and three-body stay unmanaged
-- Docker Desktop's k8s is full Kubernetes, not lightweight — heavier than k3s
-- No cross-machine scheduling — doesn't solve the "distribute work" problem
-- Docker Desktop Kubernetes has historically been buggy and slow to update
+## What Actually Hurts
 
-### Option 3: Stay with Docker Compose + launchd — improve what exists
+These are real problems, not hypothetical ones:
 
-Don't adopt Kubernetes. Instead:
-- Add health check endpoints to all services
-- Build a lightweight status CLI (`joelclaw status`) that queries all machines
-- Use Inngest cron for monitoring (already have the event bus)
-- Version-control all launchd plists and Docker Compose files together
-- Add alerting via Inngest functions that check service health
+1. **Worker crashes are silent.** Last week the worker crashed because `bun install` wasn't run after a dependency change. launchd restarted it, but it kept crash-looping. Nobody knew until a function didn't run. We patched `start.sh` to self-heal (git pull + bun install before serve), but there's no alerting.
 
-**Pros:**
-- Zero new infrastructure to learn, deploy, or maintain
-- Docker Compose is simple, well-understood, and sufficient for 3 containers
-- launchd is macOS-native, reliable, and transparent
-- Avoids the "Kubernetes tax" (certificates, networking, storage, RBAC)
-- Can always migrate to k3s later if scale demands it
+2. **No unified status view.** To know what's running: `docker ps` (3 containers), `launchctl list | grep joel` (4 plists), then SSH to clanker-001 to check pdf-brain. There's no `joelclaw status` command.
 
-**Cons:**
-- Cross-machine orchestration remains manual SSH
-- No declarative multi-machine infrastructure
-- No workload scheduling — services run where they were manually placed
-- Health checks are custom per service, not unified
-- Doesn't address the "64 GB elephant" — no mechanism to utilize available capacity
+3. **Config is scattered.** Docker Compose YAML, launchd plists, Caddy config, `.env` files, `start.sh` — five formats in five locations. A change to one can break another with no obvious connection.
 
-### Option 4: Nomad (HashiCorp)
+4. **clanker-001 is a mystery.** pdf-brain runs there. We can hit it over HTTP. We don't know: what manages it, how to restart it, what specs the machine has, whether it's healthy.
 
-HashiCorp Nomad — simpler orchestrator than Kubernetes, supports Docker, exec, and raw_exec drivers. Single binary, multi-platform including macOS (native, no VM).
+5. **No health checks.** None of the services expose health endpoints that an automated system checks. The Inngest dashboard shows function runs, but nothing monitors "is the worker process alive" or "is Qdrant accepting writes."
 
-**Pros:**
-- Runs natively on macOS — no Docker-in-Docker layer
-- Simpler mental model than Kubernetes (jobs, tasks, groups vs. pods, deployments, services, ingress, PVC)
-- Supports Docker and non-Docker workloads (raw_exec for Bun/Node processes)
-- Multi-platform: ARM64 macOS + x86_64 Linux in same cluster, natively
-- Lighter operational surface than Kubernetes
+### What does NOT hurt (yet)
 
-**Cons:**
-- Smaller ecosystem — fewer Helm charts, operators, and community resources
-- No built-in service mesh, ingress, or DNS (need Consul + Traefik separately)
-- HashiCorp's BSL license change (2023) adds uncertainty
-- Joel would be learning a niche tool vs. industry-standard Kubernetes
-- Less transferable knowledge
+- **Resource pressure.** 3% RAM usage. No contention.
+- **Cross-machine scheduling.** Only pdf-brain runs elsewhere, and it's stable.
+- **Scale.** 13 functions, 3 containers, 4 plists. Manageable by hand.
 
-## Discussion Points
+## Decision
 
-### Is Kubernetes actually needed at this scale?
+**Improve what exists before adding infrastructure.** The current setup is simple and mostly works. The problems are observability and configuration management — not orchestration. Fix those first. Consider k3s only when there's a real multi-machine scheduling need.
 
-The honest answer: **probably not yet.** Three Docker containers and two launchd services don't need an orchestrator. The case for k3s is forward-looking:
+### Why not k3s right now
 
-- ADR-0024 adds 3+ new Inngest functions and an embedding pipeline
-- ADR-0006 adds Prometheus + Grafana (2 more containers)
-- ADR-0010 adds a system loop gateway (persistent process)
-- ADR-0022 adds webhook consumers
-- The pdf-brain on clanker-001 is already a second machine with no management
+- Three Docker containers and four launchd services don't need an orchestrator.
+- k3s on macOS means k3d (k3s-in-Docker-in-VM) — three layers of abstraction for a problem that doesn't exist yet.
+- Every node added is operational surface area: certificates, networking, upgrades, debugging.
+- The family relies on this. Adding k3s to a working system introduces a new failure mode with no immediate payoff.
 
-At 10-15 services across 2-3 machines, ad-hoc management starts to hurt. The question is whether to adopt k3s now (when it's easy to migrate) or later (when it's urgent and harder).
+### When k3s becomes the right call
 
-### The macOS problem
+- **Trigger 1**: A second Mac joins permanently (Mac Studio purchase). Two always-on Macs with services on both = real scheduling need.
+- **Trigger 2**: Service count exceeds ~15 and cross-machine coordination is manual pain.
+- **Trigger 3**: GPU box comes online and workloads need to route between CUDA and MLX.
 
-k3s is Linux-only. The options for the Mac Mini:
+Until one of those triggers fires, stay on Docker Compose + launchd and make it solid.
 
-| Approach | Overhead | Complexity | Native feel |
-|---|---|---|---|
-| **k3d** (k3s in Docker) | ~512 MB + Docker | Medium | Docker Desktop already running |
-| **Lima VM** | ~1 GB + VM overhead | High | Separate VM to manage |
-| **Multipass VM** | ~1 GB + VM overhead | High | Canonical tooling |
-| **OrbStack** | ~256 MB, optimized for Mac | Low | Lightweight, ARM-native |
-| **Run control plane on clanker-001** | 0 on Mac | Medium | Mac is agent, not server |
+## Phase 0: Make the Current Setup Reliable (now)
 
-k3d is the path of least resistance since Docker Desktop is already running. But it means k3s-in-Docker-in-VM (Docker Desktop itself runs a Linux VM). Three layers of abstraction.
+These are concrete improvements to what exists. No new infrastructure, no new machines.
 
-**Alternative**: Make clanker-001 the k3s server (it's already Linux), and the Mac Mini joins as a worker. This is cleaner architecturally but means the brain runs on the less powerful machine. Though k3s server is lightweight — it could work if clanker-001 has enough RAM.
+### 0.1 — `joelclaw status` CLI
 
-### The Tailscale networking question
-
-k3s nodes need to communicate (API server, pod networking, service mesh). Over Tailscale, this means:
-
-- k3s Flannel VXLAN overlay runs over Tailscale WireGuard tunnel
-- Pod-to-pod traffic: double-encapsulated (Flannel → Tailscale)
-- Service discovery: CoreDNS inside k3s, not Tailscale MagicDNS
-
-This works but adds latency and debugging complexity. An alternative: use `--flannel-backend=none` and let Tailscale handle all networking (pods get Tailscale IPs directly). This is experimental but aligns with Tailscale's own k8s operator.
-
-### What would migration look like?
-
-Phase 0 (today): Docker Compose + launchd (status quo)
-
-Phase 1: k3d on Mac Mini, migrate Docker Compose services to manifests
-- Inngest, Qdrant, Redis become StatefulSets/Deployments
-- Caddy becomes an Ingress
-- Worker becomes a Deployment
-- All manifests in `~/Code/joelhooks/joelclaw/k8s/`
-- launchd plists retired (except vault-log-sync which is macOS-specific)
-- **Validation**: `kubectl get pods` shows all services, `docker compose down` with no impact
-
-Phase 2: Add clanker-001 as k3s agent
-- Install k3s agent binary on clanker-001
-- Join cluster over Tailscale
-- Migrate pdf-brain to a k8s Deployment scheduled on clanker-001
-- Schedule embedding workers on clanker-001 (offload from Mac Mini)
-- **Validation**: `kubectl get nodes` shows 2 nodes, pdf-brain runs as a pod
-
-Phase 3: Add three-body as storage node
-- Install k3s agent on NAS (if Atom CPU can handle it)
-- Label as `node-role=storage`, taint to prevent compute scheduling
-- Expose NFS volumes as PersistentVolumes
-- Video archive, book library accessible as PVCs from any pod
-- **Validation**: `kubectl get pv` shows NAS volumes, pods can mount them
-
-Phase 4: Observability (ADR-0006 realized)
-- `helm install prometheus kube-prometheus-stack`
-- Automatic service discovery for all k8s services
-- Grafana dashboards accessible via Caddy/Tailscale
-- **Validation**: Grafana shows metrics from all nodes and services
-
-### Adding nodes is trivial in k3s
-
-This is the core argument for k3s over ad-hoc management. Adding a new node to the cluster:
+A single command that shows everything running across the network:
 
 ```bash
-# On the new machine (Linux):
-curl -sfL https://get.k3s.io | K3S_URL=https://mac-studio:6443 K3S_TOKEN=<token> sh -
+$ joelclaw status
 
-# That's it. The node appears in:
-kubectl get nodes
+panda (Mac Mini M4 Pro, 64 GB)
+  docker    inngest     ✅ healthy   :8288   177 MB
+  docker    qdrant      ✅ healthy   :6333   331 MB
+  docker    redis       ✅ healthy   :6379    21 MB
+  launchd   worker      ✅ running   :3111   13 functions
+  launchd   caddy       ✅ running   :443    TLS proxy
+  launchd   vault-sync  ✅ running           FSEvents watcher
+  launchd   adr-sync    ✅ running           WatchPaths watcher
+
+clanker-001
+  http      pdf-brain   ✅ healthy   :3847   700 docs
+
+three-body (NAS, 64 TB)
+  ssh       reachable   ✅           57 TB free
+
+Resources: 2.1 GB / 64 GB RAM (3%)  •  15 GB / 926 GB disk (2%)
 ```
 
-The GPU box, when activated, joins with one command. NVIDIA device plugin auto-detects the GPUs:
+Implementation: Bun CLI in `~/Code/joelhooks/joelclaw/packages/cli/`. Checks Docker API, launchctl, HTTP health endpoints, SSH reachability. JSON output for agents, formatted for humans.
 
+### 0.2 — Health check Inngest cron
+
+A new Inngest function (`system/health-check`) on a 5-minute cron:
+
+- Ping each Docker container's health endpoint
+- Check `curl localhost:3111/` for worker function count
+- Check `curl clanker-001:3847/` for pdf-brain status
+- Check Tailscale node status via `tailscale status --json`
+- On failure: log to system-log, emit `system/health.degraded` event
+- Future: send push notification or Slack message on degraded status
+
+### 0.3 — Version-control all config
+
+Move into the monorepo and track:
+
+```
+~/Code/joelhooks/joelclaw/
+├── infra/
+│   ├── launchd/
+│   │   ├── com.joel.system-bus-worker.plist
+│   │   ├── com.joel.caddy.plist
+│   │   ├── com.joel.vault-log-sync.plist
+│   │   └── com.joel.adr-sync-watcher.plist
+│   ├── caddy/
+│   │   └── Caddyfile
+│   └── docker/
+│       └── docker-compose.yml  (move from packages/system-bus/)
+```
+
+Add a `joelclaw infra apply` command that symlinks/copies config to the right places and restarts affected services. One command to go from repo state → running state.
+
+### 0.4 — Audit clanker-001
+
+SSH into clanker-001 and document:
+- Hardware specs (CPU, RAM, disk)
+- How pdf-brain is managed (systemd? screen? manual?)
+- Set up a systemd service if it's running manually
+- Add a health endpoint check to the health-check cron
+- Document in `~/Vault/Resources/tools/clanker-001.md`
+
+### Phase 0 verification
+
+- [ ] `joelclaw status` shows all services across panda + clanker-001 + three-body
+- [ ] Health check cron runs every 5 minutes, logs to system-log on failure
+- [ ] All launchd plists and Caddy config tracked in `infra/` directory
+- [ ] `joelclaw infra apply` deploys config and restarts services
+- [ ] clanker-001 documented: specs, management, health endpoint
+- [ ] No regressions: all 13 Inngest functions still register and execute
+
+## Phase 1: Two-Mac Cluster (when Mac Studio arrives)
+
+**Trigger**: Mac Studio M4 Max purchase (128 GB unified, 2 TB SSD, 10 Gb Ethernet, TB5).
+
+The Studio becomes the primary machine. The Mini becomes a worker. This is when k3s earns its place — two always-on machines with services that need to be managed together.
+
+### What changes
+
+- Install k3s on the Studio (Linux via k3d, since macOS). Control plane + primary workloads.
+- Install k3s agent on the Mini. Join over Tailscale or local network.
+- Migrate Docker Compose services to k8s manifests: Inngest, Qdrant, Redis as StatefulSets/Deployments.
+- Caddy becomes a k8s Ingress (Traefik built into k3s, or keep Caddy as Ingress controller).
+- Worker becomes a k8s Deployment.
+- Manifests live in `~/Code/joelhooks/joelclaw/k8s/`.
+- launchd plists retired for anything that moves to k8s. vault-log-sync stays (macOS FSEvents).
+
+### What the Studio unlocks
+
+| Capability | Details |
+|---|---|
+| Local LLM inference | 128 GB runs 70B models (Q4 ~40 GB, Q6 ~55 GB) with room to spare |
+| Fast local embedding | 40-core GPU via MLX — potentially 500-1000 chunks/sec |
+| k3s headroom | Control plane ~512 MB = 0.4% of 128 GB |
+| Concurrent workloads | LLM + Qdrant + Redis + Inngest + embedding + 60 GB free |
+| NAS bandwidth | 10 Gb Ethernet to three-body for near-local storage speed |
+
+### What the Mini becomes
+
+Not retired — promoted to dedicated worker:
+- Agent loop execution (coding loops run here, keep Studio free for inference)
+- Embedding batch jobs, session indexing (ADR-0024)
+- Secondary compute for overflow workloads
+- 64 GB is still a powerful machine
+
+### macOS + k3s reality
+
+k3s is Linux-only. Options for running on Mac:
+
+| Approach | Overhead | Notes |
+|---|---|---|
+| **k3d** (k3s in Docker) | ~512 MB + existing Docker | Lightest path, Docker Desktop already running |
+| **OrbStack** | ~256 MB | Lightweight, ARM-native, good macOS integration |
+| **Lima VM** | ~1 GB | Heavier, separate VM to manage |
+| Control plane on clanker-001 | 0 on Mac | Macs are agents only — cleaner but brain on weaker machine |
+
+k3d is the default choice. OrbStack worth evaluating if Docker Desktop's VM overhead bothers us.
+
+### Networking considerations
+
+k3s nodes over Tailscale = Flannel overlay inside WireGuard tunnel (double encapsulation). Works but adds latency and debugging layers. If both Macs are on the same local network, prefer direct connectivity with Tailscale as fallback.
+
+Alternative: `--flannel-backend=none` + Tailscale k8s operator. Experimental but eliminates the double-encap.
+
+### Phase 1 verification
+
+- [ ] `kubectl get nodes` shows Studio + Mini
+- [ ] All services from Phase 0 running as k8s workloads
+- [ ] `kubectl get pods -A` = single view of everything
+- [ ] Health checks via k8s liveness/readiness probes (replaces Phase 0 cron)
+- [ ] Manifests in `k8s/` directory, version-controlled
+- [ ] No downtime during migration — run parallel, cut over, decommission old
+
+## Phase 2+: Add Nodes as Pressure Demands
+
+Beyond Phase 1, detail decreases intentionally. Plans change when reality strikes. These are **options with known triggers**, not a roadmap.
+
+### GPU box (when inference throughput is a bottleneck)
+
+**Trigger**: Embedding pipeline or transcription is too slow on Apple Silicon. Or a workload needs CUDA-specific acceleration.
+
+What we know about the hardware:
+- 2× NVIDIA RTX PRO 4500 Blackwell (24 GB GDDR7 each = 48 GB VRAM total)
+- Blackwell FP4 tensor cores, ~1600 TOPS combined
+- Currently dormant, not on Tailscale
+
+What joining looks like:
 ```bash
-# On GPU box:
-curl -sfL https://get.k3s.io | K3S_URL=https://mac-studio:6443 K3S_TOKEN=<token> sh -
+# On the GPU box:
+curl -sfL https://get.k3s.io | K3S_URL=https://<control-plane>:6443 K3S_TOKEN=<token> sh -
 kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.0/deployments/static/nvidia-device-plugin.yml
 ```
 
-Any future Mac, any Linux box, any device on the Tailscale mesh — one command to join. This is why k3s makes sense even before you need it: the marginal cost of adding capacity drops to near zero.
+One command to join. NVIDIA device plugin auto-detects the GPUs. k8s schedules GPU workloads there via `nvidia.com/gpu` resource requests.
 
-### What stays outside k3s?
+**Complementary roles**: CUDA for throughput (models ≤48 GB at maximum speed), Apple Silicon for capacity (models >48 GB that need 128+ GB unified memory). Don't duplicate — route by workload type.
 
-Some things don't belong in a cluster:
-- **pi sessions** — interactive TUI, runs in terminal, not a service
-- **agent-secrets** — runs ephemerally during pi sessions
-- **Obsidian** — macOS app, not a server process
-- **vault-log-sync** — macOS-specific launchd watcher (FSEvents API)
-- **Docker sandbox for loops** — k8s Jobs could replace these, but Docker sandbox is simpler for now
+### three-body NAS (when storage access is a bottleneck)
 
-## Hardware Trajectory: Mac Studio M4 Max
+**Trigger**: Pipelines need to read/write NAS data frequently enough that SSH/SCP is painful, and NFS mounts from k8s would simplify things.
 
-A Mac Studio upgrade is under consideration:
+Reality check: Intel Atom C3538, 8 GB RAM. k3s agent takes ~256 MB. It can serve NFS PersistentVolumes — label as `node-role=storage`, taint to prevent compute scheduling. But it's a weak machine. Don't ask it to do more than serve files.
 
-| Spec | Mac Mini (current) | Mac Studio (planned) |
+If plain NFS mounts (without k8s) are sufficient, skip adding it as a node entirely. Don't add orchestration overhead to a NAS that works fine as a NAS.
+
+### clanker-001 as k3s agent (when it needs managed workloads beyond pdf-brain)
+
+**Trigger**: We want to schedule additional services on clanker-001, or pdf-brain needs the restart/health guarantees that k8s provides.
+
+If pdf-brain is the only thing running there and it's stable, a systemd service (Phase 0.4) is enough. k3s agent is for when clanker-001 becomes a general-purpose worker node.
+
+### exo for distributed LLM inference (when single-machine memory isn't enough)
+
+**Trigger**: 128 GB unified memory on the Studio can't fit the model you need.
+
+[exo](https://github.com/exo-explore/exo) turns multiple Apple Silicon machines into a unified inference cluster — automatic discovery, RDMA over Thunderbolt 5, tensor parallelism, OpenAI-compatible API. Studio (128 GB) + Mini (64 GB) = 192 GB unified → Qwen3 235B (4-bit, ~135 GB) runs across both.
+
+This is Phase 3+ at earliest. 128 GB handles Llama 70B and most frontier models comfortably. exo matters when 235B+ models become the standard, or when you want to run multiple large models simultaneously.
+
+## What Stays Outside Any Cluster
+
+Some things don't belong in an orchestrator:
+
+- **pi sessions** — interactive TUI in a terminal
+- **agent-secrets** — ephemeral daemon during pi sessions
+- **Obsidian** — macOS app with iCloud sync
+- **vault-log-sync** — macOS FSEvents API, launchd is the right tool
+- **adr-sync-watcher** — macOS WatchPaths, same
+
+## Impact on Other ADRs
+
+| ADR | Phase 0 impact | Phase 1+ impact |
 |---|---|---|
-| Chip | M4 Pro (14-core CPU, 20-core GPU) | M4 Max (16-core CPU, 40-core GPU) |
-| Neural Engine | 16-core | 16-core |
-| RAM | 64 GB unified | **128 GB unified** |
-| SSD | 1 TB (839 GB free) | **2 TB** |
-| Ethernet | Gigabit | **10 Gb Ethernet** |
-| Thunderbolt | 3× TB4 | **4× TB5** |
-| Displays | 3 | 5 |
-| Price | — | $4,099 |
+| ADR-0006 (observability) | Health check cron + `joelclaw status` | Prometheus + Grafana via Helm, automatic service discovery |
+| ADR-0021 (memory system) | No change — runs on existing infra | Observer/Reflector can use local LLM on Studio |
+| ADR-0024 (session search) | Embedding runs on Mini as-is | Can schedule embedding across both Macs |
+| ADR-0005 (coding loops) | Docker sandbox continues | k8s Jobs with resource limits, schedule on Mini |
+| ADR-0023 (Docker sandbox) | No change | k8s Jobs with namespace isolation |
 
-### What 128 GB unified memory unlocks
+## Decision Summary
 
-1. **Local LLM inference.** 128 GB can run 70B parameter models (Q4 quantized = ~40 GB, Q6 = ~55 GB) entirely in unified memory with room to spare. Llama 3.3 70B, Qwen 2.5 72B, DeepSeek-V2-Lite — all viable locally. This eliminates API dependency for the Observer, Reflector, and system loop gateway (ADR-0010, ADR-0021).
+1. **Now**: Fix observability and config management on what exists. Build `joelclaw status`. Add health checks. Version-control all config. Audit clanker-001.
+2. **When the Studio arrives**: Stand up k3s, migrate services, two-node cluster. Stop there.
+3. **When pressure demands**: Add GPU box, NAS, or exo — one at a time, only when there's a concrete workload that justifies the operational surface area.
 
-2. **Local embedding at scale.** `nomic-embed-text-v1.5` already runs locally, but 128 GB means you can batch-embed the entire session corpus (34k+ chunks) without memory pressure. The 40-core GPU via MLX makes this fast — potentially 500-1000 chunks/sec vs ~100/sec on M4 Pro.
-
-3. **k3s headroom is negligible.** k3s server takes ~512 MB. On 128 GB that's 0.4%. The "overhead concern" from the original assessment evaporates.
-
-4. **Multiple concurrent agents.** 128 GB can simultaneously run: a local LLM (40-55 GB), Qdrant (1-4 GB for ADR-0024 vectors), Redis, Inngest, Prometheus, Grafana, embedding workers, and still have 60+ GB free for agent sandboxes.
-
-5. **10 Gb Ethernet.** Real bandwidth for NAS storage mounts (three-body). PVC access to 64 TB of video/books at near-local speeds on the local network.
-
-### The two-Mac cluster
-
-The Mac Mini doesn't get retired — it becomes a **powerful worker node**:
-
-```
-Mac Studio M4 Max (NEW — control plane + primary compute)
-├── k3s server (control plane)
-├── 128 GB — local LLM inference (Observer, Reflector, system loop)
-├── 40-core GPU — MLX embedding, whisper transcription
-├── Primary workloads: Inngest, Qdrant, Redis, Prometheus, Grafana
-├── Agent sandboxes (k8s Jobs with resource limits)
-└── 10 Gb Ethernet → three-body NAS
-
-Mac Mini M4 Pro (CURRENT → promoted to worker)
-├── k3s agent
-├── 64 GB — secondary compute + exo tensor parallel partner
-├── Offload: embedding batch jobs, session indexing (ADR-0024)
-├── Agent loop execution (ADR-0005 coding loops)
-└── Thunderbolt 5 ↔ Mac Studio (RDMA for exo)
-
-Linux GPU Box (2× NVIDIA RTX PRO 4500 Blackwell)
-├── k3s agent + NVIDIA device plugin
-├── 48 GB VRAM (24 GB × 2) — CUDA inference server
-├── vLLM / TensorRT-LLM / SGLang for high-throughput serving
-├── Hot path: embedding at GPU speed, 8B/70B models, batch inference
-├── Blackwell FP4 tensor cores: ~1600 TOPS combined
-└── Role: speed demon — what fits in 48 GB runs 2-3× faster than Apple Silicon
-
-clanker-001 (Linux worker)
-├── k3s agent
-├── pdf-brain (existing)
-├── Additional compute workloads
-└── x86_64 — useful for images without ARM builds
-
-three-body (NAS — storage node)
-├── k3s agent (lightweight, storage-only)
-├── NFS PersistentVolumes → 64 TB
-├── Intel Atom — no compute, just serves storage
-└── 10 Gb Ethernet ↔ Mac Studio (local network)
-```
-
-**Total cluster**: 192+ GB unified RAM, 48 GB VRAM, 30+ CPU cores, 60-core Apple GPU + dual Blackwell GPUs (~1600 FP4 TOPS), 64+ TB storage, across 5 nodes. For a personal system, this is absurd capacity — which is exactly the point. It means the system never has to think about resources, only about scheduling.
-
-### The NVIDIA advantage: speed vs. capacity
-
-The dual RTX PRO 4500s and the Apple Silicon serve complementary roles:
-
-| Dimension | 2× RTX PRO 4500 (CUDA) | Mac Studio M4 Max (MLX) |
-|---|---|---|
-| **Memory** | 48 GB VRAM (hard limit) | 128 GB unified (shared with system) |
-| **Bandwidth** | ~896 GB/s combined | ~546 GB/s |
-| **Throughput** | ~1600 TOPS FP4 | ~200 TOPS equivalent |
-| **Best for** | Models ≤48 GB at maximum speed | Models >48 GB that need capacity |
-| **Ecosystem** | vLLM, TensorRT-LLM, SGLang, CUDA | MLX, exo, Apple-native |
-
-**Optimal workload split:**
-
-```
-Linux GPU Box (speed path — 48 GB VRAM)
-├── Embedding pipeline (ADR-0024): nomic-embed-text on CUDA = 5-10× faster than MLX
-├── Observer LLM (ADR-0021): Llama 70B Q4 (~40 GB) at high tok/s
-├── Batch inference: session indexing, concept tagging, metadata extraction
-└── Whisper: faster-whisper on CUDA for video transcription (ADR video-ingest)
-
-Mac Studio + Mac Mini (capacity path — 192 GB unified)
-├── Frontier models via exo: Qwen3 235B, Kimi K2 — too large for 48 GB VRAM
-├── Reflector LLM (ADR-0021): long-context reasoning over accumulated observations
-├── System loop gateway (ADR-0010): complex SENSE→ORIENT→DECIDE with 235B model
-└── Interactive inference: direct conversation with frontier local models
-```
-
-The Linux box becomes the **workhorse** — high-throughput, GPU-accelerated inference for pipeline workloads (embedding, observation extraction, transcription). The Apple cluster handles **frontier reasoning** — models that need 100+ GB of memory for long-context, complex tasks.
-
-### k3s GPU scheduling
-
-Kubernetes natively supports NVIDIA GPUs via the [NVIDIA device plugin](https://github.com/NVIDIA/k8s-device-plugin):
-
-```yaml
-# Example: embedding worker pod requesting a GPU
-apiVersion: v1
-kind: Pod
-spec:
-  containers:
-  - name: embedding-worker
-    image: ghcr.io/joelhooks/embedding-worker:latest
-    resources:
-      limits:
-        nvidia.com/gpu: 1  # request 1 of 2 GPUs
-  nodeSelector:
-    gpu: "rtx-4500"
-```
-
-This means k3s can schedule GPU workloads to the Linux box while keeping non-GPU services on the Macs. The scheduler respects resource limits — two GPU-hungry pods can each claim one of the two 4500s.
-
-### Impact on existing ADRs
-
-| ADR | Impact of Mac Studio + k3s |
-|---|---|
-| ADR-0005 (coding loops) | Agent loop sandboxes become k8s Jobs. Can schedule on Mini to keep Studio free for LLM inference. |
-| ADR-0006 (observability) | Prometheus + Grafana via Helm. Service discovery automatic across all nodes. |
-| ADR-0010 (system loop gateway) | Gateway runs as k8s Deployment with local LLM — no API cost for SENSE→ORIENT→DECIDE. |
-| ADR-0021 (memory system) | Observer and Reflector use local LLM on Studio. No haiku-4.5 API dependency. |
-| ADR-0023 (Docker sandbox) | k8s Jobs with namespace isolation replace Docker sandbox. Better resource limits + scheduling. |
-| ADR-0024 (session search) | Embedding pipeline scheduled across Studio + Mini. Batch indexing at GPU speed. |
-
-## Preliminary Assessment
-
-The Mac Studio changes the answer from "maybe later" to "this is the natural architecture." With 128 GB unified memory, the Studio becomes a genuine AI compute hub — local LLMs, GPU embedding, and k3s control plane with negligible overhead. The Mac Mini transitions from "the machine" to "a node" without losing any capability.
-
-**Recommended path**: Option 1 (k3d on Mac Studio as control plane) with the Mac Mini as first worker node. Migrate when the Studio arrives. The current Docker Compose services translate almost 1:1 to k8s manifests.
-
-**If the Studio purchase is deferred**, Option 3 (improve existing Docker Compose + launchd) remains the pragmatic choice — the Mini alone doesn't have enough pressure to justify k3s overhead.
-
-## Future: exo for Distributed LLM Inference
-
-[exo](https://github.com/exo-explore/exo) turns multiple Apple Silicon machines into a unified AI cluster — automatic device discovery, RDMA over Thunderbolt 5, tensor parallelism, and an OpenAI-compatible API. It's the inference layer that sits on top of the k3s orchestration layer.
-
-### Why exo matters for this cluster
-
-The Mac Studio M4 Max has **Thunderbolt 5** ports. The Mac Mini M4 Pro also has **Thunderbolt 5**. Connected via a single TB5 cable, exo can split models across both machines with RDMA — 99% lower latency than network-based tensor parallel.
-
-**192 GB unified memory (128 + 64) enables frontier models:**
-
-| Model | Quant | RAM needed | Single Studio? | 2-Mac exo cluster? |
-|---|---|---|---|---|
-| Llama 3.3 70B | 8-bit | ~76 GB | ✅ | ✅ |
-| MiniMax M2.1 | 3-bit | ~95 GB | ✅ tight | ✅ |
-| Qwen3 235B | 4-bit | ~135 GB | ❌ | ✅ (57 GB free) |
-| Kimi K2 Thinking | 4-bit | ~210 GB | ❌ | ✅ (tight) |
-| DeepSeek V3.1 | 4-bit | ~385 GB | ❌ | ❌ (need more Macs) |
-
-The sweet spot: **Qwen3 235B (4-bit)** — a genuinely frontier 235B parameter model running locally across two Macs. No API, no cost per token, no latency to a data center.
-
-### Architecture with exo + CUDA
-
-exo operates at a different layer than k3s. k3s orchestrates services (Inngest, Qdrant, Redis, pipelines). exo orchestrates inference (model loading, tensor sharding, request routing). The NVIDIA box can serve inference via vLLM/SGLang independently or join the exo cluster when CUDA support ships.
-
-```
-k3s cluster (service orchestration)
-├── Deployments: inngest, qdrant, redis, prometheus, grafana, worker
-├── Jobs: agent loops, embedding batches, taxonomy sync
-├── CronJobs: TTL cleanup, session indexing
-└── Services call inference APIs:
-         │
-         ├── http://gpu-box:8000/v1/...    (vLLM on CUDA — fast path)
-         │     └── 70B models, embedding, transcription
-         │
-         └── http://localhost:52415/v1/...  (exo on Apple Silicon — capacity path)
-               └── 235B models, frontier reasoning
-         
-exo cluster (Apple Silicon inference)
-├── Mac Studio: 128 GB — primary node (TB5 RDMA)
-├── Mac Mini: 64 GB — tensor parallel partner (TB5 RDMA)
-└── 192 GB unified → Qwen3 235B, Kimi K2
-
-CUDA inference (Linux GPU box)
-├── vLLM / SGLang / TensorRT-LLM
-├── 2× RTX PRO 4500: 48 GB VRAM, Blackwell tensor cores
-├── Llama 70B Q4 at ~80+ tok/s (vs ~40-60 on MLX)
-└── Future: joins exo cluster when CUDA backend ships
-```
-
-**Two inference APIs, one routing layer.** Pipeline workloads (Observer, embedding, transcription) hit the CUDA fast path. Interactive and frontier reasoning hits exo. A simple proxy or the system-bus worker routes based on model/task.
-
-### Impact on ADR-0021 and ADR-0024
-
-- **Observer LLM** (ADR-0021): Instead of calling haiku-4.5 API, calls `exo /v1/chat/completions` with a local 70B model. Zero API cost, zero latency to provider, full privacy.
-- **Reflector LLM** (ADR-0021): Same — local inference for memory compression.
-- **System loop gateway** (ADR-0010): SENSE→ORIENT→DECIDE→ACT powered by local 235B reasoning model. No token metering.
-- **Embedding pipeline** (ADR-0024): exo doesn't handle embeddings (that's MLX/nomic directly), but freeing the GPU from API-dependent workloads means more capacity for batch embedding.
-
-### exo implementation notes
-
-- **Event-sourced architecture**: exo uses event sourcing internally with master election — resilient to device disconnection/reconnection.
-- **Automatic discovery**: Devices running exo find each other via mDNS — same as Tailscale, but for the local TB5 network.
-- **OpenAI-compatible API**: Drop-in replacement for any code calling OpenAI. Change the base URL to `http://localhost:52415` and it works.
-- **macOS app**: Ships as `.dmg` — runs in background, menu bar icon.
-- **Tier 1 support**: Mac Studio M3 Ultra, Mac Mini M4 Pro, MacBook Pro M4 Max/M5 — exactly the hardware in this cluster.
-- **48 model cards** out of the box: Llama, Qwen, DeepSeek, Kimi, MiniMax, GLM, GPT-OSS, plus FLUX image models.
-
-### Timeline
-
-exo is a Phase 5+ addition — after k3s is running, after ADR-0024 search is operational, after the Mac Studio arrives. The dependency chain:
-
-1. Mac Studio purchase → hardware foundation
-2. k3s cluster (this ADR) → service orchestration
-3. ADR-0024 pipeline → session indexing + taxonomy
-4. ADR-0021 Phases 1-4 → memory pipeline
-5. **exo → local LLM inference for Observer, Reflector, gateway, and direct conversation**
-
-At that point, the system is a self-contained AI OS: CUDA inference for throughput, MLX inference for capacity, local embedding, local search, local orchestration, 64 TB storage — with API access as an optional enhancement rather than a dependency.
-
-When exo ships CUDA support (Tier 1 planned on their roadmap), the NVIDIA box joins the exo cluster directly. At that point, the combined cluster has 192 GB unified + 48 GB VRAM = models can spill from VRAM to unified memory across the mesh. That's the endgame: a heterogeneous compute fabric where the scheduler picks the fastest available hardware for each inference request.
-
-## Verification Criteria (if accepted)
-
-- [ ] `kubectl get nodes` shows at least 2 nodes (Mac Mini + clanker-001)
-- [ ] All current services (Inngest, Qdrant, Redis, Caddy, worker) running as k8s workloads
-- [ ] `kubectl get pods -A` provides unified view across all machines
-- [ ] pdf-brain on clanker-001 managed as a k8s Deployment
-- [ ] Health checks and auto-restart working (kill a pod, confirm it recovers)
-- [ ] All manifests version-controlled in the joelclaw monorepo
-- [ ] Prometheus + Grafana deployed via Helm (ADR-0006 realized)
-- [ ] No regression: all existing Inngest functions still register and execute
+Every node added is a machine to maintain, update, monitor, and debug. The family relies on this. Keep it as simple as the workload allows.
