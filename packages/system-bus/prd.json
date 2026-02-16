@@ -1,16 +1,16 @@
 {
-  "title": "ADR-0021 Phase 1 Loop B: Implement observe Inngest function",
+  "title": "ADR-0021 Phase 1 Loop B: Create observe.ts Inngest function",
   "stories": [
     {
       "id": "OBS-1",
-      "title": "Create observe.ts Inngest function skeleton",
-      "description": "Create src/inngest/functions/observe.ts with observeSessionFunction that triggers on 'memory/session.compaction.pending' and 'memory/session.ended'. Import OBSERVER_SYSTEM_PROMPT and OBSERVER_USER_PROMPT from ./observe-prompt. Import parseObserverOutput from ./observe-parser. Import inngest client from ../client.ts. Create function with 6 step.run placeholders: validate-input, call-observer-llm, parse-observations, store-to-qdrant, update-redis-state, emit-accumulated. Return success status.",
+      "title": "Create observe.ts with function scaffold and event triggers",
+      "description": "Create src/inngest/functions/observe.ts exporting observeSessionFunction. Configure triggers for 'memory/session.compaction.pending' and 'memory/session.ended' events. Add basic function structure with inngest.createFunction including id 'memory/observe-session' and name 'Observe Session'. Import existing OBSERVER_SYSTEM_PROMPT and OBSERVER_USER_PROMPT from ./observe-prompt.ts. Set up step.run placeholders for the 6 required steps: validate-input, call-observer-llm, parse-observations, store-to-qdrant, update-redis-state, emit-accumulated.",
       "acceptance_criteria": [
-        "src/inngest/functions/observe.ts exists and exports observeSessionFunction",
-        "Function triggers on both 'memory/session.compaction.pending' and 'memory/session.ended'",
-        "Imports OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT from ./observe-prompt",
-        "Imports parseObserverOutput from ./observe-parser",
-        "Has 6 step.run calls with correct step IDs",
+        "File src/inngest/functions/observe.ts exists",
+        "Exports observeSessionFunction using inngest.createFunction",
+        "Configured with both event triggers: 'memory/session.compaction.pending' and 'memory/session.ended'",
+        "Imports OBSERVER_SYSTEM_PROMPT and OBSERVER_USER_PROMPT from ./observe-prompt.ts",
+        "Contains step.run placeholders for all 6 steps with correct names",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 1,
@@ -19,13 +19,13 @@
     {
       "id": "OBS-2",
       "title": "Implement validate-input and call-observer-llm steps",
-      "description": "In src/inngest/functions/observe.ts, implement the validate-input step to extract event.data.messages, event.data.trigger, event.data.sessionId and return early if messages is empty. Implement call-observer-llm step to spawn pi CLI using Bun.spawn: 'pi', ['-p', '--no-session', '--model', 'anthropic/claude-haiku-4-5'] with stdin containing OBSERVER_SYSTEM_PROMPT + OBSERVER_USER_PROMPT with messages interpolated. Capture stdout and return it.",
+      "description": "In observe.ts, implement the validate-input step to verify event.data contains required session data. Implement call-observer-llm step using pi CLI as subprocess (Bun.$) with OBSERVER_SYSTEM_PROMPT and OBSERVER_USER_PROMPT. Capture stdout/stderr and handle errors. The pi subprocess should receive the prompts and session context.",
       "acceptance_criteria": [
-        "validate-input step extracts sessionId, trigger, messages from event.data",
-        "validate-input returns early if messages array is empty",
-        "call-observer-llm spawns pi subprocess with correct args",
-        "call-observer-llm uses Bun.spawn to capture stdout",
-        "Prompts are interpolated correctly",
+        "validate-input step checks for required event.data fields and throws if missing",
+        "call-observer-llm step spawns pi subprocess using Bun.$",
+        "Prompts from observe-prompt.ts are passed to pi CLI correctly",
+        "Step captures and returns LLM output as string",
+        "Error handling for subprocess failures is present",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 2,
@@ -33,12 +33,13 @@
     },
     {
       "id": "OBS-3",
-      "title": "Implement parse-observations step",
-      "description": "In src/inngest/functions/observe.ts, implement the parse-observations step. Call parseObserverOutput(stdout) from ./observe-parser with the LLM output from previous step. Return the parsed ObserverOutput object containing observations array, segments, currentTask, and suggestedResponse.",
+      "title": "Implement parse-observations step using observe-parser",
+      "description": "In observe.ts, implement parse-observations step using parseObserverOutput from ./observe-parser.ts. Pass the LLM output from call-observer-llm step to parser. Handle parsing errors gracefully and return structured observations including segments, concepts, and facts.",
       "acceptance_criteria": [
-        "parse-observations step calls parseObserverOutput with LLM stdout",
-        "Returns ObserverOutput type from observe-parser",
-        "Handles parsing errors gracefully",
+        "parse-observations step imports and calls parseObserverOutput from ./observe-parser.ts",
+        "Step receives output from previous call-observer-llm step",
+        "Returns structured observation data (segments, concepts, facts)",
+        "Includes error handling for malformed LLM output",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 3,
@@ -47,13 +48,14 @@
     {
       "id": "OBS-4",
       "title": "Implement store-to-qdrant step",
-      "description": "In src/inngest/functions/observe.ts, implement the store-to-qdrant step. Import QdrantClient from @qdrant/js-client-rest. Connect to localhost:6333. Upsert a point to 'memory_observations' collection with: id as UUID v4, vector as 768-dimensional zero array, payload containing sessionId, trigger, observations (array), segments (JSON string), currentTask, suggestedResponse, capturedAt (ISO timestamp), date (YYYY-MM-DD from capturedAt).",
+      "description": "In observe.ts, implement store-to-qdrant step using @qdrant/js-client-rest. Connect to localhost:6333, use collection 'memory_observations'. Store each observation with 768-dimension zero vector placeholder (temporary until embeddings added later). Include metadata: session_id, timestamp, observation type. Handle connection and storage errors.",
       "acceptance_criteria": [
-        "Imports QdrantClient from @qdrant/js-client-rest",
+        "store-to-qdrant step imports QdrantClient from @qdrant/js-client-rest",
         "Connects to localhost:6333",
-        "Upserts to 'memory_observations' collection",
-        "Point has UUID id, 768-dim zero vector, complete payload",
-        "Payload includes sessionId, trigger, observations, segments JSON, currentTask, suggestedResponse, capturedAt, date",
+        "Uses collection name 'memory_observations'",
+        "Stores observations with 768-dim zero vector placeholder",
+        "Includes required metadata fields in payloads",
+        "Error handling for Qdrant connection/storage failures",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 4,
@@ -62,14 +64,13 @@
     {
       "id": "OBS-5",
       "title": "Implement update-redis-state and emit-accumulated steps",
-      "description": "In src/inngest/functions/observe.ts, implement update-redis-state step using Redis client from inngest client. SET key 'memory:latest:{date}' with JSON.stringify of metadata object containing sessionId, trigger, observationCount, capturedAt. Implement emit-accumulated step to send 'memory/observations.accumulated' event with sessionId, date, observationCount in event.data. Return final success object.",
+      "description": "In observe.ts, implement update-redis-state step to update Redis key pattern 'memory:latest:{date}' with observation summary. Implement emit-accumulated step to emit 'memory/observations.accumulated' event with session_id and observation count. Use Redis client for state update and inngest event emission.",
       "acceptance_criteria": [
-        "update-redis-state uses Redis from inngest client context",
-        "Sets 'memory:latest:{date}' key with JSON metadata",
-        "Metadata includes sessionId, trigger, observationCount, capturedAt",
-        "emit-accumulated sends 'memory/observations.accumulated' event",
-        "Event data includes sessionId, date, observationCount",
-        "Function returns success status object",
+        "update-redis-state step updates Redis with key pattern 'memory:latest:{date}'",
+        "Redis update includes observation summary/metadata",
+        "emit-accumulated step emits 'memory/observations.accumulated' event",
+        "Emitted event includes session_id and observation count in data",
+        "Both steps include error handling",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 5,
@@ -77,13 +78,13 @@
     },
     {
       "id": "OBS-6",
-      "title": "Register observe function in index.ts and serve.ts",
-      "description": "Import observeSessionFunction in src/inngest/functions/index.ts and add to the functions array. Import observeSessionFunction in src/serve.ts and add to the serve handler's functions array. Ensure no duplicate trigger registrations.",
+      "title": "Register observeSessionFunction in index.ts and serve.ts",
+      "description": "Import observeSessionFunction from ./observe.ts into both src/inngest/functions/index.ts and src/serve.ts. Add to the functions array in both files. Ensure no duplicate event trigger registrations. Verify the function is properly exported and available for Inngest server.",
       "acceptance_criteria": [
         "src/inngest/functions/index.ts imports and exports observeSessionFunction",
-        "src/serve.ts imports observeSessionFunction",
-        "observeSessionFunction is in both function arrays",
-        "No duplicate trigger warnings in Inngest",
+        "src/serve.ts imports and includes observeSessionFunction in serve() call",
+        "No duplicate event trigger warnings or errors",
+        "Function appears in both registration locations",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 6,
