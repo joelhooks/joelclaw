@@ -438,6 +438,11 @@ export type Events = {
       requestedBy?: string;
     };
   };
+  "content/updated": {
+    data: {
+      source?: string; // "fswatch" | "agent" | "manual"
+    };
+  };
 
   // --- Legacy ---
   "pipeline/video.ingested": {

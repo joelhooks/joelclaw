@@ -3,9 +3,8 @@ export { transcriptProcess } from "./transcript-process";
 export { summarize } from "./summarize";
 export { systemLogger } from "./system-logger";
 export { observeSessionFunction } from "./observe";
-export { adrSync } from "./adr-sync";
+export { contentSync } from "./content-sync";
 export { discoveryCapture } from "./discovery-capture";
-export { discoverySync } from "./discovery-sync";
 export {
   agentLoopPlan,
   agentLoopTestWriter,
