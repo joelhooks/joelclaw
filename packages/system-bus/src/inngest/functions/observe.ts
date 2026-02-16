@@ -350,20 +350,17 @@ Session context:
         observation_count: observationCount,
         capturedAt,
       };
-      const normalizedAccumulatedData = JSON.parse(
-        JSON.stringify(accumulatedData)
-      ) as typeof accumulatedData;
 
       try {
         await inngest.send({
           name: "memory/observations.accumulated",
-          data: normalizedAccumulatedData,
+          data: accumulatedData,
         });
 
         return {
           emitted: true,
           name: "memory/observations.accumulated",
-          data: normalizedAccumulatedData,
+          data: accumulatedData,
           observationCount,
           redisUpdated: redisStateResult,
         };
@@ -372,7 +369,7 @@ Session context:
         return {
           emitted: false,
           name: "memory/observations.accumulated",
-          data: normalizedAccumulatedData,
+          data: accumulatedData,
           error: message,
           observationCount,
           redisUpdated: redisStateResult,
