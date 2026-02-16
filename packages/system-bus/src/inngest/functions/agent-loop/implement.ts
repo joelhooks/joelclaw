@@ -19,6 +19,7 @@ import {
   readLessons,
   readRecommendations,
   readPatterns,
+  ensureClaudeAuth,
 } from "./utils";
 
 /**
@@ -229,6 +230,7 @@ async function spawnToolHost(
       cmd = ["codex", "exec", "--full-auto", prompt];
       break;
     case "claude":
+      ensureClaudeAuth();
       cmd = ["claude", "-p", prompt, "--output-format", "text", "--dangerously-skip-permissions"];
       break;
     case "pi":

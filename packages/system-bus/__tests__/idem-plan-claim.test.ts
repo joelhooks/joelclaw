@@ -144,6 +144,7 @@ async function makePlanEngine(loopId: string, extraSteps?: InngestTestEngine.Opt
       { id: "verify-worktree", handler: () => {} },
       { id: "check-cancel", handler: () => false },
       { id: "read-prd", handler: () => PRD },
+      { id: "emit-test", handler: () => {} }, // Prevent real events hitting live Inngest
       ...(extraSteps ?? []),
     ],
   });

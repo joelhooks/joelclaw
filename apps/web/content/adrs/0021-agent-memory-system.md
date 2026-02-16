@@ -16,6 +16,7 @@ credits:
   - "Mastra AI ([@mastra-ai](https://github.com/mastra-ai/mastra)) — Observational Memory pattern, Observer/Reflector two-agent architecture, async buffering design, priority-based extraction, compression guidance, continuation hints. MIT licensed. Source: packages/memory/src/processors/observational-memory/"
   - "Alex Hillman ([@alexknowshtml](https://github.com/alexknowshtml)) — kuato (session recall, 'user messages are the signal'), andy-timeline (narrative memory, weekly chapter format), defib (health monitoring, auto/ask/deny taxonomy). Indy Hall co-founder, Stacking the Bricks."
   - "John Lindquist ([@johnlindquist](https://github.com/johnlindquist)) — lamarck (session → reflection → playbook → MEMORY.md pipeline, Lamarckian inheritance metaphor, bullet lifecycle, feedback decay, secret redaction). egghead.io co-founder, Script Kit creator."
+  - "Simen Svale / Sanity ([@sanity-io](https://github.com/sanity-io)) — Nuum memory architecture: distillation over summarization, segment-aware extraction (coherent conversation segments vs flat observation lists), dual-distillate format (operational context + retained facts), recursive distillation with temporal gradient, Reflect tool for on-demand recall. Source: https://www.sanity.io/blog/how-we-solved-the-agent-memory-problem"
 ---
 
 # ADR-0021: Adopt Comprehensive Agent Memory System
@@ -61,6 +62,42 @@ This ADR consolidates everything into one canonical specification.
 - 39% started with manual handoff files (now automated by session-lifecycle)
 - 0 sessions used `/resume` or `/tree` branching
 - Average session: 5-24 user messages
+
+### Nuum refinement (2026-02-15, post-initial design)
+
+After Phase 1 implementation began (MEM-1 through MEM-4 complete), analysis of Sanity's Nuum memory architecture ([blog post](https://www.sanity.io/blog/how-we-solved-the-agent-memory-problem)) revealed a strictly better extraction strategy than the flat observation list in the original Observer design.
+
+**Key Nuum insight: distillation, not summarization.** "Compressing unrelated messages together produces mush. Compressing related messages produces useful abstraction." And: "A summary of a debugging session tells you the story. A distillation tells you the file path, the fix, and the gotcha to avoid next time."
+
+**What Nuum does differently:**
+
+1. **Segment-aware extraction.** Instead of extracting a flat list of priority-tagged observations from the full message dump, Nuum identifies *coherent conversation segments* — groups of 10-50 messages clustered by topic (debugging a specific bug, implementing a feature, making a decision). Boundaries detected by topic shifts, natural breakpoints (bug fixed, feature committed), and temporal clustering.
+
+2. **Dual distillates per segment.** Each segment produces two outputs:
+   - *Operational context* (1-3 sentences): what happened — the narrative for orientation.
+   - *Retained facts* (bullet list): specific file paths, values, decisions with rationale, gotchas, error messages and fixes — for continuing work.
+
+3. **Recursive distillation.** Distillations can be distilled again, creating a temporal gradient: last few hours = full detail, yesterday = distilled segments, last week = meta-distillations, older = increasingly abstract. Only the most durable insights survive.
+
+4. **Reflect tool.** An on-demand sub-agent with full-text search over all temporal messages + LTM knowledge base. The main agent asks a question ("what did we decide about Redis TTLs?"), the reflect agent searches and returns a synthesized answer. "Illusion of perfect recall without loading everything into context."
+
+5. **Three-tier architecture** (maps to ours):
+   - Tier 1: Temporal Memory (full messages, searchable) ≈ our Foundation
+   - Tier 2: Distilled Memory (compressed segments with narrative + facts) ≈ our Processing
+   - Tier 3: Long-Term Memory (durable knowledge, injected into system prompt) ≈ our Identity
+
+**What we adopt:**
+
+- **Segment-aware Observer prompt** (Phase 1 addendum, MEM-7): Refactor `OBSERVER_SYSTEM_PROMPT` to identify coherent conversation segments before extracting. Per segment: operational context + retained facts with priority markers. Output uses `<segment>` tags within `<observations>`. Backward-compatible: parser falls back to flat format.
+- **Segment-aware parser** (Phase 1 addendum, MEM-8-10): `DistilledSegment` interface, `parseSegments()`, updated `optimizeForContext()` and `formatSegmentsForLog()`.
+- **Recursive distillation** (Phase 2 enhancement): Reflector re-distills observations older than 3 days more aggressively. Temporal gradient emerges from repeated compression.
+- **Reflect tool** (new Phase 5 capability): Pi skill or extension tool for on-demand Qdrant + Redis memory search mid-session.
+
+**What we don't adopt:**
+
+- **Continuous context window monitoring.** Nuum watches token count and proactively compresses at ~60% capacity. We trigger on compaction/shutdown events — simpler, durable via Inngest, and pi's compaction handles context window management separately.
+- **In-process background workers.** Nuum runs distillation and LTM curation in-process. Our pipeline is Inngest functions — durable, observable, retryable.
+- **Auto-writing LTM.** Nuum's LTM Curator directly creates/updates knowledge entries. We stage proposals in REVIEW.md for human review — trust-first approach until the pipeline proves reliable.
 
 ## Decision
 
@@ -314,6 +351,7 @@ Each observation is embedded as one Qdrant point. The `text` payload contains th
 
 Observations append to `~/.joelclaw/workspace/memory/YYYY-MM-DD.md`:
 
+**Flat format (Loop A):**
 ```markdown
 ### 🔭 Observations (session: {sessionName}, {HH:MM})
 
@@ -326,6 +364,28 @@ Date: 2026-02-15
 * 🔴 (09:20) ADR-0014 superseded by ADR-0021 — comprehensive memory system spec
 * 🟡 (09:25) Session-lifecycle extension v0.3.0 handles briefing, compaction flush, shutdown
 * 🟢 (09:30) Considered Qdrant for observation search — decided to dual-write from Phase 1
+
+**Current task**: Building comprehensive memory system ADR
+```
+
+**Segment-aware format (Loop B, via `formatSegmentsForLog`):**
+```markdown
+### 🔭 Observations (session: {sessionName}, {HH:MM})
+
+**Trigger**: compaction | shutdown
+**Files**: {filesModified count} modified, {filesRead count} read
+
+#### Debugged Inngest worker registration
+*Debugged the Inngest worker registration failure. Root cause: duplicate event trigger across two functions. Fixed by removing the stale trigger from video-download.ts.*
+
+* 🔴 (09:15) Inngest rejects function registration when two functions share the same event trigger — silent failure
+* 🔴 (09:20) The fix was removing `video.requested` trigger from video-download.ts
+* 🟡 (09:25) Docker logs show registration errors that worker stderr does not
+
+#### Accepted ADR-0019 past-tense naming
+*Reviewed and accepted ADR-0019 for past-tense event naming. Renamed 19 files, 219 tests pass.*
+
+* 🔴 (10:00) All Inngest events now use past-tense naming: `video.requested` not `video.request`
 
 **Current task**: Building comprehensive memory system ADR
 ```
@@ -361,6 +421,8 @@ Session-lifecycle briefing includes: `"📋 5 pending memory proposals in REVIEW
 ### Observer Prompt
 
 Adapted from Mastra's `CURRENT_OBSERVER_EXTRACTION_INSTRUCTIONS` (`observer-agent.ts` lines ~100-340) for system-engineering context. The original is optimized for consumer chatbot memory (personal facts, preferences, social context). This version weights toward infrastructure decisions, debugging insights, and system state changes.
+
+> **Evolution note (2026-02-15):** The flat observation format below was implemented in Phase 1 Loop A (MEM-2/MEM-3). Phase 1 Loop B (MEM-7) refactors this to segment-aware distillation per Nuum: identify coherent conversation segments first, then extract operational context + retained facts per segment. The flat format remains as fallback. See "Nuum refinement" section above and Loop B PRD stories MEM-7 through MEM-10.
 
 ```typescript
 // ~/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/observe-prompt.ts
@@ -425,7 +487,7 @@ These persist for hours. Extract when:
 7. **NO TOOL OUTPUT REGURGITATION**: Don't repeat file contents, command output, or code blocks.
    Observe the DECISION or INSIGHT that resulted from them.
 
-## Output Format
+## Output Format (flat — Phase 1 Loop A, superseded by segment format below)
 
 <observations>
 Date: {YYYY-MM-DD}
@@ -434,6 +496,40 @@ Date: {YYYY-MM-DD}
 * 🔴 ({HH:MM}) {observation}
 * 🟡 ({HH:MM}) {observation}
 * 🟢 ({HH:MM}) {observation}
+</observations>
+
+<current-task>
+Primary: {what was being worked on when the session ended/compacted}
+Secondary: {other active threads, if any}
+</current-task>
+
+<suggested-response>
+{If interrupted by compaction: how should the agent continue? What was the last user intent?}
+{If session ended normally: "Session completed normally."}
+</suggested-response>
+
+## Output Format (segment-aware — Phase 1 Loop B, MEM-7)
+
+<observations>
+Date: {YYYY-MM-DD}
+
+<segment>
+<narrative>Debugged the Inngest worker registration failure. Root cause: duplicate event trigger across two functions. Fixed by removing the stale trigger from video-download.ts.</narrative>
+<facts>
+* 🔴 ({HH:MM}) Inngest rejects function registration when two functions share the same event trigger — silent failure, no error in worker logs
+* 🔴 ({HH:MM}) The fix was removing `video.requested` trigger from video-download.ts (already handled by video-ingest.ts)
+* 🟡 ({HH:MM}) Docker logs (`docker logs system-bus-inngest-1`) show registration errors that worker stderr does not
+</facts>
+</segment>
+
+<segment>
+<narrative>Reviewed and accepted ADR-0019 for past-tense event naming. Renamed 19 files, 219 tests pass.</narrative>
+<facts>
+* 🔴 ({HH:MM}) All Inngest events now use past-tense naming: `video.requested` not `video.request`
+* 🟡 ({HH:MM}) Agent loop chain order: started → story.dispatched → tests.written → code.committed → checks.completed → story.passed/failed/retried → completed
+</facts>
+</segment>
+
 </observations>
 
 <current-task>
@@ -456,6 +552,8 @@ export const OBSERVER_USER_PROMPT = (messages: string, trigger: string, sessionN
 ### Observer Output Parser
 
 Resilient XML parser with list-item fallback, adapted from Mastra's `parseObserverOutput()` (`observer-agent.ts` lines ~560-580).
+
+> **Evolution note (2026-02-15):** Phase 1 Loop B (MEM-8) adds `DistilledSegment` interface and `parseSegments()` for the segment-aware format. `ObserverOutput` gains a `segments: DistilledSegment[]` field. Empty array = flat format fallback (backward compatible).
 
 ```typescript
 // ~/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/observe-parser.ts
@@ -659,8 +757,14 @@ Replace pi's compaction summary with an observation-enriched one by returning a 
 11. Write unit tests: `observe-parser.test.ts`, dedupe key generation
 12. Run golden test: 3 real transcripts → Observer → manual quality review
 
+**Phase 1 addendum — Nuum segment-aware distillation (Loop B, post MEM-6):**
+13. Refactor `OBSERVER_SYSTEM_PROMPT` to segment-aware distillation — identify coherent conversation segments, per segment produce operational context + retained facts with `<segment>` tags
+14. Add `DistilledSegment` interface and `parseSegments()` to `observe-parser.ts`, update `ObserverOutput` with `segments` field (backward-compatible)
+15. Update `optimizeForContext` for segment-aware format + add `formatSegmentsForLog()` for daily log rendering
+16. Update `observe-parser.test.ts` with segment-aware test cases (all existing tests must still pass)
+
 **Phase 2 (Reflector + review):**
-13. Create `reflect.ts`, `reflect-prompt.ts` in system-bus functions
+17. Create `reflect.ts`, `reflect-prompt.ts` in system-bus functions
 14. Create REVIEW.md format with proposal IDs
 15. Add REVIEW.md reading + nudge to session-lifecycle briefing
 16. Write tests: compression validation, retry escalation, REVIEW.md format
@@ -731,9 +835,9 @@ Replace pi's compaction summary with an observation-enriched one by returning a 
 - Golden: 3 real session transcripts → Observer → manual quality review
 - Structural: `bunx tsc --noEmit` passes
 
-### Phase 2: Reflector + Review Staging
+### Phase 2: Reflector + Review Staging + Recursive Distillation
 
-**Target**: Observations condense into MEMORY.md proposals, staged for review.
+**Target**: Observations condense into MEMORY.md proposals, staged for review. Older observations are recursively distilled to create a temporal gradient (Nuum pattern).
 
 **Affected paths:**
 - `~/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/reflect.ts` — new
@@ -744,7 +848,8 @@ Replace pi's compaction summary with an observation-enriched one by returning a 
 - Create `reflect.ts`:
   - Triggered by `memory/observations.accumulated` OR daily cron (`0 6 * * *` — 6 AM PST)
   - Step 1 (`load-observations`): `LRANGE memory:observations:{date} 0 -1` for all dates in period
-  - Step 2 (`reflect`): Call `pi -p --no-session --model sonnet-4.5 --system-prompt {reflectorPrompt}` with observations + existing MEMORY.md as user prompt
+  - Step 1b (`recursive-distill`): For observations older than 3 days, apply recursive distillation — compress segments more aggressively, keeping only narratives + 🔴 facts. This creates the Nuum temporal gradient: recent segments stay detailed, older ones become abstract. Re-distilled entries replace originals in Redis (LSET by index).
+  - Step 2 (`reflect`): Call `pi -p --no-session --model sonnet-4.5 --system-prompt {reflectorPrompt}` with observations + existing MEMORY.md as user prompt. When segment-aware observations are present, the Reflector sees structured segments (narrative + facts) rather than flat bullet lists.
   - Step 3 (`validate`): `validateCompression(inputTokens, outputTokens)`. If fails, retry with `COMPRESSION_GUIDANCE[level]` up to level 2.
   - Step 4 (`stage-review`): Parse `<proposals>` → write/append `REVIEW.md`
   - Step 5 (`append-daily-log`): Write `### 🔭 Reflected` summary to daily log
@@ -842,14 +947,32 @@ This phase is a **consumer** of the observation pipeline, not part of it. It run
 
 **Gating condition**: Phase 4 requires at least 2 weeks of observation data in Qdrant to produce meaningful cross-session patterns. Do not implement until Phases 1-2 have been running in production.
 
-### Phase 5: Future Enhancements (roadmap only)
+### Phase 5: Reflect Tool (on-demand memory recall)
+
+**Target**: Agents can query accumulated memory mid-session without loading full history into context. Nuum pattern: "illusion of perfect recall."
+
+**Affected paths:**
+- `~/.pi/agent/skills/reflect/` — new pi skill, OR
+- `~/Code/joelhooks/pi-tools/` — new pi extension tool
+
+**Concept**: A pi skill or tool that, when invoked by an agent ("what did we decide about Redis TTLs?" or "reflect on the Inngest worker debugging"), spawns a sub-agent with:
+- Full-text search over Redis temporal memory (`LRANGE` + keyword filter)
+- Semantic search over Qdrant `memory_observations` (dense + BM25 + RRF)
+- Access to current MEMORY.md (curated long-term memory)
+- Returns a synthesized answer — not raw observations, but a coherent response to the query
+
+**Why this matters**: Without it, agents only see MEMORY.md (curated, possibly stale) and the daily log (verbose, unstructured). The Reflect tool gives access to the full observation history — including segment narratives, retained facts, and distilled context from weeks ago — without consuming context window tokens until specifically asked.
+
+**Gating condition**: Requires Phases 1-2 operational (observations in Qdrant, distilled segments in Redis) to return meaningful results.
+
+### Phase 6: Future Enhancements (roadmap only)
 
 - **Lamarck-style bullet lifecycle**: candidate → established → proven → deprecated with feedback decay. Layer on top of Reflector proposals once the review workflow proves reliable.
 - **Timeline narrative**: weekly chapter generation from observations + git activity (andy-timeline pattern). Writes to `~/Vault/system/timeline/`.
-- **Semantic memory search skill**: agents query Qdrant `memory_observations` via MCP or CLI for "what do we know about X?" — returns observation text with source session links.
 - **Auto-promotion with trust score**: After N successful review cycles, auto-promote 🔴 proposals. Track acceptance rate per category to calibrate trust threshold.
 - **Pi TUI status bar extension**: subtle footer notification for pending reviews.
 - **Friction → auto-fix pipeline**: For low-risk friction fixes (stale MEMORY.md entries, missing Hard Rules), auto-apply and notify rather than staging for review.
+- **Nuum-style continuous distillation**: Monitor context window fill rate and proactively distill at ~60% capacity, rather than waiting for compaction/shutdown events. Would require deeper pi integration (custom compaction handler).
 
 ## Verification Criteria
 
@@ -868,6 +991,19 @@ This phase is a **consumer** of the observation pipeline, not part of it. It run
 - [ ] `igs runs --status COMPLETED --hours 1` shows observe function runs with step traces
 - [ ] Redis down → Inngest retries function (visible as retry count > 0 in `igs run {id}`)
 - [ ] Golden test: 3 real transcripts → Observer output reviewed manually → each has ≥1 🔴 observation, no hallucinated timestamps, no regurgitated tool output
+
+### Phase 1 addendum (Loop B) — Must pass before shipping
+- [ ] `OBSERVER_SYSTEM_PROMPT` instructs segment identification (topic shifts, natural breakpoints, temporal clustering)
+- [ ] Each segment produces operational context (narrative) + retained facts (bullets with 🔴/🟡/🟢)
+- [ ] Output uses `<segment>` tags with `<narrative>` and `<facts>` children inside `<observations>`
+- [ ] `DistilledSegment` interface exported from `observe-parser.ts`
+- [ ] `parseSegments()` extracts segments from `<segment>` blocks
+- [ ] `ObserverOutput` includes `segments: DistilledSegment[]` (empty array for flat format — backward compatible)
+- [ ] `optimizeForContext` handles both segment and flat formats
+- [ ] `formatSegmentsForLog` renders segments as readable markdown for daily log
+- [ ] All existing MEM-6 tests still pass (backward compat)
+- [ ] New tests cover segment parsing, backward compat, optimizeForContext with segments, formatSegmentsForLog
+- [ ] `bunx tsc --noEmit` passes
 
 ### Phase 2 — Must pass before shipping
 - [ ] Reflector output < input tokens (compression validation)

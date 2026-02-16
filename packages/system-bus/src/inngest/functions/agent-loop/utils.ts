@@ -5,6 +5,21 @@ import Redis from "ioredis";
 
 const LOOP_TMP = "/tmp/agent-loop";
 
+/**
+ * Verify Claude CLI auth token is available before spawning.
+ * Fails fast with a clear error instead of getting a cryptic "Not logged in"
+ * three steps into a loop run.
+ */
+export function ensureClaudeAuth(): void {
+  if (!process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+    throw new Error(
+      "CLAUDE_CODE_OAUTH_TOKEN not set. Claude CLI will fail with 'Not logged in'. " +
+      "Fix: run 'claude setup-token', store with 'secrets add claude_oauth_token --value <token>', " +
+      "and ensure start.sh leases it at worker startup."
+    );
+  }
+}
+
 export function formatLoopDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return "0s";
 
@@ -709,6 +724,7 @@ export async function llmEvaluate(opts: {
   ].join("\n");
 
   try {
+    ensureClaudeAuth();
     const proc = Bun.spawn(
       ["claude", "-p", prompt, "--output-format", "json"],
       { stdout: "pipe", stderr: "pipe" }
@@ -819,6 +835,7 @@ export async function spawnInContainer(
       toolCmd = `codex exec --full-auto "${prompt.replace(/"/g, '\\"')}"`;
       break;
     case "claude":
+      ensureClaudeAuth();
       toolCmd = `claude -p "${prompt.replace(/"/g, '\\"')}" --output-format text`;
       break;
     case "pi":

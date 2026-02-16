@@ -1,5 +1,5 @@
 import { inngest } from "../../client";
-import { readPrd, readProgress, writeRecommendations } from "./utils";
+import { readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
@@ -307,6 +307,7 @@ export const agentLoopRetro = inngest.createFunction(
       ].join("\n");
 
       try {
+        ensureClaudeAuth();
         const proc = Bun.spawn(
           ["claude", "-p", prompt, "--output-format", "text"],
           { stdout: "pipe", stderr: "pipe", timeout: 120_000 }

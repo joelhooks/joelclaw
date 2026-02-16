@@ -70,6 +70,7 @@ beforeEach(() => {
   spawnCalls = [];
   mockStdout = '{"verdict":"pass","reasoning":"looks good"}';
   mockExitCode = 0;
+  process.env.CLAUDE_CODE_OAUTH_TOKEN = "test-token";
   installMock();
 });
 
