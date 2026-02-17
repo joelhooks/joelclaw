@@ -90,7 +90,7 @@ Rules:
   ensureClaudeAuth();
   const proc = Bun.spawn(
     ["claude", "-p", prompt, "--output-format", "json"],
-    { cwd: project, stdout: "pipe", stderr: "pipe" }
+    { cwd: project, stdout: "pipe", stderr: "pipe", env: process.env }
   );
 
   const stdout = await new Response(proc.stdout).text();

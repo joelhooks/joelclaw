@@ -46,7 +46,20 @@ export const videoDownload = inngest.createFunction(
       // Clean tmp dir for this run
       await $`rm -rf ${TMP_BASE} && mkdir -p ${TMP_BASE}`.quiet();
 
-      await $`yt-dlp -f "bestvideo[height<=${maxQuality}]+bestaudio/best[height<=${maxQuality}]" --merge-output-format mp4 --write-info-json --write-thumbnail --output "${TMP_BASE}/%(title)s/%(title)s.%(ext)s" ${url}`.quiet();
+      const ytdlp = Bun.spawn(
+        [
+          "yt-dlp",
+          "-f", `bestvideo[height<=${maxQuality}]+bestaudio/best[height<=${maxQuality}]`,
+          "--merge-output-format", "mp4",
+          "--write-info-json",
+          "--write-thumbnail",
+          "--output", `${TMP_BASE}/%(title)s/%(title)s.%(ext)s`,
+          url,
+        ],
+        { stdout: "pipe", stderr: "pipe", env: process.env }
+      );
+      await ytdlp.exited;
+      // non-zero exit will surface as missing files below
 
       // Find the subdirectory yt-dlp created
       const entries = await readdir(TMP_BASE, { withFileTypes: true });

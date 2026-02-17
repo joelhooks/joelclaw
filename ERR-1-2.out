@@ -1,0 +1,9 @@
+Here's a summary of the two fixes made:
+
+**Root cause**: Bun's `$` shell template tag doesn't pick up runtime changes to `process.env.PATH`, so the tests' fake binaries weren't being invoked.
+
+**`plan.ts`** — Added `env: process.env` to the `Bun.spawn(["claude", ...])` call. This ensures the modified `PATH` (with the fake `claude` binary prepended by the test) is passed to the subprocess.
+
+**`video-download.ts`** — Replaced the `$\`yt-dlp ...\`.quiet()` call with `Bun.spawn(["yt-dlp", ...], { ..., env: process.env })`. This serves two purposes:
+1. The fake `yt-dlp` binary installed by the test is now found via the modified PATH.
+2. yt-dlp failure (non-zero exit) no longer throws a `ShellError` — it's ignored, and missing output files are detected downstream, allowing the `NonRetriableError("No .info.json found")` to be thrown as expected.
