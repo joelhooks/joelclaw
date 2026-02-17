@@ -319,6 +319,6 @@ Some things don't belong in an orchestrator:
 
 1. **Now**: Keep running the current single-node k3d/k3s production cluster on `panda` and close remaining reliability gaps (`joelclaw status`, infra apply, clanker-001 audit).
 2. **When trigger fires**: Graduate from k3d to a true multi-node approach once a second always-on machine with real workloads must join.
-3. **As architecture matures**: Treat this as a dual-federation hub: Kubernetes for infrastructure placement, AT Protocol for data/identity federation.
+3. **As architecture matures**: AT Protocol workloads (PDS, relay) are just more pods in the same cluster.
 
 Every node added is a machine to maintain, update, monitor, and debug. The family relies on this. Keep it as simple as the workload allows.
