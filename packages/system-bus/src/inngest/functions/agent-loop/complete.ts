@@ -18,7 +18,8 @@ export const agentLoopComplete = inngest.createFunction(
     ],
   },
   [{ event: "agent/loop.completed" }],
-  async ({ event, step }) => {
+  async ({ event, step, ...rest }) => {
+    const gateway = (rest as any).gateway as import("../../middleware/gateway").GatewayContext | undefined;
     const { loopId, project, branchName, storiesCompleted, storiesFailed, workDir, originSession } = event.data;
 
     // Only proceed if branchName is present (set by planner v2)
@@ -39,6 +40,13 @@ export const agentLoopComplete = inngest.createFunction(
         return { cleaned: false };
       }
     });
+
+    // Gateway progress: merge starting
+    if (gateway) {
+      await gateway.progress(`🔀 Merging ${branchName} — ${storiesCompleted} completed, ${storiesFailed} failed`, {
+        loopId, branchName, storiesCompleted, storiesFailed,
+      });
+    }
 
     // Step 1: Merge worktree branch back to main working directory
     const mergeResult = await step.run("merge-to-main", async () => {

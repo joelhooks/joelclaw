@@ -1,4 +1,5 @@
 import { Inngest, EventSchemas } from "inngest";
+import { gatewayMiddleware } from "./middleware/gateway";
 
 /**
  * ADR-0019: Event names describe what happened (past-tense), not commands.
@@ -513,4 +514,5 @@ export type Events = {
 export const inngest = new Inngest({
   id: "system-bus",
   schemas: new EventSchemas().fromRecord<Events>(),
+  middleware: [gatewayMiddleware],
 });

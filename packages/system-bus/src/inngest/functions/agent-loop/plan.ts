@@ -193,7 +193,8 @@ export const agentLoopPlan = inngest.createFunction(
     ],
   },
   [{ event: "agent/loop.started" }, { event: "agent/loop.story.passed" }, { event: "agent/loop.story.failed" }],
-  async ({ event, step }) => {
+  async ({ event, step, ...rest }) => {
+    const gateway = (rest as any).gateway as import("../../middleware/gateway").GatewayContext | undefined;
     const { loopId, project } = event.data;
     const eventWorkDir = event.data.workDir ?? event.data.project;
     const prdPath = event.data.prdPath ?? "prd.json";
@@ -373,6 +374,16 @@ export const agentLoopPlan = inngest.createFunction(
       (s) => s.passes || (s as any).skipped
     ).length;
 
+    // Gateway progress: report story counts at each planning cycle
+    const totalStories = prd.stories.length;
+    const passedStories = prd.stories.filter((s) => s.passes).length;
+    const skippedStories = prd.stories.filter((s) => (s as any).skipped).length;
+    if (gateway && isStartEvent) {
+      await gateway.progress(`🚀 Loop started: ${prd.title ?? loopId} — ${totalStories} stories`, {
+        loopId, totalStories,
+      });
+    }
+
     const remaining = prd.stories
       .filter((s) => !s.passes && !(s as any).skipped)
       .sort((a, b) => a.priority - b.priority);
@@ -381,6 +392,11 @@ export const agentLoopPlan = inngest.createFunction(
     if (attemptedStories >= maxIterations) {
       const completed = prd.stories.filter((s) => s.passes).length;
       const skipped = prd.stories.filter((s) => (s as any).skipped).length;
+      if (gateway) {
+        await gateway.progress(`⏱️ Max iterations (${maxIterations}) reached. ${completed} completed, ${skipped} skipped.`, {
+          loopId, completed, skipped, maxIterations,
+        });
+      }
       await step.sendEvent("emit-complete-max-iterations", {
         name: "agent/loop.completed",
         data: {
@@ -451,6 +467,11 @@ export const agentLoopPlan = inngest.createFunction(
         (r) => r.status === "still-failing"
       ).length;
 
+      if (gateway) {
+        await gateway.progress(`✅ All stories processed. ${completed} completed, ${failed} skipped. Recheck: ${recovered} recovered, ${stillFailing} still failing.`, {
+          loopId, completed, failed, recovered, stillFailing,
+        });
+      }
       await step.sendEvent("emit-complete", {
         name: "agent/loop.completed",
         data: {
@@ -518,6 +539,12 @@ export const agentLoopPlan = inngest.createFunction(
         remaining: remaining.length,
         maxIterations,
       };
+    }
+
+    if (gateway) {
+      await gateway.progress(`🔄 Story ${passedStories + 1}/${totalStories}: ${next.title} (${implTool})`, {
+        loopId, storyId: next.id, tool: implTool,
+      });
     }
 
     await step.sendEvent("emit-test", {
