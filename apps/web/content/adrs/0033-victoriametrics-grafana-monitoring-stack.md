@@ -14,6 +14,10 @@ tags: [kubernetes, monitoring, observability, infrastructure]
 
 # ADR-0033: VictoriaMetrics + Grafana Monitoring Stack
 
+## Supersedes ADR-0006
+
+ADR-0006 proposed Prometheus + Grafana for the same observability goal but under different assumptions: Docker Compose, 8 GB RAM budget, pre-Talos. The system has since migrated to Talos k8s on a 64 GB machine (ADR-0029). VictoriaMetrics is a better fit than raw Prometheus for k8s — lower resources, better compression, native k8s-stack Helm chart. Grafana remains the visualization layer in both.
+
 ## Context and Problem Statement
 
 The Talos cluster has no monitoring. We observe the system via `kubectl get pods`, `talosctl dashboard`, and application logs. There's no metrics collection, no dashboards, no alerting.
