@@ -1,0 +1,2605 @@
+Implemented MEM-4 in the active CLI location (`packages/cli`) since `packages/system-bus/src/cli` does not exist in this workspace.
+
+### Changes made
+- Added new command module: `packages/cli/src/commands/review.ts`
+  - `joelclaw review` (default list behavior)
+  - `joelclaw review list`
+  - `joelclaw review approve <proposalId>` → sends `memory/proposal.approved` with `approvedBy: "joel"`
+  - `joelclaw review reject <proposalId> --reason <text>` → sends `memory/proposal.rejected` with `rejectedBy: "joel"`
+  - `joelclaw review approve-all` → reads Redis pending IDs and sends one approve event per ID
+  - `joelclaw review expire` → checks pending proposals older than 7 days and emits rejection events with expiry reason
+  - List output includes proposal-level `_actions` for approve/reject and is returned in the existing JSON/HATEOAS envelope.
+- Registered command in root CLI: `packages/cli/src/cli.ts`
+  - Added `reviewCmd` import
+  - Added `review` to root command help/command map
+  - Added `reviewCmd` to `Command.withSubcommands(...)`
+
+### Verification
+- `bun test packages/cli/src/commands/review.acceptance.test.ts` passed (7/7).
+- `bunx tsc --noEmit` passed.
+
+
+--- STDERR ---
+OpenAI Codex v0.101.0 (research preview)
+--------
+workdir: /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4
+model: gpt-5.3-codex
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: auto
+session id: 019c6e07-531e-7921-8186-2317c091787d
+--------
+user
+
+
+## Project File Listing
+
+pnpm-lock.yaml
+infra
+vercel.json
+k8s
+turbo.json
+node_modules
+bun.lock
+docs
+README.md
+pid
+package.json
+scripts
+packages
+MEM-2-1.out
+tsconfig.json
+prd.json
+apps
+MEM-3-1.out
+Vault
+MEM-1-1.out
+pnpm-workspace.yaml
+
+---
+
+## Story: Add joelclaw review CLI command (MEM-4)
+
+In packages/system-bus/src/cli/commands/, create review.ts following the same pattern as existing commands (check send.ts, runs.ts, or loop.ts for structure). Implement subcommands: (1) joelclaw review — lists all pending proposals by reading LRANGE memory:review:pending 0 -1 then HGETALL memory:review:proposal:{id} for each, output as HATEOAS JSON with _actions for approve/reject; (2) joelclaw review approve <proposalId> — sends memory/proposal.approved event with approvedBy: 'joel'; (3) joelclaw review reject <proposalId> --reason <text> — sends memory/proposal.rejected event; (4) joelclaw review approve-all — sends one approved event per pending proposal; (5) joelclaw review expire — triggers expiry check for proposals older than 7 days. Register the command in packages/system-bus/src/cli/index.ts.
+
+## Acceptance Criteria
+- review.ts exists in packages/system-bus/src/cli/commands/
+- review command is registered in packages/system-bus/src/cli/index.ts
+- joelclaw review list subcommand reads from Redis and outputs HATEOAS JSON
+- joelclaw review approve sends a memory/proposal.approved Inngest event
+- joelclaw review reject --reason sends a memory/proposal.rejected Inngest event
+- joelclaw review approve-all iterates all pending proposals
+- TypeScript compiles cleanly: bunx tsc --noEmit
+
+## Instructions
+Implement the story above. Do NOT write tests — a separate reviewer will handle testing.
+Make clean, focused changes. Commit nothing — the harness handles git.
+If your changes break existing tests (not just the ones for this story), fix those tests to match the new interface. Changing a type or adding a required field means updating all consumers.
+mcp startup: no servers
+2026-02-17T23:54:59.837283Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6d78-f4bd-70a3-9b26-6d401f72555d
+2026-02-17T23:54:59.933785Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a38-72b9-7fd3-aae0-de7058d752e1
+2026-02-17T23:54:59.986371Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6dfc-ce2b-7351-9877-3cf3dfd942e0
+2026-02-17T23:55:00.035414Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5eca-bff9-7772-83bf-5daab07b9959
+2026-02-17T23:55:00.144245Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5ffd-d51d-7a13-b1fa-342be02f164b
+2026-02-17T23:55:00.280798Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6275-d69e-7b53-bb28-583bfe07e70c
+2026-02-17T23:55:00.417455Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6d76-b1ac-7312-a2bc-33ed66270397
+2026-02-17T23:55:00.518789Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6946-d832-73b3-bade-761321c88a0a
+2026-02-17T23:55:00.651428Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6d85-da78-7b62-99df-11a605673333
+2026-02-17T23:55:00.750984Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6bed-25bc-7141-bf68-7df6c001174c
+2026-02-17T23:55:00.901101Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a5b-ba72-7f61-8273-d02deacae15e
+2026-02-17T23:55:00.969074Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6482-5bab-7e53-bc62-5239d048a3c8
+2026-02-17T23:55:01.083508Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a51-1205-7a00-bbdb-509c1624de3d
+2026-02-17T23:55:01.227828Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a59-ea9c-73e1-b537-9ad62ea24fd1
+2026-02-17T23:55:01.305681Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6d85-394c-7a22-a0ba-b3f326504c0f
+2026-02-17T23:55:01.443360Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6485-58f0-7261-8508-37f3fb9356dd
+2026-02-17T23:55:01.564209Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6e00-a005-7611-9e9c-4eb489c27876
+2026-02-17T23:55:01.635433Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c695b-193b-7040-9529-153a24848595
+2026-02-17T23:55:01.752071Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6e06-ec09-76c2-885f-2d09d13a2034
+2026-02-17T23:55:01.842893Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6031-b7fb-7120-85b5-8abf34324910
+2026-02-17T23:55:01.868779Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fe2-872d-7e93-87a3-71d37d75a127
+2026-02-17T23:55:01.960757Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6d46-f863-7a62-8f46-d697792894dd
+2026-02-17T23:55:02.069298Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a5d-a9a0-7003-8868-edeb59f5a8e9
+2026-02-17T23:55:02.188640Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a4f-9a4d-7c13-aeef-771e0c9a7900
+2026-02-17T23:55:02.278291Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6022-8a12-7ba0-b7e8-9c265e8ec17e
+2026-02-17T23:55:02.387924Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fbb-e145-7c40-9913-218548629e57
+2026-02-17T23:55:02.458902Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c647c-8066-7eb1-8782-06a844370303
+
+2026-02-17T23:55:02.587856Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6bed-24ce-70e2-a3a9-72ea76928828
+thinking
+**Announcing CLI design skill usage**
+2026-02-17T23:55:02.742389Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a58-df8a-7560-894e-8c41ec0bc9ec
+2026-02-17T23:55:02.901156Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6bed-ca0f-7153-9527-6336e87fc2d0
+2026-02-17T23:55:03.002147Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fed-5e04-78c0-9a4e-9fddc7af084e
+2026-02-17T23:55:03.105863Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6d75-a627-7be2-a5b9-708ae8d9ac39
+2026-02-17T23:55:03.208475Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6df8-e840-70b1-8ca3-7f1dc55b0796
+codex
+Implementing MEM-4 now by adding a new `review` CLI command and wiring it into the CLI registry; I’ll first inspect existing command patterns and the `cli-design` skill instructions so the new command matches project conventions exactly.
+exec
+/bin/zsh -lc "ls -la /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4/.agents/skills/cli-design && sed -n '1,220p' /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4/.agents/skills/cli-design/SKILL.md" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4exec
+/bin/zsh -lc "rg --files packages/system-bus/src/cli && rg -n \"command\\(|new Command|export.*command|\\.addCommand|program\" packages/system-bus/src/cli -S" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4 exited 2 in 52ms:
+rg: packages/system-bus/src/cli: IO error for operation on packages/system-bus/src/cli: No such file or directory (os error 2)
+ succeeded in 52ms:
+total 16
+drwxr-xr-x   3 joel  wheel    96 Feb 17 15:33 .
+drwxr-xr-x  57 joel  wheel  1824 Feb 17 15:33 ..
+-rw-r--r--   1 joel  wheel  7578 Feb 17 15:33 SKILL.md
+---
+name: cli-design
+description: "Design and build agent-first CLIs with HATEOAS JSON responses, context-protecting output, and self-documenting command trees. Use when creating new CLI tools, adding commands to existing CLIs (joelclaw, slog, igs), or reviewing CLI design for agent-friendliness. Triggers on 'build a CLI', 'add a command', 'CLI design', 'agent-friendly output', or any task involving command-line tool creation."
+---
+
+# Agent-First CLI Design
+
+CLIs in this system are **agent-first, human-distant-second**. Every command returns structured JSON that an agent can parse, act on, and follow. Humans are welcome to pipe through `jq`.
+
+## Core Principles
+
+### 1. JSON always
+
+Every command returns JSON. No plain text. No tables. No color codes. Agents parse JSON; they don't parse prose.
+
+```bash
+
+thinking
+**Locating app directory**
+codex
+I’ve loaded the `cli-design` skill and will follow its JSON/HATEOAS envelope patterns. The expected `packages/system-bus/src/cli` path does not exist in this workspace, so next I’m locating the actual CLI location and adapting the change there.
+exec
+/bin/zsh -lc 'rg --files | rg "system-bus/.*/cli|/cli/commands/|joelclaw" -n' in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4 succeeded in 52ms:
+41:apps/web/content/adrs/0025-k3s-cluster-for-joelclaw-network.md
+49:apps/web/content/adrs/0009-rename-igs-cli-to-joelclaw.md
+54:apps/web/content/adrs/0003-joelclaw-over-openclaw.md
+175:packages/system-bus/src/inngest/client.test.ts
+214:packages/system-bus/src/inngest/client.ts
+
+thinking
+**Inspecting package structure**
+exec
+/bin/zsh -lc "ls -la packages/system-bus/src && find packages/system-bus/src -maxdepth 3 -type d | sed -n '1,200p'" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4exec
+/bin/zsh -lc "rg -n \"@effect/cli|Command\\.make|next_actions|ok:\\s*true|joelclaw\" packages/system-bus/src -S" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4 succeeded in 52ms:
+total 8
+drwxr-xr-x   4 joel  wheel   128 Feb 17 15:33 .
+drwxr-xr-x  27 joel  wheel   864 Feb 17 15:33 ..
+drwxr-xr-x   6 joel  wheel   192 Feb 17 15:38 inngest
+-rw-r--r--   1 joel  wheel  3218 Feb 17 15:33 serve.ts
+packages/system-bus/src
+packages/system-bus/src/inngest
+packages/system-bus/src/inngest/prompts
+packages/system-bus/src/inngest/functions
+packages/system-bus/src/inngest/functions/agent-loop
+ succeeded in 53ms:
+packages/system-bus/src/inngest/functions/content-sync.ts:12:    dest: "/Users/joel/Code/joelhooks/joelclaw/apps/web/content/adrs/",
+packages/system-bus/src/inngest/functions/content-sync.ts:18:    dest: "/Users/joel/Code/joelhooks/joelclaw/apps/web/content/discoveries/",
+packages/system-bus/src/inngest/functions/content-sync.ts:98:              "/Users/joel/Code/joelhooks/joelclaw/",
+packages/system-bus/src/inngest/functions/content-sync.ts:158:    cwd: "/Users/joel/Code/joelhooks/joelclaw/",
+packages/system-bus/src/inngest/functions/promote.test.ts:193:  workspaceDir = join(tempHome, ".joelclaw", "workspace");
+packages/system-bus/src/inngest/functions/promote.ts:38:  return join(home, ".joelclaw", "workspace", MEMORY_FILE_NAME);
+packages/system-bus/src/inngest/functions/promote.ts:43:  return join(home, ".joelclaw", "workspace", "memory", `${date}.md`);
+packages/system-bus/src/inngest/functions/promote.ts:102:  await mkdir(join(process.env.HOME || process.env.USERPROFILE || "/Users/joel", ".joelclaw", "workspace", "memory"), {
+packages/system-bus/src/inngest/functions/promote.ts:270:  await mkdir(join(process.env.HOME || process.env.USERPROFILE || "/Users/joel", ".joelclaw", "workspace", "memory"), {
+packages/system-bus/src/inngest/functions/observe.ts:289:        ".joelclaw", "workspace", "memory", `${date}.md`
+packages/system-bus/src/inngest/functions/observe.ts:322:        mkdirSync(join(process.env.HOME || "/Users/joel", ".joelclaw", "workspace", "memory"), { recursive: true });
+packages/system-bus/src/inngest/functions/promote-integration.test.ts:190:  workspaceDir = join(tempHome, ".joelclaw", "workspace");
+packages/system-bus/src/inngest/functions/vault-sync.ts:21:const MONOREPO_ROOT = "/Users/joel/Code/joelhooks/joelclaw/";
+packages/system-bus/src/inngest/functions/agent-dispatch.ts:9:  ".joelclaw",
+packages/system-bus/src/inngest/functions/agent-loop/utils.ts:214:  const allSessions = await redis.smembers("joelclaw:gateway:sessions");
+packages/system-bus/src/inngest/functions/agent-loop/utils.ts:218:    await redis.lpush("joelclaw:events:main", json);
+packages/system-bus/src/inngest/functions/agent-loop/utils.ts:219:    await redis.publish("joelclaw:notify:main", notification);
+packages/system-bus/src/inngest/functions/agent-loop/utils.ts:232:    await redis.lpush("joelclaw:events:main", json);
+packages/system-bus/src/inngest/functions/agent-loop/utils.ts:233:    await redis.publish("joelclaw:notify:main", notification);
+packages/system-bus/src/inngest/functions/agent-loop/utils.ts:238:    await redis.lpush(`joelclaw:events:${sessionId}`, json);
+
+thinking
+**Exploring package scripts for CLI**
+codex
+I confirmed this repo currently has no CLI implementation under `packages/system-bus/src`, so I’m checking package scripts and neighboring packages to mirror the correct command architecture before creating the new CLI files from scratch.
+exec
+/bin/zsh -lc "cat package.json && echo '---' && cat packages/system-bus/package.json" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4exec
+/bin/zsh -lc 'rg -n "bunx tsc|tsc --noEmit|system-bus|cli/index|joelclaw review|memory/proposal" -S .' in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4 succeeded in 53ms:
+{
+  "name": "joelclaw",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "check-types": "turbo run check-types"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.32.0",
+    "oxlint": "^1.47.0",
+    "turbo": "^2.8.8",
+    "typescript": "5.9.2"
+  },
+  "engines": {
+    "node": ">=18"
+ succeeded in 53ms:
+Total output lines: 795
+
+./MEM-1-1.out:4:- Removed all `REVIEW.md` staging behavior from `stage-review` in `packages/system-bus/src/inngest/functions/reflect.ts`.
+./MEM-1-1.out:5:- Removed `buildReviewBlock()` entirely from `packages/system-bus/src/inngest/functions/reflect.ts`.
+./MEM-1-1.out:6:- Removed `reviewPath` from staged return payload and final function return in `packages/system-bus/src/inngest/functions/reflect.ts:344` and `packages/system-bus/src/inngest/functions/reflect.ts:388`.
+./MEM-1-1.out:7:- Kept Redis writes unchanged (`hset` + `rpush`) in `packages/system-bus/src/inngest/functions/reflect.ts:323`.
+./MEM-1-1.out:8:- Kept daily log append step unchanged (`appendToFile` still used there) in `packages/system-bus/src/inngest/functions/reflect.ts:351`.
+./MEM-1-1.out:9:- Kept `emit-complete` event emission unchanged in `packages/system-bus/src/inngest/functions/reflect.ts:383`.
+./MEM-1-1.out:12:- Removed assertions about `REVIEW.md` writes/path from `packages/system-bus/src/inngest/functions/reflect.test.ts`.
+./MEM-1-1.out:13:- Renamed one test title to match new behavior in `packages/system-bus/src/inngest/functions/reflect.test.ts:236`.
+./MEM-1-1.out:16:- `bun test packages/system-bus/src/inngest/functions/reflect.test.ts` passed (6 pass, 0 fail).
+./MEM-1-1.out:17:- `bunx tsc --noEmit` passed cleanly.
+./MEM-1-1.out:59:In packages/system-bus/src/inngest/functions/reflect.ts, remove all REVIEW.md file operations from the stage-review step. Specifically: remove the appendToFile(reviewPath, reviewBlock) call, remove the buildReviewBlock() function, remove reviewPath from return values, and remove any imports (appendToFile, existsSync, appendFileSync) that are no longer needed. Keep all Redis operations unchanged: redis.hset('memory:review:proposal:{id}', ...) and redis.rpush('memory:review:pending', ...). Keep the daily log append step and emit-complete event emission unchanged. Update reflect.test.ts to remove any assertions about REVIEW.md file writes.
+./MEM-1-1.out:66:- TypeScript compiles cleanly: bunx tsc --noEmit
+./MEM-1-1.out:108:/bin/zsh -lc "sed -n '1,280p' packages/system-bus/src/inngest/functions/reflect.test.ts" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4exec
+./MEM-1-1.out:109:/bin/zsh -lc "sed -n '1,260p' packages/system-bus/src/inngest/functions/reflect.ts" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4exec
+./MEM-1-1.out:110:/bin/zsh -lc "rg --files packages/system-bus/src/inngest/functions | rg 'reflect(\\.test)?\\.ts"'$'"'" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4 succeeded in 53ms:
+./MEM-1-1.out:111:packages/system-bus/src/inngest/functions/reflect.test.ts
+./MEM-1-1.out:112:packages/system-bus/src/inngest/functions/reflect.ts
+./MEM-1-1.out:161:/bin/zsh -lc "sed -n '260,560p' packages/system-bus/src/inngest/functions/reflect.ts" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4exec
+
+thinking
+**Inspecting CLI command structure**
+codex
+I found the active CLI in `packages/cli` (including a prewritten `review.acceptance.test.ts`), which indicates the story paths in the prompt are outdated. I’m now implementing MEM-4 in `packages/cli/src/commands` and registering it in `packages/cli/src/index.ts` to match the live codebase.
+exec
+/bin/zsh -lc "sed -n '1,260p' packages/cli/src/commands/send.ts && sed -n '1,260p' packages/cli/src/commands/runs.ts && sed -n '1,300p' packages/cli/src/commands/loop.ts" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4exec
+/bin/zsh -lc "ls -la packages/cli/src && ls -la packages/cli/src/commands && sed -n '1,220p' packages/cli/src/index.ts" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4 succeeded in 53ms:
+import { Args, Command, Options } from "@effect/cli"
+import { Console, Effect } from "effect"
+import { Inngest } from "../inngest"
+import { respond } from "../response"
+
+export const sendCmd = Command.make(
+  "send",
+  {
+    event: Args.text({ name: "event" }).pipe(
+      Args.withDescription("Event name (e.g. pipeline/video.download, system/log)")
+    ),
+    data: Options.text("data").pipe(
+      Options.withAlias("d"),
+      Options.withDescription("JSON data payload"),
+      Options.withDefault("{}")
+    ),
+    url: Options.text("url").pipe(
+      Options.withDescription("Shorthand: sets data.url for video.download events"),
+      Options.optional
+    ),
+ exited 1 in 52ms:
+total 64
+drwxr-xr-x   8 joel  wheel   256 Feb 17 15:33 .
+drwxr-xr-x   6 joel  wheel   192 Feb 17 15:33 ..
+-rwxr-xr-x   1 joel  wheel  3348 Feb 17 15:33 cli.ts
+drwxr-xr-x  16 joel  wheel   512 Feb 17 15:54 commands
+-rw-r--r--   1 joel  wheel  1383 Feb 17 15:33 config.ts
+-rw-r--r--   1 joel  wheel  9739 Feb 17 15:33 inngest.ts
+-rw-r--r--   1 joel  wheel  1626 Feb 17 15:33 response.ts
+-rw-r--r--   1 joel  wheel  4577 Feb 17 15:33 schema.ts
+total 240
+drwxr-xr-x  16 joel  wheel    512 Feb 17 15:54 .
+drwxr-xr-x   8 joel  wheel    256 Feb 17 15:33 ..
+-rw-r--r--   1 joel  wheel  17455 Feb 17 15:33 diagnose.ts
+-rw-r--r--   1 joel  wheel   1367 Feb 17 15:33 discover.ts
+-rw-r--r--   1 joel  wheel   2535 Feb 17 15:33 events.ts
+-rw-r--r--   1 joel  wheel  11222 Feb 17 15:33 gateway.ts
+-rw-r--r--   1 joel  wheel   4345 Feb 17 15:33 logs.ts
+-rw-r--r--   1 joel  wheel  27747 Feb 17 15:33 loop.ts
+-rw-r--r--   1 joel  wheel   2279 Feb 17 15:33 note.ts
+-rw-r--r--   1 joel  wheel   3795 Feb 17 15:33 refresh.ts
+
+thinking
+**Requesting root CLI commands**
+exec
+/bin/zsh -lc "sed -n '1,260p' packages/cli/src/cli.ts" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4 succeeded in 53ms:
+#!/usr/bin/env bun
+
+import { Command } from "@effect/cli"
+import { BunContext, BunRuntime } from "@effect/platform-bun"
+import { Console, Effect } from "effect"
+import { Inngest } from "./inngest"
+import { respond } from "./response"
+
+import { sendCmd } from "./commands/send"
+import { runsCmd, runCmd } from "./commands/runs"
+import { statusCmd, functionsCmd } from "./commands/status"
+import { schemaCmd } from "./commands/schema"
+import { loopCmd } from "./commands/loop"
+import { discoverCmd } from "./commands/discover"
+import { refresh } from "./commands/refresh"
+import { eventsCmd } from "./commands/events"
+import { logsCmd } from "./commands/logs"
+import { watchCmd } from "./commands/watch"
+import { noteCmd } from "./commands/note"
+import { gatewayCmd } from "./commands/gateway"
+
+thinking
+**Inspecting acceptance test for Redis expectations**
+codex
+I’ve located the real root command file (`packages/cli/src/cli.ts`). Next I’m using the existing `review.acceptance.test.ts` as the contract so the new command behavior matches exactly and compiles cleanly.
+exec
+/bin/zsh -lc "sed -n '1,320p' packages/cli/src/commands/review.acceptance.test.ts" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4 succeeded in 51ms:
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { Command } from "@effect/cli";
+import { Effect } from "effect";
+import { Inngest } from "../inngest";
+
+type ProposalHash = Record<string, string>;
+
+const redisState = {
+  pendingIds: [] as string[],
+  proposals: new Map<string, ProposalHash>(),
+  calls: {
+    lrange: [] as Array<{ key: string; start: number; stop: number }>,
+    hgetall: [] as string[],
+  },
+};
+
+class MockRedis {
+  async connect() {
+    return this;
+  }
+
+thinking
+**Inspecting response types**
+exec
+/bin/zsh -lc "sed -n '1,220p' packages/cli/src/response.ts && sed -n '1,280p' packages/cli/src/inngest.ts" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4exec
+/bin/zsh -lc 'cat packages/cli/package.json && cat tsconfig.json && cat packages/cli/tsconfig.json' in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4 succeeded in 53ms:
+/**
+ * HATEOAS-style response envelope for agent consumers.
+ * Every command returns this shape — agents always know what to do next.
+ */
+
+export interface NextAction {
+  readonly command: string
+  readonly description: string
+}
+
+export interface JoelclawResponse {
+  readonly ok: boolean
+  readonly command: string
+  readonly result: unknown
+  readonly error?: { message: string; code: string }
+  readonly fix?: string
+  readonly next_actions: readonly NextAction[]
+}
+
+const normalizeCommand = (command: string): string => {
+ succeeded in 53ms:
+{
+  "name": "@joelclaw/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "joelclaw": "src/cli.ts",
+    "igs": "src/cli.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/cli": "^0.73.2",
+    "@effect/platform": "^0.94.5",
+    "@effect/platform-bun": "^0.87.1",
+    "effect": "^3.19.17",
+    "ioredis": "^5.9.3"
+  },
+  "devDependencies": {
+
+thinking
+**Planning CLI review commands**
+codex
+I’ve confirmed the active TypeScript scope only includes `packages/cli`, so implementing there is the only way to satisfy compile checks in this workspace. I’m now adding `review.ts` with list/approve/reject/approve-all/expire and then wiring it into `packages/cli/src/cli.ts`.
+exec
+/bin/zsh -lc "rg -n \"memory/proposal\\.|proposal\\.expired|expire|review:pending|memory:review\" packages/cli/src packages/system-bus/src -S" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4 succeeded in 50ms:
+packages/cli/src/commands/review.acceptance.test.ts:24:    if (key === "memory:review:pending") {
+packages/cli/src/commands/review.acceptance.test.ts:32:    const id = key.replace("memory:review:proposal:", "");
+packages/cli/src/commands/review.acceptance.test.ts:215:      key: "memory:review:pending",
+packages/cli/src/commands/review.acceptance.test.ts:220:      "memory:review:proposal:p-1",
+packages/cli/src/commands/review.acceptance.test.ts:221:      "memory:review:proposal:p-2",
+packages/cli/src/commands/review.acceptance.test.ts:236:  test("AC-4: review approve sends memory/proposal.approved", async () => {
+packages/cli/src/commands/review.acceptance.test.ts:244:      name: "memory/proposal.approved",
+packages/cli/src/commands/review.acceptance.test.ts:252:  test("AC-5: review reject --reason sends memory/proposal.rejected", async () => {
+packages/cli/src/commands/review.acceptance.test.ts:264:      name: "memory/proposal.rejected",
+packages/cli/src/commands/review.acceptance.test.ts:280:      key: "memory:review:pending",
+packages/cli/src/commands/review.acceptance.test.ts:286:      { name: "memory/proposal.approved", data: { proposalId: "p-11", approvedBy: "joel" } },
+packages/cli/src/commands/review.acceptance.test.ts:287:      { name: "memory/proposal.approved", data: { proposalId: "p-22", approvedBy: "joel" } },
+packages/cli/src/commands/review.acceptance.test.ts:288:      { name: "memory/proposal.approved", data: { proposalId: "p-33", approvedBy: "joel" } },
+packages/system-bus/src/inngest/client.test.ts:11:  test("supports memory/proposal.approved with proposalId and approvedBy", async () => {
+packages/system-bus/src/inngest/client.test.ts:12:    const approvedData: Events["memory/proposal.approved"]["data"] = {
+packages/system-bus/src/inngest/client.test.ts:18:      name: "memory/proposal.approved",
+packages/system-bus/src/inngest/client.test.ts:23:      name: "memory/proposal.approved",
+packages/system-bus/src/inngest/client.test.ts:31:  test("supports memory/proposal.rejected with proposalId, reason, and rejectedBy", async () => {
+packages/system-bus/src/inngest/client.test.ts:32:    const rejectedData: Events["memory/proposal.rejected"]["data"] = {
+packages/system-bus/src/inngest/client.test.ts:39:      name: "memory/proposal.rejected",
+
+thinking
+**Exploring expiry check trigger options**
+exec
+/bin/zsh -lc "sed -n '300,410p' packages/system-bus/src/inngest/functions/promote.ts" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4 succeeded in 53ms:
+  const proposal = await redis.hgetall(key);
+
+  if (!isProposalOlderThanSevenDays(proposalId)) return;
+
+  const proposalText = (proposal.proposedText || proposal.change || "").trim();
+  await appendToDailyLog(
+    EXPIRED_PROPOSALS_HEADER,
+    `${proposalId}: ${proposalText}${proposalText ? "" : "(missing proposal text)"}`
+  );
+
+  await redis.lrem(REVIEW_PENDING_KEY, 0, proposalId);
+  await redis.del(key);
+}
+
+const promoteFunction = stabilizeFunctionOpts(
+  inngest.createFunction(
+    {
+      id: "memory/review-promote",
+      name: "Promote Review Decisions",
+    },
+
+thinking
+**Deciding expire event approach**
+codex
+I verified there’s no existing explicit “expire check” event in the current event schema. I’m checking the project PRD text for MEM-4 now to align the `review expire` behavior with the intended event name or mechanism before finalizing the command implementation.
+exec
+/bin/zsh -lc "rg -n \"MEM-4|review expire|proposal.exp|review command|joelclaw review\" prd.json packages/system-bus/prd*.json -S && sed -n '1,220p' prd.json" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4 succeeded in 53ms:
+prd.json:46:      "id": "MEM-4",
+prd.json:47:      "title": "Add joelclaw review CLI command",
+prd.json:48:      "description": "In packages/system-bus/src/cli/commands/, create review.ts following the same pattern as existing commands (check send.ts, runs.ts, or loop.ts for structure). Implement subcommands: (1) joelclaw review — lists all pending proposals by reading LRANGE memory:review:pending 0 -1 then HGETALL memory:review:proposal:{id} for each, output as HATEOAS JSON with _actions for approve/reject; (2) joelclaw review approve <proposalId> — sends memory/proposal.approved event with approvedBy: 'joel'; (3) joelclaw review reject <proposalId> --reason <text> — sends memory/proposal.rejected event; (4) joelclaw review approve-all — sends one approved event per pending proposal; (5) joelclaw review expire — triggers expiry check for proposals older than 7 days. Register the command in packages/system-bus/src/cli/index.ts.",
+prd.json:51:        "review command is registered in packages/system-bus/src/cli/index.ts",
+prd.json:52:        "joelclaw review list subcommand reads from Redis and outputs HATEOAS JSON",
+prd.json:53:        "joelclaw review approve sends a memory/proposal.approved Inngest event",
+prd.json:54:        "joelclaw review reject --reason sends a memory/proposal.rejected Inngest event",
+prd.json:55:        "joelclaw review approve-all iterates all pending proposals",
+prd.json:64:      "description": "In ~/Code/joelhooks/pi-tools/session-lifecycle/index.ts, in the briefing injection hook (before_agent_start or equivalent first-turn hook), add a Redis query for LLEN memory:review:pending using ioredis connecting to localhost:6379. If count > 0, append a line to the briefing: '📋 {N} pending memory proposals — run `joelclaw review` or say \"review proposals\" to see them'. Wrap the Redis call in a try/catch so that if Redis is unreachable, the briefing continues without the line. Keep the connection lightweight — connect, query, disconnect.",
+{
+  "title": "Memory System Phase 3: Event-Driven Review Workflow",
+  "stories": [
+    {
+      "id": "MEM-1",
+      "title": "Remove REVIEW.md writes from reflect.ts",
+      "description": "In packages/system-bus/src/inngest/functions/reflect.ts, remove all REVIEW.md file operations from the stage-review step. Specifically: remove the appendToFile(reviewPath, reviewBlock) call, remove the buildReviewBlock() function, remove reviewPath from return values, and remove any imports (appendToFile, existsSync, appendFileSync) that are no longer needed. Keep all Redis operations unchanged: redis.hset('memory:review:proposal:{id}', ...) and redis.rpush('memory:review:pending', ...). Keep the daily log append step and emit-complete event emission unchanged. Update reflect.test.ts to remove any assertions about REVIEW.md file writes.",
+      "acceptance_criteria": [
+        "No calls to appendToFile, existsSync, or appendFileSync remain in reflect.ts unless used by the daily log step",
+        "buildReviewBlock() function is removed",
+        "reviewPath is not referenced in reflect.ts",
+
+thinking
+**Analyzing event-based expiry checks**
+exec
+/bin/zsh -lc "sed -n '1,260p' packages/cli/src/commands/refresh.ts && sed -n '1,260p' packages/cli/src/commands/events.ts" in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4 succeeded in 53ms:
+import { Command } from "@effect/cli"
+import { Console, Effect } from "effect"
+import { loadConfig } from "../config"
+import { respond } from "../response"
+
+const cfg = loadConfig()
+const GQL = `${cfg.inngestUrl}/v0/gql`
+const WORKER = cfg.workerUrl
+
+const gql = async (query: string) => {
+  const res = await fetch(GQL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  })
+  const json = await res.json() as { errors?: Array<{ message: string }>; data: any }
+  if (json.errors?.length) throw new Error(json.errors[0].message)
+  return json.data
+}
+
+
+thinking
+**Outlining review command implementation**
+codex
+I’m writing `packages/cli/src/commands/review.ts` now with shared Redis helpers and five subcommands, including a default `joelclaw review` listing path plus explicit `review list`. Then I’ll register it in the root CLI and run typecheck.
+file update
+A /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4/packages/cli/src/commands/review.ts
+import { Args, Command, Options } from "@effect/cli"
+import { Console, Effect } from "effect"
+import Redis from "ioredis"
+import { Inngest } from "../inngest"
+import { respond } from "../response"
+
+const REVIEW_PENDING_KEY = "memory:review:pending"
+const proposalKey = (id: string) => `memory:review:proposal:${id}`
+const EXPIRY_REASON = "Expired after 7 days without review"
+const EXPIRY_WINDOW_DAYS = 7
+const EXPIRY_WINDOW_MS = EXPIRY_WINDOW_DAYS * 24 * 60 * 60 * 1000
+
+type ProposalHash = Record<string, string>
+
+const withRedis = <A>(fn: (redis: Redis) => Promise<A>): Promise<A> => {
+  const redis = new Redis()
+  return redis
+    .connect()
+    .then(() => fn(redis))
+    .finally(() => {
+      try {
+        redis.disconnect()
+      } catch {
+        // no-op
+      }
+    })
+}
+
+const readPendingProposals = (): Promise<Array<{ id: string; proposal: ProposalHash }>> =>
+  withRedis(async (redis) => {
+    const ids = await redis.lrange(REVIEW_PENDING_KEY, 0, -1)
+    const proposals = await Promise.all(
+      ids.map(async (id) => ({
+        id,
+        proposal: await redis.hgetall(proposalKey(id)),
+      }))
+    )
+    return proposals
+  })
+
+const extractCreatedAt = (proposalId: string, proposal: ProposalHash): number | null => {
+  const fromFields = proposal.createdAt ?? proposal.created_at
+  if (fromFields) {
+    const parsed = Date.parse(fromFields)
+    if (Number.isFinite(parsed)) return parsed
+  }
+
+  const proposalIdMatch = /^p-(\d{4})(\d{2})(\d{2})-\d+$/u.exec(proposalId)
+  if (!proposalIdMatch) return null
+
+  const [, y, m, d] = proposalIdMatch
+  const parsed = Date.parse(`${y}-${m}-${d}T00:00:00.000Z`)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+const isOlderThanSevenDays = (proposalId: string, proposal: ProposalHash): boolean => {
+  const createdAt = extractCreatedAt(proposalId, proposal)
+  if (createdAt === null) return false
+  return Date.now() - createdAt > EXPIRY_WINDOW_MS
+}
+
+const listPayload = (items: Array<{ id: string; proposal: ProposalHash }>) =>
+  items.map(({ id, proposal }) => ({
+    id,
+    ...proposal,
+    _actions: [
+      { command: `joelclaw review approve ${id}`, description: "Approve this proposal" },
+      { command: `joelclaw review reject ${id} --reason \"reason here\"`, description: "Reject this proposal" },
+    ],
+  }))
+
+const listCmd = Command.make("list", {}, () =>
+  Effect.gen(function* () {
+    const proposals = yield* Effect.tryPromise({
+      try: () => readPendingProposals(),
+      catch: (error) => error,
+    })
+
+    const result = {
+      pending_count: proposals.length,
+      proposals: listPayload(proposals),
+      _actions: [
+        { command: "joelclaw review approve-all", description: "Approve all pending proposals" },
+        { command: "joelclaw review expire", description: "Run an expiry check for stale proposals" },
+      ],
+    }
+
+    yield* Console.log(
+      respond("review list", result, [
+        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
+        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
+      ])
+    )
+  })
+)
+
+const approveCmd = Command.make(
+  "approve",
+  {
+    proposalId: Args.text({ name: "proposal-id" }),
+  },
+  ({ proposalId }) =>
+    Effect.gen(function* () {
+      const inngestClient = yield* Inngest
+      const response = yield* inngestClient.send("memory/proposal.approved", {
+        proposalId,
+        approvedBy: "joel",
+      })
+
+      yield* Console.log(
+        respond("review approve", { proposalId, sent: response }, [
+          { command: "joelclaw review", description: "See remaining pending proposals" },
+          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
+        ])
+      )
+    })
+)
+
+const rejectCmd = Command.make(
+  "reject",
+  {
+    proposalId: Args.text({ name: "proposal-id" }),
+    reason: Options.text("reason").pipe(
+      Options.withDescription("Reason for rejection")
+    ),
+  },
+  ({ proposalId, reason }) =>
+    Effect.gen(function* () {
+      const inngestClient = yield* Inngest
+      const response = yield* inngestClient.send("memory/proposal.rejected", {
+        proposalId,
+        reason,
+        rejectedBy: "joel",
+      })
+
+      yield* Console.log(
+        respond("review reject", { proposalId, reason, sent: response }, [
+          { command: "joelclaw review", description: "See remaining pending proposals" },
+          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
+        ])
+      )
+    })
+)
+
+const approveAllCmd = Command.make("approve-all", {}, () =>
+  Effect.gen(function* () {
+    const inngestClient = yield* Inngest
+    const proposalIds = yield* Effect.tryPromise({
+      try: () => withRedis((redis) => redis.lrange(REVIEW_PENDING_KEY, 0, -1)),
+      catch: (error) => error,
+    })
+
+    const sent = [] as Array<{ proposalId: string; response: unknown }>
+
+    for (const proposalId of proposalIds) {
+      const response = yield* inngestClient.send("memory/proposal.approved", {
+        proposalId,
+        approvedBy: "joel",
+      })
+      sent.push({ proposalId, response })
+    }
+
+    yield* Console.log(
+      respond("review approve-all", { count: sent.length, proposals: sent }, [
+        { command: "joelclaw review", description: "See remaining pending proposals" },
+        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
+      ])
+    )
+  })
+)
+
+const expireCmd = Command.make("expire", {}, () =>
+  Effect.gen(function* () {
+    const inngestClient = yield* Inngest
+    const pending = yield* Effect.tryPromise({
+      try: () => readPendingProposals(),
+      catch: (error) => error,
+    })
+
+    const expiredCandidates = pending
+      .filter(({ id, proposal }) => isOlderThanSevenDays(id, proposal))
+      .map(({ id }) => id)
+
+    const sent = [] as Array<{ proposalId: string; response: unknown }>
+
+    for (const proposalId of expiredCandidates) {
+      const response = yield* inngestClient.send("memory/proposal.rejected", {
+        proposalId,
+        reason: EXPIRY_REASON,
+        rejectedBy: "joel",
+      })
+      sent.push({ proposalId, response })
+    }
+
+    yield* Console.log(
+      respond("review expire", {
+        checked: pending.length,
+        expired: expiredCandidates.length,
+        reason: EXPIRY_REASON,
+        proposals: sent,
+      }, [
+        { command: "joelclaw review", description: "See remaining pending proposals" },
+        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
+      ])
+    )
+  })
+)
+
+export const reviewCmd = Command.make("review", {}, () =>
+  Effect.gen(function* () {
+    const proposals = yield* Effect.tryPromise({
+      try: () => readPendingProposals(),
+      catch: (error) => error,
+    })
+
+    yield* Console.log(
+      respond("review", {
+        pending_count: proposals.length,
+        proposals: listPayload(proposals),
+      }, [
+        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
+        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
+      ])
+    )
+  })
+).pipe(
+  Command.withSubcommands([listCmd, approveCmd, rejectCmd, approveAllCmd, expireCmd])
+)
+apply_patch(auto_approved=true) exited 0 in 48ms:
+Success. Updated the following files:
+A packages/cli/src/commands/review.ts
+file update:
+diff --git a/packages/cli/src/commands/review.ts b/packages/cli/src/commands/review.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e41f521a5d3e5f2f5ecbfd8cb6d4dba7a7ec8388
+--- /dev/null
++++ b/packages/cli/src/commands/review.ts
+@@ -0,0 +1,228 @@
++import { Args, Command, Options } from "@effect/cli"
++import { Console, Effect } from "effect"
++import Redis from "ioredis"
++import { Inngest } from "../inngest"
++import { respond } from "../response"
++
++const REVIEW_PENDING_KEY = "memory:review:pending"
++const proposalKey = (id: string) => `memory:review:proposal:${id}`
++const EXPIRY_REASON = "Expired after 7 days without review"
++const EXPIRY_WINDOW_DAYS = 7
++const EXPIRY_WINDOW_MS = EXPIRY_WINDOW_DAYS * 24 * 60 * 60 * 1000
++
++type ProposalHash = Record<string, string>
++
++const withRedis = <A>(fn: (redis: Redis) => Promise<A>): Promise<A> => {
++  const redis = new Redis()
++  return redis
++    .connect()
++    .then(() => fn(redis))
++    .finally(() => {
++      try {
++        redis.disconnect()
++      } catch {
++        // no-op
++      }
++    })
++}
++
++const readPendingProposals = (): Promise<Array<{ id: string; proposal: ProposalHash }>> =>
++  withRedis(async (redis) => {
++    const ids = await redis.lrange(REVIEW_PENDING_KEY, 0, -1)
++    const proposals = await Promise.all(
++      ids.map(async (id) => ({
++        id,
++        proposal: await redis.hgetall(proposalKey(id)),
++      }))
++    )
++    return proposals
++  })
++
++const extractCreatedAt = (proposalId: string, proposal: ProposalHash): number | null => {
++  const fromFields = proposal.createdAt ?? proposal.created_at
++  if (fromFields) {
++    const parsed = Date.parse(fromFields)
++    if (Number.isFinite(parsed)) return parsed
++  }
++
++  const proposalIdMatch = /^p-(\d{4})(\d{2})(\d{2})-\d+$/u.exec(proposalId)
++  if (!proposalIdMatch) return null
++
++  const [, y, m, d] = proposalIdMatch
++  const parsed = Date.parse(`${y}-${m}-${d}T00:00:00.000Z`)
++  return Number.isFinite(parsed) ? parsed : null
++}
++
++const isOlderThanSevenDays = (proposalId: string, proposal: ProposalHash): boolean => {
++  const createdAt = extractCreatedAt(proposalId, proposal)
++  if (createdAt === null) return false
++  return Date.now() - createdAt > EXPIRY_WINDOW_MS
++}
++
++const listPayload = (items: Array<{ id: string; proposal: ProposalHash }>) =>
++  items.map(({ id, proposal }) => ({
++    id,
++    ...proposal,
++    _actions: [
++      { command: `joelclaw review approve ${id}`, description: "Approve this proposal" },
++      { command: `joelclaw review reject ${id} --reason \"reason here\"`, description: "Reject this proposal" },
++    ],
++  }))
++
++const listCmd = Command.make("list", {}, () =>
++  Effect.gen(function* () {
++    const proposals = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    const result = {
++      pending_count: proposals.length,
++      proposals: listPayload(proposals),
++      _actions: [
++        { command: "joelclaw review approve-all", description: "Approve all pending proposals" },
++        { command: "joelclaw review expire", description: "Run an expiry check for stale proposals" },
++      ],
++    }
++
++    yield* Console.log(
++      respond("review list", result, [
++        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
++        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
++      ])
++    )
++  })
++)
++
++const approveCmd = Command.make(
++  "approve",
++  {
++    proposalId: Args.text({ name: "proposal-id" }),
++  },
++  ({ proposalId }) =>
++    Effect.gen(function* () {
++      const inngestClient = yield* Inngest
++      const response = yield* inngestClient.send("memory/proposal.approved", {
++        proposalId,
++        approvedBy: "joel",
++      })
++
++      yield* Console.log(
++        respond("review approve", { proposalId, sent: response }, [
++          { command: "joelclaw review", description: "See remaining pending proposals" },
++          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
++        ])
++      )
++    })
++)
++
++const rejectCmd = Command.make(
++  "reject",
++  {
++    proposalId: Args.text({ name: "proposal-id" }),
++    reason: Options.text("reason").pipe(
++      Options.withDescription("Reason for rejection")
++    ),
++  },
++  ({ proposalId, reason }) =>
++    Effect.gen(function* () {
++      const inngestClient = yield* Inngest
++      const response = yield* inngestClient.send("memory/proposal.rejected", {
++        proposalId,
++        reason,
++        rejectedBy: "joel",
++      })
++
++      yield* Console.log(
++        respond("review reject", { proposalId, reason, sent: response }, [
++          { command: "joelclaw review", description: "See remaining pending proposals" },
++          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
++        ])
++      )
++    })
++)
++
++const approveAllCmd = Command.make("approve-all", {}, () =>
++  Effect.gen(function* () {
++    const inngestClient = yield* Inngest
++    const proposalIds = yield* Effect.tryPromise({
++      try: () => withRedis((redis) => redis.lrange(REVIEW_PENDING_KEY, 0, -1)),
++      catch: (error) => error,
++    })
++
++    const sent = [] as Array<{ proposalId: string; response: unknown }>
++
++    for (const proposalId of proposalIds) {
++      const response = yield* inngestClient.send("memory/proposal.approved", {
++        proposalId,
++        approvedBy: "joel",
++      })
++      sent.push({ proposalId, response })
++    }
++
++    yield* Console.log(
++      respond("review approve-all", { count: sent.length, proposals: sent }, [
++        { command: "joelclaw review", description: "See remaining pending proposals" },
++        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
++      ])
++    )
++  })
++)
++
++const expireCmd = Command.make("expire", {}, () =>
++  Effect.gen(function* () {
++    const inngestClient = yield* Inngest
++    const pending = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    const expiredCandidates = pending
++      .filter(({ id, proposal }) => isOlderThanSevenDays(id, proposal))
++      .map(({ id }) => id)
++
++    const sent = [] as Array<{ proposalId: string; response: unknown }>
++
++    for (const proposalId of expiredCandidates) {
++      const response = yield* inngestClient.send("memory/proposal.rejected", {
++        proposalId,
++        reason: EXPIRY_REASON,
++        rejectedBy: "joel",
++      })
++      sent.push({ proposalId, response })
++    }
++
++    yield* Console.log(
++      respond("review expire", {
++        checked: pending.length,
++        expired: expiredCandidates.length,
++        reason: EXPIRY_REASON,
++        proposals: sent,
++      }, [
++        { command: "joelclaw review", description: "See remaining pending proposals" },
++        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
++      ])
++    )
++  })
++)
++
++export const reviewCmd = Command.make("review", {}, () =>
++  Effect.gen(function* () {
++    const proposals = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    yield* Console.log(
++      respond("review", {
++        pending_count: proposals.length,
++        proposals: listPayload(proposals),
++      }, [
++        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
++        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
++      ])
++    )
++  })
++).pipe(
++  Command.withSubcommands([listCmd, approveCmd, rejectCmd, approveAllCmd, expireCmd])
++)
+
+file update:
+diff --git a/packages/cli/src/commands/review.ts b/packages/cli/src/commands/review.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e41f521a5d3e5f2f5ecbfd8cb6d4dba7a7ec8388
+--- /dev/null
++++ b/packages/cli/src/commands/review.ts
+@@ -0,0 +1,228 @@
++import { Args, Command, Options } from "@effect/cli"
++import { Console, Effect } from "effect"
++import Redis from "ioredis"
++import { Inngest } from "../inngest"
++import { respond } from "../response"
++
++const REVIEW_PENDING_KEY = "memory:review:pending"
++const proposalKey = (id: string) => `memory:review:proposal:${id}`
++const EXPIRY_REASON = "Expired after 7 days without review"
++const EXPIRY_WINDOW_DAYS = 7
++const EXPIRY_WINDOW_MS = EXPIRY_WINDOW_DAYS * 24 * 60 * 60 * 1000
++
++type ProposalHash = Record<string, string>
++
++const withRedis = <A>(fn: (redis: Redis) => Promise<A>): Promise<A> => {
++  const redis = new Redis()
++  return redis
++    .connect()
++    .then(() => fn(redis))
++    .finally(() => {
++      try {
++        redis.disconnect()
++      } catch {
++        // no-op
++      }
++    })
++}
++
++const readPendingProposals = (): Promise<Array<{ id: string; proposal: ProposalHash }>> =>
++  withRedis(async (redis) => {
++    const ids = await redis.lrange(REVIEW_PENDING_KEY, 0, -1)
++    const proposals = await Promise.all(
++      ids.map(async (id) => ({
++        id,
++        proposal: await redis.hgetall(proposalKey(id)),
++      }))
++    )
++    return proposals
++  })
++
++const extractCreatedAt = (proposalId: string, proposal: ProposalHash): number | null => {
++  const fromFields = proposal.createdAt ?? proposal.created_at
++  if (fromFields) {
++    const parsed = Date.parse(fromFields)
++    if (Number.isFinite(parsed)) return parsed
++  }
++
++  const proposalIdMatch = /^p-(\d{4})(\d{2})(\d{2})-\d+$/u.exec(proposalId)
++  if (!proposalIdMatch) return null
++
++  const [, y, m, d] = proposalIdMatch
++  const parsed = Date.parse(`${y}-${m}-${d}T00:00:00.000Z`)
++  return Number.isFinite(parsed) ? parsed : null
++}
++
++const isOlderThanSevenDays = (proposalId: string, proposal: ProposalHash): boolean => {
++  const createdAt = extractCreatedAt(proposalId, proposal)
++  if (createdAt === null) return false
++  return Date.now() - createdAt > EXPIRY_WINDOW_MS
++}
++
++const listPayload = (items: Array<{ id: string; proposal: ProposalHash }>) =>
++  items.map(({ id, proposal }) => ({
++    id,
++    ...proposal,
++    _actions: [
++      { command: `joelclaw review approve ${id}`, description: "Approve this proposal" },
++      { command: `joelclaw review reject ${id} --reason \"reason here\"`, description: "Reject this proposal" },
++    ],
++  }))
++
++const listCmd = Command.make("list", {}, () =>
++  Effect.gen(function* () {
++    const proposals = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    const result = {
++      pending_count: proposals.length,
++      proposals: listPayload(proposals),
++      _actions: [
++        { command: "joelclaw review approve-all", description: "Approve all pending proposals" },
++        { command: "joelclaw review expire", description: "Run an expiry check for stale proposals" },
++      ],
++    }
++
++    yield* Console.log(
++      respond("review list", result, [
++        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
++        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
++      ])
++    )
++  })
++)
++
++const approveCmd = Command.make(
++  "approve",
++  {
++    proposalId: Args.text({ name: "proposal-id" }),
++  },
++  ({ proposalId }) =>
++    Effect.gen(function* () {
++      const inngestClient = yield* Inngest
++      const response = yield* inngestClient.send("memory/proposal.approved", {
++        proposalId,
++        approvedBy: "joel",
++      })
++
++      yield* Console.log(
++        respond("review approve", { proposalId, sent: response }, [
++          { command: "joelclaw review", description: "See remaining pending proposals" },
++          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
++        ])
++      )
++    })
++)
++
++const rejectCmd = Command.make(
++  "reject",
++  {
++    proposalId: Args.text({ name: "proposal-id" }),
++    reason: Options.text("reason").pipe(
++      Options.withDescription("Reason for rejection")
++    ),
++  },
++  ({ proposalId, reason }) =>
++    Effect.gen(function* () {
++      const inngestClient = yield* Inngest
++      const response = yield* inngestClient.send("memory/proposal.rejected", {
++        proposalId,
++        reason,
++        rejectedBy: "joel",
++      })
++
++      yield* Console.log(
++        respond("review reject", { proposalId, reason, sent: response }, [
++          { command: "joelclaw review", description: "See remaining pending proposals" },
++          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
++        ])
++      )
++    })
++)
++
++const approveAllCmd = Command.make("approve-all", {}, () =>
++  Effect.gen(function* () {
++    const inngestClient = yield* Inngest
++    const proposalIds = yield* Effect.tryPromise({
++      try: () => withRedis((redis) => redis.lrange(REVIEW_PENDING_KEY, 0, -1)),
++      catch: (error) => error,
++    })
++
++    const sent = [] as Array<{ proposalId: string; response: unknown }>
++
++    for (const proposalId of proposalIds) {
++      const response = yield* inngestClient.send("memory/proposal.approved", {
++        proposalId,
++        approvedBy: "joel",
++      })
++      sent.push({ proposalId, response })
++    }
++
++    yield* Console.log(
++      respond("review approve-all", { count: sent.length, proposals: sent }, [
++        { command: "joelclaw review", description: "See remaining pending proposals" },
++        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
++      ])
++    )
++  })
++)
++
++const expireCmd = Command.make("expire", {}, () =>
++  Effect.gen(function* () {
++    const inngestClient = yield* Inngest
++    const pending = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    const expiredCandidates = pending
++      .filter(({ id, proposal }) => isOlderThanSevenDays(id, proposal))
++      .map(({ id }) => id)
++
++    const sent = [] as Array<{ proposalId: string; response: unknown }>
++
++    for (const proposalId of expiredCandidates) {
++      const response = yield* inngestClient.send("memory/proposal.rejected", {
++        proposalId,
++        reason: EXPIRY_REASON,
++        rejectedBy: "joel",
++      })
++      sent.push({ proposalId, response })
++    }
++
++    yield* Console.log(
++      respond("review expire", {
++        checked: pending.length,
++        expired: expiredCandidates.length,
++        reason: EXPIRY_REASON,
++        proposals: sent,
++      }, [
++        { command: "joelclaw review", description: "See remaining pending proposals" },
++        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
++      ])
++    )
++  })
++)
++
++export const reviewCmd = Command.make("review", {}, () =>
++  Effect.gen(function* () {
++    const proposals = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    yield* Console.log(
++      respond("review", {
++        pending_count: proposals.length,
++        proposals: listPayload(proposals),
++      }, [
++        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
++        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
++      ])
++    )
++  })
++).pipe(
++  Command.withSubcommands([listCmd, approveCmd, rejectCmd, approveAllCmd, expireCmd])
++)
+
+
+thinking
+**Adding registration in CLI setup**
+file update
+M /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4/packages/cli/src/cli.ts
+@@ -20,2 +20,3 @@
+ import { gatewayCmd } from "./commands/gateway"
++import { reviewCmd } from "./commands/review"
+ 
+@@ -59,2 +60,3 @@
+           gateway: "joelclaw gateway {status|events|push|drain|test}",
++          review: "joelclaw review {list|approve|reject|approve-all|expire}",
+           schema: "joelclaw schema",
+@@ -73,3 +75,3 @@
+ ).pipe(
+-  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd])
++  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, reviewCmd])
+ )
+apply_patch(auto_approved=true) exited 0 in 48ms:
+Success. Updated the following files:
+M packages/cli/src/cli.ts
+file update:
+diff --git a/packages/cli/src/cli.ts b/packages/cli/src/cli.ts
+index b84f200afd762013bdf881ad816aaf247d86bf8d..7e9b732f2d0017cfb2b1429b19a92e8e3b75edeb
+--- a/packages/cli/src/cli.ts
++++ b/packages/cli/src/cli.ts
+@@ -18,6 +18,7 @@
+ import { watchCmd } from "./commands/watch"
+ import { noteCmd } from "./commands/note"
+ import { gatewayCmd } from "./commands/gateway"
++import { reviewCmd } from "./commands/review"
+ 
+ // ── Root ─────────────────────────────────────────────────────────────
+ 
+@@ -57,6 +58,7 @@
+           discover: "joelclaw discover <url> [-c context]",
+           note: "joelclaw note <text> [--source source] [--tags a,b,c]",
+           gateway: "joelclaw gateway {status|events|push|drain|test}",
++          review: "joelclaw review {list|approve|reject|approve-all|expire}",
+           schema: "joelclaw schema",
+           refresh: "joelclaw refresh",
+         },
+@@ -71,7 +73,7 @@
+     ))
+   })
+ ).pipe(
+-  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd])
++  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, reviewCmd])
+ )
+ 
+ const cli = Command.run(root, {
+diff --git a/packages/cli/src/commands/review.ts b/packages/cli/src/commands/review.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e41f521a5d3e5f2f5ecbfd8cb6d4dba7a7ec8388
+--- /dev/null
++++ b/packages/cli/src/commands/review.ts
+@@ -0,0 +1,228 @@
++import { Args, Command, Options } from "@effect/cli"
++import { Console, Effect } from "effect"
++import Redis from "ioredis"
++import { Inngest } from "../inngest"
++import { respond } from "../response"
++
++const REVIEW_PENDING_KEY = "memory:review:pending"
++const proposalKey = (id: string) => `memory:review:proposal:${id}`
++const EXPIRY_REASON = "Expired after 7 days without review"
++const EXPIRY_WINDOW_DAYS = 7
++const EXPIRY_WINDOW_MS = EXPIRY_WINDOW_DAYS * 24 * 60 * 60 * 1000
++
++type ProposalHash = Record<string, string>
++
++const withRedis = <A>(fn: (redis: Redis) => Promise<A>): Promise<A> => {
++  const redis = new Redis()
++  return redis
++    .connect()
++    .then(() => fn(redis))
++    .finally(() => {
++      try {
++        redis.disconnect()
++      } catch {
++        // no-op
++      }
++    })
++}
++
++const readPendingProposals = (): Promise<Array<{ id: string; proposal: ProposalHash }>> =>
++  withRedis(async (redis) => {
++    const ids = await redis.lrange(REVIEW_PENDING_KEY, 0, -1)
++    const proposals = await Promise.all(
++      ids.map(async (id) => ({
++        id,
++        proposal: await redis.hgetall(proposalKey(id)),
++      }))
++    )
++    return proposals
++  })
++
++const extractCreatedAt = (proposalId: string, proposal: ProposalHash): number | null => {
++  const fromFields = proposal.createdAt ?? proposal.created_at
++  if (fromFields) {
++    const parsed = Date.parse(fromFields)
++    if (Number.isFinite(parsed)) return parsed
++  }
++
++  const proposalIdMatch = /^p-(\d{4})(\d{2})(\d{2})-\d+$/u.exec(proposalId)
++  if (!proposalIdMatch) return null
++
++  const [, y, m, d] = proposalIdMatch
++  const parsed = Date.parse(`${y}-${m}-${d}T00:00:00.000Z`)
++  return Number.isFinite(parsed) ? parsed : null
++}
++
++const isOlderThanSevenDays = (proposalId: string, proposal: ProposalHash): boolean => {
++  const createdAt = extractCreatedAt(proposalId, proposal)
++  if (createdAt === null) return false
++  return Date.now() - createdAt > EXPIRY_WINDOW_MS
++}
++
++const listPayload = (items: Array<{ id: string; proposal: ProposalHash }>) =>
++  items.map(({ id, proposal }) => ({
++    id,
++    ...proposal,
++    _actions: [
++      { command: `joelclaw review approve ${id}`, description: "Approve this proposal" },
++      { command: `joelclaw review reject ${id} --reason \"reason here\"`, description: "Reject this proposal" },
++    ],
++  }))
++
++const listCmd = Command.make("list", {}, () =>
++  Effect.gen(function* () {
++    const proposals = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    const result = {
++      pending_count: proposals.length,
++      proposals: listPayload(proposals),
++      _actions: [
++        { command: "joelclaw review approve-all", description: "Approve all pending proposals" },
++        { command: "joelclaw review expire", description: "Run an expiry check for stale proposals" },
++      ],
++    }
++
++    yield* Console.log(
++      respond("review list", result, [
++        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
++        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
++      ])
++    )
++  })
++)
++
++const approveCmd = Command.make(
++  "approve",
++  {
++    proposalId: Args.text({ name: "proposal-id" }),
++  },
++  ({ proposalId }) =>
++    Effect.gen(function* () {
++      const inngestClient = yield* Inngest
++      const response = yield* inngestClient.send("memory/proposal.approved", {
++        proposalId,
++        approvedBy: "joel",
++      })
++
++      yield* Console.log(
++        respond("review approve", { proposalId, sent: response }, [
++          { command: "joelclaw review", description: "See remaining pending proposals" },
++          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
++        ])
++      )
++    })
++)
++
++const rejectCmd = Command.make(
++  "reject",
++  {
++    proposalId: Args.text({ name: "proposal-id" }),
++    reason: Options.text("reason").pipe(
++      Options.withDescription("Reason for rejection")
++    ),
++  },
++  ({ proposalId, reason }) =>
++    Effect.gen(function* () {
++      const inngestClient = yield* Inngest
++      const response = yield* inngestClient.send("memory/proposal.rejected", {
++        proposalId,
++        reason,
++        rejectedBy: "joel",
++      })
++
++      yield* Console.log(
++        respond("review reject", { proposalId, reason, sent: response }, [
++          { command: "joelclaw review", description: "See remaining pending proposals" },
++          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
++        ])
++      )
++    })
++)
++
++const approveAllCmd = Command.make("approve-all", {}, () =>
++  Effect.gen(function* () {
++    const inngestClient = yield* Inngest
++    const proposalIds = yield* Effect.tryPromise({
++      try: () => withRedis((redis) => redis.lrange(REVIEW_PENDING_KEY, 0, -1)),
++      catch: (error) => error,
++    })
++
++    const sent = [] as Array<{ proposalId: string; response: unknown }>
++
++    for (const proposalId of proposalIds) {
++      const response = yield* inngestClient.send("memory/proposal.approved", {
++        proposalId,
++        approvedBy: "joel",
++      })
++      sent.push({ proposalId, response })
++    }
++
++    yield* Console.log(
++      respond("review approve-all", { count: sent.length, proposals: sent }, [
++        { command: "joelclaw review", description: "See remaining pending proposals" },
++        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
++      ])
++    )
++  })
++)
++
++const expireCmd = Command.make("expire", {}, () =>
++  Effect.gen(function* () {
++    const inngestClient = yield* Inngest
++    const pending = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    const expiredCandidates = pending
++      .filter(({ id, proposal }) => isOlderThanSevenDays(id, proposal))
++      .map(({ id }) => id)
++
++    const sent = [] as Array<{ proposalId: string; response: unknown }>
++
++    for (const proposalId of expiredCandidates) {
++      const response = yield* inngestClient.send("memory/proposal.rejected", {
++        proposalId,
++        reason: EXPIRY_REASON,
++        rejectedBy: "joel",
++      })
++      sent.push({ proposalId, response })
++    }
++
++    yield* Console.log(
++      respond("review expire", {
++        checked: pending.length,
++        expired: expiredCandidates.length,
++        reason: EXPIRY_REASON,
++        proposals: sent,
++      }, [
++        { command: "joelclaw review", description: "See remaining pending proposals" },
++        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
++      ])
++    )
++  })
++)
++
++export const reviewCmd = Command.make("review", {}, () =>
++  Effect.gen(function* () {
++    const proposals = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    yield* Console.log(
++      respond("review", {
++        pending_count: proposals.length,
++        proposals: listPayload(proposals),
++      }, [
++        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
++        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
++      ])
++    )
++  })
++).pipe(
++  Command.withSubcommands([listCmd, approveCmd, rejectCmd, approveAllCmd, expireCmd])
++)
+
+file update:
+diff --git a/packages/cli/src/cli.ts b/packages/cli/src/cli.ts
+index b84f200afd762013bdf881ad816aaf247d86bf8d..7e9b732f2d0017cfb2b1429b19a92e8e3b75edeb
+--- a/packages/cli/src/cli.ts
++++ b/packages/cli/src/cli.ts
+@@ -18,6 +18,7 @@
+ import { watchCmd } from "./commands/watch"
+ import { noteCmd } from "./commands/note"
+ import { gatewayCmd } from "./commands/gateway"
++import { reviewCmd } from "./commands/review"
+ 
+ // ── Root ─────────────────────────────────────────────────────────────
+ 
+@@ -57,6 +58,7 @@
+           discover: "joelclaw discover <url> [-c context]",
+           note: "joelclaw note <text> [--source source] [--tags a,b,c]",
+           gateway: "joelclaw gateway {status|events|push|drain|test}",
++          review: "joelclaw review {list|approve|reject|approve-all|expire}",
+           schema: "joelclaw schema",
+           refresh: "joelclaw refresh",
+         },
+@@ -71,7 +73,7 @@
+     ))
+   })
+ ).pipe(
+-  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd])
++  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, reviewCmd])
+ )
+ 
+ const cli = Command.run(root, {
+diff --git a/packages/cli/src/commands/review.ts b/packages/cli/src/commands/review.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e41f521a5d3e5f2f5ecbfd8cb6d4dba7a7ec8388
+--- /dev/null
++++ b/packages/cli/src/commands/review.ts
+@@ -0,0 +1,228 @@
++import { Args, Command, Options } from "@effect/cli"
++import { Console, Effect } from "effect"
++import Redis from "ioredis"
++import { Inngest } from "../inngest"
++import { respond } from "../response"
++
++const REVIEW_PENDING_KEY = "memory:review:pending"
++const proposalKey = (id: string) => `memory:review:proposal:${id}`
++const EXPIRY_REASON = "Expired after 7 days without review"
++const EXPIRY_WINDOW_DAYS = 7
++const EXPIRY_WINDOW_MS = EXPIRY_WINDOW_DAYS * 24 * 60 * 60 * 1000
++
++type ProposalHash = Record<string, string>
++
++const withRedis = <A>(fn: (redis: Redis) => Promise<A>): Promise<A> => {
++  const redis = new Redis()
++  return redis
++    .connect()
++    .then(() => fn(redis))
++    .finally(() => {
++      try {
++        redis.disconnect()
++      } catch {
++        // no-op
++      }
++    })
++}
++
++const readPendingProposals = (): Promise<Array<{ id: string; proposal: ProposalHash }>> =>
++  withRedis(async (redis) => {
++    const ids = await redis.lrange(REVIEW_PENDING_KEY, 0, -1)
++    const proposals = await Promise.all(
++      ids.map(async (id) => ({
++        id,
++        proposal: await redis.hgetall(proposalKey(id)),
++      }))
++    )
++    return proposals
++  })
++
++const extractCreatedAt = (proposalId: string, proposal: ProposalHash): number | null => {
++  const fromFields = proposal.createdAt ?? proposal.created_at
++  if (fromFields) {
++    const parsed = Date.parse(fromFields)
++    if (Number.isFinite(parsed)) return parsed
++  }
++
++  const proposalIdMatch = /^p-(\d{4})(\d{2})(\d{2})-\d+$/u.exec(proposalId)
++  if (!proposalIdMatch) return null
++
++  const [, y, m, d] = proposalIdMatch
++  const parsed = Date.parse(`${y}-${m}-${d}T00:00:00.000Z`)
++  return Number.isFinite(parsed) ? parsed : null
++}
++
++const isOlderThanSevenDays = (proposalId: string, proposal: ProposalHash): boolean => {
++  const createdAt = extractCreatedAt(proposalId, proposal)
++  if (createdAt === null) return false
++  return Date.now() - createdAt > EXPIRY_WINDOW_MS
++}
++
++const listPayload = (items: Array<{ id: string; proposal: ProposalHash }>) =>
++  items.map(({ id, proposal }) => ({
++    id,
++    ...proposal,
++    _actions: [
++      { command: `joelclaw review approve ${id}`, description: "Approve this proposal" },
++      { command: `joelclaw review reject ${id} --reason \"reason here\"`, description: "Reject this proposal" },
++    ],
++  }))
++
++const listCmd = Command.make("list", {}, () =>
++  Effect.gen(function* () {
++    const proposals = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    const result = {
++      pending_count: proposals.length,
++      proposals: listPayload(proposals),
++      _actions: [
++        { command: "joelclaw review approve-all", description: "Approve all pending proposals" },
++        { command: "joelclaw review expire", description: "Run an expiry check for stale proposals" },
++      ],
++    }
++
++    yield* Console.log(
++      respond("review list", result, [
++        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
++        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
++      ])
++    )
++  })
++)
++
++const approveCmd = Command.make(
++  "approve",
++  {
++    proposalId: Args.text({ name: "proposal-id" }),
++  },
++  ({ proposalId }) =>
++    Effect.gen(function* () {
++      const inngestClient = yield* Inngest
++      const response = yield* inngestClient.send("memory/proposal.approved", {
++        proposalId,
++        approvedBy: "joel",
++      })
++
++      yield* Console.log(
++        respond("review approve", { proposalId, sent: response }, [
++          { command: "joelclaw review", description: "See remaining pending proposals" },
++          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
++        ])
++      )
++    })
++)
++
++const rejectCmd = Command.make(
++  "reject",
++  {
++    proposalId: Args.text({ name: "proposal-id" }),
++    reason: Options.text("reason").pipe(
++      Options.withDescription("Reason for rejection")
++    ),
++  },
++  ({ proposalId, reason }) =>
++    Effect.gen(function* () {
++      const inngestClient = yield* Inngest
++      const response = yield* inngestClient.send("memory/proposal.rejected", {
++        proposalId,
++        reason,
++        rejectedBy: "joel",
++      })
++
++      yield* Console.log(
++        respond("review reject", { proposalId, reason, sent: response }, [
++          { command: "joelclaw review", description: "See remaining pending proposals" },
++          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
++        ])
++      )
++    })
++)
++
++const approveAllCmd = Command.make("approve-all", {}, () =>
++  Effect.gen(function* () {
++    const inngestClient = yield* Inngest
++    const proposalIds = yield* Effect.tryPromise({
++      try: () => withRedis((redis) => redis.lrange(REVIEW_PENDING_KEY, 0, -1)),
++      catch: (error) => error,
++    })
++
++    const sent = [] as Array<{ proposalId: string; response: unknown }>
++
++    for (const proposalId of proposalIds) {
++      const response = yield* inngestClient.send("memory/proposal.approved", {
++        proposalId,
++        approvedBy: "joel",
++      })
++      sent.push({ proposalId, response })
++    }
++
++    yield* Console.log(
++      respond("review approve-all", { count: sent.length, proposals: sent }, [
++        { command: "joelclaw review", description: "See remaining pending proposals" },
++        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
++      ])
++    )
++  })
++)
++
++const expireCmd = Command.make("expire", {}, () =>
++  Effect.gen(function* () {
++    const inngestClient = yield* Inngest
++    const pending = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    const expiredCandidates = pending
++      .filter(({ id, proposal }) => isOlderThanSevenDays(id, proposal))
++      .map(({ id }) => id)
++
++    const sent = [] as Array<{ proposalId: string; response: unknown }>
++
++    for (const proposalId of expiredCandidates) {
++      const response = yield* inngestClient.send("memory/proposal.rejected", {
++        proposalId,
++        reason: EXPIRY_REASON,
++        rejectedBy: "joel",
++      })
++      sent.push({ proposalId, response })
++    }
++
++    yield* Console.log(
++      respond("review expire", {
++        checked: pending.length,
++        expired: expiredCandidates.length,
++        reason: EXPIRY_REASON,
++        proposals: sent,
++      }, [
++        { command: "joelclaw review", description: "See remaining pending proposals" },
++        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
++      ])
++    )
++  })
++)
++
++export const reviewCmd = Command.make("review", {}, () =>
++  Effect.gen(function* () {
++    const proposals = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    yield* Console.log(
++      respond("review", {
++        pending_count: proposals.length,
++        proposals: listPayload(proposals),
++      }, [
++        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
++        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
++      ])
++    )
++  })
++).pipe(
++  Command.withSubcommands([listCmd, approveCmd, rejectCmd, approveAllCmd, expireCmd])
++)
+
+
+thinking
+**Planning lint, compile, and tests**
+codex
+The new `review` command is implemented and registered. I’m running the targeted acceptance test and full TypeScript check now to confirm behavior and compile status.
+exec
+/bin/zsh -lc 'bun test packages/cli/src/commands/review.acceptance.test.ts' in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4exec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4 succeeded in 485ms:
+
+ succeeded in 1.06s:
+(pass) MEM-4 acceptance: joelclaw review CLI > AC-1: review command module exists and exports reviewCmd [2.90ms]
+(pass) MEM-4 acceptance: joelclaw review CLI > AC-2: review command is registered in root CLI [456.56ms]
+(pass) MEM-4 acceptance: joelclaw review CLI > AC-3: review list reads Redis and outputs HATEOAS JSON with approve/reject actions [4.81ms]
+(pass) MEM-4 acceptance: joelclaw review CLI > AC-4: review approve sends memory/proposal.approved [1.83ms]
+(pass) MEM-4 acceptance: joelclaw review CLI > AC-5: review reject --reason sends memory/proposal.rejected [1.37ms]
+(pass) MEM-4 acceptance: joelclaw review CLI > AC-6: review approve-all sends one approved event per pending proposal [0.82ms]
+(pass) MEM-4 acceptance: joelclaw review CLI > AC-7: TypeScript compiles with bunx tsc --noEmit [520.35ms]
+
+ 7 pass
+ 0 fail
+ 17 expect() calls
+Ran 7 tests across 1 file. [1102.00ms]
+file update:
+diff --git a/packages/cli/src/cli.ts b/packages/cli/src/cli.ts
+index b84f200afd762013bdf881ad816aaf247d86bf8d..7e9b732f2d0017cfb2b1429b19a92e8e3b75edeb
+--- a/packages/cli/src/cli.ts
++++ b/packages/cli/src/cli.ts
+@@ -18,6 +18,7 @@
+ import { watchCmd } from "./commands/watch"
+ import { noteCmd } from "./commands/note"
+ import { gatewayCmd } from "./commands/gateway"
++import { reviewCmd } from "./commands/review"
+ 
+ // ── Root ─────────────────────────────────────────────────────────────
+ 
+@@ -57,6 +58,7 @@
+           discover: "joelclaw discover <url> [-c context]",
+           note: "joelclaw note <text> [--source source] [--tags a,b,c]",
+           gateway: "joelclaw gateway {status|events|push|drain|test}",
++          review: "joelclaw review {list|approve|reject|approve-all|expire}",
+           schema: "joelclaw schema",
+           refresh: "joelclaw refresh",
+         },
+@@ -71,7 +73,7 @@
+     ))
+   })
+ ).pipe(
+-  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd])
++  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, reviewCmd])
+ )
+ 
+ const cli = Command.run(root, {
+diff --git a/packages/cli/src/commands/review.ts b/packages/cli/src/commands/review.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e41f521a5d3e5f2f5ecbfd8cb6d4dba7a7ec8388
+--- /dev/null
++++ b/packages/cli/src/commands/review.ts
+@@ -0,0 +1,228 @@
++import { Args, Command, Options } from "@effect/cli"
++import { Console, Effect } from "effect"
++import Redis from "ioredis"
++import { Inngest } from "../inngest"
++import { respond } from "../response"
++
++const REVIEW_PENDING_KEY = "memory:review:pending"
++const proposalKey = (id: string) => `memory:review:proposal:${id}`
++const EXPIRY_REASON = "Expired after 7 days without review"
++const EXPIRY_WINDOW_DAYS = 7
++const EXPIRY_WINDOW_MS = EXPIRY_WINDOW_DAYS * 24 * 60 * 60 * 1000
++
++type ProposalHash = Record<string, string>
++
++const withRedis = <A>(fn: (redis: Redis) => Promise<A>): Promise<A> => {
++  const redis = new Redis()
++  return redis
++    .connect()
++    .then(() => fn(redis))
++    .finally(() => {
++      try {
++        redis.disconnect()
++      } catch {
++        // no-op
++      }
++    })
++}
++
++const readPendingProposals = (): Promise<Array<{ id: string; proposal: ProposalHash }>> =>
++  withRedis(async (redis) => {
++    const ids = await redis.lrange(REVIEW_PENDING_KEY, 0, -1)
++    const proposals = await Promise.all(
++      ids.map(async (id) => ({
++        id,
++        proposal: await redis.hgetall(proposalKey(id)),
++      }))
++    )
++    return proposals
++  })
++
++const extractCreatedAt = (proposalId: string, proposal: ProposalHash): number | null => {
++  const fromFields = proposal.createdAt ?? proposal.created_at
++  if (fromFields) {
++    const parsed = Date.parse(fromFields)
++    if (Number.isFinite(parsed)) return parsed
++  }
++
++  const proposalIdMatch = /^p-(\d{4})(\d{2})(\d{2})-\d+$/u.exec(proposalId)
++  if (!proposalIdMatch) return null
++
++  const [, y, m, d] = proposalIdMatch
++  const parsed = Date.parse(`${y}-${m}-${d}T00:00:00.000Z`)
++  return Number.isFinite(parsed) ? parsed : null
++}
++
++const isOlderThanSevenDays = (proposalId: string, proposal: ProposalHash): boolean => {
++  const createdAt = extractCreatedAt(proposalId, proposal)
++  if (createdAt === null) return false
++  return Date.now() - createdAt > EXPIRY_WINDOW_MS
++}
++
++const listPayload = (items: Array<{ id: string; proposal: ProposalHash }>) =>
++  items.map(({ id, proposal }) => ({
++    id,
++    ...proposal,
++    _actions: [
++      { command: `joelclaw review approve ${id}`, description: "Approve this proposal" },
++      { command: `joelclaw review reject ${id} --reason \"reason here\"`, description: "Reject this proposal" },
++    ],
++  }))
++
++const listCmd = Command.make("list", {}, () =>
++  Effect.gen(function* () {
++    const proposals = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    const result = {
++      pending_count: proposals.length,
++      proposals: listPayload(proposals),
++      _actions: [
++        { command: "joelclaw review approve-all", description: "Approve all pending proposals" },
++        { command: "joelclaw review expire", description: "Run an expiry check for stale proposals" },
++      ],
++    }
++
++    yield* Console.log(
++      respond("review list", result, [
++        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
++        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
++      ])
++    )
++  })
++)
++
++const approveCmd = Command.make(
++  "approve",
++  {
++    proposalId: Args.text({ name: "proposal-id" }),
++  },
++  ({ proposalId }) =>
++    Effect.gen(function* () {
++      const inngestClient = yield* Inngest
++      const response = yield* inngestClient.send("memory/proposal.approved", {
++        proposalId,
++        approvedBy: "joel",
++      })
++
++      yield* Console.log(
++        respond("review approve", { proposalId, sent: response }, [
++          { command: "joelclaw review", description: "See remaining pending proposals" },
++          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
++        ])
++      )
++    })
++)
++
++const rejectCmd = Command.make(
++  "reject",
++  {
++    proposalId: Args.text({ name: "proposal-id" }),
++    reason: Options.text("reason").pipe(
++      Options.withDescription("Reason for rejection")
++    ),
++  },
++  ({ proposalId, reason }) =>
++    Effect.gen(function* () {
++      const inngestClient = yield* Inngest
++      const response = yield* inngestClient.send("memory/proposal.rejected", {
++        proposalId,
++        reason,
++        rejectedBy: "joel",
++      })
++
++      yield* Console.log(
++        respond("review reject", { proposalId, reason, sent: response }, [
++          { command: "joelclaw review", description: "See remaining pending proposals" },
++          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
++        ])
++      )
++    })
++)
++
++const approveAllCmd = Command.make("approve-all", {}, () =>
++  Effect.gen(function* () {
++    const inngestClient = yield* Inngest
++    const proposalIds = yield* Effect.tryPromise({
++      try: () => withRedis((redis) => redis.lrange(REVIEW_PENDING_KEY, 0, -1)),
++      catch: (error) => error,
++    })
++
++    const sent = [] as Array<{ proposalId: string; response: unknown }>
++
++    for (const proposalId of proposalIds) {
++      const response = yield* inngestClient.send("memory/proposal.approved", {
++        proposalId,
++        approvedBy: "joel",
++      })
++      sent.push({ proposalId, response })
++    }
++
++    yield* Console.log(
++      respond("review approve-all", { count: sent.length, proposals: sent }, [
++        { command: "joelclaw review", description: "See remaining pending proposals" },
++        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
++      ])
++    )
++  })
++)
++
++const expireCmd = Command.make("expire", {}, () =>
++  Effect.gen(function* () {
++    const inngestClient = yield* Inngest
++    const pending = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    const expiredCandidates = pending
++      .filter(({ id, proposal }) => isOlderThanSevenDays(id, proposal))
++      .map(({ id }) => id)
++
++    const sent = [] as Array<{ proposalId: string; response: unknown }>
++
++    for (const proposalId of expiredCandidates) {
++      const response = yield* inngestClient.send("memory/proposal.rejected", {
++        proposalId,
++        reason: EXPIRY_REASON,
++        rejectedBy: "joel",
++      })
++      sent.push({ proposalId, response })
++    }
++
++    yield* Console.log(
++      respond("review expire", {
++        checked: pending.length,
++        expired: expiredCandidates.length,
++        reason: EXPIRY_REASON,
++        proposals: sent,
++      }, [
++        { command: "joelclaw review", description: "See remaining pending proposals" },
++        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
++      ])
++    )
++  })
++)
++
++export const reviewCmd = Command.make("review", {}, () =>
++  Effect.gen(function* () {
++    const proposals = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    yield* Console.log(
++      respond("review", {
++        pending_count: proposals.length,
++        proposals: listPayload(proposals),
++      }, [
++        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
++        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
++      ])
++    )
++  })
++).pipe(
++  Command.withSubcommands([listCmd, approveCmd, rejectCmd, approveAllCmd, expireCmd])
++)
+
+
+thinking
+**Checking for unexpected changes**
+exec
+/bin/zsh -lc 'git status --short' in /private/tmp/agent-loop/loop-mlr8oxtg-b68bp4 succeeded in 52ms:
+ M packages/cli/src/cli.ts
+ M prd.json
+?? packages/cli/src/commands/review.ts
+?? pid
+file update:
+diff --git a/packages/cli/src/cli.ts b/packages/cli/src/cli.ts
+index b84f200afd762013bdf881ad816aaf247d86bf8d..7e9b732f2d0017cfb2b1429b19a92e8e3b75edeb
+--- a/packages/cli/src/cli.ts
++++ b/packages/cli/src/cli.ts
+@@ -18,6 +18,7 @@
+ import { watchCmd } from "./commands/watch"
+ import { noteCmd } from "./commands/note"
+ import { gatewayCmd } from "./commands/gateway"
++import { reviewCmd } from "./commands/review"
+ 
+ // ── Root ─────────────────────────────────────────────────────────────
+ 
+@@ -57,6 +58,7 @@
+           discover: "joelclaw discover <url> [-c context]",
+           note: "joelclaw note <text> [--source source] [--tags a,b,c]",
+           gateway: "joelclaw gateway {status|events|push|drain|test}",
++          review: "joelclaw review {list|approve|reject|approve-all|expire}",
+           schema: "joelclaw schema",
+           refresh: "joelclaw refresh",
+         },
+@@ -71,7 +73,7 @@
+     ))
+   })
+ ).pipe(
+-  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd])
++  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, reviewCmd])
+ )
+ 
+ const cli = Command.run(root, {
+diff --git a/packages/cli/src/commands/review.ts b/packages/cli/src/commands/review.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e41f521a5d3e5f2f5ecbfd8cb6d4dba7a7ec8388
+--- /dev/null
++++ b/packages/cli/src/commands/review.ts
+@@ -0,0 +1,228 @@
++import { Args, Command, Options } from "@effect/cli"
++import { Console, Effect } from "effect"
++import Redis from "ioredis"
++import { Inngest } from "../inngest"
++import { respond } from "../response"
++
++const REVIEW_PENDING_KEY = "memory:review:pending"
++const proposalKey = (id: string) => `memory:review:proposal:${id}`
++const EXPIRY_REASON = "Expired after 7 days without review"
++const EXPIRY_WINDOW_DAYS = 7
++const EXPIRY_WINDOW_MS = EXPIRY_WINDOW_DAYS * 24 * 60 * 60 * 1000
++
++type ProposalHash = Record<string, string>
++
++const withRedis = <A>(fn: (redis: Redis) => Promise<A>): Promise<A> => {
++  const redis = new Redis()
++  return redis
++    .connect()
++    .then(() => fn(redis))
++    .finally(() => {
++      try {
++        redis.disconnect()
++      } catch {
++        // no-op
++      }
++    })
++}
++
++const readPendingProposals = (): Promise<Array<{ id: string; proposal: ProposalHash }>> =>
++  withRedis(async (redis) => {
++    const ids = await redis.lrange(REVIEW_PENDING_KEY, 0, -1)
++    const proposals = await Promise.all(
++      ids.map(async (id) => ({
++        id,
++        proposal: await redis.hgetall(proposalKey(id)),
++      }))
++    )
++    return proposals
++  })
++
++const extractCreatedAt = (proposalId: string, proposal: ProposalHash): number | null => {
++  const fromFields = proposal.createdAt ?? proposal.created_at
++  if (fromFields) {
++    const parsed = Date.parse(fromFields)
++    if (Number.isFinite(parsed)) return parsed
++  }
++
++  const proposalIdMatch = /^p-(\d{4})(\d{2})(\d{2})-\d+$/u.exec(proposalId)
++  if (!proposalIdMatch) return null
++
++  const [, y, m, d] = proposalIdMatch
++  const parsed = Date.parse(`${y}-${m}-${d}T00:00:00.000Z`)
++  return Number.isFinite(parsed) ? parsed : null
++}
++
++const isOlderThanSevenDays = (proposalId: string, proposal: ProposalHash): boolean => {
++  const createdAt = extractCreatedAt(proposalId, proposal)
++  if (createdAt === null) return false
++  return Date.now() - createdAt > EXPIRY_WINDOW_MS
++}
++
++const listPayload = (items: Array<{ id: string; proposal: ProposalHash }>) =>
++  items.map(({ id, proposal }) => ({
++    id,
++    ...proposal,
++    _actions: [
++      { command: `joelclaw review approve ${id}`, description: "Approve this proposal" },
++      { command: `joelclaw review reject ${id} --reason \"reason here\"`, description: "Reject this proposal" },
++    ],
++  }))
++
++const listCmd = Command.make("list", {}, () =>
++  Effect.gen(function* () {
++    const proposals = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    const result = {
++      pending_count: proposals.length,
++      proposals: listPayload(proposals),
++      _actions: [
++        { command: "joelclaw review approve-all", description: "Approve all pending proposals" },
++        { command: "joelclaw review expire", description: "Run an expiry check for stale proposals" },
++      ],
++    }
++
++    yield* Console.log(
++      respond("review list", result, [
++        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
++        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
++      ])
++    )
++  })
++)
++
++const approveCmd = Command.make(
++  "approve",
++  {
++    proposalId: Args.text({ name: "proposal-id" }),
++  },
++  ({ proposalId }) =>
++    Effect.gen(function* () {
++      const inngestClient = yield* Inngest
++      const response = yield* inngestClient.send("memory/proposal.approved", {
++        proposalId,
++        approvedBy: "joel",
++      })
++
++      yield* Console.log(
++        respond("review approve", { proposalId, sent: response }, [
++          { command: "joelclaw review", description: "See remaining pending proposals" },
++          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
++        ])
++      )
++    })
++)
++
++const rejectCmd = Command.make(
++  "reject",
++  {
++    proposalId: Args.text({ name: "proposal-id" }),
++    reason: Options.text("reason").pipe(
++      Options.withDescription("Reason for rejection")
++    ),
++  },
++  ({ proposalId, reason }) =>
++    Effect.gen(function* () {
++      const inngestClient = yield* Inngest
++      const response = yield* inngestClient.send("memory/proposal.rejected", {
++        proposalId,
++        reason,
++        rejectedBy: "joel",
++      })
++
++      yield* Console.log(
++        respond("review reject", { proposalId, reason, sent: response }, [
++          { command: "joelclaw review", description: "See remaining pending proposals" },
++          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
++        ])
++      )
++    })
++)
++
++const approveAllCmd = Command.make("approve-all", {}, () =>
++  Effect.gen(function* () {
++    const inngestClient = yield* Inngest
++    const proposalIds = yield* Effect.tryPromise({
++      try: () => withRedis((redis) => redis.lrange(REVIEW_PENDING_KEY, 0, -1)),
++      catch: (error) => error,
++    })
++
++    const sent = [] as Array<{ proposalId: string; response: unknown }>
++
++    for (const proposalId of proposalIds) {
++      const response = yield* inngestClient.send("memory/proposal.approved", {
++        proposalId,
++        approvedBy: "joel",
++      })
++      sent.push({ proposalId, response })
++    }
++
++    yield* Console.log(
++      respond("review approve-all", { count: sent.length, proposals: sent }, [
++        { command: "joelclaw review", description: "See remaining pending proposals" },
++        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
++      ])
++    )
++  })
++)
++
++const expireCmd = Command.make("expire", {}, () =>
++  Effect.gen(function* () {
++    const inngestClient = yield* Inngest
++    const pending = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    const expiredCandidates = pending
++      .filter(({ id, proposal }) => isOlderThanSevenDays(id, proposal))
++      .map(({ id }) => id)
++
++    const sent = [] as Array<{ proposalId: string; response: unknown }>
++
++    for (const proposalId of expiredCandidates) {
++      const response = yield* inngestClient.send("memory/proposal.rejected", {
++        proposalId,
++        reason: EXPIRY_REASON,
++        rejectedBy: "joel",
++      })
++      sent.push({ proposalId, response })
++    }
++
++    yield* Console.log(
++      respond("review expire", {
++        checked: pending.length,
++        expired: expiredCandidates.length,
++        reason: EXPIRY_REASON,
++        proposals: sent,
++      }, [
++        { command: "joelclaw review", description: "See remaining pending proposals" },
++        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
++      ])
++    )
++  })
++)
++
++export const reviewCmd = Command.make("review", {}, () =>
++  Effect.gen(function* () {
++    const proposals = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    yield* Console.log(
++      respond("review", {
++        pending_count: proposals.length,
++        proposals: listPayload(proposals),
++      }, [
++        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
++        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
++      ])
++    )
++  })
++).pipe(
++  Command.withSubcommands([listCmd, approveCmd, rejectCmd, approveAllCmd, expireCmd])
++)
+
+
+thinking
+**Summarizing implementation and validation**
+codex
+Implemented MEM-4 in the active CLI location (`packages/cli`) since `packages/system-bus/src/cli` does not exist in this workspace.
+
+### Changes made
+- Added new command module: `packages/cli/src/commands/review.ts`
+  - `joelclaw review` (default list behavior)
+  - `joelclaw review list`
+  - `joelclaw review approve <proposalId>` → sends `memory/proposal.approved` with `approvedBy: "joel"`
+  - `joelclaw review reject <proposalId> --reason <text>` → sends `memory/proposal.rejected` with `rejectedBy: "joel"`
+  - `joelclaw review approve-all` → reads Redis pending IDs and sends one approve event per ID
+  - `joelclaw review expire` → checks pending proposals older than 7 days and emits rejection events with expiry reason
+  - List output includes proposal-level `_actions` for approve/reject and is returned in the existing JSON/HATEOAS envelope.
+- Registered command in root CLI: `packages/cli/src/cli.ts`
+  - Added `reviewCmd` import
+  - Added `review` to root command help/command map
+  - Added `reviewCmd` to `Command.withSubcommands(...)`
+
+### Verification
+- `bun test packages/cli/src/commands/review.acceptance.test.ts` passed (7/7).
+- `bunx tsc --noEmit` passed.
+file update:
+diff --git a/packages/cli/src/cli.ts b/packages/cli/src/cli.ts
+index b84f200afd762013bdf881ad816aaf247d86bf8d..7e9b732f2d0017cfb2b1429b19a92e8e3b75edeb
+--- a/packages/cli/src/cli.ts
++++ b/packages/cli/src/cli.ts
+@@ -18,6 +18,7 @@
+ import { watchCmd } from "./commands/watch"
+ import { noteCmd } from "./commands/note"
+ import { gatewayCmd } from "./commands/gateway"
++import { reviewCmd } from "./commands/review"
+ 
+ // ── Root ─────────────────────────────────────────────────────────────
+ 
+@@ -57,6 +58,7 @@
+           discover: "joelclaw discover <url> [-c context]",
+           note: "joelclaw note <text> [--source source] [--tags a,b,c]",
+           gateway: "joelclaw gateway {status|events|push|drain|test}",
++          review: "joelclaw review {list|approve|reject|approve-all|expire}",
+           schema: "joelclaw schema",
+           refresh: "joelclaw refresh",
+         },
+@@ -71,7 +73,7 @@
+     ))
+   })
+ ).pipe(
+-  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd])
++  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, reviewCmd])
+ )
+ 
+ const cli = Command.run(root, {
+diff --git a/packages/cli/src/commands/review.ts b/packages/cli/src/commands/review.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..e41f521a5d3e5f2f5ecbfd8cb6d4dba7a7ec8388
+--- /dev/null
++++ b/packages/cli/src/commands/review.ts
+@@ -0,0 +1,228 @@
++import { Args, Command, Options } from "@effect/cli"
++import { Console, Effect } from "effect"
++import Redis from "ioredis"
++import { Inngest } from "../inngest"
++import { respond } from "../response"
++
++const REVIEW_PENDING_KEY = "memory:review:pending"
++const proposalKey = (id: string) => `memory:review:proposal:${id}`
++const EXPIRY_REASON = "Expired after 7 days without review"
++const EXPIRY_WINDOW_DAYS = 7
++const EXPIRY_WINDOW_MS = EXPIRY_WINDOW_DAYS * 24 * 60 * 60 * 1000
++
++type ProposalHash = Record<string, string>
++
++const withRedis = <A>(fn: (redis: Redis) => Promise<A>): Promise<A> => {
++  const redis = new Redis()
++  return redis
++    .connect()
++    .then(() => fn(redis))
++    .finally(() => {
++      try {
++        redis.disconnect()
++      } catch {
++        // no-op
++      }
++    })
++}
++
++const readPendingProposals = (): Promise<Array<{ id: string; proposal: ProposalHash }>> =>
++  withRedis(async (redis) => {
++    const ids = await redis.lrange(REVIEW_PENDING_KEY, 0, -1)
++    const proposals = await Promise.all(
++      ids.map(async (id) => ({
++        id,
++        proposal: await redis.hgetall(proposalKey(id)),
++      }))
++    )
++    return proposals
++  })
++
++const extractCreatedAt = (proposalId: string, proposal: ProposalHash): number | null => {
++  const fromFields = proposal.createdAt ?? proposal.created_at
++  if (fromFields) {
++    const parsed = Date.parse(fromFields)
++    if (Number.isFinite(parsed)) return parsed
++  }
++
++  const proposalIdMatch = /^p-(\d{4})(\d{2})(\d{2})-\d+$/u.exec(proposalId)
++  if (!proposalIdMatch) return null
++
++  const [, y, m, d] = proposalIdMatch
++  const parsed = Date.parse(`${y}-${m}-${d}T00:00:00.000Z`)
++  return Number.isFinite(parsed) ? parsed : null
++}
++
++const isOlderThanSevenDays = (proposalId: string, proposal: ProposalHash): boolean => {
++  const createdAt = extractCreatedAt(proposalId, proposal)
++  if (createdAt === null) return false
++  return Date.now() - createdAt > EXPIRY_WINDOW_MS
++}
++
++const listPayload = (items: Array<{ id: string; proposal: ProposalHash }>) =>
++  items.map(({ id, proposal }) => ({
++    id,
++    ...proposal,
++    _actions: [
++      { command: `joelclaw review approve ${id}`, description: "Approve this proposal" },
++      { command: `joelclaw review reject ${id} --reason \"reason here\"`, description: "Reject this proposal" },
++    ],
++  }))
++
++const listCmd = Command.make("list", {}, () =>
++  Effect.gen(function* () {
++    const proposals = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    const result = {
++      pending_count: proposals.length,
++      proposals: listPayload(proposals),
++      _actions: [
++        { command: "joelclaw review approve-all", description: "Approve all pending proposals" },
++        { command: "joelclaw review expire", description: "Run an expiry check for stale proposals" },
++      ],
++    }
++
++    yield* Console.log(
++      respond("review list", result, [
++        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
++        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
++      ])
++    )
++  })
++)
++
++const approveCmd = Command.make(
++  "approve",
++  {
++    proposalId: Args.text({ name: "proposal-id" }),
++  },
++  ({ proposalId }) =>
++    Effect.gen(function* () {
++      const inngestClient = yield* Inngest
++      const response = yield* inngestClient.send("memory/proposal.approved", {
++        proposalId,
++        approvedBy: "joel",
++      })
++
++      yield* Console.log(
++        respond("review approve", { proposalId, sent: response }, [
++          { command: "joelclaw review", description: "See remaining pending proposals" },
++          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
++        ])
++      )
++    })
++)
++
++const rejectCmd = Command.make(
++  "reject",
++  {
++    proposalId: Args.text({ name: "proposal-id" }),
++    reason: Options.text("reason").pipe(
++      Options.withDescription("Reason for rejection")
++    ),
++  },
++  ({ proposalId, reason }) =>
++    Effect.gen(function* () {
++      const inngestClient = yield* Inngest
++      const response = yield* inngestClient.send("memory/proposal.rejected", {
++        proposalId,
++        reason,
++        rejectedBy: "joel",
++      })
++
++      yield* Console.log(
++        respond("review reject", { proposalId, reason, sent: response }, [
++          { command: "joelclaw review", description: "See remaining pending proposals" },
++          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
++        ])
++      )
++    })
++)
++
++const approveAllCmd = Command.make("approve-all", {}, () =>
++  Effect.gen(function* () {
++    const inngestClient = yield* Inngest
++    const proposalIds = yield* Effect.tryPromise({
++      try: () => withRedis((redis) => redis.lrange(REVIEW_PENDING_KEY, 0, -1)),
++      catch: (error) => error,
++    })
++
++    const sent = [] as Array<{ proposalId: string; response: unknown }>
++
++    for (const proposalId of proposalIds) {
++      const response = yield* inngestClient.send("memory/proposal.approved", {
++        proposalId,
++        approvedBy: "joel",
++      })
++      sent.push({ proposalId, response })
++    }
++
++    yield* Console.log(
++      respond("review approve-all", { count: sent.length, proposals: sent }, [
++        { command: "joelclaw review", description: "See remaining pending proposals" },
++        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
++      ])
++    )
++  })
++)
++
++const expireCmd = Command.make("expire", {}, () =>
++  Effect.gen(function* () {
++    const inngestClient = yield* Inngest
++    const pending = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    const expiredCandidates = pending
++      .filter(({ id, proposal }) => isOlderThanSevenDays(id, proposal))
++      .map(({ id }) => id)
++
++    const sent = [] as Array<{ proposalId: string; response: unknown }>
++
++    for (const proposalId of expiredCandidates) {
++      const response = yield* inngestClient.send("memory/proposal.rejected", {
++        proposalId,
++        reason: EXPIRY_REASON,
++        rejectedBy: "joel",
++      })
++      sent.push({ proposalId, response })
++    }
++
++    yield* Console.log(
++      respond("review expire", {
++        checked: pending.length,
++        expired: expiredCandidates.length,
++        reason: EXPIRY_REASON,
++        proposals: sent,
++      }, [
++        { command: "joelclaw review", description: "See remaining pending proposals" },
++        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
++      ])
++    )
++  })
++)
++
++export const reviewCmd = Command.make("review", {}, () =>
++  Effect.gen(function* () {
++    const proposals = yield* Effect.tryPromise({
++      try: () => readPendingProposals(),
++      catch: (error) => error,
++    })
++
++    yield* Console.log(
++      respond("review", {
++        pending_count: proposals.length,
++        proposals: listPayload(proposals),
++      }, [
++        { command: "joelclaw review approve-all", description: "Approve every pending proposal" },
++        { command: "joelclaw review expire", description: "Expire proposals older than 7 days" },
++      ])
++    )
++  })
++).pipe(
++  Command.withSubcommands([listCmd, approveCmd, rejectCmd, approveAllCmd, expireCmd])
++)
+
+tokens used
+55,858
