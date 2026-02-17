@@ -134,6 +134,45 @@ Any decision that changes how the system is built → write an ADR in `~/Vault/d
 - **Keep it flat** — avoid deep nesting
 - **Full read/write access** — agents can create, update, and manage all vault content
 
+## GitHub Access — Two Identities
+
+There are two ways to interact with GitHub from this system. Use the right one.
+
+### `gh` CLI — acts as Joel (@joelhooks)
+
+The GitHub CLI is authenticated via SSH as Joel's personal account. Use it for anything that should look like Joel did it: creating repos, pushing to repos where the bot isn't installed, managing account settings, or any action where human identity matters.
+
+```bash
+gh repo create joelhooks/my-repo --private --source . --push
+gh pr create --title "..." --body "..."
+gh issue create --repo joelhooks/joelclaw --title "..."
+```
+
+If `gh` returns `HTTP 401` or "Requires authentication", re-auth with:
+
+```bash
+gh auth login -h github.com
+```
+
+Pick **SSH** as git protocol (already configured). It opens a browser for device code flow — Joel pastes the one-time code at github.com/login/device. Token is then cached locally.
+
+**When to use**: creating repos, pushing when bot token can't (user-level actions), anything that should show as @joelhooks.
+
+### GitHub Bot — acts as joelclawgithub[bot]
+
+The `github-bot` skill generates installation tokens for the joelclawgithub[bot] GitHub App. Use it for automated operations that should show as bot activity: PR comments, status checks, CI-triggered pushes, API reads across many repos.
+
+```bash
+TOKEN=$(~/.agents/skills/github-bot/scripts/github-token.sh)
+curl -H "Authorization: token $TOKEN" https://api.github.com/repos/...
+```
+
+Token expires in 1 hour. Secrets stored in `agent-secrets` (app ID, PEM key, installation ID). The bot has read/write access to contents, issues, PRs, actions, deployments across all 280+ repos on @joelhooks.
+
+**When to use**: automated PR creation/comments, CI operations, bulk API reads, anything that should show as bot activity rather than Joel.
+
+**Key limitation**: The bot **cannot create repos** on Joel's personal account (GitHub Apps can only create org repos). Use `gh` for that.
+
 ## OpenClaw Integration
 
 OpenClaw has a **layered AGENTS.md** at its repo root (`~/Code/openclaw/openclaw/AGENTS.md`) that inherits from this file for shared conventions and adds orchestration-specific instructions. When working in the OpenClaw codebase, follow both this file and the OpenClaw-specific one.
