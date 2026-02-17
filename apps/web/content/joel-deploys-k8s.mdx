@@ -5,7 +5,7 @@ description: "Three containers and a spike that turned into a production migrati
 draft: false
 ---
 
-> **🌱 This is a draft.** The single-node migration happened and works. I'm still thinking through the multi-node story — where the control plane lives and what runtime replaces k3d when a second machine needs to join.
+> **🌱 This is a draft.** The single-node migration happened and works. The multi-node plan is settled — a Raspberry Pi 5 running native k3s becomes the control plane, and the Mac Mini joins as an agent over Tailscale. Hardware is ordered. The manifests don't change.
 
 I deployed Kubernetes to run three containers on a Mac Mini in my office.
 
@@ -94,6 +94,22 @@ The question is whether you need something **running after you deploy**. k8s and
 For three services on one machine, Docker Compose with `restart: always` honestly does the job. The moment you want heterogeneous nodes — GPU jobs to the GPU box, stateful services on the Mac, batch work wherever there's capacity — you need something that knows about all the nodes and can schedule across them.
 
 Docker Compose is the off-ramp if this ever feels like too much. The manifests translate back to a compose file in about ten minutes.
+
+## What's next: the one where Joel deploys Kubernetes... again
+
+k3d is a dead end for multi-node. It runs k3s inside Docker on one host — remote machines can't join. That was always the known tradeoff: get started fast, graduate later.
+
+The graduation plan: a Raspberry Pi 5 (16 GB) running native k3s as the control plane. The Mac Mini joins as a k3s agent over Tailscale. k3s has [built-in Tailscale integration](https://docs.k3s.io/networking/distributed-multicloud) — pass `--vpn-auth="name=tailscale,joinKey=..."` and it handles the mesh networking between nodes automatically.
+
+Why a Pi and not the Mac? The control plane — API server, scheduler, etcd — just decides where things run. It doesn't need 64 GB of RAM or an M4 Pro. It needs to be always on, always reachable, and running native Linux (no VM layer). A Pi 5 with 16 GB on a USB SSD is perfect for that. k3s server uses 500–800 MB. The Pi won't break a sweat.
+
+The Mac Mini stays where the real compute happens. Redis, Qdrant, Inngest, agent workloads — all schedule there as k3s agent pods. If a GPU box joins later, it's one command: `curl -sfL https://get.k3s.io | K3S_URL=... K3S_TOKEN=... sh -`. Same manifests. Same cluster.
+
+The PDS (AT Protocol Personal Data Server) is just another pod. It's a lightweight process — Bluesky recommends 1 CPU, 1 GB RAM. It could run on the Pi itself or schedule to the Mac alongside everything else. Either way, it's a StatefulSet with a PVC, managed the same way as Redis or Qdrant.
+
+Two layers of federation in one cluster. Kubernetes federates compute — where containers run. AT Protocol federates data — who owns what, how agents communicate. The Pi runs both control planes.
+
+Hardware is ordered. The manifests don't change.
 
 ---
 

@@ -224,6 +224,37 @@ export const agentLoopPlan = inngest.createFunction(
           await $`cp ${prdFile} ${worktreePrd}`.quiet();
         }
       });
+
+      // Install dependencies in the worktree so tests/typecheck work
+      await step.run("install-worktree-deps", async () => {
+        // Detect package manager from lockfile
+        const hasPnpmLock = await Bun.file(`${worktreePath}/pnpm-lock.yaml`).exists();
+        const hasBunLock = await Bun.file(`${worktreePath}/bun.lock`).exists() || await Bun.file(`${worktreePath}/bun.lockb`).exists();
+        const hasYarnLock = await Bun.file(`${worktreePath}/yarn.lock`).exists();
+
+        let installCmd: string;
+        if (hasPnpmLock) {
+          installCmd = "pnpm install --frozen-lockfile";
+        } else if (hasBunLock) {
+          installCmd = "bun install --frozen-lockfile";
+        } else if (hasYarnLock) {
+          installCmd = "yarn install --frozen-lockfile";
+        } else {
+          installCmd = "npm ci";
+        }
+
+        try {
+          const result = await $`cd ${worktreePath} && ${installCmd}`.quiet().nothrow();
+          return {
+            installed: result.exitCode === 0,
+            packageManager: installCmd.split(" ")[0],
+            exitCode: result.exitCode,
+          };
+        } catch (e: any) {
+          // Non-fatal — tool may still work if it doesn't need deps
+          return { installed: false, packageManager: installCmd.split(" ")[0], error: e?.message?.slice(0, 200) };
+        }
+      });
     } else {
       // Re-entry: verify worktree still exists
       await step.run("verify-worktree", async () => {
