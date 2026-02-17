@@ -1,4 +1,6 @@
 import type { MDXComponents } from "mdx/types";
+import Image from "next/image";
+import Link from "next/link";
 import { CodeBlockCopyButton } from "../components/copy-button";
 
 function YouTube({ id }: { id: string }) {
@@ -43,12 +45,27 @@ export const mdxComponents: MDXComponents = {
   ul: (props) => <ul className="mb-5 pl-6 list-disc text-neutral-300" {...props} />,
   ol: (props) => <ol className="mb-5 pl-6 list-decimal text-neutral-300" {...props} />,
   li: (props) => <li className="mb-1 leading-relaxed" {...props} />,
-  a: (props) => (
-    <a
-      className="underline underline-offset-3 decoration-neutral-500 hover:decoration-neutral-300 transition-colors"
-      {...props}
-    />
-  ),
+  a: ({ href, ...props }) => {
+    const isInternal = href && (href.startsWith("/") || href.startsWith("#"));
+    if (isInternal) {
+      return (
+        <Link
+          href={href}
+          className="underline underline-offset-3 decoration-neutral-500 hover:decoration-neutral-300 transition-colors"
+          {...props}
+        />
+      );
+    }
+    return (
+      <a
+        href={href}
+        className="underline underline-offset-3 decoration-neutral-500 hover:decoration-neutral-300 transition-colors"
+        target="_blank"
+        rel="noopener noreferrer"
+        {...props}
+      />
+    );
+  },
   blockquote: (props) => (
     <blockquote
       className="my-6 pl-5 border-l-2 border-neutral-700 text-neutral-400 italic"
@@ -120,8 +137,18 @@ export const mdxComponents: MDXComponents = {
     return <input {...props} />;
   },
   hr: () => <hr className="my-8 border-neutral-800" />,
-  img: (props) => (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img className="max-w-full h-auto rounded-lg my-6" alt={props.alt ?? ""} {...props} />
-  ),
+  img: ({ src, alt, ...props }) => {
+    if (!src) return null;
+    return (
+      <Image
+        src={src}
+        alt={alt ?? ""}
+        width={1200}
+        height={800}
+        className="max-w-full h-auto rounded-lg my-6"
+        sizes="(max-width: 768px) 100vw, 720px"
+        {...props}
+      />
+    );
+  },
 };
