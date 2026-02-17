@@ -184,10 +184,10 @@ function buildCommand(
     case "claude":
       return [
         "claude",
-        "--print",
-        "--no-input",
+        "-p",
+        `'${escaped}'`,
+        "--dangerously-skip-permissions",
         opts.model ? `--model ${opts.model}` : "",
-        `-p '${escaped}'`,
       ]
         .filter(Boolean)
         .join(" ");

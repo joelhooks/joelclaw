@@ -1,0 +1,87 @@
+{
+  "title": "ADR-0026: Inbox Watcher Extension + Background Agent Tool",
+  "description": "Build pieces 2 and 3 of ADR-0026 — a pi-tools extension that watches ~/.joelclaw/workspace/inbox/ for completed background agent results and injects them into the active session, plus a pi tool that lets agents dispatch background work via system/agent.requested events.",
+  "context": {
+    "adr": "ADR-0026 — Background agents via Inngest with file inbox notifications",
+    "piece1_done": "agent-dispatch Inngest function already deployed (19 functions). Spawns codex/claude/pi, writes result to inbox/{requestId}.json, emits system/agent.completed event.",
+    "inbox_dir": "~/.joelclaw/workspace/inbox/",
+    "inbox_ack_dir": "~/.joelclaw/workspace/inbox/ack/",
+    "inngest_event_key": "37aa349b89692d657d276a40e0e47a15",
+    "inngest_url": "http://localhost:8288",
+    "pi_tools_dir": "~/.pi/agent/git/github.com/joelhooks/pi-tools/",
+    "existing_extensions": ["session-lifecycle", "mcq", "agent-secrets", "mcp-bridge", "web-search", "repo-autopsy", "codex-exec", "session-reader", "ralph-loop", "ts-check"],
+    "inbox_file_format": "{ requestId, sessionId, status, task, tool, result?, error?, startedAt, completedAt, durationMs }"
+  },
+  "stories": [
+    {
+      "id": "INBOX-1",
+      "title": "Create inbox-watcher pi-tools extension that watches for new inbox files",
+      "description": "Create a new pi-tools extension at ~/.pi/agent/git/github.com/joelhooks/pi-tools/inbox-watcher/index.ts. On extension load, start watching ~/.joelclaw/workspace/inbox/ with fs.watch for new .json files. When a file appears, read it, format a concise system message with the result summary, and inject it via pi.addSystemMessage(). After injection, move the file to inbox/ack/. Use the same extension patterns as session-lifecycle/index.ts.",
+      "acceptance_criteria": [
+        "Extension file exists at inbox-watcher/index.ts",
+        "Uses pi.on('session_start') to begin watching",
+        "fs.watch on ~/.joelclaw/workspace/inbox/ detects new .json files",
+        "Reads inbox file, formats message with status/task/result preview",
+        "Moves processed files to inbox/ack/ after injection",
+        "Does not crash if inbox dir doesn't exist (creates it)"
+      ]
+    },
+    {
+      "id": "INBOX-2",
+      "title": "Scan for unacked inbox files on session start",
+      "description": "In the inbox-watcher extension, on session_start, scan ~/.joelclaw/workspace/inbox/ for any existing .json files (orphaned results from before this session). Present each one as a system message and move to ack/. This handles the case where background work completed while no session was active.",
+      "acceptance_criteria": [
+        "On session_start, reads all .json files in inbox/",
+        "Each file is formatted and injected as a system message",
+        "Files are moved to inbox/ack/ after injection",
+        "Empty inbox dir produces no messages",
+        "Handles malformed JSON files gracefully (log warning, skip)"
+      ]
+    },
+    {
+      "id": "INBOX-3",
+      "title": "Register inbox-watcher extension in pi-tools config",
+      "description": "Add the inbox-watcher extension to the pi-tools extensions list so it loads automatically. Follow the same pattern as other extensions in the pi-tools repo.",
+      "acceptance_criteria": [
+        "Extension is registered and loads without errors",
+        "Does not conflict with existing extensions",
+        "TypeScript compiles cleanly"
+      ]
+    },
+    {
+      "id": "AGENT-1",
+      "title": "Create background_agent pi tool for dispatching background work",
+      "description": "Create a pi tool (either as part of inbox-watcher or a separate extension) that agents can call to dispatch background work. The tool sends a system/agent.requested event to Inngest and returns immediately with { requestId, status: 'dispatched' }. Parameters: task (required), tool (codex|claude|pi, default codex), cwd (optional), timeout (optional, default 600), model (optional). Generate a unique requestId automatically.",
+      "acceptance_criteria": [
+        "Tool is available in pi sessions as 'background_agent' or similar name",
+        "Sends system/agent.requested event to Inngest via HTTP POST",
+        "Returns immediately with requestId and dispatched status",
+        "Generates unique requestId (e.g., req_{nanoid})",
+        "Task and tool parameters are validated",
+        "Includes current sessionId from pi context if available"
+      ]
+    },
+    {
+      "id": "CLEANUP-1",
+      "title": "Add TTL cleanup for old acked inbox files",
+      "description": "On session start, also check inbox/ack/ for files older than 7 days and delete them. This prevents unbounded growth of the ack directory.",
+      "acceptance_criteria": [
+        "Files in inbox/ack/ older than 7 days are deleted on session start",
+        "Recent acked files are preserved",
+        "Handles empty ack dir gracefully"
+      ]
+    },
+    {
+      "id": "VERIFY-1",
+      "title": "End-to-end verification: dispatch → inbox → session injection",
+      "description": "Write a test or verification script that: (1) sends a system/agent.requested event, (2) waits for the inbox file to appear, (3) verifies the inbox-watcher picks it up and formats it correctly. Verify the full ADR-0026 pipeline works.",
+      "acceptance_criteria": [
+        "Can dispatch a background task via the tool",
+        "Inbox file appears after agent completes",
+        "Inbox watcher detects and processes the file",
+        "Acked file moves to inbox/ack/",
+        "TypeScript compiles cleanly across all new code"
+      ]
+    }
+  ]
+}
