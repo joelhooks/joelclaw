@@ -9,7 +9,7 @@ import {
 } from "bun:test";
 import { InngestTestEngine } from "@inngest/test";
 import Redis from "ioredis";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { COMPRESSION_GUIDANCE, validateCompression } from "./reflect-prompt";
@@ -18,18 +18,6 @@ type MockShellResult = {
   exitCode: number;
   stdout: string;
   stderr: string;
-};
-
-type SectionItem = {
-  checked: boolean;
-  id: string;
-  text: string;
-};
-
-type ParsedReview = {
-  title: string;
-  sections: Array<{ name: string; items: SectionItem[] }>;
-  metadata: Record<string, string>;
 };
 
 const originalRedisMethods = {
@@ -74,63 +62,6 @@ function upsertHash(key: string, args: unknown[]): number {
   }
   redisHashes.set(key, existing);
   return Object.keys(existing).length;
-}
-
-function parseProposalItem(line: string): SectionItem | null {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith("- [")) return null;
-  const checked = trimmed.startsWith("- [x] ");
-  const unchecked = trimmed.startsWith("- [ ] ");
-  if (!checked && !unchecked) return null;
-  const body = trimmed.slice(6);
-  const colonIndex = body.indexOf(": ");
-  if (colonIndex < 0) return null;
-  return {
-    checked,
-    id: body.slice(0, colonIndex),
-    text: body.slice(colonIndex + 2),
-  };
-}
-
-function parseReviewMarkdown(markdown: string): ParsedReview {
-  const lines = markdown.split("\n");
-  const title = lines[0] ?? "";
-  const sections: Array<{ name: string; items: SectionItem[] }> = [];
-  const metadata: Record<string, string> = {};
-
-  let currentSection: { name: string; items: SectionItem[] } | null = null;
-  let inMetadata = false;
-
-  for (const line of lines.slice(1)) {
-    if (line.startsWith("## ")) {
-      currentSection = { name: line.slice(3).trim(), items: [] };
-      sections.push(currentSection);
-      inMetadata = false;
-      continue;
-    }
-
-    if (line.startsWith("### Metadata")) {
-      currentSection = null;
-      inMetadata = true;
-      continue;
-    }
-
-    if (inMetadata && line.startsWith("- ")) {
-      const body = line.slice(2);
-      const separator = body.indexOf(": ");
-      if (separator > 0) {
-        metadata[body.slice(0, separator)] = body.slice(separator + 2);
-      }
-      continue;
-    }
-
-    if (currentSection) {
-      const item = parseProposalItem(line);
-      if (item) currentSection.items.push(item);
-    }
-  }
-
-  return { title, sections, metadata };
 }
 
 function findReflectFunctionExport(mod: Record<string, unknown>) {
@@ -302,7 +233,7 @@ describe("MEM-16 reflect acceptance tests", () => {
     }
   });
 
-  test("REVIEW.md parsing extracts sections, unchecked proposal items, and metadata footer", async () => {
+  test("stage-review writes proposals to Redis and appends daily log metadata", async () => {
     redisLists.set("memory:observations:2026-02-17", [
       JSON.stringify({ summary: "Prepare review structure test." }),
     ]);
@@ -318,43 +249,40 @@ describe("MEM-16 reflect acceptance tests", () => {
       },
     ];
 
-    await executeReflect("2026-02-17");
+    const { result } = await executeReflect("2026-02-17");
+    const pending = redisLists.get("memory:review:pending") ?? [];
+    const proposalOne = redisHashes.get("memory:review:proposal:p-20260217-001") ?? {};
+    const proposalTwo = redisHashes.get("memory:review:proposal:p-20260217-002") ?? {};
 
-    const reviewPath = join(tempHome, ".joelclaw", "workspace", "REVIEW.md");
-    const parsed = parseReviewMarkdown(readFileSync(reviewPath, "utf8"));
-
-    expect(parsed).toMatchObject({
-      title: "# REVIEW Staging (2026-02-17)",
-      sections: [
-        {
-          name: "Constraints",
-          items: [
-            {
-              checked: false,
-              id: "p-20260217-001",
-              text: "Retain strict acceptance coverage.",
-            },
-          ],
+    expect(pending).toMatchObject(["p-20260217-001", "p-20260217-002"]);
+    expect(proposalOne).toMatchObject({
+      id: "p-20260217-001",
+      date: "2026-02-17",
+      section: "Constraints",
+      change: "Retain strict acceptance coverage.",
+      status: "pending",
+      capturedAt: expect.any(String),
+    });
+    expect(proposalTwo).toMatchObject({
+      id: "p-20260217-002",
+      date: "2026-02-17",
+      section: "Preferences",
+      change: "Prefer behavior-based assertions.",
+      status: "pending",
+      capturedAt: expect.any(String),
+    });
+    expect(result).toMatchObject({
+      proposalCount: 2,
+      dailyLogPath: expect.any(String),
+      emittedEvent: {
+        name: "memory/observations.reflected",
+        data: {
+          date: "2026-02-17",
+          proposalCount: 2,
         },
-        {
-          name: "Preferences",
-          items: [
-            {
-              checked: false,
-              id: "p-20260217-002",
-              text: "Prefer behavior-based assertions.",
-            },
-          ],
-        },
-      ],
-      metadata: {
-        date: "2026-02-17",
-        inputTokens: expect.any(String),
-        outputTokens: expect.any(String),
-        compressionRatio: expect.any(String),
-        proposalCount: "2",
       },
     });
+
   });
 
   test("mock pi subprocess valid <proposals> XML is accepted and staged", async () => {
