@@ -56,7 +56,9 @@ afterEach(() => {
 describe("SEND-1 acceptance tests", () => {
   test("observe emits accumulated event via step.sendEvent and never calls inngest.send", async () => {
     const { observeSessionFunction } = await import("./observe.ts");
-    const fn = (observeSessionFunction as { fn: (input: unknown) => Promise<unknown> }).fn;
+    const fn = (
+      observeSessionFunction as unknown as { fn: (input: unknown) => Promise<unknown> }
+    ).fn;
 
     const stepSendCalls: Array<{ id: string; payload: unknown }> = [];
     const step = {
@@ -99,15 +101,17 @@ describe("SEND-1 acceptance tests", () => {
     expect(stepSendCalls).toHaveLength(1);
     expect(stepSendCalls[0]).toMatchObject({
       id: "emit-accumulated",
-      payload: {
-        name: "memory/observations.accumulated",
-        data: {
-          date: "2026-02-17",
-          totalTokens: 1234,
-          observationCount: 3,
-          capturedAt: "2026-02-17T03:04:05.000Z",
+      payload: [
+        {
+          name: "memory/observations.accumulated",
+          data: {
+            date: "2026-02-17",
+            totalTokens: 1234,
+            observationCount: 3,
+            capturedAt: "2026-02-17T03:04:05.000Z",
+          },
         },
-      },
+      ],
     });
 
     expect(inngestSendCallCount).toBe(0);
@@ -128,7 +132,7 @@ describe("SEND-1 acceptance tests", () => {
 
   test("system logger uses step.sendEvent for follow-up event and never calls inngest.send", async () => {
     const mod = await import(`./system-logger.ts?send1=${Date.now()}`);
-    const fn = (mod.systemLogger as { fn: (input: unknown) => Promise<unknown> }).fn;
+    const fn = (mod.systemLogger as unknown as { fn: (input: unknown) => Promise<unknown> }).fn;
 
     const stepSendCalls: Array<{ id: string; payload: unknown }> = [];
     const result = (await fn({

@@ -1,93 +1,80 @@
 {
-  "title": "ADR-0021 Phase 1 Loop B: Create observe.ts Inngest function",
+  "title": "ADR-0028 Items 1-3: step.sendEvent, NonRetriableError, cancelOn",
   "stories": [
     {
-      "id": "OBS-1",
-      "title": "Create observe.ts with function scaffold and event triggers",
-      "description": "Create src/inngest/functions/observe.ts exporting observeSessionFunction. Configure triggers for 'memory/session.compaction.pending' and 'memory/session.ended' events. Add basic function structure with inngest.createFunction including id 'memory/observe-session' and name 'Observe Session'. Import existing OBSERVER_SYSTEM_PROMPT and OBSERVER_USER_PROMPT from ./observe-prompt.ts. Set up step.run placeholders for the 6 required steps: validate-input, call-observer-llm, parse-observations, store-to-qdrant, update-redis-state, emit-accumulated.",
+      "id": "SEND-1",
+      "title": "Replace inngest.send() with step.sendEvent() in observe.ts and system-logger.ts",
+      "description": "In src/inngest/functions/observe.ts and src/inngest/functions/system-logger.ts, find all patterns where inngest.send() is called inside a step.run() wrapper and replace them with step.sendEvent(). The step ID string should remain the same. Import step from the function handler signature (it is already present). Remove any now-unused inngest.send() imports if inngest client is no longer referenced in that file. For batch sends, step.sendEvent() accepts an array of events.",
       "acceptance_criteria": [
-        "File src/inngest/functions/observe.ts exists",
-        "Exports observeSessionFunction using inngest.createFunction",
-        "Configured with both event triggers: 'memory/session.compaction.pending' and 'memory/session.ended'",
-        "Imports OBSERVER_SYSTEM_PROMPT and OBSERVER_USER_PROMPT from ./observe-prompt.ts",
-        "Contains step.run placeholders for all 6 steps with correct names",
+        "grep -r \"inngest.send\" src/inngest/functions/observe.ts returns 0 matches",
+        "grep -r \"inngest.send\" src/inngest/functions/system-logger.ts returns 0 matches",
+        "step.sendEvent() calls exist in observe.ts and system-logger.ts where inngest.send() previously existed",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 1,
-      "passes": false,
-      "skipped": true
+      "passes": false
     },
     {
-      "id": "OBS-2",
-      "title": "Implement validate-input and call-observer-llm steps",
-      "description": "In observe.ts, implement the validate-input step to verify event.data contains required session data. Implement call-observer-llm step using pi CLI as subprocess (Bun.$) with OBSERVER_SYSTEM_PROMPT and OBSERVER_USER_PROMPT. Capture stdout/stderr and handle errors. The pi subprocess should receive the prompts and session context.",
+      "id": "SEND-2",
+      "title": "Replace inngest.send() with step.sendEvent() in video-download.ts and transcript-process.ts",
+      "description": "In src/inngest/functions/video-download.ts and src/inngest/functions/transcript-process.ts, find all patterns where inngest.send() is called inside a step.run() wrapper and replace them with step.sendEvent(). Both files may have batch sends (arrays of events) — pass the array directly to step.sendEvent(). Keep step IDs unchanged. Remove any now-unused inngest client imports if applicable.",
       "acceptance_criteria": [
-        "validate-input step checks for required event.data fields and throws if missing",
-        "call-observer-llm step spawns pi subprocess using Bun.$",
-        "Prompts from observe-prompt.ts are passed to pi CLI correctly",
-        "Step captures and returns LLM output as string",
-        "Error handling for subprocess failures is present",
+        "grep -r \"inngest.send\" src/inngest/functions/video-download.ts returns 0 matches",
+        "grep -r \"inngest.send\" src/inngest/functions/transcript-process.ts returns 0 matches",
+        "step.sendEvent() calls exist in both files where inngest.send() previously existed",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 2,
-      "passes": true
+      "passes": false
     },
     {
-      "id": "OBS-3",
-      "title": "Implement parse-observations step using observe-parser",
-      "description": "In observe.ts, implement parse-observations step using parseObserverOutput from ./observe-parser.ts. Pass the LLM output from call-observer-llm step to parser. Handle parsing errors gracefully and return structured observations including segments, concepts, and facts.",
+      "id": "SEND-3",
+      "title": "Replace inngest.send() with step.sendEvent() in all remaining agent-loop functions",
+      "description": "Find all remaining inngest.send() calls inside step.run() wrappers across all files in src/inngest/functions/ not already covered by SEND-1 and SEND-2 (e.g. plan.ts, reflect.ts, promote.ts, content-sync.ts, vault-sync.ts, discovery-capture.ts, summarize.ts, and any agent-loop subfunctions). Replace each with step.sendEvent() using the same step ID. Run: grep -r \"inngest.send\" src/inngest/functions/ --include=\"*.ts\" | grep -v test to find all remaining sites. The final result must be zero matches.",
       "acceptance_criteria": [
-        "parse-observations step imports and calls parseObserverOutput from ./observe-parser.ts",
-        "Step receives output from previous call-observer-llm step",
-        "Returns structured observation data (segments, concepts, facts)",
-        "Includes error handling for malformed LLM output",
+        "grep -r \"inngest.send\" src/inngest/functions/ --include=\"*.ts\" | grep -v test returns 0 matches",
+        "step.sendEvent() is used for all event emission inside Inngest function handlers",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 3,
-      "passes": false,
-      "skipped": true
+      "passes": false
     },
     {
-      "id": "OBS-4",
-      "title": "Implement store-to-qdrant step",
-      "description": "In observe.ts, implement store-to-qdrant step using @qdrant/js-client-rest. Connect to localhost:6333, use collection 'memory_observations'. Store each observation with 768-dimension zero vector placeholder (temporary until embeddings added later). Include metadata: session_id, timestamp, observation type. Handle connection and storage errors.",
+      "id": "ERR-1",
+      "title": "Add NonRetriableError for validation failures in observe.ts, transcript-process.ts, plan.ts, video-download.ts",
+      "description": "Import NonRetriableError from 'inngest' in the four files: src/inngest/functions/observe.ts, src/inngest/functions/transcript-process.ts, src/inngest/functions/plan.ts, src/inngest/functions/video-download.ts. Replace plain Error throws with NonRetriableError for these specific conditions: observe.ts — 'Missing required session field' (input validation, payload is malformed); transcript-process.ts — 'requires either audioPath or text' (schema violation); plan.ts — 'Worktree missing' (infrastructure state won't fix on retry) and 'Generated PRD has no stories' (LLM output issue, same prompt = same result); video-download.ts — 'No .info.json found' (download produced nothing usable). Leave all other Error throws as plain Error.",
       "acceptance_criteria": [
-        "store-to-qdrant step imports QdrantClient from @qdrant/js-client-rest",
-        "Connects to localhost:6333",
-        "Uses collection name 'memory_observations'",
-        "Stores observations with 768-dim zero vector placeholder",
-        "Includes required metadata fields in payloads",
-        "Error handling for Qdrant connection/storage failures",
+        "grep -r \"NonRetriableError\" src/inngest/functions/ --include=\"*.ts\" returns matches in observe.ts, transcript-process.ts, plan.ts, and video-download.ts",
+        "NonRetriableError is imported from 'inngest' in each of the four files",
+        "The specific error conditions listed (missing session field, audioPath/text schema, worktree missing, no stories, no info.json) throw NonRetriableError not plain Error",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 4,
-      "passes": true
+      "passes": false
     },
     {
-      "id": "OBS-5",
-      "title": "Implement update-redis-state and emit-accumulated steps",
-      "description": "In observe.ts, implement update-redis-state step to update Redis key pattern 'memory:latest:{date}' with observation summary. Implement emit-accumulated step to emit 'memory/observations.accumulated' event with session_id and observation count. Use Redis client for state update and inngest event emission.",
+      "id": "CANCEL-1",
+      "title": "Add cancelOn to all 7 agent-loop functions",
+      "description": "Add a cancelOn configuration to the Inngest function definition for each of the 7 agent-loop functions: plan, test-writer, implement, review, judge, complete, retro. These are likely in src/inngest/functions/ (possibly in an agent-loop/ subdirectory). Each function definition should add: cancelOn: [{ event: 'agent/loop.cancelled', if: 'event.data.loopId == async.data.loopId' }]. The 'async' refers to the triggering event's data (the event that started the function run). Ensure the loopId field exists in the event data type for agent/loop.cancelled in the Events type definition (src/inngest/client.ts or similar). Do NOT remove existing isCancelled() polling — leave it as a belt-and-suspenders check. Only add cancelOn to the function configuration object.",
       "acceptance_criteria": [
-        "update-redis-state step updates Redis with key pattern 'memory:latest:{date}'",
-        "Redis update includes observation summary/metadata",
-        "emit-accumulated step emits 'memory/observations.accumulated' event",
-        "Emitted event includes session_id and observation count in data",
-        "Both steps include error handling",
+        "grep -r \"cancelOn\" src/inngest/functions/ --include=\"*.ts\" returns matches in all 7 loop function files (plan, test-writer, implement, review, judge, complete, retro)",
+        "Each cancelOn references event 'agent/loop.cancelled' with if condition matching loopId",
+        "The agent/loop.cancelled event has loopId in its data type in the Events schema",
+        "Existing isCancelled() calls are not removed",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 5,
-      "passes": false,
-      "skipped": true
+      "passes": false
     },
     {
-      "id": "OBS-6",
-      "title": "Register observeSessionFunction in index.ts and serve.ts",
-      "description": "Import observeSessionFunction from ./observe.ts into both src/inngest/functions/index.ts and src/serve.ts. Add to the functions array in both files. Ensure no duplicate event trigger registrations. Verify the function is properly exported and available for Inngest server.",
+      "id": "VERIFY-1",
+      "title": "Run full test suite and verify ADR-0028 items 1-3 verification checklist",
+      "description": "Run the complete verification checklist from ADR-0028 for items 1-3: (1) grep -r 'inngest.send' src/inngest/functions/ --include='*.ts' | grep -v test returns 0 matches; (2) grep -r 'NonRetriableError' src/inngest/functions/ --include='*.ts' returns matches in observe, transcript-process, plan, video-download; (3) grep -r 'cancelOn' src/inngest/functions/agent-loop/ --include='*.ts' returns matches in all 7 loop functions. If the agent-loop functions are not in a subdirectory named agent-loop/, adjust the grep path accordingly. Run bun test and fix any test failures caused by the changes in stories SEND-1 through CANCEL-1. Do not modify tests to work around behavior changes — fix the implementation if tests reveal a real bug.",
       "acceptance_criteria": [
-        "src/inngest/functions/index.ts imports and exports observeSessionFunction",
-        "src/serve.ts imports and includes observeSessionFunction in serve() call",
-        "No duplicate event trigger warnings or errors",
-        "Function appears in both registration locations",
+        "grep -r \"inngest.send\" src/inngest/functions/ --include=\"*.ts\" | grep -v test returns 0 matches",
+        "grep -r \"NonRetriableError\" src/inngest/functions/ --include=\"*.ts\" returns at least 4 files with matches",
+        "cancelOn is present in all 7 agent-loop function definitions",
+        "bun test passes with no failures",
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 6,

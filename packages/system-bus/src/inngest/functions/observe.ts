@@ -469,39 +469,37 @@ Session context:
       }
     });
 
-    const accumulatedEvent = await step.run("emit-accumulated", async () => {
-      const accumulatedData = {
-        date,
-        totalTokens,
+    const accumulatedData = {
+      date,
+      totalTokens,
+      observationCount,
+      capturedAt,
+    };
+
+    const accumulatedEventPayload = {
+      name: "memory/observations.accumulated" as const,
+      data: accumulatedData,
+    };
+
+    const accumulatedEvent = await step.sendEvent("emit-accumulated", [accumulatedEventPayload])
+      .then(() => ({
+        emitted: true,
+        name: accumulatedEventPayload.name,
+        data: accumulatedEventPayload.data,
         observationCount,
-        capturedAt,
-      };
-
-      try {
-        await inngest.send({
-          name: "memory/observations.accumulated",
-          data: accumulatedData,
-        });
-
-        return {
-          emitted: true,
-          name: "memory/observations.accumulated",
-          data: accumulatedData,
-          observationCount,
-          redisUpdated: redisStateResult,
-        };
-      } catch (error) {
+        redisUpdated: redisStateResult,
+      }))
+      .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         return {
           emitted: false,
-          name: "memory/observations.accumulated",
-          data: accumulatedData,
+          name: accumulatedEventPayload.name,
+          data: accumulatedEventPayload.data,
           error: message,
           observationCount,
           redisUpdated: redisStateResult,
         };
-      }
-    });
+      });
 
     return {
       sessionId: validatedInput.sessionId,

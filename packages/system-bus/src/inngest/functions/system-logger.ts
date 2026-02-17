@@ -17,27 +17,43 @@ export const systemLogger = inngest.createFunction(
     { event: "pipeline/book.downloaded" },
     { event: "system/log.written" },
   ],
-  async ({ event }) => {
+  async ({ event, step }) => {
     const logPath = `${VAULT}/system/system-log.jsonl`;
 
     // Normalize to canonical flat format
     const data = event.data as Record<string, unknown>;
     const eventParts = event.name.split("/");
+    const action =
+      (data.action as string) ??
+      eventParts.pop()?.replace(".", "-") ??
+      "unknown";
+    const tool = (data.tool as string) ?? eventParts[0] ?? "unknown";
+    const detail = (data.detail as string) ?? JSON.stringify(data);
+    const reason = typeof data.reason === "string" ? data.reason : undefined;
     const entry = JSON.stringify({
       timestamp: new Date().toISOString(),
-      action:
-        (data.action as string) ??
-        eventParts.pop()?.replace(".", "-") ??
-        "unknown",
-      tool: (data.tool as string) ?? eventParts[0] ?? "unknown",
-      detail: (data.detail as string) ?? JSON.stringify(data),
-      ...(data.reason ? { reason: data.reason } : {}),
+      action,
+      tool,
+      detail,
+      ...(reason ? { reason } : {}),
     });
 
     await Bun.write(
       Bun.file(logPath),
       (await Bun.file(logPath).text()) + entry + "\n"
     );
+
+    if (event.name !== "system/log.written") {
+      await step.sendEvent("emit-system-log-written", {
+        name: "system/log.written",
+        data: {
+          action,
+          tool,
+          detail,
+          ...(reason ? { reason } : {}),
+        },
+      });
+    }
 
     return { logged: event.name };
   }
