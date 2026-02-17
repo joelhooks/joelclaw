@@ -1,53 +1,78 @@
 {
-  "title": "Migrate joelclaw CLI into monorepo packages/cli",
-  "description": "Replace the stale packages/cli/ scaffold with the current working CLI from ~/Code/joelhooks/joelclaw-cli/. The standalone repo has 16 source files (cli.ts, 11 command files, config.ts, inngest.ts, response.ts, schema.ts) with the joelclaw rename already done in cli.ts and response.ts but NOT in schema.ts, status.ts, inngest.ts, and several command files that still say 'igs'. Complete the rename, add the note subcommand, and wire everything up. The standalone repo at ~/Code/joelhooks/joelclaw-cli/ is the reference — copy its src/ contents into packages/cli/src/, update package.json deps, then finish the remaining work.",
+  "title": "Gateway Phase 1+2: Pi extension + Inngest heartbeat + pushGatewayEvent wiring",
+  "description": "Implement ADR-0018 Phases 1 and 2. The gateway bridges Inngest events into pi sessions via Redis. Phase 1: a pi extension at ~/.pi/agent/extensions/gateway/index.ts that subscribes to Redis pub/sub, drains a Redis list of SystemEvents, and injects them into the active pi session via sendUserMessage(). Phase 2: an Inngest pushGatewayEvent() helper in the monorepo that LPUSH+PUBLISH events, a heartbeat cron function, and wiring into agent-loop-complete and video pipelines so they push notifications. The Redis event schema: key joelclaw:events:{sessionKey} (list), notify channel joelclaw:notify:{sessionKey}. SystemEvent = {id, type, source, payload, ts}. IMPORTANT: the pi extension lives at ~/.pi/agent/extensions/gateway/ (NOT in the monorepo). For monorepo stories, work in packages/system-bus/. Read ADR-0018 at ~/Vault/docs/decisions/0018-pi-native-gateway-redis-event-bridge.md for full specification.",
   "stories": [
     {
-      "id": "COPY-1",
-      "title": "Copy current CLI source into packages/cli and update deps",
-      "description": "Delete the stale contents of packages/cli/src/ and replace with the full source tree from ~/Code/joelhooks/joelclaw-cli/src/ (cli.ts, commands/*.ts, config.ts, inngest.ts, response.ts, schema.ts). Update packages/cli/package.json to include all dependencies from the standalone (ioredis, @effect/cli, @effect/platform, @effect/platform-bun, effect). Add the igs legacy bin entry: \"igs\": \"src/cli.ts\". Remove the stale .d.ts shim files (fetch-json-compat.d.ts, globals.d.ts) that are no longer needed. Run bun install from the monorepo root.",
+      "id": "PUSH-1",
+      "title": "Add pushGatewayEvent helper to utils.ts",
+      "description": "Add a pushGatewayEvent() function to packages/system-bus/src/inngest/functions/agent-loop/utils.ts. It takes {type, source, payload} and creates a full SystemEvent with id (crypto.randomUUID()), ts (Date.now()), then LPUSH to joelclaw:events:main and PUBLISH to joelclaw:notify:main with {eventId, type}. Use the existing getRedis() singleton. Export it. Also add the SystemEvent type definition.",
       "acceptance_criteria": [
-        "packages/cli/src/commands/ directory exists with all 11 command files (diagnose.ts, discover.ts, events.ts, logs.ts, loop.ts, refresh.ts, runs.ts, schema.ts, send.ts, status.ts, watch.ts)",
-        "packages/cli/src/ has cli.ts, config.ts, inngest.ts, response.ts, schema.ts",
-        "packages/cli/package.json has ioredis in dependencies",
-        "packages/cli/package.json bin has both joelclaw and igs entries",
-        "No stale .d.ts shim files (fetch-json-compat.d.ts, globals.d.ts) remain",
-        "bun install succeeds from monorepo root",
-        "bun run packages/cli/src/cli.ts --help shows joelclaw help"
+        "pushGatewayEvent function exists in utils.ts and is exported",
+        "SystemEvent type is defined: {id: string, type: string, source: string, payload: Record<string, unknown>, ts: number}",
+        "Function LPUSH to key joelclaw:events:main with JSON.stringify(event)",
+        "Function PUBLISH to channel joelclaw:notify:main with JSON.stringify({eventId, type})",
+        "Uses existing getRedis() from same file, not a new Redis client",
+        "TypeScript compiles: cd packages/system-bus && bunx tsc --noEmit"
       ],
-      "priority": 1,
-      "status": "merged"
+      "priority": 1
     },
     {
-      "id": "RENAME-1",
-      "title": "Complete igs→joelclaw rename in all source files",
-      "description": "Several files still reference 'igs' in user-facing strings. Update ALL remaining references: (1) inngest.ts Effect.Service tag 'igs/Inngest' → 'joelclaw/Inngest', (2) schema.ts examples that say 'igs send' → 'joelclaw send', 'igs loop' → 'joelclaw loop', 'igs functions' → 'joelclaw functions', (3) status.ts next_actions that say 'igs functions' etc, (4) response.ts normalizeCommand already handles prefix replacement but verify it catches all cases, (5) any variable named 'igs' in cli.ts and command files should be renamed to something clearer (e.g. 'client' or 'inngestClient'). Internal Effect service tags and variable names are fine to update — they're not in any external contract.",
+      "id": "WIRE-1",
+      "title": "Wire pushGatewayEvent into agent-loop-complete",
+      "description": "In packages/system-bus/src/inngest/functions/agent-loop/complete.ts, add a new step.run('emit-gateway-event', ...) AFTER the existing merge/sync steps. It should call pushGatewayEvent with type 'loop.complete' or 'loop.failed' based on the outcome, source 'inngest', and payload containing loopId, storiesCompleted count, storiesFailed count, and the loop title from the PRD. Import pushGatewayEvent from ./utils. This step should be wrapped in try/catch so gateway notification failure does NOT fail the complete function.",
       "acceptance_criteria": [
-        "grep -rn '\\bigs\\b' packages/cli/src/ returns zero matches (no remaining 'igs' references)",
-        "bun run packages/cli/src/cli.ts --help shows 'joelclaw' not 'igs'",
-        "bun run packages/cli/src/cli.ts schema output uses 'joelclaw' in all examples",
-        "bun run packages/cli/src/cli.ts status output uses 'joelclaw' in next_actions",
-        "TypeScript compiles: cd packages/cli && bunx tsc --noEmit"
+        "complete.ts imports pushGatewayEvent from ./utils",
+        "A step.run('emit-gateway-event', ...) exists in complete.ts",
+        "The step calls pushGatewayEvent with type 'loop.complete' or 'loop.failed'",
+        "Payload includes loopId and story counts",
+        "The step is wrapped in try/catch so failures are swallowed (gateway notification is best-effort)",
+        "The step is AFTER the merge/sync steps, not before",
+        "TypeScript compiles: cd packages/system-bus && bunx tsc --noEmit"
       ],
       "priority": 2
     },
     {
-      "id": "NOTE-1",
-      "title": "Add joelclaw note subcommand",
-      "description": "Add a 'joelclaw note' subcommand in packages/cli/src/commands/note.ts that captures a thought to the Redis note queue. It accepts a text argument and optional --source and --tags flags. It writes to Redis using RPUSH to key 'joelclaw:notes:queue' as JSON with fields: id (nanoid or crypto.randomUUID), text, source (default 'cli'), createdAt (ISO timestamp), tags (string array), status ('pending'). Also sends a 'system/note.captured' event to Inngest with the same payload. Output is HATEOAS JSON with the created note and next_actions. Wire the command into cli.ts's root command withSubcommands. Use the existing Inngest service for the event send and create a Redis connection using ioredis (same host/port pattern as the worker: REDIS_HOST/REDIS_PORT env vars with localhost:6379 defaults).",
+      "id": "WIRE-2",
+      "title": "Wire pushGatewayEvent into video-download and transcript-process",
+      "description": "Add pushGatewayEvent calls to video-download.ts (after the emit-events step) and transcript-process.ts (after the emit-events step). For video-download: type 'media.downloaded', payload {slug, title, nasPath}. For transcript-process: type 'media.transcribed', payload {title, vaultPath}. Both should be best-effort (try/catch). Import pushGatewayEvent from the agent-loop/utils path (it lives there but is usable by any function).",
       "acceptance_criteria": [
-        "packages/cli/src/commands/note.ts exists",
-        "note command is wired into cli.ts withSubcommands",
-        "joelclaw note 'test thought' writes to Redis key joelclaw:notes:queue",
-        "Note JSON has fields: id, text, source, createdAt, tags, status",
-        "Default source is 'cli', default tags is empty array, status is 'pending'",
-        "--source flag overrides the source field",
-        "--tags flag accepts comma-separated tags string",
-        "A system/note.captured event is sent to Inngest",
-        "Output is HATEOAS JSON with created note and next_actions",
-        "TypeScript compiles: cd packages/cli && bunx tsc --noEmit"
+        "video-download.ts has a step.run calling pushGatewayEvent with type 'media.downloaded'",
+        "transcript-process.ts has a step.run calling pushGatewayEvent with type 'media.transcribed'",
+        "Both steps are wrapped in try/catch",
+        "Both import pushGatewayEvent from the correct path",
+        "TypeScript compiles: cd packages/system-bus && bunx tsc --noEmit"
       ],
       "priority": 3
+    },
+    {
+      "id": "CRON-1",
+      "title": "Add heartbeat cron and manual wake Inngest functions",
+      "description": "Create packages/system-bus/src/inngest/functions/heartbeat.ts with two functions: (1) heartbeatCron triggered by cron 'TZ=America/Los_Angeles */30 * * * *' with id 'system-heartbeat', which calls pushGatewayEvent({type: 'cron.heartbeat', source: 'inngest', payload: {}}). (2) heartbeatWake triggered by event 'system/heartbeat.wake' which does the same thing (for manual triggers). Add the 'system/heartbeat.wake' event type to client.ts events. Export both functions and register them in serve.ts (add to the functions array AND add to the console.log line that lists function names). Follow the pattern from existing functions like video-download.ts.",
+      "acceptance_criteria": [
+        "heartbeat.ts exists at packages/system-bus/src/inngest/functions/heartbeat.ts",
+        "heartbeatCron uses cron trigger with TZ=America/Los_Angeles */30 * * * *",
+        "heartbeatWake uses event trigger system/heartbeat.wake",
+        "Both call pushGatewayEvent with type cron.heartbeat",
+        "system/heartbeat.wake event type is added to client.ts",
+        "Both functions are imported and registered in serve.ts functions array",
+        "TypeScript compiles: cd packages/system-bus && bunx tsc --noEmit"
+      ],
+      "priority": 4
+    },
+    {
+      "id": "CLI-1",
+      "title": "Add joelclaw gateway subcommand tree to CLI",
+      "description": "Add a gateway subcommand tree to packages/cli/src/cli.ts with three subcommands: (1) 'gateway status' - connects to Redis, checks LLEN joelclaw:events:main for queue depth, checks PUBSUB NUMSUB joelclaw:notify:main for subscriber count, returns HATEOAS JSON. (2) 'gateway events' - LRANGE joelclaw:events:main 0 -1, returns parsed events as JSON array. (3) 'gateway push' - takes a --type and --data flag, creates a SystemEvent, LPUSH + PUBLISH. Create packages/cli/src/commands/gateway.ts for the implementation. Use ioredis (already in package.json deps). Follow the respond() envelope pattern from other commands.",
+      "acceptance_criteria": [
+        "packages/cli/src/commands/gateway.ts exists",
+        "gateway command is wired into cli.ts withSubcommands",
+        "joelclaw gateway status returns JSON with queueDepth and subscriberCount",
+        "joelclaw gateway events returns JSON array of pending events",
+        "joelclaw gateway push --type test --data '{\"smoke\":true}' pushes an event",
+        "All three use respond() envelope with ok, command, result, next_actions",
+        "TypeScript compiles: cd packages/cli && bunx tsc --noEmit"
+      ],
+      "priority": 5
     }
   ],
   "checks": ["tsc"]
