@@ -29,7 +29,6 @@ let redisState: RedisMockState = {
 
 let tempHome = "";
 let workspaceDir = "";
-let reviewPath = "";
 let memoryPath = "";
 
 function proposalKey(id: string): string {
@@ -189,7 +188,6 @@ beforeEach(() => {
   process.env.USERPROFILE = tempHome;
 
   workspaceDir = join(tempHome, ".joelclaw", "workspace");
-  reviewPath = join(workspaceDir, "REVIEW.md");
   memoryPath = join(workspaceDir, "MEMORY.md");
 
   mkdirSync(join(workspaceDir, "memory"), { recursive: true });
@@ -222,7 +220,7 @@ afterEach(() => {
 });
 
 describe("MEM-22 promote integration acceptance test", () => {
-  test("runs end-to-end promotion workflow from REVIEW.md to MEMORY.md with no proposal loss", async () => {
+  test("runs end-to-end promotion workflow through event-driven handlers with no proposal loss", async () => {
     const approvedId = proposalIdDaysAgo(1, "101");
     const deletedId = proposalIdDaysAgo(1, "102");
     const expiredId = proposalIdDaysAgo(8, "103");
@@ -256,33 +254,32 @@ describe("MEM-22 promote integration acceptance test", () => {
       capturedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
     });
 
-    writeFileSync(
-      reviewPath,
-      [
-        "# REVIEW",
-        "",
-        `- [x] ${approvedId}: ${approvedText}`,
-        `- [ ] ${expiredId}: ${expiredText}`,
-        `- [ ] ${activePendingId}: ${activePendingText}`,
-        "",
-      ].join("\n")
-    );
-
-    const { result } = await executePromoteWithEvent({
-      name: "content/updated",
-      data: { path: reviewPath },
+    const { result: approvedResult } = await executePromoteWithEvent({
+      name: "memory/proposal.approved",
+      data: { proposalId: approvedId },
+    });
+    const { result: rejectedResult } = await executePromoteWithEvent({
+      name: "memory/proposal.rejected",
+      data: { proposalId: deletedId, reason: "deleted" },
+    });
+    const { result: expiredResult } = await executePromoteWithEvent({
+      name: "inngest/scheduled.timer",
+      data: { cron: "0 8 * * *" },
     });
 
     const memory = readFileSync(memoryPath, "utf8");
     const hardRules = getSectionBlock(memory, "Hard Rules");
     const log = readFileSync(todayLogPath(), "utf8");
-    const review = readFileSync(reviewPath, "utf8");
 
-    expect(result).toMatchObject({
+    expect(approvedResult).toMatchObject({
       approved: [approvedId],
+    });
+    expect(rejectedResult).toMatchObject({
       rejected: [deletedId],
+      reason: "deleted",
+    });
+    expect(expiredResult).toMatchObject({
       expired: [expiredId],
-      pending: [activePendingId],
     });
 
     expect(hardRules).toContain(`- (${proposalDateFromId(approvedId)})`);
@@ -296,11 +293,6 @@ describe("MEM-22 promote integration acceptance test", () => {
     expect(redisState.hashes.has(proposalKey(approvedId))).toBe(false);
     expect(redisState.hashes.has(proposalKey(deletedId))).toBe(false);
     expect(redisState.hashes.has(proposalKey(expiredId))).toBe(false);
-
-    expect(review).toContain(activePendingId);
-    expect(review).not.toContain(approvedId);
-    expect(review).not.toContain(deletedId);
-    expect(review).not.toContain(expiredId);
 
     expect({
       approvedInMemory: hardRules.includes(`- (${proposalDateFromId(approvedId)})`),
