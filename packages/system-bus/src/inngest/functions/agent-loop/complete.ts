@@ -30,8 +30,8 @@ export const agentLoopComplete = inngest.createFunction(
     await step.run("clean-artifacts", async () => {
       const worktreePath = `/tmp/agent-loop/${loopId}`;
       try {
-        // Delete __tests__/ dirs, *.out files, progress.txt
-        await $`cd ${worktreePath} && find . -name "__tests__" -type d -exec rm -rf {} + 2>/dev/null; rm -f *.out progress.txt`.quiet().nothrow();
+        // Delete __tests__/ dirs, *.acceptance.test.ts, *.out files, prd.json, progress.txt
+        await $`cd ${worktreePath} && find . -name "__tests__" -type d -exec rm -rf {} + 2>/dev/null; find . -name "*.acceptance.test.ts" -delete 2>/dev/null; rm -f *.out prd.json progress.txt`.quiet().nothrow();
         // Commit cleanup if anything changed
         await $`cd ${worktreePath} && git add -A && git diff --cached --quiet || git commit -m "chore: clean loop artifacts"`.quiet().nothrow();
         return { cleaned: true };
