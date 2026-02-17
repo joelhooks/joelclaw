@@ -48,17 +48,8 @@ describe("SEND-2 acceptance tests", () => {
         },
       },
       step: {
-        run: async (id: string, work: () => Promise<unknown>) => {
+        run: async (id: string, _work: () => Promise<unknown>) => {
           runIds.push(id);
-
-          if (id === "emit-events") {
-            activeRunId = id;
-            try {
-              return await work();
-            } finally {
-              activeRunId = null;
-            }
-          }
 
           const canned: Record<string, unknown> = {
             download: {
@@ -88,11 +79,11 @@ describe("SEND-2 acceptance tests", () => {
       },
     })) as Record<string, unknown>;
 
-    expect(runIds).toContain("emit-events");
+    expect(runIds).not.toContain("emit-events");
     expect(stepSendCalls).toHaveLength(1);
     expect(stepSendCalls[0]).toMatchObject({
       id: "emit-events",
-      runContext: "emit-events",
+      runContext: null,
       payload: [
         {
           name: "pipeline/video.downloaded",
@@ -159,17 +150,8 @@ describe("SEND-2 acceptance tests", () => {
         },
       },
       step: {
-        run: async (id: string, work: () => Promise<unknown>) => {
+        run: async (id: string, _work: () => Promise<unknown>) => {
           runIds.push(id);
-
-          if (id === "emit-events") {
-            activeRunId = id;
-            try {
-              return await work();
-            } finally {
-              activeRunId = null;
-            }
-          }
 
           const canned: Record<string, unknown> = {
             transcribe: "/tmp/transcript-process/sample-video-processed.json",
@@ -191,11 +173,11 @@ describe("SEND-2 acceptance tests", () => {
       },
     })) as Record<string, unknown>;
 
-    expect(runIds).toContain("emit-events");
+    expect(runIds).not.toContain("emit-events");
     expect(stepSendCalls).toHaveLength(1);
     expect(stepSendCalls[0]).toMatchObject({
       id: "emit-events",
-      runContext: "emit-events",
+      runContext: null,
       payload: [
         {
           name: "pipeline/transcript.processed",
