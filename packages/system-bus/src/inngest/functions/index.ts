@@ -8,6 +8,7 @@ export { contentSync } from "./content-sync";
 export { discoveryCapture } from "./discovery-capture";
 export { promote } from "./promote";
 export { embedText } from "./embed";
+export { backfillObserve } from "./backfill-observe";
 export {
   agentLoopPlan,
   agentLoopTestWriter,

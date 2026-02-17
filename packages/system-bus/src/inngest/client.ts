@@ -441,6 +441,20 @@ export type Events = {
     };
   };
 
+  // --- Backfill ---
+  "memory/backfill.requested": {
+    data: {
+      minMessages?: number;
+      sleepSeconds?: number;
+      maxSessions?: number;
+    };
+  };
+  "memory/backfill.cancelled": {
+    data: {
+      reason?: string;
+    };
+  };
+
   // --- Embedding ---
   "embedding/text.requested": {
     data: {
