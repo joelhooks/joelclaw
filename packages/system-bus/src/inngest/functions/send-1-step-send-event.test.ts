@@ -91,6 +91,9 @@ describe("SEND-1 acceptance tests", () => {
         stepSendCalls.push({ id, payload });
         return { ids: ["evt-1"] };
       },
+      invoke: async (_id: string, _opts: unknown) => {
+        return { vectors: [] };
+      },
     };
 
     const result = (await fn({

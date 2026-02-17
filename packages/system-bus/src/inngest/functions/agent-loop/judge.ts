@@ -9,6 +9,7 @@ import {
   guardStory,
   releaseClaim,
   readPatterns,
+  createLoopOnFailure,
 } from "./utils";
 
 const DEFAULT_RETRY_LADDER: ("codex" | "claude" | "pi")[] = [
@@ -254,6 +255,7 @@ function buildFailureFeedback(params: {
 export const agentLoopJudge = inngest.createFunction(
   {
     id: "agent-loop-judge",
+    onFailure: createLoopOnFailure("judge"),
     cancelOn: [
       {
         event: "agent/loop.cancelled",

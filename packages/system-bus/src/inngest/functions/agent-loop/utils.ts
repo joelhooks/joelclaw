@@ -62,6 +62,64 @@ export function formatLoopDuration(ms: number): string {
   return `${seconds}s`;
 }
 
+type LoopOnFailureContext = {
+  error: unknown;
+  event: {
+    data?: {
+      loopId?: unknown;
+      storyId?: unknown;
+    };
+  };
+  step: {
+    sendEvent: (
+      id: string,
+      payload: {
+        name: string;
+        data: {
+          loopId: string;
+          functionName: string;
+          storyId?: string;
+          error: string;
+          timestamp: string;
+        };
+      }
+    ) => Promise<unknown>;
+  };
+};
+
+function stringifyFailureError(error: unknown): string {
+  if (error instanceof Error && typeof error.message === "string") return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+export function createLoopOnFailure(functionName: string) {
+  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
+    const loopId = String(event?.data?.loopId ?? "unknown");
+    const storyIdRaw = event?.data?.storyId;
+    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
+    const errorText = stringifyFailureError(error);
+    const timestamp = new Date().toISOString();
+
+    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
+
+    await step.sendEvent("emit-loop-function-failed", {
+      name: "agent/loop.function.failed",
+      data: {
+        loopId,
+        functionName,
+        ...(storyId ? { storyId } : {}),
+        error: errorText,
+        timestamp,
+      },
+    });
+  };
+}
+
 // ── Claude output parsing ────────────────────────────────────────────
 
 /**
@@ -374,8 +432,16 @@ export interface Prd {
   title: string;
   description?: string;
   adr?: string;
+  context?: string[];
+  project?: string;
+  workDir?: string;
   stories: Story[];
 }
+
+type PrdMetadata = {
+  project: string;
+  workDir: string;
+};
 
 // ── PRD storage (Redis-backed, seeded from disk) ─────────────────────
 
@@ -386,13 +452,17 @@ export interface Prd {
 export async function seedPrd(
   loopId: string,
   project: string,
-  prdPath: string
+  prdPath: string,
+  metadata?: PrdMetadata
 ): Promise<Prd> {
   const fullPath = join(project, prdPath);
   const prd = JSON.parse(await Bun.file(fullPath).text()) as Prd;
+  const prdWithMetadata = metadata
+    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
+    : prd;
   const redis = getRedis();
   const key = prdKey(loopId);
-  const value = JSON.stringify(prd);
+  const value = JSON.stringify(prdWithMetadata);
   const ttlSeconds = 7 * 24 * 60 * 60;
 
   // First writer wins: avoid clobbering loop state when duplicate start events arrive.
@@ -404,7 +474,7 @@ export async function seedPrd(
     }
   }
 
-  return prd;
+  return prdWithMetadata as Prd;
 }
 
 /**
@@ -413,12 +483,16 @@ export async function seedPrd(
  */
 export async function seedPrdFromData(
   loopId: string,
-  prd: Prd
+  prd: Prd,
+  metadata?: PrdMetadata
 ): Promise<Prd> {
+  const prdWithMetadata = metadata
+    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
+    : prd;
   const redis = getRedis();
-  await redis.set(prdKey(loopId), JSON.stringify(prd));
+  await redis.set(prdKey(loopId), JSON.stringify(prdWithMetadata));
   await redis.expire(prdKey(loopId), 7 * 24 * 60 * 60);
-  return prd;
+  return prdWithMetadata as Prd;
 }
 
 /**

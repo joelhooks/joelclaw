@@ -32,6 +32,7 @@ export const backfillObserve = inngest.createFunction(
     name: "Backfill Observations from Transcripts",
     retries: 2,
     cancelOn: [{ event: "memory/backfill.cancelled" }],
+    singleton: { key: '"backfill"', mode: "skip" },
   },
   { event: "memory/backfill.requested" },
   async ({ event, step }) => {

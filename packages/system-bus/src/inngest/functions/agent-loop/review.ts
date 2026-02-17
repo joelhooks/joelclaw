@@ -9,6 +9,7 @@ import {
   TOOL_TIMEOUTS,
   guardStory,
   renewLease,
+  createLoopOnFailure,
   ensureClaudeAuth,
 } from "./utils";
 import { join } from "node:path";
@@ -303,6 +304,7 @@ async function runChecks(project: string): Promise<{
 export const agentLoopReview = inngest.createFunction(
   {
     id: "agent-loop-review",
+    onFailure: createLoopOnFailure("review"),
     cancelOn: [
       {
         event: "agent/loop.cancelled",

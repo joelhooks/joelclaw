@@ -40,6 +40,7 @@ export const agentDispatch = inngest.createFunction(
     name: "Background Agent Dispatch",
     retries: 1,
     cancelOn: [{ event: "system/agent.cancelled", match: "data.requestId" }],
+    throttle: { limit: 3, period: "60s" },
   },
   { event: "system/agent.requested" },
   async ({ event, step }) => {

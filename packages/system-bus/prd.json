@@ -12,7 +12,8 @@
         "plan.ts stores event.data.workDir (fallback to event.data.project) as top-level 'workDir' field",
         "Existing PRD fields (title, description, stories, context) are unchanged",
         "TypeScript compiles (bunx tsc --noEmit)"
-      ]
+      ],
+      "passes": true
     },
     {
       "id": "SYNC-1",
@@ -23,7 +24,8 @@
         "On pull failure, falls back to git fetch + reset --hard origin/main + clean -fd",
         "bun install --silent runs after sync regardless of path taken",
         "TypeScript compiles (bunx tsc --noEmit)"
-      ]
+      ],
+      "passes": true
     },
     {
       "id": "FAIL-1",
@@ -35,7 +37,8 @@
         "Event data includes: loopId (from event.data), functionName, storyId (if in event.data), error (string), timestamp (ISO)",
         "All 7 agent-loop functions have onFailure in their createFunction config",
         "TypeScript compiles (bunx tsc --noEmit)"
-      ]
+      ],
+      "passes": true
     },
     {
       "id": "FLOW-1",
@@ -49,7 +52,8 @@
         "content-sync.ts has debounce: { period: '5s', key: '\"vault-sync\"' }",
         "agent-dispatch.ts has throttle: { limit: 3, period: '60s' }",
         "TypeScript compiles (bunx tsc --noEmit)"
-      ]
+      ],
+      "skipped": true
     },
     {
       "id": "CLEAN-1",

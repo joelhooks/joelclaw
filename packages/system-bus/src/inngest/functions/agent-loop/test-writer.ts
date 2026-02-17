@@ -7,6 +7,7 @@ import {
   TOOL_TIMEOUTS,
   guardStory,
   renewLease,
+  createLoopOnFailure,
   ensureClaudeAuth,
 } from "./utils";
 
@@ -133,6 +134,7 @@ async function spawnReviewer(
 export const agentLoopTestWriter = inngest.createFunction(
   {
     id: "agent-loop-test-writer",
+    onFailure: createLoopOnFailure("test-writer"),
     cancelOn: [
       {
         event: "agent/loop.cancelled",

@@ -2,7 +2,7 @@ import { inngest } from "../../client";
 import { NonRetriableError } from "inngest";
 import { $ } from "bun";
 import { join } from "node:path";
-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
 
 const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
 
@@ -178,20 +178,24 @@ async function runRecheckSuite(project: string): Promise<{
 export const agentLoopPlan = inngest.createFunction(
   {
     id: "agent-loop-plan",
+    onFailure: createLoopOnFailure("plan"),
     cancelOn: [
       {
         event: "agent/loop.cancelled",
         if: "event.data.loopId == async.data.loopId",
       },
     ],
-    concurrency: {
-      key: "event.data.project",
-      limit: 1,
-    },
+    concurrency: [
+      {
+        key: "event.data.loopId",
+        limit: 1,
+      },
+    ],
   },
   [{ event: "agent/loop.started" }, { event: "agent/loop.story.passed" }, { event: "agent/loop.story.failed" }],
   async ({ event, step }) => {
     const { loopId, project } = event.data;
+    const eventWorkDir = event.data.workDir ?? event.data.project;
     const prdPath = event.data.prdPath ?? "prd.json";
     const goal = (event.data as any).goal as string | undefined;
     const contextFiles = (event.data as any).context as string[] | undefined;
@@ -346,11 +350,17 @@ export const agentLoopPlan = inngest.createFunction(
         ].join("\n"));
 
         // Seed to Redis
-        return seedPrdFromData(loopId, generated);
+        return seedPrdFromData(loopId, generated, {
+          project,
+          workDir: eventWorkDir,
+        });
       }
 
       // Default: read from worktree disk
-      return seedPrd(loopId, workDir, prdPath);
+      return seedPrd(loopId, workDir, prdPath, {
+        project,
+        workDir: eventWorkDir,
+      });
     });
 
     // Count attempted stories (passed + skipped) for maxIterations enforcement

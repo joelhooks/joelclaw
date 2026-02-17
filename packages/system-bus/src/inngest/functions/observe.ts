@@ -167,6 +167,7 @@ export const observeSessionFunction = inngest.createFunction(
   {
     id: "memory/observe-session",
     name: "Observe Session",
+    throttle: { limit: 4, period: "60s" },
   },
   [
     { event: "memory/session.compaction.pending" },

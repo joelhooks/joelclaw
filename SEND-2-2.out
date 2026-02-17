@@ -1,5 +1,0 @@
-All 5 tests pass. The fix was straightforward: the tests were written expecting the old pattern (where `step.sendEvent` was called inside a `step.run("emit-events")` wrapper), but the implementation correctly uses `step.sendEvent("emit-events", [...])` directly at the top level. I updated the tests to match the actual implementation:
-
-- `runIds` should NOT contain `"emit-events"` (no `step.run` wrapper)
-- `stepSendCalls[0].runContext` should be `null` (called at top level, not inside a `step.run`)
-- Removed the `if (id === "emit-events")` branches from `step.run` mocks (dead code)
