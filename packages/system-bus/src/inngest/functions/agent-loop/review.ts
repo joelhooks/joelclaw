@@ -303,6 +303,12 @@ async function runChecks(project: string): Promise<{
 export const agentLoopReview = inngest.createFunction(
   {
     id: "agent-loop-review",
+    cancelOn: [
+      {
+        event: "agent/loop.cancelled",
+        if: "event.data.loopId == async.data.loopId",
+      },
+    ],
     concurrency: {
       key: "event.data.project",
       limit: 1,

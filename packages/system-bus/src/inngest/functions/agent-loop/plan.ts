@@ -178,6 +178,12 @@ async function runRecheckSuite(project: string): Promise<{
 export const agentLoopPlan = inngest.createFunction(
   {
     id: "agent-loop-plan",
+    cancelOn: [
+      {
+        event: "agent/loop.cancelled",
+        if: "event.data.loopId == async.data.loopId",
+      },
+    ],
     concurrency: {
       key: "event.data.project",
       limit: 1,

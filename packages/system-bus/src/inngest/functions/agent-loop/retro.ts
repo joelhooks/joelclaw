@@ -233,6 +233,12 @@ function parseStoryDetails(
 export const agentLoopRetro = inngest.createFunction(
   {
     id: "agent-loop-retro",
+    cancelOn: [
+      {
+        event: "agent/loop.cancelled",
+        if: "event.data.loopId == async.data.loopId",
+      },
+    ],
     concurrency: {
       key: "event.data.project",
       limit: 1,

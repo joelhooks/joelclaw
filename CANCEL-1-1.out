@@ -1,0 +1,2088 @@
+Implemented `CANCEL-1` with focused changes only.
+
+## What changed
+Added `cancelOn` to all 7 agent-loop function configs:
+
+- `src/inngest/functions/agent-loop/plan.ts:181`
+- `src/inngest/functions/agent-loop/test-writer.ts:136`
+- `src/inngest/functions/agent-loop/implement.ts:329`
+- `src/inngest/functions/agent-loop/review.ts:306`
+- `src/inngest/functions/agent-loop/judge.ts:257`
+- `src/inngest/functions/agent-loop/complete.ts:12`
+- `src/inngest/functions/agent-loop/retro.ts:236`
+
+Each uses:
+- `event: "agent/loop.cancelled"`
+- `if: "event.data.loopId == async.data.loopId"`
+
+## Validation
+- `agent/loop.cancelled` already includes `loopId` in event schema at `src/inngest/client.ts:300` (no change needed).
+- Existing `isCancelled()` polling remains in place:
+  - `src/inngest/functions/agent-loop/plan.ts:320`
+  - `src/inngest/functions/agent-loop/test-writer.ts:168`
+  - `src/inngest/functions/agent-loop/implement.ts:370`
+  - `src/inngest/functions/agent-loop/review.ts:339`
+  - `src/inngest/functions/agent-loop/judge.ts:295`
+- TypeScript compile check passed:
+  - `bunx tsc --noEmit` exited cleanly.
+
+
+--- STDERR ---
+OpenAI Codex v0.101.0 (research preview)
+--------
+workdir: /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus
+model: gpt-5.3-codex
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: auto
+session id: 019c69fd-4e52-7923-ad37-238c4be7ab08
+--------
+user
+
+
+## Project File Listing
+
+docker
+prd-v3-recovery.json
+prd-adr-0010.json
+progress.txt
+node_modules
+prd-retro.json
+bun.lock
+README.md
+__tests__
+package.json
+scripts
+tsconfig.json
+docker-compose.yml
+prd-v2.json
+index.ts
+CONTINUATION.md
+prd.json
+start.sh
+CLAUDE.md
+prd-cli-migration.json
+src
+CONTINUATION-ADR.md
+
+# src/ files:
+src/inngest/client.ts
+src/serve.ts
+
+## Project Instructions (CLAUDE.md)
+
+
+## Agent Loop Architecture (ADR-0015)
+
+This project runs automated coding loops with 5 separated roles:
+- **Planner**: generates PRD from goal, picks next story
+- **Test Writer**: writes acceptance tests BEFORE implementation (TDD)
+- **Implementor**: writes code to pass the tests
+- **Reviewer**: evaluates implementation with 4 questions (no test writing)
+- **Judge**: mechanical gates + reviewer notes + LLM verdict
+
+When working as an implementor: implement the story, don't write tests.
+When working as a test writer: write tests from acceptance criteria only, don't read implementation.
+Tests should verify observable behavior and public API — NOT internal structure.
+Do NOT use source code string matching (indexOf, regex on source) to verify behavior.
+Commit nothing — the harness handles git.
+
+## Bun Runtime
+
+Default to using Bun instead of Node.js.
+
+- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
+- Use `bun test` instead of `jest` or `vitest`
+- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
+- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
+- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
+- Use `bunx <package> <command>` instead of `npx <package> <command>`
+- Bun automatically loads .env, so don't use dotenv.
+
+## APIs
+
+- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
+- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
+- `Bun.redis` for Redis. Don't use `ioredis`.
+- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
+- `WebSocket` is built-in. Don't use `ws`.
+- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
+- Bun.$`ls` instead of execa.
+
+## Testing
+
+Use `bun test` to run tests.
+
+```ts#index.test.ts
+import { test, expect } from "bun:test";
+
+test("hello world", () => {
+  expect(1).toBe(1);
+});
+```
+
+## Frontend
+
+Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, C
+
+---
+
+## Story: Add cancelOn to all 7 agent-loop functions (CANCEL-1)
+
+Add a cancelOn configuration to the Inngest function definition for each of the 7 agent-loop functions: plan, test-writer, implement, review, judge, complete, retro. These are likely in src/inngest/functions/ (possibly in an agent-loop/ subdirectory). Each function definition should add: cancelOn: [{ event: 'agent/loop.cancelled', if: 'event.data.loopId == async.data.loopId' }]. The 'async' refers to the triggering event's data (the event that started the function run). Ensure the loopId field exists in the event data type for agent/loop.cancelled in the Events type definition (src/inngest/client.ts or similar). Do NOT remove existing isCancelled() polling — leave it as a belt-and-suspenders check. Only add cancelOn to the function configuration object.
+
+## Acceptance Criteria
+- grep -r "cancelOn" src/inngest/functions/ --include="*.ts" returns matches in all 7 loop function files (plan, test-writer, implement, review, judge, complete, retro)
+- Each cancelOn references event 'agent/loop.cancelled' with if condition matching loopId
+- The agent/loop.cancelled event has loopId in its data type in the Events schema
+- Existing isCancelled() calls are not removed
+- TypeScript compiles cleanly: bunx tsc --noEmit
+
+## Instructions
+Implement the story above. Do NOT write tests — a separate reviewer will handle testing.
+Make clean, focused changes. Commit nothing — the harness handles git.
+If your changes break existing tests (not just the ones for this story), fix those tests to match the new interface. Changing a type or adding a required field means updating all consumers.
+mcp startup: no servers
+2026-02-17T05:05:34.345747Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5eca-bff9-7772-83bf-5daab07b9959
+2026-02-17T05:05:34.375304Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5ffd-d51d-7a13-b1fa-342be02f164b
+2026-02-17T05:05:34.399012Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6275-d69e-7b53-bb28-583bfe07e70c
+2026-02-17T05:05:34.490857Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6946-d832-73b3-bade-761321c88a0a
+2026-02-17T05:05:34.543633Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5d40-288c-78b2-af66-36e0fae54073
+2026-02-17T05:05:34.573115Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6482-5bab-7e53-bc62-5239d048a3c8
+2026-02-17T05:05:34.611224Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6485-58f0-7261-8508-37f3fb9356dd
+2026-02-17T05:05:34.753143Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c695b-193b-7040-9529-153a24848595
+2026-02-17T05:05:34.896286Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6031-b7fb-7120-85b5-8abf34324910
+2026-02-17T05:05:35.013799Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fe2-872d-7e93-87a3-71d37d75a127
+2026-02-17T05:05:35.139428Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e50-6bc5-7861-a0a0-f77d68ec073f
+2026-02-17T05:05:35.255878Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6022-8a12-7ba0-b7e8-9c265e8ec17e
+2026-02-17T05:05:35.382795Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fbb-e145-7c40-9913-218548629e57
+2026-02-17T05:05:35.471589Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e21-7a30-7ed1-b686-e02ac2da8157
+
+2026-02-17T05:05:35.660793Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c647c-8066-7eb1-8782-06a844370303
+thinking
+**Preparing code edit approach**
+2026-02-17T05:05:35.840319Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fed-5e04-78c0-9a4e-9fddc7af084e
+2026-02-17T05:05:35.916520Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c69fb-cd61-7743-b26e-8af2a7976f4d
+codex
+Implementing `CANCEL-1` now: I’ll locate all 7 Inngest loop functions and the shared `Events` type, add the `cancelOn` config to each function definition, then run `bunx tsc --noEmit` to verify types compile.
+exec
+/bin/zsh -lc 'rg --files src' in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "rg -n \"agent/loop\\.cancelled|createFunction|inngest\\.createFunction|isCancelled|plan|test-writer|implement|review|judge|complete|retro\" src/inngest -S" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus succeeded in 53ms:
+src/serve.ts
+src/inngest/functions/send-1-step-send-event.test.ts
+src/inngest/functions/transcript-process.ts
+src/inngest/functions/content-sync.ts
+src/inngest/functions/index.ts
+src/inngest/functions/video-download.ts
+src/inngest/functions/promote.test.ts
+src/inngest/functions/send-2-step-send-event.test.ts
+src/inngest/functions/discovery-capture.ts
+src/inngest/functions/promote.ts
+src/inngest/functions/summarize.ts
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts
+src/inngest/functions/reflect.test.ts
+src/inngest/functions/observe.ts
+src/inngest/functions/promote-integration.test.ts
+src/inngest/functions/vault-sync.ts
+src/inngest/functions/observe-parser.ts
+src/inngest/functions/reflect-prompt.ts
+src/inngest/functions/system-logger.ts
+src/inngest/functions/agent-loop/plan.ts
+ succeeded in 52ms:
+Total output lines: 553
+
+src/inngest/functions/transcript-process.ts:19:export const transcriptProcess = inngest.createFunction(
+src/inngest/functions/content-sync.ts:40:export const contentSync = inngest.createFunction(
+src/inngest/functions/content-sync.ts:123:      status: "completed",
+src/inngest/functions/video-download.ts:33:export const videoDownload = inngest.createFunction(
+src/inngest/functions/promote.test.ts:32:let reviewPath = "";
+src/inngest/functions/promote.test.ts:36:  return `memory:review:proposal:${id}`;
+src/inngest/functions/promote.test.ts:57:function writeWorkspaceFiles(reviewMarkdown: string): void {
+src/inngest/functions/promote.test.ts:77:  writeFileSync(reviewPath, reviewMarkdown);
+src/inngest/functions/promote.test.ts:217:  reviewPath = join(workspaceDir, "REVIEW.md");
+src/inngest/functions/promote.test.ts:258:    redisState.lists.set("memory:review:pending", [proposalId]);
+src/inngest/functions/promote.test.ts:275:    expect(redisState.lists.get("memory:review:pending") ?? []).toMatchObject([]);
+src/inngest/functions/promote.test.ts:284:    redisState.lists.set("memory:review:pending", [proposalId]);
+src/inngest/functions/promote.test.ts:293:    const review = readFileSync(reviewPath, "utf8");
+src/inngest/functions/promote.test.ts:297:    expect(review).not.toContain(proposalId);
+src/inngest/functions/promote.test.ts:298:    expect(redisState.lists.get("memory:review:pending") ?? []).toMatchObject([]);
+src/inngest/functions/promote.test.ts:314:    redisState.lists.set("memory:review:pending", [recentId, oldId]);
+src/inngest/functions/promote.test.ts:328:    const review = readFileSync(reviewPath, "utf8");
+src/inngest/functions/promote.test.ts:333:    expect(review).toContain(recentId);
+
+thinking
+**Preparing files and client access**
+codex
+I found the seven loop files under `src/inngest/functions/agent-loop/`. Next I’m opening those plus `src/inngest/client.ts` to apply `cancelOn` uniformly and confirm the cancelled event type includes `loopId`.
+exec
+/bin/zsh -lc "sed -n '1,260p' src/inngest/client.ts" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "sed -n '160,280p' src/inngest/functions/agent-loop/plan.ts" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "sed -n '1,220p' src/inngest/functions/agent-loop/test-writer.ts" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "sed -n '300,420p' src/inngest/functions/agent-loop/implement.ts" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "sed -n '200,330p' src/inngest/functions/agent-loop/review.ts" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "sed -n '240,320p' src/inngest/functions/agent-loop/judge.ts" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "sed -n '1,260p' src/inngest/functions/agent-loop/retro.ts" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "sed -n '1,220p' src/inngest/functions/agent-loop/complete.ts" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus succeeded in 51ms:
+import { Inngest, EventSchemas } from "inngest";
+
+/**
+ * ADR-0019: Event names describe what happened (past-tense), not commands.
+ *
+ * Agent Loop chain:
+ *   started → story.dispatched → tests.written → code.committed
+ *     → checks.completed → story.passed/failed/retried → completed
+ *
+ * Pipeline chain:
+ *   video.requested → video.downloaded → transcript.requested
+ *     → transcript.processed → summarize.requested → summarized
+ */
+
+// System event types
+export type Events = {
+  // --- Video pipeline ---
+  "pipeline/video.requested": {
+    data: {
+      url: string;
+ succeeded in 51ms:
+  } catch (e: any) {
+    testsOk = false;
+    testOutput = e?.stdout?.toString() ?? e?.message ?? "tests failed";
+  }
+
+  return {
+    passed: typecheckOk && testsOk,
+    typecheckOutput,
+    testOutput,
+  };
+}
+
+// markStoryPassedFromRecheck is now markStoryRechecked in utils.ts
+
+/**
+ * PLANNER — Reads prd.json, finds next unpassed story, emits test.
+ * If no stories remain, emits complete.
+ */
+export const agentLoopPlan = inngest.createFunction(
+  {
+ succeeded in 52ms:
+import { inngest } from "../../client";
+import { $ } from "bun";
+import {
+  isCancelled,
+  writePidFile,
+  cleanupPid,
+  TOOL_TIMEOUTS,
+  guardStory,
+  renewLease,
+  ensureClaudeAuth,
+} from "./utils";
+
+function buildTestWriterPrompt(story: {
+  id: string;
+  title: string;
+  description: string;
+  acceptance_criteria: string[];
+}): string {
+  return [
+    `## Write Acceptance Tests: ${story.title} (${story.id})`,
+ succeeded in 52ms:
+      repoUrl = null;
+    }
+
+    if (repoUrl) {
+      const branch = branchName ?? `agent-loop/${loopId}`;
+      const result = await spawnInContainer(
+        tool as "codex" | "claude" | "pi",
+        prompt,
+        repoUrl,
+        branch,
+        loopId,
+        "impl"
+      );
+
+      await Bun.write(Bun.file(outPath), result.output);
+      return result.exitCode;
+    }
+  }
+
+  // Host-mode fallback
+ succeeded in 52ms:
+      "LLM verdict:",
+      `- ${params.llmResult.verdict.toUpperCase()}: ${params.llmResult.reasoning}`
+    );
+  }
+  return sections.join("\n");
+}
+
+/**
+ * JUDGE — Reads test results + feedback. Routes to next story or retry.
+ *
+ * PASS → update prd.json, append progress, emit plan
+ * FAIL (retries left) → emit implement with feedback
+ * FAIL (max retries) → skip story, emit plan for next story
+ */
+export const agentLoopJudge = inngest.createFunction(
+  {
+    id: "agent-loop-judge",
+    concurrency: {
+      key: "event.data.project",
+      limit: 1,
+ succeeded in 52ms:
+    });
+  }
+
+  return [
+    byId.get("q2") ?? { id: "q2", answer: false, evidence: "Claude did not return q2." },
+    byId.get("q3") ?? { id: "q3", answer: false, evidence: "Claude did not return q3." },
+    byId.get("q4") ?? { id: "q4", answer: false, evidence: "Claude did not return q4." },
+  ];
+}
+
+function buildReviewerFeedback(notes: ReviewerNotes): string {
+  const failedQuestions = notes.questions.filter((q) => !q.answer);
+  const parts: string[] = [];
+
+  if (!notes.testResults.typecheckOk) {
+    parts.push(`Typecheck failed:\n${notes.testResults.typecheckOutput.slice(0, 3000)}`);
+  }
+  if (!notes.testResults.lintOk) {
+    parts.push(`Lint failed:\n${notes.testResults.lintOutput.slice(0, 3000)}`);
+  }
+ succeeded in 53ms:
+import { inngest } from "../../client";
+import { $ } from "bun";
+import { mintGitHubToken } from "./utils";
+
+/**
+ * COMPLETER — Handles agent/loop.complete events.
+ * Merges the worktree branch back to main, then optionally pushes to remote.
+ */
+export const agentLoopComplete = inngest.createFunction(
+  {
+    id: "agent-loop-complete",
+  },
+  [{ event: "agent/loop.completed" }],
+  async ({ event, step }) => {
+    const { loopId, project, branchName, storiesCompleted, storiesFailed, workDir } = event.data;
+
+    // Only proceed if branchName is present (set by planner v2)
+    if (!branchName) {
+      return { status: "no-branch", loopId };
+    }
+ succeeded in 53ms:
+import { inngest } from "../../client";
+import { readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { $ } from "bun";
+
+type StoryDetail = {
+  id: string;
+  title: string;
+  passed: boolean;
+  skipped: boolean;
+  attempts: number;
+  tool: string;
+};
+
+type ToolRanking = {
+  tool: string;
+  passRate: number;
+  avgAttempts: number;
+};
+
+thinking
+**Reviewing client event details**
+exec
+/bin/zsh -lc "sed -n '260,520p' src/inngest/client.ts" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus succeeded in 52ms:
+  "agent/loop.story.failed": {
+    data: {
+      loopId: string;
+      project: string;
+      workDir?: string;
+      prdPath: string;
+      storyId: string;
+      reason: string;
+      attempts: number;
+      duration?: number;
+      maxIterations?: number;
+      maxRetries?: number;
+      retryLadder?: ("codex" | "claude" | "pi")[];
+    };
+  };
+
+  /** Judge wants retry → triggers implementor */
+  "agent/loop.story.retried": {
+    data: {
+      loopId: string;
+
+thinking
+**Planning multi-file config updates**
+codex
+I confirmed `agent/loop.cancelled` already includes `loopId` in `src/inngest/client.ts`. I’ll now patch the seven loop function configs to add the same `cancelOn` block while leaving all existing `isCancelled()` checks untouched.
+exec
+/bin/zsh -lc "rg -n \"export const agentLoop(Plan|TestWriter|Implement|Review|Judge|Complete|Retro) = inngest.createFunction\\(\" src/inngest/functions/agent-loop/*.ts -S" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus succeeded in 52ms:
+src/inngest/functions/agent-loop/retro.ts:233:export const agentLoopRetro = inngest.createFunction(
+src/inngest/functions/agent-loop/review.ts:303:export const agentLoopReview = inngest.createFunction(
+src/inngest/functions/agent-loop/complete.ts:9:export const agentLoopComplete = inngest.createFunction(
+src/inngest/functions/agent-loop/test-writer.ts:133:export const agentLoopTestWriter = inngest.createFunction(
+src/inngest/functions/agent-loop/implement.ts:326:export const agentLoopImplement = inngest.createFunction(
+src/inngest/functions/agent-loop/judge.ts:254:export const agentLoopJudge = inngest.createFunction(
+src/inngest/functions/agent-loop/plan.ts:178:export const agentLoopPlan = inngest.createFunction(
+
+thinking
+**Applying code patches**
+file update
+M /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -180,2 +180,8 @@
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+apply_patch(auto_approved=true) exited 0 in 37ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/plan.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+file update
+M /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -135,2 +135,8 @@
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+apply_patch(auto_approved=true) exited 0 in 43ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/test-writer.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+file update
+M /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -328,2 +328,8 @@
+     id: "agent-loop-implement",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+apply_patch(auto_approved=true) exited 0 in 31ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/implement.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 4fb79e655b875874df90ac828884947eb0168b13..885a769ad8e06f2bed157a89f121316364f0d34c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -326,6 +326,12 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 4fb79e655b875874df90ac828884947eb0168b13..885a769ad8e06f2bed157a89f121316364f0d34c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -326,6 +326,12 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+file update
+M /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -305,2 +305,8 @@
+     id: "agent-loop-review",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+apply_patch(auto_approved=true) exited 0 in 31ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/review.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 4fb79e655b875874df90ac828884947eb0168b13..885a769ad8e06f2bed157a89f121316364f0d34c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -326,6 +326,12 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index c634c875e3497785447756b6fd054ebd2d47ef30..71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -303,6 +303,12 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 4fb79e655b875874df90ac828884947eb0168b13..885a769ad8e06f2bed157a89f121316364f0d34c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -326,6 +326,12 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index c634c875e3497785447756b6fd054ebd2d47ef30..71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -303,6 +303,12 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+file update
+M /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -256,2 +256,8 @@
+     id: "agent-loop-judge",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+apply_patch(auto_approved=true) exited 0 in 69ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/judge.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 4fb79e655b875874df90ac828884947eb0168b13..885a769ad8e06f2bed157a89f121316364f0d34c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -326,6 +326,12 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index f5cbda64e25eae9e43b03b93053c1e61b8b071ac..5a48a1a1bd4a04bfe8ae739e86442704762ac76f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -254,6 +254,12 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index c634c875e3497785447756b6fd054ebd2d47ef30..71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -303,6 +303,12 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 4fb79e655b875874df90ac828884947eb0168b13..885a769ad8e06f2bed157a89f121316364f0d34c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -326,6 +326,12 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index f5cbda64e25eae9e43b03b93053c1e61b8b071ac..5a48a1a1bd4a04bfe8ae739e86442704762ac76f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -254,6 +254,12 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index c634c875e3497785447756b6fd054ebd2d47ef30..71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -303,6 +303,12 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+file update
+M /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -11,2 +11,8 @@
+     id: "agent-loop-complete",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+   },
+apply_patch(auto_approved=true) exited 0 in 68ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/complete.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+index c2ce9efb2d2a2243f22f821e9bf0851e0e2c91d5..3ff24ecbec7ece613e203c99b055678eb15bed64
+--- a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -9,6 +9,12 @@
+ export const agentLoopComplete = inngest.createFunction(
+   {
+     id: "agent-loop-complete",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+   },
+   [{ event: "agent/loop.completed" }],
+   async ({ event, step }) => {
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 4fb79e655b875874df90ac828884947eb0168b13..885a769ad8e06f2bed157a89f121316364f0d34c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -326,6 +326,12 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index f5cbda64e25eae9e43b03b93053c1e61b8b071ac..5a48a1a1bd4a04bfe8ae739e86442704762ac76f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -254,6 +254,12 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index c634c875e3497785447756b6fd054ebd2d47ef30..71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -303,6 +303,12 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+index c2ce9efb2d2a2243f22f821e9bf0851e0e2c91d5..3ff24ecbec7ece613e203c99b055678eb15bed64
+--- a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -9,6 +9,12 @@
+ export const agentLoopComplete = inngest.createFunction(
+   {
+     id: "agent-loop-complete",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+   },
+   [{ event: "agent/loop.completed" }],
+   async ({ event, step }) => {
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 4fb79e655b875874df90ac828884947eb0168b13..885a769ad8e06f2bed157a89f121316364f0d34c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -326,6 +326,12 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index f5cbda64e25eae9e43b03b93053c1e61b8b071ac..5a48a1a1bd4a04bfe8ae739e86442704762ac76f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -254,6 +254,12 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index c634c875e3497785447756b6fd054ebd2d47ef30..71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -303,6 +303,12 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+file update
+M /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+@@ -235,2 +235,8 @@
+     id: "agent-loop-retro",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+apply_patch(auto_approved=true) exited 0 in 78ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/retro.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+index c2ce9efb2d2a2243f22f821e9bf0851e0e2c91d5..3ff24ecbec7ece613e203c99b055678eb15bed64
+--- a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -9,6 +9,12 @@
+ export const agentLoopComplete = inngest.createFunction(
+   {
+     id: "agent-loop-complete",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+   },
+   [{ event: "agent/loop.completed" }],
+   async ({ event, step }) => {
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 4fb79e655b875874df90ac828884947eb0168b13..885a769ad8e06f2bed157a89f121316364f0d34c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -326,6 +326,12 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index f5cbda64e25eae9e43b03b93053c1e61b8b071ac..5a48a1a1bd4a04bfe8ae739e86442704762ac76f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -254,6 +254,12 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+index 59128dcbc775e76251a35217e2475c9ca35e22ef..1203ade125726af6f778332fa62655f6025c83da
+--- a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+@@ -233,6 +233,12 @@
+ export const agentLoopRetro = inngest.createFunction(
+   {
+     id: "agent-loop-retro",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index c634c875e3497785447756b6fd054ebd2d47ef30..71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -303,6 +303,12 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+index c2ce9efb2d2a2243f22f821e9bf0851e0e2c91d5..3ff24ecbec7ece613e203c99b055678eb15bed64
+--- a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -9,6 +9,12 @@
+ export const agentLoopComplete = inngest.createFunction(
+   {
+     id: "agent-loop-complete",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+   },
+   [{ event: "agent/loop.completed" }],
+   async ({ event, step }) => {
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 4fb79e655b875874df90ac828884947eb0168b13..885a769ad8e06f2bed157a89f121316364f0d34c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -326,6 +326,12 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index f5cbda64e25eae9e43b03b93053c1e61b8b071ac..5a48a1a1bd4a04bfe8ae739e86442704762ac76f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -254,6 +254,12 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+index 59128dcbc775e76251a35217e2475c9ca35e22ef..1203ade125726af6f778332fa62655f6025c83da
+--- a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+@@ -233,6 +233,12 @@
+ export const agentLoopRetro = inngest.createFunction(
+   {
+     id: "agent-loop-retro",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index c634c875e3497785447756b6fd054ebd2d47ef30..71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -303,6 +303,12 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+
+thinking
+**Checking cancellation flags usage**
+codex
+Edits are in place across all seven files. I’m running the requested checks (`grep cancelOn` coverage and `bunx tsc --noEmit`) to confirm acceptance criteria.
+exec
+/bin/zsh -lc 'grep -r "cancelOn" src/inngest/functions/ --include="*.ts"' in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "rg -n \"isCancelled\\(\" src/inngest/functions/agent-loop/{plan,test-writer,implement,review,judge,complete,retro}.ts -S" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus succeeded in 53ms:
+src/inngest/functions/agent-loop/retro.ts:    cancelOn: [
+src/inngest/functions/agent-loop/complete.ts:    cancelOn: [
+src/inngest/functions/agent-loop/implement.ts:    cancelOn: [
+src/inngest/functions/agent-loop/judge.ts:    cancelOn: [
+src/inngest/functions/agent-loop/cancel-on.acceptance.test.ts:    cancelOn?: Array<{ event?: string; if?: string }>;
+src/inngest/functions/agent-loop/cancel-on.acceptance.test.ts:  return fn.opts?.cancelOn ?? [];
+src/inngest/functions/agent-loop/cancel-on.acceptance.test.ts:describe("CANCEL-1 acceptance: cancelOn on all agent-loop functions", () => {
+src/inngest/functions/agent-loop/cancel-on.acceptance.test.ts:  test("all 7 loop functions define cancelOn with loopId match against agent/loop.cancelled", () => {
+src/inngest/functions/agent-loop/cancel-on.acceptance.test.ts:      expect(matchingRule, `${entry.name} is missing cancelOn for agent/loop.cancelled`).toBeDefined();
+src/inngest/functions/agent-loop/review.ts:    cancelOn: [
+src/inngest/functions/agent-loop/test-writer.ts:    cancelOn: [
+src/inngest/functions/agent-loop/plan.ts:    cancelOn: [
+ succeeded in 52ms:
+src/inngest/functions/agent-loop/test-writer.ts:168:    const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
+src/inngest/functions/agent-loop/implement.ts:370:    const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
+src/inngest/functions/agent-loop/plan.ts:320:    const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
+src/inngest/functions/agent-loop/judge.ts:295:    const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
+src/inngest/functions/agent-loop/review.ts:339:    const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+index c2ce9efb2d2a2243f22f821e9bf0851e0e2c91d5..3ff24ecbec7ece613e203c99b055678eb15bed64
+--- a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -9,6 +9,12 @@
+ export const agentLoopComplete = inngest.createFunction(
+   {
+     id: "agent-loop-complete",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+   },
+   [{ event: "agent/loop.completed" }],
+   async ({ event, step }) => {
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 4fb79e655b875874df90ac828884947eb0168b13..885a769ad8e06f2bed157a89f121316364f0d34c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -326,6 +326,12 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index f5cbda64e25eae9e43b03b93053c1e61b8b071ac..5a48a1a1bd4a04bfe8ae739e86442704762ac76f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -254,6 +254,12 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+index 59128dcbc775e76251a35217e2475c9ca35e22ef..1203ade125726af6f778332fa62655f6025c83da
+--- a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+@@ -233,6 +233,12 @@
+ export const agentLoopRetro = inngest.createFunction(
+   {
+     id: "agent-loop-retro",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index c634c875e3497785447756b6fd054ebd2d47ef30..71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -303,6 +303,12 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+
+thinking
+**Verifying cancellation usage**
+exec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus succeeded in 792ms:
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+index c2ce9efb2d2a2243f22f821e9bf0851e0e2c91d5..3ff24ecbec7ece613e203c99b055678eb15bed64
+--- a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -9,6 +9,12 @@
+ export const agentLoopComplete = inngest.createFunction(
+   {
+     id: "agent-loop-complete",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+   },
+   [{ event: "agent/loop.completed" }],
+   async ({ event, step }) => {
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 4fb79e655b875874df90ac828884947eb0168b13..885a769ad8e06f2bed157a89f121316364f0d34c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -326,6 +326,12 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index f5cbda64e25eae9e43b03b93053c1e61b8b071ac..5a48a1a1bd4a04bfe8ae739e86442704762ac76f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -254,6 +254,12 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+index 59128dcbc775e76251a35217e2475c9ca35e22ef..1203ade125726af6f778332fa62655f6025c83da
+--- a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+@@ -233,6 +233,12 @@
+ export const agentLoopRetro = inngest.createFunction(
+   {
+     id: "agent-loop-retro",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index c634c875e3497785447756b6fd054ebd2d47ef30..71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -303,6 +303,12 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+
+thinking
+**Checking condition occurrences**
+exec
+/bin/zsh -lc "rg -n \"agent/loop\\.cancelled|async\\.data\\.loopId|cancelOn\" src/inngest/functions/agent-loop/{plan,test-writer,implement,review,judge,complete,retro}.ts -S" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus succeeded in 53ms:
+src/inngest/functions/agent-loop/test-writer.ts:136:    cancelOn: [
+src/inngest/functions/agent-loop/test-writer.ts:138:        event: "agent/loop.cancelled",
+src/inngest/functions/agent-loop/test-writer.ts:139:        if: "event.data.loopId == async.data.loopId",
+src/inngest/functions/agent-loop/implement.ts:329:    cancelOn: [
+src/inngest/functions/agent-loop/implement.ts:331:        event: "agent/loop.cancelled",
+src/inngest/functions/agent-loop/implement.ts:332:        if: "event.data.loopId == async.data.loopId",
+src/inngest/functions/agent-loop/plan.ts:181:    cancelOn: [
+src/inngest/functions/agent-loop/plan.ts:183:        event: "agent/loop.cancelled",
+src/inngest/functions/agent-loop/plan.ts:184:        if: "event.data.loopId == async.data.loopId",
+src/inngest/functions/agent-loop/review.ts:306:    cancelOn: [
+src/inngest/functions/agent-loop/review.ts:308:        event: "agent/loop.cancelled",
+src/inngest/functions/agent-loop/review.ts:309:        if: "event.data.loopId == async.data.loopId",
+src/inngest/functions/agent-loop/complete.ts:12:    cancelOn: [
+src/inngest/functions/agent-loop/complete.ts:14:        event: "agent/loop.cancelled",
+src/inngest/functions/agent-loop/complete.ts:15:        if: "event.data.loopId == async.data.loopId",
+src/inngest/functions/agent-loop/judge.ts:257:    cancelOn: [
+src/inngest/functions/agent-loop/judge.ts:259:        event: "agent/loop.cancelled",
+src/inngest/functions/agent-loop/judge.ts:260:        if: "event.data.loopId == async.data.loopId",
+src/inngest/functions/agent-loop/retro.ts:236:    cancelOn: [
+src/inngest/functions/agent-loop/retro.ts:238:        event: "agent/loop.cancelled",
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+index c2ce9efb2d2a2243f22f821e9bf0851e0e2c91d5..3ff24ecbec7ece613e203c99b055678eb15bed64
+--- a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -9,6 +9,12 @@
+ export const agentLoopComplete = inngest.createFunction(
+   {
+     id: "agent-loop-complete",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+   },
+   [{ event: "agent/loop.completed" }],
+   async ({ event, step }) => {
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 4fb79e655b875874df90ac828884947eb0168b13..885a769ad8e06f2bed157a89f121316364f0d34c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -326,6 +326,12 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index f5cbda64e25eae9e43b03b93053c1e61b8b071ac..5a48a1a1bd4a04bfe8ae739e86442704762ac76f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -254,6 +254,12 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+index 59128dcbc775e76251a35217e2475c9ca35e22ef..1203ade125726af6f778332fa62655f6025c83da
+--- a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+@@ -233,6 +233,12 @@
+ export const agentLoopRetro = inngest.createFunction(
+   {
+     id: "agent-loop-retro",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index c634c875e3497785447756b6fd054ebd2d47ef30..71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -303,6 +303,12 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+
+thinking
+**Confirming event data unchanged**
+codex
+Implemented `CANCEL-1` with focused changes only.
+
+## What changed
+Added `cancelOn` to all 7 agent-loop function configs:
+
+- `src/inngest/functions/agent-loop/plan.ts:181`
+- `src/inngest/functions/agent-loop/test-writer.ts:136`
+- `src/inngest/functions/agent-loop/implement.ts:329`
+- `src/inngest/functions/agent-loop/review.ts:306`
+- `src/inngest/functions/agent-loop/judge.ts:257`
+- `src/inngest/functions/agent-loop/complete.ts:12`
+- `src/inngest/functions/agent-loop/retro.ts:236`
+
+Each uses:
+- `event: "agent/loop.cancelled"`
+- `if: "event.data.loopId == async.data.loopId"`
+
+## Validation
+- `agent/loop.cancelled` already includes `loopId` in event schema at `src/inngest/client.ts:300` (no change needed).
+- Existing `isCancelled()` polling remains in place:
+  - `src/inngest/functions/agent-loop/plan.ts:320`
+  - `src/inngest/functions/agent-loop/test-writer.ts:168`
+  - `src/inngest/functions/agent-loop/implement.ts:370`
+  - `src/inngest/functions/agent-loop/review.ts:339`
+  - `src/inngest/functions/agent-loop/judge.ts:295`
+- TypeScript compile check passed:
+  - `bunx tsc --noEmit` exited cleanly.
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+index c2ce9efb2d2a2243f22f821e9bf0851e0e2c91d5..3ff24ecbec7ece613e203c99b055678eb15bed64
+--- a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -9,6 +9,12 @@
+ export const agentLoopComplete = inngest.createFunction(
+   {
+     id: "agent-loop-complete",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+   },
+   [{ event: "agent/loop.completed" }],
+   async ({ event, step }) => {
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 4fb79e655b875874df90ac828884947eb0168b13..885a769ad8e06f2bed157a89f121316364f0d34c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -326,6 +326,12 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index f5cbda64e25eae9e43b03b93053c1e61b8b071ac..5a48a1a1bd4a04bfe8ae739e86442704762ac76f
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -254,6 +254,12 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index 776986ff2f36d85238dbee58cae4e326f6fad0ad..e2644893cda2fbba803da99d450a7143cd0111e5
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -178,6 +178,12 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+index 59128dcbc775e76251a35217e2475c9ca35e22ef..1203ade125726af6f778332fa62655f6025c83da
+--- a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+@@ -233,6 +233,12 @@
+ export const agentLoopRetro = inngest.createFunction(
+   {
+     id: "agent-loop-retro",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index c634c875e3497785447756b6fd054ebd2d47ef30..71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -303,6 +303,12 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index c8604a7f363c23d0e99f09d0d7b8c5b4fe5dc178..a4148014d66aac34c4c609ec1edd3def4edd87e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -133,6 +133,12 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    cancelOn: [
++      {
++        event: "agent/loop.cancelled",
++        if: "event.data.loopId == async.data.loopId",
++      },
++    ],
+     concurrency: {
+       key: "event.data.project",
+       limit: 1,
+
+tokens used
+75,997

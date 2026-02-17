@@ -133,6 +133,12 @@ async function spawnReviewer(
 export const agentLoopTestWriter = inngest.createFunction(
   {
     id: "agent-loop-test-writer",
+    cancelOn: [
+      {
+        event: "agent/loop.cancelled",
+        if: "event.data.loopId == async.data.loopId",
+      },
+    ],
     concurrency: {
       key: "event.data.project",
       limit: 1,

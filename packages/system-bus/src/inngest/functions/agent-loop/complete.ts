@@ -9,6 +9,12 @@ import { mintGitHubToken } from "./utils";
 export const agentLoopComplete = inngest.createFunction(
   {
     id: "agent-loop-complete",
+    cancelOn: [
+      {
+        event: "agent/loop.cancelled",
+        if: "event.data.loopId == async.data.loopId",
+      },
+    ],
   },
   [{ event: "agent/loop.completed" }],
   async ({ event, step }) => {

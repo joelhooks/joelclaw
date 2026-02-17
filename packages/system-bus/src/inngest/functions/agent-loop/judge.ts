@@ -254,6 +254,12 @@ function buildFailureFeedback(params: {
 export const agentLoopJudge = inngest.createFunction(
   {
     id: "agent-loop-judge",
+    cancelOn: [
+      {
+        event: "agent/loop.cancelled",
+        if: "event.data.loopId == async.data.loopId",
+      },
+    ],
     concurrency: {
       key: "event.data.project",
       limit: 1,

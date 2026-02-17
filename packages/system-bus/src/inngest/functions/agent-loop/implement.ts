@@ -326,6 +326,12 @@ async function spawnTool(
 export const agentLoopImplement = inngest.createFunction(
   {
     id: "agent-loop-implement",
+    cancelOn: [
+      {
+        event: "agent/loop.cancelled",
+        if: "event.data.loopId == async.data.loopId",
+      },
+    ],
     concurrency: {
       key: "event.data.project",
       limit: 1,
