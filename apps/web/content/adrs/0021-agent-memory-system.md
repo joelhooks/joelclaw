@@ -1,6 +1,7 @@
 ---
 title: Adopt comprehensive agent memory system
-status: proposed
+status: accepted
+accepted: 2026-02-17
 date: 2026-02-15
 deciders: Joel Hooks
 consulted: Claude (pi session 2026-02-15)
