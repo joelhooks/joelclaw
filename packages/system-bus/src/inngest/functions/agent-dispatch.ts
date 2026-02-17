@@ -172,11 +172,10 @@ function buildCommand(
   switch (tool) {
     case "codex":
       return [
-        "codex",
+        "codex exec",
         "--full-auto",
-        "--quiet",
-        opts.model ? `--model ${opts.model}` : "",
-        opts.sandbox ? `--sandbox ${opts.sandbox}` : "--sandbox read-only",
+        opts.model ? `-m ${opts.model}` : "",
+        opts.sandbox ? `-s ${opts.sandbox}` : "",
         `'${escaped}'`,
       ]
         .filter(Boolean)
@@ -188,7 +187,7 @@ function buildCommand(
         "--print",
         "--no-input",
         opts.model ? `--model ${opts.model}` : "",
-        `'${escaped}'`,
+        `-p '${escaped}'`,
       ]
         .filter(Boolean)
         .join(" ");
