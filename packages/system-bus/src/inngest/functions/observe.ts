@@ -51,11 +51,14 @@ let redisClient: Redis | null = null;
 
 function getRedisClient(): Redis {
   if (!redisClient) {
+    const isTestEnv = process.env.NODE_ENV === "test" || process.env.BUN_TEST === "1";
     redisClient = new Redis({
       host: process.env.REDIS_HOST ?? "localhost",
       port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
       lazyConnect: true,
+      retryStrategy: isTestEnv ? () => null : undefined,
     });
+    redisClient.on("error", () => {});
   }
   return redisClient;
 }

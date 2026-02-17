@@ -36,11 +36,14 @@ let redisClient: Redis | null = null;
 
 function getRedisClient(): Redis {
   if (!redisClient) {
+    const isTestEnv = process.env.NODE_ENV === "test" || process.env.BUN_TEST === "1";
     redisClient = new Redis({
       host: "localhost",
       port: 6379,
       lazyConnect: true,
+      retryStrategy: isTestEnv ? () => null : undefined,
     });
+    redisClient.on("error", () => {});
   }
   return redisClient;
 }

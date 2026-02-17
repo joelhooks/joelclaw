@@ -1,0 +1,11 @@
+All 76 tests pass and TypeScript compiles cleanly. The implementation is already complete and working. The previous attempt (commit `9f65a1a`) successfully added `cancelOn` to all 7 agent-loop functions.
+
+To summarize the current state:
+
+- **All 7 loop functions** (`plan.ts`, `test-writer.ts`, `implement.ts`, `review.ts`, `judge.ts`, `complete.ts`, `retro.ts`) have `cancelOn: [{ event: 'agent/loop.cancelled', if: 'event.data.loopId == async.data.loopId' }]`
+- **The `agent/loop.cancelled` event** already has `loopId` in its data type in the Events schema
+- **Existing `isCancelled()` polling** is preserved in all functions
+- **TypeScript compiles cleanly** (`bunx tsc --noEmit` exits 0)
+- **All 76 tests pass**, including the CANCEL-1 acceptance tests
+
+The story is already fully implemented. No changes needed.

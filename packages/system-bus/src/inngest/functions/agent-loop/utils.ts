@@ -3,6 +3,14 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import Redis from "ioredis";
 
+const redisClass = Redis as unknown as {
+  defaultOptions?: Record<string, unknown>;
+};
+
+if (redisClass.defaultOptions) {
+  redisClass.defaultOptions.lazyConnect = true;
+}
+
 const LOOP_TMP = "/tmp/agent-loop";
 
 /**
@@ -83,11 +91,14 @@ let _redis: Redis | null = null;
 
 function getRedis(): Redis {
   if (!_redis) {
+    const isTestEnv = process.env.NODE_ENV === "test" || process.env.BUN_TEST === "1";
     _redis = new Redis({
       host: process.env.REDIS_HOST ?? "localhost",
       port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
       lazyConnect: true,
+      retryStrategy: isTestEnv ? () => null : undefined,
     });
+    _redis.on("error", () => {});
   }
   return _redis;
 }

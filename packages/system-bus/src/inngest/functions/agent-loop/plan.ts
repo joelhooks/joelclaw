@@ -209,6 +209,10 @@ export const agentLoopPlan = inngest.createFunction(
 
     const isStartEvent = event.name === "agent/loop.started";
 
+    // Step 0: Check cancellation before any worktree or filesystem work.
+    const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
+    if (cancelled) return { status: "cancelled", loopId };
+
     // Worktree isolation: each loop gets its own working directory.
     // Main repo working tree is NEVER touched by loop operations.
     const worktreeBase = `/tmp/agent-loop`;
@@ -315,10 +319,6 @@ export const agentLoopPlan = inngest.createFunction(
       const relPath = project.startsWith(gitRoot) ? project.slice(gitRoot.length + 1) : "";
       return relPath ? join(worktreePath, relPath) : worktreePath;
     });
-
-    // Step 0: Check cancellation
-    const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
-    if (cancelled) return { status: "cancelled", loopId };
 
     // Step 1: Read or generate PRD
     // ADR-0012: If goal is provided, generate PRD from goal + context files
