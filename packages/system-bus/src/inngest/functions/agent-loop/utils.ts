@@ -199,11 +199,22 @@ export async function pushGatewayEvent(input: {
     ts: Date.now(),
   };
 
-  await redis.lpush("joelclaw:events:main", JSON.stringify(event));
-  await redis.publish(
-    "joelclaw:notify:main",
-    JSON.stringify({ eventId: event.id, type: event.type })
-  );
+  const json = JSON.stringify(event);
+  const notification = JSON.stringify({ eventId: event.id, type: event.type });
+
+  // Fan out to all registered pi sessions
+  const sessions = await redis.smembers("joelclaw:gateway:sessions");
+
+  if (sessions.length === 0) {
+    // No active sessions — push to legacy "main" list so events aren't lost
+    await redis.lpush("joelclaw:events:main", json);
+    await redis.publish("joelclaw:notify:main", notification);
+  } else {
+    for (const sessionId of sessions) {
+      await redis.lpush(`joelclaw:events:${sessionId}`, json);
+      await redis.publish(`joelclaw:notify:${sessionId}`, notification);
+    }
+  }
 
   return event;
 }
