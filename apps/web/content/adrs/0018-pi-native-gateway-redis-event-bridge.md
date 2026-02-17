@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: implemented
 date: 2026-02-14
 accepted: 2026-02-15
 decision-makers: Joel Hooks
@@ -10,6 +10,7 @@ related:
   - "[ADR-0005 — Durable multi-agent coding loops](0005-durable-multi-agent-coding-loops.md)"
   - "[ADR-0010 — Central system loop gateway](0010-system-loop-gateway.md)"
   - "[ADR-0011 — Redis-backed loop state](0011-redis-backed-loop-state.md)"
+  - "[ADR-0035 — Central + satellite session routing](0035-gateway-session-routing-central-satellite.md)"
 ---
 
 # Adopt pi-native gateway pattern with Redis event bridge for system orchestration
