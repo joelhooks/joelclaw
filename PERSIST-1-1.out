@@ -1,0 +1,1257 @@
+Implemented `PERSIST-1` by persisting PRD metadata into the Redis PRD payload.
+
+Changes made:
+- Updated planner to pass event-level metadata:
+  - `project` from `event.data.project`
+  - `workDir` from `event.data.workDir ?? event.data.project`
+  - File: `src/inngest/functions/agent-loop/plan.ts:195`
+  - File: `src/inngest/functions/agent-loop/plan.ts:350`
+  - File: `src/inngest/functions/agent-loop/plan.ts:357`
+- Updated PRD seed helpers to include metadata at top level when writing Redis JSON:
+  - Added optional PRD fields: `context`, `project`, `workDir`
+  - Added optional metadata arg to `seedPrd` and `seedPrdFromData`
+  - Redis `set` now serializes PRD merged with metadata
+  - File: `src/inngest/functions/agent-loop/utils.ts:358`
+  - File: `src/inngest/functions/agent-loop/utils.ts:378`
+  - File: `src/inngest/functions/agent-loop/utils.ts:409`
+
+Validation:
+- `bunx tsc --noEmit` passed.
+- `bun test src/inngest/functions/agent-loop/persist-1.test.ts` passed (3/3).
+
+
+--- STDERR ---
+OpenAI Codex v0.101.0 (research preview)
+--------
+workdir: /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus
+model: gpt-5.3-codex
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: auto
+session id: 019c6bf2-f611-7311-8c74-f69374755a77
+--------
+user
+
+
+## Project File Listing
+
+docker
+prd-v3-recovery.json
+prd-adr-0010.json
+progress.txt
+node_modules
+prd-retro.json
+bun.lock
+README.md
+package.json
+scripts
+prd-harden.json
+tsconfig.json
+docker-compose.yml
+prd-v2.json
+index.ts
+CONTINUATION.md
+prd-0026.json
+prd.json
+start.sh
+CLAUDE.md
+prd-cli-migration.json
+src
+CONTINUATION-ADR.md
+
+# src/ files:
+src/inngest/client.ts
+src/serve.ts
+
+## Project Instructions (CLAUDE.md)
+
+
+## Agent Loop Architecture (ADR-0015)
+
+This project runs automated coding loops with 5 separated roles:
+- **Planner**: generates PRD from goal, picks next story
+- **Test Writer**: writes acceptance tests BEFORE implementation (TDD)
+- **Implementor**: writes code to pass the tests
+- **Reviewer**: evaluates implementation with 4 questions (no test writing)
+- **Judge**: mechanical gates + reviewer notes + LLM verdict
+
+When working as an implementor: implement the story, don't write tests.
+When working as a test writer: write tests from acceptance criteria only, don't read implementation.
+Tests should verify observable behavior and public API — NOT internal structure.
+Do NOT use source code string matching (indexOf, regex on source) to verify behavior.
+Commit nothing — the harness handles git.
+
+## Bun Runtime
+
+Default to using Bun instead of Node.js.
+
+- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
+- Use `bun test` instead of `jest` or `vitest`
+- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
+- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
+- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
+- Use `bunx <package> <command>` instead of `npx <package> <command>`
+- Bun automatically loads .env, so don't use dotenv.
+
+## APIs
+
+- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
+- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
+- `Bun.redis` for Redis. Don't use `ioredis`.
+- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
+- `WebSocket` is built-in. Don't use `ws`.
+- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
+- Bun.$`ls` instead of execa.
+
+## Testing
+
+Use `bun test` to run tests.
+
+```ts#index.test.ts
+import { test, expect } from "bun:test";
+
+test("hello world", () => {
+  expect(1).toBe(1);
+});
+```
+
+## Frontend
+
+Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, C
+
+---
+
+## Story: Store project/workDir in PRD Redis key (PERSIST-1)
+
+In plan.ts, when writing the PRD to Redis via `redis.set('agent-loop:prd:{loopId}', ...)`, include `project` and `workDir` fields at the top level of the JSON object alongside `title`, `description`, `context`, and `stories`. Read these from `event.data.project` and `event.data.workDir`. The diagnose command needs project to re-fire events but currently can't find it.
+
+## Acceptance Criteria
+- plan.ts stores event.data.project as top-level 'project' field in the PRD Redis JSON
+- plan.ts stores event.data.workDir (fallback to event.data.project) as top-level 'workDir' field
+- Existing PRD fields (title, description, stories, context) are unchanged
+- TypeScript compiles (bunx tsc --noEmit)
+
+## Instructions
+Implement the story above. Do NOT write tests — a separate reviewer will handle testing.
+Make clean, focused changes. Commit nothing — the harness handles git.
+If your changes break existing tests (not just the ones for this story), fix those tests to match the new interface. Changing a type or adding a required field means updating all consumers.
+mcp startup: no servers
+2026-02-17T14:13:30.800889Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a38-72b9-7fd3-aae0-de7058d752e1
+2026-02-17T14:13:30.840313Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5eca-bff9-7772-83bf-5daab07b9959
+2026-02-17T14:13:30.888822Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5ffd-d51d-7a13-b1fa-342be02f164b
+2026-02-17T14:13:30.960397Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6275-d69e-7b53-bb28-583bfe07e70c
+2026-02-17T14:13:31.042271Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6946-d832-73b3-bade-761321c88a0a
+2026-02-17T14:13:31.067910Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5d40-288c-78b2-af66-36e0fae54073
+2026-02-17T14:13:31.178891Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6bed-25bc-7141-bf68-7df6c001174c
+2026-02-17T14:13:31.277354Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a5b-ba72-7f61-8273-d02deacae15e
+2026-02-17T14:13:31.343817Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6482-5bab-7e53-bc62-5239d048a3c8
+2026-02-17T14:13:31.435442Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a51-1205-7a00-bbdb-509c1624de3d
+2026-02-17T14:13:31.533705Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a59-ea9c-73e1-b537-9ad62ea24fd1
+2026-02-17T14:13:31.573359Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6485-58f0-7261-8508-37f3fb9356dd
+2026-02-17T14:13:31.594507Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c695b-193b-7040-9529-153a24848595
+2026-02-17T14:13:31.687152Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6031-b7fb-7120-85b5-8abf34324910
+2026-02-17T14:13:31.702073Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fe2-872d-7e93-87a3-71d37d75a127
+2026-02-17T14:13:31.791620Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a5d-a9a0-7003-8868-edeb59f5a8e9
+2026-02-17T14:13:31.827547Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a4f-9a4d-7c13-aeef-771e0c9a7900
+2026-02-17T14:13:31.893275Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e50-6bc5-7861-a0a0-f77d68ec073f
+2026-02-17T14:13:31.972975Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6022-8a12-7ba0-b7e8-9c265e8ec17e
+2026-02-17T14:13:31.988421Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fbb-e145-7c40-9913-218548629e57
+2026-02-17T14:13:32.050905Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e21-7a30-7ed1-b686-e02ac2da8157
+2026-02-17T14:13:32.084887Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c647c-8066-7eb1-8782-06a844370303
+2026-02-17T14:13:32.139694Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6bed-24ce-70e2-a3a9-72ea76928828
+2026-02-17T14:13:32.180808Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a58-df8a-7560-894e-8c41ec0bc9ec
+2026-02-17T14:13:32.219274Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6bed-ca0f-7153-9527-6336e87fc2d0
+2026-02-17T14:13:32.272219Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fed-5e04-78c0-9a4e-9fddc7af084e
+
+thinking
+**Assessing skill applicability**
+codex
+Implementing `PERSIST-1` now: I’m going to locate `plan.ts`, update the PRD payload stored in Redis to include top-level `project` and `workDir`, then run `bunx tsc --noEmit` to verify compilation.
+exec
+/bin/zsh -lc 'rg --files' in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-busexec
+/bin/zsh -lc "rg -n \"agent-loop:prd|redis\\.set\\(|plan\\.ts|stories|context\" -S src index.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 328ms:
+src/inngest/functions/summarize.ts:11:2-3 paragraphs in Joel's voice. Core argument, significance, why it matters. Rich with context from your research. Write like you're telling a friend about it, not writing a book report.
+src/inngest/functions/summarize.ts:16:## Speaker Context
+src/inngest/functions/summarize.ts:56:      // pi -p with @file reads the file content into context
+src/inngest/functions/send-2-step-send-event.test.ts:12:  runContext: string | null;
+src/inngest/functions/send-2-step-send-event.test.ts:76:          stepSendCalls.push({ id, payload, runContext: activeRunId });
+src/inngest/functions/send-2-step-send-event.test.ts:86:      runContext: null,
+src/inngest/functions/send-2-step-send-event.test.ts:170:          stepSendCalls.push({ id, payload, runContext: activeRunId });
+src/inngest/functions/send-2-step-send-event.test.ts:180:      runContext: null,
+src/inngest/functions/discovery-capture.ts:10: * Receives a URL and/or context. Does all the heavy lifting:
+src/inngest/functions/discovery-capture.ts:22:    const { url, context } = event.data;
+src/inngest/functions/discovery-capture.ts:56:        content = context ?? "No content provided.";
+src/inngest/functions/discovery-capture.ts:66:        context: context ?? undefined,
+src/inngest/functions/observe.ts:183:      const result = await redis.set(
+src/inngest/functions/observe.ts:212:      const promptWithSessionContext = `${userPrompt}
+src/inngest/functions/observe.ts:214:Session context:
+src/inngest/functions/observe.ts:219:        const result = await Bun.$`pi --no-tools --no-session --print --mode text --system-prompt ${OBSERVER_SYSTEM_PROMPT} ${promptWithSessionContext}`
+src/inngest/functions/observe.ts:486:        await redis.set(redisKey, payloadJson);
+src/inngest/prompts/discovery.ts:10:  context: string | undefined;
+src/inngest/prompts/discovery.ts:22:- Joel said: ${opts.context ?? "(just flagged it as interesting)"}
+src/inngest/functions/observe-parser.ts:14:export function optimizeForContext(observations: string): string {
+ succeeded in 365ms:
+CONTINUATION-ADR.md
+src/serve.ts
+docker/agent-loop-runner/entrypoint.sh
+docker/agent-loop-runner/Dockerfile
+tsconfig.json
+prd-harden.json
+scripts/smoke-test-observe.ts
+scripts/embed.py
+package.json
+README.md
+bun.lock
+prd-retro.json
+progress.txt
+prd-adr-0010.json
+prd-v3-recovery.json
+prd-0026.json
+CONTINUATION.md
+index.ts
+prd-v2.json
+docker-compose.yml
+
+thinking
+**Reviewing persistence and typings**
+codex
+I found `src/inngest/functions/agent-loop/plan.ts` and a dedicated `persist-1.test.ts`, so I’m inspecting the current PRD write path and existing types before making a focused patch.
+exec
+/bin/zsh -lc "nl -ba src/inngest/functions/agent-loop/plan.ts | sed -n '280,390p'" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-busexec
+/bin/zsh -lc "nl -ba src/inngest/functions/agent-loop/utils.ts | sed -n '330,460p'" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-busexec
+/bin/zsh -lc "nl -ba src/inngest/functions/agent-loop/plan.ts | sed -n '390,500p'" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 51ms:
+   330	
+   331	export async function claimCheckRead<T = unknown>(path: string): Promise<T> {
+   332	  return JSON.parse(await Bun.file(path).text()) as T;
+   333	}
+   334	
+   335	// ── Output file path ─────────────────────────────────────────────────
+   336	
+   337	export function outputPath(
+   338	  loopId: string,
+   339	  storyId: string,
+   340	  attempt: number
+   341	): string {
+   342	  return join(loopDir(loopId), `${storyId}-${attempt}.out`);
+   343	}
+   344	
+   345	// ── PRD helpers ──────────────────────────────────────────────────────
+   346	
+   347	export interface Story {
+   348	  id: string;
+   349	  title: string;
+ succeeded in 52ms:
+   280	      });
+   281	    } else {
+   282	      // Re-entry: verify worktree still exists
+   283	      await step.run("verify-worktree", async () => {
+   284	        const exists = await Bun.file(`${worktreePath}/.git`).exists();
+   285	        if (!exists) {
+   286	          throw new NonRetriableError(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
+   287	        }
+   288	      });
+   289	
+   290	      // Ensure deps are installed on re-entry too (may have been missed or cleaned)
+   291	      await step.run("ensure-worktree-deps", async () => {
+   292	        const { existsSync } = await import("node:fs");
+   293	        const hasNodeModules = existsSync(`${worktreePath}/node_modules`);
+   294	        if (hasNodeModules) {
+   295	          return { installed: true, skipped: true, reason: "node_modules exists" };
+   296	        }
+   297	        // Same install logic as create path
+   298	        const hasPnpmLock = await Bun.file(`${worktreePath}/pnpm-lock.yaml`).exists();
+   299	        const hasBunLock = await Bun.file(`${worktreePath}/bun.lock`).exists() || await Bun.file(`${worktreePath}/bun.lockb`).exists();
+ succeeded in 51ms:
+   390	
+   391	    // Step 3: If no stories remain, recheck skipped stories before complete
+   392	    if (remaining.length === 0) {
+   393	      const skippedStories = prd.stories.filter((s) => (s as any).skipped);
+   394	      const recheckResults: { storyId: string; status: "passed" | "still-failing" }[] = [];
+   395	
+   396	      for (const skippedStory of skippedStories) {
+   397	        const checks = await step.run(`recheck-suite-${skippedStory.id}`, () =>
+   398	          runRecheckSuite(workDir)
+   399	        );
+   400	
+   401	        if (checks.passed) {
+   402	          await step.run(`recheck-pass-${skippedStory.id}`, async () => {
+   403	            await markStoryRechecked(workDir, prdPath, skippedStory.id, loopId);
+   404	            await appendProgress(
+   405	              loopId,
+   406	              [
+   407	                `**Story ${skippedStory.id}: ${skippedStory.title}** — RECHECK PASS`,
+   408	                "- Recheck result: typecheck + tests now pass",
+   409	                "- Action: unskipped and marked passes=true",
+exec
+/bin/zsh -lc "nl -ba src/inngest/client.ts | sed -n '360,450p'" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 72ms:
+   360	      messageCount: number;
+   361	      tokensBefore: number;
+   362	      filesRead: string[];
+   363	      filesModified: string[];
+   364	      capturedAt: string;
+   365	      schemaVersion: 1;
+   366	    };
+   367	  };
+   368	  "memory/session.ended": {
+   369	    data: {
+   370	      sessionId: string;
+   371	      dedupeKey: string;
+   372	      trigger: "shutdown";
+   373	      messages: string;
+   374	      messageCount: number;
+   375	      userMessageCount: number;
+   376	      duration: number;
+   377	      sessionName?: string;
+   378	      filesRead: string[];
+   379	      filesModified: string[];
+
+thinking
+**Inspecting agent loop event types**
+exec
+/bin/zsh -lc "rg -n \"agent/loop.started|agent/loop.story|loop\\.completed|workDir|project\" src/inngest/client.ts -n -S" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 68ms:
+98:  "agent/loop.started": {
+101:      project: string;
+102:      workDir?: string;
+119:  "agent/loop.story.dispatched": {
+122:      project: string;
+123:      workDir?: string;
+145:      project: string;
+146:      workDir?: string;
+171:      project: string;
+172:      workDir?: string;
+197:      project: string;
+198:      workDir?: string;
+243:  "agent/loop.story.passed": {
+246:      project: string;
+247:      workDir?: string;
+260:  "agent/loop.story.failed": {
+263:      project: string;
+264:      workDir?: string;
+277:  "agent/loop.story.retried": {
+280:      project: string;
+
+thinking
+**Reviewing plan.ts Redis usage**
+exec
+/bin/zsh -lc "rg -n \"redis\\.set|seedPrd|seedPrdFromData|readPrd\\(|prdKey|getRedis\" src/inngest/functions/agent-loop/plan.ts -S" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 159ms:
+5:import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+327:        return readPrd(workDir, prdPath, loopId);
+349:        return seedPrdFromData(loopId, generated);
+353:      return seedPrd(loopId, workDir, prdPath);
+429:        readPrd(workDir, prdPath, loopId)
+
+thinking
+**Inspecting persistence tests**
+codex
+I confirmed `plan.ts` writes PRD through `seedPrd`/`seedPrdFromData` in `utils.ts`, so I’m checking `persist-1.test.ts` to align the implementation with the expected Redis payload shape.
+exec
+/bin/zsh -lc "nl -ba src/inngest/functions/agent-loop/persist-1.test.ts | sed -n '1,330p'" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 612ms:
+     1	import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+     2	import Redis from "ioredis";
+     3	import { mkdirSync } from "node:fs";
+     4	
+     5	type RedisSetCall = {
+     6	  key: string;
+     7	  value: string;
+     8	  args: unknown[];
+     9	};
+    10	
+    11	type StepSendCall = {
+    12	  id: string;
+    13	  payload: unknown;
+    14	};
+    15	
+    16	const originalRedisSet = Redis.prototype.set;
+    17	const originalRedisGet = Redis.prototype.get;
+    18	
+    19	const redisData = new Map<string, string>();
+    20	let redisSetCalls: RedisSetCall[] = [];
+
+thinking
+**Planning metadata propagation**
+exec
+/bin/zsh -lc "nl -ba src/inngest/functions/agent-loop/plan.ts | sed -n '1,120p'" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 463ms:
+     1	import { inngest } from "../../client";
+     2	import { NonRetriableError } from "inngest";
+     3	import { $ } from "bun";
+     4	import { join } from "node:path";
+     5	import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+     6	
+     7	const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+     8	
+     9	/**
+    10	 * Generate a PRD from a goal description + context files.
+    11	 * ADR-0012: Planner generates PRD.
+    12	 */
+    13	async function generatePrd(
+    14	  goal: string,
+    15	  project: string,
+    16	  contextPaths?: string[],
+    17	  maxStories: number = 6
+    18	): Promise<{ title: string; adr?: string; stories: any[] }> {
+    19	  // Read project structure
+    20	  let projectStructure = "";
+
+thinking
+**Locating event parse point**
+exec
+/bin/zsh -lc "nl -ba src/inngest/functions/agent-loop/plan.ts | sed -n '160,275p'" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 486ms:
+   160	  } catch (e: any) {
+   161	    testsOk = false;
+   162	    testOutput = e?.stdout?.toString() ?? e?.message ?? "tests failed";
+   163	  }
+   164	
+   165	  return {
+   166	    passed: typecheckOk && testsOk,
+   167	    typecheckOutput,
+   168	    testOutput,
+   169	  };
+   170	}
+   171	
+   172	// markStoryPassedFromRecheck is now markStoryRechecked in utils.ts
+   173	
+   174	/**
+   175	 * PLANNER — Reads prd.json, finds next unpassed story, emits test.
+   176	 * If no stories remain, emits complete.
+   177	 */
+   178	export const agentLoopPlan = inngest.createFunction(
+   179	  {
+
+thinking
+**Adjusting workDir handling and PRD metadata**
+exec
+/bin/zsh -lc "rg -n \"seedPrd\\(|seedPrdFromData\\(\" src -S" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 53ms:
+src/inngest/functions/agent-loop/plan.ts:349:        return seedPrdFromData(loopId, generated);
+src/inngest/functions/agent-loop/plan.ts:353:      return seedPrd(loopId, workDir, prdPath);
+src/inngest/functions/agent-loop/utils.ts:370:export async function seedPrd(
+src/inngest/functions/agent-loop/utils.ts:398:export async function seedPrdFromData(
+
+thinking
+**Planning metadata integration and patching**
+codex
+I’ve identified the minimal change: update `seedPrd`/`seedPrdFromData` to accept metadata, then pass `event.data.project` and `event.data.workDir ?? event.data.project` from `plan.ts` so Redis gets those top-level fields without changing PRD content. I’m applying that patch now.
+file update
+M /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -360,2 +360,5 @@
+   adr?: string;
++  context?: string[];
++  project?: string;
++  workDir?: string;
+   stories: Story[];
+@@ -363,2 +366,7 @@
+ 
++type PrdMetadata = {
++  project: string;
++  workDir: string;
++};
++
+ // ── PRD storage (Redis-backed, seeded from disk) ─────────────────────
+@@ -372,3 +380,4 @@
+   project: string,
+-  prdPath: string
++  prdPath: string,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
+@@ -376,5 +385,8 @@
+   const prd = JSON.parse(await Bun.file(fullPath).text()) as Prd;
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+   const key = prdKey(loopId);
+-  const value = JSON.stringify(prd);
++  const value = JSON.stringify(prdWithMetadata);
+   const ttlSeconds = 7 * 24 * 60 * 60;
+@@ -390,3 +402,3 @@
+ 
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+@@ -399,8 +411,12 @@
+   loopId: string,
+-  prd: Prd
++  prd: Prd,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+-  await redis.set(prdKey(loopId), JSON.stringify(prd));
++  await redis.set(prdKey(loopId), JSON.stringify(prdWithMetadata));
+   await redis.expire(prdKey(loopId), 7 * 24 * 60 * 60);
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+apply_patch(auto_approved=true) exited 0 in 25ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/utils.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index 66150880e722eba58db36d49da608853011cd7c1..f1016cd092c19adeb39ac3d7702ba49a34ccac3c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -358,9 +358,17 @@
+   title: string;
+   description?: string;
+   adr?: string;
++  context?: string[];
++  project?: string;
++  workDir?: string;
+   stories: Story[];
+ }
+ 
++type PrdMetadata = {
++  project: string;
++  workDir: string;
++};
++
+ // ── PRD storage (Redis-backed, seeded from disk) ─────────────────────
+ 
+ /**
+@@ -370,13 +378,17 @@
+ export async function seedPrd(
+   loopId: string,
+   project: string,
+-  prdPath: string
++  prdPath: string,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
+   const fullPath = join(project, prdPath);
+   const prd = JSON.parse(await Bun.file(fullPath).text()) as Prd;
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+   const key = prdKey(loopId);
+-  const value = JSON.stringify(prd);
++  const value = JSON.stringify(prdWithMetadata);
+   const ttlSeconds = 7 * 24 * 60 * 60;
+ 
+   // First writer wins: avoid clobbering loop state when duplicate start events arrive.
+@@ -388,7 +400,7 @@
+     }
+   }
+ 
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+ 
+ /**
+@@ -397,12 +409,16 @@
+  */
+ export async function seedPrdFromData(
+   loopId: string,
+-  prd: Prd
++  prd: Prd,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+-  await redis.set(prdKey(loopId), JSON.stringify(prd));
++  await redis.set(prdKey(loopId), JSON.stringify(prdWithMetadata));
+   await redis.expire(prdKey(loopId), 7 * 24 * 60 * 60);
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+ 
+ /**
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index 66150880e722eba58db36d49da608853011cd7c1..f1016cd092c19adeb39ac3d7702ba49a34ccac3c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -358,9 +358,17 @@
+   title: string;
+   description?: string;
+   adr?: string;
++  context?: string[];
++  project?: string;
++  workDir?: string;
+   stories: Story[];
+ }
+ 
++type PrdMetadata = {
++  project: string;
++  workDir: string;
++};
++
+ // ── PRD storage (Redis-backed, seeded from disk) ─────────────────────
+ 
+ /**
+@@ -370,13 +378,17 @@
+ export async function seedPrd(
+   loopId: string,
+   project: string,
+-  prdPath: string
++  prdPath: string,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
+   const fullPath = join(project, prdPath);
+   const prd = JSON.parse(await Bun.file(fullPath).text()) as Prd;
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+   const key = prdKey(loopId);
+-  const value = JSON.stringify(prd);
++  const value = JSON.stringify(prdWithMetadata);
+   const ttlSeconds = 7 * 24 * 60 * 60;
+ 
+   // First writer wins: avoid clobbering loop state when duplicate start events arrive.
+@@ -388,7 +400,7 @@
+     }
+   }
+ 
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+ 
+ /**
+@@ -397,12 +409,16 @@
+  */
+ export async function seedPrdFromData(
+   loopId: string,
+-  prd: Prd
++  prd: Prd,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+-  await redis.set(prdKey(loopId), JSON.stringify(prd));
++  await redis.set(prdKey(loopId), JSON.stringify(prdWithMetadata));
+   await redis.expire(prdKey(loopId), 7 * 24 * 60 * 60);
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+ 
+ /**
+
+codex
+Next I’m wiring `plan.ts` to pass the event-level metadata into those updated seed helpers so the Redis PRD key always includes the required top-level fields.
+file update
+M /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -194,2 +194,3 @@
+     const { loopId, project } = event.data;
++    const eventWorkDir = event.data.workDir ?? event.data.project;
+     const prdPath = event.data.prdPath ?? "prd.json";
+@@ -348,3 +349,6 @@
+         // Seed to Redis
+-        return seedPrdFromData(loopId, generated);
++        return seedPrdFromData(loopId, generated, {
++          project,
++          workDir: eventWorkDir,
++        });
+       }
+@@ -352,3 +356,6 @@
+       // Default: read from worktree disk
+-      return seedPrd(loopId, workDir, prdPath);
++      return seedPrd(loopId, workDir, prdPath, {
++        project,
++        workDir: eventWorkDir,
++      });
+     });
+apply_patch(auto_approved=true) exited 0 in 30ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/plan.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index d7e0301f4a1d2f51180b1d6577bcaa16f422eab9..b97bd5c37b7b6c24441c696e3511096f14b310e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -192,6 +192,7 @@
+   [{ event: "agent/loop.started" }, { event: "agent/loop.story.passed" }, { event: "agent/loop.story.failed" }],
+   async ({ event, step }) => {
+     const { loopId, project } = event.data;
++    const eventWorkDir = event.data.workDir ?? event.data.project;
+     const prdPath = event.data.prdPath ?? "prd.json";
+     const goal = (event.data as any).goal as string | undefined;
+     const contextFiles = (event.data as any).context as string[] | undefined;
+@@ -346,11 +347,17 @@
+         ].join("\n"));
+ 
+         // Seed to Redis
+-        return seedPrdFromData(loopId, generated);
++        return seedPrdFromData(loopId, generated, {
++          project,
++          workDir: eventWorkDir,
++        });
+       }
+ 
+       // Default: read from worktree disk
+-      return seedPrd(loopId, workDir, prdPath);
++      return seedPrd(loopId, workDir, prdPath, {
++        project,
++        workDir: eventWorkDir,
++      });
+     });
+ 
+     // Count attempted stories (passed + skipped) for maxIterations enforcement
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index 66150880e722eba58db36d49da608853011cd7c1..f1016cd092c19adeb39ac3d7702ba49a34ccac3c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -358,9 +358,17 @@
+   title: string;
+   description?: string;
+   adr?: string;
++  context?: string[];
++  project?: string;
++  workDir?: string;
+   stories: Story[];
+ }
+ 
++type PrdMetadata = {
++  project: string;
++  workDir: string;
++};
++
+ // ── PRD storage (Redis-backed, seeded from disk) ─────────────────────
+ 
+ /**
+@@ -370,13 +378,17 @@
+ export async function seedPrd(
+   loopId: string,
+   project: string,
+-  prdPath: string
++  prdPath: string,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
+   const fullPath = join(project, prdPath);
+   const prd = JSON.parse(await Bun.file(fullPath).text()) as Prd;
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+   const key = prdKey(loopId);
+-  const value = JSON.stringify(prd);
++  const value = JSON.stringify(prdWithMetadata);
+   const ttlSeconds = 7 * 24 * 60 * 60;
+ 
+   // First writer wins: avoid clobbering loop state when duplicate start events arrive.
+@@ -388,7 +400,7 @@
+     }
+   }
+ 
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+ 
+ /**
+@@ -397,12 +409,16 @@
+  */
+ export async function seedPrdFromData(
+   loopId: string,
+-  prd: Prd
++  prd: Prd,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+-  await redis.set(prdKey(loopId), JSON.stringify(prd));
++  await redis.set(prdKey(loopId), JSON.stringify(prdWithMetadata));
+   await redis.expire(prdKey(loopId), 7 * 24 * 60 * 60);
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+ 
+ /**
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index d7e0301f4a1d2f51180b1d6577bcaa16f422eab9..b97bd5c37b7b6c24441c696e3511096f14b310e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -192,6 +192,7 @@
+   [{ event: "agent/loop.started" }, { event: "agent/loop.story.passed" }, { event: "agent/loop.story.failed" }],
+   async ({ event, step }) => {
+     const { loopId, project } = event.data;
++    const eventWorkDir = event.data.workDir ?? event.data.project;
+     const prdPath = event.data.prdPath ?? "prd.json";
+     const goal = (event.data as any).goal as string | undefined;
+     const contextFiles = (event.data as any).context as string[] | undefined;
+@@ -346,11 +347,17 @@
+         ].join("\n"));
+ 
+         // Seed to Redis
+-        return seedPrdFromData(loopId, generated);
++        return seedPrdFromData(loopId, generated, {
++          project,
++          workDir: eventWorkDir,
++        });
+       }
+ 
+       // Default: read from worktree disk
+-      return seedPrd(loopId, workDir, prdPath);
++      return seedPrd(loopId, workDir, prdPath, {
++        project,
++        workDir: eventWorkDir,
++      });
+     });
+ 
+     // Count attempted stories (passed + skipped) for maxIterations enforcement
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index 66150880e722eba58db36d49da608853011cd7c1..f1016cd092c19adeb39ac3d7702ba49a34ccac3c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -358,9 +358,17 @@
+   title: string;
+   description?: string;
+   adr?: string;
++  context?: string[];
++  project?: string;
++  workDir?: string;
+   stories: Story[];
+ }
+ 
++type PrdMetadata = {
++  project: string;
++  workDir: string;
++};
++
+ // ── PRD storage (Redis-backed, seeded from disk) ─────────────────────
+ 
+ /**
+@@ -370,13 +378,17 @@
+ export async function seedPrd(
+   loopId: string,
+   project: string,
+-  prdPath: string
++  prdPath: string,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
+   const fullPath = join(project, prdPath);
+   const prd = JSON.parse(await Bun.file(fullPath).text()) as Prd;
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+   const key = prdKey(loopId);
+-  const value = JSON.stringify(prd);
++  const value = JSON.stringify(prdWithMetadata);
+   const ttlSeconds = 7 * 24 * 60 * 60;
+ 
+   // First writer wins: avoid clobbering loop state when duplicate start events arrive.
+@@ -388,7 +400,7 @@
+     }
+   }
+ 
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+ 
+ /**
+@@ -397,12 +409,16 @@
+  */
+ export async function seedPrdFromData(
+   loopId: string,
+-  prd: Prd
++  prd: Prd,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+-  await redis.set(prdKey(loopId), JSON.stringify(prd));
++  await redis.set(prdKey(loopId), JSON.stringify(prdWithMetadata));
+   await redis.expire(prdKey(loopId), 7 * 24 * 60 * 60);
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+ 
+ /**
+
+
+thinking
+**Running type check compilation**
+codex
+The code changes are in place; I’m running the required TypeScript compile check now.
+exec
+/bin/zsh -lc 'bun test src/inngest/functions/agent-loop/persist-1.test.ts' in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-busexec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 71ms:
+(pass) PERSIST-1 acceptance tests > plan seeds Redis PRD with top-level project and provided workDir while preserving existing PRD fields [81.10ms]
+(pass) PERSIST-1 acceptance tests > plan stores workDir as project when event.data.workDir is not provided [1.23ms]
+(pass) PERSIST-1 acceptance tests > TypeScript compile criterion: planner module imports and exposes function entrypoint [0.47ms]
+
+ 3 pass
+ 0 fail
+ 5 expect() calls
+Ran 3 tests across 1 file. [140.00ms]
+ succeeded in 1.33s:
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index d7e0301f4a1d2f51180b1d6577bcaa16f422eab9..b97bd5c37b7b6c24441c696e3511096f14b310e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -192,6 +192,7 @@
+   [{ event: "agent/loop.started" }, { event: "agent/loop.story.passed" }, { event: "agent/loop.story.failed" }],
+   async ({ event, step }) => {
+     const { loopId, project } = event.data;
++    const eventWorkDir = event.data.workDir ?? event.data.project;
+     const prdPath = event.data.prdPath ?? "prd.json";
+     const goal = (event.data as any).goal as string | undefined;
+     const contextFiles = (event.data as any).context as string[] | undefined;
+@@ -346,11 +347,17 @@
+         ].join("\n"));
+ 
+         // Seed to Redis
+-        return seedPrdFromData(loopId, generated);
++        return seedPrdFromData(loopId, generated, {
++          project,
++          workDir: eventWorkDir,
++        });
+       }
+ 
+       // Default: read from worktree disk
+-      return seedPrd(loopId, workDir, prdPath);
++      return seedPrd(loopId, workDir, prdPath, {
++        project,
++        workDir: eventWorkDir,
++      });
+     });
+ 
+     // Count attempted stories (passed + skipped) for maxIterations enforcement
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index 66150880e722eba58db36d49da608853011cd7c1..f1016cd092c19adeb39ac3d7702ba49a34ccac3c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -358,9 +358,17 @@
+   title: string;
+   description?: string;
+   adr?: string;
++  context?: string[];
++  project?: string;
++  workDir?: string;
+   stories: Story[];
+ }
+ 
++type PrdMetadata = {
++  project: string;
++  workDir: string;
++};
++
+ // ── PRD storage (Redis-backed, seeded from disk) ─────────────────────
+ 
+ /**
+@@ -370,13 +378,17 @@
+ export async function seedPrd(
+   loopId: string,
+   project: string,
+-  prdPath: string
++  prdPath: string,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
+   const fullPath = join(project, prdPath);
+   const prd = JSON.parse(await Bun.file(fullPath).text()) as Prd;
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+   const key = prdKey(loopId);
+-  const value = JSON.stringify(prd);
++  const value = JSON.stringify(prdWithMetadata);
+   const ttlSeconds = 7 * 24 * 60 * 60;
+ 
+   // First writer wins: avoid clobbering loop state when duplicate start events arrive.
+@@ -388,7 +400,7 @@
+     }
+   }
+ 
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+ 
+ /**
+@@ -397,12 +409,16 @@
+  */
+ export async function seedPrdFromData(
+   loopId: string,
+-  prd: Prd
++  prd: Prd,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+-  await redis.set(prdKey(loopId), JSON.stringify(prd));
++  await redis.set(prdKey(loopId), JSON.stringify(prdWithMetadata));
+   await redis.expire(prdKey(loopId), 7 * 24 * 60 * 60);
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+ 
+ /**
+
+
+thinking
+**Planning concise git diff summary**
+exec
+/bin/zsh -lc 'git diff -- src/inngest/functions/agent-loop/plan.ts src/inngest/functions/agent-loop/utils.ts' in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 51ms:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index d7e0301..b97bd5c 100644
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -192,6 +192,7 @@ export const agentLoopPlan = inngest.createFunction(
+   [{ event: "agent/loop.started" }, { event: "agent/loop.story.passed" }, { event: "agent/loop.story.failed" }],
+   async ({ event, step }) => {
+     const { loopId, project } = event.data;
++    const eventWorkDir = event.data.workDir ?? event.data.project;
+     const prdPath = event.data.prdPath ?? "prd.json";
+     const goal = (event.data as any).goal as string | undefined;
+     const contextFiles = (event.data as any).context as string[] | undefined;
+@@ -346,11 +347,17 @@ export const agentLoopPlan = inngest.createFunction(
+         ].join("\n"));
+ 
+         // Seed to Redis
+-        return seedPrdFromData(loopId, generated);
++        return seedPrdFromData(loopId, generated, {
++          project,
++          workDir: eventWorkDir,
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index d7e0301f4a1d2f51180b1d6577bcaa16f422eab9..b97bd5c37b7b6c24441c696e3511096f14b310e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -192,6 +192,7 @@
+   [{ event: "agent/loop.started" }, { event: "agent/loop.story.passed" }, { event: "agent/loop.story.failed" }],
+   async ({ event, step }) => {
+     const { loopId, project } = event.data;
++    const eventWorkDir = event.data.workDir ?? event.data.project;
+     const prdPath = event.data.prdPath ?? "prd.json";
+     const goal = (event.data as any).goal as string | undefined;
+     const contextFiles = (event.data as any).context as string[] | undefined;
+@@ -346,11 +347,17 @@
+         ].join("\n"));
+ 
+         // Seed to Redis
+-        return seedPrdFromData(loopId, generated);
++        return seedPrdFromData(loopId, generated, {
++          project,
++          workDir: eventWorkDir,
++        });
+       }
+ 
+       // Default: read from worktree disk
+-      return seedPrd(loopId, workDir, prdPath);
++      return seedPrd(loopId, workDir, prdPath, {
++        project,
++        workDir: eventWorkDir,
++      });
+     });
+ 
+     // Count attempted stories (passed + skipped) for maxIterations enforcement
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index 66150880e722eba58db36d49da608853011cd7c1..f1016cd092c19adeb39ac3d7702ba49a34ccac3c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -358,9 +358,17 @@
+   title: string;
+   description?: string;
+   adr?: string;
++  context?: string[];
++  project?: string;
++  workDir?: string;
+   stories: Story[];
+ }
+ 
++type PrdMetadata = {
++  project: string;
++  workDir: string;
++};
++
+ // ── PRD storage (Redis-backed, seeded from disk) ─────────────────────
+ 
+ /**
+@@ -370,13 +378,17 @@
+ export async function seedPrd(
+   loopId: string,
+   project: string,
+-  prdPath: string
++  prdPath: string,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
+   const fullPath = join(project, prdPath);
+   const prd = JSON.parse(await Bun.file(fullPath).text()) as Prd;
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+   const key = prdKey(loopId);
+-  const value = JSON.stringify(prd);
++  const value = JSON.stringify(prdWithMetadata);
+   const ttlSeconds = 7 * 24 * 60 * 60;
+ 
+   // First writer wins: avoid clobbering loop state when duplicate start events arrive.
+@@ -388,7 +400,7 @@
+     }
+   }
+ 
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+ 
+ /**
+@@ -397,12 +409,16 @@
+  */
+ export async function seedPrdFromData(
+   loopId: string,
+-  prd: Prd
++  prd: Prd,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+-  await redis.set(prdKey(loopId), JSON.stringify(prd));
++  await redis.set(prdKey(loopId), JSON.stringify(prdWithMetadata));
+   await redis.expire(prdKey(loopId), 7 * 24 * 60 * 60);
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+ 
+ /**
+
+
+thinking
+**Preparing final concise summary**
+codex
+Implemented `PERSIST-1` by persisting PRD metadata into the Redis PRD payload.
+
+Changes made:
+- Updated planner to pass event-level metadata:
+  - `project` from `event.data.project`
+  - `workDir` from `event.data.workDir ?? event.data.project`
+  - File: `src/inngest/functions/agent-loop/plan.ts:195`
+  - File: `src/inngest/functions/agent-loop/plan.ts:350`
+  - File: `src/inngest/functions/agent-loop/plan.ts:357`
+- Updated PRD seed helpers to include metadata at top level when writing Redis JSON:
+  - Added optional PRD fields: `context`, `project`, `workDir`
+  - Added optional metadata arg to `seedPrd` and `seedPrdFromData`
+  - Redis `set` now serializes PRD merged with metadata
+  - File: `src/inngest/functions/agent-loop/utils.ts:358`
+  - File: `src/inngest/functions/agent-loop/utils.ts:378`
+  - File: `src/inngest/functions/agent-loop/utils.ts:409`
+
+Validation:
+- `bunx tsc --noEmit` passed.
+- `bun test src/inngest/functions/agent-loop/persist-1.test.ts` passed (3/3).
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index d7e0301f4a1d2f51180b1d6577bcaa16f422eab9..b97bd5c37b7b6c24441c696e3511096f14b310e6
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -192,6 +192,7 @@
+   [{ event: "agent/loop.started" }, { event: "agent/loop.story.passed" }, { event: "agent/loop.story.failed" }],
+   async ({ event, step }) => {
+     const { loopId, project } = event.data;
++    const eventWorkDir = event.data.workDir ?? event.data.project;
+     const prdPath = event.data.prdPath ?? "prd.json";
+     const goal = (event.data as any).goal as string | undefined;
+     const contextFiles = (event.data as any).context as string[] | undefined;
+@@ -346,11 +347,17 @@
+         ].join("\n"));
+ 
+         // Seed to Redis
+-        return seedPrdFromData(loopId, generated);
++        return seedPrdFromData(loopId, generated, {
++          project,
++          workDir: eventWorkDir,
++        });
+       }
+ 
+       // Default: read from worktree disk
+-      return seedPrd(loopId, workDir, prdPath);
++      return seedPrd(loopId, workDir, prdPath, {
++        project,
++        workDir: eventWorkDir,
++      });
+     });
+ 
+     // Count attempted stories (passed + skipped) for maxIterations enforcement
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index 66150880e722eba58db36d49da608853011cd7c1..f1016cd092c19adeb39ac3d7702ba49a34ccac3c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -358,9 +358,17 @@
+   title: string;
+   description?: string;
+   adr?: string;
++  context?: string[];
++  project?: string;
++  workDir?: string;
+   stories: Story[];
+ }
+ 
++type PrdMetadata = {
++  project: string;
++  workDir: string;
++};
++
+ // ── PRD storage (Redis-backed, seeded from disk) ─────────────────────
+ 
+ /**
+@@ -370,13 +378,17 @@
+ export async function seedPrd(
+   loopId: string,
+   project: string,
+-  prdPath: string
++  prdPath: string,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
+   const fullPath = join(project, prdPath);
+   const prd = JSON.parse(await Bun.file(fullPath).text()) as Prd;
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+   const key = prdKey(loopId);
+-  const value = JSON.stringify(prd);
++  const value = JSON.stringify(prdWithMetadata);
+   const ttlSeconds = 7 * 24 * 60 * 60;
+ 
+   // First writer wins: avoid clobbering loop state when duplicate start events arrive.
+@@ -388,7 +400,7 @@
+     }
+   }
+ 
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+ 
+ /**
+@@ -397,12 +409,16 @@
+  */
+ export async function seedPrdFromData(
+   loopId: string,
+-  prd: Prd
++  prd: Prd,
++  metadata?: PrdMetadata
+ ): Promise<Prd> {
++  const prdWithMetadata = metadata
++    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
++    : prd;
+   const redis = getRedis();
+-  await redis.set(prdKey(loopId), JSON.stringify(prd));
++  await redis.set(prdKey(loopId), JSON.stringify(prdWithMetadata));
+   await redis.expire(prdKey(loopId), 7 * 24 * 60 * 60);
+-  return prd;
++  return prdWithMetadata as Prd;
+ }
+ 
+ /**
+
+tokens used
+35,240

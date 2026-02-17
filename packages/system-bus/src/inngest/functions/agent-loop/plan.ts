@@ -192,6 +192,7 @@ export const agentLoopPlan = inngest.createFunction(
   [{ event: "agent/loop.started" }, { event: "agent/loop.story.passed" }, { event: "agent/loop.story.failed" }],
   async ({ event, step }) => {
     const { loopId, project } = event.data;
+    const eventWorkDir = event.data.workDir ?? event.data.project;
     const prdPath = event.data.prdPath ?? "prd.json";
     const goal = (event.data as any).goal as string | undefined;
     const contextFiles = (event.data as any).context as string[] | undefined;
@@ -346,11 +347,17 @@ export const agentLoopPlan = inngest.createFunction(
         ].join("\n"));
 
         // Seed to Redis
-        return seedPrdFromData(loopId, generated);
+        return seedPrdFromData(loopId, generated, {
+          project,
+          workDir: eventWorkDir,
+        });
       }
 
       // Default: read from worktree disk
-      return seedPrd(loopId, workDir, prdPath);
+      return seedPrd(loopId, workDir, prdPath, {
+        project,
+        workDir: eventWorkDir,
+      });
     });
 
     // Count attempted stories (passed + skipped) for maxIterations enforcement
