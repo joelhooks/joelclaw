@@ -435,6 +435,9 @@ export type Events = {
       requestedBy?: string;
     };
   };
+  "system/heartbeat.wake": {
+    data: Record<string, never>;
+  };
   "content/updated": {
     data: {
       source?: string; // "fswatch" | "agent" | "manual"

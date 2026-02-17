@@ -10,6 +10,7 @@ export { promote } from "./promote";
 export { embedText } from "./embed";
 export { agentDispatch } from "./agent-dispatch";
 export { backfillObserve } from "./backfill-observe";
+export { heartbeatCron, heartbeatWake } from "./heartbeat";
 export {
   agentLoopPlan,
   agentLoopTestWriter,

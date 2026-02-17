@@ -3,6 +3,7 @@ import { NonRetriableError } from "inngest";
 import { $ } from "bun";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { pushGatewayEvent } from "./agent-loop/utils";
 
 const VAULT = process.env.VAULT_PATH ?? `${process.env.HOME}/Vault`;
 
@@ -218,6 +219,19 @@ date: ${today}
         data: { vaultPath },
       },
     ]);
+
+    await step.run("push-gateway-event", async () => {
+      try {
+        await pushGatewayEvent({
+          type: "media.transcribed",
+          source: "inngest",
+          payload: {
+            title,
+            vaultPath,
+          },
+        });
+      } catch {}
+    });
 
     return {
       vaultPath,

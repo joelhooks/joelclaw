@@ -1,6 +1,6 @@
 import { inngest } from "../../client";
 import { $ } from "bun";
-import { createLoopOnFailure, mintGitHubToken } from "./utils";
+import { createLoopOnFailure, mintGitHubToken, pushGatewayEvent, readPrd } from "./utils";
 
 /**
  * COMPLETER — Handles agent/loop.complete events.
@@ -162,6 +162,28 @@ export const agentLoopComplete = inngest.createFunction(
           return `push_failed: ${errorMsg.slice(0, 500)}`;
         }
       });
+    }
+
+    // Step 5: Emit best-effort gateway event for loop completion outcome.
+    // Notification failures must never fail the complete function.
+    try {
+      await step.run("emit-gateway-event", async () => {
+        const prd = await readPrd(project, "prd.json", loopId);
+        await pushGatewayEvent({
+          type: mergeResult.merged ? "loop.complete" : "loop.failed",
+          source: "inngest",
+          payload: {
+            loopId,
+            storiesCompleted,
+            storiesFailed,
+            title: prd.title,
+          },
+        });
+      });
+    } catch (e: any) {
+      console.warn(
+        `[agent-loop-complete] emit-gateway-event failed for loop ${loopId}: ${e?.message ?? "unknown error"}`
+      );
     }
 
     return {

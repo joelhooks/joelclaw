@@ -3,6 +3,7 @@ import { NonRetriableError } from "inngest";
 import { $ } from "bun";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { pushGatewayEvent } from "./agent-loop/utils";
 
 const NAS_HOST = "joel@three-body";
 const NAS_VIDEO_BASE = "/volume1/home/joel/video";
@@ -142,6 +143,20 @@ export const videoDownload = inngest.createFunction(
         },
       },
     ]);
+
+    await step.run("push-gateway-event", async () => {
+      try {
+        await pushGatewayEvent({
+          type: "media.downloaded",
+          source: "inngest",
+          payload: {
+            slug: download.slug,
+            title: download.title,
+            nasPath,
+          },
+        });
+      } catch {}
+    });
 
     return {
       slug: download.slug,

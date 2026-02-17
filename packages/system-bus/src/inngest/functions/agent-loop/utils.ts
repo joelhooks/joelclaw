@@ -177,6 +177,37 @@ function getRedis(): Redis {
   return _redis;
 }
 
+export type SystemEvent = {
+  id: string;
+  type: string;
+  source: string;
+  payload: Record<string, unknown>;
+  ts: number;
+};
+
+export async function pushGatewayEvent(input: {
+  type: string;
+  source: string;
+  payload: Record<string, unknown>;
+}): Promise<SystemEvent> {
+  const redis = getRedis();
+  const event: SystemEvent = {
+    id: crypto.randomUUID(),
+    type: input.type,
+    source: input.source,
+    payload: input.payload,
+    ts: Date.now(),
+  };
+
+  await redis.lpush("joelclaw:events:main", JSON.stringify(event));
+  await redis.publish(
+    "joelclaw:notify:main",
+    JSON.stringify({ eventId: event.id, type: event.type })
+  );
+
+  return event;
+}
+
 function prdKey(loopId: string): string {
   return `agent-loop:prd:${loopId}`;
 }

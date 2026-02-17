@@ -13,6 +13,8 @@ import {
   promote,
   embedText,
   backfillObserve,
+  heartbeatCron,
+  heartbeatWake,
   agentDispatch,
   agentLoopPlan,
   agentLoopTestWriter,
@@ -41,6 +43,8 @@ app.get("/", (c) =>
       "memory/review-promote",
       "embedding-generate",
       "memory/backfill-observe",
+      "system-heartbeat",
+      "system-heartbeat-wake",
       "system/agent-dispatch",
       "agent-loop-plan",
       "agent-loop-test-writer",
@@ -81,6 +85,8 @@ app.on(
       promote,
       embedText,
       backfillObserve,
+      heartbeatCron,
+      heartbeatWake,
       agentDispatch,
       agentLoopPlan,
       agentLoopTestWriter,
@@ -102,5 +108,5 @@ export default {
 console.log("🚌 system-bus worker running on http://localhost:3111");
 console.log("📡 Inngest endpoint: http://localhost:3111/api/inngest");
 console.log(
-  "📋 Functions: video-download, transcript-process, content-summarize, system-logger, memory/observe-session, memory/reflect, memory/review-promote, system/adr-sync"
+  "📋 Functions: video-download, transcript-process, content-summarize, system-logger, memory/observe-session, memory/reflect, memory/review-promote, memory/backfill-observe, system-heartbeat, system/heartbeat.wake, system/agent-dispatch, agent-loop-plan, agent-loop-test-writer, agent-loop-implement, agent-loop-review, agent-loop-judge, agent-loop-complete, agent-loop-retro"
 );
