@@ -34,12 +34,20 @@ export const agentLoopComplete = inngest.createFunction(
           return { merged: false, reason: "no_new_commits" };
         }
 
+        // Stash any dirty state (PRD, progress.txt, etc.) before merge
+        const hasChanges = (await $`cd ${gitRoot} && git status --porcelain`.quiet()).text().trim();
+        const stashed = hasChanges.length > 0;
+        if (stashed) {
+          await $`cd ${gitRoot} && git stash --include-untracked`.quiet().nothrow();
+        }
+
         // Merge the worktree branch into the current branch
         const merge = await $`cd ${gitRoot} && git merge ${branchName} --no-edit`.quiet().nothrow();
 
         if (merge.exitCode !== 0) {
-          // Merge conflict — abort and report
+          // Merge conflict — abort and restore stash
           await $`cd ${gitRoot} && git merge --abort`.quiet().nothrow();
+          if (stashed) await $`cd ${gitRoot} && git stash pop`.quiet().nothrow();
           return {
             merged: false,
             reason: "merge_conflict",
@@ -47,11 +55,17 @@ export const agentLoopComplete = inngest.createFunction(
           };
         }
 
+        // Restore stashed changes
+        if (stashed) {
+          await $`cd ${gitRoot} && git stash pop`.quiet().nothrow();
+        }
+
         return {
           merged: true,
           branch: branchName,
           into: currentBranch,
           commits: commits.split("\n").length,
+          stashed,
         };
       } catch (e: any) {
         return { merged: false, reason: "error", error: e?.message?.slice(0, 500) };
