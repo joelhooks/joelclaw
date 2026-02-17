@@ -386,24 +386,21 @@ export const agentLoopJudge = inngest.createFunction(
       });
 
       // ADR-0019: story.passed carries planner re-entry data (no separate plan emit)
-      await step.run("emit-story-pass", async () => {
-        await step.sendEvent("emit-story-pass", {
-          name: "agent/loop.story.passed",
-          data: {
-            loopId,
-            project,
-            workDir,
-            prdPath,
-            storyId,
-            commitSha: "HEAD",
-            attempt,
-            duration: durationMs,
-            maxIterations,
-            maxRetries,
-            retryLadder,
-          },
-        });
-        return { event: "agent/loop.story.passed", storyId, durationMs };
+      await step.sendEvent("emit-story-pass", {
+        name: "agent/loop.story.passed",
+        data: {
+          loopId,
+          project,
+          workDir,
+          prdPath,
+          storyId,
+          commitSha: "HEAD",
+          attempt,
+          duration: durationMs,
+          maxIterations,
+          maxRetries,
+          retryLadder,
+        },
       });
 
       return { status: "passed", loopId, storyId, attempt };
@@ -421,27 +418,24 @@ export const agentLoopJudge = inngest.createFunction(
       );
 
       // ADR-0019: story.retried → triggers implementor (skips test-writer on retry)
-      await step.run("emit-retry-implement", async () => {
-        await step.sendEvent("emit-retry-implement", {
-          name: "agent/loop.story.retried",
-          data: {
-            loopId,
-            project,
-            workDir,
-            storyId,
-            tool: retryTool,
-            attempt: nextAttempt,
-            feedback: combinedFailureFeedback || `Tests failed: ${testResults.testsFailed}. ${testResults.details}`,
-            story,
-            maxRetries,
-            maxIterations,
-            retryLadder,
-            storyStartedAt,
-            freshTests,
-            runToken,
-          },
-        });
-        return { event: "agent/loop.story.retried", storyId, attempt: nextAttempt, tool: retryTool, freshTests };
+      await step.sendEvent("emit-retry-implement", {
+        name: "agent/loop.story.retried",
+        data: {
+          loopId,
+          project,
+          workDir,
+          storyId,
+          tool: retryTool,
+          attempt: nextAttempt,
+          feedback: combinedFailureFeedback || `Tests failed: ${testResults.testsFailed}. ${testResults.details}`,
+          story,
+          maxRetries,
+          maxIterations,
+          retryLadder,
+          storyStartedAt,
+          freshTests,
+          runToken,
+        },
       });
 
       return {
@@ -484,25 +478,22 @@ export const agentLoopJudge = inngest.createFunction(
 
     // Emit story fail event with duration
     const failDurationMs = storyStartedAt ? Date.now() - storyStartedAt : 0;
-    await step.run("emit-story-fail", async () => {
-      await step.sendEvent("emit-story-fail", {
-        // ADR-0019: story.failed carries planner re-entry data (no separate plan emit)
-        name: "agent/loop.story.failed",
-        data: {
-          loopId,
-          project,
-          workDir,
-          prdPath,
-          storyId,
-          reason: `Failed after ${attempt} attempts. ${(combinedFailureFeedback || testResults.details).slice(0, 500)}`,
-          attempts: attempt,
-          duration: failDurationMs,
-          maxIterations,
-          maxRetries,
-          retryLadder,
-        },
-      });
-      return { event: "agent/loop.story.failed", storyId, attempts: attempt, durationMs: failDurationMs };
+    await step.sendEvent("emit-story-fail", {
+      // ADR-0019: story.failed carries planner re-entry data (no separate plan emit)
+      name: "agent/loop.story.failed",
+      data: {
+        loopId,
+        project,
+        workDir,
+        prdPath,
+        storyId,
+        reason: `Failed after ${attempt} attempts. ${(combinedFailureFeedback || testResults.details).slice(0, 500)}`,
+        attempts: attempt,
+        duration: failDurationMs,
+        maxIterations,
+        maxRetries,
+        retryLadder,
+      },
     });
 
     // Release claim AFTER emit — story already skipped in PRD

@@ -373,15 +373,13 @@ export const agentLoopRetro = inngest.createFunction(
       return { project, hasPatterns: Boolean(codebasePatterns) };
     });
 
-    await step.run("emit-retro-complete", async () => {
-      await step.sendEvent("emit-retro-complete", {
-        name: "agent/loop.retro.completed",
-        data: {
-          loopId,
-          project,
-          retrospective,
-        },
-      });
+    await step.sendEvent("emit-retro-complete", {
+      name: "agent/loop.retro.completed",
+      data: {
+        loopId,
+        project,
+        retrospective,
+      },
     });
 
     return {

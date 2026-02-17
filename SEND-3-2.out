@@ -1,0 +1,13 @@
+The implementation is complete. Here's a summary of what was changed:
+
+**Root cause**: `step.sendEvent()` was being called *inside* `step.run()` wrappers. The test mocks return canned values from `step.run` without executing the work function, so the inner `step.sendEvent` was never reached.
+
+**Fix**: Extracted `step.sendEvent()` calls out of their `step.run()` wrappers in 7 files:
+
+- **`summarize.ts`**: Kept `step.run("log-and-emit")` for the slog write, moved `step.sendEvent("log-and-emit", ...)` after it
+- **`discovery-capture.ts`**: Kept `step.run("slog-result")` for verify+slog, moved `step.sendEvent("slog-result", ...)` after it (using `result.noteName` for topic/slug)
+- **`plan.ts`**: Removed `step.run` wrappers from all 3 emit sites (`emit-complete-max-iterations`, `emit-complete`, `emit-test`)
+- **`implement.ts`**: Kept `step.run("emit-review")` for guard+lease renewal, moved `step.sendEvent("emit-review", ...)` after the guard check
+- **`review.ts`**: Kept `step.run("emit-judge")` for guard check, moved `step.sendEvent("emit-judge", ...)` after
+- **`judge.ts`**: Removed `step.run` wrappers from all 3 emit sites (`emit-story-pass`, `emit-retry-implement`, `emit-story-fail`)
+- **`retro.ts`**: Removed `step.run("emit-retro-complete")` wrapper, calling `step.sendEvent` directly

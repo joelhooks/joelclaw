@@ -96,16 +96,16 @@ export const discoveryCapture = inngest.createFunction(
       const title = titleMatch?.[1] ?? result.noteName;
 
       await $`slog write --action noted --tool discovery --detail "${title}" --reason "vault:Resources/discoveries/${result.noteName}.md"`.quiet();
+    });
 
-      // Trigger sync to website
-      await step.sendEvent("slog-result", {
-        name: "discovery/captured",
-        data: {
-          vaultPath: result.vaultPath,
-          topic: title,
-          slug: result.noteName,
-        },
-      });
+    // Trigger sync to website
+    await step.sendEvent("slog-result", {
+      name: "discovery/captured",
+      data: {
+        vaultPath: result.vaultPath,
+        topic: result.noteName,
+        slug: result.noteName,
+      },
     });
 
     return { status: "captured", ...result };

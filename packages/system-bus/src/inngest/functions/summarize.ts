@@ -63,11 +63,11 @@ export const summarize = inngest.createFunction(
     // Log + emit
     await step.run("log-and-emit", async () => {
       await $`slog write --action summarize --tool content-summarize --detail "enriched: ${title}" --reason "content/summarize event via inngest"`.quiet();
+    });
 
-      await step.sendEvent("log-and-emit", {
-        name: "content/summarized",
-        data: { vaultPath, title },
-      });
+    await step.sendEvent("log-and-emit", {
+      name: "content/summarized",
+      data: { vaultPath, title },
     });
 
     return { vaultPath, title, status: "summarized" };

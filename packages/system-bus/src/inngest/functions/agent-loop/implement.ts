@@ -444,7 +444,7 @@ export const agentLoopImplement = inngest.createFunction(
     // Step 3: Determine reviewer tool (default: claude)
     const reviewerTool = "claude" as const;
 
-    // Step 4: Emit review event
+    // Step 4: Guard check before emitting review event
     const emitResult = await step.run("emit-review", async () => {
       const guard = await guardStory(loopId, storyId, runToken);
       if (!guard.ok) {
@@ -453,32 +453,33 @@ export const agentLoopImplement = inngest.createFunction(
         );
         return { blocked: true as const, reason: guard.reason };
       }
-      await step.sendEvent("emit-review", {
-        name: "agent/loop.code.committed",
-        data: {
-          loopId,
-          project,
-          workDir,
-          storyId,
-          commitSha: sha,
-          attempt,
-          tool: reviewerTool,
-          story,
-          maxRetries,
-          maxIterations,
-          storyStartedAt,
-          retryLadder,
-          freshTests,
-          runToken,
-          priorFeedback: feedback,
-        },
-      });
       await renewLease(loopId, storyId, runToken);
       return { event: "agent/loop.code.committed", storyId, sha: sha.slice(0, 8), reviewer: reviewerTool };
     });
     if ("blocked" in emitResult && emitResult.blocked) {
       return { status: "blocked", loopId, storyId, reason: emitResult.reason };
     }
+
+    await step.sendEvent("emit-review", {
+      name: "agent/loop.code.committed",
+      data: {
+        loopId,
+        project,
+        workDir,
+        storyId,
+        commitSha: sha,
+        attempt,
+        tool: reviewerTool,
+        story,
+        maxRetries,
+        maxIterations,
+        storyStartedAt,
+        retryLadder,
+        freshTests,
+        runToken,
+        priorFeedback: feedback,
+      },
+    });
 
     return { status: "implemented", loopId, storyId, attempt, sha, tool };
   }

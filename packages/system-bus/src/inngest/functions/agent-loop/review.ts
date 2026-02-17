@@ -380,7 +380,7 @@ export const agentLoopReview = inngest.createFunction(
 
     const feedback = buildReviewerFeedback(reviewerNotes);
 
-    // Step 5: Emit judge event
+    // Step 5: Guard check before emitting judge event
     const emitResult = await step.run("emit-judge", async () => {
       const guard = await guardStory(loopId, storyId, runToken);
       if (!guard.ok) {
@@ -389,35 +389,6 @@ export const agentLoopReview = inngest.createFunction(
         );
         return { blocked: true as const, reason: guard.reason };
       }
-
-      await step.sendEvent("emit-judge", {
-        name: "agent/loop.checks.completed",
-        data: {
-          loopId,
-          project,
-          workDir,
-          prdPath: "prd.json",
-          storyId,
-          testResults: {
-            testsPassed: results.testsPassed,
-            testsFailed: results.testsFailed,
-            typecheckOk: results.typecheckOk,
-            lintOk: results.lintOk,
-            details: results.testOutput.slice(0, 5000),
-          },
-          feedback,
-          reviewerNotes,
-          attempt,
-          maxRetries,
-          maxIterations,
-          storyStartedAt,
-          retryLadder,
-          priorFeedback,
-          runToken,
-          story,
-          tool: "claude",
-        },
-      });
       return {
         event: "agent/loop.checks.completed",
         storyId,
@@ -430,6 +401,35 @@ export const agentLoopReview = inngest.createFunction(
     if ("blocked" in emitResult && emitResult.blocked) {
       return { status: "blocked", loopId, storyId, reason: emitResult.reason };
     }
+
+    await step.sendEvent("emit-judge", {
+      name: "agent/loop.checks.completed",
+      data: {
+        loopId,
+        project,
+        workDir,
+        prdPath: "prd.json",
+        storyId,
+        testResults: {
+          testsPassed: results.testsPassed,
+          testsFailed: results.testsFailed,
+          typecheckOk: results.typecheckOk,
+          lintOk: results.lintOk,
+          details: results.testOutput.slice(0, 5000),
+        },
+        feedback,
+        reviewerNotes,
+        attempt,
+        maxRetries,
+        maxIterations,
+        storyStartedAt,
+        retryLadder,
+        priorFeedback,
+        runToken,
+        story,
+        tool: "claude",
+      },
+    });
 
     return {
       status: "reviewed",

@@ -359,20 +359,18 @@ export const agentLoopPlan = inngest.createFunction(
     if (attemptedStories >= maxIterations) {
       const completed = prd.stories.filter((s) => s.passes).length;
       const skipped = prd.stories.filter((s) => (s as any).skipped).length;
-      await step.run("emit-complete-max-iterations", async () => {
-        await step.sendEvent("emit-complete-max-iterations", {
-          name: "agent/loop.completed",
-          data: {
-            loopId,
-            project,
-            workDir,
-            summary: `max_iterations_reached (${maxIterations}). ${completed} completed, ${skipped} skipped.`,
-            storiesCompleted: completed,
-            storiesFailed: skipped,
-            cancelled: false,
-            branchName,
-          },
-        });
+      await step.sendEvent("emit-complete-max-iterations", {
+        name: "agent/loop.completed",
+        data: {
+          loopId,
+          project,
+          workDir,
+          summary: `max_iterations_reached (${maxIterations}). ${completed} completed, ${skipped} skipped.`,
+          storiesCompleted: completed,
+          storiesFailed: skipped,
+          cancelled: false,
+          branchName,
+        },
       });
       return {
         status: "max_iterations_reached",
@@ -430,20 +428,18 @@ export const agentLoopPlan = inngest.createFunction(
         (r) => r.status === "still-failing"
       ).length;
 
-      await step.run("emit-complete", async () => {
-        await step.sendEvent("emit-complete", {
-          name: "agent/loop.completed",
-          data: {
-            loopId,
-            project,
-            workDir,
-            summary: `All stories processed. ${completed} completed, ${failed} skipped. Recheck: ${recovered} recovered, ${stillFailing} still failing.`,
-            storiesCompleted: completed,
-            storiesFailed: failed,
-            cancelled: false,
-            branchName,
-          },
-        });
+      await step.sendEvent("emit-complete", {
+        name: "agent/loop.completed",
+        data: {
+          loopId,
+          project,
+          workDir,
+          summary: `All stories processed. ${completed} completed, ${failed} skipped. Recheck: ${recovered} recovered, ${stillFailing} still failing.`,
+          storiesCompleted: completed,
+          storiesFailed: failed,
+          cancelled: false,
+          branchName,
+        },
       });
       return {
         status: "complete",
@@ -500,23 +496,21 @@ export const agentLoopPlan = inngest.createFunction(
       };
     }
 
-    await step.run("emit-test", async () => {
-      await step.sendEvent("emit-test", {
-        name: "agent/loop.story.dispatched",
-        data: {
-          loopId,
-          project,
-          workDir,
-          storyId: next.id,
-          tool: implTool,
-          attempt: 1,
-          story,
-          maxRetries,
-          maxIterations,
-          retryLadder,
-          runToken: claimedRunToken,
-        },
-      });
+    await step.sendEvent("emit-test", {
+      name: "agent/loop.story.dispatched",
+      data: {
+        loopId,
+        project,
+        workDir,
+        storyId: next.id,
+        tool: implTool,
+        attempt: 1,
+        story,
+        maxRetries,
+        maxIterations,
+        retryLadder,
+        runToken: claimedRunToken,
+      },
     });
 
     return {
