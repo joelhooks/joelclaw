@@ -88,10 +88,37 @@ export const agentLoopComplete = inngest.createFunction(
       }
     });
 
-    // Step 3: Push to remote (if merge succeeded)
+    // Step 3: Sync worker clone (if merge succeeded)
+    // The worker runs from a separate clone (~/Code/system-bus-worker/) for stability —
+    // editing the monorepo during sessions won't break the running worker.
+    // After merging to monorepo, pull changes into the worker clone and restart it.
+    let syncResult: { synced: boolean; error?: string } = { synced: false };
+    if (mergeResult.merged) {
+      syncResult = await step.run("sync-worker-clone", async () => {
+        try {
+          const workerRoot = `${process.env.HOME}/Code/system-bus-worker`;
+          // Pull from monorepo (worker's origin)
+          const pull = await $`cd ${workerRoot} && git pull --ff-only`.quiet().nothrow();
+          if (pull.exitCode !== 0) {
+            // If not fast-forward, reset to origin/main
+            await $`cd ${workerRoot} && git fetch origin && git reset --hard origin/main`.quiet().nothrow();
+          }
+          // Install deps in case new packages were added
+          await $`cd ${workerRoot} && bun install --silent`.quiet().nothrow();
+          // Restart worker via launchctl
+          const uid = (await $`id -u`.quiet()).text().trim();
+          await $`launchctl kickstart -k gui/${uid}/com.joel.system-bus-worker`.quiet().nothrow();
+          return { synced: true };
+        } catch (e: any) {
+          return { synced: false, error: e?.message?.slice(0, 500) };
+        }
+      });
+    }
+
+    // Step 4: Push to remote (if merge succeeded)
     let pushResult: string = "skipped";
     if (mergeResult.merged) {
-      pushResult = await step.run("push-branch", async () => {
+      pushResult = await step.run("push-to-remote", async () => {
         try {
           const token = await mintGitHubToken();
           const remoteResult = await $`cd ${project} && git remote get-url origin`.quiet();
@@ -120,6 +147,7 @@ export const agentLoopComplete = inngest.createFunction(
       branchName,
       mergeResult,
       cleanupResult,
+      syncResult,
       pushResult,
     };
   }
