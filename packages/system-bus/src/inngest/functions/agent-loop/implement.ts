@@ -334,10 +334,12 @@ export const agentLoopImplement = inngest.createFunction(
         if: "event.data.loopId == async.data.loopId",
       },
     ],
-    concurrency: {
-      key: "event.data.project",
-      limit: 1,
-    },
+    concurrency: [
+      {
+        key: "event.data.loopId",
+        limit: 1,
+      },
+    ],
   },
   [{ event: "agent/loop.tests.written" }, { event: "agent/loop.story.retried" }],
   async ({ event, step }) => {

@@ -42,6 +42,7 @@ export const contentSync = inngest.createFunction(
     id: "system/content-sync",
     retries: 1,
     concurrency: { limit: 1, key: "content-sync" },
+    debounce: { period: "5s", key: '"vault-sync"' },
   },
   [
     { cron: "0 * * * *" },

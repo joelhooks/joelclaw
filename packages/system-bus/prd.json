@@ -37,7 +37,8 @@
         "Event data includes: loopId (from event.data), functionName, storyId (if in event.data), error (string), timestamp (ISO)",
         "All 7 agent-loop functions have onFailure in their createFunction config",
         "TypeScript compiles (bunx tsc --noEmit)"
-      ]
+      ],
+      "passes": true
     },
     {
       "id": "FLOW-1",
