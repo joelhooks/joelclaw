@@ -1,6 +1,6 @@
 ---
 title: "Network architecture: start with what works, grow as needed"
-status: accepted
+status: proposed
 date: 2026-02-16
 deciders: Joel Hooks
 consulted: Claude (pi session 2026-02-16)
