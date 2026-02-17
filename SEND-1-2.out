@@ -1,8 +1,0 @@
-All criteria are already met in the actual working tree:
-
-1. `grep -r "inngest.send" src/inngest/functions/observe.ts` — 0 matches ✓
-2. `grep -r "inngest.send" src/inngest/functions/system-logger.ts` — 0 matches ✓
-3. `step.sendEvent()` exists in both files (`observe.ts:484`, `system-logger.ts:47`) ✓
-4. `bunx tsc --noEmit` — clean compile ✓
-
-The previous attempt's changes are already present in the working tree. No further changes are needed.

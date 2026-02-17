@@ -52,7 +52,8 @@
         "content-sync.ts has debounce: { period: '5s', key: '\"vault-sync\"' }",
         "agent-dispatch.ts has throttle: { limit: 3, period: '60s' }",
         "TypeScript compiles (bunx tsc --noEmit)"
-      ]
+      ],
+      "skipped": true
     },
     {
       "id": "CLEAN-1",
