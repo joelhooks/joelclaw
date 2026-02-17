@@ -441,6 +441,13 @@ export type Events = {
     };
   };
 
+  // --- Embedding ---
+  "embedding/text.requested": {
+    data: {
+      texts: Array<{ id: string; text: string }>;
+    };
+  };
+
   // --- Legacy ---
   "pipeline/video.ingested": {
     data: {

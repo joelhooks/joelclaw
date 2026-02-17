@@ -7,6 +7,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseObserverOutput } from "./observe-parser";
 import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+import { embedText } from "./embed";
 
 type ObserveCompactionInput = {
   sessionId: string;
@@ -369,6 +370,33 @@ Session context:
       }
     );
 
+    // Generate real embeddings via generic embedding function (all-mpnet-base-v2, 768-dim)
+    const observationItemsForEmbed = createObservationItems(parsedObservations);
+    let embeddingVectors: { id: string; vector: number[] }[] = [];
+
+    if (observationItemsForEmbed.length > 0) {
+      const result = await step.invoke("generate-embeddings", {
+        function: embedText,
+        data: {
+          texts: observationItemsForEmbed.map((item, i) => ({
+            id: String(i),
+            text: item.observation,
+          })),
+        },
+      });
+      if (result?.vectors) {
+        embeddingVectors = (result.vectors as { id: string; vector: number[] }[]).filter(
+          (v): v is { id: string; vector: number[] } => v != null
+        );
+      }
+    }
+
+    // Build a lookup: id → vector
+    const vectorMap = new Map<string, number[]>();
+    for (const v of embeddingVectors) {
+      vectorMap.set(v.id, v.vector);
+    }
+
     const qdrantStoreResult = await step.run("store-to-qdrant", async () => {
       try {
         const qdrantClient = new QdrantClient({
@@ -381,6 +409,7 @@ Session context:
           return {
             stored: true,
             count: 0,
+            hasRealVectors: false,
             sourceSessionId: validatedInput.sessionId,
           };
         }
@@ -388,7 +417,7 @@ Session context:
         const timestamp = validatedInput.capturedAt ?? new Date().toISOString();
         const points = observationItems.map((item, index) => ({
           id: randomUUID(),
-          vector: QDRANT_ZERO_VECTOR,
+          vector: vectorMap.get(String(index)) ?? QDRANT_ZERO_VECTOR,
           payload: {
             session_id: validatedInput.sessionId,
             timestamp,
@@ -396,6 +425,10 @@ Session context:
             observation: item.observation,
           } satisfies QdrantPointPayload,
         }));
+
+        const hasReal = points.some(
+          (p) => p.vector !== QDRANT_ZERO_VECTOR
+        );
 
         await qdrantClient.upsert(QDRANT_COLLECTION, {
           wait: true,
@@ -405,12 +438,14 @@ Session context:
         return {
           stored: true,
           count: points.length,
+          hasRealVectors: hasReal,
           sourceSessionId: validatedInput.sessionId,
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {
           stored: false,
+          hasRealVectors: false,
           sourceSessionId: validatedInput.sessionId,
           error: message,
         };

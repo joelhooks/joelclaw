@@ -7,6 +7,7 @@ export { reflect } from "./reflect";
 export { contentSync } from "./content-sync";
 export { discoveryCapture } from "./discovery-capture";
 export { promote } from "./promote";
+export { embedText } from "./embed";
 export {
   agentLoopPlan,
   agentLoopTestWriter,
