@@ -6,7 +6,7 @@ deciders: Joel Hooks
 consulted: Codex (session 2026-02-17)
 informed: All agents operating on this system
 related:
-  - "[ADR-0004 — AT Protocol account architecture](0004-at-protocol-account-architecture.md)"
+  - "[ADR-0004 — AT Protocol as Bedrock + Native iPhone App](0004-atproto-federation-native-app.md)"
   - "[ADR-0002 — Personal assistant system architecture](0002-personal-assistant-system-architecture.md)"
   - "[ADR-0005 — Durable multi-agent coding loops](0005-durable-multi-agent-coding-loops.md)"
   - "[ADR-0006 — Observability: Prometheus + Grafana](0006-observability-prometheus-grafana.md)"
@@ -118,7 +118,7 @@ three-body (NAS, 64 TB)
 Resources: 2.1 GB / 64 GB RAM (3%)  •  15 GB / 926 GB disk (2%)
 ```
 
-Implementation: Bun CLI in `~/Code/joelhooks/joelclaw/packages/cli/`. Checks Docker API, launchctl, HTTP health endpoints, SSH reachability. JSON output for agents, formatted for humans.
+Implementation: Bun CLI in `~/Code/joelhooks/joelclaw/packages/cli/`. Checks Kubernetes state, launchctl, HTTP health endpoints, SSH reachability. JSON output for agents, formatted for humans.
 Current status: **not done**.
 
 ### 0.2 — Health check Inngest cron
