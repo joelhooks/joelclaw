@@ -1,7 +1,7 @@
 ---
 title: "The One Where Joel Deploys Kubernetes"
 date: "2026-02-16"
-description: "Three containers and a spike that turned into a production migration. Why I moved my personal AI infrastructure to Kubernetes — and the gotchas nobody warns you about."
+description: "Three containers and a spike that turned into a production migration. Why I moved my personal AI infrastructure from Docker Compose to k3d — and the gotchas nobody warns you about."
 draft: true
 ---
 
@@ -19,7 +19,7 @@ I spiked it. The spike worked. So I kept going. The whole migration was one sess
 
 ## Nineteen seconds to a cluster
 
-k3s is Linux-only. On macOS, k3d runs it inside Docker — which is already running on this machine. No new VMs, no new dependencies. On Linux, k3s installs natively with one curl command. The portable layer is the k8s manifests — same `kubectl apply` on both platforms, different on-ramp.
+k3d runs k3s inside Docker — which is already running on this machine. No new VMs, no new dependencies. Docker Desktop is free for personal use, so the only thing I added was the `k3d` binary. The portable layer is the k8s manifests — same `kubectl apply` whether it's k3d on macOS or native k3s on Linux.
 
 ```bash
 k3d cluster create joelclaw \
@@ -58,25 +58,19 @@ The cutover was anticlimactic. Stop Compose, deploy manifests, restart the worke
 
 Not everything moved. The system-bus worker stays on launchd — it needs the host filesystem for git, Whisper transcription, and writing all over the machine. Caddy stays too. Not everything needs to be in a cluster.
 
-## Why k3s
+## Why k3d
 
 I looked at the homelab landscape before committing.
 
-**k3s** is the homelab default. Lightweight, single binary, built-in storage and load balancer, ARM + x86 mixed clusters. Biggest community, most battle-tested at small scale. Mac nodes via k3d, Linux nodes via a one-line curl install.
+**k3d** wraps k3s inside Docker containers. Since Docker Desktop is already running on this Mac, k3d adds zero new infrastructure — no VMs, no Multipass, no new daemon. Cluster up in 19 seconds, cluster down in 3. The catch: it's single-machine only. k3d nodes are containers on one host — remote machines can't join the cluster.
+
+**microk8s** runs in a Multipass VM on macOS (~4 GB RAM, comparable to Docker Desktop's own VM). It *can* do multi-node — remote microk8s instances join via `microk8s add-node`. But Multipass has known disk I/O issues on Apple Silicon, and you're paying VM overhead for something Docker already does.
 
 **Talos Linux** is the rising star — an immutable OS that *is* the cluster. No SSH, no package manager, API-driven. Compelling for dedicated Linux nodes but replaces the entire OS, which doesn't work alongside macOS.
 
 **Nomad** by HashiCorp was interesting until they relicensed it to BSL. The community is migrating away.
 
-**microk8s** runs in a Multipass VM on macOS (~4 GB RAM, comparable to Docker Desktop's own VM). Legitimate multi-node option — remote microk8s nodes can join — but Multipass has known disk I/O issues on Apple Silicon.
-
-k3s wins for a mixed cluster. When a Linux box joins, it's one command:
-
-```bash
-curl -sfL https://get.k3s.io | K3S_URL=https://<control-plane>:6443 K3S_TOKEN=<token> sh -
-```
-
-Same manifests, same `kubectl`. The [network page](/network) shows the current state.
+k3d wins for single-machine k8s on a Mac that's already running Docker. If a second machine needs to join, that's a different decision — probably native k3s on Linux, or OrbStack on Mac. The manifests are portable. The [network page](/network) shows the current state.
 
 ## Appendix: does it have to be Kubernetes
 
@@ -84,7 +78,7 @@ No. Here's the real landscape:
 
 | Approach | Good at | Bad at |
 |---|---|---|
-| **k3s / k8s** | Automatic scheduling, health checks, GPU routing, self-healing | YAML, complexity, learning curve |
+| **k3d / k3s / k8s** | Automatic scheduling, health checks, GPU routing, self-healing | YAML, complexity, learning curve |
 | **Kamal** (37signals) | Dead simple deploys, zero-downtime | You're the scheduler — you decide what runs where |
 | **Ansible + Docker Compose** | Familiar, idempotent, no runtime daemon | No live scheduling, no cross-node failover |
 | **Nomad** | Simpler than k8s, containers + VMs + batch | BSL licensed, community leaving, needs Consul + Vault |

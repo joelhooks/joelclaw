@@ -35,7 +35,7 @@ Events (HTTP POST or inngest.send())
                           └────────────────────┘
 ```
 
-Inngest server runs as a k8s StatefulSet in a [k3d cluster](/from-docker-compose-to-k3s) with persistent volume claims. The worker is a Bun + Hono app managed by launchd with `KeepAlive: true`. Both survive reboots. Caddy terminates TLS via Tailscale certs so I can hit the dashboard from my phone.
+Inngest server runs as a k8s StatefulSet in a [k3d cluster](/from-docker-compose-to-k3d) with persistent volume claims. The worker is a Bun + Hono app managed by launchd with `KeepAlive: true`. Both survive reboots. Caddy terminates TLS via Tailscale certs so I can hit the dashboard from my phone.
 
 Fourteen functions. Two pipelines. One event bus.
 
