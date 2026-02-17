@@ -2,8 +2,7 @@ import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { respond } from "../response"
 
-const EVENT_LIST = "joelclaw:events:main"
-const NOTIFY_CHANNEL = "joelclaw:notify:main"
+const SESSIONS_SET = "joelclaw:gateway:sessions"
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -30,12 +29,24 @@ function makeRedis() {
 const gatewayStatus = Command.make("status", {}, () =>
   Effect.gen(function* () {
     const redis = yield* makeRedis()
-    const queueLen = yield* Effect.tryPromise({
-      try: () => redis.llen(EVENT_LIST),
-      catch: (e) => new Error(`${e}`),
-    })
     const pong = yield* Effect.tryPromise({
       try: () => redis.ping(),
+      catch: (e) => new Error(`${e}`),
+    })
+    const sessions = yield* Effect.tryPromise({
+      try: () => redis.smembers(SESSIONS_SET),
+      catch: (e) => new Error(`${e}`),
+    })
+    const { sessionInfo, legacyLen } = yield* Effect.tryPromise({
+      try: async () => {
+        const info: Array<{ id: string; pending: number }> = []
+        for (const s of sessions) {
+          const len = await redis.llen(`joelclaw:events:${s}`)
+          info.push({ id: s, pending: len })
+        }
+        const legacy = await redis.llen("joelclaw:events:main")
+        return { sessionInfo: info, legacyLen: legacy }
+      },
       catch: (e) => new Error(`${e}`),
     })
     yield* Effect.tryPromise({ try: () => redis.quit(), catch: () => {} })
@@ -44,14 +55,13 @@ const gatewayStatus = Command.make("status", {}, () =>
       "gateway status",
       {
         redis: pong === "PONG" ? "connected" : "error",
-        eventList: EVENT_LIST,
-        notifyChannel: NOTIFY_CHANNEL,
-        pendingEvents: queueLen,
+        activeSessions: sessionInfo,
+        legacyQueuePending: legacyLen,
       },
       [
         { command: "joelclaw gateway events", description: "Peek at pending events" },
         { command: "joelclaw gateway push --type test", description: "Push a test event" },
-        { command: "joelclaw gateway drain", description: "Clear the event queue" },
+        { command: "joelclaw gateway drain", description: "Clear all event queues" },
       ],
       pong === "PONG"
     ))
@@ -63,30 +73,48 @@ const gatewayStatus = Command.make("status", {}, () =>
 const gatewayEvents = Command.make("events", {}, () =>
   Effect.gen(function* () {
     const redis = yield* makeRedis()
-    const raw = yield* Effect.tryPromise({
-      try: () => redis.lrange(EVENT_LIST, 0, -1),
+    const sessions = yield* Effect.tryPromise({
+      try: () => redis.smembers(SESSIONS_SET),
+      catch: (e) => new Error(`${e}`),
+    })
+
+    const allEvents = yield* Effect.tryPromise({
+      try: async () => {
+        const result: Array<{ session: string; events: any[] }> = []
+        for (const s of sessions) {
+          const raw = await redis.lrange(`joelclaw:events:${s}`, 0, -1)
+          const events = raw.reverse().map((r: string) => {
+            try { return JSON.parse(r) } catch { return { raw: r } }
+          })
+          if (events.length > 0) result.push({ session: s, events })
+        }
+        const legacyRaw = await redis.lrange("joelclaw:events:main", 0, -1)
+        if (legacyRaw.length > 0) {
+          const events = legacyRaw.reverse().map((r: string) => {
+            try { return JSON.parse(r) } catch { return { raw: r } }
+          })
+          result.push({ session: "main (legacy)", events })
+        }
+        return result
+      },
       catch: (e) => new Error(`${e}`),
     })
     yield* Effect.tryPromise({ try: () => redis.quit(), catch: () => {} })
 
-    const events = raw.reverse().map((r: string) => {
-      try {
-        return JSON.parse(r)
-      } catch {
-        return { raw: r }
-      }
-    })
+    const totalCount = allEvents.reduce((sum, s) => sum + s.events.length, 0)
 
     yield* Console.log(respond(
       "gateway events",
       {
-        count: events.length,
-        events: events.map((e: any) => ({
-          id: e.id,
-          type: e.type,
-          source: e.source,
-          ts: e.ts ? new Date(e.ts).toISOString() : undefined,
-          payload: e.payload,
+        totalCount,
+        sessions: allEvents.map(s => ({
+          session: s.session,
+          count: s.events.length,
+          events: s.events.map((e: any) => ({
+            id: e.id, type: e.type, source: e.source,
+            ts: e.ts ? new Date(e.ts).toISOString() : undefined,
+            payload: e.payload,
+          })),
         })),
       },
       [
@@ -131,10 +159,26 @@ const gatewayPush = Command.make("push", { type: pushType, payload: pushPayload 
       ts: Date.now(),
     }
 
+    const json = JSON.stringify(event)
+    const notification = JSON.stringify({ eventId: event.id, type: event.type })
+
+    // Fan out to all active sessions (same logic as pushGatewayEvent)
+    const sessions = yield* Effect.tryPromise({
+      try: () => redis.smembers(SESSIONS_SET),
+      catch: (e) => new Error(`${e}`),
+    })
+
     yield* Effect.tryPromise({
       try: async () => {
-        await redis.lpush(EVENT_LIST, JSON.stringify(event))
-        await redis.publish(NOTIFY_CHANNEL, JSON.stringify({ eventId: event.id, type: event.type }))
+        if (sessions.length === 0) {
+          await redis.lpush("joelclaw:events:main", json)
+          await redis.publish("joelclaw:notify:main", notification)
+        } else {
+          for (const s of sessions) {
+            await redis.lpush(`joelclaw:events:${s}`, json)
+            await redis.publish(`joelclaw:notify:${s}`, notification)
+          }
+        }
       },
       catch: (e) => new Error(`${e}`),
     })
@@ -145,7 +189,7 @@ const gatewayPush = Command.make("push", { type: pushType, payload: pushPayload 
       "gateway push",
       {
         pushed: event,
-        notified: NOTIFY_CHANNEL,
+        deliveredTo: sessions.length > 0 ? sessions : ["main (legacy)"],
       },
       [
         { command: "joelclaw gateway events", description: "See all pending events" },
@@ -161,21 +205,30 @@ const gatewayPush = Command.make("push", { type: pushType, payload: pushPayload 
 const gatewayDrain = Command.make("drain", {}, () =>
   Effect.gen(function* () {
     const redis = yield* makeRedis()
-    const count = yield* Effect.tryPromise({
-      try: () => redis.llen(EVENT_LIST),
+    const sessions = yield* Effect.tryPromise({
+      try: () => redis.smembers(SESSIONS_SET),
       catch: (e) => new Error(`${e}`),
     })
-    yield* Effect.tryPromise({
-      try: () => redis.del(EVENT_LIST),
+    const { total, legacyDrained } = yield* Effect.tryPromise({
+      try: async () => {
+        let t = 0
+        for (const s of sessions) {
+          const len = await redis.llen(`joelclaw:events:${s}`)
+          if (len > 0) { await redis.del(`joelclaw:events:${s}`); t += len }
+        }
+        const lLen = await redis.llen("joelclaw:events:main")
+        if (lLen > 0) { await redis.del("joelclaw:events:main"); t += lLen }
+        return { total: t, legacyDrained: lLen }
+      },
       catch: (e) => new Error(`${e}`),
     })
     yield* Effect.tryPromise({ try: () => redis.quit(), catch: () => {} })
 
     yield* Console.log(respond(
       "gateway drain",
-      { drained: count, list: EVENT_LIST },
+      { drained: total, sessions: sessions.length, legacyDrained },
       [
-        { command: "joelclaw gateway status", description: "Verify queue is empty" },
+        { command: "joelclaw gateway status", description: "Verify queues are empty" },
       ],
       true
     ))
@@ -187,8 +240,11 @@ const gatewayDrain = Command.make("drain", {}, () =>
 const gatewayTest = Command.make("test", {}, () =>
   Effect.gen(function* () {
     const redis = yield* makeRedis()
+    const sessions = yield* Effect.tryPromise({
+      try: () => redis.smembers(SESSIONS_SET),
+      catch: (e) => new Error(`${e}`),
+    })
 
-    // Push + publish + read back
     const event = {
       id: crypto.randomUUID(),
       type: "test.gateway-e2e",
@@ -197,16 +253,21 @@ const gatewayTest = Command.make("test", {}, () =>
       ts: Date.now(),
     }
 
+    const json = JSON.stringify(event)
+    const notification = JSON.stringify({ eventId: event.id, type: event.type })
+
     yield* Effect.tryPromise({
       try: async () => {
-        await redis.lpush(EVENT_LIST, JSON.stringify(event))
-        await redis.publish(NOTIFY_CHANNEL, JSON.stringify({ eventId: event.id, type: event.type }))
+        if (sessions.length === 0) {
+          await redis.lpush("joelclaw:events:main", json)
+          await redis.publish("joelclaw:notify:main", notification)
+        } else {
+          for (const s of sessions) {
+            await redis.lpush(`joelclaw:events:${s}`, json)
+            await redis.publish(`joelclaw:notify:${s}`, notification)
+          }
+        }
       },
-      catch: (e) => new Error(`${e}`),
-    })
-
-    const pending = yield* Effect.tryPromise({
-      try: () => redis.llen(EVENT_LIST),
       catch: (e) => new Error(`${e}`),
     })
 
@@ -216,8 +277,7 @@ const gatewayTest = Command.make("test", {}, () =>
       "gateway test",
       {
         pushed: event,
-        notified: NOTIFY_CHANNEL,
-        pendingAfterPush: pending,
+        deliveredTo: sessions.length > 0 ? sessions : ["main (legacy)"],
         note: "If the pi gateway extension is running, it should drain this event and inject it into the session.",
       },
       [
@@ -235,13 +295,13 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
   Console.log(respond(
     "gateway",
     {
-      description: "Redis event bridge between Inngest functions and pi sessions (ADR-0018)",
+      description: "Redis event bridge between Inngest functions and pi sessions (ADR-0018). Per-session fan-out.",
       subcommands: {
-        status: "joelclaw gateway status — Redis connection + queue depth",
-        events: "joelclaw gateway events — Peek at pending events",
-        push: "joelclaw gateway push --type <type> [--payload JSON] — Push an event",
-        drain: "joelclaw gateway drain — Clear the event queue",
-        test: "joelclaw gateway test — Push a test event and check round-trip",
+        status: "joelclaw gateway status — Active sessions + queue depths",
+        events: "joelclaw gateway events — Peek at all pending events",
+        push: "joelclaw gateway push --type <type> [--payload JSON] — Push to all sessions",
+        drain: "joelclaw gateway drain — Clear all event queues",
+        test: "joelclaw gateway test — Push test event to all sessions",
       },
     },
     [
