@@ -164,6 +164,6 @@ export async function commitAndPush(
   }
 
   await git("commit", "-m", commitMessage);
-  await git("push");
+  await git("push", "origin", "main");
   return true;
 }

@@ -165,6 +165,6 @@ async function commitAndPushMultiple(
   }
 
   await git("commit", "-m", message);
-  await git("push");
+  await git("push", "origin", "main");
   return true;
 }
