@@ -195,7 +195,9 @@ OpenClaw has a **layered AGENTS.md** at its repo root (`~/Code/openclaw/openclaw
 | tsgo | — | npm | TypeScript 7 native compiler |
 | joelclaw | — | bun link | Event bus + agent loop CLI — send events, check runs, start loops, restart worker (igs is a legacy alias for joelclaw) |
 | slog | 0.2.0 | bun link | System log CLI (Effect, agent-first HATEOAS JSON, ~/Code/joelhooks/slog/) |
-| Docker Sandbox | 0.11.0 | docker desktop | Isolated agent execution (claude, codex in sandboxes) |
+| Colima | 0.10.0 | homebrew | CLI container runtime (VZ framework), replaces Docker Desktop — ADR-0029 |
+| talosctl | 1.12.4 | homebrew (siderolabs/tap) | Talos Linux CLI — manages Talos k8s cluster, replaces k3d — ADR-0029 |
+| Docker Sandbox | 0.11.0 | colima | Isolated agent execution (claude, codex in sandboxes) |
 | Bun | 1.3.9 | homebrew | JS runtime & package manager |
 | Node | 24.13.1 | fnm | JS runtime |
 | yt-dlp | 2026.02.04 | homebrew | Video downloader (YouTube + many sites) |

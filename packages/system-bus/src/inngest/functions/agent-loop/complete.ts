@@ -26,6 +26,20 @@ export const agentLoopComplete = inngest.createFunction(
       return { status: "no-branch", loopId };
     }
 
+    // Step 0: Clean loop artifacts from worktree before merge
+    await step.run("clean-artifacts", async () => {
+      const worktreePath = `/tmp/agent-loop/${loopId}`;
+      try {
+        // Delete __tests__/ dirs, *.out files, progress.txt
+        await $`cd ${worktreePath} && find . -name "__tests__" -type d -exec rm -rf {} + 2>/dev/null; rm -f *.out progress.txt`.quiet().nothrow();
+        // Commit cleanup if anything changed
+        await $`cd ${worktreePath} && git add -A && git diff --cached --quiet || git commit -m "chore: clean loop artifacts"`.quiet().nothrow();
+        return { cleaned: true };
+      } catch {
+        return { cleaned: false };
+      }
+    });
+
     // Step 1: Merge worktree branch back to main working directory
     const mergeResult = await step.run("merge-to-main", async () => {
       try {
