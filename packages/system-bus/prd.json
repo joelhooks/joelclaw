@@ -12,8 +12,7 @@
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 1,
-      "passes": false,
-      "skipped": true
+      "passes": false
     },
     {
       "id": "SEND-2",
@@ -26,8 +25,12 @@
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 2,
+<<<<<<< Updated upstream
       "passes": false,
       "skipped": true
+=======
+      "passes": false
+>>>>>>> Stashed changes
     },
     {
       "id": "SEND-3",
@@ -39,8 +42,7 @@
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 3,
-      "passes": false,
-      "skipped": true
+      "passes": false
     },
     {
       "id": "ERR-1",
@@ -53,7 +55,7 @@
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 4,
-      "passes": true
+      "passes": false
     },
     {
       "id": "CANCEL-1",
@@ -67,8 +69,7 @@
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 5,
-      "passes": false,
-      "skipped": true
+      "passes": false
     },
     {
       "id": "VERIFY-1",

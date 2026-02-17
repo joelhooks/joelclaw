@@ -221,7 +221,7 @@ All skills are installed to `~/.agents/skills/` (universal) and symlinked to Cla
 | docx | anthropics/skills | Word document creation/editing |
 | ffmpeg | digitalsamba (customized) | Video/audio processing — format conversion, compression, platform export |
 | frontend-design | custom | Production-grade frontend UI design |
-| inngest | custom | Event bus operations — send events, check status, add functions, manage workflows |
+| igs | custom | Event bus + agent loop CLI — send events, check runs, start/monitor loops, debug failures, restart worker |
 | obsidian-bases | custom | Obsidian Bases (.base files) |
 | obsidian-markdown | custom | Obsidian-flavored markdown |
 | pdf | anthropics/skills | PDF creation/editing |
