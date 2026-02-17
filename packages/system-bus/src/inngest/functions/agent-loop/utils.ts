@@ -14,16 +14,32 @@ if (redisClass.defaultOptions) {
 const LOOP_TMP = "/tmp/agent-loop";
 
 /**
- * Verify Claude CLI auth token is available before spawning.
- * Fails fast with a clear error instead of getting a cryptic "Not logged in"
- * three steps into a loop run.
+ * Lease a fresh Claude OAuth token from agent-secrets at runtime.
+ * Solves the 24h-stale-env-var problem: start.sh leases once at boot,
+ * but the worker runs indefinitely. This re-leases on every spawn so
+ * the token is always fresh.
+ *
+ * Falls back to CLAUDE_CODE_OAUTH_TOKEN env var if secrets CLI unavailable.
  */
 export function ensureClaudeAuth(): void {
+  try {
+    const result = Bun.spawnSync(
+      ["secrets", "lease", "claude_oauth_token", "--ttl", "1h", "--raw"],
+      { stdout: "pipe", stderr: "pipe" }
+    );
+    const token = result.stdout.toString().trim();
+    if (token && result.exitCode === 0) {
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = token;
+      return;
+    }
+  } catch {
+    // secrets CLI not available — fall through to env check
+  }
+
   if (!process.env.CLAUDE_CODE_OAUTH_TOKEN) {
     throw new Error(
-      "CLAUDE_CODE_OAUTH_TOKEN not set. Claude CLI will fail with 'Not logged in'. " +
-      "Fix: run 'claude setup-token', store with 'secrets add claude_oauth_token --value <token>', " +
-      "and ensure start.sh leases it at worker startup."
+      "CLAUDE_CODE_OAUTH_TOKEN not set and secrets lease failed. " +
+      "Fix: run 'secrets add claude_oauth_token --value <token>' or 'claude setup-token'."
     );
   }
 }

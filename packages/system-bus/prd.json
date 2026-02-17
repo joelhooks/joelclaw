@@ -1,88 +1,76 @@
 {
-  "title": "Harden Agent Loop Infrastructure: complete.ts fixes + onFailure handlers",
-  "description": "Fix the known bugs in complete.ts that caused the igs loop merge failure, and add onFailure handlers to critical Inngest functions so failures are observable instead of silent.",
-  "context": {
-    "repo": "~/Code/joelhooks/joelclaw/packages/system-bus",
-    "known_bugs": [
-      "complete.ts merge fails when untracked files exist (prd.json, .out files) — need git clean or .gitignore before merge",
-      "complete.ts sync-worker-clone step hardcodes system-bus path — should be conditional on project",
-      "Loop artifacts (.out files, prd.json, progress.txt) get committed to repos — should be cleaned before merge"
-    ],
-    "onFailure_rationale": "Currently all Inngest functions fail silently. ADR-0028 added NonRetriableError for validation but no onFailure handlers. When a function exhausts retries, nothing is logged — you only find out by checking the dashboard or Docker logs.",
-    "inngest_event_key": "37aa349b89692d657d276a40e0e47a15",
-    "test_command": "bun test",
-    "typecheck_command": "bunx tsc --noEmit"
-  },
+  "title": "Loop Resilience: Fix Silent Stalls with Inngest Durability Patterns",
+  "description": "The agent loop infrastructure has silent stalls from three root causes: (1) judge→plan event chain breaks when worker restarts mid-loop, (2) complete.ts worker clone sync fails on dirty git state, (3) no onFailure handlers, no flow control. This PRD applies Inngest SDK patterns (onFailure, NonRetriableError, debounce, throttle, singleton, idempotency) to make loops self-healing.",
+  "context": "From debugging: `igs loop diagnose` found CHAIN_BROKEN and ORPHANED_CLAIM as the two most common failures. Inngest skills (inngest-durable-functions, inngest-flow-control) provide the exact patterns needed. Key insight: onFailure handlers can emit recovery events, turning crashes into retries instead of silent stalls.",
   "stories": [
     {
-      "id": "CLEAN-1",
-      "title": "Clean loop artifacts before merge in complete.ts",
-      "description": "In complete.ts merge-back step, before running git merge, remove common loop artifacts from the worktree branch: *.out files, prd.json, progress.txt, __tests__/ directory, *.acceptance.test.ts files. Use git rm or delete + git add. This prevents untracked files from blocking the merge and stops test pollution from landing on main.",
+      "id": "PERSIST-1",
+      "title": "Store project/workDir in PRD Redis key",
+      "description": "In plan.ts, when writing the PRD to Redis via `redis.set('agent-loop:prd:{loopId}', ...)`, include `project` and `workDir` fields at the top level of the JSON object alongside `title`, `description`, `context`, and `stories`. Read these from `event.data.project` and `event.data.workDir`. The diagnose command needs project to re-fire events but currently can't find it.",
       "acceptance_criteria": [
-        "complete.ts removes *.out files from worktree before merge",
-        "complete.ts removes prd.json and progress.txt from worktree before merge",
-        "complete.ts removes __tests__/ directory if it exists",
-        "complete.ts removes *.acceptance.test.ts files",
-        "git stash --include-untracked before merge still works",
-        "TypeScript compiles cleanly",
-        "Existing tests pass"
+        "plan.ts stores event.data.project as top-level 'project' field in the PRD Redis JSON",
+        "plan.ts stores event.data.workDir (fallback to event.data.project) as top-level 'workDir' field",
+        "Existing PRD fields (title, description, stories, context) are unchanged",
+        "TypeScript compiles (bunx tsc --noEmit)"
       ]
     },
     {
-      "id": "CLEAN-2",
-      "title": "Make sync-worker-clone conditional on project path",
-      "description": "The sync-worker-clone step in complete.ts should only run when the project path contains 'joelclaw' or 'system-bus'. For other projects (igs, pi-tools), skip the sync step. Currently it tries to sync for all projects which is harmless but logs confusing errors.",
+      "id": "SYNC-1",
+      "title": "Make complete.ts worker sync handle dirty state",
+      "description": "In complete.ts sync-worker-clone step, replace `git pull --ff-only` with a resilient sequence: try `git pull --ff-only` first (fast path), if it fails then `git fetch origin && git reset --hard origin/main && git clean -fd` (nuclear path). The worker clone is never edited directly so hard reset is always safe. Keep `bun install --silent` after either path.",
       "acceptance_criteria": [
-        "sync-worker-clone only runs for system-bus/joelclaw projects",
-        "Other projects skip the sync step cleanly",
-        "Returns a clear message like { skipped: true, reason: 'not system-bus project' }",
-        "TypeScript compiles cleanly"
+        "sync-worker-clone tries git pull --ff-only first",
+        "On pull failure, falls back to git fetch + reset --hard origin/main + clean -fd",
+        "bun install --silent runs after sync regardless of path taken",
+        "TypeScript compiles (bunx tsc --noEmit)"
       ]
     },
     {
       "id": "FAIL-1",
-      "title": "Add onFailure handler to video-download and transcript-process",
-      "description": "Add onFailure handlers to video-download.ts and transcript-process.ts that log the failure to the system log via slog and emit a system/log.written event. The handler should capture the function name, error message, event data summary, and attempt count.",
+      "title": "Add onFailure + recovery events to all agent-loop functions",
+      "description": "Create a shared `createLoopOnFailure(functionName: string)` helper in agent-loop/utils.ts. It returns an onFailure handler function that: (1) logs `[agent-loop-{name}] FAILED: {error}` to console, (2) uses `step.sendEvent` to emit `agent/loop.function.failed` with {loopId, functionName, storyId, error, timestamp}. Then add `onFailure: createLoopOnFailure('plan')` (etc) to the config object of ALL 7 agent-loop functions: plan.ts, test-writer.ts, implement.ts, review.ts, judge.ts, complete.ts, retro.ts. Import from './utils'. Per Inngest docs, onFailure fires AFTER all retries are exhausted — this is the last-resort observability hook.\n\nExample from inngest-durable-functions skill:\n```typescript\ninngest.createFunction(\n  {\n    id: 'my-fn',\n    onFailure: async ({ error, event, step }) => {\n      await step.sendEvent('emit-failure', {\n        name: 'system/function.failed',\n        data: { error: error.message, originalEvent: event.data }\n      });\n    }\n  },\n  { event: 'trigger' },\n  handler\n);\n```",
       "acceptance_criteria": [
-        "video-download has onFailure that logs to slog",
-        "transcript-process has onFailure that logs to slog",
-        "onFailure emits system/log.written event with action='error'",
-        "Error message and function ID included in the log",
-        "TypeScript compiles cleanly"
+        "utils.ts exports createLoopOnFailure(functionName) that returns an async onFailure handler",
+        "Handler logs error to console AND emits agent/loop.function.failed via step.sendEvent",
+        "Event data includes: loopId (from event.data), functionName, storyId (if in event.data), error (string), timestamp (ISO)",
+        "All 7 agent-loop functions have onFailure in their createFunction config",
+        "TypeScript compiles (bunx tsc --noEmit)"
       ]
     },
     {
-      "id": "FAIL-2",
-      "title": "Add onFailure handler to observe, reflect, and promote",
-      "description": "Add onFailure handlers to observe.ts, reflect.ts, and promote.ts (memory pipeline functions). Same pattern as FAIL-1: log via slog, emit system/log.written event.",
+      "id": "FLOW-1",
+      "title": "Add flow control to loop functions and non-loop functions",
+      "description": "Apply Inngest flow control patterns from the inngest-flow-control skill to make functions more resilient:\n\n1. **plan.ts**: Add `concurrency: [{ key: 'event.data.loopId', limit: 1 }]` — only one plan per loop at a time, prevents duplicate planning.\n\n2. **implement.ts**: Add `concurrency: [{ key: 'event.data.loopId', limit: 1 }]` — only one implement per loop.\n\n3. **observe.ts** (memory): Add `throttle: { limit: 4, period: '60s' }` — LLM calls to pi should be throttled during rapid session activity.\n\n4. **backfill-observe.ts**: Add `singleton: { key: '\"backfill\"', mode: 'skip' }` — only one backfill should run at a time, skip if already running.\n\n5. **content-sync.ts**: Add `debounce: { period: '5s', key: '\"vault-sync\"' }` — fswatch fires multiple events per save burst, debounce so one git commit per burst.\n\n6. **agent-dispatch.ts**: Add `throttle: { limit: 3, period: '60s' }` — don't stampede background agents.\n\nFor each function, add the flow control config to the first argument of createFunction().",
       "acceptance_criteria": [
-        "observe.ts has onFailure handler",
-        "reflect.ts has onFailure handler",
-        "promote.ts has onFailure handler",
-        "Each logs function name + error + event data summary",
-        "TypeScript compiles cleanly"
+        "plan.ts has concurrency keyed by loopId with limit 1",
+        "implement.ts has concurrency keyed by loopId with limit 1",
+        "observe.ts has throttle: { limit: 4, period: '60s' }",
+        "backfill-observe.ts has singleton config",
+        "content-sync.ts has debounce: { period: '5s', key: '\"vault-sync\"' }",
+        "agent-dispatch.ts has throttle: { limit: 3, period: '60s' }",
+        "TypeScript compiles (bunx tsc --noEmit)"
       ]
     },
     {
-      "id": "FAIL-3",
-      "title": "Add onFailure handler to all agent-loop functions",
-      "description": "Add onFailure handlers to all 7 agent-loop functions (plan, test-writer, implement, review, judge, complete, retro). The handler should log the failure AND update the loop progress in Redis to mark the story as failed so loop status shows the failure.",
+      "id": "CLEAN-1",
+      "title": "Clean loop artifacts before merge in complete.ts",
+      "description": "Add a 'clean-artifacts' step in complete.ts that runs BEFORE the merge-to-main step. It should: (1) delete any `__tests__/` directories recursively from the worktree, (2) delete `*.out` files in the worktree root, (3) delete `progress.txt` from the worktree root. Then `git add -A && git commit -m 'chore: clean loop artifacts'` in the worktree. Only operate on the worktree path (`/tmp/agent-loop/{loopId}`), never the main repo. Use .nothrow() on the commit in case there's nothing to clean.",
       "acceptance_criteria": [
-        "All 7 agent-loop functions have onFailure handlers",
-        "Each logs to slog with function name + loopId + storyId + error",
-        "Loop progress in Redis is updated to reflect the failure",
-        "TypeScript compiles cleanly",
-        "Existing tests pass"
+        "A clean-artifacts step runs before merge-to-main",
+        "Deletes __tests__/ directories, *.out files, and progress.txt from worktree",
+        "Commits cleanup (nothrow in case nothing changed)",
+        "Only operates on worktree path, never main repo",
+        "TypeScript compiles (bunx tsc --noEmit)"
       ]
     },
     {
       "id": "VERIFY-1",
-      "title": "Verify all changes compile and tests pass",
-      "description": "Run bunx tsc --noEmit and bun test to verify everything compiles and all tests pass after all changes.",
+      "title": "Verify compilation and tests pass",
+      "description": "Run `bunx tsc --noEmit` and `bun test` in the system-bus package. Fix any type errors or test failures introduced by previous stories. Do NOT create new test files.",
       "acceptance_criteria": [
         "bunx tsc --noEmit exits 0",
-        "bun test shows 0 failures",
-        "No regressions in existing functionality"
+        "bun test passes with 0 failures",
+        "No new test files created"
       ]
     }
   ]

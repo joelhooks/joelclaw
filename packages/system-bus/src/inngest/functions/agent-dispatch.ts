@@ -72,6 +72,19 @@ export const agentDispatch = inngest.createFunction(
     const execution = await step.run("execute-agent", async () => {
       const workDir = cwd || process.env.HOME || "/Users/joel";
 
+      // Lease fresh Claude token at runtime (not stale boot-time env var)
+      if (tool === "claude") {
+        try {
+          const lease = execSync("secrets lease claude_oauth_token --ttl 1h --raw", {
+            encoding: "utf-8",
+            timeout: 5000,
+          }).trim();
+          if (lease) process.env.CLAUDE_CODE_OAUTH_TOKEN = lease;
+        } catch {
+          // Fall through to existing env var
+        }
+      }
+
       try {
         const cmd = buildCommand(tool, task, { model, sandbox, timeout });
         const output = execSync(cmd, {

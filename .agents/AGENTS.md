@@ -106,6 +106,7 @@ After completing work:
 - **Structural contracts** — verify functions import and use required utilities (guards, claims)
 
 **What NOT to test:**
+- **What the type system already guarantees** (h/t Matt Pocock) — if TypeScript enforces it, don't write a runtime test for it
 - Internal step names or step.run call order
 - That specific mock handlers were invoked N times
 - Source code string matching (regex on .ts files to verify behavior)
@@ -192,6 +193,7 @@ OpenClaw has a **layered AGENTS.md** at its repo root (`~/Code/openclaw/openclaw
 | defuddle-cli | — | npm | Extract clean markdown from web pages |
 | Tailscale | 1.94.1 | homebrew | Mesh VPN + SSH access (running, SSH enabled) |
 | tsgo | — | npm | TypeScript 7 native compiler |
+| joelclaw | — | bun link | Event bus + agent loop CLI — send events, check runs, start loops, restart worker (igs is a legacy alias for joelclaw) |
 | slog | 0.2.0 | bun link | System log CLI (Effect, agent-first HATEOAS JSON, ~/Code/joelhooks/slog/) |
 | Docker Sandbox | 0.11.0 | docker desktop | Isolated agent execution (claude, codex in sandboxes) |
 | Bun | 1.3.9 | homebrew | JS runtime & package manager |
@@ -199,6 +201,15 @@ OpenClaw has a **layered AGENTS.md** at its repo root (`~/Code/openclaw/openclaw
 | yt-dlp | 2026.02.04 | homebrew | Video downloader (YouTube + many sites) |
 | mlx-whisper | 0.4.3 | uv | Local speech-to-text on Apple Silicon (Whisper via MLX) |
 | ffmpeg | 8.0.1 | homebrew | Audio/video processing |
+
+Common joelclaw usage:
+
+```bash
+joelclaw send video/download --url https://example.com/video
+joelclaw runs --limit 10
+joelclaw loop status
+joelclaw worker restart
+```
 
 ### Mac Apps
 
@@ -221,7 +232,7 @@ All skills are installed to `~/.agents/skills/` (universal) and symlinked to Cla
 | docx | anthropics/skills | Word document creation/editing |
 | ffmpeg | digitalsamba (customized) | Video/audio processing — format conversion, compression, platform export |
 | frontend-design | custom | Production-grade frontend UI design |
-| igs | custom | Event bus + agent loop CLI — send events, check runs, start/monitor loops, debug failures, restart worker |
+| joelclaw | custom | Event bus + agent loop CLI — send events, check runs, start/monitor loops, debug failures, restart worker (igs is a legacy alias) |
 | obsidian-bases | custom | Obsidian Bases (.base files) |
 | obsidian-markdown | custom | Obsidian-flavored markdown |
 | pdf | anthropics/skills | PDF creation/editing |
