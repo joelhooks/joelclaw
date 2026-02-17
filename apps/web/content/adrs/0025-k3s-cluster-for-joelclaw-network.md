@@ -290,14 +290,9 @@ After the spike validated feasibility, we completed the full migration:
 
 ## AT Protocol Connection (ADR-0004)
 
-ADR-0004 defines AT Protocol account architecture and PDS concerns. This network decision intersects it directly:
+AT Protocol workloads (PDS instances, relay) are just more pods in this cluster — not a separate control plane. From k8s's perspective they're StatefulSets with PVCs, same as Redis or Qdrant.
 
-- Kubernetes is **infrastructure federation**: where containers run and how workloads are scheduled across machines.
-- AT Protocol is **data and identity federation**: who owns data, where identities resolve, and how agents communicate.
-- The hub model (`panda` today, on-prem control plane in the future) can host both control planes together.
-- PDS instances become Kubernetes workloads (pods + persistent volumes).
-- Inngest bridges both worlds: subscribe to PDS firehose events, then schedule downstream compute via Kubernetes-backed services.
-- NAS storage serves both domains: k8s PVC backing where appropriate and PDS data volumes for protocol state.
+What AT Protocol adds is at the application layer: federated identity (DIDs), typed data schemas (Lexicons), and a firehose for real-time events. Inngest subscribes to the PDS firehose and processes events the same way it handles any other trigger. NAS-backed PVCs store PDS data.
 
 ## What Stays Outside Any Cluster
 
