@@ -245,14 +245,55 @@ Session context:
       }
     );
 
+    const qdrantCollectionResult = await step.run(
+      "ensure-qdrant-collection",
+      async () => {
+        try {
+          const qdrantClient = new QdrantClient({
+            host: "localhost",
+            port: 6333,
+          });
+
+          const collections = await qdrantClient.getCollections();
+          const exists = collections.collections.some(
+            (collection: { name: string }) => collection.name === QDRANT_COLLECTION
+          );
+
+          if (exists) {
+            return {
+              exists: true,
+              created: false,
+            };
+          }
+
+          await qdrantClient.createCollection(QDRANT_COLLECTION, {
+            vectors: {
+              size: QDRANT_VECTOR_DIMENSIONS,
+              distance: "Cosine",
+            },
+          });
+
+          return {
+            exists: false,
+            created: true,
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            exists: false,
+            created: false,
+            error: message,
+          };
+        }
+      }
+    );
+
     const qdrantStoreResult = await step.run("store-to-qdrant", async () => {
       try {
         const qdrantClient = new QdrantClient({
           host: "localhost",
           port: 6333,
         });
-
-        await qdrantClient.getCollections();
 
         const observationItems = createObservationItems(parsedObservations);
         if (observationItems.length === 0) {
@@ -317,6 +358,7 @@ Session context:
           message_count: validatedInput.messageCount,
           captured_at: capturedAt,
           date,
+          qdrant_collection: qdrantCollectionResult,
           qdrant: qdrantStoreResult,
         },
       };
