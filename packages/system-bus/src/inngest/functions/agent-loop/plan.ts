@@ -233,26 +233,38 @@ export const agentLoopPlan = inngest.createFunction(
         const hasYarnLock = await Bun.file(`${worktreePath}/yarn.lock`).exists();
 
         let installCmd: string;
+        let pm: string;
         if (hasPnpmLock) {
-          installCmd = "pnpm install --frozen-lockfile";
+          pm = "pnpm";
+          installCmd = "pnpm install --frozen-lockfile 2>&1";
         } else if (hasBunLock) {
-          installCmd = "bun install --frozen-lockfile";
+          pm = "bun";
+          installCmd = "bun install --frozen-lockfile 2>&1";
         } else if (hasYarnLock) {
-          installCmd = "yarn install --frozen-lockfile";
+          pm = "yarn";
+          installCmd = "yarn install --frozen-lockfile 2>&1";
         } else {
-          installCmd = "npm ci";
+          pm = "npm";
+          installCmd = "npm ci 2>&1";
         }
 
         try {
-          const result = await $`cd ${worktreePath} && ${installCmd}`.quiet().nothrow();
+          // Use shell exec for reliable install — Bun.spawn can race on pnpm writes
+          const { execSync } = await import("node:child_process");
+          const output = execSync(installCmd, {
+            cwd: worktreePath,
+            timeout: 120_000,
+            encoding: "utf-8",
+            maxBuffer: 10 * 1024 * 1024,
+          });
           return {
-            installed: result.exitCode === 0,
-            packageManager: installCmd.split(" ")[0],
-            exitCode: result.exitCode,
+            installed: true,
+            packageManager: pm,
+            output: output.slice(-200),
           };
         } catch (e: any) {
           // Non-fatal — tool may still work if it doesn't need deps
-          return { installed: false, packageManager: installCmd.split(" ")[0], error: e?.message?.slice(0, 200) };
+          return { installed: false, packageManager: pm, error: e?.message?.slice(0, 200) };
         }
       });
     } else {
@@ -261,6 +273,30 @@ export const agentLoopPlan = inngest.createFunction(
         const exists = await Bun.file(`${worktreePath}/.git`).exists();
         if (!exists) {
           throw new Error(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
+        }
+      });
+
+      // Ensure deps are installed on re-entry too (may have been missed or cleaned)
+      await step.run("ensure-worktree-deps", async () => {
+        const { existsSync } = await import("node:fs");
+        const hasNodeModules = existsSync(`${worktreePath}/node_modules`);
+        if (hasNodeModules) {
+          return { installed: true, skipped: true, reason: "node_modules exists" };
+        }
+        // Same install logic as create path
+        const hasPnpmLock = await Bun.file(`${worktreePath}/pnpm-lock.yaml`).exists();
+        const hasBunLock = await Bun.file(`${worktreePath}/bun.lock`).exists() || await Bun.file(`${worktreePath}/bun.lockb`).exists();
+        let installCmd: string;
+        let pm: string;
+        if (hasPnpmLock) { pm = "pnpm"; installCmd = "pnpm install --frozen-lockfile 2>&1"; }
+        else if (hasBunLock) { pm = "bun"; installCmd = "bun install --frozen-lockfile 2>&1"; }
+        else { pm = "npm"; installCmd = "npm ci 2>&1"; }
+        try {
+          const { execSync } = await import("node:child_process");
+          execSync(installCmd, { cwd: worktreePath, timeout: 120_000, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 });
+          return { installed: true, packageManager: pm };
+        } catch (e: any) {
+          return { installed: false, packageManager: pm, error: e?.message?.slice(0, 200) };
         }
       });
     }

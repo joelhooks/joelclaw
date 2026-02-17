@@ -1,5 +1,5 @@
 ---
-title: "The One Where Joel Deploys Kubernetes"
+title: "The One Where Joel Deploys Kubernetes... Again"
 date: "2026-02-16"
 description: "Three containers and a spike that turned into a production migration. Why I moved my personal AI infrastructure from Docker Compose to k3d — and the gotchas nobody warns you about."
 draft: false
@@ -10,6 +10,8 @@ draft: false
 I deployed Kubernetes to run three containers on a Mac Mini in my office.
 
 Three. Redis, Qdrant, Inngest. They were running fine in Docker Compose. Nobody asked for this.
+
+This isn't my first time. In [2023 I wrote about self-hosting](/self-hosting) and compared Kubernetes to Vim — "you'll install it and use somebody's dotfiles or follow a tutorial and add ALL of the plugins, only to be left with a confusing soup of keybindings and features that you don't understand. 🤡" I also tried running [Kubeflow on microk8s](/charmed-kubeflow-on-ubuntu-2204-with-microk8s) that same summer. Both times I learned a lot and shipped nothing.
 
 But I want to add more machines to the network and distribute workloads across them. Docker Compose doesn't do that. The moment you want to schedule a job on a different node, or health-check services across machines, or route inference to a GPU box — you need an orchestrator. That's what Kubernetes is.
 

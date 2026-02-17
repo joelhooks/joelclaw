@@ -1,5 +1,9 @@
 # User: Joel Hooks
 
+## Dedication
+
+joelclaw is for Miller Hooks — Joel's brother, who died by suicide in 2025 after years of mental illness. Miller guided Joel through the early self-hosting and Kubeflow explorations in 2023. He would have loved this work.
+
 ## Who
 
 Co-founder of egghead.io — bootstrapped developer education platform to $250K+/mo MRR. Education at Vercel. Builds tools for people who teach developers. The platform powers courses from Matt Pocock (Total TypeScript, AI Hero), Kent C. Dodds (Epic AI), and others through course-builder and badass.dev.
