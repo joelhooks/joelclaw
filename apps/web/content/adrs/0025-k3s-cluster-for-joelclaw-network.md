@@ -26,11 +26,14 @@ This system is not a lab experiment. Joel's family is going to use it and rely o
 
 `panda` (Mac Mini) is the hub and current on-prem control point.
 
-- `k3d` cluster `joelclaw` is running `k3s v1.33.6` on `panda`
+- **Talos v1.12.4** cluster `joelclaw` running **Kubernetes v1.35.0** on `panda` via Docker (Colima)
+- Container runtime: **Colima 0.10.0** (VZ framework, replaced Docker Desktop per ADR-0029)
+- Replaced k3d/k3s (2026-02-17) — same manifests, declarative Talos OS, path to bare metal
 - Docker Compose is decommissioned
 - `Redis`, `Qdrant`, and `Inngest` run as Kubernetes StatefulSets
 - k8s manifests are in `~/Code/joelhooks/joelclaw/k8s/`
-- Current cluster + workload memory footprint is ~916 MB
+- Storage: local-path-provisioner (added explicitly — Talos doesn't bundle one)
+- `joelclaw` namespace labeled `pod-security.kubernetes.io/enforce=privileged` for hostPath PVs
 
 Other machines on the Tailscale mesh still exist, but `clanker-001` is remote (not on-prem) and not a good control-plane candidate.
 
@@ -224,6 +227,59 @@ k3s handles Flannel CNI over Tailscale — pod-to-pod networking across the tail
 6. `k3d cluster delete joelclaw` — k3d decommissioned
 
 The manifests don't change. The migration is the same pattern as Docker Compose → k3d: stand up new, verify, cut over, tear down old.
+
+## Future Direction: Talos Linux over k3s (When Pi 5 Support Lands)
+
+Talos Linux is the architecturally preferred OS for the Pi 5 control plane. If/when official Pi 5 support ships, we should evaluate switching from k3s on Raspberry Pi OS to Talos bare metal.
+
+### Why Talos is the better architecture
+
+| Property | k3s on Pi OS | Talos on Pi |
+|----------|-------------|-------------|
+| **OS drift** | Possible — it's mutable Linux with SSH | Impossible — immutable root, no shell, no SSH |
+| **OS updates** | Manual `apt upgrade`, unattended-upgrades, or Ansible | `talosctl upgrade` — A/B partition with auto-rollback |
+| **Security surface** | Full Linux userspace, SSH daemon, package manager | Minimal — API-only, no SSH, no package manager |
+| **Config management** | Ansible/cloud-init + k3s config | Single declarative YAML per node, GitOps-native |
+| **Recovery** | Reimage SD card, reinstall k3s, rejoin cluster | Apply same YAML — full rebuild in minutes |
+| **Headless reliability** | Good, but drift accumulates over months | Excellent — the OS literally can't change underneath you |
+
+For a headless, always-on device that the family relies on, "the Pi can't drift" is the killer feature.
+
+### Current blocker: Pi 5 not officially supported
+
+As of Talos v1.12 (Dec 2025, kernel 6.18):
+- Pi 5 ethernet driver still has issues
+- Sidero team: "we need upstream Linux kernel and u-boot support"
+- Community workarounds exist (custom installer images) but aren't production-grade
+- Pi 4B and CM4 are fully supported
+
+**Trigger to revisit**: Talos release notes include official Raspberry Pi 5 support in the SBC list. Check with each major Talos release.
+
+### Progress: Mac Mini already running Talos (2026-02-17)
+
+We moved ahead with Talos on the Mac Mini before Pi 5 support landed. The current stack:
+
+- **Colima** (VZ framework) → Docker runtime
+- **Talos v1.12.4** → `talosctl cluster create docker` with port exposure
+- **Same k8s manifests** — zero changes to redis.yaml, qdrant.yaml, inngest.yaml
+- All 19 Inngest functions registered and working
+
+This means Talos operational knowledge is being built **now**, not deferred to Pi 5 arrival. When Pi 5 support lands, the migration is:
+
+1. Flash Talos image to Pi 5 USB SSD
+2. `talosctl apply-config` with controlplane.yaml
+3. `talosctl bootstrap` to initialize the cluster
+4. `kubectl apply -f k8s/` — same manifests
+5. Mac Mini joins as worker (already running Talos in Docker)
+6. Verify all services, cut over
+
+### What remains blocked
+
+k3s is **no longer the plan** for Pi 5. Talos is the target OS for all nodes. The only blocker is Talos Pi 5 hardware support (ethernet driver — check each Talos release).
+
+If Pi 5 support doesn't land in a reasonable timeframe, fallback is still k3s on Raspberry Pi OS — but the preference is now clearly Talos everywhere.
+
+**See also**: [ADR-0029 — Colima + Talos](0029-replace-docker-desktop-with-colima.md) | [Talos Linux evaluation](../../Resources/tools/talos-linux.md)
 
 ## Phase 1: Multi-Node Expansion (When Workload Demands It)
 
