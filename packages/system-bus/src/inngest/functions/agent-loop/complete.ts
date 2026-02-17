@@ -106,8 +106,10 @@ export const agentLoopComplete = inngest.createFunction(
           // Pull from monorepo (worker's origin)
           const pull = await $`cd ${workerRoot} && git pull --ff-only`.quiet().nothrow();
           if (pull.exitCode !== 0) {
-            // If not fast-forward, reset to origin/main
-            await $`cd ${workerRoot} && git fetch origin && git reset --hard origin/main`.quiet().nothrow();
+            // If not fast-forward, force-sync worker clone from origin/main
+            await $`cd ${workerRoot} && git fetch origin && git reset --hard origin/main && git clean -fd`
+              .quiet()
+              .nothrow();
           }
           // Install deps in case new packages were added
           await $`cd ${workerRoot} && bun install --silent`.quiet().nothrow();

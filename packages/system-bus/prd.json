@@ -12,7 +12,8 @@
         "plan.ts stores event.data.workDir (fallback to event.data.project) as top-level 'workDir' field",
         "Existing PRD fields (title, description, stories, context) are unchanged",
         "TypeScript compiles (bunx tsc --noEmit)"
-      ]
+      ],
+      "passes": true
     },
     {
       "id": "SYNC-1",
