@@ -1,6 +1,7 @@
 import { inngest } from "../client.ts";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import Redis from "ioredis";
+import { randomUUID } from "node:crypto";
 import { parseObserverOutput } from "./observe-parser";
 import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
 
@@ -184,7 +185,7 @@ Session context:
 - dedupeKey: ${validatedInput.dedupeKey}`;
 
       try {
-        const result = await Bun.$`pi --system ${OBSERVER_SYSTEM_PROMPT} --prompt ${promptWithSessionContext}`
+        const result = await Bun.$`pi --no-tools --no-session --print --mode text --system-prompt ${OBSERVER_SYSTEM_PROMPT} ${promptWithSessionContext}`
           .quiet()
           .nothrow();
 
@@ -306,7 +307,7 @@ Session context:
 
         const timestamp = validatedInput.capturedAt ?? new Date().toISOString();
         const points = observationItems.map((item, index) => ({
-          id: `${validatedInput.sessionId}-${index + 1}-${Date.now()}`,
+          id: randomUUID(),
           vector: QDRANT_ZERO_VECTOR,
           payload: {
             session_id: validatedInput.sessionId,
