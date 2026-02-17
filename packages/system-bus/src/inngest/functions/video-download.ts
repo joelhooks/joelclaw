@@ -98,38 +98,36 @@ export const videoDownload = inngest.createFunction(
     });
 
     // Step 4: Emit events — trigger transcript processing
-    await step.run("emit-events", async () => {
-      await inngest.send([
-        {
-          name: "pipeline/video.downloaded",
-          data: {
-            slug: download.slug,
-            title: download.title,
-            channel: download.channel,
-            duration: download.duration,
-            nasPath,
-            tmpDir: download.dir,
-            sourceUrl: download.sourceUrl,
-            publishedDate: download.publishedDate,
-          },
+    await step.sendEvent("emit-events", [
+      {
+        name: "pipeline/video.downloaded",
+        data: {
+          slug: download.slug,
+          title: download.title,
+          channel: download.channel,
+          duration: download.duration,
+          nasPath,
+          tmpDir: download.dir,
+          sourceUrl: download.sourceUrl,
+          publishedDate: download.publishedDate,
         },
-        {
-          name: "pipeline/transcript.requested",
-          data: {
-            source: "youtube",
-            audioPath: download.audioPath,
-            title: download.title,
-            slug: download.slug,
-            channel: download.channel,
-            publishedDate: download.publishedDate,
-            duration: download.duration,
-            sourceUrl: download.sourceUrl,
-            nasPath,
-            tmpDir: download.dir,
-          },
+      },
+      {
+        name: "pipeline/transcript.requested",
+        data: {
+          source: "youtube",
+          audioPath: download.audioPath,
+          title: download.title,
+          slug: download.slug,
+          channel: download.channel,
+          publishedDate: download.publishedDate,
+          duration: download.duration,
+          sourceUrl: download.sourceUrl,
+          nasPath,
+          tmpDir: download.dir,
         },
-      ]);
-    });
+      },
+    ]);
 
     return {
       slug: download.slug,

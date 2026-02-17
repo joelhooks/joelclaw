@@ -12,7 +12,8 @@
         "TypeScript compiles cleanly: bunx tsc --noEmit"
       ],
       "priority": 1,
-      "passes": false
+      "passes": false,
+      "skipped": true
     },
     {
       "id": "SEND-2",

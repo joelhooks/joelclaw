@@ -202,23 +202,21 @@ date: ${today}
     });
 
     // Step 5: Emit completion + trigger summarization
-    await step.run("emit-events", async () => {
-      await inngest.send([
-        {
-          name: "pipeline/transcript.processed",
-          data: {
-            vaultPath,
-            title,
-            slug,
-            source,
-          },
+    await step.sendEvent("emit-events", [
+      {
+        name: "pipeline/transcript.processed",
+        data: {
+          vaultPath,
+          title,
+          slug,
+          source,
         },
-        {
-          name: "content/summarize.requested",
-          data: { vaultPath },
-        },
-      ]);
-    });
+      },
+      {
+        name: "content/summarize.requested",
+        data: { vaultPath },
+      },
+    ]);
 
     return {
       vaultPath,
