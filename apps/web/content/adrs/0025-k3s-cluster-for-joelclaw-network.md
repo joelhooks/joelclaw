@@ -68,13 +68,13 @@ These are real problems, not hypothetical ones:
 
 1. **Worker crashes are silent.** Last week the worker crashed because `bun install` wasn't run after a dependency change. launchd restarted it, but it kept crash-looping. Nobody knew until a function didn't run. We patched `start.sh` to self-heal (git pull + bun install before serve), but there's no alerting.
 
-2. **No unified status view.** To know what's running: `docker ps` (3 containers), `launchctl list | grep joel` (4 plists), then SSH to clanker-001 to check pdf-brain. There's no `joelclaw status` command.
+2. **No unified status view.** To know what's running: `kubectl get pods -A`, `launchctl list | grep joel`, then SSH to clanker-001 to check pdf-brain. There's no `joelclaw status` command.
 
-3. **Config is scattered.** Docker Compose YAML, launchd plists, Caddy config, `.env` files, `start.sh` — five formats in five locations. A change to one can break another with no obvious connection.
+3. **Config is scattered.** k8s manifests, launchd plists, Caddy config, `.env` files, `start.sh` — five formats in five locations. A change to one can break another with no obvious connection.
 
 4. **clanker-001 is a mystery.** pdf-brain runs there. We can hit it over HTTP. We don't know: what manages it, how to restart it, what specs the machine has, whether it's healthy.
 
-5. **No health checks.** None of the services expose health endpoints that an automated system checks. The Inngest dashboard shows function runs, but nothing monitors "is the worker process alive" or "is Qdrant accepting writes."
+5. **No automated health loop.** Services expose health endpoints, but no single scheduled check evaluates the full system and emits degraded-state alerts.
 
 ### What does NOT hurt (yet)
 
@@ -101,10 +101,10 @@ A single command that shows everything running across the network:
 $ joelclaw status
 
 panda (Mac Mini M4 Pro, 64 GB)
-  docker    inngest     ✅ healthy   :8288   177 MB
-  docker    qdrant      ✅ healthy   :6333   331 MB
-  docker    redis       ✅ healthy   :6379    21 MB
-  launchd   worker      ✅ running   :3111   13 functions
+  k8s       inngest     ✅ healthy   :8288
+  k8s       qdrant      ✅ healthy   :6333
+  k8s       redis       ✅ healthy   :6379
+  launchd   worker      ✅ running   :3111   14 functions
   launchd   caddy       ✅ running   :443    TLS proxy
   launchd   vault-sync  ✅ running           FSEvents watcher
   launchd   adr-sync    ✅ running           WatchPaths watcher
@@ -125,7 +125,7 @@ Current status: **not done**.
 
 A new Inngest function (`system/health-check`) on a 5-minute cron:
 
-- Ping each Docker container's health endpoint
+- Ping each core k8s workload and exposed service endpoint
 - Check `curl localhost:3111/` for worker function count
 - Check `curl clanker-001:3847/` for pdf-brain status
 - Check Tailscale node status via `tailscale status --json`
@@ -148,8 +148,8 @@ Move into the monorepo and track:
 │   │   └── com.joel.adr-sync-watcher.plist
 │   ├── caddy/
 │   │   └── Caddyfile
-│   └── docker/
-│       └── docker-compose.yml  (move from packages/system-bus/)
+│   └── k8s/
+│       └── manifests/  (service/workload source of truth)
 ```
 
 Add a `joelclaw infra apply` command that symlinks/copies config to the right places and restarts affected services. One command to go from repo state → running state.
@@ -315,9 +315,9 @@ Some things don't belong in an orchestrator:
 |---|---|---|
 | ADR-0006 (observability) | Health check cron + `joelclaw status` | Prometheus + Grafana via Helm, automatic service discovery |
 | ADR-0004 (AT Protocol) | No change to account model | PDS workloads run as k8s pods with persistent storage |
-| ADR-0021 (memory system) | No change — runs on existing infra | Observer/Reflector can use local LLM on Studio |
-| ADR-0024 (session search) | Embedding runs on Mini as-is | Can schedule embedding across both Macs |
-| ADR-0005 (coding loops) | Docker sandbox continues | k8s Jobs with resource limits, schedule on Mini |
+| ADR-0021 (memory system) | No change — runs on existing infra | Observer/Reflector can use local LLM on the cluster hub |
+| ADR-0024 (session search) | Embedding runs as-is | Can schedule embedding across cluster nodes |
+| ADR-0005 (coding loops) | Docker sandbox continues | k8s Jobs with resource limits where appropriate |
 | ADR-0023 (Docker sandbox) | No change | k8s Jobs with namespace isolation |
 
 ## Decision Summary
