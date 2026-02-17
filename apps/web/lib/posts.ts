@@ -14,6 +14,7 @@ export type PostMeta = {
   source?: string;
   channel?: string;
   duration?: string;
+  draft?: boolean;
 };
 
 const contentDir = path.join(process.cwd(), "content");
@@ -36,8 +37,10 @@ export function getAllPosts(): PostMeta[] {
         source: data.source,
         channel: data.channel,
         duration: data.duration,
+        draft: data.draft ?? false,
       };
     })
+    .filter((post) => process.env.NODE_ENV === "development" || !post.draft)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
 
@@ -59,6 +62,7 @@ export function getPost(slug: string) {
       source: data.source,
       channel: data.channel,
       duration: data.duration,
+      draft: data.draft ?? false,
     } satisfies PostMeta,
     content,
   };
@@ -68,5 +72,11 @@ export function getPostSlugs(): string[] {
   return fs
     .readdirSync(contentDir)
     .filter((f) => f.endsWith(".mdx"))
+    .filter((f) => {
+      if (process.env.NODE_ENV === "development") return true;
+      const raw = fs.readFileSync(path.join(contentDir, f), "utf-8");
+      const { data } = matter(raw);
+      return !data.draft;
+    })
     .map((f) => f.replace(/\.mdx$/, ""));
 }
