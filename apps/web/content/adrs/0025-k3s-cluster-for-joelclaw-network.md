@@ -174,20 +174,56 @@ Current status: **not done**.
 - [ ] clanker-001 documented: specs, management, health endpoint
 - [x] No regressions: all 14 Inngest functions still register and execute
 
-## k3d Graduation (Open Decision)
+## k3d Graduation (Decided: Pi 5 Control Plane)
 
-`k3d` is a dead end for multi-node in this environment: it runs k3s inside Docker on one host and remote machines cannot join as real cluster nodes.
+`k3d` is a dead end for multi-node: it runs k3s inside Docker on one host and remote machines cannot join as real cluster nodes.
 
-When the trigger fires (second always-on machine with real workloads), graduation options are:
+**Decision (2026-02-16):** Raspberry Pi 5 (16 GB) as on-prem k3s control plane. Hardware ordered.
 
-| Option | Why choose it | Tradeoff |
-|---|---|---|
-| **OrbStack** | Lightweight VM, built-in k8s, API exposure is clean on macOS | New runtime/tooling to standardize |
-| **Colima + k3s** | Lima VM approach with full control | More manual setup and ops burden |
-| **microk8s via Multipass** | Familiar packaging and straightforward cluster model | ~4 GB VM overhead; known disk I/O issues on Apple Silicon |
-| **On-prem Linux control plane** | Cleanest long-term architecture for multi-node k3s | Requires buying or repurposing on-prem Linux hardware |
+### Why the Pi
 
-`clanker-001` is remote, not on-prem, and should not be the control-plane host for this network.
+The control plane (API server, scheduler, etcd/SQLite) just decides where things run. k3s server uses 500–800 MB RAM. A Pi 5 with 16 GB is wildly overprovisioned for this role — which is exactly what you want from the thing that manages the cluster.
+
+Requirements for a control plane: always on, always reachable, native Linux (no VM layer), SSD for etcd writes. A Pi on a USB SSD meets all four. ~5W power draw vs the Mac Mini's 30–60W. It sits on the tailnet, always available.
+
+### Why not the alternatives
+
+| Option | Verdict |
+|---|---|
+| **OrbStack on Mac** | Single-node only. Good for local k8s dev, can't be a multi-node control plane. |
+| **Colima + k3s on Mac** | Still a VM on macOS. Adds a layer the Pi doesn't need. |
+| **microk8s via Multipass** | Multipass has [documented disk I/O issues](https://github.com/canonical/multipass/issues/2440) on Apple Silicon (16 MB/s writes on M1). Stability problems after running for days ([#4456](https://github.com/canonical/microk8s/issues/4456)). Second VM alongside Docker Desktop. |
+| **clanker-001** | Remote, not on-prem. Control plane should be local to the network. |
+
+### How it works
+
+k3s has [built-in Tailscale integration](https://docs.k3s.io/networking/distributed-multicloud) (available since v1.27.3):
+
+```bash
+# On Pi 5 (control plane):
+k3s server --token <token> \
+  --vpn-auth="name=tailscale,joinKey=<AUTH-KEY>" \
+  --node-external-ip=<PiTailscaleIP>
+
+# On Mac Mini (agent, via OrbStack or Colima VM):
+k3s agent --token <token> \
+  --vpn-auth="name=tailscale,joinKey=<AUTH-KEY>" \
+  --server https://<PiTailscaleIP>:6443 \
+  --node-external-ip=<MacTailscaleIP>
+```
+
+k3s handles Flannel CNI over Tailscale — pod-to-pod networking across the tailnet. The Mac can't run k3s natively (Linux cgroups required), so the agent runs in a lightweight Linux VM. OrbStack is the cleanest option for this.
+
+### Migration path from k3d
+
+1. Pi 5 arrives → flash Raspberry Pi OS Lite (64-bit), boot from USB SSD
+2. Install Tailscale, install k3s server with `--vpn-auth`
+3. `kubectl apply -f k8s/` — same manifests, new cluster
+4. Mac Mini joins as k3s agent via OrbStack VM
+5. Verify all services healthy, worker re-registers with Inngest
+6. `k3d cluster delete joelclaw` — k3d decommissioned
+
+The manifests don't change. The migration is the same pattern as Docker Compose → k3d: stand up new, verify, cut over, tear down old.
 
 ## Phase 1: Multi-Node Expansion (When Workload Demands It)
 
