@@ -7,8 +7,10 @@ import {
   summarize,
   systemLogger,
   observeSessionFunction,
+  reflect,
   contentSync,
   discoveryCapture,
+  promote,
   agentLoopPlan,
   agentLoopTestWriter,
   agentLoopImplement,
@@ -30,8 +32,10 @@ app.get("/", (c) =>
       "content-summarize",
       "system-logger",
       "memory/observe-session",
+      "memory/reflect",
       "content-sync",
       "discovery-capture",
+      "memory/review-promote",
       "agent-loop-plan",
       "agent-loop-test-writer",
       "agent-loop-implement",
@@ -65,8 +69,10 @@ app.on(
       summarize,
       systemLogger,
       observeSessionFunction,
+      reflect,
       contentSync,
       discoveryCapture,
+      promote,
       agentLoopPlan,
       agentLoopTestWriter,
       agentLoopImplement,
@@ -87,5 +93,5 @@ export default {
 console.log("🚌 system-bus worker running on http://localhost:3111");
 console.log("📡 Inngest endpoint: http://localhost:3111/api/inngest");
 console.log(
-  "📋 Functions: video-download, transcript-process, content-summarize, system-logger, memory/observe-session, system/adr-sync"
+  "📋 Functions: video-download, transcript-process, content-summarize, system-logger, memory/observe-session, memory/reflect, memory/review-promote, system/adr-sync"
 );

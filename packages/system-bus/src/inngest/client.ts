@@ -383,12 +383,9 @@ export type Events = {
   };
   "memory/observations.accumulated": {
     data: {
-      session_id?: string;
-      sessionId?: string;
       date: string;
       totalTokens: number;
       observationCount: number;
-      observation_count?: number;
       capturedAt: string;
     };
   };
