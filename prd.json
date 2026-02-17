@@ -1,78 +1,53 @@
 {
-  "title": "Write ADR-0010: System Loop (OpenClaw Gateway)",
-  "description": "Use the agent loop to write ADR-0010, which designs the always-on system loop (SENSE→ORIENT→DECIDE→ACT→LEARN). The ADR goes in ~/Vault/docs/decisions/0010-system-loop-gateway.md. Each story builds one section of the ADR. The implementor writes markdown, the reviewer tests structural/content requirements. Context: we have a working coding loop (ADR-0005/0007), event bus (Inngest), note queue (Redis), retrospective system, and slog. What's missing is the autonomous orchestration layer that decides what to work on.",
+  "title": "Migrate joelclaw CLI into monorepo packages/cli",
+  "description": "Replace the stale packages/cli/ scaffold with the current working CLI from ~/Code/joelhooks/joelclaw-cli/. The standalone repo has 16 source files (cli.ts, 11 command files, config.ts, inngest.ts, response.ts, schema.ts) with the joelclaw rename already done in cli.ts and response.ts but NOT in schema.ts, status.ts, inngest.ts, and several command files that still say 'igs'. Complete the rename, add the note subcommand, and wire everything up. The standalone repo at ~/Code/joelhooks/joelclaw-cli/ is the reference — copy its src/ contents into packages/cli/src/, update package.json deps, then finish the remaining work.",
   "stories": [
     {
-      "id": "ADR10-1",
-      "title": "Frontmatter + Context and Problem Statement",
-      "description": "Create ~/Vault/docs/decisions/0010-system-loop-gateway.md (IMPORTANT: also copy the file to docs/decisions/0010-system-loop-gateway.md in the current working directory so both paths stay in sync). Add YAML frontmatter with UNQUOTED values (status: proposed, date: 2026-02-14, decision-makers: Joel Hooks). Do NOT quote YAML values — write status: proposed not status: \"proposed\". Write the Context and Problem Statement section. It should explain: (1) the current system has execution capabilities (coding loops via ADR-0005/0007, video/transcript pipelines, note queue, retrospective) but no autonomous orchestration layer, (2) Joel is currently the gateway — he decides what loops to run, what to prioritize, what to fix, (3) the OpenClaw architecture calls for a central LLM session loop that senses events, orients on state, decides actions, executes via pipelines, and learns from outcomes, (4) the decision drivers around always-on vs cron, safety, cost, and human oversight. Reference ADR-0005, ADR-0007, ADR-0008 as related decisions.",
+      "id": "COPY-1",
+      "title": "Copy current CLI source into packages/cli and update deps",
+      "description": "Delete the stale contents of packages/cli/src/ and replace with the full source tree from ~/Code/joelhooks/joelclaw-cli/src/ (cli.ts, commands/*.ts, config.ts, inngest.ts, response.ts, schema.ts). Update packages/cli/package.json to include all dependencies from the standalone (ioredis, @effect/cli, @effect/platform, @effect/platform-bun, effect). Add the igs legacy bin entry: \"igs\": \"src/cli.ts\". Remove the stale .d.ts shim files (fetch-json-compat.d.ts, globals.d.ts) that are no longer needed. Run bun install from the monorepo root.",
       "acceptance_criteria": [
-        "File exists at ~/Vault/docs/decisions/0010-system-loop-gateway.md AND also at docs/decisions/0010-system-loop-gateway.md (repo-local)",
-        "Has YAML frontmatter with status: proposed",
-        "Has ## Context and Problem Statement section",
-        "Context section is at least 200 words",
-        "References ADR-0005 (coding loops) and ADR-0007 (v2 improvements)",
-        "Describes the SENSE→ORIENT→DECIDE→ACT→LEARN pattern",
-        "Explains that Joel is currently the manual gateway",
-        "Mentions existing capabilities: coding loop, event bus, note queue, retrospective",
-        "TypeScript compiles with no errors (bun test on the test file)"
+        "packages/cli/src/commands/ directory exists with all 11 command files (diagnose.ts, discover.ts, events.ts, logs.ts, loop.ts, refresh.ts, runs.ts, schema.ts, send.ts, status.ts, watch.ts)",
+        "packages/cli/src/ has cli.ts, config.ts, inngest.ts, response.ts, schema.ts",
+        "packages/cli/package.json has ioredis in dependencies",
+        "packages/cli/package.json bin has both joelclaw and igs entries",
+        "No stale .d.ts shim files (fetch-json-compat.d.ts, globals.d.ts) remain",
+        "bun install succeeds from monorepo root",
+        "bun run packages/cli/src/cli.ts --help shows joelclaw help"
       ],
-      "priority": 1,
-      "passes": true
+      "priority": 1
     },
     {
-      "id": "ADR10-2",
-      "title": "Decision Drivers + Considered Options",
-      "description": "Add ## Decision Drivers and ## Considered Options sections to the ADR. Decision drivers should include: autonomous action capability, safety and human oversight, cost control (LLM calls), state awareness, composability with existing pipelines, graceful degradation. Considered Options should include at least 3 options: (A) No system loop — keep human as gateway, (B) Cron-triggered heartbeat — Inngest cron function that runs every N minutes and checks state, (C) Event-driven reactive loop — function triggered by terminal events (loop.complete, note captured, etc) that evaluates next action, (D) Always-on LLM session — persistent context window that receives all events. Each option should have a brief description of how it works.",
+      "id": "RENAME-1",
+      "title": "Complete igs→joelclaw rename in all source files",
+      "description": "Several files still reference 'igs' in user-facing strings. Update ALL remaining references: (1) inngest.ts Effect.Service tag 'igs/Inngest' → 'joelclaw/Inngest', (2) schema.ts examples that say 'igs send' → 'joelclaw send', 'igs loop' → 'joelclaw loop', 'igs functions' → 'joelclaw functions', (3) status.ts next_actions that say 'igs functions' etc, (4) response.ts normalizeCommand already handles prefix replacement but verify it catches all cases, (5) any variable named 'igs' in cli.ts and command files should be renamed to something clearer (e.g. 'client' or 'inngestClient'). Internal Effect service tags and variable names are fine to update — they're not in any external contract.",
       "acceptance_criteria": [
-        "Has ## Decision Drivers section with at least 5 bullet points",
-        "Has ## Considered Options section",
-        "At least 3 options are described, each as ### Option subsections",
-        "Options include a cron/heartbeat approach and an event-driven approach",
-        "Each option has at least 2 sentences describing how it works",
-        "Decision drivers mention safety, cost, and human oversight",
-        "TypeScript compiles with no errors (bun test on the test file)"
+        "grep -rn '\\bigs\\b' packages/cli/src/ returns zero matches (no remaining 'igs' references)",
+        "bun run packages/cli/src/cli.ts --help shows 'joelclaw' not 'igs'",
+        "bun run packages/cli/src/cli.ts schema output uses 'joelclaw' in all examples",
+        "bun run packages/cli/src/cli.ts status output uses 'joelclaw' in next_actions",
+        "TypeScript compiles: cd packages/cli && bunx tsc --noEmit"
       ],
-      "priority": 2,
-      "passes": true
+      "priority": 2
     },
     {
-      "id": "ADR10-3",
-      "title": "Decision Outcome + Consequences + Pros/Cons",
-      "description": "Add ## Decision Outcome and ## Pros and Cons sections. The recommended decision should be a hybrid approach: event-driven reactive loop as the primary mechanism (triggered by agent/loop.complete, agent/loop.retro.complete, system/note, etc.) PLUS a cron heartbeat as a fallback sweep (every 15-30 minutes). This gives real-time reactivity to events while ensuring nothing falls through the cracks. The consequences section should cover: good (autonomous action, faster feedback loops, note queue gets processed), bad (cost of LLM calls, risk of runaway actions, complexity), neutral (human can still override via cancel). Add Pros and Cons for each considered option.",
+      "id": "NOTE-1",
+      "title": "Add joelclaw note subcommand",
+      "description": "Add a 'joelclaw note' subcommand in packages/cli/src/commands/note.ts that captures a thought to the Redis note queue. It accepts a text argument and optional --source and --tags flags. It writes to Redis using RPUSH to key 'joelclaw:notes:queue' as JSON with fields: id (nanoid or crypto.randomUUID), text, source (default 'cli'), createdAt (ISO timestamp), tags (string array), status ('pending'). Also sends a 'system/note.captured' event to Inngest with the same payload. Output is HATEOAS JSON with the created note and next_actions. Wire the command into cli.ts's root command withSubcommands. Use the existing Inngest service for the event send and create a Redis connection using ioredis (same host/port pattern as the worker: REDIS_HOST/REDIS_PORT env vars with localhost:6379 defaults).",
       "acceptance_criteria": [
-        "Has ## Decision Outcome section",
-        "Chosen option is clearly stated with rationale",
-        "Decision recommends a hybrid event-driven + cron approach",
-        "Has ### Consequences subsection with Good, Bad, and Neutral items",
-        "Has ## Pros and Cons of the Options section",
-        "Each option from the Considered Options has pros and cons listed",
-        "Mentions safety constraints (human override, action limits, cost caps)",
-        "TypeScript compiles with no errors (bun test on the test file)"
+        "packages/cli/src/commands/note.ts exists",
+        "note command is wired into cli.ts withSubcommands",
+        "joelclaw note 'test thought' writes to Redis key joelclaw:notes:queue",
+        "Note JSON has fields: id, text, source, createdAt, tags, status",
+        "Default source is 'cli', default tags is empty array, status is 'pending'",
+        "--source flag overrides the source field",
+        "--tags flag accepts comma-separated tags string",
+        "A system/note.captured event is sent to Inngest",
+        "Output is HATEOAS JSON with created note and next_actions",
+        "TypeScript compiles: cd packages/cli && bunx tsc --noEmit"
       ],
-      "priority": 3,
-      "passes": true
-    },
-    {
-      "id": "ADR10-4",
-      "title": "Implementation Plan + Verification Criteria",
-      "description": "Add ## Implementation Plan and ## Verification sections. The implementation plan should describe: (1) new Inngest function system/heartbeat triggered by cron AND by terminal events, (2) state gathering step that reads: note queue length, recent slog entries, pending retro recommendations, active loop runs, half-done inventory, (3) LLM decision step that evaluates state and picks next action from a constrained action set (start loop, process notes, apply retro recommendation, emit alert, do nothing), (4) action execution step that emits the appropriate Inngest event, (5) safety rails: max actions per hour, cost budget, human-approval gate for destructive actions, always-log reasoning. The verification section should have testable checkbox items.",
-      "acceptance_criteria": [
-        "Has ## Implementation Plan section with numbered steps",
-        "Plan describes the heartbeat Inngest function",
-        "Plan describes state gathering (note queue, slog, retros, active runs)",
-        "Plan describes LLM decision step with constrained action set",
-        "Plan describes safety rails (rate limits, cost budget, human approval gate)",
-        "Has ## Verification section with at least 5 checkbox items using - [ ] syntax",
-        "Verification items are specific and testable, not vague",
-        "Overall ADR is coherent and self-consistent across all sections",
-        "TypeScript compiles with no errors (bun test on the test file)"
-      ],
-      "priority": 4,
-      "passes": true
+      "priority": 3
     }
   ],
-  "checks": [
-    "test"
-  ]
+  "checks": ["tsc"]
 }

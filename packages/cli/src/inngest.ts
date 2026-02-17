@@ -1,5 +1,9 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { loadConfig } from "./config"
+import {
+  InngestFunction, EventsV2Response, RunsResponse, RunTrigger,
+  SpanOutput, LoopEventData,
+} from "./schema"
 
 const cfg = loadConfig()
 const GQL = `${cfg.inngestUrl}/v0/gql`
@@ -18,14 +22,21 @@ class InngestError {
 const gql = (query: string) =>
   Effect.tryPromise({
     try: async () => {
-      const res = await fetch(GQL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
-      })
-      const json = await res.json()
-      if (json.errors?.length) throw new Error(json.errors[0].message)
-      return json.data
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 5000)
+      try {
+        const res = await fetch(GQL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query }),
+          signal: controller.signal,
+        })
+        const json = await res.json() as { errors?: Array<{ message: string }>; data: any }
+        if (json.errors?.length) throw new Error(json.errors[0].message)
+        return json.data
+      } finally {
+        clearTimeout(timer)
+      }
     },
     catch: (e) => new InngestError("GQL request failed", e),
   })
@@ -153,6 +164,43 @@ export class Inngest extends Effect.Service<Inngest>()("igs/Inngest", {
       }
     })
 
+    // ── events ─────────────────────────────────────────────────────
+
+    const events = Effect.fn("Inngest.events")(function* (opts: {
+      prefix?: string
+      hours?: number
+      count?: number
+    }) {
+      const hours = opts.hours ?? 4
+      const count = opts.count ?? 100
+      const from = new Date(Date.now() - hours * 3600_000).toISOString()
+
+      const data = yield* gql(`{
+        eventsV2(first: ${count}, filter: {
+          from: "${from}",
+          includeInternalEvents: false
+        }) {
+          edges { node { id name occurredAt raw } }
+        }
+      }`)
+
+      const decoded = Schema.decodeUnknownSync(EventsV2Response)(data)
+
+      const results = decoded.eventsV2.edges
+        .map((e) => {
+          const raw = JSON.parse(e.node.raw ?? "{}")
+          return {
+            id: e.node.id,
+            name: e.node.name,
+            occurredAt: e.node.occurredAt,
+            data: raw.data ?? {},
+          }
+        })
+        .filter((e) => !opts.prefix || e.name.startsWith(opts.prefix))
+
+      return results
+    })
+
     // ── health ─────────────────────────────────────────────────────
 
     const health = Effect.fn("Inngest.health")(function* () {
@@ -180,20 +228,21 @@ export class Inngest extends Effect.Service<Inngest>()("igs/Inngest", {
         checks.worker = { ok: false, detail: "unreachable" }
       }
 
-      // docker containers
+      // k8s pods
       try {
-        const proc = Bun.spawnSync(["docker", "ps", "--filter", "name=system-bus", "--format", "{{.Names}}: {{.Status}}"])
+        const proc = Bun.spawnSync(["kubectl", "get", "pods", "-n", "joelclaw", "--no-headers", "-o", "custom-columns=NAME:.metadata.name,STATUS:.status.phase,READY:.status.containerStatuses[0].ready"])
         const output = proc.stdout.toString().trim()
-        const lines = output.split("\n").filter(Boolean)
-        checks.docker = { ok: lines.length >= 3, detail: lines.join(" | ") }
+        const pods = output.split("\n").filter(Boolean)
+        const allRunning = pods.every(p => p.includes("Running") && p.includes("true"))
+        checks.k8s = { ok: allRunning, detail: pods.join(" | ") }
       } catch {
-        checks.docker = { ok: false, detail: "docker not available" }
+        checks.k8s = { ok: false, detail: "kubectl not available or k3d cluster not running" }
       }
 
       return checks
     })
 
-    return { send, functions, runs, run, health } as const
+    return { send, functions, runs, run, events, health } as const
   },
 }) {}
 

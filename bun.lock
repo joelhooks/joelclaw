@@ -35,6 +35,7 @@
         "@repo/ui": "workspace:*",
         "@types/mdast": "^4.0.4",
         "gray-matter": "^4.0.3",
+        "lucide-react": "^0.564.0",
         "next": "16.1.5",
         "next-mdx-remote": "^6.0.0",
         "nuqs": "^2.8.8",
@@ -67,12 +68,14 @@
       "version": "0.1.0",
       "bin": {
         "joelclaw": "src/cli.ts",
+        "igs": "src/cli.ts",
       },
       "dependencies": {
         "@effect/cli": "^0.73.2",
         "@effect/platform": "^0.94.5",
         "@effect/platform-bun": "^0.87.1",
         "effect": "^3.19.17",
+        "ioredis": "^5.9.3",
       },
       "devDependencies": {
         "@types/bun": "latest",
@@ -903,6 +906,8 @@
     "long": ["long@5.3.2", "", {}, "sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA=="],
 
     "longest-streak": ["longest-streak@3.1.0", "", {}, "sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g=="],
+
+    "lucide-react": ["lucide-react@0.564.0", "", { "peerDependencies": { "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-JJ8GVTQqFwuliifD48U6+h7DXEHdkhJ/E87kksGByII3qHxtPciVb8T8woQONHBQgHVOl7rSMrrip3SeVNy7Fg=="],
 
     "magic-string": ["magic-string@0.30.21", "", { "dependencies": { "@jridgewell/sourcemap-codec": "1.5.5" } }, "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ=="],
 
