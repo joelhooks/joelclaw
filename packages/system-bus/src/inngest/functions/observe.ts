@@ -2,6 +2,8 @@ import { inngest } from "../client.ts";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import Redis from "ioredis";
 import { randomUUID } from "node:crypto";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { parseObserverOutput } from "./observe-parser";
 import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
 
@@ -170,6 +172,30 @@ export const observeSessionFunction = inngest.createFunction(
       validateObserveInput(event.name, event.data)
     );
 
+    // Dedupe guard — prevent Inngest retries from re-processing
+    const dedupeResult = await step.run("dedupe-check", async () => {
+      const redis = getRedisClient();
+      const result = await redis.set(
+        `memory:observe:lock:${validatedInput.dedupeKey}`,
+        "1",
+        "EX",
+        3600,
+        "NX"
+      );
+      if (result === null) {
+        return { dedupe: true, dedupeKey: validatedInput.dedupeKey };
+      }
+      return { dedupe: false, dedupeKey: validatedInput.dedupeKey };
+    });
+
+    if (dedupeResult.dedupe) {
+      return {
+        status: "deduplicated",
+        sessionId: validatedInput.sessionId,
+        dedupeKey: validatedInput.dedupeKey,
+      };
+    }
+
     const llmOutput = await step.run("call-observer-llm", async () => {
       const sessionName =
         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
@@ -245,6 +271,56 @@ Session context:
         }
       }
     );
+
+    // Append to daily log — durable fallback even if Redis/Qdrant are down
+    const dailyLogResult = await step.run("append-daily-log", async () => {
+      const date = isoDateFromTimestamp(validatedInput.capturedAt);
+      const time = validatedInput.capturedAt
+        ? new Date(validatedInput.capturedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })
+        : "??:??";
+      const dailyLogPath = join(
+        process.env.HOME || "/Users/joel",
+        ".joelclaw", "workspace", "memory", `${date}.md`
+      );
+
+      const lines: string[] = [
+        `\n### 🔭 Observations (session: ${validatedInput.sessionId}, ${time})`,
+        `\n**Trigger**: ${validatedInput.trigger}`,
+        `**Files**: ${validatedInput.filesModified.length} modified, ${validatedInput.filesRead.length} read\n`,
+      ];
+
+      if (parsedObservations.segments && parsedObservations.segments.length > 0) {
+        for (const seg of parsedObservations.segments) {
+          const segment = seg as { narrative?: string; facts?: string[] };
+          if (segment.narrative) {
+            lines.push(`#### ${segment.narrative}\n`);
+          }
+          if (Array.isArray(segment.facts)) {
+            for (const fact of segment.facts) {
+              lines.push(`${fact}`);
+            }
+            lines.push("");
+          }
+        }
+      } else if (parsedObservations.observations) {
+        lines.push(parsedObservations.observations);
+        lines.push("");
+      }
+
+      if (parsedObservations.currentTask) {
+        lines.push(`**Current task**: ${parsedObservations.currentTask}\n`);
+      }
+
+      const markdown = lines.join("\n");
+      try {
+        mkdirSync(join(process.env.HOME || "/Users/joel", ".joelclaw", "workspace", "memory"), { recursive: true });
+        appendFileSync(dailyLogPath, markdown, "utf-8");
+        return { appended: true, path: dailyLogPath, length: markdown.length };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { appended: false, path: dailyLogPath, error: message };
+      }
+    });
 
     const qdrantCollectionResult = await step.run(
       "ensure-qdrant-collection",
@@ -365,10 +441,20 @@ Session context:
       };
 
       try {
-        await getRedisClient().set(redisKey, JSON.stringify(redisPayload));
+        const redis = getRedisClient();
+        const payloadJson = JSON.stringify(redisPayload);
+        // Latest observation (overwrite) for quick lookup
+        await redis.set(redisKey, payloadJson);
+        // Ordered list (append) for Reflector to load all observations
+        const listKey = `memory:observations:${date}`;
+        const listLength = await redis.rpush(listKey, payloadJson);
+        // 30-day TTL on the list
+        await redis.expire(listKey, 30 * 24 * 60 * 60);
         return {
           updated: true,
           key: redisKey,
+          listKey,
+          listLength,
           observationCount,
           summaryLength: observationSummary.length,
         };

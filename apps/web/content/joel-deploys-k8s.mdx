@@ -64,11 +64,11 @@ I looked at the homelab landscape before committing.
 
 **k3d** wraps k3s inside Docker containers. Since Docker Desktop is already running on this Mac, k3d adds zero new infrastructure — no VMs, no Multipass, no new daemon. Cluster up in 19 seconds, cluster down in 3. The catch: it's single-machine only. k3d nodes are containers on one host — remote machines can't join the cluster.
 
-**microk8s** runs in a Multipass VM on macOS (~4 GB RAM, comparable to Docker Desktop's own VM). It *can* do multi-node — remote microk8s instances join via `microk8s add-node`. But Multipass has known disk I/O issues on Apple Silicon, and you're paying VM overhead for something Docker already does.
+**microk8s** runs in a Multipass VM on macOS (~4 GB RAM, comparable to Docker Desktop's own VM). It can do multi-node — remote microk8s instances join via `microk8s add-node`. But you're running a second VM alongside Docker Desktop, and Multipass has [documented disk I/O problems](https://github.com/canonical/multipass/issues/2440) on Apple Silicon — one user measured 16 MB/s writes on an M1 where you'd expect 100+.
 
-**Talos Linux** is the rising star — an immutable OS that *is* the cluster. No SSH, no package manager, API-driven. Compelling for dedicated Linux nodes but replaces the entire OS, which doesn't work alongside macOS.
+**Talos Linux** is an immutable OS that *is* the cluster. No SSH, no package manager, API-driven. It can run in a VM on macOS — people do it with QEMU — but its strengths are wasted inside a VM on a Mac. Talos shines on dedicated Linux hardware where the API-driven lifecycle actually matters.
 
-**Nomad** by HashiCorp was interesting until they relicensed it to BSL. The community is migrating away.
+**Nomad** by HashiCorp is simpler than k8s and handles containers, VMs, and batch jobs. But HashiCorp relicensed everything to BSL in August 2023, and IBM acquired them for $6.4B in 2024. Unlike Terraform (which got OpenTofu) and Vault (which got OpenBao), nobody's forked Nomad — the community was always smaller. It's not that everyone's migrating away. It's that nobody's starting new projects on it.
 
 k3d wins for single-machine k8s on a Mac that's already running Docker. If a second machine needs to join, that's a different decision — probably native k3s on Linux, or OrbStack on Mac. The manifests are portable. The [network page](/network) shows the current state.
 
@@ -78,24 +78,22 @@ No. Here's the real landscape:
 
 | Approach | Good at | Bad at |
 |---|---|---|
-| **k3d / k3s / k8s** | Automatic scheduling, health checks, GPU routing, self-healing | YAML, complexity, learning curve |
-| **Kamal** (37signals) | Dead simple deploys, zero-downtime | You're the scheduler — you decide what runs where |
-| **Ansible + Docker Compose** | Familiar, idempotent, no runtime daemon | No live scheduling, no cross-node failover |
-| **Nomad** | Simpler than k8s, containers + VMs + batch | BSL licensed, community leaving, needs Consul + Vault |
+| **k3d / k3s / k8s** | Continuous reconciliation — health checks, rescheduling, GPU routing, self-healing | YAML, complexity, learning curve |
+| **Kamal** (37signals) | Zero-downtime web app deploys across multiple servers | Not designed for stateful infrastructure — no PVCs, no self-healing |
+| **Ansible + Docker Compose** | Familiar, idempotent, works across machines | No runtime loop — if a container dies at 3am, it stays dead |
+| **Nomad** | Simpler than k8s, handles containers + VMs + batch | BSL licensed, IBM-owned, no community fork, smaller ecosystem |
 | **systemd + Podman** | Zero overhead, OS-native | No cross-machine anything |
-| **Docker Swarm** | Built into Docker | Basically abandoned |
-| **Talos Linux** | No OS to manage, API-driven | Replaces the entire OS |
+| **Docker Swarm** | Built into Docker | Effectively abandoned |
+| **Talos Linux** | Immutable, API-driven — no OS to manage | Best on dedicated hardware, not in a VM on your Mac |
 | **NixOS** | Reproducible machine state, atomic rollbacks | Different paradigm entirely |
 
-The real question: do you need a **runtime scheduler** or **declarative deployment**?
+The real question isn't "scheduler vs. declarative" — Kubernetes is declarative too. You write YAML, it reconciles.
 
-A runtime scheduler — k8s, Nomad — decides where things run. "This pod needs a GPU, figure it out." Handles failures automatically.
+The question is whether you need something **running after you deploy**. k8s and Nomad keep a reconciliation loop going — a container dies, it restarts. A node fills up, pods move. Kamal and Ansible push configuration and then stop watching. If something breaks overnight, you find out in the morning.
 
-Declarative deployment — Kamal, Ansible — puts things where you tell it. Simpler, but you're the scheduler.
+For three services on one machine, Docker Compose with `restart: always` honestly does the job. The moment you want heterogeneous nodes — GPU jobs to the GPU box, stateful services on the Mac, batch work wherever there's capacity — you need something that knows about all the nodes and can schedule across them.
 
-For three services on one machine, Kamal works fine. The moment you want heterogeneous nodes — GPU jobs to the GPU box, stateful services on the Mac, batch work wherever there's capacity — you need a scheduler. That's the bet.
-
-Kamal is the off-ramp if this ever feels like too much.
+Docker Compose is the off-ramp if this ever feels like too much. The manifests translate back to a compose file in about ten minutes.
 
 ---
 
