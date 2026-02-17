@@ -1,9 +1,10 @@
 ---
-status: "proposed"
+status: "superseded by 0033"
 date: 2026-02-14
 decision-makers: "Joel Hooks"
 consulted: "Claude (pi session 2026-02-14)"
 informed: "All agents operating on this machine"
+superseded-by: "[ADR-0033 — VictoriaMetrics + Grafana monitoring stack](0033-victoriametrics-grafana-monitoring-stack.md)"
 ---
 
 # Adopt Prometheus + Grafana for system observability

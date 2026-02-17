@@ -8,8 +8,8 @@ informed: All agents
 related:
   - "[ADR-0029 — Colima + Talos](0029-replace-docker-desktop-with-colima.md)"
   - "[ADR-0030 — Cilium CNI](0030-cilium-cni-kube-proxy-replacement.md)"
+supersedes: "[ADR-0006 — Prometheus + Grafana](0006-observability-prometheus-grafana.md)"
 tags: [kubernetes, monitoring, observability, infrastructure]
-note: "Supersedes ADR-0006 (Prometheus + Grafana) which proposed the same observability goal but with Prometheus instead of VictoriaMetrics and before the Talos migration"
 ---
 
 # ADR-0033: VictoriaMetrics + Grafana Monitoring Stack
