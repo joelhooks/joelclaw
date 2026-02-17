@@ -399,6 +399,19 @@ export type Events = {
       capturedAt: string;
     };
   };
+  "memory/proposal.approved": {
+    data: {
+      proposalId: string;
+      approvedBy: string;
+    };
+  };
+  "memory/proposal.rejected": {
+    data: {
+      proposalId: string;
+      reason: string;
+      rejectedBy: string;
+    };
+  };
 
   // --- Discovery ---
   "discovery/noted": {
