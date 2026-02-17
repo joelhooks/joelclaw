@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: proposed
 date: 2026-02-14
 decision-makers: "Joel Hooks"
 consulted: "Claude (pi session 2026-02-14)"

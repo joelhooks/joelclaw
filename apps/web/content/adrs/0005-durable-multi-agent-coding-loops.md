@@ -1,5 +1,5 @@
 ---
-status: "implemented"
+status: implemented
 date: 2026-02-14
 implemented: 2026-02-15
 verified: 2026-02-14
