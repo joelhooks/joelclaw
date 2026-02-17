@@ -19,6 +19,7 @@ import {
   readLessons,
   readRecommendations,
   readPatterns,
+  createLoopOnFailure,
   ensureClaudeAuth,
 } from "./utils";
 
@@ -326,6 +327,7 @@ async function spawnTool(
 export const agentLoopImplement = inngest.createFunction(
   {
     id: "agent-loop-implement",
+    onFailure: createLoopOnFailure("implement"),
     cancelOn: [
       {
         event: "agent/loop.cancelled",

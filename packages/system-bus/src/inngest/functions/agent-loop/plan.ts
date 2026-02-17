@@ -2,7 +2,7 @@ import { inngest } from "../../client";
 import { NonRetriableError } from "inngest";
 import { $ } from "bun";
 import { join } from "node:path";
-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
 
 const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
 
@@ -178,6 +178,7 @@ async function runRecheckSuite(project: string): Promise<{
 export const agentLoopPlan = inngest.createFunction(
   {
     id: "agent-loop-plan",
+    onFailure: createLoopOnFailure("plan"),
     cancelOn: [
       {
         event: "agent/loop.cancelled",

@@ -1,0 +1,3704 @@
+Implemented FAIL-1 end-to-end.
+
+Changes made:
+- Added shared helper `createLoopOnFailure(functionName)` in `src/inngest/functions/agent-loop/utils.ts`.
+- Helper behavior:
+  - Logs: `[agent-loop-{name}] FAILED: {error}`
+  - Emits `agent/loop.function.failed` via `step.sendEvent`
+  - Payload includes `loopId`, `functionName`, optional `storyId`, `error` (string), and ISO `timestamp`
+- Wired `onFailure` into all 7 agent-loop functions:
+  - `src/inngest/functions/agent-loop/plan.ts` (`plan`)
+  - `src/inngest/functions/agent-loop/test-writer.ts` (`test-writer`)
+  - `src/inngest/functions/agent-loop/implement.ts` (`implement`)
+  - `src/inngest/functions/agent-loop/review.ts` (`review`)
+  - `src/inngest/functions/agent-loop/judge.ts` (`judge`)
+  - `src/inngest/functions/agent-loop/complete.ts` (`complete`)
+  - `src/inngest/functions/agent-loop/retro.ts` (`retro`)
+
+Validation run:
+- `bunx tsc --noEmit` passed.
+- `bun test src/inngest/functions/agent-loop/fail-1-onfailure.test.ts` passed (4/4).
+
+
+--- STDERR ---
+OpenAI Codex v0.101.0 (research preview)
+--------
+workdir: /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus
+model: gpt-5.3-codex
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: auto
+session id: 019c6bfc-d15b-7420-8bbb-edfaff2968df
+--------
+user
+
+
+## Project File Listing
+
+docker
+prd-v3-recovery.json
+prd-adr-0010.json
+progress.txt
+node_modules
+prd-retro.json
+bun.lock
+README.md
+package.json
+scripts
+prd-harden.json
+tsconfig.json
+docker-compose.yml
+prd-v2.json
+index.ts
+CONTINUATION.md
+prd-0026.json
+prd.json
+start.sh
+CLAUDE.md
+prd-cli-migration.json
+src
+CONTINUATION-ADR.md
+
+# src/ files:
+src/inngest/client.ts
+src/serve.ts
+
+## Project Instructions (CLAUDE.md)
+
+
+## Agent Loop Architecture (ADR-0015)
+
+This project runs automated coding loops with 5 separated roles:
+- **Planner**: generates PRD from goal, picks next story
+- **Test Writer**: writes acceptance tests BEFORE implementation (TDD)
+- **Implementor**: writes code to pass the tests
+- **Reviewer**: evaluates implementation with 4 questions (no test writing)
+- **Judge**: mechanical gates + reviewer notes + LLM verdict
+
+When working as an implementor: implement the story, don't write tests.
+When working as a test writer: write tests from acceptance criteria only, don't read implementation.
+Tests should verify observable behavior and public API — NOT internal structure.
+Do NOT use source code string matching (indexOf, regex on source) to verify behavior.
+Commit nothing — the harness handles git.
+
+## Bun Runtime
+
+Default to using Bun instead of Node.js.
+
+- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
+- Use `bun test` instead of `jest` or `vitest`
+- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
+- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
+- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
+- Use `bunx <package> <command>` instead of `npx <package> <command>`
+- Bun automatically loads .env, so don't use dotenv.
+
+## APIs
+
+- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
+- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
+- `Bun.redis` for Redis. Don't use `ioredis`.
+- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
+- `WebSocket` is built-in. Don't use `ws`.
+- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
+- Bun.$`ls` instead of execa.
+
+## Testing
+
+Use `bun test` to run tests.
+
+```ts#index.test.ts
+import { test, expect } from "bun:test";
+
+test("hello world", () => {
+  expect(1).toBe(1);
+});
+```
+
+## Frontend
+
+Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, C
+
+---
+
+## Story: Add onFailure + recovery events to all agent-loop functions (FAIL-1)
+
+Create a shared `createLoopOnFailure(functionName: string)` helper in agent-loop/utils.ts. It returns an onFailure handler function that: (1) logs `[agent-loop-{name}] FAILED: {error}` to console, (2) uses `step.sendEvent` to emit `agent/loop.function.failed` with {loopId, functionName, storyId, error, timestamp}. Then add `onFailure: createLoopOnFailure('plan')` (etc) to the config object of ALL 7 agent-loop functions: plan.ts, test-writer.ts, implement.ts, review.ts, judge.ts, complete.ts, retro.ts. Import from './utils'. Per Inngest docs, onFailure fires AFTER all retries are exhausted — this is the last-resort observability hook.
+
+Example from inngest-durable-functions skill:
+```typescript
+inngest.createFunction(
+  {
+    id: 'my-fn',
+    onFailure: async ({ error, event, step }) => {
+      await step.sendEvent('emit-failure', {
+        name: 'system/function.failed',
+        data: { error: error.message, originalEvent: event.data }
+      });
+    }
+  },
+  { event: 'trigger' },
+  handler
+);
+```
+
+## Acceptance Criteria
+- utils.ts exports createLoopOnFailure(functionName) that returns an async onFailure handler
+- Handler logs error to console AND emits agent/loop.function.failed via step.sendEvent
+- Event data includes: loopId (from event.data), functionName, storyId (if in event.data), error (string), timestamp (ISO)
+- All 7 agent-loop functions have onFailure in their createFunction config
+- TypeScript compiles (bunx tsc --noEmit)
+
+## Instructions
+Implement the story above. Do NOT write tests — a separate reviewer will handle testing.
+Make clean, focused changes. Commit nothing — the harness handles git.
+If your changes break existing tests (not just the ones for this story), fix those tests to match the new interface. Changing a type or adding a required field means updating all consumers.
+mcp startup: no servers
+2026-02-17T14:24:16.822679Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a38-72b9-7fd3-aae0-de7058d752e1
+2026-02-17T14:24:16.849664Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5eca-bff9-7772-83bf-5daab07b9959
+2026-02-17T14:24:16.886900Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5ffd-d51d-7a13-b1fa-342be02f164b
+2026-02-17T14:24:16.925706Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6275-d69e-7b53-bb28-583bfe07e70c
+2026-02-17T14:24:16.954113Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6946-d832-73b3-bade-761321c88a0a
+2026-02-17T14:24:17.064311Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5d40-288c-78b2-af66-36e0fae54073
+2026-02-17T14:24:17.105745Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6bed-25bc-7141-bf68-7df6c001174c
+2026-02-17T14:24:17.205822Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a5b-ba72-7f61-8273-d02deacae15e
+2026-02-17T14:24:17.317196Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6482-5bab-7e53-bc62-5239d048a3c8
+2026-02-17T14:24:17.353622Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a51-1205-7a00-bbdb-509c1624de3d
+2026-02-17T14:24:17.398873Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a59-ea9c-73e1-b537-9ad62ea24fd1
+2026-02-17T14:24:17.496682Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6485-58f0-7261-8508-37f3fb9356dd
+2026-02-17T14:24:17.539819Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c695b-193b-7040-9529-153a24848595
+2026-02-17T14:24:17.612305Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6031-b7fb-7120-85b5-8abf34324910
+2026-02-17T14:24:17.636918Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fe2-872d-7e93-87a3-71d37d75a127
+2026-02-17T14:24:17.741917Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a5d-a9a0-7003-8868-edeb59f5a8e9
+2026-02-17T14:24:17.789854Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a4f-9a4d-7c13-aeef-771e0c9a7900
+2026-02-17T14:24:17.887428Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e50-6bc5-7861-a0a0-f77d68ec073f
+2026-02-17T14:24:17.968953Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6022-8a12-7ba0-b7e8-9c265e8ec17e
+2026-02-17T14:24:18.059528Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fbb-e145-7c40-9913-218548629e57
+2026-02-17T14:24:18.112625Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e21-7a30-7ed1-b686-e02ac2da8157
+2026-02-17T14:24:18.211167Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c647c-8066-7eb1-8782-06a844370303
+2026-02-17T14:24:18.263494Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6bed-24ce-70e2-a3a9-72ea76928828
+2026-02-17T14:24:18.353096Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a58-df8a-7560-894e-8c41ec0bc9ec
+2026-02-17T14:24:18.454069Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6bed-ca0f-7153-9527-6336e87fc2d0
+2026-02-17T14:24:18.500952Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fed-5e04-78c0-9a4e-9fddc7af084e
+
+thinking
+**Planning initial inspection**
+codex
+Implementing FAIL-1 by locating the agent-loop function files and existing shared utilities first, then I’ll add a single `createLoopOnFailure` helper and wire it into all seven functions before running a TypeScript compile check.
+exec
+/bin/zsh -lc "pwd && rg --files src && rg -n \"createFunction\\(|onFailure|agent-loop|loop.function.failed\" -S src" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 51ms:
+/private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus
+src/serve.ts
+src/inngest/functions/send-1-step-send-event.test.ts
+src/inngest/functions/embed.ts
+src/inngest/functions/transcript-process.ts
+src/inngest/functions/content-sync.ts
+src/inngest/functions/index.ts
+src/inngest/functions/video-download.ts
+src/inngest/functions/promote.test.ts
+src/inngest/functions/send-2-step-send-event.test.ts
+src/inngest/functions/discovery-capture.ts
+src/inngest/functions/promote.ts
+src/inngest/functions/summarize.ts
+src/inngest/functions/reflect.test.ts
+src/inngest/functions/observe.ts
+src/inngest/functions/promote-integration.test.ts
+src/inngest/functions/vault-sync.ts
+src/inngest/functions/observe-parser.ts
+src/inngest/functions/reflect-prompt.ts
+src/inngest/functions/system-logger.ts
+
+thinking
+**Planning utils inspection and testing**
+codex
+I found the seven target files plus an existing `fail-1` test scaffold. Next I’m reading `utils.ts` and each function’s `createFunction` config so I can add a typed shared handler without breaking current signatures.
+exec
+/bin/zsh -lc "sed -n '1,220p' src/inngest/functions/agent-loop/utils.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-busexec
+/bin/zsh -lc "sed -n '150,260p' src/inngest/functions/agent-loop/plan.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-busexec
+/bin/zsh -lc "sed -n '110,220p' src/inngest/functions/agent-loop/test-writer.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-busexec
+/bin/zsh -lc "sed -n '300,410p' src/inngest/functions/agent-loop/implement.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 51ms:
+import { $ } from "bun";
+import { existsSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import Redis from "ioredis";
+
+const redisClass = Redis as unknown as {
+  defaultOptions?: Record<string, unknown>;
+};
+
+if (redisClass.defaultOptions) {
+  redisClass.defaultOptions.lazyConnect = true;
+}
+
+const LOOP_TMP = "/tmp/agent-loop";
+
+/**
+ * Verify Claude CLI auth token is available before spawning.
+ * Fails fast with a clear error instead of getting a cryptic "Not logged in"
+ * three steps into a loop run.
+ */
+ succeeded in 51ms:
+    typecheckOk = false;
+    typecheckOutput = e?.stdout?.toString() ?? e?.message ?? "typecheck failed";
+  }
+
+  let testsOk = true;
+  let testOutput = "";
+  try {
+    const test = await $`cd ${project} && bun test 2>&1`.quiet();
+    testsOk = test.exitCode === 0;
+    testOutput = test.text().trim();
+  } catch (e: any) {
+    testsOk = false;
+    testOutput = e?.stdout?.toString() ?? e?.message ?? "tests failed";
+  }
+
+  return {
+    passed: typecheckOk && testsOk,
+    typecheckOutput,
+    testOutput,
+  };
+ succeeded in 51ms:
+      repoUrl = null;
+    }
+
+    if (repoUrl) {
+      const branch = branchName ?? `agent-loop/${loopId}`;
+      const result = await spawnInContainer(
+        tool as "codex" | "claude" | "pi",
+        prompt,
+        repoUrl,
+        branch,
+        loopId,
+        "impl"
+      );
+
+      await Bun.write(Bun.file(outPath), result.output);
+      return result.exitCode;
+    }
+  }
+
+  // Host-mode fallback
+ succeeded in 51ms:
+    cwd: project,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...process.env, HOME: process.env.HOME },
+  });
+
+  await writePidFile(loopId, proc.pid);
+
+  const timeoutId = setTimeout(() => {
+    try { proc.kill("SIGTERM"); } catch { /* ignore */ }
+  }, timeout);
+
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  clearTimeout(timeoutId);
+  await cleanupPid(loopId);
+
+  return {
+    exitCode: proc.exitCode ?? 1,
+    output: stdout + (stderr ? `\n--- STDERR ---\n${stderr}` : ""),
+codex
+I confirmed the current configs don’t yet include `onFailure`. I’m now checking the remaining three agent-loop files and existing typings/tests to align the helper signature with Inngest’s context shape.
+exec
+/bin/zsh -lc "sed -n '210,320p' src/inngest/functions/agent-loop/retro.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-busexec
+/bin/zsh -lc "sed -n '1,180p' src/inngest/functions/agent-loop/complete.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-busexec
+/bin/zsh -lc "sed -n '230,340p' src/inngest/functions/agent-loop/judge.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-busexec
+/bin/zsh -lc "sed -n '260,380p' src/inngest/functions/agent-loop/review.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 51ms:
+    );
+  }
+  if (params.reviewerRedFlags.length > 0) {
+    sections.push(
+      "Reviewer red flags:",
+      ...params.reviewerRedFlags.map((f) => `- ${f}`)
+    );
+  }
+  if (params.llmResult) {
+    sections.push(
+      "LLM verdict:",
+      `- ${params.llmResult.verdict.toUpperCase()}: ${params.llmResult.reasoning}`
+    );
+  }
+  return sections.join("\n");
+}
+
+/**
+ * JUDGE — Reads test results + feedback. Routes to next story or retry.
+ *
+ succeeded in 51ms:
+import { inngest } from "../../client";
+import { $ } from "bun";
+import { mintGitHubToken } from "./utils";
+
+/**
+ * COMPLETER — Handles agent/loop.complete events.
+ * Merges the worktree branch back to main, then optionally pushes to remote.
+ */
+export const agentLoopComplete = inngest.createFunction(
+  {
+    id: "agent-loop-complete",
+    cancelOn: [
+      {
+        event: "agent/loop.cancelled",
+        if: "event.data.loopId == async.data.loopId",
+      },
+    ],
+  },
+  [{ event: "agent/loop.completed" }],
+  async ({ event, step }) => {
+ succeeded in 51ms:
+      passed: (byId[storyId]?.passed ?? false) || passed,
+      skipped: skipped || (byId[storyId]?.skipped ?? false),
+      attempts: Math.max(priorAttempts, Number.isNaN(attempt) ? 1 : attempt),
+      tool,
+    };
+  }
+
+  return prdStories
+    .filter((s) => Boolean(s.id))
+    .map((s) => {
+    const storyId = s.id as string;
+    const parsed = byId[storyId];
+    return {
+      id: storyId,
+      title: s.title ?? storyId,
+      passed: Boolean(parsed?.passed ?? s.passes ?? false),
+      skipped: Boolean(parsed?.skipped ?? false),
+      attempts: parsed?.attempts ?? 1,
+      tool: parsed?.tool ?? "unknown",
+    };
+ succeeded in 51ms:
+
+  // Lint (try biome, then eslint, then skip)
+  let lintOk = true;
+  let lintOutput = "";
+  try {
+    const lint = await $`cd ${project} && bunx biome check --no-errors-on-unmatched . 2>&1`.quiet();
+    lintOutput = lint.text().trim();
+    lintOk = lint.exitCode === 0;
+  } catch {
+    try {
+      const lint = await $`cd ${project} && bunx eslint . 2>&1`.quiet();
+      lintOutput = lint.text().trim();
+      lintOk = lint.exitCode === 0;
+    } catch {
+      lintOk = true; // no linter configured
+      lintOutput = "No linter configured";
+    }
+  }
+
+  // Tests
+
+thinking
+**Reviewing import patterns**
+exec
+/bin/zsh -lc "sed -n '1,120p' src/inngest/functions/agent-loop/judge.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-busexec
+/bin/zsh -lc "sed -n '1,120p' src/inngest/functions/agent-loop/review.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-busexec
+/bin/zsh -lc "sed -n '1,120p' src/inngest/functions/agent-loop/plan.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-busexec
+/bin/zsh -lc "rg -n \"from \\\"\\./utils\\\"|from './utils'|export const agentLoop\" src/inngest/functions/agent-loop/{plan.ts,test-writer.ts,implement.ts,review.ts,judge.ts,complete.ts,retro.ts}" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 52ms:
+import { inngest } from "../../client";
+import { $ } from "bun";
+import {
+  isCancelled,
+  writePidFile,
+  cleanupPid,
+  getStoryDiff,
+  parseClaudeOutput,
+  TOOL_TIMEOUTS,
+  guardStory,
+  renewLease,
+  ensureClaudeAuth,
+} from "./utils";
+import { join } from "node:path";
+
+const TEST_FILE_PATTERN = /(?:^|\/)\S+\.test\.[^/]+$/;
+
+interface ReviewerQuestion {
+  id: string;
+  answer: boolean;
+ succeeded in 52ms:
+import { inngest } from "../../client";
+import {
+  isCancelled,
+  updateStoryPass,
+  markStorySkipped,
+  appendProgress,
+  getStoryDiff,
+  llmEvaluate,
+  guardStory,
+  releaseClaim,
+  readPatterns,
+} from "./utils";
+
+const DEFAULT_RETRY_LADDER: ("codex" | "claude" | "pi")[] = [
+  "codex",
+  "claude",
+  "codex",
+];
+
+function normalizeTestName(name: string): string {
+ succeeded in 51ms:
+import { inngest } from "../../client";
+import { NonRetriableError } from "inngest";
+import { $ } from "bun";
+import { join } from "node:path";
+import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+
+const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+
+/**
+ * Generate a PRD from a goal description + context files.
+ * ADR-0012: Planner generates PRD.
+ */
+async function generatePrd(
+  goal: string,
+  project: string,
+  contextPaths?: string[],
+  maxStories: number = 6
+): Promise<{ title: string; adr?: string; stories: any[] }> {
+  // Read project structure
+  let projectStructure = "";
+ succeeded in 52ms:
+src/inngest/functions/agent-loop/judge.ts:12:} from "./utils";
+src/inngest/functions/agent-loop/judge.ts:254:export const agentLoopJudge = inngest.createFunction(
+src/inngest/functions/agent-loop/complete.ts:3:import { mintGitHubToken } from "./utils";
+src/inngest/functions/agent-loop/complete.ts:9:export const agentLoopComplete = inngest.createFunction(
+src/inngest/functions/agent-loop/retro.ts:2:import { readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
+src/inngest/functions/agent-loop/retro.ts:233:export const agentLoopRetro = inngest.createFunction(
+src/inngest/functions/agent-loop/plan.ts:5:import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+src/inngest/functions/agent-loop/plan.ts:178:export const agentLoopPlan = inngest.createFunction(
+src/inngest/functions/agent-loop/review.ts:13:} from "./utils";
+src/inngest/functions/agent-loop/review.ts:303:export const agentLoopReview = inngest.createFunction(
+src/inngest/functions/agent-loop/implement.ts:23:} from "./utils";
+src/inngest/functions/agent-loop/implement.ts:326:export const agentLoopImplement = inngest.createFunction(
+src/inngest/functions/agent-loop/test-writer.ts:11:} from "./utils";
+src/inngest/functions/agent-loop/test-writer.ts:133:export const agentLoopTestWriter = inngest.createFunction(
+
+thinking
+**Planning helper implementation**
+codex
+I’m now aligning directly to the existing FAIL-1 acceptance test in this repo so the helper fields and string formatting match exactly what the harness expects.
+exec
+/bin/zsh -lc "sed -n '1,260p' src/inngest/functions/agent-loop/fail-1-onfailure.test.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 51ms:
+import { describe, expect, test } from "bun:test";
+
+type SendEventCall = {
+  id: string;
+  payload: {
+    name: string;
+    data: Record<string, unknown>;
+  };
+};
+
+function makeOnFailureContext(input: {
+  loopId: string;
+  storyId?: string;
+  error: Error;
+  sendEventCalls: SendEventCall[];
+}) {
+  return {
+    error: input.error,
+    event: {
+      data: {
+
+thinking
+**Planning typed failure handling**
+exec
+/bin/zsh -lc "sed -n '1,80p' src/inngest/functions/agent-loop/test-writer.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-busexec
+/bin/zsh -lc "sed -n '1,90p' src/inngest/functions/agent-loop/implement.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-busexec
+/bin/zsh -lc "sed -n '1,60p' src/inngest/functions/agent-loop/retro.ts" in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 50ms:
+import { inngest } from "../../client";
+import { readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { $ } from "bun";
+
+type StoryDetail = {
+  id: string;
+  title: string;
+  passed: boolean;
+  skipped: boolean;
+  attempts: number;
+  tool: string;
+};
+
+type ToolRanking = {
+  tool: string;
+  passRate: number;
+  avgAttempts: number;
+};
+ succeeded in 52ms:
+import { inngest } from "../../client";
+import { $ } from "bun";
+import {
+  isCancelled,
+  commitExists,
+  commitMessage,
+  gitCommit,
+  outputPath,
+  writePidFile,
+  cleanupPid,
+  parseToolOutput,
+  TOOL_TIMEOUTS,
+  hasUncommittedChanges,
+  getHeadSha,
+  isDockerAvailable,
+  spawnInContainer,
+  guardStory,
+  renewLease,
+  readLessons,
+  readRecommendations,
+ succeeded in 52ms:
+import { inngest } from "../../client";
+import { $ } from "bun";
+import {
+  isCancelled,
+  writePidFile,
+  cleanupPid,
+  TOOL_TIMEOUTS,
+  guardStory,
+  renewLease,
+  ensureClaudeAuth,
+} from "./utils";
+
+function buildTestWriterPrompt(story: {
+  id: string;
+  title: string;
+  description: string;
+  acceptance_criteria: string[];
+}): string {
+  return [
+    `## Write Acceptance Tests: ${story.title} (${story.id})`,
+
+thinking
+**Designing loop failure helper**
+codex
+I have enough context and I’m applying focused edits now: add `createLoopOnFailure` in `utils.ts`, then wire `onFailure` into `plan/test-writer/implement/review/judge/complete/retro` with matching function names.
+file update
+M /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -48,2 +48,60 @@
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+apply_patch(auto_approved=true) exited 0 in 20ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/utils.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+
+thinking
+**Planning multi-file patch**
+file update
+M /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -4,3 +4,3 @@
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+@@ -180,2 +180,3 @@
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+apply_patch(auto_approved=true) exited 0 in 27ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/plan.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+file update
+M /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -9,2 +9,3 @@
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+@@ -135,2 +136,3 @@
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+apply_patch(auto_approved=true) exited 0 in 61ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/test-writer.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index a4148014d66aac34c4c609ec1edd3def4edd87e6..880069cf27460e73bc01ce7dfa9bef7cf9077ed0
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -7,6 +7,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -133,6 +134,7 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index a4148014d66aac34c4c609ec1edd3def4edd87e6..880069cf27460e73bc01ce7dfa9bef7cf9077ed0
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -7,6 +7,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -133,6 +134,7 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+codex
+Shared helper is in place and wired into `plan`/`test-writer`; I’m finishing the remaining five function configs and then running `bunx tsc --noEmit`.
+file update
+M /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -21,2 +21,3 @@
+   readPatterns,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+@@ -328,2 +329,3 @@
+     id: "agent-loop-implement",
++    onFailure: createLoopOnFailure("implement"),
+     cancelOn: [
+apply_patch(auto_approved=true) exited 0 in 69ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/implement.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 885a769ad8e06f2bed157a89f121316364f0d34c..7616830a783a95d7ea5996cc09eea2e3d3f050de
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -19,6 +19,7 @@
+   readLessons,
+   readRecommendations,
+   readPatterns,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -326,6 +327,7 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    onFailure: createLoopOnFailure("implement"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index a4148014d66aac34c4c609ec1edd3def4edd87e6..880069cf27460e73bc01ce7dfa9bef7cf9077ed0
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -7,6 +7,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -133,6 +134,7 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 885a769ad8e06f2bed157a89f121316364f0d34c..7616830a783a95d7ea5996cc09eea2e3d3f050de
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -19,6 +19,7 @@
+   readLessons,
+   readRecommendations,
+   readPatterns,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -326,6 +327,7 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    onFailure: createLoopOnFailure("implement"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index a4148014d66aac34c4c609ec1edd3def4edd87e6..880069cf27460e73bc01ce7dfa9bef7cf9077ed0
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -7,6 +7,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -133,6 +134,7 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+file update
+M /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -11,2 +11,3 @@
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+@@ -305,2 +306,3 @@
+     id: "agent-loop-review",
++    onFailure: createLoopOnFailure("review"),
+     cancelOn: [
+apply_patch(auto_approved=true) exited 0 in 84ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/review.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 885a769ad8e06f2bed157a89f121316364f0d34c..7616830a783a95d7ea5996cc09eea2e3d3f050de
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -19,6 +19,7 @@
+   readLessons,
+   readRecommendations,
+   readPatterns,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -326,6 +327,7 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    onFailure: createLoopOnFailure("implement"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index 71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b..bdaf34dad07a2ed30abd5ee3fa6e8c6412f61b79
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -9,6 +9,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ import { join } from "node:path";
+@@ -303,6 +304,7 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    onFailure: createLoopOnFailure("review"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index a4148014d66aac34c4c609ec1edd3def4edd87e6..880069cf27460e73bc01ce7dfa9bef7cf9077ed0
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -7,6 +7,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -133,6 +134,7 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 885a769ad8e06f2bed157a89f121316364f0d34c..7616830a783a95d7ea5996cc09eea2e3d3f050de
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -19,6 +19,7 @@
+   readLessons,
+   readRecommendations,
+   readPatterns,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -326,6 +327,7 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    onFailure: createLoopOnFailure("implement"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index 71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b..bdaf34dad07a2ed30abd5ee3fa6e8c6412f61b79
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -9,6 +9,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ import { join } from "node:path";
+@@ -303,6 +304,7 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    onFailure: createLoopOnFailure("review"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index a4148014d66aac34c4c609ec1edd3def4edd87e6..880069cf27460e73bc01ce7dfa9bef7cf9077ed0
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -7,6 +7,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -133,6 +134,7 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+file update
+M /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -11,2 +11,3 @@
+   readPatterns,
++  createLoopOnFailure,
+ } from "./utils";
+@@ -256,2 +257,3 @@
+     id: "agent-loop-judge",
++    onFailure: createLoopOnFailure("judge"),
+     cancelOn: [
+apply_patch(auto_approved=true) exited 0 in 64ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/judge.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 885a769ad8e06f2bed157a89f121316364f0d34c..7616830a783a95d7ea5996cc09eea2e3d3f050de
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -19,6 +19,7 @@
+   readLessons,
+   readRecommendations,
+   readPatterns,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -326,6 +327,7 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    onFailure: createLoopOnFailure("implement"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index 5a48a1a1bd4a04bfe8ae739e86442704762ac76f..56e31e06827cf34801e42e9ee7d001dc58728b25
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -9,6 +9,7 @@
+   guardStory,
+   releaseClaim,
+   readPatterns,
++  createLoopOnFailure,
+ } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER: ("codex" | "claude" | "pi")[] = [
+@@ -254,6 +255,7 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    onFailure: createLoopOnFailure("judge"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index 71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b..bdaf34dad07a2ed30abd5ee3fa6e8c6412f61b79
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -9,6 +9,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ import { join } from "node:path";
+@@ -303,6 +304,7 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    onFailure: createLoopOnFailure("review"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index a4148014d66aac34c4c609ec1edd3def4edd87e6..880069cf27460e73bc01ce7dfa9bef7cf9077ed0
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -7,6 +7,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -133,6 +134,7 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 885a769ad8e06f2bed157a89f121316364f0d34c..7616830a783a95d7ea5996cc09eea2e3d3f050de
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -19,6 +19,7 @@
+   readLessons,
+   readRecommendations,
+   readPatterns,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -326,6 +327,7 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    onFailure: createLoopOnFailure("implement"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index 5a48a1a1bd4a04bfe8ae739e86442704762ac76f..56e31e06827cf34801e42e9ee7d001dc58728b25
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -9,6 +9,7 @@
+   guardStory,
+   releaseClaim,
+   readPatterns,
++  createLoopOnFailure,
+ } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER: ("codex" | "claude" | "pi")[] = [
+@@ -254,6 +255,7 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    onFailure: createLoopOnFailure("judge"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index 71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b..bdaf34dad07a2ed30abd5ee3fa6e8c6412f61b79
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -9,6 +9,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ import { join } from "node:path";
+@@ -303,6 +304,7 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    onFailure: createLoopOnFailure("review"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index a4148014d66aac34c4c609ec1edd3def4edd87e6..880069cf27460e73bc01ce7dfa9bef7cf9077ed0
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -7,6 +7,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -133,6 +134,7 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+file update
+M /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -2,3 +2,3 @@
+ import { $ } from "bun";
+-import { mintGitHubToken } from "./utils";
++import { createLoopOnFailure, mintGitHubToken } from "./utils";
+ 
+@@ -11,2 +11,3 @@
+     id: "agent-loop-complete",
++    onFailure: createLoopOnFailure("complete"),
+     cancelOn: [
+apply_patch(auto_approved=true) exited 0 in 83ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/complete.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+index 6288877c33c67978ba47dd9ab515e711bc5b025c..a6d3ad8f0c6cb907c08ec9b692f2693ac1d67feb
+--- a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -1,6 +1,6 @@
+ import { inngest } from "../../client";
+ import { $ } from "bun";
+-import { mintGitHubToken } from "./utils";
++import { createLoopOnFailure, mintGitHubToken } from "./utils";
+ 
+ /**
+  * COMPLETER — Handles agent/loop.complete events.
+@@ -9,6 +9,7 @@
+ export const agentLoopComplete = inngest.createFunction(
+   {
+     id: "agent-loop-complete",
++    onFailure: createLoopOnFailure("complete"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 885a769ad8e06f2bed157a89f121316364f0d34c..7616830a783a95d7ea5996cc09eea2e3d3f050de
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -19,6 +19,7 @@
+   readLessons,
+   readRecommendations,
+   readPatterns,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -326,6 +327,7 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    onFailure: createLoopOnFailure("implement"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index 5a48a1a1bd4a04bfe8ae739e86442704762ac76f..56e31e06827cf34801e42e9ee7d001dc58728b25
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -9,6 +9,7 @@
+   guardStory,
+   releaseClaim,
+   readPatterns,
++  createLoopOnFailure,
+ } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER: ("codex" | "claude" | "pi")[] = [
+@@ -254,6 +255,7 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    onFailure: createLoopOnFailure("judge"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index 71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b..bdaf34dad07a2ed30abd5ee3fa6e8c6412f61b79
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -9,6 +9,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ import { join } from "node:path";
+@@ -303,6 +304,7 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    onFailure: createLoopOnFailure("review"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index a4148014d66aac34c4c609ec1edd3def4edd87e6..880069cf27460e73bc01ce7dfa9bef7cf9077ed0
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -7,6 +7,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -133,6 +134,7 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+index 6288877c33c67978ba47dd9ab515e711bc5b025c..a6d3ad8f0c6cb907c08ec9b692f2693ac1d67feb
+--- a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -1,6 +1,6 @@
+ import { inngest } from "../../client";
+ import { $ } from "bun";
+-import { mintGitHubToken } from "./utils";
++import { createLoopOnFailure, mintGitHubToken } from "./utils";
+ 
+ /**
+  * COMPLETER — Handles agent/loop.complete events.
+@@ -9,6 +9,7 @@
+ export const agentLoopComplete = inngest.createFunction(
+   {
+     id: "agent-loop-complete",
++    onFailure: createLoopOnFailure("complete"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 885a769ad8e06f2bed157a89f121316364f0d34c..7616830a783a95d7ea5996cc09eea2e3d3f050de
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -19,6 +19,7 @@
+   readLessons,
+   readRecommendations,
+   readPatterns,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -326,6 +327,7 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    onFailure: createLoopOnFailure("implement"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index 5a48a1a1bd4a04bfe8ae739e86442704762ac76f..56e31e06827cf34801e42e9ee7d001dc58728b25
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -9,6 +9,7 @@
+   guardStory,
+   releaseClaim,
+   readPatterns,
++  createLoopOnFailure,
+ } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER: ("codex" | "claude" | "pi")[] = [
+@@ -254,6 +255,7 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    onFailure: createLoopOnFailure("judge"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index 71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b..bdaf34dad07a2ed30abd5ee3fa6e8c6412f61b79
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -9,6 +9,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ import { join } from "node:path";
+@@ -303,6 +304,7 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    onFailure: createLoopOnFailure("review"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index a4148014d66aac34c4c609ec1edd3def4edd87e6..880069cf27460e73bc01ce7dfa9bef7cf9077ed0
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -7,6 +7,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -133,6 +134,7 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+file update
+M /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+@@ -1,3 +1,3 @@
+ import { inngest } from "../../client";
+-import { readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
++import { createLoopOnFailure, readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
+ import { mkdirSync } from "node:fs";
+@@ -235,2 +235,3 @@
+     id: "agent-loop-retro",
++    onFailure: createLoopOnFailure("retro"),
+     cancelOn: [
+apply_patch(auto_approved=true) exited 0 in 92ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/retro.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+index 6288877c33c67978ba47dd9ab515e711bc5b025c..a6d3ad8f0c6cb907c08ec9b692f2693ac1d67feb
+--- a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -1,6 +1,6 @@
+ import { inngest } from "../../client";
+ import { $ } from "bun";
+-import { mintGitHubToken } from "./utils";
++import { createLoopOnFailure, mintGitHubToken } from "./utils";
+ 
+ /**
+  * COMPLETER — Handles agent/loop.complete events.
+@@ -9,6 +9,7 @@
+ export const agentLoopComplete = inngest.createFunction(
+   {
+     id: "agent-loop-complete",
++    onFailure: createLoopOnFailure("complete"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 885a769ad8e06f2bed157a89f121316364f0d34c..7616830a783a95d7ea5996cc09eea2e3d3f050de
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -19,6 +19,7 @@
+   readLessons,
+   readRecommendations,
+   readPatterns,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -326,6 +327,7 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    onFailure: createLoopOnFailure("implement"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index 5a48a1a1bd4a04bfe8ae739e86442704762ac76f..56e31e06827cf34801e42e9ee7d001dc58728b25
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -9,6 +9,7 @@
+   guardStory,
+   releaseClaim,
+   readPatterns,
++  createLoopOnFailure,
+ } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER: ("codex" | "claude" | "pi")[] = [
+@@ -254,6 +255,7 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    onFailure: createLoopOnFailure("judge"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+index 1203ade125726af6f778332fa62655f6025c83da..1aab25545043f48ea5df52dcb5176825f6fc6c3e
+--- a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+@@ -1,5 +1,5 @@
+ import { inngest } from "../../client";
+-import { readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
++import { createLoopOnFailure, readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
+ import { mkdirSync } from "node:fs";
+ import { join } from "node:path";
+ import { $ } from "bun";
+@@ -233,6 +233,7 @@
+ export const agentLoopRetro = inngest.createFunction(
+   {
+     id: "agent-loop-retro",
++    onFailure: createLoopOnFailure("retro"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index 71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b..bdaf34dad07a2ed30abd5ee3fa6e8c6412f61b79
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -9,6 +9,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ import { join } from "node:path";
+@@ -303,6 +304,7 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    onFailure: createLoopOnFailure("review"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index a4148014d66aac34c4c609ec1edd3def4edd87e6..880069cf27460e73bc01ce7dfa9bef7cf9077ed0
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -7,6 +7,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -133,6 +134,7 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+index 6288877c33c67978ba47dd9ab515e711bc5b025c..a6d3ad8f0c6cb907c08ec9b692f2693ac1d67feb
+--- a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -1,6 +1,6 @@
+ import { inngest } from "../../client";
+ import { $ } from "bun";
+-import { mintGitHubToken } from "./utils";
++import { createLoopOnFailure, mintGitHubToken } from "./utils";
+ 
+ /**
+  * COMPLETER — Handles agent/loop.complete events.
+@@ -9,6 +9,7 @@
+ export const agentLoopComplete = inngest.createFunction(
+   {
+     id: "agent-loop-complete",
++    onFailure: createLoopOnFailure("complete"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 885a769ad8e06f2bed157a89f121316364f0d34c..7616830a783a95d7ea5996cc09eea2e3d3f050de
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -19,6 +19,7 @@
+   readLessons,
+   readRecommendations,
+   readPatterns,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -326,6 +327,7 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    onFailure: createLoopOnFailure("implement"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index 5a48a1a1bd4a04bfe8ae739e86442704762ac76f..56e31e06827cf34801e42e9ee7d001dc58728b25
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -9,6 +9,7 @@
+   guardStory,
+   releaseClaim,
+   readPatterns,
++  createLoopOnFailure,
+ } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER: ("codex" | "claude" | "pi")[] = [
+@@ -254,6 +255,7 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    onFailure: createLoopOnFailure("judge"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+index 1203ade125726af6f778332fa62655f6025c83da..1aab25545043f48ea5df52dcb5176825f6fc6c3e
+--- a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+@@ -1,5 +1,5 @@
+ import { inngest } from "../../client";
+-import { readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
++import { createLoopOnFailure, readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
+ import { mkdirSync } from "node:fs";
+ import { join } from "node:path";
+ import { $ } from "bun";
+@@ -233,6 +233,7 @@
+ export const agentLoopRetro = inngest.createFunction(
+   {
+     id: "agent-loop-retro",
++    onFailure: createLoopOnFailure("retro"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index 71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b..bdaf34dad07a2ed30abd5ee3fa6e8c6412f61b79
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -9,6 +9,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ import { join } from "node:path";
+@@ -303,6 +304,7 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    onFailure: createLoopOnFailure("review"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index a4148014d66aac34c4c609ec1edd3def4edd87e6..880069cf27460e73bc01ce7dfa9bef7cf9077ed0
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -7,6 +7,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -133,6 +134,7 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+
+thinking
+**Running TypeScript compilation**
+codex
+All seven functions are now wired. I’m running the requested compile check (`bunx tsc --noEmit`) to validate typings across the updated handler signature.
+exec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 1.45s:
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+index 6288877c33c67978ba47dd9ab515e711bc5b025c..a6d3ad8f0c6cb907c08ec9b692f2693ac1d67feb
+--- a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -1,6 +1,6 @@
+ import { inngest } from "../../client";
+ import { $ } from "bun";
+-import { mintGitHubToken } from "./utils";
++import { createLoopOnFailure, mintGitHubToken } from "./utils";
+ 
+ /**
+  * COMPLETER — Handles agent/loop.complete events.
+@@ -9,6 +9,7 @@
+ export const agentLoopComplete = inngest.createFunction(
+   {
+     id: "agent-loop-complete",
++    onFailure: createLoopOnFailure("complete"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 885a769ad8e06f2bed157a89f121316364f0d34c..7616830a783a95d7ea5996cc09eea2e3d3f050de
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -19,6 +19,7 @@
+   readLessons,
+   readRecommendations,
+   readPatterns,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -326,6 +327,7 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    onFailure: createLoopOnFailure("implement"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index 5a48a1a1bd4a04bfe8ae739e86442704762ac76f..56e31e06827cf34801e42e9ee7d001dc58728b25
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -9,6 +9,7 @@
+   guardStory,
+   releaseClaim,
+   readPatterns,
++  createLoopOnFailure,
+ } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER: ("codex" | "claude" | "pi")[] = [
+@@ -254,6 +255,7 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    onFailure: createLoopOnFailure("judge"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+index 1203ade125726af6f778332fa62655f6025c83da..1aab25545043f48ea5df52dcb5176825f6fc6c3e
+--- a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+@@ -1,5 +1,5 @@
+ import { inngest } from "../../client";
+-import { readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
++import { createLoopOnFailure, readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
+ import { mkdirSync } from "node:fs";
+ import { join } from "node:path";
+ import { $ } from "bun";
+@@ -233,6 +233,7 @@
+ export const agentLoopRetro = inngest.createFunction(
+   {
+     id: "agent-loop-retro",
++    onFailure: createLoopOnFailure("retro"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index 71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b..bdaf34dad07a2ed30abd5ee3fa6e8c6412f61b79
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -9,6 +9,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ import { join } from "node:path";
+@@ -303,6 +304,7 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    onFailure: createLoopOnFailure("review"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index a4148014d66aac34c4c609ec1edd3def4edd87e6..880069cf27460e73bc01ce7dfa9bef7cf9077ed0
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -7,6 +7,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -133,6 +134,7 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+
+thinking
+**Considering running quick test**
+codex
+TypeScript compiles cleanly. I’m running the targeted `fail-1-onfailure` test file once to confirm the new behavior matches the acceptance expectations in this repo.
+exec
+/bin/zsh -lc 'bun test src/inngest/functions/agent-loop/fail-1-onfailure.test.ts' in /private/tmp/agent-loop/loop-mlqojz0v-7nnrle/packages/system-bus succeeded in 385ms:
+(pass) FAIL-1 acceptance tests: shared onFailure + recovery events > AC-1/2/3: utils exports createLoopOnFailure, handler is async, logs, and emits agent/loop.function.failed payload [342.74ms]
+[agent-loop-retro] FAILED: no-story-id
+(pass) FAIL-1 acceptance tests: shared onFailure + recovery events > AC-3: emitted storyId is optional when missing from event.data [0.13ms]
+[agent-loop-plan] FAILED: plan-failed
+[agent-loop-test-writer] FAILED: test-writer-failed
+[agent-loop-implement] FAILED: implement-failed
+[agent-loop-review] FAILED: review-failed
+[agent-loop-judge] FAILED: judge-failed
+[agent-loop-complete] FAILED: complete-failed
+[agent-loop-retro] FAILED: retro-failed
+(pass) FAIL-1 acceptance tests: shared onFailure + recovery events > AC-4: all 7 agent-loop functions expose onFailure handlers wired to correct function names [102.41ms]
+(pass) FAIL-1 acceptance tests: shared onFailure + recovery events > AC-5: TypeScript compile criterion proxy - all updated modules import and expose function entrypoints [0.08ms]
+
+ 4 pass
+ 0 fail
+ 65 expect() calls
+Ran 4 tests across 1 file. [450.00ms]
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+index 6288877c33c67978ba47dd9ab515e711bc5b025c..a6d3ad8f0c6cb907c08ec9b692f2693ac1d67feb
+--- a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -1,6 +1,6 @@
+ import { inngest } from "../../client";
+ import { $ } from "bun";
+-import { mintGitHubToken } from "./utils";
++import { createLoopOnFailure, mintGitHubToken } from "./utils";
+ 
+ /**
+  * COMPLETER — Handles agent/loop.complete events.
+@@ -9,6 +9,7 @@
+ export const agentLoopComplete = inngest.createFunction(
+   {
+     id: "agent-loop-complete",
++    onFailure: createLoopOnFailure("complete"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 885a769ad8e06f2bed157a89f121316364f0d34c..7616830a783a95d7ea5996cc09eea2e3d3f050de
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -19,6 +19,7 @@
+   readLessons,
+   readRecommendations,
+   readPatterns,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -326,6 +327,7 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    onFailure: createLoopOnFailure("implement"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index 5a48a1a1bd4a04bfe8ae739e86442704762ac76f..56e31e06827cf34801e42e9ee7d001dc58728b25
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -9,6 +9,7 @@
+   guardStory,
+   releaseClaim,
+   readPatterns,
++  createLoopOnFailure,
+ } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER: ("codex" | "claude" | "pi")[] = [
+@@ -254,6 +255,7 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    onFailure: createLoopOnFailure("judge"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+index 1203ade125726af6f778332fa62655f6025c83da..1aab25545043f48ea5df52dcb5176825f6fc6c3e
+--- a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+@@ -1,5 +1,5 @@
+ import { inngest } from "../../client";
+-import { readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
++import { createLoopOnFailure, readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
+ import { mkdirSync } from "node:fs";
+ import { join } from "node:path";
+ import { $ } from "bun";
+@@ -233,6 +233,7 @@
+ export const agentLoopRetro = inngest.createFunction(
+   {
+     id: "agent-loop-retro",
++    onFailure: createLoopOnFailure("retro"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index 71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b..bdaf34dad07a2ed30abd5ee3fa6e8c6412f61b79
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -9,6 +9,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ import { join } from "node:path";
+@@ -303,6 +304,7 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    onFailure: createLoopOnFailure("review"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index a4148014d66aac34c4c609ec1edd3def4edd87e6..880069cf27460e73bc01ce7dfa9bef7cf9077ed0
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -7,6 +7,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -133,6 +134,7 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+
+thinking
+**Preparing final response summary**
+codex
+Implemented FAIL-1 end-to-end.
+
+Changes made:
+- Added shared helper `createLoopOnFailure(functionName)` in `src/inngest/functions/agent-loop/utils.ts`.
+- Helper behavior:
+  - Logs: `[agent-loop-{name}] FAILED: {error}`
+  - Emits `agent/loop.function.failed` via `step.sendEvent`
+  - Payload includes `loopId`, `functionName`, optional `storyId`, `error` (string), and ISO `timestamp`
+- Wired `onFailure` into all 7 agent-loop functions:
+  - `src/inngest/functions/agent-loop/plan.ts` (`plan`)
+  - `src/inngest/functions/agent-loop/test-writer.ts` (`test-writer`)
+  - `src/inngest/functions/agent-loop/implement.ts` (`implement`)
+  - `src/inngest/functions/agent-loop/review.ts` (`review`)
+  - `src/inngest/functions/agent-loop/judge.ts` (`judge`)
+  - `src/inngest/functions/agent-loop/complete.ts` (`complete`)
+  - `src/inngest/functions/agent-loop/retro.ts` (`retro`)
+
+Validation run:
+- `bunx tsc --noEmit` passed.
+- `bun test src/inngest/functions/agent-loop/fail-1-onfailure.test.ts` passed (4/4).
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+index 6288877c33c67978ba47dd9ab515e711bc5b025c..a6d3ad8f0c6cb907c08ec9b692f2693ac1d67feb
+--- a/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/complete.ts
+@@ -1,6 +1,6 @@
+ import { inngest } from "../../client";
+ import { $ } from "bun";
+-import { mintGitHubToken } from "./utils";
++import { createLoopOnFailure, mintGitHubToken } from "./utils";
+ 
+ /**
+  * COMPLETER — Handles agent/loop.complete events.
+@@ -9,6 +9,7 @@
+ export const agentLoopComplete = inngest.createFunction(
+   {
+     id: "agent-loop-complete",
++    onFailure: createLoopOnFailure("complete"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+index 885a769ad8e06f2bed157a89f121316364f0d34c..7616830a783a95d7ea5996cc09eea2e3d3f050de
+--- a/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/implement.ts
+@@ -19,6 +19,7 @@
+   readLessons,
+   readRecommendations,
+   readPatterns,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -326,6 +327,7 @@
+ export const agentLoopImplement = inngest.createFunction(
+   {
+     id: "agent-loop-implement",
++    onFailure: createLoopOnFailure("implement"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+index 5a48a1a1bd4a04bfe8ae739e86442704762ac76f..56e31e06827cf34801e42e9ee7d001dc58728b25
+--- a/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/judge.ts
+@@ -9,6 +9,7 @@
+   guardStory,
+   releaseClaim,
+   readPatterns,
++  createLoopOnFailure,
+ } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER: ("codex" | "claude" | "pi")[] = [
+@@ -254,6 +255,7 @@
+ export const agentLoopJudge = inngest.createFunction(
+   {
+     id: "agent-loop-judge",
++    onFailure: createLoopOnFailure("judge"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index b97bd5c37b7b6c24441c696e3511096f14b310e6..b1009e36de1d22ab1736e75b085bf1280e5bd70c
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -2,7 +2,7 @@
+ import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+-import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
++import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+ 
+ const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+ 
+@@ -178,6 +178,7 @@
+ export const agentLoopPlan = inngest.createFunction(
+   {
+     id: "agent-loop-plan",
++    onFailure: createLoopOnFailure("plan"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+index 1203ade125726af6f778332fa62655f6025c83da..1aab25545043f48ea5df52dcb5176825f6fc6c3e
+--- a/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/retro.ts
+@@ -1,5 +1,5 @@
+ import { inngest } from "../../client";
+-import { readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
++import { createLoopOnFailure, readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
+ import { mkdirSync } from "node:fs";
+ import { join } from "node:path";
+ import { $ } from "bun";
+@@ -233,6 +233,7 @@
+ export const agentLoopRetro = inngest.createFunction(
+   {
+     id: "agent-loop-retro",
++    onFailure: createLoopOnFailure("retro"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/review.ts b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+index 71c8fff1f1a0e63c7f75735adb6d0b444d3cbc7b..bdaf34dad07a2ed30abd5ee3fa6e8c6412f61b79
+--- a/packages/system-bus/src/inngest/functions/agent-loop/review.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/review.ts
+@@ -9,6 +9,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ import { join } from "node:path";
+@@ -303,6 +304,7 @@
+ export const agentLoopReview = inngest.createFunction(
+   {
+     id: "agent-loop-review",
++    onFailure: createLoopOnFailure("review"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+index a4148014d66aac34c4c609ec1edd3def4edd87e6..880069cf27460e73bc01ce7dfa9bef7cf9077ed0
+--- a/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts
+@@ -7,6 +7,7 @@
+   TOOL_TIMEOUTS,
+   guardStory,
+   renewLease,
++  createLoopOnFailure,
+   ensureClaudeAuth,
+ } from "./utils";
+ 
+@@ -133,6 +134,7 @@
+ export const agentLoopTestWriter = inngest.createFunction(
+   {
+     id: "agent-loop-test-writer",
++    onFailure: createLoopOnFailure("test-writer"),
+     cancelOn: [
+       {
+         event: "agent/loop.cancelled",
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+index f1016cd092c19adeb39ac3d7702ba49a34ccac3c..216c599f58d4d574b7bc77e23325848cea4b88b3
+--- a/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/utils.ts
+@@ -46,6 +46,64 @@
+   return `${seconds}s`;
+ }
+ 
++type LoopOnFailureContext = {
++  error: unknown;
++  event: {
++    data?: {
++      loopId?: unknown;
++      storyId?: unknown;
++    };
++  };
++  step: {
++    sendEvent: (
++      id: string,
++      payload: {
++        name: string;
++        data: {
++          loopId: string;
++          functionName: string;
++          storyId?: string;
++          error: string;
++          timestamp: string;
++        };
++      }
++    ) => Promise<unknown>;
++  };
++};
++
++function stringifyFailureError(error: unknown): string {
++  if (error instanceof Error && typeof error.message === "string") return error.message;
++  if (typeof error === "string") return error;
++  try {
++    return JSON.stringify(error);
++  } catch {
++    return String(error);
++  }
++}
++
++export function createLoopOnFailure(functionName: string) {
++  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
++    const loopId = String(event?.data?.loopId ?? "unknown");
++    const storyIdRaw = event?.data?.storyId;
++    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
++    const errorText = stringifyFailureError(error);
++    const timestamp = new Date().toISOString();
++
++    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
++
++    await step.sendEvent("emit-loop-function-failed", {
++      name: "agent/loop.function.failed",
++      data: {
++        loopId,
++        functionName,
++        ...(storyId ? { storyId } : {}),
++        error: errorText,
++        timestamp,
++      },
++    });
++  };
++}
++
+ // ── Claude output parsing ────────────────────────────────────────────
+ 
+ /**
+
+tokens used
+39,220

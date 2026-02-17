@@ -1,5 +1,5 @@
 import { inngest } from "../../client";
-import { readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
+import { createLoopOnFailure, readPrd, readProgress, writeRecommendations, ensureClaudeAuth } from "./utils";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
@@ -233,6 +233,7 @@ function parseStoryDetails(
 export const agentLoopRetro = inngest.createFunction(
   {
     id: "agent-loop-retro",
+    onFailure: createLoopOnFailure("retro"),
     cancelOn: [
       {
         event: "agent/loop.cancelled",

@@ -1,6 +1,6 @@
 import { inngest } from "../../client";
 import { $ } from "bun";
-import { mintGitHubToken } from "./utils";
+import { createLoopOnFailure, mintGitHubToken } from "./utils";
 
 /**
  * COMPLETER — Handles agent/loop.complete events.
@@ -9,6 +9,7 @@ import { mintGitHubToken } from "./utils";
 export const agentLoopComplete = inngest.createFunction(
   {
     id: "agent-loop-complete",
+    onFailure: createLoopOnFailure("complete"),
     cancelOn: [
       {
         event: "agent/loop.cancelled",

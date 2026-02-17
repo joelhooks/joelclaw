@@ -46,6 +46,64 @@ export function formatLoopDuration(ms: number): string {
   return `${seconds}s`;
 }
 
+type LoopOnFailureContext = {
+  error: unknown;
+  event: {
+    data?: {
+      loopId?: unknown;
+      storyId?: unknown;
+    };
+  };
+  step: {
+    sendEvent: (
+      id: string,
+      payload: {
+        name: string;
+        data: {
+          loopId: string;
+          functionName: string;
+          storyId?: string;
+          error: string;
+          timestamp: string;
+        };
+      }
+    ) => Promise<unknown>;
+  };
+};
+
+function stringifyFailureError(error: unknown): string {
+  if (error instanceof Error && typeof error.message === "string") return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+export function createLoopOnFailure(functionName: string) {
+  return async ({ error, event, step }: LoopOnFailureContext): Promise<void> => {
+    const loopId = String(event?.data?.loopId ?? "unknown");
+    const storyIdRaw = event?.data?.storyId;
+    const storyId = typeof storyIdRaw === "string" ? storyIdRaw : undefined;
+    const errorText = stringifyFailureError(error);
+    const timestamp = new Date().toISOString();
+
+    console.log(`[agent-loop-${functionName}] FAILED: ${errorText}`);
+
+    await step.sendEvent("emit-loop-function-failed", {
+      name: "agent/loop.function.failed",
+      data: {
+        loopId,
+        functionName,
+        ...(storyId ? { storyId } : {}),
+        error: errorText,
+        timestamp,
+      },
+    });
+  };
+}
+
 // ── Claude output parsing ────────────────────────────────────────────
 
 /**

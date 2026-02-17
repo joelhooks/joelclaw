@@ -24,7 +24,8 @@
         "On pull failure, falls back to git fetch + reset --hard origin/main + clean -fd",
         "bun install --silent runs after sync regardless of path taken",
         "TypeScript compiles (bunx tsc --noEmit)"
-      ]
+      ],
+      "passes": true
     },
     {
       "id": "FAIL-1",
