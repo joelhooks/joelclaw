@@ -19,7 +19,7 @@ export const agentLoopComplete = inngest.createFunction(
   },
   [{ event: "agent/loop.completed" }],
   async ({ event, step }) => {
-    const { loopId, project, branchName, storiesCompleted, storiesFailed, workDir } = event.data;
+    const { loopId, project, branchName, storiesCompleted, storiesFailed, workDir, originSession } = event.data;
 
     // Only proceed if branchName is present (set by planner v2)
     if (!branchName) {
@@ -178,6 +178,7 @@ export const agentLoopComplete = inngest.createFunction(
             storiesFailed,
             title: prd.title,
           },
+          originSession,
         });
       });
     } catch (e: any) {

@@ -105,6 +105,7 @@ export type Events = {
       maxIterations?: number;
       retryLadder?: ("codex" | "claude" | "pi")[];
       push?: boolean;
+      originSession?: string; // gateway session ID of the session that started this loop (ADR-0035)
       toolAssignments?: Record<
         string,
         {
@@ -319,6 +320,7 @@ export type Events = {
       cancelled: boolean;
       branchName?: string;
       pushResult?: string;
+      originSession?: string; // carried from loop.started (ADR-0035)
     };
   };
 

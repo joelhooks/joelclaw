@@ -232,6 +232,11 @@ export const restartLoop = (
 
     const inngestClient = yield* Inngest
 
+    // ADR-0035: capture originating session ID for gateway routing
+    const originSession = process.env.GATEWAY_ROLE === "central"
+      ? "gateway"
+      : `pid-${process.ppid}`;
+
     const result = yield* inngestClient.send("agent/loop.started", {
       loopId,
       project,
@@ -241,6 +246,7 @@ export const restartLoop = (
       push: recovered.push,
       goal: recovered.goal,
       context: recovered.context,
+      originSession,
     })
 
     const eventId =
@@ -305,6 +311,11 @@ export const loopStartCmd = Command.make(
       const contextStr = Option.getOrUndefined(context)
       const contextFiles = contextStr ? contextStr.split(",").map(s => s.trim()) : undefined
 
+      // ADR-0035: capture originating session ID so loop completion notifies this session
+      const originSession = process.env.GATEWAY_ROLE === "central"
+        ? "gateway"
+        : `pid-${process.ppid}`; // ppid = pi process (CLI is a child)
+
       const result = yield* inngestClient.send("agent/loop.started", {
         loopId,
         project,
@@ -314,6 +325,7 @@ export const loopStartCmd = Command.make(
         maxRetries,
         maxIterations,
         push,
+        originSession,
       })
 
       yield* Console.log(respond("loop start", {

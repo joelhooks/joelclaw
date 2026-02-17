@@ -210,6 +210,11 @@ export const agentLoopPlan = inngest.createFunction(
       event.name === "agent/loop.started"
         ? event.data.retryLadder ?? [...DEFAULT_RETRY_LADDER]
         : (event.data as any).retryLadder ?? [...DEFAULT_RETRY_LADDER];
+    // ADR-0035: carry originSession through the pipeline for gateway routing
+    const originSession =
+      event.name === "agent/loop.started"
+        ? event.data.originSession
+        : (event.data as any).originSession as string | undefined;
 
     const isStartEvent = event.name === "agent/loop.started";
 
@@ -387,6 +392,7 @@ export const agentLoopPlan = inngest.createFunction(
           storiesFailed: skipped,
           cancelled: false,
           branchName,
+          originSession,
         },
       });
       return {
@@ -456,6 +462,7 @@ export const agentLoopPlan = inngest.createFunction(
           storiesFailed: failed,
           cancelled: false,
           branchName,
+          originSession,
         },
       });
       return {
