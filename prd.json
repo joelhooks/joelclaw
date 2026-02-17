@@ -15,7 +15,8 @@
         "bun install succeeds from monorepo root",
         "bun run packages/cli/src/cli.ts --help shows joelclaw help"
       ],
-      "priority": 1
+      "priority": 1,
+      "status": "merged"
     },
     {
       "id": "RENAME-1",

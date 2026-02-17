@@ -43,7 +43,7 @@ const gql = (query: string) =>
 
 // ── Service ──────────────────────────────────────────────────────────
 
-export class Inngest extends Effect.Service<Inngest>()("igs/Inngest", {
+export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
   sync: () => {
     // ── send event ─────────────────────────────────────────────────
 

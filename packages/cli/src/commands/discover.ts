@@ -17,14 +17,14 @@ export const discoverCmd = Command.make(
   },
   ({ url, context }) =>
     Effect.gen(function* () {
-      const igs = yield* Inngest
+      const inngestClient = yield* Inngest
 
       const data: Record<string, unknown> = { url }
       if (context._tag === "Some") {
         data.context = context.value
       }
 
-      const result = yield* igs.send("discovery/noted", data)
+      const result = yield* inngestClient.send("discovery/noted", data)
       const ids = (result as any)?.ids ?? []
 
       yield* Console.log(respond("discover", {
@@ -33,8 +33,8 @@ export const discoverCmd = Command.make(
         event: "discovery/noted",
         response: result,
       }, [
-        { command: `igs runs --count 3`, description: "Check discovery-capture progress" },
-        { command: `igs run ${ids[0] ?? "RUN_ID"}`, description: "Inspect the run" },
+        { command: `joelclaw runs --count 3`, description: "Check discovery-capture progress" },
+        { command: `joelclaw run ${ids[0] ?? "RUN_ID"}`, description: "Inspect the run" },
         { command: `ls ~/Vault/Resources/discoveries/`, description: "Check vault output" },
       ]))
     })

@@ -24,9 +24,9 @@ export const eventsCmd = Command.make(
   },
   ({ prefix, hours, count }) =>
     Effect.gen(function* () {
-      const igs = yield* Inngest
+      const inngestClient = yield* Inngest
       const prefixVal = prefix._tag === "Some" ? prefix.value : undefined
-      const result = yield* igs.events({ prefix: prefixVal, hours, count })
+      const result = yield* inngestClient.events({ prefix: prefixVal, hours, count })
 
       // Terse: just name + time + truncated data
       const events = result.map((e: any) => ({
@@ -44,10 +44,10 @@ export const eventsCmd = Command.make(
       }
 
       const next: NextAction[] = [
-        { command: `igs events --prefix memory/ --hours 24`, description: "Memory pipeline events" },
-        { command: `igs events --prefix agent/ --hours 24`, description: "Agent loop events" },
-        { command: `igs events --prefix pipeline/`, description: "Pipeline events" },
-        { command: `igs runs --count 5`, description: "Runs triggered by events" },
+        { command: `joelclaw events --prefix memory/ --hours 24`, description: "Memory pipeline events" },
+        { command: `joelclaw events --prefix agent/ --hours 24`, description: "Agent loop events" },
+        { command: `joelclaw events --prefix pipeline/`, description: "Pipeline events" },
+        { command: `joelclaw runs --count 5`, description: "Runs triggered by events" },
       ]
 
       yield* Console.log(respond("events", {

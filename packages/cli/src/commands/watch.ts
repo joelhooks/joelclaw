@@ -17,7 +17,7 @@ export const watchCmd = Command.make(
   },
   ({ loopId, interval }) =>
     Effect.gen(function* () {
-      const igs = yield* Inngest
+      const inngestClient = yield* Inngest
 
       const resolveLoop = async (): Promise<{ id: string; prd: any } | null> => {
         const Redis = (await import("ioredis")).default
@@ -100,7 +100,7 @@ export const watchCmd = Command.make(
           break
         }
 
-        const events = yield* igs.events({ prefix: "agent/loop", hours: 4, count: 50 })
+        const events = yield* inngestClient.events({ prefix: "agent/loop", hours: 4, count: 50 })
         const output = formatStatus(freshLoop, events as any[])
 
         if (output !== lastOutput) {

@@ -42,7 +42,7 @@ export const logsCmd = Command.make(
           if (proc.exitCode !== 0) {
             const next: NextAction[] = [
               { command: `kubectl get pods -n joelclaw`, description: "Check pod status" },
-              { command: `igs logs worker`, description: "Try worker logs instead" },
+              { command: `joelclaw logs worker`, description: "Try worker logs instead" },
             ]
             yield* Console.log(respondError("logs server", "kubectl failed — k8s not reachable", "K8S_UNREACHABLE",
               "Check k3d cluster: k3d cluster list && kubectl get pods -n joelclaw", next))
@@ -56,7 +56,7 @@ export const logsCmd = Command.make(
           label = "worker stderr"
           if (!existsSync(WORKER_ERR)) {
             yield* Console.log(respond("logs errors", { source: label, lineCount: 0, output: "(no error log file)" }, [
-              { command: `igs logs worker`, description: "Check worker stdout instead" },
+              { command: `joelclaw logs worker`, description: "Check worker stdout instead" },
             ]))
             return
           }
@@ -70,7 +70,7 @@ export const logsCmd = Command.make(
           if (!existsSync(WORKER_LOG)) {
             yield* Console.log(respondError("logs worker", "Worker log not found", "LOG_MISSING",
               "Check launchd: launchctl print gui/$(id -u)/com.joel.system-bus-worker", [
-                { command: `igs status`, description: "Check overall health" },
+                { command: `joelclaw status`, description: "Check overall health" },
               ]))
             return
           }
@@ -92,11 +92,11 @@ export const logsCmd = Command.make(
       const shown = filteredLines.slice(-lines)
 
       const next: NextAction[] = []
-      if (source !== "errors") next.push({ command: `igs logs errors`, description: "Worker stderr (stack traces)" })
-      if (source !== "server") next.push({ command: `igs logs server`, description: "Inngest server logs (k8s)" })
-      if (source !== "worker") next.push({ command: `igs logs worker`, description: "Worker stdout" })
-      if (!grepVal) next.push({ command: `igs logs ${source} --grep error`, description: "Filter for errors" })
-      next.push({ command: `igs runs --status FAILED`, description: "Failed runs" })
+      if (source !== "errors") next.push({ command: `joelclaw logs errors`, description: "Worker stderr (stack traces)" })
+      if (source !== "server") next.push({ command: `joelclaw logs server`, description: "Inngest server logs (k8s)" })
+      if (source !== "worker") next.push({ command: `joelclaw logs worker`, description: "Worker stdout" })
+      if (!grepVal) next.push({ command: `joelclaw logs ${source} --grep error`, description: "Filter for errors" })
+      next.push({ command: `joelclaw runs --status FAILED`, description: "Failed runs" })
 
       yield* Console.log(respond(`logs ${source}`, {
         source: label,

@@ -339,7 +339,7 @@ export const loopDiagnoseCmd = Command.make(
   },
   ({ loopId, fix, compact }) =>
     Effect.gen(function* () {
-      const igs = yield* Inngest
+      const inngestClient = yield* Inngest
 
       // Handle 'all' — diagnose every loop with pending stories
       const loopIds = yield* Effect.tryPromise({
@@ -419,11 +419,11 @@ export const loopDiagnoseCmd = Command.make(
             fixApplied: fixResult,
           }, [
             result.fixAction && !fix
-              ? { command: `igs loop diagnose ${id} --fix`, description: `Apply fix: ${result.fixAction}` }
+              ? { command: `joelclaw loop diagnose ${id} --fix`, description: `Apply fix: ${result.fixAction}` }
               : null,
-            { command: `igs loop status ${id} -c`, description: "Check loop status" },
-            { command: `igs loop cancel ${id}`, description: "Cancel this loop" },
-            { command: `igs loop restart ${id}`, description: "Full restart" },
+            { command: `joelclaw loop status ${id} -c`, description: "Check loop status" },
+            { command: `joelclaw loop cancel ${id}`, description: "Cancel this loop" },
+            { command: `joelclaw loop restart ${id}`, description: "Full restart" },
           ].filter(Boolean)))
         }
       }

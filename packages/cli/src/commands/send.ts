@@ -21,7 +21,7 @@ export const sendCmd = Command.make(
   },
   ({ event, data, url }) =>
     Effect.gen(function* () {
-      const igs = yield* Inngest
+      const inngestClient = yield* Inngest
       let payload: Record<string, unknown>
 
       try {
@@ -35,12 +35,12 @@ export const sendCmd = Command.make(
         payload.url = url.value
       }
 
-      const result = yield* igs.send(event, payload)
+      const result = yield* inngestClient.send(event, payload)
 
       yield* Console.log(respond("send", { event, data: payload, response: result }, [
-        { command: `igs runs --count 3`, description: "Check if the function picked it up" },
-        { command: `igs run ${(result as any)?.ids?.[0] ?? "RUN_ID"}`, description: "Inspect the run once it starts" },
-        { command: `igs functions`, description: "See which function handles this event" },
+        { command: `joelclaw runs --count 3`, description: "Check if the function picked it up" },
+        { command: `joelclaw run ${(result as any)?.ids?.[0] ?? "RUN_ID"}`, description: "Inspect the run once it starts" },
+        { command: `joelclaw functions`, description: "See which function handles this event" },
       ]))
     })
 )

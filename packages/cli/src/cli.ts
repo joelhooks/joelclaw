@@ -16,16 +16,17 @@ import { refresh } from "./commands/refresh"
 import { eventsCmd } from "./commands/events"
 import { logsCmd } from "./commands/logs"
 import { watchCmd } from "./commands/watch"
+import { noteCmd } from "./commands/note"
 
 // ── Root ─────────────────────────────────────────────────────────────
 
 const root = Command.make("joelclaw", {}, () =>
   Effect.gen(function* () {
-    const igs = yield* Inngest
+    const inngestClient = yield* Inngest
 
-    const checks = yield* igs.health()
-    const fns = yield* igs.functions()
-    const recent = yield* igs.runs({ count: 5 })
+    const checks = yield* inngestClient.health()
+    const fns = yield* inngestClient.functions()
+    const recent = yield* inngestClient.runs({ count: 5 })
 
     yield* Console.log(respond(
       "",
@@ -53,6 +54,7 @@ const root = Command.make("joelclaw", {}, () =>
           loop: "joelclaw loop {start|status|list|cancel|restart|nuke}",
           watch: "joelclaw watch [LOOP_ID] [-i 15]",
           discover: "joelclaw discover <url> [-c context]",
+          note: "joelclaw note <text> [--source source] [--tags a,b,c]",
           schema: "joelclaw schema",
           refresh: "joelclaw refresh",
         },
@@ -67,7 +69,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([discoverCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh])
+  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh])
 )
 
 const cli = Command.run(root, {

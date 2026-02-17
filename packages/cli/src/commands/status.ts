@@ -8,8 +8,8 @@ export const statusCmd = Command.make(
   {},
   () =>
     Effect.gen(function* () {
-      const igs = yield* Inngest
-      const checks = yield* igs.health()
+      const inngestClient = yield* Inngest
+      const checks = yield* inngestClient.health()
       const allOk = Object.values(checks).every((c) => c.ok)
 
       const next = []
@@ -20,9 +20,9 @@ export const statusCmd = Command.make(
         next.push({ command: `launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker`, description: "Restart worker" })
       }
       next.push(
-        { command: `igs functions`, description: "View registered functions" },
-        { command: `igs runs --count 5`, description: "Recent runs" },
-        { command: `igs logs errors`, description: "Check worker errors" },
+        { command: `joelclaw functions`, description: "View registered functions" },
+        { command: `joelclaw runs --count 5`, description: "Recent runs" },
+        { command: `joelclaw logs errors`, description: "Check worker errors" },
       )
 
       yield* Console.log(respond("status", checks, next, allOk))
@@ -34,16 +34,16 @@ export const functionsCmd = Command.make(
   {},
   () =>
     Effect.gen(function* () {
-      const igs = yield* Inngest
-      const fns = yield* igs.functions()
+      const inngestClient = yield* Inngest
+      const fns = yield* inngestClient.functions()
 
       const next = fns.flatMap((f) =>
         f.triggers.slice(0, 1).map((t) => ({
-          command: `igs send ${t.value} -d '{}'`,
+          command: `joelclaw send ${t.value} -d '{}'`,
           description: `Trigger ${f.name}`,
         }))
       )
-      next.push({ command: `igs runs --count 5`, description: "See recent runs" })
+      next.push({ command: `joelclaw runs --count 5`, description: "See recent runs" })
 
       yield* Console.log(respond("functions", { count: fns.length, functions: fns }, next))
     })

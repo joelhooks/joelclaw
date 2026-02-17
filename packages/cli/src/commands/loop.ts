@@ -6,7 +6,7 @@ import { Inngest } from "../inngest"
 import { respond } from "../response"
 import { loopDiagnoseCmd } from "./diagnose"
 
-export class Redis extends Context.Tag("igs/Redis")<
+export class Redis extends Context.Tag("joelclaw/Redis")<
   Redis,
   {
     get: (key: string) => Effect.Effect<string | null, never>
@@ -230,9 +230,9 @@ export const restartLoop = (
       status: redisStatus,
     }, [])))
 
-    const igs = yield* Inngest
+    const inngestClient = yield* Inngest
 
-    const result = yield* igs.send("agent/loop.started", {
+    const result = yield* inngestClient.send("agent/loop.started", {
       loopId,
       project,
       prdPath,
@@ -257,12 +257,12 @@ export const restartLoop = (
       message: "Restart success",
       eventId,
     }, [
-      { command: `igs loop status ${loopId}`, description: "Check loop progress" },
-      { command: `igs runs --count 10`, description: "See pipeline runs" },
+      { command: `joelclaw loop status ${loopId}`, description: "Check loop progress" },
+      { command: `joelclaw runs --count 10`, description: "See pipeline runs" },
     ])))
   })
 
-// ── igs loop start ───────────────────────────────────────────────────
+// ── joelclaw loop start ───────────────────────────────────────────────────
 
 export const loopStartCmd = Command.make(
   "start",
@@ -298,14 +298,14 @@ export const loopStartCmd = Command.make(
   },
   ({ project, prd, maxRetries, maxIterations, push, goal, context }) =>
     Effect.gen(function* () {
-      const igs = yield* Inngest
+      const inngestClient = yield* Inngest
 
       const loopId = `loop-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
       const goalStr = Option.getOrUndefined(goal)
       const contextStr = Option.getOrUndefined(context)
       const contextFiles = contextStr ? contextStr.split(",").map(s => s.trim()) : undefined
 
-      const result = yield* igs.send("agent/loop.started", {
+      const result = yield* inngestClient.send("agent/loop.started", {
         loopId,
         project,
         prdPath: goalStr ? undefined : prd,
@@ -319,14 +319,14 @@ export const loopStartCmd = Command.make(
       yield* Console.log(respond("loop start", {
         loopId, project, prdPath: prd, maxRetries, maxIterations, push, event: result,
       }, [
-        { command: `igs loop status ${loopId}`, description: "Check loop progress" },
-        { command: `igs runs --count 10`, description: "See pipeline runs" },
-        { command: `igs loop cancel ${loopId}`, description: "Stop the loop" },
+        { command: `joelclaw loop status ${loopId}`, description: "Check loop progress" },
+        { command: `joelclaw runs --count 10`, description: "See pipeline runs" },
+        { command: `joelclaw loop cancel ${loopId}`, description: "Stop the loop" },
       ]))
     })
 )
 
-// ── igs loop status ──────────────────────────────────────────────────
+// ── joelclaw loop status ──────────────────────────────────────────────────
 
 export const loopStatusCmd = Command.make(
   "status",
@@ -348,7 +348,7 @@ export const loopStatusCmd = Command.make(
   },
   ({ loopId, verbose, compact }) =>
     Effect.gen(function* () {
-      const igs = yield* Inngest
+      const inngestClient = yield* Inngest
 
       // Read all loop PRDs from Redis — the source of truth (ADR-0011)
       const loopData = yield* Effect.tryPromise({
@@ -407,13 +407,13 @@ export const loopStatusCmd = Command.make(
 
       if (!targetId || !prd) {
         yield* Console.log(respond("loop status", { loop: "no loops in Redis" }, [
-          { command: `igs loop start --project PATH`, description: "Start a new loop" },
+          { command: `joelclaw loop start --project PATH`, description: "Start a new loop" },
         ]))
         return
       }
 
       // Get loop events from Inngest — the event stream IS the log
-      const loopEvents = yield* igs.events({ prefix: "agent/loop", hours: 4, count: 100 })
+      const loopEvents = yield* inngestClient.events({ prefix: "agent/loop", hours: 4, count: 100 })
       const myEvents = loopEvents.filter((e: any) => e.data?.loopId === targetId)
 
       // Derive current state from most recent event
@@ -494,20 +494,20 @@ export const loopStatusCmd = Command.make(
       }
 
       const next = []
-      next.push({ command: `igs loop cancel ${targetId}`, description: "Cancel this loop" })
-      if (running) next.push({ command: `igs run ${(running[0] as any).runId ?? targetId}`, description: "Inspect running function" })
+      next.push({ command: `joelclaw loop cancel ${targetId}`, description: "Cancel this loop" })
+      if (running) next.push({ command: `joelclaw run ${(running[0] as any).runId ?? targetId}`, description: "Inspect running function" })
       const others = loopData.filter(
         (l) => l.loopId !== targetId && l.prd?.stories?.some((s: any) => !s.passes && !s.skipped)
       )
       for (const o of others.slice(0, 2)) {
-        next.push({ command: `igs loop status ${o.loopId}`, description: o.prd?.title })
+        next.push({ command: `joelclaw loop status ${o.loopId}`, description: o.prd?.title })
       }
 
       yield* Console.log(respond("loop status", output, next))
     })
 )
 
-// ── igs loop cancel ──────────────────────────────────────────────────
+// ── joelclaw loop cancel ──────────────────────────────────────────────────
 
 export const loopCancelCmd = Command.make(
   "cancel",
@@ -516,12 +516,12 @@ export const loopCancelCmd = Command.make(
       Args.withDescription("Loop ID to cancel")
     ),
     reason: Options.text("reason").pipe(
-      Options.withDefault("Cancelled via igs loop cancel")
+      Options.withDefault("Cancelled via joelclaw loop cancel")
     ),
   },
   ({ loopId, reason }) =>
     Effect.gen(function* () {
-      const igs = yield* Inngest
+      const inngestClient = yield* Inngest
 
       const cancelDir = `/tmp/agent-loop/${loopId}`
       const cancelPath = `${cancelDir}/cancelled`
@@ -547,7 +547,7 @@ export const loopCancelCmd = Command.make(
         catch: () => new Error("Failed to kill subprocess"),
       })
 
-      const result = yield* igs.send("agent/loop.cancelled", { loopId, reason })
+      const result = yield* inngestClient.send("agent/loop.cancelled", { loopId, reason })
 
       // Clean up Redis key — cancelled loop is dead
       const redisClean = yield* Effect.tryPromise({
@@ -572,13 +572,13 @@ export const loopCancelCmd = Command.make(
         loopId, reason, cancelFlagWritten: true, subprocessKilled: killedPid,
         redisKeyRemoved: redisClean, cancelEvent: result,
       }, [
-        { command: `igs loop list`, description: "Check remaining loops" },
-        { command: `igs runs --status RUNNING`, description: "Check for any still-running functions" },
+        { command: `joelclaw loop list`, description: "Check remaining loops" },
+        { command: `joelclaw runs --status RUNNING`, description: "Check for any still-running functions" },
       ]))
     })
 )
 
-// ── igs loop restart ─────────────────────────────────────────────────
+// ── joelclaw loop restart ─────────────────────────────────────────────────
 
 const restartHandler = ({
   loopId,
@@ -613,7 +613,7 @@ const _restartCommandImpl = Command.make(
   },
   restartHandler
 ).pipe(
-  Command.withDescription("Restart a loop: run cleanup then re-send agent/loop.started. Usage: igs loop restart <loop-id>")
+  Command.withDescription("Restart a loop: run cleanup then re-send agent/loop.started. Usage: joelclaw loop restart <loop-id>")
 )
 
 export const restartCommand = new Proxy(_restartCommandImpl, {
@@ -627,7 +627,7 @@ export const restartCommand = new Proxy(_restartCommandImpl, {
   },
 })
 
-// ── igs loop nuke ────────────────────────────────────────────────────
+// ── joelclaw loop nuke ────────────────────────────────────────────────────
 
 export const loopNukeCmd = Command.make(
   "nuke",
@@ -686,12 +686,12 @@ export const loopNukeCmd = Command.make(
       })
 
       yield* Console.log(respond("loop nuke", nuked, [
-        { command: `igs loop status`, description: "Check remaining loops" },
+        { command: `joelclaw loop status`, description: "Check remaining loops" },
       ]))
     })
 )
 
-// ── igs loop list ────────────────────────────────────────────────────
+// ── joelclaw loop list ────────────────────────────────────────────────────
 
 export const loopListCmd = Command.make(
   "list",
@@ -734,31 +734,31 @@ export const loopListCmd = Command.make(
       })
 
       yield* Console.log(respond("loop list", { count: loops.length, loops }, [
-        { command: `igs loop nuke dead`, description: "Remove completed loops from Redis" },
-        { command: `igs loop status`, description: "Check active loop" },
+        { command: `joelclaw loop nuke dead`, description: "Remove completed loops from Redis" },
+        { command: `joelclaw loop status`, description: "Check active loop" },
       ]))
     })
 )
 
-// ── igs loop (parent) ────────────────────────────────────────────────
+// ── joelclaw loop (parent) ────────────────────────────────────────────────
 
 export const loopCmd = Command.make("loop", {}, () =>
   Console.log(respond("loop", {
     description: "Manage durable agent coding loops",
     subcommands: {
-      start: "igs loop start --project PATH [--prd prd.json] [--max-retries 2]",
-      status: "igs loop status [LOOP_ID]",
-      list: "igs loop list",
-      cancel: "igs loop cancel LOOP_ID [--reason TEXT]",
-      restart: "igs loop restart LOOP_ID [--project PATH] [--prd prd.json]",
-      diagnose: "igs loop diagnose LOOP_ID|all [--fix] [--compact]",
-      nuke: "igs loop nuke LOOP_ID | dead",
+      start: "joelclaw loop start --project PATH [--prd prd.json] [--max-retries 2]",
+      status: "joelclaw loop status [LOOP_ID]",
+      list: "joelclaw loop list",
+      cancel: "joelclaw loop cancel LOOP_ID [--reason TEXT]",
+      restart: "joelclaw loop restart LOOP_ID [--project PATH] [--prd prd.json]",
+      diagnose: "joelclaw loop diagnose LOOP_ID|all [--fix] [--compact]",
+      nuke: "joelclaw loop nuke LOOP_ID | dead",
     },
   }, [
-    { command: `igs loop status`, description: "Check active loop" },
-    { command: `igs loop diagnose all -c`, description: "Diagnose all stalled loops" },
-    { command: `igs loop list`, description: "All loops in Redis" },
-    { command: `igs loop nuke dead`, description: "Clean up completed loops" },
+    { command: `joelclaw loop status`, description: "Check active loop" },
+    { command: `joelclaw loop diagnose all -c`, description: "Diagnose all stalled loops" },
+    { command: `joelclaw loop list`, description: "All loops in Redis" },
+    { command: `joelclaw loop nuke dead`, description: "Clean up completed loops" },
   ]))
 ).pipe(
   Command.withSubcommands([loopStartCmd, loopStatusCmd, loopListCmd, loopCancelCmd, restartCommand, loopNukeCmd, loopDiagnoseCmd])

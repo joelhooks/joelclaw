@@ -29,9 +29,9 @@ export const runsCmd = Command.make(
   },
   ({ count, status, hours, compact }) =>
     Effect.gen(function* () {
-      const igs = yield* Inngest
+      const inngestClient = yield* Inngest
       const statusVal = status._tag === "Some" ? status.value : undefined
-      const result = yield* igs.runs({ count, status: statusVal, hours })
+      const result = yield* inngestClient.runs({ count, status: statusVal, hours })
 
       if (compact) {
         for (const r of result as any[]) {
@@ -47,13 +47,13 @@ export const runsCmd = Command.make(
         .filter((r: any) => r.status === "FAILED" || r.status === "RUNNING")
         .slice(0, 3)
         .map((r: any) => ({
-          command: `igs run ${r.id}`,
+          command: `joelclaw run ${r.id}`,
           description: `Inspect ${r.status.toLowerCase()} ${r.functionName}`,
         }))
 
       next.push(
-        { command: `igs runs --status FAILED`, description: "Show only failures" },
-        { command: `igs runs --hours 48 --count 20`, description: "Wider time range" },
+        { command: `joelclaw runs --status FAILED`, description: "Show only failures" },
+        { command: `joelclaw runs --hours 48 --count 20`, description: "Wider time range" },
       )
 
       yield* Console.log(respond("runs", { count: result.length, runs: result }, next))
@@ -69,8 +69,8 @@ export const runCmd = Command.make(
   },
   ({ runId }) =>
     Effect.gen(function* () {
-      const igs = yield* Inngest
-      const result = yield* igs.run(runId)
+      const inngestClient = yield* Inngest
+      const result = yield* inngestClient.run(runId)
 
       const next: NextAction[] = []
 
@@ -82,18 +82,18 @@ export const runCmd = Command.make(
       }
       if (result.run.status === "RUNNING") {
         next.push({
-          command: `igs run ${runId}`,
+          command: `joelclaw run ${runId}`,
           description: "Re-check (still running)",
         })
       }
       if (result.trigger?.IDs?.[0]) {
         next.push({
-          command: `igs event ${result.trigger.IDs[0]}`,
+          command: `joelclaw event ${result.trigger.IDs[0]}`,
           description: "View the trigger event payload",
         })
       }
       next.push(
-        { command: `igs runs --count 5`, description: "See surrounding runs" },
+        { command: `joelclaw runs --count 5`, description: "See surrounding runs" },
         { command: `docker logs system-bus-inngest-1 2>&1 | grep "${runId}" | tail -5`, description: "Server-side logs for this run" },
       )
 

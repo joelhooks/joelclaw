@@ -19,7 +19,7 @@ const gql = async (query: string) => {
 }
 
 /**
- * `igs refresh` — reconcile Inngest function registry with what the worker serves.
+ * `joelclaw refresh` — reconcile Inngest function registry with what the worker serves.
  *
  * Deletes the app registration and re-registers from scratch.
  * The worker's PUT /api/inngest response is the source of truth.
@@ -96,8 +96,8 @@ export const refresh = Command.make("refresh", {}, () =>
         functions: after?.functions.map((f) => f.name) ?? [],
       }, changed
         ? [
-            { command: "igs functions", description: "Verify registered functions" },
-            { command: "igs runs --count 3", description: "Check recent runs" },
+            { command: "joelclaw functions", description: "Verify registered functions" },
+            { command: "joelclaw runs --count 3", description: "Check recent runs" },
           ]
         : []
       )

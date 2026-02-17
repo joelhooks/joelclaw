@@ -22,17 +22,8 @@ const normalizeCommand = (command: string): string => {
   if (trimmed.length === 0) {
     return "joelclaw"
   }
-  if (trimmed.startsWith("joelclaw ")) {
+  if (trimmed === "joelclaw" || trimmed.startsWith("joelclaw ")) {
     return trimmed
-  }
-  if (trimmed === "joelclaw") {
-    return trimmed
-  }
-  if (trimmed.startsWith("igs ")) {
-    return `joelclaw ${trimmed.slice(4)}`
-  }
-  if (trimmed === "igs") {
-    return "joelclaw"
   }
   return `joelclaw ${trimmed}`
 }
