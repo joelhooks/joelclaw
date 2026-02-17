@@ -1,0 +1,7 @@
+All 235 tests pass now. The error about `amazon-bedrock` in the output is just stderr from the `promote-integration.test.ts` test (which invokes a real subprocess that fails to find an API key) — but that test itself passes (it's testing that the workflow runs, not the LLM call).
+
+To summarize what was done:
+
+1. **PERSIST-1 was already implemented** in the previous attempt — `plan.ts` and `utils.ts` already store `project` and `workDir` in the Redis PRD key via `seedPrd`/`seedPrdFromData` with the `metadata` parameter.
+
+2. **Fixed the pre-existing test failure** in `send-1-step-send-event.test.ts`: the `observe` function started using `step.invoke` (added in the generic embedding commit) but the test mock didn't have an `invoke` method. Added `invoke: async () => ({ vectors: [] })` to the mock so the test passes.
