@@ -185,10 +185,19 @@ export type SystemEvent = {
   ts: number;
 };
 
+/**
+ * Push a gateway event to pi sessions via Redis.
+ *
+ * Routing:
+ *   - No originSession: event goes to "gateway" (central) only
+ *   - With originSession: event goes to that session + "gateway"
+ *   - If no sessions registered: falls back to legacy "main" list
+ */
 export async function pushGatewayEvent(input: {
   type: string;
   source: string;
   payload: Record<string, unknown>;
+  originSession?: string;
 }): Promise<SystemEvent> {
   const redis = getRedis();
   const event: SystemEvent = {
@@ -202,18 +211,32 @@ export async function pushGatewayEvent(input: {
   const json = JSON.stringify(event);
   const notification = JSON.stringify({ eventId: event.id, type: event.type });
 
-  // Fan out to all registered pi sessions
-  const sessions = await redis.smembers("joelclaw:gateway:sessions");
+  const allSessions = await redis.smembers("joelclaw:gateway:sessions");
 
-  if (sessions.length === 0) {
-    // No active sessions — push to legacy "main" list so events aren't lost
+  if (allSessions.length === 0) {
+    // No sessions registered — fallback to legacy
     await redis.lpush("joelclaw:events:main", json);
     await redis.publish("joelclaw:notify:main", notification);
-  } else {
-    for (const sessionId of sessions) {
-      await redis.lpush(`joelclaw:events:${sessionId}`, json);
-      await redis.publish(`joelclaw:notify:${sessionId}`, notification);
-    }
+    return event;
+  }
+
+  // Build target set: always include "gateway" (central), plus originSession if specified
+  const targets = new Set<string>();
+  if (allSessions.includes("gateway")) targets.add("gateway");
+  if (input.originSession && allSessions.includes(input.originSession)) {
+    targets.add(input.originSession);
+  }
+
+  // If no targets matched (no gateway registered, origin session gone), fallback to legacy
+  if (targets.size === 0) {
+    await redis.lpush("joelclaw:events:main", json);
+    await redis.publish("joelclaw:notify:main", notification);
+    return event;
+  }
+
+  for (const sessionId of targets) {
+    await redis.lpush(`joelclaw:events:${sessionId}`, json);
+    await redis.publish(`joelclaw:notify:${sessionId}`, notification);
   }
 
   return event;
