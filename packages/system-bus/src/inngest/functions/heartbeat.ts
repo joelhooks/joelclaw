@@ -5,7 +5,7 @@ export const heartbeatCron = inngest.createFunction(
   {
     id: "system-heartbeat",
   },
-  [{ cron: "TZ=America/Los_Angeles */30 * * * *" }],
+  [{ cron: "* * * * *" }],
   async ({ step }) => {
     await step.run("push-gateway-event", async () => {
       await pushGatewayEvent({
