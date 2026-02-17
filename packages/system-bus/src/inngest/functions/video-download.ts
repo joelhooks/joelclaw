@@ -1,4 +1,5 @@
 import { inngest } from "../client";
+import { NonRetriableError } from "inngest";
 import { $ } from "bun";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -56,7 +57,7 @@ export const videoDownload = inngest.createFunction(
       // Find and parse info.json
       const files = await readdir(dir);
       const infoFile = files.find((f) => f.endsWith(".info.json"));
-      if (!infoFile) throw new Error("No .info.json found");
+      if (!infoFile) throw new NonRetriableError("No .info.json found");
       const info = JSON.parse(await Bun.file(join(dir, infoFile)).text());
 
       const title = info.title as string;

@@ -1,0 +1,1187 @@
+Implemented ERR-1 with focused changes only.
+
+Updated:
+- `src/inngest/functions/observe.ts:2` imported `NonRetriableError` and changed:
+  - `Missing required session field: ...` to `throw new NonRetriableError(...)` at `src/inngest/functions/observe.ts:132`
+- `src/inngest/functions/transcript-process.ts:2` imported `NonRetriableError` and changed:
+  - `transcript.process requires either audioPath or text` to `throw new NonRetriableError(...)` at `src/inngest/functions/transcript-process.ts:56`
+- `src/inngest/functions/agent-loop/plan.ts:2` imported `NonRetriableError` and changed:
+  - `Generated PRD has no stories...` to `throw new NonRetriableError(...)` at `src/inngest/functions/agent-loop/plan.ts:122`
+  - `Worktree missing at ...` to `throw new NonRetriableError(...)` at `src/inngest/functions/agent-loop/plan.ts:276`
+- `src/inngest/functions/video-download.ts:2` imported `NonRetriableError` and changed:
+  - `No .info.json found` to `throw new NonRetriableError(...)` at `src/inngest/functions/video-download.ts:60`
+
+Validation:
+- `bunx tsc --noEmit` passes cleanly.
+- `NonRetriableError` now appears in the four intended files (with `plan.ts` located at `src/inngest/functions/agent-loop/plan.ts` in this repo).
+
+
+--- STDERR ---
+OpenAI Codex v0.101.0 (research preview)
+--------
+workdir: /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus
+model: gpt-5.3-codex
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: auto
+session id: 019c69f6-94e0-7521-8915-50f8e7f0314b
+--------
+user
+
+
+## Project File Listing
+
+docker
+prd-v3-recovery.json
+prd-adr-0010.json
+progress.txt
+node_modules
+prd-retro.json
+bun.lock
+README.md
+__tests__
+package.json
+scripts
+tsconfig.json
+docker-compose.yml
+prd-v2.json
+index.ts
+CONTINUATION.md
+prd.json
+start.sh
+CLAUDE.md
+prd-cli-migration.json
+src
+CONTINUATION-ADR.md
+
+# src/ files:
+src/inngest/client.ts
+src/serve.ts
+
+## Project Instructions (CLAUDE.md)
+
+
+## Agent Loop Architecture (ADR-0015)
+
+This project runs automated coding loops with 5 separated roles:
+- **Planner**: generates PRD from goal, picks next story
+- **Test Writer**: writes acceptance tests BEFORE implementation (TDD)
+- **Implementor**: writes code to pass the tests
+- **Reviewer**: evaluates implementation with 4 questions (no test writing)
+- **Judge**: mechanical gates + reviewer notes + LLM verdict
+
+When working as an implementor: implement the story, don't write tests.
+When working as a test writer: write tests from acceptance criteria only, don't read implementation.
+Tests should verify observable behavior and public API — NOT internal structure.
+Do NOT use source code string matching (indexOf, regex on source) to verify behavior.
+Commit nothing — the harness handles git.
+
+## Bun Runtime
+
+Default to using Bun instead of Node.js.
+
+- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
+- Use `bun test` instead of `jest` or `vitest`
+- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
+- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
+- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
+- Use `bunx <package> <command>` instead of `npx <package> <command>`
+- Bun automatically loads .env, so don't use dotenv.
+
+## APIs
+
+- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
+- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
+- `Bun.redis` for Redis. Don't use `ioredis`.
+- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
+- `WebSocket` is built-in. Don't use `ws`.
+- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
+- Bun.$`ls` instead of execa.
+
+## Testing
+
+Use `bun test` to run tests.
+
+```ts#index.test.ts
+import { test, expect } from "bun:test";
+
+test("hello world", () => {
+  expect(1).toBe(1);
+});
+```
+
+## Frontend
+
+Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, C
+
+---
+
+## Story: Add NonRetriableError for validation failures in observe.ts, transcript-process.ts, plan.ts, video-download.ts (ERR-1)
+
+Import NonRetriableError from 'inngest' in the four files: src/inngest/functions/observe.ts, src/inngest/functions/transcript-process.ts, src/inngest/functions/plan.ts, src/inngest/functions/video-download.ts. Replace plain Error throws with NonRetriableError for these specific conditions: observe.ts — 'Missing required session field' (input validation, payload is malformed); transcript-process.ts — 'requires either audioPath or text' (schema violation); plan.ts — 'Worktree missing' (infrastructure state won't fix on retry) and 'Generated PRD has no stories' (LLM output issue, same prompt = same result); video-download.ts — 'No .info.json found' (download produced nothing usable). Leave all other Error throws as plain Error.
+
+## Acceptance Criteria
+- grep -r "NonRetriableError" src/inngest/functions/ --include="*.ts" returns matches in observe.ts, transcript-process.ts, plan.ts, and video-download.ts
+- NonRetriableError is imported from 'inngest' in each of the four files
+- The specific error conditions listed (missing session field, audioPath/text schema, worktree missing, no stories, no info.json) throw NonRetriableError not plain Error
+- TypeScript compiles cleanly: bunx tsc --noEmit
+
+## Instructions
+Implement the story above. Do NOT write tests — a separate reviewer will handle testing.
+Make clean, focused changes. Commit nothing — the harness handles git.
+If your changes break existing tests (not just the ones for this story), fix those tests to match the new interface. Changing a type or adding a required field means updating all consumers.
+mcp startup: no servers
+2026-02-17T04:58:13.680149Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5eca-bff9-7772-83bf-5daab07b9959
+2026-02-17T04:58:13.713687Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5ffd-d51d-7a13-b1fa-342be02f164b
+2026-02-17T04:58:13.779971Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6275-d69e-7b53-bb28-583bfe07e70c
+2026-02-17T04:58:13.888834Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6946-d832-73b3-bade-761321c88a0a
+2026-02-17T04:58:14.008638Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5d40-288c-78b2-af66-36e0fae54073
+2026-02-17T04:58:14.103292Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6482-5bab-7e53-bc62-5239d048a3c8
+2026-02-17T04:58:14.211714Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6485-58f0-7261-8508-37f3fb9356dd
+2026-02-17T04:58:14.246838Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c695b-193b-7040-9529-153a24848595
+2026-02-17T04:58:14.296758Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6031-b7fb-7120-85b5-8abf34324910
+2026-02-17T04:58:14.399888Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fe2-872d-7e93-87a3-71d37d75a127
+2026-02-17T04:58:14.510767Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e50-6bc5-7861-a0a0-f77d68ec073f
+2026-02-17T04:58:14.617823Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6022-8a12-7ba0-b7e8-9c265e8ec17e
+2026-02-17T04:58:14.685458Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fbb-e145-7c40-9913-218548629e57
+2026-02-17T04:58:14.838852Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5e21-7a30-7ed1-b686-e02ac2da8157
+2026-02-17T04:58:14.932687Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c647c-8066-7eb1-8782-06a844370303
+2026-02-17T04:58:15.075343Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fed-5e04-78c0-9a4e-9fddc7af084e
+
+thinking
+**Preparing file inspection**
+codex
+Implementing ERR-1 now: I’ll inspect the four Inngest function files, update only the specified throw sites to `NonRetriableError`, then run a TypeScript compile check with `bunx tsc --noEmit`.
+exec
+/bin/zsh -lc "sed -n '1,320p' src/inngest/functions/plan.ts" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "sed -n '1,220p' src/inngest/functions/observe.ts" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "sed -n '1,260p' src/inngest/functions/transcript-process.ts" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "sed -n '1,300p' src/inngest/functions/video-download.ts" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "rg --files src/inngest/functions | rg 'observe.ts|transcript-process.ts|plan.ts|video-download.ts'" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus succeeded in 50ms:
+import { inngest } from "../client";
+import { $ } from "bun";
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
+
+const NAS_HOST = "joel@three-body";
+const NAS_VIDEO_BASE = "/volume1/home/joel/video";
+const TMP_BASE = "/tmp/video-ingest";
+
+function slugify(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 80)
+    .replace(/-$/, "");
+}
+
+function formatDuration(seconds: number): string {
+ exited 1 in 52ms:
+sed: src/inngest/functions/plan.ts: No such file or directory
+ succeeded in 51ms:
+import { inngest } from "../client.ts";
+import { QdrantClient } from "@qdrant/js-client-rest";
+import Redis from "ioredis";
+import { randomUUID } from "node:crypto";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { parseObserverOutput } from "./observe-parser";
+import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+
+type ObserveCompactionInput = {
+  sessionId: string;
+  dedupeKey: string;
+  trigger: "compaction";
+  messages: string;
+  messageCount: number;
+  tokensBefore: number;
+  filesRead: string[];
+  filesModified: string[];
+  capturedAt: string;
+  schemaVersion: 1;
+ succeeded in 50ms:
+import { inngest } from "../client";
+import { $ } from "bun";
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
+
+const VAULT = process.env.VAULT_PATH ?? `${process.env.HOME}/Vault`;
+
+/**
+ * Transcript Process — accepts audio files OR raw text from any source.
+ *
+ * Sources: youtube (via video-download), granola, fathom, podcast, manual
+ *
+ * If audioPath is provided → runs mlx-whisper
+ * If text is provided → uses directly (no whisper needed)
+ *
+ * Creates vault note, updates daily note, emits transcript.processed + content/summarize
+ */
+export const transcriptProcess = inngest.createFunction(
+  {
+    id: "transcript-process",
+ succeeded in 53ms:
+src/inngest/functions/transcript-process.ts
+src/inngest/functions/video-download.ts
+src/inngest/functions/observe.ts
+src/inngest/functions/agent-loop/plan.ts
+
+thinking
+**Identifying plan file location**
+codex
+I found `plan.ts` under `src/inngest/functions/agent-loop/plan.ts` (not at the top level). I’ll patch that file plus the other three, keeping all non-specified `Error` throws unchanged.
+exec
+/bin/zsh -lc "sed -n '1,340p' src/inngest/functions/agent-loop/plan.ts" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus succeeded in 53ms:
+import { inngest } from "../../client";
+import { $ } from "bun";
+import { join } from "node:path";
+import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+
+const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+
+/**
+ * Generate a PRD from a goal description + context files.
+ * ADR-0012: Planner generates PRD.
+ */
+async function generatePrd(
+  goal: string,
+  project: string,
+  contextPaths?: string[],
+  maxStories: number = 6
+): Promise<{ title: string; adr?: string; stories: any[] }> {
+  // Read project structure
+  let projectStructure = "";
+  try {
+exec
+/bin/zsh -lc "sed -n '340,760p' src/inngest/functions/agent-loop/plan.ts" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus succeeded in 51ms:
+
+        // Seed to Redis
+        return seedPrdFromData(loopId, generated);
+      }
+
+      // Default: read from worktree disk
+      return seedPrd(loopId, workDir, prdPath);
+    });
+
+    // Count attempted stories (passed + skipped) for maxIterations enforcement
+    const attemptedStories = prd.stories.filter(
+      (s) => s.passes || (s as any).skipped
+    ).length;
+
+    const remaining = prd.stories
+      .filter((s) => !s.passes && !(s as any).skipped)
+      .sort((a, b) => a.priority - b.priority);
+
+    // Step 2: Check maxIterations limit
+    if (attemptedStories >= maxIterations) {
+
+thinking
+**Extending patch scope and imports**
+codex
+I’m now applying a focused patch to add `NonRetriableError` imports and switch only the five specified failure conditions, with no other behavior changes.
+file update
+M /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,2 +1,3 @@
+ import { inngest } from "../client.ts";
++import { NonRetriableError } from "inngest";
+ import { QdrantClient } from "@qdrant/js-client-rest";
+@@ -130,3 +131,3 @@
+   if (typeof value !== "string" || value.trim().length === 0) {
+-    throw new Error(`Missing required session field: ${fieldName}`);
++    throw new NonRetriableError(`Missing required session field: ${fieldName}`);
+   }
+apply_patch(auto_approved=true) exited 0 in 31ms:
+Success. Updated the following files:
+M src/inngest/functions/observe.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 82b363f20356dc0aff54aa7c0c750f59a1bf48fb..4856ae2e0717dbdcc57f2571cf8af7f051ce98d9
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client.ts";
++import { NonRetriableError } from "inngest";
+ import { QdrantClient } from "@qdrant/js-client-rest";
+ import Redis from "ioredis";
+ import { randomUUID } from "node:crypto";
+@@ -128,7 +129,7 @@
+ ) {
+   const value = payload[fieldName];
+   if (typeof value !== "string" || value.trim().length === 0) {
+-    throw new Error(`Missing required session field: ${fieldName}`);
++    throw new NonRetriableError(`Missing required session field: ${fieldName}`);
+   }
+ }
+ 
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 82b363f20356dc0aff54aa7c0c750f59a1bf48fb..4856ae2e0717dbdcc57f2571cf8af7f051ce98d9
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client.ts";
++import { NonRetriableError } from "inngest";
+ import { QdrantClient } from "@qdrant/js-client-rest";
+ import Redis from "ioredis";
+ import { randomUUID } from "node:crypto";
+@@ -128,7 +129,7 @@
+ ) {
+   const value = payload[fieldName];
+   if (typeof value !== "string" || value.trim().length === 0) {
+-    throw new Error(`Missing required session field: ${fieldName}`);
++    throw new NonRetriableError(`Missing required session field: ${fieldName}`);
+   }
+ }
+ 
+
+file update
+M /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus/src/inngest/functions/transcript-process.ts
+@@ -1,2 +1,3 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+@@ -54,3 +55,3 @@
+       if (!audioPath) {
+-        throw new Error(
++        throw new NonRetriableError(
+           "transcript.process requires either audioPath or text"
+apply_patch(auto_approved=true) exited 0 in 38ms:
+Success. Updated the following files:
+M src/inngest/functions/transcript-process.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 82b363f20356dc0aff54aa7c0c750f59a1bf48fb..4856ae2e0717dbdcc57f2571cf8af7f051ce98d9
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client.ts";
++import { NonRetriableError } from "inngest";
+ import { QdrantClient } from "@qdrant/js-client-rest";
+ import Redis from "ioredis";
+ import { randomUUID } from "node:crypto";
+@@ -128,7 +129,7 @@
+ ) {
+   const value = payload[fieldName];
+   if (typeof value !== "string" || value.trim().length === 0) {
+-    throw new Error(`Missing required session field: ${fieldName}`);
++    throw new NonRetriableError(`Missing required session field: ${fieldName}`);
+   }
+ }
+ 
+diff --git a/packages/system-bus/src/inngest/functions/transcript-process.ts b/packages/system-bus/src/inngest/functions/transcript-process.ts
+index 3a6269489ad90f59e03f024ccbd5401556081701..0279913e692ecd2f018fbbbeb07191bdc8021e25
+--- a/packages/system-bus/src/inngest/functions/transcript-process.ts
++++ b/packages/system-bus/src/inngest/functions/transcript-process.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { readdir } from "node:fs/promises";
+ import { join } from "node:path";
+@@ -52,7 +53,7 @@
+       }
+ 
+       if (!audioPath) {
+-        throw new Error(
++        throw new NonRetriableError(
+           "transcript.process requires either audioPath or text"
+         );
+       }
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 82b363f20356dc0aff54aa7c0c750f59a1bf48fb..4856ae2e0717dbdcc57f2571cf8af7f051ce98d9
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client.ts";
++import { NonRetriableError } from "inngest";
+ import { QdrantClient } from "@qdrant/js-client-rest";
+ import Redis from "ioredis";
+ import { randomUUID } from "node:crypto";
+@@ -128,7 +129,7 @@
+ ) {
+   const value = payload[fieldName];
+   if (typeof value !== "string" || value.trim().length === 0) {
+-    throw new Error(`Missing required session field: ${fieldName}`);
++    throw new NonRetriableError(`Missing required session field: ${fieldName}`);
+   }
+ }
+ 
+diff --git a/packages/system-bus/src/inngest/functions/transcript-process.ts b/packages/system-bus/src/inngest/functions/transcript-process.ts
+index 3a6269489ad90f59e03f024ccbd5401556081701..0279913e692ecd2f018fbbbeb07191bdc8021e25
+--- a/packages/system-bus/src/inngest/functions/transcript-process.ts
++++ b/packages/system-bus/src/inngest/functions/transcript-process.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { readdir } from "node:fs/promises";
+ import { join } from "node:path";
+@@ -52,7 +53,7 @@
+       }
+ 
+       if (!audioPath) {
+-        throw new Error(
++        throw new NonRetriableError(
+           "transcript.process requires either audioPath or text"
+         );
+       }
+
+codex
+Next I’m patching `agent-loop/plan.ts` and `video-download.ts` for the remaining specified conditions, then I’ll run a grep + typecheck verification.
+file update
+M /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -1,2 +1,3 @@
+ import { inngest } from "../../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+@@ -120,3 +121,3 @@
+   if (!parsed.stories || !Array.isArray(parsed.stories) || parsed.stories.length === 0) {
+-    throw new Error(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
++    throw new NonRetriableError(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
+   }
+@@ -274,3 +275,3 @@
+         if (!exists) {
+-          throw new Error(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
++          throw new NonRetriableError(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
+         }
+apply_patch(auto_approved=true) exited 0 in 44ms:
+Success. Updated the following files:
+M src/inngest/functions/agent-loop/plan.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index f794f15745605776477d90fb58499e8caf78e73b..e41156e38b7c5ea4505fa7c334782f0c4850b045
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+ import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+@@ -118,7 +119,7 @@
+ 
+   // Validate shape
+   if (!parsed.stories || !Array.isArray(parsed.stories) || parsed.stories.length === 0) {
+-    throw new Error(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
++    throw new NonRetriableError(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
+   }
+ 
+   // Cap stories
+@@ -272,7 +273,7 @@
+       await step.run("verify-worktree", async () => {
+         const exists = await Bun.file(`${worktreePath}/.git`).exists();
+         if (!exists) {
+-          throw new Error(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
++          throw new NonRetriableError(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
+         }
+       });
+ 
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 82b363f20356dc0aff54aa7c0c750f59a1bf48fb..4856ae2e0717dbdcc57f2571cf8af7f051ce98d9
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client.ts";
++import { NonRetriableError } from "inngest";
+ import { QdrantClient } from "@qdrant/js-client-rest";
+ import Redis from "ioredis";
+ import { randomUUID } from "node:crypto";
+@@ -128,7 +129,7 @@
+ ) {
+   const value = payload[fieldName];
+   if (typeof value !== "string" || value.trim().length === 0) {
+-    throw new Error(`Missing required session field: ${fieldName}`);
++    throw new NonRetriableError(`Missing required session field: ${fieldName}`);
+   }
+ }
+ 
+diff --git a/packages/system-bus/src/inngest/functions/transcript-process.ts b/packages/system-bus/src/inngest/functions/transcript-process.ts
+index 3a6269489ad90f59e03f024ccbd5401556081701..0279913e692ecd2f018fbbbeb07191bdc8021e25
+--- a/packages/system-bus/src/inngest/functions/transcript-process.ts
++++ b/packages/system-bus/src/inngest/functions/transcript-process.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { readdir } from "node:fs/promises";
+ import { join } from "node:path";
+@@ -52,7 +53,7 @@
+       }
+ 
+       if (!audioPath) {
+-        throw new Error(
++        throw new NonRetriableError(
+           "transcript.process requires either audioPath or text"
+         );
+       }
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index f794f15745605776477d90fb58499e8caf78e73b..e41156e38b7c5ea4505fa7c334782f0c4850b045
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+ import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+@@ -118,7 +119,7 @@
+ 
+   // Validate shape
+   if (!parsed.stories || !Array.isArray(parsed.stories) || parsed.stories.length === 0) {
+-    throw new Error(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
++    throw new NonRetriableError(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
+   }
+ 
+   // Cap stories
+@@ -272,7 +273,7 @@
+       await step.run("verify-worktree", async () => {
+         const exists = await Bun.file(`${worktreePath}/.git`).exists();
+         if (!exists) {
+-          throw new Error(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
++          throw new NonRetriableError(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
+         }
+       });
+ 
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 82b363f20356dc0aff54aa7c0c750f59a1bf48fb..4856ae2e0717dbdcc57f2571cf8af7f051ce98d9
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client.ts";
++import { NonRetriableError } from "inngest";
+ import { QdrantClient } from "@qdrant/js-client-rest";
+ import Redis from "ioredis";
+ import { randomUUID } from "node:crypto";
+@@ -128,7 +129,7 @@
+ ) {
+   const value = payload[fieldName];
+   if (typeof value !== "string" || value.trim().length === 0) {
+-    throw new Error(`Missing required session field: ${fieldName}`);
++    throw new NonRetriableError(`Missing required session field: ${fieldName}`);
+   }
+ }
+ 
+diff --git a/packages/system-bus/src/inngest/functions/transcript-process.ts b/packages/system-bus/src/inngest/functions/transcript-process.ts
+index 3a6269489ad90f59e03f024ccbd5401556081701..0279913e692ecd2f018fbbbeb07191bdc8021e25
+--- a/packages/system-bus/src/inngest/functions/transcript-process.ts
++++ b/packages/system-bus/src/inngest/functions/transcript-process.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { readdir } from "node:fs/promises";
+ import { join } from "node:path";
+@@ -52,7 +53,7 @@
+       }
+ 
+       if (!audioPath) {
+-        throw new Error(
++        throw new NonRetriableError(
+           "transcript.process requires either audioPath or text"
+         );
+       }
+
+
+thinking
+**Confirming em dash support**
+file update
+M /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus/src/inngest/functions/video-download.ts
+@@ -1,2 +1,3 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+@@ -58,3 +59,3 @@
+       const infoFile = files.find((f) => f.endsWith(".info.json"));
+-      if (!infoFile) throw new Error("No .info.json found");
++      if (!infoFile) throw new NonRetriableError("No .info.json found");
+       const info = JSON.parse(await Bun.file(join(dir, infoFile)).text());
+apply_patch(auto_approved=true) exited 0 in 56ms:
+Success. Updated the following files:
+M src/inngest/functions/video-download.ts
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index f794f15745605776477d90fb58499e8caf78e73b..e41156e38b7c5ea4505fa7c334782f0c4850b045
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+ import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+@@ -118,7 +119,7 @@
+ 
+   // Validate shape
+   if (!parsed.stories || !Array.isArray(parsed.stories) || parsed.stories.length === 0) {
+-    throw new Error(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
++    throw new NonRetriableError(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
+   }
+ 
+   // Cap stories
+@@ -272,7 +273,7 @@
+       await step.run("verify-worktree", async () => {
+         const exists = await Bun.file(`${worktreePath}/.git`).exists();
+         if (!exists) {
+-          throw new Error(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
++          throw new NonRetriableError(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
+         }
+       });
+ 
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 82b363f20356dc0aff54aa7c0c750f59a1bf48fb..4856ae2e0717dbdcc57f2571cf8af7f051ce98d9
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client.ts";
++import { NonRetriableError } from "inngest";
+ import { QdrantClient } from "@qdrant/js-client-rest";
+ import Redis from "ioredis";
+ import { randomUUID } from "node:crypto";
+@@ -128,7 +129,7 @@
+ ) {
+   const value = payload[fieldName];
+   if (typeof value !== "string" || value.trim().length === 0) {
+-    throw new Error(`Missing required session field: ${fieldName}`);
++    throw new NonRetriableError(`Missing required session field: ${fieldName}`);
+   }
+ }
+ 
+diff --git a/packages/system-bus/src/inngest/functions/transcript-process.ts b/packages/system-bus/src/inngest/functions/transcript-process.ts
+index 3a6269489ad90f59e03f024ccbd5401556081701..0279913e692ecd2f018fbbbeb07191bdc8021e25
+--- a/packages/system-bus/src/inngest/functions/transcript-process.ts
++++ b/packages/system-bus/src/inngest/functions/transcript-process.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { readdir } from "node:fs/promises";
+ import { join } from "node:path";
+@@ -52,7 +53,7 @@
+       }
+ 
+       if (!audioPath) {
+-        throw new Error(
++        throw new NonRetriableError(
+           "transcript.process requires either audioPath or text"
+         );
+       }
+diff --git a/packages/system-bus/src/inngest/functions/video-download.ts b/packages/system-bus/src/inngest/functions/video-download.ts
+index 3ec1a7af958fff618e7e9967e817da76864545da..42dbccb3581874bafd83f76aab1c1da3d84d2b55
+--- a/packages/system-bus/src/inngest/functions/video-download.ts
++++ b/packages/system-bus/src/inngest/functions/video-download.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { readdir } from "node:fs/promises";
+ import { join } from "node:path";
+@@ -56,7 +57,7 @@
+       // Find and parse info.json
+       const files = await readdir(dir);
+       const infoFile = files.find((f) => f.endsWith(".info.json"));
+-      if (!infoFile) throw new Error("No .info.json found");
++      if (!infoFile) throw new NonRetriableError("No .info.json found");
+       const info = JSON.parse(await Bun.file(join(dir, infoFile)).text());
+ 
+       const title = info.title as string;
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index f794f15745605776477d90fb58499e8caf78e73b..e41156e38b7c5ea4505fa7c334782f0c4850b045
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+ import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+@@ -118,7 +119,7 @@
+ 
+   // Validate shape
+   if (!parsed.stories || !Array.isArray(parsed.stories) || parsed.stories.length === 0) {
+-    throw new Error(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
++    throw new NonRetriableError(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
+   }
+ 
+   // Cap stories
+@@ -272,7 +273,7 @@
+       await step.run("verify-worktree", async () => {
+         const exists = await Bun.file(`${worktreePath}/.git`).exists();
+         if (!exists) {
+-          throw new Error(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
++          throw new NonRetriableError(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
+         }
+       });
+ 
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 82b363f20356dc0aff54aa7c0c750f59a1bf48fb..4856ae2e0717dbdcc57f2571cf8af7f051ce98d9
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client.ts";
++import { NonRetriableError } from "inngest";
+ import { QdrantClient } from "@qdrant/js-client-rest";
+ import Redis from "ioredis";
+ import { randomUUID } from "node:crypto";
+@@ -128,7 +129,7 @@
+ ) {
+   const value = payload[fieldName];
+   if (typeof value !== "string" || value.trim().length === 0) {
+-    throw new Error(`Missing required session field: ${fieldName}`);
++    throw new NonRetriableError(`Missing required session field: ${fieldName}`);
+   }
+ }
+ 
+diff --git a/packages/system-bus/src/inngest/functions/transcript-process.ts b/packages/system-bus/src/inngest/functions/transcript-process.ts
+index 3a6269489ad90f59e03f024ccbd5401556081701..0279913e692ecd2f018fbbbeb07191bdc8021e25
+--- a/packages/system-bus/src/inngest/functions/transcript-process.ts
++++ b/packages/system-bus/src/inngest/functions/transcript-process.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { readdir } from "node:fs/promises";
+ import { join } from "node:path";
+@@ -52,7 +53,7 @@
+       }
+ 
+       if (!audioPath) {
+-        throw new Error(
++        throw new NonRetriableError(
+           "transcript.process requires either audioPath or text"
+         );
+       }
+diff --git a/packages/system-bus/src/inngest/functions/video-download.ts b/packages/system-bus/src/inngest/functions/video-download.ts
+index 3ec1a7af958fff618e7e9967e817da76864545da..42dbccb3581874bafd83f76aab1c1da3d84d2b55
+--- a/packages/system-bus/src/inngest/functions/video-download.ts
++++ b/packages/system-bus/src/inngest/functions/video-download.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { readdir } from "node:fs/promises";
+ import { join } from "node:path";
+@@ -56,7 +57,7 @@
+       // Find and parse info.json
+       const files = await readdir(dir);
+       const infoFile = files.find((f) => f.endsWith(".info.json"));
+-      if (!infoFile) throw new Error("No .info.json found");
++      if (!infoFile) throw new NonRetriableError("No .info.json found");
+       const info = JSON.parse(await Bun.file(join(dir, infoFile)).text());
+ 
+       const title = info.title as string;
+
+
+thinking
+**Running codebase search and type check**
+codex
+Edits are in place. I’m validating with targeted grep checks and then running `bunx tsc --noEmit` to confirm the project still compiles.
+exec
+/bin/zsh -lc "rg -n \"NonRetriableError|Missing required session field|requires either audioPath or text|Worktree missing|Generated PRD has no stories|No \\\\.info\\\\.json found\" src/inngest/functions --glob \"*.ts\"" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus succeeded in 53ms:
+src/inngest/functions/transcript-process.ts:2:import { NonRetriableError } from "inngest";
+src/inngest/functions/transcript-process.ts:56:        throw new NonRetriableError(
+src/inngest/functions/transcript-process.ts:57:          "transcript.process requires either audioPath or text"
+src/inngest/functions/video-download.ts:2:import { NonRetriableError } from "inngest";
+src/inngest/functions/video-download.ts:60:      if (!infoFile) throw new NonRetriableError("No .info.json found");
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts:6:import { NonRetriableError } from "inngest";
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts:55:async function expectNonRetriableError(
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts:63:    expect(error).toBeInstanceOf(NonRetriableError);
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts:71:  test("observe: missing required session field throws NonRetriableError", async () => {
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts:81:    await expectNonRetriableError(
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts:83:      "Missing required session field: sessionId"
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts:87:  test("transcript-process: missing audioPath and text throws NonRetriableError", async () => {
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts:97:    await expectNonRetriableError(
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts:99:      "transcript.process requires either audioPath or text"
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts:103:  test("plan: missing worktree on re-entry throws NonRetriableError", async () => {
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts:116:    await expectNonRetriableError(
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts:118:      `Worktree missing at /tmp/agent-loop/${loopId}`
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts:122:  test("plan: generated PRD without stories throws NonRetriableError", async () => {
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts:160:    await expectNonRetriableError(
+src/inngest/functions/err-1-non-retriable-errors.acceptance.test.ts:162:      "Generated PRD has no stories"
+exec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus succeeded in 777ms:
+
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index f794f15745605776477d90fb58499e8caf78e73b..e41156e38b7c5ea4505fa7c334782f0c4850b045
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+ import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+@@ -118,7 +119,7 @@
+ 
+   // Validate shape
+   if (!parsed.stories || !Array.isArray(parsed.stories) || parsed.stories.length === 0) {
+-    throw new Error(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
++    throw new NonRetriableError(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
+   }
+ 
+   // Cap stories
+@@ -272,7 +273,7 @@
+       await step.run("verify-worktree", async () => {
+         const exists = await Bun.file(`${worktreePath}/.git`).exists();
+         if (!exists) {
+-          throw new Error(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
++          throw new NonRetriableError(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
+         }
+       });
+ 
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 82b363f20356dc0aff54aa7c0c750f59a1bf48fb..4856ae2e0717dbdcc57f2571cf8af7f051ce98d9
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client.ts";
++import { NonRetriableError } from "inngest";
+ import { QdrantClient } from "@qdrant/js-client-rest";
+ import Redis from "ioredis";
+ import { randomUUID } from "node:crypto";
+@@ -128,7 +129,7 @@
+ ) {
+   const value = payload[fieldName];
+   if (typeof value !== "string" || value.trim().length === 0) {
+-    throw new Error(`Missing required session field: ${fieldName}`);
++    throw new NonRetriableError(`Missing required session field: ${fieldName}`);
+   }
+ }
+ 
+diff --git a/packages/system-bus/src/inngest/functions/transcript-process.ts b/packages/system-bus/src/inngest/functions/transcript-process.ts
+index 3a6269489ad90f59e03f024ccbd5401556081701..0279913e692ecd2f018fbbbeb07191bdc8021e25
+--- a/packages/system-bus/src/inngest/functions/transcript-process.ts
++++ b/packages/system-bus/src/inngest/functions/transcript-process.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { readdir } from "node:fs/promises";
+ import { join } from "node:path";
+@@ -52,7 +53,7 @@
+       }
+ 
+       if (!audioPath) {
+-        throw new Error(
++        throw new NonRetriableError(
+           "transcript.process requires either audioPath or text"
+         );
+       }
+diff --git a/packages/system-bus/src/inngest/functions/video-download.ts b/packages/system-bus/src/inngest/functions/video-download.ts
+index 3ec1a7af958fff618e7e9967e817da76864545da..42dbccb3581874bafd83f76aab1c1da3d84d2b55
+--- a/packages/system-bus/src/inngest/functions/video-download.ts
++++ b/packages/system-bus/src/inngest/functions/video-download.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { readdir } from "node:fs/promises";
+ import { join } from "node:path";
+@@ -56,7 +57,7 @@
+       // Find and parse info.json
+       const files = await readdir(dir);
+       const infoFile = files.find((f) => f.endsWith(".info.json"));
+-      if (!infoFile) throw new Error("No .info.json found");
++      if (!infoFile) throw new NonRetriableError("No .info.json found");
+       const info = JSON.parse(await Bun.file(join(dir, infoFile)).text());
+ 
+       const title = info.title as string;
+
+
+thinking
+**Preparing final change summary**
+exec
+/bin/zsh -lc "nl -ba src/inngest/functions/transcript-process.ts | sed -n '1,100p'" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "nl -ba src/inngest/functions/observe.ts | sed -n '1,170p'" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "nl -ba src/inngest/functions/video-download.ts | sed -n '1,110p'" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-busexec
+/bin/zsh -lc "nl -ba src/inngest/functions/agent-loop/plan.ts | sed -n '1,320p'" in /private/tmp/agent-loop/loop-mlq3ts3f-tefwji/packages/system-bus succeeded in 52ms:
+     1	import { inngest } from "../client";
+     2	import { NonRetriableError } from "inngest";
+     3	import { $ } from "bun";
+     4	import { readdir } from "node:fs/promises";
+     5	import { join } from "node:path";
+     6	
+     7	const VAULT = process.env.VAULT_PATH ?? `${process.env.HOME}/Vault`;
+     8	
+     9	/**
+    10	 * Transcript Process — accepts audio files OR raw text from any source.
+    11	 *
+    12	 * Sources: youtube (via video-download), granola, fathom, podcast, manual
+    13	 *
+    14	 * If audioPath is provided → runs mlx-whisper
+    15	 * If text is provided → uses directly (no whisper needed)
+    16	 *
+    17	 * Creates vault note, updates daily note, emits transcript.processed + content/summarize
+    18	 */
+    19	export const transcriptProcess = inngest.createFunction(
+    20	  {
+ succeeded in 52ms:
+     1	import { inngest } from "../client.ts";
+     2	import { NonRetriableError } from "inngest";
+     3	import { QdrantClient } from "@qdrant/js-client-rest";
+     4	import Redis from "ioredis";
+     5	import { randomUUID } from "node:crypto";
+     6	import { appendFileSync, mkdirSync } from "node:fs";
+     7	import { join } from "node:path";
+     8	import { parseObserverOutput } from "./observe-parser";
+     9	import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+    10	
+    11	type ObserveCompactionInput = {
+    12	  sessionId: string;
+    13	  dedupeKey: string;
+    14	  trigger: "compaction";
+    15	  messages: string;
+    16	  messageCount: number;
+    17	  tokensBefore: number;
+    18	  filesRead: string[];
+    19	  filesModified: string[];
+    20	  capturedAt: string;
+ succeeded in 52ms:
+     1	import { inngest } from "../client";
+     2	import { NonRetriableError } from "inngest";
+     3	import { $ } from "bun";
+     4	import { readdir } from "node:fs/promises";
+     5	import { join } from "node:path";
+     6	
+     7	const NAS_HOST = "joel@three-body";
+     8	const NAS_VIDEO_BASE = "/volume1/home/joel/video";
+     9	const TMP_BASE = "/tmp/video-ingest";
+    10	
+    11	function slugify(title: string): string {
+    12	  return title
+    13	    .toLowerCase()
+    14	    .replace(/[^a-z0-9\s-]/g, "")
+    15	    .replace(/\s+/g, "-")
+    16	    .replace(/-+/g, "-")
+    17	    .slice(0, 80)
+    18	    .replace(/-$/, "");
+    19	}
+    20	
+ succeeded in 52ms:
+     1	import { inngest } from "../../client";
+     2	import { NonRetriableError } from "inngest";
+     3	import { $ } from "bun";
+     4	import { join } from "node:path";
+     5	import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+     6	
+     7	const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+     8	
+     9	/**
+    10	 * Generate a PRD from a goal description + context files.
+    11	 * ADR-0012: Planner generates PRD.
+    12	 */
+    13	async function generatePrd(
+    14	  goal: string,
+    15	  project: string,
+    16	  contextPaths?: string[],
+    17	  maxStories: number = 6
+    18	): Promise<{ title: string; adr?: string; stories: any[] }> {
+    19	  // Read project structure
+    20	  let projectStructure = "";
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index f794f15745605776477d90fb58499e8caf78e73b..e41156e38b7c5ea4505fa7c334782f0c4850b045
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+ import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+@@ -118,7 +119,7 @@
+ 
+   // Validate shape
+   if (!parsed.stories || !Array.isArray(parsed.stories) || parsed.stories.length === 0) {
+-    throw new Error(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
++    throw new NonRetriableError(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
+   }
+ 
+   // Cap stories
+@@ -272,7 +273,7 @@
+       await step.run("verify-worktree", async () => {
+         const exists = await Bun.file(`${worktreePath}/.git`).exists();
+         if (!exists) {
+-          throw new Error(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
++          throw new NonRetriableError(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
+         }
+       });
+ 
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 82b363f20356dc0aff54aa7c0c750f59a1bf48fb..4856ae2e0717dbdcc57f2571cf8af7f051ce98d9
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client.ts";
++import { NonRetriableError } from "inngest";
+ import { QdrantClient } from "@qdrant/js-client-rest";
+ import Redis from "ioredis";
+ import { randomUUID } from "node:crypto";
+@@ -128,7 +129,7 @@
+ ) {
+   const value = payload[fieldName];
+   if (typeof value !== "string" || value.trim().length === 0) {
+-    throw new Error(`Missing required session field: ${fieldName}`);
++    throw new NonRetriableError(`Missing required session field: ${fieldName}`);
+   }
+ }
+ 
+diff --git a/packages/system-bus/src/inngest/functions/transcript-process.ts b/packages/system-bus/src/inngest/functions/transcript-process.ts
+index 3a6269489ad90f59e03f024ccbd5401556081701..0279913e692ecd2f018fbbbeb07191bdc8021e25
+--- a/packages/system-bus/src/inngest/functions/transcript-process.ts
++++ b/packages/system-bus/src/inngest/functions/transcript-process.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { readdir } from "node:fs/promises";
+ import { join } from "node:path";
+@@ -52,7 +53,7 @@
+       }
+ 
+       if (!audioPath) {
+-        throw new Error(
++        throw new NonRetriableError(
+           "transcript.process requires either audioPath or text"
+         );
+       }
+diff --git a/packages/system-bus/src/inngest/functions/video-download.ts b/packages/system-bus/src/inngest/functions/video-download.ts
+index 3ec1a7af958fff618e7e9967e817da76864545da..42dbccb3581874bafd83f76aab1c1da3d84d2b55
+--- a/packages/system-bus/src/inngest/functions/video-download.ts
++++ b/packages/system-bus/src/inngest/functions/video-download.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { readdir } from "node:fs/promises";
+ import { join } from "node:path";
+@@ -56,7 +57,7 @@
+       // Find and parse info.json
+       const files = await readdir(dir);
+       const infoFile = files.find((f) => f.endsWith(".info.json"));
+-      if (!infoFile) throw new Error("No .info.json found");
++      if (!infoFile) throw new NonRetriableError("No .info.json found");
+       const info = JSON.parse(await Bun.file(join(dir, infoFile)).text());
+ 
+       const title = info.title as string;
+
+
+thinking
+**Confirming run success and path clarification**
+codex
+Implemented ERR-1 with focused changes only.
+
+Updated:
+- `src/inngest/functions/observe.ts:2` imported `NonRetriableError` and changed:
+  - `Missing required session field: ...` to `throw new NonRetriableError(...)` at `src/inngest/functions/observe.ts:132`
+- `src/inngest/functions/transcript-process.ts:2` imported `NonRetriableError` and changed:
+  - `transcript.process requires either audioPath or text` to `throw new NonRetriableError(...)` at `src/inngest/functions/transcript-process.ts:56`
+- `src/inngest/functions/agent-loop/plan.ts:2` imported `NonRetriableError` and changed:
+  - `Generated PRD has no stories...` to `throw new NonRetriableError(...)` at `src/inngest/functions/agent-loop/plan.ts:122`
+  - `Worktree missing at ...` to `throw new NonRetriableError(...)` at `src/inngest/functions/agent-loop/plan.ts:276`
+- `src/inngest/functions/video-download.ts:2` imported `NonRetriableError` and changed:
+  - `No .info.json found` to `throw new NonRetriableError(...)` at `src/inngest/functions/video-download.ts:60`
+
+Validation:
+- `bunx tsc --noEmit` passes cleanly.
+- `NonRetriableError` now appears in the four intended files (with `plan.ts` located at `src/inngest/functions/agent-loop/plan.ts` in this repo).
+file update:
+diff --git a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+index f794f15745605776477d90fb58499e8caf78e73b..e41156e38b7c5ea4505fa7c334782f0c4850b045
+--- a/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
++++ b/packages/system-bus/src/inngest/functions/agent-loop/plan.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { join } from "node:path";
+ import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+@@ -118,7 +119,7 @@
+ 
+   // Validate shape
+   if (!parsed.stories || !Array.isArray(parsed.stories) || parsed.stories.length === 0) {
+-    throw new Error(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
++    throw new NonRetriableError(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
+   }
+ 
+   // Cap stories
+@@ -272,7 +273,7 @@
+       await step.run("verify-worktree", async () => {
+         const exists = await Bun.file(`${worktreePath}/.git`).exists();
+         if (!exists) {
+-          throw new Error(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
++          throw new NonRetriableError(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
+         }
+       });
+ 
+diff --git a/packages/system-bus/src/inngest/functions/observe.ts b/packages/system-bus/src/inngest/functions/observe.ts
+index 82b363f20356dc0aff54aa7c0c750f59a1bf48fb..4856ae2e0717dbdcc57f2571cf8af7f051ce98d9
+--- a/packages/system-bus/src/inngest/functions/observe.ts
++++ b/packages/system-bus/src/inngest/functions/observe.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client.ts";
++import { NonRetriableError } from "inngest";
+ import { QdrantClient } from "@qdrant/js-client-rest";
+ import Redis from "ioredis";
+ import { randomUUID } from "node:crypto";
+@@ -128,7 +129,7 @@
+ ) {
+   const value = payload[fieldName];
+   if (typeof value !== "string" || value.trim().length === 0) {
+-    throw new Error(`Missing required session field: ${fieldName}`);
++    throw new NonRetriableError(`Missing required session field: ${fieldName}`);
+   }
+ }
+ 
+diff --git a/packages/system-bus/src/inngest/functions/transcript-process.ts b/packages/system-bus/src/inngest/functions/transcript-process.ts
+index 3a6269489ad90f59e03f024ccbd5401556081701..0279913e692ecd2f018fbbbeb07191bdc8021e25
+--- a/packages/system-bus/src/inngest/functions/transcript-process.ts
++++ b/packages/system-bus/src/inngest/functions/transcript-process.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { readdir } from "node:fs/promises";
+ import { join } from "node:path";
+@@ -52,7 +53,7 @@
+       }
+ 
+       if (!audioPath) {
+-        throw new Error(
++        throw new NonRetriableError(
+           "transcript.process requires either audioPath or text"
+         );
+       }
+diff --git a/packages/system-bus/src/inngest/functions/video-download.ts b/packages/system-bus/src/inngest/functions/video-download.ts
+index 3ec1a7af958fff618e7e9967e817da76864545da..42dbccb3581874bafd83f76aab1c1da3d84d2b55
+--- a/packages/system-bus/src/inngest/functions/video-download.ts
++++ b/packages/system-bus/src/inngest/functions/video-download.ts
+@@ -1,4 +1,5 @@
+ import { inngest } from "../client";
++import { NonRetriableError } from "inngest";
+ import { $ } from "bun";
+ import { readdir } from "node:fs/promises";
+ import { join } from "node:path";
+@@ -56,7 +57,7 @@
+       // Find and parse info.json
+       const files = await readdir(dir);
+       const infoFile = files.find((f) => f.endsWith(".info.json"));
+-      if (!infoFile) throw new Error("No .info.json found");
++      if (!infoFile) throw new NonRetriableError("No .info.json found");
+       const info = JSON.parse(await Bun.file(join(dir, infoFile)).text());
+ 
+       const title = info.title as string;
+
+tokens used
+57,514

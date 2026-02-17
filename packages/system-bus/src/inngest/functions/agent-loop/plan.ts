@@ -1,4 +1,5 @@
 import { inngest } from "../../client";
+import { NonRetriableError } from "inngest";
 import { $ } from "bun";
 import { join } from "node:path";
 import { appendProgress, claimStory, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
@@ -118,7 +119,7 @@ Rules:
 
   // Validate shape
   if (!parsed.stories || !Array.isArray(parsed.stories) || parsed.stories.length === 0) {
-    throw new Error(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
+    throw new NonRetriableError(`Generated PRD has no stories: ${JSON.stringify(parsed).slice(0, 500)}`);
   }
 
   // Cap stories
@@ -272,7 +273,7 @@ export const agentLoopPlan = inngest.createFunction(
       await step.run("verify-worktree", async () => {
         const exists = await Bun.file(`${worktreePath}/.git`).exists();
         if (!exists) {
-          throw new Error(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
+          throw new NonRetriableError(`Worktree missing at ${worktreePath} — loop may have been cleaned up`);
         }
       });
 

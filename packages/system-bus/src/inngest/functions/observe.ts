@@ -1,4 +1,5 @@
 import { inngest } from "../client.ts";
+import { NonRetriableError } from "inngest";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import Redis from "ioredis";
 import { randomUUID } from "node:crypto";
@@ -128,7 +129,7 @@ function assertRequiredStringField(
 ) {
   const value = payload[fieldName];
   if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`Missing required session field: ${fieldName}`);
+    throw new NonRetriableError(`Missing required session field: ${fieldName}`);
   }
 }
 

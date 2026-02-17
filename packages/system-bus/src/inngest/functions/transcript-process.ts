@@ -1,4 +1,5 @@
 import { inngest } from "../client";
+import { NonRetriableError } from "inngest";
 import { $ } from "bun";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -52,7 +53,7 @@ export const transcriptProcess = inngest.createFunction(
       }
 
       if (!audioPath) {
-        throw new Error(
+        throw new NonRetriableError(
           "transcript.process requires either audioPath or text"
         );
       }
