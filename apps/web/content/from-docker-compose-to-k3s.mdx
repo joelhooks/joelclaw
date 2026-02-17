@@ -68,7 +68,7 @@ I looked at the homelab landscape before committing.
 
 **Nomad** by HashiCorp was interesting until they relicensed it to BSL. The community is migrating away.
 
-**microk8s** runs in a Multipass VM on macOS — a second VM alongside Docker Desktop for zero benefit.
+**microk8s** runs in a Multipass VM on macOS (~4 GB RAM, comparable to Docker Desktop's own VM). Legitimate multi-node option — remote microk8s nodes can join — but Multipass has known disk I/O issues on Apple Silicon.
 
 k3s wins for a mixed cluster. When a Linux box joins, it's one command:
 
