@@ -441,6 +441,36 @@ export type Events = {
     };
   };
 
+  // --- Background Agents (ADR-0026) ---
+  "system/agent.requested": {
+    data: {
+      requestId: string;
+      sessionId?: string;
+      task: string;
+      tool: "codex" | "claude" | "pi";
+      cwd?: string;
+      timeout?: number; // seconds, default 600 (10min)
+      model?: string;
+      sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+    };
+  };
+  "system/agent.cancelled": {
+    data: {
+      requestId: string;
+      reason?: string;
+    };
+  };
+  "system/agent.completed": {
+    data: {
+      requestId: string;
+      sessionId?: string;
+      status: "completed" | "failed";
+      task: string;
+      tool: string;
+      durationMs: number;
+    };
+  };
+
   // --- Backfill ---
   "memory/backfill.requested": {
     data: {
