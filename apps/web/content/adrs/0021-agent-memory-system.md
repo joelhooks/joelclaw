@@ -774,10 +774,18 @@ Replace pi's compaction summary with an observation-enriched one by returning a 
 17. Implement proposal promotion/rejection/archive by proposal ID
 18. Add 7-day auto-archive for unreviewed proposals
 
-**Phase 4 (Friction analysis):**
+**Phase 4 (Friction analysis) — GATED, collecting data:**
 19. Create `friction.ts`, `friction-prompt.ts` — daily cron, Qdrant semantic clustering
 20. Add `## Friction Fixes` section to REVIEW.md format
 21. Gate: requires 2+ weeks of observation data before deployment
+22. **Prerequisite**: Add real embeddings to observe.ts (replace zero vectors) — needed for semantic clustering
+
+**Data collection status (updated 2026-02-17):**
+- Pipeline running: observe → reflect → promote all verified end-to-end
+- Observations: 9 (1 day). Need ~100+ across 14+ days.
+- Qdrant: 357 points, 0 real vectors (zero vectors — embeddings not yet wired)
+- Check-in target: ~2026-03-03 (2 weeks of data)
+- Prerequisite before Phase 4: wire real embeddings in observe.ts
 
 ## Implementation Plan
 
