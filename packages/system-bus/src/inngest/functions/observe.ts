@@ -471,12 +471,9 @@ Session context:
 
     const accumulatedEvent = await step.run("emit-accumulated", async () => {
       const accumulatedData = {
-        session_id: validatedInput.sessionId,
-        sessionId: validatedInput.sessionId,
         date,
         totalTokens,
         observationCount,
-        observation_count: observationCount,
         capturedAt,
       };
 
