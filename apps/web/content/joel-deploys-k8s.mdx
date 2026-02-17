@@ -13,6 +13,8 @@ Three. Redis, Qdrant, Inngest. They were running fine in Docker Compose. Nobody 
 
 This isn't my first time. In [2023 I wrote about self-hosting](/self-hosting) and compared Kubernetes to Vim — "you'll install it and use somebody's dotfiles or follow a tutorial and add ALL of the plugins, only to be left with a confusing soup of keybindings and features that you don't understand. 🤡" I also tried running [Kubeflow on microk8s](/charmed-kubeflow-on-ubuntu-2204-with-microk8s) that same summer. Both times I learned a lot and shipped nothing.
 
+![Miller Hooks](/images/miller-handstand.jpg)
+
 But I want to add more machines to the network and distribute workloads across them. Docker Compose doesn't do that. The moment you want to schedule a job on a different node, or health-check services across machines, or route inference to a GPU box — you need an orchestrator. That's what Kubernetes is.
 
 Whether three containers on a single machine justifies Kubernetes is a question I've decided not to think too hard about. The manifests are the same whether it's one node or five.
