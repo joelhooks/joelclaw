@@ -14,6 +14,31 @@ export type AdrMeta = {
 
 const adrDir = path.join(process.cwd(), "content", "adrs");
 
+/**
+ * Canonical ADR statuses. Anything else gets normalized:
+ * - "superseded by 0033" → "superseded"
+ * - "accepted (partially superseded by 0003)" → "accepted"
+ * Raw "superseded-by" metadata is preserved separately.
+ */
+const VALID_STATUSES = [
+  "proposed",
+  "accepted",
+  "implemented",
+  "superseded",
+  "deprecated",
+  "rejected",
+] as const;
+
+function normalizeStatus(raw: unknown): string {
+  if (typeof raw !== "string") return "proposed";
+  const lower = raw.toLowerCase().trim();
+  // Match against known statuses — take the first word that matches
+  for (const valid of VALID_STATUSES) {
+    if (lower === valid || lower.startsWith(valid)) return valid;
+  }
+  return "proposed";
+}
+
 /** Extract title from frontmatter, falling back to the first H1 in the body */
 function extractTitle(data: Record<string, unknown>, content: string): string {
   if (data.title && typeof data.title === "string") return data.title;
@@ -50,7 +75,7 @@ export function getAllAdrs(): AdrMeta[] {
       return {
         title: extractTitle(data, content),
         date: data.date ?? "",
-        status: data.status ?? "proposed",
+        status: normalizeStatus(data.status),
         slug,
         number,
         supersededBy: data["superseded-by"],
@@ -72,7 +97,7 @@ export function getAdr(slug: string) {
     meta: {
       title: extractTitle(data, content),
       date: data.date ?? "",
-      status: data.status ?? "proposed",
+      status: normalizeStatus(data.status),
       slug,
       number,
       supersededBy: data["superseded-by"],
