@@ -453,7 +453,7 @@ export const agentLoopImplement = inngest.createFunction(
         );
         return { blocked: true as const, reason: guard.reason };
       }
-      await inngest.send({
+      await step.sendEvent("emit-review", {
         name: "agent/loop.code.committed",
         data: {
           loopId,

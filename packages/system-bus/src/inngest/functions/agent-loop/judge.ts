@@ -387,7 +387,7 @@ export const agentLoopJudge = inngest.createFunction(
 
       // ADR-0019: story.passed carries planner re-entry data (no separate plan emit)
       await step.run("emit-story-pass", async () => {
-        await inngest.send({
+        await step.sendEvent("emit-story-pass", {
           name: "agent/loop.story.passed",
           data: {
             loopId,
@@ -422,7 +422,7 @@ export const agentLoopJudge = inngest.createFunction(
 
       // ADR-0019: story.retried → triggers implementor (skips test-writer on retry)
       await step.run("emit-retry-implement", async () => {
-        await inngest.send({
+        await step.sendEvent("emit-retry-implement", {
           name: "agent/loop.story.retried",
           data: {
             loopId,
@@ -485,7 +485,7 @@ export const agentLoopJudge = inngest.createFunction(
     // Emit story fail event with duration
     const failDurationMs = storyStartedAt ? Date.now() - storyStartedAt : 0;
     await step.run("emit-story-fail", async () => {
-      await inngest.send({
+      await step.sendEvent("emit-story-fail", {
         // ADR-0019: story.failed carries planner re-entry data (no separate plan emit)
         name: "agent/loop.story.failed",
         data: {

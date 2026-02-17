@@ -98,7 +98,7 @@ export const discoveryCapture = inngest.createFunction(
       await $`slog write --action noted --tool discovery --detail "${title}" --reason "vault:Resources/discoveries/${result.noteName}.md"`.quiet();
 
       // Trigger sync to website
-      await inngest.send({
+      await step.sendEvent("slog-result", {
         name: "discovery/captured",
         data: {
           vaultPath: result.vaultPath,

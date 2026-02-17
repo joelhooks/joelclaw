@@ -360,7 +360,7 @@ export const agentLoopPlan = inngest.createFunction(
       const completed = prd.stories.filter((s) => s.passes).length;
       const skipped = prd.stories.filter((s) => (s as any).skipped).length;
       await step.run("emit-complete-max-iterations", async () => {
-        await inngest.send({
+        await step.sendEvent("emit-complete-max-iterations", {
           name: "agent/loop.completed",
           data: {
             loopId,
@@ -431,7 +431,7 @@ export const agentLoopPlan = inngest.createFunction(
       ).length;
 
       await step.run("emit-complete", async () => {
-        await inngest.send({
+        await step.sendEvent("emit-complete", {
           name: "agent/loop.completed",
           data: {
             loopId,
@@ -501,7 +501,7 @@ export const agentLoopPlan = inngest.createFunction(
     }
 
     await step.run("emit-test", async () => {
-      await inngest.send({
+      await step.sendEvent("emit-test", {
         name: "agent/loop.story.dispatched",
         data: {
           loopId,

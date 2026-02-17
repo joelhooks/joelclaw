@@ -390,7 +390,7 @@ export const agentLoopReview = inngest.createFunction(
         return { blocked: true as const, reason: guard.reason };
       }
 
-      await inngest.send({
+      await step.sendEvent("emit-judge", {
         name: "agent/loop.checks.completed",
         data: {
           loopId,

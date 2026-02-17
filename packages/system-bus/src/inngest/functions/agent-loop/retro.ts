@@ -374,7 +374,7 @@ export const agentLoopRetro = inngest.createFunction(
     });
 
     await step.run("emit-retro-complete", async () => {
-      await inngest.send({
+      await step.sendEvent("emit-retro-complete", {
         name: "agent/loop.retro.completed",
         data: {
           loopId,
