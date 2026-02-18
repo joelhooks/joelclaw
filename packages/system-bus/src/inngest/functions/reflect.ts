@@ -43,7 +43,7 @@ function getRedisClient(): Redis {
       lazyConnect: true,
       retryStrategy: isTestEnv ? () => null : undefined,
     });
-    redisClient.on("error", () => {});
+    if (typeof redisClient.on === "function") redisClient.on("error", () => {});
   }
   return redisClient;
 }

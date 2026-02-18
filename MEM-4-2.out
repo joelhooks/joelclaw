@@ -1,0 +1,10 @@
+All tests pass. Here's what was done:
+
+**Root cause:** The `review.acceptance.test.ts` uses `mock.module("ioredis", ...)` which globally replaces ioredis with a `MockRedis` class in Bun's module cache. When `promote-integration.test.ts` and `reflect.test.ts` ran in the same Bun worker process afterward, `new Redis({...})` returned a `MockRedis` instance (which lacks `.on()`), causing `TypeError: redisClient.on is not a function`.
+
+**Fix:** Made the `.on()` call conditional in both `promote.ts` and `reflect.ts`:
+
+- `packages/system-bus/src/inngest/functions/promote.ts:31` — `if (typeof redisClient.on === "function") redisClient.on("error", () => {});`
+- `packages/system-bus/src/inngest/functions/reflect.ts:46` — same guard
+
+This makes both files resilient to test environments where ioredis is mocked with a minimal implementation that lacks EventEmitter methods. **201 tests pass, 0 fail, TypeScript compiles cleanly.**
