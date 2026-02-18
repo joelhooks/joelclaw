@@ -137,10 +137,20 @@ async function drainEvents(): Promise<void> {
       return;
     }
 
+    // Check if any event has an originSession — route response back to that channel
+    const originSession = events.find(
+      (e) => typeof e.payload?.originSession === "string" && e.payload.originSession
+    )?.payload?.originSession as string | undefined;
+
+    // Use originSession as source if it's a channel (telegram:*, etc.)
+    // so the response routes back to the originating channel, not console
+    const source = originSession?.includes(":") ? originSession : SESSION_ID;
+
     const prompt = await buildPrompt(events);
-    enqueuePrompt(SESSION_ID, prompt, {
+    enqueuePrompt(source, prompt, {
       eventCount: events.length,
       eventIds: events.map((event) => event.id),
+      originSession,
     });
     await cmd.del(EVENT_LIST);
   } catch (error) {

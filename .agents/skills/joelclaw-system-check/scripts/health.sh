@@ -31,12 +31,28 @@ echo ""
 K8S_PODS=$(kubectl get pods -n joelclaw --no-headers 2>/dev/null | grep -c "Running" || echo 0)
 K8S_TOTAL=$(kubectl get pods -n joelclaw --no-headers 2>/dev/null | wc -l | tr -d ' ')
 K8S_RESTARTS=$(kubectl get pods -n joelclaw --no-headers 2>/dev/null | awk '{sum+=$4} END {print sum+0}')
-if [[ "$K8S_PODS" == "$K8S_TOTAL" && "$K8S_TOTAL" -ge 3 ]]; then
+if [[ "$K8S_PODS" == "$K8S_TOTAL" && "$K8S_TOTAL" -ge 4 ]]; then
   check "k8s cluster" 10 "${K8S_PODS}/${K8S_TOTAL} pods Running, ${K8S_RESTARTS} restarts"
 elif [[ "$K8S_PODS" -gt 0 ]]; then
   check "k8s cluster" 5 "${K8S_PODS}/${K8S_TOTAL} pods Running"
 else
   check "k8s cluster" 1 "no pods running"
+fi
+
+# ── PDS health ───────────────────────────────────────────
+PDS_VER=$(curl -sf http://localhost:2583/xrpc/_health 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('version',''))" 2>/dev/null || echo "")
+if [[ -n "$PDS_VER" ]]; then
+  # Try describe to check collections
+  PDS_COLLS=$(curl -sf "http://localhost:2583/xrpc/com.atproto.repo.describeRepo?repo=did:plc:7vyfh3gnwfjniddpp5sws4mq" 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('collections',[])))" 2>/dev/null || echo "?")
+  check "pds" 10 "v${PDS_VER}, ${PDS_COLLS} collections"
+else
+  # Check if pod is running but port-forward is down
+  PDS_POD=$(kubectl get pods -n joelclaw -l app.kubernetes.io/name=bluesky-pds --no-headers 2>/dev/null | grep -c "Running" || echo 0)
+  if [[ "$PDS_POD" -gt 0 ]]; then
+    check "pds" 4 "pod running but :2583 unreachable — run: kubectl port-forward -n joelclaw svc/bluesky-pds 2583:3000 &"
+  else
+    check "pds" 1 "pod not running — run: kubectl rollout restart deployment/bluesky-pds -n joelclaw"
+  fi
 fi
 
 # ── worker health ────────────────────────────────────────

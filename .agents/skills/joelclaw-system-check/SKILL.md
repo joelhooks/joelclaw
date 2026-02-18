@@ -15,7 +15,8 @@ Run `scripts/health.sh` for a full system health report with 1-10 score.
 
 | Check | What | Green (10) | Yellow (5-7) | Red (1-3) |
 |-------|------|-----------|-------------|----------|
-| k8s cluster | pods in `joelclaw` namespace | 3/3 Running, 0 restarts | partial pods | no pods |
+| k8s cluster | pods in `joelclaw` namespace | 4/4 Running, 0 restarts | partial pods | no pods |
+| pds | AT Proto PDS on :2583 | version + collections | pod running, port-forward down | pod not running |
 | worker | system-bus on :3111 | 16+ functions | responding, low count | down |
 | inngest server | :8288 reachable | responding | — | down |
 | redis | PING/PONG on :6379 | PONG + memory | — | down |
@@ -42,6 +43,8 @@ Run `scripts/health.sh` for a full system health report with 1-10 score.
 **Repo drift**: `cd ~/Code/system-bus-worker && git fetch origin && git reset --hard origin/main`
 
 **pi-tools broken**: `cd ~/.pi/agent/git/github.com/joelhooks/pi-tools && bun add @sinclair/typebox @mariozechner/pi-coding-agent @mariozechner/pi-tui @mariozechner/pi-ai`
+
+**PDS unreachable**: `kubectl port-forward -n joelclaw svc/bluesky-pds 2583:3000 &` (or if pod down: `kubectl rollout restart deployment/bluesky-pds -n joelclaw`)
 
 **Worker down**: `launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker && sleep 3 && igs refresh`
 

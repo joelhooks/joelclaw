@@ -20,7 +20,21 @@ Concretely:
 
 When debugging: Docker logs first (dispatch errors), then worker stderr (runtime errors), then dashboard (per-step traces), then system-log.jsonl (what actually completed).
 
-### 3. Credit your sources
+### 3. Ports and Adapters
+
+**Decouple application logic from technology.** When joelclaw integrates with an external system (task managers, media channels, databases, notification services), define a **port** (interface) owned by the hexagon, then implement **adapters** for each provider. The hexagon never knows which adapter is plugged in.
+
+Concretely:
+- **Define the port first** — a TypeScript interface describing what the application needs, not how any provider works
+- **At least two adapters per port** — one real, one for testing (mock/in-memory)
+- **New providers are one adapter** — never modify the hexagon to add a backend
+- **Configurable at startup** — which adapter to use is a config/env decision, not a code decision
+
+This is Alistair Cockburn's Hexagonal Architecture (2005). See `~/Vault/Resources/patterns/hexagonal-architecture.md` for the full pattern reference. Applied in ADR-0045 (Task Management), and the guiding pattern for all future integrations.
+
+> "The hexagonal architecture solves these problems by noting the symmetry in the situation: there is an application on the inside communicating over some number of ports with things on the outside." — Cockburn
+
+### 4. Credit your sources
 
 When adopting patterns, tools, or ideas from other projects or people, **always attribute them** — in code comments, commit messages, vault notes, and documentation. If a design was inspired by someone's work, say so. This applies to open-source repos, conversations, blog posts, and any external knowledge that shapes the system.
 
@@ -198,6 +212,7 @@ OpenClaw has a **layered AGENTS.md** at its repo root (`~/Code/openclaw/openclaw
 | gogcli (gog) | 0.11.0 | homebrew (steipete/tap) | Google Workspace CLI — Gmail, Calendar, Drive, Contacts, Tasks, Sheets, Docs + 6 more. File keyring backend, password in agent-secrets — ADR-0040 |
 | Colima | 0.10.0 | homebrew | CLI container runtime (VZ framework), replaces Docker Desktop — ADR-0029 |
 | talosctl | 1.12.4 | homebrew (siderolabs/tap) | Talos Linux CLI — manages Talos k8s cluster, replaces k3d — ADR-0029 |
+| Helm | 4.1.1 | homebrew | K8s package manager — deploys PDS, Bento charts to joelclaw namespace — ADR-0044 |
 | Docker Sandbox | 0.11.0 | colima | Isolated agent execution (claude, codex in sandboxes) |
 | Bun | 1.3.9 | homebrew | JS runtime & package manager |
 | Node | 24.13.1 | fnm | JS runtime |
@@ -239,6 +254,7 @@ All skills are installed to `~/.agents/skills/` (universal) and symlinked to Cla
 | joelclaw | custom | Event bus + agent loop CLI — send events, check runs, start/monitor loops, debug failures, restart worker (igs is a legacy alias) |
 | obsidian-bases | custom | Obsidian Bases (.base files) |
 | obsidian-markdown | custom | Obsidian-flavored markdown |
+| pds | custom | AT Protocol Personal Data Server — write/read dev.joelclaw.* records, session management, health, troubleshooting, helm ops — ADR-0044 |
 | pdf | anthropics/skills | PDF creation/editing |
 | pptx | anthropics/skills | PowerPoint creation/editing |
 | remotion-best-practices | remotion-dev/skills | React video production (Remotion) |
