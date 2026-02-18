@@ -350,6 +350,14 @@ export const reflect = inngest.createFunction(
 
     const dailyLog = await step.run("append-daily-log", async () => {
       const dailyLogPath = join(getWorkspaceRoot(), "memory", `${loaded.anchorDate}.md`);
+      const existingDailyLog = Bun.file(dailyLogPath);
+      if ((await existingDailyLog.exists()) && (await existingDailyLog.text()).includes("### 🔭 Reflected")) {
+        return {
+          appended: false,
+          path: dailyLogPath,
+          reason: "already reflected today",
+        };
+      }
       const sectionSummary =
         staged.sections.length > 0 ? staged.sections.join(", ") : "none";
       const lines = [
@@ -364,6 +372,7 @@ export const reflect = inngest.createFunction(
       return {
         appended: writeResult.ok,
         path: dailyLogPath,
+        reason: writeResult.ok ? undefined : "append failed",
         error: writeResult.error,
       };
     });

@@ -9,7 +9,7 @@ import {
 } from "bun:test";
 import { InngestTestEngine } from "@inngest/test";
 import Redis from "ioredis";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { COMPRESSION_GUIDANCE, validateCompression } from "./reflect-prompt";
@@ -93,6 +93,27 @@ async function executeReflect(eventDate = "2026-02-17") {
     ],
   });
   return engine.execute();
+}
+
+async function executeReflectFromCron() {
+  const mod = await import("./reflect.ts");
+  const reflectFn = findReflectFunctionExport(mod as Record<string, unknown>);
+  const engine = new InngestTestEngine({
+    function: reflectFn as any,
+    events: [
+      {
+        name: "inngest/scheduled.timer",
+        data: {
+          cron: "0 6 * * *",
+        },
+      } as any,
+    ],
+  });
+  return engine.execute();
+}
+
+function countReflectedBlocks(markdown: string): number {
+  return markdown.split("### 🔭 Reflected").length - 1;
 }
 
 beforeAll(() => {
@@ -283,6 +304,88 @@ describe("MEM-16 reflect acceptance tests", () => {
       },
     });
 
+  });
+
+  test("running reflect twice on the same day appends at most one Reflected daily-log entry", async () => {
+    redisLists.set("memory:observations:2026-02-17", [
+      JSON.stringify({ summary: "Daily reflection dedup acceptance coverage." }),
+    ]);
+
+    shellResultQueue = [
+      {
+        exitCode: 0,
+        stdout:
+          "<proposals><proposal><section>Facts</section><change>First pass.</change></proposal></proposals>",
+        stderr: "",
+      },
+      {
+        exitCode: 0,
+        stdout:
+          "<proposals><proposal><section>Facts</section><change>Second pass.</change></proposal></proposals>",
+        stderr: "",
+      },
+    ];
+
+    const firstRun = await executeReflect("2026-02-17");
+    const secondRun = await executeReflect("2026-02-17");
+    const dailyLogPath = String((firstRun.result as { dailyLogPath?: unknown }).dailyLogPath ?? "");
+
+    expect(firstRun.result).toMatchObject({
+      dailyLogPath: expect.any(String),
+    });
+    expect(secondRun.result).toMatchObject({
+      dailyLogPath: expect.any(String),
+    });
+    expect(dailyLogPath.length).toBeGreaterThan(0);
+
+    const dailyLog = readFileSync(dailyLogPath, "utf8");
+    const reflectedEntries = countReflectedBlocks(dailyLog);
+
+    expect({
+      reflectedEntries,
+      hasOnlyOneReflectedEntry: reflectedEntries === 1,
+    }).toMatchObject({
+      reflectedEntries: 1,
+      hasOnlyOneReflectedEntry: true,
+    });
+  });
+
+  test("6 AM cron still processes backfill observations accumulated in Redis", async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    redisLists.set(`memory:observations:${today}`, [
+      JSON.stringify({
+        summary: "Backfill summary block available for cron reflect.",
+        metadata: { trigger: "backfill" },
+      }),
+    ]);
+
+    shellResultQueue = [
+      {
+        exitCode: 0,
+        stdout: `<proposals>
+  <proposal><section>Patterns</section><change>Keep daily cron reflection for backfill.</change></proposal>
+</proposals>`,
+        stderr: "",
+      },
+    ];
+
+    const { result } = await executeReflectFromCron();
+    const cronResult = (result ?? {}) as Record<string, unknown>;
+    const pending = redisLists.get("memory:review:pending") ?? [];
+
+    expect(shellCalls[0]).toContain("Backfill summary block available for cron reflect.");
+    expect({
+      proposalCount: cronResult.proposalCount,
+      emittedEvent: cronResult.emittedEvent,
+      pendingCount: pending.length,
+    }).toMatchObject({
+      proposalCount: 1,
+      emittedEvent: {
+        name: "memory/observations.reflected",
+        data: { date: today },
+      },
+      pendingCount: 1,
+    });
   });
 
   test("mock pi subprocess valid <proposals> XML is accepted and staged", async () => {

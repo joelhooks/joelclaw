@@ -220,7 +220,7 @@ export const backfillObserve = inngest.createFunction(
         data: {
           sessionId: `backfill-${session.sessionId}`,
           dedupeKey,
-          trigger: "shutdown" as const,
+          trigger: "backfill" as const,
           messages: messageData.messages,
           messageCount: messageData.messageCount,
           userMessageCount: messageData.userMessageCount,
