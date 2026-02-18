@@ -1,0 +1,102 @@
+{
+  "title": "ADR-0038 Phase 1: Embedded Pi Gateway Daemon",
+  "goal": "Replace the tmux+extension central gateway with a headless Node.js daemon that embeds pi via createAgentSession(). The daemon owns the LLM session, serializes inputs through a command queue, handles Redis events from Inngest, and runs the heartbeat. This is the foundation for Telegram, WebSocket, and native app channels.",
+  "context": [
+    "ADR-0038: ~/Vault/docs/decisions/0038-embedded-pi-gateway-daemon.md",
+    "Current extension: ~/.pi/agent/extensions/gateway/index.ts (~250 lines, Redis sub/pub, heartbeat prompts, watchdog)",
+    "Pi SDK: @mariozechner/pi-coding-agent — createAgentSession(), AgentSession.prompt(), .subscribe(), .sendUserMessage()",
+    "Pi SDK examples: ~/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/examples/sdk/ (01-minimal through 12-full-control)",
+    "Pi SDK docs: ~/.bun/install/global/node_modules/@mariozechner/pi-coding-agent/docs/sdk.md",
+    "OpenClaw reference: ~/Code/openclaw/openclaw/src/macos/gateway-daemon.ts (launchd lifecycle, restart handling)",
+    "OpenClaw command queue: ~/Code/openclaw/openclaw/src/process/command-queue.ts (lane-based serialization)",
+    "OpenClaw heartbeat: ~/Code/openclaw/openclaw/src/infra/heartbeat-runner.ts (setInterval, HEARTBEAT.md, system events drain)",
+    "Current pushGatewayEvent: packages/system-bus/src/inngest/functions/agent-loop/utils.ts (fan-out to sessions via Redis)",
+    "Current launchd plist: ~/Library/LaunchAgents/com.joel.gateway.plist (runs gateway-start.sh → tmux → pi)",
+    "Redis keys: joelclaw:gateway:sessions (SET), joelclaw:events:{id} (LIST), joelclaw:notify:{id} (PUBSUB)",
+    "Monorepo packages pattern: see packages/system-bus/package.json and packages/cli/package.json for conventions"
+  ],
+  "stories": [
+    {
+      "id": "SCAFFOLD",
+      "title": "Scaffold packages/gateway with package.json, tsconfig, entry point",
+      "description": "Create packages/gateway/ with package.json (@joelclaw/gateway), tsconfig.json extending the monorepo typescript-config, and a src/daemon.ts entry point that imports createAgentSession from @mariozechner/pi-coding-agent, creates a session with default discovery (skills, extensions, tools from ~/.pi/agent/), and logs 'gateway daemon started'. Dependencies: @mariozechner/pi-coding-agent, @mariozechner/pi-ai, ioredis. Scripts: dev (bun --watch), start (bun run).",
+      "acceptance_criteria": [
+        "packages/gateway/package.json exists with correct name and deps",
+        "packages/gateway/tsconfig.json extends monorepo typescript-config",
+        "packages/gateway/src/daemon.ts creates a session via createAgentSession()",
+        "bun run packages/gateway/src/daemon.ts starts without errors (may need ANTHROPIC_API_KEY)",
+        "bunx tsc --noEmit from packages/gateway/ passes"
+      ],
+      "priority": 1
+    },
+    {
+      "id": "QUEUE",
+      "title": "Implement command queue with sequential drain",
+      "description": "Create src/command-queue.ts with a simple sequential queue. enqueue(source, prompt, metadata?) adds to queue. drain() processes one at a time via session.prompt(). Track currentSource so the outbound router knows where to send replies. Export types: QueueEntry = { source: string, prompt: string, replyTo?: string, metadata?: Record<string,unknown> }. Adapted from OpenClaw's CommandQueue pattern but simplified (single lane, no concurrency).",
+      "acceptance_criteria": [
+        "command-queue.ts exports enqueue() and a way to set the session reference",
+        "Queue drains sequentially (one prompt at a time)",
+        "currentSource is tracked and accessible for outbound routing",
+        "Queue handles errors gracefully (log and continue to next entry)",
+        "TypeScript compiles cleanly"
+      ],
+      "priority": 2
+    },
+    {
+      "id": "REDIS",
+      "title": "Port Redis channel from extension into daemon",
+      "description": "Create src/channels/redis.ts that registers this daemon as 'gateway' in joelclaw:gateway:sessions (SADD), subscribes to joelclaw:notify:gateway (and legacy joelclaw:notify:main), and drains joelclaw:events:gateway on notification. Events get formatted into prompts and enqueued via the command queue. On shutdown, SREM + DEL cleanup. Port the dedup logic (seenIds set, 500 max) and legacy list migration from the extension. Two ioredis clients: sub (subscriber mode) + cmd (commands).",
+      "acceptance_criteria": [
+        "Redis channel registers 'gateway' in joelclaw:gateway:sessions on start",
+        "Subscribes to joelclaw:notify:gateway channel",
+        "Drains joelclaw:events:gateway on notification, enqueues formatted prompts",
+        "Dedup via seenIds prevents double-processing",
+        "Cleanup on shutdown (SREM, DEL, disconnect)",
+        "Legacy joelclaw:events:main migration on startup"
+      ],
+      "priority": 3
+    },
+    {
+      "id": "HEARTBEAT",
+      "title": "Implement heartbeat runner with HEARTBEAT.md and watchdog",
+      "description": "Create src/heartbeat.ts with a setInterval(15 min) that reads ~/Vault/HEARTBEAT.md, builds a heartbeat prompt (same format as current extension), and enqueues it via the command queue with source='heartbeat'. Include the watchdog: track lastHeartbeatTs, check every 5 min, alarm if >30 min since last heartbeat. Write /tmp/joelclaw/last-heartbeat.ts on each heartbeat for the launchd tripwire (ADR-0037 Layer 2). Filter HEARTBEAT_OK responses (log but don't route to any channel).",
+      "acceptance_criteria": [
+        "Heartbeat fires every 15 minutes via setInterval",
+        "Reads ~/Vault/HEARTBEAT.md for checklist content",
+        "Enqueues heartbeat prompt via command queue",
+        "Watchdog detects missed heartbeats (30min threshold)",
+        "Writes /tmp/joelclaw/last-heartbeat.ts for tripwire",
+        "HEARTBEAT_OK filtering implemented (suppress from outbound)"
+      ],
+      "priority": 4
+    },
+    {
+      "id": "OUTBOUND",
+      "title": "Create outbound router skeleton with console channel",
+      "description": "Create src/outbound/router.ts that receives LLM responses (from session.subscribe events) and routes them based on currentSource. For now, implement a console channel that logs responses to stdout (the daemon's log). This is the foundation — Telegram, WebSocket channels will register their own outbound handlers later. The router should: collect text deltas into a full response, detect source from command queue, and call the appropriate channel's send() method.",
+      "acceptance_criteria": [
+        "router.ts exports registerChannel(id, handler) and handles routing",
+        "session.subscribe() wired to collect assistant responses",
+        "Console channel logs full responses to stdout",
+        "HEARTBEAT_OK responses are detected and suppressed",
+        "Source tracking from command queue determines outbound target"
+      ],
+      "priority": 5
+    },
+    {
+      "id": "LIFECYCLE",
+      "title": "Wire daemon lifecycle: startup, shutdown, launchd integration",
+      "description": "Wire everything together in daemon.ts: create session, start Redis channel, start heartbeat runner, handle SIGTERM/SIGINT for graceful shutdown (cleanup Redis, close session). Update ~/.joelclaw/scripts/gateway-start.sh to run the daemon directly (no tmux). Update ~/Library/LaunchAgents/com.joel.gateway.plist to point at the new daemon. The daemon should log startup info (session ID, model, registered channels) and write a PID file to /tmp/joelclaw/gateway.pid.",
+      "acceptance_criteria": [
+        "daemon.ts wires session + redis + heartbeat + outbound together",
+        "SIGTERM/SIGINT trigger graceful shutdown",
+        "gateway-start.sh updated to run daemon directly",
+        "com.joel.gateway.plist points at updated script",
+        "PID file written to /tmp/joelclaw/gateway.pid",
+        "Startup log shows session ID, model, channels"
+      ],
+      "priority": 6
+    }
+  ],
+  "maxRetries": 3
+}

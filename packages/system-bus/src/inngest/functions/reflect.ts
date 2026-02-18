@@ -43,7 +43,7 @@ function getRedisClient(): Redis {
       lazyConnect: true,
       retryStrategy: isTestEnv ? () => null : undefined,
     });
-    redisClient.on("error", () => {});
+    if (typeof redisClient.on === "function") redisClient.on("error", () => {});
   }
   return redisClient;
 }
@@ -180,34 +180,6 @@ function groupBySection(proposals: StagedProposal[]): Map<string, StagedProposal
     }
   }
   return grouped;
-}
-
-function buildReviewBlock(grouped: Map<string, StagedProposal[]>, metadata: Record<string, string>): string {
-  const lines: string[] = [];
-
-  lines.push(`# REVIEW Staging (${metadata.date})`);
-  lines.push("");
-
-  for (const [section, proposals] of grouped) {
-    lines.push(`## ${section}`);
-    lines.push("");
-    for (const proposal of proposals) {
-      lines.push(`- [ ] ${proposal.id}: ${proposal.change}`);
-    }
-    lines.push("");
-  }
-
-  lines.push("### Metadata");
-  lines.push("");
-  lines.push(`- date: ${metadata.date}`);
-  lines.push(`- capturedAt: ${metadata.capturedAt}`);
-  lines.push(`- inputTokens: ${metadata.inputTokens}`);
-  lines.push(`- outputTokens: ${metadata.outputTokens}`);
-  lines.push(`- compressionRatio: ${metadata.compressionRatio}`);
-  lines.push(`- proposalCount: ${metadata.proposalCount}`);
-  lines.push("");
-
-  return lines.join("\n");
 }
 
 function appendToFile(path: string, content: string): { ok: boolean; error?: string } {
@@ -367,24 +339,12 @@ export const reflect = inngest.createFunction(
         await redis.rpush("memory:review:pending", proposal.id);
       }
 
-      const reviewPath = join(getWorkspaceRoot(), "REVIEW.md");
       const grouped = groupBySection(stagedProposals);
-      const reviewBlock = buildReviewBlock(grouped, {
-        date: loaded.anchorDate,
-        capturedAt,
-        inputTokens: String(validated.inputTokens),
-        outputTokens: String(validated.outputTokens),
-        compressionRatio: String(validated.compressionRatio),
-        proposalCount: String(stagedProposals.length),
-      });
-      const writeResult = appendToFile(reviewPath, reviewBlock);
 
       return {
         proposalCount: stagedProposals.length,
         capturedAt,
-        reviewPath,
         sections: [...grouped.keys()],
-        writeResult,
       };
     });
 
@@ -432,7 +392,6 @@ export const reflect = inngest.createFunction(
       compressionRatio: validated.compressionRatio,
       retryLevel: validated.retryLevel,
       proposalCount: staged.proposalCount,
-      reviewPath: staged.reviewPath,
       dailyLogPath: dailyLog.path,
       emittedEvent,
       emitCompleteError,

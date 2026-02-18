@@ -4,15 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InngestTestEngine } from "@inngest/test";
 import Redis from "ioredis";
-import { archiveProposal, expireProposal, parseReviewMd, promote, promoteToMemory } from "./promote";
+import * as promoteModule from "./promote";
+import { archiveProposal, expireProposal, promote, promoteToMemory } from "./promote";
 
 type RedisMockState = {
   hashes: Map<string, Record<string, string>>;
   lists: Map<string, string[]>;
 };
 
+const REVIEW_PENDING_KEY = "memory:review:pending";
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
+const originalPath = process.env.PATH;
 const originalRedisMethods = {
   lrange: Redis.prototype.lrange,
   hgetall: Redis.prototype.hgetall,
@@ -85,38 +88,12 @@ function putProposal(id: string, fields: Record<string, string>): void {
   });
 }
 
-function getSectionBlock(markdown: string, sectionTitle: string): string {
-  const lines = markdown.split(/\r?\n/u);
-  const start = lines.findIndex((line) => line.trim() === `## ${sectionTitle}`);
-  if (start === -1) return "";
-
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i += 1) {
-    if ((lines[i] ?? "").startsWith("## ")) {
-      end = i;
-      break;
-    }
-  }
-
-  return lines.slice(start, end).join("\n");
-}
-
 async function executePromoteWithEvent(event: { name: string; data: Record<string, unknown> }) {
   const engine = new InngestTestEngine({
     function: promote as any,
     events: [event as any],
   });
   return engine.execute();
-}
-
-async function loadPromotePromptModule(): Promise<{ exists: boolean; module: Record<string, unknown> | null }> {
-  const promotePromptUrl = new URL("./promote-prompt.ts", import.meta.url);
-  const file = Bun.file(promotePromptUrl);
-  const exists = await file.exists();
-  if (!exists) return { exists, module: null };
-
-  const loaded = await import(`${promotePromptUrl.href}?ts=${Date.now()}`);
-  return { exists, module: loaded as Record<string, unknown> };
 }
 
 beforeAll(() => {
@@ -209,13 +186,27 @@ beforeEach(() => {
     lists: new Map(),
   };
 
-  tempHome = mkdtempSync(join(tmpdir(), "mem-20-home-"));
+  tempHome = mkdtempSync(join(tmpdir(), "mem-3-home-"));
   process.env.HOME = tempHome;
   process.env.USERPROFILE = tempHome;
 
   workspaceDir = join(tempHome, ".joelclaw", "workspace");
   reviewPath = join(workspaceDir, "REVIEW.md");
   memoryPath = join(workspaceDir, "MEMORY.md");
+
+  const shimBinDir = join(tempHome, "bin");
+  const piShimPath = join(shimBinDir, "pi");
+  mkdirSync(shimBinDir, { recursive: true });
+  writeFileSync(
+    piShimPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "exit 0",
+    ].join("\n")
+  );
+  Bun.spawnSync(["chmod", "+x", piShimPath]);
+  process.env.PATH = `${shimBinDir}:${originalPath ?? ""}`;
 });
 
 afterEach(() => {
@@ -225,359 +216,220 @@ afterEach(() => {
   if (originalUserProfile === undefined) delete process.env.USERPROFILE;
   else process.env.USERPROFILE = originalUserProfile;
 
+  if (originalPath === undefined) delete process.env.PATH;
+  else process.env.PATH = originalPath;
+
   rmSync(tempHome, { recursive: true, force: true });
 });
 
-describe("MEM-20 promote acceptance tests", () => {
-  test("parseReviewMd extracts proposal IDs with checked, unchecked, and deleted states", () => {
-    const markdown = [
-      "# REVIEW Staging",
-      "",
-      "- [ ] p-20260217-001: Keep pending",
-      "- [x] p-20260217-002: Promote",
-      "- [-] p-20260217-003: Reject",
-      "",
-    ].join("\n");
+describe("MEM-3 promote acceptance tests", () => {
+  test("exports public promotion operations and does not export REVIEW parser helpers", () => {
+    const exportsMap = promoteModule as Record<string, unknown>;
 
-    const parsed = parseReviewMd(markdown);
+    expect({
+      promoteToMemory: typeof exportsMap.promoteToMemory,
+      archiveProposal: typeof exportsMap.archiveProposal,
+      expireProposal: typeof exportsMap.expireProposal,
+    }).toMatchObject({
+      promoteToMemory: "function",
+      archiveProposal: "function",
+      expireProposal: "function",
+    });
 
-    expect(parsed).toMatchObject({
-      proposals: [
-        { id: "p-20260217-001", state: "unchecked" },
-        { id: "p-20260217-002", state: "checked" },
-        { id: "p-20260217-003", state: "deleted" },
-      ],
+    expect({
+      parseReviewMd: "parseReviewMd" in exportsMap,
+      getReviewPath: "getReviewPath" in exportsMap,
+      removeProposalFromReview: "removeProposalFromReview" in exportsMap,
+      extractContentPath: "extractContentPath" in exportsMap,
+    }).toMatchObject({
+      parseReviewMd: false,
+      getReviewPath: false,
+      removeProposalFromReview: false,
+      extractContentPath: false,
     });
   });
 
-  test("promoteToMemory appends to the correct MEMORY.md section with a date prefix", async () => {
-    const proposalId = "p-20260210-001";
-    const proposedText = "Capture architectural decisions as durable memory.";
+  test("registers approved/rejected event triggers and retains daily 8 AM cron trigger", () => {
+    const triggerDefs = (((promote as any).opts?.triggers ?? []) as Array<Record<string, unknown>>).map((trigger) => ({
+      event: trigger.event,
+      cron: trigger.cron,
+    }));
 
-    writeWorkspaceFiles("# REVIEW Staging\n");
-    redisState.lists.set("memory:review:pending", [proposalId]);
-    putProposal(proposalId, {
-      targetSection: "System Architecture",
-      proposedText,
-      capturedAt: "2026-02-10T08:00:00.000Z",
+    expect({
+      hasApprovedTrigger: triggerDefs.some((trigger) => trigger.event === "memory/proposal.approved"),
+      hasRejectedTrigger: triggerDefs.some((trigger) => trigger.event === "memory/proposal.rejected"),
+      hasDailyCronTrigger: triggerDefs.some((trigger) => trigger.cron === "0 8 * * *"),
+      hasLegacyContentUpdatedTrigger: triggerDefs.some((trigger) => trigger.event === "content/updated"),
+    }).toMatchObject({
+      hasApprovedTrigger: true,
+      hasRejectedTrigger: true,
+      hasDailyCronTrigger: true,
+      hasLegacyContentUpdatedTrigger: false,
     });
-
-    await promoteToMemory(proposalId);
-
-    const memory = readFileSync(memoryPath, "utf8");
-    const architecture = getSectionBlock(memory, "System Architecture");
-    const hardRules = getSectionBlock(memory, "Hard Rules");
-    const patterns = getSectionBlock(memory, "Patterns");
-
-    expect(architecture).toContain(`- (2026-02-10) ${proposedText}`);
-    expect(hardRules).not.toContain(proposedText);
-    expect(patterns).not.toContain(proposedText);
-    expect(redisState.lists.get("memory:review:pending") ?? []).toMatchObject([]);
-    expect(redisState.hashes.has(proposalKey(proposalId))).toBe(false);
   });
 
-  test("archiveProposal logs rejected proposals to the daily log with reason", async () => {
-    const proposalId = "p-20260212-002";
-    const proposedText = "Drop redundant summary section from memory.";
+  test("approved proposal event promotes memory and leaves REVIEW.md untouched", async () => {
+    const approvedId = proposalIdDaysAgo(1, "101");
+    const approvedText = "Approved proposal written to memory from event trigger.";
+    const initialReview = ["# REVIEW Staging", `- [ ] ${approvedId}: ${approvedText}`, ""].join("\n");
 
-    writeWorkspaceFiles(["# REVIEW Staging", `- [ ] ${proposalId}: ${proposedText}`, ""].join("\n"));
-    redisState.lists.set("memory:review:pending", [proposalId]);
-    putProposal(proposalId, {
-      proposedText,
-      capturedAt: "2026-02-12T08:00:00.000Z",
-    });
-
-    await archiveProposal(proposalId, "deleted");
-
-    const log = readFileSync(todayLogPath(), "utf8");
-    const review = readFileSync(reviewPath, "utf8");
-
-    expect(log).toContain("### Rejected Proposals");
-    expect(log).toContain(`${proposalId}: ${proposedText} [reason: deleted]`);
-    expect(review).not.toContain(proposalId);
-    expect(redisState.lists.get("memory:review:pending") ?? []).toMatchObject([]);
-    expect(redisState.hashes.has(proposalKey(proposalId))).toBe(false);
-  });
-
-  test("expireProposal only archives proposals older than 7 days", async () => {
-    const recentId = proposalIdDaysAgo(3, "001");
-    const oldId = proposalIdDaysAgo(8, "002");
-
-    writeWorkspaceFiles(
-      [
-        "# REVIEW Staging",
-        `- [ ] ${recentId}: Recent proposal`,
-        `- [ ] ${oldId}: Old proposal`,
-        "",
-      ].join("\n")
-    );
-    redisState.lists.set("memory:review:pending", [recentId, oldId]);
-    putProposal(recentId, {
-      proposedText: "Recent proposal",
-      capturedAt: new Date().toISOString(),
-    });
-    putProposal(oldId, {
-      proposedText: "Old proposal",
-      capturedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(),
-    });
-
-    await expireProposal(recentId);
-    await expireProposal(oldId);
-
-    const log = readFileSync(todayLogPath(), "utf8");
-    const review = readFileSync(reviewPath, "utf8");
-
-    expect(log).toContain("### Expired Proposals");
-    expect(log).toContain(oldId);
-    expect(log).not.toContain(recentId);
-    expect(review).toContain(recentId);
-    expect(review).not.toContain(oldId);
-    expect(redisState.lists.get("memory:review:pending") ?? []).toMatchObject([recentId]);
-    expect(redisState.hashes.has(proposalKey(recentId))).toBe(true);
-    expect(redisState.hashes.has(proposalKey(oldId))).toBe(false);
-  });
-
-  test("promote function detects approved proposals and routes them to memory promotion", async () => {
-    const approvedId = proposalIdDaysAgo(1, "010");
-    const approvedText = "Approved: preserve concrete acceptance criteria in tests.";
-
-    writeWorkspaceFiles(["# REVIEW Staging", `- [x] ${approvedId}: ${approvedText}`, ""].join("\n"));
-    redisState.lists.set("memory:review:pending", [approvedId]);
+    writeWorkspaceFiles(initialReview);
+    redisState.lists.set(REVIEW_PENDING_KEY, [approvedId]);
     putProposal(approvedId, {
       targetSection: "Hard Rules",
       proposedText: approvedText,
       capturedAt: new Date().toISOString(),
     });
 
-    const { result } = await executePromoteWithEvent({
-      name: "content/updated",
-      data: { path: reviewPath },
+    await executePromoteWithEvent({
+      name: "memory/proposal.approved",
+      data: {
+        proposalId: approvedId,
+        approvedBy: "acceptance-test",
+      },
     });
 
     const memory = readFileSync(memoryPath, "utf8");
+    const review = readFileSync(reviewPath, "utf8");
 
-    expect(result).toMatchObject({ approved: [approvedId] });
-    expect(memory).toContain(approvedText);
-    expect(redisState.lists.get("memory:review:pending") ?? []).toMatchObject([]);
-    expect(redisState.hashes.has(proposalKey(approvedId))).toBe(false);
+    expect({
+      memoryContainsApprovedText: memory.includes(approvedText),
+      reviewUnchanged: review === initialReview,
+      pendingIds: redisState.lists.get(REVIEW_PENDING_KEY) ?? [],
+      proposalExists: redisState.hashes.has(proposalKey(approvedId)),
+    }).toMatchObject({
+      memoryContainsApprovedText: true,
+      reviewUnchanged: true,
+      pendingIds: [],
+      proposalExists: false,
+    });
   });
 
-  test("promote function detects deleted proposals and routes them to archive", async () => {
-    const deletedId = proposalIdDaysAgo(1, "020");
-    const deletedText = "Deleted: remove duplicate operational rule.";
+  test("rejected proposal event archives reason and leaves REVIEW.md untouched", async () => {
+    const rejectedId = proposalIdDaysAgo(1, "102");
+    const rejectedText = "Rejected proposal should be logged with explicit reason.";
+    const rejectReason = "insufficient evidence";
+    const initialReview = ["# REVIEW Staging", `- [ ] ${rejectedId}: ${rejectedText}`, ""].join("\n");
 
-    writeWorkspaceFiles(["# REVIEW Staging", `- [-] ${deletedId}: ${deletedText}`, ""].join("\n"));
-    redisState.lists.set("memory:review:pending", [deletedId]);
-    putProposal(deletedId, {
-      proposedText: deletedText,
+    writeWorkspaceFiles(initialReview);
+    redisState.lists.set(REVIEW_PENDING_KEY, [rejectedId]);
+    putProposal(rejectedId, {
+      proposedText: rejectedText,
       capturedAt: new Date().toISOString(),
     });
 
-    const { result } = await executePromoteWithEvent({
-      name: "content/updated",
-      data: { path: reviewPath },
+    await executePromoteWithEvent({
+      name: "memory/proposal.rejected",
+      data: {
+        proposalId: rejectedId,
+        reason: rejectReason,
+        rejectedBy: "acceptance-test",
+      },
     });
 
     const log = readFileSync(todayLogPath(), "utf8");
+    const review = readFileSync(reviewPath, "utf8");
 
-    expect(result).toMatchObject({ rejected: [deletedId] });
-    expect(log).toContain("### Rejected Proposals");
-    expect(log).toContain(`${deletedId}: ${deletedText} [reason: marked-rejected]`);
-    expect(redisState.lists.get("memory:review:pending") ?? []).toMatchObject([]);
-    expect(redisState.hashes.has(proposalKey(deletedId))).toBe(false);
+    expect({
+      logContainsHeader: log.includes("### Rejected Proposals"),
+      logContainsReason: log.includes(`${rejectedId}: ${rejectedText} [reason: ${rejectReason}]`),
+      reviewUnchanged: review === initialReview,
+      pendingIds: redisState.lists.get(REVIEW_PENDING_KEY) ?? [],
+      proposalExists: redisState.hashes.has(proposalKey(rejectedId)),
+    }).toMatchObject({
+      logContainsHeader: true,
+      logContainsReason: true,
+      reviewUnchanged: true,
+      pendingIds: [],
+      proposalExists: false,
+    });
   });
 
-  test("promote function auto-expires old proposals on cron run", async () => {
-    const expiredId = proposalIdDaysAgo(9, "030");
-    const expiredText = "Expired: stale proposal should be archived.";
+  test("cron trigger auto-expires proposals older than 7 days", async () => {
+    const staleId = proposalIdDaysAgo(8, "201");
+    const recentId = proposalIdDaysAgo(2, "202");
+    const initialReview = [
+      "# REVIEW Staging",
+      `- [ ] ${staleId}: stale proposal`,
+      `- [ ] ${recentId}: recent proposal`,
+      "",
+    ].join("\n");
 
-    writeWorkspaceFiles(["# REVIEW Staging", `- [ ] ${expiredId}: ${expiredText}`, ""].join("\n"));
-    redisState.lists.set("memory:review:pending", [expiredId]);
-    putProposal(expiredId, {
-      proposedText: expiredText,
-      capturedAt: new Date(Date.now() - 9 * 24 * 60 * 60 * 1000).toISOString(),
+    writeWorkspaceFiles(initialReview);
+    redisState.lists.set(REVIEW_PENDING_KEY, [staleId, recentId]);
+    putProposal(staleId, {
+      proposedText: "stale proposal",
+      capturedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    putProposal(recentId, {
+      proposedText: "recent proposal",
+      capturedAt: new Date().toISOString(),
     });
 
-    const { result } = await executePromoteWithEvent({
+    await executePromoteWithEvent({
       name: "inngest/scheduled.timer",
       data: { cron: "0 8 * * *" },
     });
 
     const log = readFileSync(todayLogPath(), "utf8");
+    const review = readFileSync(reviewPath, "utf8");
 
-    expect(result).toMatchObject({ expired: [expiredId] });
-    expect(log).toContain("### Expired Proposals");
-    expect(log).toContain(expiredId);
-    expect(redisState.lists.get("memory:review:pending") ?? []).toMatchObject([]);
-    expect(redisState.hashes.has(proposalKey(expiredId))).toBe(false);
+    expect({
+      logContainsExpiredHeader: log.includes("### Expired Proposals"),
+      logContainsStaleId: log.includes(staleId),
+      logContainsRecentId: log.includes(recentId),
+      reviewUnchanged: review === initialReview,
+      pendingIds: redisState.lists.get(REVIEW_PENDING_KEY) ?? [],
+      staleExists: redisState.hashes.has(proposalKey(staleId)),
+      recentExists: redisState.hashes.has(proposalKey(recentId)),
+    }).toMatchObject({
+      logContainsExpiredHeader: true,
+      logContainsStaleId: true,
+      logContainsRecentId: false,
+      reviewUnchanged: true,
+      pendingIds: [recentId],
+      staleExists: false,
+      recentExists: true,
+    });
   });
 
-  test("no data loss: every proposal ends up in MEMORY.md or daily log", async () => {
-    const approvedId = proposalIdDaysAgo(1, "101");
-    const deletedId = proposalIdDaysAgo(1, "102");
-    const expiredId = proposalIdDaysAgo(8, "103");
+  test("direct public operations do not mutate REVIEW.md", async () => {
+    const promotedId = proposalIdDaysAgo(1, "301");
+    const archivedId = proposalIdDaysAgo(1, "302");
+    const expiredId = proposalIdDaysAgo(9, "303");
+    const initialReview = [
+      "# REVIEW Staging",
+      `- [ ] ${promotedId}: promote candidate`,
+      `- [ ] ${archivedId}: archive candidate`,
+      `- [ ] ${expiredId}: expire candidate`,
+      "",
+    ].join("\n");
 
-    const approvedText = "Approved proposal survives in MEMORY.md.";
-    const deletedText = "Deleted proposal is retained in rejection log.";
-    const expiredText = "Expired proposal is retained in expiry log.";
+    writeWorkspaceFiles(initialReview);
+    redisState.lists.set(REVIEW_PENDING_KEY, [promotedId, archivedId, expiredId]);
 
-    writeWorkspaceFiles(
-      [
-        "# REVIEW Staging",
-        `- [x] ${approvedId}: ${approvedText}`,
-        `- [-] ${deletedId}: ${deletedText}`,
-        `- [ ] ${expiredId}: ${expiredText}`,
-        "",
-      ].join("\n")
-    );
-
-    redisState.lists.set("memory:review:pending", [approvedId, deletedId, expiredId]);
-    putProposal(approvedId, {
+    putProposal(promotedId, {
       targetSection: "Patterns",
-      proposedText: approvedText,
+      proposedText: "promote candidate",
       capturedAt: new Date().toISOString(),
     });
-    putProposal(deletedId, {
-      proposedText: deletedText,
+    putProposal(archivedId, {
+      proposedText: "archive candidate",
       capturedAt: new Date().toISOString(),
     });
     putProposal(expiredId, {
-      proposedText: expiredText,
-      capturedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(),
+      proposedText: "expire candidate",
+      capturedAt: new Date(Date.now() - 9 * 24 * 60 * 60 * 1000).toISOString(),
     });
 
-    const { result } = await executePromoteWithEvent({
-      name: "content/updated",
-      data: { path: reviewPath },
+    await promoteToMemory(promotedId);
+    await archiveProposal(archivedId, "deleted");
+    await expireProposal(expiredId);
+
+    const review = readFileSync(reviewPath, "utf8");
+
+    expect({ reviewUnchanged: review === initialReview }).toMatchObject({
+      reviewUnchanged: true,
     });
-
-    const memory = readFileSync(memoryPath, "utf8");
-    const log = readFileSync(todayLogPath(), "utf8");
-
-    expect(result).toMatchObject({
-      approved: [approvedId],
-      rejected: [deletedId],
-      expired: [expiredId],
-      pending: [],
-    });
-
-    expect(memory).toContain(approvedText);
-    expect(log).toContain(deletedText);
-    expect(log).toContain(expiredText);
-    expect(redisState.lists.get("memory:review:pending") ?? []).toMatchObject([]);
-  });
-});
-
-describe("MEM-21 promote prompt acceptance tests", () => {
-  test("promote-prompt module exists and exports either a usable system prompt or stubbed contract", async () => {
-    const loaded = await loadPromotePromptModule();
-    expect(loaded).toMatchObject({ exists: true });
-
-    const prompt = loaded.module?.PROMOTE_SYSTEM_PROMPT;
-    if (typeof prompt === "string" && prompt.trim().length > 0) {
-      expect(prompt).toContain("MEMORY.md");
-      expect(prompt.toLowerCase()).toContain("single");
-      expect(prompt.toLowerCase()).toContain("line");
-    } else {
-      expect({
-        promptDefined: false,
-      }).toMatchObject({ promptDefined: false });
-    }
-  });
-
-  test("promoteToMemory conditionally uses pi formatting and inserts formatted output when prompt is defined", async () => {
-    const proposalId = "p-20260211-041";
-    const rawProposalText = "raw proposal text that should be normalized before insertion";
-    const llmFormattedText = "Consolidate duplicate operational guidance into a single canonical rule.";
-
-    writeWorkspaceFiles("# REVIEW Staging\n");
-    redisState.lists.set("memory:review:pending", [proposalId]);
-    putProposal(proposalId, {
-      targetSection: "Hard Rules",
-      proposedText: rawProposalText,
-      capturedAt: "2026-02-11T08:00:00.000Z",
-    });
-
-    const loaded = await loadPromotePromptModule();
-    const prompt = loaded.module?.PROMOTE_SYSTEM_PROMPT;
-    const hasPrompt = typeof prompt === "string" && prompt.trim().length > 0;
-
-    const originalPath = process.env.PATH ?? "";
-    const shimBinDir = join(tempHome, "bin");
-    const piArgsPath = join(tempHome, "pi-args.log");
-    const piStdinPath = join(tempHome, "pi-stdin.log");
-    const piShimPath = join(shimBinDir, "pi");
-    mkdirSync(shimBinDir, { recursive: true });
-    writeFileSync(
-      piShimPath,
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        "printf '%s\\n' \"$@\" > \"$PI_ARGS_FILE\"",
-        "cat > \"$PI_STDIN_FILE\" || true",
-        "printf '%s\\n' \"${PI_MOCK_OUTPUT:-}\"",
-      ].join("\n")
-    );
-    Bun.spawnSync(["chmod", "+x", piShimPath]);
-
-    process.env.PATH = `${shimBinDir}:${originalPath}`;
-    process.env.PI_ARGS_FILE = piArgsPath;
-    process.env.PI_STDIN_FILE = piStdinPath;
-    process.env.PI_MOCK_OUTPUT = llmFormattedText;
-
-    try {
-      await promoteToMemory(proposalId);
-    } finally {
-      process.env.PATH = originalPath;
-      delete process.env.PI_ARGS_FILE;
-      delete process.env.PI_STDIN_FILE;
-      delete process.env.PI_MOCK_OUTPUT;
-    }
-
-    const memory = readFileSync(memoryPath, "utf8");
-    const hardRules = getSectionBlock(memory, "Hard Rules");
-    const log = readFileSync(join(workspaceDir, "memory", "2026-02-11.md"), "utf8");
-    const piRan = Bun.file(piArgsPath);
-    const piRanExists = await piRan.exists();
-
-    if (hasPrompt) {
-      const argsText = readFileSync(piArgsPath, "utf8");
-      const normalizedArgs = argsText.trim().split(/\r?\n/u).filter(Boolean);
-      const joinedArgs = normalizedArgs.join(" ");
-
-      expect({
-        piRan: piRanExists,
-        insertedRaw: hardRules.includes(rawProposalText),
-        insertedFormatted: hardRules.includes(llmFormattedText),
-      }).toMatchObject({
-        piRan: true,
-        insertedRaw: false,
-        insertedFormatted: true,
-      });
-      expect(joinedArgs.includes(" -p ") || normalizedArgs.includes("-p")).toBe(true);
-      expect(joinedArgs.includes("--no-session")).toBe(true);
-      expect(joinedArgs.includes("--model haiku") || joinedArgs.includes("--model=haiku")).toBe(true);
-      expect(log).toContain(llmFormattedText);
-      expect(log).not.toContain(rawProposalText);
-    } else {
-      expect({
-        piRan: piRanExists,
-        insertedRaw: hardRules.includes(rawProposalText),
-      }).toMatchObject({
-        piRan: false,
-        insertedRaw: true,
-      });
-      expect(log).toContain(rawProposalText);
-    }
-  });
-
-  test("TypeScript compiles with no emit", async () => {
-    const proc = Bun.spawn(["bunx", "tsc", "--noEmit"], {
-      cwd: process.cwd(),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const exitCode = await proc.exited;
-    expect({ exitCode }).toMatchObject({ exitCode: 0 });
   });
 });
