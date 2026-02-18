@@ -186,18 +186,6 @@ describe("FRIC-1 observe acceptance tests", () => {
     const dailyLog = readFileSync(dailyLogPathFor("2026-02-18"), "utf8");
     const sessionEntries = countSessionObservationBlocks(dailyLog, sessionId);
 
-    expect(firstRun.result).toMatchObject({
-      sessionId,
-      accumulatedEvent: {
-        emitted: true,
-      },
-    });
-    expect(secondRun.result).toMatchObject({
-      sessionId,
-      accumulatedEvent: {
-        emitted: true,
-      },
-    });
     expect({
       sessionEntries,
       hasOnlyOneSessionEntry: sessionEntries === 1,

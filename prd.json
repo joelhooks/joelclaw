@@ -1,89 +1,77 @@
 {
-  "title": "Memory System Phase 3: Event-Driven Review Workflow",
+  "title": "Friction Fixes: Daily Log Dedup + Backfill Guards + Session Rotation",
+  "goal": "Fix daily log explosion root causes: observe/reflect dedup, backfill cascade throttle, session rotation",
   "stories": [
     {
-      "id": "MEM-1",
-      "title": "Remove REVIEW.md writes from reflect.ts",
-      "description": "In packages/system-bus/src/inngest/functions/reflect.ts, remove all REVIEW.md file operations from the stage-review step. Specifically: remove the appendToFile(reviewPath, reviewBlock) call, remove the buildReviewBlock() function, remove reviewPath from return values, and remove any imports (appendToFile, existsSync, appendFileSync) that are no longer needed. Keep all Redis operations unchanged: redis.hset('memory:review:proposal:{id}', ...) and redis.rpush('memory:review:pending', ...). Keep the daily log append step and emit-complete event emission unchanged. Update reflect.test.ts to remove any assertions about REVIEW.md file writes.",
+      "id": "FRIC-1",
+      "title": "Add dedup guard to observe.ts daily log append",
+      "description": "Before appending an observation block to the daily log, check if that session ID already exists in the file. In the `append-daily-log` step: read the target daily log file, check if `### 🔭 Observations (session: {sessionId}` already exists, if so skip with { appended: false, reason: 'duplicate' }.",
       "acceptance_criteria": [
-        "No calls to appendToFile, existsSync, or appendFileSync remain in reflect.ts unless used by the daily log step",
-        "buildReviewBlock() function is removed",
-        "reviewPath is not referenced in reflect.ts",
-        "bun test src/inngest/functions/reflect.test.ts passes with 0 failures",
-        "TypeScript compiles cleanly: bunx tsc --noEmit"
+        "Running observe twice for the same session+trigger only produces one daily log entry",
+        "bun test passes in packages/system-bus",
+        "bunx tsc --noEmit passes"
       ],
-      "priority": 1,
-      "passes": false
+      "files": [
+        "packages/system-bus/src/inngest/functions/observe.ts"
+      ],
+      "passes": true
     },
     {
-      "id": "MEM-2",
-      "title": "Add memory/proposal.approved and memory/proposal.rejected event types to client.ts",
-      "description": "In packages/system-bus/src/inngest/client.ts, add two new event type definitions to the EventSchemas map: 'memory/proposal.approved' with data shape { proposalId: string; approvedBy: string } and 'memory/proposal.rejected' with data shape { proposalId: string; reason: string; rejectedBy: string }. Follow the existing event type pattern in that file.",
+      "id": "FRIC-2",
+      "title": "Add dedup guard to reflect.ts daily log append",
+      "description": "reflect.ts appends `### 🔭 Reflected` every time it runs. During backfill this produced 1,404 entries. In the `append-daily-log` step: read the target daily log file, check if `### 🔭 Reflected` already exists for this anchor date, if so skip with { appended: false, reason: 'already reflected today' }.",
       "acceptance_criteria": [
-        "'memory/proposal.approved' event type is defined in client.ts with proposalId and approvedBy fields",
-        "'memory/proposal.rejected' event type is defined in client.ts with proposalId, reason, and rejectedBy fields",
-        "TypeScript compiles cleanly: bunx tsc --noEmit"
+        "Running reflect multiple times on the same day produces at most one Reflected entry in the daily log",
+        "bun test passes in packages/system-bus",
+        "bunx tsc --noEmit passes"
       ],
-      "priority": 2,
-      "passes": false
+      "files": [
+        "packages/system-bus/src/inngest/functions/reflect.ts"
+      ]
     },
     {
-      "id": "MEM-3",
-      "title": "Rewrite promote.ts to be event-driven, remove REVIEW.md parsing",
-      "description": "In packages/system-bus/src/inngest/functions/promote.ts, remove all REVIEW.md file reading/parsing: delete parseReviewMd(), getReviewPath(), removeProposalFromReview(), extractContentPath(), and the content/updated trigger. Add two new Inngest function triggers: one for 'memory/proposal.approved' that calls promoteToMemory(event.data.proposalId), and one for 'memory/proposal.rejected' that calls archiveProposal(event.data.proposalId, event.data.reason). Keep the cron '0 8 * * *' trigger for auto-expiry of proposals older than 7 days (iterate LRANGE memory:review:pending, call expireProposal() for those older than 7 days). Remove any removeProposalFromReview() calls from promoteToMemory(), archiveProposal(), and expireProposal(). Export promoteToMemory, archiveProposal, and expireProposal. Update promote.test.ts to test the new event-driven triggers instead of checkbox-driven ones.",
+      "id": "FRIC-3",
+      "title": "Suppress reflect triggers during backfill observations",
+      "description": "During backfill, every batch of observations crossing the 40k token threshold triggers a reflect cascade. In observe.ts `check-threshold` step: if event.data.trigger === 'backfill', do NOT emit memory/observations.accumulated. Backfill observations accumulate in Redis silently; the daily 6AM cron picks them up. Also verify backfill-observe.ts sends trigger: 'backfill' in event data.",
       "acceptance_criteria": [
-        "No references to REVIEW.md, parseReviewMd, getReviewPath, removeProposalFromReview, or content/updated remain in promote.ts",
-        "promote.ts registers handlers for memory/proposal.approved and memory/proposal.rejected events",
-        "The daily 8 AM cron trigger is retained for auto-expiry",
-        "promoteToMemory, archiveProposal, and expireProposal are exported from promote.ts",
-        "bun test src/inngest/functions/promote.test.ts passes with 0 failures",
-        "TypeScript compiles cleanly: bunx tsc --noEmit"
+        "memory/observations.accumulated is NOT emitted when trigger is backfill",
+        "The 6AM reflect cron still processes accumulated backfill observations",
+        "bun test passes in packages/system-bus",
+        "bunx tsc --noEmit passes"
       ],
-      "priority": 3,
-      "passes": false
+      "files": [
+        "packages/system-bus/src/inngest/functions/observe.ts",
+        "packages/system-bus/src/inngest/functions/backfill-observe.ts"
+      ]
     },
     {
-      "id": "MEM-4",
-      "title": "Add joelclaw review CLI command",
-      "description": "In packages/system-bus/src/cli/commands/, create review.ts following the same pattern as existing commands (check send.ts, runs.ts, or loop.ts for structure). Implement subcommands: (1) joelclaw review — lists all pending proposals by reading LRANGE memory:review:pending 0 -1 then HGETALL memory:review:proposal:{id} for each, output as HATEOAS JSON with _actions for approve/reject; (2) joelclaw review approve <proposalId> — sends memory/proposal.approved event with approvedBy: 'joel'; (3) joelclaw review reject <proposalId> --reason <text> — sends memory/proposal.rejected event; (4) joelclaw review approve-all — sends one approved event per pending proposal; (5) joelclaw review expire — triggers expiry check for proposals older than 7 days. Register the command in packages/system-bus/src/cli/index.ts.",
+      "id": "FRIC-4",
+      "title": "Add session file pruning to system heartbeat",
+      "description": "~/.pi/agent/sessions/ is 45MB and growing. Add a prune-old-sessions step to the existing heartbeat function. Find all .jsonl files recursively in ~/.pi/agent/sessions/, delete any with mtime older than 30 days. Log the count. Also prune ~/.claude/debug/ files older than 30 days.",
       "acceptance_criteria": [
-        "review.ts exists in packages/system-bus/src/cli/commands/",
-        "review command is registered in packages/system-bus/src/cli/index.ts",
-        "joelclaw review list subcommand reads from Redis and outputs HATEOAS JSON",
-        "joelclaw review approve sends a memory/proposal.approved Inngest event",
-        "joelclaw review reject --reason sends a memory/proposal.rejected Inngest event",
-        "joelclaw review approve-all iterates all pending proposals",
-        "TypeScript compiles cleanly: bunx tsc --noEmit"
+        "Heartbeat has a prune-old-sessions step",
+        "Files older than 30 days are deleted",
+        "Files newer than 30 days are NOT deleted",
+        "Count of pruned files is in step output",
+        "bunx tsc --noEmit passes"
       ],
-      "priority": 4,
-      "passes": false
+      "files": [
+        "packages/system-bus/src/inngest/functions/heartbeat.ts"
+      ]
     },
     {
-      "id": "MEM-5",
-      "title": "Add pending proposal count to session briefing",
-      "description": "In ~/Code/joelhooks/pi-tools/session-lifecycle/index.ts, in the briefing injection hook (before_agent_start or equivalent first-turn hook), add a Redis query for LLEN memory:review:pending using ioredis connecting to localhost:6379. If count > 0, append a line to the briefing: '📋 {N} pending memory proposals — run `joelclaw review` or say \"review proposals\" to see them'. Wrap the Redis call in a try/catch so that if Redis is unreachable, the briefing continues without the line. Keep the connection lightweight — connect, query, disconnect.",
+      "id": "FRIC-5",
+      "title": "Clean up stale acceptance test files from loop worktree",
+      "description": "The Phase 3 loop left acceptance test files in the repo root that got merged: session-lifecycle.mem5.acceptance.test.ts, system-bus.mem6.acceptance.test.ts, and any *.acceptance.test.ts at the repo root. Delete them. Also check for and remove any packages/cli/src/commands/review.acceptance.test.ts. Run bun test and bunx tsc --noEmit to verify nothing breaks.",
       "acceptance_criteria": [
-        "session-lifecycle/index.ts queries LLEN memory:review:pending from Redis",
-        "When count > 0, briefing includes the pending proposals line with the count",
-        "When count is 0, no proposal line appears in the briefing",
-        "Redis errors are caught and do not block the briefing",
-        "TypeScript compiles cleanly: bunx tsc --noEmit in the pi-tools directory"
+        "No *.acceptance.test.ts files exist at repo root",
+        "No review.acceptance.test.ts exists in packages/cli/",
+        "bun test passes in packages/system-bus",
+        "bunx tsc --noEmit passes"
       ],
-      "priority": 5,
-      "passes": false
-    },
-    {
-      "id": "MEM-6",
-      "title": "Final cleanup: delete REVIEW.md, verify full test suite and no stale references",
-      "description": "Delete ~/.joelclaw/workspace/REVIEW.md. Inspect promote-integration.test.ts — if it tests REVIEW.md parsing, delete it; if tests are still relevant to the Redis-based flow, update them. Run the full test suite in packages/system-bus (bun test). Run bunx tsc --noEmit. Grep the system-bus source (excluding test files) for any remaining references to REVIEW.md and remove them. Verify joelclaw functions output shows the updated promote function with memory/proposal.approved and memory/proposal.rejected triggers.",
-      "acceptance_criteria": [
-        "~/.joelclaw/workspace/REVIEW.md does not exist",
-        "No references to REVIEW.md remain in non-test source files under packages/system-bus/src (grep confirms)",
-        "bun test passes with 0 failures in packages/system-bus",
-        "TypeScript compiles cleanly: bunx tsc --noEmit"
-      ],
-      "priority": 6,
-      "passes": false
+      "files": []
     }
-  ]
+  ],
+  "project": "/Users/joel/Code/joelhooks/joelclaw",
+  "workDir": "/Users/joel/Code/joelhooks/joelclaw"
 }

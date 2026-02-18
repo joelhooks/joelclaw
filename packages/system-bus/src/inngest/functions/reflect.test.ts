@@ -9,7 +9,7 @@ import {
 } from "bun:test";
 import { InngestTestEngine } from "@inngest/test";
 import Redis from "ioredis";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { COMPRESSION_GUIDANCE, validateCompression } from "./reflect-prompt";
@@ -93,6 +93,10 @@ async function executeReflect(eventDate = "2026-02-17") {
     ],
   });
   return engine.execute();
+}
+
+function countReflectedBlocks(markdown: string): number {
+  return markdown.split("### 🔭 Reflected").length - 1;
 }
 
 beforeAll(() => {
@@ -283,6 +287,50 @@ describe("MEM-16 reflect acceptance tests", () => {
       },
     });
 
+  });
+
+  test("running reflect twice on the same day appends at most one Reflected daily-log entry", async () => {
+    redisLists.set("memory:observations:2026-02-17", [
+      JSON.stringify({ summary: "Daily reflection dedup acceptance coverage." }),
+    ]);
+
+    shellResultQueue = [
+      {
+        exitCode: 0,
+        stdout:
+          "<proposals><proposal><section>Facts</section><change>First pass.</change></proposal></proposals>",
+        stderr: "",
+      },
+      {
+        exitCode: 0,
+        stdout:
+          "<proposals><proposal><section>Facts</section><change>Second pass.</change></proposal></proposals>",
+        stderr: "",
+      },
+    ];
+
+    const firstRun = await executeReflect("2026-02-17");
+    const secondRun = await executeReflect("2026-02-17");
+    const dailyLogPath = String((firstRun.result as { dailyLogPath?: unknown }).dailyLogPath ?? "");
+
+    expect(firstRun.result).toMatchObject({
+      dailyLogPath: expect.any(String),
+    });
+    expect(secondRun.result).toMatchObject({
+      dailyLogPath: expect.any(String),
+    });
+    expect(dailyLogPath.length).toBeGreaterThan(0);
+
+    const dailyLog = readFileSync(dailyLogPath, "utf8");
+    const reflectedEntries = countReflectedBlocks(dailyLog);
+
+    expect({
+      reflectedEntries,
+      hasOnlyOneReflectedEntry: reflectedEntries === 1,
+    }).toMatchObject({
+      reflectedEntries: 1,
+      hasOnlyOneReflectedEntry: true,
+    });
   });
 
   test("mock pi subprocess valid <proposals> XML is accepted and staged", async () => {
