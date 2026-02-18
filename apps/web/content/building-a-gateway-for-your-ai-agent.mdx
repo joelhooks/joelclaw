@@ -4,11 +4,23 @@ date: "2026-02-18"
 description: "From ephemeral terminal sessions to an always-on gateway. Event routing, heartbeat monitoring, failure detection, and Telegram access — for an AI agent running on your Mac."
 ---
 
-Close the terminal and your agent disappears.
+## Set it up
 
-Not because the work stopped. Because your only control plane just evaporated. Background jobs finish. Loops complete. But nothing can tap you on the shoulder and say your shit is done.
+**Prerequisite:** [Self-hosted Inngest](/self-hosting-inngest-background-tasks) + Redis.
 
-I wanted three things: an **always-on session** that handles system heartbeats, **targeted notifications** back to whichever session started a task, and **phone access** when I'm away from the keyboard.
+**For agents** — install the skill and it walks through the full build adapted to your machine and intent:
+
+```bash
+npx skills add joelhooks/joelclaw --skill gateway-setup --yes --global
+```
+
+The skill contains the compressed ADR chain with all tradeoffs — [ADR-0018](/adrs/0018-pi-native-gateway-redis-event-bridge) through [ADR-0038](/adrs/0038-embedded-pi-gateway-daemon) — so your agent has the full reasoning context.
+
+**Or curl the setup script:**
+
+```bash
+curl -fsSL https://joelclaw.com/scripts/gateway-setup.sh | bash
+```
 
 {/* TODO: Video — "Building an Agent Gateway on macOS"
 Pitch: Screen recording. Show the problem first — close terminal, events pile up in Redis with nobody listening. Then build the solution live:
@@ -22,9 +34,19 @@ Runtime: ~12-15 minutes. Terminal + Telegram side-by-side for the mobile demo.
 Split into chapters with timestamps.
 */}
 
+---
+
+## The problem
+
+Close the terminal and your agent disappears.
+
+Not because the work stopped. Because your only control plane just evaporated. Background jobs finish. Loops complete. But nothing can tap you on the shoulder and say your shit is done.
+
+I wanted three things: an **always-on session** that handles system heartbeats, **targeted notifications** back to whichever session started a task, and **phone access** when I'm away from the keyboard.
+
 ## What it is
 
-A Redis event bridge between your background infrastructure (Inngest, cron, webhooks) and your AI agent's session. Events route to the right session. Failures get detected. Responses go back through the channel that asked.
+A Redis event bridge between your background infrastructure ([Inngest](/self-hosting-inngest-background-tasks), cron, webhooks) and your AI agent's session. Events route to the right session. Failures get detected. Responses go back through the channel that asked.
 
 ```
 Inngest functions ──→ Redis ──→ pi extension ──→ agent session
@@ -110,19 +132,9 @@ Talk to the agent from your phone. Get responses back in the same thread.
 └─────────────────┘
 ```
 
-## For agents
-
-The `gateway-setup` skill has the full build — tiered from "notification bridge" to "always-on daemon with Telegram." It asks about your intent first, builds to match.
-
-```bash
-npx skills add joelhooks/joelclaw --skill gateway-setup --yes --global
-```
-
-The skill contains the compressed ADR chain with all tradeoffs — [ADR-0018](/adrs/0018-pi-native-gateway-redis-event-bridge) through [ADR-0038](/adrs/0038-embedded-pi-gateway-daemon) — so your agent has the full reasoning context.
-
 ## For humans
 
-Prerequisites: [Inngest running](/self-hosting-inngest-background-tasks), Redis, pi, and optionally [Kubernetes](/joel-deploys-k8s) and Tailscale. The deeper architecture narrative is in [Inngest is the Nervous System](/inngest-is-the-nervous-system).
+The deeper architecture narrative is in [Inngest is the Nervous System](/inngest-is-the-nervous-system). For the k8s foundation: [The One Where Joel Deploys Kubernetes... Again](/joel-deploys-k8s).
 
 ---
 
