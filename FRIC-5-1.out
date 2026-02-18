@@ -1,0 +1,196 @@
+No code changes were needed: the stale files are already absent.
+
+Verification results:
+- `find . -name '*.acceptance.test.ts'` returned no files (so none at repo root).
+- `packages/cli/src/commands/review.acceptance.test.ts` does not exist.
+- `bunx tsc --noEmit` passed (exit `0`).
+- `bun test` in `packages/system-bus` failed due existing environment/runtime issues, not cleanup changes:
+  - connection refused to `http://localhost:8288/...`
+  - missing API key for `amazon-bedrock`
+  - resulting failures in `backfill-observe.test.ts` and a dependent FRIC-5 check test.
+
+No files were edited or deleted in this turn.
+
+
+--- STDERR ---
+OpenAI Codex v0.101.0 (research preview)
+--------
+workdir: /private/tmp/agent-loop/loop-mlreb9au-bvjrl0
+model: gpt-5.3-codex
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: none
+reasoning summaries: auto
+session id: 019c6e98-d9a0-76e1-ac5e-97a6af742488
+--------
+user
+
+
+## Project File Listing
+
+pnpm-lock.yaml
+FRIC-4-1.out
+infra
+FRIC-2-1.out
+vercel.json
+k8s
+turbo.json
+node_modules
+FRIC-1-1.out
+FRIC-1-2.out
+bun.lock
+docs
+friction-prd.json
+FRIC-3-1.out
+README.md
+package.json
+scripts
+packages
+tsconfig.json
+prd.json
+apps
+Vault
+pnpm-workspace.yaml
+
+---
+
+## Story: Clean up stale acceptance test files from loop worktree (FRIC-5)
+
+The Phase 3 loop left acceptance test files in the repo root that got merged: session-lifecycle.mem5.acceptance.test.ts, system-bus.mem6.acceptance.test.ts, and any *.acceptance.test.ts at the repo root. Delete them. Also check for and remove any packages/cli/src/commands/review.acceptance.test.ts. Run bun test and bunx tsc --noEmit to verify nothing breaks.
+
+## Acceptance Criteria
+- No *.acceptance.test.ts files exist at repo root
+- No review.acceptance.test.ts exists in packages/cli/
+- bun test passes in packages/system-bus
+- bunx tsc --noEmit passes
+
+## Instructions
+Implement the story above. Do NOT write tests — a separate reviewer will handle testing.
+Make clean, focused changes. Commit nothing — the harness handles git.
+If your changes break existing tests (not just the ones for this story), fix those tests to match the new interface. Changing a type or adding a required field means updating all consumers.
+mcp startup: no servers
+2026-02-18T02:33:56.950769Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6d78-f4bd-70a3-9b26-6d401f72555d
+2026-02-18T02:33:56.992635Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a38-72b9-7fd3-aae0-de7058d752e1
+2026-02-18T02:33:57.079646Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6dfc-ce2b-7351-9877-3cf3dfd942e0
+2026-02-18T02:33:57.205754Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5ffd-d51d-7a13-b1fa-342be02f164b
+2026-02-18T02:33:57.315905Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6275-d69e-7b53-bb28-583bfe07e70c
+2026-02-18T02:33:57.438087Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6d76-b1ac-7312-a2bc-33ed66270397
+2026-02-18T02:33:57.551165Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6946-d832-73b3-bade-761321c88a0a
+2026-02-18T02:33:57.638130Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6d85-da78-7b62-99df-11a605673333
+2026-02-18T02:33:57.678931Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6bed-25bc-7141-bf68-7df6c001174c
+2026-02-18T02:33:57.836225Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a5b-ba72-7f61-8273-d02deacae15e
+2026-02-18T02:33:57.947589Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6482-5bab-7e53-bc62-5239d048a3c8
+2026-02-18T02:33:58.099511Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a51-1205-7a00-bbdb-509c1624de3d
+2026-02-18T02:33:58.168005Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a59-ea9c-73e1-b537-9ad62ea24fd1
+2026-02-18T02:33:58.254834Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6d85-394c-7a22-a0ba-b3f326504c0f
+2026-02-18T02:33:58.356706Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6485-58f0-7261-8508-37f3fb9356dd
+2026-02-18T02:33:58.410693Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6e00-a005-7611-9e9c-4eb489c27876
+2026-02-18T02:33:58.513998Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c695b-193b-7040-9529-153a24848595
+2026-02-18T02:33:58.624382Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6e06-ec09-76c2-885f-2d09d13a2034
+2026-02-18T02:33:58.794967Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6031-b7fb-7120-85b5-8abf34324910
+2026-02-18T02:33:58.903474Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fe2-872d-7e93-87a3-71d37d75a127
+2026-02-18T02:33:59.055331Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6d46-f863-7a62-8f46-d697792894dd
+2026-02-18T02:33:59.171682Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a5d-a9a0-7003-8868-edeb59f5a8e9
+2026-02-18T02:33:59.261106Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a4f-9a4d-7c13-aeef-771e0c9a7900
+
+2026-02-18T02:33:59.417101Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6e83-f754-78e0-91ab-9f35f5d158a3
+thinking
+**Planning command execution**
+2026-02-18T02:33:59.529007Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6022-8a12-7ba0-b7e8-9c265e8ec17e
+2026-02-18T02:33:59.640175Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fbb-e145-7c40-9913-218548629e57
+2026-02-18T02:33:59.740366Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c647c-8066-7eb1-8782-06a844370303
+2026-02-18T02:33:59.806497Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6bed-24ce-70e2-a3a9-72ea76928828
+2026-02-18T02:33:59.907843Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6a58-df8a-7560-894e-8c41ec0bc9ec
+2026-02-18T02:33:59.997514Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6bed-ca0f-7153-9527-6336e87fc2d0
+2026-02-18T02:34:00.095614Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c5fed-5e04-78c0-9a4e-9fddc7af084e
+2026-02-18T02:34:00.201659Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6d75-a627-7be2-a5b9-708ae8d9ac39
+codex
+I’ll remove the stale `*.acceptance.test.ts` files from the repo root and `packages/cli/src/commands/review.acceptance.test.ts`, then run the requested `bun test` and `bunx tsc --noEmit` checks to confirm the workspace is clean. I’m starting by locating the exact files now.
+2026-02-18T02:34:00.303743Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6e13-228a-7cb2-a82d-b195be95b007
+2026-02-18T02:34:00.422088Z ERROR codex_core::rollout::list: state db missing rollout path for thread 019c6df8-e840-70b1-8ca3-7f1dc55b0796
+
+thinking
+**Planning efficient file listing**
+exec
+/bin/zsh -lc "rg --files -g '*.acceptance.test.ts'" in /private/tmp/agent-loop/loop-mlreb9au-bvjrl0 exited 1 in 55ms:
+
+
+thinking
+**Verifying file presence with find**
+codex
+I checked for tracked `*.acceptance.test.ts` files and didn’t find any via `rg`; next I’m confirming with a broader filesystem search and then I’ll run the verification commands.
+exec
+/bin/zsh -lc "find . -name '*.acceptance.test.ts' -print" in /private/tmp/agent-loop/loop-mlreb9au-bvjrl0 succeeded in 345ms:
+
+
+thinking
+**Checking for CLI files**
+exec
+/bin/zsh -lc 'test -f packages/cli/src/commands/review.acceptance.test.ts; echo $?' in /private/tmp/agent-loop/loop-mlreb9au-bvjrl0 succeeded in 52ms:
+1
+
+thinking
+**Planning sequential test runs**
+codex
+No matching acceptance test files are present right now, including `packages/cli/src/commands/review.acceptance.test.ts`. I’m running the required `bun test` in `packages/system-bus` and then `bunx tsc --noEmit`.
+
+thinking
+**Running tests**
+exec
+/bin/zsh -lc 'bun test' in /private/tmp/agent-loop/loop-mlreb9au-bvjrl0/packages/system-bus exited 1 in 12.38s:
+error: Unable to connect. Is the computer able to access the url?
+  path: "http://localhost:8288/e/37aa349b89692d657d276a40e0e47a15",
+ errno: 0,
+  code: "ConnectionRefused"
+
+
+145 |           payload !== null &&
+146 |           "name" in payload &&
+147 |           (payload as { name?: unknown }).name === "memory/session.ended"
+148 |       ) as { data?: Record<string, unknown> } | undefined;
+149 | 
+150 |     expect(result).toMatchObject({
+                         ^
+error: expect(received).toMatchObject(expected)
+
+Matcher error: received value must be a non-null object
+
+      at <anonymous> (/private/tmp/agent-loop/loop-mlreb9au-bvjrl0/packages/system-bus/src/inngest/functions/backfill-observe.test.ts:150:20)
+(fail) FRIC-3 backfill observe acceptance tests > emits observe-session event with trigger set to backfill [1784.64ms]
+
+
+thinking
+**Running type check to isolate failure**
+codex
+`bun test` in `packages/system-bus` fails currently due pre-existing runtime/environment issues (Inngest localhost connection refusal and missing `amazon-bedrock` API key), not due file cleanup. I’m running `bunx tsc --noEmit` now.
+exec
+/bin/zsh -lc 'bunx tsc --noEmit' in /private/tmp/agent-loop/loop-mlreb9au-bvjrl0 succeeded in 464ms:
+
+
+thinking
+**Checking for uncommitted changes**
+codex
+TypeScript check passed. I’m doing a quick git status to confirm whether any file changes were required in this worktree.
+exec
+/bin/zsh -lc 'git status --short' in /private/tmp/agent-loop/loop-mlreb9au-bvjrl0 succeeded in 53ms:
+ M prd.json
+?? pid
+
+thinking
+**Summarizing test failure and no changes**
+codex
+No code changes were needed: the stale files are already absent.
+
+Verification results:
+- `find . -name '*.acceptance.test.ts'` returned no files (so none at repo root).
+- `packages/cli/src/commands/review.acceptance.test.ts` does not exist.
+- `bunx tsc --noEmit` passed (exit `0`).
+- `bun test` in `packages/system-bus` failed due existing environment/runtime issues, not cleanup changes:
+  - connection refused to `http://localhost:8288/...`
+  - missing API key for `amazon-bedrock`
+  - resulting failures in `backfill-observe.test.ts` and a dependent FRIC-5 check test.
+
+No files were edited or deleted in this turn.
+tokens used
+18,421

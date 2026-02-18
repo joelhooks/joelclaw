@@ -59,7 +59,8 @@
       ],
       "files": [
         "packages/system-bus/src/inngest/functions/heartbeat.ts"
-      ]
+      ],
+      "passes": true
     },
     {
       "id": "FRIC-5",
