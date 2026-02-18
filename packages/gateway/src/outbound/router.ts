@@ -115,7 +115,13 @@ function routeResponse(source: string, message: string): void {
 
   ensureDefaultChannels();
 
-  const target = channels.get(source) ?? channels.get("console");
+  // Match exact source first, then prefix (e.g. "telegram:12345" → "telegram")
+  let target = channels.get(source);
+  if (!target) {
+    const prefix = source.split(":")[0];
+    if (prefix) target = channels.get(prefix);
+  }
+  if (!target) target = channels.get("console");
   if (!target) return;
 
   try {

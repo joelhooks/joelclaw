@@ -5,8 +5,9 @@ import { getModel } from "@mariozechner/pi-ai";
 import { createAgentSession } from "@mariozechner/pi-coding-agent";
 import { drain, enqueue, setSession } from "./command-queue";
 import { start as startRedisChannel, shutdown as shutdownRedisChannel } from "./channels/redis";
+import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, parseChatId } from "./channels/telegram";
 import { startHeartbeatRunner } from "./heartbeat";
-import { wireSession } from "./outbound/router";
+import { wireSession, registerChannel } from "./outbound/router";
 
 const HOME = homedir();
 const AGENT_DIR = join(HOME, ".pi/agent");
@@ -48,10 +49,35 @@ setSession({
 
 await wireSession(session);
 
+// ── Redis channel ──────────────────────────────────────
 await startRedisChannel(((source, prompt, metadata) => {
   enqueue(source, prompt, metadata);
   void drain();
 }));
+
+// ── Telegram channel ───────────────────────────────────
+const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID
+  ? parseInt(process.env.TELEGRAM_USER_ID, 10)
+  : undefined;
+
+if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
+  // Register Telegram outbound — route replies back to the chat that sent the message
+  registerChannel("telegram", {
+    send: async (message: string, context?: { source?: string }) => {
+      const source = context?.source ?? "";
+      const chatId = parseChatId(source) ?? TELEGRAM_USER_ID;
+      await sendTelegram(chatId, message);
+    },
+  });
+
+  await startTelegram(TELEGRAM_TOKEN, TELEGRAM_USER_ID, (source, prompt, metadata) => {
+    enqueue(source, prompt, metadata);
+    void drain();
+  });
+} else {
+  console.warn("[gateway] telegram disabled — set TELEGRAM_BOT_TOKEN and TELEGRAM_USER_ID env vars");
+}
 
 const heartbeatRunner = startHeartbeatRunner();
 const queueDrainTimer = setInterval(() => {
@@ -73,7 +99,7 @@ console.log("[gateway] daemon started", {
   model: describeModel(session.model),
   cwd: HOME,
   agentDir: AGENT_DIR,
-  channels: ["redis", "console"],
+  channels: ["redis", "console", ...(TELEGRAM_TOKEN ? ["telegram"] : [])],
   pidFile: PID_FILE,
 });
 
@@ -92,6 +118,12 @@ async function gracefulShutdown(signal: string): Promise<void> {
     await heartbeatRunner.shutdown();
   } catch (error) {
     console.error("[gateway] heartbeat shutdown failed", { error });
+  }
+
+  try {
+    await shutdownTelegram();
+  } catch (error) {
+    console.error("[gateway] telegram shutdown failed", { error });
   }
 
   try {
