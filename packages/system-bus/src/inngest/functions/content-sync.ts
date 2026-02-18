@@ -50,7 +50,8 @@ export const contentSync = inngest.createFunction(
     { event: "discovery/captured" },
     { event: "system/adr.sync.requested" },
   ],
-  async ({ event, step }) => {
+  async ({ event, step, ...rest }) => {
+    const gateway = (rest as any).gateway as import("../middleware/gateway").GatewayContext | undefined;
     console.log(
       `[content-sync] started via ${event.name} at ${new Date().toISOString()}`
     );
@@ -119,6 +120,23 @@ export const contentSync = inngest.createFunction(
     console.log(
       `[content-sync] done — ${allSynced.length} total changes, committed=${committed}`
     );
+
+    // Notify gateway if anything changed
+    if (allSynced.length > 0 && gateway) {
+      await step.run("notify-gateway", async () => {
+        try {
+          const summary = results
+            .filter((r) => r.synced.length > 0)
+            .map((r) => `${r.name}: ${r.synced.length}`)
+            .join(", ");
+          await gateway.notify("content.synced", {
+            files: allSynced.length,
+            committed,
+            summary,
+          });
+        } catch {}
+      });
+    }
 
     return {
       status: "completed",

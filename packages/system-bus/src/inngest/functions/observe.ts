@@ -181,7 +181,8 @@ export const observeSessionFunction = inngest.createFunction(
     { event: "memory/session.compaction.pending" },
     { event: "memory/session.ended" },
   ],
-  async ({ event, step }) => {
+  async ({ event, step, ...rest }) => {
+    const gateway = (rest as any).gateway as import("../middleware/gateway").GatewayContext | undefined;
     const validatedInput = await step.run("validate-input", async () =>
       validateObserveInput(event.name, event.data)
     );
@@ -584,6 +585,20 @@ Session context:
           observationCount,
           redisUpdated: redisStateResult,
         };
+
+    // Notify gateway — memory pipeline completed
+    await step.run("notify-gateway", async () => {
+      if (!gateway) return;
+      try {
+        await gateway.notify("memory.observed", {
+          sessionId: validatedInput.sessionId,
+          trigger: validatedInput.trigger,
+          observations: observationCount,
+          qdrantStored: qdrantStoreResult.stored && "count" in qdrantStoreResult ? qdrantStoreResult.count : 0,
+          hasRealVectors: qdrantStoreResult.hasRealVectors ?? false,
+        });
+      } catch {}
+    });
 
     return {
       sessionId: validatedInput.sessionId,

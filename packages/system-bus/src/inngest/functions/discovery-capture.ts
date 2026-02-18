@@ -18,7 +18,8 @@ export const discoveryCapture = inngest.createFunction(
     retries: 1,
   },
   { event: "discovery/noted" },
-  async ({ event, step }) => {
+  async ({ event, step, ...rest }) => {
+    const gateway = (rest as any).gateway as import("../middleware/gateway").GatewayContext | undefined;
     const { url, context } = event.data;
     const today = new Date().toISOString().split("T")[0];
 
@@ -107,6 +108,16 @@ export const discoveryCapture = inngest.createFunction(
         slug: result.noteName,
       },
     });
+
+    // Notify gateway
+    if (gateway) {
+      try {
+        await gateway.notify("discovery.captured", {
+          topic: result.noteName,
+          url: url ?? null,
+        });
+      } catch {}
+    }
 
     return { status: "captured", ...result };
   }
