@@ -195,6 +195,7 @@ OpenClaw has a **layered AGENTS.md** at its repo root (`~/Code/openclaw/openclaw
 | tsgo | — | npm | TypeScript 7 native compiler |
 | joelclaw | — | bun link | Event bus + agent loop CLI — send events, check runs, start loops, restart worker (igs is a legacy alias for joelclaw) |
 | slog | 0.2.0 | bun link | System log CLI (Effect, agent-first HATEOAS JSON, ~/Code/joelhooks/slog/) |
+| gogcli (gog) | 0.11.0 | homebrew (steipete/tap) | Google Workspace CLI — Gmail, Calendar, Drive, Contacts, Tasks, Sheets, Docs + 6 more. File keyring backend, password in agent-secrets — ADR-0040 |
 | Colima | 0.10.0 | homebrew | CLI container runtime (VZ framework), replaces Docker Desktop — ADR-0029 |
 | talosctl | 1.12.4 | homebrew (siderolabs/tap) | Talos Linux CLI — manages Talos k8s cluster, replaces k3d — ADR-0029 |
 | Docker Sandbox | 0.11.0 | colima | Isolated agent execution (claude, codex in sandboxes) |
@@ -234,6 +235,7 @@ All skills are installed to `~/.agents/skills/` (universal) and symlinked to Cla
 | docx | anthropics/skills | Word document creation/editing |
 | ffmpeg | digitalsamba (customized) | Video/audio processing — format conversion, compression, platform export |
 | frontend-design | custom | Production-grade frontend UI design |
+| gogcli | custom | Google Workspace CLI — Gmail, Calendar, Drive, Contacts, Tasks, Sheets, Docs, Chat, Forms, Slides, Classroom, Apps Script — ADR-0040 |
 | joelclaw | custom | Event bus + agent loop CLI — send events, check runs, start/monitor loops, debug failures, restart worker (igs is a legacy alias) |
 | obsidian-bases | custom | Obsidian Bases (.base files) |
 | obsidian-markdown | custom | Obsidian-flavored markdown |

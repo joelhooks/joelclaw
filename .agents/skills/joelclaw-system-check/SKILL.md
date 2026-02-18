@@ -11,7 +11,7 @@ Run `scripts/health.sh` for a full system health report with 1-10 score.
 ~/.agents/skills/joelclaw-system-check/scripts/health.sh
 ```
 
-## What It Checks (13 components)
+## What It Checks (14 components)
 
 | Check | What | Green (10) | Yellow (5-7) | Red (1-3) |
 |-------|------|-----------|-------------|----------|
@@ -26,6 +26,7 @@ Run `scripts/health.sh` for a full system health report with 1-10 score.
 | memory pipeline | observations in Redis | 50+ obs, 7+ days | collecting (<50) | none |
 | pi-tools | extension deps installed | all 3 deps | — | missing |
 | git config | user.name + email set | set | — | missing |
+| gogcli | Google Workspace auth | account authed, token valid | token stored, no password | not configured |
 | disk | free space + loop tmp | <80% used | — | >80% |
 | stale tests | `__tests__/` + acceptance tests | clean | — | present |
 

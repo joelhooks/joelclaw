@@ -166,6 +166,26 @@ else
   check "disk" 4 "${DISK_FREE} free (${DISK_PCT}% used) — low"
 fi
 
+# ── gogcli (Google Workspace) ────────────────────────────
+GOG_KP=$(secrets lease gog_keyring_password --raw 2>/dev/null || echo "")
+if [[ -n "$GOG_KP" ]]; then
+  GOG_LIST=$(GOG_KEYRING_PASSWORD="$GOG_KP" gog auth list --check 2>&1)
+  GOG_ACCT=$(echo "$GOG_LIST" | grep -c "true" || echo 0)
+  GOG_SVCS=$(echo "$GOG_LIST" | head -1 | awk -F'\t' '{print $3}' || echo "")
+  if [[ "$GOG_ACCT" -gt 0 ]]; then
+    check "gogcli" 10 "${GOG_ACCT} account(s) authed, services: ${GOG_SVCS}"
+  else
+    check "gogcli" 3 "auth present but token check failed"
+  fi
+else
+  GOG_LIST=$(gog auth list 2>&1)
+  if echo "$GOG_LIST" | grep -q "@"; then
+    check "gogcli" 5 "tokens stored but GOG_KEYRING_PASSWORD not available"
+  else
+    check "gogcli" 1 "not configured — run: gog auth add <email>"
+  fi
+fi
+
 # ── stale tests ──────────────────────────────────────────
 STALE_TESTS=$(find ~/Code/joelhooks/joelclaw/packages/system-bus -name "__tests__" -type d 2>/dev/null | head -1)
 STALE_ACC=$(find ~/Code/joelhooks/joelclaw/packages/system-bus/src -name "*.acceptance.test.ts" 2>/dev/null | wc -l | tr -d ' ')
