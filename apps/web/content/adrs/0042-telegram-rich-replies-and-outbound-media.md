@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-02-18
 decision-makers: joel
 tags:
