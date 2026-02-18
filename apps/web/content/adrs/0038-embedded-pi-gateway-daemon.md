@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-02-17
 decision-makers: Joel Hooks
 consulted: Claude (pi session 2026-02-17)
