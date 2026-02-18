@@ -289,6 +289,106 @@ const gatewayTest = Command.make("test", {}, () =>
   })
 )
 
+// ── gateway restart ─────────────────────────────────────────────────
+
+import { execSync } from "node:child_process"
+import { existsSync, readFileSync } from "node:fs"
+
+const gatewayRestart = Command.make("restart", {}, () =>
+  Effect.gen(function* () {
+    const LAUNCHD_LABEL = "com.joel.gateway"
+    const PID_FILE = "/tmp/joelclaw/gateway.pid"
+    const LOG_FILE = "/tmp/joelclaw/gateway.log"
+
+    let oldPid: string | null = null
+    try {
+      if (existsSync(PID_FILE)) {
+        oldPid = readFileSync(PID_FILE, "utf-8").trim()
+      }
+    } catch {}
+
+    // Clean stale Redis state (in case shutdown doesn't complete cleanly)
+    const redis = yield* makeRedis()
+    yield* Effect.tryPromise({
+      try: async () => {
+        await redis.srem("joelclaw:gateway:sessions", "gateway")
+        await redis.del("joelclaw:events:gateway")
+      },
+      catch: () => {},
+    })
+    yield* Effect.tryPromise({ try: () => redis.quit(), catch: () => {} })
+
+    // Stop via launchctl (SIGTERM → graceful shutdown)
+    try {
+      execSync(`launchctl bootout gui/$(id -u) system/${LAUNCHD_LABEL} 2>/dev/null || launchctl stop ${LAUNCHD_LABEL}`, {
+        timeout: 10_000,
+        stdio: "pipe",
+      })
+    } catch {}
+
+    // Wait for old process to exit
+    let waited = 0
+    while (waited < 5000 && oldPid) {
+      try {
+        execSync(`kill -0 ${oldPid} 2>/dev/null`, { stdio: "pipe" })
+      } catch {
+        break
+      }
+      yield* Effect.promise(() => new Promise(r => setTimeout(r, 500)))
+      waited += 500
+    }
+
+    // Re-bootstrap + kickstart (KeepAlive ensures it comes back)
+    try {
+      execSync(`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.joel.gateway.plist 2>/dev/null || true`, {
+        timeout: 5_000, stdio: "pipe",
+      })
+    } catch {}
+    try {
+      execSync(`launchctl kickstart -k gui/$(id -u)/${LAUNCHD_LABEL}`, {
+        timeout: 5_000, stdio: "pipe",
+      })
+    } catch {}
+
+    // Wait for new PID
+    let newPid: string | null = null
+    let attempts = 0
+    while (attempts < 10) {
+      yield* Effect.promise(() => new Promise(r => setTimeout(r, 1000)))
+      attempts++
+      try {
+        if (existsSync(PID_FILE)) {
+          newPid = readFileSync(PID_FILE, "utf-8").trim()
+          if (newPid && newPid !== oldPid) break
+        }
+      } catch {}
+    }
+
+    let logTail = ""
+    try {
+      logTail = execSync(`tail -5 ${LOG_FILE}`, { encoding: "utf-8", timeout: 3000 }).trim()
+    } catch {}
+
+    const ok = !!newPid && newPid !== oldPid
+
+    yield* Console.log(respond(
+      "gateway restart",
+      {
+        previousPid: oldPid,
+        newPid: newPid ?? "unknown",
+        restarted: ok,
+        waitedMs: attempts * 1000,
+        log: logTail.split("\n").slice(-3),
+      },
+      [
+        { command: "joelclaw gateway status", description: "Verify sessions registered" },
+        { command: "joelclaw gateway test", description: "Push test event to verify" },
+      ],
+      ok
+    ))
+  })
+)
+
 // ── Root gateway command ────────────────────────────────────────────
 
 export const gatewayCmd = Command.make("gateway", {}, () =>
@@ -302,14 +402,16 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
         push: "joelclaw gateway push --type <type> [--payload JSON] — Push to all sessions",
         drain: "joelclaw gateway drain — Clear all event queues",
         test: "joelclaw gateway test — Push test event to all sessions",
+        restart: "joelclaw gateway restart — Roll the pi session, clean Redis, restart daemon",
       },
     },
     [
       { command: "joelclaw gateway status", description: "Check gateway health" },
       { command: "joelclaw gateway test", description: "Push test event + verify" },
+      { command: "joelclaw gateway restart", description: "Restart the gateway daemon" },
     ],
     true
   ))
 ).pipe(
-  Command.withSubcommands([gatewayStatus, gatewayEvents, gatewayPush, gatewayDrain, gatewayTest])
+  Command.withSubcommands([gatewayStatus, gatewayEvents, gatewayPush, gatewayDrain, gatewayTest, gatewayRestart])
 )
