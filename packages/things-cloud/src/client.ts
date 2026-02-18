@@ -1,3 +1,5 @@
+/// <reference types="bun" />
+
 /**
  * Things Cloud client — task access via reverse-engineered HTTP endpoints.
  *
@@ -23,7 +25,7 @@ const THINGS_CLIENT_INFO = {
   pl: "en-US",
   ul: "en-Latn-US",
 }
-const THINGS_CLIENT_INFO_B64 = Buffer.from(JSON.stringify(THINGS_CLIENT_INFO)).toString("base64")
+const THINGS_CLIENT_INFO_B64 = btoa(JSON.stringify(THINGS_CLIENT_INFO))
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 export class TasksError {
@@ -68,6 +70,20 @@ interface CreateOptions {
   readonly note?: string
 }
 
+interface TasksService {
+  readonly verify: () => Effect.Effect<{ email: string; status: string; historyKey: string | undefined }, TasksError>
+  readonly today: () => Effect.Effect<readonly TaskRecord[], TasksError>
+  readonly inbox: () => Effect.Effect<readonly TaskRecord[], TasksError>
+  readonly projects: () => Effect.Effect<readonly { uuid: string; title: string }[], TasksError>
+  readonly areas: () => Effect.Effect<readonly { uuid: string; title: string }[], TasksError>
+  readonly create: (
+    title: string,
+    opts?: CreateOptions
+  ) => Effect.Effect<{ uuid: string; result: Record<string, unknown> }, TasksError>
+  readonly complete: (uuid: string) => Effect.Effect<{ uuid: string; result: Record<string, unknown> }, TasksError>
+  readonly search: (query: string) => Effect.Effect<readonly TaskRecord[], TasksError>
+}
+
 const todayLocal = (): string => {
   const d = new Date()
   const year = d.getFullYear()
@@ -90,7 +106,7 @@ const encodeBase58 = (bytes: Uint8Array): string => {
   for (const byte of bytes) {
     let carry = byte
     for (let i = 0; i < digits.length; i++) {
-      const value = digits[i] * 256 + carry
+      const value = (digits[i] ?? 0) * 256 + carry
       digits[i] = value % 58
       carry = Math.floor(value / 58)
     }
@@ -104,8 +120,14 @@ const encodeBase58 = (bytes: Uint8Array): string => {
   while (zeros < bytes.length && bytes[zeros] === 0) zeros++
 
   let out = ""
-  for (let i = 0; i < zeros; i++) out += BASE58_ALPHABET[0]
-  for (let i = digits.length - 1; i >= 0; i--) out += BASE58_ALPHABET[digits[i]]
+  const zeroChar = BASE58_ALPHABET[0]
+  if (zeroChar === undefined) return out
+  for (let i = 0; i < zeros; i++) out += zeroChar
+  for (let i = digits.length - 1; i >= 0; i--) {
+    const char = BASE58_ALPHABET[digits[i] ?? 0]
+    if (char === undefined) continue
+    out += char
+  }
   return out
 }
 
@@ -162,8 +184,8 @@ const toTitleEntry = (item: ThingsItem): { uuid: string; title: string } | null 
 }
 
 export class Tasks extends Effect.Service<Tasks>()("joelclaw/Tasks", {
-  sync: () => {
-    let cachedHistoryKey: string | null = null
+  sync: (): TasksService => {
+    let cachedHistoryKey: string | undefined = undefined
     let cachedCredentials: Credentials | null = null
 
     const leaseSecret = (name: string) =>
@@ -296,11 +318,11 @@ export class Tasks extends Effect.Service<Tasks>()("joelclaw/Tasks", {
         cachedHistoryKey = historyKey
       }
 
-      return {
-        email: String(result.email ?? creds.username),
-        status: String(result.status ?? "unknown"),
-        historyKey: cachedHistoryKey,
-      }
+	      return {
+	        email: String(result.email ?? creds.username),
+	        status: String(result.status ?? "unknown"),
+	        historyKey: cachedHistoryKey,
+	      }
     })
 
     const historyKey = Effect.fn("Tasks.historyKey")(function* () {
@@ -325,8 +347,14 @@ export class Tasks extends Effect.Service<Tasks>()("joelclaw/Tasks", {
         return "" as never
       }
 
-      cachedHistoryKey = historyKeys[0]
-      return cachedHistoryKey
+      const firstHistoryKey = historyKeys[0]
+      if (!firstHistoryKey) {
+        yield* Effect.fail(new TasksError("No Things history key found for account"))
+        return "" as never
+      }
+
+      cachedHistoryKey = firstHistoryKey
+      return firstHistoryKey
     })
 
     const history = Effect.fn("Tasks.history")(function* () {

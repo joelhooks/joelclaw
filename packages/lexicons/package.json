@@ -1,0 +1,6 @@
+{
+  "name": "@joelclaw/lexicons",
+  "version": "0.1.0",
+  "private": true,
+  "exports": { "./*": "./src/*.json" }
+}
