@@ -511,6 +511,37 @@ export type Events = {
     };
   };
 
+  // --- Media pipeline (ADR-0041) ---
+  "media/received": {
+    data: {
+      source: "telegram" | "imessage" | "slack" | "cli";
+      type: "image" | "audio" | "video" | "document";
+      localPath: string;
+      mimeType: string;
+      fileName?: string;
+      fileSize: number;
+      caption?: string;
+      originSession?: string;
+      metadata?: {
+        telegramFileId?: string;
+        width?: number;
+        height?: number;
+        duration?: number;
+      };
+    };
+  };
+  "media/processed": {
+    data: {
+      source: string;
+      type: string;
+      localPath: string;
+      description?: string;
+      transcript?: string;
+      archivePath?: string;
+      originSession?: string;
+    };
+  };
+
   // --- Legacy ---
   "pipeline/video.ingested": {
     data: {

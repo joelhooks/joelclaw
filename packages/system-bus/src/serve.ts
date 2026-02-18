@@ -16,6 +16,7 @@ import {
   heartbeatCron,
   heartbeatWake,
   agentDispatch,
+  mediaProcess,
   agentLoopPlan,
   agentLoopTestWriter,
   agentLoopImplement,
@@ -53,6 +54,7 @@ app.get("/", (c) =>
       "agent-loop-judge",
       "agent-loop-complete",
       "agent-loop-retro",
+      "media-process",
     ],
     events: {
       "pipeline/video.requested": "Download video + NAS transfer → emits transcript.requested",
@@ -62,6 +64,7 @@ app.get("/", (c) =>
       "content/updated": "Vault content changed → sync ADRs + discoveries to website",
       "discovery/noted": "Investigate interesting find → vault note in Resources/discoveries/",
       "system/log.written": "Write canonical log entry",
+      "media/received": "Process media from channels → vision/transcribe → notify gateway",
     },
   })
 );
@@ -95,6 +98,7 @@ app.on(
       agentLoopJudge,
       agentLoopComplete,
       agentLoopRetro,
+      mediaProcess,
     ],
     serveHost: "http://host.docker.internal:3111",
   })

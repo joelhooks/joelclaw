@@ -11,6 +11,7 @@ export { embedText } from "./embed";
 export { agentDispatch } from "./agent-dispatch";
 export { backfillObserve } from "./backfill-observe";
 export { heartbeatCron, heartbeatWake } from "./heartbeat";
+export { mediaProcess } from "./media-process";
 export {
   agentLoopPlan,
   agentLoopTestWriter,
