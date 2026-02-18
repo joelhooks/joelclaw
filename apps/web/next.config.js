@@ -1,14 +1,5 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  async rewrites() {
-    return [
-      // /slug.md → /slug/md (markdown route)
-      {
-        source: "/:slug((?!_next|api|scripts|adrs|cool|network|feed|sitemap|robots|icon|opengraph)[\\w-]+)\\.md",
-        destination: "/:slug/md",
-      },
-    ];
-  },
   async redirects() {
     return [
       {
