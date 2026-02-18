@@ -372,7 +372,7 @@ export type Events = {
     data: {
       sessionId: string;
       dedupeKey: string;
-      trigger: "shutdown";
+      trigger: "shutdown" | "backfill";
       messages: string;
       messageCount: number;
       userMessageCount: number;

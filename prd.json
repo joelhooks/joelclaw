@@ -27,7 +27,8 @@
       ],
       "files": [
         "packages/system-bus/src/inngest/functions/reflect.ts"
-      ]
+      ],
+      "passes": true
     },
     {
       "id": "FRIC-3",

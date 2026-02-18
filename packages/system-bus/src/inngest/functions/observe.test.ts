@@ -194,4 +194,46 @@ describe("FRIC-1 observe acceptance tests", () => {
       hasOnlyOneSessionEntry: true,
     });
   });
+
+  test("suppresses accumulated reflect trigger for backfill while still storing observations", async () => {
+    const capturedAt = "2026-02-18T16:00:00.000Z";
+
+    const { ctx } = await executeObserve({
+      sessionId: "session-fric-3-backfill",
+      dedupeKey: "fric-3-backfill-dedupe",
+      trigger: "backfill",
+      messages: "historical backfill transcript",
+      messageCount: 12000,
+      userMessageCount: 3000,
+      duration: 0,
+      filesRead: [],
+      filesModified: [],
+      capturedAt,
+      schemaVersion: 1,
+    });
+
+    const sendEventCalls = ((ctx.step.sendEvent as any).mock?.calls ?? []) as unknown[][];
+    const emittedAccumulatedEvent = sendEventCalls.some((call) => {
+      const payload = call[1] as unknown;
+      if (!Array.isArray(payload)) return false;
+      return payload.some(
+        (entry) =>
+          typeof entry === "object" &&
+          entry !== null &&
+          "name" in entry &&
+          (entry as { name?: unknown }).name === "memory/observations.accumulated"
+      );
+    });
+
+    const listKey = "memory:observations:2026-02-18";
+    const persistedEntries = redisLists.get(listKey) ?? [];
+
+    expect({
+      emittedAccumulatedEvent,
+      persistedEntryCount: persistedEntries.length,
+    }).toMatchObject({
+      emittedAccumulatedEvent: false,
+      persistedEntryCount: 1,
+    });
+  });
 });

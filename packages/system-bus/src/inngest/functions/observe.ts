@@ -25,7 +25,7 @@ type ObserveCompactionInput = {
 type ObserveEndedInput = {
   sessionId: string;
   dedupeKey: string;
-  trigger: "shutdown";
+  trigger: "shutdown" | "backfill";
   messages: string;
   messageCount: number;
   userMessageCount: number;
@@ -152,11 +152,19 @@ function validateObserveInput(eventName: string, data: unknown): ObserveInput {
     throw new Error("Invalid trigger for compaction event; expected 'compaction'");
   }
 
-  if (eventName === "memory/session.ended" && payload.trigger !== "shutdown") {
-    throw new Error("Invalid trigger for ended event; expected 'shutdown'");
+  if (
+    eventName === "memory/session.ended" &&
+    payload.trigger !== "shutdown" &&
+    payload.trigger !== "backfill"
+  ) {
+    throw new Error("Invalid trigger for ended event; expected 'shutdown' or 'backfill'");
   }
 
-  if (payload.trigger !== "compaction" && payload.trigger !== "shutdown") {
+  if (
+    payload.trigger !== "compaction" &&
+    payload.trigger !== "shutdown" &&
+    payload.trigger !== "backfill"
+  ) {
     throw new Error(`Invalid trigger value: ${payload.trigger}`);
   }
 
@@ -536,30 +544,46 @@ Session context:
       capturedAt,
     };
 
+    const thresholdCheck = await step.run("check-threshold", async () => {
+      return {
+        shouldEmitAccumulated: validatedInput.trigger !== "backfill",
+      };
+    });
+
     const accumulatedEventPayload = {
       name: "memory/observations.accumulated" as const,
       data: accumulatedData,
     };
 
-    const accumulatedEvent = await step.sendEvent("emit-accumulated", [accumulatedEventPayload])
-      .then(() => ({
-        emitted: true,
-        name: accumulatedEventPayload.name,
-        data: accumulatedEventPayload.data,
-        observationCount,
-        redisUpdated: redisStateResult,
-      }))
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        return {
+    const accumulatedEvent = thresholdCheck.shouldEmitAccumulated
+      ? await step.sendEvent("emit-accumulated", [accumulatedEventPayload])
+          .then(() => ({
+            emitted: true,
+            name: accumulatedEventPayload.name,
+            data: accumulatedEventPayload.data,
+            observationCount,
+            redisUpdated: redisStateResult,
+          }))
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            return {
+              emitted: false,
+              name: accumulatedEventPayload.name,
+              data: accumulatedEventPayload.data,
+              error: message,
+              observationCount,
+              redisUpdated: redisStateResult,
+            };
+          })
+      : {
           emitted: false,
+          suppressed: true,
+          reason: "backfill-trigger",
           name: accumulatedEventPayload.name,
           data: accumulatedEventPayload.data,
-          error: message,
           observationCount,
           redisUpdated: redisStateResult,
         };
-      });
 
     return {
       sessionId: validatedInput.sessionId,
