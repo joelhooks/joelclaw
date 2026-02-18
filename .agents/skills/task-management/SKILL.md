@@ -1,11 +1,11 @@
 ---
 name: task-management
-description: "Manage Joel's task system in Things 3. Triggers on: 'add a task', 'create a todo', 'what's on my list', 'today's tasks', 'what do I need to do', 'remind me to', 'inbox', 'complete', 'mark done', 'weekly review', 'groom tasks', 'what's next', or when actionable items emerge from other work. Also triggers when Joel mentions something he needs to do in passing — capture it."
+description: "Manage Joel's task system in Todoist. Triggers on: 'add a task', 'create a todo', 'what's on my list', 'today's tasks', 'what do I need to do', 'remind me to', 'inbox', 'complete', 'mark done', 'weekly review', 'groom tasks', 'what's next', or when actionable items emerge from other work. Also triggers when Joel mentions something he needs to do in passing — capture it."
 ---
 
 # Task Management — The System That Thinks For You
 
-Things 3 is the task layer. The agent is the gardener.
+Todoist is the task layer. The agent is the gardener.
 
 ## Philosophy
 
@@ -20,80 +20,101 @@ Three systems, one practice:
 ### What This Means In Practice
 
 - **Every task is a next physical action.** Not "research X" but "spend 20 min reading the X docs." Not "fix the bug" but "reproduce the bug in a test."
-- **Inbox is a capture buffer, not a todo list.** Process it to zero. Each item gets: do it (< 2 min), schedule it (today/upcoming), delegate it, someday/maybe it, or trash it.
+- **Inbox is a capture buffer, not a todo list.** Process it to zero. Each item gets: do it (< 2 min), schedule it, delegate it, someday it, or delete it.
 - **Projects have appetite.** "2 weeks, small batch" or "6 weeks, big batch." If a project has been open for 3x its appetite with no progress, it's a zombie. Kill it or re-scope.
 - **Habits are anchored, not scheduled.** "After morning coffee → shoulder warm-up" not "Do exercises at 7am." The anchor is the trigger.
 - **Less is more.** A clean list with 5 clear next actions beats 50 vague intentions. Ruthlessly prune. If you haven't touched it in 2 weeks and it's not scheduled, it doesn't matter.
 
-## Things 3 Adapter
+## Todoist Adapter
 
 ### Credentials
 
 ```bash
-# New account (Feb 2026)
-export THINGS_USERNAME=$(secrets lease things_username_new --raw)
-export THINGS_PASSWORD=$(secrets lease things_password_new --raw)
+# API token from https://app.todoist.com/app/settings/integrations/developer
+# Stored in agent-secrets
+export TODOIST_API_TOKEN=$(secrets lease todoist_api_token --raw)
 ```
-
-**⚠️ NEVER purge areas.** `action=2` on `Area3` items corrupts the history and crashes Things 3 iOS. Trash areas instead. Learned the hard way — see slog 2026-02-18.
 
 ### Read
 
 ```bash
-things-cli list --today        # What's on today
-things-cli list --inbox        # Needs triage
-things-cli list                # Everything active
-things-cli projects            # All projects
-things-cli areas               # All areas
-things-cli show <uuid>         # Single item detail
-things-cli list --project NAME # Tasks in a project
-things-cli list --area NAME    # Tasks in an area
+todoist-cli today                    # What's due today
+todoist-cli inbox                    # Needs triage
+todoist-cli list                     # All active tasks
+todoist-cli list --filter "p1"       # Todoist filter query (priority 1)
+todoist-cli list --project ID        # Tasks in a project
+todoist-cli list --label review      # Tasks with a label
+todoist-cli projects                 # All projects
+todoist-cli sections --project ID    # Sections in a project
+todoist-cli labels                   # All labels
+todoist-cli show ID                  # Task detail + comments
+todoist-cli review                   # Daily standup: today, inbox, overdue, project breakdown
 ```
 
 ### Write
 
 ```bash
 # Create a task
-things-cli create "Title" --when today --note "Details" --project <uuid>
+todoist-cli add "Title" --due today --description "Details" --project ID
 
-# Batch (one HTTP call — use for 3+ items)
-echo '[
-  {"cmd":"create","title":"Task 1","when":"today","project":"<uuid>"},
-  {"cmd":"create","title":"Task 2","when":"anytime"},
-  {"cmd":"complete","uuid":"<uuid>"}
-]' | things-cli batch
+# With labels, priority, deadline
+todoist-cli add "Ship feature" --due "next monday" --priority 3 --labels agent,urgent --deadline 2026-03-01
 
 # Complete
-things-cli complete <uuid>
+todoist-cli complete ID
 
-# Move
-things-cli move-to-today <uuid>
-things-cli edit <uuid> --when someday
+# Update
+todoist-cli update ID --content "New title" --due tomorrow --description "Updated notes"
 
-# Trash (not purge!)
-things-cli trash <uuid>
+# Move between projects
+todoist-cli move ID --project ID
+
+# Delete permanently
+todoist-cli delete ID
+
+# Reopen a completed task
+todoist-cli reopen ID
+
+# Create a project
+todoist-cli add-project "Project Name" --color blue
+
+# Create a section
+todoist-cli add-section "Section Name" --project ID
 ```
 
 ### Schedule Mapping
 
-| Value | Things View | GTD Context |
-|-------|-------------|-------------|
-| `inbox` | Inbox | Captured, not processed |
-| `today` | Today | Committed — doing it today |
-| `anytime` | Anytime | Next action, no date pressure |
-| `someday` | Someday | Maybe/later — reviewed weekly |
-| `upcoming` | Upcoming | Scheduled for specific date |
+| Todoist | GTD Context | CLI Flag |
+|---------|-------------|----------|
+| Inbox (no project) | Captured, not processed | (default) |
+| `--due today` | Committed — doing it today | `--due today` |
+| `--due "next week"` | Scheduled | `--due "next monday"` |
+| No due date | Next action, no date pressure | (omit --due) |
+| Label: `someday` | Maybe/later — reviewed weekly | `--labels someday` |
+| `--due "every day"` | Recurring habit | `--due "every day"` |
 
 ### Structure
 
-| Concept | Things | Rule |
-|---------|--------|------|
-| Area | Area | Long-lived responsibility. Never "done." Max 5-7. |
-| Project | Project | Finite goal with appetite. Has a "done" state. |
-| Task | To-do | Next physical action. Concrete, verb-first. |
-| Habit | Repeating to-do | Anchored to a routine, not a time. |
+| Concept | Todoist | Rule |
+|---------|---------|------|
+| Project | Project | Finite goal with appetite. Has a "done" state. Archive when complete. |
+| Section | Section | Group within a project. Optional — keep flat until complexity demands it. |
+| Task | Task | Next physical action. Concrete, verb-first. |
+| Habit | Recurring task | `--due "every day"` or `"every friday at 5pm"`. Anchored to routine. |
+| Context | Label | Lightweight tags: `review`, `agent`, `someday`, `waiting`. |
 
-Current areas: **joelclaw**, **Family**, **Health**, **Writing**
+### Todoist Filters (Pro)
+
+Todoist's filter syntax is powerful. Use via `todoist-cli list --filter`:
+
+```bash
+todoist-cli list --filter "today | overdue"     # Due today or overdue
+todoist-cli list --filter "p1 & !#Inbox"        # Priority 1, not in inbox
+todoist-cli list --filter "no date"             # Floating tasks
+todoist-cli list --filter "@review"             # Label: review
+todoist-cli list --filter "assigned to: me"     # My tasks
+todoist-cli list --filter "created before: -14d"  # Stale tasks
+```
 
 ## Agent Behaviors
 
@@ -102,7 +123,7 @@ Current areas: **joelclaw**, **Family**, **Health**, **Writing**
 When Joel says anything implying a task — "I need to...", "remind me to...", "we should...", "don't forget..." — capture it:
 
 ```bash
-things-cli create "The thing Joel said" --when inbox
+todoist-cli add "The thing Joel said"
 ```
 
 Then confirm: **"Captured → Inbox: 'The thing Joel said'"**
@@ -115,10 +136,10 @@ When asked to review or when inbox has items:
 
 For each item, decide ONE of:
 1. **Do it** — takes < 2 min? Just do it now. Complete the task.
-2. **Schedule it** — `--when today` or `--scheduled YYYY-MM-DD`
-3. **Delegate it** — note who, move to anytime with a waiting-for tag
-4. **Someday/maybe** — `--when someday`
-5. **Trash it** — not worth doing. `things-cli trash <uuid>`
+2. **Schedule it** — `todoist-cli update ID --due today` or `--due "next monday"`
+3. **Move it** — `todoist-cli move ID --project ID`
+4. **Someday/maybe** — `todoist-cli update ID --labels someday`
+5. **Delete it** — not worth doing. `todoist-cli delete ID`
 
 Present as a batch decision: "Inbox has 4 items. Here's my triage..."
 
@@ -127,42 +148,63 @@ Present as a batch decision: "Inbox has 4 items. Here's my triage..."
 When actionable items emerge from other activities (transcribed photos, calendar events, project planning):
 
 1. Extract concrete next actions (verb-first, specific)
-2. Group into a project if 3+ related
-3. Use `things-cli batch` for efficiency
+2. Assign to the right project
+3. Add descriptions with context (ADR refs, links, acceptance criteria)
 4. Report what was created
 
-### Weekly Review Prompt
+### Weekly Review
 
-When Joel asks for weekly review, or on a nudge:
+When Joel asks for weekly review, or triggered by the recurring Friday task:
 
-1. Show today + inbox counts
+```bash
+todoist-cli review
+```
+
+Then:
+1. Process inbox to zero
 2. Flag zombie projects (no activity in 2+ weeks)
-3. Flag tasks without next actions
-4. Flag someday items worth promoting
-5. Ask: "What's the one thing that would make this week a win?"
+3. Flag overdue tasks — reschedule or kill
+4. Flag floating tasks (no due date) — still relevant?
+5. Ask: "What's the one thing that would make next week a win?"
 
 ### Keep It Clean
 
-- **Max 7 items on Today.** More than that = overcommitted. Push overflow to anytime.
+- **Max 7 items due today.** More than that = overcommitted. Push overflow.
 - **Inbox should be zero** after processing. Not "low" — zero.
-- **Complete or kill.** No task should exist for more than 2 weeks without progress unless it's in Someday.
+- **Complete or kill.** No task should linger more than 2 weeks without progress unless labeled `someday`.
 - **Project names are outcomes.** "Ship task integration" not "Task stuff."
+- **Descriptions matter.** Every task gets enough context that you can pick it up cold.
+
+### "Could the agent just do this?"
+
+Before creating a task, ask: **could joelclaw do this right now?** If yes, do it and create a completed task as a record. Tasks are for humans; agents execute.
+
+- **Agent does it**: code changes, research, file operations, API calls, calendar updates
+- **Agent drafts, Joel reviews**: writing in Joel's voice, design decisions
+- **Joel only**: physical actions (shopping, exercise), phone calls, editorial taste
 
 ## Fallback: Vault Checklists
 
-If Things auth fails, use Vault markdown checklists:
+If Todoist auth fails, use Vault markdown checklists:
 
 ```markdown
 - [ ] Task description
 - [x] Completed task
 ```
 
-Google Tasks via `gog` is available as secondary adapter but Things is primary.
+Google Tasks via `gog` is available as secondary adapter.
 
 ## Anti-Patterns
 
-- **Never purge areas** — corrupts Things Cloud history permanently
 - **Don't create vague tasks** — "Look into X" is not a next action. "Spend 15 min reading X docs" is.
 - **Don't let inbox accumulate** — if it has > 10 items, triage before adding more
-- **Don't over-organize** — tags, headings, and sub-projects add friction. Keep it flat until complexity demands structure.
-- **Don't sync too aggressively** — Things Cloud API is unofficial, respect it
+- **Don't over-organize** — labels and sections add friction. Keep it flat until complexity demands structure.
+- **Don't duplicate** — check existing tasks before creating. Use `todoist-cli list --filter` to search.
+- **Don't put agent context in task titles** — keep titles human-readable. Put ADR refs and technical details in the description.
+
+## Credits
+
+- David Allen — Getting Things Done
+- Ryan Singer — Shape Up (Basecamp)
+- BJ Fogg — Tiny Habits
+- Todoist / Doist — official API and SDK
