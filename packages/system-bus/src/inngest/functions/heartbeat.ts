@@ -1,5 +1,6 @@
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import { auditTriggers } from "./trigger-audit";
 import { readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -91,11 +92,30 @@ export const heartbeatCron = inngest.createFunction(
   async ({ step }) => {
     await step.run("prune-old-sessions", pruneOldSessionFiles);
 
+    const triggerAudit = await step.run("audit-triggers", async () => {
+      try {
+        return await auditTriggers();
+      } catch (err) {
+        return { ok: true, checked: 0, drifted: [], missing: [], extra: [], error: String(err) };
+      }
+    });
+
     await step.run("push-gateway-event", async () => {
+      const payload: Record<string, unknown> = {};
+
+      // Alert on trigger drift — silent misregistration is how the promote
+      // bug went undetected. See ADR-0021 Phase 3 postmortem.
+      if (!triggerAudit.ok) {
+        payload.triggerDrift = {
+          drifted: triggerAudit.drifted,
+          missing: triggerAudit.missing,
+        };
+      }
+
       await pushGatewayEvent({
-        type: "cron.heartbeat",
+        type: triggerAudit.ok ? "cron.heartbeat" : "cron.heartbeat.drift",
         source: "inngest",
-        payload: {},
+        payload,
       });
     });
   }
