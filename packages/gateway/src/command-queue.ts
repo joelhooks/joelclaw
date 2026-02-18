@@ -6,7 +6,7 @@ export type QueueEntry = {
 };
 
 type PromptSession = {
-  prompt: (prompt: string, metadata?: Record<string, unknown>) => unknown | Promise<unknown>;
+  prompt: (text: string) => unknown | Promise<unknown>;
 };
 
 const queue: QueueEntry[] = [];
@@ -45,7 +45,7 @@ export async function drain(): Promise<void> {
           continue;
         }
 
-        await sessionRef.prompt(entry.prompt, entry.metadata);
+        await sessionRef.prompt(entry.prompt);
       } catch (error) {
         console.error("command-queue: prompt failed", {
           source: entry.source,

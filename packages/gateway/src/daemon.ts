@@ -7,7 +7,7 @@ import { drain, enqueue, setSession } from "./command-queue";
 import { start as startRedisChannel, shutdown as shutdownRedisChannel } from "./channels/redis";
 import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, parseChatId } from "./channels/telegram";
 import { startHeartbeatRunner } from "./heartbeat";
-import { wireSession, registerChannel } from "./outbound/router";
+import { getCurrentSource } from "./command-queue";
 
 const HOME = homedir();
 const AGENT_DIR = join(HOME, ".pi/agent");
@@ -44,10 +44,48 @@ const { session } = await createAgentSession({
 });
 
 setSession({
-  prompt: (prompt: string) => session.prompt(prompt),
+  prompt: (text: string) => session.prompt(text),
 });
 
-await wireSession(session);
+// ── Config ─────────────────────────────────────────────
+const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID
+  ? parseInt(process.env.TELEGRAM_USER_ID, 10)
+  : undefined;
+
+// ── Outbound: collect assistant responses and route to source channel ──
+let responseChunks: string[] = [];
+
+session.subscribe((event: any) => {
+  // Collect text deltas
+  if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+    responseChunks.push(event.assistantMessageEvent.delta);
+  }
+
+  // On message end, route the full response to the source channel
+  if (event.type === "message_end") {
+    const fullText = responseChunks.join("");
+    responseChunks = [];
+
+    if (!fullText.trim()) return;
+
+    const source = getCurrentSource() ?? "console";
+    console.log("[gateway] response ready", { source, length: fullText.length });
+
+    // Route to Telegram if source is telegram:*
+    if (source.startsWith("telegram:") && TELEGRAM_TOKEN) {
+      const chatId = parseChatId(source) ?? TELEGRAM_USER_ID;
+      if (chatId) {
+        sendTelegram(chatId, fullText).catch((e: any) =>
+          console.error("[gateway] telegram send failed", { error: e.message })
+        );
+      }
+    } else {
+      // Console channel — just log
+      console.log("[gateway] assistant:", fullText.slice(0, 200));
+    }
+  }
+});
 
 // ── Redis channel ──────────────────────────────────────
 await startRedisChannel(((source, prompt, metadata) => {
@@ -56,21 +94,7 @@ await startRedisChannel(((source, prompt, metadata) => {
 }));
 
 // ── Telegram channel ───────────────────────────────────
-const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID
-  ? parseInt(process.env.TELEGRAM_USER_ID, 10)
-  : undefined;
-
 if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
-  // Register Telegram outbound — route replies back to the chat that sent the message
-  registerChannel("telegram", {
-    send: async (message: string, context?: { source?: string }) => {
-      const source = context?.source ?? "";
-      const chatId = parseChatId(source) ?? TELEGRAM_USER_ID;
-      await sendTelegram(chatId, message);
-    },
-  });
-
   await startTelegram(TELEGRAM_TOKEN, TELEGRAM_USER_ID, (source, prompt, metadata) => {
     enqueue(source, prompt, metadata);
     void drain();
@@ -84,8 +108,9 @@ const queueDrainTimer = setInterval(() => {
   void drain();
 }, 1000);
 
-const unsubscribeAgent = session.subscribe((event: { type?: string }) => {
-  if (event.type === "agent_end") {
+// Drain queue when agent finishes a turn
+session.subscribe((event: any) => {
+  if (event.type === "turn_end") {
     void drain();
   }
 });
@@ -112,7 +137,6 @@ async function gracefulShutdown(signal: string): Promise<void> {
   console.log("[gateway] shutting down", { signal });
 
   clearInterval(queueDrainTimer);
-  unsubscribeAgent();
 
   try {
     await heartbeatRunner.shutdown();
@@ -153,4 +177,16 @@ process.on("SIGINT", () => {
 
 process.on("SIGTERM", () => {
   void gracefulShutdown("SIGTERM");
+});
+
+// Keep the event loop alive — Bun may exit after session.prompt() resolves
+// even with bot.start() polling and setInterval timers active
+setInterval(() => {}, 30_000);
+
+process.on("uncaughtException", (error) => {
+  console.error("[gateway] uncaught exception", { error: error.message, stack: error.stack });
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[gateway] unhandled rejection", { reason });
 });
