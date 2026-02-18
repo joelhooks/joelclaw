@@ -360,9 +360,38 @@ After setup, verify:
 - [ ] (Tier 2+) Kill the heartbeat source — watchdog alarm fires after 30 min
 - [ ] (Tier 3+) Central session receives heartbeats, satellite sessions don't
 
+## Setup Script (curl-first)
+
+For automated setup, the user can run:
+```bash
+curl -sL joelclaw.com/scripts/gateway-setup.sh | bash
+```
+
+Or with a specific tier:
+```bash
+curl -sL joelclaw.com/scripts/gateway-setup.sh | bash -s -- 2
+```
+
+The script is idempotent, detects Redis, installs the extension, and configures persistence for Tier 2+.
+
+## Decision Chain (compressed ADRs)
+
+Sequential architecture decisions that led to the current gateway design. Each solved a real problem discovered in the previous iteration.
+
+| # | ADR | Decision | Problem Solved | Key Tradeoff |
+|---|-----|----------|---------------|-------------|
+| 1 | [0010](/adrs/0010-system-loop-gateway) | Hybrid cron + event gateway | Manual triage bottleneck | Always-on LLM session = expensive. Cron = latency. Hybrid balances both. |
+| 2 | [0018](/adrs/0018-pi-native-gateway-redis-event-bridge) | Redis event bridge (pi extension) | No Inngest→pi bridge existed | Extension-only, no separate process. Redis as the clean interface boundary. |
+| 3 | [0035](/adrs/0035-gateway-session-routing-central-satellite) | Central + satellite routing | Heartbeats interrupting coding sessions | Fan-out by role. Central gets all, satellites get only origin-targeted. |
+| 4 | [0036](/adrs/0036-launchd-central-gateway-session) | launchd + tmux (superseded) | Gateway session dies on terminal close | Pi needs PTY. tmux provides it. launchd restarts on crash. |
+| 5 | [0037](/adrs/0037-gateway-watchdog-layered-failure-detection) | 3-layer watchdog | "Who watches the watchmen" | Extension watchdog (Inngest down), launchd tripwire (pi down), heartbeat (everything healthy). |
+| 6 | [0038](/adrs/0038-embedded-pi-gateway-daemon) | Embedded pi daemon (supersedes 0036) | No mobile access, no multi-channel | Embeds pi as library. grammY for Telegram. Command queue serializes all inputs. Most complex tier. |
+
+**Read order for full context:** 0010 → 0018 → 0035 → 0037 → 0038 (skip 0036, superseded)
+
 ## Credits
 
-- [OpenClaw](https://github.com/openclaw/openclaw) — the gateway-daemon pattern, command queue serialization, and channel plugin architecture
+- [OpenClaw](https://github.com/openclaw/openclaw) — gateway-daemon pattern, command queue serialization, channel plugin architecture
 - [pi coding agent](https://github.com/mariozechner/pi-coding-agent) — extension API, sendUserMessage(), session lifecycle
 - [Inngest](https://www.inngest.com/) — durable event-driven workflows
-- [joelclaw.com articles](/building-a-gateway-for-your-ai-agent) — full narrative of how this system evolved
+- [joelclaw.com/building-a-gateway-for-your-ai-agent](/building-a-gateway-for-your-ai-agent) — human summary

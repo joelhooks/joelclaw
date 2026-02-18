@@ -376,8 +376,38 @@ launchctl load ~/Library/LaunchAgents/com.you.inngest-worker.plist
 - [ ] (Tier 2+) Restart Docker — Inngest state is preserved
 - [ ] (launchd) Reboot Mac — worker and Inngest both come back automatically
 
+## Setup Script (curl-first)
+
+For automated setup, the user can run:
+```bash
+curl -sL joelclaw.com/scripts/inngest-setup.sh | bash
+```
+
+Or with a specific tier:
+```bash
+curl -sL joelclaw.com/scripts/inngest-setup.sh | bash -s -- 2
+```
+
+The script is idempotent, detects existing state, and scaffolds a worker with typed events.
+
+## Decision Chain (compressed ADRs)
+
+This skill's architecture is backed by a chain of Architecture Decision Records. Unfurl as needed for tradeoff context.
+
+**ADR-0010 → ADR-0029 → current state**
+
+| Decision | Choice | Key Tradeoff | Link |
+|----------|--------|-------------|------|
+| Workflow engine | Inngest (self-hosted) | Step-level durability vs complexity. Cron+scripts has no per-step retry. | [ADR-0010](/adrs/0010-system-loop-gateway) |
+| Container runtime | Colima (VZ framework) | Replaces Docker Desktop. Free, headless, less RAM. | [ADR-0029](/adrs/0029-colima-talos-migration) |
+| k8s for 3 containers | Yes (k3d → Talos) | 380MB overhead for reconciliation loop + multi-node future. Docker Compose = no self-healing. | [joel-deploys-k8s](/joel-deploys-k8s) |
+| Service naming | `inngest-svc` not `inngest` | k8s injects `INNGEST_PORT` env var. Binary expects integer, gets URL. | Hard-won debugging |
+| Worker runtime | Bun + Hono | Faster cold start than Node. Hono = minimal HTTP. launchd KeepAlive for persistence. | Practical choice |
+| Step data pattern | Claim-check (file path) | Step outputs have size limits. Write large data to disk, pass path between steps. | Inngest docs |
+| Trigger auditing | Heartbeat cron auditor | Silent trigger drift broke promote function for days. Now audited every 15 min. | [ADR-0037](/adrs/0037-gateway-watchdog) |
+
 ## Credits
 
 - [Inngest](https://www.inngest.com/) — the workflow engine
 - [joelclaw.com/inngest-is-the-nervous-system](/inngest-is-the-nervous-system) — architecture narrative
-- [joelclaw.com/self-hosting-inngest-background-tasks](/self-hosting-inngest-background-tasks) — step-by-step tutorial
+- [joelclaw.com/self-hosting-inngest-background-tasks](/self-hosting-inngest-background-tasks) — human summary

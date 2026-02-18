@@ -1,349 +1,101 @@
 ---
 title: "Self-Hosting Inngest: A Background Task Manager for AI Agents"
 date: "2026-02-18"
-description: "Step-by-step: get Inngest running on your Mac, build a durable worker, write your first function that survives crashes. Zero cloud dependencies."
+description: "Durable workflows on your Mac. Each step retries independently. Self-hosted, zero cloud dependencies. Your agent's nervous system."
 ---
 
 You know this failure mode.
 
-A script dies at minute 27 and you rerun the whole damn thing. An agent loop is humming for 30 minutes and you keep a terminal tab open like a life support machine. A video download succeeds, transcription crashes, and you lose the good part.
+A script dies at minute 27 and you rerun the whole thing. An agent loop hums for 30 minutes and you keep the terminal open like a life support machine. A video download succeeds, transcription crashes, and you lose the good part.
 
-Durable workflows fix this. Self-hosting means your data stays on your machine.
+**Durable workflows fix all of these.** Each step in a function retries independently. The machine reboots, the job picks up where it left off. Self-hosting means your data stays on your machine.
 
-## What Inngest actually is
+{/* TODO: Video — "Self-Hosting Inngest in 10 Minutes"
+Pitch: Screen recording walkthrough. Start with empty Mac terminal.
+1. docker run inngest (30 seconds to dashboard)
+2. bun init a worker, write one function with two steps
+3. Send an event, watch it execute step-by-step in dashboard
+4. Kill the worker mid-function, restart, show it resume from last step
+5. Set up launchd so it survives reboots
+6. Show the claim-check pattern for large data between steps
+7. Show the Caddy+Tailscale trick to access dashboard from phone
+Runtime: ~8-10 minutes. No slides, no narration preamble. Terminal first frame.
+*/}
 
-Inngest is an event-driven workflow engine.
+## What it is
 
-You send an event. A function runs. That function is broken into steps. If step 2 fails, step 1 does **not** run again. Inngest retries the failed step.
+[Inngest](https://www.inngest.com/) is an event-driven workflow engine. You send an event, a function runs, that function is broken into steps. If step 2 fails, step 1 does **not** run again.
 
-That one behavior is the whole game. You stop writing giant brittle scripts and start writing recoverable workflows.
+Self-hosted = one Docker container (the server) + your worker process (Bun/Node). Dashboard at `localhost:8288` shows every event, every step, every retry.
 
-For self-hosting, the setup is simple: one Inngest server container, plus your worker process that serves functions. The dashboard at `http://localhost:8288` shows every event, every run, every step, every retry.
+## What happens when you set this up
 
-## Get it running
+```
+docker run → Inngest server + dashboard (localhost:8288)
+bun run   → your worker registers functions
+curl      → send events, functions execute durably
+launchd   → everything survives reboots
+```
 
-### Option A: Docker directly
+One Docker container. One Bun process. That's the whole infrastructure.
+
+## The 30-second version
 
 ```bash
+# Start the server
 docker run -d --name inngest \
   -p 8288:8288 \
   -v inngest-data:/var/lib/inngest \
+  --restart unless-stopped \
   inngest/inngest:latest \
   inngest start --host 0.0.0.0
+
+# Open the dashboard
+open http://localhost:8288
 ```
 
-That gives you the Inngest API and dashboard. If you want your worker auto-discovered from Docker, I also run it with `--sdk-url` in compose:
+Your agent can do the rest. Install the `inngest-local` skill and it walks through the full setup — worker, functions, persistence, gotchas — adapted to your machine and intent.
 
-```bash
-inngest start --sdk-url http://host.docker.internal:3111/api/inngest
-```
+## What I run on this
 
-### Option B: Kubernetes
+Fourteen functions. Two pipelines. The full architecture is in [Inngest is the Nervous System](/inngest-is-the-nervous-system).
 
-I run Inngest in k3d as a StatefulSet with persistent storage. If you want the full k8s path, read [The One Where Joel Deploys Kubernetes... Again](/joel-deploys-k8s).
+**Video ingest pipeline:** YouTube URL → yt-dlp download → NAS archive → mlx-whisper transcription → vault note → AI enrichment. Five steps across three tools. Any step retries independently.
 
-### Verify
+**Autonomous coding loops:** A PRD goes in, committed code comes out. Planner → Implementor → Reviewer → Judge → Retrospective. Each role is a separate function run with its own retry policy and timeout.
 
-Open `http://localhost:8288`.
+**Heartbeat cron:** Every 15 minutes, prunes stale sessions, audits trigger registrations, pushes a gateway event. The [gateway](/building-a-gateway-for-your-ai-agent) picks it up.
 
-If you see the dashboard, you're in business.
+## Patterns that matter
 
-## Build a worker (Bun + Hono)
+**Event chaining** — function A emits an event that triggers function B. No orchestrator holding state. Inngest replays from the last completed step if anything crashes.
 
-Install deps:
+**Claim-check** — step outputs have a size limit. Write large data to a file, pass the path. The transcribe step writes a 1MB transcript to `/tmp`, returns just the filepath.
 
-```bash
-bun add inngest hono
-```
-
-### 1) Create a typed Inngest client
-
-This is the pattern from `packages/system-bus/src/inngest/client.ts`, simplified to just the core events:
-
-```typescript
-import { EventSchemas, Inngest } from "inngest";
-
-type Events = {
-  "pipeline/video.requested": {
-    data: { url: string; maxQuality?: string };
-  };
-  "pipeline/video.downloaded": {
-    data: {
-      slug: string;
-      title: string;
-      sourceUrl: string;
-      nasPath: string;
-      tmpDir: string;
-    };
-  };
-  "pipeline/transcript.requested": {
-    data: {
-      source: string;
-      audioPath?: string;
-      text?: string;
-      title: string;
-      slug: string;
-      tmpDir?: string;
-    };
-  };
-  "pipeline/transcript.processed": {
-    data: {
-      vaultPath: string;
-      title: string;
-      slug: string;
-      source: string;
-    };
-  };
-};
-
-export const inngest = new Inngest({
-  id: "system-bus",
-  schemas: new EventSchemas().fromRecord<Events>(),
-});
-```
-
-### 2) Serve functions with Hono
-
-This is the same structure as `packages/system-bus/src/serve.ts`:
-
-```typescript
-import { Hono } from "hono";
-import { serve } from "inngest/hono";
-import { inngest } from "./inngest/client";
-import { videoDownload, transcriptProcess } from "./inngest/functions";
-
-const app = new Hono();
-
-app.get("/", (c) => c.json({ service: "system-bus", status: "running" }));
-
-app.on(["GET", "POST", "PUT"], "/api/inngest", serve({
-  client: inngest,
-  functions: [videoDownload, transcriptProcess],
-  serveHost: "http://host.docker.internal:3111",
-}));
-
-export default {
-  port: 3111,
-  fetch: app.fetch,
-};
-```
-
-Run it:
-
-```bash
-INNGEST_DEV=1 bun run src/serve.ts
-```
-
-If your entry file is named `worker.ts`, same thing:
-
-```bash
-INNGEST_DEV=1 bun run worker.ts
-```
-
-When the worker is reachable, Inngest registers your functions automatically.
-
-## Your first function: download + process
-
-No hello world. Build something you actually care about.
-
-### Step 1: Download (retries on network failure)
-
-From my `video-download` function pattern:
-
-```typescript
-export const videoDownload = inngest.createFunction(
-  {
-    id: "video-download",
-    concurrency: { limit: 1 },
-    retries: 2,
-  },
-  [{ event: "pipeline/video.requested" }],
-  async ({ event, step }) => {
-    const download = await step.run("download", async () => {
-      // yt-dlp + metadata parse
-      return {
-        slug: "...",
-        title: "...",
-        sourceUrl: event.data.url,
-        audioPath: "/tmp/.../video.mp4",
-        tmpDir: "/tmp/...",
-      };
-    });
-
-    const nasPath = await step.run("transfer-to-nas", async () => {
-      // scp to NAS
-      return "/volume1/home/joel/video/2026/some-slug";
-    });
-
-    await step.sendEvent("emit-events", [
-      {
-        name: "pipeline/video.downloaded",
-        data: {
-          slug: download.slug,
-          title: download.title,
-          sourceUrl: download.sourceUrl,
-          nasPath,
-          tmpDir: download.tmpDir,
-        },
-      },
-      {
-        name: "pipeline/transcript.requested",
-        data: {
-          source: "youtube",
-          audioPath: download.audioPath,
-          title: download.title,
-          slug: download.slug,
-          tmpDir: download.tmpDir,
-        },
-      },
-    ]);
-  }
-);
-```
-
-### Step 2: Process (retries independently)
-
-From `transcript-process`: keep step output small with claim-check.
-
-```typescript
-export const transcriptProcess = inngest.createFunction(
-  {
-    id: "transcript-process",
-    concurrency: { limit: 1 },
-    retries: 2,
-  },
-  { event: "pipeline/transcript.requested" },
-  async ({ event, step }) => {
-    const transcriptPath = await step.run("transcribe", async () => {
-      const outFile = `/tmp/transcript-process/${event.data.slug}-processed.json`;
-      // run whisper or write provided text
-      // write big payload to file, return only path
-      return outFile;
-    });
-
-    const vaultPath = await step.run("create-vault-note", async () => {
-      const transcript = await Bun.file(transcriptPath).json();
-      // build note
-      return `/Users/you/Vault/Resources/videos/${event.data.slug}.md`;
-    });
-
-    await step.sendEvent("emit-events", {
-      name: "pipeline/transcript.processed",
-      data: {
-        vaultPath,
-        title: event.data.title,
-        slug: event.data.slug,
-        source: event.data.source,
-      },
-    });
-  }
-);
-```
-
-Add timeouts where long-running tools can hang:
-
-```typescript
-const child = Bun.spawn(["mlx_whisper", "..."], {
-  stdout: "pipe",
-  stderr: "pipe",
-  timeout: 20 * 60 * 1000,
-});
-```
-
-What matters here: if download succeeds and processing fails, Inngest retries **only** processing. You keep the downloaded artifact. You don't eat the cost twice.
-
-## The patterns that matter
-
-### Event chaining
-
-Function A emits an event that triggers Function B.
-
-Real chain from my pipeline:
-
-`pipeline/video.requested` -> `video-download` -> `pipeline/transcript.requested` -> `transcript-process` -> `content/summarize.requested`
-
-This keeps each function focused and retry boundaries clean.
-
-### Claim-check pattern
-
-Don't pass huge blobs between steps. Write the blob to disk (or object storage), pass a path/key.
-
-That fixed transcript payload size issues immediately.
-
-### Concurrency keys
-
-Use concurrency to serialize expensive resources while allowing other work:
-
-```typescript
-concurrency: { limit: 1, key: "content-sync" }
-```
-
-Or scope by project/loop ID when you need parallelism across tenants but not within one tenant.
-
-### Cron functions
-
-Heartbeat every 15 minutes:
-
-```typescript
-export const heartbeatCron = inngest.createFunction(
-  { id: "system-heartbeat" },
-  [{ cron: "*/15 * * * *" }],
-  async ({ step }) => {
-    await step.run("audit-triggers", async () => {
-      // detect trigger drift and alert
-    });
-  }
-);
-```
-
-## Make it durable across reboots
-
-Two things matter.
-
-1. Persist Inngest state.
-2. Keep the worker process alive.
-
-In Docker, persistence is the volume mount in that `docker run` command (`inngest-data`). In k8s, use a PVC.
-
-For the worker, run it under launchd with `KeepAlive: true`.
-
-```xml
-<key>KeepAlive</key>
-<true/>
-```
-
-When your machine reboots, Inngest keeps run state, worker comes back, and queued work resumes from the last completed step. **That's the point.**
-
-## The dashboard is the superpower
-
-The dashboard at `localhost:8288` is not optional candy. It's the debugger.
-Picture the screenshot: one vertical timeline with the event at top, the function run under it, and each step expanded with retries and stack traces.
-
-You'll see:
-
-- Event timeline
-- Function runs
-- Per-step traces
-- Retry history with error payloads
-
-That visibility saves hours of "what the hell is broken" log spelunking.
-
-I also proxy it behind Caddy with Tailscale certs so I can check runs from my phone.
+**Concurrency keys** — `concurrency: { key: "event.data.project", limit: 1 }`. One coding loop per project. One transcription at a time (GPU saturation). Multiple downloads in parallel.
 
 ## Gotchas I hit
 
-- k8s service naming collision: naming the Service `inngest` injected `INNGEST_PORT=tcp://...`, which broke Inngest's integer parse. Renamed service to `inngest-svc`.
-- Step output limits: transcript payloads were too big. Claim-check fixed it.
-- `INNGEST_DEV=1` vs prod mode: local dev is forgiving; production wiring needs explicit URLs and registration sanity checks.
-- Worker re-register after server restart: if function registry gets weird, `joelclaw refresh` clears and re-registers.
-- Trigger drift is real: triggers are registered at startup, and server state can drift from code. I added a trigger auditor (`trigger-audit.ts`) to catch silent breakage.
+**The k8s naming collision.** A Service named `inngest` creates an `INNGEST_PORT` env var. The Inngest binary also uses `INNGEST_PORT` — expects an integer, gets `tcp://10.43.x.x:8288`. Two characters: name it `inngest-svc`. Thirty minutes of debugging.
 
-## Keep going
+**Trigger drift.** Functions register triggers at startup. Server state can drift from code. Triggers silently break. I built an [auditor](/building-a-gateway-for-your-ai-agent#heartbeat) that runs every 15 minutes and alerts on drift.
 
-If you want the architecture view, read [Inngest is the Nervous System](/inngest-is-the-nervous-system).
+**Worker re-registration.** After Inngest server restart, the worker needs to re-register. `joelclaw refresh` or just restart the worker process.
 
-If you want the routing layer on top, read [Building a Gateway for Your AI Agent](/building-a-gateway-for-your-ai-agent).
+## For agents
 
-If you want the full setup automated, there's a skill for that.
+The `inngest-local` skill has the full setup — tiered from "Docker one-liner" to "k8s StatefulSet with persistent storage and launchd worker." It asks about your intent first, then builds to the fidelity you need.
 
-This is a living document.
+```bash
+npx skills add joelhooks/joelclaw --skill inngest-local --yes --global
+```
+
+Or your agent can read the skill directly and set everything up.
+
+## For humans
+
+The deeper architecture narrative — why each decision was made, what the alternatives were, how the pieces compose — is in [Inngest is the Nervous System](/inngest-is-the-nervous-system) and [The One Where Joel Deploys Kubernetes... Again](/joel-deploys-k8s).
+
+---
+
+*This is a living document. Updated as the system evolves.*
