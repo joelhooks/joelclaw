@@ -43,7 +43,8 @@
       "files": [
         "packages/system-bus/src/inngest/functions/observe.ts",
         "packages/system-bus/src/inngest/functions/backfill-observe.ts"
-      ]
+      ],
+      "passes": true
     },
     {
       "id": "FRIC-4",
