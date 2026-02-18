@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-02-18
 deciders: Joel
 tags:
@@ -13,19 +13,29 @@ tags:
 
 ## Context
 
-Task management is integral to a personal AI operating system. Joel uses Things 3 on Mac/iPhone/iPad as his primary task app. Google Tasks exists via `gog` CLI. Apple Reminders is available. Future providers are likely.
+Task management is integral to a personal AI operating system. Joel uses Todoist on Mac/iPhone/iPad as his primary task app. Google Tasks exists via `gog` CLI. Apple Reminders is available. Future providers are likely.
 
-Currently tasks live in silos — the agent has no awareness of what Joel needs to do, and Joel has no way to delegate task creation/management to the agent. The surgery prep checklist (ADR-0044 context, Vault note created 2026-02-18) is a concrete example: the agent transcribed post-op care instructions from photos but had no way to create actionable tasks from them.
+Currently tasks live in silos — the agent has no awareness of what Joel needs to do, and Joel has no way to delegate task creation/management to the agent. The surgery prep checklist (Vault note created 2026-02-18) is a concrete example: the agent transcribed post-op care instructions from photos but had no way to create actionable tasks from them.
 
 An agent that can't manage tasks is an agent that can't manage life.
+
+### Why Todoist (Not Things Cloud)
+
+Things 3 is a beautiful native app with a reverse-engineered, event-sourced sync protocol. On 2026-02-18, two Things Cloud accounts were corrupted in a single day:
+1. **joel@egghead.io**: Area purge (`action=2` on `Area3` items) poisoned history — `own-history-keys` API endpoint is dead, no way to delete history events. Things 3 iOS crashes on sync.
+2. **joelhooks@gmail.com**: Batch edits with em-dashes, unicode characters, and long notes in task descriptions crash the Things 3 iOS sync parser.
+
+Things Cloud history is **immutable event-sourced** — there is no delete API. Once corrupted, it stays corrupted. The `things-cloud-sdk` approach (Go CLI, reverse-engineered protocol) is fundamentally fragile.
+
+Todoist has an **official REST API**, a **maintained TypeScript SDK** (`@doist/todoist-api-typescript` v6), bearer token auth, markdown in descriptions, and proper CRUD. The Ports and Adapters pattern means we swap the adapter, keep the port interface.
 
 ## Decision
 
 Implement task management as a **core joelclaw capability** using the **Ports and Adapters** (hexagonal) pattern:
 
-1. **Define a `TaskPort` interface** — provider-agnostic operations for task CRUD, project/area organization, and sync.
-2. **Implement adapters** for each backend — starting with Things Cloud, then Google Tasks, with the architecture supporting n+1 providers.
-3. **Co-management** — both Joel (via native apps) and the agent (via the port) read and write to the same task state. Bidirectional sync, not one-way push.
+1. **Define a `TaskPort` interface** — provider-agnostic operations for task CRUD, project organization, and sync.
+2. **Implement adapters** for each backend — primary is Todoist, with architecture supporting n+1 providers.
+3. **Co-management** — both Joel (via Todoist apps) and the agent (via the port) read and write to the same task state. Bidirectional sync, not one-way push.
 4. **Event-driven reactivity** — task changes emit Inngest events so the agent can react (task completed → close related items, task created → suggest scheduling, recurring task missed → nudge).
 
 ### Port Interface (TypeScript)
@@ -42,27 +52,19 @@ interface TaskPort {
 
   // Organization
   listProjects(): Promise<Project[]>
-  listAreas(): Promise<Area[]>
-  listTags(): Promise<Tag[]>
+  listLabels(): Promise<Label[]>
   moveToProject(taskId: string, projectId: string): Promise<void>
-
-  // Scheduling
-  moveToToday(taskId: string): Promise<void>
-  moveToUpcoming(taskId: string, date: Date): Promise<void>
-  moveToSomeday(taskId: string): Promise<void>
-  moveToInbox(taskId: string): Promise<void>
 
   // Sync
   sync(): Promise<Change[]>
-  getState(): TaskState
 }
 
 interface TaskFilter {
   inbox?: boolean
   today?: boolean
   project?: string
-  area?: string
-  tag?: string
+  label?: string
+  filter?: string      // Todoist filter syntax (Pro)
   completed?: boolean
   search?: string
 }
@@ -70,19 +72,20 @@ interface TaskFilter {
 // Provider-agnostic domain types
 interface Task {
   id: string
-  title: string
-  notes?: string
-  schedule: 'inbox' | 'today' | 'anytime' | 'someday' | 'upcoming'
-  scheduledDate?: Date
+  content: string
+  description?: string
+  priority: 1 | 2 | 3 | 4
+  due?: Date
+  dueString?: string
+  isRecurring: boolean
   deadline?: Date
   completed: boolean
-  completedDate?: Date
   projectId?: string
-  areaId?: string
-  tags: string[]
-  checklistItems: ChecklistItem[]
+  sectionId?: string
+  parentId?: string
+  labels: string[]
+  url: string
   createdAt: Date
-  updatedAt: Date
 }
 
 interface Change {
@@ -97,89 +100,96 @@ interface Change {
 
 | Adapter | Backend | Status | Notes |
 |---------|---------|--------|-------|
-| **ThingsAdapter** | Things Cloud API | First priority | Via [things-cloud-sdk](https://github.com/arthursoares/things-cloud-sdk) — Go CLI with persistent sync engine, 40+ semantic change types. Build `things-cli`, call from TypeScript. |
-| **GoogleTasksAdapter** | Google Tasks API | Second | Via `gog tasks` CLI (already installed). Flat structure — map projects/areas to task lists. |
+| **TodoistAdapter** | Todoist REST API | ✅ Implemented | `todoist-cli` — official SDK, HATEOAS JSON, bearer token auth |
+| **GoogleTasksAdapter** | Google Tasks API | Future | Via `gog tasks` CLI. Flat structure — map projects to task lists. |
 | **VaultAdapter** | Markdown checklists | Fallback | Always available. Parse `- [ ]` / `- [x]` from Vault notes. No external dependency. |
-| **AppleRemindersAdapter** | Apple Reminders | Future | Via AppleScript or Shortcuts. Native iOS/macOS integration. |
+| ~~ThingsAdapter~~ | ~~Things Cloud~~ | ❌ Abandoned | Event-sourced sync corrupts on unicode. Two accounts lost. |
+
+### Task Philosophy
+
+Inspired by Ali Abdaal's Todoist setup — radical minimalism:
+
+- **Labels as context** (`joelclaw`, `family`, `health`, `writing`, `review`, `someday`) — cross-cutting views across projects
+- **Projects as workflow containers** — finite bets with finish lines, not categories
+- **Priorities + due dates** for urgency, not complex scheduling schemes
+- **Inbox zero** — capture everything, triage ruthlessly
+
+Productivity influences: **GTD** (David Allen), **Shape Up** (Ryan Singer), **Tiny Habits** (BJ Fogg).
 
 ### Agent Integration
 
-- **joelclaw CLI**: `joelclaw tasks today`, `joelclaw tasks add "..."`, `joelclaw tasks complete <id>`
-- **Pi skill**: natural language — "add prep tasks for Kristina's surgery", "what's on my list today", "move that to someday"
-- **Inngest events**: `tasks/synced` (with changes), `tasks/created`, `tasks/completed` — agent loop can react
-- **Recall integration**: when agent sees task-related context (like surgery prep photos), it can create tasks directly
+- **todoist-cli**: `todoist-cli today`, `todoist-cli add "..."`, `todoist-cli complete <id>`, `todoist-cli review`
+- **Pi skill**: natural language — "add prep tasks for Kristina's surgery", "what's on my list today"
+- **Inngest events**: `tasks/synced` (with changes), `tasks/created`, `tasks/completed`
+- **"Could the agent just do this?"** — before creating a task, check if the agent can execute it now. Tasks are for humans; agents execute.
 
 ### Where It Lives
 
 ```
+~/Code/joelhooks/todoist-cli/     # Standalone CLI (published to GitHub)
 packages/system-bus/src/tasks/
-├── port.ts              # TaskPort interface + domain types
+├── port.ts                       # TaskPort interface + domain types
 ├── adapters/
-│   ├── things.ts        # Things Cloud adapter (shells out to things-cli)
-│   ├── google-tasks.ts  # Google Tasks adapter (shells out to gog)
-│   └── vault.ts         # Vault markdown adapter
-├── manager.ts           # Orchestrates multiple adapters, handles sync
-└── events.ts            # Inngest event schemas for task changes
+│   ├── todoist.ts                # Todoist adapter (official SDK)
+│   ├── google-tasks.ts           # Google Tasks adapter (via gog)
+│   └── vault.ts                  # Vault markdown adapter
+├── manager.ts                    # Orchestrates adapters, handles sync
+└── events.ts                     # Inngest event schemas
 ```
 
 ## Alternatives Considered
 
 ### A: Google Tasks Only
 
-Simplest — `gog` CLI already works. But Google Tasks is flat (no areas, no headings, no Today/Someday), and Joel loves Things. Forcing into one provider defeats the purpose.
+Simplest — `gog` CLI already works. But Google Tasks is flat (no sections, limited priorities), and Todoist's filter syntax is far more powerful. Forcing into one provider defeats the purpose.
 
-### B: Things Only
+### B: Things Cloud Only
 
-Things is Joel's preferred UI, and the SDK is excellent. But hard-coding to one provider creates vendor lock-in and makes it impossible to sync tasks to/from other systems (e.g., work Google account).
+Beautiful UI, but the sync protocol is reverse-engineered and fragile. Two accounts corrupted in one day. Event-sourced history is immutable — can't recover from corruption.
 
 ### C: Build Custom Task Store
 
-Roll our own task database (Redis/SQLite). Maximum control. But then Joel has two task systems — the custom store and whatever app he uses. Defeats co-management principle.
+Roll our own task database (Redis/SQLite). Maximum control. But then Joel has two task systems. Defeats co-management principle.
 
 ## Consequences
 
 ### Positive
 - Agent becomes a true task co-pilot — creates, organizes, completes tasks alongside Joel
-- Tasks follow Joel everywhere — Things on phone, agent on Mac Mini, both synced
+- Tasks follow Joel everywhere — Todoist on phone, agent on Mac Mini, both synced
 - New providers are one adapter implementation away
 - Event-driven: task changes trigger agent reactions automatically
-- Surgery prep example becomes trivial: agent reads photos → creates tasks in Things → Joel sees them on his phone
+- Official API — no reverse-engineering, no fragile sync, proper error messages
 
 ### Negative
-- Things Cloud SDK is reverse-engineered, unofficial — could break if Cultured Code changes their API
-- Go binary dependency for Things adapter (need to build and ship `things-cli`)
+- Todoist Pro required for filter syntax and webhooks ($5/mo)
+- Network dependency — Todoist is cloud-only (Vault adapter is offline fallback)
 - Sync conflicts possible when both agent and human modify simultaneously
-- Things account credentials need to be in agent-secrets
 
-### Follow-up Tasks
-- [ ] Clone and build things-cloud-sdk, test auth with Joel's Things account
-- [ ] Implement `TaskPort` interface and `ThingsAdapter`
-- [ ] Build `joelclaw tasks` CLI subcommand
-- [ ] Create task management pi skill
-- [ ] Wire sync engine to Inngest events
-- [ ] Implement `GoogleTasksAdapter` via gog
-- [ ] Create recall skill (ADR-0046?) that fans out across memory sources on vague references
+### Risks Mitigated
+- **Provider lock-in**: Ports and Adapters pattern — swap adapter, keep interface
+- **API changes**: Official SDK maintained by Doist, semver'd, TypeScript-first
+- **Credential exposure**: Bearer token in agent-secrets with TTL leasing
 
-## Implementation Plan
+## Implementation Status
 
-### Phase 1: Things Adapter + CLI (first)
-1. Clone `arthursoares/things-cloud-sdk` to `~/Code/arthursoares/things-cloud-sdk`
-2. Build `things-cli` binary
-3. Store Things credentials in agent-secrets
-4. Implement `TaskPort` interface in `packages/system-bus/src/tasks/port.ts`
-5. Implement `ThingsAdapter` that shells out to `things-cli --json`
-6. Add `joelclaw tasks` subcommand tree: `today`, `inbox`, `add`, `complete`, `projects`, `sync`
+### Phase 1: Todoist Adapter + CLI ✅
+1. ✅ Built `todoist-cli` at `~/Code/joelhooks/todoist-cli/`
+2. ✅ Published to GitHub with cross-platform binaries (v0.1.0)
+3. ✅ Stored API token in agent-secrets
+4. ✅ Full CRUD verified: add, complete, update, move, delete
+5. ✅ Unicode, em-dashes, markdown in descriptions — no issues
+6. ✅ Updated task-management skill for Todoist
 
-### Phase 2: Event-Driven Sync
-1. Inngest cron function: periodic sync via Things adapter
-2. Emit `tasks/synced` events with semantic changes
-3. Agent can react to changes (completions, reschedules, new tasks)
+### Phase 2: Event-Driven Sync (next)
+1. Inngest cron function: poll Todoist every 5 min
+2. Diff against Redis cache, emit `tasks/synced` on changes
+3. Todoist webhooks (Pro) as upgrade from polling
 
-### Phase 3: Multi-Adapter
-1. Implement `GoogleTasksAdapter` via `gog tasks`
-2. Task manager orchestrates across adapters (primary + mirrors)
-3. Conflict resolution strategy
+### Phase 3: Port Interface + Manager
+1. Implement `TaskPort` in `packages/system-bus/src/tasks/port.ts`
+2. Wire `joelclaw tasks` subcommand to delegate to todoist-cli
+3. `GoogleTasksAdapter` via `gog tasks` as secondary
 
-### Phase 4: Skill + Recall
-1. Pi skill for natural language task management
-2. Recall skill for vague reference resolution (separate ADR)
+### Phase 4: Reactivity
+1. Agent reacts to task events (completions, missed recurring)
+2. Automatic task creation from context (photos, calendar, discoveries)
