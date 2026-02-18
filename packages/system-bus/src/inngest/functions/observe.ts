@@ -3,7 +3,7 @@ import { NonRetriableError } from "inngest";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import Redis from "ioredis";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseObserverOutput } from "./observe-parser";
 import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
@@ -288,6 +288,26 @@ Session context:
         process.env.HOME || "/Users/joel",
         ".joelclaw", "workspace", "memory", `${date}.md`
       );
+      const sessionMarker = `### 🔭 Observations (session: ${validatedInput.sessionId}`;
+
+      try {
+        const existingDailyLog = readFileSync(dailyLogPath, "utf-8");
+        if (existingDailyLog.includes(sessionMarker)) {
+          return { appended: false, path: dailyLogPath, reason: "duplicate" };
+        }
+      } catch (error) {
+        const code =
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          typeof (error as { code?: unknown }).code === "string"
+            ? (error as { code: string }).code
+            : null;
+        if (code !== "ENOENT") {
+          const message = error instanceof Error ? error.message : String(error);
+          return { appended: false, path: dailyLogPath, error: message };
+        }
+      }
 
       const lines: string[] = [
         `\n### 🔭 Observations (session: ${validatedInput.sessionId}, ${time})`,
