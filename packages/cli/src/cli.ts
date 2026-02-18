@@ -19,6 +19,7 @@ import { watchCmd } from "./commands/watch"
 import { noteCmd } from "./commands/note"
 import { gatewayCmd } from "./commands/gateway"
 import { reviewCmd } from "./commands/review"
+import { recallCmd } from "./commands/recall"
 
 // ── Root ─────────────────────────────────────────────────────────────
 
@@ -59,6 +60,7 @@ const root = Command.make("joelclaw", {}, () =>
           note: "joelclaw note <text> [--source source] [--tags a,b,c]",
           gateway: "joelclaw gateway {status|events|push|drain|test}",
           review: "joelclaw review {list|approve|reject|approve-all|expire}",
+          recall: "joelclaw recall <query> [--limit N] [--min-score F] [--raw]",
           schema: "joelclaw schema",
           refresh: "joelclaw refresh",
         },
@@ -73,7 +75,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, reviewCmd])
+  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, reviewCmd, recallCmd])
 )
 
 const cli = Command.run(root, {
