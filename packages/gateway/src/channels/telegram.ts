@@ -1,10 +1,131 @@
-import { Bot } from "grammy";
+import crypto from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import { extname } from "node:path";
+import { Bot, InputFile } from "grammy";
 import type { EnqueueFn } from "./redis";
 
 // ── Telegram HTML formatting ───────────────────────────
 // Telegram's HTML mode supports: <b>, <i>, <code>, <pre>, <a href="">
 // Max message length: 4096 chars. We chunk at 4000 to leave room.
 const CHUNK_MAX = 4000;
+
+// ── Media download (ADR-0042) ──────────────────────────
+const MEDIA_DIR = "/tmp/joelclaw-media";
+const MAX_DOWNLOAD_RETRIES = 3;
+const RETRY_DELAY_MS = 1000;
+
+// Inngest event API — same config as joelclaw CLI
+const INNGEST_URL = process.env.INNGEST_URL ?? "http://localhost:8288";
+const INNGEST_EVENT_KEY = process.env.INNGEST_EVENT_KEY ?? "";
+
+let _botToken: string | undefined;
+
+function mimeFromExt(ext: string): string {
+  const map: Record<string, string> = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+    ".gif": "image/gif", ".webp": "image/webp", ".mp4": "video/mp4",
+    ".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/opus",
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".pdf": "application/pdf",
+  };
+  return map[ext.toLowerCase()] ?? "application/octet-stream";
+}
+
+function mediaKindFromExt(ext: string): "photo" | "video" | "audio" | "document" {
+  if ([".jpg", ".jpeg", ".png", ".gif", ".webp"].includes(ext)) return "photo";
+  if ([".mp4", ".mov", ".avi", ".webm", ".mkv"].includes(ext)) return "video";
+  if ([".mp3", ".ogg", ".opus", ".wav", ".m4a", ".flac", ".oga"].includes(ext)) return "audio";
+  return "document";
+}
+
+/**
+ * Download a file from Telegram Bot API to local disk.
+ * Retries on transient errors. Returns null if file is too big or permanently fails.
+ */
+async function downloadTelegramFile(
+  fileId: string,
+): Promise<{ localPath: string; mimeType: string; fileSize: number } | null> {
+  if (!bot || !_botToken) return null;
+  await mkdir(MEDIA_DIR, { recursive: true });
+
+  let file: { file_path?: string; file_size?: number } | undefined;
+  for (let attempt = 1; attempt <= MAX_DOWNLOAD_RETRIES; attempt++) {
+    try {
+      file = await bot.api.getFile(fileId);
+      break;
+    } catch (err) {
+      const msg = String(err);
+      if (msg.includes("file is too big")) {
+        console.warn("[gateway:telegram] file too big for Bot API download", { fileId });
+        return null;
+      }
+      if (attempt === MAX_DOWNLOAD_RETRIES) {
+        console.error("[gateway:telegram] getFile failed after retries", { fileId, error: msg });
+        return null;
+      }
+      await new Promise(r => setTimeout(r, RETRY_DELAY_MS * attempt));
+    }
+  }
+
+  if (!file?.file_path) return null;
+
+  const url = `https://api.telegram.org/file/bot${_botToken}/${file.file_path}`;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.error("[gateway:telegram] file download HTTP error", { status: response.status });
+      return null;
+    }
+
+    const ext = extname(file.file_path) || ".bin";
+    const localPath = `${MEDIA_DIR}/${crypto.randomUUID()}${ext}`;
+    await Bun.write(localPath, await response.arrayBuffer());
+
+    const mimeType = response.headers.get("content-type")?.split(";")[0]?.trim()
+      ?? mimeFromExt(ext);
+    const fileSize = file.file_size ?? (await Bun.file(localPath).size);
+
+    console.log("[gateway:telegram] file downloaded", { localPath, mimeType, fileSize });
+    return { localPath, mimeType, fileSize };
+  } catch (err) {
+    console.error("[gateway:telegram] file download failed", { error: String(err) });
+    return null;
+  }
+}
+
+/**
+ * Emit a media/received event to Inngest for processing (ADR-0041 pipeline).
+ */
+async function emitMediaReceived(data: {
+  source: string;
+  type: string;
+  localPath: string;
+  mimeType: string;
+  fileSize: number;
+  caption?: string;
+  originSession?: string;
+  metadata?: Record<string, unknown>;
+}): Promise<boolean> {
+  if (!INNGEST_EVENT_KEY) {
+    console.warn("[gateway:telegram] no INNGEST_EVENT_KEY — can't emit media/received");
+    return false;
+  }
+  try {
+    const res = await fetch(`${INNGEST_URL}/e/${INNGEST_EVENT_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "media/received", data }),
+    });
+    if (!res.ok) {
+      console.error("[gateway:telegram] inngest event failed", { status: res.status });
+      return false;
+    }
+    console.log("[gateway:telegram] media/received event sent", { type: data.type });
+    return true;
+  } catch (err) {
+    console.error("[gateway:telegram] inngest event error", { error: String(err) });
+    return false;
+  }
+}
 
 /**
  * Convert basic markdown to Telegram HTML.
@@ -88,6 +209,7 @@ export async function start(
 
   enqueuePrompt = enqueue;
   allowedUserId = userId;
+  _botToken = token;
   bot = new Bot(token);
 
   // Error handler
@@ -123,23 +245,189 @@ export async function start(
     });
   });
 
-  // Photo messages → describe what was sent
-  bot.on("message:photo", (ctx) => {
-    const caption = ctx.message.caption ?? "";
+  // Photo messages → download + vision pipeline (ADR-0042)
+  bot.on("message:photo", async (ctx) => {
     const chatId = ctx.chat.id;
+    const caption = ctx.message.caption ?? "";
+    const photo = ctx.message.photo;
+    const largest = photo[photo.length - 1];
+    if (!largest) {
+      enqueuePrompt!(`telegram:${chatId}`,
+        `[User sent a photo${caption ? `: ${caption}` : ""} — no photo data]`,
+        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+      return;
+    }
 
-    enqueuePrompt!(`telegram:${chatId}`, `[User sent a photo${caption ? `: ${caption}` : ""}]`, {
-      telegramChatId: chatId,
+    const result = await downloadTelegramFile(largest.file_id);
+    if (!result) {
+      enqueuePrompt!(`telegram:${chatId}`,
+        `[User sent a photo${caption ? `: ${caption}` : ""} — download failed]`,
+        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+      return;
+    }
+
+    await emitMediaReceived({
+      source: "telegram",
+      type: "image",
+      localPath: result.localPath,
+      mimeType: result.mimeType,
+      fileSize: result.fileSize,
+      caption: caption || undefined,
+      originSession: `telegram:${chatId}`,
+      metadata: {
+        telegramFileId: largest.file_id,
+        telegramChatId: chatId,
+        telegramMessageId: ctx.message.message_id,
+        width: largest.width,
+        height: largest.height,
+      },
     });
+
+    enqueuePrompt!(`telegram:${chatId}`,
+      `[User sent a photo${caption ? `: ${caption}` : ""} — processing via vision pipeline, file: ${result.localPath}]`,
+      { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
   });
 
-  // Voice messages → note for now (future: whisper transcription)
-  bot.on("message:voice", (ctx) => {
+  // Voice messages → download + transcription pipeline (ADR-0042)
+  bot.on("message:voice", async (ctx) => {
     const chatId = ctx.chat.id;
+    const voice = ctx.message.voice;
 
-    enqueuePrompt!(`telegram:${chatId}`, "[User sent a voice message — voice transcription not yet supported]", {
-      telegramChatId: chatId,
+    const result = await downloadTelegramFile(voice.file_id);
+    if (!result) {
+      enqueuePrompt!(`telegram:${chatId}`,
+        "[User sent a voice message — download failed]",
+        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+      return;
+    }
+
+    await emitMediaReceived({
+      source: "telegram",
+      type: "audio",
+      localPath: result.localPath,
+      mimeType: result.mimeType,
+      fileSize: result.fileSize,
+      originSession: `telegram:${chatId}`,
+      metadata: {
+        telegramFileId: voice.file_id,
+        telegramChatId: chatId,
+        telegramMessageId: ctx.message.message_id,
+        duration: voice.duration,
+      },
     });
+
+    enqueuePrompt!(`telegram:${chatId}`,
+      `[User sent a voice message — transcribing, file: ${result.localPath}]`,
+      { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+  });
+
+  // Audio files (music, recordings) → download + pipeline
+  bot.on("message:audio", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const audio = ctx.message.audio;
+    const caption = ctx.message.caption ?? "";
+
+    const result = await downloadTelegramFile(audio.file_id);
+    if (!result) {
+      enqueuePrompt!(`telegram:${chatId}`,
+        `[User sent an audio file${caption ? `: ${caption}` : ""} — download failed]`,
+        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+      return;
+    }
+
+    await emitMediaReceived({
+      source: "telegram",
+      type: "audio",
+      localPath: result.localPath,
+      mimeType: result.mimeType,
+      fileSize: result.fileSize,
+      caption: caption || undefined,
+      originSession: `telegram:${chatId}`,
+      metadata: {
+        telegramFileId: audio.file_id,
+        telegramChatId: chatId,
+        telegramMessageId: ctx.message.message_id,
+        duration: audio.duration,
+        title: audio.title,
+        performer: audio.performer,
+      },
+    });
+
+    enqueuePrompt!(`telegram:${chatId}`,
+      `[User sent an audio file${audio.title ? ` "${audio.title}"` : ""}${caption ? `: ${caption}` : ""} — processing, file: ${result.localPath}]`,
+      { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+  });
+
+  // Video messages → download + pipeline
+  bot.on("message:video", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const video = ctx.message.video;
+    const caption = ctx.message.caption ?? "";
+
+    const result = await downloadTelegramFile(video.file_id);
+    if (!result) {
+      enqueuePrompt!(`telegram:${chatId}`,
+        `[User sent a video${caption ? `: ${caption}` : ""} — download failed]`,
+        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+      return;
+    }
+
+    await emitMediaReceived({
+      source: "telegram",
+      type: "video",
+      localPath: result.localPath,
+      mimeType: result.mimeType,
+      fileSize: result.fileSize,
+      caption: caption || undefined,
+      originSession: `telegram:${chatId}`,
+      metadata: {
+        telegramFileId: video.file_id,
+        telegramChatId: chatId,
+        telegramMessageId: ctx.message.message_id,
+        duration: video.duration,
+        width: video.width,
+        height: video.height,
+      },
+    });
+
+    enqueuePrompt!(`telegram:${chatId}`,
+      `[User sent a video${caption ? `: ${caption}` : ""} — processing, file: ${result.localPath}]`,
+      { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+  });
+
+  // Documents (PDF, files, etc.) → download + pipeline
+  bot.on("message:document", async (ctx) => {
+    const chatId = ctx.chat.id;
+    const doc = ctx.message.document;
+    const caption = ctx.message.caption ?? "";
+
+    const result = await downloadTelegramFile(doc.file_id);
+    if (!result) {
+      enqueuePrompt!(`telegram:${chatId}`,
+        `[User sent a document "${doc.file_name ?? "file"}"${caption ? `: ${caption}` : ""} — download failed]`,
+        { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
+      return;
+    }
+
+    await emitMediaReceived({
+      source: "telegram",
+      type: "document",
+      localPath: result.localPath,
+      mimeType: doc.mime_type ?? result.mimeType,
+      fileSize: result.fileSize,
+      caption: caption || undefined,
+      originSession: `telegram:${chatId}`,
+      metadata: {
+        telegramFileId: doc.file_id,
+        telegramChatId: chatId,
+        telegramMessageId: ctx.message.message_id,
+        fileName: doc.file_name,
+      },
+    });
+
+    enqueuePrompt!(`telegram:${chatId}`,
+      `[User sent a document "${doc.file_name ?? "file"}"${caption ? `: ${caption}` : ""} — processing, file: ${result.localPath}]`,
+      { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
   });
 
   // Start long polling (non-blocking)
@@ -157,12 +445,13 @@ export async function start(
 }
 
 /**
- * Send a message back to a Telegram chat.
- * Handles markdown→HTML conversion and chunking.
+ * Send a text message back to a Telegram chat.
+ * Handles markdown→HTML conversion, chunking, and optional reply threading.
  */
 export async function send(
   chatId: number,
   message: string,
+  options?: { replyTo?: number },
 ): Promise<void> {
   if (!bot) {
     console.error("[gateway:telegram] bot not started, can't send");
@@ -181,16 +470,86 @@ export async function send(
 
   for (const chunk of chunks) {
     try {
-      await bot.api.sendMessage(chatId, chunk, { parse_mode: "HTML" });
+      await bot.api.sendMessage(chatId, chunk, {
+        parse_mode: "HTML",
+        ...(options?.replyTo ? { reply_parameters: { message_id: options.replyTo } } : {}),
+      });
     } catch (error) {
       // Fallback: send as plain text if HTML parsing fails
       console.warn("[gateway:telegram] HTML send failed, trying plain text", { error });
       try {
-        await bot.api.sendMessage(chatId, message.slice(0, CHUNK_MAX));
+        await bot.api.sendMessage(chatId, message.slice(0, CHUNK_MAX), {
+          ...(options?.replyTo ? { reply_parameters: { message_id: options.replyTo } } : {}),
+        });
       } catch (fallbackError) {
         console.error("[gateway:telegram] send failed completely", { fallbackError });
       }
       break; // don't continue chunking if we had to fallback
+    }
+  }
+}
+
+/**
+ * Send a media file to a Telegram chat.
+ * Detects kind from extension and dispatches to appropriate Bot API method.
+ */
+export async function sendMedia(
+  chatId: number,
+  filePath: string,
+  options?: { caption?: string; replyTo?: number; asVoice?: boolean },
+): Promise<void> {
+  if (!bot) {
+    console.error("[gateway:telegram] bot not started, can't send media");
+    return;
+  }
+
+  const ext = (extname(filePath) || ".bin").toLowerCase();
+  const kind = mediaKindFromExt(ext);
+
+  // Show appropriate typing indicator
+  const action = kind === "photo" ? "upload_photo"
+    : kind === "video" ? "upload_video"
+    : kind === "audio" ? "upload_voice"
+    : "upload_document";
+  try { await bot.api.sendChatAction(chatId, action); } catch {}
+
+  const file = new InputFile(filePath);
+  const params = {
+    ...(options?.caption ? { caption: options.caption, parse_mode: "HTML" as const } : {}),
+    ...(options?.replyTo ? { reply_parameters: { message_id: options.replyTo } } : {}),
+  };
+
+  try {
+    switch (kind) {
+      case "photo":
+        await bot.api.sendPhoto(chatId, file, params);
+        break;
+      case "video":
+        await bot.api.sendVideo(chatId, file, params);
+        break;
+      case "audio":
+        if (options?.asVoice) {
+          try {
+            await bot.api.sendVoice(chatId, file, params);
+          } catch (err) {
+            if (/VOICE_MESSAGES_FORBIDDEN/.test(String(err))) {
+              await bot.api.sendAudio(chatId, file, params);
+            } else throw err;
+          }
+        } else {
+          await bot.api.sendAudio(chatId, file, params);
+        }
+        break;
+      default:
+        await bot.api.sendDocument(chatId, file, params);
+    }
+    console.log("[gateway:telegram] media sent", { chatId, kind, filePath });
+  } catch (error) {
+    console.error("[gateway:telegram] sendMedia failed, trying as document", { kind, error });
+    try {
+      await bot.api.sendDocument(chatId, file, params);
+    } catch (fallbackErr) {
+      console.error("[gateway:telegram] sendMedia fallback failed", { fallbackErr });
     }
   }
 }

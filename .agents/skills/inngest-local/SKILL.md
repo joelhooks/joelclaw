@@ -41,6 +41,18 @@ Ask the user these questions to determine scope.
 
 ## Setup Tiers
 
+### Signing Keys (required)
+
+As of Feb 2026, `inngest/inngest:latest` requires signing keys. Without them the container crash-loops with `Error: signing-key is required`.
+
+```bash
+# Generate once, reuse across tiers
+INNGEST_SIGNING_KEY="signkey-dev-$(openssl rand -hex 16)"
+INNGEST_EVENT_KEY="evtkey-dev-$(openssl rand -hex 16)"
+echo "INNGEST_SIGNING_KEY=$INNGEST_SIGNING_KEY" >> .env.inngest
+echo "INNGEST_EVENT_KEY=$INNGEST_EVENT_KEY" >> .env.inngest
+```
+
 ### Tier 1: Docker One-Liner (experiment)
 
 Get Inngest running in 30 seconds:
@@ -48,6 +60,8 @@ Get Inngest running in 30 seconds:
 ```bash
 docker run -d --name inngest \
   -p 8288:8288 \
+  -e INNGEST_SIGNING_KEY="$INNGEST_SIGNING_KEY" \
+  -e INNGEST_EVENT_KEY="$INNGEST_EVENT_KEY" \
   inngest/inngest:latest \
   inngest start --host 0.0.0.0
 ```
@@ -64,6 +78,8 @@ Add a volume for SQLite state:
 docker run -d --name inngest \
   -p 8288:8288 \
   -v inngest-data:/var/lib/inngest \
+  -e INNGEST_SIGNING_KEY="$INNGEST_SIGNING_KEY" \
+  -e INNGEST_EVENT_KEY="$INNGEST_EVENT_KEY" \
   --restart unless-stopped \
   inngest/inngest:latest \
   inngest start --host 0.0.0.0
@@ -140,7 +156,7 @@ kubectl apply -f inngest.yaml
 ```bash
 mkdir my-worker && cd my-worker
 bun init -y
-bun add inngest hono
+bun add inngest @inngest/ai hono
 ```
 
 ### Step 2: Create the Inngest client
@@ -355,17 +371,21 @@ launchctl load ~/Library/LaunchAgents/com.you.inngest-worker.plist
 
 ## Gotchas
 
-1. **Service naming in k8s:** Never name a Service the same as the binary. `INNGEST_PORT` env var collision crashes the container.
+1. **`@inngest/ai` is a required peer dep.** `bun add inngest` alone isn't enough — the SDK imports `@inngest/ai` at startup. Worker crashes with `Cannot find module '@inngest/ai'`. Always install both.
 
-2. **Step output size:** Keep step return values small. Use claim-check pattern for large data.
+2. **Docker-to-host networking.** If Inngest runs in Docker and the worker on the host, the server can't reach `localhost:3111`. Pass `--sdk-url http://host.docker.internal:3111/api/inngest` on the docker run command. This is Docker Desktop/OrbStack-specific; Linux Docker needs `--add-host=host.docker.internal:host-gateway`.
 
-3. **Worker re-registration:** After Inngest server restart, the worker needs to re-register. Restart the worker or hit the registration endpoint.
+3. **Service naming in k8s:** Never name a Service the same as the binary. `INNGEST_PORT` env var collision crashes the container.
 
-4. **Trigger drift:** Functions register their triggers at startup. If you change a trigger in code but the server has stale state, the old trigger stays active. Build an auditor or restart both server and worker.
+4. **Step output size:** Keep step return values small. Use claim-check pattern for large data.
 
-5. **`INNGEST_DEV=1`:** Required for local development. Without it, the worker tries to register with Inngest Cloud.
+5. **Worker re-registration:** After Inngest server restart, the worker needs to re-register. Restart the worker or hit the registration endpoint.
 
-6. **Concurrency = 1 for GPU work:** Transcription, inference — anything that saturates a GPU needs `concurrency: { limit: 1 }`.
+6. **Trigger drift:** Functions register their triggers at startup. If you change a trigger in code but the server has stale state, the old trigger stays active. Build an auditor or restart both server and worker.
+
+7. **`INNGEST_DEV=1`:** Required for local development. Without it, the worker tries to register with Inngest Cloud.
+
+8. **Concurrency = 1 for GPU work:** Transcription, inference — anything that saturates a GPU needs `concurrency: { limit: 1 }`.
 
 ## Verification
 
