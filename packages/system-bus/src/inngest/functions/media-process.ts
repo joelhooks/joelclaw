@@ -13,8 +13,11 @@ import { inngest } from "../client";
 import { readFile, stat, mkdir } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { execSync } from "node:child_process";
+import { $ } from "bun";
 
 const MEDIA_TMP = "/tmp/joelclaw-media";
+const NAS_HOST = "joel@three-body";
+const NAS_MEDIA_BASE = "/volume1/home/joel/media";
 
 // Supported image MIME types for vision
 const IMAGE_MIMES = new Set([
@@ -82,7 +85,25 @@ export const mediaProcess = inngest.createFunction(
       description = `Media received but no processor for ${mimeType}: ${fileInfo.name}`;
     }
 
-    // Step 3: Format and notify the gateway
+    // Step 3: Archive to NAS for durability
+    const archivePath = await step.run("archive-to-nas", async () => {
+      try {
+        const year = new Date().getFullYear();
+        const destDir = `${NAS_MEDIA_BASE}/${year}/${source}`;
+        const destFile = `${destDir}/${fileInfo.name}`;
+
+        await $`ssh ${NAS_HOST} "mkdir -p ${destDir}"`.quiet();
+        await $`scp "${localPath}" "${NAS_HOST}:${destFile}"`.quiet();
+
+        return destFile;
+      } catch (err: any) {
+        // Archive failure is non-fatal — file still in /tmp
+        console.error(`[media] NAS archive failed: ${err.message}`);
+        return null;
+      }
+    });
+
+    // Step 4: Format and notify the gateway
     await step.run("notify-gateway", async () => {
       const emoji = type === "image" ? "🖼️" : type === "audio" ? "🎙️" : type === "video" ? "🎬" : "📎";
       const parts = [
@@ -95,6 +116,7 @@ export const mediaProcess = inngest.createFunction(
       if (caption) parts.push(`**Caption:** ${caption}`, "");
       parts.push(`File: \`${fileInfo.name}\` (${formatBytes(fileInfo.size)})`);
       parts.push(`Path: \`${localPath}\``);
+      if (archivePath) parts.push(`NAS: \`${archivePath}\``);
 
       gateway.notify("media.processed", {
         message: parts.join("\n"),
@@ -102,7 +124,7 @@ export const mediaProcess = inngest.createFunction(
       });
     });
 
-    // Step 4: Emit processed event for downstream consumers
+    // Step 5: Emit processed event for downstream consumers
     await step.sendEvent("emit-processed", {
       name: "media/processed",
       data: {
@@ -111,6 +133,7 @@ export const mediaProcess = inngest.createFunction(
         localPath,
         description,
         transcript,
+        archivePath: archivePath ?? undefined,
         originSession,
       },
     });
