@@ -3,6 +3,31 @@ import Image from "next/image";
 import Link from "next/link";
 import { CodeBlockCopyButton } from "../components/copy-button";
 
+// ── Tufte-style sidenotes ──────────────────────────────────────
+// Numbered sidenotes (superscript toggle) and unnumbered margin notes.
+// Pure CSS toggle on mobile (checkbox hack, no JS). Desktop: floats into right margin.
+// Credit: Edward Tufte / Tufte-CSS (https://edwardtufte.github.io/tufte-css/)
+
+function Sidenote({ children, id }: { children: React.ReactNode; id: string }) {
+  return (
+    <span className="sidenote-wrapper">
+      <label htmlFor={id} className="margin-toggle sidenote-number" />
+      <input type="checkbox" id={id} className="margin-toggle" />
+      <span className="sidenote">{children}</span>
+    </span>
+  );
+}
+
+function MarginNote({ children, id }: { children: React.ReactNode; id: string }) {
+  return (
+    <span className="sidenote-wrapper">
+      <label htmlFor={id} className="margin-toggle">&#8853;</label>
+      <input type="checkbox" id={id} className="margin-toggle" />
+      <span className="marginnote">{children}</span>
+    </span>
+  );
+}
+
 function YouTube({ id }: { id: string }) {
   return (
     <div className="my-6 aspect-video w-full overflow-hidden rounded-lg border border-neutral-800">
@@ -31,6 +56,8 @@ function extractText(children: React.ReactNode): string {
 
 export const mdxComponents: MDXComponents = {
   YouTube,
+  Sidenote,
+  MarginNote,
   h1: (props) => <h1 className="text-3xl font-bold mt-10 mb-4 tracking-tight" {...props} />,
   h2: (props) => (
     <h2

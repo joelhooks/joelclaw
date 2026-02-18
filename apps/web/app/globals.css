@@ -50,3 +50,96 @@
   font-family: var(--font-code);
   @apply text-sm bg-neutral-800/60 rounded px-1.5 py-0.5 text-claw;
 }
+
+/* ── Tufte-style sidenotes ──────────────────────────────────────
+ * Credit: Edward Tufte / Tufte-CSS (https://edwardtufte.github.io/tufte-css/)
+ * Adapted for dark theme + Tailwind v4. Pure CSS, no JS.
+ * ──────────────────────────────────────────────────────────────── */
+
+/* Article wrapper — reset sidenote counter, allow margin overflow */
+.prose-joelclaw {
+  counter-reset: sidenote-counter;
+  overflow: visible;
+}
+
+.margin-toggle {
+  display: none;
+}
+
+.sidenote-number {
+  counter-increment: sidenote-counter;
+}
+
+.sidenote-number::after,
+.sidenote::before {
+  position: relative;
+  vertical-align: baseline;
+}
+
+/* Superscript number in body text */
+.sidenote-number::after {
+  content: counter(sidenote-counter);
+  font-size: 0.7rem;
+  top: -0.5rem;
+  left: 0.1rem;
+  color: #a3a3a3;
+}
+
+/* Matching number in the sidenote itself */
+.sidenote::before {
+  content: counter(sidenote-counter) " ";
+  font-size: 0.7rem;
+  top: -0.5rem;
+  color: #a3a3a3;
+}
+
+/* Desktop: float into right margin */
+.sidenote,
+.marginnote {
+  float: right;
+  clear: right;
+  margin-right: -55%;
+  width: 45%;
+  margin-top: 0.3rem;
+  margin-bottom: 1rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: #a3a3a3;
+  position: relative;
+}
+
+.marginnote {
+  /* No number for margin notes */
+}
+
+/* ⊕ toggle for margin notes */
+label.margin-toggle:not(.sidenote-number) {
+  display: none;
+}
+
+/* Mobile: collapse behind toggle */
+@media (max-width: 900px) {
+  label.margin-toggle:not(.sidenote-number) {
+    display: inline;
+    cursor: pointer;
+    color: #a3a3a3;
+  }
+
+  .sidenote,
+  .marginnote {
+    display: none;
+  }
+
+  .margin-toggle:checked + .sidenote,
+  .margin-toggle:checked + .marginnote {
+    display: block;
+    float: left;
+    clear: both;
+    width: 95%;
+    margin: 1rem 2.5%;
+    padding: 0.75rem 1rem;
+    background: #171717;
+    border-left: 2px solid #404040;
+    border-radius: 0 0.375rem 0.375rem 0;
+  }
+}

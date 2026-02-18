@@ -51,9 +51,9 @@ Runtime: ~8-10 minutes. No slides, no narration preamble. Terminal first frame.
 
 You know this failure mode.
 
-A script dies at minute 27 and you rerun the whole thing. An agent loop hums for 30 minutes and you keep the terminal open like a life support machine. A video download succeeds, transcription crashes, and you lose the good part.
+A script dies at minute 27 and you rerun the whole thing. An agent loop hums for 30 minutes and you keep the terminal open like a life support machine.<Sidenote id="sn-terminal-life">I lost an 8-story coding loop this way. Agent was on story 6 of 8. Closed the lid, machine slept, loop died. The first 5 stories were committed but the retry logic didn't exist yet.</Sidenote> A video download succeeds, transcription crashes, and you lose the good part.
 
-**Durable workflows fix all of these.** Each step in a function retries independently. The machine reboots, the job picks up where it left off. Self-hosting means your data stays on your machine.
+**Durable workflows fix all of these.** Each step in a function retries independently. The machine reboots, the job picks up where it left off. Self-hosting means your data stays on your machine.<MarginNote id="mn-selfhost">Inngest Cloud exists and is great. I self-host because the data includes code diffs, transcripts, and agent conversations I don't want leaving my network.</MarginNote>
 
 ## What it is
 
@@ -86,11 +86,11 @@ Fourteen functions. Two pipelines. The full architecture is in [Inngest is the N
 
 **Claim-check** — step outputs have a size limit. Write large data to a file, pass the path. The transcribe step writes a 1MB transcript to `/tmp`, returns just the filepath.
 
-**Concurrency keys** — `concurrency: { key: "event.data.project", limit: 1 }`. One coding loop per project. One transcription at a time (GPU saturation). Multiple downloads in parallel.
+**Concurrency keys** — `concurrency: { key: "event.data.project", limit: 1 }`. One coding loop per project. One transcription at a time (GPU saturation).<Sidenote id="sn-gpu-sat">mlx-whisper saturates the Apple Silicon GPU. Running two transcriptions concurrently doesn't error — it just makes both take 3x longer. Concurrency limit of 1 is the right call.</Sidenote> Multiple downloads in parallel.
 
 ## Gotchas I hit
 
-**The k8s naming collision.** A Service named `inngest` creates an `INNGEST_PORT` env var. The Inngest binary also uses `INNGEST_PORT` — expects an integer, gets `tcp://10.43.x.x:8288`. Two characters: name it `inngest-svc`. Thirty minutes of debugging.
+**The k8s naming collision.** A Service named `inngest` creates an `INNGEST_PORT` env var. The Inngest binary also uses `INNGEST_PORT` — expects an integer, gets `tcp://10.43.x.x:8288`.<Sidenote id="sn-k8s-naming">Kubernetes auto-creates `{SERVICE_NAME}_PORT` env vars for every Service. If your Service name collides with an env var the binary expects, you get silent misconfig. Name your Service `inngest-svc` or similar. This is a rite of passage.</Sidenote> Two characters: name it `inngest-svc`. Thirty minutes of debugging.
 
 **Trigger drift.** Functions register triggers at startup. Server state can drift from code. Triggers silently break. I built an auditor that runs every 15 minutes and alerts on drift.
 

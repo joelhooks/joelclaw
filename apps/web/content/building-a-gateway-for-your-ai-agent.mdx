@@ -40,7 +40,7 @@ Split into chapters with timestamps.
 
 Close the terminal and your agent disappears.
 
-Not because the work stopped. Because your only control plane just evaporated. Background jobs finish. Loops complete. But nothing can tap you on the shoulder and say your shit is done.
+Not because the work stopped. Because your only control plane just evaporated. Background jobs finish. Loops complete. But nothing can tap you on the shoulder and say your shit is done.<Sidenote id="sn-context-budget">This burns context budget too. Every interrupt eats tokens from whatever the agent was actually working on. The gateway solves routing — only the right session gets the message.</Sidenote>
 
 I wanted three things: an **always-on session** that handles system heartbeats, **targeted notifications** back to whichever session started a task, and **phone access** when I'm away from the keyboard.
 
@@ -60,7 +60,7 @@ I didn't design this upfront. Each iteration solved a real problem.
 
 ### v1: Redis bridge
 
-Inngest functions push events to a Redis list. A pi extension subscribes to a pub/sub channel and drains the list into the session as a user message. ~100 lines of TypeScript.
+Inngest functions push events to a Redis list. A pi extension subscribes to a pub/sub channel and drains the list into the session as a user message.<Sidenote id="sn-redis-choice">Why Redis and not a proper message queue? Because it was already running for caching, the pub/sub semantics are good enough for single-machine fan-out, and adding RabbitMQ or NATS for one consumer felt like architecture theater.</Sidenote> ~100 lines of TypeScript.
 
 **Solved:** background jobs can notify the agent.
 
@@ -81,7 +81,7 @@ pi                       →  gets only its own loop completions, downloads
 
 An Inngest cron fires every 15 minutes. The gateway extension tracks when the last heartbeat arrived. If 30 minutes pass with nothing — inject an alarm with triage steps.
 
-Three independent failure detection layers: extension watchdog catches Inngest/worker failures. A launchd tripwire catches pi crashes. The heartbeat prompt itself runs system health checks.
+Three independent failure detection layers: extension watchdog catches Inngest/worker failures. A launchd tripwire catches pi crashes. The heartbeat prompt itself runs system health checks.<Sidenote id="sn-watchmen">The "who watches the watchmen" problem is real. Each layer fails independently: Inngest can crash, the worker can hang, the extension can lose Redis, launchd can restart too aggressively. Three uncorrelated monitors is the minimum.</Sidenote>
 
 **Solved:** "who watches the watchmen" — more than one watcher.
 
@@ -101,7 +101,7 @@ async ({ event, step, gateway }) => {
 
 ## What's next: embedded daemon + Telegram
 
-The extension gets me far. The next step is a standalone daemon that embeds pi as a library — no terminal needed. Telegram as the first external channel. WebSocket for remote TUI. All inputs serialize through one command queue into one session.
+The extension gets me far. The next step is a standalone daemon that embeds pi as a library — no terminal needed.<MarginNote id="mn-daemon">This is done now. The daemon runs via launchd with `KeepAlive: true`. `joelclaw gateway restart` rolls the session cleanly.</MarginNote> Telegram as the first external channel. WebSocket for remote TUI. All inputs serialize through one command queue into one session.
 
 Talk to the agent from your phone. Get responses back in the same thread.
 
