@@ -5,6 +5,8 @@ accepted: 2026-02-15
 decision-makers: Joel Hooks
 consulted: Claude (pi sessions 2026-02-14, 2026-02-15)
 informed: All agents operating on this machine
+evolved-by:
+  - "[ADR-0038 — Embedded pi gateway daemon (replaces extension with library embedding)](0038-embedded-pi-gateway-daemon.md)"
 related:
   - "[ADR-0003 — Build joelclaw instead of deploying OpenClaw](0003-joelclaw-over-openclaw.md)"
   - "[ADR-0005 — Durable multi-agent coding loops](0005-durable-multi-agent-coding-loops.md)"

@@ -1,9 +1,11 @@
 ---
-status: implemented
+status: superseded
 date: 2026-02-17
 decision-makers: Joel Hooks
 consulted: Claude (pi session 2026-02-17)
 informed: All agents operating on this machine
+superseded-by:
+  - "[ADR-0038 — Embedded pi gateway daemon](0038-embedded-pi-gateway-daemon.md)"
 related:
   - "[ADR-0003 — Build joelclaw instead of deploying OpenClaw](0003-joelclaw-over-openclaw.md)"
   - "[ADR-0018 — Pi-native gateway with Redis event bridge](0018-pi-native-gateway-redis-event-bridge.md)"

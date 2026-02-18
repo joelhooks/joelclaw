@@ -141,25 +141,24 @@ Protocol: JSON frames over WebSocket (simplified from OpenClaw's protocol):
 
 ## Build Plan
 
-### Phase 1: Daemon + Redis (replace current extension)
+### Phase 1: Daemon + Redis (replace current extension) ✅
 
-- [ ] Create `packages/gateway/` in monorepo
-- [ ] `daemon.ts` — entry point, `createAgentSession()`, launchd lifecycle
-- [ ] `command-queue.ts` — sequential input serialization
-- [ ] `channels/redis.ts` — port existing Redis bridge from extension
-- [ ] `heartbeat.ts` — `setInterval` runner, reads HEARTBEAT.md
-- [ ] `watchdog.ts` — port from extension (heartbeat staleness detection)
-- [ ] Update `com.joel.gateway` plist to run daemon directly (no tmux)
-- [ ] Verify: heartbeats work, Redis events flow, satellite sessions get notifications
+- [x] Create `packages/gateway/` in monorepo
+- [x] `daemon.ts` — entry point, `createAgentSession()`, launchd lifecycle
+- [x] `command-queue.ts` — sequential input serialization
+- [x] `channels/redis.ts` — port existing Redis bridge from extension
+- [x] `heartbeat.ts` — `setInterval` runner, reads HEARTBEAT.md, watchdog (30min threshold), tripwire file
+- [x] Update `com.joel.gateway` plist to run daemon directly (no tmux)
+- [x] Verify: Redis events flow through pi session, responses logged
 
-### Phase 2: Telegram
+### Phase 2: Telegram ✅
 
-- [ ] `channels/telegram.ts` — grammY bot, allowlist, message handling
-- [ ] `outbound/telegram.ts` — markdown → HTML chunking, send via Bot API
-- [ ] `outbound/router.ts` — route replies to source channel
-- [ ] Bot token in `agent-secrets`
-- [ ] Create Telegram bot via @BotFather
-- [ ] Verify: send message from phone, get LLM response
+- [x] `channels/telegram.ts` — grammY bot, user allowlist, text/photo/voice handlers
+- [x] Outbound: markdown → Telegram HTML conversion, 4000 char chunking, typing indicator
+- [x] Response routing via session.subscribe() delta collection → source channel dispatch
+- [x] Bot token in `agent-secrets` (leased at startup via gateway-start.sh)
+- [x] Created @JoelClawPandaBot via @BotFather
+- [x] Verified: full round-trip — phone → Telegram → pi session → Telegram → phone
 
 ### Phase 3: WebSocket + TUI
 
