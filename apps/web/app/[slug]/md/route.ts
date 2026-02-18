@@ -1,36 +1,25 @@
-import { getPost, getPostSlugs, getPostSlugs as getAllSlugs } from "../../../lib/posts";
+import { getPost, getPostSlugs } from "../../../lib/posts";
 import { SITE_URL } from "../../../lib/constants";
+import { remark } from "remark";
+import remarkGfm from "remark-gfm";
+import remarkMdx from "remark-mdx";
+import { remarkMdLinks } from "../../../lib/remark-md-links";
+import { remarkStripMdxComments } from "../../../lib/remark-strip-mdx-comments";
 
 export async function generateStaticParams() {
   return getPostSlugs().map((slug) => ({ slug }));
 }
 
-/** Rewrite internal links to their /md markdown versions.
- *  `[text](/some-slug)` → `[text](https://joelclaw.com/some-slug/md)`
- *  Only rewrites links whose path matches a known post or ADR slug. */
-function rewriteInternalLinks(markdown: string): string {
-  const slugs = new Set(getAllSlugs());
-  // Match markdown links with relative paths: [text](/path) or [text](/path#anchor)
-  return markdown.replace(
-    /\[([^\]]+)\]\(\/([\w-]+(?:\/[\w-]+)?)(#[^\)]+)?\)/g,
-    (match, text, path, anchor) => {
-      // Post slugs — rewrite to /md
-      if (slugs.has(path)) {
-        return `[${text}](${SITE_URL}/${path}/md${anchor ?? ""})`;
-      }
-      // ADR links (/adrs/NNNN-slug) — keep as full URLs (no /md route for ADRs)
-      if (path.startsWith("adrs/")) {
-        return `[${text}](${SITE_URL}/${path}${anchor ?? ""})`;
-      }
-      // Other internal links — just make absolute
-      return `[${text}](${SITE_URL}/${path}${anchor ?? ""})`;
-    }
-  );
-}
+/** Process MDX content through remark pipeline for clean markdown output */
+async function toCleanMarkdown(mdxContent: string): Promise<string> {
+  const result = await remark()
+    .use(remarkMdx) // parse MDX syntax so expression nodes are in the AST
+    .use(remarkStripMdxComments) // remove {/* ... */} comment blocks
+    .use(remarkGfm) // tables, strikethrough, task lists
+    .use(remarkMdLinks) // rewrite internal links to /md endpoints
+    .process(mdxContent);
 
-/** Strip MDX comment blocks: {/* ... *\/} */
-function stripMdxComments(markdown: string): string {
-  return markdown.replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+  return String(result);
 }
 
 export async function GET(
@@ -44,7 +33,7 @@ export async function GET(
   }
 
   const { meta, content } = post;
-  const cleaned = stripMdxComments(rewriteInternalLinks(content));
+  const cleaned = await toCleanMarkdown(content);
 
   const header = [
     `# ${meta.title}`,
