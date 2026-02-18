@@ -1,184 +1,168 @@
 ---
 name: task-management
-description: "Manage tasks across providers (Things 3, Google Tasks, Vault checklists) via the TaskPort interface. Triggers on: 'add a task', 'create a todo', 'what's on my list', 'today's tasks', 'move to today', 'complete task', 'mark done', 'what do I need to do', 'prep tasks for', 'remind me to', 'task list', 'inbox', 'someday', 'upcoming', 'schedule this', or any request to create, read, update, or organize tasks. Also triggers when actionable items emerge from other work (e.g., transcribing instructions that should become tasks)."
+description: "Manage Joel's task system in Things 3. Triggers on: 'add a task', 'create a todo', 'what's on my list', 'today's tasks', 'what do I need to do', 'remind me to', 'inbox', 'complete', 'mark done', 'weekly review', 'groom tasks', 'what's next', or when actionable items emerge from other work. Also triggers when Joel mentions something he needs to do in passing — capture it."
 ---
 
-# Task Management — Ports and Adapters
+# Task Management — The System That Thinks For You
 
-> **ADR-0045**: Task management is a core joelclaw capability. The `TaskPort` interface abstracts over providers. Multiple adapters can be active simultaneously.
+Things 3 is the task layer. The agent is the gardener.
 
-## Architecture
+## Philosophy
 
-```
-Joel (Things app) ←→ Things Cloud ←→ ThingsAdapter ←→ TaskPort
-Joel (gog CLI)    ←→ Google Tasks  ←→ GoogleTasksAdapter ←→ TaskPort
-Agent (any skill) ←→                                        TaskPort
-Vault checklists  ←→                   VaultAdapter    ←→ TaskPort
-```
+Three systems, one practice:
 
-The agent always works through the port. Never call provider CLIs directly from other skills — go through task management.
+**Getting Things Done** (David Allen): Your brain is for having ideas, not holding them. Capture everything immediately. Process to next physical action. If it takes < 2 min, do it now. Weekly review is sacred.
 
-## Current Adapters
+**Shape Up** (Ryan Singer, Basecamp): Work expands to fill the time available. Set appetite (how much time is this worth?), not estimates. Projects are bets with fixed timelines, not open-ended backlogs. If it's not worth betting on, kill it.
 
-### Things 3 (Primary)
+**Tiny Habits** (BJ Fogg): Behavior change = anchor moment + tiny behavior + celebration. "After I [existing routine], I will [tiny version of new habit]." Make it stupidly small. Celebrate immediately. Let it grow naturally.
 
-Things Cloud SDK: https://github.com/arthursoares/things-cloud-sdk
+### What This Means In Practice
+
+- **Every task is a next physical action.** Not "research X" but "spend 20 min reading the X docs." Not "fix the bug" but "reproduce the bug in a test."
+- **Inbox is a capture buffer, not a todo list.** Process it to zero. Each item gets: do it (< 2 min), schedule it (today/upcoming), delegate it, someday/maybe it, or trash it.
+- **Projects have appetite.** "2 weeks, small batch" or "6 weeks, big batch." If a project has been open for 3x its appetite with no progress, it's a zombie. Kill it or re-scope.
+- **Habits are anchored, not scheduled.** "After morning coffee → shoulder warm-up" not "Do exercises at 7am." The anchor is the trigger.
+- **Less is more.** A clean list with 5 clear next actions beats 50 vague intentions. Ruthlessly prune. If you haven't touched it in 2 weeks and it's not scheduled, it doesn't matter.
+
+## Things 3 Adapter
+
+### Credentials
 
 ```bash
-# CLI binary (once built and installed)
-export THINGS_USERNAME=$(secrets lease things_username --raw)
-export THINGS_PASSWORD=$(secrets lease things_password --raw)
+# New account (Feb 2026)
+export THINGS_USERNAME=$(secrets lease things_username_new --raw)
+export THINGS_PASSWORD=$(secrets lease things_password_new --raw)
+```
 
-# List today's tasks
-things-cli list --today --json
+**⚠️ NEVER purge areas.** `action=2` on `Area3` items corrupts the history and crashes Things 3 iOS. Trash areas instead. Learned the hard way — see slog 2026-02-18.
 
+### Read
+
+```bash
+things-cli list --today        # What's on today
+things-cli list --inbox        # Needs triage
+things-cli list                # Everything active
+things-cli projects            # All projects
+things-cli areas               # All areas
+things-cli show <uuid>         # Single item detail
+things-cli list --project NAME # Tasks in a project
+things-cli list --area NAME    # Tasks in an area
+```
+
+### Write
+
+```bash
 # Create a task
-things-cli create "Task title" --when today --note "Details"
+things-cli create "Title" --when today --note "Details" --project <uuid>
 
-# Create with project
-things-cli create "Subtask" --project <uuid> --when today
+# Batch (one HTTP call — use for 3+ items)
+echo '[
+  {"cmd":"create","title":"Task 1","when":"today","project":"<uuid>"},
+  {"cmd":"create","title":"Task 2","when":"anytime"},
+  {"cmd":"complete","uuid":"<uuid>"}
+]' | things-cli batch
 
 # Complete
 things-cli complete <uuid>
 
-# Batch operations (fast — one HTTP request)
-echo '[
-  {"cmd": "create", "title": "Task 1", "when": "today"},
-  {"cmd": "create", "title": "Task 2", "when": "today"},
-  {"cmd": "complete", "uuid": "abc123"}
-]' | things-cli batch
+# Move
+things-cli move-to-today <uuid>
+things-cli edit <uuid> --when someday
 
-# Sync and show changes
-things-cli sync --json
+# Trash (not purge!)
+things-cli trash <uuid>
 ```
 
-#### Things Schedule Mapping
-| Schedule | Things View | Use When |
-|----------|-------------|----------|
-| `inbox` | Inbox | Uncategorized, needs triage |
-| `today` | Today | Do it today |
-| `anytime` | Anytime | Ready to do, no urgency |
-| `someday` | Someday | Maybe later |
-| `upcoming` | Upcoming | Scheduled for a future date |
+### Schedule Mapping
 
-### Google Tasks
+| Value | Things View | GTD Context |
+|-------|-------------|-------------|
+| `inbox` | Inbox | Captured, not processed |
+| `today` | Today | Committed — doing it today |
+| `anytime` | Anytime | Next action, no date pressure |
+| `someday` | Someday | Maybe/later — reviewed weekly |
+| `upcoming` | Upcoming | Scheduled for specific date |
+
+### Structure
+
+| Concept | Things | Rule |
+|---------|--------|------|
+| Area | Area | Long-lived responsibility. Never "done." Max 5-7. |
+| Project | Project | Finite goal with appetite. Has a "done" state. |
+| Task | To-do | Next physical action. Concrete, verb-first. |
+| Habit | Repeating to-do | Anchored to a routine, not a time. |
+
+Current areas: **joelclaw**, **Family**, **Health**, **Writing**
+
+## Agent Behaviors
+
+### Capture Immediately
+
+When Joel says anything implying a task — "I need to...", "remind me to...", "we should...", "don't forget..." — capture it:
 
 ```bash
-export GOG_ACCOUNT=joelhooks@gmail.com
-export GOG_KEYRING_PASSWORD=$(secrets lease gog_keyring_password --raw)
-
-# List task lists
-gog tasks lists --json
-
-# List tasks in a list
-gog tasks list <tasklistId> --max 50 --json
-
-# Add a task
-gog tasks add <tasklistId> --title "Task title"
-
-# Complete
-gog tasks done <tasklistId> <taskId>
+things-cli create "The thing Joel said" --when inbox
 ```
 
-### Vault Checklists (Fallback)
+Then confirm: **"Captured → Inbox: 'The thing Joel said'"**
 
-Always available. Parse markdown checklists from Vault notes.
+Don't ask permission to capture. Ask permission before scheduling or assigning to a project. Capturing is free.
 
-```bash
-# Find unchecked tasks in a note
-grep -n '^\- \[ \]' ~/Vault/Areas/family/kristina-surgery-march-2026.md
-```
+### Process Inbox (GTD)
 
-When creating tasks in Vault notes, use standard checkbox syntax:
+When asked to review or when inbox has items:
+
+For each item, decide ONE of:
+1. **Do it** — takes < 2 min? Just do it now. Complete the task.
+2. **Schedule it** — `--when today` or `--scheduled YYYY-MM-DD`
+3. **Delegate it** — note who, move to anytime with a waiting-for tag
+4. **Someday/maybe** — `--when someday`
+5. **Trash it** — not worth doing. `things-cli trash <uuid>`
+
+Present as a batch decision: "Inbox has 4 items. Here's my triage..."
+
+### Create Tasks From Work
+
+When actionable items emerge from other activities (transcribed photos, calendar events, project planning):
+
+1. Extract concrete next actions (verb-first, specific)
+2. Group into a project if 3+ related
+3. Use `things-cli batch` for efficiency
+4. Report what was created
+
+### Weekly Review Prompt
+
+When Joel asks for weekly review, or on a nudge:
+
+1. Show today + inbox counts
+2. Flag zombie projects (no activity in 2+ weeks)
+3. Flag tasks without next actions
+4. Flag someday items worth promoting
+5. Ask: "What's the one thing that would make this week a win?"
+
+### Keep It Clean
+
+- **Max 7 items on Today.** More than that = overcommitted. Push overflow to anytime.
+- **Inbox should be zero** after processing. Not "low" — zero.
+- **Complete or kill.** No task should exist for more than 2 weeks without progress unless it's in Someday.
+- **Project names are outcomes.** "Ship task integration" not "Task stuff."
+
+## Fallback: Vault Checklists
+
+If Things auth fails, use Vault markdown checklists:
+
 ```markdown
 - [ ] Task description
 - [x] Completed task
 ```
 
-## Workflow Patterns
-
-### Creating Tasks from Context
-
-When actionable items emerge from other work (transcribed photos, meeting notes, discussions):
-
-1. **Extract actionable items** — identify concrete tasks from the content
-2. **Choose the right provider** — Things for personal tasks, Google Tasks for work, Vault for project-specific checklists
-3. **Set schedule** — inbox if unsure, today if urgent, upcoming with date if scheduled
-4. **Group into a project** if there are 3+ related tasks
-5. **Confirm with Joel** before bulk-creating (unless explicitly asked)
-
-### Daily Review
-
-```bash
-# What's on today
-things-cli list --today --json
-
-# What's in inbox (needs triage)
-things-cli list --inbox --json
-
-# Overdue (upcoming tasks past their date)
-things-cli list --today --json | jq '.[] | select(.deadline) | select(.deadline < now)'
-```
-
-### Task from Conversation
-
-When Joel says something like "remind me to..." or "I need to...":
-
-1. Create the task immediately via the primary adapter
-2. Confirm: "Created in Things: '<title>' → Today"
-3. Continue the conversation
-
-### Bulk Task Creation
-
-For checklists (like surgery prep):
-
-1. Draft the full list
-2. Show Joel for approval
-3. Use `things-cli batch` for one-shot creation
-4. Report what was created
-
-## Event Integration (Future — Phase 2)
-
-Once Inngest events are wired:
-- `tasks/synced` — periodic sync detected changes
-- `tasks/created` — new task (from any source)
-- `tasks/completed` — task done
-- `tasks/moved` — schedule/project changed
-- `tasks/overdue` — deadline passed
-
-Agent can react: "You completed 'Stock beverages' — want me to check off related prep items?"
-
-## Secrets Required
-
-| Secret | Purpose |
-|--------|---------|
-| `things_username` | Things Cloud account email |
-| `things_password` | Things Cloud account password |
-| `gog_keyring_password` | Google Workspace CLI auth (already configured) |
+Google Tasks via `gog` is available as secondary adapter but Things is primary.
 
 ## Anti-Patterns
 
-- **Don't create tasks without confirmation** unless Joel explicitly asked ("add these as tasks").
-- **Don't use provider CLIs directly from other skills.** Go through task management.
-- **Don't assume Things is available.** Fall back to Vault checklists if Things auth fails.
-- **Don't sync too aggressively.** Things Cloud API is unofficial — respect rate limits.
-
-## Setup (One-Time)
-
-```bash
-# 1. Clone and build things-cloud-sdk
-cd ~/Code && mkdir -p arthursoares && cd arthursoares
-git clone https://github.com/arthursoares/things-cloud-sdk.git
-cd things-cloud-sdk
-go build -o things-cli ./cmd/things-cli/
-sudo cp things-cli /usr/local/bin/  # or symlink
-
-# 2. Store credentials
-secrets add things_username   # Joel's Things account email
-secrets add things_password   # Joel's Things account password
-
-# 3. Test auth
-export THINGS_USERNAME=$(secrets lease things_username --raw)
-export THINGS_PASSWORD=$(secrets lease things_password --raw)
-things-cli list --today
-```
+- **Never purge areas** — corrupts Things Cloud history permanently
+- **Don't create vague tasks** — "Look into X" is not a next action. "Spend 15 min reading X docs" is.
+- **Don't let inbox accumulate** — if it has > 10 items, triage before adding more
+- **Don't over-organize** — tags, headings, and sub-projects add friction. Keep it flat until complexity demands structure.
+- **Don't sync too aggressively** — Things Cloud API is unofficial, respect it
