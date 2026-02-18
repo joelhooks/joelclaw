@@ -13,7 +13,7 @@ created: 2026-02-14
 **Status**: accepted  
 **Date**: 2026-02-14  
 **Deciders**: Joel  
-**Relates to**: [0003 — joelclaw over OpenClaw](0003-joelclaw-over-openclaw.md)
+**Relates to**: [0003 — joelclaw over OpenClaw](0003-joelclaw-over-openclaw.md), [0044 — Private-first PDS with Bento bridge](0044-pds-private-first-with-bento-bridge.md) (implements Phase 0)
 
 ## Context
 
