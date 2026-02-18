@@ -1,0 +1,361 @@
+---
+title: "Building a Gateway for Your AI Agent"
+date: "2026-02-18"
+description: "From ephemeral terminal sessions to an always-on gateway that routes events, detects failures, and talks back through Telegram. Here's how I built the nervous system's brain stem."
+---
+
+Close the terminal and your agent disappears.
+
+Not because the work stopped. Because your only control plane just evaporated.
+
+Background jobs still finish. Loops still complete. But there's no persistent place for your agent to tap you and say your shit is done.
+
+I wanted one **always-on gateway session** for `pi`, plus targeted notifications back to the session that started a task, plus phone access when I'm away from the keyboard.
+
+This is the architecture path.
+
+It's a living document. I'll keep updating it as the system changes.
+
+## The problem shape
+
+I already had durable workflows in [Inngest is the Nervous System](/inngest-is-the-nervous-system) and infrastructure running in [The One Where Joel Deploys Kubernetes... Again](/joel-deploys-k8s).
+
+What I didn't have was persistent session routing between Inngest and pi.
+
+## v1: Redis bridge first ([ADR-0018](/adrs/0018-pi-native-gateway-redis-event-bridge))
+
+I started with the **thinnest possible bridge**:
+
+1. Inngest pushes an event into Redis.
+2. Pi extension subscribes to a notify channel.
+3. Extension drains queued events and injects a prompt.
+
+The core utility is `pushGatewayEvent()` from `packages/system-bus/src/inngest/functions/agent-loop/utils.ts`:
+
+```typescript
+export async function pushGatewayEvent(input: {
+  type: string;
+  source: string;
+  payload: Record<string, unknown>;
+  originSession?: string;
+}): Promise<SystemEvent> {
+  const redis = getRedis();
+  const event: SystemEvent = {
+    id: crypto.randomUUID(),
+    type: input.type,
+    source: input.source,
+    payload: input.payload,
+    ts: Date.now(),
+  };
+
+  const json = JSON.stringify(event);
+  const notification = JSON.stringify({ eventId: event.id, type: event.type });
+
+  const allSessions = await redis.smembers("joelclaw:gateway:sessions");
+
+  if (allSessions.length === 0) {
+    await redis.lpush("joelclaw:events:main", json);
+    await redis.publish("joelclaw:notify:main", notification);
+    return event;
+  }
+
+  const targets = new Set<string>();
+  if (allSessions.includes("gateway")) targets.add("gateway");
+  if (input.originSession && allSessions.includes(input.originSession)) {
+    targets.add(input.originSession);
+  }
+
+  if (targets.size === 0) {
+    await redis.lpush("joelclaw:events:main", json);
+    await redis.publish("joelclaw:notify:main", notification);
+    return event;
+  }
+
+  for (const sessionId of targets) {
+    await redis.lpush(`joelclaw:events:${sessionId}`, json);
+    await redis.publish(`joelclaw:notify:${sessionId}`, notification);
+  }
+
+  return event;
+}
+```
+
+ASCII version:
+
+```text
+Inngest function
+   ├─ LPUSH joelclaw:events:{session}
+   └─ PUBLISH joelclaw:notify:{session}
+                    │
+                    ▼
+         pi gateway extension
+              ├─ subscribe
+              ├─ drain list
+              └─ sendUserMessage()
+```
+
+It was simple. It worked.
+
+## v2: Multi-session routing ([ADR-0035](/adrs/0035-gateway-session-routing-central-satellite))
+
+Then I hit the obvious issue: 3-5 sessions open, and heartbeat messages interrupt the wrong terminal.
+
+That was fucking noisy.
+
+So I moved to central + satellite routing:
+
+- `gateway` session gets everything global.
+- Satellite sessions only get events they initiated.
+- Active sessions register in `joelclaw:gateway:sessions`.
+
+`originSession` is carried through the loop pipeline:
+
+```typescript
+const originSession =
+  event.name === "agent/loop.started"
+    ? event.data.originSession
+    : (event.data as any).originSession as string | undefined;
+```
+
+And used when completion is emitted:
+
+```typescript
+await pushGatewayEvent({
+  type: mergeResult.merged ? "loop.complete" : "loop.failed",
+  source: "inngest",
+  payload: { loopId, storiesCompleted, storiesFailed, title: prd.title },
+  originSession,
+});
+```
+
+That made notifications land where they belonged.
+
+## v3: Heartbeat + watchdog ([ADR-0037](/adrs/0037-gateway-watchdog-layered-failure-detection))
+
+Heartbeat cron runs every 15 minutes in `packages/system-bus/src/inngest/functions/heartbeat.ts`:
+
+```typescript
+export const heartbeatCron = inngest.createFunction(
+  { id: "system-heartbeat" },
+  [{ cron: "*/15 * * * *" }],
+  async ({ step }) => {
+    await step.run("prune-old-sessions", pruneOldSessionFiles);
+
+    const triggerAudit = await step.run("audit-triggers", async () => {
+      try {
+        return await auditTriggers();
+      } catch (err) {
+        return { ok: true, checked: 0, drifted: [], missing: [], extra: [], error: String(err) };
+      }
+    });
+
+    await step.run("push-gateway-event", async () => {
+      const payload: Record<string, unknown> = {};
+      if (!triggerAudit.ok) {
+        payload.triggerDrift = { drifted: triggerAudit.drifted, missing: triggerAudit.missing };
+      }
+      await pushGatewayEvent({
+        type: triggerAudit.ok ? "cron.heartbeat" : "cron.heartbeat.drift",
+        source: "inngest",
+        payload,
+      });
+    });
+  }
+);
+```
+
+In the extension, heartbeat updates `lastHeartbeatTs` and writes launchd tripwire state:
+
+```typescript
+if (hasHeartbeat) {
+  lastHeartbeatTs = Date.now();
+  watchdogAlarmFired = false;
+  try {
+    mkdirSync("/tmp/joelclaw", { recursive: true });
+    writeFileSync("/tmp/joelclaw/last-heartbeat.ts", String(lastHeartbeatTs));
+  } catch {}
+}
+```
+
+Three independent detection layers:
+
+```text
+Layer 1: extension watchdog (missed heartbeat alarm in-session)
+Layer 2: launchd tripwire (/tmp/joelclaw/last-heartbeat.ts freshness)
+Layer 3: heartbeat prompt runs system-check playbook when healthy
+```
+
+Who watches the watchmen: **more than one watcher**.
+
+## v4: Gateway middleware SDK
+
+Directly importing Redis bridge helpers in every function was brittle. I pushed that behind middleware in `packages/system-bus/src/inngest/middleware/gateway.ts`.
+
+```typescript
+export const gatewayMiddleware = new InngestMiddleware({
+  name: "Gateway SDK",
+  init() {
+    return {
+      onFunctionRun({ ctx }) {
+        const eventData = ctx.event?.data as Record<string, unknown> | undefined;
+        const originSession = (eventData?.originSession as string) ?? undefined;
+        const source = `inngest/${ctx.event?.name ?? "unknown"}`;
+
+        const gateway: GatewayContext = {
+          originSession,
+          async progress(message: string, extra?: Record<string, unknown>) {
+            await pushGatewayEvent({ type: "progress", source, payload: { message, ...extra }, originSession });
+          },
+          async notify(type: string, payload?: Record<string, unknown>) {
+            await pushGatewayEvent({ type, source, payload: payload ?? {}, originSession });
+          },
+          async alert(message: string, extra?: Record<string, unknown>) {
+            await pushGatewayEvent({ type: "alert", source, payload: { message, ...extra } });
+          },
+        };
+
+        return {
+          transformInput({ ctx: inputCtx }) {
+            return { ctx: { ...inputCtx, gateway } };
+          },
+        };
+      },
+    };
+  },
+});
+```
+
+Registered globally in the Inngest client:
+
+```typescript
+export const inngest = new Inngest({
+  id: "system-bus",
+  schemas: new EventSchemas().fromRecord<Events>(),
+  middleware: [gatewayMiddleware],
+});
+```
+
+Now every function gets `gateway.progress()`, `gateway.notify()`, and `gateway.alert()` without caring about Redis routing internals.
+
+## v5: The full extension (363 lines)
+
+`~/.pi/agent/extensions/gateway/index.ts` is the runtime behavior.
+
+Boot + registration + subscription:
+
+```typescript
+const ROLE = process.env.GATEWAY_ROLE ?? "satellite";
+const SESSION_ID = ROLE === "central" ? "gateway" : `pid-${process.pid}`;
+const SESSIONS_SET = "joelclaw:gateway:sessions";
+const EVENT_LIST = `joelclaw:events:${SESSION_ID}`;
+const NOTIFY_CHANNEL = `joelclaw:notify:${SESSION_ID}`;
+
+await sub.connect();
+await cmd.connect();
+await cmd.sadd(SESSIONS_SET, SESSION_ID);
+await sub.subscribe(NOTIFY_CHANNEL);
+await sub.subscribe("joelclaw:notify:main");
+```
+
+Prompt building (heartbeat vs normal notification):
+
+```typescript
+function buildPrompt(events: SystemEvent[]): string {
+  const isHeartbeatOnly = events.length === 1 && events[0].type === "cron.heartbeat";
+
+  if (ROLE === "satellite" || !isHeartbeatOnly) {
+    const eventBlock = formatEvents(events);
+    const ts = new Date().toISOString();
+    return [
+      `## 🔔 Gateway — ${ts}`,
+      "",
+      `${events.length} event(s):`,
+      eventBlock,
+      "",
+      "Take action on anything that needs it, otherwise acknowledge briefly.",
+    ].join("\n");
+  }
+
+  const heartbeat = readHeartbeat();
+  const eventBlock = formatEvents(events);
+  const ts = new Date().toISOString();
+  return [`## 🔔 Heartbeat — ${ts}`, "", eventBlock, "", heartbeat].join("\n");
+}
+```
+
+Legacy event drain on boot (important during migration):
+
+```typescript
+const legacyCount = await cmd.llen("joelclaw:events:main");
+if (legacyCount > 0) {
+  const legacyRaw = await cmd.lrange("joelclaw:events:main", 0, -1);
+  for (const item of legacyRaw) await cmd.lpush(EVENT_LIST, item);
+  await cmd.del("joelclaw:events:main");
+}
+```
+
+Dedup and command surface:
+
+```typescript
+const seenIds = new Set<string>();
+const DEDUP_MAX = 500;
+
+pi.registerCommand("gateway-id", {
+  description: "Show this session's gateway ID and role",
+  handler: async (_args, _ctx) => {
+    const hbAgo = lastHeartbeatTs > 0
+      ? `${Math.round((Date.now() - lastHeartbeatTs) / 60_000)}min ago`
+      : "never";
+    _ctx.ui.notify(
+      `Session: ${SESSION_ID}\nRole: ${ROLE}\nLast heartbeat: ${hbAgo}\nWatchdog: ${watchdogTimer ? "active" : "off"}\nList: ${EVENT_LIST}\nChannel: ${NOTIFY_CHANNEL}`,
+      "info"
+    );
+  },
+});
+```
+
+There are also `/heartbeat` and `/events` commands for manual drain and queue inspection.
+
+## End-to-end architecture
+
+```text
+                     ┌──────────────────────────────┐
+                     │ Inngest (durable workflows) │
+                     │ cron + event-driven funcs   │
+                     └──────────────┬──────────────┘
+                                    │ pushGatewayEvent()
+                                    ▼
+                     ┌──────────────────────────────┐
+                     │ Redis                        │
+                     │ joelclaw:events:*            │
+                     │ joelclaw:notify:*            │
+                     │ joelclaw:gateway:sessions    │
+                     └──────────────┬──────────────┘
+                                    │
+             ┌──────────────────────┴──────────────────────┐
+             ▼                                             ▼
+    central session (gateway)                     satellite sessions
+    all heartbeats + alerts                       only origin-targeted events
+    watchdog + triage                             loop/download completions
+```
+
+## Prerequisites
+
+- Mac (Apple Silicon preferred for local Whisper/transcription)
+- Redis running (see [The One Where Joel Deploys Kubernetes... Again](/joel-deploys-k8s))
+- Self-hosted Inngest worker (see [Inngest is the Nervous System](/inngest-is-the-nervous-system))
+- `pi` coding agent installed
+- Tailscale for secure network access
+
+## What's next: embedded daemon + Telegram ([ADR-0038](/adrs/0038-embedded-pi-gateway-daemon))
+
+The extension gets me far, but the next step is a real embedded daemon:
+
+- Telegram channel via grammY
+- WebSocket channel for remote TUI
+- one serialized command queue for all inputs
+- launchd-managed process with no terminal dependency
+
+That is the always-on version.
+
+If you want to set this up yourself, there's a skill for that.
