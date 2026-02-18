@@ -43,9 +43,10 @@ export const videoDownload = inngest.createFunction(
     const download = await step.run("download", async () => {
       const url = event.data.url;
       const maxQuality = event.data.maxQuality ?? "1080";
+      const runTmpDir = join(TMP_BASE, crypto.randomUUID());
 
-      // Clean tmp dir for this run
-      await $`rm -rf ${TMP_BASE} && mkdir -p ${TMP_BASE}`.quiet();
+      // Clean only this run's directory to avoid deleting in-flight downloads.
+      await $`rm -rf ${runTmpDir} && mkdir -p ${runTmpDir}`.quiet();
 
       const ytdlp = Bun.spawn(
         [
@@ -54,7 +55,7 @@ export const videoDownload = inngest.createFunction(
           "--merge-output-format", "mp4",
           "--write-info-json",
           "--write-thumbnail",
-          "--output", `${TMP_BASE}/%(title)s/%(title)s.%(ext)s`,
+          "--output", `${runTmpDir}/%(title)s/%(title)s.%(ext)s`,
           url,
         ],
         { stdout: "pipe", stderr: "pipe", env: process.env }
@@ -63,10 +64,10 @@ export const videoDownload = inngest.createFunction(
       // non-zero exit will surface as missing files below
 
       // Find the subdirectory yt-dlp created
-      const entries = await readdir(TMP_BASE, { withFileTypes: true });
+      const entries = await readdir(runTmpDir, { withFileTypes: true });
       const subdir = entries.find((e) => e.isDirectory());
       if (!subdir) throw new Error("yt-dlp did not create a subdirectory");
-      const dir = join(TMP_BASE, subdir.name) + "/";
+      const dir = join(runTmpDir, subdir.name) + "/";
 
       // Find and parse info.json
       const files = await readdir(dir);
@@ -85,6 +86,7 @@ export const videoDownload = inngest.createFunction(
       if (!mp4File) throw new Error("No .mp4 found after download");
 
       return {
+        tmpDir: runTmpDir,
         dir,
         title,
         slug,
@@ -122,7 +124,7 @@ export const videoDownload = inngest.createFunction(
           channel: download.channel,
           duration: download.duration,
           nasPath,
-          tmpDir: download.dir,
+          tmpDir: download.tmpDir,
           sourceUrl: download.sourceUrl,
           publishedDate: download.publishedDate,
         },
@@ -139,7 +141,7 @@ export const videoDownload = inngest.createFunction(
           duration: download.duration,
           sourceUrl: download.sourceUrl,
           nasPath,
-          tmpDir: download.dir,
+          tmpDir: download.tmpDir,
         },
       },
     ]);
