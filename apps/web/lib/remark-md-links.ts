@@ -48,9 +48,9 @@ export function remarkMdLinks() {
       const anchor = parts[1];
       const anchorSuffix = anchor ? `#${anchor}` : "";
 
-      // Post slugs → /md markdown endpoint
+      // Post slugs → .md markdown endpoint
       if (slugs.has(cleanPath)) {
-        node.url = `${SITE_URL}/${cleanPath}/md${anchorSuffix}`;
+        node.url = `${SITE_URL}/${cleanPath}.md${anchorSuffix}`;
         return;
       }
 
