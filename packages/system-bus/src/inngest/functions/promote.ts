@@ -311,7 +311,9 @@ export async function expireProposal(proposalId: string): Promise<void> {
   await redis.del(key);
 }
 
-const promoteFunction = stabilizeFunctionOpts(
+// NOTE: stabilizeFunctionOpts removed — its Proxy was mangling trigger
+// registration, causing proposal events to be replaced with content/updated.
+const promoteFunction =
   inngest.createFunction(
     {
       id: "memory/review-promote",
@@ -365,7 +367,6 @@ const promoteFunction = stabilizeFunctionOpts(
 
       return { expired: expiredIds };
     }
-  )
-);
+  );
 
 export const promote = promoteFunction;
