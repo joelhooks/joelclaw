@@ -71,7 +71,8 @@
         "TypeScript compiles cleanly: bunx tsc --noEmit in the pi-tools directory"
       ],
       "priority": 5,
-      "passes": false
+      "passes": false,
+      "skipped": true
     },
     {
       "id": "MEM-6",
