@@ -215,34 +215,10 @@ async function formatProposalForMemoryIfNeeded(
   return formatted ?? proposedText;
 }
 
-function stabilizeFunctionOpts<T extends { opts?: Record<string, unknown> }>(fn: T): T {
-  const original = fn.opts;
-  if (!original) return fn;
-
-  const source: Record<string, unknown> = { ...original };
-  const triggerSource = original.triggers;
-  source.triggers = Array.isArray(triggerSource)
-    ? [...triggerSource]
-    : triggerSource
-      ? [triggerSource]
-      : [];
-
-  return new Proxy(fn, {
-    get(target, property, receiver) {
-      if (property === "opts") {
-        return {
-          ...source,
-          triggers: [...(source.triggers as unknown[])],
-        };
-      }
-      return Reflect.get(target, property, receiver);
-    },
-    set(target, property, value, receiver) {
-      if (property === "opts") return true;
-      return Reflect.set(target, property, value, receiver);
-    },
-  });
-}
+// stabilizeFunctionOpts removed — was a Proxy wrapper that turned out to be
+// unnecessary and obfuscated debugging. The underlying Inngest SDK properly
+// handles function opts without mutation protection. The real trigger drift
+// bug was server-side caching, now detected by trigger-audit.ts.
 
 export async function promoteToMemory(proposalId: string): Promise<void> {
   const redis = getRedisClient();
