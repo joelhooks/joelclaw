@@ -78,6 +78,15 @@ joelclaw namespace:
 - [x] Verify XRPC read/write via port-forward on 2583
 - [x] Values file at `infra/pds/values.yaml` (secrets reference `existingSecret`, not plaintext)
 
+### Phase 1.5: Operational tooling (done)
+
+- [x] `joelclaw pds` CLI subcommand tree: health, describe, collections, records, write, delete, session
+- [x] PDS Effect service (`~/Code/joelhooks/joelclaw-cli/src/pds.ts`) — XRPC client with auto-session management
+- [x] Auto-lease credentials from agent-secrets (no manual env var setup needed)
+- [x] Session caching at `~/.joelclaw/pds-session.json` with auto-refresh
+- [x] HATEOAS JSON output on all commands
+- [x] PDS skill at `~/.agents/skills/pds/` — operational guide, symlinked to pi + claude
+
 ### Phase 2: Lexicon definitions
 
 - [ ] Define `dev.joelclaw.system.log` lexicon JSON (mirrors slog schema)
