@@ -80,8 +80,11 @@ async function downloadTelegramFile(
     const localPath = `${MEDIA_DIR}/${crypto.randomUUID()}${ext}`;
     await Bun.write(localPath, await response.arrayBuffer());
 
-    const mimeType = response.headers.get("content-type")?.split(";")[0]?.trim()
-      ?? mimeFromExt(ext);
+    // Prefer extension-based mime — Telegram's Content-Type header often returns
+    // application/octet-stream for images, which breaks downstream vision processing
+    const headerMime = response.headers.get("content-type")?.split(";")[0]?.trim();
+    const extMime = mimeFromExt(ext);
+    const mimeType = extMime !== "application/octet-stream" ? extMime : (headerMime ?? extMime);
     const fileSize = file.file_size ?? (await Bun.file(localPath).size);
 
     console.log("[gateway:telegram] file downloaded", { localPath, mimeType, fileSize });
@@ -103,6 +106,7 @@ async function emitMediaReceived(data: {
   fileSize: number;
   caption?: string;
   originSession?: string;
+  fileName?: string;
   metadata?: Record<string, unknown>;
 }): Promise<boolean> {
   if (!INNGEST_EVENT_KEY) {
@@ -110,10 +114,15 @@ async function emitMediaReceived(data: {
     return false;
   }
   try {
+    // Derive stable idempotency key from source + telegram message ID
+    const msgId = (data.metadata as any)?.telegramMessageId ?? "";
+    const chatId = (data.metadata as any)?.telegramChatId ?? "";
+    const eventId = `media-${data.source}-${chatId}-${msgId}`;
+
     const res = await fetch(`${INNGEST_URL}/e/${INNGEST_EVENT_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "media/received", data }),
+      body: JSON.stringify({ name: "media/received", data, id: eventId }),
     });
     if (!res.ok) {
       console.error("[gateway:telegram] inngest event failed", { status: res.status });
