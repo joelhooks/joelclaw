@@ -19,6 +19,31 @@ This skill builds a persistent gateway for an AI coding agent on a Mac. It bridg
 - Tailscale (for secure remote access from phone/laptop)
 - Telegram bot token (for mobile notifications/chat)
 
+## Critical Setup Notes
+
+**`GATEWAY_ROLE=central` is required for the always-on session.** Without it, the session runs as a satellite and misses heartbeats, system alerts, and any events not targeted at it specifically. Set it when launching:
+```bash
+GATEWAY_ROLE=central pi
+```
+
+**`serveHost` is mandatory when Inngest runs in Docker and the worker runs on the host.** The SDK advertises `localhost:3100` as its callback URL, but Docker can't reach the host's loopback. Set it in your Hono serve handler:
+```typescript
+inngestServe({
+  client: inngest,
+  functions,
+  serveHost: "http://host.docker.internal:3100",
+})
+```
+Then force re-sync: `curl -X PUT http://localhost:3100/api/inngest`
+
+**ioredis resolution in Bun is flaky.** If you get `Cannot find module '@ioredis/commands'`, install it explicitly:
+```bash
+bun add @ioredis/commands
+# or: rm -rf node_modules && bun install
+```
+
+**Two ioredis clients required for pub/sub.** A subscribed client can't run LRANGE, DEL, or other commands. The extension creates separate `sub` and `cmd` clients.
+
 ## Intent Alignment
 
 Before building anything, ask the user these questions to determine scope. Adapt based on their answers.
@@ -388,6 +413,16 @@ Sequential architecture decisions that led to the current gateway design. Each s
 | 6 | [0038](/adrs/0038-embedded-pi-gateway-daemon) | Embedded pi daemon (supersedes 0036) | No mobile access, no multi-channel | Embeds pi as library. grammY for Telegram. Command queue serializes all inputs. Most complex tier. |
 
 **Read order for full context:** 0010 → 0018 → 0035 → 0037 → 0038 (skip 0036, superseded)
+
+## Known Limitations
+
+1. **Drain race condition.** The extension does `LRANGE` then `DEL` — not atomic. Events pushed between those calls are deleted without processing. The in-memory `seenIds` dedup prevents double-delivery but doesn't prevent lost events. Fix: use `LRANGE` + `LTRIM` or a Redis transaction. Low-impact on single-user systems but real.
+
+2. **Redis connection recovery is notify-only.** If Redis goes down, the extension catches the error and logs it, but doesn't retry or reconnect automatically. ioredis `retryStrategy` handles reconnection at the client level, but accumulated events during the outage may be lost.
+
+3. **Watchdog intervals are hardcoded.** Check interval (5 min) and threshold (30 min) are constants in the extension. Should be configurable via env vars or Redis config.
+
+4. **No persistent dedup across restarts.** The `seenIds` Set lives in memory and caps at 500. Process restart = dedup resets. For the heartbeat-every-15-min use case this is fine. For high-frequency events it could cause duplicates.
 
 ## Credits
 
