@@ -17,9 +17,9 @@ export default function Home() {
           <li key={post.slug}>
             <Link href={`/${post.slug}`} className="group block">
               <div className="flex items-center gap-2">
-                {post.type === "note" && (
+                {post.type !== "article" && (
                   <span className="shrink-0 text-[11px] font-medium uppercase tracking-wider text-neutral-500 border border-neutral-800 rounded px-1.5 py-0.5">
-                    note
+                    {post.type}
                   </span>
                 )}
                 <h2 className="text-xl font-semibold tracking-tight group-hover:text-white transition-colors">

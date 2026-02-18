@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import matter from "gray-matter";
 
-export type ContentType = "article" | "note";
+export type ContentType = "article" | "note" | "tutorial";
 
 export type PostMeta = {
   title: string;

@@ -70,9 +70,9 @@ export default async function PostPage({ params }: Props) {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbs) }}
       />
       <header className="mb-10">
-        {meta.type === "note" && (
+        {meta.type !== "article" && (
           <span className="inline-block text-[11px] font-medium uppercase tracking-wider text-neutral-500 border border-neutral-800 rounded px-1.5 py-0.5 mb-3">
-            note
+            {meta.type}
           </span>
         )}
         <h1 className="text-3xl font-bold tracking-tight">{meta.title}</h1>
