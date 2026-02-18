@@ -14,16 +14,13 @@ type ProposalHash = Record<string, string>
 
 const withRedis = <A>(fn: (redis: Redis) => Promise<A>): Promise<A> => {
   const redis = new Redis()
-  return redis
-    .connect()
-    .then(() => fn(redis))
-    .finally(() => {
-      try {
-        redis.disconnect()
-      } catch {
-        // no-op
-      }
-    })
+  return fn(redis).finally(() => {
+    try {
+      redis.disconnect()
+    } catch {
+      // no-op
+    }
+  })
 }
 
 const readPendingProposals = (): Promise<Array<{ id: string; proposal: ProposalHash }>> =>

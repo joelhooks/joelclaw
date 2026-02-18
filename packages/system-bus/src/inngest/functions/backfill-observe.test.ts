@@ -65,7 +65,10 @@ function buildTranscriptJsonl(): string {
   return `${lines.join("\n")}\n`;
 }
 
+const sendEventCaptured: unknown[][] = [];
+
 async function executeBackfillObserve() {
+  sendEventCaptured.length = 0;
   const { backfillObserve } = await import("./backfill-observe");
   const engine = new InngestTestEngine({
     function: backfillObserve as any,
@@ -79,11 +82,26 @@ async function executeBackfillObserve() {
         },
       } as any,
     ],
+    transformCtx: (ctx: any) => {
+      const originalSendEvent = ctx.step.sendEvent;
+      ctx.step.sendEvent = async (...args: unknown[]) => {
+        sendEventCaptured.push(args);
+        // Return mock response instead of calling real Inngest API
+        return { ids: ["mock-event-id"] };
+      };
+      // Preserve mock interface for assertion compatibility
+      ctx.step.sendEvent.mock = { calls: sendEventCaptured };
+      return ctx;
+    },
   });
   return engine.execute();
 }
 
 beforeAll(() => {
+  // Prevent step.sendEvent from hitting real Inngest API
+  process.env.INNGEST_EVENT_KEY = "test";
+  process.env.INNGEST_DEV = "1";
+
   (Redis.prototype as any).sismember = async function (key: string, member: string) {
     const set = redisSets.get(String(key)) ?? new Set<string>();
     return set.has(String(member)) ? 1 : 0;
