@@ -63,6 +63,25 @@ I didn't design this upfront. Each iteration solved a real problem.
 
 Inngest functions push events to a Redis list. A pi extension subscribes to a pub/sub channel and drains the list into the session as a user message.<Sidenote id="sn-redis-choice">Why Redis and not a proper message queue? Because it was already running for caching, the pub/sub semantics are good enough for single-machine fan-out, and adding RabbitMQ or NATS for one consumer felt like architecture theater.</Sidenote> ~100 lines of TypeScript.
 
+**⚠️ `serveHost` is mandatory** if your Inngest server runs in Docker and your worker runs on the host. Without it, the SDK advertises `localhost:3100` as its callback URL — but that's the container's loopback, not yours. Every function run fails silently with "Unable to reach SDK URL."
+
+```typescript
+// In your worker's Hono serve handler:
+inngestServe({
+  client: inngest,
+  functions,
+  serveHost: "http://host.docker.internal:3100",
+})
+```
+
+Then force a re-sync so the server picks up the new URL:
+
+```bash
+curl -X PUT http://localhost:3100/api/inngest
+```
+
+<Sidenote id="sn-servehost">This burned 30+ minutes of debugging. The function runs showed up in the dashboard as "started" but immediately failed. The Docker logs revealed the actual callback URL being used — localhost inside the container. If you're using k8s instead of raw Docker, the pod can reach the host via the node IP or a Service, so this is Docker-topology-specific.</Sidenote>
+
 **Solved:** background jobs can notify the agent.
 
 ### v2: Multi-session routing
@@ -98,7 +117,72 @@ async ({ event, step, gateway }) => {
 }
 ```
 
+The middleware itself is ~30 lines — it creates a Redis client once, then injects the helpers into every function's context:
+
+```typescript
+import { InngestMiddleware } from "inngest";
+import Redis from "ioredis";
+
+const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379");
+
+export const gatewayMiddleware = new InngestMiddleware({
+  name: "gateway",
+  init() {
+    return {
+      onFunctionRun({ fn }) {
+        return {
+          transformInput({ ctx }) {
+            const push = (type: string, payload: Record<string, unknown>) => {
+              const event = JSON.stringify({
+                type, payload, fn: fn.id,
+                ts: Date.now(), origin: ctx.event?.data?.originSession,
+              });
+              redis.lpush("joelclaw:events:central", event);
+              redis.publish("joelclaw:notify:central", "1");
+            };
+            return {
+              ctx: {
+                ...ctx,
+                gateway: {
+                  progress: (msg: string) => push("progress", { message: msg }),
+                  notify: (topic: string, data?: Record<string, unknown>) =>
+                    push("notify", { topic, ...data }),
+                  alert: (msg: string, data?: Record<string, unknown>) =>
+                    push("alert", { message: msg, ...data }),
+                },
+              },
+            };
+          },
+        };
+      },
+    };
+  },
+});
+```
+
+Register it on your Inngest client: `new Inngest({ id: "my-worker", middleware: [gatewayMiddleware] })`.
+
 **Solved:** functions push status updates without coupling to the delivery mechanism.
+
+## Gotchas
+
+**Function sync has a delay window.** Adding functions and restarting the worker isn't enough — the server won't see them until the next `--poll-interval` cycle (30s in our config) or a manual sync:
+
+```bash
+curl -X PUT http://localhost:3100/api/inngest
+```
+
+The heartbeat cron was registered by the SDK but invisible to the server for the first minute. If your function isn't triggering, check the Functions tab in the dashboard — if it's not listed, sync hasn't happened yet.
+
+**ioredis resolution is flaky in Bun.** Bun occasionally can't resolve `@ioredis/commands` from within `ioredis`. Fix: explicitly install the sub-dependency, or nuke and reinstall:
+
+```bash
+bun add @ioredis/commands
+# or the nuclear option:
+rm -rf node_modules && bun install
+```
+
+**Two ioredis clients for pub/sub.** A subscribed Redis client can't run commands like `LRANGE` or `DEL`. You need one client for subscriptions and a separate one for reads/writes. This isn't an Inngest gotcha — it's a Redis protocol constraint that bites everyone once.
 
 ## What's next: embedded daemon + Telegram
 
