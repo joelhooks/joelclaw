@@ -17,6 +17,21 @@ TIER="${1:-}"
 WORKER_DIR="${2:-./inngest-worker}"
 INNGEST_PORT=8288
 
+# ── Signing Keys (required as of Feb 2026) ───────────────
+generate_keys() {
+  if [ -f ".env.inngest" ]; then
+    source .env.inngest
+    ok "Using existing keys from .env.inngest"
+  else
+    INNGEST_SIGNING_KEY="signkey-dev-$(openssl rand -hex 16)"
+    INNGEST_EVENT_KEY="evtkey-dev-$(openssl rand -hex 16)"
+    echo "INNGEST_SIGNING_KEY=$INNGEST_SIGNING_KEY" > .env.inngest
+    echo "INNGEST_EVENT_KEY=$INNGEST_EVENT_KEY" >> .env.inngest
+    ok "Generated signing keys → .env.inngest"
+  fi
+  export INNGEST_SIGNING_KEY INNGEST_EVENT_KEY
+}
+
 # ── Helpers ──────────────────────────────────────────────
 info()  { echo "▸ $*"; }
 ok()    { echo "✓ $*"; }
@@ -66,6 +81,7 @@ esac
 # ── Preflight ────────────────────────────────────────────
 info "Checking prerequisites..."
 check_docker
+generate_keys
 
 if check_inngest_running; then
   info "Inngest is already running. Skipping server setup."
@@ -75,6 +91,8 @@ else
       info "Tier 1: Docker (ephemeral)"
       docker run -d --name inngest \
         -p ${INNGEST_PORT}:${INNGEST_PORT} \
+        -e INNGEST_SIGNING_KEY="$INNGEST_SIGNING_KEY" \
+        -e INNGEST_EVENT_KEY="$INNGEST_EVENT_KEY" \
         inngest/inngest:latest \
         inngest start --host 0.0.0.0
       ok "Inngest running at http://localhost:${INNGEST_PORT}"
@@ -86,6 +104,8 @@ else
       docker run -d --name inngest \
         -p ${INNGEST_PORT}:${INNGEST_PORT} \
         -v inngest-data:/var/lib/inngest \
+        -e INNGEST_SIGNING_KEY="$INNGEST_SIGNING_KEY" \
+        -e INNGEST_EVENT_KEY="$INNGEST_EVENT_KEY" \
         --restart unless-stopped \
         inngest/inngest:latest \
         inngest start --host 0.0.0.0
@@ -166,7 +186,7 @@ else
     
     cd "$WORKER_DIR"
     bun init -y 2>/dev/null
-    bun add inngest hono 2>/dev/null
+    bun add inngest @inngest/ai hono 2>/dev/null
 
     cat > src/inngest.ts << 'TS'
 import { Inngest, EventSchemas } from "inngest";
@@ -237,7 +257,8 @@ fi
 
 echo ""
 echo "Next steps:"
-echo "  1. Start the worker:  cd $WORKER_DIR && INNGEST_DEV=1 bun run src/serve.ts"
-echo "  2. Open dashboard:    http://localhost:${INNGEST_PORT}"
-echo "  3. Send test event:   curl -X POST http://localhost:${INNGEST_PORT}/e/key -H 'Content-Type: application/json' -d '{\"name\":\"task/process\",\"data\":{\"input\":\"hello\"}}'"
+echo "  1. Source keys:       source .env.inngest"
+echo "  2. Start the worker:  cd $WORKER_DIR && INNGEST_DEV=1 bun run src/serve.ts"
+echo "  3. Open dashboard:    http://localhost:${INNGEST_PORT}"
+echo "  4. Send test event:   curl -X POST http://localhost:${INNGEST_PORT}/e/\$INNGEST_EVENT_KEY -H 'Content-Type: application/json' -d '{\"name\":\"task/process\",\"data\":{\"input\":\"hello\"}}'"
 echo ""

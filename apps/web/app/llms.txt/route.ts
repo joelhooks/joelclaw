@@ -26,8 +26,11 @@ export function GET() {
     "",
     "## Markdown access",
     "",
-    "All posts are available as clean markdown by appending /md to the URL.",
-    `Example: ${SITE_URL}/building-my-own-openclaw/md`,
+    "All posts are available as clean markdown by appending .md to the URL.",
+    `Example: ${SITE_URL}/building-my-own-openclaw.md`,
+    "",
+    "Each markdown version includes an agent context preamble with content type,",
+    "citation guidance, accuracy caveats, and links to related posts.",
     "",
   ];
 

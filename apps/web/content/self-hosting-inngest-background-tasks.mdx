@@ -8,10 +8,20 @@ description: "Durable workflows on your Mac. Each step retries independently. Se
 ## Set it up
 
 ```bash
+# Generate signing keys (one-time)
+INNGEST_SIGNING_KEY="signkey-dev-$(openssl rand -hex 16)"
+INNGEST_EVENT_KEY="evtkey-dev-$(openssl rand -hex 16)"
+
+# Save them — your worker needs these too
+echo "INNGEST_SIGNING_KEY=$INNGEST_SIGNING_KEY" >> .env.inngest
+echo "INNGEST_EVENT_KEY=$INNGEST_EVENT_KEY" >> .env.inngest
+
 # Start the server (30 seconds to dashboard)
 docker run -d --name inngest \
   -p 8288:8288 \
   -v inngest-data:/var/lib/inngest \
+  -e INNGEST_SIGNING_KEY="$INNGEST_SIGNING_KEY" \
+  -e INNGEST_EVENT_KEY="$INNGEST_EVENT_KEY" \
   --restart unless-stopped \
   inngest/inngest:latest \
   inngest start --host 0.0.0.0
@@ -21,6 +31,8 @@ open http://localhost:8288
 ```
 
 One Docker container. Dashboard at `localhost:8288`. That's the whole infrastructure.
+
+**⚠️ Signing keys are mandatory** as of `inngest/inngest:latest` (Feb 2026). Without `INNGEST_SIGNING_KEY` and `INNGEST_EVENT_KEY`, the container crash-loops with `Error: signing-key is required`. The keys above use `openssl rand` — any random hex string works for local dev.
 
 **For agents** — install the skill and it walks through the full setup adapted to your machine:
 
@@ -90,6 +102,31 @@ Fourteen functions. Two pipelines. The full architecture is in [Inngest is the N
 **Concurrency keys** — `concurrency: { key: "event.data.project", limit: 1 }`. One coding loop per project. One transcription at a time (GPU saturation).<Sidenote id="sn-gpu-sat">mlx-whisper saturates the Apple Silicon GPU. Running two transcriptions concurrently doesn't error — it just makes both take 3x longer. Concurrency limit of 1 is the right call.</Sidenote> Multiple downloads in parallel.
 
 ## Gotchas I hit
+
+**Missing peer dependency.** `bun add inngest` doesn't pull `@inngest/ai`, but the SDK imports it at startup. Worker crashes with `Cannot find module '@inngest/ai'`. Install both:
+
+```bash
+bun add inngest @inngest/ai
+```
+
+**Docker-to-host networking.** If Inngest runs in Docker and your worker runs on the host (bare metal Bun), the server can't reach `localhost:3111` — that's the container's localhost, not yours. Use `host.docker.internal`:<Sidenote id="sn-docker-host">This is Docker Desktop/OrbStack-specific. Colima and Lima also support it. Linux Docker needs `--add-host=host.docker.internal:host-gateway` on the container.</Sidenote>
+
+```bash
+# When starting the worker, tell Inngest where to find it
+INNGEST_DEV=1 bun run src/serve.ts
+# The Inngest server needs --sdk-url pointing back to host
+# Dashboard → Apps → manually set SDK URL to http://host.docker.internal:3111/api/inngest
+```
+
+Or pass it on the docker run:
+
+```bash
+docker run -d --name inngest \
+  ... \
+  inngest/inngest:latest \
+  inngest start --host 0.0.0.0 \
+  --sdk-url http://host.docker.internal:3111/api/inngest
+```
 
 **The k8s naming collision.** A Service named `inngest` creates an `INNGEST_PORT` env var. The Inngest binary also uses `INNGEST_PORT` — expects an integer, gets `tcp://10.43.x.x:8288`.<Sidenote id="sn-k8s-naming">Kubernetes auto-creates `{SERVICE_NAME}_PORT` env vars for every Service. If your Service name collides with an env var the binary expects, you get silent misconfig. Name your Service `inngest-svc` or similar. This is a rite of passage.</Sidenote> Two characters: name it `inngest-svc`. Thirty minutes of debugging.
 

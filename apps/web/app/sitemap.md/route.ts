@@ -34,9 +34,9 @@ export function GET() {
     "",
     "## Markdown versions",
     "",
-    "Append `/md` to any post URL for the raw markdown:",
+    "Append `.md` to any post URL for the agent-friendly markdown:",
     "",
-    ...posts.map((p) => `- [${p.title}](${SITE_URL}/${p.slug}/md)`),
+    ...posts.map((p) => `- [${p.title}](${SITE_URL}/${p.slug}.md)`),
     "",
   ];
 
