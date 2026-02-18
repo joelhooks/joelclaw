@@ -43,6 +43,30 @@ class MockRedis {
     return redisState.pendingCount;
   }
 
+  async lrange(_key: string, _start: number, _stop: number): Promise<string[]> {
+    return [];
+  }
+
+  async hgetall(_key: string): Promise<Record<string, string>> {
+    return {};
+  }
+
+  async hset(_key: string, ..._args: string[]): Promise<number> {
+    return 0;
+  }
+
+  async lrem(_key: string, _count: number, _value: string): Promise<number> {
+    return 0;
+  }
+
+  async del(..._keys: string[]): Promise<number> {
+    return 0;
+  }
+
+  async rpush(_key: string, ..._values: string[]): Promise<number> {
+    return 0;
+  }
+
   async quit() {
     redisState.quitCalls += 1;
     return "OK";
@@ -57,22 +81,37 @@ mock.module("ioredis", () => ({
   default: MockRedis,
 }));
 
-mock.module("node:os", () => ({
-  homedir: () => TEST_HOME,
-}));
+mock.module("node:os", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const realOs = require("node:os") as typeof import("node:os");
+  return {
+    ...realOs,
+    homedir: () => TEST_HOME,
+  };
+});
 
-mock.module("node:fs", () => ({
-  readFileSync: (filePath: string) => {
-    if (filePath === MEMORY_PATH) return fsState.memoryContent;
-    if (filePath === DAILY_PATH) return fsState.dailyContent;
-    throw new Error(`ENOENT: ${filePath}`);
-  },
-  readdirSync: () => {
-    throw new Error("ENOENT");
-  },
-  mkdirSync: () => {},
-  appendFileSync: () => {},
-}));
+mock.module("node:fs", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const realFs = require("node:fs") as typeof import("node:fs");
+  return {
+    ...realFs,
+    readFileSync: (filePath: string, options?: unknown) => {
+      if (filePath === MEMORY_PATH) return fsState.memoryContent;
+      if (filePath === DAILY_PATH) return fsState.dailyContent;
+      return (realFs.readFileSync as Function)(filePath, options);
+    },
+    readdirSync: (dirPath: string, options?: unknown) => {
+      if (String(dirPath).includes("Vault") || String(dirPath).includes("Projects")) {
+        throw new Error("ENOENT");
+      }
+      return (realFs.readdirSync as Function)(dirPath, options);
+    },
+    appendFileSync: (filePath: string, data: unknown, options?: unknown) => {
+      if (filePath === DAILY_PATH) return;
+      return (realFs.appendFileSync as Function)(filePath, data, options);
+    },
+  };
+});
 
 type BeforeAgentStartHandler = (
   event: { prompt?: string; systemPrompt: string },

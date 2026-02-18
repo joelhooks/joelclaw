@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
 import { promote } from "./packages/system-bus/src/inngest/functions/promote";
 
 const REPO_ROOT = import.meta.dir;
@@ -10,7 +9,7 @@ const SYSTEM_BUS_DIR = join(REPO_ROOT, "packages", "system-bus");
 const REVIEW_PATH = join(homedir(), ".joelclaw", "workspace", "REVIEW.md");
 
 function runCommand(command: string, args: string[], cwd = REPO_ROOT) {
-  const proc = spawnSync(command, args, {
+  const proc = Bun.spawnSync([command, ...args], {
     cwd,
     env: process.env,
     stdout: "pipe",
@@ -19,8 +18,8 @@ function runCommand(command: string, args: string[], cwd = REPO_ROOT) {
 
   return {
     exitCode: proc.exitCode,
-    stdout: proc.stdout.toString(),
-    stderr: proc.stderr.toString(),
+    stdout: proc.stdout?.toString() ?? "",
+    stderr: proc.stderr?.toString() ?? "",
   };
 }
 
@@ -34,12 +33,12 @@ describe("MEM-6 acceptance: review cleanup and validation", () => {
   });
 
   test("AC-2: no REVIEW.md references remain in packages/system-bus/src non-test source", () => {
-    const result = runCommand("rg", [
-      "--files-with-matches",
+    const result = runCommand("grep", [
+      "-rl",
+      "--include=*.ts",
+      "--exclude=*.test.ts",
       "REVIEW\\.md",
       "packages/system-bus/src",
-      "-g",
-      "!**/*.test.ts",
     ]);
 
     expect(result).toMatchObject({
