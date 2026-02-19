@@ -355,16 +355,25 @@ Implemented first — skipped Phase 1 polling since webhooks proved simpler.
 - Key files: `src/webhooks/server.ts`, `src/webhooks/providers/todoist.ts`, `src/inngest/functions/todoist-notify.ts`
 
 ### ✅ Phase 2b: Front Webhook Adapter (2026-02-18)
-- Front Rules-based webhook (not app-level) — scoped to private inboxes at Front's Rules layer
+- **Rules-based webhook** (not app-level) — scoped to private inboxes at Front's Rules layer
 - HMAC-SHA1 over `JSON.stringify(body)` → base64 (different from Todoist's SHA256)
 - No challenge mechanism (rules webhooks don't use challenges)
 - 3 Inngest notify functions: inbound email, outbound sent, assignee changed
 - API enrichment step fetches conversation details (tags, assignee, status) from Front API
-- Structured agent prompts with triage instructions (matches Todoist pattern)
+- Structured agent prompts with triage instructions (matches Todoist enrich → build-prompt → notify pattern)
 - Webhook URL: `https://panda.tail7af24.ts.net/webhooks/front`
 - Secrets: `front_rules_webhook_secret` (HMAC), `front_api_token` (enrichment) in agent-secrets
 - Key files: `src/webhooks/providers/front.ts`, `src/inngest/functions/front-notify.ts`
-- Gotchas: Rules webhooks use SHA1 not SHA256; app-level webhooks auto-disable after repeated failures; `agent-secrets` v0.5.0 dropped `--raw` flag (now default)
+- **Verified E2E**: real Front webhook → HMAC ✅ → Inngest → gateway notification. Confirmed with The Information newsletter + Vercel notifications flowing through.
+
+**Gotchas learned (Front webhooks):**
+1. **Two webhook mechanisms**: App-level (`inbound_received` types, HMAC-SHA256 with `timestamp:body`, challenge handshake) vs Rules-based (`inbound` types, HMAC-SHA1 with `JSON.stringify(body)`, no challenge). Completely different formats.
+2. **App-level webhooks auto-disable** after repeated 401/500 failures. No retry, no warning. If your secret isn't ready when Front validates, the webhook silently dies.
+3. **Rules webhooks send Event objects**, not app-level payloads. Type names are short (`inbound`, `outbound`, `assign`) not compound (`inbound_received`, `assignee_changed`). Data lives at top level (`conversation`, `source`, `target`) not nested under `payload`.
+4. **Front Rules can scope to private inboxes** — better than server-side teammate filtering. The rule's "When" condition + inbox filter handles what `FRONT_MONITORED_TEAMMATE` was supposed to do.
+5. **Front ID conversion**: URL numeric IDs → API IDs via `base36(numericId)` + resource prefix. E.g., teammate URL 818967 → `base36(818967)` = `hjx3` → `tea_hjx3`.
+6. **`agent-secrets` v0.5.0** dropped `--raw` flag (raw is now the default output). Worker `start.sh` must not pass `--raw` or leases silently fail.
+7. **Rules webhook User-Agent** is `Needle/3.0.0` (Node.js HTTP client), not `Front/1.0` like app-level webhooks.
 
 ### ⬜ Phase 1: Poll Fallback
 - Todoist Activity Log API poll as backup (not needed while Funnel is reliable)
