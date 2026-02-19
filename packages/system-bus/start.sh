@@ -53,4 +53,11 @@ else
   echo "WARNING: Failed to lease front_api_token" >&2
 fi
 
+ANTHROPIC_KEY=$(secrets lease anthropic_api_key --ttl 24h 2>/dev/null)
+if [ -n "$ANTHROPIC_KEY" ]; then
+  export ANTHROPIC_API_KEY="$ANTHROPIC_KEY"
+else
+  echo "WARNING: Failed to lease anthropic_api_key" >&2
+fi
+
 exec bun run src/serve.ts

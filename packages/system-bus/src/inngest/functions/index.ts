@@ -22,6 +22,7 @@ export {
   frontMessageSent,
   frontAssigneeChanged,
 } from "./front-notify";
+export { emailInboxCleanup } from "./email-cleanup";
 export {
   agentLoopPlan,
   agentLoopTestWriter,

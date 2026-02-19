@@ -31,6 +31,7 @@ import {
   frontMessageReceived,
   frontMessageSent,
   frontAssigneeChanged,
+  emailInboxCleanup,
 } from "./inngest/functions";
 
 const app = new Hono();
@@ -120,6 +121,7 @@ app.on(
       frontMessageReceived,
       frontMessageSent,
       frontAssigneeChanged,
+      emailInboxCleanup,
     ],
     serveHost: "http://host.docker.internal:3111",
   })

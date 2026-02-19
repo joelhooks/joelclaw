@@ -259,6 +259,7 @@ All skills are installed to `~/.agents/skills/` (universal) and symlinked to Cla
 | agent-browser | custom | Browser automation for agents |
 | defuddle | custom | Clean markdown extraction from web pages |
 | docx | anthropics/skills | Word document creation/editing |
+| email-triage | joelhooks/joelclaw | Inference-based email inbox triage via `joelclaw email` CLI — scan, categorize, archive, surface actionable |
 | ffmpeg | digitalsamba (customized) | Video/audio processing — format conversion, compression, platform export |
 | frontend-design | custom | Production-grade frontend UI design |
 | gateway-comms | joelhooks/joelclaw | Gateway communication patterns — middleware SDK, pushGatewayEvent, CLI, new webhook provider checklist |
