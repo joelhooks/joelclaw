@@ -120,28 +120,37 @@ export const granolaBackfill = inngest.createFunction(
     // Step 3: Filter out already processed
     const newMeetings = allMeetings.filter((m) => !processedSet.has(m.id));
 
-    // Step 4: Fan out meeting/noted events
-    if (!dryRun && newMeetings.length > 0) {
-      await step.run("fan-out-events", async () => {
-        const events = newMeetings.map((m) => ({
-          name: "meeting/noted" as const,
-          data: {
-            meetingId: m.id,
-            title: m.title,
-            date: m.date,
-            participants: m.participants,
-            source: "backfill" as const,
-          },
-        }));
+    // Step 4: Fan out meeting/noted events ONE AT A TIME with sleep between
+    // Granola MCP has aggressive rate limits on transcript fetches.
+    // Sequential emission + step.sleep ensures only 1 meeting processes at a time.
+    const results: Array<{ id: string; title: string; status: string }> = [];
 
-        // Send in batches of 10 to avoid overwhelming Inngest
-        for (let i = 0; i < events.length; i += 10) {
-          const batch = events.slice(i, i + 10);
-          await inngest.send(batch);
+    if (!dryRun) {
+      for (let i = 0; i < newMeetings.length; i++) {
+        const m = newMeetings[i]!;
+
+        await step.run(`emit-${i}-${m.id.slice(0, 8)}`, async () => {
+          await inngest.send({
+            name: "meeting/noted" as const,
+            data: {
+              meetingId: m.id,
+              title: m.title,
+              date: m.date,
+              participants: m.participants,
+              source: "backfill" as const,
+            },
+          });
+          return { sent: m.id };
+        });
+
+        results.push({ id: m.id, title: m.title, status: "emitted" });
+
+        // Sleep between emissions — let previous meeting finish processing
+        // before starting next (3 min matches meeting-analyze throttle)
+        if (i < newMeetings.length - 1) {
+          await step.sleep(`wait-${i}`, "3m");
         }
-
-        return { sent: events.length };
-      });
+      }
     }
 
     // Step 5: Notify
