@@ -1,0 +1,80 @@
+{
+  "$schema": "./skillpacks.schema.json",
+  "description": "Recommended third-party skill packs for joelclaw. These skills are NOT bundled in this repo — install them from their canonical sources to preserve attribution.",
+  "packs": [
+    {
+      "name": "inngest",
+      "repo": "inngest/inngest-skills",
+      "description": "Inngest durable functions, events, flow control, middleware, setup, and step patterns.",
+      "url": "https://github.com/inngest/inngest-skills",
+      "skills": ["inngest-durable-functions", "inngest-events", "inngest-flow-control", "inngest-middleware", "inngest-setup", "inngest-steps"]
+    },
+    {
+      "name": "vercel-react",
+      "repo": "vercel-labs/agent-skills",
+      "description": "React composition patterns, performance best practices, and web design guidelines from Vercel Engineering.",
+      "url": "https://github.com/vercel-labs/agent-skills",
+      "skills": ["vercel-composition-patterns", "vercel-react-best-practices", "web-design-guidelines"]
+    },
+    {
+      "name": "vercel-next",
+      "repo": "vercel-labs/next-skills",
+      "description": "Next.js best practices, cache components, and upgrade guides from Vercel.",
+      "url": "https://github.com/vercel-labs/next-skills",
+      "skills": ["next-best-practices", "next-cache-components", "next-upgrade"]
+    },
+    {
+      "name": "axiom",
+      "repo": "charleswiltgen/axiom",
+      "description": "64+ iOS/SwiftUI/Apple development skills by Charles Wiltgen. HIG, Liquid Glass, SwiftData, SF Symbols, and more.",
+      "url": "https://charleswiltgen.github.io/Axiom/",
+      "skills": [
+        "axiom-accessibility-diag", "axiom-app-composition", "axiom-app-intents-ref",
+        "axiom-foundation-models", "axiom-hig", "axiom-hig-ref", "axiom-liquid-glass",
+        "axiom-sf-symbols", "axiom-storekit-ref", "axiom-swift-concurrency",
+        "axiom-swift-performance", "axiom-swiftdata", "axiom-swiftui-architecture",
+        "axiom-swiftui-debugging", "axiom-swiftui-layout", "axiom-swiftui-nav",
+        "axiom-swiftui-performance"
+      ]
+    },
+    {
+      "name": "marketing",
+      "repo": "coreyhaines31/marketingskills",
+      "description": "20+ marketing skills by Corey Haines — copywriting, SEO, CRO, analytics, content strategy.",
+      "url": "https://www.marketing-skills.com/",
+      "skills": [
+        "analytics-tracking", "competitor-alternatives", "content-strategy",
+        "copy-editing", "copywriting", "page-cro", "product-marketing-context",
+        "programmatic-seo", "schema-markup", "seo-audit", "social-content"
+      ]
+    },
+    {
+      "name": "platform-design",
+      "repo": "ehmo/platform-design-skills",
+      "description": "Apple HIG design guidelines per platform — iOS, iPadOS, macOS, visionOS.",
+      "url": "https://github.com/ehmo/platform-design-skills",
+      "skills": ["ios-design-guidelines", "ipados-design-guidelines", "macos-design-guidelines", "visionos-design-guidelines"]
+    },
+    {
+      "name": "graphite",
+      "repo": "withgraphite/agent-skills",
+      "description": "Context-efficient Git and Graphite stacked diff workflows.",
+      "url": "https://github.com/withgraphite/agent-skills",
+      "skills": ["graphite-skill"]
+    },
+    {
+      "name": "axiom-observability",
+      "repo": "axiomhq/skills",
+      "description": "Axiom observability skills — dashboards, APL queries, cost control, SPL-to-APL migration, SRE incident response.",
+      "url": "https://github.com/axiomhq/skills",
+      "skills": ["building-dashboards", "controlling-costs", "query-metrics", "spl-to-apl", "axiom-sre"]
+    },
+    {
+      "name": "skills-meta",
+      "repo": "vercel-labs/skills",
+      "description": "Skill discovery and management meta-skill from Vercel Labs.",
+      "url": "https://github.com/vercel-labs/skills",
+      "skills": ["find-skills"]
+    }
+  ]
+}
