@@ -10,6 +10,7 @@
 
 import { inngest } from "../client";
 import type { GatewayContext } from "../middleware/gateway";
+import { meetingAnalyze } from "./meeting-analyze";
 import { spawnSync } from "node:child_process";
 import Redis from "ioredis";
 
@@ -120,35 +121,41 @@ export const granolaBackfill = inngest.createFunction(
     // Step 3: Filter out already processed
     const newMeetings = allMeetings.filter((m) => !processedSet.has(m.id));
 
-    // Step 4: Fan out meeting/noted events ONE AT A TIME with sleep between
+    // Step 4: Process meetings sequentially via step.invoke (not fan-out)
     // Granola MCP has aggressive rate limits on transcript fetches.
-    // Sequential emission + step.sleep ensures only 1 meeting processes at a time.
-    const results: Array<{ id: string; title: string; status: string }> = [];
+    // step.invoke gives us: sequential control, result per meeting, automatic
+    // retry delegation to the invoked function. (See inngest-steps skill)
+    const results: Array<{ id: string; title: string; status: string; actionItems?: number; decisions?: number; people?: number }> = [];
 
     if (!dryRun) {
       for (let i = 0; i < newMeetings.length; i++) {
         const m = newMeetings[i]!;
 
-        await step.run(`emit-${i}-${m.id.slice(0, 8)}`, async () => {
-          await inngest.send({
-            name: "meeting/noted" as const,
-            data: {
-              meetingId: m.id,
-              title: m.title,
-              date: m.date,
-              participants: m.participants,
-              source: "backfill" as const,
-            },
-          });
-          return { sent: m.id };
+        // Invoke meeting-analyze directly — blocks until complete
+        const result = await step.invoke(`analyze-${i}-${m.id.slice(0, 8)}`, {
+          function: meetingAnalyze,
+          data: {
+            meetingId: m.id,
+            title: m.title,
+            date: m.date,
+            participants: m.participants,
+            source: "backfill" as const,
+          },
         });
 
-        results.push({ id: m.id, title: m.title, status: "emitted" });
+        const r = result as Record<string, any> | null;
+        results.push({
+          id: m.id,
+          title: m.title,
+          status: r?.skipped ? "skipped" : r?.error ? "error" : "analyzed",
+          actionItems: r?.actionItems ?? 0,
+          decisions: r?.decisions ?? 0,
+          people: r?.people ?? 0,
+        });
 
-        // Sleep between emissions — let previous meeting finish processing
-        // before starting next (3 min matches meeting-analyze throttle)
+        // Sleep between invocations — respect Granola rate limits
         if (i < newMeetings.length - 1) {
-          await step.sleep(`wait-${i}`, "3m");
+          await step.sleep(`cooldown-${i}`, "3m");
         }
       }
     }
