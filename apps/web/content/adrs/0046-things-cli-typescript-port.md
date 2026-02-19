@@ -133,3 +133,7 @@ Start with shell-out adapter, replace with native TypeScript later. Pragmatic bu
 - [ ] Test: verify, list histories, read items, create task, complete task
 - [ ] Wire credentials via agent-secrets
 - [ ] Update AGENTS.md tool inventory
+
+## Withdrawal Note (2026-02-19)
+
+Withdrawn. Pivoted to Todoist (ADR-0045/0047) as primary task system. The Go `things-cli` (Arthur Soares, `~/Code/arthursoares/things-cloud-sdk`) exists as a standalone binary but a TypeScript reimplementation in joelclaw is unnecessary. Task port (ADR-0045) abstracts the provider anyway — Todoist adapter is active, Things adapter could be added if needed.

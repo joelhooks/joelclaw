@@ -108,3 +108,7 @@ If we go multi-node and need shared PVCs (ReadWriteMany), SeaweedFS is the pract
 - SeaweedFS vs Ceph comparison: https://onidel.com/blog/minio-ceph-seaweedfs-garage-2025
 - SeaweedFS K8s deployment: https://itnext.io/minio-alternative-seaweedfs-41fe42c3f7be
 - MinIO exit plan / Ceph comparison: https://kubedo.com/minio-exit-plan-ceph-s3-storage/
+
+## Withdrawal Note (2026-02-19)
+
+Withdrawn. local-path-provisioner handles all storage needs. Persistent data lives on the NAS via PDS. Running Ceph or SeaweedFS on a single node is pointless overhead.

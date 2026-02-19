@@ -150,3 +150,7 @@ Full eBPF networking stack. Network policies, Hubble observability, service mesh
 - Siderolabs Reference Architecture (2025): https://www.siderolabs.com/wp-content/uploads/2025/08/Kubernetes-Cluster-Reference-Architecture-with-Talos-Linux-for-2025-05.pdf
 - Talos + Cilium walkthrough: https://rcwz.pl/2025-10-08-adding-cilium-to-talos-cluster/
 - Talos + Cilium on Proxmox: https://unixorn.github.io/post/homelab/k8s/01-talos-with-cilium-cni-on-proxmox/
+
+## Withdrawal Note (2026-02-19)
+
+Withdrawn. Single-node Talos cluster with Flannel works fine. Cilium adds operational complexity (eBPF kernel requirements, CRD proliferation) without meaningful benefit at this scale. If the cluster grows to multi-node or needs network policy enforcement, revisit.

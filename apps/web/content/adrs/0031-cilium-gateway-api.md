@@ -140,3 +140,7 @@ ADR-0030 (Cilium) must be accepted and implemented first. Gateway API is a natur
 - Cilium Gateway API docs: https://docs.cilium.io/en/latest/network/servicemesh/ingress-to-gateway/ingress-to-gateway/
 - DigitalOcean tutorial: https://www.digitalocean.com/community/tutorials/kubernetes-gateway-api-tutorial-cilium-ingress-alternative
 - r/kubernetes discussion: https://www.reddit.com/r/kubernetes/comments/1kri73b/ingress_controller_v_gateway_api/
+
+## Withdrawal Note (2026-02-19)
+
+Withdrawn. Depends on ADR-0030 (Cilium) which is withdrawn. Caddy + Tailscale handles all routing needs. NodePort services with Docker port mapping is sufficient for the single-node topology.
