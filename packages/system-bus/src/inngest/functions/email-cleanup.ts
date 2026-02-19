@@ -161,11 +161,23 @@ export const emailInboxCleanup = inngest.createFunction(
 
       // Fetch a page of conversations
       const pageData = await step.run(`fetch-page-${page}`, async () => {
-        const url = nextPageUrl
-          ? nextPageUrl
-          : `/conversations/search/${encodeURIComponent(query)}?limit=${PAGE_SIZE}`;
-
-        const data = await frontGet(url, frontToken);
+        let data: any;
+        if (nextPageUrl) {
+          // Pagination URLs from Front are fully qualified — fetch directly
+          const res = await fetch(nextPageUrl, {
+            headers: {
+              Authorization: `Bearer ${frontToken}`,
+              Accept: "application/json",
+            },
+          });
+          if (!res.ok) throw new Error(`Front API ${res.status}: ${await res.text()}`);
+          data = await res.json();
+        } else {
+          data = await frontGet(
+            `/conversations/search/${encodeURIComponent(query)}?limit=${PAGE_SIZE}`,
+            frontToken,
+          );
+        }
         const conversations: ConversationSummary[] = (
           data._results ?? []
         ).map((c: any) => ({
