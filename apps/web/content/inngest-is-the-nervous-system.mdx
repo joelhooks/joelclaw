@@ -226,4 +226,16 @@ The loop gets better at its job by reflecting on its own work. Which is kind of 
 
 ---
 
+## Give your agent the skills
+
+Inngest published [official agent skills](https://github.com/inngest/inngest-skills) — six skills covering setup, events, steps, flow control, middleware, and durable functions. Install them and your agent knows how to build all of this without you explaining the patterns:
+
+```bash
+npx skills add inngest/inngest-skills --yes --global
+```
+
+Every pattern in this post — step-level durability, event chaining, concurrency keys, claim-check, middleware — is covered. The skills work with Claude Code, pi, Cursor, and anything that supports the [skills spec](https://agentskills.io).
+
+---
+
 _This is part of a series about building a personal AI system. Previous: [Playing with AT Protocol as a Data Layer](/at-protocol-as-bedrock)._

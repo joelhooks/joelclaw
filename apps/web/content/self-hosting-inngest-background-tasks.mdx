@@ -34,17 +34,24 @@ One Docker container. Dashboard at `localhost:8288`. That's the whole infrastruc
 
 **⚠️ Signing keys are mandatory** as of `inngest/inngest:latest` (Feb 2026). Without `INNGEST_SIGNING_KEY` and `INNGEST_EVENT_KEY`, the container crash-loops with `Error: signing-key is required`. The keys above use `openssl rand` — any random hex string works for local dev.
 
-**For agents** — install the skill and it walks through the full setup adapted to your machine:
+**For agents** — Inngest published [official skills](https://github.com/inngest/inngest-skills) that cover setup, events, steps, flow control, middleware, and durable functions. Install all six:
 
 ```bash
-npx skills add joelhooks/joelclaw --skill inngest-local --yes --global
+npx skills add inngest/inngest-skills --yes --global
 ```
 
-**Or curl the setup script:**
+Or cherry-pick what you need:
 
 ```bash
-curl -fsSL https://joelclaw.com/scripts/inngest-setup.sh | bash
+npx skills add inngest/inngest-skills --skill inngest-setup --yes --global
+npx skills add inngest/inngest-skills --skill inngest-steps --yes --global
+npx skills add inngest/inngest-skills --skill inngest-durable-functions --yes --global
+npx skills add inngest/inngest-skills --skill inngest-flow-control --yes --global
+npx skills add inngest/inngest-skills --skill inngest-events --yes --global
+npx skills add inngest/inngest-skills --skill inngest-middleware --yes --global
 ```
+
+Once installed, your agent knows how to set up Inngest, write durable functions with proper step patterns, configure concurrency/throttling/debounce, and handle errors with retries — without you explaining any of it.
 
 {/* TODO: Video — "Self-Hosting Inngest in 10 Minutes"
 Pitch: Screen recording walkthrough. Start with empty Mac terminal.
