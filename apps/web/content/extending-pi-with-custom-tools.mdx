@@ -1,0 +1,254 @@
+---
+title: "Extending Pi with Custom Tools and Widgets"
+date: "2026-02-19T14:00:00"
+type: "tutorial"
+description: "Build a pi extension that sends Inngest events and shows live run progress in a persistent widget. The full walkthrough — from empty file to working tool."
+tags: ["pi", "extensions", "inngest", "tui"]
+---
+
+```bash
+npx skills add joelhooks/pi-tools --skill pi-tui-design --yes --global
+```
+
+Pi is an agent harness. It runs tools, renders output, manages sessions. But the interesting part is what happens when you extend it — when you give the agent new capabilities that didn't exist before.
+
+I built an extension that lets the agent fire [Inngest](/self-hosting-inngest-background-tasks) events and watch their lifecycle in a persistent widget. Send an event, see which function picks it up, watch steps complete in real time, get the result delivered silently when it's done. No context-switching to a terminal. No polling by hand.
+
+The whole thing is one TypeScript file.
+
+## What you're building
+
+Two tools and a widget:
+
+- **`inngest_send`** — fire an Inngest event, resolve it to runs, poll for status
+- **`inngest_runs`** — inspect tracked runs on demand
+- **Widget** — persistent status bar showing live run progress
+
+The widget looks like this while a function executes:
+
+```
+◆ video-ingest-pipeline 12s  step: download-video
+```
+
+And like this when it completes:
+
+```
+✓ check/system-health 0s  2 steps
+```
+
+Then it auto-hides. The model gets the result via a silent message — no conversation spam.
+
+## The extension API
+
+A pi extension is a function that receives the `ExtensionAPI` and registers things:
+
+```typescript
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { Text, Container, Spacer } from "@mariozechner/pi-tui";
+import { Type } from "@sinclair/typebox";
+
+export default function myExtension(pi: ExtensionAPI) {
+  // Register lifecycle handlers
+  pi.on("session_start", async (event, ctx) => { ... });
+  pi.on("session_shutdown", async () => { ... });
+
+  // Register tools
+  pi.registerTool({ name, parameters, execute, renderCall, renderResult });
+
+  // Register message renderers
+  pi.registerMessageRenderer("custom-type", (message, opts, theme) => { ... });
+}
+```
+
+Three primitives do most of the work: **tools** the model calls, **widgets** for persistent visual state, and **messages** for delivering results.
+
+## Widgets: persistent visual state
+
+The widget is what makes this feel alive. Instead of dumping status into the conversation, you put it in a persistent bar above the editor that updates in place.
+
+```typescript
+pi.on("session_start", async (_event, ctx) => {
+  if (ctx.hasUI) {
+    ctx.ui.setWidget("inngest-monitor", (tui, theme) => {
+      widgetTui = tui;  // save for later invalidation
+      return {
+        render: () => renderWidget(theme),  // returns string[]
+        invalidate: () => {},
+        dispose: () => { widgetTui = null; },
+      };
+    });
+  }
+});
+```
+
+The factory function runs once. After that, call `widgetTui.requestRender()` whenever state changes. The `render` function returns an array of strings — one per line. Return `[]` to auto-hide.
+
+```typescript
+function renderWidget(theme: any): string[] {
+  const visible = getVisibleRuns();
+  if (visible.length === 0) return [];  // auto-hide
+
+  return visible.map((run) => {
+    const elapsed = formatElapsed(run);
+    if (run.status === "completed") {
+      return `${theme.fg("success", "✓")} ${theme.fg("text", run.name)} ${theme.fg("dim", elapsed)}`;
+    }
+    if (run.status === "failed") {
+      return `${theme.fg("error", "✗")} ${theme.fg("text", run.name)} ${theme.fg("error", run.error)}`;
+    }
+    return `${theme.fg("warning", "◆")} ${theme.fg("text", run.name)} ${theme.fg("muted", "step: " + run.currentStep)}`;
+  });
+}
+```
+
+**Always use theme tokens.** `theme.fg("success", ...)` adapts to whatever color scheme the user has. Hardcoded ANSI breaks on theme switch. The `pi-tui-design` skill has the full vocabulary — 51 color tokens, Unicode repertoire, layout primitives.
+
+## Silent messages: model gets data, user sees nothing
+
+The key UX pattern: background work updates the widget visually, and when it finishes, the result goes to the model via a hidden message.
+
+```typescript
+pi.sendMessage(
+  {
+    customType: "inngest-run-complete",
+    content: "✓ check/system-health completed in 2s",
+    display: false,    // user doesn't see this in conversation
+    details: snapshot,  // structured data for the model
+  },
+  {
+    triggerTurn: true,     // wake the model to act on the result
+    deliverAs: "followUp",
+  },
+);
+```
+
+`display: false` means the message goes to the model's context but doesn't appear in the conversation. `triggerTurn: true` tells pi to give the model a turn to respond — "hey, that thing you kicked off? Here's the result."
+
+**Batch turn triggering**: if multiple runs are in flight, only trigger the model on the last one. Errors always trigger immediately.
+
+```typescript
+const isError = run.status === "failed";
+const otherRunsActive = [...timers.keys()].some(id => id !== run.runId);
+const triggerTurn = isError || !otherRunsActive;
+```
+
+## Tool renderers: compact conversation history
+
+Without renderers, tool calls and results dump raw JSON into the conversation. Renderers give you control over how they appear:
+
+```typescript
+pi.registerTool({
+  name: "inngest_send",
+  // ...
+  renderCall(args, theme) {
+    return new Text(
+      `${theme.fg("toolTitle", theme.bold("inngest_send"))} ${theme.fg("muted", args.event)}`,
+      0, 0
+    );
+  },
+  renderResult(result, _opts, theme) {
+    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+    return new Text(theme.fg("muted", text), 0, 0);
+  },
+});
+```
+
+Instead of a JSON blob, the conversation shows:
+
+```
+inngest_send system/health.check {"source": "test"}
+→ Sent system/health.check → 1 run (monitoring)
+```
+
+## The polling loop: CLI-first
+
+The extension shells out to the `joelclaw` CLI for all Inngest communication. No raw GraphQL. No API plumbing. The CLI handles authentication, error formatting, and HATEOAS navigation.<MarginNote id="mn-cli-first">[CLI Design for AI Agents](/cli-design-for-ai-agents) covers the full philosophy — JSON always, HATEOAS next_actions, NDJSON streaming. If your CLI returns structured data, any consumer (agent, extension, script) can use it.</MarginNote>
+
+```typescript
+function runCli(args: string[]): Promise<{ stdout: string; code: number }> {
+  return new Promise((resolve) => {
+    const proc = spawn("joelclaw", args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    proc.stdout.on("data", (d) => (stdout += d.toString()));
+    proc.on("close", (code) => resolve({ stdout, code: code ?? 1 }));
+  });
+}
+```
+
+**Send an event:**
+```typescript
+const { stdout } = await runCli(["send", eventName, "-d", jsonData]);
+const result = parseJson(stdout);
+const eventId = result?.response?.ids?.[0];
+```
+
+**Resolve event → runs:**
+```typescript
+const { stdout } = await runCli(["event", eventId]);
+const data = parseJson(stdout);
+const runIds = data?.runs?.map(r => r.id) ?? [];
+```
+
+**Poll a run:**
+```typescript
+const { stdout, code } = await runCli(["run", runId]);
+if (code !== 0) return;  // CLI error — keep polling, don't crash
+const data = parseJson(stdout);
+// data.run.status: RUNNING | COMPLETED | FAILED | CANCELLED
+// data.trace.childrenSpans: step tree with names and statuses
+```
+
+The polling loop runs every 5 seconds via `setInterval`. When the run reaches a terminal state, it clears the interval, updates the widget, sends the silent message, and sets a linger timer so the result stays visible for 15 seconds before auto-hiding.
+
+**Resilience matters.** The Inngest server might be restarting. The run might not exist yet (event IDs resolve to runs asynchronously). A CLI error code means "try again later," not "crash." The extension retries the event→runs resolution up to 3 times with 1.5s backoff.
+
+## Putting it together
+
+The full flow:
+
+1. Model calls `inngest_send("system/health.check", '{"source": "test"}')`
+2. Extension runs `joelclaw send system/health.check -d '...'`
+3. Gets back event ID, resolves to run IDs via `joelclaw event <id>`
+4. Starts polling `joelclaw run <id>` every 5s
+5. Widget shows `◆ check/system-health 3s  step: check-services`
+6. Run completes → widget shows `✓ check/system-health 5s  2 steps`
+7. Silent message delivered → model gets the result, responds accordingly
+8. 15 seconds later, widget auto-hides
+
+One extension. One file. The agent gains native access to every Inngest function in the system.
+
+## Packaging
+
+Pi discovers extensions in two places:
+
+**Pi packages** — npm packages with a `pi` field in `package.json`:
+
+```json
+{
+  "pi": {
+    "extensions": ["./inngest-monitor/index.ts"]
+  }
+}
+```
+
+**Local extensions** — `.ts` files in `~/.pi/agent/extensions/`. Drop a directory there and pi loads it on session start. Good for system-specific extensions that don't belong in a shared package.
+
+I keep the inngest-monitor in the [joelclaw monorepo](https://github.com/joelhooks/joelclaw) (`packages/pi-extensions/`) and symlink it to `~/.pi/agent/extensions/`. Single source of truth, no copy drift.
+
+Extensions load at startup. Edit one mid-session, type `/reload`.
+
+## What to build
+
+The extension pattern works for anything with background state:
+
+- **Database monitor** — run queries, show results in a widget
+- **Deploy tracker** — trigger a Vercel/Railway deploy, poll for status
+- **Test runner** — kick off tests, stream results, flag failures
+- **CI watcher** — poll GitHub Actions, surface failures without leaving the editor
+- **Queue monitor** — show job counts, processing rates, dead letters
+
+The constraint is the same every time: **widget for visual state, silent messages for model context, CLI for the plumbing.** The pattern scales to anything.
+
+---
+
+*The full source is at [`packages/pi-extensions/inngest-monitor/index.ts`](https://github.com/joelhooks/joelclaw/tree/main/packages/pi-extensions/inngest-monitor). The pi-tui-design skill (`npx skills add joelhooks/pi-tools --skill pi-tui-design`) has the complete component API, theme tokens, and design vocabulary.*
