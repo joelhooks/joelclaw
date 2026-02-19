@@ -1,13 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
-import Link from "next/link";
 import { NuqsAdapter } from "nuqs/adapters/next";
-import { SITE_URL, SITE_NAME, SITE_TAGLINE, SITE_DESCRIPTION, AUTHOR } from "../lib/constants";
+import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, AUTHOR } from "../lib/constants";
 import { personJsonLd } from "../lib/jsonld";
-import { CLAW_PATH } from "../lib/claw";
 import { Github } from "lucide-react";
-import { SearchDialog } from "../components/search-dialog";
-import { MobileNav } from "../components/mobile-nav";
+import { SiteHeader } from "../components/site-header";
 import "./globals.css";
 
 const geistSans = localFont({
@@ -86,41 +83,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} ${dankMono.variable} font-sans bg-neutral-950 text-neutral-100 antialiased`}
       >
         <div className="mx-auto max-w-2xl px-6 py-16">
-          <header className="mb-16">
-            <div className="flex items-center justify-between">
-              <Link href="/" className="group flex items-center gap-3">
-                <svg viewBox="0 0 512 512" className="w-8 h-8 shrink-0 text-claw transition-transform group-hover:rotate-[-8deg]" aria-hidden="true">
-                  <path fill="currentColor" d={CLAW_PATH} />
-                </svg>
-                <div>
-                  <span className="text-lg font-semibold group-hover:text-white transition-colors">
-                    {SITE_NAME}
-                  </span>
-                  <span className="hidden sm:block text-sm text-neutral-500 mt-0.5">
-                    {SITE_TAGLINE}
-                  </span>
-                </div>
-              </Link>
-              <div className="flex items-center gap-4">
-                <nav className="hidden md:flex items-center gap-5 text-sm text-neutral-500">
-                  <Link href="/" className="hover:text-white transition-colors">
-                    Writing
-                  </Link>
-                  <Link href="/cool" className="hover:text-white transition-colors">
-                    Cool
-                  </Link>
-                  <Link href="/adrs" className="hover:text-white transition-colors">
-                    ADRs
-                  </Link>
-                  <Link href="/network" className="hover:text-white transition-colors">
-                    Network
-                  </Link>
-                </nav>
-                <SearchDialog />
-                <MobileNav />
-              </div>
-            </div>
-          </header>
+          <SiteHeader />
           <NuqsAdapter>
             <main>{children}</main>
           </NuqsAdapter>
