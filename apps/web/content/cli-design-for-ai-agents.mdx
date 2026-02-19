@@ -5,6 +5,10 @@ type: "essay"
 description: "Your AI agent's primary interface isn't a chat window. It's stdout. Here's how to design CLIs that agents can actually use — JSON envelopes, HATEOAS navigation, NDJSON streaming, and zero guesswork."
 ---
 
+```bash
+npx skills add joelhooks/joelclaw --skill cli-design
+```
+
 ## The interface is stdout
 
 Every agent harness can run a shell command and read stdout. Pi, Claude Code, Codex — doesn't matter. That's the universal interface. **If your tool returns something an agent can parse, the agent can use it.** If it returns a pretty table with ANSI colors, the agent is flying blind.
