@@ -88,23 +88,41 @@ Respond with ONLY valid JSON, no markdown fencing:
 {"archive": ["cnv_xxx", "cnv_yyy"], "keep": ["cnv_zzz"]}`;
 
   try {
+    // Write prompt to temp file to avoid shell escaping issues with large prompts
+    const tmpFile = `/tmp/email-cleanup-prompt-${Date.now()}.txt`;
+    require("fs").writeFileSync(tmpFile, prompt);
+
     const result = execSync(
-      `pi --print --no-session --provider anthropic --model haiku -p ${JSON.stringify(prompt)}`,
+      `pi --print --no-session --provider anthropic --model haiku "$(cat ${tmpFile})"`,
       {
         encoding: "utf-8",
-        timeout: 60_000,
-        stdio: ["pipe", "pipe", "pipe"], // capture stderr separately
+        timeout: 120_000,
+        stdio: ["pipe", "pipe", "pipe"],
       },
     ).trim();
 
-    // Extract JSON from response (may have leading whitespace/newlines)
-    const jsonMatch = result.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      console.error("[email-cleanup] No JSON in pi response, keeping all");
-      return { archive: [], keep: conversations.map((c) => c.id) };
+    // Clean up temp file
+    try { require("fs").unlinkSync(tmpFile); } catch {}
+
+    // Find the JSON object in output — skip any stderr noise that leaked through
+    const lines = result.split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("{") && trimmed.includes('"archive"')) {
+        try {
+          return JSON.parse(trimmed);
+        } catch {}
+      }
     }
 
-    return JSON.parse(jsonMatch[0]);
+    // Fallback: try to extract any JSON object
+    const jsonMatch = result.match(/\{"archive":\s*\[[\s\S]*?\].*?"keep":\s*\[[\s\S]*?\]\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+
+    console.error("[email-cleanup] No valid JSON in pi response, keeping all. Output:", result.slice(0, 200));
+    return { archive: [], keep: conversations.map((c) => c.id) };
   } catch (err) {
     console.error("[email-cleanup] pi inference failed, keeping all:", err);
     return { archive: [], keep: conversations.map((c) => c.id) };

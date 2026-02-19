@@ -223,7 +223,9 @@ OpenClaw has a **layered AGENTS.md** at its repo root (`~/Code/openclaw/openclaw
 | gogcli (gog) | 0.11.0 | homebrew (steipete/tap) | Google Workspace CLI — Gmail, Calendar, Drive, Contacts, Tasks, Sheets, Docs + 6 more. File keyring backend, password in agent-secrets — ADR-0040 |
 | Colima | 0.10.0 | homebrew | CLI container runtime (VZ framework), replaces Docker Desktop — ADR-0029 |
 | talosctl | 1.12.4 | homebrew (siderolabs/tap) | Talos Linux CLI — manages Talos k8s cluster, replaces k3d — ADR-0029 |
-| Helm | 4.1.1 | homebrew | K8s package manager — deploys PDS, Bento charts to joelclaw namespace — ADR-0044 |
+| Helm | 4.1.1 | homebrew | K8s package manager — deploys PDS, LiveKit, Bento charts to joelclaw namespace — ADR-0044 |
+| LiveKit Server | 1.9.0 | helm (livekit/livekit-server) | WebRTC media server for voice agents — k8s joelclaw namespace, hostNetwork, ports 7880/7881 — ADR-0043 |
+| lk | — | homebrew | LiveKit CLI — room management, token generation, diagnostics |
 | Docker Sandbox | 0.11.0 | colima | Isolated agent execution (claude, codex in sandboxes) |
 | Bun | 1.3.9 | homebrew | JS runtime & package manager |
 | Node | 24.13.1 | fnm | JS runtime |
@@ -266,6 +268,7 @@ All skills are installed to `~/.agents/skills/` (universal) and symlinked to Cla
 | gateway-debug | joelhooks/joelclaw | Diagnose hung gateway sessions, stuck tool calls, queue backpressure — ADR-0049 |
 | gogcli | custom | Google Workspace CLI — Gmail, Calendar, Drive, Contacts, Tasks, Sheets, Docs, Chat, Forms, Slides, Classroom, Apps Script — ADR-0040 |
 | joelclaw | custom | Event bus + agent loop CLI — send events, check runs, start/monitor loops, debug failures, restart worker (igs is a legacy alias) |
+| k8s | joelhooks/joelclaw | Operate joelclaw Talos k8s cluster — deploy services, health checks, recovery, port mappings, Helm releases, cluster recreation |
 | obsidian-bases | custom | Obsidian Bases (.base files) |
 | obsidian-markdown | custom | Obsidian-flavored markdown |
 | pds | custom | AT Protocol Personal Data Server — write/read dev.joelclaw.* records, session management, health, troubleshooting, helm ops — ADR-0044 |

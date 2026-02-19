@@ -20,11 +20,8 @@ spec:
           args:
             - inngest
             - start
-            # Worker runs on the host — k3d resolves host.k3d.internal
-            - --sdk-url
-            - http://host.k3d.internal:3111/api/inngest
-            - --poll-interval
-            - "5"
+            # Worker connects outbound via connect protocol (INNGEST_DEV=0)
+            # No --sdk-url needed — worker initiates gRPC connection to server
             - --verbose
           ports:
             - containerPort: 8288
