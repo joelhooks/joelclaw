@@ -354,6 +354,18 @@ Implemented first — skipped Phase 1 polling since webhooks proved simpler.
 - HMAC gotcha: Todoist "Verification token" ≠ signing key. `client_secret` is the HMAC key per docs.
 - Key files: `src/webhooks/server.ts`, `src/webhooks/providers/todoist.ts`, `src/inngest/functions/todoist-notify.ts`
 
+### ✅ Phase 2b: Front Webhook Adapter (2026-02-18)
+- Front Rules-based webhook (not app-level) — scoped to private inboxes at Front's Rules layer
+- HMAC-SHA1 over `JSON.stringify(body)` → base64 (different from Todoist's SHA256)
+- No challenge mechanism (rules webhooks don't use challenges)
+- 3 Inngest notify functions: inbound email, outbound sent, assignee changed
+- API enrichment step fetches conversation details (tags, assignee, status) from Front API
+- Structured agent prompts with triage instructions (matches Todoist pattern)
+- Webhook URL: `https://panda.tail7af24.ts.net/webhooks/front`
+- Secrets: `front_rules_webhook_secret` (HMAC), `front_api_token` (enrichment) in agent-secrets
+- Key files: `src/webhooks/providers/front.ts`, `src/inngest/functions/front-notify.ts`
+- Gotchas: Rules webhooks use SHA1 not SHA256; app-level webhooks auto-disable after repeated failures; `agent-secrets` v0.5.0 dropped `--raw` flag (now default)
+
 ### ⬜ Phase 1: Poll Fallback
 - Todoist Activity Log API poll as backup (not needed while Funnel is reliable)
 - Idempotency keys already on all webhook events — safe to run push + poll simultaneously
