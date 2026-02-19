@@ -6,6 +6,8 @@ import { SITE_URL, SITE_NAME, SITE_TAGLINE, SITE_DESCRIPTION, AUTHOR } from "../
 import { personJsonLd } from "../lib/jsonld";
 import { CLAW_PATH } from "../lib/claw";
 import { Github } from "lucide-react";
+import { SearchDialog } from "../components/search-dialog";
+import { MobileNav } from "../components/mobile-nav";
 import "./globals.css";
 
 const geistSans = localFont({
@@ -99,20 +101,24 @@ export default function RootLayout({
                   </span>
                 </div>
               </Link>
-              <nav className="flex items-center gap-5 text-sm text-neutral-500">
-                <Link href="/" className="hover:text-white transition-colors">
-                  Writing
-                </Link>
-                <Link href="/cool" className="hover:text-white transition-colors">
-                  Cool
-                </Link>
-                <Link href="/adrs" className="hover:text-white transition-colors">
-                  ADRs
-                </Link>
-                <Link href="/network" className="hover:text-white transition-colors">
-                  Network
-                </Link>
-              </nav>
+              <div className="flex items-center gap-4">
+                <nav className="hidden md:flex items-center gap-5 text-sm text-neutral-500">
+                  <Link href="/" className="hover:text-white transition-colors">
+                    Writing
+                  </Link>
+                  <Link href="/cool" className="hover:text-white transition-colors">
+                    Cool
+                  </Link>
+                  <Link href="/adrs" className="hover:text-white transition-colors">
+                    ADRs
+                  </Link>
+                  <Link href="/network" className="hover:text-white transition-colors">
+                    Network
+                  </Link>
+                </nav>
+                <SearchDialog />
+                <MobileNav />
+              </div>
             </div>
           </header>
           <NuqsAdapter>

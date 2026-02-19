@@ -52,7 +52,7 @@ export default async function DiscoveryPage({ params }: Props) {
   const { meta, content } = discovery;
 
   return (
-    <article>
+    <article data-pagefind-body data-pagefind-meta="type:discovery">
       <header className="mb-10">
         <h1 className="text-3xl font-bold tracking-tight">{meta.title}</h1>
         <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-neutral-500">

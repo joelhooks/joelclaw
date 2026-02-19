@@ -133,6 +133,9 @@ importers:
       '@types/react-dom':
         specifier: 19.2.2
         version: 19.2.2(@types/react@19.2.2)
+      pagefind:
+        specifier: ^1.4.0
+        version: 1.4.0
       postcss:
         specifier: ^8.5.6
         version: 8.5.6
@@ -205,6 +208,8 @@ importers:
       typescript:
         specifier: 5.9.2
         version: 5.9.2
+
+  packages/lexicons: {}
 
   packages/system-bus:
     dependencies:
@@ -1684,6 +1689,36 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@pagefind/darwin-arm64@1.4.0':
+    resolution: {integrity: sha512-2vMqkbv3lbx1Awea90gTaBsvpzgRs7MuSgKDxW0m9oV1GPZCZbZBJg/qL83GIUEN2BFlY46dtUZi54pwH+/pTQ==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@pagefind/darwin-x64@1.4.0':
+    resolution: {integrity: sha512-e7JPIS6L9/cJfow+/IAqknsGqEPjJnVXGjpGm25bnq+NPdoD3c/7fAwr1OXkG4Ocjx6ZGSCijXEV4ryMcH2E3A==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@pagefind/freebsd-x64@1.4.0':
+    resolution: {integrity: sha512-WcJVypXSZ+9HpiqZjFXMUobfFfZZ6NzIYtkhQ9eOhZrQpeY5uQFqNWLCk7w9RkMUwBv1HAMDW3YJQl/8OqsV0Q==}
+    cpu: [x64]
+    os: [freebsd]
+
+  '@pagefind/linux-arm64@1.4.0':
+    resolution: {integrity: sha512-PIt8dkqt4W06KGmQjONw7EZbhDF+uXI7i0XtRLN1vjCUxM9vGPdtJc2mUyVPevjomrGz5M86M8bqTr6cgDp1Uw==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@pagefind/linux-x64@1.4.0':
+    resolution: {integrity: sha512-z4oddcWwQ0UHrTHR8psLnVlz6USGJ/eOlDPTDYZ4cI8TK8PgwRUPQZp9D2iJPNIPcS6Qx/E4TebjuGJOyK8Mmg==}
+    cpu: [x64]
+    os: [linux]
+
+  '@pagefind/windows-x64@1.4.0':
+    resolution: {integrity: sha512-NkT+YAdgS2FPCn8mIA9bQhiBs+xmniMGq1LFPDhcFn0+2yIUEiIG06t7bsZlhdjknEQRTSdT7YitP6fC5qwP0g==}
+    cpu: [x64]
+    os: [win32]
+
   '@parcel/watcher-android-arm64@2.5.6':
     resolution: {integrity: sha512-YQxSS34tPF/6ZG7r/Ih9xy+kP/WwediEUsqmtf0cuCV5TPPKw/PQHRhueUo6JdeFJaqV3pyjm0GdYjZotbRt/A==}
     engines: {node: '>= 10.0.0'}
@@ -1831,14 +1866,14 @@ packages:
   '@shikijs/vscode-textmate@10.0.2':
     resolution: {integrity: sha512-83yeghZ2xxin3Nj8z1NMd/NCuca+gsYXswywDy5bHvwlWL8tpTQmzGeUuHd9FC3E/SBEMvzJRwWEOz5gGes9Qg==}
 
-  '@skillrecordings/front-sdk@0.1.0':
-    resolution: {integrity: sha512-PcFU3Z/GZWeXf72Y+fbR2lzsCjbcg3icDbBwC8cNXYvjDa/YfgKyDYAB/eVBbN/8/rbmW4fhgGa/O55FKtN2Bw==}
-
   '@silvia-odwyer/photon-node@0.3.4':
     resolution: {integrity: sha512-bnly4BKB3KDTFxrUIcgCLbaeVVS8lrAkri1pEzskpmxu9MdfGQTy8b8EgcD83ywD3RPMsIulY8xJH5Awa+t9fA==}
 
   '@sinclair/typebox@0.34.48':
     resolution: {integrity: sha512-kKJTNuK3AQOrgjjotVxMrCn1sUJwM76wMszfq1kdU4uYVJjvEWuFQ6HgvLt4Xz3fSmZlTOxJ/Ie13KnIcWQXFA==}
+
+  '@skillrecordings/front-sdk@0.1.0':
+    resolution: {integrity: sha512-PcFU3Z/GZWeXf72Y+fbR2lzsCjbcg3icDbBwC8cNXYvjDa/YfgKyDYAB/eVBbN/8/rbmW4fhgGa/O55FKtN2Bw==}
 
   '@smithy/abort-controller@4.2.8':
     resolution: {integrity: sha512-peuVfkYHAmS5ybKxWcfraK7WBBP0J+rkfUcbHJJKQ4ir3UAUNQI+Y4Vt/PqSzGqgloJ5O1dk7+WzNL8wcCSXbw==}
@@ -3329,6 +3364,10 @@ packages:
 
   package-json-from-dist@1.0.1:
     resolution: {integrity: sha512-UEZIS3/by4OC8vL3P2dTXRETpebLI2NiI5vIrjaD/5UtrkFX/tNbwjTSRAGC/+7CAo2pIcBaRgWmcBBHcsaCIw==}
+
+  pagefind@1.4.0:
+    resolution: {integrity: sha512-z2kY1mQlL4J8q5EIsQkLzQjilovKzfNVhX8De6oyE6uHpfFtyBaqUpcl/XzJC/4fjD8vBDyh1zolimIcVrCn9g==}
+    hasBin: true
 
   parse-entities@4.0.2:
     resolution: {integrity: sha512-GG2AQYWoLgL877gQIKeRPGO1xF9+eG1ujIb5soS5gPvLQ1y2o8FL90w2QWNdf9I361Mpp7726c+lj3U0qK1uGw==}
@@ -5825,6 +5864,24 @@ snapshots:
   '@oxlint/binding-win32-x64-msvc@1.47.0':
     optional: true
 
+  '@pagefind/darwin-arm64@1.4.0':
+    optional: true
+
+  '@pagefind/darwin-x64@1.4.0':
+    optional: true
+
+  '@pagefind/freebsd-x64@1.4.0':
+    optional: true
+
+  '@pagefind/linux-arm64@1.4.0':
+    optional: true
+
+  '@pagefind/linux-x64@1.4.0':
+    optional: true
+
+  '@pagefind/windows-x64@1.4.0':
+    optional: true
+
   '@parcel/watcher-android-arm64@2.5.6':
     optional: true
 
@@ -5952,13 +6009,13 @@ snapshots:
 
   '@shikijs/vscode-textmate@10.0.2': {}
 
-  '@skillrecordings/front-sdk@0.1.0':
-    dependencies:
-      zod: 4.3.6
-
   '@silvia-odwyer/photon-node@0.3.4': {}
 
   '@sinclair/typebox@0.34.48': {}
+
+  '@skillrecordings/front-sdk@0.1.0':
+    dependencies:
+      zod: 4.3.6
 
   '@smithy/abort-controller@4.2.8':
     dependencies:
@@ -7899,6 +7956,15 @@ snapshots:
       netmask: 2.0.2
 
   package-json-from-dist@1.0.1: {}
+
+  pagefind@1.4.0:
+    optionalDependencies:
+      '@pagefind/darwin-arm64': 1.4.0
+      '@pagefind/darwin-x64': 1.4.0
+      '@pagefind/freebsd-x64': 1.4.0
+      '@pagefind/linux-arm64': 1.4.0
+      '@pagefind/linux-x64': 1.4.0
+      '@pagefind/windows-x64': 1.4.0
 
   parse-entities@4.0.2:
     dependencies:

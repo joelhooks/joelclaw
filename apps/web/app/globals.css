@@ -7,6 +7,69 @@
   --color-claw: #ff1493;
 }
 
+/* ── Search dialog + Mobile nav ─────────────────────────────── */
+
+@keyframes search-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes search-panel-in {
+  from { opacity: 0; transform: scale(0.96) translateY(-8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes mobile-nav-link-in {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.search-overlay {
+  background: rgba(10, 10, 10, 0.82);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: search-overlay-in 120ms ease-out;
+}
+
+.search-panel {
+  animation: search-panel-in 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.mobile-nav-overlay {
+  animation: search-overlay-in 150ms ease-out;
+}
+
+.mobile-nav-link {
+  opacity: 0;
+  animation: mobile-nav-link-in 200ms ease-out forwards;
+}
+
+/* Pagefind excerpt highlighting */
+.search-excerpt mark {
+  background: transparent;
+  color: #ff1493;
+  font-weight: 500;
+}
+
+/* Thin scrollbar for search results */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #404040 transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #404040;
+  border-radius: 2px;
+}
+
 /* Code blocks — Dank Mono + Catppuccin Macchiato */
 [data-rehype-pretty-code-figure] pre {
   @apply rounded-lg border border-neutral-800 px-4 py-3 text-sm leading-relaxed overflow-x-auto;
