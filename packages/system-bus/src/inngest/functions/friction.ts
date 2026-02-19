@@ -278,7 +278,7 @@ export const friction = inngest.createFunction(
     concurrency: 1,
   },
   [{ cron: "0 7 * * *" }, { event: "memory/friction.requested" }],
-  async ({ step }) => {
+  async ({ step, gateway }) => {
     const gate = await step.run("gate-minimum-points", async () => {
       try {
         const qdrant = getQdrantClient();
@@ -383,7 +383,7 @@ export const friction = inngest.createFunction(
         const task = await adapter.createTask({
           content: `Friction: ${truncateForTaskContent(pattern.title, 80)}`,
           description: descriptionLines.join("\n"),
-          labels: ["memory-review", "agent", "friction"],
+          labels: ["agent", "friction"],
           projectId: "Agent Work",
         });
         taskIds.push(task.id);
@@ -393,6 +393,22 @@ export const friction = inngest.createFunction(
         created: taskIds.length,
         taskIds,
       };
+    });
+
+    await step.run("notify-gateway", async () => {
+      if (parsed.count === 0) {
+        await gateway.notify("friction-analysis", {
+          message: "Friction analysis ran — no patterns detected",
+          observations: observations.count,
+        });
+      } else {
+        const titles = parsed.patterns.map((p) => p.title).join(", ");
+        await gateway.notify("friction-analysis", {
+          message: `Friction analysis: ${parsed.count} patterns → ${tasks.created} Todoist tasks`,
+          patterns: titles,
+          tasksCreated: tasks.created,
+        });
+      }
     });
 
     return {
