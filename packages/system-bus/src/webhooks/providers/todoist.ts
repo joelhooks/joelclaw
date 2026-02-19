@@ -34,6 +34,15 @@ export const todoistProvider: WebhookProvider = {
     const secret = getClientSecret();
     const computed = createHmac("sha256", secret).update(rawBody).digest("base64");
 
+    // O11y: log HMAC comparison for debugging (remove after webhook verified working)
+    console.log("[todoist:hmac]", {
+      received: signature.slice(0, 20) + "...",
+      computed: computed.slice(0, 20) + "...",
+      match: signature === computed,
+      secretPrefix: secret.slice(0, 6) + "...",
+      bodyLen: rawBody.length,
+    });
+
     try {
       return timingSafeEqual(
         Buffer.from(signature, "base64"),
