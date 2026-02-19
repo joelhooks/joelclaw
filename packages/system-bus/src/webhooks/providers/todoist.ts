@@ -16,9 +16,11 @@ const EVENT_MAP: Record<string, string> = {
 };
 
 function getClientSecret(): string {
-  const secret = process.env.TODOIST_CLIENT_SECRET;
+  // Todoist App Console "Verification token" — used for HMAC-SHA256 signing.
+  // Different from the OAuth client_secret.
+  const secret = process.env.TODOIST_WEBHOOK_SECRET ?? process.env.TODOIST_CLIENT_SECRET;
   if (!secret) {
-    throw new Error("TODOIST_CLIENT_SECRET env var is required for webhook verification");
+    throw new Error("TODOIST_WEBHOOK_SECRET (or TODOIST_CLIENT_SECRET) env var is required for webhook verification");
   }
   return secret;
 }
