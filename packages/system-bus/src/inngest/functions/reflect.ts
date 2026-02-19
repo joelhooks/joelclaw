@@ -368,6 +368,7 @@ export const reflect = inngest.createFunction(
       const grouped = groupBySection(stagedProposals);
 
       return {
+        proposals: stagedProposals,
         proposalCount: stagedProposals.length,
         capturedAt,
         sections: [...grouped.keys()],
@@ -414,6 +415,23 @@ export const reflect = inngest.createFunction(
         capturedAt: staged.capturedAt,
       },
     };
+
+    if (staged.proposals.length > 0) {
+      await step.sendEvent(
+        "emit-proposal-created-events",
+        staged.proposals.map((proposal) => ({
+          name: "memory/proposal.created" as const,
+          data: {
+            proposalId: proposal.id,
+            id: proposal.id,
+            section: proposal.section,
+            change: proposal.change,
+            source: "reflect",
+            timestamp: staged.capturedAt,
+          },
+        }))
+      );
+    }
 
     let emitCompleteError: string | undefined;
     step.sendEvent("emit-complete", [emittedEvent]).catch((error) => {

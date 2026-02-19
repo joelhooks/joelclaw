@@ -422,6 +422,25 @@ export type Events = {
       capturedAt: string;
     };
   };
+  "memory/proposal.created": {
+    data: {
+      proposalId: string;
+      id: string;
+      section: string;
+      change: string;
+      source?: string;
+      timestamp?: string;
+    };
+  };
+  "memory/proposal.triaged": {
+    data: {
+      proposalId: string;
+      action: "auto-promote" | "auto-reject" | "auto-merge" | "needs-review";
+      reason: string;
+      mergeWith?: string;
+      triagedAt: string;
+    };
+  };
   "memory/proposal.approved": {
     data: {
       proposalId: string;
