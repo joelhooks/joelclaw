@@ -8,10 +8,12 @@ import { Hono } from "hono";
 import { inngest } from "../inngest/client";
 import type { WebhookProvider } from "./types";
 import { todoistProvider } from "./providers/todoist";
+import { frontProvider } from "./providers/front";
 
 // ── Provider registry ────────────────────────────────────
 const providers = new Map<string, WebhookProvider>();
 providers.set(todoistProvider.id, todoistProvider);
+providers.set(frontProvider.id, frontProvider);
 
 // ── Rate limiting (auth failures per IP) ─────────────────
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -117,6 +119,14 @@ webhookApp.post("/:provider", async (c) => {
 
   if (events.length === 0) {
     return c.json({ ok: true, events: 0, note: "No matching events" });
+  }
+
+  // Handle challenge/validation requests (Front sends x-front-challenge)
+  const challengeEvent = events.find((e) => e.name === "_challenge");
+  if (challengeEvent) {
+    const challenge = (challengeEvent.data as any).challenge;
+    console.log("[webhooks] challenge response", { provider: providerId });
+    return c.text(challenge, 200, { "Content-Type": "text/plain" });
   }
 
   // Emit to Inngest

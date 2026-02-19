@@ -18,6 +18,11 @@ export {
   todoistTaskCreated,
 } from "./todoist-notify";
 export {
+  frontMessageReceived,
+  frontMessageSent,
+  frontAssigneeChanged,
+} from "./front-notify";
+export {
   agentLoopPlan,
   agentLoopTestWriter,
   agentLoopImplement,

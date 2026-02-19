@@ -1,0 +1,28 @@
+/**
+ * @joelclaw/email — Email port + adapters.
+ *
+ * Hexagonal Architecture (ADR-0052):
+ *   Port: EmailPort interface (application-owned)
+ *   Adapters: Front (primary), Gmail via gog CLI (secondary)
+ *
+ * Usage:
+ *   import { createFrontAdapter } from "@joelclaw/email"
+ *   const email = createFrontAdapter({ apiToken: "..." })
+ *   const convos = await email.listConversations("inb_xxx", { unread: true })
+ */
+
+// Port
+export type {
+  EmailPort,
+  EmailAddress,
+  EmailAttachment,
+  EmailConversation,
+  EmailDraft,
+  EmailInbox,
+  EmailMessage,
+  ConversationFilter,
+} from "./port/types";
+
+// Adapters
+export { createFrontAdapter } from "./adapters/front";
+export { createGmailAdapter } from "./adapters/gmail";

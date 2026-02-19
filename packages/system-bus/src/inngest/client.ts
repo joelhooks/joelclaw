@@ -569,6 +569,37 @@ export type Events = {
     };
   };
 
+  // --- Front ---
+  "front/message.received": {
+    data: {
+      conversationId: string;
+      messageId: string;
+      from: string;
+      fromName: string;
+      to: string[];
+      subject: string;
+      body: string;
+      bodyPlain: string;
+      preview: string;
+      isInbound: boolean;
+      attachmentCount: number;
+    };
+  };
+  "front/message.sent": {
+    data: {
+      conversationId: string;
+      to: string[];
+      subject: string;
+    };
+  };
+  "front/assignee.changed": {
+    data: {
+      conversationId: string;
+      assigneeEmail: string;
+      assigneeName: string;
+    };
+  };
+
   // --- Legacy ---
   "pipeline/video.ingested": {
     data: {

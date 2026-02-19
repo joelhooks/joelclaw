@@ -74,14 +74,26 @@ export const todoistCommentAdded = inngest.createFunction(
       return { taskContent, projectId, projectName, labels: task?.labels ?? [] };
     });
 
+    // Comment = instruction. Context + instruction + IDs. Agent knows how to triage (SOUL.md § Agency).
+    const agentPrompt = await step.run("build-prompt", () => {
+      const projectTag = context.projectName ? ` (${context.projectName})` : "";
+      const labelTag = context.labels?.length ? ` [${context.labels.join(", ")}]` : "";
+      return [
+        `## 📋 Todoist Instruction`,
+        "",
+        `**Task**: "${context.taskContent || `task ${taskId}`}"${projectTag}${labelTag}`,
+        `**Instruction**: ${commentContent}`,
+        `Task \`${taskId}\` · Comment \`${commentId}\`${context.projectId ? ` · Project \`${context.projectId}\`` : ""}`,
+      ].filter(Boolean).join("\n");
+    });
+
     const result = await step.run("notify-gateway", async () => {
       if (!gateway) {
         return { pushed: false, reason: "no gateway context" };
       }
 
-      const projectTag = context.projectName ? ` (${context.projectName})` : "";
       return await gateway.notify("todoist.comment.added", {
-        message: `💬 New comment on "${context.taskContent || `task ${taskId}`}"${projectTag}: ${commentContent}`,
+        prompt: agentPrompt,
         taskId,
         commentId,
         commentContent,
@@ -120,14 +132,25 @@ export const todoistTaskCompleted = inngest.createFunction(
       return { taskContent: rawTaskContent || "", projectId, projectName };
     });
 
+    const agentPrompt = await step.run("build-prompt", () => {
+      const projectTag = context.projectName ? ` (${context.projectName})` : "";
+      return [
+        `## ✅ Task Completed`,
+        "",
+        `**Task**: "${context.taskContent || taskId}"${projectTag}`,
+        "",
+        `Is there follow-up work? A next step to create, a calendar event to remove, something to notify about?`,
+        `If nothing obvious, acknowledge briefly.`,
+      ].join("\n");
+    });
+
     const result = await step.run("notify-gateway", async () => {
       if (!gateway) {
         return { pushed: false, reason: "no gateway context" };
       }
 
-      const projectTag = context.projectName ? ` (${context.projectName})` : "";
       return await gateway.notify("todoist.task.completed", {
-        message: `✅ Task completed: "${context.taskContent || taskId}"${projectTag}`,
+        prompt: agentPrompt,
         taskId,
         taskContent: context.taskContent,
         projectId: context.projectId,
@@ -161,15 +184,26 @@ export const todoistTaskCreated = inngest.createFunction(
       return { taskContent: rawTaskContent || "", projectId, projectName, labels };
     });
 
+    const agentPrompt = await step.run("build-prompt", () => {
+      const projectTag = context.projectName ? ` (${context.projectName})` : "";
+      const labelTag = context.labels?.length ? `\n**Labels**: ${context.labels.join(", ")}` : "";
+      return [
+        `## 📝 New Task`,
+        "",
+        `**Task**: "${context.taskContent || taskId}"${projectTag}${labelTag}`,
+        "",
+        `Can I help with this? Does it need scheduling, breakdown into subtasks, research, or context from the vault?`,
+        `If it's just a note Joel created for himself, acknowledge briefly.`,
+      ].join("\n");
+    });
+
     const result = await step.run("notify-gateway", async () => {
       if (!gateway) {
         return { pushed: false, reason: "no gateway context" };
       }
 
-      const projectTag = context.projectName ? ` (${context.projectName})` : "";
-      const labelTag = context.labels?.length ? ` [${context.labels.join(", ")}]` : "";
       return await gateway.notify("todoist.task.created", {
-        message: `📝 New task: "${context.taskContent || taskId}"${projectTag}${labelTag}`,
+        prompt: agentPrompt,
         taskId,
         taskContent: context.taskContent,
         projectId: context.projectId,

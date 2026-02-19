@@ -28,6 +28,9 @@ import {
   todoistCommentAdded,
   todoistTaskCompleted,
   todoistTaskCreated,
+  frontMessageReceived,
+  frontMessageSent,
+  frontAssigneeChanged,
 } from "./inngest/functions";
 
 const app = new Hono();
@@ -114,6 +117,9 @@ app.on(
       todoistCommentAdded,
       todoistTaskCompleted,
       todoistTaskCreated,
+      frontMessageReceived,
+      frontMessageSent,
+      frontAssigneeChanged,
     ],
     serveHost: "http://host.docker.internal:3111",
   })
