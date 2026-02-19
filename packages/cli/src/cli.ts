@@ -13,6 +13,7 @@ import { schemaCmd } from "./commands/schema"
 import { loopCmd } from "./commands/loop"
 import { discoverCmd } from "./commands/discover"
 import { refresh } from "./commands/refresh"
+import { eventCmd } from "./commands/event"
 import { eventsCmd } from "./commands/events"
 import { logsCmd } from "./commands/logs"
 import { watchCmd } from "./commands/watch"
@@ -52,6 +53,7 @@ const root = Command.make("joelclaw", {}, () =>
           send: "joelclaw send <event> [-d JSON]",
           runs: "joelclaw runs [--count N] [--status S] [--hours H]",
           run: "joelclaw run <run-id>",
+          event: "joelclaw event <event-id>",
           events: "joelclaw events [--prefix P] [--hours H] [--count N]",
           functions: "joelclaw functions",
           status: "joelclaw status",
@@ -79,7 +81,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, tuiCmd, reviewCmd, recallCmd, emailCmd])
+  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, tuiCmd, reviewCmd, recallCmd, emailCmd])
 )
 
 const cli = Command.run(root, {

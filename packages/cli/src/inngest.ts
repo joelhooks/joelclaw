@@ -201,6 +201,47 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
       return results
     })
 
+    // ── single event + its runs ──────────────────────────────────
+
+    const event = Effect.fn("Inngest.event")(function* (eventID: string) {
+      const data = yield* gql(`{
+        event(query: { eventId: "${eventID}" }) {
+          id name createdAt raw pendingRuns totalRuns
+          functionRuns { id status functionID startedAt finishedAt output }
+        }
+      }`)
+
+      const ev = data.event
+      if (!ev) return { event: null, runs: [] }
+
+      // resolve function names
+      const fns = yield* functions()
+      const fnMap = new Map(fns.map((f) => [f.id, f.name]))
+
+      let payload: Record<string, unknown> = {}
+      try { payload = JSON.parse(ev.raw ?? "{}").data ?? {} } catch {}
+
+      return {
+        event: {
+          id: ev.id,
+          name: ev.name,
+          createdAt: ev.createdAt,
+          pendingRuns: ev.pendingRuns,
+          totalRuns: ev.totalRuns,
+          data: payload,
+        },
+        runs: (ev.functionRuns ?? []).map((r: any) => ({
+          id: r.id,
+          status: r.status,
+          functionID: r.functionID,
+          functionName: fnMap.get(r.functionID) ?? r.functionID,
+          startedAt: r.startedAt,
+          finishedAt: r.finishedAt,
+          output: r.output,
+        })),
+      }
+    })
+
     // ── health ─────────────────────────────────────────────────────
 
     const health = Effect.fn("Inngest.health")(function* () {
@@ -242,7 +283,7 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
       return checks
     })
 
-    return { send, functions, runs, run, events, health } as const
+    return { send, functions, runs, run, event, events, health } as const
   },
 }) {}
 
