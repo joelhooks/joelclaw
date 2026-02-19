@@ -27,6 +27,7 @@ export {
   todoistTaskCompleted,
   todoistTaskCreated,
 } from "./todoist-notify";
+export { todoistMemoryReviewBridge } from "./todoist-memory-review-bridge";
 export {
   frontMessageReceived,
   frontMessageSent,
@@ -41,6 +42,7 @@ export {
 export { emailInboxCleanup } from "./email-cleanup";
 export { meetingAnalyze } from "./meeting-analyze";
 export { granolaBackfill } from "./granola-backfill";
+export { friction } from "./friction";
 export {
   agentLoopPlan,
   agentLoopTestWriter,

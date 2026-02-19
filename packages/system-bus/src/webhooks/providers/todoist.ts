@@ -86,6 +86,7 @@ export const todoistProvider: WebhookProvider = {
           data: {
             taskId: entityId,
             taskContent: String(eventData.content ?? ""),
+            taskDescription: String(eventData.description ?? eventDataExtra.description ?? ""),
             projectId: String(eventData.project_id ?? ""),
             labels,
           },

@@ -557,6 +557,7 @@ export type Events = {
     data: {
       taskId: string;
       taskContent: string;
+      taskDescription?: string;
       projectId: string;
       labels: string[];
     };

@@ -13,6 +13,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { COMPRESSION_GUIDANCE, validateCompression } from "./reflect-prompt";
+import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
+import type { CreateTaskInput, Task } from "../../tasks/port";
 
 type MockShellResult = {
   exitCode: number;
@@ -29,11 +31,13 @@ const originalRedisMethods = {
 const originalBunDollar = Bun.$;
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
+const originalTodoistCreateTask = TodoistTaskAdapter.prototype.createTask;
 
 const redisLists = new Map<string, string[]>();
 const redisHashes = new Map<string, Record<string, string>>();
 let shellCalls: string[] = [];
 let shellResultQueue: MockShellResult[] = [];
+let todoistCreateTaskCalls: CreateTaskInput[] = [];
 let tempHome = "";
 
 function buildCommandText(strings: TemplateStringsArray, values: unknown[]): string {
@@ -156,11 +160,33 @@ beforeAll(() => {
       },
     };
   }) as typeof Bun.$;
+
+  (TodoistTaskAdapter.prototype as any).createTask = async function (task: CreateTaskInput) {
+    todoistCreateTaskCalls.push(task);
+    return {
+      id: `mock-task-${todoistCreateTaskCalls.length}`,
+      content: task.content,
+      description: task.description,
+      priority: task.priority ?? 1,
+      due: task.due,
+      dueString: task.dueString,
+      isRecurring: false,
+      deadline: task.deadline,
+      completed: false,
+      projectId: task.projectId,
+      sectionId: task.sectionId,
+      parentId: task.parentId,
+      labels: task.labels ?? [],
+      url: "",
+      createdAt: new Date(),
+    } satisfies Task;
+  };
 });
 
 afterAll(() => {
   Object.assign(Redis.prototype, originalRedisMethods);
   Bun.$ = originalBunDollar;
+  TodoistTaskAdapter.prototype.createTask = originalTodoistCreateTask;
 });
 
 beforeEach(() => {
@@ -168,6 +194,7 @@ beforeEach(() => {
   redisHashes.clear();
   shellCalls = [];
   shellResultQueue = [];
+  todoistCreateTaskCalls = [];
   tempHome = mkdtempSync(join(tmpdir(), "mem-16-home-"));
   process.env.HOME = tempHome;
   process.env.USERPROFILE = tempHome;
@@ -304,6 +331,49 @@ describe("MEM-16 reflect acceptance tests", () => {
       },
     });
 
+    expect(todoistCreateTaskCalls).toHaveLength(2);
+    expect(todoistCreateTaskCalls[0]).toMatchObject({
+      content: "Memory: Retain strict acceptance coverage. → Constraints",
+      description: expect.stringContaining("Proposal: p-20260217-001"),
+      labels: ["memory-review", "agent"],
+      projectId: "Agent Work",
+    });
+    expect(todoistCreateTaskCalls[1]).toMatchObject({
+      content: "Memory: Prefer behavior-based assertions. → Preferences",
+      description: expect.stringContaining("Proposal: p-20260217-002"),
+      labels: ["memory-review", "agent"],
+      projectId: "Agent Work",
+    });
+
+  });
+
+  test("Todoist task content truncates change text to 80 characters", async () => {
+    redisLists.set("memory:observations:2026-02-17", [
+      JSON.stringify({ summary: "Verify truncation behavior." }),
+    ]);
+
+    const longChange = "A".repeat(90);
+    shellResultQueue = [
+      {
+        exitCode: 0,
+        stdout: `<proposals>
+  <proposal><section>Patterns</section><change>${longChange}</change></proposal>
+</proposals>`,
+        stderr: "",
+      },
+    ];
+
+    await executeReflect("2026-02-17");
+
+    expect(todoistCreateTaskCalls).toHaveLength(1);
+    expect(todoistCreateTaskCalls[0]).toMatchObject({
+      content: `Memory: ${"A".repeat(80)} → Patterns`,
+      labels: ["memory-review", "agent"],
+      projectId: "Agent Work",
+    });
+    expect(todoistCreateTaskCalls[0]?.description?.split("\n")[0]).toBe(
+      "Proposal: p-20260217-001"
+    );
   });
 
   test("running reflect twice on the same day appends at most one Reflected daily-log entry", async () => {

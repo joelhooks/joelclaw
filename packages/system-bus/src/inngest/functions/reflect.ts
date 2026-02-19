@@ -2,6 +2,7 @@ import { inngest } from "../client";
 import Redis from "ioredis";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import {
   COMPRESSION_GUIDANCE,
   REFLECTOR_SYSTEM_PROMPT,
@@ -182,6 +183,11 @@ function groupBySection(proposals: StagedProposal[]): Map<string, StagedProposal
   return grouped;
 }
 
+function truncateForTaskContent(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength);
+}
+
 function appendToFile(path: string, content: string): { ok: boolean; error?: string } {
   try {
     mkdirSync(dirname(path), { recursive: true });
@@ -304,6 +310,7 @@ export const reflect = inngest.createFunction(
 
     const staged = await step.run("stage-review", async () => {
       const redis = getRedisClient();
+      const taskAdapter = new TodoistTaskAdapter();
       const proposals = parseProposals(validated.raw);
       const capturedAt = new Date().toISOString();
       let nextSequence = 1;
@@ -337,6 +344,18 @@ export const reflect = inngest.createFunction(
           capturedAt
         );
         await redis.rpush("memory:review:pending", proposal.id);
+
+        const truncatedChange = truncateForTaskContent(proposal.change, 80);
+        await taskAdapter.createTask({
+          content: `Memory: ${truncatedChange} → ${proposal.section}`,
+          description: [
+            `Proposal: ${proposal.id}`,
+            `Section: ${proposal.section}`,
+            `Change: ${proposal.change}`,
+          ].join("\n"),
+          labels: ["memory-review", "agent"],
+          projectId: "Agent Work",
+        });
       }
 
       const grouped = groupBySection(stagedProposals);

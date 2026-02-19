@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { mkdir, rename } from "node:fs/promises";
 import Redis from "ioredis";
 import { inngest } from "../client";
+import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import { PROMOTE_SYSTEM_PROMPT, PROMOTE_USER_PROMPT } from "./promote-prompt";
 
 type RedisLike = {
@@ -287,6 +288,21 @@ export async function expireProposal(proposalId: string): Promise<void> {
   await redis.del(key);
 }
 
+async function completeTodoistProposalTasks(proposalId: string): Promise<number> {
+  const adapter = new TodoistTaskAdapter();
+  const needle = `Proposal: ${proposalId}`;
+  const tasks = await adapter.listTasks();
+  const matchingTasks = tasks.filter(
+    (task) => typeof task.description === "string" && task.description.includes(needle)
+  );
+
+  for (const task of matchingTasks) {
+    await adapter.completeTask(task.id);
+  }
+
+  return matchingTasks.length;
+}
+
 // NOTE: stabilizeFunctionOpts removed — its Proxy was mangling trigger
 // registration, causing proposal events to be replaced with content/updated.
 const promoteFunction =
@@ -335,6 +351,15 @@ const promoteFunction =
         for (const proposalId of pending) {
           if (!isProposalOlderThanSevenDays(proposalId)) continue;
           await expireProposal(proposalId);
+          try {
+            await completeTodoistProposalTasks(proposalId);
+          } catch (error) {
+            console.error(
+              `Failed to complete Todoist task for expired proposal ${proposalId}: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            );
+          }
           expired.push(proposalId);
         }
 

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InngestTestEngine } from "@inngest/test";
 import Redis from "ioredis";
+import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import { promote } from "./promote";
 
 type RedisMockState = {
@@ -21,6 +22,10 @@ const originalRedisMethods = {
   del: Redis.prototype.del,
   rpush: Redis.prototype.rpush,
 };
+const originalTodoistMethods = {
+  listTasks: TodoistTaskAdapter.prototype.listTasks,
+  completeTask: TodoistTaskAdapter.prototype.completeTask,
+};
 
 let redisState: RedisMockState = {
   hashes: new Map(),
@@ -30,6 +35,8 @@ let redisState: RedisMockState = {
 let tempHome = "";
 let workspaceDir = "";
 let memoryPath = "";
+let todoistTasks: Array<{ id: string; description?: string }> = [];
+let completedTodoistTaskIds: string[] = [];
 
 function proposalKey(id: string): string {
   return `memory:review:proposal:${id}`;
@@ -166,6 +173,23 @@ beforeAll(() => {
     redisState.lists.set(String(key), list);
     return list.length;
   };
+
+  (TodoistTaskAdapter.prototype as any).listTasks = async function () {
+    return todoistTasks.map((task) => ({
+      id: task.id,
+      content: "",
+      description: task.description,
+      priority: 1,
+      completed: false,
+      labels: [],
+      url: "",
+      createdAt: new Date(0),
+    }));
+  };
+
+  (TodoistTaskAdapter.prototype as any).completeTask = async function (id: string) {
+    completedTodoistTaskIds.push(String(id));
+  };
 });
 
 afterAll(() => {
@@ -175,6 +199,8 @@ afterAll(() => {
   (Redis.prototype as { lrem?: unknown }).lrem = originalRedisMethods.lrem;
   Redis.prototype.del = originalRedisMethods.del;
   Redis.prototype.rpush = originalRedisMethods.rpush;
+  TodoistTaskAdapter.prototype.listTasks = originalTodoistMethods.listTasks;
+  TodoistTaskAdapter.prototype.completeTask = originalTodoistMethods.completeTask;
 });
 
 beforeEach(() => {
@@ -182,6 +208,8 @@ beforeEach(() => {
     hashes: new Map(),
     lists: new Map(),
   };
+  todoistTasks = [];
+  completedTodoistTaskIds = [];
 
   tempHome = mkdtempSync(join(tmpdir(), "mem-22-home-"));
   process.env.HOME = tempHome;
@@ -253,6 +281,16 @@ describe("MEM-22 promote integration acceptance test", () => {
       proposedText: activePendingText,
       capturedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
     });
+    todoistTasks = [
+      {
+        id: "task-expired",
+        description: `Proposal: ${expiredId}\nSection: Patterns`,
+      },
+      {
+        id: "task-active",
+        description: `Proposal: ${activePendingId}\nSection: Patterns`,
+      },
+    ];
 
     const { result: approvedResult } = await executePromoteWithEvent({
       name: "memory/proposal.approved",
@@ -293,6 +331,7 @@ describe("MEM-22 promote integration acceptance test", () => {
     expect(redisState.hashes.has(proposalKey(approvedId))).toBe(false);
     expect(redisState.hashes.has(proposalKey(deletedId))).toBe(false);
     expect(redisState.hashes.has(proposalKey(expiredId))).toBe(false);
+    expect(completedTodoistTaskIds).toEqual(["task-expired"]);
 
     expect({
       approvedInMemory: hardRules.includes(`- (${proposalDateFromId(approvedId)})`),

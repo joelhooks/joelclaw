@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InngestTestEngine } from "@inngest/test";
 import Redis from "ioredis";
+import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import * as promoteModule from "./promote";
 import { archiveProposal, expireProposal, promote, promoteToMemory } from "./promote";
 
@@ -24,6 +25,10 @@ const originalRedisMethods = {
   del: Redis.prototype.del,
   rpush: Redis.prototype.rpush,
 };
+const originalTodoistMethods = {
+  listTasks: TodoistTaskAdapter.prototype.listTasks,
+  completeTask: TodoistTaskAdapter.prototype.completeTask,
+};
 
 let redisState: RedisMockState = {
   hashes: new Map(),
@@ -34,6 +39,8 @@ let tempHome = "";
 let workspaceDir = "";
 let reviewPath = "";
 let memoryPath = "";
+let todoistTasks: Array<{ id: string; description?: string }> = [];
+let completedTodoistTaskIds: string[] = [];
 
 function proposalKey(id: string): string {
   return `memory:review:proposal:${id}`;
@@ -169,6 +176,23 @@ beforeAll(() => {
     redisState.lists.set(String(key), list);
     return list.length;
   };
+
+  (TodoistTaskAdapter.prototype as any).listTasks = async function () {
+    return todoistTasks.map((task) => ({
+      id: task.id,
+      content: "",
+      description: task.description,
+      priority: 1,
+      completed: false,
+      labels: [],
+      url: "",
+      createdAt: new Date(0),
+    }));
+  };
+
+  (TodoistTaskAdapter.prototype as any).completeTask = async function (id: string) {
+    completedTodoistTaskIds.push(String(id));
+  };
 });
 
 afterAll(() => {
@@ -178,6 +202,8 @@ afterAll(() => {
   (Redis.prototype as { lrem?: unknown }).lrem = originalRedisMethods.lrem;
   Redis.prototype.del = originalRedisMethods.del;
   Redis.prototype.rpush = originalRedisMethods.rpush;
+  TodoistTaskAdapter.prototype.listTasks = originalTodoistMethods.listTasks;
+  TodoistTaskAdapter.prototype.completeTask = originalTodoistMethods.completeTask;
 });
 
 beforeEach(() => {
@@ -185,6 +211,8 @@ beforeEach(() => {
     hashes: new Map(),
     lists: new Map(),
   };
+  todoistTasks = [];
+  completedTodoistTaskIds = [];
 
   tempHome = mkdtempSync(join(tmpdir(), "mem-3-home-"));
   process.env.HOME = tempHome;
@@ -365,6 +393,16 @@ describe("MEM-3 promote acceptance tests", () => {
       proposedText: "recent proposal",
       capturedAt: new Date().toISOString(),
     });
+    todoistTasks = [
+      {
+        id: "todo-stale",
+        description: `Proposal: ${staleId}\nSection: Patterns`,
+      },
+      {
+        id: "todo-recent",
+        description: `Proposal: ${recentId}\nSection: Patterns`,
+      },
+    ];
 
     await executePromoteWithEvent({
       name: "inngest/scheduled.timer",
@@ -382,6 +420,7 @@ describe("MEM-3 promote acceptance tests", () => {
       pendingIds: redisState.lists.get(REVIEW_PENDING_KEY) ?? [],
       staleExists: redisState.hashes.has(proposalKey(staleId)),
       recentExists: redisState.hashes.has(proposalKey(recentId)),
+      completedTodoistTaskIds,
     }).toMatchObject({
       logContainsExpiredHeader: true,
       logContainsStaleId: true,
@@ -390,6 +429,7 @@ describe("MEM-3 promote acceptance tests", () => {
       pendingIds: [recentId],
       staleExists: false,
       recentExists: true,
+      completedTodoistTaskIds: ["todo-stale"],
     });
   });
 
