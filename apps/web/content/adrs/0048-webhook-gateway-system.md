@@ -339,28 +339,30 @@ Fork OpenClaw's `hooks.ts` + `hooks-mapping.ts` and adapt.
 - OpenClaw (~/Code/openclaw/openclaw) for the hooks architecture patterns: path-based routing, template mapping, rate limiting, body size limits, auth failure tracking
 - Ali Abdaal for the "comments as conversation" pattern that motivated this
 
-## Implementation Plan
+## Implementation Status
 
-### Phase 1: Todoist Poll (now — ADR-0047 prerequisite)
-1. Implement `todoistProvider.poll()` via Activity Log API
-2. Inngest cron every 2 min
-3. Emit `todoist/comment.added` events
-4. Wire up the comment-respond function from ADR-0047
+### ✅ Phase 2: Webhook Server + Tailscale Funnel (2026-02-18)
+Implemented first — skipped Phase 1 polling since webhooks proved simpler.
 
-### Phase 2: Webhook Server + Tailscale Funnel
-1. Build Bun HTTP server at `packages/system-bus/src/webhooks/server.ts`
-2. Implement `WebhookProvider` interface
-3. Todoist webhook adapter with HMAC-SHA256 verification
-4. Expose via Caddy + Tailscale Funnel
-5. Run poll + push simultaneously with idempotency keys
-6. launchd plist for the webhook server process
+- Webhook server as Hono sub-app mounted on worker at `/webhooks/:provider` (not separate process)
+- `WebhookProvider` interface: `verifySignature()`, `normalizePayload()`, per-provider routing
+- Todoist adapter: HMAC-SHA256 with `client_secret`, 3 event types (`note:added`, `item:completed`, `item:added`)
+- Tailscale Funnel :443 → worker :3111 directly (ADR-0051). Caddy path-routing dropped — Caddy swallows POST bodies on Funnel requests.
+- 3 Inngest notify functions with API enrichment step (fetches task title + project name)
+- Gateway middleware returns `GatewayPushResult` (not void) for observability
+- Rate limiting: 10 req/min per IP via Hono middleware
+- HMAC gotcha: Todoist "Verification token" ≠ signing key. `client_secret` is the HMAC key per docs.
+- Key files: `src/webhooks/server.ts`, `src/webhooks/providers/todoist.ts`, `src/inngest/functions/todoist-notify.ts`
 
-### Phase 3: GitHub + Vercel Adapters
-1. GitHub webhook adapter (push, PR, deploy status events)
-2. Vercel webhook adapter (deploy.ready, deploy.error)
-3. Wire to existing Inngest functions (content sync, deploy monitoring)
+### ⬜ Phase 1: Poll Fallback
+- Todoist Activity Log API poll as backup (not needed while Funnel is reliable)
+- Idempotency keys already on all webhook events — safe to run push + poll simultaneously
 
-### Phase 4: Mapping System (optional)
-1. Port OpenClaw's template mapping for config-driven webhooks
-2. `hooks/transforms/` directory for custom JS transform functions
-3. Config-driven: add new webhooks without code changes
+### ⬜ Phase 3: GitHub + Vercel Adapters
+- GitHub webhook adapter (push, PR, deploy status events)
+- Vercel webhook adapter (deploy.ready, deploy.error)
+- Provider interface is ready — add adapter + register route + notify function
+
+### ⬜ Phase 4: Mapping System (optional)
+- Port OpenClaw's template mapping for config-driven webhooks
+- Config-driven: add new webhooks without code changes
