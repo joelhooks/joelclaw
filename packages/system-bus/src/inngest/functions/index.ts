@@ -11,6 +11,7 @@ export { embedText } from "./embed";
 export { agentDispatch } from "./agent-dispatch";
 export { backfillObserve } from "./backfill-observe";
 export { heartbeatCron, heartbeatWake } from "./heartbeat";
+export { approvalRequest, approvalResolve } from "./approval";
 export { taskTriage } from "./task-triage";
 export { checkSessions } from "./check-sessions";
 export { checkTriggers } from "./check-triggers";
@@ -21,6 +22,7 @@ export { checkGranola } from "./check-granola";
 export { checkEmail } from "./check-email";
 export { checkCalendar } from "./check-calendar";
 export { checkLoops } from "./check-loops";
+export { dailyDigest } from "./daily-digest";
 export { mediaProcess } from "./media-process";
 export {
   todoistCommentAdded,

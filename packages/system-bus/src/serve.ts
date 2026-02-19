@@ -16,6 +16,8 @@ import {
   backfillObserve,
   heartbeatCron,
   heartbeatWake,
+  approvalRequest,
+  approvalResolve,
   agentDispatch,
   mediaProcess,
   agentLoopPlan,
@@ -52,6 +54,7 @@ import {
   checkCalendar,
   checkLoops,
 } from "./inngest/functions";
+import { dailyDigest } from "./inngest/functions/daily-digest";
 
 const app = new Hono();
 
@@ -70,6 +73,8 @@ const registeredFunctions = [
   backfillObserve,
   heartbeatCron,
   heartbeatWake,
+  approvalRequest,
+  approvalResolve,
   agentDispatch,
   agentLoopPlan,
   agentLoopTestWriter,
@@ -105,6 +110,7 @@ const registeredFunctions = [
   checkEmail,
   checkCalendar,
   checkLoops,
+  dailyDigest,
 ];
 
 // Derive function names from the actual array — no stale hardcoded list
@@ -137,6 +143,7 @@ app.get("/", (c) =>
       "email/inbox.cleanup": "AI-powered inbox triage — classify + archive noise",
       "meeting/noted": "Analyze meeting → extract action items, decisions, people (ADR-0055)",
       "granola/backfill.requested": "Backfill all historical Granola meetings (ADR-0055)",
+      "memory/digest.created": "Structured daily digest generated from raw daily memory log",
     },
   })
 );

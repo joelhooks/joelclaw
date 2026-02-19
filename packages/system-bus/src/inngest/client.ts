@@ -355,6 +355,24 @@ export type Events = {
     };
   };
 
+  // --- Agent approvals (ADR-0067) ---
+  "agent/approval.requested": {
+    data: {
+      agent: string;
+      category: string;
+      operation: string;
+      reasoning: string;
+    };
+  };
+  "agent/approval.resolved": {
+    data: {
+      requestId: string;
+      status: "approved" | "denied";
+      reviewer: string;
+      learn?: boolean;
+    };
+  };
+
   // --- Memory ---
   "memory/session.compaction.pending": {
     data: {
@@ -415,6 +433,17 @@ export type Events = {
       proposalId: string;
       reason: string;
       rejectedBy: string;
+    };
+  };
+  // ADR-0067: Daily digest lifecycle events.
+  "memory/digest.requested": {
+    data: Record<string, never>;
+  };
+  "memory/digest.created": {
+    data: {
+      date: string;
+      sourcePath: string;
+      digestPath: string;
     };
   };
 

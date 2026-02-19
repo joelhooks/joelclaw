@@ -17,12 +17,13 @@
         "Comment at top credits memory-curator by 77darius77 (ADR-0067)",
         "TypeScript compiles: bunx tsc --noEmit passes"
       ],
-      "passes": false
+      "passes": true,
+      "status": "done"
     },
     {
       "id": "digest-prompt",
       "title": "Daily Digest Prompt Engineering",
-      "description": "Create the prompt template for daily digest generation in a separate file daily-digest-prompt.ts. Follow the pattern of reflect-prompt.ts and friction-prompt.ts. System prompt instructs Claude to analyze a raw daily log and produce a structured digest. Include compression guidance \u2014 the digest should be 50-80 lines max from a 200-500 line raw log. Include the section schema (Summary, Key Events, Learnings, Connections, Open Questions, Tomorrow). Output format: markdown with YAML frontmatter.",
+      "description": "Create the prompt template for daily digest generation in a separate file daily-digest-prompt.ts. Follow the pattern of reflect-prompt.ts and friction-prompt.ts. System prompt instructs Claude to analyze a raw daily log and produce a structured digest. Include compression guidance — the digest should be 50-80 lines max from a 200-500 line raw log. Include the section schema (Summary, Key Events, Learnings, Connections, Open Questions, Tomorrow). Output format: markdown with YAML frontmatter.",
       "priority": 1,
       "acceptance_criteria": [
         "File exists: packages/system-bus/src/inngest/functions/daily-digest-prompt.ts",
@@ -32,7 +33,8 @@
         "Output format includes YAML frontmatter template",
         "TypeScript compiles: bunx tsc --noEmit passes"
       ],
-      "passes": false
+      "passes": true,
+      "status": "done"
     },
     {
       "id": "imsg-skill",
@@ -48,11 +50,12 @@
         "Credits steipete as original author (ADR-0067)",
         "Symlinked to ~/.pi/agent/skills/imsg and ~/.claude/skills/imsg"
       ],
-      "passes": false
+      "passes": true,
+      "status": "done"
     },
     {
       "id": "approval-system",
-      "title": "Agent Approval System \u2014 Redis State",
+      "title": "Agent Approval System — Redis State",
       "description": "Create an approval system for agent actions. Pattern from local-approvals by shaiss (openclaw/skills, MIT). Redis-backed state instead of JSON files. Key design: agents submit approval requests for novel action categories. Known-safe categories are auto-approved (learned from past approvals). Novel categories queue for human review. Redis keys: approval:pending:<id> (hash), approval:auto:<agent> (set of learned categories), approval:history (sorted set by timestamp). Core module at packages/system-bus/src/approvals/core.ts with functions: submitRequest, checkAutoApprove, approveRequest, denyRequest, learnCategory, listPending, getHistory. Each function is pure (takes Redis client as param).",
       "priority": 2,
       "acceptance_criteria": [
@@ -67,11 +70,12 @@
         "Credits local-approvals by shaiss (ADR-0067)",
         "TypeScript compiles: bunx tsc --noEmit passes"
       ],
-      "passes": false
+      "passes": true,
+      "status": "done"
     },
     {
       "id": "approval-events",
-      "title": "Agent Approval System \u2014 Inngest Events",
+      "title": "Agent Approval System — Inngest Events",
       "description": "Create Inngest functions for the approval workflow. Two functions: (1) approval-request: triggered by agent/approval.requested event, checks auto-approve first, if auto-approved emits agent/approval.resolved immediately, otherwise stores in Redis and pushes to gateway for human review. (2) approval-resolve: triggered by agent/approval.resolved event, updates Redis history, notifies gateway of result. Add event types to inngest client.ts. Register both in serve.ts.",
       "priority": 2,
       "acceptance_criteria": [
@@ -86,11 +90,12 @@
         "Credits local-approvals by shaiss (ADR-0067)",
         "TypeScript compiles: bunx tsc --noEmit passes"
       ],
-      "passes": false
+      "passes": true,
+      "status": "done"
     },
     {
       "id": "approval-cli",
-      "title": "Agent Approval System \u2014 CLI Commands",
+      "title": "Agent Approval System — CLI Commands",
       "description": "Add approval subcommands to the joelclaw CLI. Commands: joelclaw approvals (list pending), joelclaw approvals approve <id> [--learn], joelclaw approvals deny <id>, joelclaw approvals categories [--agent <name>], joelclaw approvals reset <agent>. Each command calls the core.ts functions via Redis. Output as HATEOAS JSON with next_actions. Add to packages/cli/src/cli.ts command tree.",
       "priority": 3,
       "acceptance_criteria": [
@@ -103,7 +108,8 @@
         "All output follows HATEOAS JSON pattern with next_actions",
         "TypeScript compiles: bunx tsc --noEmit passes"
       ],
-      "passes": false
+      "passes": true,
+      "status": "done"
     },
     {
       "id": "observation-versioning",
@@ -118,7 +124,8 @@
         "Comment credits knowledge-graph by safatinaztepe (ADR-0067)",
         "TypeScript compiles: bunx tsc --noEmit passes"
       ],
-      "passes": false
+      "passes": true,
+      "status": "done"
     }
   ],
   "projectName": "Community Skill Patterns Integration"

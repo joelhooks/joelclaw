@@ -1,3 +1,4 @@
+// ADR-0067: Supersede pattern adapted from knowledge-graph by safatinaztepe (openclaw/skills, MIT).
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { execSync } from "node:child_process"
@@ -16,6 +17,8 @@ interface QdrantHit {
     timestamp: string
     observation_type: string
     observation: string
+    superseded_by?: string
+    supersedes?: string
   }
 }
 
@@ -36,13 +39,19 @@ function embedQuery(query: string): number[] {
 }
 
 /** Search Qdrant for nearest observations */
-async function searchQdrant(vector: number[], limit: number, minScore: number): Promise<QdrantHit[]> {
+async function searchQdrant(
+  vector: number[],
+  limit: number,
+  minScore: number,
+  includeSuperseded: boolean
+): Promise<QdrantHit[]> {
+  const requestedLimit = includeSuperseded ? limit : Math.max(limit * 3, limit)
   const resp = await fetch(`${QDRANT_URL}/collections/${QDRANT_COLLECTION}/points/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       vector,
-      limit,
+      limit: requestedLimit,
       with_payload: true,
       score_threshold: minScore,
     }),
@@ -54,22 +63,29 @@ async function searchQdrant(vector: number[], limit: number, minScore: number): 
   }
 
   const data = await resp.json() as { result: QdrantHit[] }
-  return data.result
+  const hits = data.result ?? []
+  const filteredHits = includeSuperseded
+    ? hits
+    : hits.filter((hit) => !hit.payload?.superseded_by)
+  return filteredHits.slice(0, limit)
 }
 
 const query = Args.text({ name: "query" })
 const limit = Options.integer("limit").pipe(Options.withDefault(5))
 const minScore = Options.float("min-score").pipe(Options.withDefault(0.25))
 const raw = Options.boolean("raw").pipe(Options.withDefault(false))
+const includeSuperseded = Options.boolean("include-superseded").pipe(Options.withDefault(false))
 
 export const recallCmd = Command.make(
   "recall",
-  { query, limit, minScore, raw },
-  ({ query, limit, minScore, raw }) =>
+  { query, limit, minScore, raw, includeSuperseded },
+  ({ query, limit, minScore, raw, includeSuperseded }) =>
     Effect.gen(function* () {
       try {
         const vector = embedQuery(query)
-        const hits = yield* Effect.promise(() => searchQdrant(vector, limit, minScore))
+        const hits = yield* Effect.promise(() =>
+          searchQdrant(vector, limit, minScore, includeSuperseded)
+        )
 
         if (raw) {
           // Raw mode: just observations, one per line — for piping/injection
@@ -91,9 +107,11 @@ export const recallCmd = Command.make(
             count: hits.length,
             collection: QDRANT_COLLECTION,
             totalPoints: "520+",
+            includeSuperseded,
           }, [
             { command: `recall "${query}" --limit 10`, description: "Get more results" },
             { command: `recall "${query}" --min-score 0.35`, description: "Stricter relevance" },
+            { command: `recall "${query}" --include-superseded`, description: "Include older superseded observations" },
             { command: `recall "${query}" --raw`, description: "Raw observations for injection" },
           ])
         )
