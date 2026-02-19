@@ -1,5 +1,6 @@
 ---
 status: superseded
+superseded-by: "[ADR-0048 — Webhook Gateway for External Service Integration](0048-webhook-gateway-system.md)"
 date: 2026-02-15
 decision-makers: Joel Hooks
 consulted: Claude (pi session 2026-02-15)

@@ -1,6 +1,6 @@
 ---
 title: "VictoriaMetrics + Grafana monitoring stack for Kubernetes"
-status: proposed
+status: deferred
 date: 2026-02-17
 deciders: Joel Hooks
 consulted: X community advice, Siderolabs reference architecture

@@ -1,6 +1,6 @@
 ---
 title: "Flux Operator for GitOps cluster management"
-status: proposed
+status: deferred
 date: 2026-02-17
 deciders: Joel Hooks
 consulted: X community advice

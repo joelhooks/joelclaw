@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: deferred
 date: 2026-02-18
 decision-makers: joel
 consulted: openclaw/openclaw media-understanding system

@@ -1,6 +1,6 @@
 ---
 title: "Kubernetes persistent storage: Ceph Rook vs SeaweedFS vs local-path"
-status: proposed
+status: withdrawn
 date: 2026-02-17
 deciders: Joel Hooks
 consulted: X community advice
