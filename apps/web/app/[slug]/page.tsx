@@ -86,6 +86,15 @@ export default async function PostPage({ params }: Props) {
           {meta.channel && <span>· {meta.channel}</span>}
           {meta.duration && <span>· {meta.duration}</span>}
         </div>
+        {meta.tags.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {meta.tags.map((tag) => (
+              <span key={tag} className="text-[11px] font-medium text-neutral-500 border border-neutral-800 rounded px-1.5 py-0.5">
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
       </header>
       <div className="prose-joelclaw">
         <MDXRemote

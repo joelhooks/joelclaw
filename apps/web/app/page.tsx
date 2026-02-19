@@ -29,7 +29,19 @@ export default function Home() {
               {post.description && (
                 <p className="mt-1.5 text-neutral-400 leading-relaxed">{post.description}</p>
               )}
-              <RelativeTime date={post.date} className="mt-2 block text-sm text-neutral-500" />
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <RelativeTime date={post.date} className="text-sm text-neutral-500" />
+                {post.tags.length > 0 && (
+                  <>
+                    <span className="text-neutral-700">·</span>
+                    {post.tags.slice(0, 3).map((tag) => (
+                      <span key={tag} className="text-[11px] font-medium text-neutral-600 border border-neutral-800 rounded px-1.5 py-0.5">
+                        {tag}
+                      </span>
+                    ))}
+                  </>
+                )}
+              </div>
             </Link>
           </li>
         ))}

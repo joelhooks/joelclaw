@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import matter from "gray-matter";
 
-export type ContentType = "article" | "note" | "tutorial";
+export type ContentType = "article" | "essay" | "note" | "tutorial";
 
 export type PostMeta = {
   title: string;
@@ -11,6 +11,7 @@ export type PostMeta = {
   description: string;
   slug: string;
   type: ContentType;
+  tags: string[];
   source?: string;
   channel?: string;
   duration?: string;
@@ -34,6 +35,7 @@ export function getAllPosts(): PostMeta[] {
         description: data.description ?? "",
         slug: filename.replace(/\.mdx$/, ""),
         type: (data.type as ContentType) ?? "article",
+        tags: Array.isArray(data.tags) ? data.tags : [],
         source: data.source,
         channel: data.channel,
         duration: data.duration,
@@ -59,6 +61,7 @@ export function getPost(slug: string) {
       description: data.description ?? "",
       slug,
       type: (data.type as ContentType) ?? "article",
+      tags: Array.isArray(data.tags) ? data.tags : [],
       source: data.source,
       channel: data.channel,
       duration: data.duration,
