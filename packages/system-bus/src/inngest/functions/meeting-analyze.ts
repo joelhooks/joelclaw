@@ -22,6 +22,13 @@ import Redis from "ioredis";
 const REDIS_KEY_PROCESSED = "granola:processed";
 const REDIS_TTL_DAYS = 90;
 
+type MeetingActionItem = {
+  task: string;
+  owner: string;
+  deadline?: string;
+  context: string;
+};
+
 function granolaCli(args: string[]): { ok: boolean; data?: any; raw?: string; error?: string } {
   const proc = spawnSync("granola", args, {
     encoding: "utf-8",
@@ -43,7 +50,7 @@ function granolaCli(args: string[]): { ok: boolean; data?: any; raw?: string; er
 }
 
 function analyzeMeeting(details: string, transcript: string): {
-  action_items: Array<{ task: string; owner: string; deadline?: string; context: string }>;
+  action_items: MeetingActionItem[];
   decisions: Array<{ decision: string; rationale: string }>;
   follow_ups: Array<{ item: string; frequency?: string }>;
   people: Array<{ name: string; email?: string; role?: string; relationship?: string }>;
@@ -57,7 +64,12 @@ ${details}
 ${transcript}
 
 Extract:
-1. ACTION ITEMS — concrete next steps with owner and deadline if mentioned
+1. ACTION ITEMS — include ONLY if all are true:
+   - specific and actionable (a concrete next step, not a vague idea)
+   - assigned to Joel, his team, or clearly "we/us/our team"
+   - time-bound OR clearly next-step oriented
+   - not an observation, recap, or discussion point
+   - when uncertain, omit it
 2. DECISIONS — things that were decided or agreed upon
 3. FOLLOW UPS — recurring or future check-ins mentioned
 4. PEOPLE — everyone mentioned or participating, with role/relationship context if apparent
@@ -112,17 +124,67 @@ Respond with ONLY valid JSON, no markdown fencing:
   return { action_items: [], decisions: [], follow_ups: [], people: [] };
 }
 
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
+}
+
+function isJoelOrTeamOwner(owner: string): boolean {
+  const normalizedOwner = normalizeWhitespace(owner).toLowerCase();
+  if (!normalizedOwner) return false;
+  return /(joel|we|us|our team|team|joelclaw)/u.test(normalizedOwner);
+}
+
+function isSpecificActionableTask(task: string): boolean {
+  const normalizedTask = normalizeWhitespace(task);
+  if (normalizedTask.length < 10) return false;
+  if (/[?]/u.test(normalizedTask)) return false;
+  const vaguePatterns = [
+    /\bdiscuss\b/iu,
+    /\btalk about\b/iu,
+    /\bthink about\b/iu,
+    /\bconsider\b/iu,
+    /\bbrainstorm\b/iu,
+    /\bmaybe\b/iu,
+    /\bidea\b/iu,
+    /\blater\b/iu,
+  ];
+  if (vaguePatterns.some((pattern) => pattern.test(normalizedTask))) return false;
+  return true;
+}
+
+function isObservationOrDiscussion(item: MeetingActionItem): boolean {
+  const combined = `${item.task} ${item.context}`.toLowerCase();
+  return /(observation|noted that|mentioned that|discussion|recap|background)/u.test(combined);
+}
+
+function isTimeBoundOrNextStep(item: MeetingActionItem): boolean {
+  if (typeof item.deadline === "string" && item.deadline.trim().length > 0) return true;
+  const combined = normalizeWhitespace(`${item.task} ${item.context}`).toLowerCase();
+  return /\b(next|follow up|by |before |after |today|tomorrow|this week|next week)\b/u.test(combined);
+}
+
+function qualityGateActionItems(items: MeetingActionItem[]): MeetingActionItem[] {
+  return items.filter((item) => {
+    if (!isSpecificActionableTask(item.task)) return false;
+    if (!isJoelOrTeamOwner(item.owner)) return false;
+    if (isObservationOrDiscussion(item)) return false;
+    if (!isTimeBoundOrNextStep(item)) return false;
+    return true;
+  });
+}
+
 function createTasks(
   meetingTitle: string,
   meetingId: string,
   meetingDate: string,
-  items: Array<{ task: string; owner: string; deadline?: string; context: string }>,
+  items: MeetingActionItem[],
 ): number {
   let created = 0;
   for (const item of items) {
     try {
       const description = [
         `From: "${meetingTitle}" (${meetingDate})`,
+        "Source: granola",
         item.owner ? `Owner: ${item.owner}` : null,
         `Link: https://notes.granola.ai/d/${meetingId}`,
         item.context ? `Context: ${item.context}` : null,
@@ -216,14 +278,18 @@ export const meetingAnalyze = inngest.createFunction(
       return analyzeMeeting(details.details, cappedTranscript);
     });
 
+    const qualifiedActionItems = await step.run("quality-gate-action-items", () => {
+      return qualityGateActionItems(analysis.action_items);
+    });
+
     // Step 5: Create tasks for action items (skip for backfill — historical meetings
     // don't need todos, just knowledge capture. ADR-0045 task port pending.)
     const source = event.data?.source;
     const tasksCreated = await step.run("create-tasks", () => {
       if (source === "backfill") return 0; // historical — capture only
-      if (analysis.action_items.length === 0) return 0;
+      if (qualifiedActionItems.length === 0) return 0;
       const meetingDate = details.date ?? "unknown";
-      return createTasks(meetingTitle, meetingId, meetingDate, analysis.action_items);
+      return createTasks(meetingTitle, meetingId, meetingDate, qualifiedActionItems);
     });
 
     // Step 6: Mark as processed
@@ -277,8 +343,8 @@ export const meetingAnalyze = inngest.createFunction(
         ...(analysis.decisions.length > 0
           ? ["## Decisions", ...analysis.decisions.map((d: any) => `- **${d.decision}**${d.rationale ? ` — ${d.rationale}` : ""}`), ""]
           : []),
-        ...(analysis.action_items.length > 0
-          ? ["## Action Items", ...analysis.action_items.map((a: any) =>
+        ...(qualifiedActionItems.length > 0
+          ? ["## Action Items", ...qualifiedActionItems.map((a: any) =>
               `- [ ] ${a.task}${a.owner ? ` *(${a.owner})*` : ""}${a.deadline ? ` — due ${a.deadline}` : ""}${a.context ? `\n  > ${a.context}` : ""}`
             ), ""]
           : []),
@@ -295,7 +361,7 @@ export const meetingAnalyze = inngest.createFunction(
     await step.run("notify-gateway", async () => {
       if (!gateway) return { pushed: false };
 
-      const actionCount = analysis.action_items.length;
+      const actionCount = qualifiedActionItems.length;
       const decisionCount = analysis.decisions.length;
       const peopleCount = analysis.people.length;
 
@@ -310,8 +376,8 @@ export const meetingAnalyze = inngest.createFunction(
           ...(analysis.decisions.length > 0
             ? ["### Decisions", ...analysis.decisions.map((d) => `- ${d.decision}`), ""]
             : []),
-          ...(analysis.action_items.length > 0
-            ? ["### Action Items", ...analysis.action_items.map((a) => `- ${a.task} (${a.owner})`)]
+          ...(qualifiedActionItems.length > 0
+            ? ["### Action Items", ...qualifiedActionItems.map((a) => `- ${a.task} (${a.owner})`)]
             : []),
         ].join("\n"),
       });
@@ -320,7 +386,7 @@ export const meetingAnalyze = inngest.createFunction(
     return {
       meetingId,
       title: meetingTitle,
-      actionItems: analysis.action_items.length,
+      actionItems: qualifiedActionItems.length,
       decisions: analysis.decisions.length,
       followUps: analysis.follow_ups.length,
       people: analysis.people.length,

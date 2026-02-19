@@ -188,6 +188,13 @@ function truncateForTaskContent(text: string, maxLength: number): string {
   return text.slice(0, maxLength);
 }
 
+function summarizeChangeForTask(change: string): string {
+  const normalized = change.replace(/\s+/gu, " ").trim();
+  const withoutDatePrefix = normalized.replace(/^-\s*\(\d{4}-\d{2}-\d{2}\)\s*/u, "");
+  const firstSentence = withoutDatePrefix.split(/[.!?](?:\s|$)/u)[0] ?? withoutDatePrefix;
+  return truncateForTaskContent(firstSentence.trim(), 90);
+}
+
 function appendToFile(path: string, content: string): { ok: boolean; error?: string } {
   try {
     mkdirSync(dirname(path), { recursive: true });
@@ -345,9 +352,9 @@ export const reflect = inngest.createFunction(
         );
         await redis.rpush("memory:review:pending", proposal.id);
 
-        const truncatedChange = truncateForTaskContent(proposal.change, 80);
+        const summary = summarizeChangeForTask(proposal.change);
         await taskAdapter.createTask({
-          content: `Memory: ${truncatedChange} → ${proposal.section}`,
+          content: `Memory: ${proposal.section} — ${summary}`,
           description: [
             `Proposal: ${proposal.id}`,
             `Section: ${proposal.section}`,

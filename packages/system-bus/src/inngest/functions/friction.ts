@@ -271,6 +271,29 @@ function truncateForTaskContent(text: string, maxLength: number): string {
   return text.slice(0, maxLength);
 }
 
+function normalizedContentPrefix(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 50);
+}
+
+function hasSimilarContent(existingContents: string[], candidate: string): boolean {
+  const candidatePrefix = normalizedContentPrefix(candidate);
+  if (!candidatePrefix) return false;
+  return existingContents.some((content) => {
+    const existingPrefix = normalizedContentPrefix(content);
+    if (!existingPrefix) return false;
+    return (
+      existingPrefix === candidatePrefix
+      || existingPrefix.includes(candidatePrefix)
+      || candidatePrefix.includes(existingPrefix)
+    );
+  });
+}
+
 export const friction = inngest.createFunction(
   {
     id: "memory/friction-analysis",
@@ -365,12 +388,21 @@ export const friction = inngest.createFunction(
         return {
           created: 0,
           taskIds: [] as string[],
+          createdPatterns: [] as FrictionPattern[],
         };
       }
 
       const adapter = new TodoistTaskAdapter();
+      const existingFrictionTasks = await adapter.listTasks({ label: "friction" });
+      const knownContents = existingFrictionTasks.map((task) => task.content);
       const taskIds: string[] = [];
+      const createdPatterns: FrictionPattern[] = [];
       for (const pattern of parsed.patterns) {
+        const taskContent = `Friction: ${truncateForTaskContent(pattern.title, 80)}`;
+        if (hasSimilarContent(knownContents, taskContent)) {
+          continue;
+        }
+
         const descriptionLines = [
           `Summary: ${pattern.summary}`,
           `Suggestion: ${pattern.suggestion}`,
@@ -381,22 +413,25 @@ export const friction = inngest.createFunction(
         }
 
         const task = await adapter.createTask({
-          content: `Friction: ${truncateForTaskContent(pattern.title, 80)}`,
+          content: taskContent,
           description: descriptionLines.join("\n"),
           labels: ["agent", "friction"],
           projectId: "Agent Work",
         });
         taskIds.push(task.id);
+        createdPatterns.push(pattern);
+        knownContents.push(taskContent);
       }
 
       return {
         created: taskIds.length,
         taskIds,
+        createdPatterns,
       };
     });
 
     const date = new Date().toISOString().slice(0, 10);
-    const fixEvents = parsed.patterns.map((pattern, index) => {
+    const fixEvents = tasks.createdPatterns.map((pattern, index) => {
       const patternId = `friction-${date}-${String(index + 1).padStart(3, "0")}`;
       return {
         name: "memory/friction.fix.requested" as const,
