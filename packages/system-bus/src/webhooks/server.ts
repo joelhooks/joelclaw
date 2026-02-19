@@ -118,6 +118,11 @@ webhookApp.post("/:provider", async (c) => {
   const events = provider.normalizePayload(body, headers);
 
   if (events.length === 0) {
+    console.log("[webhooks] no matching events", {
+      provider: providerId,
+      type: body.type ?? "no-type",
+      keys: Object.keys(body),
+    });
     return c.json({ ok: true, events: 0, note: "No matching events" });
   }
 
