@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { SITE_NAME } from "../../lib/constants";
 
-type NodeStatus = "Active" | "Dormant";
+type NodeStatus = "Online" | "Offline" | "Idle";
 
 type NodeSpec = {
   name: string;
+  tailscaleHost?: string;
   status: NodeStatus;
   specs: string[];
   role: string;
@@ -12,129 +13,182 @@ type NodeSpec = {
 };
 
 const clusterOverview = [
-  { label: "Orchestration", value: "k3s (v1.33.6) via k3d" },
-  { label: "Unified memory", value: "64 GB" },
-  { label: "CPU cores", value: "14" },
-  { label: "GPU compute", value: "20-core Apple GPU" },
-  { label: "Storage", value: "64+ TB (NAS)" },
-  { label: "Active nodes", value: "3" },
-  { label: "Interconnect", value: "WireGuard mesh (Tailscale)" },
+  { label: "Orchestration", value: "Talos Linux v1.12.4 on Colima (VZ framework)" },
+  { label: "Memory", value: "64 GB unified" },
+  { label: "CPU", value: "Apple M4 Pro · 14 cores" },
+  { label: "GPU", value: "20-core Apple GPU" },
+  { label: "Storage", value: "64 TB NAS + 1 TB local NVMe" },
+  { label: "Functions", value: "48 Inngest durable functions" },
+  { label: "Interconnect", value: "Tailscale WireGuard mesh" },
 ];
 
 const nodes: NodeSpec[] = [
   {
-    name: "Hub",
-    status: "Active",
-    specs: ["Apple M4 Pro", "14-core CPU", "20-core GPU", "64 GB unified memory"],
-    role: "Control plane, event bus, vector search, state management — k3s single-node cluster",
+    name: "Panda",
+    tailscaleHost: "panda",
+    status: "Online",
+    specs: ["Mac Mini", "Apple M4 Pro", "14-core CPU", "20-core GPU", "64 GB unified", "1 TB NVMe"],
+    role: "Control plane. Runs everything — k8s cluster, agent gateway, event bus, all pipelines. Always on.",
     services: [
-      "k3s control plane (k3d)",
-      "Event orchestration (Inngest — k8s StatefulSet)",
-      "Vector database (Qdrant — k8s StatefulSet)",
-      "Cache/state (Redis — k8s StatefulSet)",
-      "System-bus worker (14 Inngest functions)",
-      "HTTPS proxy (Caddy + Tailscale TLS)",
+      "Talos k8s cluster (Colima + Talos)",
+      "Inngest event bus (k8s StatefulSet, port 8288)",
+      "Redis state/pub-sub (k8s StatefulSet, port 6379)",
+      "Qdrant vector search (k8s StatefulSet, port 6333)",
+      "Bluesky PDS — AT Protocol personal data server (Helm, port 2583)",
+      "LiveKit — WebRTC media server (Helm, ports 7880/7881)",
+      "System-bus worker (launchd, 48 functions, port 3111)",
+      "Gateway daemon (launchd, pi agent + Telegram bridge)",
+      "Caddy HTTPS proxy (launchd, Tailscale TLS)",
+      "Vault sync (launchd, git auto-commit + push)",
     ],
   },
   {
-    name: "Library",
-    status: "Active",
+    name: "Three-Body",
+    tailscaleHost: "three-body",
+    status: "Online",
+    specs: ["Synology NAS", "Intel Atom", "8 GB RAM", "64 TB RAID (7.1 TB used)"],
+    role: "Archive. Video library, book collection, media backups, pipeline output landing zone.",
+    services: [
+      "SSH file access (video ingest target)",
+      "Video archive by year (yt-dlp pipeline output)",
+      "Screenshot storage (pipeline-extracted key moments)",
+    ],
+  },
+  {
+    name: "Dark Wizard",
+    tailscaleHost: "dark-wizard",
+    status: "Online",
+    specs: ["MacBook Pro", "Apple Silicon", "macOS"],
+    role: "Joel's laptop. Primary development machine, exit node for the tailnet.",
+  },
+  {
+    name: "Clanker-001",
+    tailscaleHost: "clanker-001",
+    status: "Online",
     specs: ["Linux server"],
-    role: "Knowledge base — 700 documents, 393k searchable chunks",
-    services: ["Semantic search API", "Full-text search", "Hybrid retrieval"],
+    role: "Remote Linux node. Available on tailnet.",
   },
   {
-    name: "Archive",
-    status: "Active",
-    specs: ["Intel Atom", "8 GB RAM", "64 TB network-attached storage"],
-    role: "Cold storage — video archive, books, backups, media",
-  },
-  {
-    name: "Forge",
-    status: "Dormant",
-    specs: [
-      "Linux workstation",
-      "2x NVIDIA RTX PRO 4500 (Blackwell architecture)",
-      "48 GB VRAM (24 GB x 2)",
-      "~1600 FP4 TOPS combined",
-    ],
-    role: "CUDA inference server — not on the network yet",
+    name: "Nightmare Router",
+    tailscaleHost: "nightmare-router",
+    status: "Idle",
+    specs: ["Linux router"],
+    role: "Network edge. Tailscale exit node, currently idle.",
   },
 ];
 
+const launchdServices = [
+  { name: "com.joel.system-bus-worker", desc: "Inngest function worker (48 functions)" },
+  { name: "com.joel.gateway", desc: "Pi agent gateway daemon + Telegram bridge" },
+  { name: "com.joel.gateway-tripwire", desc: "Gateway watchdog (ADR-0037)" },
+  { name: "com.joel.caddy", desc: "HTTPS reverse proxy with Tailscale certs" },
+  { name: "com.joel.colima", desc: "Container runtime (VZ framework → Talos k8s)" },
+  { name: "com.joel.vault-log-sync", desc: "system-log.jsonl → Obsidian markdown notes" },
+  { name: "com.joel.content-sync-watcher", desc: "Vault content → web deploy trigger" },
+  { name: "com.joel.system-bus-sync", desc: "Monorepo → worker clone sync" },
+];
+
+const k8sPods = [
+  { name: "inngest-0", desc: "Event orchestration server", port: "8288" },
+  { name: "redis-0", desc: "State, pub/sub, loop PRD, cooldowns", port: "6379" },
+  { name: "qdrant-0", desc: "Vector search (memory_observations)", port: "6333" },
+  { name: "bluesky-pds", desc: "AT Protocol personal data server (Helm)", port: "2583" },
+  { name: "livekit-server", desc: "WebRTC media server (Helm)", port: "7880" },
+];
+
 const architectureLayers = [
-  "Layer 4: Orchestration — k3s cluster, declarative scheduling",
-  "Layer 3: Services      — Inngest, Qdrant, Redis as k8s StatefulSets",
-  "Layer 2: Pipelines     — Video ingest, content sync, coding loops, memory",
-  "Layer 1: Agents        — AI coding assistants with full recall",
-  "Layer 0: Data          — Vault, system log, sessions, 64 TB archive",
+  "Layer 5: Agents       — Pi gateway, coding loops, background workers",
+  "Layer 4: Orchestration — Talos k8s cluster, launchd daemons, Helm releases",
+  "Layer 3: Services      — Inngest, Redis, Qdrant, PDS, LiveKit (k8s pods)",
+  "Layer 2: Pipelines     — Video ingest, transcription, screenshots, content enrichment",
+  "Layer 1: Memory        — Observations, proposals, MEMORY.md, session transcripts",
+  "Layer 0: Data          — Obsidian Vault, system-log.jsonl, 64 TB NAS archive",
 ];
 
 export const metadata: Metadata = {
   title: `Network — ${SITE_NAME}`,
   description:
-    "The joelclaw network — k3s-orchestrated services on Apple Silicon with vector search, event bus, and 64TB archival storage.",
+    "The joelclaw network — Talos k8s on Apple Silicon with 48 Inngest functions, vector search, AT Protocol PDS, and 64TB archival storage.",
 };
 
-function StatusBadge({ status }: { status: NodeStatus }) {
-  const className =
-    status === "Active"
-      ? "border-emerald-800 bg-emerald-950/60 text-emerald-300"
-      : "border-neutral-700 bg-neutral-900 text-neutral-300";
+function StatusDot({ status }: { status: NodeStatus }) {
+  const color =
+    status === "Online"
+      ? "bg-emerald-400"
+      : status === "Idle"
+        ? "bg-yellow-400"
+        : "bg-neutral-600";
 
   return (
-    <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${className}`}
-    >
-      {status}
+    <span className="relative flex h-2 w-2">
+      {status === "Online" && (
+        <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${color} opacity-40`} />
+      )}
+      <span className={`relative inline-flex h-2 w-2 rounded-full ${color}`} />
     </span>
   );
 }
 
 export default function NetworkPage() {
   return (
-    <div className="space-y-10">
+    <div className="space-y-12">
       <header>
         <h1 className="text-2xl font-bold tracking-tight">Network</h1>
         <p className="mt-2 text-sm text-neutral-400 leading-relaxed">
-          The <span className="text-claw">joelclaw network</span> — services
-          orchestrated by k3s on Apple Silicon, connected to a Linux knowledge
-          base and 64TB of archival storage via encrypted WireGuard mesh.
+          Always-on personal infrastructure.{" "}
+          <span className="text-claw">Panda</span> runs the cluster, agents,
+          and all pipelines.{" "}
+          <span className="text-neutral-300">Three-Body</span> holds 64 TB of
+          archive. Everything connected via Tailscale mesh.
         </p>
       </header>
 
+      {/* Cluster overview */}
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold tracking-tight text-neutral-100">Cluster</h2>
-        <div className="border border-neutral-800 rounded-lg p-4">
-          <dl className="grid gap-3 sm:grid-cols-2">
+        <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">Cluster</h2>
+        <div className="border border-neutral-800 rounded-lg p-5">
+          <dl className="grid gap-4 sm:grid-cols-2">
             {clusterOverview.map((item) => (
-              <div key={item.label} className="space-y-1">
-                <dt className="text-xs uppercase tracking-wider text-neutral-500">{item.label}</dt>
-                <dd className="font-mono text-sm text-neutral-100">{item.value}</dd>
+              <div key={item.label} className="space-y-0.5">
+                <dt className="text-[11px] uppercase tracking-wider text-neutral-600">{item.label}</dt>
+                <dd className="font-mono text-sm text-neutral-200">{item.value}</dd>
               </div>
             ))}
           </dl>
         </div>
       </section>
 
+      {/* Nodes */}
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold tracking-tight text-neutral-100">Nodes</h2>
+        <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">Nodes</h2>
         <div className="space-y-3">
           {nodes.map((node) => (
-            <article key={node.name} className="border border-neutral-800 rounded-lg p-4 space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <h3 className="text-base font-semibold text-neutral-100">{node.name}</h3>
-                <StatusBadge status={node.status} />
+            <article key={node.name} className="border border-neutral-800 rounded-lg p-5 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <StatusDot status={node.status} />
+                  <h3 className="text-base font-semibold text-neutral-100">{node.name}</h3>
+                  {node.tailscaleHost && (
+                    <span className="font-mono text-xs text-neutral-600">{node.tailscaleHost}</span>
+                  )}
+                </div>
+                <span className="text-[11px] text-neutral-600 uppercase tracking-wider">{node.status}</span>
               </div>
 
               <p className="text-sm text-neutral-400 leading-relaxed">{node.role}</p>
 
-              <p className="font-mono text-xs text-neutral-300">{node.specs.join(" • ")}</p>
+              <p className="font-mono text-xs text-neutral-500">{node.specs.join(" · ")}</p>
 
               {node.services && node.services.length > 0 && (
-                <div>
-                  <p className="text-xs uppercase tracking-wider text-neutral-500">Services</p>
-                  <p className="mt-1 text-sm text-neutral-400">{node.services.join(" • ")}</p>
+                <div className="pt-1">
+                  <ul className="space-y-1">
+                    {node.services.map((s) => (
+                      <li key={s} className="text-sm text-neutral-400 flex items-start gap-2">
+                        <span className="text-neutral-700 mt-1.5 text-[8px]">●</span>
+                        {s}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               )}
             </article>
@@ -142,10 +196,63 @@ export default function NetworkPage() {
         </div>
       </section>
 
+      {/* K8s Pods */}
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold tracking-tight text-neutral-100">Stack</h2>
-        <div className="border border-neutral-800 rounded-lg p-4">
-          <pre className="font-mono text-xs leading-relaxed text-neutral-300 whitespace-pre-wrap">
+        <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">
+          K8s Pods <span className="text-neutral-700 normal-case tracking-normal">joelclaw namespace</span>
+        </h2>
+        <div className="border border-neutral-800 rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-neutral-800 text-left">
+                <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-neutral-600 font-medium">Pod</th>
+                <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-neutral-600 font-medium">Role</th>
+                <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-neutral-600 font-medium text-right">Port</th>
+              </tr>
+            </thead>
+            <tbody>
+              {k8sPods.map((pod) => (
+                <tr key={pod.name} className="border-b border-neutral-800/50 last:border-0">
+                  <td className="px-4 py-2.5 font-mono text-xs text-neutral-200">{pod.name}</td>
+                  <td className="px-4 py-2.5 text-neutral-400">{pod.desc}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-neutral-500 text-right">{pod.port}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Launchd daemons */}
+      <section className="space-y-3">
+        <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">
+          Daemons <span className="text-neutral-700 normal-case tracking-normal">launchd</span>
+        </h2>
+        <div className="border border-neutral-800 rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-neutral-800 text-left">
+                <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-neutral-600 font-medium">Service</th>
+                <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-neutral-600 font-medium">Purpose</th>
+              </tr>
+            </thead>
+            <tbody>
+              {launchdServices.map((svc) => (
+                <tr key={svc.name} className="border-b border-neutral-800/50 last:border-0">
+                  <td className="px-4 py-2.5 font-mono text-xs text-neutral-200 whitespace-nowrap">{svc.name}</td>
+                  <td className="px-4 py-2.5 text-neutral-400">{svc.desc}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Architecture layers */}
+      <section className="space-y-3">
+        <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">Stack</h2>
+        <div className="border border-neutral-800 rounded-lg p-5">
+          <pre className="font-mono text-xs leading-relaxed text-neutral-400 whitespace-pre-wrap">
             {architectureLayers.join("\n")}
           </pre>
         </div>
