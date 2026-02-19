@@ -45,4 +45,7 @@ else
   echo "WARNING: Failed to lease front_webhook_secret" >&2
 fi
 
+# Front inbox filter — Joel's teammate ID (URL 818967 → base36 hjx3 → tea_hjx3)
+export FRONT_MONITORED_TEAMMATE="tea_hjx3"
+
 exec bun run src/serve.ts

@@ -26,12 +26,38 @@ const EVENT_MAP: Record<string, string> = {
   tag_removed: "tag.removed",
 };
 
+/** Monitored teammate ID — only process events relevant to this inbox.
+ *  Set via FRONT_MONITORED_TEAMMATE env var (e.g. tea_hjx3).
+ *  Convert Front URL numeric ID to API ID: base36(818967) = hjx3 → tea_hjx3
+ *  Future: read from ~/.joelclaw/config.json email-front section */
+const MONITORED_TEAMMATE = process.env.FRONT_MONITORED_TEAMMATE;
+
 function getWebhookSecret(): string {
   const secret = process.env.FRONT_WEBHOOK_SECRET;
   if (!secret) {
     throw new Error("FRONT_WEBHOOK_SECRET env var required for webhook verification");
   }
   return secret;
+}
+
+/** Check if this event is relevant to the monitored teammate's inbox.
+ *  If no FRONT_MONITORED_TEAMMATE is set, all events pass through. */
+function isRelevantToMonitored(body: Record<string, unknown>): boolean {
+  if (!MONITORED_TEAMMATE) return true; // no filter configured
+
+  const payload = (body.payload ?? {}) as Record<string, unknown>;
+  const conversation = (payload.conversation ?? {}) as Record<string, unknown>;
+  const assignee = conversation.assignee as Record<string, unknown> | null | undefined;
+
+  // No assignee = unassigned/new inbound — let it through
+  if (!assignee) return true;
+
+  // Assigned to monitored teammate — relevant
+  if (assignee.id === MONITORED_TEAMMATE) return true;
+
+  // Assigned to someone else — skip
+  console.log(`[webhooks:front] filtered: assigned to ${assignee.id} (${assignee.email ?? "?"}), want ${MONITORED_TEAMMATE}`);
+  return false;
 }
 
 export const frontProvider: WebhookProvider = {
@@ -83,6 +109,9 @@ export const frontProvider: WebhookProvider = {
 
     const mappedName = EVENT_MAP[type];
     if (!mappedName) return [];
+
+    // Inbox filter — drop events for other teammates
+    if (!isRelevantToMonitored(body)) return [];
 
     const payload = (body.payload ?? {}) as Record<string, unknown>;
     const conversation = (payload.conversation ?? payload) as Record<string, unknown>;
