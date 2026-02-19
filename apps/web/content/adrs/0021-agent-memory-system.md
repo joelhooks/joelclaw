@@ -419,6 +419,56 @@ Proposal IDs (`p-YYYYMMDD-NNN`) enable deterministic promotion and rejection tra
 
 Session-lifecycle briefing includes: `"📋 5 pending memory proposals in REVIEW.md — review when ready"`
 
+### Todoist-as-Review-Surface Refinement (2026-02-19)
+
+**Problem**: REVIEW.md was designed as the primary surface for proposal review, but it was never written — proposals accumulated in Redis with no path to Joel's attention. Joel checks Todoist daily; he does not check `~/.joelclaw/workspace/REVIEW.md`. The review surface must meet Joel where he already is.
+
+**Insight**: The task management system (ADR-0045) and webhook pipeline (ADR-0048) already provide a closed loop: Todoist tasks → webhooks → Inngest events. Proposals are reviewable work items — they belong in the task system, not a file.
+
+**What changes:**
+
+1. **Reflector creates Todoist tasks**, not REVIEW.md entries. After storing proposals in Redis, the `stage-review` step shells out to `todoist-cli add` with the `@memory-review` label. Task content is the proposal text; description includes the proposal ID, target section, and source observations.
+
+2. **Label-based routing**, not string prefix parsing. The `@memory-review` Todoist label identifies proposal tasks cleanly — filterable, colorable, visible on all devices. Joel can view all pending proposals with `todoist-cli list --label memory-review` or the Todoist filter `@memory-review`.
+
+3. **Completion → approval via webhook pipeline**. When Joel completes a `@memory-review` task, the Todoist webhook fires `todoist/task.completed`. A small bridge function matches the `memory-review` label, extracts the proposal ID from the task description, and emits `memory/proposal.approved`. The existing `promote.ts` handles the rest — writing to MEMORY.md, logging, cleanup.
+
+4. **Deletion → rejection**. Tasks deleted by Joel fire `todoist/task.deleted` (needs webhook mapping). The bridge function emits `memory/proposal.rejected` with the proposal ID.
+
+5. **REVIEW.md becomes optional audit trail**. Still written for observability, but no longer the primary review surface. Session-lifecycle briefing queries Todoist (`todoist-cli list --label memory-review`) instead of reading REVIEW.md.
+
+6. **7-day auto-expiry preserved**. The existing daily cron in `promote.ts` still expires proposals older than 7 days. When it expires a Redis proposal, it also completes the corresponding Todoist task (or deletes it if Joel never saw it).
+
+**Pipeline with Todoist:**
+
+```
+Reflector
+  → Redis proposals (as before)
+  → todoist-cli add "Promote: {text} → {section}" --labels memory-review,agent
+      ↓
+Joel sees task in Todoist (mobile/desktop)
+  → completes task
+      ↓
+Todoist webhook → todoist/task.completed (with labels)
+  → bridge function: labels.includes("memory-review")?
+      → extract proposal ID from description
+      → emit memory/proposal.approved
+          ↓
+promote.ts → MEMORY.md updated
+```
+
+**Requirements for this flow:**
+- `todoist/task.completed` event must include `labels` array (currently missing — normalizer strips it)
+- Bridge Inngest function matching `@memory-review` label → `memory/proposal.approved`
+- `todoist/task.deleted` webhook mapping (not yet in EVENT_MAP)
+- Reflector `stage-review` step updated to call `todoist-cli add`
+
+**What we don't change:**
+- Redis remains the proposal store (Todoist task is the notification surface, not the source of truth)
+- Proposal IDs (`p-YYYYMMDD-NNN`) still deterministic and trackable
+- `promote.ts` logic unchanged — it reacts to `memory/proposal.approved` regardless of source
+- Phase 4 friction proposals follow the same pattern (just use `@memory-review` label)
+
 ### Observer Prompt
 
 Adapted from Mastra's `CURRENT_OBSERVER_EXTRACTION_INSTRUCTIONS` (`observer-agent.ts` lines ~100-340) for system-engineering context. The original is optimized for consumer chatbot memory (personal facts, preferences, social context). This version weights toward infrastructure decisions, debugging insights, and system state changes.
