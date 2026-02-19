@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@mariozechner/pi-ai";
-import { createAgentSession } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
 import { drain, enqueue, getQueueDepth, getCurrentSource, setSession } from "./command-queue";
 import { start as startRedisChannel, shutdown as shutdownRedisChannel } from "./channels/redis";
 import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, sendMedia as sendTelegramMedia, parseChatId } from "./channels/telegram";
@@ -40,10 +40,19 @@ function describeModel(model: unknown): string {
   return `${provider}/${id}`;
 }
 
+// Resume the most recent session on restart instead of creating a fresh one.
+// This preserves pi context (conversation history, tool state) across
+// gateway restarts — launchd restarts should NOT obliterate context.
+const sessionManager = SessionManager.continueRecent(HOME);
+const resumedSessionId = sessionManager.getSessionId();
+const resumedFile = sessionManager.getSessionFile();
+console.log("[gateway] resuming session", { sessionId: resumedSessionId, file: resumedFile });
+
 const { session } = await createAgentSession({
   cwd: HOME,
   agentDir: AGENT_DIR,
   model: resolveModel(),
+  sessionManager,
 });
 
 setSession({

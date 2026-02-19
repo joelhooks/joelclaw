@@ -214,6 +214,14 @@ async function buildPrompt(
 }
 
 /**
+ * Resolve the codex model to use for agent-loop invocations.
+ * Reads CODEX_MODEL env var, defaults to gpt-5.3-codex.
+ */
+function resolveCodexModel(): string {
+  return process.env.CODEX_MODEL || "gpt-5.3-codex";
+}
+
+/**
  * Spawn a tool subprocess and capture output (host-mode).
  * Returns the exit code.
  */
@@ -225,10 +233,11 @@ async function spawnToolHost(
   outPath: string
 ): Promise<number> {
   let cmd: string[];
+  const codexModel = resolveCodexModel();
 
   switch (tool) {
     case "codex":
-      cmd = ["codex", "exec", "--full-auto", prompt];
+      cmd = ["codex", "exec", "--full-auto", "-m", codexModel, prompt];
       break;
     case "claude":
       ensureClaudeAuth();
@@ -238,7 +247,7 @@ async function spawnToolHost(
       cmd = ["pi", "--prompt", prompt, "--no-tui"];
       break;
     default:
-      cmd = ["codex", "exec", "--full-auto", prompt];
+      cmd = ["codex", "exec", "--full-auto", "-m", codexModel, prompt];
   }
 
   const timeout = TOOL_TIMEOUTS[tool] ?? 15 * 60 * 1000;

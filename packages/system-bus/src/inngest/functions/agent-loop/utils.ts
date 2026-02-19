@@ -995,10 +995,11 @@ export async function spawnInContainer(
   const timeout = TOOL_TIMEOUTS[tool] ?? 15 * 60 * 1000;
 
   // Build the tool command to run inside the container
+  const codexModel = process.env.CODEX_MODEL || "gpt-5.3-codex";
   let toolCmd: string;
   switch (tool) {
     case "codex":
-      toolCmd = `codex exec --full-auto "${prompt.replace(/"/g, '\\"')}"`;
+      toolCmd = `codex exec --full-auto -m ${codexModel} "${prompt.replace(/"/g, '\\"')}"`;
       break;
     case "claude":
       ensureClaudeAuth();
@@ -1008,7 +1009,7 @@ export async function spawnInContainer(
       toolCmd = `pi --prompt "${prompt.replace(/"/g, '\\"')}" --no-tui`;
       break;
     default:
-      toolCmd = `codex exec --full-auto "${prompt.replace(/"/g, '\\"')}"`;
+      toolCmd = `codex exec --full-auto -m ${codexModel} "${prompt.replace(/"/g, '\\"')}"`;
   }
 
   const proc = Bun.spawn([
