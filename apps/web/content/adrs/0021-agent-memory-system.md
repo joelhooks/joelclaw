@@ -832,13 +832,15 @@ Replace pi's compaction summary with an observation-enriched one by returning a 
 
 **Data collection status (updated 2026-02-19):**
 - Pipeline running: observe → reflect → promote all verified end-to-end
-- Observations: ~100 Qdrant points across 6 days with `🔭 Observations` in daily logs
-- Redis: 12 proposals generated (`p-20260219-001` through `012`), 4 observations today
-- Qdrant: 100 points with 768-dim nomic-embed vectors (semantic search verified)
-- Gap: REVIEW.md never written — proposals trapped in Redis. Todoist-as-review-surface refinement (above) addresses this.
-- Gap: `todoist/task.completed` webhook doesn't pass labels — needed for approval flow
-- Check-in target: ~2026-03-05 (Todoist task created with due date)
-- Prerequisite before Phase 4: verify real embeddings in observe.ts Qdrant upsert
+- Observations: 227 Qdrant points across 6 days with `🔭 Observations` in daily logs
+- Redis: 20 proposals generated (`p-20260219-001` through `020`)
+- Qdrant: 227 points with 768-dim nomic-embed vectors (semantic search verified)
+- ~~Gap: REVIEW.md never written — proposals trapped in Redis.~~ ✅ Fixed: Todoist-as-review-surface implemented
+- ~~Gap: `todoist/task.completed` webhook doesn't pass labels~~ ✅ Fixed: labels flow through normalizer
+- Phase 3 deployed: todoist-memory-review-bridge, reflect→Todoist, promote expiry+cleanup
+- Phase 4 deployed: friction.ts + friction-prompt.ts, daily cron 7 AM, gated on 100+ points (have 227)
+- Check-in target: ~2026-03-05 (Todoist task — verify friction produces actionable results)
+- ✅ Real nomic-embed vectors confirmed in Qdrant (768-dim, similarity search working)
 
 ## Implementation Plan
 
