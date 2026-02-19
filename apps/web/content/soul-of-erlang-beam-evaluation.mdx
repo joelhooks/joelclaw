@@ -1,0 +1,94 @@
+---
+title: "The Soul of Erlang Made Me Question Everything"
+type: "note"
+date: "2026-02-19"
+description: "Saša Jurić's 2019 GOTO talk is a masterclass in fault tolerance. It made me look hard at my current TypeScript + Inngest + Redis + K8s stack and ask: what if BEAM just... does all of this natively?"
+tags: ["elixir", "beam", "architecture", "video-note"]
+source: "https://www.youtube.com/watch?v=JvBT4XBdoUE"
+channel: "GOTO Conferences"
+duration: "00:42:02"
+---
+
+<YouTube id="JvBT4XBdoUE" />
+
+I watched [Saša Jurić](https://github.com/sasa1977) demolish a running system three different ways in 42 minutes and the dashboard never blinked. Unhandled exceptions, CPU-bound infinite loops, a rogue process eating everything — each time he SSHed into the live system, found the problem in seconds, killed it with one line of code, hot-deployed a fix, and the other 10,000 operations per second kept humming. No container restart. No deploy pipeline. No downtime.
+
+This is a 2019 talk. The tech is decades older than that. And it made me feel some kind of way about the stack I'm building on.
+
+## The demo that broke my brain
+
+Jurić runs a single BEAM instance handling 10,000 concurrent operations. Then he deliberately introduces three failures:
+
+1. **Unhandled exception** in a calculation process — the connection process stays alive, reports the error, and every other user is unaffected
+2. **CPU-intensive computation** that would block a Node.js event loop — BEAM's preemptive scheduler keeps every other process progressing at sub-millisecond granularity
+3. **Infinite loop** in a rogue process — he attaches a remote shell to the running production system, lists processes, finds the offender by stack trace, and kills it with `Process.exit(pid, :kill)`
+
+![BEAM processes and the scheduler queue](/images/soul-of-erlang/somehow-pulls-process-queue.jpg)
+
+Then — **while the system is still running** — he recompiles two modules and deploys them. The dashboard shows continuous throughput through the entire deploy. Hot code reloading. In production. For real.
+
+![Live system running 10k ops/sec through a hot deploy](/images/soul-of-erlang/nice-highly-available-system.jpg)
+
+If you've ever wrestled with a Kubernetes rolling update to fix a one-line bug, this will make you physically uncomfortable.
+
+## Why I'm paying attention
+
+Here's my current joelclaw stack and what BEAM does instead:
+
+| What I built | How I built it | What BEAM does natively |
+|---|---|---|
+| Durable workflows with retries | Inngest server + worker (Docker + K8s) | OTP GenServers + Supervisors |
+| Pub/sub + message passing | Redis (need two ioredis clients) | Built-in process messaging |
+| Process supervision | launchd + K8s + custom watchdog | Supervision trees ("let it crash") |
+| Hot code reload | Worker restart via `launchctl kickstart` | Native. Zero downtime. |
+| Concurrency control | Inngest concurrency limits | Millions of lightweight processes, preemptive scheduling |
+| Gateway long-lived connections | Custom Redis bridge + extension polling | Phoenix Channels |
+| Runtime introspection | `docker logs`, grep, prayer | Remote shell, process listing, stack traces, tracing — all built in |
+
+That's seven pieces of infrastructure I bolted together that BEAM ships as runtime features.
+
+## The "controversial" thesis
+
+Jurić's bigger argument — the one he explicitly calls controversial — hits me where I live:
+
+> "A new developer comes on board, they learn themselves a bit of Elixir, and they can immediately contribute to any part of the system. We don't need to have a Redis specialist, Nginx specialist, Kafka specialist, Kubernetes specialist, and so on and so forth."
+
+He's describing my exact situation. I'm one person running Inngest in Docker, Redis in K8s, Qdrant for vectors, Hono for HTTP, launchd for supervision, Tailscale for networking, Caddy for TLS — and I wrote an ADR for each of these decisions because the cognitive surface area is enormous.
+
+BEAM's proposition: **one language, one project, one OS process per machine.** Your background workers, your service discovery, your pub/sub, your web server — all just processes in the same VM.
+
+![The network of separately deployed services vs one BEAM node](/images/soul-of-erlang/network-software-development-cycle.jpg)
+
+## What keeps me on TypeScript
+
+I'm not migrating tomorrow. Here's why:
+
+**LLM SDKs are JavaScript-first.** Anthropic's SDK, OpenAI's SDK, Vercel AI SDK — they're all TypeScript-native. The Elixir ecosystem has wrappers, but they're community-maintained and lag behind. When Claude ships a new feature, I have it in hours. An Elixir adapter might take weeks.
+
+**Inngest is battle-tested for what I'm doing.** 47 registered functions, durable step execution, event-driven fan-out. It works. Replacing it with hand-rolled OTP supervisors means rebuilding retry logic, step memoization, event replay, and the dashboard.
+
+**I know TypeScript.** I've been writing JavaScript for over a decade. Elixir would be a real learning investment — not just the syntax, but OTP patterns, the "let it crash" philosophy, BEAM deployment, and the ecosystem.
+
+**Migration cost is real.** Working system. 47 functions. Extensive skills and tooling. Gateway daemon. Memory pipeline. Video ingest. Agent loops. Rewriting any of this is months of work for uncertain benefit.
+
+## What I'm actually going to do
+
+I opened [ADR-0064](/adrs/0064-elixir-beam-evaluation) to track this properly. Three options on the table:
+
+1. **Full replacement** — rewrite joelclaw on Elixir/Phoenix/OTP
+2. **Selective adoption** — keep TS for LLM work, add an Elixir node for gateway supervision, pub/sub, and process management
+3. **Study and shelve** — document the tradeoffs, file it away, pull it out when a specific pain point justifies the move
+
+Right now I'm between 2 and 3. The supervision model is genuinely compelling — I wrote a three-layer watchdog (ADR-0037) to keep my gateway alive, and BEAM just... does that. Natively. With decades of production hardening behind it.
+
+![Distribution across BEAM nodes — processes migrate when a node goes down](/images/soul-of-erlang/distributed-exactly-three-done.jpg)
+
+The honest answer is I need to build something small in Elixir to feel the difference in my hands. Reading about supervision trees isn't the same as watching one recover from a crash you caused. Jurić's demo proved that in 42 minutes.
+
+## The line that stuck
+
+> "High availability is not about chasing some mythical amount of nines of uptime. It's about having a system which is there for its users — which is ultimately its primary, if not the only, purpose."
+
+That's my system. It's supposed to be there for me — always on, always available, always recovering. Right now I achieve that with seven tools duct-taped together. BEAM achieves it with one runtime.
+
+Worth exploring. Filed under: things that make me uncomfortable in the best way.
