@@ -23,4 +23,26 @@ else
   echo "WARNING: Failed to lease claude_oauth_token from agent-secrets" >&2
 fi
 
+# Webhook secrets
+TODOIST_SECRET=$(secrets lease todoist_client_secret --ttl 24h --raw 2>/dev/null)
+if [ -n "$TODOIST_SECRET" ]; then
+  export TODOIST_CLIENT_SECRET="$TODOIST_SECRET"
+else
+  echo "WARNING: Failed to lease todoist_client_secret" >&2
+fi
+
+TODOIST_TOKEN=$(secrets lease todoist_api_token --ttl 24h --raw 2>/dev/null)
+if [ -n "$TODOIST_TOKEN" ]; then
+  export TODOIST_API_TOKEN="$TODOIST_TOKEN"
+else
+  echo "WARNING: Failed to lease todoist_api_token" >&2
+fi
+
+FRONT_SECRET=$(secrets lease front_webhook_secret --ttl 24h --raw 2>/dev/null)
+if [ -n "$FRONT_SECRET" ]; then
+  export FRONT_WEBHOOK_SECRET="$FRONT_SECRET"
+else
+  echo "WARNING: Failed to lease front_webhook_secret" >&2
+fi
+
 exec bun run src/serve.ts
