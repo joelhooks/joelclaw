@@ -67,7 +67,7 @@ secrets add my_provider_webhook_secret --value "..."
 Add to `~/Code/system-bus-worker/packages/system-bus/start.sh`:
 
 ```bash
-MY_SECRET=$(secrets lease my_provider_webhook_secret --ttl 24h --raw 2>/dev/null)
+MY_SECRET=$(secrets lease my_provider_webhook_secret --ttl 24h 2>/dev/null)
 [ -n "$MY_SECRET" ] && export MY_PROVIDER_WEBHOOK_SECRET="$MY_SECRET"
 ```
 

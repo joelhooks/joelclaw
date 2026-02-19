@@ -76,7 +76,7 @@ export const agentDispatch = inngest.createFunction(
       // Lease fresh Claude token at runtime (not stale boot-time env var)
       if (tool === "claude") {
         try {
-          const lease = execSync("secrets lease claude_oauth_token --ttl 1h --raw", {
+          const lease = execSync("secrets lease claude_oauth_token --ttl 1h", {
             encoding: "utf-8",
             timeout: 5000,
           }).trim();

@@ -167,7 +167,7 @@ async function describeImage(
     let apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
       try {
-        apiKey = execSync("secrets lease anthropic_api_key --ttl 1h --raw 2>/dev/null", {
+        apiKey = execSync("secrets lease anthropic_api_key --ttl 1h 2>/dev/null", {
           encoding: "utf-8",
           timeout: 5000,
         }).trim();
