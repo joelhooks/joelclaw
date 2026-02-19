@@ -43,7 +43,12 @@ export function getAllPosts(): PostMeta[] {
       };
     })
     .filter((post) => process.env.NODE_ENV === "development" || !post.draft)
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    .sort((a, b) => {
+      // Sort by most recent timestamp — use updated if available, fall back to date
+      const aTime = new Date(a.updated ?? a.date).getTime();
+      const bTime = new Date(b.updated ?? b.date).getTime();
+      return bTime - aTime;
+    });
 }
 
 export function getPost(slug: string) {

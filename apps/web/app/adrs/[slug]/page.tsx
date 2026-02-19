@@ -81,7 +81,7 @@ export default async function AdrPage({ params }: Props) {
       </header>
       <div className="prose-joelclaw">
         <MDXRemote
-          source={content}
+          source={content.replace(/^#\s+(?:ADR-\d+:\s*)?.*$/m, "").trim()}
           components={mdxComponents}
           options={{ mdxOptions: { remarkPlugins: [...remarkPlugins, remarkAdrLinks], rehypePlugins, format: "md" } }}
         />
