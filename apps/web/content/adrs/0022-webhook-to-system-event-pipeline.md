@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: superseded
 date: 2026-02-15
 decision-makers: Joel Hooks
 consulted: Claude (pi session 2026-02-15)

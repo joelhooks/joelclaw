@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: deferred
 date: 2026-02-16
 decision-makers: Joel
 consulted: mattpocock/course-video-manager (reference implementation)
