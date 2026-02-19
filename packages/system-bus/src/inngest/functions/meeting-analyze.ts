@@ -151,8 +151,8 @@ export const meetingAnalyze = inngest.createFunction(
     id: "meeting-analyze",
     name: "Meeting → Analyze & Extract Intelligence",
     concurrency: [{ limit: 1 }],
-    retries: 3,
-    throttle: { limit: 1, period: "30s" }, // Granola MCP rate limit protection
+    retries: 5,
+    throttle: { limit: 1, period: "3m" }, // Granola MCP rate limit — backfill can be slow
   },
   { event: "meeting/noted" },
   async ({ event, step, ...rest }) => {
@@ -190,13 +190,18 @@ export const meetingAnalyze = inngest.createFunction(
       };
     });
 
-    // Step 3: Pull transcript
+    // Step 3: Pull transcript (throws on rate limit → Inngest retries with backoff)
     const transcript = await step.run("pull-transcript", (): string => {
       const result = granolaCli(["meeting", meetingId, "--transcript"]);
       if (!result.ok) throw new Error(`Failed to pull transcript: ${result.error}`);
       const data = result.data ?? {};
       const raw = data?.transcript ?? data;
-      return typeof raw === "string" ? raw : JSON.stringify(raw, null, 2);
+      const text = typeof raw === "string" ? raw : JSON.stringify(raw, null, 2);
+
+      if (text.toLowerCase().includes("rate limit")) {
+        throw new Error(`Granola rate limited — will retry: ${text}`);
+      }
+      return text;
     });
 
     // Step 4: LLM analysis
@@ -239,8 +244,11 @@ export const meetingAnalyze = inngest.createFunction(
       fs.mkdirSync(meetingsDir, { recursive: true });
 
       const dateStr = details.date ?? event.data?.date ?? "unknown";
+      // Parse date to YYYY-MM-DD for filename; fall back to raw if unparseable
+      const parsed = new Date(dateStr);
+      const isoDate = isNaN(parsed.getTime()) ? dateStr.slice(0, 10) : parsed.toISOString().slice(0, 10);
       const safeTitle = meetingTitle.replace(/[/\\:*?"<>|]/g, "-").slice(0, 80);
-      const filename = `${dateStr.slice(0, 10)}-${safeTitle}.md`;
+      const filename = `${isoDate}-${safeTitle}.md`;
 
       const people = analysis.people.map((p: any) =>
         [p.name, p.role].filter(Boolean).join(" — ")
@@ -250,7 +258,7 @@ export const meetingAnalyze = inngest.createFunction(
         "---",
         `type: meeting`,
         `title: "${meetingTitle.replace(/"/g, '\\"')}"`,
-        `date: ${dateStr.slice(0, 10)}`,
+        `date: ${isoDate}`,
         `source: granola`,
         `granola_id: ${meetingId}`,
         `granola_url: https://notes.granola.ai/d/${meetingId}`,

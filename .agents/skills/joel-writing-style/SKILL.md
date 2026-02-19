@@ -88,6 +88,8 @@ Never open with "In this article, I'll discuss..." — open with a hook that cre
 - "We crossed the $16M milestone on 2019-12-05."
 - "Being able to work remotely is probably one of the coolest fuckin things that's ever happened to me."
 
+**⚠️ These are examples, not templates.** Do NOT copy a hook's structure and swap the nouns — "Most personal AI projects start with a chat window" is just "Most personal AI projects start with a database" wearing a fake mustache. Every hook should be **original to the piece**. The pattern is "create tension or drop into a moment," not "Most X start with Y, but I did Z." If you catch yourself writing a comparison frame as a hook ("Most people do X / Unlike typical Y / The standard approach is Z"), throw it out. Start with the thing itself — what it does, why it matters, what broke.
+
 ### Headers as narrative beats
 
 Headers tell a story, not an outline. They're conversational, sometimes sentence fragments.

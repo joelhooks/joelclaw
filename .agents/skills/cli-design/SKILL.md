@@ -204,6 +204,131 @@ cp joelclaw ~/.bun/bin/
 6. Add to the root command's `commands` array in the self-documenting output
 7. Rebuild and install
 
+## Streaming Protocol (NDJSON) — ADR-0058
+
+Request-response covers the **spatial** dimension (what's the state now?). Streamed NDJSON covers the **temporal** dimension (what's happening over time?). Together they make the full system observable through one protocol.
+
+### When to stream
+
+Stream when the command involves **temporal operations** — watching, following, tailing. Not every command needs streaming. Point-in-time queries (`status`, `functions`, `runs`) stay as single envelopes.
+
+Streaming is activated by command semantics (`--follow`, `watch`, `gateway stream`), never by a global `--stream` flag.
+
+### Protocol: typed NDJSON with HATEOAS terminal
+
+Each line is a self-contained JSON object with a `type` discriminator. The **last line is always the standard HATEOAS envelope** (`result` or `error`). Tools that don't understand streaming read the last line and get exactly what they expect.
+
+```
+{"type":"start","command":"joelclaw send video/download --follow","ts":"2026-02-19T08:25:00Z"}
+{"type":"step","name":"download","status":"started","ts":"..."}
+{"type":"progress","name":"download","percent":45,"ts":"..."}
+{"type":"step","name":"download","status":"completed","duration_ms":3200,"ts":"..."}
+{"type":"step","name":"transcribe","status":"started","ts":"..."}
+{"type":"log","level":"warn","message":"Large file, chunked transcription","ts":"..."}
+{"type":"step","name":"transcribe","status":"completed","duration_ms":45000,"ts":"..."}
+{"type":"result","ok":true,"command":"...","result":{...},"next_actions":[...]}
+```
+
+### Stream event types
+
+| Type | Meaning | Terminal? |
+|------|---------|-----------|
+| `start` | Stream begun, echoes command | No |
+| `step` | Inngest step lifecycle (started/completed/failed) | No |
+| `progress` | Progress update (percent, bytes, message) | No |
+| `log` | Diagnostic message (info/warn/error level) | No |
+| `event` | An Inngest event was emitted (fan-out visibility) | No |
+| `result` | HATEOAS success envelope — always last | **Yes** |
+| `error` | HATEOAS error envelope — always last | **Yes** |
+
+### TypeScript types
+
+```typescript
+import type { NextAction } from "./response"
+
+type StreamEvent =
+  | { type: "start"; command: string; ts: string }
+  | { type: "step"; name: string; status: "started" | "completed" | "failed"; duration_ms?: number; error?: string; ts: string }
+  | { type: "progress"; name: string; percent?: number; message?: string; ts: string }
+  | { type: "log"; level: "info" | "warn" | "error"; message: string; ts: string }
+  | { type: "event"; name: string; data: unknown; ts: string }
+  | { type: "result"; ok: true; command: string; result: unknown; next_actions: NextAction[] }
+  | { type: "error"; ok: false; command: string; error: { message: string; code: string }; fix: string; next_actions: NextAction[] }
+```
+
+### Emitting stream events
+
+Use the `emit()` helper — one JSON line per call, flushed immediately:
+
+```typescript
+import { emit, emitResult, emitError } from "../stream"
+
+// Progress events
+emit({ type: "start", command: "joelclaw send video/download --follow", ts: new Date().toISOString() })
+emit({ type: "step", name: "download", status: "started", ts: new Date().toISOString() })
+emit({ type: "step", name: "download", status: "completed", duration_ms: 3200, ts: new Date().toISOString() })
+
+// Terminal — always last
+emitResult("send --follow", { videoId: "abc123" }, [
+  { command: "joelclaw run abc123", description: "Inspect the completed run" },
+])
+```
+
+### Redis subscription pattern
+
+Streaming commands subscribe to the same Redis pub/sub channels the gateway extension uses. `pushGatewayEvent()` middleware is the emission point — the CLI is just another subscriber.
+
+```typescript
+import { streamFromRedis } from "../stream"
+
+// Subscribe to a channel, transform events, emit NDJSON
+await streamFromRedis({
+  channel: `joelclaw:notify:gateway`,
+  command: "joelclaw gateway stream",
+  transform: (event) => ({
+    type: "event" as const,
+    name: event.type,
+    data: event.data,
+    ts: new Date().toISOString(),
+  }),
+  // Optional: end condition
+  until: (event) => event.type === "loop.complete",
+})
+```
+
+### Composable with Unix tools
+
+NDJSON is pipe-native. Agents and humans can filter streams:
+
+```bash
+# Only step events
+joelclaw watch | jq --unbuffered 'select(.type == "step")'
+
+# Only failures
+joelclaw send video/download --follow | jq --unbuffered 'select(.type == "error" or (.type == "step" and .status == "failed"))'
+
+# Count steps
+joelclaw send pipeline/run --follow | jq --unbuffered 'select(.type == "step" and .status == "completed")' | wc -l
+```
+
+### Agent consumption pattern
+
+Agents consuming streams read lines as they arrive and can make decisions mid-execution:
+
+1. Start the stream: `joelclaw send video/download --follow`
+2. Read lines incrementally
+3. React to early signals (cancel if error, escalate if slow, log progress)
+4. The terminal `result`/`error` line contains `next_actions` for what to do after
+
+This eliminates the **polling tax** — no wasted tool calls checking "is it done yet?"
+
+### Cleanup
+
+Streaming commands hold a Redis connection. They **must**:
+- Handle SIGINT/SIGTERM gracefully (disconnect Redis, emit terminal event)
+- Use `connectTimeout` and `commandTimeout` to prevent hangs
+- Clean up the subscription on stream end (success, error, or signal)
+
 ## Anti-Patterns
 
 | Don't | Do |
@@ -218,6 +343,9 @@ cp joelclaw ~/.bun/bin/
 | `console.log("Success!")` | `{ ok: true, result: {...} }` |
 | Exit code as the only error signal | Error in JSON + exit code |
 | Require the agent to read --help | Root command self-documents |
+| Poll in a loop for temporal data | Stream NDJSON via Redis sub (ADR-0058) |
+| Plain text in streaming commands | Every line is a typed JSON object |
+| Hold Redis connections without cleanup | SIGINT handler + connection timeout |
 
 ## Naming Conventions
 

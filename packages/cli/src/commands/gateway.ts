@@ -389,6 +389,133 @@ const gatewayRestart = Command.make("restart", {}, () =>
   })
 )
 
+// ── gateway stream (ADR-0058) ───────────────────────────────────────
+
+import {
+  emitStart,
+  emitLog,
+  emitEvent,
+  emitResult,
+  emitError,
+  emit,
+} from "../stream"
+
+const gatewayStream = Command.make(
+  "stream",
+  {
+    timeout: Options.integer("timeout").pipe(
+      Options.withDefault(0),
+      Options.withDescription("Stop after N seconds (0 = indefinite)"),
+    ),
+    channel: Options.text("channel").pipe(
+      Options.withDefault("gateway"),
+      Options.withDescription("Session channel to subscribe to (default: gateway)"),
+    ),
+  },
+  ({ timeout, channel }) =>
+    Effect.gen(function* () {
+      const cmd = `joelclaw gateway stream`
+      const channelName = `joelclaw:notify:${channel}`
+
+      const Redis = (yield* Effect.tryPromise({
+        try: () => import("ioredis"),
+        catch: (e) => new Error(`ioredis: ${e}`),
+      })).default
+
+      const sub = new Redis({
+        host: process.env.REDIS_HOST ?? "localhost",
+        port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+        lazyConnect: true,
+        connectTimeout: 3000,
+        retryStrategy: (times: number) => (times > 3 ? null : Math.min(times * 500, 5000)),
+      })
+
+      try {
+        yield* Effect.tryPromise({
+          try: () => sub.connect(),
+          catch: (e) => new Error(`Redis: ${e}`),
+        })
+      } catch {
+        emitError(cmd, "Redis connection failed", "REDIS_CONNECT_FAILED",
+          "Check Redis: kubectl get pods -n joelclaw | grep redis", [
+            { command: "joelclaw gateway status", description: "Check gateway health" },
+          ])
+        return
+      }
+
+      emitStart(cmd)
+      emitLog("info", `Subscribed to ${channelName} — streaming events (ctrl-c to stop)`)
+
+      let ended = false
+      let eventCount = 0
+      const startTime = Date.now()
+
+      const onSignal = () => {
+        ended = true
+        sub.disconnect().catch(() => {})
+        emitResult(cmd, {
+          reason: "interrupted",
+          events_received: eventCount,
+          duration_ms: Date.now() - startTime,
+        }, [
+          { command: "joelclaw gateway status", description: "Check gateway health" },
+          { command: "joelclaw gateway events", description: "Peek at pending events" },
+        ])
+        process.exit(0)
+      }
+      process.on("SIGINT", onSignal)
+      process.on("SIGTERM", onSignal)
+
+      // Also subscribe to the event list channel for LPUSH notifications
+      sub.on("message", (_ch: string, message: string) => {
+        if (ended) return
+        eventCount++
+        try {
+          const parsed = JSON.parse(message)
+          emitEvent(parsed.type ?? parsed.eventId ?? "unknown", parsed)
+        } catch {
+          emitLog("warn", `Unparseable: ${message.slice(0, 200)}`)
+        }
+      })
+
+      yield* Effect.tryPromise({
+        try: () => sub.subscribe(channelName),
+        catch: (e) => new Error(`Subscribe: ${e}`),
+      })
+
+      // Wait until timeout or signal
+      if (timeout > 0) {
+        yield* Effect.tryPromise({
+          try: () => new Promise((resolve) => setTimeout(resolve, timeout * 1000)),
+          catch: () => new Error("sleep"),
+        })
+        emitLog("info", `Timeout reached (${timeout}s)`)
+      } else {
+        // Block indefinitely — signals handle exit
+        while (!ended) {
+          yield* Effect.tryPromise({
+            try: () => new Promise((resolve) => setTimeout(resolve, 60_000)),
+            catch: () => new Error("sleep"),
+          })
+        }
+      }
+
+      ended = true
+      process.off("SIGINT", onSignal)
+      process.off("SIGTERM", onSignal)
+      sub.disconnect().catch(() => {})
+
+      emitResult(cmd, {
+        reason: timeout > 0 ? "timeout" : "ended",
+        events_received: eventCount,
+        duration_ms: Date.now() - startTime,
+      }, [
+        { command: "joelclaw gateway status", description: "Check gateway health" },
+        { command: `joelclaw gateway stream`, description: "Resume streaming" },
+      ])
+    }),
+)
+
 // ── Root gateway command ────────────────────────────────────────────
 
 export const gatewayCmd = Command.make("gateway", {}, () =>
@@ -403,15 +530,17 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
         drain: "joelclaw gateway drain — Clear all event queues",
         test: "joelclaw gateway test — Push test event to all sessions",
         restart: "joelclaw gateway restart — Roll the pi session, clean Redis, restart daemon",
+        stream: "joelclaw gateway stream — NDJSON stream of all gateway events (ADR-0058)",
       },
     },
     [
       { command: "joelclaw gateway status", description: "Check gateway health" },
+      { command: "joelclaw gateway stream", description: "Stream all gateway events (NDJSON)" },
       { command: "joelclaw gateway test", description: "Push test event + verify" },
       { command: "joelclaw gateway restart", description: "Restart the gateway daemon" },
     ],
     true
   ))
 ).pipe(
-  Command.withSubcommands([gatewayStatus, gatewayEvents, gatewayPush, gatewayDrain, gatewayTest, gatewayRestart])
+  Command.withSubcommands([gatewayStatus, gatewayEvents, gatewayPush, gatewayDrain, gatewayTest, gatewayRestart, gatewayStream])
 )

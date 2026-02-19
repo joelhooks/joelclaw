@@ -1,8 +1,22 @@
+/**
+ * ADR-0058: Log viewing with optional --follow for NDJSON streaming.
+ *
+ * Without --follow: returns last N lines as JSON envelope.
+ * With --follow: tails the log file, emitting each new line as
+ * {"type":"log",...} NDJSON. Ctrl-c to stop.
+ */
+
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { respond, respondError } from "../response"
 import type { NextAction } from "../response"
 import { existsSync } from "node:fs"
+import {
+  emitStart,
+  emitLog,
+  emitResult,
+  emitError,
+} from "../stream"
 
 const WORKER_LOG = `${process.env.HOME}/.local/log/system-bus-worker.log`
 const WORKER_ERR = `${process.env.HOME}/.local/log/system-bus-worker.err`
@@ -24,10 +38,119 @@ export const logsCmd = Command.make(
       Options.optional,
       Options.withDescription("Filter lines containing this string")
     ),
+    follow: Options.boolean("follow").pipe(
+      Options.withAlias("f"),
+      Options.withDefault(false),
+      Options.withDescription("Stream new lines as NDJSON (ADR-0058)")
+    ),
+    timeout: Options.integer("timeout").pipe(
+      Options.withDefault(0),
+      Options.withDescription("Follow timeout in seconds (0 = indefinite)")
+    ),
   },
-  ({ source, lines, grep }) =>
+  ({ source, lines, grep, follow, timeout }) =>
     Effect.gen(function* () {
       const grepVal = grep._tag === "Some" ? grep.value : undefined
+
+      // ── Follow mode: tail -f as NDJSON ─────────────────────────
+      if (follow) {
+        let logFile: string
+        let label: string
+        switch (source) {
+          case "errors":
+          case "err":
+            logFile = WORKER_ERR; label = "worker stderr"; break
+          case "server":
+            emitError("logs --follow", "Cannot follow k8s logs via NDJSON yet — use kubectl logs -f",
+              "NOT_SUPPORTED",
+              "kubectl logs -n joelclaw -f statefulset/inngest", [
+                { command: "joelclaw logs server", description: "Snapshot of server logs" },
+              ])
+            return
+          default:
+            logFile = WORKER_LOG; label = "worker stdout"
+        }
+
+        if (!existsSync(logFile)) {
+          emitError(`logs --follow`, `Log file not found: ${logFile}`, "LOG_MISSING",
+            "Check worker: launchctl print gui/$(id -u)/com.joel.system-bus-worker", [])
+          return
+        }
+
+        const cmd = `joelclaw logs ${source} --follow`
+        emitStart(cmd)
+        emitLog("info", `Tailing ${label} (${logFile})`)
+
+        let ended = false
+        let lineCount = 0
+        const startTime = Date.now()
+
+        const onSignal = () => {
+          ended = true
+          emitResult(cmd, { lines_emitted: lineCount, duration_ms: Date.now() - startTime }, [])
+          process.exit(0)
+        }
+        process.on("SIGINT", onSignal)
+        process.on("SIGTERM", onSignal)
+
+        // Use tail -f subprocess
+        const proc = Bun.spawn(["tail", "-f", "-n", String(lines), logFile], {
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+
+        // Timeout handler
+        let timer: ReturnType<typeof setTimeout> | null = null
+        if (timeout > 0) {
+          timer = setTimeout(() => {
+            ended = true
+            proc.kill()
+          }, timeout * 1000)
+        }
+
+        yield* Effect.tryPromise({
+          try: async () => {
+            const reader = proc.stdout.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ""
+            try {
+              while (!ended) {
+                const { value, done } = await reader.read()
+                if (done) break
+                buffer += decoder.decode(value, { stream: true })
+                const splitLines = buffer.split("\n")
+                buffer = splitLines.pop() ?? ""
+                for (const line of splitLines) {
+                  if (!line.trim()) continue
+                  if (grepVal && !line.toLowerCase().includes(grepVal.toLowerCase())) continue
+                  lineCount++
+                  const level = line.includes("ERROR") || line.includes("error")
+                    ? "error" as const
+                    : line.includes("WARN") || line.includes("warn")
+                      ? "warn" as const
+                      : "info" as const
+                  emitLog(level, line)
+                }
+              }
+            } catch {
+              // Reader closed
+            }
+          },
+          catch: () => new Error("tail failed"),
+        })
+
+        if (timer) clearTimeout(timer)
+        proc.kill()
+        process.off("SIGINT", onSignal)
+        process.off("SIGTERM", onSignal)
+
+        emitResult(cmd, { lines_emitted: lineCount, duration_ms: Date.now() - startTime }, [
+          { command: `joelclaw logs ${source}`, description: "Snapshot mode" },
+        ])
+        return
+      }
+
+      // ── Snapshot mode (original behavior) ──────────────────────
 
       let label: string
       let output: string
