@@ -641,6 +641,9 @@ export type Events = {
       component?: string;
     };
   };
+  "memory/friction.requested": {
+    data: Record<string, never>;
+  };
   "memory/review.check": {
     data: Record<string, never>;
   };

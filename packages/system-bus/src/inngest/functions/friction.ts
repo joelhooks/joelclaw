@@ -277,7 +277,7 @@ export const friction = inngest.createFunction(
     name: "Analyze Memory Friction",
     concurrency: 1,
   },
-  { cron: "0 7 * * *" },
+  [{ cron: "0 7 * * *" }, { event: "memory/friction.requested" }],
   async ({ step }) => {
     const gate = await step.run("gate-minimum-points", async () => {
       try {
