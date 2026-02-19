@@ -7,6 +7,7 @@
 
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import Redis from "ioredis";
 
 const PROCESSED_SET = "granola:processed";
@@ -103,10 +104,19 @@ export const checkGranola = inngest.createFunction(
       return { status: "noop", reason: "all meetings already processed", totalChecked: meetings.length };
     }
 
+    const untrackedMeetings = await step.run("filter-meetings-against-tasks", async () => {
+      const tasks = await getCurrentTasks();
+      return newMeetings.filter((meeting) => !hasTaskMatching(tasks, meeting.title));
+    });
+
+    if (untrackedMeetings.length === 0) {
+      return { status: "noop", reason: "already tracked in tasks", totalChecked: meetings.length };
+    }
+
     // Step 3: Emit meeting/noted events for each new meeting
     await step.sendEvent(
       "emit-new-meetings",
-      newMeetings.map((m) => ({
+      untrackedMeetings.map((m) => ({
         name: "meeting/noted" as const,
         data: {
           meetingId: m.id,
@@ -120,16 +130,16 @@ export const checkGranola = inngest.createFunction(
 
     // Step 4: Notify gateway about new meetings (actionable)
     await step.run("notify-new-meetings", async () => {
-      const list = newMeetings.map((m) => `- **${m.title}**${m.date ? ` (${m.date})` : ""}`).join("\n");
+      const list = untrackedMeetings.map((m) => `- **${m.title}**${m.date ? ` (${m.date})` : ""}`).join("\n");
       await pushGatewayEvent({
         type: "granola.new.meetings",
         source: "inngest/check-granola",
         payload: {
-          prompt: `## 📝 ${newMeetings.length} New Meeting${newMeetings.length > 1 ? "s" : ""} Detected\n\n${list}\n\nMeeting analysis pipeline triggered automatically.`,
+          prompt: `## 📝 ${untrackedMeetings.length} New Meeting${untrackedMeetings.length > 1 ? "s" : ""} Detected\n\n${list}\n\nMeeting analysis pipeline triggered automatically.`,
         },
       });
     });
 
-    return { status: "new-meetings", count: newMeetings.length, meetings: newMeetings.map((m) => m.title) };
+    return { status: "new-meetings", count: untrackedMeetings.length, meetings: untrackedMeetings.map((m) => m.title) };
   }
 );

@@ -9,3 +9,4 @@ export type {
   Change,
 } from "./port";
 export { TodoistTaskAdapter } from "./adapters/todoist";
+export { getCurrentTasks, hasTaskMatching, tasksWithLabel, tasksInProject } from "./utils";

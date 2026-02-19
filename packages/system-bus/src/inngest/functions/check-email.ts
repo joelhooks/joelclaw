@@ -14,8 +14,8 @@
 
 import { inngest } from "../client";
 import { parseClaudeOutput, pushGatewayEvent } from "./agent-loop/utils";
+import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import Redis from "ioredis";
-import type { EmailConversation } from "@joelclaw/email";
 
 const COOLDOWN_KEY = "email:triage:last-run";
 const COOLDOWN_TTL = 2 * 60 * 60; // 2 hours
@@ -280,8 +280,16 @@ export const checkEmail = inngest.createFunction(
       return result;
     });
 
-    // NOOP: nothing to escalate — all handled silently
-    if (summary.escalated.length === 0) {
+    // Step 5: Filter escalations against existing tasks — don't nag about what's already tracked
+    const filteredEscalations = await step.run("filter-against-tasks", async () => {
+      const tasks = await getCurrentTasks();
+      return summary.escalated.filter(
+        (e) => !hasTaskMatching(tasks, e.subject) && !hasTaskMatching(tasks, e.from.split("<")[0].trim()),
+      );
+    });
+
+    // NOOP: nothing to escalate (all handled silently or already have tasks)
+    if (filteredEscalations.length === 0) {
       return {
         status: "handled-silently",
         archived: summary.archived,
@@ -291,9 +299,9 @@ export const checkEmail = inngest.createFunction(
       };
     }
 
-    // Step 4: Only notify gateway for emails that need Joel
+    // Step 6: Only notify gateway for emails that need Joel AND don't have tasks
     await step.run("notify-gateway", async () => {
-      const lines = summary.escalated.map((e) =>
+      const lines = filteredEscalations.map((e) =>
         `- **${e.subject}** from ${e.from}\n  _${e.reason}_`
       );
 
@@ -308,7 +316,7 @@ export const checkEmail = inngest.createFunction(
         source: "inngest/check-email",
         payload: {
           prompt: [
-            `## 📧 ${summary.escalated.length} Email${summary.escalated.length > 1 ? "s" : ""} Need${summary.escalated.length === 1 ? "s" : ""} You`,
+            `## 📧 ${filteredEscalations.length} Email${filteredEscalations.length > 1 ? "s" : ""} Need${filteredEscalations.length === 1 ? "s" : ""} You`,
             "",
             ...lines,
             "",
@@ -320,7 +328,7 @@ export const checkEmail = inngest.createFunction(
 
     return {
       status: "escalated",
-      escalated: summary.escalated.length,
+      escalated: filteredEscalations.length,
       archived: summary.archived,
       unsubscribed: summary.unsubscribed,
       labeled: summary.labeled,

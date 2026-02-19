@@ -5,6 +5,7 @@
 
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import Redis from "ioredis";
 
 type ServiceStatus = { name: string; ok: boolean; detail?: string };
@@ -70,7 +71,17 @@ export const checkSystemHealth = inngest.createFunction(
       return { status: "noop", services };
     }
 
-    // Something's down → alert gateway
+    // Filter: don't re-alert about things that already have tasks
+    const newDegraded = await step.run("filter-against-tasks", async () => {
+      const tasks = await getCurrentTasks();
+      return degraded.filter((s) => !hasTaskMatching(tasks, s.name));
+    });
+
+    if (newDegraded.length === 0) {
+      return { status: "noop", reason: "degraded but already tracked in tasks", services };
+    }
+
+    // Something's down and NOT already tracked → alert gateway
     await step.run("notify-degradation", async () => {
       const lines = [
         "## 🚨 System Health Degradation",

@@ -5,6 +5,7 @@
 
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import Redis from "ioredis";
 
 const COOLDOWN_KEY = "loops:stale:last-check";
@@ -111,9 +112,22 @@ export const checkLoops = inngest.createFunction(
       return { status: "noop", reason: "loops running, none stale", activeCount: loops.length };
     }
 
+    const trackedStale = await step.run("filter-tracked-stale-loops", async () => {
+      const tasks = await getCurrentTasks();
+      return stale.filter((loop) => {
+        const byId = loop.id ? hasTaskMatching(tasks, `loop ${loop.id}`) : false;
+        const generic = hasTaskMatching(tasks, "stale loop") || hasTaskMatching(tasks, "loop issue");
+        return !byId && !generic;
+      });
+    });
+
+    if (trackedStale.length === 0) {
+      return { status: "noop", reason: "already tracked in tasks", activeCount: loops.length, staleCount: stale.length };
+    }
+
     // Alert: stale loops detected
     await step.run("notify-stale-loops", async () => {
-      const lines = stale.map((l) => {
+      const lines = trackedStale.map((l) => {
         const age = Math.round((now - new Date(l.startedAt).getTime()) / (60 * 1000));
         return `- **Loop ${l.id}**: ${l.storiesDone}/${l.storiesTotal} stories, running ${age}min`;
       });
@@ -123,7 +137,7 @@ export const checkLoops = inngest.createFunction(
         source: "inngest/check-loops",
         payload: {
           prompt: [
-            `## ⚠️ ${stale.length} Stale Loop${stale.length > 1 ? "s" : ""} Detected`,
+            `## ⚠️ ${trackedStale.length} Stale Loop${trackedStale.length > 1 ? "s" : ""} Detected`,
             "",
             ...lines,
             "",
@@ -133,6 +147,6 @@ export const checkLoops = inngest.createFunction(
       });
     });
 
-    return { status: "stale-detected", staleCount: stale.length, activeCount: loops.length };
+    return { status: "stale-detected", staleCount: trackedStale.length, activeCount: loops.length };
   }
 );

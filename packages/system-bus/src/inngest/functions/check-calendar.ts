@@ -6,6 +6,7 @@
 
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import Redis from "ioredis";
 
 const COOLDOWN_KEY = "calendar:check:last-run";
@@ -110,23 +111,32 @@ export const checkCalendar = inngest.createFunction(
       return { status: "noop", reason: "no events today" };
     }
 
+    const eventsWithTaskContext = await step.run("annotate-events-with-tasks", async () => {
+      const tasks = await getCurrentTasks();
+      return events.map((event) => ({
+        ...event,
+        hasRelatedTask: hasTaskMatching(tasks, event.title),
+      }));
+    });
+
     // Notify gateway with today's schedule
     await step.run("notify-gateway", async () => {
-      const list = events.map((e) => {
+      const list = eventsWithTaskContext.map((e) => {
         const time = e.start ? e.start.slice(11, 16) : "all-day";
         const loc = e.location ? ` 📍 ${e.location}` : "";
-        return `- **${time}** ${e.title}${loc}`;
+        const taskMarker = e.hasRelatedTask ? " ✅ task linked" : "";
+        return `- **${time}** ${e.title}${loc}${taskMarker}`;
       }).join("\n");
 
       await pushGatewayEvent({
         type: "calendar.today",
         source: "inngest/check-calendar",
         payload: {
-          prompt: `## 📅 Today's Schedule (${events.length} event${events.length > 1 ? "s" : ""})\n\n${list}`,
+          prompt: `## 📅 Today's Schedule (${eventsWithTaskContext.length} event${eventsWithTaskContext.length > 1 ? "s" : ""})\n\n${list}`,
         },
       });
     });
 
-    return { status: "notified", eventCount: events.length };
+    return { status: "notified", eventCount: eventsWithTaskContext.length };
   }
 );

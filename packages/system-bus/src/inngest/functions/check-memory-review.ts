@@ -6,6 +6,7 @@
 
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import Redis from "ioredis";
 
 const REVIEW_PENDING_KEY = "memory:review:pending";
@@ -41,6 +42,15 @@ export const checkMemoryReview = inngest.createFunction(
     // NOOP: no proposals or already nudged today
     if (state.count === 0 || state.alreadyNudged) {
       return { status: "noop", pendingCount: state.count, reason: state.count === 0 ? "no proposals" : "nudge cooldown" };
+    }
+
+    const alreadyTracked = await step.run("check-existing-memory-task", async () => {
+      const tasks = await getCurrentTasks();
+      return hasTaskMatching(tasks, "memory") || hasTaskMatching(tasks, "proposal");
+    });
+
+    if (alreadyTracked) {
+      return { status: "noop", pendingCount: state.count, reason: "already tracked in tasks" };
     }
 
     // Proposals pending and haven't nudged in 24h
