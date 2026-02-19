@@ -29,6 +29,8 @@ export {
   vercelDeployCanceled,
 } from "./vercel-notify";
 export { emailInboxCleanup } from "./email-cleanup";
+export { meetingAnalyze } from "./meeting-analyze";
+export { granolaBackfill } from "./granola-backfill";
 export {
   agentLoopPlan,
   agentLoopTestWriter,

@@ -36,6 +36,8 @@ import {
   vercelDeployCreated,
   vercelDeployCanceled,
   emailInboxCleanup,
+  meetingAnalyze,
+  granolaBackfill,
 } from "./inngest/functions";
 
 const app = new Hono();
@@ -75,6 +77,8 @@ const registeredFunctions = [
   vercelDeployCreated,
   vercelDeployCanceled,
   emailInboxCleanup,
+  meetingAnalyze,
+  granolaBackfill,
 ];
 
 // Derive function names from the actual array — no stale hardcoded list
@@ -105,6 +109,8 @@ app.get("/", (c) =>
       "front/*": "Front webhook events (message.received, message.sent, assignee.changed)",
       "vercel/*": "Vercel webhook events (deploy.succeeded, deploy.error, deploy.created, deploy.canceled)",
       "email/inbox.cleanup": "AI-powered inbox triage — classify + archive noise",
+      "meeting/noted": "Analyze meeting → extract action items, decisions, people (ADR-0055)",
+      "granola/backfill.requested": "Backfill all historical Granola meetings (ADR-0055)",
     },
   })
 );

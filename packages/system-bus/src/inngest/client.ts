@@ -600,6 +600,28 @@ export type Events = {
     };
   };
 
+  // --- Granola / Meetings (ADR-0055, ADR-0056) ---
+  "meeting/noted": {
+    data: {
+      meetingId: string;
+      title: string;
+      date?: string;
+      participants?: string[];
+      source?: "heartbeat" | "backfill" | "manual";
+    };
+  };
+  "granola/backfill.requested": {
+    data: {
+      dryRun?: boolean;
+      customRanges?: Array<{
+        range: string;
+        start?: string;
+        end?: string;
+        label: string;
+      }>;
+    };
+  };
+
   // --- Legacy ---
   "pipeline/video.ingested": {
     data: {
