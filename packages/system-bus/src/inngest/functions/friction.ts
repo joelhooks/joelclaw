@@ -395,6 +395,27 @@ export const friction = inngest.createFunction(
       };
     });
 
+    const date = new Date().toISOString().slice(0, 10);
+    const fixEvents = parsed.patterns.map((pattern, index) => {
+      const patternId = `friction-${date}-${String(index + 1).padStart(3, "0")}`;
+      return {
+        name: "memory/friction.fix.requested" as const,
+        data: {
+          patternId,
+          title: pattern.title,
+          summary: pattern.summary,
+          suggestion: pattern.suggestion,
+          evidence: pattern.evidence,
+          todoistTaskId: tasks.taskIds[index],
+        },
+      };
+    });
+    const patternIds = fixEvents.map((event) => event.data.patternId);
+
+    if (fixEvents.length > 0) {
+      await step.sendEvent("dispatch-fix-events", fixEvents);
+    }
+
     await step.run("notify-gateway", async () => {
       if (parsed.count === 0) {
         await gateway.notify("friction-analysis", {
@@ -419,6 +440,8 @@ export const friction = inngest.createFunction(
       patternsDetected: parsed.count,
       tasksCreated: tasks.created,
       taskIds: tasks.taskIds,
+      fixEventsDispatched: fixEvents.length,
+      patternIds,
     };
   }
 );

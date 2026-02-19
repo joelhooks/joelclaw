@@ -655,6 +655,25 @@ export type Events = {
   "memory/friction.requested": {
     data: Record<string, never>;
   };
+  "memory/friction.fix.requested": {
+    data: {
+      patternId: string;
+      title: string;
+      summary: string;
+      suggestion: string;
+      evidence: string[];
+      todoistTaskId?: string;
+    };
+  };
+  "memory/friction.fix.completed": {
+    data: {
+      patternId: string;
+      status: "fixed" | "documented" | "skipped";
+      commitSha?: string;
+      filesChanged?: string[];
+      message: string;
+    };
+  };
   "memory/review.check": {
     data: Record<string, never>;
   };

@@ -43,6 +43,7 @@ export { emailInboxCleanup } from "./email-cleanup";
 export { meetingAnalyze } from "./meeting-analyze";
 export { granolaBackfill } from "./granola-backfill";
 export { friction } from "./friction";
+export { frictionFix } from "./friction-fix";
 export {
   agentLoopPlan,
   agentLoopTestWriter,
