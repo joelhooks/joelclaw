@@ -24,30 +24,30 @@ const clusterOverview = [
 
 const nodes: NodeSpec[] = [
   {
-    name: "Panda",
-    tailscaleHost: "panda",
+    name: "Overlook",
+    tailscaleHost: "overlook",
     status: "Online",
     specs: ["Mac Mini", "Apple M4 Pro", "14-core CPU", "20-core GPU", "64 GB unified", "1 TB NVMe"],
-    role: "Control plane. Runs everything — k8s cluster, agent gateway, event bus, all pipelines. Always on.",
+    role: "Control plane. Runs everything — k8s cluster, agent gateway, event bus, all pipelines. Always on, always watching.",
     services: [
       "Talos k8s cluster (Colima + Talos)",
-      "Inngest event bus (k8s StatefulSet, port 8288)",
-      "Redis state/pub-sub (k8s StatefulSet, port 6379)",
-      "Qdrant vector search (k8s StatefulSet, port 6333)",
-      "Bluesky PDS — AT Protocol personal data server (Helm, port 2583)",
-      "LiveKit — WebRTC media server (Helm, ports 7880/7881)",
-      "System-bus worker (launchd, 48 functions, port 3111)",
+      "Inngest event bus (k8s StatefulSet)",
+      "Redis state/pub-sub (k8s StatefulSet)",
+      "Qdrant vector search (k8s StatefulSet)",
+      "Bluesky PDS — AT Protocol personal data server (Helm)",
+      "LiveKit — WebRTC media server (Helm)",
+      "System-bus worker (launchd, 48 functions)",
       "Gateway daemon (launchd, pi agent + Telegram bridge)",
       "Caddy HTTPS proxy (launchd, Tailscale TLS)",
       "Vault sync (launchd, git auto-commit + push)",
     ],
   },
   {
-    name: "Three-Body",
-    tailscaleHost: "three-body",
+    name: "Derry",
+    tailscaleHost: "derry",
     status: "Online",
-    specs: ["Synology NAS", "Intel Atom", "8 GB RAM", "64 TB RAID (7.1 TB used)"],
-    role: "Archive. Video library, book collection, media backups, pipeline output landing zone.",
+    specs: ["NAS", "Intel Atom", "8 GB RAM", "64 TB RAID"],
+    role: "Archive. Video library, book collection, media backups, pipeline output landing zone. Everything's buried down here.",
     services: [
       "SSH file access (video ingest target)",
       "Video archive by year (yt-dlp pipeline output)",
@@ -55,45 +55,45 @@ const nodes: NodeSpec[] = [
     ],
   },
   {
-    name: "Dark Wizard",
-    tailscaleHost: "dark-wizard",
+    name: "Flagg",
+    tailscaleHost: "flagg",
     status: "Online",
     specs: ["MacBook Pro", "Apple Silicon", "macOS"],
-    role: "Joel's laptop. Primary development machine, exit node for the tailnet.",
+    role: "Primary development machine. Goes everywhere, exit node for the tailnet.",
   },
   {
-    name: "Clanker-001",
-    tailscaleHost: "clanker-001",
+    name: "Blaine",
+    tailscaleHost: "blaine",
     status: "Online",
     specs: ["Linux server"],
-    role: "Remote Linux node. Available on tailnet.",
+    role: "Remote Linux node. Available on tailnet. Asks a lot of riddles.",
   },
   {
-    name: "Nightmare Router",
-    tailscaleHost: "nightmare-router",
+    name: "Todash",
+    tailscaleHost: "todash",
     status: "Idle",
     specs: ["Linux router"],
-    role: "Network edge. Tailscale exit node, currently idle.",
+    role: "Network edge. Tailscale exit node, currently idle. The darkness between worlds.",
   },
 ];
 
 const launchdServices = [
-  { name: "com.joel.system-bus-worker", desc: "Inngest function worker (48 functions)" },
-  { name: "com.joel.gateway", desc: "Pi agent gateway daemon + Telegram bridge" },
-  { name: "com.joel.gateway-tripwire", desc: "Gateway watchdog (ADR-0037)" },
-  { name: "com.joel.caddy", desc: "HTTPS reverse proxy with Tailscale certs" },
-  { name: "com.joel.colima", desc: "Container runtime (VZ framework → Talos k8s)" },
-  { name: "com.joel.vault-log-sync", desc: "system-log.jsonl → Obsidian markdown notes" },
-  { name: "com.joel.content-sync-watcher", desc: "Vault content → web deploy trigger" },
-  { name: "com.joel.system-bus-sync", desc: "Monorepo → worker clone sync" },
+  { name: "system-bus-worker", desc: "Inngest function worker (48 functions)" },
+  { name: "gateway", desc: "Pi agent gateway daemon + Telegram bridge" },
+  { name: "gateway-tripwire", desc: "Gateway watchdog" },
+  { name: "caddy", desc: "HTTPS reverse proxy with Tailscale certs" },
+  { name: "colima", desc: "Container runtime (VZ framework → Talos k8s)" },
+  { name: "vault-log-sync", desc: "system-log.jsonl → Obsidian markdown notes" },
+  { name: "content-sync-watcher", desc: "Vault content → web deploy trigger" },
+  { name: "system-bus-sync", desc: "Monorepo → worker clone sync" },
 ];
 
 const k8sPods = [
-  { name: "inngest-0", desc: "Event orchestration server", port: "8288" },
-  { name: "redis-0", desc: "State, pub/sub, loop PRD, cooldowns", port: "6379" },
-  { name: "qdrant-0", desc: "Vector search (memory_observations)", port: "6333" },
-  { name: "bluesky-pds", desc: "AT Protocol personal data server (Helm)", port: "2583" },
-  { name: "livekit-server", desc: "WebRTC media server (Helm)", port: "7880" },
+  { name: "inngest-0", desc: "Event orchestration server" },
+  { name: "redis-0", desc: "State, pub/sub, loop PRD, cooldowns" },
+  { name: "qdrant-0", desc: "Vector search (memory observations)" },
+  { name: "bluesky-pds", desc: "AT Protocol personal data server (Helm)" },
+  { name: "livekit-server", desc: "WebRTC media server (Helm)" },
 ];
 
 const architectureLayers = [
@@ -136,10 +136,10 @@ export default function NetworkPage() {
         <h1 className="text-2xl font-bold tracking-tight">Network</h1>
         <p className="mt-2 text-sm text-neutral-400 leading-relaxed">
           Always-on personal infrastructure.{" "}
-          <span className="text-claw">Panda</span> runs the cluster, agents,
+          <span className="text-claw">Overlook</span> runs the cluster, agents,
           and all pipelines.{" "}
-          <span className="text-neutral-300">Three-Body</span> holds 64 TB of
-          archive. Everything connected via Tailscale mesh.
+          <span className="text-neutral-300">Derry</span> holds 64 TB of
+          archive. Everything connected via encrypted WireGuard mesh.
         </p>
       </header>
 
@@ -207,7 +207,6 @@ export default function NetworkPage() {
               <tr className="border-b border-neutral-800 text-left">
                 <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-neutral-600 font-medium">Pod</th>
                 <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-neutral-600 font-medium">Role</th>
-                <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-neutral-600 font-medium text-right">Port</th>
               </tr>
             </thead>
             <tbody>
@@ -215,7 +214,6 @@ export default function NetworkPage() {
                 <tr key={pod.name} className="border-b border-neutral-800/50 last:border-0">
                   <td className="px-4 py-2.5 font-mono text-xs text-neutral-200">{pod.name}</td>
                   <td className="px-4 py-2.5 text-neutral-400">{pod.desc}</td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-neutral-500 text-right">{pod.port}</td>
                 </tr>
               ))}
             </tbody>
