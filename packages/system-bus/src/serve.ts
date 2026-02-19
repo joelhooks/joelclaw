@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { serve as inngestServe } from "inngest/hono";
 import { inngest } from "./inngest/client";
+import { webhookApp } from "./webhooks/server";
 import {
   videoDownload,
   transcriptProcess,
@@ -56,6 +57,10 @@ app.get("/", (c) =>
       "agent-loop-retro",
       "media-process",
     ],
+    webhooks: {
+      endpoint: "/webhooks/:provider",
+      providers: ["todoist"],
+    },
     events: {
       "pipeline/video.requested": "Download video + NAS transfer → emits transcript.requested",
       "pipeline/transcript.requested":
@@ -68,6 +73,10 @@ app.get("/", (c) =>
     },
   })
 );
+
+// Webhook gateway — external services POST here
+// ADR-0048: Webhook Gateway for External Service Integration
+app.route("/webhooks", webhookApp);
 
 // Inngest serve endpoint — registers functions and handles execution
 // serveHost must match how the Inngest server (in Docker) reaches this worker

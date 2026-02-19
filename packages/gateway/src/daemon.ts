@@ -13,6 +13,12 @@ const AGENT_DIR = join(HOME, ".pi/agent");
 const PID_DIR = "/tmp/joelclaw";
 const PID_FILE = `${PID_DIR}/gateway.pid`;
 const WS_PORT_FILE = `${PID_DIR}/gateway.ws.port`;
+const JOELCLAW_DIR = join(HOME, ".joelclaw");
+const SESSION_ID_FILE = join(JOELCLAW_DIR, "gateway.session");
+// Gateway uses a fixed, well-known session file — deterministic, not "most recent".
+// Pattern borrowed from OpenClaw: named session keys → fixed file paths.
+const GATEWAY_SESSION_DIR = join(JOELCLAW_DIR, "sessions", "gateway");
+const GATEWAY_SESSION_FILE = join(GATEWAY_SESSION_DIR, "gateway.jsonl");
 const DEFAULT_WS_PORT = 3018;
 const WS_PORT = Number.parseInt(process.env.PI_GATEWAY_WS_PORT ?? `${DEFAULT_WS_PORT}`, 10) || DEFAULT_WS_PORT;
 const startedAt = Date.now();
@@ -40,13 +46,21 @@ function describeModel(model: unknown): string {
   return `${provider}/${id}`;
 }
 
-// Resume the most recent session on restart instead of creating a fresh one.
-// This preserves pi context (conversation history, tool state) across
-// gateway restarts — launchd restarts should NOT obliterate context.
-const sessionManager = SessionManager.continueRecent(HOME);
-const resumedSessionId = sessionManager.getSessionId();
-const resumedFile = sessionManager.getSessionFile();
-console.log("[gateway] resuming session", { sessionId: resumedSessionId, file: resumedFile });
+// Open the gateway's fixed session file, or create a new one if it doesn't exist.
+// Deterministic path (not "most recent") — borrowed from OpenClaw's named session pattern.
+// Restarts always resume the same session; context survives launchd restarts.
+import { existsSync, mkdirSync } from "node:fs";
+mkdirSync(GATEWAY_SESSION_DIR, { recursive: true });
+const hasExistingSession = existsSync(GATEWAY_SESSION_FILE);
+const sessionManager = hasExistingSession
+  ? SessionManager.open(GATEWAY_SESSION_FILE, GATEWAY_SESSION_DIR)
+  : SessionManager.create(HOME, GATEWAY_SESSION_DIR);
+console.log("[gateway] session", {
+  mode: hasExistingSession ? "resumed" : "new",
+  sessionId: sessionManager.getSessionId(),
+  file: sessionManager.getSessionFile(),
+  entries: sessionManager.getEntries().length,
+});
 
 const { session } = await createAgentSession({
   cwd: HOME,
@@ -323,6 +337,7 @@ const queueDrainTimer = setInterval(() => {
   void drain();
 }, 1000);
 await writeFile(PID_FILE, `${process.pid}\n`);
+await writeFile(SESSION_ID_FILE, `${session.sessionId}\n`);
 
 console.log("[gateway] daemon started", {
   pid: process.pid,
@@ -386,6 +401,12 @@ async function gracefulShutdown(signal: string): Promise<void> {
     await rm(WS_PORT_FILE, { force: true });
   } catch (error) {
     console.error("[gateway] failed removing WS port file", { error });
+  }
+
+  try {
+    await rm(SESSION_ID_FILE, { force: true });
+  } catch (error) {
+    console.error("[gateway] failed removing session ID file", { error });
   }
 
   process.exit(0);
