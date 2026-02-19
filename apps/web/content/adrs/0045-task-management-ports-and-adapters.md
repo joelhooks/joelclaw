@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: implemented
 date: 2026-02-18
 deciders: Joel
 tags:
@@ -186,9 +186,10 @@ Roll our own task database (Redis/SQLite). Maximum control. But then Joel has tw
 3. Todoist webhooks (Pro) as upgrade from polling
 
 ### Phase 3: Port Interface + Manager
-1. Implement `TaskPort` in `packages/system-bus/src/tasks/port.ts`
-2. Wire `joelclaw tasks` subcommand to delegate to todoist-cli
-3. `GoogleTasksAdapter` via `gog tasks` as secondary
+1. ✅ Implemented `TaskPort` in `packages/system-bus/src/tasks/port.ts`
+2. ✅ `TodoistTaskAdapter` in `packages/system-bus/src/tasks/adapters/todoist.ts`
+3. Wire `joelclaw tasks` subcommand to delegate to todoist-cli
+4. `GoogleTasksAdapter` via `gog tasks` as secondary
 
 ### Phase 4: Reactivity
 1. Agent reacts to task events (completions, missed recurring)
