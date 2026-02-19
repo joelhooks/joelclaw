@@ -1,0 +1,79 @@
+{
+  "project": "ADR-0045 TaskPort + ADR-0062 Heartbeat Task Triage",
+  "description": "Implement the TaskPort hexagonal interface with Todoist adapter, wire labels through webhooks, and add heartbeat-driven task triage that scans agent-labeled Todoist tasks and notifies the gateway when actionable work is found.",
+  "repo": "~/Code/joelhooks/joelclaw",
+  "stories": [
+    {
+      "id": "task-port-interface",
+      "title": "Create TaskPort interface and domain types",
+      "priority": 1,
+      "description": "Create packages/system-bus/src/tasks/port.ts with the TaskPort interface and provider-agnostic domain types (Task, TaskFilter, CreateTaskInput, UpdateTaskInput, Project, Label, Change). Export all types. This is the hexagonal port — no implementation, just the contract. Reference ADR-0045 for the interface spec.",
+      "files": [
+        "packages/system-bus/src/tasks/port.ts",
+        "packages/system-bus/src/tasks/index.ts"
+      ],
+      "acceptance": [
+        "packages/system-bus/src/tasks/port.ts exports TaskPort interface",
+        "packages/system-bus/src/tasks/port.ts exports Task, TaskFilter, CreateTaskInput, UpdateTaskInput, Project, Label types",
+        "packages/system-bus/src/tasks/index.ts re-exports everything from port.ts",
+        "bunx tsc --noEmit passes"
+      ],
+      "passes": true
+    },
+    {
+      "id": "todoist-adapter",
+      "title": "Implement Todoist adapter via todoist-cli",
+      "priority": 2,
+      "description": "Create packages/system-bus/src/tasks/adapters/todoist.ts that implements TaskPort by shelling out to todoist-cli. Each method parses the HATEOAS JSON response. Use Bun.spawn or $`todoist-cli ...` for shell calls. Handle the JSON envelope (check .ok, extract .result). API token comes from TODOIST_API_TOKEN env var. For listTasks, map TaskFilter fields to todoist-cli flags (--label, --project, --filter, etc). For createTask, map CreateTaskInput fields to todoist-cli add flags.",
+      "files": [
+        "packages/system-bus/src/tasks/adapters/todoist.ts",
+        "packages/system-bus/src/tasks/adapters/index.ts"
+      ],
+      "acceptance": [
+        "TodoistAdapter class implements TaskPort interface",
+        "listTasks supports filter by label, project, today, inbox, search",
+        "createTask maps all fields to todoist-cli add flags",
+        "completeTask calls todoist-cli complete",
+        "All methods parse HATEOAS JSON envelope and throw on .ok=false",
+        "bunx tsc --noEmit passes"
+      ],
+      "passes": true
+    },
+    {
+      "id": "webhook-labels",
+      "title": "Pass labels through todoist/task.completed webhook event",
+      "priority": 3,
+      "description": "In packages/system-bus/src/webhooks/providers/todoist.ts, the task.completed normalizer currently does NOT include labels in the event data (unlike task.created which does). Fix: add labels extraction to the task.completed case — same pattern as task.created: const labels = Array.isArray(eventData.labels) ? eventData.labels : []. Also update the todoist/task.completed type in packages/system-bus/src/inngest/client.ts to include labels: string[].",
+      "files": [
+        "packages/system-bus/src/webhooks/providers/todoist.ts",
+        "packages/system-bus/src/inngest/client.ts"
+      ],
+      "acceptance": [
+        "todoist/task.completed event type in client.ts includes labels: string[]",
+        "todoist.ts normalizer extracts labels from eventData for task.completed",
+        "bunx tsc --noEmit passes"
+      ],
+      "passes": true
+    },
+    {
+      "id": "heartbeat-task-triage",
+      "title": "Add task triage step to heartbeat cron",
+      "priority": 4,
+      "description": "Add a task-triage step to the heartbeatCron function in packages/system-bus/src/inngest/functions/heartbeat.ts. The step should: (1) Shell out to todoist-cli list --label agent to get agent-labeled tasks, parse the HATEOAS JSON. (2) Check Redis key tasks:triage:last-hash — if SHA256 of task IDs matches, skip (no changes). (3) If tasks changed, call LLM (pi -p --no-session --model anthropic/claude-haiku-4-5) with a system prompt that categorizes each task as: agent-can-do-now, needs-human-decision, blocked, or human-only. Include the task content + description + labels + project in the prompt. (4) Parse LLM response. (5) If any actionable items (can-do-now or needs-decision), push a gateway event with a structured markdown prompt showing the triage. (6) Set Redis tasks:triage:last-hash and tasks:triage:last-notified with 2 hour TTL. Use pushGatewayEvent for gateway notification. ADR-0062.",
+      "files": [
+        "packages/system-bus/src/inngest/functions/heartbeat.ts"
+      ],
+      "acceptance": [
+        "heartbeatCron has a new task-triage step after existing steps",
+        "Step shells out to todoist-cli list --label agent and parses response",
+        "Step checks Redis hash to avoid re-triaging unchanged task lists",
+        "Step calls LLM to categorize tasks when list has changed",
+        "Step pushes gateway event with structured markdown when actionable items found",
+        "Step sets Redis cooldown to avoid re-notifying within 2 hours",
+        "bunx tsc --noEmit passes",
+        "No triage notification if no tasks have @agent label"
+      ],
+      "passes": true
+    }
+  ]
+}

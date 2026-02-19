@@ -79,6 +79,7 @@ export const todoistProvider: WebhookProvider = {
     }
 
     if (mappedName === "task.completed") {
+      const labels = Array.isArray(eventData.labels) ? eventData.labels : [];
       return [
         {
           name: mappedName,
@@ -86,6 +87,7 @@ export const todoistProvider: WebhookProvider = {
             taskId: entityId,
             taskContent: String(eventData.content ?? ""),
             projectId: String(eventData.project_id ?? ""),
+            labels,
           },
           idempotencyKey,
         },

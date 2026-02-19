@@ -558,6 +558,7 @@ export type Events = {
       taskId: string;
       taskContent: string;
       projectId: string;
+      labels: string[];
     };
   };
   "todoist/task.created": {
