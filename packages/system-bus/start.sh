@@ -38,14 +38,11 @@ else
   echo "WARNING: Failed to lease todoist_api_token" >&2
 fi
 
-FRONT_SECRET=$(secrets lease front_webhook_secret --ttl 24h --raw 2>/dev/null)
+FRONT_SECRET=$(secrets lease front_rules_webhook_secret --ttl 24h --raw 2>/dev/null)
 if [ -n "$FRONT_SECRET" ]; then
   export FRONT_WEBHOOK_SECRET="$FRONT_SECRET"
 else
-  echo "WARNING: Failed to lease front_webhook_secret" >&2
+  echo "WARNING: Failed to lease front_rules_webhook_secret" >&2
 fi
-
-# Front inbox filter — Joel's teammate ID (URL 818967 → base36 hjx3 → tea_hjx3)
-export FRONT_MONITORED_TEAMMATE="tea_hjx3"
 
 exec bun run src/serve.ts

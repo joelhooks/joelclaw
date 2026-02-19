@@ -97,13 +97,6 @@ webhookApp.post("/:provider", async (c) => {
     headers[key.toLowerCase()] = value;
   });
 
-  // Front challenge: respond before HMAC (chicken-and-egg — no secret yet during setup)
-  const frontChallenge = headers["x-front-challenge"];
-  if (frontChallenge && providerId === "front") {
-    console.log("[webhooks] front challenge response (setup validation)");
-    return c.text(frontChallenge, 200, { "Content-Type": "text/plain" });
-  }
-
   // Verify signature
   if (!provider.verifySignature(rawBody, headers)) {
     recordAuthFailure(ip);

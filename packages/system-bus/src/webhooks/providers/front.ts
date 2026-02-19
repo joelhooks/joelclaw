@@ -1,10 +1,13 @@
 /**
- * Front webhook provider adapter.
- * HMAC-SHA256 signature verification (timestamp:body) + payload normalization.
+ * Front webhook provider adapter — RULES-BASED webhooks.
  *
- * Front docs: https://dev.frontapp.com/docs/application-webhooks
- * Signature: HMAC-SHA256(token, `${timestamp}:${rawBody}`) → base64
- * Challenge: POST with x-front-challenge header → respond with challenge value
+ * Rules webhooks use HMAC-SHA1 (not SHA256) over JSON.stringify(body).
+ * No timestamp in HMAC, no challenge mechanism.
+ * Filtering happens at Front's Rules level (scoped to private inboxes).
+ *
+ * Docs: https://dev.frontapp.com/docs/rule-webhooks
+ * Signature: HMAC-SHA1(apiSecret, JSON.stringify(body)) → base64
+ * Header: x-front-signature
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -26,12 +29,6 @@ const EVENT_MAP: Record<string, string> = {
   tag_removed: "tag.removed",
 };
 
-/** Monitored teammate ID — only process events relevant to this inbox.
- *  Set via FRONT_MONITORED_TEAMMATE env var (e.g. tea_hjx3).
- *  Convert Front URL numeric ID to API ID: base36(818967) = hjx3 → tea_hjx3
- *  Future: read from ~/.joelclaw/config.json email-front section */
-const MONITORED_TEAMMATE = process.env.FRONT_MONITORED_TEAMMATE;
-
 function getWebhookSecret(): string {
   const secret = process.env.FRONT_WEBHOOK_SECRET;
   if (!secret) {
@@ -40,44 +37,27 @@ function getWebhookSecret(): string {
   return secret;
 }
 
-/** Check if this event is relevant to the monitored teammate's inbox.
- *  If no FRONT_MONITORED_TEAMMATE is set, all events pass through. */
-function isRelevantToMonitored(body: Record<string, unknown>): boolean {
-  if (!MONITORED_TEAMMATE) return true; // no filter configured
-
-  const payload = (body.payload ?? {}) as Record<string, unknown>;
-  const conversation = (payload.conversation ?? {}) as Record<string, unknown>;
-  const assignee = conversation.assignee as Record<string, unknown> | null | undefined;
-
-  // No assignee = unassigned/new inbound — let it through
-  if (!assignee) return true;
-
-  // Assigned to monitored teammate — relevant
-  if (assignee.id === MONITORED_TEAMMATE) return true;
-
-  // Assigned to someone else — skip
-  console.log(`[webhooks:front] filtered: assigned to ${assignee.id} (${assignee.email ?? "?"}), want ${MONITORED_TEAMMATE}`);
-  return false;
-}
-
 export const frontProvider: WebhookProvider = {
   id: "front",
   eventPrefix: "front",
 
   verifySignature(rawBody: string, headers: Record<string, string>): boolean {
     const signature = headers["x-front-signature"];
-    const timestamp = headers["x-front-request-timestamp"];
-
-    if (!signature || !timestamp) return false;
+    if (!signature) return false;
 
     const secret = getWebhookSecret();
-    // Front: HMAC-SHA256(token, `${timestamp}:${rawBody}`) → base64
-    const baseString = Buffer.concat([
-      Buffer.from(`${timestamp}:`, "utf8"),
-      Buffer.from(rawBody, "utf8"),
-    ]).toString();
-    const computed = createHmac("sha256", secret)
-      .update(baseString)
+
+    // Rules webhook: HMAC-SHA1(secret, JSON.stringify(parsed body)) → base64
+    // Re-serialize to match Front's compact JSON format
+    let compactBody: string;
+    try {
+      compactBody = JSON.stringify(JSON.parse(rawBody));
+    } catch {
+      return false;
+    }
+
+    const computed = createHmac("sha1", secret)
+      .update(compactBody)
       .digest("base64");
 
     try {
@@ -92,26 +72,13 @@ export const frontProvider: WebhookProvider = {
 
   normalizePayload(
     body: Record<string, unknown>,
-    headers: Record<string, string>,
+    _headers: Record<string, string>,
   ): NormalizedEvent[] {
-    // Front challenge validation — not a real event
-    const challenge = headers["x-front-challenge"];
-    if (challenge) {
-      return [{
-        name: "_challenge",
-        data: { challenge },
-        idempotencyKey: `front-challenge-${Date.now()}`,
-      }];
-    }
-
     const type = body.type as string | undefined;
     if (!type) return [];
 
     const mappedName = EVENT_MAP[type];
     if (!mappedName) return [];
-
-    // Inbox filter — drop events for other teammates
-    if (!isRelevantToMonitored(body)) return [];
 
     const payload = (body.payload ?? {}) as Record<string, unknown>;
     const conversation = (payload.conversation ?? payload) as Record<string, unknown>;
