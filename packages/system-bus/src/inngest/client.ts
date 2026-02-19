@@ -623,6 +623,42 @@ export type Events = {
     };
   };
 
+  // --- Heartbeat Fan-Out Checks (ADR-0062) ---
+  "tasks/triage.requested": {
+    data: {
+      taskCount?: number;
+    };
+  };
+  "sessions/prune.requested": {
+    data: Record<string, never>;
+  };
+  "triggers/audit.requested": {
+    data: Record<string, never>;
+  };
+  "system/health.requested": {
+    data: {
+      component?: string;
+    };
+  };
+  "memory/review.check": {
+    data: Record<string, never>;
+  };
+  "vault/sync.check": {
+    data: Record<string, never>;
+  };
+  "granola/check.requested": {
+    data: Record<string, never>;
+  };
+  "email/triage.requested": {
+    data: Record<string, never>;
+  };
+  "calendar/daily.check": {
+    data: Record<string, never>;
+  };
+  "loops/stale.check": {
+    data: Record<string, never>;
+  };
+
   // --- Legacy ---
   "pipeline/video.ingested": {
     data: {

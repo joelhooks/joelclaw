@@ -188,7 +188,7 @@ async function formatProposalForMemoryIfNeeded(
     currentSectionContent,
   });
 
-  const proc = Bun.spawn(["pi", "-p", "--no-session", "--model", "haiku", "--system-prompt", PROMOTE_SYSTEM_PROMPT, userPrompt], {
+  const proc = Bun.spawn(["pi", "-p", "--no-session", "--no-extensions", "--model", "haiku", "--system-prompt", PROMOTE_SYSTEM_PROMPT, userPrompt], {
     env: { ...process.env, TERM: "dumb" },
     stdin: "ignore",
     stdout: "pipe",

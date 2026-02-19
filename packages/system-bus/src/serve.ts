@@ -38,6 +38,16 @@ import {
   emailInboxCleanup,
   meetingAnalyze,
   granolaBackfill,
+  taskTriage,
+  checkSessions,
+  checkTriggers,
+  checkSystemHealth,
+  checkMemoryReview,
+  checkVaultSync,
+  checkGranola,
+  checkEmail,
+  checkCalendar,
+  checkLoops,
 } from "./inngest/functions";
 
 const app = new Hono();
@@ -79,6 +89,16 @@ const registeredFunctions = [
   emailInboxCleanup,
   meetingAnalyze,
   granolaBackfill,
+  taskTriage,
+  checkSessions,
+  checkTriggers,
+  checkSystemHealth,
+  checkMemoryReview,
+  checkVaultSync,
+  checkGranola,
+  checkEmail,
+  checkCalendar,
+  checkLoops,
 ];
 
 // Derive function names from the actual array — no stale hardcoded list

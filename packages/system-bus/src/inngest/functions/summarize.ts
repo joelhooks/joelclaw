@@ -55,7 +55,7 @@ export const summarize = inngest.createFunction(
     await step.run("pi-enrich", async () => {
       // pi -p with @file reads the file content into context
       // pi with tools will use edit/write to modify the file directly
-      await $`pi -p --no-session "Read the file at ${vaultPath} and enrich it. ${summaryPrompt}"`
+      await $`pi -p --no-session --no-extensions "Read the file at ${vaultPath} and enrich it. ${summaryPrompt}"`
         .env({ ...process.env, TERM: "dumb" })
         .quiet();
     });

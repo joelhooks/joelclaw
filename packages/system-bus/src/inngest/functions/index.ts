@@ -11,6 +11,16 @@ export { embedText } from "./embed";
 export { agentDispatch } from "./agent-dispatch";
 export { backfillObserve } from "./backfill-observe";
 export { heartbeatCron, heartbeatWake } from "./heartbeat";
+export { taskTriage } from "./task-triage";
+export { checkSessions } from "./check-sessions";
+export { checkTriggers } from "./check-triggers";
+export { checkSystemHealth } from "./check-system-health";
+export { checkMemoryReview } from "./check-memory-review";
+export { checkVaultSync } from "./check-vault-sync";
+export { checkGranola } from "./check-granola";
+export { checkEmail } from "./check-email";
+export { checkCalendar } from "./check-calendar";
+export { checkLoops } from "./check-loops";
 export { mediaProcess } from "./media-process";
 export {
   todoistCommentAdded,

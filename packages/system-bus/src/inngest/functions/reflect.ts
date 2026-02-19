@@ -215,7 +215,7 @@ async function runReflectorLLM(
     ? `${REFLECTOR_SYSTEM_PROMPT}\n\n${guidance}`
     : REFLECTOR_SYSTEM_PROMPT;
   const userPrompt = REFLECTOR_USER_PROMPT(observations, memoryContent);
-  const result = await Bun.$`pi --no-tools --no-session --print --mode text --model anthropic/claude-sonnet-4-5 --system-prompt ${systemPrompt} ${userPrompt}`
+  const result = await Bun.$`pi --no-tools --no-session --no-extensions --print --mode text --model anthropic/claude-sonnet-4-5 --system-prompt ${systemPrompt} ${userPrompt}`
     .quiet()
     .nothrow();
 

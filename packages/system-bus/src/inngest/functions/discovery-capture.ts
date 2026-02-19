@@ -71,7 +71,7 @@ export const discoveryCapture = inngest.createFunction(
         vaultDir: VAULT_DISCOVERIES,
       });
 
-      const output = await $`pi -p --no-session ${prompt}`
+      const output = await $`pi -p --no-session --no-extensions ${prompt}`
         .env({ ...process.env, TERM: "dumb" })
         .text();
 
