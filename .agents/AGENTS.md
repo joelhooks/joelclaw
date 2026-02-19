@@ -20,6 +20,16 @@ Concretely:
 
 When debugging: Docker logs first (dispatch errors), then worker stderr (runtime errors), then dashboard (per-step traces), then system-log.jsonl (what actually completed).
 
+### 2a. Bash Timeouts Are Mandatory
+
+**Always specify a timeout on bash tool calls.** In headless sessions (gateway daemon), a hung command blocks all subsequent messages indefinitely. The `bash-timeout` pi-tools extension enforces a 120-second default, but agents should also specify explicit timeouts for long-running commands:
+
+- Quick commands (`ls`, `cat`, `grep`): 30s
+- Build/install commands (`pnpm install`, `bun build`): 300s
+- Network commands (`curl`, `git clone`): 60s
+- Search commands (`find`, `rg`): 60s
+- Never omit the timeout parameter
+
 ### 3. Ports and Adapters
 
 **Decouple application logic from technology.** When joelclaw integrates with an external system (task managers, media channels, databases, notification services), define a **port** (interface) owned by the hexagon, then implement **adapters** for each provider. The hexagon never knows which adapter is plugged in.
