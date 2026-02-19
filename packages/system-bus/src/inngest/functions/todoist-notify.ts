@@ -20,13 +20,12 @@ export const todoistCommentAdded = inngest.createFunction(
     const gateway = (rest as any).gateway as GatewayContext | undefined;
     const { taskId, commentId, commentContent, taskContent, projectId } = event.data;
 
-    await step.run("notify-gateway", async () => {
+    const result = await step.run("notify-gateway", async () => {
       if (!gateway) {
-        console.warn("[todoist] no gateway context — event will not reach pi session");
-        return;
+        return { pushed: false, reason: "no gateway context" };
       }
 
-      await gateway.notify("todoist.comment.added", {
+      const pushResult = await gateway.notify("todoist.comment.added", {
         message: `💬 New Todoist comment on "${taskContent || `task ${taskId}`}": ${commentContent}`,
         taskId,
         commentId,
@@ -34,9 +33,11 @@ export const todoistCommentAdded = inngest.createFunction(
         taskContent,
         projectId,
       });
+
+      return pushResult;
     });
 
-    return { status: "notified", taskId, commentId };
+    return { status: result.pushed ? "notified" : "skipped", taskId, commentId, commentContent, result };
   }
 );
 
@@ -49,21 +50,22 @@ export const todoistTaskCompleted = inngest.createFunction(
     const gateway = (rest as any).gateway as GatewayContext | undefined;
     const { taskId, taskContent, projectId } = event.data;
 
-    await step.run("notify-gateway", async () => {
+    const result = await step.run("notify-gateway", async () => {
       if (!gateway) {
-        console.warn("[todoist] no gateway context");
-        return;
+        return { pushed: false, reason: "no gateway context" };
       }
 
-      await gateway.notify("todoist.task.completed", {
+      const pushResult = await gateway.notify("todoist.task.completed", {
         message: `✅ Todoist task completed: "${taskContent || taskId}"`,
         taskId,
         taskContent,
         projectId,
       });
+
+      return pushResult;
     });
 
-    return { status: "notified", taskId };
+    return { status: result.pushed ? "notified" : "skipped", taskId, taskContent, result };
   }
 );
 
@@ -76,21 +78,22 @@ export const todoistTaskCreated = inngest.createFunction(
     const gateway = (rest as any).gateway as GatewayContext | undefined;
     const { taskId, taskContent, projectId, labels } = event.data;
 
-    await step.run("notify-gateway", async () => {
+    const result = await step.run("notify-gateway", async () => {
       if (!gateway) {
-        console.warn("[todoist] no gateway context");
-        return;
+        return { pushed: false, reason: "no gateway context" };
       }
 
-      await gateway.notify("todoist.task.created", {
+      const pushResult = await gateway.notify("todoist.task.created", {
         message: `📝 New Todoist task: "${taskContent || taskId}"${labels?.length ? ` [${labels.join(", ")}]` : ""}`,
         taskId,
         taskContent,
         projectId,
         labels,
       });
+
+      return pushResult;
     });
 
-    return { status: "notified", taskId };
+    return { status: result.pushed ? "notified" : "skipped", taskId, taskContent, result };
   }
 );
