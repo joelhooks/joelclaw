@@ -16,7 +16,8 @@ cd "$REPO_ROOT" && bun install --silent 2>&1 || echo "WARNING: bun install faile
 
 cd "$(dirname "$0")"
 
-CLAUDE_TOKEN=$(secrets lease claude_oauth_token --ttl 24h --raw 2>/dev/null)
+# agent-secrets v0.5.0+: raw output is default (no --raw flag)
+CLAUDE_TOKEN=$(secrets lease claude_oauth_token --ttl 24h 2>/dev/null)
 if [ -n "$CLAUDE_TOKEN" ]; then
   export CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_TOKEN"
 else
@@ -24,21 +25,21 @@ else
 fi
 
 # Webhook secrets
-TODOIST_SECRET=$(secrets lease todoist_client_secret --ttl 24h --raw 2>/dev/null)
+TODOIST_SECRET=$(secrets lease todoist_client_secret --ttl 24h 2>/dev/null)
 if [ -n "$TODOIST_SECRET" ]; then
   export TODOIST_CLIENT_SECRET="$TODOIST_SECRET"
 else
   echo "WARNING: Failed to lease todoist_client_secret" >&2
 fi
 
-TODOIST_TOKEN=$(secrets lease todoist_api_token --ttl 24h --raw 2>/dev/null)
+TODOIST_TOKEN=$(secrets lease todoist_api_token --ttl 24h 2>/dev/null)
 if [ -n "$TODOIST_TOKEN" ]; then
   export TODOIST_API_TOKEN="$TODOIST_TOKEN"
 else
   echo "WARNING: Failed to lease todoist_api_token" >&2
 fi
 
-FRONT_SECRET=$(secrets lease front_rules_webhook_secret --ttl 24h --raw 2>/dev/null)
+FRONT_SECRET=$(secrets lease front_rules_webhook_secret --ttl 24h 2>/dev/null)
 if [ -n "$FRONT_SECRET" ]; then
   export FRONT_WEBHOOK_SECRET="$FRONT_SECRET"
 else
