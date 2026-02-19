@@ -23,7 +23,16 @@ No `--json` flag. No `--human` flag. JSON is the default and only format.
 
 ### 2. HATEOAS — every response tells you what to do next
 
-Every response includes `next_actions` — an array of commands the agent can run next, with descriptions. The agent never has to guess what's available.
+Every response includes `next_actions` — an array of command **templates** the agent can run next. Templates use standard POSIX/docopt placeholder syntax:
+
+- `<placeholder>` — required argument
+- `[--flag <value>]` — optional flag with value
+- `[--flag]` — optional boolean flag
+- No `params` field — literal command (run as-is)
+- `params` present — template (agent fills placeholders)
+- `params.*.value` — pre-filled from context (agent can override)
+- `params.*.default` — value if omitted
+- `params.*.enum` — valid choices
 
 ```json
 {
@@ -35,12 +44,18 @@ Every response includes `next_actions` — an array of commands the agent can ru
   },
   "next_actions": [
     {
-      "command": "joelclaw run 01KHF98SKZ7RE6HC2BH8PW2HB2",
-      "description": "Check run status for this event"
+      "command": "joelclaw run <run-id>",
+      "description": "Check run status for this event",
+      "params": {
+        "run-id": { "value": "01KHF98SKZ7RE6HC2BH8PW2HB2", "description": "Run ID (ULID)" }
+      }
     },
     {
-      "command": "joelclaw logs --follow",
-      "description": "Watch worker logs in real-time"
+      "command": "joelclaw logs [--follow] [--source <source>]",
+      "description": "View worker logs",
+      "params": {
+        "source": { "enum": ["worker", "inngest", "gateway"], "default": "worker" }
+      }
     },
     {
       "command": "joelclaw health",
@@ -50,7 +65,7 @@ Every response includes `next_actions` — an array of commands the agent can ru
 }
 ```
 
-`next_actions` are **contextual** — they change based on what just happened. A failed command suggests different next steps than a successful one.
+`next_actions` are **contextual** — they change based on what just happened. A failed command suggests different next steps than a successful one. Templates are the agent's **affordances** — they show what's parameterizable, what values are valid, and what the current context pre-fills.
 
 ### 3. Self-documenting command tree
 
@@ -95,7 +110,11 @@ Agents have finite context windows. CLI output must not blow them up.
     "entries": ["...last 20 lines..."]
   },
   "next_actions": [
-    { "command": "joelclaw logs --tail 100", "description": "Show more log lines" }
+    {
+      "command": "joelclaw logs [--tail <lines>]",
+      "description": "Show more log lines",
+      "params": { "lines": { "default": 20, "description": "Number of lines" } }
+    }
   ]
 }
 ```
@@ -112,10 +131,14 @@ When something fails, the response includes a `fix` field — plain language tel
     "message": "Inngest server not responding",
     "code": "SERVER_UNREACHABLE"
   },
-  "fix": "Start the Inngest server: cd ~/Code/system-bus && docker compose up -d",
+  "fix": "Start the Inngest server pod: kubectl rollout restart statefulset/inngest -n joelclaw",
   "next_actions": [
     { "command": "joelclaw health", "description": "Re-check system health after fix" },
-    { "command": "docker ps", "description": "Check if Docker containers are running" }
+    {
+      "command": "kubectl get pods [--namespace <ns>]",
+      "description": "Check pod status",
+      "params": { "ns": { "default": "joelclaw" } }
+    }
   ]
 }
 ```
@@ -132,8 +155,15 @@ Every command uses this exact shape:
   command: string,          // the command that was run
   result: object,           // command-specific payload
   next_actions: Array<{
-    command: string,        // exact command to copy-paste/run
-    description: string     // what it does
+    command: string,        // command template (POSIX syntax) or literal
+    description: string,    // what it does
+    params?: Record<string, {   // presence = command is a template
+      description?: string,     // what this param means
+      value?: string | number,  // pre-filled from current context
+      default?: string | number,// value if omitted
+      enum?: string[],          // valid choices
+      required?: boolean        // true for <positional> args
+    }>
   }>
 }
 ```
@@ -150,8 +180,9 @@ Every command uses this exact shape:
   },
   fix: string,              // plain-language suggested fix
   next_actions: Array<{
-    command: string,
-    description: string
+    command: string,        // command template or literal
+    description: string,
+    params?: Record<string, { ... }>  // same schema as success
   }>
 }
 ```
@@ -362,6 +393,8 @@ Streaming commands hold a Redis connection. They **must**:
 - [ ] Root command lists this command in its tree
 - [ ] Output is context-safe (truncated if potentially large)
 - [ ] next_actions are contextual to what just happened
+- [ ] next_actions with variable parts use template syntax (`<required>`, `[--flag <value>]`) + `params`
+- [ ] Context-specific values pre-filled via `params.*.value`
 - [ ] No plain text output anywhere
 - [ ] No ANSI colors or formatting
 - [ ] Works when piped (no TTY detection)

@@ -1,11 +1,35 @@
 /**
  * HATEOAS-style response envelope for agent consumers.
  * Every command returns this shape — agents always know what to do next.
+ *
+ * next_actions use standard CLI template syntax (POSIX/docopt conventions):
+ *   <required>    — required positional argument
+ *   [--flag]      — optional boolean flag
+ *   [--flag <v>]  — optional flag with value
+ *
+ * When `params` is present, `command` is a template. Agent fills placeholders.
+ * When `params` is absent, `command` is a literal. Agent runs it as-is.
+ * When a param has `value`, it's pre-filled from context (agent can override).
  */
 
+export interface NextActionParam {
+  readonly description?: string
+  /** Pre-filled value from current context */
+  readonly value?: string | number
+  /** Default if omitted */
+  readonly default?: string | number
+  /** Valid choices */
+  readonly enum?: readonly string[]
+  /** Is this param required? (positional args with <brackets> are required) */
+  readonly required?: boolean
+}
+
 export interface NextAction {
+  /** Command template (POSIX syntax) or literal command if no params */
   readonly command: string
   readonly description: string
+  /** Placeholder descriptions — presence indicates command is a template */
+  readonly params?: Record<string, NextActionParam>
 }
 
 export interface JoelclawResponse {

@@ -5,11 +5,11 @@ type: "essay"
 description: "Your AI agent's primary interface isn't a chat window. It's stdout. Here's how to design CLIs that agents can actually use — JSON envelopes, HATEOAS navigation, NDJSON streaming, and zero guesswork."
 ---
 
+Every agent harness can run a shell command and read stdout. Pi, Claude Code, Codex — doesn't matter. That's the universal interface. **If your tool returns something an agent can parse, the agent can use it.** If it returns a pretty table with ANSI colors, the agent is flying blind.
+
 ```bash
 npx skills add joelhooks/joelclaw --skill cli-design
 ```
-
-Every agent harness can run a shell command and read stdout. Pi, Claude Code, Codex — doesn't matter. That's the universal interface. **If your tool returns something an agent can parse, the agent can use it.** If it returns a pretty table with ANSI colors, the agent is flying blind.
 
 My system runs 35 Inngest functions, an always-on [gateway](/building-a-gateway-for-your-ai-agent), video transcription, email triage, meeting analysis. The agent operates all of it through one CLI: `joelclaw`. Not a REST API. Not an SDK. A CLI that returns JSON.
 
@@ -44,7 +44,9 @@ Every command. Every time. The agent never has to guess what format it's getting
 
 This is the one that changes everything.
 
-Every response includes `next_actions` — an array of commands the agent can run next, with descriptions. The agent never has to memorize your command tree. It discovers available actions from the output of the last command it ran.
+Every response includes `next_actions` — command **templates** the agent can run next. Not literal examples to copy-paste — templates with typed placeholders the agent fills in.
+
+Standard POSIX/docopt syntax: `<required>` for positional args, `[--flag <value>]` for optional flags. When a `params` object is present, the command is a template. When it's absent, the command is literal. The agent doesn't need to know your CLI's flag syntax — the template tells it everything.
 
 ```json
 {
@@ -57,14 +59,52 @@ Every response includes `next_actions` — an array of commands the agent can ru
   "fix": "Start the Inngest server pod: kubectl rollout restart statefulset/inngest -n joelclaw",
   "next_actions": [
     { "command": "joelclaw status", "description": "Re-check after fix" },
-    { "command": "kubectl get pods -n joelclaw", "description": "Check pod status" }
+    {
+      "command": "kubectl get pods [--namespace <ns>]",
+      "description": "Check pod status",
+      "params": { "ns": { "default": "joelclaw" } }
+    }
   ]
 }
 ```
 
-The `next_actions` are **contextual** — they change based on what just happened. A failed command suggests different next steps than a successful one. An error includes a `fix` field in plain language. The agent has everything it needs to self-recover.
+The `next_actions` are **contextual** — they change based on what just happened. A failed command suggests different templates than a successful one. An error includes a `fix` field in plain language. The agent has everything it needs to self-recover.
 
-This is Roy Fielding's [HATEOAS](https://en.wikipedia.org/wiki/HATEOAS) constraint from REST, applied to CLIs. The application state is navigable from the response itself. No out-of-band knowledge required.
+The `params` object carries metadata the agent uses to fill templates intelligently:
+
+- `value` — pre-filled from the current response context (e.g., a run ID just returned)
+- `default` — what happens if the agent omits this flag entirely
+- `enum` — valid choices (the agent picks from a closed set instead of guessing)
+- `description` — what this parameter means
+
+```json
+{
+  "ok": true,
+  "command": "joelclaw send video/download",
+  "result": { "event_id": "01KHF98SKZ7RE6HC2BH8PW2HB2", "status": "accepted" },
+  "next_actions": [
+    {
+      "command": "joelclaw run <run-id>",
+      "description": "Inspect the triggered run",
+      "params": {
+        "run-id": { "value": "01KHF98SKZ7RE6HC2BH8PW2HB2", "description": "Run ID (ULID)" }
+      }
+    },
+    {
+      "command": "joelclaw runs [--status <status>] [--count <count>]",
+      "description": "List recent runs",
+      "params": {
+        "status": { "enum": ["COMPLETED", "FAILED", "RUNNING", "QUEUED", "CANCELLED"] },
+        "count": { "default": 10 }
+      }
+    }
+  ]
+}
+```
+
+The agent sees `params.run-id.value` → it knows the exact ID to use. It sees `params.status.enum` → it picks from the list instead of hallucinating a filter name. It sees `params.count.default` → it can omit the flag or adjust it.
+
+This is Roy Fielding's [HATEOAS](https://en.wikipedia.org/wiki/HATEOAS) constraint from REST, applied to CLIs. But where REST gives you links, this gives you **forms** — hypermedia controls with typed inputs. The application state is navigable and parameterizable from the response itself. No out-of-band knowledge required.
 
 ## Principle 3: Self-documenting command tree
 
@@ -81,9 +121,9 @@ joelclaw
   "result": {
     "description": "joelclaw — Personal AI system CLI",
     "commands": [
-      { "name": "send", "usage": "joelclaw send <event> -d '<json>'" },
+      { "name": "send", "usage": "joelclaw send <event> [-d <json>] [--follow]" },
       { "name": "status", "usage": "joelclaw status" },
-      { "name": "watch", "usage": "joelclaw watch [loop-id]" },
+      { "name": "watch", "usage": "joelclaw watch [<loop-id>]" },
       { "name": "gateway stream", "usage": "joelclaw gateway stream" }
     ]
   },
@@ -112,7 +152,11 @@ Rules:
     "lines": ["...last 30 lines..."]
   },
   "next_actions": [
-    { "command": "joelclaw logs --lines 100", "description": "Show more" }
+    {
+      "command": "joelclaw logs [--lines <count>]",
+      "description": "Show more",
+      "params": { "count": { "default": 30, "description": "Number of lines" } }
+    }
   ]
 }
 ```
@@ -201,8 +245,14 @@ For reference — the exact shape every command uses.
   command: string,          // the command that was run
   result: object,           // command-specific payload
   next_actions: Array<{
-    command: string,        // exact command to copy-paste/run
-    description: string     // what it does
+    command: string,        // template (POSIX syntax) or literal command
+    description: string,    // what it does
+    params?: Record<string, {   // presence = command is a template
+      value?: string | number,  // pre-filled from context
+      default?: string | number,// value if omitted
+      enum?: string[],          // valid choices
+      description?: string      // what this param means
+    }>
   }>
 }
 ```
@@ -220,7 +270,8 @@ For reference — the exact shape every command uses.
   fix: string,              // plain-language suggested fix
   next_actions: Array<{
     command: string,
-    description: string
+    description: string,
+    params?: Record<string, { ... }>  // same schema as success
   }>
 }
 ```
@@ -269,6 +320,7 @@ Runtime: ~10 minutes. Terminal with split pane: left = running commands, right =
 | Dump unbounded output | Truncate + file pointer |
 | Static `--help` text | Self-documenting root command |
 | `Error: something went wrong` | `{ ok: false, error: {...}, fix: "..." }` |
+| Hardcoded literal next_actions | Templates with `params` (`<placeholder>`, `[--flag <value>]`) |
 | Poll for temporal data | Stream NDJSON |
 | ANSI colors | JSON fields |
 
