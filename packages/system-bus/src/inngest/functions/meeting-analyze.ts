@@ -208,8 +208,11 @@ export const meetingAnalyze = inngest.createFunction(
       return analyzeMeeting(details.details, cappedTranscript);
     });
 
-    // Step 5: Create tasks for action items
+    // Step 5: Create tasks for action items (skip for backfill — historical meetings
+    // don't need todos, just knowledge capture. ADR-0045 task port pending.)
+    const source = event.data?.source;
     const tasksCreated = await step.run("create-tasks", () => {
+      if (source === "backfill") return 0; // historical — capture only
       if (analysis.action_items.length === 0) return 0;
       const meetingDate = details.date ?? "unknown";
       return createTasks(meetingTitle, meetingId, meetingDate, analysis.action_items);
@@ -226,7 +229,58 @@ export const meetingAnalyze = inngest.createFunction(
       }
     });
 
-    // Step 7: Notify gateway
+    // Step 7: Write Vault meeting note
+    await step.run("write-vault-note", () => {
+      const vaultPath = process.env.VAULT_PATH ?? `${process.env.HOME}/Vault`;
+      const meetingsDir = `${vaultPath}/Resources/meetings`;
+      const fs = require("fs");
+
+      fs.mkdirSync(meetingsDir, { recursive: true });
+
+      const dateStr = details.date ?? event.data?.date ?? "unknown";
+      const safeTitle = meetingTitle.replace(/[/\\:*?"<>|]/g, "-").slice(0, 80);
+      const filename = `${dateStr.slice(0, 10)}-${safeTitle}.md`;
+
+      const people = analysis.people.map((p: any) =>
+        [p.name, p.role].filter(Boolean).join(" — ")
+      );
+
+      const note = [
+        "---",
+        `type: meeting`,
+        `title: "${meetingTitle.replace(/"/g, '\\"')}"`,
+        `date: ${dateStr.slice(0, 10)}`,
+        `source: granola`,
+        `granola_id: ${meetingId}`,
+        `granola_url: https://notes.granola.ai/d/${meetingId}`,
+        `tags: [meeting, granola]`,
+        `people: [${people.map((p: string) => `"${p.replace(/"/g, '\\"')}"`).join(", ")}]`,
+        "---",
+        "",
+        `# ${meetingTitle}`,
+        "",
+        `**Date**: ${dateStr}`,
+        `**Source**: [Granola](https://notes.granola.ai/d/${meetingId})`,
+        people.length > 0 ? `**People**: ${people.join(", ")}` : null,
+        "",
+        ...(analysis.decisions.length > 0
+          ? ["## Decisions", ...analysis.decisions.map((d: any) => `- **${d.decision}**${d.rationale ? ` — ${d.rationale}` : ""}`), ""]
+          : []),
+        ...(analysis.action_items.length > 0
+          ? ["## Action Items", ...analysis.action_items.map((a: any) =>
+              `- [ ] ${a.task}${a.owner ? ` *(${a.owner})*` : ""}${a.deadline ? ` — due ${a.deadline}` : ""}${a.context ? `\n  > ${a.context}` : ""}`
+            ), ""]
+          : []),
+        ...(analysis.follow_ups.length > 0
+          ? ["## Follow-ups", ...analysis.follow_ups.map((f: any) => `- ${f.item}${f.frequency ? ` (${f.frequency})` : ""}`), ""]
+          : []),
+      ].filter((l) => l !== null).join("\n");
+
+      fs.writeFileSync(`${meetingsDir}/${filename}`, note, "utf-8");
+      return { wrote: filename };
+    });
+
+    // Step 8: Notify gateway
     await step.run("notify-gateway", async () => {
       if (!gateway) return { pushed: false };
 
