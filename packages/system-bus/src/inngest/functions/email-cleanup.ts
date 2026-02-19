@@ -88,40 +88,57 @@ Respond with ONLY valid JSON, no markdown fencing:
 {"archive": ["cnv_xxx", "cnv_yyy"], "keep": ["cnv_zzz"]}`;
 
   try {
-    // Write prompt to temp file to avoid shell escaping issues with large prompts
+    // Write prompt to temp file to avoid shell escaping issues
+    const fs = require("fs");
     const tmpFile = `/tmp/email-cleanup-prompt-${Date.now()}.txt`;
-    require("fs").writeFileSync(tmpFile, prompt);
+    fs.writeFileSync(tmpFile, prompt);
 
-    const result = execSync(
-      `pi --print --no-session --provider anthropic --model haiku "$(cat ${tmpFile})"`,
+    // Use pi --print with --system-prompt override (skip AGENTS.md loading)
+    const { spawnSync } = require("child_process");
+    const proc = spawnSync(
+      "pi",
+      [
+        "--print", "--no-session",
+        "--provider", "anthropic", "--model", "haiku",
+        "--system-prompt", "You classify emails as archive or keep. Respond with ONLY valid JSON, no markdown.",
+        fs.readFileSync(tmpFile, "utf-8"),
+      ],
       {
         encoding: "utf-8",
         timeout: 120_000,
         stdio: ["pipe", "pipe", "pipe"],
       },
-    ).trim();
+    );
 
     // Clean up temp file
-    try { require("fs").unlinkSync(tmpFile); } catch {}
+    try { fs.unlinkSync(tmpFile); } catch {}
 
-    // Find the JSON object in output — skip any stderr noise that leaked through
-    const lines = result.split("\n");
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("{") && trimmed.includes('"archive"')) {
-        try {
-          return JSON.parse(trimmed);
-        } catch {}
-      }
+    // Only use stdout — stderr has gateway noise
+    const stdout = (proc.stdout ?? "").trim();
+
+    if (proc.status !== 0 && !stdout) {
+      console.error("[email-cleanup] pi exited with status", proc.status, proc.stderr?.slice(0, 200));
+      return { archive: [], keep: conversations.map((c) => c.id) };
     }
 
-    // Fallback: try to extract any JSON object
-    const jsonMatch = result.match(/\{"archive":\s*\[[\s\S]*?\].*?"keep":\s*\[[\s\S]*?\]\}/);
+    // Filter out non-JSON lines (gateway registration, extension warnings)
+    const lines = stdout.split("\n").filter(
+      (l: string) => !l.startsWith("[gateway]") && !l.startsWith("Failed to load") && !l.startsWith("Extension error"),
+    );
+    const cleaned = lines.join("\n").trim();
+
+    // Try parsing the full cleaned output as JSON
+    try {
+      return JSON.parse(cleaned);
+    } catch {}
+
+    // Fallback: extract JSON object with archive/keep keys
+    const jsonMatch = cleaned.match(/\{[\s\S]*"archive"\s*:\s*\[[\s\S]*?\][\s\S]*"keep"\s*:\s*\[[\s\S]*?\][\s\S]*\}/);
     if (jsonMatch) {
       return JSON.parse(jsonMatch[0]);
     }
 
-    console.error("[email-cleanup] No valid JSON in pi response, keeping all. Output:", result.slice(0, 200));
+    console.error("[email-cleanup] No valid JSON in pi response, keeping all. Output:", cleaned.slice(0, 300));
     return { archive: [], keep: conversations.map((c) => c.id) };
   } catch (err) {
     console.error("[email-cleanup] pi inference failed, keeping all:", err);
