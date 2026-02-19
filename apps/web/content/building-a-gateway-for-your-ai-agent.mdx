@@ -9,7 +9,7 @@ description: "From ephemeral terminal sessions to an always-on gateway. Event ro
 npx skills add joelhooks/joelclaw --skill gateway-setup
 ```
 
-## Set it up
+Your agent session dies when you close the terminal. Every WebSocket disconnects, every event subscription gone, every in-memory state evaporated. The gateway fixes that — a persistent daemon that stays alive, routes events, monitors its own health, and gives you Telegram access from your phone.
 
 **Prerequisite:** [Self-hosted Inngest](/self-hosting-inngest-background-tasks) + Redis.
 

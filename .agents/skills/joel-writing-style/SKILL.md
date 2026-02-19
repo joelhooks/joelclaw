@@ -76,6 +76,14 @@ Use *italics* for thoughts, recurring questions, and emphasis that's softer than
 
 ## Structural Patterns
 
+### Never lead with a heading
+
+The title is already an H1 rendered above the content. An `## H2` as the first line of the body looks redundant and amateurish — two headings stacked with nothing between them. Always open with prose: a hook, a sentence, an observation. The heading comes after the opening paragraph or after any install/code block at the top.
+
+- ❌ `## The interface is stdout` (right after title — two headings in a row)
+- ✅ A prose sentence, then `## The interface is stdout` further down
+- ✅ A skill install code block, then prose, then the first heading
+
 ### Opening hooks, not thesis statements
 
 Never open with "In this article, I'll discuss..." — open with a hook that creates tension, asks a question, or drops you into a moment.
