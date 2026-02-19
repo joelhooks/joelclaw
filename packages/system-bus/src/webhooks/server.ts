@@ -46,6 +46,19 @@ const MAX_BODY_SIZE = 256 * 1024; // 256KB
 // ── Hono app ─────────────────────────────────────────────
 export const webhookApp = new Hono();
 
+// O11y: log every request before routing
+webhookApp.use("*", async (c, next) => {
+  const method = c.req.method;
+  const path = c.req.path;
+  const ua = c.req.header("user-agent") ?? "none";
+  const ip = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "direct";
+  const funnel = c.req.header("tailscale-funnel-request") ?? "no";
+  const deliveryId = c.req.header("x-todoist-delivery-id") ?? "";
+  console.log(`[webhooks:req] ${method} ${path} ip=${ip} ua=${ua.slice(0, 40)} funnel=${funnel} delivery=${deliveryId}`);
+  await next();
+  console.log(`[webhooks:res] ${method} ${path} → ${c.res.status}`);
+});
+
 webhookApp.get("/", (c) =>
   c.json({
     service: "webhook-gateway",
