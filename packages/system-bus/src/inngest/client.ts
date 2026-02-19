@@ -542,6 +542,33 @@ export type Events = {
     };
   };
 
+  // --- Todoist (ADR-0047, ADR-0048) ---
+  "todoist/comment.added": {
+    data: {
+      taskId: string;
+      commentId: string;
+      commentContent: string;
+      taskContent: string;
+      projectId: string;
+      initiatorId: string;
+    };
+  };
+  "todoist/task.completed": {
+    data: {
+      taskId: string;
+      taskContent: string;
+      projectId: string;
+    };
+  };
+  "todoist/task.created": {
+    data: {
+      taskId: string;
+      taskContent: string;
+      projectId: string;
+      labels: string[];
+    };
+  };
+
   // --- Legacy ---
   "pipeline/video.ingested": {
     data: {
