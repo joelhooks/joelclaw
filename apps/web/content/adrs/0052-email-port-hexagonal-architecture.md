@@ -125,11 +125,14 @@ One adapter class with if/else for Front vs Gmail.
 
 ## Implementation Status
 
-### ✅ Scaffolded (2026-02-18)
+### ✅ Scaffolded + Front Webhooks Verified (2026-02-18)
 - `packages/email/` created with `package.json`, `tsconfig.json`
 - `EmailPort` interface defined at `src/port/types.ts`
 - Front adapter started at `src/adapters/front.ts` (uses `@skillrecordings/front-sdk`)
 - Gmail adapter started at `src/adapters/gmail.ts` (wraps `gog` CLI)
+- Front webhooks fully working: Rules webhook → `front/message.received` events flowing. Real emails (newsletters, Vercel notifications) confirmed E2E through gateway.
+- `front_api_token` and `front_rules_webhook_secret` stored in agent-secrets
+- Worker `start.sh` leases both secrets + `TODOIST_*` secrets on startup
 
 ### ⬜ Front adapter complete
 - Finish all `EmailPort` methods against Front API

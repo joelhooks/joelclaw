@@ -223,11 +223,7 @@ function buildTaskSystemPrompt(task: Task): string {
 
 Todoist supports webhooks for Pro accounts. A webhook would POST to a URL when a comment is added — lower latency than polling.
 
-**Rejected for now** because:
-- Requires a public-facing endpoint (Caddy + Tailscale funnel or similar)
-- Adds infrastructure complexity
-- 2-minute poll latency is fine for async decisions
-- Can upgrade to webhooks later without changing the event schema
+**Rejected initially**, then implemented as Phase 4 (see below). Tailscale Funnel (ADR-0051) solved the public endpoint problem with zero additional infra. Webhooks are now the primary path; polling remains as fallback.
 
 ### B: Telegram Only
 
@@ -253,7 +249,7 @@ Use GitHub issues as the conversation layer. Already has threads, labels, assign
 - **No new apps** — Todoist is already installed and active
 
 ### Negative
-- **2-minute latency** (poll-based) — not suitable for real-time conversation (that's what Telegram is for)
+- **~~2-minute latency~~** — eliminated by webhooks (ADR-0048 Phase 4). Near-instant via Tailscale Funnel.
 - **Comment threading is flat** — Todoist comments don't nest, long conversations get linear
 - **API rate limits** — polling every 2 min is ~720 calls/day, well within Todoist's limits
 - **Agent identity** — comments from the agent use Joel's token (appears as Joel). Could confuse if Joel reads old threads. Mitigation: prefix agent comments with `🤖` or similar.
