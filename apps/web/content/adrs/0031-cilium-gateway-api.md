@@ -1,6 +1,6 @@
 ---
 title: "Adopt Cilium Gateway API instead of Ingress"
-status: withdrawn
+status: deferred
 date: 2026-02-17
 deciders: Joel Hooks
 consulted: X community advice
@@ -141,6 +141,6 @@ ADR-0030 (Cilium) must be accepted and implemented first. Gateway API is a natur
 - DigitalOcean tutorial: https://www.digitalocean.com/community/tutorials/kubernetes-gateway-api-tutorial-cilium-ingress-alternative
 - r/kubernetes discussion: https://www.reddit.com/r/kubernetes/comments/1kri73b/ingress_controller_v_gateway_api/
 
-## Withdrawal Note (2026-02-19)
+## Deferral Note (2026-02-19)
 
-Withdrawn. Depends on ADR-0030 (Cilium) which is withdrawn. Caddy + Tailscale handles all routing needs. NodePort services with Docker port mapping is sufficient for the single-node topology.
+Deferred. Depends on ADR-0030 (Cilium). Caddy + Tailscale handles routing on single-node today, but Gateway API becomes the right ingress model for multi-node. Revisit alongside ADR-0030 when Pi 5 workers join the cluster.

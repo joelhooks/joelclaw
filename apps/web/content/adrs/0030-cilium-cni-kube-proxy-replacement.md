@@ -1,6 +1,6 @@
 ---
 title: "Replace Flannel + kube-proxy with Cilium"
-status: withdrawn
+status: deferred
 date: 2026-02-17
 deciders: Joel Hooks
 consulted: X community advice
@@ -151,6 +151,6 @@ Full eBPF networking stack. Network policies, Hubble observability, service mesh
 - Talos + Cilium walkthrough: https://rcwz.pl/2025-10-08-adding-cilium-to-talos-cluster/
 - Talos + Cilium on Proxmox: https://unixorn.github.io/post/homelab/k8s/01-talos-with-cilium-cni-on-proxmox/
 
-## Withdrawal Note (2026-02-19)
+## Deferral Note (2026-02-19)
 
-Withdrawn. Single-node Talos cluster with Flannel works fine. Cilium adds operational complexity (eBPF kernel requirements, CRD proliferation) without meaningful benefit at this scale. If the cluster grows to multi-node or needs network policy enforcement, revisit.
+Deferred. Single-node Talos with Flannel works today. Cilium becomes relevant when the cluster goes multi-node (Pi 5 workers on the roadmap) — network policy, eBPF observability, and kube-proxy replacement matter at that scale. Revisit when adding the first worker node.

@@ -1,6 +1,6 @@
 ---
 title: "Kubernetes persistent storage: Ceph Rook vs SeaweedFS vs local-path"
-status: withdrawn
+status: deferred
 date: 2026-02-17
 deciders: Joel Hooks
 consulted: X community advice
@@ -109,6 +109,6 @@ If we go multi-node and need shared PVCs (ReadWriteMany), SeaweedFS is the pract
 - SeaweedFS K8s deployment: https://itnext.io/minio-alternative-seaweedfs-41fe42c3f7be
 - MinIO exit plan / Ceph comparison: https://kubedo.com/minio-exit-plan-ceph-s3-storage/
 
-## Withdrawal Note (2026-02-19)
+## Deferral Note (2026-02-19)
 
-Withdrawn. local-path-provisioner handles all storage needs. Persistent data lives on the NAS via PDS. Running Ceph or SeaweedFS on a single node is pointless overhead.
+Deferred. local-path works on single-node. Multi-node needs distributed storage — pods scheduled on Pi 5 workers need PVCs that work across nodes. NAS-backed NFS might be simpler than Ceph/SeaweedFS given three-body is already on the network. Revisit storage strategy when adding worker nodes.
