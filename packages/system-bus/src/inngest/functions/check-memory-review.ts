@@ -36,7 +36,19 @@ export const checkMemoryReview = inngest.createFunction(
       const redis = getRedis();
       const pending = await redis.lrange(REVIEW_PENDING_KEY, 0, -1);
       const alreadyNudged = await redis.get(NUDGE_COOLDOWN_KEY);
-      return { count: pending.length, ids: pending.slice(0, 10), alreadyNudged: !!alreadyNudged };
+
+      // Check for proposals nearing expiry (created > 5 days ago)
+      const expiringSoon: string[] = [];
+      const now = Date.now();
+      const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
+      for (const id of pending.slice(0, 20)) {
+        const capturedAt = await redis.hget(`memory:review:proposal:${id}`, "capturedAt");
+        if (capturedAt && now - new Date(capturedAt).getTime() > FIVE_DAYS_MS) {
+          expiringSoon.push(id);
+        }
+      }
+
+      return { count: pending.length, ids: pending.slice(0, 10), expiringSoon, alreadyNudged: !!alreadyNudged };
     });
 
     // NOOP: no proposals or already nudged today
@@ -63,9 +75,13 @@ export const checkMemoryReview = inngest.createFunction(
             `## 📋 ${state.count} Memory Proposal${state.count > 1 ? "s" : ""} Pending`,
             "",
             `Review with: \`todoist-cli list --label memory-review\``,
-            `Or check Redis: \`redis-cli lrange memory:review:pending 0 -1\``,
             "",
-            "Complete tasks in Todoist to approve, delete to reject. Auto-expires after 7 days.",
+            "**Complete** in Todoist → approve → writes to MEMORY.md",
+            "**Delete** or add `@rejected` label → reject",
+            "**Ignore** → auto-expires after 7 days",
+            ...(state.expiringSoon.length > 0
+              ? ["", `⏳ **${state.expiringSoon.length} expiring soon** (>5 days old, auto-expire at 7): ${state.expiringSoon.join(", ")}`]
+              : []),
           ].join("\n"),
         },
       });

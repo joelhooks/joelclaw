@@ -573,6 +573,15 @@ export type Events = {
     };
   };
 
+  "todoist/task.deleted": {
+    data: {
+      taskId: string;
+      taskContent: string;
+      projectId: string;
+      labels: string[];
+    };
+  };
+
   // --- Front ---
   "front/message.received": {
     data: {

@@ -1,24 +1,34 @@
+/**
+ * Todoist → Memory Promotion Bridge (ADR-0021 Phase 3)
+ *
+ * Listens to todoist/task.completed for @memory-review tasks.
+ * - Complete (no @rejected label) → memory/proposal.approved → MEMORY.md
+ * - Complete WITH @rejected label → memory/proposal.rejected → archived
+ * - Ignore → 7-day auto-expiry in promote.ts daily cron
+ *
+ * Also listens to todoist/task.deleted for explicit rejection.
+ */
+
 import { inngest } from "../client";
 
 const MEMORY_REVIEW_LABEL = "memory-review";
+const REJECTED_LABEL = "rejected";
 const PROPOSAL_PATTERN = /\bProposal:\s*(p-\d{8}-\d{3,})\b/u;
 
-function readString(value: unknown): string {
-  return typeof value === "string" ? value : "";
-}
-
-function hasMemoryReviewLabel(labels: unknown): boolean {
+function hasLabel(labels: unknown, target: string): boolean {
   if (!Array.isArray(labels)) return false;
-
   return labels.some(
-    (label) =>
-      typeof label === "string" && label.trim().toLowerCase() === MEMORY_REVIEW_LABEL
+    (l) => typeof l === "string" && l.trim().toLowerCase() === target,
   );
 }
 
-function extractProposalId(description: string): string | null {
-  const match = PROPOSAL_PATTERN.exec(description);
+function extractProposalId(text: string): string | null {
+  const match = PROPOSAL_PATTERN.exec(text);
   return match?.[1] ?? null;
+}
+
+function readString(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 export const todoistMemoryReviewBridge = inngest.createFunction(
@@ -26,22 +36,40 @@ export const todoistMemoryReviewBridge = inngest.createFunction(
     id: "todoist-memory-review-bridge",
     name: "Todoist Memory Review Bridge",
   },
-  { event: "todoist/task.completed" },
+  [{ event: "todoist/task.completed" }, { event: "todoist/task.deleted" }],
   async ({ event, step }) => {
-    const labels = (event.data as { labels?: unknown }).labels;
-    if (!hasMemoryReviewLabel(labels)) {
-      return { status: "noop", reason: "missing-memory-review-label" };
+    const data = event.data as Record<string, unknown>;
+    const labels = data.labels;
+
+    if (!hasLabel(labels, MEMORY_REVIEW_LABEL)) {
+      return { status: "noop", reason: "not-memory-review" };
     }
 
-    const description = readString(
-      (event.data as { taskDescription?: unknown }).taskDescription
-    ).trim();
-    const proposalId = extractProposalId(description);
+    // Try description first, then task content for proposal ID
+    const description = readString(data.taskDescription ?? data.description);
+    const content = readString(data.taskContent ?? data.content);
+    const proposalId = extractProposalId(description) ?? extractProposalId(content);
 
     if (!proposalId) {
-      return { status: "noop", reason: "proposal-id-not-found", description };
+      return { status: "noop", reason: "no-proposal-id", description: description.slice(0, 100) };
     }
 
+    // Rejection: deleted task OR completed with @rejected label
+    const isRejection = event.name === "todoist/task.deleted" || hasLabel(labels, REJECTED_LABEL);
+
+    if (isRejection) {
+      await step.sendEvent("emit-proposal-rejected", {
+        name: "memory/proposal.rejected",
+        data: {
+          proposalId,
+          reason: event.name === "todoist/task.deleted" ? "deleted" : "rejected-label",
+        },
+      });
+
+      return { status: "rejected", proposalId, via: event.name };
+    }
+
+    // Approval: completed without @rejected
     await step.sendEvent("emit-proposal-approved", {
       name: "memory/proposal.approved",
       data: {
@@ -50,11 +78,6 @@ export const todoistMemoryReviewBridge = inngest.createFunction(
       },
     });
 
-    return {
-      status: "approved",
-      proposalId,
-      taskId: (event.data as { taskId?: unknown }).taskId,
-    };
-  }
+    return { status: "approved", proposalId };
+  },
 );
-

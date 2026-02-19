@@ -13,6 +13,7 @@ const EVENT_MAP: Record<string, string> = {
   "note:added": "comment.added",
   "item:completed": "task.completed",
   "item:added": "task.created",
+  "item:deleted": "task.deleted",
 };
 
 function getClientSecret(): string {
@@ -87,6 +88,22 @@ export const todoistProvider: WebhookProvider = {
             taskId: entityId,
             taskContent: String(eventData.content ?? ""),
             taskDescription: String(eventData.description ?? eventDataExtra.description ?? ""),
+            projectId: String(eventData.project_id ?? ""),
+            labels,
+          },
+          idempotencyKey,
+        },
+      ];
+    }
+
+    if (mappedName === "task.deleted") {
+      const labels = Array.isArray(eventData.labels) ? eventData.labels : [];
+      return [
+        {
+          name: mappedName,
+          data: {
+            taskId: entityId,
+            taskContent: String(eventData.content ?? ""),
             projectId: String(eventData.project_id ?? ""),
             labels,
           },
