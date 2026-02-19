@@ -89,18 +89,19 @@ async function checkGateway(): Promise<ServiceStatus> {
   }
 }
 
-async function checkWebhookFunnel(): Promise<ServiceStatus> {
+async function checkWebhooks(): Promise<ServiceStatus> {
   try {
-    const res = await fetch("https://panda.tail7af24.ts.net:8443/webhooks", {
-      signal: AbortSignal.timeout(5000),
+    // Probe webhook server locally (avoids TLS cert issues with Tailscale funnel)
+    const res = await fetch("http://localhost:3111/webhooks", {
+      signal: AbortSignal.timeout(3000),
     });
     if (res.ok) {
       const data = await res.json() as { status?: string; providers?: string[] };
-      return { name: "Webhook Funnel", ok: true, detail: `providers: ${data.providers?.join(", ") ?? "none"}` };
+      return { name: "Webhooks", ok: true, detail: `providers: ${data.providers?.join(", ") ?? "none"}` };
     }
-    return { name: "Webhook Funnel", ok: false, detail: `HTTP ${res.status}` };
+    return { name: "Webhooks", ok: false, detail: `HTTP ${res.status}` };
   } catch (err) {
-    return { name: "Webhook Funnel", ok: false, detail: String(err) };
+    return { name: "Webhooks", ok: false, detail: String(err) };
   }
 }
 
@@ -115,7 +116,7 @@ export const checkSystemHealth = inngest.createFunction(
         checkInngest(),
         checkWorker(),
         checkGateway(),
-        checkWebhookFunnel(),
+        checkWebhooks(),
       ]);
       return results;
     });
