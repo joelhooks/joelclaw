@@ -251,6 +251,7 @@ All skills are installed to `~/.agents/skills/` (universal) and symlinked to Cla
 | docx | anthropics/skills | Word document creation/editing |
 | ffmpeg | digitalsamba (customized) | Video/audio processing — format conversion, compression, platform export |
 | frontend-design | custom | Production-grade frontend UI design |
+| gateway-debug | joelhooks/joelclaw | Diagnose hung gateway sessions, stuck tool calls, queue backpressure — ADR-0049 |
 | gogcli | custom | Google Workspace CLI — Gmail, Calendar, Drive, Contacts, Tasks, Sheets, Docs, Chat, Forms, Slides, Classroom, Apps Script — ADR-0040 |
 | joelclaw | custom | Event bus + agent loop CLI — send events, check runs, start/monitor loops, debug failures, restart worker (igs is a legacy alias) |
 | obsidian-bases | custom | Obsidian Bases (.base files) |
