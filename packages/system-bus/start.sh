@@ -46,4 +46,11 @@ else
   echo "WARNING: Failed to lease front_rules_webhook_secret" >&2
 fi
 
+FRONT_TOKEN=$(secrets lease front_api_token --ttl 24h 2>/dev/null)
+if [ -n "$FRONT_TOKEN" ]; then
+  export FRONT_API_TOKEN="$FRONT_TOKEN"
+else
+  echo "WARNING: Failed to lease front_api_token" >&2
+fi
+
 exec bun run src/serve.ts
