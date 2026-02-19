@@ -46,14 +46,14 @@ function describeModel(model: unknown): string {
   return `${provider}/${id}`;
 }
 
-// Open the gateway's fixed session file, or create a new one if it doesn't exist.
-// Deterministic path (not "most recent") — borrowed from OpenClaw's named session pattern.
-// Restarts always resume the same session; context survives launchd restarts.
-import { existsSync, mkdirSync } from "node:fs";
+// Resume the most recent session in the gateway session dir, or create a new one.
+// SessionManager.continueRecent() finds the latest .jsonl by mtime — no hardcoded filename.
+// Restarts always resume context; survives launchd restarts.
+import { mkdirSync, readdirSync } from "node:fs";
 mkdirSync(GATEWAY_SESSION_DIR, { recursive: true });
-const hasExistingSession = existsSync(GATEWAY_SESSION_FILE);
+const hasExistingSession = readdirSync(GATEWAY_SESSION_DIR).some(f => f.endsWith(".jsonl"));
 const sessionManager = hasExistingSession
-  ? SessionManager.open(GATEWAY_SESSION_FILE, GATEWAY_SESSION_DIR)
+  ? SessionManager.continueRecent(HOME, GATEWAY_SESSION_DIR)
   : SessionManager.create(HOME, GATEWAY_SESSION_DIR);
 console.log("[gateway] session", {
   mode: hasExistingSession ? "resumed" : "new",
