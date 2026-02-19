@@ -142,5 +142,5 @@ Adding a step to the existing 15-min heartbeat keeps the cron surface small. If 
 - [ ] `granola meetings` returns data in heartbeat step
 - [ ] New meetings emit `meeting/noted` events
 - [ ] Previously processed meetings are skipped (Redis SISMEMBER)
-- [ ] Todoist tasks created with meeting link and context
+- [ ] Tasks created via port with meeting link and context
 - [ ] Gateway receives notification with meeting summary
