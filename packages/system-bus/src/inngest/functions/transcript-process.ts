@@ -1,9 +1,10 @@
 import { inngest } from "../client";
 import { NonRetriableError } from "inngest";
 import { $ } from "bun";
-import { readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import { execSync } from "node:child_process";
 
 const VAULT = process.env.VAULT_PATH ?? `${process.env.HOME}/Vault`;
 
@@ -199,6 +200,196 @@ export const transcriptProcess = inngest.createFunction(
       return results;
     });
 
+    // Step 1c: LLM vision review — describe, name, and filter screenshots
+    const reviewedScreenshots = await step.run(
+      "review-screenshots",
+      async () => {
+        type Reviewed = { name: string; altText: string; timestamp: string };
+        if (screenshots.length === 0) return [] as Reviewed[];
+
+        // Get API key — env first, then agent-secrets
+        let apiKey = process.env.ANTHROPIC_API_KEY;
+        if (!apiKey) {
+          try {
+            apiKey = execSync(
+              "secrets lease anthropic_api_key --ttl 1h 2>/dev/null",
+              { encoding: "utf-8", timeout: 5000 },
+            ).trim();
+          } catch {}
+        }
+        if (!apiKey) {
+          // Fallback: keep originals with transcript-derived names
+          return screenshots.map((s) => ({
+            name: s.name,
+            altText: s.name.replace(".jpg", "").replace(/-/g, " "),
+            timestamp: s.timestamp,
+          }));
+        }
+
+        // Read transcript for cross-reference
+        const transcript: {
+          text: string;
+          segments: Array<{ start: number; end: number; text: string }>;
+        } = await Bun.file(transcriptPath).json();
+
+        // Build vision request: each screenshot + transcript context
+        const imageContents: Array<Record<string, unknown>> = [];
+        const vaultDir = join(
+          process.env.HOME ?? "/Users/joel",
+          "Vault/Resources/videos",
+          slug,
+        );
+
+        for (let idx = 0; idx < screenshots.length; idx++) {
+          const shot = screenshots[idx]!;
+          const buffer = await readFile(join(vaultDir, shot.name));
+          const base64 = buffer.toString("base64");
+
+          // Transcript text ±20s around screenshot timestamp
+          const [mins, secs] = shot.timestamp.split(":").map(Number);
+          const ts = (mins ?? 0) * 60 + (secs ?? 0);
+          const windowText = transcript.segments
+            .filter((s) => s.start >= ts - 20 && s.start <= ts + 20)
+            .map((s) => s.text)
+            .join(" ")
+            .trim();
+
+          imageContents.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/jpeg",
+              data: base64,
+            },
+          });
+          imageContents.push({
+            type: "text",
+            text: `Screenshot ${idx + 1}/${screenshots.length} at ${shot.timestamp}. Speaker is saying: "${windowText.slice(0, 300)}"`,
+          });
+        }
+
+        imageContents.push({
+          type: "text",
+          text: `Review these ${screenshots.length} screenshots from "${title}". Return a JSON array:
+[{"index":0,"keep":true,"filename":"descriptive-name.jpg","altText":"What's visible in the frame"}]
+
+Rules:
+- filename: lowercase-kebab-case, max 50 chars, describe WHAT'S VISIBLE — diagrams, code, slides, terminal output, architecture drawings. Cross-reference with what the speaker is saying to give precise names.
+- DISCARD (keep:false): speaker's face with no informative visual content, transition slides, blurry or near-duplicate frames
+- KEEP: diagrams, code, demos, slides with text, architecture drawings, terminal output, dashboards, meaningful visuals
+- altText: describe what someone would see — labels, text on slides, code snippets, diagram elements, UI state
+- Return ONLY the JSON array, no markdown fences or explanation`,
+        });
+
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 2048,
+            messages: [{ role: "user", content: imageContents }],
+          }),
+        });
+
+        if (!response.ok) {
+          // Non-fatal: return originals
+          return screenshots.map((s) => ({
+            name: s.name,
+            altText: s.name.replace(".jpg", "").replace(/-/g, " "),
+            timestamp: s.timestamp,
+          }));
+        }
+
+        const data = (await response.json()) as {
+          content?: Array<{ text?: string }>;
+        };
+        const rawText = data.content?.[0]?.text ?? "[]";
+
+        let reviews: Array<{
+          index: number;
+          keep: boolean;
+          filename: string;
+          altText: string;
+        }>;
+        try {
+          reviews = JSON.parse(
+            rawText
+              .replace(/```json?\n?/g, "")
+              .replace(/```/g, "")
+              .trim(),
+          );
+        } catch {
+          return screenshots.map((s) => ({
+            name: s.name,
+            altText: s.name.replace(".jpg", "").replace(/-/g, " "),
+            timestamp: s.timestamp,
+          }));
+        }
+
+        // Rename kept files, discard the rest
+        const result: Reviewed[] = [];
+        const usedNames = new Set<string>();
+
+        for (const review of reviews) {
+          if (!review.keep || review.index >= screenshots.length) continue;
+          const shot = screenshots[review.index]!;
+
+          // Sanitize and deduplicate filename
+          let cleaned = review.filename
+            .toLowerCase()
+            .replace(/[^a-z0-9-\.]/g, "")
+            .slice(0, 54);
+          if (!cleaned.endsWith(".jpg")) cleaned = cleaned.replace(/\.jpg$/, "") + ".jpg";
+          let baseName = cleaned.replace(".jpg", "");
+          let finalName = cleaned;
+          let n = 2;
+          while (usedNames.has(finalName)) {
+            finalName = `${baseName}-${n}.jpg`;
+            n++;
+          }
+          usedNames.add(finalName);
+
+          // Rename in vault
+          try {
+            await $`mv ${join(vaultDir, shot.name)} ${join(vaultDir, finalName)}`.quiet();
+          } catch {}
+
+          // Rename on NAS
+          if (nasPath) {
+            try {
+              await $`ssh joel@three-body "mv '${nasPath}/screenshots/${shot.name}' '${nasPath}/screenshots/${finalName}'"`.quiet();
+            } catch {}
+          }
+
+          result.push({
+            name: finalName,
+            altText: review.altText,
+            timestamp: shot.timestamp,
+          });
+        }
+
+        // Clean up discarded screenshots from vault + NAS
+        for (const shot of screenshots) {
+          if (!result.some((r) => r.timestamp === shot.timestamp)) {
+            try {
+              await $`rm -f ${join(vaultDir, shot.name)}`.quiet();
+            } catch {}
+            if (nasPath) {
+              try {
+                await $`ssh joel@three-body "rm -f '${nasPath}/screenshots/${shot.name}'"`.quiet();
+              } catch {}
+            }
+          }
+        }
+
+        return result;
+      },
+    );
+
     // Step 2: Create Vault note — reads transcript from file
     const vaultPath = await step.run("create-vault-note", async () => {
       const notePath = `${VAULT}/Resources/videos/${slug}.md`;
@@ -250,13 +441,13 @@ export const transcriptProcess = inngest.createFunction(
       const infoLine = infoParts.length > 0 ? infoParts.join(" · ") : "";
       const urlLine = sourceUrl ? `\n> **URL**: ${sourceUrl}` : "";
 
-      // List screenshots as assets for the summarizer to place inline
+      // List reviewed screenshots as assets for the summarizer to place inline
       const screenshotSection =
-        screenshots.length > 0
-          ? `\n## Screenshots (place inline during enrichment)\n\n${screenshots
+        reviewedScreenshots.length > 0
+          ? `\n## Screenshots (place inline during enrichment)\n\n${reviewedScreenshots
               .map((f) => {
-                const alt = f.name.replace(".jpg", "").replace(/-/g, " ");
-                return `![${alt}](${slug}/${f.name}) <!-- ${f.timestamp} -->`;
+                const safeAlt = f.altText.replace(/"/g, "'").replace(/\n/g, " ").slice(0, 200);
+                return `![${safeAlt}](${slug}/${f.name}) <!-- ${f.timestamp} -->`;
               })
               .join("\n\n")}\n`
           : "";
