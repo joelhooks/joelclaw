@@ -7,6 +7,48 @@ import { pushGatewayEvent } from "./agent-loop/utils";
 
 const VAULT = process.env.VAULT_PATH ?? `${process.env.HOME}/Vault`;
 
+// --- Screenshot naming: extract descriptive slugs from transcript context ---
+const STOP_WORDS = new Set([
+  "the","a","an","is","are","was","were","be","been","being","have","has","had",
+  "do","does","did","will","would","could","should","may","might","shall","can",
+  "to","of","in","for","on","with","at","by","from","as","into","through",
+  "during","before","after","above","below","between","out","off","over","under",
+  "again","further","then","once","here","there","when","where","why","how",
+  "all","both","each","few","more","most","other","some","such","no","not",
+  "only","own","same","so","than","too","very","just","because","but","and",
+  "or","if","while","about","up","its","it","this","that","these","those",
+  "i","me","my","we","our","you","your","he","him","his","she","her","they",
+  "them","their","what","which","who","whom","am","like","going","get","got",
+  "know","think","thing","things","really","actually","kind","right","well",
+  "also","now","way","much","many","even","still","back","something",
+  "dont","ive","thats","youre","lets","gonna","wanna","yeah","okay",
+  "um","uh","sort","lot","bit","want","need","say","said","see","look",
+  "come","take","make","go","use","try","put","basically","literally",
+  "absolutely","definitely","probably","obviously","essentially","talking",
+  "showing","looking","pretty","stuff","everything","nothing",
+]);
+
+function extractKeyPhrase(text: string, maxWords = 4): string {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .split(/\s+/)
+    .filter((w) => w.length > 3 && !STOP_WORDS.has(w));
+  const seen = new Set<string>();
+  const unique = words.filter((w) => {
+    if (seen.has(w)) return false;
+    seen.add(w);
+    return true;
+  });
+  return unique.slice(0, maxWords).join("-").slice(0, 50) || "scene";
+}
+
+function fmtTs(seconds: number): string {
+  const m = String(Math.floor(seconds / 60)).padStart(2, "0");
+  const s = String(Math.floor(seconds % 60)).padStart(2, "0");
+  return `${m}:${s}`;
+}
+
 /**
  * Transcript Process — accepts audio files OR raw text from any source.
  *
@@ -86,6 +128,77 @@ export const transcriptProcess = inngest.createFunction(
       return outFile;
     });
 
+    // Step 1b: Extract key moment screenshots — named from transcript context
+    const screenshots = await step.run("extract-screenshots", async () => {
+      if (!audioPath) return [] as Array<{ name: string; timestamp: string }>;
+
+      const transcript: {
+        text: string;
+        segments: Array<{ start: number; end: number; text: string }>;
+      } = await Bun.file(transcriptPath).json();
+
+      if (!transcript.segments.length)
+        return [] as Array<{ name: string; timestamp: string }>;
+
+      const screenshotDir = `/tmp/screenshots-${slug}`;
+      await $`mkdir -p ${screenshotDir}`.quiet();
+
+      const totalDur =
+        transcript.segments[transcript.segments.length - 1]!.end;
+      // ~1 screenshot per 2 minutes, min 4 max 10
+      const count = Math.min(10, Math.max(4, Math.floor(totalDur / 120)));
+      const interval = totalDur / (count + 1);
+      const results: Array<{ name: string; timestamp: string }> = [];
+      const usedNames = new Set<string>();
+
+      for (let i = 1; i <= count; i++) {
+        const ts = interval * i;
+
+        // Grab transcript text ±30s around this timestamp
+        const windowText = transcript.segments
+          .filter((s) => s.start >= ts - 30 && s.start <= ts + 30)
+          .map((s) => s.text)
+          .join(" ");
+
+        let baseName = extractKeyPhrase(windowText);
+        let name = baseName;
+        let n = 2;
+        while (usedNames.has(name)) {
+          name = `${baseName}-${n}`;
+          n++;
+        }
+        usedNames.add(name);
+
+        const filename = `${name}.jpg`;
+        try {
+          await $`ffmpeg -ss ${Math.floor(ts)} -i ${audioPath} -vframes 1 -vf scale=1280:-1 -q:v 2 ${join(screenshotDir, filename)}`.quiet();
+          results.push({ name: filename, timestamp: fmtTs(ts) });
+        } catch {}
+      }
+
+      // Copy to vault
+      const vaultDir = join(
+        process.env.HOME ?? "/Users/joel",
+        "Vault/Resources/videos",
+        slug
+      );
+      await $`mkdir -p ${vaultDir}`.quiet();
+      for (const f of results) {
+        await $`cp ${join(screenshotDir, f.name)} ${join(vaultDir, f.name)}`.quiet();
+      }
+
+      // Transfer to NAS alongside video
+      if (nasPath) {
+        try {
+          await $`ssh joel@three-body "mkdir -p ${nasPath}/screenshots"`.quiet();
+          await $`scp -r ${screenshotDir}/. joel@three-body:${nasPath}/screenshots/`.quiet();
+        } catch {}
+      }
+
+      await $`rm -rf ${screenshotDir}`.quiet();
+      return results;
+    });
+
     // Step 2: Create Vault note — reads transcript from file
     const vaultPath = await step.run("create-vault-note", async () => {
       const notePath = `${VAULT}/Resources/videos/${slug}.md`;
@@ -137,6 +250,17 @@ export const transcriptProcess = inngest.createFunction(
       const infoLine = infoParts.length > 0 ? infoParts.join(" · ") : "";
       const urlLine = sourceUrl ? `\n> **URL**: ${sourceUrl}` : "";
 
+      // Build key moment screenshots section
+      const screenshotSection =
+        screenshots.length > 0
+          ? `\n## Key Moments\n\n${screenshots
+              .map((f) => {
+                const alt = f.name.replace(".jpg", "").replace(/-/g, " ");
+                return `![${alt}](${slug}/${f.name})\n*${f.timestamp}*`;
+              })
+              .join("\n\n")}\n`
+          : "";
+
       const note = `---
 ${frontmatter}
 tags:
@@ -151,7 +275,7 @@ ${infoLine || urlLine ? `
 ## Executive Summary
 
 <!-- TODO: enrichment via content/summarize -->
-
+${screenshotSection}
 ## Full Transcript
 
 > [!note]- Transcript

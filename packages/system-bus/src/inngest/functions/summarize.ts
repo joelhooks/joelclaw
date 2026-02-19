@@ -1,5 +1,6 @@
 import { inngest } from "../client";
 import { $ } from "bun";
+import { pushGatewayEvent } from "./agent-loop/utils";
 
 const DEFAULT_PROMPT = `Read the joel-writing-style skill at ~/.pi/agent/skills/joel-writing-style/SKILL.md first. All writing in this note MUST match Joel's voice — conversational first person, short punchy paragraphs, strategic profanity where it earns its place, bold for emphasis, direct and honest tone. No corporate voice. No "In this video..." openings.
 
@@ -25,7 +26,7 @@ Who is this person? Background, previous work, current role. Link to profiles, c
 ## Tags
 Comma-separated topic tags for vault indexing.
 
-Preserve the frontmatter, info callout, and transcript sections unchanged.`;
+Preserve the frontmatter, info callout, and transcript sections unchanged. If there's a Key Moments section with screenshots, keep those images in place and reference them in the summary when relevant.`;
 
 /**
  * Content Summarize — enriches any vault note using pi with full tools.
@@ -68,6 +69,20 @@ export const summarize = inngest.createFunction(
     await step.sendEvent("log-and-emit", {
       name: "content/summarized",
       data: { vaultPath, title },
+    });
+
+    await step.run("notify-gateway", async () => {
+      try {
+        await pushGatewayEvent({
+          type: "content.summarized",
+          source: "inngest",
+          payload: {
+            title,
+            vaultPath,
+            prompt: `Video "${title}" has been fully ingested — downloaded, transcribed, and summarized with key moment screenshots. The enriched vault note is at ${vaultPath}. Let Joel know it's ready.`,
+          },
+        });
+      } catch {}
     });
 
     return { vaultPath, title, status: "summarized" };

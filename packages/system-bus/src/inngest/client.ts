@@ -53,6 +53,8 @@ export type Events = {
       nasPath?: string;
       /** Tmp dir to clean up after processing */
       tmpDir?: string;
+      /** Key moment screenshots extracted during download */
+      screenshots?: { vaultDir: string; files: string[] };
     };
   };
   "pipeline/transcript.processed": {
