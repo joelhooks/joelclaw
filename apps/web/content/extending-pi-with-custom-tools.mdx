@@ -6,7 +6,7 @@ description: "Build a pi extension that sends Inngest events and shows live run 
 tags: ["pi", "extensions", "inngest", "tui"]
 ---
 
-[Pi](https://github.com/badlogic/pi-mono) is an agent harness. It runs tools, renders output, manages sessions. But the interesting part is what happens when you extend it — when you give the agent capabilities that didn't exist before and it starts using them without being told how.
+[Pi](https://github.com/badlogic/pi-mono) is an agent harness with a [full TUI framework](https://github.com/badlogic/pi-mono/tree/main/packages/tui) built in — Box, Text, Markdown, SelectList, Image rendering, overlays, fuzzy matching, even Kitty image protocol support. It runs tools, renders output, manages sessions. But the interesting part is what happens when you extend it — when you give the agent capabilities that didn't exist before and it starts using them without being told how.
 
 ```bash
 npx skills add joelhooks/pi-tools --skill pi-tui-design --yes --global
