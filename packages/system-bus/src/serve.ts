@@ -31,6 +31,10 @@ import {
   frontMessageReceived,
   frontMessageSent,
   frontAssigneeChanged,
+  vercelDeploySucceeded,
+  vercelDeployError,
+  vercelDeployCreated,
+  vercelDeployCanceled,
   emailInboxCleanup,
 } from "./inngest/functions";
 
@@ -66,6 +70,10 @@ const registeredFunctions = [
   frontMessageReceived,
   frontMessageSent,
   frontAssigneeChanged,
+  vercelDeploySucceeded,
+  vercelDeployError,
+  vercelDeployCreated,
+  vercelDeployCanceled,
   emailInboxCleanup,
 ];
 
@@ -82,7 +90,7 @@ app.get("/", (c) =>
     count: registeredFunctions.length,
     webhooks: {
       endpoint: "/webhooks/:provider",
-      providers: ["todoist", "front"],
+      providers: ["todoist", "front", "vercel"],
     },
     events: {
       "pipeline/video.requested": "Download video + NAS transfer → emits transcript.requested",
@@ -95,6 +103,7 @@ app.get("/", (c) =>
       "media/received": "Process media from channels → vision/transcribe → notify gateway",
       "todoist/*": "Todoist webhook events (comment.added, task.completed, task.created)",
       "front/*": "Front webhook events (message.received, message.sent, assignee.changed)",
+      "vercel/*": "Vercel webhook events (deploy.succeeded, deploy.error, deploy.created, deploy.canceled)",
       "email/inbox.cleanup": "AI-powered inbox triage — classify + archive noise",
     },
   })

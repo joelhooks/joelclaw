@@ -22,6 +22,12 @@ export {
   frontMessageSent,
   frontAssigneeChanged,
 } from "./front-notify";
+export {
+  vercelDeploySucceeded,
+  vercelDeployError,
+  vercelDeployCreated,
+  vercelDeployCanceled,
+} from "./vercel-notify";
 export { emailInboxCleanup } from "./email-cleanup";
 export {
   agentLoopPlan,

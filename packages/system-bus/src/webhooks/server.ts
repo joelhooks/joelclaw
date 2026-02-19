@@ -9,11 +9,13 @@ import { inngest } from "../inngest/client";
 import type { WebhookProvider } from "./types";
 import { todoistProvider } from "./providers/todoist";
 import { frontProvider } from "./providers/front";
+import { vercelProvider } from "./providers/vercel";
 
 // ── Provider registry ────────────────────────────────────
 const providers = new Map<string, WebhookProvider>();
 providers.set(todoistProvider.id, todoistProvider);
 providers.set(frontProvider.id, frontProvider);
+providers.set(vercelProvider.id, vercelProvider);
 
 // ── Rate limiting (auth failures per IP) ─────────────────
 const RATE_LIMIT_WINDOW_MS = 60_000;
