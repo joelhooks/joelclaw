@@ -46,6 +46,7 @@ yarn-error.log*
 !.agents/skills/recall/
 !.agents/skills/task-management/
 !.agents/skills/video-note/
+!.agents/skills/joelclaw-web/
 .claude/skills/*
 # Root skills/ dir created by npx skills add
 skills/
