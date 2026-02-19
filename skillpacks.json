@@ -25,9 +25,9 @@
     },
     {
       "name": "axiom",
-      "repo": "charleswiltgen/axiom",
+      "repo": "CharlesWiltgen/Axiom",
       "description": "64+ iOS/SwiftUI/Apple development skills by Charles Wiltgen. HIG, Liquid Glass, SwiftData, SF Symbols, and more.",
-      "url": "https://charleswiltgen.github.io/Axiom/",
+      "url": "https://github.com/CharlesWiltgen/Axiom",
       "skills": [
         "axiom-accessibility-diag", "axiom-app-composition", "axiom-app-intents-ref",
         "axiom-foundation-models", "axiom-hig", "axiom-hig-ref", "axiom-liquid-glass",

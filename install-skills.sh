@@ -106,34 +106,34 @@ install_packs() {
   echo -e "${BOLD}Installing skill packs${NC}"
   echo ""
 
-  # Process each pack
+  # Build install commands as a temp script to avoid stdin conflicts
+  local tmpscript
+  tmpscript=$(mktemp)
+
   echo "$selected" | node -e "
     const packs = JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf8'));
     for (const pack of packs) {
-      console.log(JSON.stringify(pack));
+      console.log([pack.name, pack.repo, pack.url, pack.skills.length].join('|'));
     }
-  " | while IFS= read -r pack_json; do
-    local name repo url skill_count skills_csv
-    name=$(echo "$pack_json" | node -e "const p=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(p.name)")
-    repo=$(echo "$pack_json" | node -e "const p=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(p.repo)")
-    url=$(echo "$pack_json" | node -e "const p=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(p.url)")
-    skill_count=$(echo "$pack_json" | node -e "const p=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(p.skills.length)")
-    skills_csv=$(echo "$pack_json" | node -e "const p=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(p.skills.join(' '))")
+  " > "$tmpscript"
 
+  while IFS='|' read -r name repo url skill_count; do
     echo -e "  ${BLUE}▸${NC} ${BOLD}$name${NC} ${DIM}($skill_count skills from $repo)${NC}"
     echo -e "    ${DIM}$url${NC}"
 
     if [ "$DRY_RUN" = true ]; then
       echo -e "    ${DIM}npx skills add $repo --yes --all${NC}"
     else
-      if npx skills add "$repo" --yes --all 2>&1 | tail -1; then
+      if npx skills add "$repo" --yes --all </dev/null 2>&1 | tail -1; then
         echo -e "    ${GREEN}✓ Installed${NC}"
       else
         echo -e "    ${RED}✗ Failed — try manually: npx skills add $repo --yes --all${NC}"
       fi
     fi
     echo ""
-  done
+  done < "$tmpscript"
+
+  rm -f "$tmpscript"
 
   if [ "$DRY_RUN" = true ]; then
     echo -e "${DIM}Dry run — nothing was installed.${NC}"
