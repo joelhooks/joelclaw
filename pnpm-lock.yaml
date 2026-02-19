@@ -211,6 +211,25 @@ importers:
 
   packages/lexicons: {}
 
+  packages/pi-extensions:
+    dependencies:
+      '@mariozechner/pi-ai':
+        specifier: ~0.52.12
+        version: 0.52.12(ws@8.19.0)(zod@3.25.76)
+      '@mariozechner/pi-coding-agent':
+        specifier: ~0.52.12
+        version: 0.52.12(ws@8.19.0)(zod@3.25.76)
+      '@mariozechner/pi-tui':
+        specifier: ~0.52.12
+        version: 0.52.12
+      '@sinclair/typebox':
+        specifier: ^0.34.33
+        version: 0.34.48
+    devDependencies:
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
+
   packages/system-bus:
     dependencies:
       '@qdrant/js-client-rest':
