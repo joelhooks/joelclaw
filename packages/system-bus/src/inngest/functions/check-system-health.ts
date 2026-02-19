@@ -6,6 +6,7 @@
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
 import { getCurrentTasks, hasTaskMatching } from "../../tasks";
+import { readFile } from "node:fs/promises";
 import Redis from "ioredis";
 
 type ServiceStatus = { name: string; ok: boolean; detail?: string };
@@ -50,6 +51,59 @@ async function checkWorker(): Promise<ServiceStatus> {
   }
 }
 
+async function checkGateway(): Promise<ServiceStatus> {
+  try {
+    // Check PID file — is the process alive?
+    const pidRaw = await readFile("/tmp/joelclaw/gateway.pid", "utf8").catch(() => "");
+    const pid = parseInt(pidRaw.trim(), 10);
+    if (!pid || isNaN(pid)) {
+      return { name: "Gateway", ok: false, detail: "no PID file" };
+    }
+
+    // Check process is alive (kill -0 doesn't actually kill)
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return { name: "Gateway", ok: false, detail: `PID ${pid} is dead` };
+    }
+
+    // Check WS server responds — read port, open WS, request status, close
+    const portRaw = await readFile("/tmp/joelclaw/gateway.ws.port", "utf8").catch(() => "");
+    const wsPort = parseInt(portRaw.trim(), 10);
+    if (!wsPort || isNaN(wsPort)) {
+      return { name: "Gateway", ok: false, detail: "no WS port file — daemon may not have WS server" };
+    }
+
+    // Probe via HTTP upgrade attempt (Bun.serve returns 426 for non-WS)
+    const res = await fetch(`http://localhost:${wsPort}/`, { signal: AbortSignal.timeout(3000) }).catch(() => null);
+    if (!res) {
+      return { name: "Gateway", ok: false, detail: `WS port ${wsPort} not responding` };
+    }
+    // 426 = "Upgrade Required" = WS server is there and healthy
+    if (res.status === 426) {
+      return { name: "Gateway", ok: true };
+    }
+    return { name: "Gateway", ok: false, detail: `unexpected status ${res.status}` };
+  } catch (err) {
+    return { name: "Gateway", ok: false, detail: String(err) };
+  }
+}
+
+async function checkWebhookFunnel(): Promise<ServiceStatus> {
+  try {
+    const res = await fetch("https://panda.tail7af24.ts.net:8443/webhooks", {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      const data = await res.json() as { status?: string; providers?: string[] };
+      return { name: "Webhook Funnel", ok: true, detail: `providers: ${data.providers?.join(", ") ?? "none"}` };
+    }
+    return { name: "Webhook Funnel", ok: false, detail: `HTTP ${res.status}` };
+  } catch (err) {
+    return { name: "Webhook Funnel", ok: false, detail: String(err) };
+  }
+}
+
 export const checkSystemHealth = inngest.createFunction(
   { id: "check/system-health", concurrency: { limit: 1 }, retries: 1 },
   [{ event: "system/health.requested" }, { event: "system/health.check" }],
@@ -60,6 +114,8 @@ export const checkSystemHealth = inngest.createFunction(
         checkQdrant(),
         checkInngest(),
         checkWorker(),
+        checkGateway(),
+        checkWebhookFunnel(),
       ]);
       return results;
     });
