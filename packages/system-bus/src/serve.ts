@@ -36,37 +36,53 @@ import {
 
 const app = new Hono();
 
+// Single source of truth for registered functions — never maintain a separate list.
+const registeredFunctions = [
+  videoDownload,
+  transcriptProcess,
+  summarize,
+  systemLogger,
+  observeSessionFunction,
+  reflect,
+  contentSync,
+  discoveryCapture,
+  promote,
+  embedText,
+  backfillObserve,
+  heartbeatCron,
+  heartbeatWake,
+  agentDispatch,
+  agentLoopPlan,
+  agentLoopTestWriter,
+  agentLoopImplement,
+  agentLoopReview,
+  agentLoopJudge,
+  agentLoopComplete,
+  agentLoopRetro,
+  mediaProcess,
+  todoistCommentAdded,
+  todoistTaskCompleted,
+  todoistTaskCreated,
+  frontMessageReceived,
+  frontMessageSent,
+  frontAssigneeChanged,
+  emailInboxCleanup,
+];
+
+// Derive function names from the actual array — no stale hardcoded list
+const functionNames = registeredFunctions.map(
+  (fn) => (fn as any).opts?.id ?? "unknown"
+);
+
 app.get("/", (c) =>
   c.json({
     service: "system-bus",
     status: "running",
-    functions: [
-      "video-download",
-      "transcript-process",
-      "content-summarize",
-      "system-logger",
-      "memory/observe-session",
-      "memory/reflect",
-      "content-sync",
-      "discovery-capture",
-      "memory/review-promote",
-      "embedding-generate",
-      "memory/backfill-observe",
-      "system-heartbeat",
-      "system-heartbeat-wake",
-      "system/agent-dispatch",
-      "agent-loop-plan",
-      "agent-loop-test-writer",
-      "agent-loop-implement",
-      "agent-loop-review",
-      "agent-loop-judge",
-      "agent-loop-complete",
-      "agent-loop-retro",
-      "media-process",
-    ],
+    functions: functionNames,
+    count: registeredFunctions.length,
     webhooks: {
       endpoint: "/webhooks/:provider",
-      providers: ["todoist"],
+      providers: ["todoist", "front"],
     },
     events: {
       "pipeline/video.requested": "Download video + NAS transfer → emits transcript.requested",
@@ -77,6 +93,9 @@ app.get("/", (c) =>
       "discovery/noted": "Investigate interesting find → vault note in Resources/discoveries/",
       "system/log.written": "Write canonical log entry",
       "media/received": "Process media from channels → vision/transcribe → notify gateway",
+      "todoist/*": "Todoist webhook events (comment.added, task.completed, task.created)",
+      "front/*": "Front webhook events (message.received, message.sent, assignee.changed)",
+      "email/inbox.cleanup": "AI-powered inbox triage — classify + archive noise",
     },
   })
 );
@@ -92,37 +111,7 @@ app.on(
   "/api/inngest",
   inngestServe({
     client: inngest,
-    functions: [
-      videoDownload,
-      transcriptProcess,
-      summarize,
-      systemLogger,
-      observeSessionFunction,
-      reflect,
-      contentSync,
-      discoveryCapture,
-      promote,
-      embedText,
-      backfillObserve,
-      heartbeatCron,
-      heartbeatWake,
-      agentDispatch,
-      agentLoopPlan,
-      agentLoopTestWriter,
-      agentLoopImplement,
-      agentLoopReview,
-      agentLoopJudge,
-      agentLoopComplete,
-      agentLoopRetro,
-      mediaProcess,
-      todoistCommentAdded,
-      todoistTaskCompleted,
-      todoistTaskCreated,
-      frontMessageReceived,
-      frontMessageSent,
-      frontAssigneeChanged,
-      emailInboxCleanup,
-    ],
+    functions: registeredFunctions,
     serveHost: "http://host.docker.internal:3111",
   })
 );
@@ -134,6 +123,4 @@ export default {
 
 console.log("🚌 system-bus worker running on http://localhost:3111");
 console.log("📡 Inngest endpoint: http://localhost:3111/api/inngest");
-console.log(
-  "📋 Functions: video-download, transcript-process, content-summarize, system-logger, memory/observe-session, memory/reflect, memory/review-promote, memory/backfill-observe, system-heartbeat, system/heartbeat.wake, system/agent-dispatch, agent-loop-plan, agent-loop-test-writer, agent-loop-implement, agent-loop-review, agent-loop-judge, agent-loop-complete, agent-loop-retro"
-);
+console.log(`📋 ${registeredFunctions.length} functions registered`);
