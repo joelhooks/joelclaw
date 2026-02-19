@@ -174,18 +174,62 @@ async function migrateLegacyEvents(): Promise<void> {
   console.log("[gateway:redis] migrated legacy events", { count: legacyRaw.length });
 }
 
-export async function start(enqueue: EnqueueFn): Promise<void> {
-  if (started) return;
+// ── Self-healing: retry start on Redis failure ───────
+let _startEnqueue: EnqueueFn | undefined;
+let _retryTimer: ReturnType<typeof setTimeout> | undefined;
+const RETRY_DELAY_MS = 5_000;
+const MAX_RETRY_DELAY_MS = 60_000;
+let _retryCount = 0;
 
+function scheduleRetry(): void {
+  if (_retryTimer || !_startEnqueue) return;
+  const delay = Math.min(RETRY_DELAY_MS * Math.pow(2, _retryCount), MAX_RETRY_DELAY_MS);
+  _retryCount++;
+  console.log(`[gateway:redis] scheduling reconnect in ${delay}ms (attempt ${_retryCount})`);
+  _retryTimer = setTimeout(async () => {
+    _retryTimer = undefined;
+    if (started) return; // recovered via ioredis retry
+    try {
+      await doStart(_startEnqueue!);
+    } catch (error) {
+      console.error("[gateway:redis] reconnect failed", { error });
+      scheduleRetry();
+    }
+  }, delay);
+}
+
+async function doStart(enqueue: EnqueueFn): Promise<void> {
   enqueuePrompt = enqueue;
   sub = new Redis(redisOpts);
   cmd = new Redis(redisOpts);
+
+  // Track ready state for health checks
+  let subReady = false;
+  let cmdReady = false;
+  sub.on("ready", () => { subReady = true; _retryCount = 0; });
+  cmd.on("ready", () => { cmdReady = true; _retryCount = 0; });
 
   sub.on("error", (error: unknown) => {
     console.error("[gateway:redis] subscriber error", { error });
   });
   cmd.on("error", (error: unknown) => {
     console.error("[gateway:redis] command client error", { error });
+  });
+
+  // On disconnect, mark as not started and schedule reconnect
+  sub.on("close", () => {
+    if (started) {
+      console.warn("[gateway:redis] subscriber disconnected — will reconnect");
+      started = false;
+      scheduleRetry();
+    }
+  });
+  cmd.on("close", () => {
+    if (started) {
+      console.warn("[gateway:redis] command client disconnected — will reconnect");
+      started = false;
+      scheduleRetry();
+    }
   });
 
   await sub.connect();
@@ -210,7 +254,29 @@ export async function start(enqueue: EnqueueFn): Promise<void> {
   });
 }
 
+export async function start(enqueue: EnqueueFn): Promise<void> {
+  if (started) return;
+  _startEnqueue = enqueue;
+  try {
+    await doStart(enqueue);
+  } catch (error) {
+    console.error("[gateway:redis] initial connect failed — will retry", { error });
+    scheduleRetry();
+  }
+}
+
+/** Is the Redis channel healthy and connected? */
+export function isHealthy(): boolean {
+  return started && sub?.status === "ready" && cmd?.status === "ready";
+}
+
 export async function shutdown(): Promise<void> {
+  if (_retryTimer) {
+    clearTimeout(_retryTimer);
+    _retryTimer = undefined;
+  }
+  _startEnqueue = undefined;
+
   try {
     if (cmd) {
       await cmd.srem(SESSIONS_SET, SESSION_ID);

@@ -9,14 +9,22 @@ type PromptSession = {
   prompt: (text: string) => unknown | Promise<unknown>;
 };
 
+type PromptCallback = () => void;
+
 const queue: QueueEntry[] = [];
 let sessionRef: PromptSession | undefined;
 let drainPromise: Promise<void> | undefined;
+let onPromptSent: PromptCallback | undefined;
 
 export let currentSource: string | undefined;
 
 export function setSession(session: PromptSession): void {
   sessionRef = session;
+}
+
+/** Register a callback fired each time a prompt is dispatched to the session. */
+export function onPrompt(cb: PromptCallback): void {
+  onPromptSent = cb;
 }
 
 export function enqueue(source: string, prompt: string, metadata?: Record<string, unknown>): void {
@@ -49,6 +57,7 @@ export async function drain(): Promise<void> {
           continue;
         }
 
+        onPromptSent?.();
         await sessionRef.prompt(entry.prompt);
       } catch (error) {
         console.error("command-queue: prompt failed", {

@@ -3,8 +3,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@mariozechner/pi-ai";
 import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
-import { drain, enqueue, getQueueDepth, getCurrentSource, setSession } from "./command-queue";
-import { start as startRedisChannel, shutdown as shutdownRedisChannel } from "./channels/redis";
+import { drain, enqueue, getQueueDepth, getCurrentSource, setSession, onPrompt } from "./command-queue";
+import { start as startRedisChannel, shutdown as shutdownRedisChannel, isHealthy as isRedisHealthy } from "./channels/redis";
 import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, sendMedia as sendTelegramMedia, parseChatId } from "./channels/telegram";
 import { startHeartbeatRunner } from "./heartbeat";
 
@@ -15,10 +15,7 @@ const PID_FILE = `${PID_DIR}/gateway.pid`;
 const WS_PORT_FILE = `${PID_DIR}/gateway.ws.port`;
 const JOELCLAW_DIR = join(HOME, ".joelclaw");
 const SESSION_ID_FILE = join(JOELCLAW_DIR, "gateway.session");
-// Gateway uses a fixed, well-known session file — deterministic, not "most recent".
-// Pattern borrowed from OpenClaw: named session keys → fixed file paths.
 const GATEWAY_SESSION_DIR = join(JOELCLAW_DIR, "sessions", "gateway");
-const GATEWAY_SESSION_FILE = join(GATEWAY_SESSION_DIR, "gateway.jsonl");
 const DEFAULT_WS_PORT = 3018;
 const WS_PORT = Number.parseInt(process.env.PI_GATEWAY_WS_PORT ?? `${DEFAULT_WS_PORT}`, 10) || DEFAULT_WS_PORT;
 const startedAt = Date.now();
@@ -73,6 +70,9 @@ setSession({
   prompt: (text: string) => session.prompt(text),
 });
 
+// Track prompt dispatch timing for stuck-session detection (vars declared later in watchdog section)
+onPrompt(() => { _lastPromptAt = Date.now(); });
+
 // ── Config ─────────────────────────────────────────────
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID
@@ -110,6 +110,7 @@ function getStatusPayload(): Record<string, unknown> {
     pid: process.pid,
     channelInfo: {
       ...channelInfo,
+      redis: isRedisHealthy() ? "ok" : "degraded",
       ws: {
         port: wsServer.port,
         clients: wsClients.size,
@@ -258,18 +259,13 @@ session.subscribe((event: any) => {
   }
 
   if (event.type === "turn_end") {
+    _lastTurnEndAt = Date.now();
     broadcastWs({ type: "turn_end" });
     void drain();
   }
 });
 
-// ── Redis channel ──────────────────────────────────────
-await startRedisChannel(((source, prompt, metadata) => {
-  enqueue(source, prompt, metadata);
-  void drain();
-}));
-
-// ── Telegram channel ───────────────────────────────────
+// ── Telegram channel (start BEFORE Redis — Telegram doesn't need Redis) ──
 if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
   await startTelegram(TELEGRAM_TOKEN, TELEGRAM_USER_ID, (source, prompt, metadata) => {
     enqueue(source, prompt, metadata);
@@ -279,63 +275,128 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
   console.warn("[gateway] telegram disabled — set TELEGRAM_BOT_TOKEN and TELEGRAM_USER_ID env vars");
 }
 
+// ── Redis channel (self-healing — retries on failure, won't crash daemon) ──
+await startRedisChannel(((source, prompt, metadata) => {
+  enqueue(source, prompt, metadata);
+  void drain();
+}));
+
 // ── Media outbound: satellite sessions push files, we deliver ──────
+// Self-healing: retries connection independently, errors don't propagate
 if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
-  const Redis = (await import("ioredis")).default;
-  const mediaSub = new Redis({
-    host: process.env.REDIS_HOST ?? "localhost",
-    port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
-    lazyConnect: true,
-    retryStrategy: (times: number) => Math.min(times * 500, 30_000),
-  });
-  const mediaCmd = new Redis({
-    host: process.env.REDIS_HOST ?? "localhost",
-    port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
-    lazyConnect: true,
-    retryStrategy: (times: number) => Math.min(times * 500, 30_000),
-  });
-  mediaSub.on("error", () => {});
-  mediaCmd.on("error", () => {});
-  await mediaSub.connect();
-  await mediaCmd.connect();
-  await mediaSub.subscribe("joelclaw:notify:media-outbound");
+  const startMediaOutbound = async () => {
+    const Redis = (await import("ioredis")).default;
+    const mediaSub = new Redis({
+      host: process.env.REDIS_HOST ?? "localhost",
+      port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+      lazyConnect: true,
+      retryStrategy: (times: number) => Math.min(times * 500, 30_000),
+    });
+    const mediaCmd = new Redis({
+      host: process.env.REDIS_HOST ?? "localhost",
+      port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+      lazyConnect: true,
+      retryStrategy: (times: number) => Math.min(times * 500, 30_000),
+    });
+    mediaSub.on("error", () => {});
+    mediaCmd.on("error", () => {});
+    await mediaSub.connect();
+    await mediaCmd.connect();
+    await mediaSub.subscribe("joelclaw:notify:media-outbound");
 
-  const drainMediaOutbound = async () => {
-    try {
-      const raw = await mediaCmd.lrange("joelclaw:media:outbound", 0, -1);
-      if (raw.length === 0) return;
-      await mediaCmd.del("joelclaw:media:outbound");
+    const drainMediaOutbound = async () => {
+      try {
+        const raw = await mediaCmd.lrange("joelclaw:media:outbound", 0, -1);
+        if (raw.length === 0) return;
+        await mediaCmd.del("joelclaw:media:outbound");
 
-      for (const item of raw) {
-        try {
-          const evt = JSON.parse(item) as {
-            payload: { filePath: string; caption?: string; chatId?: number };
-          };
-          const chatId = evt.payload.chatId ?? TELEGRAM_USER_ID;
-          if (!chatId) continue;
-          console.log("[gateway] media outbound →", { chatId, filePath: evt.payload.filePath });
-          await sendTelegramMedia(chatId, evt.payload.filePath, {
-            caption: evt.payload.caption,
-          });
-        } catch (err) {
-          console.error("[gateway] media outbound failed", { error: err });
+        for (const item of raw) {
+          try {
+            const evt = JSON.parse(item) as {
+              payload: { filePath: string; caption?: string; chatId?: number };
+            };
+            const chatId = evt.payload.chatId ?? TELEGRAM_USER_ID;
+            if (!chatId) continue;
+            console.log("[gateway] media outbound →", { chatId, filePath: evt.payload.filePath });
+            await sendTelegramMedia(chatId, evt.payload.filePath, {
+              caption: evt.payload.caption,
+            });
+          } catch (err) {
+            console.error("[gateway] media outbound failed", { error: err });
+          }
         }
+      } catch (err) {
+        console.error("[gateway] media outbound drain failed", { error: err });
       }
-    } catch (err) {
-      console.error("[gateway] media outbound drain failed", { error: err });
-    }
+    };
+
+    mediaSub.on("message", () => { void drainMediaOutbound(); });
+    await drainMediaOutbound();
+    console.log("[gateway] media outbound listener started");
   };
 
-  mediaSub.on("message", () => { void drainMediaOutbound(); });
-  // Also drain on startup in case anything queued while daemon was down
-  await drainMediaOutbound();
-  console.log("[gateway] media outbound listener started");
+  // Don't let media outbound failure crash daemon startup
+  startMediaOutbound().catch((error) => {
+    console.error("[gateway] media outbound initial connect failed — ioredis will retry", { error: String(error) });
+  });
 }
 
 const heartbeatRunner = startHeartbeatRunner();
 const queueDrainTimer = setInterval(() => {
   void drain();
 }, 1000);
+
+// ── Self-healing watchdog ──────────────────────────────
+// Monitors subsystem health every 30s. Logs degraded state.
+// Detects stuck sessions (no turn_end for 10min after a prompt).
+let _lastTurnEndAt = Date.now();
+let _lastPromptAt = 0; // set by onPrompt callback registered at session init
+const STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+
+const watchdogTimer = setInterval(() => {
+  const now = Date.now();
+  const uptimeMs = now - startedAt;
+  const redisOk = isRedisHealthy();
+  const telegramOk = channelInfo.telegram; // grammy self-heals via long-polling retry
+  const stuckMs = _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
+  const isStuck = stuckMs > STUCK_THRESHOLD_MS;
+
+  if (!redisOk || isStuck) {
+    console.warn("[gateway:watchdog] health check", {
+      redis: redisOk ? "ok" : "DEGRADED",
+      telegram: telegramOk ? "ok" : "disabled",
+      ws: { port: wsServer.port, clients: wsClients.size },
+      queueDepth: getQueueDepth(),
+      uptimeMs,
+      ...(isStuck ? { stuckForMs: stuckMs, lastPromptAt: new Date(_lastPromptAt).toISOString() } : {}),
+    });
+
+    if (isStuck) {
+      console.error("[gateway:watchdog] session appears stuck — attempting abort");
+      session.abort().catch((e: any) =>
+        console.error("[gateway:watchdog] abort failed", { error: e?.message })
+      );
+      // Reset so we don't spam abort
+      _lastPromptAt = 0;
+    }
+  }
+}, 30_000);
+
+// Expose health for CLI / external checks
+function getHealthStatus(): { healthy: boolean; components: Record<string, string> } {
+  const redisOk = isRedisHealthy();
+  const stuckMs = _lastPromptAt > _lastTurnEndAt ? Date.now() - _lastPromptAt : 0;
+  return {
+    healthy: redisOk && stuckMs < STUCK_THRESHOLD_MS,
+    components: {
+      redis: redisOk ? "ok" : "degraded",
+      telegram: channelInfo.telegram ? "ok" : "disabled",
+      ws: `ok (${wsClients.size} clients)`,
+      session: stuckMs > STUCK_THRESHOLD_MS ? `stuck (${Math.round(stuckMs / 1000)}s)` : "ok",
+    },
+  };
+}
+
 await writeFile(PID_FILE, `${process.pid}\n`);
 await writeFile(SESSION_ID_FILE, `${session.sessionId}\n`);
 
@@ -360,6 +421,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   console.log("[gateway] shutting down", { signal });
 
   clearInterval(queueDrainTimer);
+  clearInterval(watchdogTimer);
 
   try {
     wsServer.stop(true);
