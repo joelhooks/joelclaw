@@ -1,5 +1,4 @@
 {
-  "name": "Community Skill Patterns Integration",
   "description": "Integrate best patterns from OpenClaw community skills into joelclaw. ADR-0067.",
   "stories": [
     {
@@ -7,7 +6,6 @@
       "title": "Daily Digest Inngest Function",
       "description": "Create an Inngest cron function that generates a structured daily digest from the raw daily log. Pattern from memory-curator by 77darius77 (openclaw/skills, MIT). Runs at 23:55 PST. Reads ~/.joelclaw/workspace/memory/YYYY-MM-DD.md, uses Claude to generate a structured digest with sections: Summary (2-3 sentences), Key Events (3-7 items), Learnings (bullets), Connections (people + context), Open Questions, Tomorrow (actionable). Writes digest to ~/Vault/Daily/digests/YYYY-MM-DD-digest.md with frontmatter (type: digest, date, source). Emits memory/digest.created event. Add to heartbeat as daily-only event (check if already generated today before running). Register in serve.ts.",
       "priority": 1,
-      "status": "pending",
       "acceptance_criteria": [
         "File exists: packages/system-bus/src/inngest/functions/daily-digest.ts",
         "Function registered in serve.ts registeredFunctions array",
@@ -18,14 +16,14 @@
         "Skips if digest already exists for today",
         "Comment at top credits memory-curator by 77darius77 (ADR-0067)",
         "TypeScript compiles: bunx tsc --noEmit passes"
-      ]
+      ],
+      "passes": false
     },
     {
       "id": "digest-prompt",
       "title": "Daily Digest Prompt Engineering",
-      "description": "Create the prompt template for daily digest generation in a separate file daily-digest-prompt.ts. Follow the pattern of reflect-prompt.ts and friction-prompt.ts. System prompt instructs Claude to analyze a raw daily log and produce a structured digest. Include compression guidance — the digest should be 50-80 lines max from a 200-500 line raw log. Include the section schema (Summary, Key Events, Learnings, Connections, Open Questions, Tomorrow). Output format: markdown with YAML frontmatter.",
+      "description": "Create the prompt template for daily digest generation in a separate file daily-digest-prompt.ts. Follow the pattern of reflect-prompt.ts and friction-prompt.ts. System prompt instructs Claude to analyze a raw daily log and produce a structured digest. Include compression guidance \u2014 the digest should be 50-80 lines max from a 200-500 line raw log. Include the section schema (Summary, Key Events, Learnings, Connections, Open Questions, Tomorrow). Output format: markdown with YAML frontmatter.",
       "priority": 1,
-      "status": "pending",
       "acceptance_criteria": [
         "File exists: packages/system-bus/src/inngest/functions/daily-digest-prompt.ts",
         "Exports DIGEST_SYSTEM_PROMPT and DIGEST_USER_PROMPT",
@@ -33,14 +31,14 @@
         "Compression guidance: 50-80 lines max, preserve names and decisions",
         "Output format includes YAML frontmatter template",
         "TypeScript compiles: bunx tsc --noEmit passes"
-      ]
+      ],
+      "passes": false
     },
     {
       "id": "imsg-skill",
       "title": "iMessage Skill",
       "description": "Create a pi/claude skill for iMessage access via the imsg CLI (by steipete, MIT). Skill at ~/.agents/skills/imsg/SKILL.md. The skill wraps the imsg CLI (brew install steipete/tap/imsg). Commands: list chats, read history, watch for new messages, send messages. Include setup requirements: Messages.app signed in, Full Disk Access for terminal, Automation permission. Default to read-only operations. Sending requires explicit confirmation context. Include --json flag for structured output. Symlink skill to ~/.pi/agent/skills/ and ~/.claude/skills/.",
       "priority": 2,
-      "status": "pending",
       "acceptance_criteria": [
         "File exists: ~/.agents/skills/imsg/SKILL.md",
         "SKILL.md has correct frontmatter (name: imsg, description, triggers)",
@@ -49,14 +47,14 @@
         "Emphasizes read-only default, confirm before send",
         "Credits steipete as original author (ADR-0067)",
         "Symlinked to ~/.pi/agent/skills/imsg and ~/.claude/skills/imsg"
-      ]
+      ],
+      "passes": false
     },
     {
       "id": "approval-system",
-      "title": "Agent Approval System — Redis State",
+      "title": "Agent Approval System \u2014 Redis State",
       "description": "Create an approval system for agent actions. Pattern from local-approvals by shaiss (openclaw/skills, MIT). Redis-backed state instead of JSON files. Key design: agents submit approval requests for novel action categories. Known-safe categories are auto-approved (learned from past approvals). Novel categories queue for human review. Redis keys: approval:pending:<id> (hash), approval:auto:<agent> (set of learned categories), approval:history (sorted set by timestamp). Core module at packages/system-bus/src/approvals/core.ts with functions: submitRequest, checkAutoApprove, approveRequest, denyRequest, learnCategory, listPending, getHistory. Each function is pure (takes Redis client as param).",
       "priority": 2,
-      "status": "pending",
       "acceptance_criteria": [
         "File exists: packages/system-bus/src/approvals/core.ts",
         "Exports: submitRequest, checkAutoApprove, approveRequest, denyRequest, learnCategory, listPending, getHistory",
@@ -68,14 +66,14 @@
         "History stored as sorted set with timestamp scores",
         "Credits local-approvals by shaiss (ADR-0067)",
         "TypeScript compiles: bunx tsc --noEmit passes"
-      ]
+      ],
+      "passes": false
     },
     {
       "id": "approval-events",
-      "title": "Agent Approval System — Inngest Events",
+      "title": "Agent Approval System \u2014 Inngest Events",
       "description": "Create Inngest functions for the approval workflow. Two functions: (1) approval-request: triggered by agent/approval.requested event, checks auto-approve first, if auto-approved emits agent/approval.resolved immediately, otherwise stores in Redis and pushes to gateway for human review. (2) approval-resolve: triggered by agent/approval.resolved event, updates Redis history, notifies gateway of result. Add event types to inngest client.ts. Register both in serve.ts.",
       "priority": 2,
-      "status": "pending",
       "acceptance_criteria": [
         "File exists: packages/system-bus/src/inngest/functions/approval.ts",
         "Two functions exported: approvalRequest and approvalResolve",
@@ -87,14 +85,14 @@
         "Both functions registered in serve.ts",
         "Credits local-approvals by shaiss (ADR-0067)",
         "TypeScript compiles: bunx tsc --noEmit passes"
-      ]
+      ],
+      "passes": false
     },
     {
       "id": "approval-cli",
-      "title": "Agent Approval System — CLI Commands",
+      "title": "Agent Approval System \u2014 CLI Commands",
       "description": "Add approval subcommands to the joelclaw CLI. Commands: joelclaw approvals (list pending), joelclaw approvals approve <id> [--learn], joelclaw approvals deny <id>, joelclaw approvals categories [--agent <name>], joelclaw approvals reset <agent>. Each command calls the core.ts functions via Redis. Output as HATEOAS JSON with next_actions. Add to packages/cli/src/cli.ts command tree.",
       "priority": 3,
-      "status": "pending",
       "acceptance_criteria": [
         "joelclaw approvals lists pending requests as JSON",
         "joelclaw approvals approve <id> approves and emits event",
@@ -104,14 +102,14 @@
         "joelclaw approvals reset <agent> clears auto-approve set",
         "All output follows HATEOAS JSON pattern with next_actions",
         "TypeScript compiles: bunx tsc --noEmit passes"
-      ]
+      ],
+      "passes": false
     },
     {
       "id": "observation-versioning",
       "title": "Atomic Fact Versioning for Observations",
       "description": "Apply the supersede-don't-delete pattern from knowledge-graph by safatinaztepe (MIT) to memory observations. When a new observation contradicts or updates an existing one, the old observation gets a superseded_by field pointing to the new one's ID, and the new one gets a supersedes field. Update the observe function to check for semantic duplicates before inserting (using Qdrant similarity search with threshold 0.85). If a near-duplicate is found, supersede it rather than creating a parallel fact. Add superseded_by and supersedes fields to the observation metadata in Qdrant.",
       "priority": 3,
-      "status": "pending",
       "acceptance_criteria": [
         "observe.ts checks Qdrant for similar observations (threshold 0.85) before insert",
         "If similar observation found, adds superseded_by to old observation metadata",
@@ -119,7 +117,9 @@
         "recall/search filters out superseded observations by default",
         "Comment credits knowledge-graph by safatinaztepe (ADR-0067)",
         "TypeScript compiles: bunx tsc --noEmit passes"
-      ]
+      ],
+      "passes": false
     }
-  ]
+  ],
+  "projectName": "Community Skill Patterns Integration"
 }
