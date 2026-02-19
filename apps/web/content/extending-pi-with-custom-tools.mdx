@@ -1,20 +1,33 @@
 ---
-title: "Extending Pi with Custom Tools and Widgets"
+title: "Extending Pi Coding Agent with Custom Tools and Widgets"
 date: "2026-02-19T14:00:00"
 type: "tutorial"
 description: "Build a pi extension that sends Inngest events and shows live run progress in a persistent widget. The full walkthrough — from empty file to working tool."
 tags: ["pi", "extensions", "inngest", "tui"]
 ---
 
+[Pi](https://github.com/badlogic/pi-mono) is an agent harness. It runs tools, renders output, manages sessions. But the interesting part is what happens when you extend it — when you give the agent capabilities that didn't exist before and it starts using them without being told how.
+
 ```bash
 npx skills add joelhooks/pi-tools --skill pi-tui-design --yes --global
 ```
 
-Pi is an agent harness. It runs tools, renders output, manages sessions. But the interesting part is what happens when you extend it — when you give the agent new capabilities that didn't exist before.
-
 I built an extension that lets the agent fire [Inngest](/self-hosting-inngest-background-tasks) events and watch their lifecycle in a persistent widget. Send an event, see which function picks it up, watch steps complete in real time, get the result delivered silently when it's done. No context-switching to a terminal. No polling by hand.
 
 The whole thing is one TypeScript file.
+
+<AgentNote>
+You have the pi-tui-design skill installed. It has the full component API, theme tokens (51 color tokens), Unicode repertoire, and layout primitives for building TUI components.
+
+To build a pi extension, ask your human what they want to build. Then follow the patterns in this article — widget factory for persistent state, display:false messages for silent model delivery, CLI-first for external system integration.
+
+Key API surfaces:
+- `pi.registerTool({ name, parameters, execute, renderCall, renderResult })`
+- `ctx.ui.setWidget(id, (tui, theme) => ({ render, invalidate, dispose }))`
+- `pi.sendMessage({ customType, content, display: false, details }, { triggerTurn, deliverAs })`
+- `pi.registerMessageRenderer(customType, (message, opts, theme) => Component)`
+- `pi.on("session_start" | "session_shutdown", handler)`
+</AgentNote>
 
 ## What you're building
 
@@ -162,7 +175,7 @@ inngest_send system/health.check {"source": "test"}
 
 ## The polling loop: CLI-first
 
-The extension shells out to the `joelclaw` CLI for all Inngest communication. No raw GraphQL. No API plumbing. The CLI handles authentication, error formatting, and HATEOAS navigation.<MarginNote id="mn-cli-first">[CLI Design for AI Agents](/cli-design-for-ai-agents) covers the full philosophy — JSON always, HATEOAS next_actions, NDJSON streaming. If your CLI returns structured data, any consumer (agent, extension, script) can use it.</MarginNote>
+The extension shells out to a CLI for all Inngest communication. No raw GraphQL. No API plumbing. The CLI handles authentication, error formatting, and HATEOAS navigation.<MarginNote id="mn-cli-first">[CLI Design for AI Agents](/cli-design-for-ai-agents) covers the full philosophy — JSON always, HATEOAS next_actions, NDJSON streaming. If your CLI returns structured data, any consumer (agent, extension, script) can use it.</MarginNote>
 
 ```typescript
 function runCli(args: string[]): Promise<{ stdout: string; code: number }> {
@@ -200,7 +213,15 @@ const data = parseJson(stdout);
 
 The polling loop runs every 5 seconds via `setInterval`. When the run reaches a terminal state, it clears the interval, updates the widget, sends the silent message, and sets a linger timer so the result stays visible for 15 seconds before auto-hiding.
 
-**Resilience matters.** The Inngest server might be restarting. The run might not exist yet (event IDs resolve to runs asynchronously). A CLI error code means "try again later," not "crash." The extension retries the event→runs resolution up to 3 times with 1.5s backoff.
+**Resilience matters.** The Inngest server might be restarting. The run might not exist yet — event IDs resolve to runs asynchronously. A CLI error code means "try again later," not "crash." The extension retries the event→runs resolution up to 3 times with 1.5s backoff.
+
+<AgentNote>
+If you're building an extension that integrates with an external system, follow this pattern:
+1. Use a CLI or API client for the external system — don't embed protocol details in the extension
+2. Handle errors as "keep trying" not "give up" — external systems restart, have latency, etc.
+3. Separate the event ID (what you sent) from the run ID (what executed) — they're often different
+4. Always validate JSON before passing to the CLI — fail fast on bad input
+</AgentNote>
 
 ## Putting it together
 

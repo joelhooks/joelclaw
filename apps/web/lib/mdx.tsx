@@ -28,6 +28,18 @@ function MarginNote({ children, id }: { children: React.ReactNode; id: string })
   );
 }
 
+/**
+ * Agent-only content. Returns null on the web — invisible to humans.
+ * Visible in the raw .mdx source and the /slug.md agent-facing route,
+ * where it appears as <AgentNote>...</AgentNote> tags.
+ *
+ * Use for: skill install instructions, agent-specific context,
+ * implementation hints that would clutter the human reading experience.
+ */
+function AgentNote(_props: { children: React.ReactNode }) {
+  return null;
+}
+
 function YouTube({ id }: { id: string }) {
   return (
     <div className="my-6 aspect-video w-full overflow-hidden rounded-lg border border-neutral-800">
@@ -55,6 +67,7 @@ function extractText(children: React.ReactNode): string {
 }
 
 export const mdxComponents: MDXComponents = {
+  AgentNote,
   YouTube,
   Sidenote,
   MarginNote,
