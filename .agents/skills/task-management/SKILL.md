@@ -82,6 +82,19 @@ todoist-cli add-project "Project Name" --color blue
 todoist-cli add-section "Section Name" --project ID
 ```
 
+### Priority Convention
+
+Use Todoist's native p1–p4. The API inverts these: `--priority 4` = p1 (red) in the UI.
+
+| UI | API | Meaning | Agent rule |
+|----|-----|---------|------------|
+| **p1** 🔴 | `--priority 4` | Urgent / today | Blocking something. Do it now or escalate. |
+| **p2** 🟠 | `--priority 3` | High / this week | Next up. Agent picks from these first. |
+| **p3** 🔵 | `--priority 2` | Medium / this cycle | Scheduled work. Gets done when p1-p2 clear. |
+| **p4** ⚪ | `--priority 1` | Backlog | Someday/maybe. Reviewed weekly, killed if stale. |
+
+**SOP: When creating agent tasks from ADRs or session work, always set priority.** Default to p3. Promote to p2 if it unblocks other work. p1 is rare — something is broken or blocking Joel.
+
 ### Schedule Mapping
 
 | Todoist | GTD Context | CLI Flag |
@@ -193,6 +206,26 @@ If Todoist auth fails, use Vault markdown checklists:
 ```
 
 Google Tasks via `gog` is available as secondary adapter.
+
+## SOP: ADR → Tasks
+
+When an ADR is `accepted` or `proposed`, its remaining work should exist as Todoist tasks. This is how the system tracks what's actually next.
+
+**After an ADR sweep or session that produces action items:**
+
+1. Check the ADR's verification checklist for unchecked items
+2. Each unchecked item → one Todoist task (verb-first, concrete)
+3. Set priority based on leverage: does it unblock other ADRs? p2. Standalone? p3. Research? p3.
+4. Label `agent` (agent can do it) or `joel` (needs human). Add `joelclaw` if it's system work.
+5. Description includes ADR reference and enough context to pick up cold
+6. Cross-reference: if a task completes the last item in an ADR, update the ADR to `implemented`
+
+**The loop:** ADR sweep → tasks created → agent/Joel works tasks → tasks completed → ADR status updated → next sweep finds it clean.
+
+**Don't create tasks for:**
+- Things the agent can do right now (< 5 min) — just do them
+- Deferred ADRs — they'll get tasked when un-deferred
+- Vague research — time-box it first ("Spend 30 min on X" not "Research X")
 
 ## Anti-Patterns
 
