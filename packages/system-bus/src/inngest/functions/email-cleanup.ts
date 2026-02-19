@@ -121,9 +121,16 @@ Respond with ONLY valid JSON, no markdown fencing:
       return { archive: [], keep: conversations.map((c) => c.id) };
     }
 
-    // Filter out non-JSON lines (gateway registration, extension warnings)
+    // Filter out non-JSON lines (gateway registration, extension warnings, markdown fences)
     const lines = stdout.split("\n").filter(
-      (l: string) => !l.startsWith("[gateway]") && !l.startsWith("Failed to load") && !l.startsWith("Extension error"),
+      (l: string) => {
+        const t = l.trim();
+        return t.length > 0
+          && !t.startsWith("[gateway]")
+          && !t.startsWith("Failed to load")
+          && !t.startsWith("Extension error")
+          && !t.startsWith("```");
+      },
     );
     const cleaned = lines.join("\n").trim();
 
@@ -132,13 +139,16 @@ Respond with ONLY valid JSON, no markdown fencing:
       return JSON.parse(cleaned);
     } catch {}
 
-    // Fallback: extract JSON object with archive/keep keys
-    const jsonMatch = cleaned.match(/\{[\s\S]*"archive"\s*:\s*\[[\s\S]*?\][\s\S]*"keep"\s*:\s*\[[\s\S]*?\][\s\S]*\}/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
+    // Try: find lines between { and } that contain archive/keep
+    const braceStart = cleaned.indexOf("{");
+    const braceEnd = cleaned.lastIndexOf("}");
+    if (braceStart !== -1 && braceEnd > braceStart) {
+      try {
+        return JSON.parse(cleaned.slice(braceStart, braceEnd + 1));
+      } catch {}
     }
 
-    console.error("[email-cleanup] No valid JSON in pi response, keeping all. Output:", cleaned.slice(0, 300));
+    console.error("[email-cleanup] No valid JSON in pi response, keeping all. Raw stdout:", stdout.slice(0, 500));
     return { archive: [], keep: conversations.map((c) => c.id) };
   } catch (err) {
     console.error("[email-cleanup] pi inference failed, keeping all:", err);
