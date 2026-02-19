@@ -830,12 +830,15 @@ Replace pi's compaction summary with an observation-enriched one by returning a 
 21. Gate: requires 2+ weeks of observation data before deployment
 22. ~~**Prerequisite**: Add real embeddings to observe.ts~~ ✅ Done — local nomic-embed-text-v1.5 via Python subprocess, 768-dim vectors confirmed real and searchable
 
-**Data collection status (updated 2026-02-17):**
+**Data collection status (updated 2026-02-19):**
 - Pipeline running: observe → reflect → promote all verified end-to-end
-- Observations: 9 (1 day). Need ~100+ across 14+ days.
-- Qdrant: 130 points with real 768-dim nomic-embed vectors (semantic search verified, HNSW index builds at ~20k points)
-- Check-in target: ~2026-03-03 (2 weeks of data)
-- Prerequisite before Phase 4: wire real embeddings in observe.ts
+- Observations: ~100 Qdrant points across 6 days with `🔭 Observations` in daily logs
+- Redis: 12 proposals generated (`p-20260219-001` through `012`), 4 observations today
+- Qdrant: 100 points with 768-dim nomic-embed vectors (semantic search verified)
+- Gap: REVIEW.md never written — proposals trapped in Redis. Todoist-as-review-surface refinement (above) addresses this.
+- Gap: `todoist/task.completed` webhook doesn't pass labels — needed for approval flow
+- Check-in target: ~2026-03-05 (Todoist task created with due date)
+- Prerequisite before Phase 4: verify real embeddings in observe.ts Qdrant upsert
 
 ## Implementation Plan
 
