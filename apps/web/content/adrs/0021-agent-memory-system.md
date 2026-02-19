@@ -837,8 +837,9 @@ Replace pi's compaction summary with an observation-enriched one by returning a 
 - Qdrant: 227 points with 768-dim nomic-embed vectors (semantic search verified)
 - ~~Gap: REVIEW.md never written — proposals trapped in Redis.~~ ✅ Fixed: Todoist-as-review-surface implemented
 - ~~Gap: `todoist/task.completed` webhook doesn't pass labels~~ ✅ Fixed: labels flow through normalizer
-- Phase 3 deployed: todoist-memory-review-bridge, reflect→Todoist, promote expiry+cleanup
-- Phase 4 deployed: friction.ts + friction-prompt.ts, daily cron 7 AM, gated on 100+ points (have 227)
+- Phase 3 **verified**: todoist-memory-review-bridge fires on task.completed AND task.deleted, reflect→Todoist creates 8 proposal tasks on manual trigger, promote expiry+cleanup deployed
+- Phase 3 review UX: complete=approve, delete=reject, @rejected label=reject, ignore=7-day auto-expiry. check-memory-review surfaces expiring proposals (>5 days).
+- Phase 4 deployed: friction.ts + friction-prompt.ts, daily cron 7 AM + manual `memory/friction.requested` event, gated on 100+ points (have 227). First manual run produced no friction tasks — needs investigation.
 - Check-in target: ~2026-03-05 (Todoist task — verify friction produces actionable results)
 - ✅ Real nomic-embed vectors confirmed in Qdrant (768-dim, similarity search working)
 
