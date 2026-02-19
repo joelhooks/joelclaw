@@ -13,6 +13,11 @@ export { backfillObserve } from "./backfill-observe";
 export { heartbeatCron, heartbeatWake } from "./heartbeat";
 export { mediaProcess } from "./media-process";
 export {
+  todoistCommentAdded,
+  todoistTaskCompleted,
+  todoistTaskCreated,
+} from "./todoist-notify";
+export {
   agentLoopPlan,
   agentLoopTestWriter,
   agentLoopImplement,

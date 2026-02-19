@@ -25,6 +25,9 @@ import {
   agentLoopJudge,
   agentLoopComplete,
   agentLoopRetro,
+  todoistCommentAdded,
+  todoistTaskCompleted,
+  todoistTaskCreated,
 } from "./inngest/functions";
 
 const app = new Hono();
@@ -108,6 +111,9 @@ app.on(
       agentLoopComplete,
       agentLoopRetro,
       mediaProcess,
+      todoistCommentAdded,
+      todoistTaskCompleted,
+      todoistTaskCreated,
     ],
     serveHost: "http://host.docker.internal:3111",
   })
