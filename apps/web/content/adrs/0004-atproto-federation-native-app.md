@@ -5,103 +5,110 @@ tags:
   - adr
   - atproto
   - architecture
+  - federation
 created: 2026-02-14
+updated: 2026-02-19
 ---
 
-# 0004 — AT Protocol as Bedrock + Native iPhone App
+# 0004 — AT Protocol as Bedrock
 
-**Status**: accepted  
-**Date**: 2026-02-14  
-**Deciders**: Joel  
-**Relates to**: [0003 — joelclaw over OpenClaw](0003-joelclaw-over-openclaw.md), [0044 — Private-first PDS with Bento bridge](0044-pds-private-first-with-bento-bridge.md) (implements Phase 0)
+**Status**: accepted
+**Date**: 2026-02-14
+**Updated**: 2026-02-19 — Trimmed native app scope to ADR-0054. This ADR now covers AT Protocol as the data/identity layer only.
+**Deciders**: Joel
+**Relates to**: [0003 — joelclaw over OpenClaw](0003-joelclaw-over-openclaw.md), [0044 — Private-first PDS with Bento bridge](0044-pds-private-first-with-bento-bridge.md), [0054 — joelclaw native app](0054-joelclaw-native-app.md)
 
 ## Context
 
-joelclaw needs a foundational data layer. Not just a client interface — a substrate that every component builds on. The system has CLI tools (pi, igs, slog) for operator use, but needs:
+joelclaw needs a foundational data layer — a substrate that every component builds on. Not a database. An identity and data ownership protocol.
 
-1. **A mobile interface** — interact with the agent from anywhere, not just at a terminal
-2. **Family access** — partner, kids, and eventually friends should have their own agents
-3. **Data sovereignty** — each person should own their data, not have it trapped in a single service
-4. **Federation** — agents should communicate across people (shared lists, cross-agent messaging)
+Requirements:
 
-Options considered:
-
-### Option A: Custom API + React Native
-Build custom REST/WebSocket API, React Native cross-platform app.
-- Pro: Full control, cross-platform from day one
-- Con: Custom auth, custom sync, custom identity — rebuilding what protocols already solve. No federation model.
-
-### Option B: Custom API + SwiftUI
-Build custom REST/WebSocket API, native SwiftUI iPhone app.
-- Pro: Best native feel, full iOS integration (widgets, shortcuts, Keychain)
-- Con: Still custom everything for federation, identity, data portability.
-
-### Option C: AT Protocol as bedrock + SwiftUI ← **CHOSEN**
-Use AT Protocol as the foundational data layer — not just for federation, but as the substrate everything builds on. PDS is the database. Every record (messages, memory, logs, events) is a PDS record. SwiftUI native app as the primary client AppView.
-- Pro: Standardized identity (DIDs), data portability, federation baked in, custom Lexicons for every data type, PDS per person, typed schemas, firehose for real-time, community ecosystem
-- Con: Larger upfront investment (PDS setup, Lexicon design, relay). AT Proto ecosystem is social-media-oriented — we're repurposing it as a personal OS data layer. That's a bet.
+1. **Data sovereignty** — each person owns their data, portable across hosts
+2. **Federation** — agents communicate across people (shared lists, cross-agent messaging)
+3. **Typed schemas** — every record type has a machine-readable contract
+4. **Multiple clients** — CLI, web, native app, watch, car all read/write the same data
 
 ## Decision
 
-**AT Protocol is the bedrock of joelclaw.** Not a feature. Not Phase 4. Phase 0.
+**AT Protocol is the bedrock of joelclaw.** Not a feature. Phase 0.
 
 Every record in the system — agent messages, memory entries, system logs, coding loop state, health checks — is a PDS record with a typed Lexicon schema under `dev.joelclaw.*`.
 
-Each person in the network gets their own PDS (Personal Data Server) running as a Docker container on the Mac Mini, with data stored on three-body (Asustor 70TB NAS). A family relay aggregates events across all PDSs.
+Each person in the network gets their own PDS (Personal Data Server). Data stored on three-body NAS. A family relay aggregates events across all PDSs.
 
-The existing Inngest infrastructure stays as the compute/orchestration layer. It subscribes to the PDS firehose, processes events, and writes results back to the PDS. Inngest is the nervous system; the PDS is the skeleton.
+Inngest stays as the compute/orchestration layer. It subscribes to PDS firehose, processes events, writes results back. Inngest = nervous system. PDS = skeleton.
 
-Obsidian Vault remains as the human knowledge layer — markdown notes, ADRs, project docs. It is NOT replaced by the PDS. The two halves: PDS = agent data (structured, typed, federated). Vault = human knowledge (prose, wikilinks, browseable). Qdrant indexes both.
+Obsidian Vault remains as the human knowledge layer (prose, wikilinks, browseable). PDS = agent data (structured, typed, federated). Qdrant indexes both.
 
-SwiftUI native iPhone app is the primary human interface. CLI tools (pi, igs, slog) are the primary agent/operator interface. Both speak XRPC to the PDS.
+### Custom Lexicons (dev.joelclaw.*)
+
+#### Agent Communication
+```
+dev.joelclaw.agent.message     — role, text, threadId, tools[], model
+dev.joelclaw.agent.thread      — title, participants[], status
+```
+
+#### Memory
+```
+dev.joelclaw.memory.session    — summary, source, filesModified[], decisions[]
+dev.joelclaw.memory.playbook   — pattern, context, confidence, source
+dev.joelclaw.memory.timeline   — period, narrative, highlights[]
+```
+
+#### System
+```
+dev.joelclaw.system.event      — type, data, source (mirrors Inngest events)
+dev.joelclaw.system.health     — service, status, lastCheck, details
+dev.joelclaw.system.log        — action, tool, detail, reason (mirrors slog)
+```
+
+#### Coding Loops
+```
+dev.joelclaw.loop.run          — loopId, project, status, toolAssignments
+dev.joelclaw.loop.iteration    — loopId, storyId, role, tool, status, commitSha
+```
+
+#### Tasks
+```
+dev.joelclaw.task.item         — title, status, project, priority, due, assignee
+dev.joelclaw.task.list         — title, items[], sharedWith[]
+```
+
+#### Family / Shared
+```
+dev.joelclaw.family.list       — title, items[], sharedWith[]
+dev.joelclaw.family.reminder   — text, due, assignee
+dev.joelclaw.family.automation — trigger, action, enabled
+```
+
+### Federation Model
+
+Each person gets a DID via PLC directory:
+- `did:plc:joel` → custom domain handle
+- Family members get their own DIDs, own PDS, own agents
+
+Permissions are role-based:
+- **Operator** (Joel): Full system access, all lexicons
+- **Family** (trusted): Own PDS + shared family lexicons
+- **Friends** (limited): Own PDS + explicitly shared data
+
+### Implementation Phases
+
+**Phase 0**: PDS running, Lexicons defined, XRPC verified ← PDS is live (ADR-0044)
+**Phase 1**: Inngest ↔ PDS bridge (firehose → events, responses → records)
+**Phase 2**: Family expansion (partner/kid PDS instances)
+**Phase 3**: Full federation (relay, cross-agent communication)
 
 ## Consequences
 
-### Must Do
-- Define `dev.joelclaw.*` Lexicon schemas (agent, memory, system, family)
-- Stand up PDS Docker containers with data volumes on three-body
-- Register DIDs via PLC directory for each person
-- Build Inngest ↔ AT Protocol bridge (firehose → events, responses → records)
-- Build SwiftUI app (auth, chat, dashboard)
-- Set up family relay
-- Configure Tailscale ACLs for per-person PDS access
+- Every client (CLI, app, web, watch, car) reads/writes the same PDS records
+- Data is portable — move your PDS, your identity follows
+- Adding a person = spinning up a PDS container
+- slog, igs, and all system tools write PDS records alongside current behavior
+- The native app (ADR-0054) is the primary human interface to this data layer
 
-### Enables
-- **Data portability** — anyone can move their PDS to different hardware, their identity follows
-- **Open-ended growth** — adding a friend is just spinning up another PDS container
-- **Standard protocol** — any AT Protocol client could interact with the system, not just our app
-- **Multiple AppViews** — web dashboard, CLI tools, and iPhone app all read from the same PDS
-- **slog/igs integration** — system logs and run traces become PDS records, visible in the app
+## Credits
 
-### Risks
-- AT Protocol is designed for social media, not agent systems. Custom Lexicons may hit edge cases.
-- Swift AT Protocol client ecosystem is immature. May need to build thin XRPC client.
-- Running multiple PDS instances + relay on one Mac Mini needs memory/CPU monitoring.
-- PLC directory dependency for DID registration (could self-host if needed).
-
-## Implementation Plan
-
-See `~/Vault/Projects/09-joelclaw/native-app-atproto.md` for full architecture, Lexicon schemas, app tab structure, data flow diagrams, and phased build order.
-
-**Phase 0**: AT Protocol foundation (PDS, Lexicons, relay)  
-**Phase 1**: Inngest ↔ PDS bridge  
-**Phase 2**: iPhone app MVP (chat + dashboard)  
-**Phase 3**: Family expansion (partner/kid PDS + simplified agents)  
-**Phase 4**: Full dashboard + widgets + Siri shortcuts  
-
-## Verification
-
-- [ ] Joel PDS running, reachable via XRPC, DID resolvable
-- [ ] Custom Lexicon records can be created and read via curl
-- [ ] Inngest function successfully receives firehose events and writes responses
-- [ ] iPhone app authenticates via DID, sends message, receives agent response
-- [ ] Second PDS (family member) federates with Joel's PDS via relay
-- [ ] Data on three-body survives PDS container restart
-
-## Notes
-
-- NAS hostname: `three-body` (Asustor, 70TB)
-- All PDS data stored on NAS, not Mac Mini SSD (durability + space)
-- AT Protocol docs: https://atproto.com/specs/atp
-- Lexicon spec: https://atproto.com/specs/lexicon
-- PDS self-hosting: https://github.com/bluesky-social/pds
+- Bluesky / AT Protocol team — protocol design, PDS implementation, Lexicon schema language
+- Paul Frazee — AT Protocol architecture decisions
