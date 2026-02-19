@@ -1,88 +1,125 @@
 {
-  "name": "Memory Phase 3+4: Promotion Wiring + Friction Analysis",
-  "description": "Wire the memory proposal pipeline end-to-end (ADR-0021 Phases 3-4). Proposals accumulate in Redis but never reach Joel. Fix: Reflector creates Todoist tasks, completion triggers promotion to MEMORY.md. Then build friction analysis cron.",
-  "adr": "ADR-0021 (Comprehensive Agent Memory System)",
+  "name": "Community Skill Patterns Integration",
+  "description": "Integrate best patterns from OpenClaw community skills into joelclaw. ADR-0067.",
   "stories": [
     {
-      "id": "MEM-BRIDGE-1",
-      "title": "Todoist memory-review bridge function",
-      "description": "Create an Inngest function that listens to 'todoist/task.completed' events. When the completed task has 'memory-review' label, extract the proposal ID from the task description (format: 'Proposal: p-YYYYMMDD-NNN'), then emit 'memory/proposal.approved' with that proposalId. This bridges Todoist completion → memory promotion. Register in index.ts and serve.ts.",
+      "id": "digest-function",
+      "title": "Daily Digest Inngest Function",
+      "description": "Create an Inngest cron function that generates a structured daily digest from the raw daily log. Pattern from memory-curator by 77darius77 (openclaw/skills, MIT). Runs at 23:55 PST. Reads ~/.joelclaw/workspace/memory/YYYY-MM-DD.md, uses Claude to generate a structured digest with sections: Summary (2-3 sentences), Key Events (3-7 items), Learnings (bullets), Connections (people + context), Open Questions, Tomorrow (actionable). Writes digest to ~/Vault/Daily/digests/YYYY-MM-DD-digest.md with frontmatter (type: digest, date, source). Emits memory/digest.created event. Add to heartbeat as daily-only event (check if already generated today before running). Register in serve.ts.",
       "priority": 1,
       "status": "pending",
-      "tests": [
-        "Function exists at packages/system-bus/src/inngest/functions/todoist-memory-bridge.ts",
-        "Triggered by 'todoist/task.completed' event",
-        "Skips tasks without 'memory-review' label (returns noop)",
-        "Extracts proposal ID from task description via regex",
-        "Emits 'memory/proposal.approved' with correct proposalId",
-        "Registered in index.ts and serve.ts",
-        "bunx tsc --noEmit passes"
-      ],
-      "files": [
-        "packages/system-bus/src/inngest/functions/todoist-memory-bridge.ts",
-        "packages/system-bus/src/inngest/functions/index.ts",
-        "packages/system-bus/src/serve.ts"
-      ],
-      "passes": true
+      "acceptance_criteria": [
+        "File exists: packages/system-bus/src/inngest/functions/daily-digest.ts",
+        "Function registered in serve.ts registeredFunctions array",
+        "Function triggers on cron '55 7 * * *' (23:55 PST = 07:55 UTC)",
+        "Reads daily log from ~/.joelclaw/workspace/memory/ for current date",
+        "Writes digest to ~/Vault/Daily/digests/ with YAML frontmatter",
+        "Emits memory/digest.created event with date and path",
+        "Skips if digest already exists for today",
+        "Comment at top credits memory-curator by 77darius77 (ADR-0067)",
+        "TypeScript compiles: bunx tsc --noEmit passes"
+      ]
     },
     {
-      "id": "MEM-BRIDGE-2",
-      "title": "Reflector creates Todoist tasks for proposals",
-      "description": "Update the 'stage-review' step in reflect.ts to create a Todoist task for each proposal using TodoistTaskAdapter from '../../tasks/adapters/todoist'. Task content: 'Memory: {change text truncated to 80 chars} → {section}'. Task description must include 'Proposal: {proposalId}' on its own line (the bridge function parses this). Labels: ['memory-review', 'agent']. Project: 'Agent Work'. Keep existing Redis storage — Todoist is the notification surface, Redis is source of truth.",
+      "id": "digest-prompt",
+      "title": "Daily Digest Prompt Engineering",
+      "description": "Create the prompt template for daily digest generation in a separate file daily-digest-prompt.ts. Follow the pattern of reflect-prompt.ts and friction-prompt.ts. System prompt instructs Claude to analyze a raw daily log and produce a structured digest. Include compression guidance — the digest should be 50-80 lines max from a 200-500 line raw log. Include the section schema (Summary, Key Events, Learnings, Connections, Open Questions, Tomorrow). Output format: markdown with YAML frontmatter.",
+      "priority": 1,
+      "status": "pending",
+      "acceptance_criteria": [
+        "File exists: packages/system-bus/src/inngest/functions/daily-digest-prompt.ts",
+        "Exports DIGEST_SYSTEM_PROMPT and DIGEST_USER_PROMPT",
+        "System prompt defines all 6 sections with examples",
+        "Compression guidance: 50-80 lines max, preserve names and decisions",
+        "Output format includes YAML frontmatter template",
+        "TypeScript compiles: bunx tsc --noEmit passes"
+      ]
+    },
+    {
+      "id": "imsg-skill",
+      "title": "iMessage Skill",
+      "description": "Create a pi/claude skill for iMessage access via the imsg CLI (by steipete, MIT). Skill at ~/.agents/skills/imsg/SKILL.md. The skill wraps the imsg CLI (brew install steipete/tap/imsg). Commands: list chats, read history, watch for new messages, send messages. Include setup requirements: Messages.app signed in, Full Disk Access for terminal, Automation permission. Default to read-only operations. Sending requires explicit confirmation context. Include --json flag for structured output. Symlink skill to ~/.pi/agent/skills/ and ~/.claude/skills/.",
       "priority": 2,
       "status": "pending",
-      "tests": [
-        "reflect.ts stage-review step imports TodoistTaskAdapter",
-        "Each proposal creates a Todoist task with memory-review label",
-        "Task description contains 'Proposal: p-YYYYMMDD-NNN' on its own line",
-        "Redis proposals still stored (not removed)",
-        "bunx tsc --noEmit passes"
-      ],
-      "files": [
-        "packages/system-bus/src/inngest/functions/reflect.ts"
-      ],
-      "passes": true
+      "acceptance_criteria": [
+        "File exists: ~/.agents/skills/imsg/SKILL.md",
+        "SKILL.md has correct frontmatter (name: imsg, description, triggers)",
+        "Documents all imsg CLI commands with examples",
+        "Lists prerequisites: brew install, Messages.app, Full Disk Access, Automation permission",
+        "Emphasizes read-only default, confirm before send",
+        "Credits steipete as original author (ADR-0067)",
+        "Symlinked to ~/.pi/agent/skills/imsg and ~/.claude/skills/imsg"
+      ]
     },
     {
-      "id": "MEM-BRIDGE-3",
-      "title": "Expire stale proposals and clean up Todoist tasks",
-      "description": "Update the daily cron handler in promote.ts to expire proposals older than 7 days. When expiring a Redis proposal, also complete the corresponding Todoist task (search by 'Proposal: {id}' in description using TodoistTaskAdapter.listTasks() then .completeTask()). Log expired proposals to the daily log. The cron already fires at '0 8 * * *' — add the expiry logic to the existing handler.",
+      "id": "approval-system",
+      "title": "Agent Approval System — Redis State",
+      "description": "Create an approval system for agent actions. Pattern from local-approvals by shaiss (openclaw/skills, MIT). Redis-backed state instead of JSON files. Key design: agents submit approval requests for novel action categories. Known-safe categories are auto-approved (learned from past approvals). Novel categories queue for human review. Redis keys: approval:pending:<id> (hash), approval:auto:<agent> (set of learned categories), approval:history (sorted set by timestamp). Core module at packages/system-bus/src/approvals/core.ts with functions: submitRequest, checkAutoApprove, approveRequest, denyRequest, learnCategory, listPending, getHistory. Each function is pure (takes Redis client as param).",
+      "priority": 2,
+      "status": "pending",
+      "acceptance_criteria": [
+        "File exists: packages/system-bus/src/approvals/core.ts",
+        "Exports: submitRequest, checkAutoApprove, approveRequest, denyRequest, learnCategory, listPending, getHistory",
+        "All functions take Redis client as first parameter (ports and adapters)",
+        "Redis key schema documented in comments at top of file",
+        "submitRequest generates UUID-based request ID",
+        "checkAutoApprove checks approval:auto:<agent> set membership",
+        "learnCategory adds to approval:auto:<agent> set",
+        "History stored as sorted set with timestamp scores",
+        "Credits local-approvals by shaiss (ADR-0067)",
+        "TypeScript compiles: bunx tsc --noEmit passes"
+      ]
+    },
+    {
+      "id": "approval-events",
+      "title": "Agent Approval System — Inngest Events",
+      "description": "Create Inngest functions for the approval workflow. Two functions: (1) approval-request: triggered by agent/approval.requested event, checks auto-approve first, if auto-approved emits agent/approval.resolved immediately, otherwise stores in Redis and pushes to gateway for human review. (2) approval-resolve: triggered by agent/approval.resolved event, updates Redis history, notifies gateway of result. Add event types to inngest client.ts. Register both in serve.ts.",
+      "priority": 2,
+      "status": "pending",
+      "acceptance_criteria": [
+        "File exists: packages/system-bus/src/inngest/functions/approval.ts",
+        "Two functions exported: approvalRequest and approvalResolve",
+        "approvalRequest triggers on agent/approval.requested",
+        "approvalResolve triggers on agent/approval.resolved",
+        "Auto-approve check happens before queuing",
+        "Gateway notification sent for pending approvals via pushGatewayEvent",
+        "Event types added to inngest client.ts events schema",
+        "Both functions registered in serve.ts",
+        "Credits local-approvals by shaiss (ADR-0067)",
+        "TypeScript compiles: bunx tsc --noEmit passes"
+      ]
+    },
+    {
+      "id": "approval-cli",
+      "title": "Agent Approval System — CLI Commands",
+      "description": "Add approval subcommands to the joelclaw CLI. Commands: joelclaw approvals (list pending), joelclaw approvals approve <id> [--learn], joelclaw approvals deny <id>, joelclaw approvals categories [--agent <name>], joelclaw approvals reset <agent>. Each command calls the core.ts functions via Redis. Output as HATEOAS JSON with next_actions. Add to packages/cli/src/cli.ts command tree.",
       "priority": 3,
       "status": "pending",
-      "tests": [
-        "promote.ts cron handler imports TodoistTaskAdapter",
-        "Proposals older than 7 days are expired from Redis",
-        "Corresponding Todoist tasks are completed on expiry",
-        "Expired proposals logged to daily log",
-        "bunx tsc --noEmit passes"
-      ],
-      "files": [
-        "packages/system-bus/src/inngest/functions/promote.ts"
-      ],
-      "passes": true
+      "acceptance_criteria": [
+        "joelclaw approvals lists pending requests as JSON",
+        "joelclaw approvals approve <id> approves and emits event",
+        "joelclaw approvals approve <id> --learn also adds to auto-approve",
+        "joelclaw approvals deny <id> denies and emits event",
+        "joelclaw approvals categories lists auto-approved categories",
+        "joelclaw approvals reset <agent> clears auto-approve set",
+        "All output follows HATEOAS JSON pattern with next_actions",
+        "TypeScript compiles: bunx tsc --noEmit passes"
+      ]
     },
     {
-      "id": "MEM-FRICTION-1",
-      "title": "Friction analysis Inngest function + prompt",
-      "description": "Create friction.ts and friction-prompt.ts (ADR-0021 Phase 4). Daily cron at '0 7 * * *' (after reflector at 6 AM). Step 1: Query Qdrant memory_observations for all observations from past 7 days (use @qdrant/js-client-rest, scroll with filter date >= 7 days ago). Step 2: Group observations by semantic similarity (simple: group by date, future: clustering). Step 3: Call LLM (pi -p --no-session --no-extensions --model anthropic/claude-sonnet-4-6) with friction-prompt.ts system prompt + observations + current MEMORY.md + AGENTS.md. Step 4: Parse output for friction patterns. Step 5: For each pattern, create Todoist task via TodoistTaskAdapter with labels ['memory-review', 'agent', 'friction']. Concurrency limit 1. Gate: only runs if Qdrant has >= 100 points.",
-      "priority": 4,
+      "id": "observation-versioning",
+      "title": "Atomic Fact Versioning for Observations",
+      "description": "Apply the supersede-don't-delete pattern from knowledge-graph by safatinaztepe (MIT) to memory observations. When a new observation contradicts or updates an existing one, the old observation gets a superseded_by field pointing to the new one's ID, and the new one gets a supersedes field. Update the observe function to check for semantic duplicates before inserting (using Qdrant similarity search with threshold 0.85). If a near-duplicate is found, supersede it rather than creating a parallel fact. Add superseded_by and supersedes fields to the observation metadata in Qdrant.",
+      "priority": 3,
       "status": "pending",
-      "tests": [
-        "friction.ts exists with daily cron trigger",
-        "friction-prompt.ts exists with system prompt for pattern detection",
-        "Queries Qdrant for 7-day window of observations",
-        "Gates on >= 100 Qdrant points (returns noop if insufficient data)",
-        "Creates Todoist tasks with friction label for detected patterns",
-        "Registered in index.ts and serve.ts",
-        "bunx tsc --noEmit passes"
-      ],
-      "files": [
-        "packages/system-bus/src/inngest/functions/friction.ts",
-        "packages/system-bus/src/inngest/functions/friction-prompt.ts",
-        "packages/system-bus/src/inngest/functions/index.ts",
-        "packages/system-bus/src/serve.ts"
-      ],
-      "passes": true
+      "acceptance_criteria": [
+        "observe.ts checks Qdrant for similar observations (threshold 0.85) before insert",
+        "If similar observation found, adds superseded_by to old observation metadata",
+        "New observation includes supersedes field in metadata",
+        "recall/search filters out superseded observations by default",
+        "Comment credits knowledge-graph by safatinaztepe (ADR-0067)",
+        "TypeScript compiles: bunx tsc --noEmit passes"
+      ]
     }
   ]
 }
