@@ -1,6 +1,6 @@
 ---
 title: Docker Sandbox for Agent Loops
-status: accepted
+status: implemented
 date: 2026-02-15
 deciders: Joel Hooks
 related:

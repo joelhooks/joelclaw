@@ -1,6 +1,6 @@
 ---
 type: adr
-status: accepted
+status: implemented
 tags:
   - adr
   - atproto

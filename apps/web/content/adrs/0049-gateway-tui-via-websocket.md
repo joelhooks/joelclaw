@@ -1,6 +1,6 @@
 ---
 type: adr
-status: accepted
+status: implemented
 date: 2026-02-18
 tags: [gateway, tui, websocket, pi-sdk]
 ---

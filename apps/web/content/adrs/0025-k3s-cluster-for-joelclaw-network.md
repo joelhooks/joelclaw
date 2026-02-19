@@ -1,6 +1,6 @@
 ---
 title: "Network architecture: start with what works, grow as needed"
-status: accepted
+status: implemented
 date: 2026-02-17
 deciders: Joel Hooks
 consulted: Codex (session 2026-02-17)

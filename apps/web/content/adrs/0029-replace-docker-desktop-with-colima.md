@@ -1,6 +1,6 @@
 ---
 title: "Replace Docker Desktop with Colima + Talos for container runtime"
-status: accepted
+status: implemented
 date: 2026-02-17
 deciders: Joel Hooks
 consulted: pi (session 2026-02-17)

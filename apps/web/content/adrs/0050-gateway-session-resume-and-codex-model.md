@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: implemented
 date: 2026-02-18
 decision-makers: Joel Hooks
 tags: [gateway, session, codex, agent-loop, openclaw]
