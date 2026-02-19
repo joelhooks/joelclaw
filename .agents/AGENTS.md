@@ -212,7 +212,7 @@ OpenClaw has a **layered AGENTS.md** at its repo root (`~/Code/openclaw/openclaw
 | pi-tools | 0.2.0 | bun | Extensions: repo-autopsy, ts-check, codex-exec, MCQ, web search, MCP bridge, agent-secrets, session-reader, ralph-loop |
 | Claude Code | 2.1.42 | npm | AI coding (via ~/.claude/) |
 | OpenClaw | — | git | Agent orchestration framework (cloned, not yet deployed) |
-| agent-secrets | 0.4.1 | bun | Secret leasing with TTLs |
+| agent-secrets | 0.5.0 | bun | Secret leasing with TTLs. v0.5.0: raw output is default (no --raw flag) |
 | agent-browser | 0.10.0 | bun | Browser automation CLI |
 | defuddle-cli | — | npm | Extract clean markdown from web pages |
 | Tailscale | 1.94.1 | homebrew | Mesh VPN + SSH access (running, SSH enabled) |
