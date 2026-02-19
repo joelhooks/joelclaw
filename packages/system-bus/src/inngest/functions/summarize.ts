@@ -26,7 +26,9 @@ Who is this person? Background, previous work, current role. Link to profiles, c
 ## Tags
 Comma-separated topic tags for vault indexing.
 
-Preserve the frontmatter, info callout, and transcript sections unchanged. If there's a Key Moments section with screenshots, keep those images in place and reference them in the summary when relevant.`;
+Preserve the frontmatter, info callout, and transcript sections unchanged.
+
+SCREENSHOTS: If there's a Key Moments section with screenshot images, DO NOT leave them bunched together. Dissolve that section entirely — move each screenshot inline into the Executive Summary or Key Points where it's contextually relevant. Place each image immediately after the paragraph or bullet that discusses what's shown in that frame. Use the timestamp and filename as clues for what the screenshot depicts. Delete the Key Moments heading when done — every image should live inside the content, not in a separate gallery.`;
 
 /**
  * Content Summarize — enriches any vault note using pi with full tools.

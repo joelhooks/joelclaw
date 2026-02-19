@@ -250,13 +250,13 @@ export const transcriptProcess = inngest.createFunction(
       const infoLine = infoParts.length > 0 ? infoParts.join(" · ") : "";
       const urlLine = sourceUrl ? `\n> **URL**: ${sourceUrl}` : "";
 
-      // Build key moment screenshots section
+      // List screenshots as assets for the summarizer to place inline
       const screenshotSection =
         screenshots.length > 0
-          ? `\n## Key Moments\n\n${screenshots
+          ? `\n## Screenshots (place inline during enrichment)\n\n${screenshots
               .map((f) => {
                 const alt = f.name.replace(".jpg", "").replace(/-/g, " ");
-                return `![${alt}](${slug}/${f.name})\n*${f.timestamp}*`;
+                return `![${alt}](${slug}/${f.name}) <!-- ${f.timestamp} -->`;
               })
               .join("\n\n")}\n`
           : "";
