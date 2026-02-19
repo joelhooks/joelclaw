@@ -262,26 +262,27 @@ Use GitHub issues as the conversation layer. Already has threads, labels, assign
 - **Comment storms** — agent and Joel both comment rapidly, creating a loop. Mitigation: agent only responds to comments from Joel (filter by `initiator_id`), never to its own.
 - **Stale context** — task description may be outdated by the time Joel comments. Mitigation: agent re-reads task + all comments on every trigger.
 
-## Implementation Plan
+## Implementation Status
 
-### Phase 1: Poll + Respond (first)
-1. Add `todoist/comment.added` event schema to system-bus
-2. Implement Inngest cron function polling Activity Log API
-3. Implement responder function that loads task context + comments
-4. Agent posts reply as comment
-5. Test with a `review` labeled task
+**Phase 4 implemented first** — webhooks proved simpler than polling.
 
-### Phase 2: Agent-Initiated Questions
-1. Agent creates tasks with `review` label when decisions are needed
-2. Task description includes structured briefing (context, options, recommendation)
-3. Filter `@review & !completed` becomes Joel's decision queue
+### ✅ Phase 4: Webhooks (2026-02-18)
+- Todoist webhook → Tailscale Funnel :443 → worker :3111 → HMAC verify → Inngest event
+- 3 Inngest functions: `todoist-comment-notify`, `todoist-task-completed-notify`, `todoist-task-created-notify`
+- API enrichment step fetches task title + project name from Todoist API v1
+- Gateway notifications via `gateway.notify()` → Redis → pi session
+- Webhook URL: `https://panda.tail7af24.ts.net/webhooks/todoist`
+- Key files: `src/webhooks/providers/todoist.ts`, `src/inngest/functions/todoist-notify.ts`
+- Gotchas learned: Caddy drops Funnel POST bodies (point Funnel directly at worker); HMAC uses `client_secret` not "Verification token"; `joelclaw refresh` required after function deploy
 
-### Phase 3: Actions from Comments
-1. Agent parses intent from Joel's comment (approve, reject, modify, defer)
-2. Takes actions: update ADRs, create subtasks, complete task, reschedule
-3. Reports actions taken in follow-up comment
+### ⬜ Phase 1: Respond via Comments
+- Agent posts reply as comment on the originating task
+- Not yet implemented — gateway currently acknowledges but doesn't write back to Todoist
 
-### Phase 4: Upgrade to Webhooks (optional)
-1. Set up Todoist webhook → Caddy → gateway endpoint
-2. Replace cron poll with push-based trigger
-3. Same event schema — `todoist/comment.added` — downstream unchanged
+### ⬜ Phase 2: Agent-Initiated Questions
+- Agent creates tasks with `review` label when decisions are needed
+- Task description includes structured briefing (context, options, recommendation)
+
+### ⬜ Phase 3: Actions from Comments
+- Agent parses intent from Joel's comment (approve, reject, modify, defer)
+- Takes actions: update ADRs, create subtasks, complete task, reschedule
