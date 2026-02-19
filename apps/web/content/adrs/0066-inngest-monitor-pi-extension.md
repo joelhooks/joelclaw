@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-02-19
 deciders: joel
 tags: [pi, inngest, monitoring, joelclaw]
