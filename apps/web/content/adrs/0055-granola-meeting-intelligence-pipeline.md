@@ -51,7 +51,7 @@ meeting/noted (Inngest function)
   ├─ step: pull-details    → granola meeting <id>
   ├─ step: pull-transcript → granola meeting <id> --transcript
   ├─ step: analyze         → LLM extracts action items, decisions, follow-ups
-  ├─ step: create-tasks    → todoist-cli add (with meeting link, context)
+  ├─ step: create-tasks    → task port (ADR-0045) add (with meeting link, context)
   ├─ step: mark-processed  → Redis SADD granola:processed <id>
   └─ step: notify-gateway  → pushGatewayEvent with summary
 ```
@@ -79,7 +79,9 @@ The LLM analysis step extracts structured data from the transcript:
 }
 ```
 
-### Todoist Task Format
+### Task Creation (via ADR-0045 Port)
+
+Tasks are created through the task management port (ADR-0045), not a specific adapter. Currently Todoist is the active adapter, but the pipeline is adapter-agnostic.
 
 ```
 Title: [Granola] Run Amex statements through AI analysis
@@ -88,7 +90,7 @@ Description:
   Owner: Joel
   Link: https://notes.granola.ai/d/<id>
   Context: Accountant requested expense analysis for tax filing
-Project: Inbox (agent captures, Joel triages)
+Destination: Inbox (agent captures, Joel triages)
 ```
 
 ## Alternatives Considered
@@ -133,7 +135,7 @@ Adding a step to the existing 15-min heartbeat keeps the cron surface small. If 
 - Shell out to `granola` CLI (compiled binary at `~/.local/bin/granola`)
 - Parse HATEOAS JSON response
 - Fan-out via Inngest events (one per new meeting)
-- Todoist tasks via `todoist-cli` (ADR-0045 adapter)
+- Task creation via task management port (ADR-0045) — adapter-agnostic
 - Gateway notifications via `pushGatewayEvent` (ADR-0018)
 
 ### Verification
