@@ -1,11 +1,11 @@
 ---
-status: proposed
-date: 2026-02-18
+status: accepted
+date: 2026-02-19
 decision-makers: joel
 tags:
   - voice
-  - identity
-  - telegram
+  - livekit
+  - webrtc
   - conversations
   - elevenlabs
   - agent-identity
@@ -14,241 +14,222 @@ related:
   - "0042-telegram-rich-replies-and-outbound-media"
   - "0041-first-class-media-from-channels"
   - "0038-embedded-pi-gateway-daemon"
+  - "0029-replace-docker-desktop-with-colima"
 ---
 
-# ADR-0043: Agent Voice Conversations — Morning Calls, Retrospectives, and Mobile Interviews
+# ADR-0043: Agent Voice Conversations via Self-Hosted LiveKit
 
 ## Context
 
-ADR-0042 covers TTS as an output mode — the agent synthesizes speech for Telegram voice messages. But the real value is **bidirectional voice conversation** as a first-class interaction pattern.
+The agent needs **bidirectional voice conversation** — not just TTS output, but real-time spoken dialogue. Three use cases drive this:
 
-Three use cases drive this:
+**Morning call.** The agent runs through calendar, overnight events, pending decisions, priorities. Joel responds verbally while making coffee. Decisions get captured.
 
-**Morning call.** The agent calls Joel (or sends a Telegram voice thread) at a configured time. Runs through: calendar, overnight events, pending decisions, priorities for the day. Joel responds verbally while making coffee. The agent captures decisions and updates the system.
+**Retrospective.** End of day/week. Agent reviews completed work, open items, drift. Asks reflective questions. Results in vault notes, updated status, captured insights.
 
-**Retrospective.** End of day or end of week. The agent reviews what happened: completed work, open items, decisions made, things that drifted. Asks reflective questions. Joel answers. Results in: updated vault notes, project status, new tasks, captured insights.
+**MCQ as interview.** Spoken multiple-choice while driving/walking. No screen needed for decisions.
 
-**MCQ as interview.** The same quick-choice pattern used in pi sessions, but spoken. The agent asks "I've got three options for the media pipeline. Option one: implement inbound download first. Option two: start with outbound voice. Option three: do reply threading. What feels right?" Joel answers while driving/walking. No screen needed.
+All three require: agent-initiated conversations, real-time STT → LLM → TTS, low latency (~1-3s), graceful interruption, and structured output from freeform speech.
 
-All three require:
-- Agent-initiated conversations (not just responding to messages)
-- Real-time STT → think → TTS loop
-- Low enough latency to feel conversational (~1-3 seconds)
-- Graceful interruption (Joel can cut in)
-- Structured output from freeform conversation (decisions, tasks, notes — not just chat)
+### Why LiveKit over ElevenLabs Agents WebSocket
+
+The original design (proposed Feb 18) used ElevenLabs Agents platform — a managed WebSocket API for real-time voice. After research, LiveKit Agents framework is better for this system:
+
+| Dimension | ElevenLabs Agents | LiveKit Agents |
+|-----------|------------------|----------------|
+| Transport | WebSocket (audio frames) | WebRTC (native browser/mobile) |
+| Architecture | Managed service | Self-hosted, Apache 2.0 |
+| STT | ElevenLabs Scribe only | Any plugin (Deepgram, Whisper, etc.) |
+| LLM | Bring-your-own via server webhook | Plugin architecture, direct SDK |
+| TTS | ElevenLabs only | Any plugin (ElevenLabs, OpenAI, etc.) |
+| Turn detection | Built-in, no control | Silero VAD + configurable pipeline |
+| Tool use | Limited | `@function_tool` decorator, full async |
+| Cost | ~$0.088/min + LLM | Self-hosted server = free, pay only for STT/LLM/TTS |
+| Privacy | Audio to ElevenLabs | Audio stays on infra, only API calls to providers |
+
+The clincher: LiveKit's `@function_tool` lets the voice agent call joelclaw system tools mid-conversation. "Check my calendar" → `gog cal today` → spoken response. ElevenLabs Agents can't do that without a separate webhook server.
 
 ## Decision
 
-Build agent voice conversations as an Inngest-orchestrated capability that uses ElevenLabs for both STT and TTS, with the LLM layer being Claude (same as gateway).
+**Self-host LiveKit server on the existing Talos k8s cluster. Build voice agents using the LiveKit Agents Python framework with pluggable STT/LLM/TTS.**
 
-### Architecture: Two Modes
-
-**Mode 1: Asynchronous voice thread (Telegram)**
-
-The simpler mode. Agent sends voice messages, Joel responds with voice messages. Not real-time — each turn has natural latency (seconds to minutes).
+### Architecture
 
 ```
-Agent cron trigger (e.g., 7:30am) →
-  Inngest function: morning-briefing →
-    Step 1: Gather context (calendar, tasks, overnight events, slog tail)
-    Step 2: Generate briefing text via Claude
-    Step 3: Synthesize voice via ElevenLabs TTS
-    Step 4: Send as Telegram voice message (sendVoice)
-    Step 5: Wait for Joel's response (step.waitForEvent)
-    Step 6: Transcribe Joel's voice reply (STT)
-    Step 7: Process response, extract decisions/tasks
-    Step 8: Continue conversation or close out
+┌─────── Client (phone/laptop on Tailscale) ───────┐
+│  Browser → agents-playground.livekit.io           │
+│  or: native app, Telegram voice, SIP/phone        │
+│  WebRTC audio ←→ LiveKit server                   │
+└──────────────────────┬────────────────────────────┘
+                       │ WebRTC (UDP/TCP)
+                       ▼
+┌─────── Mac Mini (panda) ─────────────────────────┐
+│  Caddy WSS proxy (panda.tail7af24.ts.net:7443)   │
+│      ↓                                            │
+│  LiveKit Server v1.9.0 (k8s, port 7880/7881)     │
+│      ↓ dispatches job                             │
+│  Voice Agent (Python, host process)               │
+│  ├─ Deepgram STT (ears)                           │
+│  ├─ Claude Sonnet 4.6 via OpenRouter (brain)      │
+│  ├─ ElevenLabs TTS (mouth)                        │
+│  ├─ Silero VAD (turn detection)                   │
+│  └─ @function_tool → joelclaw tooling             │
+│      ↓ system actions                             │
+│  Inngest (event bus) / Redis / Vault / etc.       │
+└───────────────────────────────────────────────────┘
 ```
 
-This is implementable today with existing infrastructure. The Inngest `step.waitForEvent` pattern already handles the async wait. Voice messages flow through the existing Telegram channel.
+### Proven Pipeline (Spike, Feb 19 2026)
 
-**Mode 2: Real-time voice call (ElevenLabs Agents / WebSocket)**
+Every component verified working end-to-end:
 
-Full duplex conversation. Sub-second latency. Interruption handling. The "phone call from your agent" experience.
+| Component | Provider | Status | Notes |
+|-----------|----------|--------|-------|
+| Media server | LiveKit v1.9.0 | ✅ Running | Helm chart, k8s joelclaw namespace, hostNetwork |
+| STT | Deepgram | ✅ Working | Transcribed "What can you help me with today?" ~180ms delay |
+| LLM | Claude Sonnet 4.6 via OpenRouter | ✅ Working | "Hi there! Hope you're having a wonderful day!" |
+| TTS | ElevenLabs | ✅ Working | 6 audio chunks, played out to room |
+| VAD | Silero | ✅ Working | Turn detection with live mic (file-based audio has timing issues, expected) |
+| WSS proxy | Caddy over Tailscale | ✅ Working | `wss://panda.tail7af24.ts.net:7443` |
+| Playground | agents-playground.livekit.io | ✅ Working | Token auth, real-time conversation from phone |
 
-ElevenLabs Agents platform provides this:
-- WebSocket API: `wss://api.elevenlabs.io/v1/convai/conversation?agent_id={id}`
-- STT (Scribe v2 Realtime): ~150ms latency, 90+ languages
-- TTS (Flash v2.5): ~75ms latency
-- Bring your own LLM (Claude via server integration)
-- Turn detection, interruption handling built-in
-- Telegram, phone (Twilio), and web clients
+### Voice Agent Code
 
-**Cost comparison:**
+```python
+from livekit.agents import Agent, AgentSession, WorkerOptions, cli
+from livekit.plugins import deepgram, elevenlabs, openai, silero
 
-| Mode | Cost per minute | Latency | Infrastructure |
-|------|----------------|---------|----------------|
-| Async Telegram | ~$0.01 (TTS only, STT local via mlx-whisper) | Seconds-minutes per turn | Existing |
-| ElevenLabs Agents | ~$0.088 (Business tier, + LLM cost) | 1-3 seconds | WebSocket client |
-| OpenAI Realtime | ~$0.15 (audio in + audio out) | <1 second | WebSocket client |
+class JoelclawAgent(Agent):
+    def __init__(self):
+        super().__init__(
+            instructions="You are joelclaw, a helpful voice assistant. "
+                        "Be concise, conversational, and friendly."
+        )
 
-### Conversation Types
+async def entrypoint(ctx):
+    session = AgentSession(
+        stt=deepgram.STT(),
+        llm=openai.LLM.with_openrouter(model="anthropic/claude-sonnet-4.6"),
+        tts=elevenlabs.TTS(),
+        vad=silero.VAD.load(),
+    )
+    await session.start(agent=JoelclawAgent(), room=ctx.room)
+    session.generate_reply(
+        user_input="The user just joined. Say hi briefly."
+    )
 
-**Morning briefing** (async or real-time):
-```
-Agent: "Morning. You've got three things on the calendar today.
-  The dentist at 2, a deploy window at 4, and you blocked 
-  an hour for the media pipeline work. Overnight, two PRs 
-  merged and the memory pipeline processed 126 observations.
-  One decision needs your input — the NAS partitioning 
-  scheme. Time-first or identity-first?"
-
-Joel: "Time first. What's the deploy?"
-
-Agent: "The Telegram media download wiring from yesterday. 
-  Tests pass, worker's running 22 functions. Want me to 
-  merge and deploy, or hold for review?"
-
-Joel: "Ship it."
-
-Agent: [updates task status, triggers deploy, notes decision]
-```
-
-**Retrospective** (weekly, async or real-time):
-```
-Agent: "This week: 4 ADRs written, media pipeline operational 
-  through NAS archive, the Inngest articles are fixed and 
-  deployed. The voice work is designed but not started.
-  What felt good this week?"
-
-Joel: "The ADR velocity. Having those as reference docs 
-  instead of just decisions changes how the agents work."
-
-Agent: "Noted. What dragged?"
-
-Joel: "The worker sync issue. Subtree model is friction."
-
-Agent: [captures reflection, updates project notes, flags 
-  worker sync for improvement]
+if __name__ == "__main__":
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
 ```
 
-**MCQ interview** (mobile, real-time preferred):
-```
-Agent: "I need to know where to focus next on the media 
-  pipeline. Three options. One: wire up the Telegram 
-  download handlers — photos and voice. Two: implement 
-  reply threading so responses go to the right message. 
-  Three: start on outbound media so I can send you 
-  files back. What sounds right?"
+### System Integration via @function_tool
 
-Joel: "Downloads first. That's the blocking thing."
+LiveKit agents support `@function_tool` decorators that let the LLM call tools mid-conversation. This is how the voice agent gets access to joelclaw tooling:
 
-Agent: "Got it. Phase one, inbound media. I'll work on 
-  that. Anything else before I go?"
+```python
+from livekit.agents import function_tool
 
-Joel: "Nah, that's good."
+@function_tool
+async def check_calendar(day: str = "today") -> str:
+    """Check Joel's calendar for a specific day."""
+    result = subprocess.run(["gog", "cal", "events", "list", "--day", day],
+                          capture_output=True, text=True)
+    return result.stdout
 
-Agent: [updates priorities, queues implementation work]
-```
+@function_tool
+async def add_task(description: str, project: str = "inbox") -> str:
+    """Add a task to Joel's task list."""
+    # Todoist API or joelclaw event
+    await inngest.send({"name": "task/created",
+                       "data": {"description": description, "project": project}})
+    return f"Task added: {description}"
 
-### Structured Output from Conversations
+@function_tool
+async def check_system_health() -> str:
+    """Check the health of joelclaw infrastructure."""
+    # kubectl, redis, inngest health checks
+    return "All 5 pods running, worker healthy, 28 functions registered"
 
-The critical difference between voice chat and voice *conversation* is that the latter produces artifacts. Every conversation should yield:
-
-- **Decisions** → logged to vault, referenced in ADRs
-- **Tasks** → added to project index or Inngest events
-- **Reflections** → captured in daily notes
-- **Priority changes** → updated in project status
-- **Configuration** → voice settings, schedule adjustments
-
-The agent uses a structured extraction step after each conversation:
-
-```typescript
-// Post-conversation processing
-const artifacts = await step.run("extract-artifacts", async () => {
-  const prompt = `Extract structured artifacts from this conversation:
-    ${transcript}
-    
-    Return JSON with:
-    - decisions: [{summary, context, confidence}]
-    - tasks: [{description, project, priority}]  
-    - reflections: [{insight, category}]
-    - priority_changes: [{item, from, to, reason}]`;
-  
-  return await claude.generate(prompt);
-});
-
-// Write artifacts to vault
-await step.run("persist-artifacts", async () => {
-  for (const decision of artifacts.decisions) {
-    await appendToDaily(decision);
-  }
-  for (const task of artifacts.tasks) {
-    await emitEvent("task/created", task);
-  }
-});
+@function_tool
+async def search_vault(query: str) -> str:
+    """Search the Obsidian vault for notes matching a query."""
+    # Qdrant semantic search
+    return search_results
 ```
 
-### Voice Identity (from ADR-0042)
+These tools let the agent do things like:
+- "What's on my calendar?" → `check_calendar()`
+- "Add a task to deploy the media pipeline" → `add_task()`
+- "Is the system healthy?" → `check_system_health()`
+- "What did we decide about the NAS layout?" → `search_vault()`
 
-Each agent's voice is part of its identity. The refinement happens naturally during these conversations — Joel hears the voice, gives feedback, the agent adjusts.
+### Cost
 
-```yaml
-# Agent identity config
-voice:
-  provider: elevenlabs
-  voiceId: "abc123"
-  model: eleven_flash_v2_5       # low latency for conversations
-  settings:
-    stability: 0.6
-    similarityBoost: 0.75
-    style: 0.2
-    speed: 1.05
-  conversation:
-    auto: scheduled              # morning + retro on schedule
-    morningBriefing: "07:30"     # PT
-    weeklyRetro: "friday:17:00"  # PT
-    interruptible: true
-    maxDuration: 300             # 5 minutes
-  fallback:
-    provider: edge
-    voice: "en-US-GuyNeural"
-```
+| Component | Cost | Notes |
+|-----------|------|-------|
+| LiveKit server | $0 | Self-hosted, Apache 2.0 |
+| Deepgram STT | $0.0043/min | Pay-as-you-go |
+| Claude Sonnet 4.6 | ~$0.10-0.15/5min conversation | Via OpenRouter |
+| ElevenLabs TTS | ~$0.018/min | Starter tier characters |
+| **Total** | **~$0.03-0.05/min** | **~$0.15-0.25 per 5-min conversation** |
 
 ### Implementation Path
 
-**Phase 1: Async voice thread via Telegram** (uses existing infra)
-- Inngest cron function: `morning-briefing` at configured time
-- Gathers context: `gog cal today`, `slog tail`, pending decisions, calendar
-- Claude generates briefing
-- ElevenLabs TTS → Telegram `sendVoice`
-- `step.waitForEvent("telegram/voice.received")` for Joel's response
-- mlx-whisper transcription (local, free) or ElevenLabs Scribe ($0.22/hr)
-- Artifact extraction + vault writes
+**Phase 1: Conversational agent with tools** ← NEXT
+- Add `@function_tool` decorators for calendar, tasks, vault search, system health
+- Wire up Inngest event emission from voice tools
+- Structured artifact extraction post-conversation
 
-**Phase 2: MCQ as spoken interview**
-- Same async pattern but multi-turn
-- Agent presents options verbally
-- Joel responds with choice + context
-- Agent adapts next question based on answer (same adaptive flow as MCQ tool)
-- Conversation ends when decisions are captured
+**Phase 2: Scheduled conversations**
+- Inngest cron: morning briefing, weekly retro
+- Agent creates LiveKit room, sends join link via Telegram
+- `step.waitForEvent("voice/conversation.ended")` for pipeline continuation
 
-**Phase 3: Real-time via ElevenLabs Agents**
-- Create ElevenLabs Agent with joelclaw's voice
-- Configure Claude as LLM backend (server integration)
-- WebSocket client in gateway daemon
-- Telegram voice chat or phone call trigger
-- Full duplex with interruption handling
-- Sub-3-second turn latency
+**Phase 3: Telegram voice integration**
+- Telegram voice messages → LiveKit room (bridge)
+- Or: async voice thread mode (TTS → sendVoice, STT on reply)
+- Hybrid: start async, escalate to real-time if needed
 
 **Phase 4: Proactive conversations**
-- Agent detects when a conversation would be useful (not just scheduled)
-- "You've been heads-down for 4 hours. Quick check-in?"
-- Context-aware triggers: stale decisions, blocked tasks, missed calendar items
-- Notification via Telegram, escalation to voice if no text response
+- Agent detects when voice would be useful (stale decisions, long heads-down, blocked tasks)
+- "You've been at it for 4 hours. Quick check-in?"
+- Notification → Telegram → voice if no text response
+
+### Key Files
+
+| Path | Purpose |
+|------|---------|
+| `~/Projects/livekit-spike/agent/main.py` | Voice agent code |
+| `~/Projects/livekit-spike/agent/run.sh` | Secret-leasing launcher |
+| `~/Projects/livekit-spike/values-joelclaw.yaml` | LiveKit Helm values |
+| `~/.local/caddy/Caddyfile` | WSS proxy (port 7443) |
+
+### Gotchas Learned
+
+1. **`on_enter` timing**: `session.say()` or `generate_reply()` inside `on_enter` fires before the speech scheduling task is fully initialized. Call `generate_reply()` AFTER `session.start()` returns.
+
+2. **File-based audio testing**: Publishing a .ogg file via `lk room join --publish` doesn't work for VAD turn detection — the track unpublishes before VAD detects end-of-speech. Use the playground with a real mic.
+
+3. **`on_user_turn_completed` signature**: The 1.4.x API passes `(self, turn_ctx, *, new_message=...)`. Overriding with the wrong signature silently crashes the response pipeline.
+
+4. **Caddy port 443 vs Tailscale Funnel**: Both try to bind :443. Caddy must use a high port (9443) or bind to the Tailscale IP explicitly. Funnel owns :443 for public webhooks.
+
+5. **Multi-process architecture**: LiveKit agents spawn child processes per job. `dev` mode captures child logs via IPC; `start` mode doesn't redirect child output to the parent's stdout.
 
 ## Consequences
 
-- **The agent becomes a conversational partner**, not just a text responder. Morning briefings and retros create natural checkpoints.
-- **Mobile-first interaction.** Voice works while driving, walking, cooking. No screen needed for decisions.
-- **Structured output from informal input.** Freeform speech → decisions, tasks, reflections. The agent does the extraction work.
-- **Cost:** Phase 1 is nearly free (mlx-whisper local STT + ElevenLabs Starter $5/mo TTS). Phase 3 adds ~$0.09/min for real-time.
-- **Privacy:** STT can stay local (mlx-whisper). TTS requires cloud (ElevenLabs/OpenAI). Real-time mode sends audio to ElevenLabs.
-- **Voice refinement is ongoing.** Each conversation is an opportunity to adjust. "Slower." "Warmer." "Less pause between sentences."
+- **Voice is a first-class interaction mode**, not an afterthought. The agent can initiate conversations, not just respond.
+- **Self-hosted = full control.** No vendor lock-in on the media server. Swap STT/LLM/TTS providers via plugins.
+- **Tool use during conversation** — the killer feature. "Check my calendar" works mid-sentence.
+- **Runs on existing infra.** LiveKit is one more pod in the k8s cluster. No new machines, no cloud dependencies.
+- **Privacy preserved.** Audio never leaves the tailnet except for API calls to Deepgram/OpenRouter/ElevenLabs. STT could go local (mlx-whisper plugin) for full offline.
+- **WebRTC is the right transport.** Works in browsers, native apps, and eventually SIP/phone. WebSocket voice was a dead end.
 
 ## Credits
 
-- ElevenLabs — Agents platform, Scribe v2 Realtime STT, Flash v2.5 TTS, voice cloning
-- OpenClaw `src/tts/` — provider cascade pattern, auto modes, text summarization
-- Inngest — `step.waitForEvent` for async conversation turns, cron triggers for scheduled conversations
-- ADR-0042 — Telegram media and voice identity foundation
+- [LiveKit](https://livekit.io/) — Agents framework, self-hosted media server, Apache 2.0
+- [Deepgram](https://deepgram.com/) — STT with ~180ms latency
+- [ElevenLabs](https://elevenlabs.io/) — TTS, voice identity
+- [OpenRouter](https://openrouter.ai/) — LLM gateway routing to Claude Sonnet 4.6
+- [Silero](https://github.com/snakers4/silero-vad) — Voice Activity Detection
+- Inngest — Durable workflow engine for conversation orchestration
