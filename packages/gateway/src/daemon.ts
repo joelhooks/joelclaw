@@ -3,16 +3,19 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@mariozechner/pi-ai";
 import { createAgentSession } from "@mariozechner/pi-coding-agent";
-import { drain, enqueue, setSession } from "./command-queue";
+import { drain, enqueue, getQueueDepth, getCurrentSource, setSession } from "./command-queue";
 import { start as startRedisChannel, shutdown as shutdownRedisChannel } from "./channels/redis";
-import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, parseChatId } from "./channels/telegram";
+import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, sendMedia as sendTelegramMedia, parseChatId } from "./channels/telegram";
 import { startHeartbeatRunner } from "./heartbeat";
-import { getCurrentSource } from "./command-queue";
 
 const HOME = homedir();
 const AGENT_DIR = join(HOME, ".pi/agent");
 const PID_DIR = "/tmp/joelclaw";
 const PID_FILE = `${PID_DIR}/gateway.pid`;
+const WS_PORT_FILE = `${PID_DIR}/gateway.ws.port`;
+const DEFAULT_WS_PORT = 3018;
+const WS_PORT = Number.parseInt(process.env.PI_GATEWAY_WS_PORT ?? `${DEFAULT_WS_PORT}`, 10) || DEFAULT_WS_PORT;
+const startedAt = Date.now();
 
 function resolveModel() {
   const provider = process.env.PI_MODEL_PROVIDER;
@@ -52,14 +55,133 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID
   ? parseInt(process.env.TELEGRAM_USER_ID, 10)
   : undefined;
+const channelInfo = {
+  redis: true,
+  console: true,
+  telegram: Boolean(TELEGRAM_TOKEN && TELEGRAM_USER_ID),
+};
+
+type WsServerMessage =
+  | { type: "text_delta"; delta: string }
+  | { type: "tool_call"; id: string; toolName: string; input: unknown }
+  | { type: "tool_result"; id: string; toolName: string; content: unknown; isError?: boolean }
+  | { type: "turn_end" }
+  | { type: "status"; data: Record<string, unknown> }
+  | { type: "error"; message: string };
+
+type WsClientMessage =
+  | { type: "prompt"; text: string }
+  | { type: "abort" }
+  | { type: "status" };
 
 // ── Outbound: collect assistant responses and route to source channel ──
 let responseChunks: string[] = [];
+const wsClients = new Set<Bun.ServerWebSocket<unknown>>();
+
+function getStatusPayload(): Record<string, unknown> {
+  return {
+    sessionId: session.sessionId,
+    isStreaming: responseChunks.length > 0,
+    model: describeModel(session.model),
+    uptimeMs: Date.now() - startedAt,
+    pid: process.pid,
+    channelInfo: {
+      ...channelInfo,
+      ws: {
+        port: wsServer.port,
+        clients: wsClients.size,
+      },
+    },
+    queueDepth: getQueueDepth(),
+  };
+}
+
+function sendWsMessage(ws: Bun.ServerWebSocket<unknown>, payload: WsServerMessage): void {
+  try {
+    ws.send(JSON.stringify(payload));
+  } catch (error) {
+    console.error("[gateway] ws send failed", { error });
+  }
+}
+
+function broadcastWs(payload: WsServerMessage): void {
+  for (const client of wsClients) {
+    sendWsMessage(client, payload);
+  }
+}
+
+function parseClientMessage(raw: string | Buffer | Uint8Array): WsClientMessage | undefined {
+  try {
+    const text = typeof raw === "string" ? raw : Buffer.from(raw).toString("utf8");
+    const parsed = JSON.parse(text) as WsClientMessage;
+    if (!parsed || typeof parsed !== "object" || typeof parsed.type !== "string") return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+await mkdir(PID_DIR, { recursive: true });
+
+const wsServer = Bun.serve({
+  port: WS_PORT,
+  fetch(req, server) {
+    if (server.upgrade(req)) return;
+    return new Response("WebSocket upgrade required", { status: 426 });
+  },
+  websocket: {
+    open(ws) {
+      wsClients.add(ws);
+      sendWsMessage(ws, { type: "status", data: getStatusPayload() });
+    },
+    async message(ws, message) {
+      const data = parseClientMessage(message);
+      if (!data) {
+        sendWsMessage(ws, { type: "error", message: "Invalid message payload" });
+        return;
+      }
+
+      if (data.type === "prompt") {
+        const text = data.text?.trim();
+        if (!text) {
+          sendWsMessage(ws, { type: "error", message: "Prompt text is required" });
+          return;
+        }
+        enqueue("tui", text, { via: "ws" });
+        void drain();
+        return;
+      }
+
+      if (data.type === "abort") {
+        try {
+          await session.abort();
+        } catch (error: any) {
+          sendWsMessage(ws, { type: "error", message: `Abort failed: ${error?.message ?? String(error)}` });
+        }
+        return;
+      }
+
+      if (data.type === "status") {
+        sendWsMessage(ws, { type: "status", data: getStatusPayload() });
+      }
+    },
+    close(ws) {
+      wsClients.delete(ws);
+    },
+  },
+});
+
+await writeFile(WS_PORT_FILE, `${wsServer.port}\n`);
 
 session.subscribe((event: any) => {
   // Collect text deltas
   if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
-    responseChunks.push(event.assistantMessageEvent.delta);
+    const delta = typeof event.assistantMessageEvent.delta === "string"
+      ? event.assistantMessageEvent.delta
+      : "";
+    if (!delta) return;
+    responseChunks.push(delta);
+    broadcastWs({ type: "text_delta", delta });
   }
 
   // On message end, route the full response to the source channel
@@ -85,6 +207,37 @@ session.subscribe((event: any) => {
       console.log("[gateway] assistant:", fullText.slice(0, 200));
     }
   }
+
+  if (event.type === "tool_call") {
+    broadcastWs({
+      type: "tool_call",
+      id: event.toolCallId,
+      toolName: event.toolName,
+      input: event.input,
+    });
+  }
+
+  if (event.type === "tool_result") {
+    broadcastWs({
+      type: "tool_result",
+      id: event.toolCallId,
+      toolName: event.toolName,
+      content: event.content,
+      isError: event.isError,
+    });
+
+    if (event.isError) {
+      broadcastWs({
+        type: "error",
+        message: `Tool ${event.toolName} failed (${event.toolCallId})`,
+      });
+    }
+  }
+
+  if (event.type === "turn_end") {
+    broadcastWs({ type: "turn_end" });
+    void drain();
+  }
 });
 
 // ── Redis channel ──────────────────────────────────────
@@ -103,19 +256,63 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
   console.warn("[gateway] telegram disabled — set TELEGRAM_BOT_TOKEN and TELEGRAM_USER_ID env vars");
 }
 
+// ── Media outbound: satellite sessions push files, we deliver ──────
+if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
+  const Redis = (await import("ioredis")).default;
+  const mediaSub = new Redis({
+    host: process.env.REDIS_HOST ?? "localhost",
+    port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+    lazyConnect: true,
+    retryStrategy: (times: number) => Math.min(times * 500, 30_000),
+  });
+  const mediaCmd = new Redis({
+    host: process.env.REDIS_HOST ?? "localhost",
+    port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+    lazyConnect: true,
+    retryStrategy: (times: number) => Math.min(times * 500, 30_000),
+  });
+  mediaSub.on("error", () => {});
+  mediaCmd.on("error", () => {});
+  await mediaSub.connect();
+  await mediaCmd.connect();
+  await mediaSub.subscribe("joelclaw:notify:media-outbound");
+
+  const drainMediaOutbound = async () => {
+    try {
+      const raw = await mediaCmd.lrange("joelclaw:media:outbound", 0, -1);
+      if (raw.length === 0) return;
+      await mediaCmd.del("joelclaw:media:outbound");
+
+      for (const item of raw) {
+        try {
+          const evt = JSON.parse(item) as {
+            payload: { filePath: string; caption?: string; chatId?: number };
+          };
+          const chatId = evt.payload.chatId ?? TELEGRAM_USER_ID;
+          if (!chatId) continue;
+          console.log("[gateway] media outbound →", { chatId, filePath: evt.payload.filePath });
+          await sendTelegramMedia(chatId, evt.payload.filePath, {
+            caption: evt.payload.caption,
+          });
+        } catch (err) {
+          console.error("[gateway] media outbound failed", { error: err });
+        }
+      }
+    } catch (err) {
+      console.error("[gateway] media outbound drain failed", { error: err });
+    }
+  };
+
+  mediaSub.on("message", () => { void drainMediaOutbound(); });
+  // Also drain on startup in case anything queued while daemon was down
+  await drainMediaOutbound();
+  console.log("[gateway] media outbound listener started");
+}
+
 const heartbeatRunner = startHeartbeatRunner();
 const queueDrainTimer = setInterval(() => {
   void drain();
 }, 1000);
-
-// Drain queue when agent finishes a turn
-session.subscribe((event: any) => {
-  if (event.type === "turn_end") {
-    void drain();
-  }
-});
-
-await mkdir(PID_DIR, { recursive: true });
 await writeFile(PID_FILE, `${process.pid}\n`);
 
 console.log("[gateway] daemon started", {
@@ -126,6 +323,8 @@ console.log("[gateway] daemon started", {
   agentDir: AGENT_DIR,
   channels: ["redis", "console", ...(TELEGRAM_TOKEN ? ["telegram"] : [])],
   pidFile: PID_FILE,
+  wsPort: wsServer.port,
+  wsPortFile: WS_PORT_FILE,
 });
 
 let shuttingDown = false;
@@ -137,6 +336,12 @@ async function gracefulShutdown(signal: string): Promise<void> {
   console.log("[gateway] shutting down", { signal });
 
   clearInterval(queueDrainTimer);
+
+  try {
+    wsServer.stop(true);
+  } catch (error) {
+    console.error("[gateway] ws server shutdown failed", { error });
+  }
 
   try {
     await heartbeatRunner.shutdown();
@@ -168,6 +373,12 @@ async function gracefulShutdown(signal: string): Promise<void> {
     console.error("[gateway] failed removing PID file", { error });
   }
 
+  try {
+    await rm(WS_PORT_FILE, { force: true });
+  } catch (error) {
+    console.error("[gateway] failed removing WS port file", { error });
+  }
+
   process.exit(0);
 }
 
@@ -185,8 +396,10 @@ setInterval(() => {}, 30_000);
 
 process.on("uncaughtException", (error) => {
   console.error("[gateway] uncaught exception", { error: error.message, stack: error.stack });
+  broadcastWs({ type: "error", message: error.message });
 });
 
 process.on("unhandledRejection", (reason) => {
   console.error("[gateway] unhandled rejection", { reason });
+  broadcastWs({ type: "error", message: `Unhandled rejection: ${String(reason)}` });
 });

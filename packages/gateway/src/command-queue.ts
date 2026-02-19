@@ -27,6 +27,10 @@ export function getCurrentSource(): string | undefined {
   return currentSource;
 }
 
+export function getQueueDepth(): number {
+  return queue.length;
+}
+
 export async function drain(): Promise<void> {
   if (drainPromise) return drainPromise;
 
