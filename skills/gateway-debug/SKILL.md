@@ -1,6 +1,6 @@
 ---
 name: gateway-debug
-description: "Diagnose and fix the joelclaw gateway daemon — detect hung sessions, stuck tool calls, queue backpressure, stale processes, and Telegram/Redis channel failures. Use when: 'gateway stuck', 'gateway hung', 'is gateway healthy', 'gateway not responding', 'telegram not working', 'messages not going through', 'restart gateway', 'gateway debug', 'why is the gateway stuck', or any gateway troubleshooting task."
+description: "SUPERSEDED by the 'gateway' skill. Use that instead. This skill remains for deep debugging reference — hung session detection, stuck tool calls, session file inspection."
 ---
 
 # Gateway Debug — Diagnose & Fix the joelclaw Gateway Daemon

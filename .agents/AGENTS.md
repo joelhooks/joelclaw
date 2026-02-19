@@ -90,6 +90,21 @@ This is Joel's always-on Mac Mini — a prototype personal AI assistant, copilot
 
 ## Agent Conventions
 
+### CLI First — No Plumbing
+
+**Always use `joelclaw` and `slog` CLIs instead of low-level tools.** These CLIs exist so agents don't need to know the plumbing. They return structured HATEOAS JSON with next-action suggestions.
+
+| Instead of... | Use |
+|---------------|-----|
+| `launchctl bootout/bootstrap` | `joelclaw gateway restart` or `joelclaw worker restart` |
+| `curl http://localhost:8288/...` | `joelclaw runs`, `joelclaw functions`, `joelclaw status` |
+| `grep` on `/tmp/joelclaw/*.log` | `joelclaw gateway status`, `joelclaw logs` |
+| `curl -X PUT .../api/inngest` | `joelclaw refresh` |
+| `redis-cli` commands | `joelclaw gateway events`, `joelclaw gateway drain` |
+| manual JSONL append | `slog write --action ... --tool ... --detail ...` |
+
+If the CLI can do it, use the CLI. Period.
+
 ### Consult Before Acting
 
 Before starting any task:
@@ -236,10 +251,18 @@ OpenClaw has a **layered AGENTS.md** at its repo root (`~/Code/openclaw/openclaw
 Common joelclaw usage:
 
 ```bash
-joelclaw send video/download --url https://example.com/video
-joelclaw runs --limit 10
-joelclaw loop status
-joelclaw worker restart
+joelclaw                          # Health + all functions + next actions
+joelclaw status                   # Quick health check (server, worker, k8s)
+joelclaw functions                # List all registered functions
+joelclaw runs --limit 10          # Recent Inngest runs
+joelclaw send <event> -d '{}'     # Send an event
+joelclaw gateway status           # Gateway sessions + queue depths
+joelclaw gateway restart          # Restart the gateway daemon
+joelclaw gateway test             # Push test event + verify delivery
+joelclaw worker restart           # Restart the system-bus worker
+joelclaw refresh                  # Force Inngest function re-sync
+joelclaw loop status              # Check agent loop state
+joelclaw recall <query>           # Search Qdrant memory
 ```
 
 ### Mac Apps
@@ -264,8 +287,9 @@ All skills are installed to `~/.agents/skills/` (universal) and symlinked to Cla
 | email-triage | joelhooks/joelclaw | Inference-based email inbox triage via `joelclaw email` CLI — scan, categorize, archive, surface actionable |
 | ffmpeg | digitalsamba (customized) | Video/audio processing — format conversion, compression, platform export |
 | frontend-design | custom | Production-grade frontend UI design |
-| gateway-comms | joelhooks/joelclaw | Gateway communication patterns — middleware SDK, pushGatewayEvent, CLI, new webhook provider checklist |
-| gateway-debug | joelhooks/joelclaw | Diagnose hung gateway sessions, stuck tool calls, queue backpressure — ADR-0049 |
+| gateway | joelhooks/joelclaw | Operate the gateway daemon — CLI commands, sending events, triage, failure modes, architecture. Supersedes gateway-comms and gateway-debug |
+| gateway-comms | joelhooks/joelclaw | _(superseded by gateway)_ Reference only: middleware API, pushGatewayEvent, webhook provider checklist |
+| gateway-debug | joelhooks/joelclaw | _(superseded by gateway)_ Reference only: deep debugging, hung session detection, session file inspection |
 | gogcli | custom | Google Workspace CLI — Gmail, Calendar, Drive, Contacts, Tasks, Sheets, Docs, Chat, Forms, Slides, Classroom, Apps Script — ADR-0040 |
 | joelclaw | custom | Event bus + agent loop CLI — send events, check runs, start/monitor loops, debug failures, restart worker (igs is a legacy alias) |
 | k8s | joelhooks/joelclaw | Operate joelclaw Talos k8s cluster — deploy services, health checks, recovery, port mappings, Helm releases, cluster recreation |

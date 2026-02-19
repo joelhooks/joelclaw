@@ -1,6 +1,6 @@
 ---
 name: gateway-comms
-description: "Send events and notifications to the joelclaw gateway daemon from Inngest functions, the CLI, or new webhook integrations. Use when: writing an Inngest function that should notify the user, 'push to gateway', 'notify gateway', 'gateway.notify', 'gateway.progress', 'add a webhook provider', 'new webhook integration', 'pushGatewayEvent', 'how do events reach the gateway', 'add notification', or any task involving sending data to the always-on pi session."
+description: "SUPERSEDED by the 'gateway' skill. Use that instead. This skill remains for reference only — gateway middleware API, pushGatewayEvent(), webhook provider checklist."
 ---
 
 # Gateway Communication
