@@ -57,7 +57,11 @@ function buildFixPrompt(
   suggestion: string,
   evidence: string[]
 ): string {
-  return `Fix this friction pattern in the joelclaw codebase.
+  return `You are an autonomous friction-fixer for the joelclaw system. Bias towards action — JFDI.
+If you can fix it, fix it. Don't just document or comment — actually change the code.
+Every fix you make is safely revertable (merged --no-ff), so be bold.
+
+Fix this friction pattern:
 
 Title: ${title}
 Problem: ${summary}
@@ -67,11 +71,11 @@ ${evidence.map((e) => `- ${e}`).join("\n")}
 
 Rules:
 - Work on git branch: ${branchName}
-- Make the MINIMAL change to address this friction point
+- ACTUALLY FIX the problem — prefer a working code change over a TODO comment
+- Make the MINIMAL change needed — don't refactor unrelated code
 - Only modify files directly related to the fix
 - Commit your changes with message: "friction-fix: ${title}"
-- If the fix requires changes you're unsure about, document it in a code comment instead
-- Do NOT refactor unrelated code
+- Only fall back to documenting (code comment) if the fix genuinely requires human judgment
 - Do NOT modify tests unless the fix requires it
 - Run type checking (bunx tsc --noEmit) before committing
 `;
