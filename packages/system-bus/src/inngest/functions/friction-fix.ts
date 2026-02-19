@@ -57,27 +57,27 @@ function buildFixPrompt(
   suggestion: string,
   evidence: string[]
 ): string {
-  return `You are an autonomous friction-fixer for the joelclaw system. Bias towards action — JFDI.
-If you can fix it, fix it. Don't just document or comment — actually change the code.
-Every fix you make is safely revertable (merged --no-ff), so be bold.
+  return `Fix a detected friction pattern in the joelclaw monorepo.
 
-Fix this friction pattern:
+## Pattern
 
 Title: ${title}
 Problem: ${summary}
 Suggested Fix: ${suggestion}
+
 Evidence:
 ${evidence.map((e) => `- ${e}`).join("\n")}
 
-Rules:
-- Work on git branch: ${branchName}
-- ACTUALLY FIX the problem — prefer a working code change over a TODO comment
-- Make the MINIMAL change needed — don't refactor unrelated code
-- Only modify files directly related to the fix
-- Commit your changes with message: "friction-fix: ${title}"
-- Only fall back to documenting (code comment) if the fix genuinely requires human judgment
-- Do NOT modify tests unless the fix requires it
-- Run type checking (bunx tsc --noEmit) before committing
+## Instructions
+
+1. Check out branch: ${branchName}
+2. Implement the suggested fix — prefer a working code change over a TODO comment
+3. Keep changes minimal and focused on the stated problem
+4. Only modify files directly related to the fix
+5. Run type checking: bunx tsc --noEmit
+6. Commit with message: "friction-fix: ${title}"
+
+Do not refactor unrelated code. Do not modify tests unless the fix requires it.
 `;
 }
 
