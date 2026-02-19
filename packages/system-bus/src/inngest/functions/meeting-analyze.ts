@@ -150,8 +150,9 @@ export const meetingAnalyze = inngest.createFunction(
   {
     id: "meeting-analyze",
     name: "Meeting → Analyze & Extract Intelligence",
-    concurrency: [{ limit: 3 }],
-    retries: 2,
+    concurrency: [{ limit: 1 }],
+    retries: 3,
+    throttle: { limit: 1, period: "30s" }, // Granola MCP rate limit protection
   },
   { event: "meeting/noted" },
   async ({ event, step, ...rest }) => {
