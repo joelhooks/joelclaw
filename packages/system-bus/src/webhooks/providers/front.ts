@@ -1,32 +1,37 @@
 /**
  * Front webhook provider adapter — RULES-BASED webhooks.
  *
- * Rules webhooks use HMAC-SHA1 (not SHA256) over JSON.stringify(body).
- * No timestamp in HMAC, no challenge mechanism.
- * Filtering happens at Front's Rules level (scoped to private inboxes).
+ * Rules webhooks send Front Event objects (not app-level webhook format).
+ * Different type names and payload structure than application webhooks.
+ *
+ * Event format: { type, id, emitted_at, conversation, source, target, _links }
+ * Types: inbound, outbound, move, archive, reopen, assign, unassign, tag, untag, comment, etc.
+ *
+ * HMAC: SHA1(apiSecret, JSON.stringify(body)) → base64
+ * Header: x-front-signature
  *
  * Docs: https://dev.frontapp.com/docs/rule-webhooks
- * Signature: HMAC-SHA1(apiSecret, JSON.stringify(body)) → base64
- * Header: x-front-signature
+ *       https://dev.frontapp.com/reference/events
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { WebhookProvider, NormalizedEvent } from "../types";
 
-/** Front webhook type → normalized event name */
+/** Front Event type → normalized Inngest event name.
+ *  Rules webhooks use short Event types, not app-level "inbound_received" style. */
 const EVENT_MAP: Record<string, string> = {
-  inbound_received: "message.received",
-  outbound_sent: "message.sent",
-  message_delivery_failed: "message.failed",
-  conversation_archived: "conversation.archived",
-  conversation_reopened: "conversation.reopened",
-  conversation_deleted: "conversation.deleted",
-  conversation_snoozed: "conversation.snoozed",
-  conversation_snooze_expired: "conversation.unsnoozed",
-  new_comment_added: "comment.added",
-  assignee_changed: "assignee.changed",
-  tag_added: "tag.added",
-  tag_removed: "tag.removed",
+  inbound: "message.received",
+  outbound: "message.sent",
+  move: "conversation.moved",
+  archive: "conversation.archived",
+  reopen: "conversation.reopened",
+  trash: "conversation.deleted",
+  restore: "conversation.restored",
+  assign: "assignee.changed",
+  unassign: "assignee.changed",
+  tag: "tag.added",
+  untag: "tag.removed",
+  comment: "comment.added",
 };
 
 function getWebhookSecret(): string {
@@ -48,7 +53,6 @@ export const frontProvider: WebhookProvider = {
     const secret = getWebhookSecret();
 
     // Rules webhook: HMAC-SHA1(secret, JSON.stringify(parsed body)) → base64
-    // Re-serialize to match Front's compact JSON format
     let compactBody: string;
     try {
       compactBody = JSON.stringify(JSON.parse(rawBody));
@@ -80,41 +84,47 @@ export const frontProvider: WebhookProvider = {
     const mappedName = EVENT_MAP[type];
     if (!mappedName) return [];
 
-    const payload = (body.payload ?? {}) as Record<string, unknown>;
-    const conversation = (payload.conversation ?? payload) as Record<string, unknown>;
-    const target = (payload.target ?? {}) as Record<string, unknown>;
-    const targetData = ((target as any)?.data ?? {}) as Record<string, unknown>;
+    // Rules webhook Event object: top-level conversation, source, target
+    const conversation = (body.conversation ?? {}) as Record<string, unknown>;
+    const source = (body.source ?? {}) as Record<string, unknown>;
+    const target = (body.target ?? {}) as Record<string, unknown>;
+    const targetData = (target.data ?? {}) as Record<string, unknown>;
+    const sourceData = (source.data ?? {}) as Record<string, unknown>;
 
     const conversationId = String(conversation.id ?? "");
-    const idempotencyKey = `front-${type}-${payload.id ?? conversationId}-${body.ts ?? Date.now()}`;
+    const eventId = String(body.id ?? "");
+    const idempotencyKey = `front-${type}-${eventId || conversationId}-${body.emitted_at ?? Date.now()}`;
 
     // Inbound/outbound message events
-    if (type === "inbound_received" || type === "outbound_sent") {
-      const recipients = (payload.recipients ?? []) as Array<Record<string, unknown>>;
+    if (type === "inbound" || type === "outbound") {
+      // target.data is the message object
+      const recipients = Array.isArray(targetData.recipients)
+        ? (targetData.recipients as Array<Record<string, unknown>>)
+        : [];
       const fromRecipient = recipients.find((r) => r.role === "from");
       const toRecipients = recipients.filter((r) => r.role === "to");
-      const author = (payload.author ?? {}) as Record<string, unknown>;
+      const author = (targetData.author ?? {}) as Record<string, unknown>;
 
       return [{
         name: mappedName,
         data: {
           conversationId,
-          messageId: String(payload.id ?? ""),
+          messageId: String(targetData.id ?? ""),
           from: String(fromRecipient?.handle ?? author.email ?? ""),
-          fromName: fromRecipient?.name ?? "",
+          fromName: String(fromRecipient?.name ?? ""),
           to: toRecipients.map((r) => String(r.handle ?? "")),
-          subject: String(payload.subject ?? conversation.subject ?? ""),
-          body: String(payload.body ?? ""),
-          bodyPlain: String(payload.text ?? ""),
-          preview: String(payload.blurb ?? ""),
-          isInbound: type === "inbound_received",
-          attachmentCount: Array.isArray(payload.attachments) ? payload.attachments.length : 0,
+          subject: String(targetData.subject ?? conversation.subject ?? ""),
+          body: String(targetData.body ?? ""),
+          bodyPlain: String(targetData.text ?? ""),
+          preview: String(targetData.blurb ?? ""),
+          isInbound: type === "inbound",
+          attachmentCount: Array.isArray(targetData.attachments) ? targetData.attachments.length : 0,
         },
         idempotencyKey,
       }];
     }
 
-    // Conversation state changes
+    // Conversation state changes (archive, reopen, move, trash, restore)
     if (mappedName.startsWith("conversation.")) {
       return [{
         name: mappedName,
@@ -126,8 +136,22 @@ export const frontProvider: WebhookProvider = {
       }];
     }
 
+    // Assignee changed (assign/unassign)
+    if (type === "assign" || type === "unassign") {
+      return [{
+        name: mappedName,
+        data: {
+          conversationId,
+          assigneeEmail: String(targetData.email ?? ""),
+          assigneeName: [targetData.first_name, targetData.last_name].filter(Boolean).join(" "),
+          isUnassign: type === "unassign",
+        },
+        idempotencyKey,
+      }];
+    }
+
     // Comment added
-    if (type === "new_comment_added") {
+    if (type === "comment") {
       return [{
         name: mappedName,
         data: {
@@ -139,21 +163,8 @@ export const frontProvider: WebhookProvider = {
       }];
     }
 
-    // Assignee changed
-    if (type === "assignee_changed") {
-      return [{
-        name: mappedName,
-        data: {
-          conversationId,
-          assigneeEmail: String(targetData.email ?? ""),
-          assigneeName: [targetData.first_name, targetData.last_name].filter(Boolean).join(" "),
-        },
-        idempotencyKey,
-      }];
-    }
-
     // Tag added/removed
-    if (type === "tag_added" || type === "tag_removed") {
+    if (type === "tag" || type === "untag") {
       return [{
         name: mappedName,
         data: {
@@ -168,7 +179,7 @@ export const frontProvider: WebhookProvider = {
     // Fallback for mapped but unhandled types
     return [{
       name: mappedName,
-      data: { conversationId, raw: payload },
+      data: { conversationId, raw: body },
       idempotencyKey,
     }];
   },
