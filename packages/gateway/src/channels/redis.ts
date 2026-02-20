@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import Redis from "ioredis";
+import { enrichPromptWithVaultContext } from "../vault-read";
 
 export type EnqueueFn = (
   source: string,
@@ -114,6 +115,38 @@ function formatEvents(events: SystemEvent[]): string {
 }
 
 async function buildPrompt(events: SystemEvent[]): Promise<string> {
+  const promptEvents = events.filter(
+    (event) => typeof event.payload?.prompt === "string" && event.payload.prompt
+  );
+  const genericEvents = events.filter((event) => !(typeof event.payload?.prompt === "string" && event.payload.prompt));
+  if (promptEvents.length > 0) {
+    const resolvedPrompts = await Promise.all(
+      promptEvents.map(async (event) => {
+        const prompt = event.payload.prompt as string;
+        return enrichPromptWithVaultContext(prompt);
+      })
+    );
+
+    if (genericEvents.length === 0) {
+      return resolvedPrompts.join("\n\n---\n\n");
+    }
+
+    const eventBlock = formatEvents(genericEvents);
+    const ts = new Date().toISOString();
+    return [
+      resolvedPrompts.join("\n\n---\n\n"),
+      "",
+      "---",
+      "",
+      `## 🔔 Gateway — ${ts}`,
+      "",
+      `${genericEvents.length} additional event(s):`,
+      eventBlock,
+      "",
+      "Take action on anything that needs it, otherwise acknowledge briefly.",
+    ].join("\n");
+  }
+
   const firstEvent = events[0];
   const isHeartbeatOnly = events.length === 1 && firstEvent?.type === "cron.heartbeat";
   const eventBlock = formatEvents(events);

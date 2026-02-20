@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { extname } from "node:path";
 import { Bot, InputFile } from "grammy";
 import type { EnqueueFn } from "./redis";
+import { enrichPromptWithVaultContext } from "../vault-read";
 
 // ── Telegram HTML formatting ───────────────────────────
 // Telegram's HTML mode supports: <b>, <i>, <code>, <pre>, <a href="">
@@ -245,9 +246,9 @@ function mdToTelegramHtml(md: string): string {
   html = html.replace(/^[-| :]+$/gm, "");
 
   // Restore protected elements
-  html = html.replace(/\x00CODEBLOCK(\d+)\x00/g, (_match, idx) => codeBlocks[parseInt(idx)]);
-  html = html.replace(/\x00INLINE(\d+)\x00/g, (_match, idx) => inlineCodes[parseInt(idx)]);
-  html = html.replace(/\x00LINK(\d+)\x00/g, (_match, idx) => links[parseInt(idx)]);
+  html = html.replace(/\x00CODEBLOCK(\d+)\x00/g, (_match, idx) => codeBlocks[parseInt(idx)] ?? "");
+  html = html.replace(/\x00INLINE(\d+)\x00/g, (_match, idx) => inlineCodes[parseInt(idx)] ?? "");
+  html = html.replace(/\x00LINK(\d+)\x00/g, (_match, idx) => links[parseInt(idx)] ?? "");
 
   // Clean up excessive blank lines (max 2)
   html = html.replace(/\n{3,}/g, "\n\n");
@@ -329,7 +330,7 @@ export async function start(
   });
 
   // Text messages → command queue
-  bot.on("message:text", (ctx) => {
+  bot.on("message:text", async (ctx) => {
     const text = ctx.message.text;
     const chatId = ctx.chat.id;
 
@@ -338,7 +339,9 @@ export async function start(
       length: text.length,
     });
 
-    enqueuePrompt!(`telegram:${chatId}`, text, {
+    const prompt = await enrichPromptWithVaultContext(text);
+
+    enqueuePrompt!(`telegram:${chatId}`, prompt, {
       telegramChatId: chatId,
       telegramMessageId: ctx.message.message_id,
     });
@@ -649,6 +652,7 @@ export async function send(
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
+    if (!chunk) continue;
     const isLast = i === chunks.length - 1;
 
     try {

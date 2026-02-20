@@ -155,10 +155,21 @@ export const mediaProcess = inngest.createFunction(
       parts.push(`Path: \`${localPath}\``);
       if (archivePath) parts.push(`NAS: \`${archivePath}\``);
 
-      gateway.notify("media.processed", {
+      await gateway.notify("media.processed", {
         message: parts.join("\n"),
         originSession,
       });
+
+      // Voice commands from Telegram should be treated as direct user prompts,
+      // not as passive media status updates.
+      if (source === "telegram" && type === "audio" && transcript && originSession?.startsWith("telegram:")) {
+        await gateway.notify("telegram.message.received", {
+          originSession,
+          prompt: transcript,
+          transcript,
+          source: "telegram.voice",
+        });
+      }
     });
 
     // Step 5: Emit processed event for downstream consumers
