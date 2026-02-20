@@ -1,225 +1,212 @@
 ---
-title: "Getting a Voice Agent to Actually Fucking Work: A Deep Dive"
-date: "2026-02-20"
-description: "48 hours of voice agent deployment — from LiveKit spike to working phone calls. Stephen King nodes, SIP trunks, and why Tailscale can't do everything."
-tags:
-  - voice
-  - livekit
-  - agents
-  - deployment
-  - stephen-king
+title: "Voice Agent Deployment: Phone Calls with My AI Assistant"
+publishedAt: "2026-02-20T14:00:00"
+summary: "How I set up bidirectional voice conversations with my AI assistant using LiveKit, SIP trunks, and a distributed network. The complete topology and what actually works."
+author: "Joel Hooks"
+tags: ["voice", "livekit", "sip", "infrastructure"]
 ---
 
-3:53 AM on a Thursday. The voice agent just said "shit's broken" and I couldn't stop laughing. Four hours into debugging why the WebSocket kept dropping, turns out it was trying to route through Colima's VM network instead of Tailscale.
+After months of terminal sessions, my AI assistant can now talk. Real voice, real phone calls, real conversations. This is how the voice infrastructure works.
 
-This is the story of getting bidirectional voice conversations working with joelclaw.
+## The Architecture
 
-## The Promise
+[ADR-0043](/adrs/0043-agent-voice-conversations) laid out the vision: self-hosted voice conversations via LiveKit. No cloud dependencies. Full control over the stack. Here's what got deployed.
 
-ADR-0043 laid out the vision: real-time voice conversations with my AI assistant. Morning briefings while making coffee. End-of-day retrospectives. Spoken decisions captured automatically. The ADR was accepted on February 19th — two days ago.
+### Network Topology
 
-The plan looked straightforward:
-- Self-host LiveKit on the k8s cluster
-- Build a Python voice agent with pluggable STT/LLM/TTS
-- Hook up function tools for calendar, tasks, vault search
-- Get a phone number for SIP inbound calls
-
-What could go wrong?
-
-## Everything That Went Wrong
-
-### WebSocket Hell
-
-The first spike worked in the LiveKit playground. Deepgram transcribed my voice, Claude responded, ElevenLabs spoke back. Success! Time to ship.
-
-Then I tried to run it for real.
+The system spans three nodes:
 
 ```
-ConnectionError: WebSocket connection to ws://localhost:7880 failed
+Primary (Mac Mini) ←──────────→ Edge (DigitalOcean)
+    │                              │
+    │ LiveKit Server               │ SIP Gateway
+    │ Voice Agent                  │ Public IP
+    │ k8s cluster                  │
+    │                              ↓
+    └───────────────────────────→ Telnyx SIP
+                                   Phone Network
 ```
 
-Localhost. Of course. The agent was running on Overlook (the Mac Mini), but trying to connect to localhost inside the Colima VM. The fix was switching to Tailscale IPs:
+**Primary node** runs the core infrastructure:
+- LiveKit server on k8s (ports 7880/7881)
+- Python voice agent with function tools
+- Connects via Tailscale mesh network
+
+**Edge node** handles public connectivity:
+- LiveKit SIP service in Docker
+- Public IP for SIP registration
+- Routes calls to primary via Tailscale
+
+This split exists because SIP requires UDP on port 5060 and ports 10000-20000 for RTP media. Tailscale Funnel only supports TCP on specific ports. The edge node provides the public face while keeping the core system private.
+
+### Voice Pipeline
+
+```
+Incoming call → Telnyx → Edge SIP → LiveKit room → Voice agent dispatched
+                                                    │
+                                                    ├─ Deepgram STT
+                                                    ├─ Claude reasoning
+                                                    ├─ Function tools
+                                                    └─ ElevenLabs TTS
+```
+
+The agent runs as a Python process using `livekit-agents` framework. Key configuration:
 
 ```python
-# Before: goes nowhere
-"ws://localhost:7880"
+# Voice parameters tuned for phone quality
+vad = silero.VAD.load(
+    min_speech_duration=0.2,      # Quick response
+    min_silence_duration=0.7,     # Natural pauses
+    activation_threshold=0.85     # Filter background noise
+)
 
-# After: actually routes
-"ws://100.93.201.72:7880"  # Overlook's Tailscale IP
+# Pre-warm for instant responses
+prewarm_fn = lambda: JobProcess(
+    initialize_process_fnc=_plumb_job,
+    job_entrypoint_fnc=_entrypoint,
+    num_idle_processes=1  # Always ready
+)
 ```
 
-### Dev Mode Kills Everything
+### Tools Integration
 
-LiveKit's agent framework has a helpful `dev` mode that watches files and restarts on changes. Except it was killing the agent every 12 seconds:
-
-```
-Agent process died (exit_code=15)
-... 12 seconds later ...
-Agent process died (exit_code=15)
-```
-
-The file watcher was seeing its own log files change and restarting in an infinite loop. Switched to `start` mode. Problem solved.
-
-### SIP Trunk Format Wars
-
-Telnyx lets you configure phone numbers in multiple formats:
-- `+13606051697`
-- `13606051697`
-- `3606051697`
-
-LiveKit SIP accepts any format when creating trunks. But when an actual call comes in, it tries to match ALL configured formats. If you have the same number in two formats, you get:
-
-```
-Multiple SIP Trunks matched for number +13606051697
-```
-
-And the call fails. Had to delete and recreate everything with a single format.
-
-### Voice Not Found
-
-ElevenLabs has this neat library of voices. You can preview them, get their IDs, everything looks great. Then you try to use one:
-
-```json
-{
-  "error": "voice_id_does_not_exist: pg7Nd5b8Y3tnfSndq5lh"
-}
-```
-
-Turns out you need to "Add to My Voices" in the ElevenLabs UI first. The voice exists, the API can see it, but it can't USE it until you claim it. Not documented anywhere.
-
-### No UDP on Tailscale Funnel
-
-The original plan was to use Tailscale Funnel for the SIP trunk. Clean, simple, no public IPs needed. One problem:
-
-**Funnel only does TCP on ports 443, 8443, and 10000.**
-
-SIP needs UDP on 5060 and 10000-20000 for RTP media. No dice.
-
-## The Stephen King Network
-
-That's where our Stephen King nodes came in. The joelclaw network uses Dark Tower character names:
-
-- **Overlook** (panda) — Mac Mini running everything
-- **Derry** (three-body) — 64TB NAS for archives
-- **Blaine** (clanker-001) — DigitalOcean droplet with a real public IP
-
-Blaine saved the day. Spun up a $6/month droplet, gave it a public IP, and ran LiveKit's SIP service there:
-
-```yaml
-# docker-compose on clanker-001
-services:
-  livekit-sip:
-    image: livekit/sip:v0.2.0
-    environment:
-      LIVEKIT_URL: ws://100.93.201.72:7880  # Overlook via Tailscale
-      LIVEKIT_API_KEY: joelclaw_da7b9907
-      USE_JITTER_BUFFER: true  # Fixed choppy audio
-```
-
-Now SIP traffic hits Blaine's public IP, which forwards to Overlook over the Tailscale mesh. Best of both worlds.
-
-## What Actually Works Now
-
-As of 4:13 AM this morning:
-
-### Voice Agent Running
-
-```bash
-~/Projects/joelclaw-voice-agent/run.sh
-```
-
-Python process with Panda's personality loaded from the soul files. Australian accent. Swears naturally. Pre-warm process pool so responses are instant.
-
-### Full Tool Suite
+The voice agent has full access to the system:
 
 ```python
 @function_tool
-async def check_calendar(day: str = "today") -> str:
-    """Check Joel's calendar for a specific day."""
-    result = subprocess.run(
-        ["gog", "cal", "events", "list", "--day", day],
-        capture_output=True, text=True, env=_tool_env()
-    )
-    return _clean_gog_output(result.stdout)
+async def check_calendar(
+    day: str = "today"  # today, tomorrow, Monday, 2026-02-25, range:2026-02-25:2026-02-27
+) -> str:
+    """Check Joel's calendar for a specific day or range."""
+    # Executes gog CLI with proper auth
+    
+@function_tool  
+async def add_task(
+    content: str,
+    due: Optional[str] = None,  # today, tomorrow, Monday, 2026-02-25
+    labels: Optional[List[str]] = None,
+    priority: Optional[int] = None  # 1-4, 4 highest
+) -> str:
+    """Add a task to Joel's Todoist."""
+    # Uses todoist-cli with full TaskPort
 ```
 
-Eight tools wired up: calendar (full CRUD), tasks (via todoist-cli), email check, vault search, system health, Inngest events, current time, and voice switching.
+Plus: email triage, vault search, system health, Inngest event dispatch, and dynamic voice switching.
 
-### Caller Security
+### Security Model
+
+Simple but effective:
 
 ```python
-ALLOWED_CALLERS = {"8176756031"}  # Joel's number
+ALLOWED_CALLERS = {"[REDACTED]"}  # Allowlist
 
-def _extract_caller(room_name: str) -> str:
-    match = re.search(r"sip_(\d+)", room_name)
-    return match.group(1) if match else "unknown"
-
-# In entrypoint
-caller = _extract_caller(ctx.room.name)
+caller = _extract_caller(ctx.room.name)  # sip_PHONENUMBER format
 if caller not in ALLOWED_CALLERS:
-    # Brief "not accepting calls" message
+    # Polite rejection via brief voicemail
     return
 ```
 
-Unknown callers get a polite fuck-off. Joel gets Panda.
+Future phases will add caller tiers — read-only access for some numbers, full control for others.
 
-### Outbound Calling Works Too
+## What Works
+
+### Inbound Calls
+
+Call the system number. Panda (the AI's voice persona) answers immediately. Full conversation with function calling. Calendar queries, task creation, system status — all via voice.
+
+### Outbound Calls
 
 ```bash
 lk sip participant create \
-  --trunk ST_cMFCXnachDG8 \
-  --call +18176756031 \
+  --trunk [TRUNK_ID] \
+  --call +1XXXXXXXXXX \
   --room voice-outbound-joel
 ```
 
-Agent joins the outbound room automatically. Voice callback architecture is designed but not built yet — gateway sees `callback: "voice"` in completion events and initiates the call.
+The agent auto-joins any room matching `voice-outbound-*`. Voice callbacks will integrate with the gateway — completion events with `callback: "voice"` trigger outbound calls.
 
-## The Numbers
+### Voice Quality
 
-- **Phone**: +1 (360) 605-1697 ($1/month from Telnyx)
-- **Latency**: ~1-2 seconds turn-to-turn
-- **Cost**: ~$0.03-0.05 per minute (Deepgram + Claude + ElevenLabs)
-- **Uptime**: Survived the whole night, still running
+- **Latency**: 1-2 seconds turn-to-turn
+- **Audio**: Crystal clear after enabling jitter buffer
+- **Interruption**: VAD handles talk-over gracefully
+- **Cost**: ~$0.04/minute all-in
 
-## slogs Tell the Story
+## Configuration Highlights
+
+### SIP on Edge Node
+
+```yaml
+services:
+  livekit-sip:
+    image: livekit/sip:v0.2.0
+    ports:
+      - "5060:5060/udp"
+      - "5060:5060/tcp"  
+      - "10000-20000:10000-20000/udp"
+    environment:
+      LIVEKIT_URL: ws://[TAILSCALE_IP]:7880
+      LIVEKIT_API_KEY: [KEY]
+      USE_JITTER_BUFFER: true  # Critical for quality
+```
+
+### Voice Agent Identity
+
+System prompt built from soul files:
+
+```python
+soul = (Path.home() / ".agents" / "SOUL.md").read_text()
+identity = (Path.home() / ".agents" / "IDENTITY.md").read_text()
+user = (Path.home() / ".agents" / "USER.md").read_text()
+
+system_prompt = f"""{soul}
+
+## Identity
+{identity}
+
+## User Context  
+{user}
+
+[Voice-specific rules...]
+
+## Vibe
+You have an Australian accent. Swear naturally when it fits.
+"""
+```
+
+### Persistence
 
 ```bash
-slog tail --count 50 | grep voice
+# ~/Projects/joelclaw-voice-agent/run.sh
+#!/bin/bash
+source .venv/bin/activate
+exec python main.py start
 ```
 
-```json
-{
-  "timestamp": "2026-02-20T02:41:52.455Z",
-  "action": "configure",
-  "tool": "telnyx",
-  "detail": "Swapped phone number from Portland 971 to 360 area code",
-  "reason": "Joel is in 360 area code"
-}
-{
-  "timestamp": "2026-02-20T03:53:22.123Z", 
-  "action": "configure",
-  "tool": "voice-agent",
-  "detail": "Fixed voice agent stability: dev→start mode, localhost→tailscale IP, VAD 0.5→0.85",
-  "reason": "Agent dying every 12s, WebSocket drops, room noise"
-}
-```
+Runs via `screen` session. Survives SSH disconnects. Logs to `/tmp/joelclaw/voice-agent.log`.
 
-The system log captures every config change. When something breaks in 6 months, I'll know exactly what we did.
+## Troubleshooting Notes
+
+Common issues encountered during deployment:
+
+**WebSocket failures** — Agent defaulted to `localhost:7880` which routes nowhere in containerized environment. Solution: explicit Tailscale IPs.
+
+**Dev mode instability** — File watcher saw its own logs change, restarted every 12 seconds. Solution: use `start` mode for production.
+
+**SIP trunk format conflicts** — Multiple formats for same number causes ambiguous routing. Solution: single E.164 format throughout.
+
+**Voice library access** — ElevenLabs voices must be "added to my voices" before API access. Not documented, learned through trial.
+
+**Background noise** — Default VAD threshold (0.5) triggered on ambient sound. Raised to 0.85 for phone environment.
 
 ## What's Next
 
-Phase 1 is done — bidirectional voice conversations work. Next up:
+**Phase 2**: Scheduled calls — morning briefings, weekly retrospectives  
+**Phase 3**: Telegram voice messages — async voice notes to/from the bot  
+**Phase 4**: Proactive outreach — context-aware check-ins  
 
-**Phase 2: Scheduled conversations** — Morning briefings via cron, weekly retros that create rooms and send join links
-
-**Phase 3: Telegram voice integration** — Voice messages to/from the bot, or escalate text threads to voice
-
-**Phase 4: Proactive check-ins** — "You've been coding for 4 hours straight. Quick break?"
-
-The voice agent runs 24/7 now, waiting for calls. Panda's always there when I need to talk through a problem. Even if the first words are usually "what the fuck do you want now?"
-
-That's the Australian charm.
+The foundation is solid. Voice is just another interface to the system — same tools, same data, same capabilities. Just more human.
 
 ---
 
-*This is part of the joelclaw deployment series. The system continues to evolve — follow along at [github.com/joelhooks/joelclaw](https://github.com/joelhooks/joelclaw).*
+_Part of the joelclaw deployment series. Source: [github.com/joelhooks/joelclaw](https://github.com/joelhooks/joelclaw)_
