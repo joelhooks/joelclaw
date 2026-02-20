@@ -32,3 +32,4 @@ tags:
 | [0021](0021-agent-memory-system.md) | Comprehensive agent memory system (supersedes 0014, 0020) | proposed | 2026-02-15 |
 | [0072](0072-vip-email-intelligence-pipeline.md) | VIP Email Intelligence Pipeline | proposed | 2026-02-20 |
 | [0073](0073-person-dossier-system.md) | Automatic person dossier system from communication history | proposed | 2026-02-20 |
+| [0074](0074-sandbox-work-extraction-pattern.md) | Sandbox Work Extraction Pattern | proposed | 2026-02-20 |
