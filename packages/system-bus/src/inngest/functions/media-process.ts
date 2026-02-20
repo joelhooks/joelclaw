@@ -156,68 +156,27 @@ async function describeImage(
   mimeType: string,
   caption?: string,
 ): Promise<string> {
-  const buffer = await readFile(imagePath);
-  const base64 = buffer.toString("base64");
-
+  // Use codex for vision — it can read image files natively.
+  // Pattern: all LLM calls use pi/codex CLIs, never direct API calls.
   const prompt = caption
-    ? `Describe this image in detail. The sender included this caption: "${caption}". Include what you see and any text visible in the image.`
-    : "Describe this image in detail. Include what you see and any text visible in the image. If there's handwritten or printed text, transcribe it.";
+    ? `Read the image at ${imagePath} and describe it in detail. The sender included this caption: "${caption}". Include what you see and any text visible in the image.`
+    : `Read the image at ${imagePath} and describe it in detail. Include what you see and any text visible in the image. If there's handwritten or printed text, transcribe it.`;
 
   try {
-    // Use OpenRouter for vision — same pattern as all other LLM calls in system-bus.
-    // NEVER use direct Anthropic API — we don't store anthropic_api_key.
-    let apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) {
-      try {
-        apiKey = execSync("secrets lease openrouter_api_key --ttl 1h 2>/dev/null", {
-          encoding: "utf-8",
-          timeout: 5000,
-        }).trim();
-        if (apiKey.startsWith("{")) apiKey = undefined; // JSON envelope = error
-      } catch {}
-    }
-    if (!apiKey) throw new Error("No OPENROUTER_API_KEY available");
-
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
+    const result = execSync(
+      `codex exec --full-auto -q ${JSON.stringify(prompt)}`,
+      {
+        encoding: "utf-8",
+        timeout: 60_000,
+        maxBuffer: 1024 * 1024,
       },
-      body: JSON.stringify({
-        model: "anthropic/claude-sonnet-4-20250514",
-        max_tokens: 1024,
-        messages: [
-          {
-            role: "system",
-            content: "You describe images sent to an AI assistant via messaging. Be thorough but concise. Transcribe any visible text accurately. If it appears personal, still describe it factually — the recipient asked to see it.",
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:${mimeType};base64,${base64}`,
-                },
-              },
-              { type: "text", text: prompt },
-            ],
-          },
-        ],
-      }),
-    });
+    ).trim();
 
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`OpenRouter API ${response.status}: ${body.slice(0, 200)}`);
-    }
-
-    const data = await response.json() as any;
-    const text = data.choices?.[0]?.message?.content;
-    return text || "Image received but vision description produced no output.";
+    return result || "Image received but vision description produced no output.";
   } catch (err: any) {
-    return `Image received (${mimeType}, ${buffer.length} bytes). Vision description failed: ${err.message?.slice(0, 100)}`;
+    const info = await stat(imagePath).catch(() => null);
+    const size = info?.size ?? 0;
+    return `Image received (${mimeType}, ${size} bytes). Vision description failed: ${err.message?.slice(0, 100)}`;
   }
 }
 
