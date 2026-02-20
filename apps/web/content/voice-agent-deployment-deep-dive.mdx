@@ -5,7 +5,7 @@ description: "Building a janky voice interface for my AI assistant. It's not nat
 tags: ["voice", "livekit", "experiments"]
 ---
 
-I've been frustrated for years watching voice apps like SuperWhisper and Wispr Flow do amazing local transcription but be completely useless in the car. No CarPlay means they're dead to me when I actually need hands-free.
+I've wanted CarPlay voice control for years. Tools like [SuperWhisper](https://superwhisper.com) and [Wispr Flow](https://wisprflow.ai) do amazing local transcription but they're stuck on your device. No CarPlay means they can't help when I actually need hands-free.
 
 So I built my own. It's rough as hell but it works.
 
@@ -28,7 +28,7 @@ When you call, it goes: Phone → Telnyx → SIP gateway → LiveKit room → Vo
 
 ## The Honest State of It
 
-Let me be real: voice is still kind of dumb. I've barely used it. Talking to an AI isn't natural for me and probably won't be without a lot of practice and tuning.
+Voice is still kind of dumb. I've barely used it. Talking to an AI isn't natural for me and probably won't be without a lot of practice and tuning.
 
 What's annoying:
 - **The lag**: 1-2 seconds feels like forever in conversation
@@ -40,7 +40,7 @@ It beats the shit out of Siri (admittedly a low bar 💀) but this is rough edge
 
 ## What Actually Works
 
-Despite all that, some things are genuinely useful:
+A few things are genuinely useful already:
 
 **Q&A for writing**: Voice conversations avoid AI writing slop. When I talk through ideas, the agent asks questions, I give real answers in my actual voice. No "In today's rapidly evolving technological landscape" bullshit. This article came from exactly that process.
 
@@ -48,9 +48,9 @@ Despite all that, some things are genuinely useful:
 
 **Emails and messages**: Voice-to-text for mundane communication. Not revolutionary but saves the context switch.
 
-## What Needs to Happen
+## Iterating to Actually Good™
 
-For this to not suck:
+Key improvements needed:
 
 1. **Native app + CarPlay**: This is everything. Voice without CarPlay is pointless.
 2. **Way lower latency**: Sub-second or it's unusable for real conversation
@@ -105,7 +105,7 @@ But that's fine. I'll use this janky version to work towards making it Actually 
 
 ## The Real Point
 
-This isn't about having the best voice interface. It's about learning what actually matters for voice interactions with my own tools. Every jank conversation teaches me something about what needs to be better.
+It's about learning what actually matters for voice interactions with my own tools. Every jank conversation teaches me something about what needs to be better. Building it myself means I can iterate on exactly what bugs me.
 
 Maybe in six months this evolves into something actually good. Maybe voice stays a party trick. But I had to try building it to find out.
 
