@@ -18,6 +18,7 @@ const EVENT_LIST = "joelclaw:events:gateway";
 const LEGACY_EVENT_LIST = "joelclaw:events:main";
 const NOTIFY_CHANNEL = "joelclaw:notify:gateway";
 const LEGACY_NOTIFY_CHANNEL = "joelclaw:notify:main";
+const BATCH_LIST = "joelclaw:events:batch";
 const HEARTBEAT_PATH = `${homedir()}/Vault/HEARTBEAT.md`;
 const DEDUP_MAX = 500;
 
@@ -137,22 +138,64 @@ async function drainEvents(): Promise<void> {
       return;
     }
 
-    // ── Noise suppression ─────────────────────────────────────────
-    // Filter event types that burn tokens without adding signal.
-    // todoist.task.completed: echoes from tasks the agent just closed
-    // memory.observed: telemetry confirmations, not actionable
-    // content.synced: vault sync confirmations
+    // ── Three-tier event triage (bias-to-action triangle) ────────
+    //
+    // 🔺 IMMEDIATE — forward to agent now (actionable, needs response)
+    // 🔸 BATCHED   — accumulate in Redis, flush as hourly digest
+    // ⬛ SUPPRESSED — drop silently (echoes, telemetry, noise)
+    //
     const SUPPRESSED_TYPES = new Set([
-      "todoist.task.completed",
-      "memory.observed",
-      "content.synced",
+      "todoist.task.completed",  // echo from agent's own closes
+      "memory.observed",         // telemetry confirmation
+      "content.synced",          // vault sync confirmation
     ]);
-    const actionable = events.filter((e) => !SUPPRESSED_TYPES.has(e.type));
-    if (actionable.length === 0) {
-      console.log(`[redis] suppressed ${events.length} noise event(s): ${events.map(e => e.type).join(", ")}`);
+
+    const BATCHED_TYPES = new Set([
+      "todoist.task.created",      // agent-created task echo
+      "todoist.task.deleted",      // no action needed
+      "front.message.sent",        // outbound email echo
+      "front.assignee.changed",    // low signal assignment change
+      "vercel.deploy.succeeded",   // success is default
+      "vercel.deploy.created",     // deploy started, nothing to do
+      "vercel.deploy.canceled",    // rare, no action
+      "discovery.captured",        // captured for later
+      "meeting.analyzed",          // Granola meeting summaries
+    ]);
+
+    const suppressed: SystemEvent[] = [];
+    const batched: SystemEvent[] = [];
+    const immediate: SystemEvent[] = [];
+
+    for (const e of events) {
+      if (SUPPRESSED_TYPES.has(e.type)) {
+        suppressed.push(e);
+      } else if (BATCHED_TYPES.has(e.type)) {
+        batched.push(e);
+      } else {
+        immediate.push(e);
+      }
+    }
+
+    // Stash batched events in Redis for hourly digest
+    if (batched.length > 0) {
+      for (const e of batched) {
+        await cmd.rpush(BATCH_LIST, JSON.stringify(e));
+      }
+      console.log(`[redis] batched ${batched.length} event(s): ${batched.map(e => e.type).join(", ")}`);
+    }
+
+    if (suppressed.length > 0) {
+      console.log(`[redis] suppressed ${suppressed.length} noise event(s): ${suppressed.map(e => e.type).join(", ")}`);
+    }
+
+    // Nothing immediate? Clear the queue and wait
+    if (immediate.length === 0) {
       await cmd.del(EVENT_LIST);
       return;
     }
+
+    // Only immediate events get forwarded to the agent session
+    const actionable = immediate;
 
     // Check if any event has an originSession — route response back to that channel
     const originSession = actionable.find(
@@ -280,6 +323,56 @@ export async function start(enqueue: EnqueueFn): Promise<void> {
     console.error("[gateway:redis] initial connect failed — will retry", { error });
     scheduleRetry();
   }
+}
+
+/**
+ * Flush batched events as a single digest prompt.
+ * Called by heartbeat runner on hourly cadence.
+ * Returns the number of events flushed.
+ */
+export async function flushBatchDigest(): Promise<number> {
+  if (!cmd || !enqueuePrompt) return 0;
+
+  const raw = await cmd.lrange(BATCH_LIST, 0, -1);
+  if (raw.length === 0) return 0;
+
+  await cmd.del(BATCH_LIST);
+
+  const events: SystemEvent[] = [];
+  for (const item of raw) {
+    const event = parseEvent(item);
+    if (event) events.push(event);
+  }
+
+  if (events.length === 0) return 0;
+
+  // Group by type for a compact summary
+  const counts = new Map<string, number>();
+  for (const e of events) {
+    counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
+  }
+
+  const lines = Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([type, count]) => `- ${type}: ${count}`);
+
+  const ts = new Date().toISOString();
+  const prompt = [
+    `## 📋 Batch Digest — ${ts}`,
+    "",
+    `${events.length} event(s) since last digest:`,
+    ...lines,
+    "",
+    "Acknowledge briefly. Only flag if something looks wrong.",
+  ].join("\n");
+
+  enqueuePrompt(SESSION_ID, prompt, {
+    eventCount: events.length,
+    digestTypes: Object.fromEntries(counts),
+  });
+
+  console.log(`[redis] flushed batch digest: ${events.length} events across ${counts.size} types`);
+  return events.length;
 }
 
 /** Is the Redis channel healthy and connected? */

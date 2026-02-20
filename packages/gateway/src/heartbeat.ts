@@ -1,10 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { enqueue } from "./command-queue";
+import { flushBatchDigest } from "./channels/redis";
 
 const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const THIRTY_MINUTES_MS = 30 * 60 * 1000;
+const ONE_HOUR_MS = 60 * 60 * 1000;
 
 const HEARTBEAT_SOURCE = "heartbeat";
 const HEARTBEAT_CHECKLIST_PATH = `${homedir()}/Vault/HEARTBEAT.md`;
@@ -130,9 +132,25 @@ export function startHeartbeatRunner(): HeartbeatRunner {
     runWatchdog();
   }, FIVE_MINUTES_MS);
 
+  // ── Hourly batch digest flush ─────────────────────────
+  // Flushes accumulated BATCHED-tier events as a single digest.
+  // Runs independently of heartbeat — digest only fires when
+  // there are events to report.
+  const digestTimer: TimerHandle = setInterval(async () => {
+    try {
+      const count = await flushBatchDigest();
+      if (count > 0) {
+        console.log(`[heartbeat] hourly digest flushed ${count} events`);
+      }
+    } catch (error) {
+      console.error("[heartbeat] digest flush failed", { error });
+    }
+  }, ONE_HOUR_MS);
+
   const stop = async (): Promise<void> => {
     clearInterval(heartbeatTimer);
     clearInterval(watchdogTimer);
+    clearInterval(digestTimer);
   };
 
   return {
