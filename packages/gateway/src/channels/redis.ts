@@ -54,7 +54,7 @@ function normalizeMode(mode: string | null | undefined): GatewayMode {
   return mode === "sleep" ? "sleep" : "active";
 }
 
-async function getGatewayMode(): Promise<GatewayMode> {
+export async function getGatewayMode(): Promise<GatewayMode> {
   if (!cmd) return "active";
   const mode = await cmd.get(MODE_KEY);
   return normalizeMode(mode);

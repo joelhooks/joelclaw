@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { enqueue } from "./command-queue";
-import { flushBatchDigest } from "./channels/redis";
+import { flushBatchDigest, getGatewayMode } from "./channels/redis";
 
 const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
@@ -49,6 +49,12 @@ async function writeTripwire(ts: number): Promise<void> {
 }
 
 async function runHeartbeat(): Promise<void> {
+  const mode = await getGatewayMode();
+  if (mode === "sleep") {
+    console.log("[heartbeat] skipped heartbeat injection (sleep mode)");
+    return;
+  }
+
   let checklistContent = "";
 
   try {
@@ -138,6 +144,12 @@ export function startHeartbeatRunner(): HeartbeatRunner {
   // there are events to report.
   const digestTimer: TimerHandle = setInterval(async () => {
     try {
+      const mode = await getGatewayMode();
+      if (mode === "sleep") {
+        console.log("[heartbeat] skipped digest flush (sleep mode)");
+        return;
+      }
+
       const count = await flushBatchDigest();
       if (count > 0) {
         console.log(`[heartbeat] hourly digest flushed ${count} events`);
