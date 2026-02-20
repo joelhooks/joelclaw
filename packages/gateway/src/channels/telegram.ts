@@ -20,6 +20,32 @@ const INNGEST_EVENT_KEY = process.env.INNGEST_EVENT_KEY ?? "";
 
 let _botToken: string | undefined;
 
+// ── Inline keyboard types (ADR-0070) ───────────────────
+export interface InlineButton {
+  text: string;
+  action?: string;   // callback_data (max 64 bytes, mutually exclusive with url)
+  url?: string;       // URL button
+}
+
+export interface RichSendOptions {
+  replyTo?: number;
+  buttons?: InlineButton[][];  // rows of buttons
+  silent?: boolean;            // disable_notification
+  noPreview?: boolean;         // disable_web_page_preview
+}
+
+// Human-readable labels shown after button press
+const ACTION_LABELS: Record<string, string> = {
+  archive: "📦 <b>Archived</b>",
+  flag: "🚩 <b>Flagged for follow-up</b>",
+  reply_later: "⏰ <b>Marked for reply</b>",
+  approve: "✅ <b>Approved</b>",
+  reject: "❌ <b>Rejected</b>",
+  skip: "⏭ <b>Skipped</b>",
+  ack: "👍 <b>Acknowledged</b>",
+  investigate: "🔍 <b>Investigating...</b>",
+};
+
 function mimeFromExt(ext: string): string {
   const map: Record<string, string> = {
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
@@ -490,6 +516,74 @@ export async function start(
       { telegramChatId: chatId, telegramMessageId: ctx.message.message_id });
   });
 
+  // Callback query handler — inline keyboard button presses (ADR-0070)
+  bot.on("callback_query:data", async (ctx) => {
+    const data = ctx.callbackQuery.data;
+    const chatId = ctx.callbackQuery.message?.chat.id;
+    const messageId = ctx.callbackQuery.message?.message_id;
+
+    console.log("[gateway:telegram] callback_query", { data, chatId, messageId });
+
+    // Always answer within 10s or button shows loading spinner
+    try {
+      await ctx.answerCallbackQuery({ text: "Processing..." });
+    } catch {
+      // non-critical
+    }
+
+    // Parse callback_data — format: "action:context" (max 64 bytes)
+    const colonIdx = data.indexOf(":");
+    const action = colonIdx > 0 ? data.slice(0, colonIdx) : data;
+    const context = colonIdx > 0 ? data.slice(colonIdx + 1) : "";
+
+    // Fire Inngest event for the callback action
+    try {
+      const eventKey = INNGEST_EVENT_KEY || "37aa349b89692d657d276a40e0e47a15";
+      const res = await fetch(`${INNGEST_URL}/e/${eventKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "telegram/callback.received",
+          data: {
+            action,
+            context,
+            rawData: data,
+            chatId,
+            messageId,
+          },
+        }),
+      });
+      if (!res.ok) {
+        console.error("[gateway:telegram] callback inngest event failed", { status: res.status });
+      }
+    } catch (err) {
+      console.error("[gateway:telegram] callback inngest error", { error: String(err) });
+    }
+
+    // Edit the original message to show action taken
+    if (chatId && messageId) {
+      const actionLabel = ACTION_LABELS[action] ?? `✅ ${action}`;
+      try {
+        await bot!.api.editMessageReplyMarkup(chatId, messageId, {
+          reply_markup: { inline_keyboard: [] }, // remove buttons
+        });
+        // Append action indicator to message
+        const original = ctx.callbackQuery.message && "text" in ctx.callbackQuery.message
+          ? (ctx.callbackQuery.message as any).text ?? ""
+          : "";
+        if (original) {
+          await bot!.api.editMessageText(chatId, messageId, `${original}\n\n${actionLabel}`, {
+            parse_mode: "HTML",
+          }).catch(() => {
+            // editMessageText can fail if content unchanged — ignore
+          });
+        }
+      } catch (err) {
+        console.error("[gateway:telegram] edit after callback failed", { error: String(err) });
+      }
+    }
+  });
+
   // Start long polling (non-blocking)
   bot.start({
     onStart: (botInfo) => {
@@ -511,7 +605,7 @@ export async function start(
 export async function send(
   chatId: number,
   message: string,
-  options?: { replyTo?: number },
+  options?: RichSendOptions,
 ): Promise<void> {
   if (!bot) {
     console.error("[gateway:telegram] bot not started, can't send");
@@ -525,14 +619,33 @@ export async function send(
     // non-critical
   }
 
+  // Build inline keyboard if buttons provided
+  const replyMarkup = options?.buttons
+    ? {
+        inline_keyboard: options.buttons.map(row =>
+          row.map(btn => btn.url
+            ? { text: btn.text, url: btn.url }
+            : { text: btn.text, callback_data: btn.action ?? btn.text }
+          )
+        ),
+      }
+    : undefined;
+
   const html = mdToTelegramHtml(message);
   const chunks = chunkMessage(html);
 
-  for (const chunk of chunks) {
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const isLast = i === chunks.length - 1;
+
     try {
       await bot.api.sendMessage(chatId, chunk, {
         parse_mode: "HTML",
+        // Only attach buttons to the last chunk
+        ...(isLast && replyMarkup ? { reply_markup: replyMarkup } : {}),
         ...(options?.replyTo ? { reply_parameters: { message_id: options.replyTo } } : {}),
+        ...(options?.silent ? { disable_notification: true } : {}),
+        ...(options?.noPreview ? { link_preview_options: { is_disabled: true } } : {}),
       });
     } catch (error) {
       // Fallback: send as plain text if HTML parsing fails
@@ -540,6 +653,8 @@ export async function send(
       try {
         await bot.api.sendMessage(chatId, message.slice(0, CHUNK_MAX), {
           ...(options?.replyTo ? { reply_parameters: { message_id: options.replyTo } } : {}),
+          ...(options?.silent ? { disable_notification: true } : {}),
+          ...(isLast && replyMarkup ? { reply_markup: replyMarkup } : {}),
         });
       } catch (fallbackError) {
         console.error("[gateway:telegram] send failed completely", { fallbackError });
