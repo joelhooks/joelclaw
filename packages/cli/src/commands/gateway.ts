@@ -26,6 +26,16 @@ function makeRedis() {
 
 // ── gateway status ──────────────────────────────────────────────────
 
+/** Check if a PID is alive (POSIX kill -0) */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 const gatewayStatus = Command.make("status", {}, () =>
   Effect.gen(function* () {
     const redis = yield* makeRedis()
@@ -37,12 +47,44 @@ const gatewayStatus = Command.make("status", {}, () =>
       try: () => redis.smembers(SESSIONS_SET),
       catch: (e) => new Error(`${e}`),
     })
+
+    // Check PIDs and auto-prune dead ones
+    const deadSessions: string[] = []
+    const aliveSessions: string[] = []
+    for (const s of sessions) {
+      const pidMatch = s.match(/^pid-(\d+)$/)
+      if (pidMatch) {
+        const pid = parseInt(pidMatch[1], 10)
+        if (isPidAlive(pid)) {
+          aliveSessions.push(s)
+        } else {
+          deadSessions.push(s)
+        }
+      } else {
+        // Non-PID sessions (e.g. "gateway") — keep
+        aliveSessions.push(s)
+      }
+    }
+
+    // Auto-prune dead PIDs from Redis
+    if (deadSessions.length > 0) {
+      yield* Effect.tryPromise({
+        try: async () => {
+          for (const s of deadSessions) {
+            await redis.srem(SESSIONS_SET, s)
+            await redis.del(`joelclaw:events:${s}`)
+          }
+        },
+        catch: () => {},
+      })
+    }
+
     const { sessionInfo, legacyLen } = yield* Effect.tryPromise({
       try: async () => {
-        const info: Array<{ id: string; pending: number }> = []
-        for (const s of sessions) {
+        const info: Array<{ id: string; pending: number; alive: boolean }> = []
+        for (const s of aliveSessions) {
           const len = await redis.llen(`joelclaw:events:${s}`)
-          info.push({ id: s, pending: len })
+          info.push({ id: s, pending: len, alive: true })
         }
         const legacy = await redis.llen("joelclaw:events:main")
         return { sessionInfo: info, legacyLen: legacy }
@@ -56,11 +98,18 @@ const gatewayStatus = Command.make("status", {}, () =>
       {
         redis: pong === "PONG" ? "connected" : "error",
         activeSessions: sessionInfo,
+        ...(deadSessions.length > 0 ? { pruned: deadSessions } : {}),
         legacyQueuePending: legacyLen,
       },
       [
         { command: "joelclaw gateway events", description: "Peek at pending events" },
-        { command: "joelclaw gateway push --type test", description: "Push a test event" },
+        {
+          command: "joelclaw gateway push --type <type>",
+          description: "Push an event to all sessions",
+          params: {
+            type: { description: "Event type", default: "test", enum: ["test", "cron.heartbeat", "test.gateway-e2e"] },
+          },
+        },
         { command: "joelclaw gateway drain", description: "Clear all event queues" },
       ],
       pong === "PONG"
