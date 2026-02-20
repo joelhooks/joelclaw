@@ -201,6 +201,12 @@ Writing in someone's voice is a privilege. The moment you invent experiences the
 | Hiding behind "we" when he means "I" | "I" for personal opinions, "we" for team efforts (egghead) |
 | SEO keyword stuffing | Write for humans. Search follows substance. |
 | Attribution-free idea theft | Names and links for every borrowed concept |
+| "Let me be real" intros | Just be real without announcing it |
+| "What I Actually Built" | "What I Built" — no need to emphasize actuality |
+| Calling things "dumb" when you mean "unnatural" | Be precise about the actual friction |
+| "Genuinely useful" | "Useful" — the adverb adds nothing |
+| "as hell" intensifier | Just "rough" is stronger than "rough as hell" |
+| Making up kids' reactions | They "didn't give a fuck" not "saw it as dial-up" |
 
 ---
 

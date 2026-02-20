@@ -194,7 +194,7 @@ async function drainEvents(): Promise<void> {
       "todoist.task.completed",  // echo from agent's own closes
       "memory.observed",         // telemetry confirmation
       "content.synced",          // vault sync confirmation
-      "media.processed",         // media pipeline completion — already handled inline
+      // media.processed — removed: gateway.notify() uses this type and it was being suppressed
       "progress",                // inngest step progress events — noisy, not actionable
     ]);
 

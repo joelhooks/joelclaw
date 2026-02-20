@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { enqueue } from "./command-queue";
-import { flushBatchDigest, getGatewayMode } from "./channels/redis";
+import { enqueue, getConsecutiveFailures, getQueueDepth } from "./command-queue";
+import { flushBatchDigest, getGatewayMode, isHealthy as isRedisHealthy } from "./channels/redis";
 
 const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
@@ -24,13 +24,34 @@ export type HeartbeatRunner = {
 let lastHeartbeatTs: number | undefined;
 let watchdogAlarmFired = false;
 
+function buildAgentHealthBlock(): string {
+  const failures = getConsecutiveFailures();
+  const queueDepth = getQueueDepth();
+  const redisOk = isRedisHealthy();
+  const sessionOk = failures < 3;
+  const allGreen = redisOk && sessionOk && queueDepth <= 2;
+
+  if (allGreen) {
+    return "## Agent Health: ✅ all green";
+  }
+
+  const lines = ["## Agent Health: ⚠️ NEEDS ATTENTION"];
+  if (!redisOk) lines.push("- ❌ Redis: DEGRADED — channels may be dropping events");
+  if (!sessionOk) lines.push(`- ❌ Session: DEAD — ${failures} consecutive prompt failures (auto-restart pending)`);
+  if (queueDepth > 2) lines.push(`- ⚠️ Queue depth: ${queueDepth} — messages backing up`);
+  return lines.join("\n");
+}
+
 function buildHeartbeatPrompt(checklistContent: string): string {
   const timestamp = new Date().toISOString();
+  const agentHealth = buildAgentHealthBlock();
 
   return [
     "HEARTBEAT",
     "",
     `Timestamp: ${timestamp}`,
+    "",
+    agentHealth,
     "",
     "Run this checklist now. Keep the response short and operational.",
     `If nothing needs attention, reply exactly: ${HEARTBEAT_OK}`,

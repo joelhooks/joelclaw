@@ -26,6 +26,10 @@ const WS_PORT_FILE = `${PID_DIR}/gateway.ws.port`;
 const JOELCLAW_DIR = join(HOME, ".joelclaw");
 const SESSION_ID_FILE = join(JOELCLAW_DIR, "gateway.session");
 const GATEWAY_SESSION_DIR = join(JOELCLAW_DIR, "sessions", "gateway");
+// Gateway-specific working dir — has its own .pi/settings.json with aggressive compaction.
+// Project-level settings (cwd/.pi/settings.json) override global (~/.pi/agent/settings.json).
+// This keeps gateway compaction isolated from interactive pi sessions.
+const GATEWAY_CWD = join(JOELCLAW_DIR, "gateway");
 const DEFAULT_WS_PORT = 3018;
 const WS_PORT = Number.parseInt(process.env.PI_GATEWAY_WS_PORT ?? `${DEFAULT_WS_PORT}`, 10) || DEFAULT_WS_PORT;
 const startedAt = Date.now();
@@ -70,7 +74,7 @@ console.log("[gateway] session", {
 });
 
 const { session } = await createAgentSession({
-  cwd: HOME,
+  cwd: GATEWAY_CWD,
   agentDir: AGENT_DIR,
   model: resolveModel(),
   thinkingLevel: "low",
