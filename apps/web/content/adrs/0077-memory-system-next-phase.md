@@ -35,17 +35,13 @@ The memory system (ADR-0021) has been running in production since 2026-02-14. Si
 
 [@jumperz on X](https://x.com/jumperz/status/2024841165774717031) published a comprehensive 31-piece agent memory architecture split across 3 phases. The two diagrams below capture the full system:
 
-#### Section 1: Memory Storage
+#### Section 1: Memory Storage — "Full Agent Memory Build — In Order"
 
-![[adr/jumperz-memory-storage.jpg]]
+![[adr/jumperz-memory-storage.jpg|Full Agent Memory Build — In Order: Short-Term (checkpoint, working memory), Files (resources, items, write gate, dedup, categories, strength, sentiment), Graph (triples, conflict resolution), Episodic (episodes, episode search)]]
 
-*Rows: Short-Term (checkpoint, working memory), Files (resources, items, write gate, dedup, categories, strength, sentiment), Graph (triples, conflict resolution), Episodic (episodes, episode search). Tags: Core, Next, Adv.*
+#### Section 2: Memory Intelligence — "Feeds Into"
 
-#### Section 2: Memory Intelligence
-
-![[adr/jumperz-memory-intelligence.jpg]]
-
-*Rows: Retrieval (rewrite query, score decay, tiered, inject, dual search), Decay (nightly, weekly, cron fallback, domain TTLs), Advanced (trust pass, echo/fizzle, memory agent, cross-agent, forward, budget-aware), Ops (session flush, behavior loop). Tags: Core, Next, Adv. Bottom banner: "Weekly/Monthly rebuilds feed back into Categories + Score Decay."*
+![[adr/jumperz-memory-intelligence.jpg|Memory Intelligence: Retrieval (rewrite query, score decay, tiered, inject, dual search), Decay (nightly, weekly, cron fallback, domain TTLs), Advanced (trust pass, echo/fizzle, memory agent, cross-agent, forward, budget-aware), Ops (session flush, behavior loop)]]
 
 Key concepts from that framework not yet implemented in joelclaw:
 
