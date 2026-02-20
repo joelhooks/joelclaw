@@ -33,3 +33,5 @@ tags:
 | [0072](0072-vip-email-intelligence-pipeline.md) | VIP Email Intelligence Pipeline | proposed | 2026-02-20 |
 | [0073](0073-person-dossier-system.md) | Automatic person dossier system from communication history | proposed | 2026-02-20 |
 | [0074](0074-sandbox-work-extraction-pattern.md) | Sandbox Work Extraction Pattern | proposed | 2026-02-20 |
+| [0075](0075-joelclaw-auth-better-auth-github-convex.md) | joelclaw.com Authentication with Better Auth + GitHub + Convex | proposed | 2026-02-20 |
+| [0076](0076-enhanced-agent-markdown-instructions.md) | Enhanced Agent-Specific Markdown Instructions | proposed | 2026-02-20 |
