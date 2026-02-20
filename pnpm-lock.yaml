@@ -161,6 +161,9 @@ importers:
       '@effect/platform-bun':
         specifier: ^0.87.1
         version: 0.87.1(@effect/cluster@0.56.4(@effect/platform@0.94.5(effect@3.19.17))(@effect/rpc@0.73.1(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17))(@effect/sql@0.49.0(@effect/experimental@0.58.0(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17)(ioredis@5.9.3))(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17))(@effect/workflow@0.16.0(@effect/experimental@0.58.0(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17)(ioredis@5.9.3))(@effect/platform@0.94.5(effect@3.19.17))(@effect/rpc@0.73.1(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17))(effect@3.19.17))(effect@3.19.17))(@effect/platform@0.94.5(effect@3.19.17))(@effect/rpc@0.73.1(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17))(@effect/sql@0.49.0(@effect/experimental@0.58.0(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17)(ioredis@5.9.3))(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17))(effect@3.19.17)
+      '@toon-format/toon':
+        specifier: ^2.1.0
+        version: 2.1.0
       effect:
         specifier: ^3.19.17
         version: 3.19.17
@@ -2193,6 +2196,9 @@ packages:
 
   '@tokenizer/token@0.3.0':
     resolution: {integrity: sha512-OvjF+z51L3ov0OyAU0duzsYuvO01PH7x4t6DJx+guahgTnBHkhJdG7soQeTSFLWN3efnHyibZ4Z8l2EuWwJN3A==}
+
+  '@toon-format/toon@2.1.0':
+    resolution: {integrity: sha512-JwWptdF5eOA0HaQxbKAzkpQtR4wSWTEfDlEy/y3/4okmOAX1qwnpLZMmtEWr+ncAhTTY1raCKH0kteHhSXnQqg==}
 
   '@tootallnate/quickjs-emscripten@0.23.0':
     resolution: {integrity: sha512-C5Mc6rdnsaJDjO3UpGW/CQTHtCKaYlScZTly4JIu97Jxo/odCiH0ITnDXSJPTOrEKk/ycSZ0AOgTmkDtkOsvIA==}
@@ -6429,6 +6435,8 @@ snapshots:
       - supports-color
 
   '@tokenizer/token@0.3.0': {}
+
+  '@toon-format/toon@2.1.0': {}
 
   '@tootallnate/quickjs-emscripten@0.23.0': {}
 

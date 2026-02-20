@@ -91,7 +91,10 @@ const cli = Command.run(root, {
   version: "0.2.0",
 })
 
-cli(process.argv).pipe(
+// Strip --toon before Effect CLI sees it (handled in response.ts via process.argv check)
+const argv = process.argv.filter(a => a !== "--toon")
+
+cli(argv).pipe(
   Effect.provide(Inngest.Default),
   Effect.provide(BunContext.layer),
   BunRuntime.runMain,

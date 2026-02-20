@@ -10,7 +10,17 @@
  * When `params` is present, `command` is a template. Agent fills placeholders.
  * When `params` is absent, `command` is a literal. Agent runs it as-is.
  * When a param has `value`, it's pre-filled from context (agent can override).
+ *
+ * TOON support (spike): pass --toon flag to encode the result field in
+ * Token-Oriented Object Notation for ~40% token savings on array data.
+ * Envelope (ok, command, next_actions) stays JSON. Only result changes.
+ * Revert: remove @toon-format/toon dep and toonEnabled/encodeToon code.
  */
+
+import { encode as toonEncode } from "@toon-format/toon"
+
+/** Check if --toon flag was passed */
+export const toonEnabled = process.argv.includes("--toon")
 
 export interface NextActionParam {
   readonly description?: string
@@ -57,8 +67,30 @@ export const respond = (
   result: unknown,
   nextActions: readonly NextAction[],
   ok = true
-): string =>
-  JSON.stringify(
+): string => {
+  if (toonEnabled) {
+    // Hybrid output: JSON envelope with TOON-encoded result
+    // Envelope stays JSON for parseability, result gets token savings
+    let toonResult: string
+    try {
+      toonResult = toonEncode(result as Record<string, unknown>)
+    } catch {
+      // Fall back to JSON if TOON can't encode (primitives, etc.)
+      toonResult = JSON.stringify(result, null, 2)
+    }
+    const envelope = {
+      ok,
+      command: normalizeCommand(command),
+      result_format: "toon" as const,
+      next_actions: nextActions.map((action) => ({
+        ...action,
+        command: normalizeCommand(action.command),
+      })),
+    }
+    return JSON.stringify(envelope, null, 2) + "\n---TOON---\n" + toonResult
+  }
+
+  return JSON.stringify(
     {
       ok,
       command: normalizeCommand(command),
@@ -71,6 +103,7 @@ export const respond = (
     null,
     2
   )
+}
 
 export const respondError = (
   command: string,
