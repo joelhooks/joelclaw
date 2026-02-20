@@ -60,7 +60,8 @@ export const mediaProcess = inngest.createFunction(
       };
     });
 
-    gateway.progress(`Processing ${type} from ${source}: ${fileInfo.name} (${formatBytes(fileInfo.size)})`);
+    // NOTE: gateway.progress() MUST be inside a step — outside, it fires on every
+    // step replay (once per step = 5x for a single image). See ADR-0043 gotcha.
 
     // Step 2: Process based on type
     let description: string | undefined;
@@ -167,10 +168,21 @@ async function describeImage(
     let apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
       try {
-        apiKey = execSync("secrets lease anthropic_api_key --ttl 1h 2>/dev/null", {
+        const raw = execSync("secrets lease anthropic_api_key --ttl 1h 2>/dev/null", {
           encoding: "utf-8",
           timeout: 5000,
         }).trim();
+        // agent-secrets may return JSON envelope — extract the value
+        if (raw.startsWith("{")) {
+          try {
+            const parsed = JSON.parse(raw);
+            apiKey = parsed.value ?? parsed.secret ?? undefined;
+          } catch {
+            apiKey = undefined;
+          }
+        } else {
+          apiKey = raw;
+        }
       } catch {}
     }
     if (!apiKey) throw new Error("No ANTHROPIC_API_KEY available");
