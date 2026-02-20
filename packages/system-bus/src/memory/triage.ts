@@ -14,10 +14,20 @@ export type TriageResult = {
 
 const INSTRUCTION_PREFIXES = [
   "add after",
+  "add entries",
+  "add:",
+  "add new",
   "replace ",
   "expand ",
   "consolidate ",
   "strengthen existing",
+  "strengthen ",
+  "update existing",
+  "update the ",
+  "remove duplicate",
+  "remove all duplicate",
+  "confirm and",
+  "clarify the",
 ];
 
 const OPINION_WORDS_RE = /\b(should|wants|prefers|never|always)\b/iu;
