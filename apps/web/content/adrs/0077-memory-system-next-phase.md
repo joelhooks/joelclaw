@@ -41,7 +41,7 @@ The memory system (ADR-0021) has been running in production since 2026-02-14. Si
 
 #### Section 2: Memory Intelligence — "Feeds Into"
 
-![[adr/jumperz-memory-intelligence.jpg|Memory Intelligence: Retrieval (rewrite query, score decay, tiered, inject, dual search), Decay (nightly, weekly, cron fallback, domain TTLs), Advanced (trust pass, echo/fizzle, memory agent, cross-agent, forward, budget-aware), Ops (session flush, behavior loop)]]
+![Memory Intelligence: Retrieval (rewrite query, score decay, tiered, inject, dual search), Decay (nightly, weekly, cron fallback, domain TTLs), Advanced (trust pass, echo/fizzle, memory agent, cross-agent, forward, budget-aware), Ops (session flush, behavior loop)](/images/adr/jumperz-memory-intelligence.jpg)
 
 Key concepts from that framework not yet implemented in joelclaw:
 
