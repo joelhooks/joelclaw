@@ -71,9 +71,21 @@
 }
 
 /* Code blocks — Dank Mono + Catppuccin Macchiato */
+[data-rehype-pretty-code-figure] {
+  @apply my-6;
+}
+
+[data-rehype-pretty-code-title] {
+  @apply rounded-t-lg border border-b-0 border-neutral-800 bg-neutral-900/80 px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-neutral-400;
+}
+
 [data-rehype-pretty-code-figure] pre {
-  @apply rounded-lg border border-neutral-800 px-4 py-3 text-sm leading-relaxed overflow-x-auto;
+  @apply rounded-lg border border-neutral-800 px-4 py-3 text-sm leading-relaxed overflow-x-auto shadow-[inset_0_1px_0_rgba(255,255,255,0.03)];
   font-family: var(--font-code);
+}
+
+[data-rehype-pretty-code-title] + pre {
+  @apply rounded-t-none;
 }
 
 [data-rehype-pretty-code-figure] code {
@@ -83,6 +95,14 @@
 
 [data-rehype-pretty-code-figure] [data-line] {
   @apply px-4 -mx-4;
+}
+
+[data-rehype-pretty-code-figure] [data-highlighted-line] {
+  @apply bg-white/5 border-l-2 border-claw;
+}
+
+[data-rehype-pretty-code-caption] {
+  @apply rounded-b-lg border border-t-0 border-neutral-800 bg-neutral-900/50 px-4 py-2 text-xs text-neutral-500;
 }
 
 /* Custom scrollbars for code blocks */
