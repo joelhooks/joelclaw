@@ -666,6 +666,24 @@ export type Events = {
     };
   };
 
+  // --- VIP Email ---
+  "vip/email.received": {
+    data: {
+      conversationId: string;
+      messageId: string;
+      from: string;
+      fromName: string;
+      to: string[];
+      subject: string;
+      body: string;
+      bodyPlain: string;
+      preview: string;
+      isInbound: boolean;
+      attachmentCount: number;
+      source: "front-webhook" | "manual";
+    };
+  };
+
   // --- Granola / Meetings (ADR-0055, ADR-0056) ---
   "meeting/noted": {
     data: {

@@ -53,6 +53,7 @@ import {
   checkVaultSync,
   checkGranola,
   checkEmail,
+  vipEmailReceived,
   checkCalendar,
   checkLoops,
 } from "./inngest/functions";
@@ -112,6 +113,7 @@ const registeredFunctions = [
   checkVaultSync,
   checkGranola,
   checkEmail,
+  vipEmailReceived,
   checkCalendar,
   checkLoops,
   dailyDigest,
@@ -143,6 +145,7 @@ app.get("/", (c) =>
       "media/received": "Process media from channels → vision/transcribe → notify gateway",
       "todoist/*": "Todoist webhook events (comment.added, task.completed, task.created)",
       "front/*": "Front webhook events (message.received, message.sent, assignee.changed)",
+      "vip/email.received": "VIP email deep-dive workflow (Opus + meetings + memory + GitHub + todos)",
       "vercel/*": "Vercel webhook events (deploy.succeeded, deploy.error, deploy.created, deploy.canceled)",
       "email/inbox.cleanup": "AI-powered inbox triage — classify + archive noise",
       "meeting/noted": "Analyze meeting → extract action items, decisions, people (ADR-0055)",

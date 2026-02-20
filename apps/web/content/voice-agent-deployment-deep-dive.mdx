@@ -59,6 +59,50 @@ For this to not suck:
 
 I'm also building a public mode — anyone can call and ask about joelclaw, browse ADRs, understand the architecture. Different context, restricted tools. Like office hours but 24/7 and automated.
 
+<AgentOnly>
+## Agent Implementation Appendix
+
+### Runtime Topology
+
+- **LiveKit** runs in the Talos k8s cluster.
+- **SIP gateway** runs on a public droplet and bridges calls back over Tailscale.
+- **Voice agent** runs from `~/Projects/joelclaw-voice-agent/`.
+
+### Verify the path end-to-end
+
+```bash
+# LiveKit health
+curl http://100.93.201.72:7880/health
+
+# Voice worker process
+ps aux | grep "python main.py start"
+
+# Active rooms
+lk room list
+```
+
+### Common failure modes
+
+1. **No audio / worker unreachable**: agent defaulted to localhost instead of Tailscale LiveKit URL.
+2. **Dev mode loop crashes**: `python main.py dev` file watcher restarts repeatedly from log writes.
+3. **SIP trunk conflicts**: duplicate Telnyx number mapping causes trunk match errors.
+
+### Required secrets
+
+- `livekit_api_key` / `livekit_api_secret`
+- `openrouter_api_key`
+- `elevenlabs_api_key`
+- `deepgram_api_key`
+- `gog_keyring_password`
+- `todoist_cli_token`
+</AgentOnly>
+
+## Reality Check
+
+My kids weren't impressed. They're the ultimate bullshit detectors — to them, 2 second lag might as well be dial-up internet. 
+
+But that's fine. I'll use this janky version to work towards making it Actually Good™ over time. Every awkward conversation teaches me what needs fixing. And if I can make it good enough, other joelclaw users get a voice interface without suffering through the rough prototype phase. They get the polished version while I talk to laggy Australian Panda today.
+
 ## The Real Point
 
 This isn't about having the best voice interface. It's about learning what actually matters for voice interactions with my own tools. Every jank conversation teaches me something about what needs to be better.

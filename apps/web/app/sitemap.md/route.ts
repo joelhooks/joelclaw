@@ -34,9 +34,13 @@ export function GET() {
     "",
     "## Markdown versions",
     "",
-    "Append `.md` to any post URL for the agent-friendly markdown:",
+    "Append `.md` for human-safe markdown and `.agent.md` for full agent markdown:",
     "",
     ...posts.map((p) => `- [${p.title}](${SITE_URL}/${p.slug}.md)`),
+    "",
+    "Agent-complete exports:",
+    "",
+    ...posts.map((p) => `- [${p.title}](${SITE_URL}/${p.slug}.agent.md)`),
     "",
   ];
 

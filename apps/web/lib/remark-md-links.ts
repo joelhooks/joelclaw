@@ -33,7 +33,11 @@ function getSlugSet() {
  *
  * Use in /md route remark pipeline, NOT in the HTML pipeline.
  */
-export function remarkMdLinks() {
+export function remarkMdLinks(
+  options: { mode?: "human" | "agent" } = {}
+) {
+  const mode = options.mode ?? "human";
+
   return (tree: Root) => {
     const slugs = getSlugSet();
 
@@ -50,7 +54,8 @@ export function remarkMdLinks() {
 
       // Post slugs → .md markdown endpoint
       if (slugs.has(cleanPath)) {
-        node.url = `${SITE_URL}/${cleanPath}.md${anchorSuffix}`;
+        const suffix = mode === "agent" ? ".agent.md" : ".md";
+        node.url = `${SITE_URL}/${cleanPath}${suffix}${anchorSuffix}`;
         return;
       }
 

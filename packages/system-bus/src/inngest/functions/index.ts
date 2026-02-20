@@ -22,6 +22,7 @@ export { checkGranola } from "./check-granola";
 export { checkEmail } from "./check-email";
 export { checkCalendar } from "./check-calendar";
 export { checkLoops } from "./check-loops";
+export { vipEmailReceived } from "./vip-email-received";
 export { dailyDigest } from "./daily-digest";
 export { mediaProcess } from "./media-process";
 export {

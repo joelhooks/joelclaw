@@ -29,12 +29,17 @@ function MarginNote({ children, id }: { children: React.ReactNode; id: string })
 }
 
 /**
- * Agent-only content. Returns null on the web — invisible to humans.
- * Visible in the raw .mdx source and the /slug.md agent-facing route,
- * where it appears as <AgentNote>...</AgentNote> tags.
+ * Agent-only content component.
  *
- * Use for: skill install instructions, agent-specific context,
- * implementation hints that would clutter the human reading experience.
+ * Build pipeline strips these blocks from human outputs.
+ * This runtime fallback returns null for safety.
+ */
+function AgentOnly(_props: { children: React.ReactNode }) {
+  return null;
+}
+
+/**
+ * Backward-compatible alias for legacy content.
  */
 function AgentNote(_props: { children: React.ReactNode }) {
   return null;
@@ -67,6 +72,7 @@ function extractText(children: React.ReactNode): string {
 }
 
 export const mdxComponents: MDXComponents = {
+  AgentOnly,
   AgentNote,
   YouTube,
   Sidenote,

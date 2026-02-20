@@ -9,6 +9,7 @@
 
 import { inngest } from "../client";
 import type { GatewayContext } from "../middleware/gateway";
+import { isVipSender } from "./vip-utils";
 
 // ── Front API helpers ───────────────────────────────────────────────
 
@@ -59,7 +60,19 @@ export const frontMessageReceived = inngest.createFunction(
   { event: "front/message.received" },
   async ({ event, step, ...rest }) => {
     const gateway = (rest as any).gateway as GatewayContext | undefined;
-    const { from, fromName, subject, preview, conversationId, attachmentCount, bodyPlain } = event.data;
+    const {
+      from,
+      fromName,
+      to,
+      subject,
+      body,
+      bodyPlain,
+      preview,
+      conversationId,
+      messageId,
+      isInbound,
+      attachmentCount,
+    } = event.data;
 
     // Enrich: fetch conversation context (tags, assignee, status, thread depth)
     const context = await step.run("enrich-context", async () => {
@@ -110,12 +123,35 @@ export const frontMessageReceived = inngest.createFunction(
       });
     });
 
+    let vipTriggered = false;
+    if (isVipSender(from, fromName)) {
+      await step.sendEvent("emit-vip-email-received", {
+        name: "vip/email.received",
+        data: {
+          conversationId,
+          messageId,
+          from,
+          fromName,
+          to,
+          subject: context.subject,
+          body,
+          bodyPlain,
+          preview,
+          isInbound,
+          attachmentCount,
+          source: "front-webhook" as const,
+        },
+      });
+      vipTriggered = true;
+    }
+
     return {
       status: result.pushed ? "notified" : "skipped",
       conversationId,
       from,
       subject: context.subject,
       tags: context.tags,
+      vipTriggered,
       result,
     };
   }
