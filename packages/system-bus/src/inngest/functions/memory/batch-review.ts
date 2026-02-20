@@ -1,26 +1,26 @@
 /**
- * Batch LLM review of memory proposals.
+ * Batch LLM review of memory proposals via pi CLI.
  *
  * Replaces the broken heuristic auto-promote path. Instead of appending raw
  * proposal text to MEMORY.md, this function sends a batch of proposals to
- * Sonnet for review against current MEMORY.md. Sonnet decides what to promote
- * (outputting clean formatted entries), what to reject, and what needs human
- * review. ~$0.01 per batch of 20 proposals.
+ * Sonnet (via pi CLI) for review against current MEMORY.md. Sonnet decides
+ * what to promote (outputting clean formatted entries), what to reject, and
+ * what needs human review. ~$0.01 per batch of 20 proposals.
  *
  * Triggered by:
- *   - memory/batch-review.requested (fired by proposal-triage when items queue up)
+ *   - memory/batch-review.requested (manual or from triage)
  *   - Cron: every 30 minutes (catch stragglers)
  *
  * ADR-0068: Memory Proposal Auto-Triage Pipeline
  */
 
-import { rename } from "node:fs/promises";
+import { rename, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import Redis from "ioredis";
 import { inngest } from "../../client";
 
 const LLM_PENDING_KEY = "memory:review:llm-pending";
-const REVIEW_MODEL = "claude-sonnet-4-20250514";
+const REVIEW_MODEL = "anthropic/claude-sonnet-4-5";
 
 let redisClient: Redis | null = null;
 
@@ -42,6 +42,12 @@ function getMemoryPath(): string {
   return join(home, ".joelclaw", "workspace", "MEMORY.md");
 }
 
+function readShellText(output: Buffer | Uint8Array | string | undefined): string {
+  if (!output) return "";
+  if (typeof output === "string") return output;
+  return Buffer.from(output).toString("utf-8");
+}
+
 interface PendingProposal {
   id: string;
   section: string;
@@ -56,19 +62,6 @@ interface ReviewDecision {
   entry?: string; // Clean formatted bullet (promote only)
   section?: string; // Target section (promote only)
   reason: string;
-}
-
-function extractTextFromAiResponse(response: unknown): string {
-  if (!response || typeof response !== "object") return "";
-  const r = response as Record<string, unknown>;
-  if (Array.isArray(r.content)) {
-    return (r.content as Array<{ type?: string; text?: string }>)
-      .filter((b) => b.type === "text" && typeof b.text === "string")
-      .map((b) => b.text!)
-      .join("\n");
-  }
-  if (typeof r.text === "string") return r.text;
-  return "";
 }
 
 const SYSTEM_PROMPT = `You are a memory curator for a personal AI system. You review proposed additions to a curated knowledge base (MEMORY.md).
@@ -132,9 +125,14 @@ For each proposal, respond with a JSON array of decisions:
 }
 
 function parseDecisions(raw: string): ReviewDecision[] {
-  const cleaned = raw.replace(/```json\n?/gu, "").replace(/```\n?/gu, "").trim();
+  // Try to find JSON array in the output (pi may include preamble)
+  const jsonMatch = raw.match(/\[[\s\S]*\]/u);
+  if (!jsonMatch) {
+    console.error("[batch-review] no JSON array found in LLM output:", raw.slice(0, 300));
+    return [];
+  }
   try {
-    const parsed = JSON.parse(cleaned) as unknown;
+    const parsed = JSON.parse(jsonMatch[0]) as unknown;
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(
       (d: unknown): d is ReviewDecision =>
@@ -145,7 +143,7 @@ function parseDecisions(raw: string): ReviewDecision[] {
         ["promote", "reject", "needs-review"].includes((d as ReviewDecision).action)
     );
   } catch {
-    console.error("[batch-review] failed to parse LLM response as JSON:", cleaned.slice(0, 200));
+    console.error("[batch-review] failed to parse JSON from LLM output:", raw.slice(0, 300));
     return [];
   }
 }
@@ -160,7 +158,7 @@ function normalizeSection(input: string | undefined): MemorySection {
   if (value === "Hard Rules") return value;
   if (value === "System Architecture") return value;
   if (value === "Patterns") return value;
-  return "Patterns"; // Default for new observations
+  return "Patterns";
 }
 
 function appendBulletToSection(markdown: string, section: MemorySection, bullet: string): string {
@@ -169,7 +167,6 @@ function appendBulletToSection(markdown: string, section: MemorySection, bullet:
   const headerIndex = lines.findIndex((line) => line.trim() === header);
 
   if (headerIndex < 0) {
-    // Section doesn't exist — append at end
     lines.push("", header, "", bullet);
     return lines.join("\n");
   }
@@ -240,27 +237,38 @@ export const batchReview = inngest.createFunction(
       return (await file.text()).trim();
     });
 
-    // Send batch to Sonnet
-    const aiResponse = await step.ai.infer("llm-review-proposals", {
-      model: step.ai.models.anthropic({
-        model: REVIEW_MODEL,
-        defaultParameters: { max_tokens: 4096 },
-      }),
-      body: {
-        max_tokens: 4096,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: "user", content: buildUserPrompt(proposals, currentMemory) }],
-      },
+    // Call pi CLI for LLM review
+    const llmOutput = await step.run("llm-review-proposals", async () => {
+      const userPrompt = buildUserPrompt(proposals, currentMemory);
+
+      // Write prompt to temp file to avoid shell escaping issues with large prompts
+      const tmpFile = `/tmp/batch-review-prompt-${Date.now()}.txt`;
+      await writeFile(tmpFile, userPrompt, "utf-8");
+
+      try {
+        const result = await Bun.$`pi --no-tools --no-session --no-extensions --print --mode text --model ${REVIEW_MODEL} --system-prompt ${SYSTEM_PROMPT} ${await Bun.file(tmpFile).text()}`
+          .quiet()
+          .nothrow();
+
+        const stdout = readShellText(result.stdout);
+        const stderr = readShellText(result.stderr);
+
+        if (result.exitCode !== 0 && !stdout) {
+          throw new Error(`pi CLI failed (exit ${result.exitCode}): ${stderr.slice(0, 500)}`);
+        }
+
+        return stdout.trim();
+      } finally {
+        try { await unlink(tmpFile); } catch {}
+      }
     });
 
     // Parse decisions
     const decisions = await step.run("parse-decisions", () => {
-      const text = extractTextFromAiResponse(aiResponse);
-      const parsed = parseDecisions(text);
+      const parsed = parseDecisions(llmOutput);
 
       if (parsed.length === 0) {
         console.error("[batch-review] LLM returned 0 parseable decisions from", proposals.length, "proposals");
-        // Don't process — leave proposals for next run
         return { decisions: [] as ReviewDecision[], unparsed: true };
       }
 
@@ -283,7 +291,6 @@ export const batchReview = inngest.createFunction(
 
       for (const decision of decisions.decisions) {
         if (decision.action === "promote" && decision.entry) {
-          // Find the proposal to get the date
           const proposal = proposals.find((p) => p.id === decision.id);
           const date = proposal?.timestamp?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
           const section = normalizeSection(decision.section);
@@ -302,12 +309,11 @@ export const batchReview = inngest.createFunction(
           await redis.del(`memory:proposal:${decision.id}`);
           await redis.del(`memory:review:proposal:${decision.id}`);
         } else {
-          // needs-review — leave in queue, will get picked up by needs-review path
           flagged++;
         }
       }
 
-      // Write updated MEMORY.md
+      // Write updated MEMORY.md atomically
       if (promoted > 0) {
         const tmpPath = `${memoryPath}.tmp`;
         await Bun.write(tmpPath, memoryText);
