@@ -137,32 +137,83 @@ async function emitMediaReceived(data: {
 }
 
 /**
- * Convert basic markdown to Telegram HTML.
- * Handles: **bold**, `code`, ```pre```, [link](url), *italic*
+ * Convert markdown to Telegram HTML.
+ * Telegram supports: <b>, <i>, <u>, <s>, <code>, <pre>, <a href>, <blockquote>, <tg-spoiler>
+ * No <br> (use \n), no lists (use manual bullets), no headings (use bold).
  */
 function mdToTelegramHtml(md: string): string {
   let html = md;
 
-  // Code blocks first (``` ... ```)
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, _lang, code) => {
-    return `<pre>${escapeHtml(code.trim())}</pre>`;
+  // Protect code blocks first — extract and replace with placeholders
+  const codeBlocks: string[] = [];
+  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
+    const idx = codeBlocks.length;
+    const langAttr = lang ? ` class="language-${escapeHtml(lang)}"` : "";
+    codeBlocks.push(`<pre><code${langAttr}>${escapeHtml(code.trim())}</code></pre>`);
+    return `\x00CODEBLOCK${idx}\x00`;
   });
 
-  // Inline code (`...`)
+  // Protect inline code
+  const inlineCodes: string[] = [];
   html = html.replace(/`([^`]+)`/g, (_match, code) => {
-    return `<code>${escapeHtml(code)}</code>`;
+    const idx = inlineCodes.length;
+    inlineCodes.push(`<code>${escapeHtml(code)}</code>`);
+    return `\x00INLINE${idx}\x00`;
   });
 
-  // Bold (**...**)
-  html = html.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  // Headings → bold (Telegram has no heading tags)
+  // ### heading → \n<b>heading</b>\n
+  html = html.replace(/^#{1,6}\s+(.+)$/gm, "\n<b>$1</b>");
 
-  // Italic (*...*)  — but not inside <b> tags
+  // Horizontal rules → thin line
+  html = html.replace(/^[-*_]{3,}\s*$/gm, "───────────────");
+
+  // Blockquotes (> text) → <blockquote>
+  // Collect consecutive > lines into one blockquote
+  html = html.replace(/(?:^> ?.+\n?)+/gm, (match) => {
+    const content = match.replace(/^> ?/gm, "").trim();
+    return `<blockquote>${content}</blockquote>\n`;
+  });
+
+  // Bold + italic (***text*** or ___text___)
+  html = html.replace(/\*\*\*(.+?)\*\*\*/g, "<b><i>$1</i></b>");
+
+  // Bold (**text** or __text__)
+  html = html.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  html = html.replace(/__(.+?)__/g, "<u>$1</u>"); // __ = underline in Telegram convention
+
+  // Strikethrough (~~text~~)
+  html = html.replace(/~~(.+?)~~/g, "<s>$1</s>");
+
+  // Italic (*text* or _text_) — but not inside other tags or mid-word underscores
   html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<i>$1</i>");
+  html = html.replace(/(?<![_\w])_([^_]+)_(?![_\w])/g, "<i>$1</i>");
 
   // Links [text](url)
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
 
-  return html;
+  // Bullet lists: - item or * item → • item (Telegram has no list tags)
+  html = html.replace(/^[\t ]*[-*]\s+/gm, "• ");
+
+  // Numbered lists: 1. item → keep as-is (already readable)
+
+  // Tables: | col | col | → simplified
+  // Convert markdown table rows to aligned text
+  html = html.replace(/^\|(.+)\|$/gm, (_match, row) => {
+    const cells = row.split("|").map((c: string) => c.trim()).filter(Boolean);
+    return cells.join("  ·  ");
+  });
+  // Remove separator rows (|---|---|)
+  html = html.replace(/^[-| :]+$/gm, "");
+
+  // Restore code blocks and inline code
+  html = html.replace(/\x00CODEBLOCK(\d+)\x00/g, (_match, idx) => codeBlocks[parseInt(idx)]);
+  html = html.replace(/\x00INLINE(\d+)\x00/g, (_match, idx) => inlineCodes[parseInt(idx)]);
+
+  // Clean up excessive blank lines (max 2)
+  html = html.replace(/\n{3,}/g, "\n\n");
+
+  return html.trim();
 }
 
 function escapeHtml(text: string): string {

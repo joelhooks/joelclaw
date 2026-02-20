@@ -227,8 +227,34 @@ session.subscribe((event: any) => {
         );
       }
     } else {
-      // Console channel — just log
+      // Console channel — log
       console.log("[gateway] assistant:", fullText.slice(0, 200));
+
+      // Forward non-telegram responses to Telegram as proactive notifications (ADR-0069)
+      // Filter: skip noise, only forward actionable/substantial content
+      if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
+        const trimmed = fullText.trim();
+        const lower = trimmed.toLowerCase();
+
+        // Skip heartbeat OKs
+        const isHeartbeatOk = trimmed === "HEARTBEAT_OK"
+          || (trimmed.includes("HEARTBEAT_OK") && trimmed.length < 300);
+
+        // Skip trivial acknowledgments (Echo., Archived., etc.)
+        const isTrivial = trimmed.length < 80;
+
+        // Skip completion echo responses (agent just says "echo" to its own task closes)
+        const isEcho = lower === "echo." || lower === "echo"
+          || lower.startsWith("echo.") || lower.startsWith("completion echo");
+
+        const shouldForward = !isHeartbeatOk && !isTrivial && !isEcho;
+
+        if (shouldForward) {
+          sendTelegram(TELEGRAM_USER_ID, fullText).catch((e: any) =>
+            console.error("[gateway] telegram notification failed", { error: e.message })
+          );
+        }
+      }
     }
   }
 
