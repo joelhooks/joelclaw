@@ -2,7 +2,11 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import Redis from "ioredis";
 
-export type EnqueueFn = (source: string, prompt: string, metadata?: Record<string, unknown>) => void;
+export type EnqueueFn = (
+  source: string,
+  prompt: string,
+  metadata?: Record<string, unknown>,
+) => void | Promise<void>;
 
 type SystemEvent = {
   id: string;
@@ -281,7 +285,7 @@ async function drainEvents(): Promise<void> {
     const source = originSession?.includes(":") ? originSession : SESSION_ID;
 
     const prompt = await buildPrompt(actionable);
-    enqueuePrompt(source, prompt, {
+    await enqueuePrompt(source, prompt, {
       eventCount: actionable.length,
       eventIds: actionable.map((event) => event.id),
       originSession,
@@ -452,7 +456,7 @@ export async function flushBatchDigest(): Promise<number> {
     "Acknowledge briefly. Only flag if something looks wrong.",
   ].join("\n");
 
-  enqueuePrompt(SESSION_ID, prompt, {
+  await enqueuePrompt(SESSION_ID, prompt, {
     eventCount: events.length,
     digestTypes: Object.fromEntries(counts),
   });
@@ -464,6 +468,10 @@ export async function flushBatchDigest(): Promise<number> {
 /** Is the Redis channel healthy and connected? */
 export function isHealthy(): boolean {
   return started && sub?.status === "ready" && cmd?.status === "ready";
+}
+
+export function getRedisClient(): Redis | undefined {
+  return cmd;
 }
 
 export async function shutdown(): Promise<void> {

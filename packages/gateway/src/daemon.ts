@@ -3,10 +3,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@mariozechner/pi-ai";
 import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
-import { drain, enqueue, getQueueDepth, getCurrentSource, setSession, onPrompt } from "./command-queue";
-import { start as startRedisChannel, shutdown as shutdownRedisChannel, isHealthy as isRedisHealthy } from "./channels/redis";
+import { drain, enqueue, getQueueDepth, getCurrentSource, setSession, onPrompt, replayUnacked } from "./command-queue";
+import { start as startRedisChannel, shutdown as shutdownRedisChannel, isHealthy as isRedisHealthy, getRedisClient } from "./channels/redis";
 import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, sendMedia as sendTelegramMedia, parseChatId } from "./channels/telegram";
 import { startHeartbeatRunner } from "./heartbeat";
+import { init as initMessageStore, trimOld } from "./message-store";
 
 const HOME = homedir();
 const AGENT_DIR = join(HOME, ".pi/agent");
@@ -172,7 +173,7 @@ const wsServer = Bun.serve({
           sendWsMessage(ws, { type: "error", message: "Prompt text is required" });
           return;
         }
-        enqueue("tui", text, { via: "ws" });
+        await enqueue("tui", text, { via: "ws" });
         void drain();
         return;
       }
@@ -294,8 +295,8 @@ session.subscribe((event: any) => {
 
 // ── Telegram channel (start BEFORE Redis — Telegram doesn't need Redis) ──
 if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
-  await startTelegram(TELEGRAM_TOKEN, TELEGRAM_USER_ID, (source, prompt, metadata) => {
-    enqueue(source, prompt, metadata);
+  await startTelegram(TELEGRAM_TOKEN, TELEGRAM_USER_ID, async (source, prompt, metadata) => {
+    await enqueue(source, prompt, metadata);
     void drain();
   });
 } else {
@@ -303,10 +304,19 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
 }
 
 // ── Redis channel (self-healing — retries on failure, won't crash daemon) ──
-await startRedisChannel(((source, prompt, metadata) => {
-  enqueue(source, prompt, metadata);
+await startRedisChannel((async (source, prompt, metadata) => {
+  await enqueue(source, prompt, metadata);
   void drain();
 }));
+
+const redisClient = getRedisClient();
+if (redisClient) {
+  await initMessageStore(redisClient);
+  await trimOld();
+  await replayUnacked();
+} else {
+  console.warn("[gateway:store] redis command client unavailable; durable replay skipped");
+}
 
 // ── Media outbound: satellite sessions push files, we deliver ──────
 // Self-healing: retries connection independently, errors don't propagate

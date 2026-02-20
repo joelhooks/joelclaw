@@ -69,7 +69,7 @@ async function runHeartbeat(): Promise<void> {
   const ts = Date.now();
   const prompt = buildHeartbeatPrompt(checklistContent);
 
-  enqueue(HEARTBEAT_SOURCE, prompt, {
+  await enqueue(HEARTBEAT_SOURCE, prompt, {
     checklistPath: HEARTBEAT_CHECKLIST_PATH,
     ts,
   });
