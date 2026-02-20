@@ -20,7 +20,8 @@ import Redis from "ioredis";
 import { inngest } from "../../client";
 
 const LLM_PENDING_KEY = "memory:review:llm-pending";
-const REVIEW_MODEL = "anthropic/claude-haiku";
+// ADR-0078: Use explicit versioned model IDs. Bare "claude-haiku" may resolve to deprecated Haiku 3.
+const REVIEW_MODEL = "anthropic/claude-haiku-4-5";
 
 let redisClient: Redis | null = null;
 

@@ -14,10 +14,13 @@ import { readFile, stat, mkdir } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { execSync } from "node:child_process";
 import { $ } from "bun";
+import Redis from "ioredis";
 
 const MEDIA_TMP = "/tmp/joelclaw-media";
 const NAS_HOST = "joel@three-body";
 const NAS_MEDIA_BASE = "/volume1/home/joel/media";
+const MEDIA_PROCESSED_KEY_PREFIX = "media:processed";
+const MEDIA_PROCESSED_TTL_SECONDS = 24 * 60 * 60;
 
 // Supported image MIME types for vision
 const IMAGE_MIMES = new Set([
@@ -37,6 +40,21 @@ const AUDIO_MIMES = new Set([
   "audio/webm",
   "audio/opus",
 ]);
+
+let redisClient: Redis | null = null;
+
+function getRedis(): Redis {
+  if (redisClient) return redisClient;
+  const isTest = process.env.NODE_ENV === "test" || process.env.BUN_TEST === "1";
+  redisClient = new Redis({
+    host: process.env.REDIS_HOST ?? "localhost",
+    port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+    lazyConnect: true,
+    retryStrategy: isTest ? () => null : undefined,
+  });
+  redisClient.on("error", () => {});
+  return redisClient;
+}
 
 export const mediaProcess = inngest.createFunction(
   {
@@ -59,6 +77,24 @@ export const mediaProcess = inngest.createFunction(
         name: fileName ?? basename(localPath),
       };
     });
+    const dedupeKey = `${MEDIA_PROCESSED_KEY_PREFIX}:${fileInfo.name}`;
+
+    const alreadyProcessed = await step.run("check-dedup", async () => {
+      const redis = getRedis();
+      return !!(await redis.get(dedupeKey));
+    });
+
+    if (alreadyProcessed) {
+      console.info(
+        `[media] dedup skip: file already processed (${fileInfo.name}) source=${source} type=${type}`,
+      );
+      return {
+        status: "already_processed",
+        type,
+        source,
+        fileName: fileInfo.name,
+      };
+    }
 
     // NOTE: gateway.progress() MUST be inside a step — outside, it fires on every
     // step replay (once per step = 5x for a single image). See ADR-0043 gotcha.
@@ -137,6 +173,16 @@ export const mediaProcess = inngest.createFunction(
         archivePath: archivePath ?? undefined,
         originSession,
       },
+    });
+
+    await step.run("mark-processed", async () => {
+      const redis = getRedis();
+      const payload = JSON.stringify({
+        source,
+        type,
+        processedAt: new Date().toISOString(),
+      });
+      await redis.set(dedupeKey, payload, "EX", MEDIA_PROCESSED_TTL_SECONDS);
     });
 
     return {

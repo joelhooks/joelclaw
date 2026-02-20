@@ -11,7 +11,8 @@ import { TodoistTaskAdapter } from "../../tasks";
 import { isVipSender } from "./vip-utils";
 
 const FRONT_API = "https://api2.frontapp.com";
-const VIP_MODEL = process.env.JOELCLAW_VIP_EMAIL_MODEL ?? "anthropic/claude-opus-4-1";
+// ADR-0078: Opus 4.1 was $15/$75 per MTok. Opus 4.6 is $5/$15. Never use dated snapshots.
+const VIP_MODEL = process.env.JOELCLAW_VIP_EMAIL_MODEL ?? "anthropic/claude-opus-4-6";
 const TRIAGE_MODEL = process.env.JOELCLAW_VIP_TRIAGE_MODEL ?? "anthropic/claude-sonnet-4-6";
 const ENABLE_GITHUB_SEARCH = (process.env.JOELCLAW_VIP_ENABLE_GITHUB_SEARCH ?? "0") === "1";
 const ENABLE_OPUS_ESCALATION = (process.env.JOELCLAW_VIP_ENABLE_OPUS_ESCALATION ?? "1") === "1";
