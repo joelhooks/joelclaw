@@ -137,8 +137,25 @@ async function drainEvents(): Promise<void> {
       return;
     }
 
+    // ── Noise suppression ─────────────────────────────────────────
+    // Filter event types that burn tokens without adding signal.
+    // todoist.task.completed: echoes from tasks the agent just closed
+    // memory.observed: telemetry confirmations, not actionable
+    // content.synced: vault sync confirmations
+    const SUPPRESSED_TYPES = new Set([
+      "todoist.task.completed",
+      "memory.observed",
+      "content.synced",
+    ]);
+    const actionable = events.filter((e) => !SUPPRESSED_TYPES.has(e.type));
+    if (actionable.length === 0) {
+      console.log(`[redis] suppressed ${events.length} noise event(s): ${events.map(e => e.type).join(", ")}`);
+      await cmd.del(EVENT_LIST);
+      return;
+    }
+
     // Check if any event has an originSession — route response back to that channel
-    const originSession = events.find(
+    const originSession = actionable.find(
       (e) => typeof e.payload?.originSession === "string" && e.payload.originSession
     )?.payload?.originSession as string | undefined;
 
@@ -146,10 +163,10 @@ async function drainEvents(): Promise<void> {
     // so the response routes back to the originating channel, not console
     const source = originSession?.includes(":") ? originSession : SESSION_ID;
 
-    const prompt = await buildPrompt(events);
+    const prompt = await buildPrompt(actionable);
     enqueuePrompt(source, prompt, {
-      eventCount: events.length,
-      eventIds: events.map((event) => event.id),
+      eventCount: actionable.length,
+      eventIds: actionable.map((event) => event.id),
       originSession,
     });
     await cmd.del(EVENT_LIST);
