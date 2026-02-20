@@ -293,7 +293,7 @@ Session context:
 - dedupeKey: ${validatedInput.dedupeKey}`;
 
       try {
-        const result = await Bun.$`pi --no-tools --no-session --no-extensions --print --mode text --system-prompt ${OBSERVER_SYSTEM_PROMPT} ${promptWithSessionContext}`
+        const result = await Bun.$`pi --no-tools --no-session --no-extensions --print --mode text --model anthropic/claude-haiku --system-prompt ${OBSERVER_SYSTEM_PROMPT} ${promptWithSessionContext}`
           .quiet()
           .nothrow();
 

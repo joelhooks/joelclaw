@@ -63,6 +63,7 @@ const { session } = await createAgentSession({
   cwd: HOME,
   agentDir: AGENT_DIR,
   model: resolveModel(),
+  thinkingLevel: "low",
   sessionManager,
 });
 

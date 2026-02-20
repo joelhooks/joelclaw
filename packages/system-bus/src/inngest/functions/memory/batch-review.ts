@@ -20,7 +20,7 @@ import Redis from "ioredis";
 import { inngest } from "../../client";
 
 const LLM_PENDING_KEY = "memory:review:llm-pending";
-const REVIEW_MODEL = "anthropic/claude-sonnet-4-6";
+const REVIEW_MODEL = "anthropic/claude-haiku";
 
 let redisClient: Redis | null = null;
 
