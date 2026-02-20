@@ -1,215 +1,72 @@
 ---
-title: "Voice Agent Deployment: Phone Calls with My AI Assistant"
+title: "Voice Agent: A Rough Edge Experiment"
 date: "2026-02-20T14:00:00"
-description: "Voice as a practical interface for AI agents. The complete infrastructure for phone-based conversations — LiveKit, SIP trunks, distributed topology, and why CarPlay is the endgame."
-tags: ["voice", "livekit", "sip", "infrastructure"]
+description: "Building a janky voice interface for my AI assistant. It's not natural, the lag is real, and it needs tons of work — but it beats typing while walking."
+tags: ["voice", "livekit", "experiments"]
 ---
 
-Voice is a UI for getting shit done when typing is impractical. Driving to the office, walking the dog, cooking dinner — times when your hands are busy but your brain isn't. That's why I built phone-based voice conversations into joelclaw.
+I've been frustrated for years watching voice apps like SuperWhisper and Wispr Flow do amazing local transcription but be completely useless in the car. No CarPlay means they're dead to me when I actually need hands-free.
 
-The dream is CarPlay integration: "Hey, implement that feature we discussed yesterday." The agent asks clarifying questions, you dial in the requirements during your commute, and by the time you're home there's a PR waiting. Voice for utility, not novelty.
+So I built my own. It's rough as hell but it works.
 
-## The Architecture
+## Why Voice At All
 
-[ADR-0043](/adrs/0043-agent-voice-conversations) laid out the vision: self-hosted voice conversations via LiveKit. The core infrastructure runs on my hardware, but the voice pipeline uses best-in-class cloud services — Deepgram for STT, Claude for reasoning, ElevenLabs for TTS, Telnyx for phone connectivity. Here's what got deployed.
+Voice is a UI for getting shit done when typing is impractical. Walking the dog. Making dinner. Driving. The dream is CarPlay integration — "Hey, implement that feature from yesterday's PRD." The agent asks clarifying questions during the commute, and there's a PR waiting when I get home.
 
-### Network Topology
+That's the vision. The reality is way jankier.
 
-The system spans two nodes:
+## What I Actually Built
 
-```
-Primary (Mac Mini) ←──────────→ Edge (DigitalOcean)
-    │                              │
-    │ LiveKit Server               │ SIP Gateway
-    │ Voice Agent                  │ Public IP
-    │ k8s cluster                  │
-    │                              ↓
-    └───────────────────────────→ Telnyx SIP
-                                   Phone Network
-```
+[ADR-0043](/adrs/0043-agent-voice-conversations) laid out the plan. Self-hosted LiveKit for the media server, but I'm not kidding myself — this thing depends on cloud services for everything that matters. Deepgram for speech-to-text. Claude for the actual thinking. ElevenLabs for voice. Telnyx for phone connectivity.
 
-**Primary node** runs the core infrastructure:
-- LiveKit server on Talos k8s cluster (ports 7880/7881)
-- Python voice agent with function tools
-- Connects via Tailscale mesh network
+The architecture splits across two machines because Tailscale Funnel doesn't do UDP:
 
-**Edge node** handles public connectivity:
-- LiveKit SIP service in Docker
-- Public IP for SIP registration
-- Routes calls to primary via Tailscale
+- **Mac Mini**: Runs LiveKit, the voice agent, all the core stuff
+- **DigitalOcean droplet**: Public IP for SIP, routes calls back through Tailscale
 
-This split exists because SIP requires UDP on port 5060 and ports 10000-20000 for RTP media. Tailscale Funnel only supports TCP on specific ports. The edge node provides the public face while keeping the core system private.
+When you call, it goes: Phone → Telnyx → SIP gateway → LiveKit room → Voice agent wakes up. The agent has all my tools — calendar, tasks, email, vault search. Same capabilities as text, just through voice.
 
-### Voice Pipeline
+## The Honest State of It
 
-```
-Incoming call → Telnyx → Edge SIP → LiveKit room → Voice agent dispatched
-                                                    │
-                                                    ├─ Deepgram STT
-                                                    ├─ Claude reasoning
-                                                    ├─ Function tools
-                                                    └─ ElevenLabs TTS
-```
+Let me be real: voice is still kind of dumb. I've barely used it. Talking to an AI isn't natural for me and probably won't be without a lot of practice and tuning.
 
-The agent runs as a Python process using `livekit-agents` framework. Key configuration:
+What's annoying:
+- **The lag**: 1-2 seconds feels like forever in conversation
+- **Response sensitivity**: Doesn't feel natural, timing is off
+- **Personality**: Panda's Australian accent and swearing is fun in theory but still feels forced
+- **The whole vibe**: It's just awkward talking to nobody
 
-```python
-# Voice parameters tuned for phone quality
-vad = silero.VAD.load(
-    min_speech_duration=0.2,      # Quick response
-    min_silence_duration=0.7,     # Natural pauses
-    activation_threshold=0.85     # Filter background noise
-)
+It beats the shit out of Siri (admittedly a low bar 💀) but this is rough edge baby voice integration. Lots of very smart people at big companies are working on making voice feel natural. My self-hosted Python script cobbled together from tutorials isn't that refined.
 
-# Pre-warm for instant responses
-prewarm_fn = lambda: JobProcess(
-    initialize_process_fnc=_plumb_job,
-    job_entrypoint_fnc=_entrypoint,
-    num_idle_processes=1  # Always ready
-)
-```
+## What Actually Works
 
-### Tools Integration
+Despite all that, some things are genuinely useful:
 
-The voice agent has full access to the system:
+**Q&A for writing**: Voice conversations avoid AI writing slop. When I talk through ideas, the agent asks questions, I give real answers in my actual voice. No "In today's rapidly evolving technological landscape" bullshit. This article came from exactly that process.
 
-```python
-@function_tool
-async def check_calendar(
-    day: str = "today"  # today, tomorrow, Monday, 2026-02-25, range:2026-02-25:2026-02-27
-) -> str:
-    """Check Joel's calendar for a specific day or range."""
-    # Executes gog CLI with proper auth
-    
-@function_tool  
-async def add_task(
-    content: str,
-    due: Optional[str] = None,  # today, tomorrow, Monday, 2026-02-25
-    labels: Optional[List[str]] = None,
-    priority: Optional[int] = None  # 1-4, 4 highest
-) -> str:
-    """Add a task to Joel's Todoist."""
-    # Uses todoist-cli with full TaskPort
-```
+**Quick tasks while moving**: "Add a task to call the dentist tomorrow" while making coffee. "What's on my calendar today?" while getting dressed. Basic, but it works.
 
-Plus: email triage, vault search, system health, Inngest event dispatch, and dynamic voice switching.
+**Emails and messages**: Voice-to-text for mundane communication. Not revolutionary but saves the context switch.
 
-### Security Model
+## What Needs to Happen
 
-Simple but effective:
+For this to not suck:
 
-```python
-ALLOWED_CALLERS = {"[REDACTED]"}  # Allowlist
+1. **Native app + CarPlay**: This is everything. Voice without CarPlay is pointless.
+2. **Way lower latency**: Sub-second or it's unusable for real conversation
+3. **Better interruption handling**: Let me cut the agent off naturally
+4. **Personality that doesn't annoy me**: Still searching for the right voice/vibe
 
-caller = _extract_caller(ctx.room.name)  # sip_PHONENUMBER format
-if caller not in ALLOWED_CALLERS:
-    # Polite rejection via brief voicemail
-    return
-```
+I'm also building a public mode — anyone can call and ask about joelclaw, browse ADRs, understand the architecture. Different context, restricted tools. Like office hours but 24/7 and automated.
 
-Future phases will add caller tiers — read-only access for some numbers, full control for others.
+## The Real Point
 
-## What Works
+This isn't about having the best voice interface. It's about learning what actually matters for voice interactions with my own tools. Every jank conversation teaches me something about what needs to be better.
 
-### Inbound Calls
+Maybe in six months this evolves into something actually good. Maybe voice stays a party trick. But I had to try building it to find out.
 
-Call the system number. Panda (the AI's voice persona) answers immediately. Full conversation with function calling. Calendar queries, task creation, system status — all via voice.
-
-### Outbound Calls
-
-```bash
-lk sip participant create \
-  --trunk [TRUNK_ID] \
-  --call +1XXXXXXXXXX \
-  --room voice-outbound-joel
-```
-
-The agent auto-joins any room matching `voice-outbound-*`. Voice callbacks will integrate with the gateway — completion events with `callback: "voice"` trigger outbound calls.
-
-### Voice Quality
-
-- **Latency**: 1-2 seconds turn-to-turn
-- **Audio**: Crystal clear after enabling jitter buffer
-- **Interruption**: VAD handles talk-over gracefully
-- **Cost**: ~$0.04/minute all-in
-
-## Configuration Highlights
-
-### SIP on Edge Node
-
-```yaml
-services:
-  livekit-sip:
-    image: livekit/sip:v0.2.0
-    ports:
-      - "5060:5060/udp"
-      - "5060:5060/tcp"  
-      - "10000-20000:10000-20000/udp"
-    environment:
-      LIVEKIT_URL: ws://[TAILSCALE_IP]:7880
-      LIVEKIT_API_KEY: [KEY]
-      USE_JITTER_BUFFER: true  # Critical for quality
-```
-
-### Voice Agent Identity
-
-System prompt built from soul files:
-
-```python
-soul = (Path.home() / ".agents" / "SOUL.md").read_text()
-identity = (Path.home() / ".agents" / "IDENTITY.md").read_text()
-user = (Path.home() / ".agents" / "USER.md").read_text()
-
-system_prompt = f"""{soul}
-
-## Identity
-{identity}
-
-## User Context  
-{user}
-
-[Voice-specific rules...]
-
-## Vibe
-You have an Australian accent. Swear naturally when it fits.
-"""
-```
-
-### Persistence
-
-```bash
-# ~/Projects/joelclaw-voice-agent/run.sh
-#!/bin/bash
-source .venv/bin/activate
-exec python main.py start
-```
-
-Runs as a background process. Logs to `/tmp/joelclaw/voice-agent.log`.
-
-## Troubleshooting Notes
-
-Common issues encountered during deployment:
-
-**WebSocket failures** — Agent defaulted to `localhost:7880` which routes nowhere in containerized environment. Solution: explicit Tailscale IPs.
-
-**Dev mode instability** — File watcher saw its own logs change, restarted every 12 seconds. Solution: use `start` mode for production.
-
-**SIP trunk format conflicts** — Multiple formats for same number causes ambiguous routing. Solution: single E.164 format throughout.
-
-**Voice library access** — ElevenLabs voices must be "added to my voices" before API access. Not documented, learned through trial.
-
-**Background noise** — Default VAD threshold (0.5) triggered on ambient sound. Raised to 0.85 for phone environment.
-
-## What's Next
-
-**Public Mode**: Open the phone number to everyone. Different context, restricted tools — anyone can call and ask about joelclaw, browse ADRs by voice, understand the architecture. Like office hours, but 24/7 and automated.
-
-**Write While Walking**: Start an article with voice. The agent asks clarifying questions, you refine the angle, add examples. By the end of the walk, you have a solid outline. Q&A interaction produces better writing than staring at a blank page.
-
-**Native App + CarPlay**: The real endgame. "Start implementing that PRD from yesterday." Drive and code — request features, answer clarifying questions, get progress callbacks. Commute time becomes productive time.
-
-Voice is just another interface to the system — same tools, same data, same capabilities. But optimized for when your hands are busy and your brain isn't.
+The code works. The experience needs everything.
 
 ---
 
-_Part of the joelclaw deployment series. Source: [github.com/joelhooks/joelclaw](https://github.com/joelhooks/joelclaw)_
+_Part of the joelclaw deployment series. Working code at [github.com/joelhooks/joelclaw](https://github.com/joelhooks/joelclaw)_
