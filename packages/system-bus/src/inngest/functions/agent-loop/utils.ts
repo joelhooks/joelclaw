@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import Redis from "ioredis";
+import { MODEL } from "../../../lib/models";
 
 const redisClass = Redis as unknown as {
   defaultOptions?: Record<string, unknown>;
@@ -995,7 +996,7 @@ export async function spawnInContainer(
   const timeout = TOOL_TIMEOUTS[tool] ?? 15 * 60 * 1000;
 
   // Build the tool command to run inside the container
-  const codexModel = process.env.CODEX_MODEL || "gpt-5.3-codex";
+  const codexModel = process.env.CODEX_MODEL || MODEL.CODEX; // ADR-0078
   let toolCmd: string;
   switch (tool) {
     case "codex":

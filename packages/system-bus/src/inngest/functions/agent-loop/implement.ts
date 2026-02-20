@@ -1,4 +1,5 @@
 import { inngest } from "../../client";
+import { MODEL } from "../../../lib/models";
 import { $ } from "bun";
 import {
   isCancelled,
@@ -215,10 +216,10 @@ async function buildPrompt(
 
 /**
  * Resolve the codex model to use for agent-loop invocations.
- * Reads CODEX_MODEL env var, defaults to gpt-5.3-codex.
+ * Reads CODEX_MODEL env var, defaults to MODEL.CODEX (ADR-0078).
  */
 function resolveCodexModel(): string {
-  return process.env.CODEX_MODEL || "gpt-5.3-codex";
+  return process.env.CODEX_MODEL || MODEL.CODEX;
 }
 
 /**

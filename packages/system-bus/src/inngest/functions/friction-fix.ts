@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
+import { MODEL } from "../../lib/models";
 import { inngest } from "../client";
 
 const HOME_DIR = process.env.HOME || "/Users/joel";
@@ -112,7 +113,7 @@ export const frictionFix = inngest.createFunction(
         "codex",
         "exec",
         "--model",
-        "o4-mini",
+        MODEL.O4_MINI, // ADR-0078
         "--full-auto",
         "-q",
         shellEscapeSingleQuoted(prompt),

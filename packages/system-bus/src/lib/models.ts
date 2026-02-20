@@ -16,12 +16,17 @@
  *   Opus 4/4.1: $15 in / $75 out  ← NEVER USE, 5x more expensive
  */
 
-/** Allowed model IDs — gateway-start.sh mirrors this list */
+/** Allowed model IDs — gateway-start.sh mirrors the Anthropic subset */
 export const ALLOWED_MODELS = [
+  // Anthropic
   "anthropic/claude-opus-4-6",
   "anthropic/claude-sonnet-4-6",
   "anthropic/claude-sonnet-4-5",
   "anthropic/claude-haiku-4-5",
+  // OpenAI (codex exec, agent loops, friction-fix)
+  "gpt-5.3-codex",
+  "o4-mini",
+  "o3",
 ] as const;
 
 export type AllowedModel = (typeof ALLOWED_MODELS)[number];
@@ -34,6 +39,12 @@ export const MODEL = {
   SONNET: "anthropic/claude-sonnet-4-6" as const,
   /** Cheap and fast. Use for triage, formatting, simple extraction — $1/$5 per MTok. */
   HAIKU: "anthropic/claude-haiku-4-5" as const,
+  /** Codex agent loops — OpenAI's coding model. */
+  CODEX: "gpt-5.3-codex" as const,
+  /** Fast OpenAI reasoning — friction fixes, quick tasks. */
+  O4_MINI: "o4-mini" as const,
+  /** OpenAI reasoning — heavier tasks. */
+  O3: "o3" as const,
 } satisfies Record<string, AllowedModel>;
 
 /**
