@@ -187,6 +187,19 @@ function mdToTelegramHtml(md: string): string {
     return `\x00INLINE${idx}\x00`;
   });
 
+  // Protect links before escaping (extract URL hrefs)
+  const links: string[] = [];
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text, url) => {
+    const idx = links.length;
+    links.push(`<a href="${escapeHtml(url)}">${escapeHtml(text)}</a>`);
+    return `\x00LINK${idx}\x00`;
+  });
+
+  // CRITICAL: Escape <, >, & in body text BEFORE markdown transforms.
+  // Telegram's HTML parser is strict — unescaped entities cause 400 errors
+  // which trigger our fallback to plain text (raw markdown shown).
+  html = escapeHtml(html);
+
   // Headings → bold (Telegram has no heading tags)
   // ### heading → \n<b>heading</b>\n
   html = html.replace(/^#{1,6}\s+(.+)$/gm, "\n<b>$1</b>");
@@ -215,8 +228,7 @@ function mdToTelegramHtml(md: string): string {
   html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<i>$1</i>");
   html = html.replace(/(?<![_\w])_([^_]+)_(?![_\w])/g, "<i>$1</i>");
 
-  // Links [text](url)
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  // Links already extracted and protected above (before HTML escaping)
 
   // Bullet lists: - item or * item → • item (Telegram has no list tags)
   html = html.replace(/^[\t ]*[-*]\s+/gm, "• ");
@@ -232,9 +244,10 @@ function mdToTelegramHtml(md: string): string {
   // Remove separator rows (|---|---|)
   html = html.replace(/^[-| :]+$/gm, "");
 
-  // Restore code blocks and inline code
+  // Restore protected elements
   html = html.replace(/\x00CODEBLOCK(\d+)\x00/g, (_match, idx) => codeBlocks[parseInt(idx)]);
   html = html.replace(/\x00INLINE(\d+)\x00/g, (_match, idx) => inlineCodes[parseInt(idx)]);
+  html = html.replace(/\x00LINK(\d+)\x00/g, (_match, idx) => links[parseInt(idx)]);
 
   // Clean up excessive blank lines (max 2)
   html = html.replace(/\n{3,}/g, "\n\n");
