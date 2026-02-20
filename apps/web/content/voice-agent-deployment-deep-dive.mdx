@@ -1,11 +1,13 @@
 ---
 title: "Voice Agent Deployment: Phone Calls with My AI Assistant"
 date: "2026-02-20T14:00:00"
-description: "How I set up bidirectional voice conversations with my AI assistant using LiveKit, SIP trunks, and a distributed network. The complete topology and what actually works."
+description: "Voice as a practical interface for AI agents. The complete infrastructure for phone-based conversations — LiveKit, SIP trunks, distributed topology, and why CarPlay is the endgame."
 tags: ["voice", "livekit", "sip", "infrastructure"]
 ---
 
-After months of terminal sessions, my AI assistant can now talk. Real voice, real phone calls, real conversations. This is how the voice infrastructure works.
+Voice is a UI for getting shit done when typing is impractical. Driving to the office, walking the dog, cooking dinner — times when your hands are busy but your brain isn't. That's why I built phone-based voice conversations into joelclaw.
+
+The dream is CarPlay integration: "Hey, implement that feature we discussed yesterday." The agent asks clarifying questions, you dial in the requirements during your commute, and by the time you're home there's a PR waiting. Voice for utility, not novelty.
 
 ## The Architecture
 
@@ -200,11 +202,13 @@ Common issues encountered during deployment:
 
 ## What's Next
 
-**Phase 2**: Scheduled calls — morning briefings, weekly retrospectives  
-**Phase 3**: Telegram voice messages — async voice notes to/from the bot  
-**Phase 4**: Proactive outreach — context-aware check-ins  
+**Public Mode**: Open the phone number to everyone. Different context, restricted tools — anyone can call and ask about joelclaw, browse ADRs by voice, understand the architecture. Like office hours, but 24/7 and automated.
 
-The foundation is solid. Voice is just another interface to the system — same tools, same data, same capabilities. Just more human.
+**Write While Walking**: Start an article with voice. The agent asks clarifying questions, you refine the angle, add examples. By the end of the walk, you have a solid outline. Q&A interaction produces better writing than staring at a blank page.
+
+**Native App + CarPlay**: The real endgame. "Start implementing that PRD from yesterday." Drive and code — request features, answer clarifying questions, get progress callbacks. Commute time becomes productive time.
+
+Voice is just another interface to the system — same tools, same data, same capabilities. But optimized for when your hands are busy and your brain isn't.
 
 ---
 
