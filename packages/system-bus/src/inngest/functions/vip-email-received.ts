@@ -12,7 +12,21 @@ import { isVipSender } from "./vip-utils";
 
 const FRONT_API = "https://api2.frontapp.com";
 const VIP_MODEL = process.env.JOELCLAW_VIP_EMAIL_MODEL ?? "anthropic/claude-sonnet-4-6";
-const TRIAGE_MODEL = "anthropic/claude-haiku"; // Fast triage
+const TRIAGE_MODEL = process.env.JOELCLAW_VIP_TRIAGE_MODEL ?? "anthropic/claude-sonnet-4-6";
+const ENABLE_GITHUB_SEARCH = (process.env.JOELCLAW_VIP_ENABLE_GITHUB_SEARCH ?? "0") === "1";
+const ENABLE_OPUS_ESCALATION = (process.env.JOELCLAW_VIP_ENABLE_OPUS_ESCALATION ?? "1") === "1";
+const TOTAL_BUDGET_MS = Number(process.env.JOELCLAW_VIP_TOTAL_BUDGET_MS ?? "10000");
+const FRONT_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_FRONT_TIMEOUT_MS ?? "2000");
+const GRANOLA_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_GRANOLA_TIMEOUT_MS ?? "2500");
+const QDRANT_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_QDRANT_TIMEOUT_MS ?? "3500");
+const GITHUB_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_GITHUB_TIMEOUT_MS ?? "1500");
+const TRIAGE_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_TRIAGE_TIMEOUT_MS ?? "4500");
+const OPUS_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_OPUS_TIMEOUT_MS ?? "7000");
+const MIN_OPUS_TIME_REMAINING_MS = Number(process.env.JOELCLAW_VIP_MIN_OPUS_REMAINING_MS ?? "7500");
+const GRANOLA_RANGES = (process.env.JOELCLAW_VIP_GRANOLA_RANGES ?? "year")
+  .split(",")
+  .map((range) => range.trim())
+  .filter(Boolean);
 
 const VIP_SYSTEM_PROMPT = `You are a relationship intelligence analyst for Joel Hooks.
 
@@ -35,6 +49,25 @@ Respond ONLY with valid JSON:
   "missing_information": [{ "item": "string", "why_missing": "string", "how_to_get_it": "string" }],
   "questions_for_human": ["string"]
 }`;
+
+const VIP_TRIAGE_PROMPT = `You are a fast triage analyst for VIP email processing.
+
+Return only valid JSON with this exact shape:
+{
+  "needs_opus": true|false,
+  "complexity": "low|medium|high",
+  "reason": "short reason",
+  "analysis": {
+    "executive_summary": "string",
+    "interaction_signals": ["string"],
+    "entity_investigation": [{ "entity": "string", "type": "person|company|project|property|other", "notes": "string", "confidence": "high|medium|low" }],
+    "todos": [{ "title": "string", "description": "string", "priority": 1, "due": "optional natural language due" }],
+    "missing_information": [{ "item": "string", "why_missing": "string", "how_to_get_it": "string" }],
+    "questions_for_human": ["string"]
+  }
+}
+
+Set needs_opus=true only when high ambiguity, high risk, or executive-sensitive decisions require deep reasoning.`;
 
 type GranolaMeeting = {
   id: string;
@@ -115,20 +148,36 @@ function readFrontToken(): string {
   return process.env.FRONT_API_TOKEN ?? "";
 }
 
+async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchFrontContext(conversationId: string): Promise<{ summary: Record<string, unknown>; recentMessages: string[] } | null> {
   const token = readFrontToken();
   if (!token || !conversationId) return null;
 
+  const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
+
   try {
-    const convoRes = await fetch(`${FRONT_API}/conversations/${conversationId}`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-    });
+    const convoRes = await fetchJsonWithTimeout(
+      `${FRONT_API}/conversations/${conversationId}` ,
+      { headers },
+      FRONT_TIMEOUT_MS
+    );
     if (!convoRes.ok) return null;
     const convo = (await convoRes.json()) as Record<string, unknown>;
 
-    const msgRes = await fetch(`${FRONT_API}/conversations/${conversationId}/messages?limit=8`, {
-      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-    });
+    const msgRes = await fetchJsonWithTimeout(
+      `${FRONT_API}/conversations/${conversationId}/messages?limit=8`,
+      { headers },
+      FRONT_TIMEOUT_MS
+    );
 
     let recentMessages: string[] = [];
     if (msgRes.ok) {
@@ -411,7 +460,7 @@ export const vipEmailReceived = inngest.createFunction(
         ["-p", "--no-session", "--no-extensions", "--model", VIP_MODEL, "--system-prompt", VIP_SYSTEM_PROMPT, prompt],
         {
           encoding: "utf-8",
-          timeout: 15_000,  // 15s timeout - Sonnet should be fast
+          timeout: 30_000,  // 30s timeout - balanced for Sonnet
           stdio: ["ignore", "pipe", "pipe"],
           env: { ...process.env, TERM: "dumb" },
         }
