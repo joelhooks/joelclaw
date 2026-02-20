@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import matter from "gray-matter";
+import { toDateString } from "./date";
 
 export type AdrMeta = {
   title: string;
@@ -74,7 +75,7 @@ export function getAllAdrs(): AdrMeta[] {
 
       return {
         title: extractTitle(data, content),
-        date: data.date ?? "",
+        date: toDateString(data.date),
         status: normalizeStatus(data.status),
         slug,
         number,
@@ -96,7 +97,7 @@ export function getAdr(slug: string) {
   return {
     meta: {
       title: extractTitle(data, content),
-      date: data.date ?? "",
+      date: toDateString(data.date),
       status: normalizeStatus(data.status),
       slug,
       number,

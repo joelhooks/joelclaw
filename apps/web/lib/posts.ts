@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import matter from "gray-matter";
+import { parseDateValue, toDateString } from "./date";
 
 export type ContentType = "article" | "essay" | "note" | "tutorial";
 
@@ -30,8 +31,8 @@ export function getAllPosts(): PostMeta[] {
 
       return {
         title: data.title ?? "Untitled",
-        date: data.date ?? "",
-        updated: data.updated,
+        date: toDateString(data.date),
+        updated: toDateString(data.updated) || undefined,
         description: data.description ?? "",
         slug: filename.replace(/\.mdx$/, ""),
         type: (data.type as ContentType) ?? "article",
@@ -45,8 +46,8 @@ export function getAllPosts(): PostMeta[] {
     .filter((post) => process.env.NODE_ENV === "development" || !post.draft)
     .sort((a, b) => {
       // Sort by most recent timestamp — use updated if available, fall back to date
-      const aTime = new Date(a.updated ?? a.date).getTime();
-      const bTime = new Date(b.updated ?? b.date).getTime();
+      const aTime = parseDateValue(a.updated ?? a.date)?.getTime() ?? 0;
+      const bTime = parseDateValue(b.updated ?? b.date)?.getTime() ?? 0;
       return bTime - aTime;
     });
 }
@@ -61,8 +62,8 @@ export function getPost(slug: string) {
   return {
     meta: {
       title: data.title ?? "Untitled",
-      date: data.date ?? "",
-      updated: data.updated,
+      date: toDateString(data.date),
+      updated: toDateString(data.updated) || undefined,
       description: data.description ?? "",
       slug,
       type: (data.type as ContentType) ?? "article",
