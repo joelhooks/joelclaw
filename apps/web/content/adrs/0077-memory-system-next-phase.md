@@ -37,7 +37,7 @@ The memory system (ADR-0021) has been running in production since 2026-02-14. Si
 
 #### Section 1: Memory Storage — "Full Agent Memory Build — In Order"
 
-![[adr/jumperz-memory-storage.jpg|Full Agent Memory Build — In Order: Short-Term (checkpoint, working memory), Files (resources, items, write gate, dedup, categories, strength, sentiment), Graph (triples, conflict resolution), Episodic (episodes, episode search)]]
+![Full Agent Memory Build — In Order: Short-Term (checkpoint, working memory), Files (resources, items, write gate, dedup, categories, strength, sentiment), Graph (triples, conflict resolution), Episodic (episodes, episode search)](/images/adr/jumperz-memory-storage.jpg)
 
 #### Section 2: Memory Intelligence — "Feeds Into"
 
