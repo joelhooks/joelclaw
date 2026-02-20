@@ -124,3 +124,89 @@ Most `gateway.notify()` calls from Inngest functions already contain fully-forme
 ### Risks
 - Some events may need more intelligence than pass-through — need escape hatch to LLM
 - Telegram conversation quality may noticeably degrade on Sonnet vs Opus
+
+## Research: OpenClaw Token Optimization Patterns
+
+OpenClaw (~/Code/openclaw/openclaw) manages token costs across a multi-channel agent platform. Relevant patterns from their codebase and git history (credit: Peter Steinberger / OpenClaw contributors):
+
+### 1. Heartbeat Model Override (`heartbeat.model`)
+OpenClaw lets you run heartbeats on a **different, cheaper model** than the session primary. Config: `agents.defaults.heartbeat.model: "anthropic/claude-haiku"`. The main session keeps Opus for user interactions; heartbeats use Haiku. This is exactly what joelclaw needs — the gateway's hourly heartbeat doesn't need Opus.
+
+*Commit: `4200782a5` — "fix(heartbeat): honor heartbeat.model config for heartbeat turns"*
+
+### 2. Heartbeat Transcript Pruning
+When a heartbeat run produces `HEARTBEAT_OK` (no action needed), OpenClaw **truncates the transcript back** to pre-heartbeat size. Zero-information exchanges are pruned from history, preventing context window pollution from routine checks.
+
+*Commit: `e9f2e6a82` — "fix(heartbeat): prune transcript for HEARTBEAT_OK turns"*
+
+**joelclaw equivalent**: The gateway daemon never prunes its session. Every heartbeat acknowledgment accumulates in context, making subsequent Opus calls progressively more expensive.
+
+### 3. Session Pruning (Cache-TTL Aware)
+OpenClaw prunes **old tool results** from in-memory context before each LLM call. Two levels:
+- **Soft-trim**: Keep head + tail of oversized tool results, insert `...`
+- **Hard-clear**: Replace entire tool result with `[Old tool result content cleared]`
+
+Configurable per-tool (`tools.allow`/`tools.deny`), with TTL-aware triggering to avoid re-caching full history when Anthropic prompt cache expires.
+
+*Defaults: keepLastAssistants=3, softTrim maxChars=4000, hardClear enabled*
+
+**joelclaw equivalent**: The gateway session never trims tool results. Long bash outputs, file reads, and API responses persist in full across the entire session lifetime.
+
+### 4. Image Dimension Reduction
+OpenClaw reduced default image max dimension from 2000px to **1200px**. Vision tokens scale with image size — smaller images = fewer tokens with sufficient detail for most use cases.
+
+*Commit: `5ee79f80e` — "fix: reduce default image dimension from 2000px to 1200px"*
+
+**joelclaw equivalent**: media-process sends images to Haiku (already cheap), but if the gateway ever processes images directly, this matters.
+
+### 5. Skill Path Compaction
+Replace absolute home directory in skill `<location>` tags with `~`. Saves ~5-6 tokens per path × 90+ skills = **400-600 tokens per system prompt**.
+
+*Commit: `4f2c57eb4` — "feat(skills): compact skill paths with ~ to reduce prompt tokens"*
+
+**joelclaw equivalent**: The gateway's pi session loads all skills into the system prompt with full absolute paths. Direct savings opportunity.
+
+### 6. Bootstrap File Truncation
+System prompt workspace files (`AGENTS.md`, `MEMORY.md`, etc.) are truncated at configurable limits:
+- Per-file: `bootstrapMaxChars` (default: 20,000)
+- Total: `bootstrapTotalMaxChars` (default: 150,000)
+
+**joelclaw equivalent**: AGENTS.md alone is ~15K chars. MEMORY.md is growing. No truncation in gateway.
+
+### 7. Compaction Reserve Tokens Floor
+Minimum 20,000 tokens reserved for compaction summaries. Prevents compaction from producing too-small summaries that lose critical context.
+
+### 8. Cron Usage Tracking
+OpenClaw has `scripts/cron_usage_report.ts` — parses JSONL run logs to produce per-job, per-model token usage reports with input/output/cache breakdowns. Essential for identifying which cron jobs are most expensive.
+
+**joelclaw equivalent**: No per-function token tracking. We can't currently measure which Inngest functions or gateway events cost the most.
+
+### 9. Active Hours Window
+`agents.defaults.heartbeat.activeHours: { start: "09:00", end: "22:00" }` — heartbeats only run during waking hours. No overnight token burn for a system nobody's watching.
+
+**joelclaw equivalent**: Heartbeat runs 24/7. Sleep mode exists but is manual. Active hours would eliminate ~8 hours of heartbeat token spend automatically.
+
+### 10. Cache Warming via Heartbeat Interval
+If Anthropic cache TTL is 1h, setting heartbeat to 55min keeps the prompt cache warm — subsequent requests are cache reads (cheap) instead of cache writes (expensive). OpenClaw documents this explicitly in their token-use guide.
+
+**joelclaw equivalent**: Not leveraging prompt caching at all. The gateway daemon doesn't configure `cacheRetention` or align heartbeat timing with cache TTL.
+
+### 11. Model Fallback Chain
+OpenClaw has a full model failover system — on 429/503/timeout, it falls to the next model in the chain. Subagent spawns can override the model. Context overflow errors are specifically excluded from fallback (switching to a smaller-context model on overflow would be counterproductive).
+
+*Commit: `b8f66c260` — "Agents: add nested subagent orchestration controls and reduce subagent token waste"*
+
+## Summary: Applicable Techniques for joelclaw
+
+| Technique | Effort | Impact | Phase |
+|-----------|--------|--------|-------|
+| Pass-through delivery (no LLM for formatted events) | Medium | **Huge** | 1 |
+| Heartbeat model demotion (Opus → Haiku) | Low | **High** | 1 |
+| Active hours window (no overnight heartbeat) | Low | Medium | 1 |
+| Heartbeat transcript pruning (HEARTBEAT_OK → prune) | Medium | Medium | 2 |
+| Session pruning (trim old tool results) | Medium | Medium | 2 |
+| Skill path compaction (~ instead of /Users/joel) | Low | Small | 1 |
+| Bootstrap file truncation | Low | Small | 1 |
+| Per-function token tracking | Medium | Diagnostic | 2 |
+| Prompt cache warming (align heartbeat with TTL) | Low | Medium | 2 |
+| Gateway → dumb router (full Opus removal) | High | **Huge** | 3 |
