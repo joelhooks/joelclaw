@@ -43,6 +43,7 @@ import {
   granolaBackfill,
   friction,
   frictionFix,
+  telnyxNotify,
   proposalTriage,
   batchReview,
   nightlyMaintenance,
@@ -104,6 +105,7 @@ const registeredFunctions = [
   todoistMemoryReviewBridge,
   friction,
   frictionFix,
+  telnyxNotify,
   proposalTriage,
   batchReview,
   nightlyMaintenance,
@@ -153,6 +155,7 @@ app.get("/", (c) =>
       "meeting/noted": "Analyze meeting → extract action items, decisions, people (ADR-0055)",
       "granola/backfill.requested": "Backfill all historical Granola meetings (ADR-0055)",
       "memory/digest.created": "Structured daily digest generated from raw daily memory log",
+      "notification/call.requested": "Place outbound call via Telnyx, fallback to SMS if unanswered",
     },
   })
 );

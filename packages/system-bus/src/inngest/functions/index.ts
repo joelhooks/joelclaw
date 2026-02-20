@@ -47,6 +47,7 @@ export { meetingAnalyze } from "./meeting-analyze";
 export { granolaBackfill } from "./granola-backfill";
 export { friction } from "./friction";
 export { frictionFix } from "./friction-fix";
+export { telnyxNotify } from "./telnyx-notify";
 export { proposalTriage } from "./memory/proposal-triage";
 export { batchReview } from "./memory/batch-review";
 export { nightlyMaintenance } from "./memory/nightly-maintenance";
