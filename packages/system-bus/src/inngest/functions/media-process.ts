@@ -156,15 +156,15 @@ async function describeImage(
   mimeType: string,
   caption?: string,
 ): Promise<string> {
-  // Use codex for vision — it can read image files natively.
-  // Pattern: all LLM calls use pi/codex CLIs, never direct API calls.
-  const prompt = caption
-    ? `Read the image at ${imagePath} and describe it in detail. The sender included this caption: "${caption}". Include what you see and any text visible in the image.`
-    : `Read the image at ${imagePath} and describe it in detail. Include what you see and any text visible in the image. If there's handwritten or printed text, transcribe it.`;
+  // Use pi CLI with file ref — pi's read tool handles images natively.
+  // No --no-tools here so pi can read the image file.
+  const captionCtx = caption ? ` The sender included this caption: "${caption}".` : "";
+  const systemPrompt = "You describe images sent to an AI assistant via messaging. Be thorough but concise. Transcribe any visible text accurately.";
+  const userPrompt = `Read the file ${imagePath} and describe the image in detail.${captionCtx} Include what you see and any text visible in the image.`;
 
   try {
     const result = execSync(
-      `codex exec --full-auto -q ${JSON.stringify(prompt)}`,
+      `pi --no-session --no-extensions --print --mode text --model anthropic/claude-sonnet-4-6 --system-prompt ${JSON.stringify(systemPrompt)} ${JSON.stringify(userPrompt)}`,
       {
         encoding: "utf-8",
         timeout: 60_000,
