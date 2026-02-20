@@ -37,11 +37,11 @@ The memory system (ADR-0021) has been running in production since 2026-02-14. Si
 
 #### Section 1: Memory Storage — "Full Agent Memory Build — In Order"
 
-![Full Agent Memory Build — In Order: Short-Term (checkpoint, working memory), Files (resources, items, write gate, dedup, categories, strength, sentiment), Graph (triples, conflict resolution), Episodic (episodes, episode search)](/images/adr/jumperz-memory-storage.jpg)
+![[adr/jumperz-memory-storage.jpg|Full Agent Memory Build — In Order: Short-Term (checkpoint, working memory), Files (resources, items, write gate, dedup, categories, strength, sentiment), Graph (triples, conflict resolution), Episodic (episodes, episode search)]]
 
 #### Section 2: Memory Intelligence — "Feeds Into"
 
-![Memory Intelligence: Retrieval (rewrite query, score decay, tiered, inject, dual search), Decay (nightly, weekly, cron fallback, domain TTLs), Advanced (trust pass, echo/fizzle, memory agent, cross-agent, forward, budget-aware), Ops (session flush, behavior loop)](/images/adr/jumperz-memory-intelligence.jpg)
+![[adr/jumperz-memory-intelligence.jpg|Memory Intelligence: Retrieval (rewrite query, score decay, tiered, inject, dual search), Decay (nightly, weekly, cron fallback, domain TTLs), Advanced (trust pass, echo/fizzle, memory agent, cross-agent, forward, budget-aware), Ops (session flush, behavior loop)]]
 
 Key concepts from that framework not yet implemented in joelclaw:
 
