@@ -97,7 +97,13 @@ export const refresh = Command.make("refresh", {}, () =>
       }, changed
         ? [
             { command: "joelclaw functions", description: "Verify registered functions" },
-            { command: "joelclaw runs --count 3", description: "Check recent runs" },
+            {
+              command: "joelclaw runs [--count <count>]",
+              description: "Check recent runs",
+              params: {
+                count: { description: "Number of runs", value: 3, default: 10 },
+              },
+            },
           ]
         : []
       )

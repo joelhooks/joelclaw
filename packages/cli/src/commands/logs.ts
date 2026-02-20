@@ -145,7 +145,18 @@ export const logsCmd = Command.make(
         process.off("SIGTERM", onSignal)
 
         emitResult(cmd, { lines_emitted: lineCount, duration_ms: Date.now() - startTime }, [
-          { command: `joelclaw logs ${source}`, description: "Snapshot mode" },
+          {
+            command: "joelclaw logs <source>",
+            description: "Snapshot mode",
+            params: {
+              source: {
+                description: "Log source",
+                value: source,
+                enum: ["worker", "errors", "server"],
+                required: true,
+              },
+            },
+          },
         ])
         return
       }
@@ -165,7 +176,18 @@ export const logsCmd = Command.make(
           if (proc.exitCode !== 0) {
             const next: NextAction[] = [
               { command: `kubectl get pods -n joelclaw`, description: "Check pod status" },
-              { command: `joelclaw logs worker`, description: "Try worker logs instead" },
+              {
+                command: "joelclaw logs <source>",
+                description: "Try worker logs instead",
+                params: {
+                  source: {
+                    description: "Log source",
+                    value: "worker",
+                    enum: ["worker", "errors", "server"],
+                    required: true,
+                  },
+                },
+              },
             ]
             yield* Console.log(respondError("logs server", "kubectl failed — k8s not reachable", "K8S_UNREACHABLE",
               "Check k3d cluster: k3d cluster list && kubectl get pods -n joelclaw", next))
@@ -179,7 +201,18 @@ export const logsCmd = Command.make(
           label = "worker stderr"
           if (!existsSync(WORKER_ERR)) {
             yield* Console.log(respond("logs errors", { source: label, lineCount: 0, output: "(no error log file)" }, [
-              { command: `joelclaw logs worker`, description: "Check worker stdout instead" },
+              {
+                command: "joelclaw logs <source>",
+                description: "Check worker stdout instead",
+                params: {
+                  source: {
+                    description: "Log source",
+                    value: "worker",
+                    enum: ["worker", "errors", "server"],
+                    required: true,
+                  },
+                },
+              },
             ]))
             return
           }
@@ -215,11 +248,74 @@ export const logsCmd = Command.make(
       const shown = filteredLines.slice(-lines)
 
       const next: NextAction[] = []
-      if (source !== "errors") next.push({ command: `joelclaw logs errors`, description: "Worker stderr (stack traces)" })
-      if (source !== "server") next.push({ command: `joelclaw logs server`, description: "Inngest server logs (k8s)" })
-      if (source !== "worker") next.push({ command: `joelclaw logs worker`, description: "Worker stdout" })
-      if (!grepVal) next.push({ command: `joelclaw logs ${source} --grep error`, description: "Filter for errors" })
-      next.push({ command: `joelclaw runs --status FAILED`, description: "Failed runs" })
+      if (source !== "errors") {
+        next.push({
+          command: "joelclaw logs <source>",
+          description: "Worker stderr (stack traces)",
+          params: {
+            source: {
+              description: "Log source",
+              value: "errors",
+              enum: ["worker", "errors", "server"],
+              required: true,
+            },
+          },
+        })
+      }
+      if (source !== "server") {
+        next.push({
+          command: "joelclaw logs <source>",
+          description: "Inngest server logs (k8s)",
+          params: {
+            source: {
+              description: "Log source",
+              value: "server",
+              enum: ["worker", "errors", "server"],
+              required: true,
+            },
+          },
+        })
+      }
+      if (source !== "worker") {
+        next.push({
+          command: "joelclaw logs <source>",
+          description: "Worker stdout",
+          params: {
+            source: {
+              description: "Log source",
+              value: "worker",
+              enum: ["worker", "errors", "server"],
+              required: true,
+            },
+          },
+        })
+      }
+      if (!grepVal) {
+        next.push({
+          command: "joelclaw logs <source> [--grep <grep>]",
+          description: "Filter for errors",
+          params: {
+            source: {
+              description: "Log source",
+              value: source,
+              enum: ["worker", "errors", "server"],
+              required: true,
+            },
+            grep: { description: "Filter string", value: "error" },
+          },
+        })
+      }
+      next.push({
+        command: "joelclaw runs [--status <status>]",
+        description: "Failed runs",
+        params: {
+          status: {
+            description: "Run status filter",
+            value: "FAILED",
+            enum: ["COMPLETED", "FAILED", "RUNNING", "QUEUED", "CANCELLED"],
+          },
+        },
+      })
 
       yield* Console.log(respond(`logs ${source}`, {
         source: label,

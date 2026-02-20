@@ -44,10 +44,36 @@ export const eventsCmd = Command.make(
       }
 
       const next: NextAction[] = [
-        { command: `joelclaw events --prefix memory/ --hours 24`, description: "Memory pipeline events" },
-        { command: `joelclaw events --prefix agent/ --hours 24`, description: "Agent loop events" },
-        { command: `joelclaw events --prefix pipeline/`, description: "Pipeline events" },
-        { command: `joelclaw runs --count 5`, description: "Runs triggered by events" },
+        {
+          command: "joelclaw events [--prefix <prefix>] [--hours <hours>]",
+          description: "Memory pipeline events",
+          params: {
+            prefix: { description: "Event prefix", value: "memory/" },
+            hours: { description: "Lookback window in hours", value: 24, default: 4 },
+          },
+        },
+        {
+          command: "joelclaw events [--prefix <prefix>] [--hours <hours>]",
+          description: "Agent loop events",
+          params: {
+            prefix: { description: "Event prefix", value: "agent/" },
+            hours: { description: "Lookback window in hours", value: 24, default: 4 },
+          },
+        },
+        {
+          command: "joelclaw events [--prefix <prefix>]",
+          description: "Pipeline events",
+          params: {
+            prefix: { description: "Event prefix", value: "pipeline/" },
+          },
+        },
+        {
+          command: "joelclaw runs [--count <count>]",
+          description: "Runs triggered by events",
+          params: {
+            count: { description: "Number of runs", value: 5, default: 10 },
+          },
+        },
       ]
 
       yield* Console.log(respond("events", {

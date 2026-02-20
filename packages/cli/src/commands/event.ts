@@ -27,14 +27,29 @@ export const eventCmd = Command.make(
 
       for (const run of result.runs) {
         next.push({
-          command: `joelclaw run ${run.id}`,
+          command: "joelclaw run <run-id>",
           description: `Inspect ${run.status.toLowerCase()} ${run.functionName ?? run.functionID}`,
+          params: {
+            "run-id": { description: "Run ID", value: run.id, required: true },
+          },
         })
       }
 
       next.push(
-        { command: `joelclaw events --count 5`, description: "Recent events" },
-        { command: `joelclaw runs --count 5`, description: "Recent runs" },
+        {
+          command: "joelclaw events [--count <count>]",
+          description: "Recent events",
+          params: {
+            count: { description: "Number of events", value: 5, default: 20 },
+          },
+        },
+        {
+          command: "joelclaw runs [--count <count>]",
+          description: "Recent runs",
+          params: {
+            count: { description: "Number of runs", value: 5, default: 10 },
+          },
+        },
       )
 
       yield* Console.log(respond("event", result, next))

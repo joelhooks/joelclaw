@@ -419,11 +419,35 @@ export const loopDiagnoseCmd = Command.make(
             fixApplied: fixResult,
           }, [
             result.fixAction && !fix
-              ? { command: `joelclaw loop diagnose ${id} --fix`, description: `Apply fix: ${result.fixAction}` }
+              ? {
+                  command: "joelclaw loop diagnose <loop-id> [--fix]",
+                  description: `Apply fix: ${result.fixAction}`,
+                  params: {
+                    "loop-id": { description: "Loop ID", value: id, required: true },
+                  },
+                }
               : null,
-            { command: `joelclaw loop status ${id} -c`, description: "Check loop status" },
-            { command: `joelclaw loop cancel ${id}`, description: "Cancel this loop" },
-            { command: `joelclaw loop restart ${id}`, description: "Full restart" },
+            {
+              command: "joelclaw loop status <loop-id> [--compact]",
+              description: "Check loop status",
+              params: {
+                "loop-id": { description: "Loop ID", value: id, required: true },
+              },
+            },
+            {
+              command: "joelclaw loop cancel <loop-id>",
+              description: "Cancel this loop",
+              params: {
+                "loop-id": { description: "Loop ID", value: id, required: true },
+              },
+            },
+            {
+              command: "joelclaw loop restart <loop-id>",
+              description: "Full restart",
+              params: {
+                "loop-id": { description: "Loop ID", value: id, required: true },
+              },
+            },
           ].filter(Boolean)))
         }
       }

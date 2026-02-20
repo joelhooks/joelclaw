@@ -72,9 +72,28 @@ export const sendCmd = Command.make(
       // ── Standard mode: fire and forget ─────────────────────────
       if (!follow) {
         yield* Console.log(respond("send", { event, data: payload, response: result }, [
-          { command: `joelclaw runs --count 3`, description: "Check if the function picked it up" },
-          { command: `joelclaw run ${runIds[0] ?? "RUN_ID"}`, description: "Inspect the run once it starts" },
-          { command: `joelclaw send ${event} -d '${JSON.stringify(payload)}' --follow`, description: "Re-send with streaming" },
+          {
+            command: "joelclaw runs [--count <count>]",
+            description: "Check if the function picked it up",
+            params: {
+              count: { description: "Number of runs", value: 3, default: 10 },
+            },
+          },
+          {
+            command: "joelclaw run <run-id>",
+            description: "Inspect the run once it starts",
+            params: {
+              "run-id": { description: "Run ID", value: runIds[0] ?? "RUN_ID", required: true },
+            },
+          },
+          {
+            command: "joelclaw send <event> [--data <data>] [--follow]",
+            description: "Re-send with streaming",
+            params: {
+              event: { description: "Event name", value: event, required: true },
+              data: { description: "JSON payload", value: JSON.stringify(payload), default: "{}" },
+            },
+          },
           { command: `joelclaw functions`, description: "See which function handles this event" },
         ]))
         return
@@ -111,7 +130,13 @@ export const sendCmd = Command.make(
           response: result,
           follow_failed: "Redis connection failed — event sent but cannot stream progress",
         }, [
-          { command: `joelclaw run ${runIds[0] ?? "RUN_ID"}`, description: "Poll run status instead" },
+          {
+            command: "joelclaw run <run-id>",
+            description: "Poll run status instead",
+            params: {
+              "run-id": { description: "Run ID", value: runIds[0] ?? "RUN_ID", required: true },
+            },
+          },
         ])
         return
       }
@@ -226,14 +251,32 @@ export const sendCmd = Command.make(
           status: finalState?.run?.status ?? "unknown",
           data: payload,
         }, [
-          { command: `joelclaw run ${runIds[0]}`, description: "Inspect final run state" },
-          { command: `joelclaw runs --count 5`, description: "Recent runs" },
+          {
+            command: "joelclaw run <run-id>",
+            description: "Inspect final run state",
+            params: {
+              "run-id": { description: "Run ID", value: runIds[0], required: true },
+            },
+          },
+          {
+            command: "joelclaw runs [--count <count>]",
+            description: "Recent runs",
+            params: {
+              count: { description: "Number of runs", value: 5, default: 10 },
+            },
+          },
         ])
       } else {
         emitError(cmd, `Run failed: ${finalState?.errors?.[0]?.message ?? "unknown"}`,
           "RUN_FAILED",
           `Check: joelclaw run ${runIds[0]}`, [
-            { command: `joelclaw run ${runIds[0]}`, description: "Inspect failed run" },
+            {
+              command: "joelclaw run <run-id>",
+              description: "Inspect failed run",
+              params: {
+                "run-id": { description: "Run ID", value: runIds[0], required: true },
+              },
+            },
             { command: `joelclaw logs errors`, description: "Worker error logs" },
           ])
       }

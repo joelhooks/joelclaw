@@ -71,8 +71,21 @@ export const noteCmd = Command.make(
         "note",
         note,
         [
-          { command: "joelclaw runs --count 3", description: "Check recent processing runs" },
-          { command: "joelclaw events --prefix system/note.captured --hours 1", description: "Verify note capture events" },
+          {
+            command: "joelclaw runs [--count <count>]",
+            description: "Check recent processing runs",
+            params: {
+              count: { description: "Number of runs", value: 3, default: 10 },
+            },
+          },
+          {
+            command: "joelclaw events [--prefix <prefix>] [--hours <hours>]",
+            description: "Verify note capture events",
+            params: {
+              prefix: { description: "Event prefix", value: "system/note.captured" },
+              hours: { description: "Lookback window in hours", value: 1, default: 4 },
+            },
+          },
           { command: "joelclaw note \"another thought\"", description: "Capture another note" },
         ]
       )

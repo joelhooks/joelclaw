@@ -21,7 +21,13 @@ export const statusCmd = Command.make(
       }
       next.push(
         { command: `joelclaw functions`, description: "View registered functions" },
-        { command: `joelclaw runs --count 5`, description: "Recent runs" },
+        {
+          command: "joelclaw runs [--count <count>]",
+          description: "Recent runs",
+          params: {
+            count: { description: "Number of runs", value: 5, default: 10 },
+          },
+        },
         { command: `joelclaw logs errors`, description: "Check worker errors" },
       )
 
@@ -39,11 +45,21 @@ export const functionsCmd = Command.make(
 
       const next = fns.flatMap((f) =>
         f.triggers.slice(0, 1).map((t) => ({
-          command: `joelclaw send ${t.value} -d '{}'`,
+          command: "joelclaw send <event> [--data <data>]",
           description: `Trigger ${f.name}`,
+          params: {
+            event: { description: "Event name", value: t.value, required: true },
+            data: { description: "JSON payload", value: "{}", default: "{}" },
+          },
         }))
       )
-      next.push({ command: `joelclaw runs --count 5`, description: "See recent runs" })
+      next.push({
+        command: "joelclaw runs [--count <count>]",
+        description: "See recent runs",
+        params: {
+          count: { description: "Number of runs", value: 5, default: 10 },
+        },
+      })
 
       yield* Console.log(respond("functions", { count: fns.length, functions: fns }, next))
     })

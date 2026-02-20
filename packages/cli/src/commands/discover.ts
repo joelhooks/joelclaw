@@ -33,8 +33,20 @@ export const discoverCmd = Command.make(
         event: "discovery/noted",
         response: result,
       }, [
-        { command: `joelclaw runs --count 3`, description: "Check discovery-capture progress" },
-        { command: `joelclaw run ${ids[0] ?? "RUN_ID"}`, description: "Inspect the run" },
+        {
+          command: "joelclaw runs [--count <count>]",
+          description: "Check discovery-capture progress",
+          params: {
+            count: { description: "Number of runs", value: 3, default: 10 },
+          },
+        },
+        {
+          command: "joelclaw run <run-id>",
+          description: "Inspect the run",
+          params: {
+            "run-id": { description: "Run ID", value: ids[0] ?? "RUN_ID", required: true },
+          },
+        },
         { command: `ls ~/Vault/Resources/discoveries/`, description: "Check vault output" },
       ]))
     })

@@ -63,8 +63,20 @@ const listCmd = Command.make("list", {}, () =>
         },
         [
           { command: "joelclaw approvals categories", description: "List auto-approval categories" },
-          { command: "joelclaw approvals approve <id> [--learn]", description: "Approve one request" },
-          { command: "joelclaw approvals deny <id>", description: "Deny one request" },
+          {
+            command: "joelclaw approvals approve <id> [--learn]",
+            description: "Approve one request",
+            params: {
+              id: { description: "Approval request ID", required: true },
+            },
+          },
+          {
+            command: "joelclaw approvals deny <id>",
+            description: "Deny one request",
+            params: {
+              id: { description: "Approval request ID", required: true },
+            },
+          },
         ]
       )
     )
@@ -174,7 +186,13 @@ const categoriesCmd = Command.make(
           },
           [
             { command: "joelclaw approvals", description: "List pending approvals" },
-            { command: "joelclaw approvals reset <agent>", description: "Reset categories for one agent" },
+            {
+              command: "joelclaw approvals reset <agent>",
+              description: "Reset categories for one agent",
+              params: {
+                agent: { description: "Agent name", required: true },
+              },
+            },
           ]
         )
       )
@@ -256,10 +274,34 @@ export const approvalsCmd = Command.make("approvals", {}, () =>
         },
         [
           { command: "joelclaw approvals categories", description: "List auto-approval categories" },
-          { command: "joelclaw approvals approve <id> [--learn]", description: "Approve one request" },
-          { command: "joelclaw approvals deny <id>", description: "Deny one request" },
-          { command: "joelclaw approvals history [--limit <n>]", description: "View approval history" },
-          { command: "joelclaw approvals reset <agent>", description: "Clear learned categories for an agent" },
+          {
+            command: "joelclaw approvals approve <id> [--learn]",
+            description: "Approve one request",
+            params: {
+              id: { description: "Approval request ID", required: true },
+            },
+          },
+          {
+            command: "joelclaw approvals deny <id>",
+            description: "Deny one request",
+            params: {
+              id: { description: "Approval request ID", required: true },
+            },
+          },
+          {
+            command: "joelclaw approvals history [--limit <limit>]",
+            description: "View approval history",
+            params: {
+              limit: { description: "Maximum history entries", default: 50 },
+            },
+          },
+          {
+            command: "joelclaw approvals reset <agent>",
+            description: "Clear learned categories for an agent",
+            params: {
+              agent: { description: "Agent name", required: true },
+            },
+          },
         ]
       )
     )

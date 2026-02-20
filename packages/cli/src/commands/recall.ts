@@ -109,10 +109,36 @@ export const recallCmd = Command.make(
             totalPoints: "520+",
             includeSuperseded,
           }, [
-            { command: `recall "${query}" --limit 10`, description: "Get more results" },
-            { command: `recall "${query}" --min-score 0.35`, description: "Stricter relevance" },
-            { command: `recall "${query}" --include-superseded`, description: "Include older superseded observations" },
-            { command: `recall "${query}" --raw`, description: "Raw observations for injection" },
+            {
+              command: "recall <query> [--limit <limit>]",
+              description: "Get more results",
+              params: {
+                query: { description: "Recall search query", value: query, required: true },
+                limit: { description: "Maximum results", value: 10, default: 5 },
+              },
+            },
+            {
+              command: "recall <query> [--min-score <min-score>]",
+              description: "Stricter relevance",
+              params: {
+                query: { description: "Recall search query", value: query, required: true },
+                "min-score": { description: "Minimum similarity score", value: 0.35, default: 0.25 },
+              },
+            },
+            {
+              command: "recall <query> [--include-superseded]",
+              description: "Include older superseded observations",
+              params: {
+                query: { description: "Recall search query", value: query, required: true },
+              },
+            },
+            {
+              command: "recall <query> [--raw]",
+              description: "Raw observations for injection",
+              params: {
+                query: { description: "Recall search query", value: query, required: true },
+              },
+            },
           ])
         )
       } catch (error) {

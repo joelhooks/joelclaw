@@ -144,16 +144,26 @@ const inboxCmd = Command.make(
           },
           [
             {
-              command: `joelclaw email inbox -q "is:open is:unread" -n 25`,
+              command: "joelclaw email inbox [--query <query>] [--limit <limit>]",
               description: "Show only unread",
+              params: {
+                query: { description: "Front search query", value: "is:open is:unread", default: "is:open" },
+                limit: { description: "Maximum conversations", value: 25, default: 50 },
+              },
             },
             {
-              command: `joelclaw email archive <conversation_id>`,
+              command: "joelclaw email archive --id <conversation-id>",
               description: "Archive a conversation",
+              params: {
+                "conversation-id": { description: "Conversation ID", required: true },
+              },
             },
             {
-              command: `joelclaw email archive-bulk -q "is:open before:2026-01-01" --confirm`,
+              command: "joelclaw email archive-bulk --query <query> [--confirm]",
               description: "Bulk archive old conversations",
+              params: {
+                query: { description: "Front search query", value: "is:open before:2026-01-01", required: true },
+              },
             },
           ],
         ),
@@ -219,8 +229,11 @@ const archiveBulkCmd = Command.make(
             },
             [
               {
-                command: `joelclaw email archive-bulk -q "${query}" --confirm`,
+                command: "joelclaw email archive-bulk --query <query> [--confirm]",
                 description: `Archive ${ids.length} conversations (pass --confirm to execute)`,
+                params: {
+                  query: { description: "Front search query", value: query, required: true },
+                },
               },
             ],
           ),
@@ -252,8 +265,11 @@ const archiveBulkCmd = Command.make(
               description: "Check remaining open conversations",
             },
             {
-              command: `joelclaw email archive-bulk -q "${query}" --confirm`,
+              command: "joelclaw email archive-bulk --query <query> [--confirm]",
               description: "Archive next batch (if more remain)",
+              params: {
+                query: { description: "Front search query", value: query, required: true },
+              },
             },
           ],
         ),
@@ -305,8 +321,11 @@ const readCmd = Command.make(
           },
           [
             {
-              command: `joelclaw email archive --id ${conversationId}`,
+              command: "joelclaw email archive --id <conversation-id>",
               description: "Archive this conversation",
+              params: {
+                "conversation-id": { description: "Conversation ID", value: conversationId, required: true },
+              },
             },
             {
               command: "joelclaw email inbox",
@@ -368,8 +387,11 @@ export const emailCmd = Command.make("email", {}, () =>
             description: "Scan open conversations",
           },
           {
-            command: 'joelclaw email inbox -q "is:open is:unread"',
+            command: "joelclaw email inbox [--query <query>]",
             description: "Show unread only",
+            params: {
+              query: { description: "Front search query", value: "is:open is:unread", default: "is:open" },
+            },
           },
         ],
       ),

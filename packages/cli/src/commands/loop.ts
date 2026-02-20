@@ -263,8 +263,20 @@ export const restartLoop = (
       message: "Restart success",
       eventId,
     }, [
-      { command: `joelclaw loop status ${loopId}`, description: "Check loop progress" },
-      { command: `joelclaw runs --count 10`, description: "See pipeline runs" },
+      {
+        command: "joelclaw loop status <loop-id>",
+        description: "Check loop progress",
+        params: {
+          "loop-id": { description: "Loop ID", value: loopId, required: true },
+        },
+      },
+      {
+        command: "joelclaw runs [--count <count>]",
+        description: "See pipeline runs",
+        params: {
+          count: { description: "Number of runs", value: 10, default: 10 },
+        },
+      },
     ])))
   })
 
@@ -331,9 +343,27 @@ export const loopStartCmd = Command.make(
       yield* Console.log(respond("loop start", {
         loopId, project, prdPath: prd, maxRetries, maxIterations, push, event: result,
       }, [
-        { command: `joelclaw loop status ${loopId}`, description: "Check loop progress" },
-        { command: `joelclaw runs --count 10`, description: "See pipeline runs" },
-        { command: `joelclaw loop cancel ${loopId}`, description: "Stop the loop" },
+        {
+          command: "joelclaw loop status <loop-id>",
+          description: "Check loop progress",
+          params: {
+            "loop-id": { description: "Loop ID", value: loopId, required: true },
+          },
+        },
+        {
+          command: "joelclaw runs [--count <count>]",
+          description: "See pipeline runs",
+          params: {
+            count: { description: "Number of runs", value: 10, default: 10 },
+          },
+        },
+        {
+          command: "joelclaw loop cancel <loop-id>",
+          description: "Stop the loop",
+          params: {
+            "loop-id": { description: "Loop ID", value: loopId, required: true },
+          },
+        },
       ]))
     })
 )
@@ -419,7 +449,13 @@ export const loopStatusCmd = Command.make(
 
       if (!targetId || !prd) {
         yield* Console.log(respond("loop status", { loop: "no loops in Redis" }, [
-          { command: `joelclaw loop start --project PATH`, description: "Start a new loop" },
+          {
+            command: "joelclaw loop start --project <project>",
+            description: "Start a new loop",
+            params: {
+              project: { description: "Absolute project path", required: true },
+            },
+          },
         ]))
         return
       }
@@ -506,13 +542,33 @@ export const loopStatusCmd = Command.make(
       }
 
       const next = []
-      next.push({ command: `joelclaw loop cancel ${targetId}`, description: "Cancel this loop" })
-      if (running) next.push({ command: `joelclaw run ${(running[0] as any).runId ?? targetId}`, description: "Inspect running function" })
+      next.push({
+        command: "joelclaw loop cancel <loop-id>",
+        description: "Cancel this loop",
+        params: {
+          "loop-id": { description: "Loop ID", value: targetId, required: true },
+        },
+      })
+      if (running) {
+        next.push({
+          command: "joelclaw run <run-id>",
+          description: "Inspect running function",
+          params: {
+            "run-id": { description: "Run ID", value: (running[0] as any).runId ?? targetId, required: true },
+          },
+        })
+      }
       const others = loopData.filter(
         (l) => l.loopId !== targetId && l.prd?.stories?.some((s: any) => !s.passes && !s.skipped)
       )
       for (const o of others.slice(0, 2)) {
-        next.push({ command: `joelclaw loop status ${o.loopId}`, description: o.prd?.title })
+        next.push({
+          command: "joelclaw loop status <loop-id>",
+          description: o.prd?.title,
+          params: {
+            "loop-id": { description: "Loop ID", value: o.loopId, required: true },
+          },
+        })
       }
 
       yield* Console.log(respond("loop status", output, next))
@@ -585,7 +641,17 @@ export const loopCancelCmd = Command.make(
         redisKeyRemoved: redisClean, cancelEvent: result,
       }, [
         { command: `joelclaw loop list`, description: "Check remaining loops" },
-        { command: `joelclaw runs --status RUNNING`, description: "Check for any still-running functions" },
+        {
+          command: "joelclaw runs [--status <status>]",
+          description: "Check for any still-running functions",
+          params: {
+            status: {
+              description: "Run status filter",
+              value: "RUNNING",
+              enum: ["COMPLETED", "FAILED", "RUNNING", "QUEUED", "CANCELLED"],
+            },
+          },
+        },
       ]))
     })
 )
@@ -768,7 +834,13 @@ export const loopCmd = Command.make("loop", {}, () =>
     },
   }, [
     { command: `joelclaw loop status`, description: "Check active loop" },
-    { command: `joelclaw loop diagnose all -c`, description: "Diagnose all stalled loops" },
+    {
+      command: "joelclaw loop diagnose <loop-id> [--compact]",
+      description: "Diagnose all stalled loops",
+      params: {
+        "loop-id": { description: "Loop ID or 'all'", value: "all", required: true },
+      },
+    },
     { command: `joelclaw loop list`, description: "All loops in Redis" },
     { command: `joelclaw loop nuke dead`, description: "Clean up completed loops" },
   ]))

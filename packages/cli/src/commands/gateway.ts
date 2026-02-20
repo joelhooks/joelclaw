@@ -168,7 +168,13 @@ const gatewayEvents = Command.make("events", {}, () =>
       },
       [
         { command: "joelclaw gateway drain", description: "Clear all events" },
-        { command: "joelclaw gateway push --type test", description: "Push a test event" },
+        {
+          command: "joelclaw gateway push --type <type>",
+          description: "Push a test event",
+          params: {
+            type: { description: "Event type", value: "test", enum: ["test", "cron.heartbeat", "test.gateway-e2e"] },
+          },
+        },
       ],
       true
     ))

@@ -107,7 +107,13 @@ const approveCmd = Command.make(
       yield* Console.log(
         respond("review approve", { proposalId, sent: response }, [
           { command: "joelclaw review", description: "See remaining pending proposals" },
-          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
+          {
+            command: "joelclaw runs [--count <count>]",
+            description: "Confirm processing run",
+            params: {
+              count: { description: "Number of runs", value: 5, default: 10 },
+            },
+          },
         ])
       )
     })
@@ -133,7 +139,13 @@ const rejectCmd = Command.make(
       yield* Console.log(
         respond("review reject", { proposalId, reason, sent: response }, [
           { command: "joelclaw review", description: "See remaining pending proposals" },
-          { command: "joelclaw runs --count 5", description: "Confirm processing run" },
+          {
+            command: "joelclaw runs [--count <count>]",
+            description: "Confirm processing run",
+            params: {
+              count: { description: "Number of runs", value: 5, default: 10 },
+            },
+          },
         ])
       )
     })
@@ -160,7 +172,13 @@ const approveAllCmd = Command.make("approve-all", {}, () =>
     yield* Console.log(
       respond("review approve-all", { count: sent.length, proposals: sent }, [
         { command: "joelclaw review", description: "See remaining pending proposals" },
-        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
+        {
+          command: "joelclaw runs [--count <count>]",
+          description: "Inspect resulting runs",
+          params: {
+            count: { description: "Number of runs", value: 10, default: 10 },
+          },
+        },
       ])
     )
   })
@@ -197,7 +215,13 @@ const expireCmd = Command.make("expire", {}, () =>
         proposals: sent,
       }, [
         { command: "joelclaw review", description: "See remaining pending proposals" },
-        { command: "joelclaw runs --count 10", description: "Inspect resulting runs" },
+        {
+          command: "joelclaw runs [--count <count>]",
+          description: "Inspect resulting runs",
+          params: {
+            count: { description: "Number of runs", value: 10, default: 10 },
+          },
+        },
       ])
     )
   })

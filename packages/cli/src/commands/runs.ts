@@ -47,13 +47,33 @@ export const runsCmd = Command.make(
         .filter((r: any) => r.status === "FAILED" || r.status === "RUNNING")
         .slice(0, 3)
         .map((r: any) => ({
-          command: `joelclaw run ${r.id}`,
+          command: "joelclaw run <run-id>",
           description: `Inspect ${r.status.toLowerCase()} ${r.functionName}`,
+          params: {
+            "run-id": { description: "Run ID", value: r.id, required: true },
+          },
         }))
 
       next.push(
-        { command: `joelclaw runs --status FAILED`, description: "Show only failures" },
-        { command: `joelclaw runs --hours 48 --count 20`, description: "Wider time range" },
+        {
+          command: "joelclaw runs [--status <status>]",
+          description: "Show only failures",
+          params: {
+            status: {
+              description: "Run status filter",
+              value: "FAILED",
+              enum: ["COMPLETED", "FAILED", "RUNNING", "QUEUED", "CANCELLED"],
+            },
+          },
+        },
+        {
+          command: "joelclaw runs [--hours <hours>] [--count <count>]",
+          description: "Wider time range",
+          params: {
+            hours: { description: "Lookback window in hours", value: 48, default: 24 },
+            count: { description: "Number of runs", value: 20, default: 10 },
+          },
+        },
       )
 
       yield* Console.log(respond("runs", { count: result.length, runs: result }, next))
@@ -82,19 +102,37 @@ export const runCmd = Command.make(
       }
       if (result.run.status === "RUNNING") {
         next.push({
-          command: `joelclaw run ${runId}`,
+          command: "joelclaw run <run-id>",
           description: "Re-check (still running)",
+          params: {
+            "run-id": { description: "Run ID", value: runId, required: true },
+          },
         })
       }
       if (result.trigger?.IDs?.[0]) {
         next.push({
-          command: `joelclaw event ${result.trigger.IDs[0]}`,
+          command: "joelclaw event <event-id>",
           description: "View the trigger event payload",
+          params: {
+            "event-id": { description: "Event ID", value: result.trigger.IDs[0], required: true },
+          },
         })
       }
       next.push(
-        { command: `joelclaw runs --count 5`, description: "See surrounding runs" },
-        { command: `docker logs system-bus-inngest-1 2>&1 | grep "${runId}" | tail -5`, description: "Server-side logs for this run" },
+        {
+          command: "joelclaw runs [--count <count>]",
+          description: "See surrounding runs",
+          params: {
+            count: { description: "Number of runs", value: 5, default: 10 },
+          },
+        },
+        {
+          command: 'docker logs system-bus-inngest-1 2>&1 | grep "<run-id>" | tail -5',
+          description: "Server-side logs for this run",
+          params: {
+            "run-id": { description: "Run ID", value: runId, required: true },
+          },
+        },
       )
 
       yield* Console.log(respond("run", result, next, result.run.status !== "FAILED"))
