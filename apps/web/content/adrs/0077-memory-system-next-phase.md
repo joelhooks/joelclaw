@@ -33,7 +33,21 @@ The memory system (ADR-0021) has been running in production since 2026-02-14. Si
 
 ### What's Not Built (from @jumperz's 31-piece memory stack)
 
-[@jumperz on X](https://x.com/jumperz/status/2024841165774717031) published a comprehensive 31-piece agent memory architecture split across 3 phases. Key concepts from that framework not yet implemented in joelclaw:
+[@jumperz on X](https://x.com/jumperz/status/2024841165774717031) published a comprehensive 31-piece agent memory architecture split across 3 phases. The two diagrams below capture the full system:
+
+#### Section 1: Memory Storage
+
+![[adr/jumperz-memory-storage.jpg]]
+
+*Rows: Short-Term (checkpoint, working memory), Files (resources, items, write gate, dedup, categories, strength, sentiment), Graph (triples, conflict resolution), Episodic (episodes, episode search). Tags: Core, Next, Adv.*
+
+#### Section 2: Memory Intelligence
+
+![[adr/jumperz-memory-intelligence.jpg]]
+
+*Rows: Retrieval (rewrite query, score decay, tiered, inject, dual search), Decay (nightly, weekly, cron fallback, domain TTLs), Advanced (trust pass, echo/fizzle, memory agent, cross-agent, forward, budget-aware), Ops (session flush, behavior loop). Tags: Core, Next, Adv. Bottom banner: "Weekly/Monthly rebuilds feed back into Categories + Score Decay."*
+
+Key concepts from that framework not yet implemented in joelclaw:
 
 **Retrieval Intelligence:**
 - Score Decay — `final_score = raw_score × exp(-0.01 × days_since_created)` for time-weighted relevance
