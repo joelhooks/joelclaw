@@ -25,10 +25,10 @@ const EVENT_MAP: Record<string, string> = {
   "deployment-canceled": "deploy.canceled",
 };
 
-function getWebhookSecret(): string {
+function getWebhookSecret(): string | null {
   const secret = process.env.VERCEL_WEBHOOK_SECRET;
-  if (!secret) {
-    throw new Error("VERCEL_WEBHOOK_SECRET env var required for webhook verification");
+  if (!secret || secret.trim().length === 0) {
+    return null;
   }
   return secret;
 }
@@ -42,6 +42,8 @@ export const vercelProvider: WebhookProvider = {
     if (!signature) return false;
 
     const secret = getWebhookSecret();
+    if (!secret) return false;
+
     const computed = createHmac("sha1", secret)
       .update(rawBody)
       .digest("hex");

@@ -1,9 +1,63 @@
 import { inngest } from "../client";
 import { NonRetriableError } from "inngest";
-import { execSync } from "node:child_process";
 import { join } from "node:path";
 
 const EMBED_SCRIPT = join(__dirname, "..", "..", "..", "scripts", "embed.py");
+const EMBED_TIMEOUT_MS = 120_000;
+
+function readShellText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
+  if (value == null) return "";
+  return String(value);
+}
+
+async function runEmbedScript(input: string): Promise<string> {
+  const proc = Bun.spawn(
+    ["uv", "run", "--with", "sentence-transformers", EMBED_SCRIPT],
+    {
+      env: {
+        ...process.env,
+        TERM: "dumb",
+        TQDM_DISABLE: "1",
+        HF_HUB_DISABLE_PROGRESS_BARS: "1",
+        TOKENIZERS_PARALLELISM: "false",
+      },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    }
+  );
+
+  const timeout = setTimeout(() => proc.kill("SIGKILL"), EMBED_TIMEOUT_MS);
+
+  try {
+    if (proc.stdin) {
+      proc.stdin.write(input);
+      proc.stdin.end();
+    }
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    if (exitCode !== 0) {
+      throw new Error(
+        `embed subprocess failed (exit ${exitCode})${stderr ? `: ${stderr.slice(0, 500)}` : ""}`
+      );
+    }
+
+    if (stderr.trim().length > 0) {
+      console.warn("[embed] subprocess stderr:", stderr.slice(0, 300));
+    }
+
+    return stdout;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 /**
  * Generic embedding function — any Inngest function can invoke this
@@ -20,7 +74,8 @@ export const embedText = inngest.createFunction(
   {
     id: "embedding-generate",
     name: "Generate Embeddings",
-    retries: 2,
+    concurrency: { limit: 1 },
+    retries: 0,
   },
   { event: "embedding/text.requested" },
   async ({ event, step }) => {
@@ -44,18 +99,10 @@ export const embedText = inngest.createFunction(
         .map((item: { id: string; text: string }) => JSON.stringify(item))
         .join("\n");
 
-      const output = execSync(
-        `uv run --with sentence-transformers ${EMBED_SCRIPT}`,
-        {
-          input,
-          encoding: "utf-8",
-          timeout: 120_000, // 2min for model load + batch
-          maxBuffer: 50 * 1024 * 1024, // 50MB for large batches
-        }
-      );
+      const output = await runEmbedScript(input);
 
       const results: { id: string; vector: number[] }[] = JSON.parse(
-        output.trim()
+        readShellText(output).trim()
       );
 
       return results;
