@@ -6,7 +6,7 @@ consulted: []
 informed: []
 ---
 
-# ADR-0080: Memory System Phased Implementation — 31 Pieces in Strict Order
+# ADR-0077: Memory System Phased Implementation — 31 Pieces in Strict Order
 
 ## Status
 
@@ -121,9 +121,9 @@ We will implement the agent memory system in exactly 3 phases, with mandatory st
 
 ## References
 
-- ADR-0077: Full Agent Memory Build Order (superseded)
-- ADR-0078: Memory Intelligence Features (superseded)
-- ADR-0079: Memory System Behaviors (superseded)
+- removed — content consolidated here
+- removed — content consolidated here
+- removed — content consolidated here
 - ADR-0021: Agent Memory System (original 4-layer design)
 
 ## Notes
