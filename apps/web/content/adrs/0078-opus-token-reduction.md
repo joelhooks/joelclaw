@@ -42,7 +42,7 @@ The joelclaw system burns Opus tokens at an alarming rate. The central gateway d
 | Media vision-describe | Haiku | Photo/video received | ~5/day | Small — Haiku is cheap |
 | Observer (memory) | Haiku | Session compaction | ~5-10/day | Small |
 | Reflector (memory) | Haiku | After observation | ~5-10/day | Small |
-| Batch review (memory) | Haiku | Hourly | 24/day | Small |
+| Batch review (memory) | ~~bare Haiku~~ → Haiku 4.5 | Hourly | 24/day | Small |
 | Email triage | Sonnet 4.6 | Hourly check | 24/day | Medium |
 | Task triage | Sonnet 4.6 | Hourly heartbeat | 24/day | Medium |
 | Friction analysis | Sonnet 4.6 | After reflect | ~5/day | Small |
