@@ -32,8 +32,9 @@ export function applyScoreDecay<T extends ScoredResult>(
   now: Date = new Date(),
 ): (T & { decayedScore: number })[] {
   return results.map((r) => {
-    const createdAt = r.payload?.created_at
-      ? new Date(r.payload.created_at as string)
+    // Qdrant points store ISO timestamp in `timestamp` field (set by observe.ts)
+    const createdAt = r.payload?.timestamp
+      ? new Date(r.payload.timestamp as string)
       : now;
     const daysSince = Math.max(0, (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
     let decayed = r.score * Math.exp(-decayConstant * daysSince);

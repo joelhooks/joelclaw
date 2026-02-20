@@ -99,8 +99,8 @@ function chooseFresherObservationText(
     typeof duplicatePayload?.observation === "string" ? duplicatePayload.observation : null;
   if (!duplicateText) return null;
 
-  const currentCreatedAt = toIsoOrNull(currentPayload?.created_at);
-  const duplicateCreatedAt = toIsoOrNull(duplicatePayload?.created_at);
+  const currentCreatedAt = toIsoOrNull(currentPayload?.timestamp);
+  const duplicateCreatedAt = toIsoOrNull(duplicatePayload?.timestamp);
   if (duplicateCreatedAt && currentCreatedAt && duplicateCreatedAt > currentCreatedAt) {
     return duplicateText;
   }
@@ -178,7 +178,7 @@ export const nightlyMaintenance = inngest.createFunction(
         {
           must: [
             {
-              key: "created_at",
+              key: "timestamp",
               range: { gte: startIso, lt: endIso },
             },
           ],
@@ -253,7 +253,7 @@ export const nightlyMaintenance = inngest.createFunction(
         {
           must: [
             {
-              key: "created_at",
+              key: "timestamp",
               range: { lt: cutoffIso },
             },
           ],
