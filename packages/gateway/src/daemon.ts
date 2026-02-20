@@ -81,7 +81,9 @@ setSession({
   prompt: (text: string) => session.prompt(text),
 });
 
-// Track prompt dispatch timing for stuck-session detection (vars declared later in watchdog section)
+// Track prompt dispatch timing for stuck-session detection
+let _lastTurnEndAt = Date.now();
+let _lastPromptAt = 0;
 onPrompt(() => { _lastPromptAt = Date.now(); });
 
 // ── Config ─────────────────────────────────────────────
@@ -395,8 +397,7 @@ const queueDrainTimer = setInterval(() => {
 // ── Self-healing watchdog ──────────────────────────────
 // Monitors subsystem health every 30s. Logs degraded state.
 // Detects stuck sessions (no turn_end for 10min after a prompt).
-let _lastTurnEndAt = Date.now();
-let _lastPromptAt = 0; // set by onPrompt callback registered at session init
+// _lastTurnEndAt and _lastPromptAt declared near session init (line ~85) to avoid TDZ
 const STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
 
 const watchdogTimer = setInterval(() => {
