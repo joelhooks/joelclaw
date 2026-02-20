@@ -11,7 +11,7 @@ The dream is CarPlay integration: "Hey, implement that feature we discussed yest
 
 ## The Architecture
 
-[ADR-0043](/adrs/0043-agent-voice-conversations) laid out the vision: self-hosted voice conversations via LiveKit. No cloud dependencies. Full control over the stack. Here's what got deployed.
+[ADR-0043](/adrs/0043-agent-voice-conversations) laid out the vision: self-hosted voice conversations via LiveKit. The core infrastructure runs on my hardware, but the voice pipeline uses best-in-class cloud services — Deepgram for STT, Claude for reasoning, ElevenLabs for TTS, Telnyx for phone connectivity. Here's what got deployed.
 
 ### Network Topology
 
