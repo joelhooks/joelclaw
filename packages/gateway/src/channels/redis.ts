@@ -190,6 +190,8 @@ async function drainEvents(): Promise<void> {
       "todoist.task.completed",  // echo from agent's own closes
       "memory.observed",         // telemetry confirmation
       "content.synced",          // vault sync confirmation
+      "media.processed",         // media pipeline completion — already handled inline
+      "progress",                // inngest step progress events — noisy, not actionable
     ]);
 
     const BATCHED_TYPES = new Set([
