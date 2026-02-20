@@ -15,7 +15,7 @@ The dream is CarPlay integration: "Hey, implement that feature we discussed yest
 
 ### Network Topology
 
-The system spans three nodes:
+The system spans two nodes:
 
 ```
 Primary (Mac Mini) ←──────────→ Edge (DigitalOcean)
@@ -29,7 +29,7 @@ Primary (Mac Mini) ←──────────→ Edge (DigitalOcean)
 ```
 
 **Primary node** runs the core infrastructure:
-- LiveKit server on k8s (ports 7880/7881)
+- LiveKit server on Talos k8s cluster (ports 7880/7881)
 - Python voice agent with function tools
 - Connects via Tailscale mesh network
 
@@ -184,7 +184,7 @@ source .venv/bin/activate
 exec python main.py start
 ```
 
-Runs via `screen` session. Survives SSH disconnects. Logs to `/tmp/joelclaw/voice-agent.log`.
+Runs as a background process. Logs to `/tmp/joelclaw/voice-agent.log`.
 
 ## Troubleshooting Notes
 
