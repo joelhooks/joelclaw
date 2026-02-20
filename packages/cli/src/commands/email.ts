@@ -16,9 +16,25 @@ import { respond, respondError } from "../response"
 
 function frontToken(): string {
   const { execSync } = require("child_process")
-  return execSync("secrets lease front_api_token --ttl 15m", {
+  const output = execSync("secrets lease front_api_token --ttl 15m", {
     encoding: "utf-8",
   }).trim()
+  
+  // Handle agent-secrets JSON response format
+  try {
+    const parsed = JSON.parse(output)
+    if (!parsed.ok) {
+      throw new Error(parsed.error?.message || "Failed to get Front token")
+    }
+    // If parsed successfully but has ok:true, something is wrong
+    throw new Error("Unexpected JSON response from secrets lease")
+  } catch (e) {
+    // If it's not JSON, it's the raw token (expected)
+    if (e instanceof SyntaxError) {
+      return output
+    }
+    throw e
+  }
 }
 
 async function frontGet(path: string, token: string): Promise<any> {
