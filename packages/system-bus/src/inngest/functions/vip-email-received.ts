@@ -27,6 +27,7 @@ const GRANOLA_RANGES = (process.env.JOELCLAW_VIP_GRANOLA_RANGES ?? "year")
   .split(",")
   .map((range) => range.trim())
   .filter(Boolean);
+const AUTO_ARCHIVE_NEWSLETTER_SENDERS = new Set(["alex@indyhall.org"]);
 
 const VIP_SYSTEM_PROMPT = `You are a relationship intelligence analyst for Joel Hooks.
 
@@ -105,6 +106,57 @@ type VipAnalysis = {
   missing_information: MissingInfo[];
   questions_for_human: string[];
 };
+
+function emptyVipAnalysis(summary = "No actionable follow-up required."): VipAnalysis {
+  return {
+    executive_summary: summary,
+    interaction_signals: [],
+    entity_investigation: [],
+    todos: [],
+    missing_information: [],
+    questions_for_human: [],
+  };
+}
+
+function extractEmailAddress(input: string): string {
+  const lowered = input.trim().toLowerCase();
+  if (!lowered) return "";
+  const match = lowered.match(/<([^>]+)>/);
+  const value = (match?.[1] ?? lowered).trim();
+  if (!value.includes("@")) return "";
+  return value;
+}
+
+function extractModelText(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+
+  try {
+    const envelope = JSON.parse(trimmed) as Record<string, unknown>;
+    if (typeof envelope.result === "string") return envelope.result.trim();
+  } catch {
+    // non-JSON or partial JSON output
+  }
+
+  return trimmed;
+}
+
+function isLikelyNewsletter(input: {
+  senderEmail: string;
+  subject: string;
+  preview: string;
+  bodyPlain: string;
+}): boolean {
+  if (AUTO_ARCHIVE_NEWSLETTER_SENDERS.has(input.senderEmail)) return true;
+
+  const haystack = [input.subject, input.preview, input.bodyPlain].join(" ").toLowerCase();
+  const hasUnsubscribe = haystack.includes("unsubscribe");
+  const hasNewsletterLanguage = ["newsletter", "weekly", "upcoming", "events", "view in browser"].some((token) =>
+    haystack.includes(token)
+  );
+
+  return hasUnsubscribe && hasNewsletterLanguage;
+}
 
 function toLines(value: string): string[] {
   return value
@@ -207,6 +259,37 @@ async function fetchFrontContext(conversationId: string): Promise<{ summary: Rec
   }
 }
 
+async function archiveFrontConversation(conversationId: string): Promise<{ ok: boolean; error?: string }> {
+  const token = readFrontToken();
+  if (!token) return { ok: false, error: "FRONT_API_TOKEN missing" };
+  if (!conversationId) return { ok: false, error: "conversationId missing" };
+
+  try {
+    const res = await fetchJsonWithTimeout(
+      `${FRONT_API}/conversations/${conversationId}`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ status: "archived" }),
+      },
+      FRONT_TIMEOUT_MS
+    );
+
+    if (res.ok || res.status === 204) return { ok: true };
+    const body = (await res.text()).slice(0, 180);
+    return { ok: false, error: `Front API ${res.status}${body ? `: ${body}` : ""}` };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message.slice(0, 180) : String(error).slice(0, 180),
+    };
+  }
+}
+
 function parseGranolaMeetingsResponse(data: unknown): GranolaMeeting[] {
   if (!data || typeof data !== "object") return [];
   const body = data as Record<string, unknown>;
@@ -254,14 +337,10 @@ function findRelatedMeetings(meetings: GranolaMeeting[], senderName: string, sub
 function parseVipAnalysis(raw: string): VipAnalysis {
   const parsed = parseClaudeOutput(raw);
   if (!parsed || typeof parsed !== "object") {
-    return {
-      executive_summary: "Unable to parse VIP analysis output.",
-      interaction_signals: [],
-      entity_investigation: [],
-      todos: [],
-      missing_information: [],
-      questions_for_human: [],
-    };
+    const text = extractModelText(raw).replace(/\s+/g, " ").trim();
+    if (!text) return emptyVipAnalysis();
+    const summary = text.length > 220 ? `${text.slice(0, 217)}...` : text;
+    return emptyVipAnalysis(`No structured VIP analysis returned. ${summary}`);
   }
 
   const data = parsed as Record<string, unknown>;
@@ -310,7 +389,7 @@ function parseVipAnalysis(raw: string): VipAnalysis {
     : [];
 
   return {
-    executive_summary: String(data.executive_summary ?? "VIP analysis generated."),
+    executive_summary: String(data.executive_summary ?? "").trim() || (todos.length > 0 ? "VIP analysis generated." : "No actionable follow-up required."),
     interaction_signals: signals,
     entity_investigation: entities,
     todos,
@@ -444,7 +523,62 @@ export const vipEmailReceived = inngest.createFunction(
 
     const subject = String(event.data.subject ?? "");
     const conversationId = String(event.data.conversationId ?? "");
+    const bodyPlain = String(event.data.bodyPlain ?? "");
+    const body = String(event.data.body ?? "");
     const preview = String(event.data.preview ?? "");
+    const senderEmail = extractEmailAddress(from);
+
+    if (
+      isLikelyNewsletter({
+        senderEmail,
+        subject,
+        preview,
+        bodyPlain: bodyPlain || body,
+      })
+    ) {
+      const archived = await step.run("archive-newsletter-conversation", async () => {
+        return await archiveFrontConversation(conversationId);
+      });
+
+      await step.run("notify-newsletter-archive", async () => {
+        const archiveLine = archived.ok
+          ? "Archived in Front."
+          : `Archive attempt failed: ${archived.error ?? "unknown error"}`;
+
+        await pushGatewayEvent({
+          type: "vip.email.received",
+          source: "inngest/vip-email-received",
+          payload: {
+            prompt: [
+              "## VIP Newsletter Auto-Archive",
+              "",
+              `From: ${senderDisplay}`,
+              `Subject: ${subject}`,
+              archiveLine,
+              "",
+              "No todo extraction was attempted.",
+            ].join("\n"),
+            from,
+            fromName,
+            subject,
+            conversationId,
+            newsletter: true,
+            archived: archived.ok,
+            archiveError: archived.error,
+          },
+        });
+      });
+
+      return {
+        status: "archived-newsletter",
+        from: senderDisplay,
+        subject,
+        conversationId,
+        archived: archived.ok,
+        archiveError: archived.error,
+        todosCreated: 0,
+      };
+    }
 
     const timings: Record<string, number> = {};
     const accessGaps: MissingInfo[] = [];
