@@ -1,8 +1,8 @@
 ---
 type: adr
-status: proposed
+status: accepted
 date: 2026-02-20
-tags: [adr, cost, gateway, tokens, architecture]
+tags: [adr, cost, gateway, tokens, architecture, models]
 deciders: [joel]
 ---
 
@@ -10,19 +10,35 @@ deciders: [joel]
 
 ## Status
 
-proposed
+accepted — Phase 0 (emergency model fix + enforcement) implemented 2026-02-20.
+
+## Incident: $1000 in 2 Days
+
+The gateway daemon was configured with `PI_MODEL="claude-opus-4-20250514"` — a dated snapshot ID resolving to **Opus 4** pricing ($15/$75 per MTok). The correct model is `claude-opus-4-6` ($5/$15 per MTok). This 5x output cost multiplier, combined with 50-100 events/day through Opus, burned ~$1000 in approximately 2 days.
+
+### Immediate Fixes (2026-02-20)
+1. **gateway-start.sh**: Fixed model to `claude-opus-4-6`, added `ALLOWED_MODELS` allowlist — gateway refuses to start if model not on list
+2. **vip-email-received.ts**: `opus-4-1` → `opus-4-6` (was defaulting to $15/$75 tier)
+3. **batch-review.ts**: bare `claude-haiku` → `claude-haiku-4-5` (explicit version)
+4. **lib/models.ts**: Centralized `MODEL` registry with `assertAllowedModel()` guard, pricing comments, semantic aliases (`MODEL.OPUS`, `MODEL.SONNET`, `MODEL.HAIKU`)
+
+### Model Enforcement Rules
+1. **No dated snapshot IDs** (e.g. `claude-opus-4-20250514`) — these silently resolve to expensive legacy tiers
+2. **No bare aliases** (e.g. `claude-haiku`) — always specify version
+3. **All models must be in `ALLOWED_MODELS`** or the gateway won't start
+4. **Use `MODEL.*` constants** from `lib/models.ts` in all Inngest functions
 
 ## Context
 
-The joelclaw system burns Opus tokens at an alarming rate. The central gateway daemon runs `claude-opus-4-20250514` with `thinking:low` and every inbound event — heartbeat, media notification, email triage result, Todoist echo, content sync — gets turned into a prompt that hits Opus for inference.
+The joelclaw system burns Opus tokens at an alarming rate. The central gateway daemon runs `claude-opus-4-6` with `thinking:low` and every inbound event — heartbeat, media notification, email triage result, Todoist echo, content sync — gets turned into a prompt that hits Opus for inference.
 
 ### Current Token Burn Points
 
 | Component | Model | Trigger | Frequency | Token Impact |
 |-----------|-------|---------|-----------|-------------|
-| **Gateway daemon** | Opus 4 (thinking:low) | Every non-suppressed event | ~50-100/day | **HUGE** — full session context + event prompt |
-| **Gateway heartbeat** | Opus 4 (thinking:low) | Hourly cron | 24/day | Large — reads HEARTBEAT.md checklist |
-| VIP email analysis | Opus 4.1 | Inbound VIP email | ~5-10/day | Medium — full email analysis |
+| **Gateway daemon** | ~~Opus 4~~ → Opus 4.6 (thinking:low) | Every non-suppressed event | ~50-100/day | **HUGE** — full session context + event prompt (5x cheaper after fix) |
+| **Gateway heartbeat** | ~~Opus 4~~ → Opus 4.6 (thinking:low) | Hourly cron | 24/day | Large — reads HEARTBEAT.md checklist |
+| VIP email analysis | ~~Opus 4.1~~ → Opus 4.6 | Inbound VIP email | ~5-10/day | Medium — full email analysis (5x cheaper after fix) |
 | Media vision-describe | Haiku | Photo/video received | ~5/day | Small — Haiku is cheap |
 | Observer (memory) | Haiku | Session compaction | ~5-10/day | Small |
 | Reflector (memory) | Haiku | After observation | ~5-10/day | Small |
