@@ -153,6 +153,7 @@ async function drainEvents(): Promise<void> {
     const BATCHED_TYPES = new Set([
       "todoist.task.created",      // agent-created task echo
       "todoist.task.deleted",      // no action needed
+      "front.message.received",    // inbound email — triage runs on schedule
       "front.message.sent",        // outbound email echo
       "front.assignee.changed",    // low signal assignment change
       "vercel.deploy.succeeded",   // success is default
