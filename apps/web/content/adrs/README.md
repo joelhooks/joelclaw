@@ -30,3 +30,4 @@ tags:
 | [0019](0019-event-naming-past-tense.md) | Rename events to past-tense notifications | proposed | 2026-02-15 |
 | [0020](0020-observational-memory-pipeline.md) | Observational memory pipeline (Observer/Reflector) | superseded by 0021 | 2026-02-15 |
 | [0021](0021-agent-memory-system.md) | Comprehensive agent memory system (supersedes 0014, 0020) | proposed | 2026-02-15 |
+| [0072](0072-vip-email-intelligence-pipeline.md) | VIP Email Intelligence Pipeline | proposed | 2026-02-20 |
