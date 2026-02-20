@@ -11,7 +11,8 @@ import { TodoistTaskAdapter } from "../../tasks";
 import { isVipSender } from "./vip-utils";
 
 const FRONT_API = "https://api2.frontapp.com";
-const VIP_MODEL = process.env.JOELCLAW_VIP_EMAIL_MODEL ?? "anthropic/claude-opus-4-1";
+const VIP_MODEL = process.env.JOELCLAW_VIP_EMAIL_MODEL ?? "anthropic/claude-sonnet-4-6";
+const TRIAGE_MODEL = "anthropic/claude-haiku"; // Fast triage
 
 const VIP_SYSTEM_PROMPT = `You are a relationship intelligence analyst for Joel Hooks.
 
@@ -288,79 +289,81 @@ export const vipEmailReceived = inngest.createFunction(
 
     const accessGaps: MissingInfo[] = [];
 
-    const frontContext = await step.run("fetch-front-context", async () => {
-      const context = await fetchFrontContext(String(event.data.conversationId ?? ""));
-      if (!context) {
-        accessGaps.push({
-          item: "Front thread context",
-          why_missing: "Front API token unavailable or API call failed",
-          how_to_get_it: "Ensure FRONT_API_TOKEN is valid and Front API is reachable",
-        });
-      }
-      return context;
-    });
+    // Run all searches in parallel for speed
+    const [frontContext, granolaMeetings, memoryContext, githubRepos] = await step.run("parallel-context-gathering", async () => {
+      return Promise.all([
+        // Front context - keep this fast
+        fetchFrontContext(String(event.data.conversationId ?? "")).catch((err) => {
+          accessGaps.push({
+            item: "Front thread context",
+            why_missing: "Front API token unavailable or API call failed",
+            how_to_get_it: "Ensure FRONT_API_TOKEN is valid and Front API is reachable",
+          });
+          return null;
+        }),
 
-    const granolaMeetings = await step.run("search-granola-related", async () => {
-      const ranges = ["today", "week", "month", "quarter", "year"];
-      const allMeetings: GranolaMeeting[] = [];
+        // Granola meetings - only check recent, not all ranges
+        (async () => {
+          const ranges = ["today", "week"];  // Skip month/quarter/year for speed
+          const allMeetings: GranolaMeeting[] = [];
 
-      for (const range of ranges) {
-        const response = parseJsonOutput<Record<string, unknown>>("granola", ["meetings", "--range", range], 30_000);
-        if (!response.ok || !response.data) continue;
-        allMeetings.push(...parseGranolaMeetingsResponse(response.data));
-      }
+          for (const range of ranges) {
+            const response = parseJsonOutput<Record<string, unknown>>("granola", ["meetings", "--range", range], 5_000); // 5s timeout
+            if (!response.ok || !response.data) continue;
+            allMeetings.push(...parseGranolaMeetingsResponse(response.data));
+          }
 
-      if (allMeetings.length === 0) {
-        accessGaps.push({
-          item: "Related Granola meetings",
-          why_missing: "Granola CLI returned no usable meeting data",
-          how_to_get_it: "Verify granola CLI auth and local MCP availability",
-        });
-      }
+          if (allMeetings.length === 0) {
+            accessGaps.push({
+              item: "Related Granola meetings",
+              why_missing: "Granola CLI returned no usable meeting data",
+              how_to_get_it: "Verify granola CLI auth and local MCP availability",
+            });
+          }
 
-      const related = findRelatedMeetings(allMeetings, fromName || from, String(event.data.subject ?? ""));
-      return related.slice(0, 8);
-    });
+          const related = findRelatedMeetings(allMeetings, fromName || from, String(event.data.subject ?? ""));
+          return related.slice(0, 8);
+        })(),
 
-    const memoryContext = await step.run("search-memory-qdrant", async () => {
-      const query = `${fromName || from} ${String(event.data.subject ?? "")}`.trim();
-      const proc = spawnSync("joelclaw", ["recall", query, "--limit", "8", "--raw"], {
-        encoding: "utf-8",
-        timeout: 45_000,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, TERM: "dumb" },
-      });
+        // Memory search - reduce timeout
+        (async () => {
+          const query = `${fromName || from} ${String(event.data.subject ?? "")}`.trim();
+          const proc = spawnSync("joelclaw", ["recall", query, "--limit", "8", "--raw"], {
+            encoding: "utf-8",
+            timeout: 3_000,  // 3s timeout - Qdrant should be fast
+            stdio: ["ignore", "pipe", "pipe"],
+            env: { ...process.env, TERM: "dumb" },
+          });
 
-      if (proc.status !== 0) {
-        accessGaps.push({
-          item: "Memory/Qdrant recall",
-          why_missing: (proc.stderr ?? proc.stdout ?? "recall command failed").slice(0, 180),
-          how_to_get_it: "Ensure Qdrant is up and `joelclaw recall` works in this environment",
-        });
-        return [];
-      }
+          if (proc.status !== 0) {
+            accessGaps.push({
+              item: "Memory/Qdrant recall",
+              why_missing: (proc.stderr ?? proc.stdout ?? "recall command failed").slice(0, 180),
+              how_to_get_it: "Ensure Qdrant is up and `joelclaw recall` works in this environment",
+            });
+            return [];
+          }
 
-      return toLines(proc.stdout ?? "").slice(0, 8);
-    });
+          return toLines(proc.stdout ?? "").slice(0, 8);
+        })(),
 
-    const githubRepos = await step.run("search-github-projects", async () => {
-      const query = `${fromName || from} ${String(event.data.subject ?? "")}`.trim();
-      const response = parseJsonOutput<GitHubRepo[]>(
-        "gh",
-        ["search", "repos", query, "--limit", "8", "--json", "name,description,url,updatedAt,stargazersCount"],
-        45_000
-      );
+        // GitHub search - make optional and fast
+        (async () => {
+          const query = `${fromName || from} ${String(event.data.subject ?? "")}`.trim();
+          const response = parseJsonOutput<GitHubRepo[]>(
+            "gh",
+            ["search", "repos", query, "--limit", "5", "--json", "name,description,url,updatedAt,stargazersCount"],
+            3_000  // 3s timeout
+          );
 
-      if (!response.ok || !response.data) {
-        accessGaps.push({
-          item: "GitHub project search",
-          why_missing: response.error ?? "gh search failed",
-          how_to_get_it: "Authenticate gh CLI and verify network/API access",
-        });
-        return [];
-      }
+          if (!response.ok || !response.data) {
+            // Don't push to accessGaps - GitHub is optional context
+            return [];
+          }
 
-      return response.data;
+          return response.data;
+        })(),
+      ]);
     });
 
     const analysis = await step.run("opus-vip-analysis", async () => {
@@ -408,7 +411,7 @@ export const vipEmailReceived = inngest.createFunction(
         ["-p", "--no-session", "--no-extensions", "--model", VIP_MODEL, "--system-prompt", VIP_SYSTEM_PROMPT, prompt],
         {
           encoding: "utf-8",
-          timeout: 240_000,
+          timeout: 15_000,  // 15s timeout - Sonnet should be fast
           stdio: ["ignore", "pipe", "pipe"],
           env: { ...process.env, TERM: "dumb" },
         }
