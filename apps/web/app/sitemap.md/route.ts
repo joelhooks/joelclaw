@@ -32,15 +32,11 @@ export function GET() {
     `- [Sitemap XML](${SITE_URL}/sitemap.xml)`,
     `- [Sitemap Markdown](${SITE_URL}/sitemap.md)`,
     "",
-    "## Markdown versions",
+    "## Agent Markdown Exports",
     "",
-    "Append `.md` for human-safe markdown and `.agent.md` for full agent markdown:",
+    "Append `.md` for agent markdown with preamble + implementation details:",
     "",
     ...posts.map((p) => `- [${p.title}](${SITE_URL}/${p.slug}.md)`),
-    "",
-    "Agent-complete exports:",
-    "",
-    ...posts.map((p) => `- [${p.title}](${SITE_URL}/${p.slug}.agent.md)`),
     "",
   ];
 

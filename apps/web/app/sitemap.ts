@@ -23,6 +23,13 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.8,
   }));
 
+  const agentMarkdownEntries = posts.map((post) => ({
+    url: `${SITE_URL}/${post.slug}.md`,
+    lastModified: getLastModified(post.updated, post.date),
+    changeFrequency: "monthly" as const,
+    priority: 0.3,
+  }));
+
   const adrEntries = adrs.map((adr) => ({
     url: `${SITE_URL}/adrs/${adr.slug}`,
     lastModified: getLastModified(adr.date),
@@ -45,5 +52,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
       priority: 0.6,
     },
     ...adrEntries,
+    ...agentMarkdownEntries,
   ];
 }

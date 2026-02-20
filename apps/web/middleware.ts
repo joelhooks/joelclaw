@@ -4,12 +4,12 @@ import type { NextRequest } from "next/server";
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // /slug.agent.md → internal rewrite to /slug/agent-md route handler
+  // /slug.agent.md → redirect to canonical /slug.md
   const agentMdMatch = pathname.match(/^\/([\w-]+)\.agent\.md$/);
   if (agentMdMatch) {
     const url = request.nextUrl.clone();
-    url.pathname = `/${agentMdMatch[1]}/agent-md`;
-    return NextResponse.rewrite(url);
+    url.pathname = `/${agentMdMatch[1]}.md`;
+    return NextResponse.redirect(url, 301);
   }
 
   // /slug.md → internal rewrite to /slug/md route handler
@@ -20,11 +20,11 @@ export function middleware(request: NextRequest) {
     return NextResponse.rewrite(url);
   }
 
-  // /slug/agent-md → redirect to canonical /slug.agent.md
+  // /slug/agent-md → redirect to canonical /slug.md
   const legacyAgentMatch = pathname.match(/^\/([\w-]+)\/agent-md$/);
   if (legacyAgentMatch) {
     const url = request.nextUrl.clone();
-    url.pathname = `/${legacyAgentMatch[1]}.agent.md`;
+    url.pathname = `/${legacyAgentMatch[1]}.md`;
     return NextResponse.redirect(url, 301);
   }
 

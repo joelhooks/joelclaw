@@ -27,17 +27,13 @@ function getSlugSet() {
 
 /**
  * Remark plugin for markdown output routes:
- * - Rewrites internal post links to their /md endpoint
+ * - Rewrites internal post links to markdown endpoints
  * - Rewrites ADR links to absolute URLs
  * - Makes all other internal links absolute
  *
- * Use in /md route remark pipeline, NOT in the HTML pipeline.
+ * Use in markdown export routes, NOT in the HTML pipeline.
  */
-export function remarkMdLinks(
-  options: { mode?: "human" | "agent" } = {}
-) {
-  const mode = options.mode ?? "human";
-
+export function remarkMdLinks(_options: { mode?: "human" | "agent" } = {}) {
   return (tree: Root) => {
     const slugs = getSlugSet();
 
@@ -52,10 +48,9 @@ export function remarkMdLinks(
       const anchor = parts[1];
       const anchorSuffix = anchor ? `#${anchor}` : "";
 
-      // Post slugs → .md markdown endpoint
+      // Post slugs → canonical markdown endpoint (.md)
       if (slugs.has(cleanPath)) {
-        const suffix = mode === "agent" ? ".agent.md" : ".md";
-        node.url = `${SITE_URL}/${cleanPath}${suffix}${anchorSuffix}`;
+        node.url = `${SITE_URL}/${cleanPath}.md${anchorSuffix}`;
         return;
       }
 
