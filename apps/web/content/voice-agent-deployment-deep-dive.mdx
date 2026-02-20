@@ -6,9 +6,9 @@ type: "essay"
 tags: ["voice", "livekit", "experiments"]
 ---
 
-I've wanted CarPlay voice control for years. Tools like [SuperWhisper](https://superwhisper.com) and [Wispr Flow](https://wisprflow.ai) do amazing local transcription but they're stuck on your device. No CarPlay means they can't help when I actually need hands-free.
+I've wanted voice dictation for years — ramble into the aether and have coherent notes come out. Tools like [SuperWhisper](https://superwhisper.com) and [Wispr Flow](https://wisprflow.ai) do amazing local transcription but they're stuck on your device. No CarPlay means they can't help when I actually need hands-free.
 
-So I built my own. It's rough as hell but it works.
+So I built my own. It's rough, but it works.
 
 ## Why Voice At All
 
@@ -16,7 +16,7 @@ Voice is a UI for getting shit done when typing is impractical. Walking the dog.
 
 That's the vision. The reality is way jankier.
 
-## What I Actually Built
+## What I Built
 
 [ADR-0043](/adrs/0043-agent-voice-conversations) laid out the plan. Self-hosted LiveKit for the media server, but I'm not kidding myself — this thing depends on cloud services for everything that matters. Deepgram for speech-to-text. Claude for the actual thinking. ElevenLabs for voice. Telnyx for phone connectivity.
 
@@ -29,7 +29,7 @@ When you call, it goes: Phone → Telnyx → SIP gateway → LiveKit room → Vo
 
 ## The Honest State of It
 
-Voice is still kind of dumb. I've barely used it. Talking to an AI isn't natural for me and probably won't be without a lot of practice and tuning.
+I've barely used it. Talking to an AI isn't natural for me and probably won't be without a lot of practice and tuning.
 
 What's annoying:
 - **The lag**: 1-2 seconds feels like forever in conversation
@@ -37,11 +37,11 @@ What's annoying:
 - **Personality**: Panda's Australian accent and swearing is fun in theory but still feels forced
 - **The whole vibe**: It's just awkward talking to nobody
 
-It beats the shit out of Siri (admittedly a low bar 💀) but this is rough edge baby voice integration. Lots of very smart people at big companies are working on making voice feel natural. My self-hosted Python script cobbled together from tutorials isn't that refined.
+It beats the shit out of Siri (admittedly a low bar 💀) but this is rough edge baby voice integration. Lots of very smart people at big companies are working on making voice feel natural.
 
 ## What Actually Works
 
-A few things are genuinely useful already:
+A few things are useful already:
 
 **Q&A for writing**: Voice conversations avoid AI writing slop. When I talk through ideas, the agent asks questions, I give real answers in my actual voice. No "In today's rapidly evolving technological landscape" bullshit. This article came from exactly that process.
 
@@ -100,7 +100,7 @@ lk room list
 
 ## Reality Check
 
-My kids weren't impressed. They're the ultimate bullshit detectors — to them, 2 second lag might as well be dial-up internet. 
+My kids weren't impressed. They're the ultimate bullshit detectors — they just didn't give a fuck or see it as novel. 
 
 But that's fine. I'll use this janky version to work towards making it Actually Good™ over time. Every awkward conversation teaches me what needs fixing. And if I can make it good enough, other joelclaw users get a voice interface without suffering through the rough prototype phase. They get the polished version while I talk to laggy Australian Panda today.
 
