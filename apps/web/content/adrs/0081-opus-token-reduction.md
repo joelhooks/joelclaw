@@ -6,7 +6,7 @@ tags: [adr, cost, gateway, tokens, architecture]
 deciders: [joel]
 ---
 
-# ADR-0079: Opus Token Reduction Across joelclaw
+# ADR-0081: Opus Token Reduction Across joelclaw
 
 ## Status
 
