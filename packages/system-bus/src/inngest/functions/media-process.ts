@@ -164,50 +164,41 @@ async function describeImage(
     : "Describe this image in detail. Include what you see and any text visible in the image. If there's handwritten or printed text, transcribe it.";
 
   try {
-    // Use Anthropic API directly for vision — ANTHROPIC_API_KEY from env or agent-secrets
-    let apiKey = process.env.ANTHROPIC_API_KEY;
+    // Use OpenRouter for vision — same pattern as all other LLM calls in system-bus.
+    // NEVER use direct Anthropic API — we don't store anthropic_api_key.
+    let apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
       try {
-        const raw = execSync("secrets lease anthropic_api_key --ttl 1h 2>/dev/null", {
+        apiKey = execSync("secrets lease openrouter_api_key --ttl 1h 2>/dev/null", {
           encoding: "utf-8",
           timeout: 5000,
         }).trim();
-        // agent-secrets may return JSON envelope — extract the value
-        if (raw.startsWith("{")) {
-          try {
-            const parsed = JSON.parse(raw);
-            apiKey = parsed.value ?? parsed.secret ?? undefined;
-          } catch {
-            apiKey = undefined;
-          }
-        } else {
-          apiKey = raw;
-        }
+        if (apiKey.startsWith("{")) apiKey = undefined; // JSON envelope = error
       } catch {}
     }
-    if (!apiKey) throw new Error("No ANTHROPIC_API_KEY available");
+    if (!apiKey) throw new Error("No OPENROUTER_API_KEY available");
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
+        "Authorization": `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "anthropic/claude-sonnet-4-20250514",
         max_tokens: 1024,
-        system: "You describe images sent to an AI assistant via messaging. Be thorough but concise. Transcribe any visible text accurately. If it appears personal, still describe it factually — the recipient asked to see it.",
         messages: [
+          {
+            role: "system",
+            content: "You describe images sent to an AI assistant via messaging. Be thorough but concise. Transcribe any visible text accurately. If it appears personal, still describe it factually — the recipient asked to see it.",
+          },
           {
             role: "user",
             content: [
               {
-                type: "image",
-                source: {
-                  type: "base64",
-                  media_type: mimeType,
-                  data: base64,
+                type: "image_url",
+                image_url: {
+                  url: `data:${mimeType};base64,${base64}`,
                 },
               },
               { type: "text", text: prompt },
@@ -219,11 +210,11 @@ async function describeImage(
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`Anthropic API ${response.status}: ${body.slice(0, 200)}`);
+      throw new Error(`OpenRouter API ${response.status}: ${body.slice(0, 200)}`);
     }
 
     const data = await response.json() as any;
-    const text = data.content?.[0]?.text;
+    const text = data.choices?.[0]?.message?.content;
     return text || "Image received but vision description produced no output.";
   } catch (err: any) {
     return `Image received (${mimeType}, ${buffer.length} bytes). Vision description failed: ${err.message?.slice(0, 100)}`;
