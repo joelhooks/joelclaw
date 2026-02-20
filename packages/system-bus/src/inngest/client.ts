@@ -435,10 +435,15 @@ export type Events = {
   "memory/proposal.triaged": {
     data: {
       proposalId: string;
-      action: "auto-promote" | "auto-reject" | "auto-merge" | "needs-review";
+      action: "auto-promote" | "auto-reject" | "auto-merge" | "needs-review" | "llm-pending";
       reason: string;
       mergeWith?: string;
       triagedAt: string;
+    };
+  };
+  "memory/batch-review.requested": {
+    data: {
+      reason?: string;
     };
   };
   "memory/proposal.approved": {

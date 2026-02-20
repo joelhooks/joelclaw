@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      ioredis:
+        specifier: ^5.9.3
+        version: 5.9.3
     devDependencies:
       oxfmt:
         specifier: ^0.32.0

@@ -241,8 +241,16 @@ export const proposalTriage = inngest.createFunction(
       const result = triageProposal(proposal, memoryText, pending);
 
       if (result.action === "auto-promote") {
-        await appendProposalToMemory(proposal);
-        await deleteProposal(redis, proposal.id);
+        // Don't append raw text — queue for LLM batch review (ADR-0068).
+        // Sonnet reviews proposals against current MEMORY.md and outputs clean entries.
+        const LLM_PENDING_KEY = "memory:review:llm-pending";
+        await redis.rpush(LLM_PENDING_KEY, proposal.id);
+        // Reclassify as llm-pending so downstream knows the path
+        return {
+          action: "llm-pending" as const,
+          reason: result.reason + " — queued for LLM batch review",
+          mergeWith: undefined,
+        };
       } else if (result.action === "auto-reject") {
         await deleteProposal(redis, proposal.id);
       } else if (result.action === "auto-merge") {
