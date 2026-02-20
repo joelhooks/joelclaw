@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { parseObserverOutput } from "./observe-parser";
 import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
 import { embedText } from "./embed";
+import { DEDUP_THRESHOLD } from "../../memory/retrieval";
 
 type ObserveCompactionInput = {
   sessionId: string;
@@ -44,6 +45,8 @@ type QdrantPointPayload = {
   timestamp: string;
   observation_type: string;
   observation: string;
+  merged_count: number;
+  updated_at: string;
   superseded_by: string | null;
   supersedes: string | null;
 };
@@ -52,12 +55,12 @@ type QdrantSearchPoint = {
   id: QdrantPointId;
   score: number;
   payload?: Record<string, unknown>;
+  vector?: number[] | Record<string, number[]>;
 };
 
 const QDRANT_COLLECTION = "memory_observations";
 const QDRANT_VECTOR_DIMENSIONS = 768;
 const QDRANT_ZERO_VECTOR = Array.from({ length: QDRANT_VECTOR_DIMENSIONS }, () => 0);
-const QDRANT_SIMILARITY_THRESHOLD = 0.85;
 const QDRANT_HOST = process.env.QDRANT_HOST ?? "localhost";
 const QDRANT_PORT = Number.parseInt(process.env.QDRANT_PORT ?? "6333", 10);
 let redisClient: Redis | null = null;
@@ -137,61 +140,6 @@ function readShellText(value: unknown): string {
   if (value instanceof Uint8Array) return new TextDecoder().decode(value);
   if (value == null) return "";
   return String(value);
-}
-
-async function findSimilarObservationPoint(
-  vector: number[],
-  threshold: number
-): Promise<{ id: QdrantPointId; score: number } | null> {
-  const response = await fetch(
-    `http://${QDRANT_HOST}:${QDRANT_PORT}/collections/${QDRANT_COLLECTION}/points/search`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        vector,
-        limit: 5,
-        with_payload: true,
-        score_threshold: threshold,
-      }),
-    }
-  );
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Qdrant similarity search failed (${response.status}): ${text}`);
-  }
-
-  const body = (await response.json()) as { result?: QdrantSearchPoint[] };
-  const matches = Array.isArray(body.result) ? body.result : [];
-  const latestMatch = matches.find((match) => {
-    if (match.score < threshold) return false;
-    const payload = match.payload ?? {};
-    return typeof payload.superseded_by !== "string" || payload.superseded_by.length === 0;
-  });
-
-  if (!latestMatch) return null;
-  return { id: latestMatch.id, score: latestMatch.score };
-}
-
-async function markPointSuperseded(oldPointId: QdrantPointId, newPointId: string): Promise<void> {
-  const response = await fetch(
-    `http://${QDRANT_HOST}:${QDRANT_PORT}/collections/${QDRANT_COLLECTION}/points/payload`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        wait: true,
-        payload: { superseded_by: newPointId },
-        points: [oldPointId],
-      }),
-    }
-  );
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Qdrant supersede payload update failed (${response.status}): ${text}`);
-  }
 }
 
 function assertRequiredStringField(
@@ -524,44 +472,92 @@ Session context:
             timestamp,
             observation_type: item.observationType,
             observation: item.observation,
+            merged_count: 1,
+            updated_at: timestamp,
             superseded_by: null,
             supersedes: null,
           },
         }));
 
-        let supersededLinks = 0;
+        let mergedCount = 0;
+        const pointsToUpsert: Array<{
+          id: QdrantPointId;
+          vector: number[];
+          payload: QdrantPointPayload;
+        }> = [];
+
         for (const point of points) {
           if (point.vector === QDRANT_ZERO_VECTOR) {
+            pointsToUpsert.push(point);
             continue;
           }
 
-          const similarPoint = await findSimilarObservationPoint(
-            point.vector,
-            QDRANT_SIMILARITY_THRESHOLD
-          );
-          if (!similarPoint) {
+          const matches = (await qdrantClient.search(QDRANT_COLLECTION, {
+            vector: point.vector,
+            limit: 1,
+            with_payload: true,
+          })) as QdrantSearchPoint[];
+          const topMatch = Array.isArray(matches) ? matches[0] : null;
+
+          if (!topMatch || topMatch.score <= DEDUP_THRESHOLD) {
+            pointsToUpsert.push(point);
             continue;
           }
 
-          await markPointSuperseded(similarPoint.id, point.id);
-          point.payload.supersedes = String(similarPoint.id);
-          supersededLinks += 1;
+          const existingPayload = (topMatch.payload ?? {}) as Record<string, unknown>;
+          const rawMergedCount = existingPayload.merged_count;
+          const currentMergedCount =
+            typeof rawMergedCount === "number" && Number.isFinite(rawMergedCount)
+              ? rawMergedCount
+              : 1;
+          const nextMergedCount = currentMergedCount + 1;
+
+          pointsToUpsert.push({
+            id: topMatch.id,
+            vector: point.vector,
+            payload: {
+              session_id:
+                typeof existingPayload.session_id === "string"
+                  ? existingPayload.session_id
+                  : point.payload.session_id,
+              timestamp:
+                typeof existingPayload.timestamp === "string"
+                  ? existingPayload.timestamp
+                  : point.payload.timestamp,
+              observation_type:
+                typeof existingPayload.observation_type === "string"
+                  ? existingPayload.observation_type
+                  : point.payload.observation_type,
+              observation: point.payload.observation,
+              merged_count: nextMergedCount,
+              updated_at: timestamp,
+              superseded_by:
+                typeof existingPayload.superseded_by === "string"
+                  ? existingPayload.superseded_by
+                  : null,
+              supersedes:
+                typeof existingPayload.supersedes === "string"
+                  ? existingPayload.supersedes
+                  : null,
+            },
+          });
+          mergedCount += 1;
         }
 
-        const hasReal = points.some(
+        const hasReal = pointsToUpsert.some(
           (p) => p.vector !== QDRANT_ZERO_VECTOR
         );
 
         await qdrantClient.upsert(QDRANT_COLLECTION, {
           wait: true,
-          points,
+          points: pointsToUpsert,
         });
 
         return {
           stored: true,
-          count: points.length,
+          count: pointsToUpsert.length,
           hasRealVectors: hasReal,
-          supersededLinks,
+          mergedCount,
           sourceSessionId: validatedInput.sessionId,
         };
       } catch (error) {

@@ -49,6 +49,7 @@ export { friction } from "./friction";
 export { frictionFix } from "./friction-fix";
 export { proposalTriage } from "./memory/proposal-triage";
 export { batchReview } from "./memory/batch-review";
+export { nightlyMaintenance } from "./memory/nightly-maintenance";
 export {
   agentLoopPlan,
   agentLoopTestWriter,

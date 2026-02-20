@@ -8,6 +8,7 @@ import rehypeUnwrapImages from "rehype-unwrap-images";
 import type { Options as PrettyCodeOptions } from "rehype-pretty-code";
 import { getSingletonHighlighter } from "shiki";
 import { rehypeNormalizeCodeLangs } from "./rehype-normalize-code-langs";
+import { remarkObsidian } from "./remark-obsidian";
 import { remarkStripAgentOnly } from "./remark-strip-agent-only";
 
 const SHIKI_THEME = "catppuccin-macchiato";
@@ -46,6 +47,7 @@ const prettyCodeOptions: PrettyCodeOptions = {
 
 export const remarkPlugins: any[] = [
   remarkGfm, // tables, strikethrough, autolinks, task lists
+  remarkObsidian, // Obsidian wikilinks/embeds -> standard markdown links/images
   remarkStripAgentOnly, // strip <AgentOnly> blocks from human HTML
   remarkSmartypants, // smart quotes, em dashes, ellipses
 ];
