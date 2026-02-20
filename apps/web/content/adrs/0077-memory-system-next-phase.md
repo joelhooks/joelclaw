@@ -127,10 +127,56 @@ These create the virtuous cycle that makes memory better with use.
 - ADR-0021: Agent Memory System (canonical spec, all phases)
 - ADR-0068: Memory Proposal Auto-Triage Pipeline
 - ADR-0078: Opus Token Reduction (budget-aware retrieval dependency)
-- Joel's memory architecture diagrams (Telegram, 2026-02-20) — the aspirational vision captured as photos
+- **@jumperz on X** — [31-piece memory system thread](https://x.com/jumperz/status/2024841165774717031) (2026-02-20). The source architecture for this ADR's vision. Credit: jumperz.
 
 ## Notes
 
-The diagrams Joel sent capture a comprehensive vision with 31 pieces across 3 phases. This ADR prioritizes the 8 pieces that improve the *existing* running system, using the infrastructure that's already proven. The remaining 23 pieces are documented here as deferred items — they're not rejected, just not next.
+### Source: @jumperz's 31-Piece Memory Stack
 
-"Phase 1 and 2 are solid, Phase 3 is still being built. But the longer you work with it the more you see, they're not separate... it's all one system."
+The architecture vision comes from @jumperz's X thread, which Joel shared via Telegram. jumperz frames it as "the entire memory stack if you actually want to take your agent memory to somewhere real — from actually remembering to having an intelligence layer."
+
+**jumperz's key insight — build order is everything:**
+
+> "31 pieces total, split into 3 phases: core first, reliability second, then advanced last. You build from core to advanced slowly, and you test each phase before touching the next. If you try to build all 31 at once, you will break everything and you won't understand anything."
+
+**Phase 1 (10 pieces)** — "Memory that actually works": write pipeline, read pipeline, decay, session flush, behavior loop, categories, strength tags, sentiment tags, inject limit, trust pass.
+
+**Phase 2 (7 pieces)** — "Memory that survives": crash recovery, audit trail, dedup, conflict resolution, nightly maintenance, weekly maintenance, cron fallback.
+
+**Phase 3 (14 pieces)** — "The ceiling": rewrite query, tiered search, dual search, episodes, episode search, trust scoring, echo/fizzle, cross-agent sharing, memory agent, forward triggers, budget-aware, domain TTLs, monthly reindexing, knowledge graphs.
+
+> "None of Phase 3 matters until Phase 1 and 2 are solid. Phase 1 unstable means Phase 3 just amplifies the flaws. Phase 2 missing means Phase 3 is literally optimising pure garbage."
+
+> "Personally I'm not done yet. Phase 1 and 2 are solid, Phase 3 is still being built. But the longer you work with it the more you see, they're not separate... it's all one system."
+
+### How joelclaw Maps to jumperz's Phases
+
+| jumperz Phase 1 (Core) | joelclaw Status |
+|------------------------|-----------------|
+| Write pipeline | ✅ observe.ts — extracts facts from sessions |
+| Read pipeline | ✅ recall tool — Qdrant semantic search |
+| Score Decay | ❌ **Increment 1 of this ADR** |
+| Session Flush | ✅ session-lifecycle flushes on compaction/shutdown |
+| Behavior Loop | ⚠️ Partially — friction.ts detects patterns, but no corrections→lessons pipeline |
+| Categories | ❌ Deferred — taxonomy undefined |
+| Strength tags | ❌ Deferred |
+| Sentiment tags | ❌ Deferred |
+| Inject limit | ⚠️ Informal — not enforced in code |
+| Trust Pass | ❌ **Increment 1 of this ADR** (basic confidence thresholds) |
+
+| jumperz Phase 2 (Reliability) | joelclaw Status |
+|-------------------------------|-----------------|
+| Crash recovery | ⚠️ Inngest retries handle transient failures, but no checkpoint/replay |
+| Audit trail | ✅ Qdrant stores source metadata, daily logs are append-only |
+| Dedup | ⚠️ Redis SETNX dedupe key per session, but no cross-session cosine dedup |
+| Conflict resolution | ❌ **Increment 2 of this ADR** (staleness tagging) |
+| Nightly maintenance | ❌ **Increment 2 of this ADR** |
+| Weekly maintenance | ❌ Deferred |
+| Cron fallback | ✅ Inngest cron + heartbeat checks = equivalent |
+
+| jumperz Phase 3 (Intelligence) | joelclaw Status |
+|--------------------------------|-----------------|
+| Echo/Fizzle | ❌ **Increment 3 of this ADR** |
+| All others | ❌ Deferred — see "Not Yet" section above |
+
+**Assessment**: joelclaw has ~60% of Phase 1 and ~40% of Phase 2 by jumperz's framework. This ADR's 3 increments close the gaps in Phase 1 (score decay, inject cap, trust pass) and Phase 2 (dedup, nightly maintenance, staleness), then start Phase 3 (echo/fizzle). That's the right order per jumperz: "build from core to advanced slowly."
