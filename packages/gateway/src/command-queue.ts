@@ -18,6 +18,7 @@ const queue: QueueEntry[] = [];
 let sessionRef: PromptSession | undefined;
 let drainPromise: Promise<void> | undefined;
 let onPromptSent: PromptCallback | undefined;
+let consecutiveFailures = 0;
 
 export let currentSource: string | undefined;
 
@@ -60,6 +61,14 @@ export function getQueueDepth(): number {
   return queue.length;
 }
 
+export function getConsecutiveFailures(): number {
+  return consecutiveFailures;
+}
+
+export function resetFailureCount(): void {
+  consecutiveFailures = 0;
+}
+
 export async function drain(): Promise<void> {
   if (drainPromise) return drainPromise;
 
@@ -84,9 +93,13 @@ export async function drain(): Promise<void> {
         if (entry.streamId) {
           await ack(entry.streamId);
         }
+
+        consecutiveFailures = 0;
       } catch (error) {
+        consecutiveFailures += 1;
         console.error("command-queue: prompt failed", {
           source: entry.source,
+          consecutiveFailures,
           error,
         });
       } finally {

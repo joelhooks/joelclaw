@@ -3,7 +3,16 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@mariozechner/pi-ai";
 import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
-import { drain, enqueue, getQueueDepth, getCurrentSource, setSession, onPrompt, replayUnacked } from "./command-queue";
+import {
+  drain,
+  enqueue,
+  getQueueDepth,
+  getCurrentSource,
+  setSession,
+  onPrompt,
+  replayUnacked,
+  getConsecutiveFailures,
+} from "./command-queue";
 import { start as startRedisChannel, shutdown as shutdownRedisChannel, isHealthy as isRedisHealthy, getRedisClient } from "./channels/redis";
 import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, sendMedia as sendTelegramMedia, parseChatId } from "./channels/telegram";
 import { startHeartbeatRunner } from "./heartbeat";
@@ -397,14 +406,17 @@ const watchdogTimer = setInterval(() => {
   const telegramOk = channelInfo.telegram; // grammy self-heals via long-polling retry
   const stuckMs = _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
   const isStuck = stuckMs > STUCK_THRESHOLD_MS;
+  const failures = getConsecutiveFailures();
+  const isDead = failures >= 3;
 
-  if (!redisOk || isStuck) {
+  if (!redisOk || isStuck || isDead) {
     console.warn("[gateway:watchdog] health check", {
       redis: redisOk ? "ok" : "DEGRADED",
       telegram: telegramOk ? "ok" : "disabled",
       ws: { port: wsServer.port, clients: wsClients.size },
       queueDepth: getQueueDepth(),
       uptimeMs,
+      consecutiveFailures: failures,
       ...(isStuck ? { stuckForMs: stuckMs, lastPromptAt: new Date(_lastPromptAt).toISOString() } : {}),
     });
 
@@ -416,20 +428,37 @@ const watchdogTimer = setInterval(() => {
       // Reset so we don't spam abort
       _lastPromptAt = 0;
     }
+
+    if (isDead) {
+      console.error("[gateway:watchdog] session appears dead — too many consecutive prompt failures", {
+        consecutiveFailures: failures,
+      });
+      // Self-restart: the launchd service will bring us back
+      // Messages are persisted in Redis Stream, so they'll replay on restart
+      console.error("[gateway:watchdog] initiating self-restart for session recovery");
+      void gracefulShutdown("watchdog:dead-session");
+    }
   }
 }, 30_000);
 
 // Expose health for CLI / external checks
-function getHealthStatus(): { healthy: boolean; components: Record<string, string> } {
+function getHealthStatus(): { healthy: boolean; components: Record<string, string | number> } {
   const redisOk = isRedisHealthy();
   const stuckMs = _lastPromptAt > _lastTurnEndAt ? Date.now() - _lastPromptAt : 0;
+  const failures = getConsecutiveFailures();
+  const isDead = failures >= 3;
   return {
-    healthy: redisOk && stuckMs < STUCK_THRESHOLD_MS,
+    healthy: redisOk && stuckMs < STUCK_THRESHOLD_MS && !isDead,
     components: {
       redis: redisOk ? "ok" : "degraded",
       telegram: channelInfo.telegram ? "ok" : "disabled",
       ws: `ok (${wsClients.size} clients)`,
-      session: stuckMs > STUCK_THRESHOLD_MS ? `stuck (${Math.round(stuckMs / 1000)}s)` : "ok",
+      session: isDead
+        ? `dead (${failures} consecutive failures)`
+        : stuckMs > STUCK_THRESHOLD_MS
+          ? `stuck (${Math.round(stuckMs / 1000)}s)`
+          : "ok",
+      consecutivePromptFailures: failures,
     },
   };
 }
