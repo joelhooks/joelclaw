@@ -19,8 +19,8 @@
 
 import { encode as toonEncode } from "@toon-format/toon"
 
-/** Check if --toon flag was passed */
-export const toonEnabled = process.argv.includes("--toon")
+/** TOON is default. Pass --json to get plain JSON output. */
+export const toonEnabled = !process.argv.includes("--json")
 
 export interface NextActionParam {
   readonly description?: string

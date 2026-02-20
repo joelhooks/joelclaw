@@ -91,8 +91,8 @@ const cli = Command.run(root, {
   version: "0.2.0",
 })
 
-// Strip --toon before Effect CLI sees it (handled in response.ts via process.argv check)
-const argv = process.argv.filter(a => a !== "--toon")
+// Strip --toon/--json before Effect CLI sees it (handled in response.ts via process.argv check)
+const argv = process.argv.filter(a => a !== "--toon" && a !== "--json")
 
 cli(argv).pipe(
   Effect.provide(Inngest.Default),
