@@ -164,7 +164,7 @@ async function describeImage(
 
   try {
     const result = execSync(
-      `pi --no-session --no-extensions --print --mode text --model anthropic/claude-sonnet-4-6 --system-prompt ${JSON.stringify(systemPrompt)} ${JSON.stringify(userPrompt)}`,
+      `pi --no-session --no-extensions --print --mode text --model anthropic/claude-haiku --system-prompt ${JSON.stringify(systemPrompt)} ${JSON.stringify(userPrompt)}`,
       {
         encoding: "utf-8",
         timeout: 60_000,
