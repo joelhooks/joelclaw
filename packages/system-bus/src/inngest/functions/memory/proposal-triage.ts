@@ -3,6 +3,7 @@ import { join } from "node:path";
 import Redis from "ioredis";
 import { inngest } from "../../client";
 import { triageProposal, type Proposal } from "../../../memory/triage";
+import { TodoistTaskAdapter } from "../../../tasks/adapters/todoist";
 
 const REVIEW_PENDING_KEY = "memory:review:pending";
 
@@ -278,6 +279,30 @@ export const proposalTriage = inngest.createFunction(
     });
 
     console.log(`[memory/proposal-triage] ${proposalId} -> ${triaged.action}: ${triaged.reason}`);
+
+    // Only create Todoist task for proposals that need human review.
+    // Auto-promoted and auto-rejected proposals don't need tasks.
+    // This prevents 50+ junk tasks per compaction from instruction-text artifacts.
+    if (triaged.action === "needs-review") {
+      await step.run("create-review-task", async () => {
+        const redis = getRedis();
+        const proposal = await readProposal(redis, proposalId);
+        if (!proposal) return;
+
+        const taskAdapter = new TodoistTaskAdapter();
+        const summary = proposal.change.replace(/\s+/gu, " ").trim().slice(0, 90);
+        await taskAdapter.createTask({
+          content: `Memory: ${proposal.section} — ${summary}`,
+          description: [
+            `Proposal: ${proposalId}`,
+            `Section: ${proposal.section}`,
+            `Change: ${proposal.change}`,
+          ].join("\n"),
+          labels: ["memory-review", "agent"],
+          projectId: "Agent Work",
+        });
+      });
+    }
 
     await step.sendEvent("emit-triage-result", {
       name: "memory/proposal.triaged",

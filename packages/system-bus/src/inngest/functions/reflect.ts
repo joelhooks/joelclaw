@@ -2,7 +2,7 @@ import { inngest } from "../client";
 import Redis from "ioredis";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
+// TodoistTaskAdapter removed — task creation moved to proposal-triage.ts (ADR-0068)
 import {
   COMPRESSION_GUIDANCE,
   REFLECTOR_SYSTEM_PROMPT,
@@ -317,7 +317,6 @@ export const reflect = inngest.createFunction(
 
     const staged = await step.run("stage-review", async () => {
       const redis = getRedisClient();
-      const taskAdapter = new TodoistTaskAdapter();
       const proposals = parseProposals(validated.raw);
       const capturedAt = new Date().toISOString();
       let nextSequence = 1;
@@ -352,17 +351,10 @@ export const reflect = inngest.createFunction(
         );
         await redis.rpush("memory:review:pending", proposal.id);
 
-        const summary = summarizeChangeForTask(proposal.change);
-        await taskAdapter.createTask({
-          content: `Memory: ${proposal.section} — ${summary}`,
-          description: [
-            `Proposal: ${proposal.id}`,
-            `Section: ${proposal.section}`,
-            `Change: ${proposal.change}`,
-          ].join("\n"),
-          labels: ["memory-review", "agent"],
-          projectId: "Agent Work",
-        });
+        // Todoist task creation removed — proposal-triage.ts (ADR-0068)
+        // now decides whether to create a task (only for needs-review).
+        // This eliminates 50+ junk tasks per compaction from instruction-text
+        // proposals that triage would auto-reject anyway.
       }
 
       const grouped = groupBySection(stagedProposals);
