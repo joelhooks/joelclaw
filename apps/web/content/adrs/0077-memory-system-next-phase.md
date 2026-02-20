@@ -31,9 +31,9 @@ The memory system (ADR-0021) has been running in production since 2026-02-14. Si
 | **Daily log** | ✅ Operational | `~/.joelclaw/workspace/memory/YYYY-MM-DD.md` — observations appended per session. |
 | **Session briefing** | ✅ Operational | MEMORY.md + daily log + slog auto-injected at session start. |
 
-### What's Not Built (from Joel's design diagrams, 2026-02-20)
+### What's Not Built (from @jumperz's 31-piece memory stack)
 
-Joel sent architecture diagrams via Telegram capturing a comprehensive vision for the memory system's next evolution. Key concepts not yet implemented:
+[@jumperz on X](https://x.com/jumperz/status/2024841165774717031) published a comprehensive 31-piece agent memory architecture split across 3 phases. Key concepts from that framework not yet implemented in joelclaw:
 
 **Retrieval Intelligence:**
 - Score Decay — `final_score = raw_score × exp(-0.01 × days_since_created)` for time-weighted relevance
