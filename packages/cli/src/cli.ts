@@ -25,6 +25,7 @@ import { recallCmd } from "./commands/recall"
 import { emailCmd } from "./commands/email"
 import { approvalsCmd } from "./commands/approvals"
 import { callCmd } from "./commands/call"
+import { vaultCmd } from "./commands/vault"
 
 // ── Root ─────────────────────────────────────────────────────────────
 
@@ -70,6 +71,7 @@ const root = Command.make("joelclaw", {}, () =>
           approvals: "joelclaw approvals {list|approve|deny|categories|history|reset}",
           call: "joelclaw call <message> [--to <phone>]",
           recall: "joelclaw recall <query> [--limit N] [--min-score F] [--raw]",
+          vault: "joelclaw vault {read|search|ls|tree}",
           email: "joelclaw email {inboxes|inbox|read|archive|archive-bulk}",
           schema: "joelclaw schema",
           refresh: "joelclaw refresh",
@@ -85,7 +87,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, emailCmd, callCmd])
+  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, emailCmd, callCmd])
 )
 
 const cli = Command.run(root, {
