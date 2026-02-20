@@ -11,7 +11,7 @@ import { TodoistTaskAdapter } from "../../tasks";
 import { isVipSender } from "./vip-utils";
 
 const FRONT_API = "https://api2.frontapp.com";
-const VIP_MODEL = process.env.JOELCLAW_VIP_EMAIL_MODEL ?? "anthropic/claude-sonnet-4-6";
+const VIP_MODEL = process.env.JOELCLAW_VIP_EMAIL_MODEL ?? "anthropic/claude-opus-4-1";
 const TRIAGE_MODEL = process.env.JOELCLAW_VIP_TRIAGE_MODEL ?? "anthropic/claude-sonnet-4-6";
 const ENABLE_GITHUB_SEARCH = (process.env.JOELCLAW_VIP_ENABLE_GITHUB_SEARCH ?? "0") === "1";
 const ENABLE_OPUS_ESCALATION = (process.env.JOELCLAW_VIP_ENABLE_OPUS_ESCALATION ?? "1") === "1";
@@ -166,7 +166,7 @@ async function fetchFrontContext(conversationId: string): Promise<{ summary: Rec
 
   try {
     const convoRes = await fetchJsonWithTimeout(
-      `${FRONT_API}/conversations/${conversationId}` ,
+      `${FRONT_API}/conversations/${conversationId}`,
       { headers },
       FRONT_TIMEOUT_MS
     );
@@ -319,6 +319,111 @@ function parseVipAnalysis(raw: string): VipAnalysis {
   };
 }
 
+type TriageDecision = {
+  needs_opus: boolean;
+  complexity: string;
+  reason: string;
+  analysis: VipAnalysis;
+};
+
+function runModelAnalysis(model: string, systemPrompt: string, prompt: string, timeoutMs: number): { analysis: VipAnalysis; error?: string } {
+  const proc = spawnSync(
+    "pi",
+    ["-p", "--no-session", "--no-extensions", "--model", model, "--system-prompt", systemPrompt, prompt],
+    {
+      encoding: "utf-8",
+      timeout: timeoutMs,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, TERM: "dumb" },
+    }
+  );
+
+  const stdout = (proc.stdout ?? "").trim();
+  const stderr = (proc.stderr ?? "").trim();
+
+  if (proc.status !== 0 && !stdout) {
+    return {
+      analysis: parseVipAnalysis(""),
+      error: `model failure (${proc.status ?? "unknown"}): ${stderr.slice(0, 250)}`,
+    };
+  }
+
+  return { analysis: parseVipAnalysis(stdout), error: proc.status !== 0 ? stderr.slice(0, 250) : undefined };
+}
+
+function parseTriageDecision(raw: string): TriageDecision {
+  const parsed = parseClaudeOutput(raw);
+  if (!parsed || typeof parsed !== "object") {
+    return {
+      needs_opus: false,
+      complexity: "medium",
+      reason: "triage parse failed",
+      analysis: parseVipAnalysis(raw),
+    };
+  }
+
+  const data = parsed as Record<string, unknown>;
+  const analysis = parseVipAnalysis(JSON.stringify(data.analysis ?? {}));
+
+  return {
+    needs_opus: Boolean(data.needs_opus),
+    complexity: String(data.complexity ?? "medium"),
+    reason: String(data.reason ?? "no reason provided"),
+    analysis,
+  };
+}
+
+function buildAnalysisPrompt(input: {
+  senderDisplay: string;
+  subject: string;
+  conversationId: string;
+  preview: string;
+  frontContext: { summary: Record<string, unknown>; recentMessages: string[] } | null;
+  granolaMeetings: GranolaMeeting[];
+  memoryContext: string[];
+  githubRepos: GitHubRepo[];
+  accessGaps: MissingInfo[];
+}): string {
+  const relatedMeetingLines = input.granolaMeetings.map((meeting) => {
+    const when = meeting.date ? ` (${meeting.date})` : "";
+    return `- ${meeting.title}${when} [${meeting.id}]`;
+  });
+
+  const repoLines = input.githubRepos.map((repo) => {
+    const name = repo.name ?? "unknown";
+    const description = repo.description ?? "";
+    const url = repo.url ?? "";
+    return `- ${name}: ${description} ${url}`.trim();
+  });
+
+  return [
+    `VIP sender: ${input.senderDisplay}`,
+    `Subject: ${input.subject}`,
+    `Conversation ID: ${input.conversationId}`,
+    `Preview: ${input.preview}`,
+    "",
+    "Front conversation summary:",
+    JSON.stringify(input.frontContext?.summary ?? {}, null, 2),
+    "",
+    "Recent Front messages:",
+    ...(input.frontContext?.recentMessages ?? []),
+    "",
+    "Related Granola meetings:",
+    ...(relatedMeetingLines.length > 0 ? relatedMeetingLines : ["- none found"]),
+    "",
+    "Memory recall excerpts:",
+    ...(input.memoryContext.length > 0 ? input.memoryContext : ["- none found"]),
+    "",
+    "GitHub repositories:",
+    ...(repoLines.length > 0 ? repoLines : ["- none found"]),
+    "",
+    "Access gaps detected before analysis:",
+    ...(input.accessGaps.length > 0
+      ? input.accessGaps.map((gap) => `- ${gap.item}: ${gap.why_missing}. How to get: ${gap.how_to_get_it}`)
+      : ["- none"]),
+  ].join("\n");
+}
+
 export const vipEmailReceived = inngest.createFunction(
   {
     id: "vip/email-received",
@@ -328,6 +433,7 @@ export const vipEmailReceived = inngest.createFunction(
   },
   { event: "vip/email.received" },
   async ({ event, step }) => {
+    const startedAt = Date.now();
     const from = String(event.data.from ?? "");
     const fromName = String(event.data.fromName ?? "");
     const senderDisplay = fromName ? `${fromName} <${from}>` : from;
@@ -336,131 +442,158 @@ export const vipEmailReceived = inngest.createFunction(
       return { status: "noop", reason: "not-vip-sender", from: senderDisplay };
     }
 
+    const subject = String(event.data.subject ?? "");
+    const conversationId = String(event.data.conversationId ?? "");
+    const preview = String(event.data.preview ?? "");
+
+    const timings: Record<string, number> = {};
     const accessGaps: MissingInfo[] = [];
 
-    // Run all searches in parallel for speed
-    const [frontContext, granolaMeetings, memoryContext, githubRepos] = await step.run("parallel-context-gathering", async () => {
-      return Promise.all([
-        // Front context - keep this fast
-        fetchFrontContext(String(event.data.conversationId ?? "")).catch((err) => {
-          accessGaps.push({
-            item: "Front thread context",
-            why_missing: "Front API token unavailable or API call failed",
-            how_to_get_it: "Ensure FRONT_API_TOKEN is valid and Front API is reachable",
-          });
-          return null;
-        }),
+    const [frontResult, granolaResult, memoryResult, githubResult] = await Promise.all([
+      step.run("fetch-front-context", async () => {
+        const t0 = Date.now();
+        const context = await fetchFrontContext(conversationId);
+        const gap = !context
+          ? {
+              item: "Front thread context",
+              why_missing: "Front API token unavailable, timed out, or API call failed",
+              how_to_get_it: "Ensure FRONT_API_TOKEN is valid and Front API is reachable",
+            }
+          : null;
 
-        // Granola meetings - only check recent, not all ranges
-        (async () => {
-          const ranges = ["today", "week"];  // Skip month/quarter/year for speed
-          const allMeetings: GranolaMeeting[] = [];
+        return { context, gap, durationMs: Date.now() - t0 };
+      }),
+      step.run("search-granola-related", async () => {
+        const t0 = Date.now();
+        const rangeDurations: Record<string, number> = {};
+        const allMeetings: GranolaMeeting[] = [];
 
-          for (const range of ranges) {
-            const response = parseJsonOutput<Record<string, unknown>>("granola", ["meetings", "--range", range], 5_000); // 5s timeout
-            if (!response.ok || !response.data) continue;
-            allMeetings.push(...parseGranolaMeetingsResponse(response.data));
-          }
+        for (const range of GRANOLA_RANGES) {
+          const rangeStart = Date.now();
+          const response = parseJsonOutput<Record<string, unknown>>(
+            "granola",
+            ["meetings", "--range", range],
+            GRANOLA_TIMEOUT_MS
+          );
+          rangeDurations[range] = Date.now() - rangeStart;
+          if (!response.ok || !response.data) continue;
+          allMeetings.push(...parseGranolaMeetingsResponse(response.data));
+        }
 
-          if (allMeetings.length === 0) {
-            accessGaps.push({
+        const related = findRelatedMeetings(allMeetings, fromName || from, subject).slice(0, 8);
+        const gap = allMeetings.length === 0
+          ? {
               item: "Related Granola meetings",
               why_missing: "Granola CLI returned no usable meeting data",
               how_to_get_it: "Verify granola CLI auth and local MCP availability",
-            });
-          }
+            }
+          : null;
 
-          const related = findRelatedMeetings(allMeetings, fromName || from, String(event.data.subject ?? ""));
-          return related.slice(0, 8);
-        })(),
+        return {
+          meetings: related,
+          gap,
+          durationMs: Date.now() - t0,
+          rangeDurations,
+        };
+      }),
+      step.run("search-memory-qdrant", async () => {
+        const t0 = Date.now();
+        const query = `${fromName || from} ${subject}`.trim();
+        const proc = spawnSync("joelclaw", ["recall", query, "--limit", "8", "--raw"], {
+          encoding: "utf-8",
+          timeout: QDRANT_TIMEOUT_MS,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: { ...process.env, TERM: "dumb" },
+        });
 
-        // Memory search - reduce timeout
-        (async () => {
-          const query = `${fromName || from} ${String(event.data.subject ?? "")}`.trim();
-          const proc = spawnSync("joelclaw", ["recall", query, "--limit", "8", "--raw"], {
-            encoding: "utf-8",
-            timeout: 3_000,  // 3s timeout - Qdrant should be fast
-            stdio: ["ignore", "pipe", "pipe"],
-            env: { ...process.env, TERM: "dumb" },
-          });
+        const durationMs = Date.now() - t0;
 
-          if (proc.status !== 0) {
-            accessGaps.push({
+        if (proc.status !== 0) {
+          return {
+            lines: [] as string[],
+            durationMs,
+            gap: {
               item: "Memory/Qdrant recall",
               why_missing: (proc.stderr ?? proc.stdout ?? "recall command failed").slice(0, 180),
               how_to_get_it: "Ensure Qdrant is up and `joelclaw recall` works in this environment",
-            });
-            return [];
-          }
+            },
+          };
+        }
 
-          return toLines(proc.stdout ?? "").slice(0, 8);
-        })(),
+        return {
+          lines: toLines(proc.stdout ?? "").slice(0, 8),
+          durationMs,
+          gap: null,
+        };
+      }),
+      step.run("search-github-projects", async () => {
+        const t0 = Date.now();
+        if (!ENABLE_GITHUB_SEARCH) {
+          return {
+            repos: [] as GitHubRepo[],
+            durationMs: Date.now() - t0,
+            skipped: true,
+            gap: null,
+          };
+        }
 
-        // GitHub search - make optional and fast
-        (async () => {
-          const query = `${fromName || from} ${String(event.data.subject ?? "")}`.trim();
-          const response = parseJsonOutput<GitHubRepo[]>(
-            "gh",
-            ["search", "repos", query, "--limit", "5", "--json", "name,description,url,updatedAt,stargazersCount"],
-            3_000  // 3s timeout
-          );
+        const query = `${fromName || from} ${subject}`.trim();
+        const response = parseJsonOutput<GitHubRepo[]>(
+          "gh",
+          ["search", "repos", query, "--limit", "5", "--json", "name,description,url,updatedAt,stargazersCount"],
+          GITHUB_TIMEOUT_MS
+        );
 
-          if (!response.ok || !response.data) {
-            // Don't push to accessGaps - GitHub is optional context
-            return [];
-          }
+        return {
+          repos: response.ok && response.data ? response.data : [],
+          durationMs: Date.now() - t0,
+          skipped: false,
+          gap: response.ok || !response.error
+            ? null
+            : {
+                item: "GitHub project search",
+                why_missing: response.error,
+                how_to_get_it: "Authenticate gh CLI and verify network/API access",
+              },
+        };
+      }),
+    ]);
 
-          return response.data;
-        })(),
-      ]);
+    timings["fetch-front-context"] = frontResult.durationMs;
+    timings["search-granola-related"] = granolaResult.durationMs;
+    timings["search-memory-qdrant"] = memoryResult.durationMs;
+    timings["search-github-projects"] = githubResult.durationMs;
+
+    if (frontResult.gap?.item) accessGaps.push(frontResult.gap as MissingInfo);
+    if (granolaResult.gap?.item) accessGaps.push(granolaResult.gap as MissingInfo);
+    if (memoryResult.gap?.item) accessGaps.push(memoryResult.gap as MissingInfo);
+    if (githubResult.gap?.item) accessGaps.push(githubResult.gap as MissingInfo);
+
+    const frontContext = (frontResult.context ?? null) as { summary: Record<string, unknown>; recentMessages: string[] } | null;
+    const granolaMeetings = (granolaResult.meetings ?? []) as GranolaMeeting[];
+    const memoryContext = (memoryResult.lines ?? []) as string[];
+    const githubRepos = (githubResult.repos ?? []) as GitHubRepo[];
+
+    const analysisPrompt = buildAnalysisPrompt({
+      senderDisplay,
+      subject,
+      conversationId,
+      preview,
+      frontContext,
+      granolaMeetings,
+      memoryContext,
+      githubRepos,
+      accessGaps,
     });
 
-    const analysis = await step.run("opus-vip-analysis", async () => {
-      const relatedMeetingLines = granolaMeetings.map((meeting) => {
-        const when = meeting.date ? ` (${meeting.date})` : "";
-        return `- ${meeting.title}${when} [${meeting.id}]`;
-      });
-
-      const repoLines = githubRepos.map((repo) => {
-        const name = repo.name ?? "unknown";
-        const description = repo.description ?? "";
-        const url = repo.url ?? "";
-        return `- ${name}: ${description} ${url}`.trim();
-      });
-
-      const prompt = [
-        `VIP sender: ${senderDisplay}`,
-        `Subject: ${String(event.data.subject ?? "")}`,
-        `Conversation ID: ${String(event.data.conversationId ?? "")}`,
-        `Preview: ${String(event.data.preview ?? "")}`,
-        "",
-        "Front conversation summary:",
-        JSON.stringify(frontContext?.summary ?? {}, null, 2),
-        "",
-        "Recent Front messages:",
-        ...(frontContext?.recentMessages ?? []),
-        "",
-        "Related Granola meetings:",
-        ...(relatedMeetingLines.length > 0 ? relatedMeetingLines : ["- none found"]),
-        "",
-        "Memory recall excerpts:",
-        ...(memoryContext.length > 0 ? memoryContext : ["- none found"]),
-        "",
-        "GitHub repositories:",
-        ...(repoLines.length > 0 ? repoLines : ["- none found"]),
-        "",
-        "Access gaps detected before analysis:",
-        ...(accessGaps.length > 0
-          ? accessGaps.map((gap) => `- ${gap.item}: ${gap.why_missing}. How to get: ${gap.how_to_get_it}`)
-          : ["- none"]),
-      ].join("\n");
-
+    const triageResult = await step.run("sonnet-initial-triage", async () => {
+      const t0 = Date.now();
       const proc = spawnSync(
         "pi",
-        ["-p", "--no-session", "--no-extensions", "--model", VIP_MODEL, "--system-prompt", VIP_SYSTEM_PROMPT, prompt],
+        ["-p", "--no-session", "--no-extensions", "--model", TRIAGE_MODEL, "--system-prompt", VIP_TRIAGE_PROMPT, analysisPrompt],
         {
           encoding: "utf-8",
-          timeout: 30_000,  // 30s timeout - balanced for Sonnet
+          timeout: TRIAGE_TIMEOUT_MS,
           stdio: ["ignore", "pipe", "pipe"],
           env: { ...process.env, TERM: "dumb" },
         }
@@ -468,15 +601,82 @@ export const vipEmailReceived = inngest.createFunction(
 
       const stdout = (proc.stdout ?? "").trim();
       const stderr = (proc.stderr ?? "").trim();
+      const durationMs = Date.now() - t0;
 
       if (proc.status !== 0 && !stdout) {
-        throw new Error(`VIP Opus analysis failed (${proc.status ?? "unknown"}): ${stderr.slice(0, 250)}`);
+        return {
+          decision: {
+            needs_opus: false,
+            complexity: "medium",
+            reason: `triage failed: ${stderr.slice(0, 200)}`,
+            analysis: parseVipAnalysis(""),
+          },
+          durationMs,
+          error: stderr.slice(0, 250),
+        };
       }
 
-      return parseVipAnalysis(stdout);
+      return {
+        decision: parseTriageDecision(stdout),
+        durationMs,
+        error: proc.status !== 0 ? stderr.slice(0, 250) : undefined,
+      };
     });
 
+    timings["sonnet-initial-triage"] = triageResult.durationMs;
+
+    if (triageResult.error) {
+      accessGaps.push({
+        item: "Sonnet triage",
+        why_missing: triageResult.error,
+        how_to_get_it: "Check pi model access and CLI auth",
+      });
+    }
+
+    const elapsedAfterTriage = Date.now() - startedAt;
+    const remainingBudgetMs = TOTAL_BUDGET_MS - elapsedAfterTriage;
+    const shouldRunOpus = ENABLE_OPUS_ESCALATION
+      && triageResult.decision.needs_opus
+      && remainingBudgetMs >= MIN_OPUS_TIME_REMAINING_MS;
+
+    const finalAnalysis = shouldRunOpus
+      ? await step.run("opus-vip-analysis", async () => {
+          const t0 = Date.now();
+          const timeoutMs = Math.min(OPUS_TIMEOUT_MS, Math.max(2_000, remainingBudgetMs - 1_000));
+          const result = runModelAnalysis(VIP_MODEL, VIP_SYSTEM_PROMPT, analysisPrompt, timeoutMs);
+          return {
+            ...result,
+            durationMs: Date.now() - t0,
+          };
+        })
+      : {
+          analysis: triageResult.decision.analysis,
+          error: undefined,
+          durationMs: 0,
+        };
+
+    timings["opus-vip-analysis"] = finalAnalysis.durationMs;
+
+    if (!shouldRunOpus && triageResult.decision.needs_opus) {
+      accessGaps.push({
+        item: "Deep Opus analysis",
+        why_missing: `Skipped to keep within ${TOTAL_BUDGET_MS}ms budget`,
+        how_to_get_it: "Increase JOELCLAW_VIP_TOTAL_BUDGET_MS or force JOELCLAW_VIP_ENABLE_OPUS_ESCALATION=1 with higher budget",
+      });
+    }
+
+    if (finalAnalysis.error) {
+      accessGaps.push({
+        item: "Deep model analysis",
+        why_missing: finalAnalysis.error,
+        how_to_get_it: "Check pi model access and CLI auth",
+      });
+    }
+
+    const analysis = finalAnalysis.analysis;
+
     const createdTodos = await step.run("create-comprehensive-todos", async () => {
+      const t0 = Date.now();
       const taskAdapter = new TodoistTaskAdapter();
       const created: Array<{ id: string; content: string }> = [];
       const todos = analysis.todos.slice(0, 10);
@@ -485,8 +685,8 @@ export const vipEmailReceived = inngest.createFunction(
         try {
           const description = [
             `VIP email source: ${senderDisplay}`,
-            `Subject: ${String(event.data.subject ?? "")}`,
-            `Conversation: ${String(event.data.conversationId ?? "")}`,
+            `Subject: ${subject}`,
+            `Conversation: ${conversationId}`,
             "",
             todo.description,
           ].filter(Boolean).join("\n");
@@ -508,8 +708,10 @@ export const vipEmailReceived = inngest.createFunction(
         }
       }
 
-      return created;
+      return { created, durationMs: Date.now() - t0 };
     });
+
+    timings["create-comprehensive-todos"] = createdTodos.durationMs;
 
     const allMissingInfo = [
       ...analysis.missing_information,
@@ -517,12 +719,14 @@ export const vipEmailReceived = inngest.createFunction(
     ];
 
     await step.run("notify-vip-summary", async () => {
+      const t0 = Date.now();
       const lines: string[] = [
         "## VIP Email Deep Dive",
         "",
         `From: ${senderDisplay}`,
-        `Subject: ${String(event.data.subject ?? "")}`,
-        `Model: ${VIP_MODEL}`,
+        `Subject: ${subject}`,
+        `Model: ${shouldRunOpus ? VIP_MODEL : TRIAGE_MODEL}`,
+        `Triage: ${triageResult.decision.complexity} (${triageResult.decision.reason})`,
         "",
         `Summary: ${analysis.executive_summary}`,
       ];
@@ -534,9 +738,9 @@ export const vipEmailReceived = inngest.createFunction(
         }
       }
 
-      if (createdTodos.length > 0) {
-        lines.push("", `Todos created (${createdTodos.length}):`);
-        for (const todo of createdTodos) {
+      if (createdTodos.created.length > 0) {
+        lines.push("", `Todos created (${createdTodos.created.length}):`);
+        for (const todo of createdTodos.created) {
           lines.push(`- ${todo.content} (${todo.id})`);
         }
       }
@@ -555,6 +759,17 @@ export const vipEmailReceived = inngest.createFunction(
         }
       }
 
+      const totalMs = Date.now() - startedAt;
+      lines.push("", "Timing profile (ms):");
+      lines.push(`- fetch-front-context: ${timings["fetch-front-context"] ?? 0}`);
+      lines.push(`- search-granola-related: ${timings["search-granola-related"] ?? 0}`);
+      lines.push(`- search-memory-qdrant: ${timings["search-memory-qdrant"] ?? 0}`);
+      lines.push(`- search-github-projects: ${timings["search-github-projects"] ?? 0}${githubResult.skipped ? " (skipped)" : ""}`);
+      lines.push(`- sonnet-initial-triage: ${timings["sonnet-initial-triage"] ?? 0}`);
+      lines.push(`- opus-vip-analysis: ${timings["opus-vip-analysis"] ?? 0}`);
+      lines.push(`- create-comprehensive-todos: ${timings["create-comprehensive-todos"] ?? 0}`);
+      lines.push(`- total: ${totalMs}`);
+
       await pushGatewayEvent({
         type: "vip.email.received",
         source: "inngest/vip-email-received",
@@ -562,27 +777,45 @@ export const vipEmailReceived = inngest.createFunction(
           prompt: lines.join("\n"),
           from,
           fromName,
-          subject: String(event.data.subject ?? ""),
-          conversationId: String(event.data.conversationId ?? ""),
-          todosCreated: createdTodos.length,
+          subject,
+          conversationId,
+          todosCreated: createdTodos.created.length,
           missingInfoCount: allMissingInfo.length,
           relatedMeetingCount: granolaMeetings.length,
           memoryContextCount: memoryContext.length,
           githubRepoCount: githubRepos.length,
+          triageComplexity: triageResult.decision.complexity,
+          triageNeedsOpus: triageResult.decision.needs_opus,
+          ranOpus: shouldRunOpus,
+          timings,
+          granolaRangeDurations: granolaResult.rangeDurations,
+          totalDurationMs: totalMs,
         },
       });
+
+      return { durationMs: Date.now() - t0 };
     });
+
+    const totalDurationMs = Date.now() - startedAt;
 
     return {
       status: "processed",
-      model: VIP_MODEL,
+      model: shouldRunOpus ? VIP_MODEL : TRIAGE_MODEL,
       from: senderDisplay,
-      subject: String(event.data.subject ?? ""),
+      subject,
       relatedMeetings: granolaMeetings.length,
       memoryMatches: memoryContext.length,
       githubRepos: githubRepos.length,
-      todosCreated: createdTodos.length,
+      todosCreated: createdTodos.created.length,
       missingInfoCount: allMissingInfo.length,
+      triageComplexity: triageResult.decision.complexity,
+      triageNeedsOpus: triageResult.decision.needs_opus,
+      ranOpus: shouldRunOpus,
+      timings,
+      granolaRangeDurations: granolaResult.rangeDurations,
+      totalDurationMs,
+      budgetMs: TOTAL_BUDGET_MS,
+      budgetExceeded: totalDurationMs > TOTAL_BUDGET_MS,
     };
   }
 );
