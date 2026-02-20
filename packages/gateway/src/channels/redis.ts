@@ -19,6 +19,7 @@ const LEGACY_EVENT_LIST = "joelclaw:events:main";
 const NOTIFY_CHANNEL = "joelclaw:notify:gateway";
 const LEGACY_NOTIFY_CHANNEL = "joelclaw:notify:main";
 const BATCH_LIST = "joelclaw:events:batch";
+const MODE_KEY = "joelclaw:mode";
 const HEARTBEAT_PATH = `${homedir()}/Vault/HEARTBEAT.md`;
 const DEDUP_MAX = 500;
 
@@ -36,6 +37,8 @@ let started = false;
 let draining = false;
 const seenIds = new Set<string>();
 
+type GatewayMode = "active" | "sleep";
+
 function pruneSeenIds(): void {
   if (seenIds.size <= DEDUP_MAX) return;
   const entries = Array.from(seenIds);
@@ -43,6 +46,45 @@ function pruneSeenIds(): void {
     const entry = entries[i];
     if (entry) {
       seenIds.delete(entry);
+    }
+  }
+}
+
+function normalizeMode(mode: string | null | undefined): GatewayMode {
+  return mode === "sleep" ? "sleep" : "active";
+}
+
+async function getGatewayMode(): Promise<GatewayMode> {
+  if (!cmd) return "active";
+  const mode = await cmd.get(MODE_KEY);
+  return normalizeMode(mode);
+}
+
+async function setGatewayMode(mode: GatewayMode): Promise<void> {
+  if (!cmd) return;
+  await cmd.set(MODE_KEY, mode);
+}
+
+async function appendToBatch(events: SystemEvent[], reason: string): Promise<void> {
+  if (!cmd || events.length === 0) return;
+  for (const event of events) {
+    await cmd.rpush(BATCH_LIST, JSON.stringify(event));
+  }
+  console.log(`[redis] batched ${events.length} event(s) (${reason}): ${events.map((e) => e.type).join(", ")}`);
+}
+
+export async function sleepGateway(): Promise<void> {
+  await setGatewayMode("sleep");
+  console.log("[redis] gateway mode set to sleep");
+}
+
+export async function wakeGateway(options?: { flushDigest?: boolean }): Promise<void> {
+  await setGatewayMode("active");
+  console.log("[redis] gateway mode set to active");
+  if (options?.flushDigest ?? true) {
+    const flushed = await flushBatchDigest();
+    if (flushed > 0) {
+      console.log(`[redis] wake flush delivered ${flushed} batched event(s)`);
     }
   }
 }
@@ -178,25 +220,54 @@ async function drainEvents(): Promise<void> {
     }
 
     // Stash batched events in Redis for hourly digest
-    if (batched.length > 0) {
-      for (const e of batched) {
-        await cmd.rpush(BATCH_LIST, JSON.stringify(e));
-      }
-      console.log(`[redis] batched ${batched.length} event(s): ${batched.map(e => e.type).join(", ")}`);
-    }
+    await appendToBatch(batched, "triage");
 
     if (suppressed.length > 0) {
       console.log(`[redis] suppressed ${suppressed.length} noise event(s): ${suppressed.map(e => e.type).join(", ")}`);
     }
 
+    let actionable = immediate;
+    const modeEvents = actionable.filter((event) => event.type === "gateway/sleep" || event.type === "gateway/wake");
+    if (modeEvents.length > 0) {
+      for (const event of modeEvents) {
+        if (event.type === "gateway/sleep") {
+          await sleepGateway();
+        } else if (event.type === "gateway/wake") {
+          await wakeGateway();
+        }
+      }
+      actionable = actionable.filter((event) => event.type !== "gateway/sleep" && event.type !== "gateway/wake");
+    }
+
+    const mode = await getGatewayMode();
+    let wokeFromTelegram = false;
+
+    if (mode === "sleep" && actionable.length > 0) {
+      const heartbeatWhileSleep = actionable.filter((event) => event.type === "cron.heartbeat");
+      const telegramWhileSleep = actionable.filter((event) => event.type === "telegram.message.received");
+      const immediateWhileSleep = actionable.filter(
+        (event) => event.type !== "cron.heartbeat" && event.type !== "telegram.message.received"
+      );
+
+      if (heartbeatWhileSleep.length > 0) {
+        console.log(
+          `[redis] sleep mode: ignored ${heartbeatWhileSleep.length} heartbeat event(s): ${heartbeatWhileSleep
+            .map((event) => event.id)
+            .join(", ")}`
+        );
+      }
+
+      await appendToBatch(immediateWhileSleep, "sleep-mode immediate deferral");
+
+      actionable = telegramWhileSleep;
+      wokeFromTelegram = telegramWhileSleep.length > 0;
+    }
+
     // Nothing immediate? Clear the queue and wait
-    if (immediate.length === 0) {
+    if (actionable.length === 0) {
       await cmd.del(EVENT_LIST);
       return;
     }
-
-    // Only immediate events get forwarded to the agent session
-    const actionable = immediate;
 
     // Check if any event has an originSession — route response back to that channel
     const originSession = actionable.find(
@@ -213,6 +284,12 @@ async function drainEvents(): Promise<void> {
       eventIds: actionable.map((event) => event.id),
       originSession,
     });
+
+    if (wokeFromTelegram) {
+      await wakeGateway({ flushDigest: false });
+      console.log("[redis] sleep mode wake triggered by telegram.message.received");
+    }
+
     await cmd.del(EVENT_LIST);
   } catch (error) {
     console.error("[gateway:redis] failed to drain events", { error });
@@ -333,6 +410,12 @@ export async function start(enqueue: EnqueueFn): Promise<void> {
  */
 export async function flushBatchDigest(): Promise<number> {
   if (!cmd || !enqueuePrompt) return 0;
+
+  const mode = await getGatewayMode();
+  if (mode === "sleep") {
+    console.log("[redis] batch digest skipped (sleep mode)");
+    return 0;
+  }
 
   const raw = await cmd.lrange(BATCH_LIST, 0, -1);
   if (raw.length === 0) return 0;
