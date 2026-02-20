@@ -20,13 +20,14 @@ The gateway daemon was configured with `PI_MODEL="claude-opus-4-20250514"` — a
 1. **gateway-start.sh**: Fixed model to `claude-opus-4-6`, added `ALLOWED_MODELS` allowlist — gateway refuses to start if model not on list
 2. **vip-email-received.ts**: `opus-4-1` → `opus-4-6` (was defaulting to $15/$75 tier)
 3. **batch-review.ts**: bare `claude-haiku` → `claude-haiku-4-5` (explicit version)
-4. **lib/models.ts**: Centralized `MODEL` registry with `assertAllowedModel()` guard, pricing comments, semantic aliases (`MODEL.OPUS`, `MODEL.SONNET`, `MODEL.HAIKU`)
+4. **lib/models.ts**: Centralized `MODEL` registry with `assertAllowedModel()` guard, pricing comments, semantic aliases (`MODEL.OPUS`, `MODEL.SONNET`, `MODEL.HAIKU`, `MODEL.CODEX`, `MODEL.O4_MINI`, `MODEL.O3`)
 
 ### Model Enforcement Rules
 1. **No dated snapshot IDs** (e.g. `claude-opus-4-20250514`) — these silently resolve to expensive legacy tiers
 2. **No bare aliases** (e.g. `claude-haiku`) — always specify version
 3. **All models must be in `ALLOWED_MODELS`** or the gateway won't start
 4. **Use `MODEL.*` constants** from `lib/models.ts` in all Inngest functions
+5. **OpenAI models included**: `gpt-5.3-codex`, `o4-mini`, `o3` — used by codex exec, agent loops, friction-fix
 
 ## Context
 
