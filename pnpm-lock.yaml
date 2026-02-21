@@ -257,6 +257,9 @@ importers:
       '@qdrant/js-client-rest':
         specifier: ^1.16.2
         version: 1.16.2(typescript@5.9.2)
+      convex:
+        specifier: ^1.32.0
+        version: 1.32.0(react@19.2.0)
       hono:
         specifier: ^4.11.9
         version: 4.11.9

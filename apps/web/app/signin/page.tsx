@@ -1,6 +1,6 @@
 "use client";
 
-import { authClient } from "@/lib/auth-client";
+import { authClient } from "../../lib/auth-client";
 import { Github } from "lucide-react";
 
 export default function SignInPage() {

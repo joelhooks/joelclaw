@@ -1,4 +1,4 @@
-import { isAuthenticated } from "@/lib/auth-server";
+import { isAuthenticated } from "../../lib/auth-server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 
@@ -9,7 +9,7 @@ export default async function DashboardLayout({
 }) {
   const authed = await isAuthenticated();
   if (!authed) {
-    redirect("/sign-in");
+    redirect("/signin");
   }
 
   return (
