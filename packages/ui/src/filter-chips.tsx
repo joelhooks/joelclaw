@@ -28,8 +28,8 @@ export function FilterChips({
         onClick={() => onSelect(undefined)}
         className={`min-h-8 rounded-full border px-3 py-1 text-[10px] font-mono uppercase tracking-wide transition-colors ${
           selected == null
-            ? "border-neutral-500 bg-neutral-700/80 text-neutral-100"
-            : "border-neutral-800 bg-neutral-900/40 text-neutral-500 hover:border-neutral-700 hover:text-neutral-300"
+            ? "border-neutral-600 bg-neutral-700/80 text-neutral-100"
+            : "border-neutral-800/50 bg-neutral-900/40 text-neutral-500 hover:border-neutral-700/60 hover:text-neutral-300"
         }`}
       >
         {allLabel}
@@ -43,8 +43,8 @@ export function FilterChips({
             onClick={() => onSelect(active ? undefined : option.value)}
             className={`min-h-8 rounded-full border px-3 py-1 text-[10px] font-mono uppercase tracking-wide transition-colors ${
               active
-                ? "border-neutral-500 bg-neutral-700/80 text-neutral-100"
-                : "border-neutral-800 bg-neutral-900/40 text-neutral-500 hover:border-neutral-700 hover:text-neutral-300"
+                ? "border-neutral-600 bg-neutral-700/80 text-neutral-100"
+                : "border-neutral-800/50 bg-neutral-900/40 text-neutral-500 hover:border-neutral-700/60 hover:text-neutral-300"
             }`}
           >
             {option.label ?? option.value}

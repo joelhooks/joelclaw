@@ -38,7 +38,7 @@ export function MetricCard({
 
   return (
     <article
-      className={`rounded-xl border border-neutral-800/70 bg-neutral-900/30 ${
+      className={`rounded-xl border border-neutral-800/40 bg-neutral-900/30 ${
         isLarge ? "px-5 py-4 sm:px-6 sm:py-5" : "px-4 py-3"
       } ${className ?? ""}`}
     >
