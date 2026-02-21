@@ -288,6 +288,34 @@ label.margin-toggle:not(.sidenote-number) {
   @apply bg-transparent p-0 text-neutral-300;
 }
 
+/* Shiki / rehype-pretty-code */
+.vault-prose figure[data-rehype-pretty-code-figure] {
+  @apply mb-3;
+}
+.vault-prose figure[data-rehype-pretty-code-figure] pre {
+  @apply mb-0;
+}
+.vault-prose figure[data-rehype-pretty-code-figure] figcaption {
+  @apply rounded-t-lg border border-b-0 border-neutral-800/50 bg-neutral-900/80 px-3 py-1.5 font-pixel text-[10px] uppercase tracking-wider text-neutral-500;
+}
+.vault-prose figure[data-rehype-pretty-code-figure] figcaption + pre {
+  @apply rounded-t-none;
+}
+.vault-prose [data-rehype-pretty-code-figure] code {
+  counter-reset: line;
+}
+.vault-prose [data-rehype-pretty-code-figure] code > [data-line]::before {
+  counter-increment: line;
+  content: counter(line);
+  @apply mr-4 inline-block w-4 text-right text-neutral-700;
+}
+.vault-prose [data-highlighted-line] {
+  @apply -mx-3 border-l-2 border-claw/40 bg-claw/5 px-3;
+}
+.vault-prose [data-highlighted-chars] {
+  @apply rounded bg-claw/15 px-1;
+}
+
 .vault-prose blockquote {
   @apply mb-3 border-l-2 border-neutral-700/60 pl-3 text-neutral-400 italic;
 }

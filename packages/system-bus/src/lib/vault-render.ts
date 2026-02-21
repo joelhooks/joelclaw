@@ -11,6 +11,7 @@ import remarkGfm from "remark-gfm";
 import remarkRehype from "remark-rehype";
 import rehypeStringify from "rehype-stringify";
 import rehypeSlug from "rehype-slug";
+import rehypePrettyCode from "rehype-pretty-code";
 
 // ── Wikilink resolution ─────────────────────────────────────────
 
@@ -85,6 +86,11 @@ function getProcessor() {
       .use(remarkGfm)
       .use(remarkRehype, { allowDangerousHtml: true })
       .use(rehypeSlug)
+      .use(rehypePrettyCode, {
+        theme: "github-dark-default",
+        keepBackground: true,
+        defaultLang: "plaintext",
+      })
       .use(rehypeStringify, { allowDangerousHtml: true });
   }
   return _processor;
