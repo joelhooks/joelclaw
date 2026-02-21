@@ -686,7 +686,7 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
 // ── Init fallback controller (ADR-0091) ──────────────────
 // Must happen after Telegram starts so notify can send alerts.
 fallbackController.init(
-  { setModel: (m: unknown) => session.setModel(m), get model() { return session.model; } },
+  { setModel: (m) => session.setModel(m as any), get model() { return session.model; } },
   (text: string) => {
     console.log("[gateway:fallback]", text);
     if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
