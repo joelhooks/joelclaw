@@ -16,6 +16,7 @@ export { taskTriage } from "./task-triage";
 export { checkSessions } from "./check-sessions";
 export { checkTriggers } from "./check-triggers";
 export { checkSystemHealth } from "./check-system-health";
+export { networkStatusUpdate } from "./network-status-update";
 export { checkMemoryReview } from "./check-memory-review";
 export { checkVaultSync } from "./check-vault-sync";
 export { checkGranola } from "./check-granola";

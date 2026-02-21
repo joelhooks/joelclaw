@@ -153,6 +153,11 @@ export const checkSystemHealth = inngest.createFunction(
 
     // NOOP: all healthy → no notification
     if (degraded.length === 0) {
+      // ADR-0085: trigger live network status collection after health checks.
+      await step.sendEvent("emit-network-update", {
+        name: "system/network.update",
+        data: { source: "check-system-health", checkedAt: Date.now() },
+      });
       return { status: "noop", services };
     }
 
@@ -163,6 +168,11 @@ export const checkSystemHealth = inngest.createFunction(
     });
 
     if (newDegraded.length === 0) {
+      // ADR-0085: trigger live network status collection after health checks.
+      await step.sendEvent("emit-network-update", {
+        name: "system/network.update",
+        data: { source: "check-system-health", checkedAt: Date.now() },
+      });
       return { status: "noop", reason: "degraded but already tracked in tasks", services };
     }
 
@@ -199,6 +209,12 @@ export const checkSystemHealth = inngest.createFunction(
         `Health degradation: ${degradedNames.join(", ")}`,
         degradedDetails.join("\n")
       );
+    });
+
+    // ADR-0085: trigger live network status collection after health checks.
+    await step.sendEvent("emit-network-update", {
+      name: "system/network.update",
+      data: { source: "check-system-health", checkedAt: Date.now() },
     });
 
     return { status: "degraded", degraded: degraded.map((s) => s.name), services };

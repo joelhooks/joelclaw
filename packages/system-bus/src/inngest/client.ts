@@ -500,6 +500,12 @@ export type Events = {
       component?: string;
     };
   };
+  "system/network.update": {
+    data: {
+      source?: string;
+      checkedAt?: number;
+    };
+  };
   "system/adr.sync.requested": {
     data: {
       reason?: string;
