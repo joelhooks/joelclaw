@@ -1,95 +1,81 @@
 // ADR-0067: Supersede pattern adapted from knowledge-graph by safatinaztepe (openclaw/skills, MIT).
+// ADR-0082: Migrated from Qdrant+embed.py to Typesense with built-in auto-embedding.
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
-import { execSync } from "node:child_process"
-import { join } from "node:path"
 import { respond, respondError } from "../response"
 
-const QDRANT_URL = "http://localhost:6333"
-const QDRANT_COLLECTION = "memory_observations"
-const EMBED_SCRIPT = join(__dirname, "..", "..", "..", "system-bus", "scripts", "embed.py")
+const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 
-interface QdrantHit {
-  id: string
-  score: number
-  payload: {
-    session_id: string
-    timestamp: string
-    observation_type: string
-    observation: string
-    superseded_by?: string
-    supersedes?: string
+function getApiKey(): string {
+  const envKey = process.env.TYPESENSE_API_KEY
+  if (envKey) return envKey
+  try {
+    const { execSync } = require("node:child_process")
+    return execSync("secrets lease typesense_api_key --ttl 15m", {
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim()
+  } catch {
+    throw new Error("No TYPESENSE_API_KEY and secrets lease failed")
   }
 }
 
-/** Embed a query string using local all-mpnet-base-v2 (768-dim) */
-function embedQuery(query: string): number[] {
-  const input = JSON.stringify({ id: "q", text: query })
-  const output = execSync(
-    `echo '${input.replace(/'/g, "'\\''")}' | uv run --with sentence-transformers ${EMBED_SCRIPT}`,
-    {
-      encoding: "utf-8",
-      timeout: 60_000,
-      stdio: ["pipe", "pipe", "pipe"],
-    }
-  )
-  const results: Array<{ id: string; vector: number[] }> = JSON.parse(output.trim())
-  if (!results[0]?.vector) throw new Error("Embedding returned no vector")
-  return results[0].vector
+interface TypesenseHit {
+  document: {
+    id: string
+    session_id?: string
+    timestamp?: number
+    observation_type?: string
+    observation: string
+    source?: string
+  }
+  highlights?: Array<{ field: string; snippet?: string }>
+  text_match_info?: { score: number }
+  hybrid_search_info?: { rank_fusion_score: number }
 }
 
-/** Search Qdrant for nearest observations */
-async function searchQdrant(
-  vector: number[],
+/** Search Typesense memory_observations — keyword search with auto-embedding */
+async function searchTypesense(
+  query: string,
   limit: number,
-  minScore: number,
-  includeSuperseded: boolean
-): Promise<QdrantHit[]> {
-  const requestedLimit = includeSuperseded ? limit : Math.max(limit * 3, limit)
-  const resp = await fetch(`${QDRANT_URL}/collections/${QDRANT_COLLECTION}/points/search`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      vector,
-      limit: requestedLimit,
-      with_payload: true,
-      score_threshold: minScore,
-    }),
+): Promise<{ hits: TypesenseHit[]; found: number }> {
+  const apiKey = getApiKey()
+  const params = new URLSearchParams({
+    q: query,
+    query_by: "observation",
+    per_page: String(limit),
+    exclude_fields: "embedding",
   })
+
+  const resp = await fetch(
+    `${TYPESENSE_URL}/collections/memory_observations/documents/search?${params}`,
+    { headers: { "X-TYPESENSE-API-KEY": apiKey } }
+  )
 
   if (!resp.ok) {
     const text = await resp.text()
-    throw new Error(`Qdrant search failed (${resp.status}): ${text}`)
+    throw new Error(`Typesense search failed (${resp.status}): ${text}`)
   }
 
-  const data = await resp.json() as { result: QdrantHit[] }
-  const hits = data.result ?? []
-  const filteredHits = includeSuperseded
-    ? hits
-    : hits.filter((hit) => !hit.payload?.superseded_by)
-  return filteredHits.slice(0, limit)
+  const data = await resp.json() as { found: number; hits: TypesenseHit[] }
+  return { hits: data.hits ?? [], found: data.found ?? 0 }
 }
 
 const query = Args.text({ name: "query" })
 const limit = Options.integer("limit").pipe(Options.withDefault(5))
-const minScore = Options.float("min-score").pipe(Options.withDefault(0.25))
 const raw = Options.boolean("raw").pipe(Options.withDefault(false))
-const includeSuperseded = Options.boolean("include-superseded").pipe(Options.withDefault(false))
 
 export const recallCmd = Command.make(
   "recall",
-  { query, limit, minScore, raw, includeSuperseded },
-  ({ query, limit, minScore, raw, includeSuperseded }) =>
+  { query, limit, raw },
+  ({ query, limit, raw }) =>
     Effect.gen(function* () {
       try {
-        const vector = embedQuery(query)
-        const hits = yield* Effect.promise(() =>
-          searchQdrant(vector, limit, minScore, includeSuperseded)
-        )
+        const result = yield* Effect.promise(() => searchTypesense(query, limit))
 
         if (raw) {
-          // Raw mode: just observations, one per line — for piping/injection
-          const lines = hits.map((h) => h.payload.observation)
+          const lines = result.hits.map((h) => h.document.observation)
           yield* Console.log(lines.join("\n"))
           return
         }
@@ -97,75 +83,49 @@ export const recallCmd = Command.make(
         yield* Console.log(
           respond("recall", {
             query,
-            hits: hits.map((h) => ({
-              score: Math.round(h.score * 1000) / 1000,
-              observation: h.payload.observation,
-              type: h.payload.observation_type,
-              session: h.payload.session_id,
-              timestamp: h.payload.timestamp,
+            hits: result.hits.map((h) => ({
+              score: h.text_match_info?.score || h.hybrid_search_info?.rank_fusion_score || 0,
+              observation: h.document.observation,
+              type: h.document.observation_type || "unknown",
+              session: h.document.session_id || "unknown",
+              timestamp: h.document.timestamp
+                ? new Date(h.document.timestamp * 1000).toISOString()
+                : "unknown",
             })),
-            count: hits.length,
-            collection: QDRANT_COLLECTION,
-            totalPoints: "520+",
-            includeSuperseded,
+            count: result.hits.length,
+            found: result.found,
+            backend: "typesense",
           }, [
             {
-              command: "recall <query> [--limit <limit>]",
+              command: `joelclaw recall "${query}" --limit 10`,
               description: "Get more results",
-              params: {
-                query: { description: "Recall search query", value: query, required: true },
-                limit: { description: "Maximum results", value: 10, default: 5 },
-              },
             },
             {
-              command: "recall <query> [--min-score <min-score>]",
-              description: "Stricter relevance",
-              params: {
-                query: { description: "Recall search query", value: query, required: true },
-                "min-score": { description: "Minimum similarity score", value: 0.35, default: 0.25 },
-              },
+              command: `joelclaw search "${query}"`,
+              description: "Search all collections (vault, blog, slog too)",
             },
             {
-              command: "recall <query> [--include-superseded]",
-              description: "Include older superseded observations",
-              params: {
-                query: { description: "Recall search query", value: query, required: true },
-              },
-            },
-            {
-              command: "recall <query> [--raw]",
+              command: `joelclaw recall "${query}" --raw`,
               description: "Raw observations for injection",
-              params: {
-                query: { description: "Recall search query", value: query, required: true },
-              },
             },
           ])
         )
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
 
-        if (message.includes("Qdrant") || message.includes("Connection refused")) {
+        if (message.includes("Typesense") || message.includes("Connection refused") || message.includes("ECONNREFUSED")) {
           yield* Console.log(respondError(
-            "recall", message, "QDRANT_UNREACHABLE",
-            "kubectl port-forward -n joelclaw svc/qdrant-svc 6333:6333",
-            [{ command: "status", description: "Check all services" }]
-          ))
-          return
-        }
-
-        if (message.includes("uv") || message.includes("sentence-transformers")) {
-          yield* Console.log(respondError(
-            "recall", message, "EMBED_FAILED",
-            "uv run --with sentence-transformers python3 -c 'import sentence_transformers; print(\"ok\")'",
-            [{ command: "status", description: "Check all services" }]
+            "recall", message, "TYPESENSE_UNREACHABLE",
+            "kubectl port-forward -n joelclaw svc/typesense 8108:8108 &",
+            [{ command: "joelclaw status", description: "Check all services" }]
           ))
           return
         }
 
         yield* Console.log(respondError(
           "recall", message, "UNKNOWN",
-          "Check Qdrant (localhost:6333) and embed.py script",
-          [{ command: "status", description: "Check all services" }]
+          "Check Typesense (localhost:8108)",
+          [{ command: "joelclaw status", description: "Check all services" }]
         ))
       }
     })
