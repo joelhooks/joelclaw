@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: implemented
 date: 2026-02-20
 decision-makers: Joel
 tags:
@@ -212,25 +212,26 @@ probes:
 
 ### Deployment Plan
 
-**Phase 1: Infrastructure** (this ADR)
-- Create `~/Code/joelhooks/typesense-helm-charts/` repo
-- Build Helm chart with single-node defaults
-- Deploy to k8s `joelclaw` namespace on port 8108
-- Store API key in `agent-secrets`
-- Add NodePort mapping in Colima (8108:8108)
+**Phase 1: Infrastructure** ✅ DONE
+- ~~Create Helm chart~~ → Used raw k8s manifest (`k8s/typesense.yaml`)
+- Deployed StatefulSet `typesense-0` to k8s `joelclaw` namespace on port 8108
+- API key stored in `agent-secrets` as `typesense_api_key`
+- Access via `kubectl port-forward` (Tailscale operator planned for persistent access)
 
-**Phase 2: Indexing**
-- Build vault indexer (Inngest function: scan vault, upsert to Typesense)
-- Build blog indexer (triggered on deploy)
-- Build voice transcript indexer (hook into `voice/call.completed`)
-- Build observation indexer (hook into `agent/memory.observed`)
+**Phase 2: Indexing** ✅ DONE
+- 6 collections created with auto-embedding (`ts/all-MiniLM-L12-v2`, local ONNX)
+- vault_notes: 747 docs, blog_posts: 13 docs, system_log: 577 docs
+- memory_observations: 1,355 migrated from Qdrant (zero errors)
+- Dual-write in `observe.ts` — new observations go to both Qdrant and Typesense
+- 3 Inngest sync functions: vault-sync (on content changes), blog-sync (on Vercel deploy), full-sync (daily 3am cron)
 
-**Phase 3: Search Interface**
-- Add `joelclaw search` CLI command with hybrid query support
-- Add `search` tool to voice agent
-- Add search-only API key generation for web UI
+**Phase 3: Search Interface** ✅ DONE
+- `joelclaw search` CLI — multi-collection, typo-tolerant, faceted, filterable
+- `joelclaw recall` migrated from Qdrant to Typesense — eliminates `embed.py` Python dependency
+- Voice agent search tool: pending swap
+- Search-only API key for web UI: pending
 
-**Phase 4: Analytics & Tuning**
+**Phase 4: Analytics & Tuning** — NOT STARTED
 - Enable search analytics, track popular queries
 - Tune hybrid search alpha (keyword vs semantic weighting)
 - Add synonyms (e.g., "k8s" = "kubernetes", "ADR" = "architecture decision record")
