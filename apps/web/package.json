@@ -12,6 +12,7 @@
   "dependencies": {
     "@better-auth/cli": "^1.4.18",
     "@convex-dev/better-auth": "^0.10.10",
+    "@joelclaw/mdx-pipeline": "workspace:^",
     "@repo/ui": "workspace:*",
     "@types/mdast": "^4.0.4",
     "better-auth": "^1.4.9",
