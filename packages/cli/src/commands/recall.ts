@@ -79,8 +79,8 @@ async function searchTypesense(
   const cappedLimit = Math.min(Math.max(limit, 1), MAX_INJECT)
   const params = new URLSearchParams({
     q: query,
-    query_by: "observation",
-    vector_query: "embedding:([], k:10, distance_threshold: 0.5)",
+    query_by: "embedding,observation",
+    vector_query: "embedding:([], alpha: 0.7)",
     per_page: String(cappedLimit),
     exclude_fields: "embedding",
   })
