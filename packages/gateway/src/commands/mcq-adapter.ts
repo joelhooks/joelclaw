@@ -14,6 +14,14 @@ export type McqParams = {
   questions: McqQuestion[];
 };
 
+export type McqAdapterRuntime = {
+  handleMcqToolCall: (
+    params: McqParams,
+    options?: { chatId?: number },
+  ) => Promise<Record<string, string>>;
+  hasPendingMcq: () => boolean;
+};
+
 type PendingQuestion = {
   chatId: number;
   messageId: number;
@@ -30,6 +38,7 @@ type PendingFreeText = {
 
 const MCQ_PREFIX = "mcq:";
 const QUESTION_TIMEOUT_MS = 5 * 60 * 1000;
+let activeMcqAdapter: McqAdapterRuntime | undefined;
 
 function escapeHtml(text: string): string {
   return text
@@ -92,10 +101,11 @@ function buildKeyboard(
   return rows;
 }
 
-export function registerMcqAdapter(bot: Bot, chatId: number): {
-  handleMcqToolCall: (params: McqParams) => Promise<Record<string, string>>;
-  hasPendingMcq: () => boolean;
-} {
+export function getActiveMcqAdapter(): McqAdapterRuntime | undefined {
+  return activeMcqAdapter;
+}
+
+export function registerMcqAdapter(bot: Bot, chatId: number): McqAdapterRuntime {
   const pendingQuestions = new Map<string, PendingQuestion>();
   const pendingFreeText = new Map<number, PendingFreeText>();
   let activeCalls = 0;
@@ -179,14 +189,14 @@ export function registerMcqAdapter(bot: Bot, chatId: number): {
     pendingQuestion.settle(text.length > 0 ? text : "(empty)");
   });
 
-  const askQuestion = async (question: McqQuestion): Promise<string> => {
+  const askQuestion = async (question: McqQuestion, targetChatId: number): Promise<string> => {
     const callbackQuestionId = question.id.length > 40
       ? `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
       : question.id;
     let messageId = 0;
 
     try {
-      const message = await bot.api.sendMessage(chatId, formatQuestionHtml(question), {
+      const message = await bot.api.sendMessage(targetChatId, formatQuestionHtml(question), {
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: buildKeyboard(question, callbackQuestionId) },
       });
@@ -205,8 +215,8 @@ export function registerMcqAdapter(bot: Bot, chatId: number): {
         if (settled) return;
         settled = true;
         pendingQuestions.delete(callbackQuestionId);
-        if (pendingFreeText.get(chatId)?.questionId === callbackQuestionId) {
-          pendingFreeText.delete(chatId);
+        if (pendingFreeText.get(targetChatId)?.questionId === callbackQuestionId) {
+          pendingFreeText.delete(targetChatId);
         }
         resolve("(timeout)");
       }, QUESTION_TIMEOUT_MS);
@@ -216,14 +226,14 @@ export function registerMcqAdapter(bot: Bot, chatId: number): {
         settled = true;
         clearTimeout(timeout);
         pendingQuestions.delete(callbackQuestionId);
-        if (pendingFreeText.get(chatId)?.questionId === callbackQuestionId) {
-          pendingFreeText.delete(chatId);
+        if (pendingFreeText.get(targetChatId)?.questionId === callbackQuestionId) {
+          pendingFreeText.delete(targetChatId);
         }
         resolve(selected);
       };
 
       pendingQuestions.set(callbackQuestionId, {
-        chatId,
+        chatId: targetChatId,
         messageId,
         questionId: callbackQuestionId,
         questionText: question.question,
@@ -235,7 +245,7 @@ export function registerMcqAdapter(bot: Bot, chatId: number): {
 
     try {
       await bot.api.editMessageText(
-        chatId,
+        targetChatId,
         messageId,
         selectedHtml(question.question, question.context, answer),
         {
@@ -262,14 +272,15 @@ export function registerMcqAdapter(bot: Bot, chatId: number): {
     return next;
   };
 
-  const handleMcqToolCall = (params: McqParams): Promise<Record<string, string>> => {
+  const handleMcqToolCall = (params: McqParams, options?: { chatId?: number }): Promise<Record<string, string>> => {
     return runSequential(async () => {
       activeCalls += 1;
+      const targetChatId = options?.chatId ?? chatId;
 
       try {
         if (params.title?.trim()) {
           try {
-            await bot.api.sendMessage(chatId, `<b>${escapeHtml(params.title.trim())}</b>`, {
+            await bot.api.sendMessage(targetChatId, `<b>${escapeHtml(params.title.trim())}</b>`, {
               parse_mode: "HTML",
             });
           } catch (error) {
@@ -280,7 +291,7 @@ export function registerMcqAdapter(bot: Bot, chatId: number): {
         const answers: Record<string, string> = {};
         for (const question of params.questions) {
           try {
-            answers[question.id] = await askQuestion(question);
+            answers[question.id] = await askQuestion(question, targetChatId);
           } catch (error) {
             console.error("[gateway:mcq] question handling failed", {
               questionId: question.id,
@@ -297,5 +308,7 @@ export function registerMcqAdapter(bot: Bot, chatId: number): {
     });
   };
 
-  return { handleMcqToolCall, hasPendingMcq };
+  const runtime: McqAdapterRuntime = { handleMcqToolCall, hasPendingMcq };
+  activeMcqAdapter = runtime;
+  return runtime;
 }

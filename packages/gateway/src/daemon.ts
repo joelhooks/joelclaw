@@ -3,7 +3,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@mariozechner/pi-ai";
-import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader, SessionManager, type LoadExtensionsResult } from "@mariozechner/pi-coding-agent";
 import {
   drain,
   enqueue,
@@ -17,6 +17,7 @@ import {
 import { start as startRedisChannel, shutdown as shutdownRedisChannel, isHealthy as isRedisHealthy, getRedisClient } from "./channels/redis";
 import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, sendMedia as sendTelegramMedia, parseChatId } from "./channels/telegram";
 import { defaultGatewayConfig, loadGatewayConfig } from "./commands/config";
+import { getActiveMcqAdapter, type McqParams } from "./commands/mcq-adapter";
 import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands/telegram-handler";
 import { TRIPWIRE_PATH, startHeartbeatRunner } from "./heartbeat";
 import { init as initMessageStore, trimOld } from "./message-store";
@@ -103,6 +104,180 @@ function shouldForwardToTelegram(text: string): boolean {
   return !isHeartbeatOk && !isTrivial && !isEcho;
 }
 
+function isMcqQuestion(value: unknown): value is McqParams["questions"][number] {
+  if (!value || typeof value !== "object") return false;
+  const question = value as Record<string, unknown>;
+  return typeof question.id === "string"
+    && typeof question.question === "string"
+    && Array.isArray(question.options)
+    && question.options.every((option) => typeof option === "string");
+}
+
+function isMcqParams(value: unknown): value is McqParams {
+  if (!value || typeof value !== "object") return false;
+  const params = value as Record<string, unknown>;
+  return Array.isArray(params.questions) && params.questions.every(isMcqQuestion);
+}
+
+function buildMcqToolResult(params: McqParams, answers: Record<string, string>): {
+  content: Array<{ type: "text"; text: string }>;
+  details: {
+    title: string;
+    answers: Array<{
+      id: string;
+      question: string;
+      selected: number;
+      answer: string;
+      isCustom: boolean;
+    }>;
+    cancelled: false;
+  };
+} {
+  const detailsAnswers = params.questions.map((question) => {
+    const answer = answers[question.id] ?? "(no answer)";
+    const selectedIndex = question.options.findIndex((option) => option === answer);
+    const isCustom = selectedIndex === -1;
+
+    return {
+      id: question.id,
+      question: question.question,
+      selected: isCustom ? question.options.length + 1 : selectedIndex + 1,
+      answer,
+      isCustom,
+    };
+  });
+
+  const contentLines = detailsAnswers.map((answer) => {
+    if (answer.isCustom) return `${answer.id}: (user wrote) ${answer.answer}`;
+    return `${answer.id}: ${answer.selected}. ${answer.answer}`;
+  });
+
+  return {
+    content: [{ type: "text", text: contentLines.join("\n") }],
+    details: {
+      title: params.title ?? "Questions",
+      answers: detailsAnswers,
+      cancelled: false,
+    },
+  };
+}
+
+function withTelegramMcqOverride(base: LoadExtensionsResult): LoadExtensionsResult {
+  let overridesApplied = 0;
+
+  for (const extension of base.extensions) {
+    const registered = extension.tools.get("mcq");
+    if (!registered) continue;
+
+    const originalExecute = registered.definition.execute as (
+      toolCallId: string,
+      params: unknown,
+      signal: AbortSignal | undefined,
+      onUpdate: unknown,
+      ctx: unknown,
+    ) => Promise<{ content: Array<{ type: "text"; text: string }>; details: unknown }>;
+
+    registered.definition.execute = (async (
+      toolCallId: string,
+      params: unknown,
+      signal: AbortSignal | undefined,
+      onUpdate: unknown,
+      ctx: unknown,
+    ) => {
+      const source = getCurrentSource();
+      const isTelegramSource = typeof source === "string" && source.startsWith("telegram:");
+
+      if (!isTelegramSource || !isMcqParams(params)) {
+        return originalExecute(toolCallId, params, signal, onUpdate, ctx);
+      }
+
+      const adapter = getActiveMcqAdapter();
+      if (!adapter) {
+        console.warn("[gateway:mcq] telegram mcq call received before adapter initialization; using default tool behavior", {
+          source,
+        });
+        void emitGatewayOtel({
+          level: "warn",
+          component: "daemon.mcq",
+          action: "mcq.adapter_unavailable",
+          success: false,
+          metadata: {
+            source,
+            immediateTelegram: true,
+          },
+        });
+        return originalExecute(toolCallId, params, signal, onUpdate, ctx);
+      }
+
+      const sourceChatId = source ? parseChatId(source) : undefined;
+
+      try {
+        const answers = await adapter.handleMcqToolCall(
+          params,
+          sourceChatId ? { chatId: sourceChatId } : undefined,
+        );
+        void emitGatewayOtel({
+          level: "info",
+          component: "daemon.mcq",
+          action: "mcq.telegram.completed",
+          success: true,
+          metadata: {
+            source,
+            chatId: sourceChatId,
+            questionCount: params.questions.length,
+          },
+        });
+        return buildMcqToolResult(params, answers);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error("[gateway:mcq] telegram adapter execution failed", { source, error: message });
+        void emitGatewayOtel({
+          level: "error",
+          component: "daemon.mcq",
+          action: "mcq.telegram.failed",
+          success: false,
+          error: message,
+          metadata: {
+            source,
+            chatId: sourceChatId,
+          },
+        });
+        return {
+          content: [{ type: "text", text: `MCQ adapter failed: ${message}` }],
+          details: {
+            title: params.title ?? "Questions",
+            answers: [],
+            cancelled: true,
+          },
+        };
+      }
+    }) as typeof registered.definition.execute;
+
+    overridesApplied += 1;
+  }
+
+  if (overridesApplied === 0) {
+    console.warn("[gateway:mcq] no mcq tool found in loaded extensions; telegram adapter override inactive");
+    void emitGatewayOtel({
+      level: "warn",
+      component: "daemon.mcq",
+      action: "mcq.override.missing",
+      success: false,
+    });
+  } else {
+    console.log("[gateway:mcq] installed telegram mcq tool override", { overridesApplied });
+    void emitGatewayOtel({
+      level: "info",
+      component: "daemon.mcq",
+      action: "mcq.override.installed",
+      success: true,
+      metadata: { overridesApplied },
+    });
+  }
+
+  return base;
+}
+
 mkdirSync(GATEWAY_SESSION_DIR, { recursive: true });
 
 // Always resume the existing session — context continuity is critical.
@@ -119,12 +294,20 @@ console.log("[gateway] session", {
   entries: sessionManager.getEntries().length,
 });
 
+const resourceLoader = new DefaultResourceLoader({
+  cwd: GATEWAY_CWD,
+  agentDir: AGENT_DIR,
+  extensionsOverride: withTelegramMcqOverride,
+});
+await resourceLoader.reload();
+
 const { session } = await createAgentSession({
   cwd: GATEWAY_CWD,
   agentDir: AGENT_DIR,
   model: resolveModel(startupGatewayConfig.model),
   thinkingLevel: startupGatewayConfig.thinkingLevel === "none" ? undefined : startupGatewayConfig.thinkingLevel,
   sessionManager,
+  resourceLoader,
 });
 void emitGatewayOtel({
   level: "info",
@@ -364,13 +547,6 @@ session.subscribe((event: any) => {
   }
 
   if (event.type === "tool_call") {
-    if (event.toolName === "mcq") {
-      // TODO(ADR-0086/phase5): Intercept `mcq` tool execution here and route to
-      // registerMcqAdapter(...).handleMcqToolCall(...) before native tool execution.
-      // Current event subscription is post-hoc; actual interception must hook the
-      // pi session tool executor so the tool call is suspended until Telegram input resolves.
-    }
-
     broadcastWs({
       type: "tool_call",
       id: event.toolCallId,
@@ -415,7 +591,6 @@ const redisClient = getRedisClient();
 if (redisClient) {
   await initMessageStore(redisClient);
   await trimOld();
-  await replayUnacked();
 } else {
   console.warn("[gateway:store] redis command client unavailable; durable replay skipped");
 }
@@ -447,6 +622,11 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
     action: "daemon.telegram.disabled",
     success: false,
   });
+}
+
+if (redisClient) {
+  // Replay after channels initialize so telegram-originated turns can use command/callback adapters.
+  await replayUnacked();
 }
 
 // ── Media outbound: satellite sessions push files, we deliver ──────

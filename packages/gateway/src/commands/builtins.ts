@@ -117,6 +117,21 @@ async function handleRuns(): Promise<string> {
   return formatCliResult("joelclaw runs -n 5", result);
 }
 
+async function handleHealth(): Promise<string> {
+  const result = await runJoelclawCommand(["gateway", "status"]);
+  return formatCliResult("joelclaw gateway status", result);
+}
+
+async function handleSearch(parsed: ParsedArgs): Promise<string> {
+  const query = (getStringArg(parsed, "query") ?? parsed.raw).trim();
+  if (!query) {
+    return "<b>Missing argument</b>\nUse <code>/search &lt;query&gt;</code>.";
+  }
+
+  const result = await runJoelclawCommand(["search", query]);
+  return formatCliResult(`joelclaw search ${query}`, result);
+}
+
 async function handleSend(parsed: ParsedArgs): Promise<string> {
   const eventName = getStringArg(parsed, "event") ?? parsed.positional[0];
   if (!eventName) {
@@ -159,6 +174,31 @@ export const BUILTIN_COMMANDS: CommandDefinition[] = [
     category: "ops",
     execution: "direct",
     directHandler: handleRuns,
+  }),
+  defineChatCommand({
+    key: "health",
+    nativeName: "health",
+    description: "Show detailed gateway health",
+    category: "ops",
+    execution: "direct",
+    directHandler: handleHealth,
+  }),
+  defineChatCommand({
+    key: "search",
+    nativeName: "search",
+    description: "Search across system knowledge",
+    category: "search",
+    execution: "direct",
+    args: [
+      {
+        name: "query",
+        description: "Search query",
+        type: "string",
+        required: true,
+        captureRemaining: true,
+      },
+    ],
+    directHandler: handleSearch,
   }),
   defineChatCommand({
     key: "send",
