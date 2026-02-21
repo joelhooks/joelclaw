@@ -57,7 +57,7 @@ joelclaw call "message"
 | `telnyx_connection_id` | SIP connection for calls |
 | `telnyx_phone_number` | FROM number |
 | `telnyx_ovp_id` | Outbound voice profile |
-| `joel_phone_number` | TO number (+18176756031) |
+| `joel_phone_number` | TO number ((stored in agent-secrets as joel_phone_number)) |
 
 ### Security
 
