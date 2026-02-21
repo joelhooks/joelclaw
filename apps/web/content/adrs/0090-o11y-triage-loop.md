@@ -1,5 +1,5 @@
 ---
-status: partially-implemented
+status: implemented
 date: 2026-02-21
 deciders: joel
 ---
