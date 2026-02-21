@@ -1,51 +1,59 @@
 /**
  * Vault markdown → HTML renderer for sync-time pre-rendering.
- * Obsidian-flavored: wikilinks, callouts, GFM, syntax highlighting.
  *
- * Used by typesense-sync to pre-render vault notes into HTML
- * stored alongside raw content in Convex.
+ * Shares the same remark/rehype pipeline as joelclaw.com MDX blog posts
+ * (apps/web/lib/mdx-plugins.ts) — same theme, same plugins, same output.
+ *
+ * Additions for vault: Obsidian callout blocks, vault-local wikilink resolution.
  */
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import remarkSmartypants from "remark-smartypants";
 import remarkRehype from "remark-rehype";
 import rehypeStringify from "rehype-stringify";
 import rehypeSlug from "rehype-slug";
+import rehypeAutolinkHeadings from "rehype-autolink-headings";
 import rehypePrettyCode from "rehype-pretty-code";
+import rehypeExternalLinks from "rehype-external-links";
+import type { Options as PrettyCodeOptions } from "rehype-pretty-code";
+import { getSingletonHighlighter } from "shiki";
 
-// ── Wikilink resolution ─────────────────────────────────────────
+// ── Shared config — must match apps/web/lib/mdx-plugins.ts ──────
 
-/**
- * Convert [[wikilinks]] to vault navigation links.
- * Handles: [[Note]], [[Note|display text]], [[Note#heading]]
- */
-function resolveWikilinks(markdown: string, notePaths: Set<string>): string {
-  return markdown.replace(
-    /\[\[([^\]|#]+)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]/g,
-    (_match, target: string, heading: string | undefined, display: string | undefined) => {
-      const label = display || target;
-      // Try to find the note path
-      const targetLower = target.toLowerCase().trim();
-      let resolvedPath = "";
+const SHIKI_THEME = "catppuccin-macchiato";
 
-      for (const p of notePaths) {
-        const fileName = p.split("/").pop()?.replace(".md", "") || "";
-        if (fileName.toLowerCase() === targetLower) {
-          resolvedPath = p;
-          break;
-        }
-      }
+const SHIKI_LANGS = [
+  "plaintext",
+  "bash",
+  "python",
+  "yaml",
+  "typescript",
+  "javascript",
+  "json",
+  "markdown",
+  "graphql",
+  "swift",
+] as const;
 
-      if (resolvedPath) {
-        const hash = heading ? `#${heading.toLowerCase().replace(/\s+/g, "-")}` : "";
-        return `[${label}](/vault?path=${encodeURIComponent(resolvedPath)}${hash})`;
-      }
-
-      // Unresolved wikilink — render as styled span
-      return `<span class="wikilink-unresolved">${label}</span>`;
-    }
-  );
-}
+const prettyCodeOptions: PrettyCodeOptions = {
+  theme: {
+    dark: SHIKI_THEME,
+    light: SHIKI_THEME,
+  },
+  grid: true,
+  keepBackground: true,
+  defaultLang: {
+    block: "plaintext",
+    inline: "plaintext",
+  },
+  getHighlighter: async (options) =>
+    getSingletonHighlighter({
+      ...options,
+      themes: [SHIKI_THEME],
+      langs: [...SHIKI_LANGS],
+    }),
+};
 
 // ── Obsidian callouts ───────────────────────────────────────────
 
@@ -75,6 +83,38 @@ function resolveCallouts(markdown: string): string {
   );
 }
 
+// ── Wikilink resolution (vault-specific) ────────────────────────
+
+/**
+ * Convert [[wikilinks]] to vault navigation links.
+ * For vault notes, resolves to /vault?path=... (not /adrs/ like the blog).
+ */
+function resolveWikilinks(markdown: string, notePaths: Set<string>): string {
+  return markdown.replace(
+    /\[\[([^\]|#]+)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]/g,
+    (_match, target: string, heading: string | undefined, display: string | undefined) => {
+      const label = display || target;
+      const targetLower = target.toLowerCase().trim();
+      let resolvedPath = "";
+
+      for (const p of notePaths) {
+        const fileName = p.split("/").pop()?.replace(".md", "") || "";
+        if (fileName.toLowerCase() === targetLower) {
+          resolvedPath = p;
+          break;
+        }
+      }
+
+      if (resolvedPath) {
+        const hash = heading ? `#${heading.toLowerCase().replace(/\s+/g, "-")}` : "";
+        return `[${label}](/vault?path=${encodeURIComponent(resolvedPath)}${hash})`;
+      }
+
+      return `<span class="wikilink-unresolved">${label}</span>`;
+    }
+  );
+}
+
 // ── Processor ───────────────────────────────────────────────────
 
 let _processor: ReturnType<typeof unified> | null = null;
@@ -84,13 +124,12 @@ function getProcessor() {
     _processor = unified()
       .use(remarkParse)
       .use(remarkGfm)
+      .use(remarkSmartypants)
       .use(remarkRehype, { allowDangerousHtml: true })
       .use(rehypeSlug)
-      .use(rehypePrettyCode, {
-        theme: "github-dark-default",
-        keepBackground: true,
-        defaultLang: "plaintext",
-      })
+      .use(rehypeAutolinkHeadings, { behavior: "wrap" } as any)
+      .use(rehypePrettyCode, prettyCodeOptions)
+      .use(rehypeExternalLinks, { target: "_blank", rel: ["noopener", "noreferrer"] } as any)
       .use(rehypeStringify, { allowDangerousHtml: true });
   }
   return _processor;
@@ -98,19 +137,19 @@ function getProcessor() {
 
 /**
  * Render vault markdown to HTML with Obsidian-flavored features.
- * @param markdown - Raw markdown content
- * @param allPaths - Set of all vault note paths for wikilink resolution
- * @returns Rendered HTML string
+ * Uses the same pipeline as joelclaw.com blog posts (catppuccin-macchiato,
+ * GFM, smartypants, pretty-code, external links, slug headings).
+ *
+ * Vault-specific additions: callout blocks, wikilink → /vault?path= resolution.
  */
 export async function renderVaultMarkdown(
   markdown: string,
   allPaths: Set<string> = new Set()
 ): Promise<string> {
-  // Pre-process: resolve Obsidian-specific syntax
+  // Pre-process: resolve Obsidian-specific syntax before unified pipeline
   let processed = resolveCallouts(markdown);
   processed = resolveWikilinks(processed, allPaths);
 
-  // Render markdown → HTML
   const result = await getProcessor().process(processed);
   return String(result);
 }
