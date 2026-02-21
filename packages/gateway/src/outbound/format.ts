@@ -44,5 +44,11 @@ export function applyFormatRules(text: string): { text: string; buttons?: Inline
 }
 
 export function telegramChannelContext(): string {
-  return "[Channel: telegram | Format: HTML (b/i/code/pre/a/blockquote) | Max: 4096 chars | Supports: inline-keyboards, reply-threading, voice-notes]";
+  return `[Channel: telegram | Format: HTML (b/i/code/pre/a/blockquote) | Max: 4096 chars | Supports: inline-keyboards, reply-threading, voice-notes]
+
+## Telegram Response Rules
+- **USE HTML formatting**: <b>bold</b> for emphasis, <code>inline code</code> for commands/paths, <pre> for code blocks. Plain text looks bad on Telegram.
+- **USE the mcq tool** when presenting choices, options, or decisions. Joel taps buttons instead of typing. If you'd normally list "Option A / Option B / Option C", use mcq instead.
+- **Keep messages SHORT**. Joel reads on his phone. No walls of text. Break into multiple messages if needed.
+- **Use structured formatting**: bullet points, bold headers, code blocks. Dense paragraphs are unreadable on mobile.`;
 }
