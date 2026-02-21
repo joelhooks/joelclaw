@@ -8,11 +8,45 @@ const OTEL_QUERY_BY = "action,error,component,source,metadata_json,search_text";
 const OTEL_PER_PAGE = 200;
 const TRIAGE_COMPONENT = "o11y-triage";
 const DEFAULT_DEDUP_HOURS = 24;
+const CLASSIFIER_MODEL = "anthropic/claude-haiku-4-5";
+const CLASSIFIER_TIMEOUT_MS = 30_000;
+const UNKNOWN_REASONING = "Unknown failure; defaulting to tier 2.";
+const CLASSIFIER_SYSTEM_PROMPT = `You are an observability triage classifier for a personal infrastructure system (JoelClaw). 
+Given a failed OTEL event, classify its severity tier:
+
+Tier 1 (ignore/auto-fix): Transient failures, known race conditions, test probes, self-healing issues.
+Tier 2 (note for later): Novel but non-urgent issues, intermittent failures, performance degradation.  
+Tier 3 (escalate immediately): Sustained failures, data loss risk, pipeline stalls, crashes.
+
+Respond with ONLY valid JSON:
+{"tier": 1|2|3, "reasoning": "one sentence", "proposed_pattern": {"match": {"component": "...", "action": "...", "error": "regex"}, "tier": N, "dedup_hours": N} | null}
+
+When multiple events are provided, return a JSON array in input order where each item follows the same schema.`;
+
+type TriageTier = 1 | 2 | 3;
+
+export type ProposedPattern = {
+  match: {
+    component?: string;
+    action?: string;
+    error?: string;
+  };
+  tier: TriageTier;
+  dedup_hours: number;
+};
+
+export type ClassifiedEvent = {
+  event: OtelEvent;
+  tier: TriageTier;
+  reasoning: string;
+  proposed_pattern: ProposedPattern | null;
+};
 
 export type TriageResult = {
   tier1: OtelEvent[];
   tier2: OtelEvent[];
   tier3: OtelEvent[];
+  unmatchedTier2: OtelEvent[];
 };
 
 function asFiniteNumber(value: unknown, fallback = 0): number {
@@ -80,13 +114,209 @@ function serializePattern(pattern?: TriagePattern): Record<string, unknown> | nu
   };
 }
 
-function escalateTier(tier: 1 | 2 | 3): 1 | 2 | 3 {
+function readShellText(output: Buffer | Uint8Array | string | undefined): string {
+  if (!output) return "";
+  if (typeof output === "string") return output;
+  return Buffer.from(output).toString("utf-8");
+}
+
+function escapeTypesenseValue(value: string): string {
+  return `\`${value.replace(/[`\\]/gu, "\\$&")}\``;
+}
+
+function asTier(value: unknown): TriageTier | null {
+  if (value === 1 || value === 2 || value === 3) return value;
+  if (typeof value === "string") {
+    if (value === "1") return 1;
+    if (value === "2") return 2;
+    if (value === "3") return 3;
+  }
+  return null;
+}
+
+function normalizeProposedPattern(value: unknown): ProposedPattern | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const tier = asTier(record.tier);
+  if (!tier) return null;
+
+  const matchRaw = record.match;
+  if (!matchRaw || typeof matchRaw !== "object") return null;
+  const matchRecord = matchRaw as Record<string, unknown>;
+
+  const component = typeof matchRecord.component === "string" && matchRecord.component.trim().length > 0
+    ? matchRecord.component.trim()
+    : undefined;
+  const action = typeof matchRecord.action === "string" && matchRecord.action.trim().length > 0
+    ? matchRecord.action.trim()
+    : undefined;
+  const error = typeof matchRecord.error === "string" && matchRecord.error.trim().length > 0
+    ? matchRecord.error.trim()
+    : undefined;
+
+  if (!component && !action && !error) return null;
+
+  const dedup = asFiniteNumber(record.dedup_hours, DEFAULT_DEDUP_HOURS);
+  const dedupHours = Math.max(1, Math.round(dedup));
+
+  return {
+    match: {
+      component,
+      action,
+      error,
+    },
+    tier,
+    dedup_hours: dedupHours,
+  };
+}
+
+function normalizeLLMClassification(
+  event: OtelEvent,
+  value: unknown
+): ClassifiedEvent {
+  if (!value || typeof value !== "object") {
+    return {
+      event,
+      tier: 2,
+      reasoning: UNKNOWN_REASONING,
+      proposed_pattern: null,
+    };
+  }
+
+  const record = value as Record<string, unknown>;
+  const tier = asTier(record.tier) ?? 2;
+  const reasoning = typeof record.reasoning === "string" && record.reasoning.trim().length > 0
+    ? record.reasoning.trim()
+    : UNKNOWN_REASONING;
+
+  return {
+    event,
+    tier,
+    reasoning,
+    proposed_pattern: normalizeProposedPattern(record.proposed_pattern),
+  };
+}
+
+function parseClassificationArray(raw: string): unknown[] | null {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+
+  try {
+    const direct = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(direct)) return direct;
+    if (direct && typeof direct === "object") return [direct];
+  } catch {
+    // continue
+  }
+
+  const codeFence = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/iu);
+  if (codeFence?.[1]) {
+    try {
+      const parsed = JSON.parse(codeFence[1]) as unknown;
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && typeof parsed === "object") return [parsed];
+    } catch {
+      // continue
+    }
+  }
+
+  const arrayStart = trimmed.indexOf("[");
+  const arrayEnd = trimmed.lastIndexOf("]");
+  if (arrayStart >= 0 && arrayEnd > arrayStart) {
+    const candidate = trimmed.slice(arrayStart, arrayEnd + 1);
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // continue
+    }
+  }
+
+  const objectStart = trimmed.indexOf("{");
+  const objectEnd = trimmed.lastIndexOf("}");
+  if (objectStart >= 0 && objectEnd > objectStart) {
+    const candidate = trimmed.slice(objectStart, objectEnd + 1);
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (parsed && typeof parsed === "object") return [parsed];
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+type ComponentContextEvent = {
+  timestamp: number;
+  level: OtelEvent["level"];
+  action: string;
+  success: boolean;
+  error: string | null;
+};
+
+async function recentComponentEvents(
+  component: string,
+  limit = 5
+): Promise<ComponentContextEvent[]> {
+  try {
+    const response = await typesense.search({
+      collection: OTEL_COLLECTION,
+      q: "*",
+      query_by: OTEL_QUERY_BY,
+      per_page: Math.max(limit, 1),
+      sort_by: "timestamp:desc",
+      include_fields: "timestamp,level,action,success,error",
+      filter_by: `component:=${escapeTypesenseValue(component)}`,
+    });
+
+    const hits = Array.isArray(response.hits) ? response.hits : [];
+    const context: ComponentContextEvent[] = [];
+    for (const hit of hits) {
+      const document = (hit.document ?? {}) as Record<string, unknown>;
+      const successRaw = document.success;
+      const success = typeof successRaw === "boolean"
+        ? successRaw
+        : typeof successRaw === "string"
+          ? ["1", "true", "yes"].includes(successRaw.trim().toLowerCase())
+          : Boolean(successRaw);
+
+      context.push({
+        timestamp: asFiniteNumber(document.timestamp, Date.now()),
+        level: typeof document.level === "string" ? document.level as OtelEvent["level"] : "info",
+        action: typeof document.action === "string" ? document.action : "unknown",
+        success,
+        error: typeof document.error === "string" && document.error.trim().length > 0
+          ? document.error.trim()
+          : null,
+      });
+    }
+
+    return context.slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
+function fallbackClassifications(
+  events: OtelEvent[],
+  reasoning: string
+): ClassifiedEvent[] {
+  return events.map((event) => ({
+    event,
+    tier: 2,
+    reasoning,
+    proposed_pattern: null,
+  }));
+}
+
+function escalateTier(tier: TriageTier): TriageTier {
   if (tier === 1) return 2;
   if (tier === 2) return 3;
   return 3;
 }
 
-function tierToLevel(tier: 1 | 2 | 3): "info" | "warn" | "error" {
+function tierToLevel(tier: TriageTier): "info" | "warn" | "error" {
   if (tier === 1) return "info";
   if (tier === 2) return "warn";
   return "error";
@@ -138,8 +368,131 @@ export async function scanRecentFailures(windowMinutes: number): Promise<OtelEve
   return events;
 }
 
+export async function classifyWithLLM(events: OtelEvent[]): Promise<ClassifiedEvent[]> {
+  if (events.length === 0) return [];
+
+  const fallback = (reason: string) => fallbackClassifications(events, reason);
+
+  try {
+    const components = [...new Set(events.map((event) => event.component))];
+    const contextEntries = await Promise.all(
+      components.map(async (component) => [
+        component,
+        await recentComponentEvents(component, 5),
+      ] as const)
+    );
+    const contextByComponent = new Map<string, ComponentContextEvent[]>(contextEntries);
+
+    const payload = events.map((event, index) => ({
+      index,
+      event: {
+        id: event.id,
+        component: event.component,
+        action: event.action,
+        error: event.error ?? "operation_failed",
+        level: event.level,
+        timestamp: new Date(event.timestamp).toISOString(),
+      },
+      recent_component_events: (contextByComponent.get(event.component) ?? []).map((item) => ({
+        timestamp: new Date(item.timestamp).toISOString(),
+        action: item.action,
+        level: item.level,
+        success: item.success,
+        error: item.error,
+      })),
+    }));
+
+    const userPrompt = [
+      `Classify ${events.length} failed OTEL events.`,
+      "Return ONLY valid JSON array, same order as input.",
+      "Each item must match schema: {\"tier\":1|2|3,\"reasoning\":\"one sentence\",\"proposed_pattern\":{\"match\":{\"component\":\"...\",\"action\":\"...\",\"error\":\"regex\"},\"tier\":1|2|3,\"dedup_hours\":N}|null}.",
+      "",
+      JSON.stringify(payload, null, 2),
+    ].join("\n");
+
+    const runPromise = Bun.$`pi --no-tools --no-session --no-extensions --print --mode text --model ${CLASSIFIER_MODEL} --system-prompt ${CLASSIFIER_SYSTEM_PROMPT} ${userPrompt}`
+      .quiet()
+      .nothrow();
+
+    const result = await new Promise<any>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`Classifier LLM timed out after ${CLASSIFIER_TIMEOUT_MS}ms`));
+      }, CLASSIFIER_TIMEOUT_MS);
+
+      runPromise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        }
+      );
+    });
+
+    const stdout = readShellText(result.stdout);
+    const stderr = readShellText(result.stderr).trim();
+    if (result.exitCode !== 0) {
+      throw new Error(`pi exit ${result.exitCode}${stderr ? `: ${stderr}` : ""}`);
+    }
+
+    const parsedArray = parseClassificationArray(stdout);
+    if (!parsedArray) {
+      throw new Error("unparseable classifier output");
+    }
+
+    const normalized: ClassifiedEvent[] = [];
+    for (let i = 0; i < events.length; i += 1) {
+      const event = events[i];
+      if (!event) continue;
+      const record = i < parsedArray.length ? parsedArray[i] : null;
+      normalized.push(normalizeLLMClassification(event, record));
+    }
+
+    const tier1Count = normalized.filter((item) => item.tier === 1).length;
+    const tier2Count = normalized.filter((item) => item.tier === 2).length;
+    const tier3Count = normalized.filter((item) => item.tier === 3).length;
+    const proposedPatternCount = normalized.filter((item) => item.proposed_pattern != null).length;
+
+    await emitOtelEvent({
+      level: "info",
+      source: "worker",
+      component: TRIAGE_COMPONENT,
+      action: "triage.llm_classified",
+      success: true,
+      metadata: {
+        count: normalized.length,
+        tier1: tier1Count,
+        tier2: tier2Count,
+        tier3: tier3Count,
+        proposedPatternCount,
+        eventIds: normalized.map((item) => item.event.id),
+      },
+    });
+
+    return normalized;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await emitOtelEvent({
+      level: "warn",
+      source: "worker",
+      component: TRIAGE_COMPONENT,
+      action: "triage.llm_classification_failed",
+      success: false,
+      error: message,
+      metadata: {
+        eventCount: events.length,
+        fallbackTier: 2,
+        eventIds: events.map((event) => event.id),
+      },
+    });
+    return fallback(`LLM classification unavailable; defaulted to tier 2 (${message}).`);
+  }
+}
+
 export async function triageFailures(events: OtelEvent[]): Promise<TriageResult> {
-  const grouped: TriageResult = { tier1: [], tier2: [], tier3: [] };
+  const grouped: TriageResult = { tier1: [], tier2: [], tier3: [], unmatchedTier2: [] };
   if (events.length === 0) {
     return grouped;
   }
@@ -156,7 +509,8 @@ export async function triageFailures(events: OtelEvent[]): Promise<TriageResult>
   for (const event of events) {
     const key = dedupKey(event);
     const classified = classifyEvent(event);
-    let tier: 1 | 2 | 3 = classified.tier;
+    let tier: TriageTier = classified.tier;
+    const unmatchedTier2 = classified.tier === 2 && !classified.pattern;
 
     if (
       classified.pattern?.escalate_after &&
@@ -183,7 +537,12 @@ export async function triageFailures(events: OtelEvent[]): Promise<TriageResult>
     seenThisRun.add(key);
 
     if (tier === 1) grouped.tier1.push(event);
-    if (tier === 2) grouped.tier2.push(event);
+    if (tier === 2) {
+      grouped.tier2.push(event);
+      if (unmatchedTier2) {
+        grouped.unmatchedTier2.push(event);
+      }
+    }
     if (tier === 3) grouped.tier3.push(event);
 
     await emitOtelEvent({
@@ -197,6 +556,8 @@ export async function triageFailures(events: OtelEvent[]): Promise<TriageResult>
         tier,
         dedupHours,
         occurrenceCount: occurrenceCountByKey.get(key) ?? 1,
+        matchedPattern: Boolean(classified.pattern),
+        llmCandidate: unmatchedTier2,
         pattern: serializePattern(classified.pattern),
         event: {
           id: event.id,
