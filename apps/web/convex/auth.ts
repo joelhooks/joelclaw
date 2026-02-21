@@ -45,17 +45,18 @@ export const isOwner = query({
   handler: async (ctx) => {
     const user = await authComponent.getAuthUser(ctx);
     if (!user) return false;
-    // Check accounts table for GitHub provider with Joel's ID
-    const account = await ctx.db
-      .query("accounts")
-      .withIndex("by_userId", (q) => q.eq("userId", user._id))
-      .filter((q) =>
-        q.and(
-          q.eq(q.field("providerId"), "github"),
-          q.eq(q.field("accountId"), "86834")
-        )
-      )
-      .first();
+    // Check component's accounts table for GitHub provider with Joel's ID
+    const account = await ctx.runQuery(
+      components.betterAuth.adapter.findOne,
+      {
+        model: "account",
+        where: [
+          { field: "userId", value: user._id },
+          { field: "providerId", value: "github" },
+          { field: "accountId", value: "86834" },
+        ],
+      }
+    );
     return !!account;
   },
 });

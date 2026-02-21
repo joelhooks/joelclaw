@@ -32,10 +32,10 @@ function SystemHealth() {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <h2 className="font-pixel text-[11px] uppercase tracking-[0.15em] text-neutral-600">
+        <h2 className="font-pixel text-[11px] uppercase tracking-[0.15em] text-neutral-400">
           Infrastructure
         </h2>
-        <div className="h-px flex-1 bg-neutral-800/40" />
+        <div className="h-px flex-1 bg-neutral-700/40" />
       </div>
 
       {!status ? (
@@ -43,7 +43,7 @@ function SystemHealth() {
           {[...Array(6)].map((_, i) => (
             <div
               key={i}
-              className="h-12 animate-pulse rounded-lg border border-neutral-800/40 bg-neutral-900/30"
+              className="h-12 animate-pulse rounded-lg border border-neutral-700/40 bg-neutral-900/30"
             />
           ))}
         </div>
@@ -61,7 +61,7 @@ function SystemHealth() {
           {status.map((s) => (
             <div
               key={s._id}
-              className="group flex items-center gap-3 rounded-lg border border-neutral-800/40 bg-neutral-900/20 px-3 py-2.5 transition-colors hover:border-neutral-700/60 hover:bg-neutral-900/40"
+              className="group flex items-center gap-3 rounded-lg border border-neutral-700/40 bg-neutral-900/30 px-3 py-2.5 transition-colors hover:border-neutral-600/60 hover:bg-neutral-900/50"
             >
               <Pulse status={s.status} />
               <div className="min-w-0 flex-1">
@@ -69,7 +69,7 @@ function SystemHealth() {
                   {s.component}
                 </p>
                 {s.detail && (
-                  <p className="truncate font-mono text-[10px] text-neutral-600">
+                  <p className="truncate font-mono text-[10px] text-neutral-500">
                     {s.detail}
                   </p>
                 )}
@@ -99,7 +99,7 @@ function NotificationFeed() {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <h2 className="font-pixel text-[11px] uppercase tracking-[0.15em] text-neutral-600">
+        <h2 className="font-pixel text-[11px] uppercase tracking-[0.15em] text-neutral-400">
           Activity
         </h2>
         {unreadCount != null && unreadCount > 0 && (
@@ -107,7 +107,7 @@ function NotificationFeed() {
             {unreadCount}
           </span>
         )}
-        <div className="h-px flex-1 bg-neutral-800/40" />
+        <div className="h-px flex-1 bg-neutral-700/40" />
       </div>
 
       {!notifications ? (
@@ -134,7 +134,7 @@ function NotificationFeed() {
                 n.read ? "opacity-50" : ""
               }`}
             >
-              <span className="mt-0.5 font-mono text-[10px] text-neutral-600">
+              <span className="mt-0.5 font-mono text-[10px] text-neutral-500">
                 {typeIcons[n.type] || "·"}
               </span>
               <div className="min-w-0 flex-1">
@@ -142,7 +142,7 @@ function NotificationFeed() {
                   <span className="font-mono text-xs text-neutral-300">
                     {n.title}
                   </span>
-                  <span className="shrink-0 font-mono text-[10px] text-neutral-700">
+                  <span className="shrink-0 font-mono text-[10px] text-neutral-500">
                     {new Date(n.createdAt).toLocaleTimeString("en-US", {
                       hour: "2-digit",
                       minute: "2-digit",
@@ -151,7 +151,7 @@ function NotificationFeed() {
                   </span>
                 </div>
                 {n.body && (
-                  <p className="mt-0.5 font-mono text-[10px] leading-relaxed text-neutral-600">
+                  <p className="mt-0.5 font-mono text-[10px] leading-relaxed text-neutral-500">
                     {n.body}
                   </p>
                 )}
@@ -201,15 +201,15 @@ function Search() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <h2 className="font-pixel text-[11px] uppercase tracking-[0.15em] text-neutral-600">
+        <h2 className="font-pixel text-[11px] uppercase tracking-[0.15em] text-neutral-400">
           Search
         </h2>
         {searched && !searching && (
-          <span className="font-mono text-[10px] text-neutral-700">
+          <span className="font-mono text-[10px] text-neutral-500">
             {totalFound} results
           </span>
         )}
-        <div className="h-px flex-1 bg-neutral-800/40" />
+        <div className="h-px flex-1 bg-neutral-700/40" />
       </div>
 
       {/* Search input */}
@@ -282,21 +282,21 @@ function Search() {
 
 function StatsBar() {
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-1 border-b border-neutral-800/40 pb-4 font-pixel text-[11px] text-neutral-600">
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-1 border-b border-neutral-700/40 pb-4 font-pixel text-[11px] text-neutral-500">
       <div className="flex items-center gap-1.5">
-        <span className="text-neutral-500">collections</span>
-        <span className="text-neutral-300">6</span>
+        <span className="text-neutral-400">collections</span>
+        <span className="text-neutral-200">6</span>
       </div>
       <div className="flex items-center gap-1.5">
-        <span className="text-neutral-500">documents</span>
-        <span className="text-neutral-300">2,692</span>
+        <span className="text-neutral-400">documents</span>
+        <span className="text-neutral-200">2,692</span>
       </div>
       <div className="flex items-center gap-1.5">
-        <span className="text-neutral-500">functions</span>
-        <span className="text-neutral-300">66</span>
+        <span className="text-neutral-400">functions</span>
+        <span className="text-neutral-200">66</span>
       </div>
       <div className="flex items-center gap-1.5">
-        <span className="text-neutral-500">backend</span>
+        <span className="text-neutral-400">backend</span>
         <span className="text-claw/70">typesense</span>
       </div>
     </div>
@@ -307,10 +307,10 @@ function StatsBar() {
 
 export default function DashboardPage() {
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <StatsBar />
       <Search />
-      <div className="grid gap-8 md:grid-cols-2">
+      <div className="grid gap-6 md:grid-cols-2">
         <SystemHealth />
         <NotificationFeed />
       </div>
