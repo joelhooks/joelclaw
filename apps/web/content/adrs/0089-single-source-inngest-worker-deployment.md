@@ -30,6 +30,14 @@ This creates operational drag and drift risk:
 
 The local cluster already runs Inngest server in connect mode and is the intended long-term runtime target for durable workflows.
 
+### Drift Evidence (validated 2026-02-21)
+
+- Gateway launch path is monorepo-based: `~/.joelclaw/scripts/gateway-start.sh` points at `~/Code/joelhooks/joelclaw/packages/gateway/src/daemon.ts`.
+- Worker launch path is clone-based: `~/Library/LaunchAgents/com.joel.system-bus-worker.plist` runs `~/Code/system-bus-worker/packages/system-bus/start.sh`.
+- Worker startup is mutable at runtime: `start.sh` executes `git pull --ff-only` and `bun install` on every restart.
+- Live logs showed drift symptoms: repeated worker import failures for `../../observability/emit` during restart cycles while gateway/runtime behavior remained healthy enough to drain events.
+- Result: deploy state is not derivable from a single git SHA in the monorepo.
+
 ## Decision
 
 Adopt a **single source of truth** for Inngest worker code in the `joelclaw` monorepo and deploy workers as **immutable k8s workloads** built from that source.
@@ -40,6 +48,7 @@ Adopt a **single source of truth** for Inngest worker code in the `joelclaw` mon
 2. The worker runtime moves from launchd + separate clone to k8s Deployment(s).
 3. The rsync-based dual-copy workflow is removed.
 4. Host-coupled functions are split explicitly from cluster-safe functions during migration.
+5. Runtime `git pull`/`bun install` mutation is removed from worker boot paths.
 
 ### Runtime model
 
@@ -75,45 +84,54 @@ Adopt a **single source of truth** for Inngest worker code in the `joelclaw` mon
 
 ## Implementation Plan
 
+### Phase 0: Stop further drift (immediate)
+
+1. Mark `~/Code/system-bus-worker` as transitional runtime-only and block new feature edits there.
+2. Add explicit warning in `packages/system-bus/start.sh` and related ops docs that dual-clone runtime is deprecated.
+3. Record current launch points in docs:
+   - `~/Library/LaunchAgents/com.joel.system-bus-worker.plist`
+   - `~/.joelclaw/scripts/gateway-start.sh`
+   - `packages/system-bus/start.sh`
+
 ### Phase 1: Define ownership boundaries
 
-1. Classify every function in `packages/system-bus/src/inngest/functions/` as:
+4. Classify every function in `packages/system-bus/src/inngest/functions/` as:
    - `cluster-safe`
    - `host-required`
-2. Add explicit function group exports:
+5. Add explicit function group exports:
    - `packages/system-bus/src/inngest/functions/index.cluster.ts`
    - `packages/system-bus/src/inngest/functions/index.host.ts`
-3. Ensure no function appears in both groups.
+6. Ensure no function appears in both groups.
 
 ### Phase 2: Containerize system-bus worker
 
-4. Add a production Dockerfile for `packages/system-bus` with deterministic install/build.
-5. Add k8s manifests for `system-bus-worker` Deployment + Service in `k8s/`.
-6. Move required env/secrets from launchd/start script assumptions into k8s Secret/config wiring.
+7. Add a production Dockerfile for `packages/system-bus` with deterministic install/build.
+8. Add k8s manifests for `system-bus-worker` Deployment + Service in `k8s/`.
+9. Move required env/secrets from launchd/start script assumptions into k8s Secret/config wiring.
 
 ### Phase 3: Route registrations by worker role
 
-7. Update `packages/system-bus/src/serve.ts` to register function lists by worker role env:
+10. Update `packages/system-bus/src/serve.ts` to register function lists by worker role env:
    - `WORKER_ROLE=cluster` -> register `cluster` functions only
    - `WORKER_ROLE=host` -> register `host` functions only
-8. Keep connect-mode registration behavior compatible with current Inngest server deployment.
+11. Keep connect-mode registration behavior compatible with current Inngest server deployment.
 
 ### Phase 4: Remove dual-clone coupling
 
-9. Remove rsync-based sync command from `packages/cli/src/commands/inngest.ts`:
+12. Remove rsync-based sync command from `packages/cli/src/commands/inngest.ts`:
    - delete `sync-worker` subcommand
    - delete hardcoded source/target clone paths
-10. Remove worker-clone sync logic from `packages/system-bus/src/inngest/functions/agent-loop/complete.ts`.
-11. Deprecate and then remove runtime `git pull` behavior from worker startup scripts.
+13. Remove worker-clone sync logic from `packages/system-bus/src/inngest/functions/agent-loop/complete.ts`.
+14. Deprecate and then remove runtime `git pull` behavior from worker startup scripts.
 
 ### Phase 5: Operability hardening
 
-12. Add health/readiness checks for worker Deployment.
-13. Add a quick diagnostics command showing:
+15. Add health/readiness checks for worker Deployment.
+16. Add a quick diagnostics command showing:
    - registered function count by worker role
    - last registration timestamp
    - duplicate function-id detection result
-14. Document rollout and rollback playbook in k8s/inngest docs.
+17. Document rollout and rollback playbook in k8s/inngest docs.
 
 ## Verification
 
@@ -123,8 +141,9 @@ Adopt a **single source of truth** for Inngest worker code in the `joelclaw` mon
 - [ ] Worker pods in k8s pass readiness and execute cluster-safe functions successfully.
 - [ ] Host-required functions continue to execute during transition without regressions.
 - [ ] Duplicate function IDs across worker roles are detected and blocked.
+- [ ] Gateway and worker are both running code derived from the same monorepo git SHA at deploy time.
+- [ ] A synthetic gateway event (`joelclaw gateway test` / `system.fatal` probe) lands in `otel_events` with `source=gateway` within the expected ingestion window.
 
 ## Migration Trigger to Revisit
 
 Revisit this ADR when host-required functions drop to zero; at that point, remove the host worker and run a single k8s worker role.
-
