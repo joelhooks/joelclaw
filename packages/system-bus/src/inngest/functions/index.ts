@@ -2,6 +2,7 @@ import { emitOtelEvent } from "../../observability/emit";
 
 export { videoDownload } from "./video-download";
 export { transcriptProcess } from "./transcript-process";
+export { transcriptIndexWeb } from "./transcript-index-web";
 export { summarize } from "./summarize";
 export { systemLogger } from "./system-logger";
 export { observeSessionFunction } from "./observe";
@@ -45,6 +46,10 @@ export {
   vercelDeployCreated,
   vercelDeployCanceled,
 } from "./vercel-notify";
+export {
+  githubWorkflowRunCompleted,
+  githubPackagePublished,
+} from "./github-notify";
 export { emailInboxCleanup } from "./email-cleanup";
 export { meetingAnalyze } from "./meeting-analyze";
 export { granolaBackfill } from "./granola-backfill";
@@ -54,6 +59,7 @@ export { telnyxNotify } from "./telnyx-notify";
 export { proposalTriage } from "./memory/proposal-triage";
 export { batchReview } from "./memory/batch-review";
 export { nightlyMaintenance } from "./memory/nightly-maintenance";
+export { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
 export { echoFizzle } from "../../memory/echo-fizzle";
 export {
   agentLoopPlan,
@@ -70,6 +76,8 @@ export {
   typesenseFullSync,
 } from "./typesense-sync";
 export { nasSoakSample, nasSoakReview } from "./nas-soak";
+export { hostFunctionDefinitions, hostFunctionIds } from "./index.host";
+export { clusterFunctionDefinitions, clusterFunctionIds } from "./index.cluster";
 
 export async function emitInngestRegistryLoaded(functionIds: string[]): Promise<void> {
   await emitOtelEvent({

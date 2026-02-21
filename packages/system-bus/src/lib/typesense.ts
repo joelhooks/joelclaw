@@ -69,6 +69,45 @@ export interface TypesenseSearchResult {
   facet_counts?: Array<{ field_name: string; counts: Array<{ value: string; count: number }> }>;
 }
 
+export const TRANSCRIPTS_COLLECTION = "transcripts";
+
+const MINI_LM_MODEL_CONFIG = {
+  model_name: "ts/all-MiniLM-L12-v2",
+  indexing_prefix: "",
+  query_prefix: "",
+};
+
+/**
+ * ADR-0089: unified transcript index for video + meeting sources.
+ * Auto-embedding is generated from the `text` field.
+ */
+export const TRANSCRIPTS_COLLECTION_SCHEMA = {
+  name: TRANSCRIPTS_COLLECTION,
+  fields: [
+    { name: "chunk_id", type: "string" },
+    { name: "source_id", type: "string", facet: true },
+    { name: "type", type: "string", facet: true },
+    { name: "title", type: "string" },
+    { name: "speaker", type: "string", facet: true, optional: true },
+    { name: "text", type: "string" },
+    { name: "start_seconds", type: "float", optional: true },
+    { name: "end_seconds", type: "float", optional: true },
+    { name: "chapter", type: "string", facet: true, optional: true },
+    { name: "source_url", type: "string", optional: true },
+    { name: "channel", type: "string", facet: true, optional: true },
+    { name: "source_date", type: "int64" },
+    {
+      name: "embedding",
+      type: "float[]",
+      embed: {
+        from: ["text"],
+        model_config: MINI_LM_MODEL_CONFIG,
+      },
+    },
+  ],
+  default_sorting_field: "source_date",
+} satisfies Record<string, unknown>;
+
 /** Upsert a single document */
 export async function upsert(collection: string, doc: Record<string, unknown>): Promise<void> {
   const resp = await fetch(
@@ -177,4 +216,8 @@ export async function ensureCollection(
     }
     throw new Error(`Typesense collection create failed (${create.status}): ${text}`);
   }
+}
+
+export async function ensureTranscriptsCollection(): Promise<void> {
+  await ensureCollection(TRANSCRIPTS_COLLECTION, TRANSCRIPTS_COLLECTION_SCHEMA);
 }

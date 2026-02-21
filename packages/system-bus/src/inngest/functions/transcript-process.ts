@@ -5,6 +5,9 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pushGatewayEvent } from "./agent-loop/utils";
 import { execSync } from "node:child_process";
+import { pushContentResource } from "../../lib/convex";
+import * as typesense from "../../lib/typesense";
+import { chunkBySegments, chunkBySpeakerTurns } from "../../lib/transcript-chunk";
 
 const VAULT = process.env.VAULT_PATH ?? `${process.env.HOME}/Vault`;
 
@@ -48,6 +51,20 @@ function fmtTs(seconds: number): string {
   const m = String(Math.floor(seconds / 60)).padStart(2, "0");
   const s = String(Math.floor(seconds % 60)).padStart(2, "0");
   return `${m}:${s}`;
+}
+
+function resolveTranscriptType(source: string): "video" | "meeting" {
+  if (source === "granola" || source === "meeting" || source === "fathom") {
+    return "meeting";
+  }
+  return "video";
+}
+
+function resolveSourceDateSeconds(publishedDate: string | undefined): number {
+  if (!publishedDate) return Math.floor(Date.now() / 1000);
+  const parsed = Date.parse(publishedDate);
+  if (!Number.isNaN(parsed)) return Math.floor(parsed / 1000);
+  return Math.floor(Date.now() / 1000);
 }
 
 /**
@@ -477,7 +494,116 @@ ${screenshotSection}
       return notePath;
     });
 
-    // Step 3: Append to daily note
+    // Step 3: Index transcript chunks in Typesense + Convex
+    await step.run("index-transcript-chunks", async () => {
+      try {
+        const transcript: {
+          text: string;
+          segments: Array<{ start: number; end: number; text: string; speaker?: string }>;
+        } = await Bun.file(transcriptPath).json();
+
+        const chunks =
+          transcript.segments.length > 0
+            ? chunkBySegments(transcript.segments, {
+                maxTokens: 500,
+                overlapSentences: 1,
+              })
+            : chunkBySpeakerTurns(transcript.text ?? "", {
+                maxTokens: 500,
+                overlapSentences: 1,
+              });
+
+        if (chunks.length === 0) {
+          return { indexed: 0, errors: 0, convex: 0, sourceId: slug };
+        }
+
+        await typesense.ensureTranscriptsCollection();
+
+        type TranscriptDoc = {
+          id: string;
+          chunk_id: string;
+          source_id: string;
+          type: "video" | "meeting";
+          title: string;
+          text: string;
+          source_date: number;
+          speaker?: string;
+          start_seconds?: number;
+          end_seconds?: number;
+          source_url?: string;
+          channel?: string;
+        };
+
+        const sourceType = resolveTranscriptType(source);
+        const sourceDate = resolveSourceDateSeconds(publishedDate);
+        const docs: TranscriptDoc[] = chunks.map((chunk) => {
+          const chunkId = `${slug}:${chunk.chunk_index}`;
+          return {
+            id: chunkId,
+            chunk_id: chunkId,
+            source_id: slug,
+            type: sourceType,
+            title,
+            ...(chunk.speaker ? { speaker: chunk.speaker } : {}),
+            text: chunk.text,
+            ...(chunk.start_seconds != null
+              ? { start_seconds: chunk.start_seconds }
+              : {}),
+            ...(chunk.end_seconds != null ? { end_seconds: chunk.end_seconds } : {}),
+            ...(sourceUrl ? { source_url: sourceUrl } : {}),
+            ...(channel ? { channel } : {}),
+            source_date: sourceDate,
+          };
+        });
+
+        const result = await typesense.bulkImport(typesense.TRANSCRIPTS_COLLECTION, docs);
+
+        let convex = 0;
+        for (const doc of docs) {
+          const searchText = [
+            doc.title,
+            doc.speaker ?? "",
+            doc.text,
+            doc.channel ?? "",
+          ]
+            .filter(Boolean)
+            .join(" ");
+
+          await pushContentResource(
+            `transcript:${doc.chunk_id}`,
+            "transcript_chunk",
+            {
+              chunkId: doc.chunk_id,
+              sourceId: doc.source_id,
+              type: doc.type,
+              title: doc.title,
+              speaker: doc.speaker,
+              text: doc.text,
+              startSeconds: doc.start_seconds,
+              endSeconds: doc.end_seconds,
+              sourceUrl: doc.source_url,
+              channel: doc.channel,
+              sourceDate: doc.source_date,
+              vaultPath,
+            },
+            searchText
+          ).catch(() => {});
+          convex++;
+        }
+
+        return {
+          indexed: result.success,
+          errors: result.errors,
+          convex,
+          sourceId: slug,
+        };
+      } catch (error) {
+        console.warn("[transcript-process] transcript chunk indexing failed:", error);
+        return { indexed: 0, errors: 1, convex: 0, sourceId: slug };
+      }
+    });
+
+    // Step 4: Append to daily note
     await step.run("update-daily-note", async () => {
       const today = new Date().toISOString().split("T")[0];
       const dailyPath = `${VAULT}/Daily/${today}.md`;
@@ -508,7 +634,7 @@ date: ${today}
       await Bun.write(dailyPath, content);
     });
 
-    // Step 4: Log + cleanup + emit
+    // Step 5: Log + cleanup + emit
     await step.run("log-and-cleanup", async () => {
       await $`slog write --action transcribe --tool transcript-process --detail "${title} (${source})" --reason "transcript processing via inngest"`.quiet();
 
@@ -518,7 +644,7 @@ date: ${today}
       }
     });
 
-    // Step 5: Emit completion + trigger summarization
+    // Step 6: Emit completion + trigger summarization
     await step.sendEvent("emit-events", [
       {
         name: "pipeline/transcript.processed",
