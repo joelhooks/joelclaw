@@ -18,14 +18,15 @@ const clusterOverview = [
   { label: "CPU", value: "Apple M4 Pro · 14 cores" },
   { label: "GPU", value: "20-core Apple GPU" },
   { label: "Storage", value: "64 TB NAS + 1 TB local NVMe" },
-  { label: "Functions", value: "48 Inngest durable functions" },
+  { label: "Functions", value: "66 Inngest durable functions" },
+  { label: "Skills", value: "65 agent skills" },
   { label: "Interconnect", value: "Tailscale WireGuard mesh" },
 ];
 
 const nodes: NodeSpec[] = [
   {
-    name: "Overlook",
-    tailscaleHost: "overlook",
+    name: "Panda",
+    tailscaleHost: "panda",
     status: "Online",
     specs: ["Mac Mini", "Apple M4 Pro", "14-core CPU", "20-core GPU", "64 GB unified", "1 TB NVMe"],
     role: "Control plane. Runs everything — k8s cluster, agent gateway, event bus, all pipelines. Always on, always watching.",
@@ -33,82 +34,92 @@ const nodes: NodeSpec[] = [
       "Talos k8s cluster (Colima + Talos)",
       "Inngest event bus (k8s StatefulSet)",
       "Redis state/pub-sub (k8s StatefulSet)",
-      "Qdrant vector search (k8s StatefulSet)",
+      "Typesense search (k8s StatefulSet, 6 collections)",
+      "Qdrant vector search (k8s StatefulSet, migration target)",
       "Bluesky PDS — AT Protocol personal data server (Helm)",
       "LiveKit — WebRTC media server (Helm)",
-      "System-bus worker (launchd, 48 functions)",
+      "System-bus worker (launchd, 66 functions)",
       "Gateway daemon (launchd, pi agent + Telegram bridge)",
       "Caddy HTTPS proxy (launchd, Tailscale TLS)",
       "Vault sync (launchd, git auto-commit + push)",
+      "Content sync watcher (launchd, Vault → web deploy)",
     ],
   },
   {
-    name: "Derry",
-    tailscaleHost: "derry",
+    name: "Clanker-001",
+    tailscaleHost: "clanker-001",
     status: "Online",
-    specs: ["NAS", "Intel Atom", "8 GB RAM", "64 TB RAID"],
-    role: "Archive. Video library, book collection, media backups, pipeline output landing zone. Everything's buried down here.",
+    specs: ["Ubuntu 24.04", "16 GB RAM", "309 GB disk", "Public IP"],
+    role: "Library and SIP bridge. Hosts pdf-brain knowledge base and public-facing telephony endpoint for the voice agent.",
+    services: [
+      "pdf-brain-api :3847 (knowledge base)",
+      "LiveKit SIP bridge :5060 (public telephony endpoint)",
+      "SIP RTP range :10000-20000",
+    ],
+  },
+  {
+    name: "Three-Body",
+    tailscaleHost: "three-body",
+    status: "Online",
+    specs: ["Synology NAS", "Intel Atom C3538", "8 GB RAM", "64 TB RAID"],
+    role: "Cold storage. Video archive by year, book collection, media backups, pipeline output landing zone.",
     services: [
       "SSH file access (video ingest target)",
       "Video archive by year (yt-dlp pipeline output)",
-      "Screenshot storage (pipeline-extracted key moments)",
+      "Book collection (aa-book pipeline output)",
     ],
   },
   {
-    name: "Flagg",
-    tailscaleHost: "flagg",
+    name: "Dark-Wizard",
+    tailscaleHost: "dark-wizard",
     status: "Online",
     specs: ["MacBook Pro", "Apple Silicon", "macOS"],
-    role: "Primary development machine. Goes everywhere, exit node for the tailnet.",
+    role: "Joel's primary development machine. Goes everywhere, exit node for the tailnet.",
   },
   {
-    name: "Blaine",
-    tailscaleHost: "blaine",
-    status: "Online",
-    specs: ["Linux server"],
-    role: "Remote Linux node. Available on tailnet. Asks a lot of riddles.",
-  },
-  {
-    name: "Todash",
-    tailscaleHost: "todash",
+    name: "Nightmare-Router",
+    tailscaleHost: "nightmare-router",
     status: "Idle",
     specs: ["Linux router"],
-    role: "Network edge. Tailscale exit node, currently idle. The darkness between worlds.",
+    role: "Network edge. Tailscale exit node, currently idle.",
   },
 ];
 
 const launchdServices = [
-  { name: "system-bus-worker", desc: "Inngest function worker (48 functions)" },
+  { name: "system-bus-worker", desc: "Inngest function worker (66 functions)" },
   { name: "gateway", desc: "Pi agent gateway daemon + Telegram bridge" },
-  { name: "gateway-tripwire", desc: "Gateway watchdog" },
+  { name: "gateway-tripwire", desc: "Gateway watchdog (auto-restart on failure)" },
   { name: "caddy", desc: "HTTPS reverse proxy with Tailscale certs" },
   { name: "colima", desc: "Container runtime (VZ framework → Talos k8s)" },
   { name: "vault-log-sync", desc: "system-log.jsonl → Obsidian markdown notes" },
   { name: "content-sync-watcher", desc: "Vault content → web deploy trigger" },
   { name: "system-bus-sync", desc: "Monorepo → worker clone sync" },
+  { name: "typesense-portforward", desc: "kubectl port-forward for Typesense :8108" },
 ];
 
 const k8sPods = [
   { name: "inngest-0", desc: "Event orchestration server" },
   { name: "redis-0", desc: "State, pub/sub, loop PRD, cooldowns" },
-  { name: "qdrant-0", desc: "Vector search (memory observations)" },
+  { name: "typesense-0", desc: "Search engine (6 collections, auto-embedding via ONNX)" },
+  { name: "qdrant-0", desc: "Vector search (legacy, being replaced by Typesense)" },
   { name: "bluesky-pds", desc: "AT Protocol personal data server (Helm)" },
   { name: "livekit-server", desc: "WebRTC media server (Helm)" },
 ];
 
 const architectureLayers = [
-  "Layer 5: Agents       — Pi gateway, coding loops, background workers",
+  "Layer 6: Interface     — joelclaw.com (Next.js + Convex), ⌘K search, vault browser",
+  "Layer 5: Agents       — Pi gateway, coding loops, background workers, voice agent",
   "Layer 4: Orchestration — Talos k8s cluster, launchd daemons, Helm releases",
-  "Layer 3: Services      — Inngest, Redis, Qdrant, PDS, LiveKit (k8s pods)",
-  "Layer 2: Pipelines     — Video ingest, transcription, screenshots, content enrichment",
-  "Layer 1: Memory        — Observations, proposals, MEMORY.md, session transcripts",
+  "Layer 3: Services      — Inngest, Redis, Typesense, PDS, LiveKit (k8s pods)",
+  "Layer 2: Pipelines     — Video ingest, transcription, content sync, friction fix",
+  "Layer 1: Memory        — Observations, contentResources (Convex), MEMORY.md",
   "Layer 0: Data          — Obsidian Vault, system-log.jsonl, 64 TB NAS archive",
 ];
 
 export const metadata: Metadata = {
   title: `Network — ${SITE_NAME}`,
   description:
-    "The joelclaw network — Talos k8s on Apple Silicon with 48 Inngest functions, vector search, AT Protocol PDS, and 64TB archival storage.",
+    "The joelclaw network — Talos k8s on Apple Silicon with 66 Inngest functions, Typesense search, AT Protocol PDS, Convex real-time data, and 64TB archival storage.",
 };
 
 function StatusDot({ status }: { status: NodeStatus }) {
@@ -136,9 +147,10 @@ export default function NetworkPage() {
         <h1 className="text-2xl font-bold tracking-tight">Network</h1>
         <p className="mt-2 text-sm text-neutral-400 leading-relaxed">
           Always-on personal infrastructure.{" "}
-          <span className="text-claw">Overlook</span> runs the cluster, agents,
+          <span className="text-claw">Panda</span> runs the cluster, agents,
           and all pipelines.{" "}
-          <span className="text-neutral-300">Derry</span> holds 64 TB of
+          <span className="text-neutral-300">Clanker-001</span> bridges telephony.{" "}
+          <span className="text-neutral-300">Three-Body</span> holds 64 TB of
           archive. Everything connected via encrypted WireGuard mesh.
         </p>
       </header>
