@@ -25,7 +25,7 @@ const clusterOverview = [
 
 const nodes: NodeSpec[] = [
   {
-    name: "Panda",
+    name: "Overlook",
     tailscaleHost: "panda",
     status: "Online",
     specs: ["Mac Mini", "Apple M4 Pro", "14-core CPU", "20-core GPU", "64 GB unified", "1 TB NVMe"],
@@ -46,11 +46,11 @@ const nodes: NodeSpec[] = [
     ],
   },
   {
-    name: "Clanker-001",
+    name: "Blaine",
     tailscaleHost: "clanker-001",
     status: "Online",
     specs: ["Ubuntu 24.04", "16 GB RAM", "309 GB disk", "Public IP"],
-    role: "Library and SIP bridge. Hosts pdf-brain knowledge base and public-facing telephony endpoint for the voice agent.",
+    role: "Library and SIP bridge. Hosts pdf-brain knowledge base and public-facing telephony endpoint for the voice agent. Asks a lot of riddles.",
     services: [
       "pdf-brain-api :3847 (knowledge base)",
       "LiveKit SIP bridge :5060 (public telephony endpoint)",
@@ -58,11 +58,11 @@ const nodes: NodeSpec[] = [
     ],
   },
   {
-    name: "Three-Body",
+    name: "Derry",
     tailscaleHost: "three-body",
     status: "Online",
     specs: ["Synology NAS", "Intel Atom C3538", "8 GB RAM", "64 TB RAID"],
-    role: "Cold storage. Video archive by year, book collection, media backups, pipeline output landing zone.",
+    role: "Archive. Video library, book collection, media backups, pipeline output landing zone. Everything's buried down here.",
     services: [
       "SSH file access (video ingest target)",
       "Video archive by year (yt-dlp pipeline output)",
@@ -70,18 +70,18 @@ const nodes: NodeSpec[] = [
     ],
   },
   {
-    name: "Dark-Wizard",
+    name: "Flagg",
     tailscaleHost: "dark-wizard",
     status: "Online",
     specs: ["MacBook Pro", "Apple Silicon", "macOS"],
-    role: "Joel's primary development machine. Goes everywhere, exit node for the tailnet.",
+    role: "Primary development machine. Goes everywhere, exit node for the tailnet.",
   },
   {
-    name: "Nightmare-Router",
+    name: "Todash",
     tailscaleHost: "nightmare-router",
     status: "Idle",
     specs: ["Linux router"],
-    role: "Network edge. Tailscale exit node, currently idle.",
+    role: "Network edge. Tailscale exit node, currently idle. The darkness between worlds.",
   },
 ];
 
@@ -147,10 +147,10 @@ export default function NetworkPage() {
         <h1 className="text-2xl font-bold tracking-tight">Network</h1>
         <p className="mt-2 text-sm text-neutral-400 leading-relaxed">
           Always-on personal infrastructure.{" "}
-          <span className="text-claw">Panda</span> runs the cluster, agents,
+          <span className="text-claw">Overlook</span> runs the cluster, agents,
           and all pipelines.{" "}
-          <span className="text-neutral-300">Clanker-001</span> bridges telephony.{" "}
-          <span className="text-neutral-300">Three-Body</span> holds 64 TB of
+          <span className="text-neutral-300">Blaine</span> bridges telephony.{" "}
+          <span className="text-neutral-300">Derry</span> holds 64 TB of
           archive. Everything connected via encrypted WireGuard mesh.
         </p>
       </header>
