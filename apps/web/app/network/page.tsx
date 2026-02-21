@@ -26,7 +26,7 @@ const clusterOverview = [
 const nodes: NodeSpec[] = [
   {
     name: "Overlook",
-    tailscaleHost: "panda",
+    tailscaleHost: "overlook",
     status: "Online",
     specs: ["Mac Mini", "Apple M4 Pro", "14-core CPU", "20-core GPU", "64 GB unified", "1 TB NVMe"],
     role: "Control plane. Runs everything — k8s cluster, agent gateway, event bus, all pipelines. Always on, always watching.",
@@ -47,7 +47,7 @@ const nodes: NodeSpec[] = [
   },
   {
     name: "Blaine",
-    tailscaleHost: "clanker-001",
+    tailscaleHost: "blaine",
     status: "Online",
     specs: ["Ubuntu 24.04", "16 GB RAM", "309 GB disk", "Public IP"],
     role: "Library and SIP bridge. Hosts pdf-brain knowledge base and public-facing telephony endpoint for the voice agent. Asks a lot of riddles.",
@@ -59,7 +59,7 @@ const nodes: NodeSpec[] = [
   },
   {
     name: "Derry",
-    tailscaleHost: "three-body",
+    tailscaleHost: "derry",
     status: "Online",
     specs: ["Synology NAS", "Intel Atom C3538", "8 GB RAM", "64 TB RAID"],
     role: "Archive. Video library, book collection, media backups, pipeline output landing zone. Everything's buried down here.",
@@ -71,14 +71,14 @@ const nodes: NodeSpec[] = [
   },
   {
     name: "Flagg",
-    tailscaleHost: "dark-wizard",
+    tailscaleHost: "flagg",
     status: "Online",
     specs: ["MacBook Pro", "Apple Silicon", "macOS"],
     role: "Primary development machine. Goes everywhere, exit node for the tailnet.",
   },
   {
     name: "Todash",
-    tailscaleHost: "nightmare-router",
+    tailscaleHost: "todash",
     status: "Idle",
     specs: ["Linux router"],
     role: "Network edge. Tailscale exit node, currently idle. The darkness between worlds.",
