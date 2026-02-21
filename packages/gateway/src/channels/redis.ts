@@ -131,10 +131,36 @@ function formatEvents(events: SystemEvent[]): string {
 }
 
 async function buildPrompt(events: SystemEvent[]): Promise<string> {
+  const footer = "Take action on anything that needs it, otherwise acknowledge briefly.";
+  const ts = new Date().toISOString();
+  const firstEvent = events[0];
+  const isHeartbeatOnly = events.length === 1 && firstEvent?.type === "cron.heartbeat";
+
+  if (isHeartbeatOnly) {
+    const eventBlock = formatEvents(events);
+    const heartbeat = await readHeartbeatChecklist();
+    return [
+      `## 🔔 Heartbeat — ${ts}`,
+      "",
+      eventBlock,
+      "",
+      heartbeat,
+      "",
+      footer,
+    ].join("\n");
+  }
+
   const promptEvents = events.filter(
     (event) => typeof event.payload?.prompt === "string" && event.payload.prompt
   );
   const genericEvents = events.filter((event) => !(typeof event.payload?.prompt === "string" && event.payload.prompt));
+
+  const parts: string[] = [
+    `## 🔔 Gateway — ${ts}`,
+    "",
+    `${events.length} event(s):`,
+  ];
+
   if (promptEvents.length > 0) {
     const resolvedPrompts = await Promise.all(
       promptEvents.map(async (event) => {
@@ -143,50 +169,19 @@ async function buildPrompt(events: SystemEvent[]): Promise<string> {
       })
     );
 
-    if (genericEvents.length === 0) {
-      return resolvedPrompts.join("\n\n---\n\n");
+    parts.push(resolvedPrompts.join("\n\n---\n\n"));
+
+    if (genericEvents.length > 0) {
+      const eventBlock = formatEvents(genericEvents);
+      parts.push("", "---", "", `${genericEvents.length} additional event(s):`, eventBlock);
     }
-
-    const eventBlock = formatEvents(genericEvents);
-    const ts = new Date().toISOString();
-    return [
-      resolvedPrompts.join("\n\n---\n\n"),
-      "",
-      "---",
-      "",
-      `## 🔔 Gateway — ${ts}`,
-      "",
-      `${genericEvents.length} additional event(s):`,
-      eventBlock,
-      "",
-      "Take action on anything that needs it, otherwise acknowledge briefly.",
-    ].join("\n");
+  } else {
+    const eventBlock = formatEvents(events);
+    parts.push(eventBlock);
   }
 
-  const firstEvent = events[0];
-  const isHeartbeatOnly = events.length === 1 && firstEvent?.type === "cron.heartbeat";
-  const eventBlock = formatEvents(events);
-  const ts = new Date().toISOString();
-
-  if (!isHeartbeatOnly) {
-    return [
-      `## 🔔 Gateway — ${ts}`,
-      "",
-      `${events.length} event(s):`,
-      eventBlock,
-      "",
-      "Take action on anything that needs it, otherwise acknowledge briefly.",
-    ].join("\n");
-  }
-
-  const heartbeat = await readHeartbeatChecklist();
-  return [
-    `## 🔔 Heartbeat — ${ts}`,
-    "",
-    eventBlock,
-    "",
-    heartbeat,
-  ].join("\n");
+  parts.push("", footer);
+  return parts.join("\n");
 }
 
 function parseEvent(raw: string): SystemEvent | undefined {
