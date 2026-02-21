@@ -42,6 +42,11 @@ Gate checks were re-run before starting the next phase:
   - all checks passed (`memoryStageStall`, `otelErrorRate`, `staleRatio`, `failedMemoryRuns`, `memoryBacklog`)
   - OTEL memory-stage error rate: `0.01373`
   - latest success event: `weekly-maintenance.completed` at `2026-02-21T19:18:24.483Z`
+- `joelclaw inngest memory-gate --json`
+  - `ok: true`
+  - executes `memory-e2e` + `memory-weekly` + `memory-health` as one gate
+  - latest gate run window: `2026-02-21T19:22:25.684Z -> 2026-02-21T19:22:43.742Z`
+  - weekly run completed in gate: `01KJ0TEY3NGE0Q14C751T56TNW`
 
 Phase kickoff was logged via slog:
 - `slog write --action "memory.phase.kickoff" --tool "codex" --detail "0077 next phase kickoff after green checks: memory-e2e, memory-weekly, memory-health" --reason "gate checks passed"`
