@@ -149,14 +149,17 @@ export async function drain(): Promise<void> {
           continue;
         }
 
+        // Set up idle waiter BEFORE prompt() so turn_end can resolve it
+        // regardless of when prompt() returns. If prompt() blocks until
+        // turn_end, the idle promise is already resolved by the time we
+        // await it. If prompt() returns early, we correctly wait.
+        const idlePromise = idleWaiter?.();
+
         onPromptSent?.();
         await sessionRef.prompt(entry.prompt);
 
-        // session.prompt() resolves when the message is queued, not when
-        // the full turn (streaming + tool calls) completes. Wait for the
-        // session to become idle before processing the next queue entry.
-        if (idleWaiter) {
-          await idleWaiter();
+        if (idlePromise) {
+          await idlePromise;
         }
 
         if (entry.streamId) {
