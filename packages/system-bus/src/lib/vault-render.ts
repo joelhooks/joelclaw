@@ -20,7 +20,7 @@ export async function renderVaultMarkdown(
       for (const p of allPaths) {
         const fileName = p.split("/").pop()?.replace(".md", "") || "";
         if (fileName.toLowerCase() === targetLower) {
-          return `/vault?path=${encodeURIComponent(p)}`;
+          return `/vault/${p}`;
         }
       }
       // Unresolved — fall back to search

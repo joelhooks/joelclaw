@@ -232,7 +232,7 @@ label.margin-toggle:not(.sidenote-number) {
 /* ── Vault prose — pre-rendered markdown viewer ──────────────── */
 
 .vault-prose {
-  @apply font-mono text-[13px] leading-[1.8] text-neutral-300;
+  @apply font-mono text-sm leading-[1.8] text-neutral-300;
 }
 
 .vault-prose h1 {

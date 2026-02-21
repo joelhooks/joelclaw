@@ -6,6 +6,7 @@ import { api } from "../../convex/_generated/api";
 import { authClient } from "../../lib/auth-client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 
 // ── Section colors ──────────────────────────────────────────────
 
@@ -61,24 +62,21 @@ function VaultSearch({ onSelect }: { onSelect: (path: string) => void }) {
       {results && results.length > 0 && (
         <div className="max-h-64 space-y-0.5 overflow-y-auto rounded-lg border border-neutral-700/30 bg-neutral-900/50 p-1">
           {results.map((r) => (
-            <button
+            <Link
               key={r.path}
-              onClick={() => {
-                onSelect(r.path);
-                setQuery("");
-              }}
-              className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left transition-colors hover:bg-neutral-800/50"
+              href={`/vault/${r.path}`}
+              className="flex w-full items-center gap-2 rounded-md px-3 py-2.5 text-left transition-colors hover:bg-neutral-800/50"
             >
-              <span className={`rounded px-1 py-0.5 font-pixel text-[9px] uppercase tracking-wider ${sectionStyle(r.section).color} ${sectionStyle(r.section).bg}`}>
+              <span className={`rounded px-1.5 py-0.5 font-pixel text-[10px] uppercase tracking-wider ${sectionStyle(r.section).color} ${sectionStyle(r.section).bg}`}>
                 {r.section}
               </span>
-              <span className="truncate font-mono text-xs text-neutral-200">
+              <span className="truncate font-mono text-sm text-neutral-200">
                 {r.title}
               </span>
-              <span className="ml-auto shrink-0 rounded bg-neutral-800/50 px-1 py-0.5 font-pixel text-[9px] text-neutral-500">
+              <span className="ml-auto shrink-0 rounded bg-neutral-800/50 px-1.5 py-0.5 font-pixel text-[10px] text-neutral-500">
                 {r.type}
               </span>
-            </button>
+            </Link>
           ))}
         </div>
       )}
@@ -115,30 +113,30 @@ function VaultTree({
               onClick={() => toggle(section)}
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-neutral-800/40"
             >
-              <span className="font-mono text-[10px] text-neutral-500">
+              <span className="font-mono text-xs text-neutral-500">
                 {isOpen ? "▼" : "▶"}
               </span>
-              <span className={`rounded px-1.5 py-0.5 font-pixel text-[10px] uppercase tracking-wider ${style.color} ${style.bg}`}>
+              <span className={`rounded px-1.5 py-0.5 font-pixel text-xs uppercase tracking-wider ${style.color} ${style.bg}`}>
                 {section}
               </span>
-              <span className="font-mono text-[10px] text-neutral-500">
+              <span className="font-mono text-xs text-neutral-500">
                 {notes.length}
               </span>
             </button>
             {isOpen && (
               <div className="ml-4 space-y-0.5 border-l border-neutral-700/30 pl-3">
                 {notes.map((note) => (
-                  <button
+                  <Link
                     key={note.path}
-                    onClick={() => onSelect(note.path)}
-                    className={`block w-full truncate rounded-md px-2 py-1 text-left font-mono text-xs transition-colors hover:bg-neutral-800/40 ${
+                    href={`/vault/${note.path}`}
+                    className={`block w-full truncate rounded-md px-2 py-1.5 text-left font-mono text-sm transition-colors hover:bg-neutral-800/40 ${
                       selectedPath === note.path
                         ? "bg-neutral-800/60 text-neutral-100"
                         : "text-neutral-400"
                     }`}
                   >
                     {note.title}
-                  </button>
+                  </Link>
                 ))}
               </div>
             )}
@@ -247,17 +245,17 @@ export default function VaultPage() {
       {/* Header */}
       <div className="flex items-center justify-between border-b border-neutral-700/40 pb-4">
         <div className="flex items-center gap-3">
-          <span className="font-mono text-lg">📂</span>
-          <h1 className="font-pixel text-sm uppercase tracking-[0.12em] text-neutral-300">
+          <span className="text-xl">📂</span>
+          <h1 className="font-pixel text-base uppercase tracking-[0.12em] text-neutral-300">
             Vault
           </h1>
           {data && (
-            <span className="font-mono text-[11px] text-neutral-500">
+            <span className="font-mono text-sm text-neutral-500">
               {data.total} notes
             </span>
           )}
         </div>
-        <div className="flex items-center gap-4 font-mono text-[10px] text-neutral-500">
+        <div className="flex items-center gap-4 font-mono text-xs text-neutral-500">
           <Link href="/dashboard" className="transition-colors hover:text-neutral-300">
             ← system
           </Link>
@@ -272,9 +270,9 @@ export default function VaultPage() {
       <VaultSearch onSelect={setSelectedPath} />
 
       {/* Content */}
-      <div className="grid gap-6 md:grid-cols-[280px_1fr]">
+      <div className="grid gap-6 md:grid-cols-[300px_1fr]">
         {/* Sidebar */}
-        <div className="max-h-[80vh] overflow-y-auto rounded-lg border border-neutral-700/30 bg-neutral-900/20 p-3">
+        <div className="max-h-[50vh] md:max-h-[80vh] overflow-y-auto rounded-lg border border-neutral-700/30 bg-neutral-900/20 p-3">
           {!data ? (
             <div className="space-y-2">
               {[...Array(8)].map((_, i) => (
