@@ -24,7 +24,29 @@ implemented
 - ADR-0087 observability contract is now enforced across memory stages with lifecycle OTEL events for `reflect`, `proposal-triage`, `batch-review`, `promote`, and maintenance flows (`nightly-maintenance` + weekly summary).
 - Weekly governance signal added: `system/memory-weekly-maintenance-summary` emits merge/stale/triage-backlog stats into `otel_events` for CLI and dashboard diagnosis.
 
-## Next Phase Plan (2026-02-22 to 2026-03-07)
+## Kickoff Verification (2026-02-21)
+
+Gate checks were re-run before starting the next phase:
+
+- `joelclaw inngest memory-e2e --wait-ms 120000 --poll-ms 1500 --json`
+  - `ok: true`
+  - observe run completed: `01KJ0T6H0WG805WWYY2Q5RHCRN`
+  - Typesense count moved `1555 -> 1558`
+  - vector query returned hits (`hitCount: 3`)
+  - recall probe command returned `exitCode: 0`
+- `joelclaw inngest memory-weekly --wait-ms 60000 --poll-ms 1000 --json`
+  - `ok: true`
+  - weekly run completed: `01KJ0T71W586B5H77S16B4E0N5`
+  - OTEL evidence: `weekly-maintenance.completed = 1`, `weekly-maintenance.failed = 0`
+- `joelclaw inngest memory-health --hours 24 --stall-minutes 30 --json`
+  - all checks passed (`memoryStageStall`, `otelErrorRate`, `staleRatio`, `failedMemoryRuns`, `memoryBacklog`)
+  - OTEL memory-stage error rate: `0.01373`
+  - latest success event: `weekly-maintenance.completed` at `2026-02-21T19:18:24.483Z`
+
+Phase kickoff was logged via slog:
+- `slog write --action "memory.phase.kickoff" --tool "codex" --detail "0077 next phase kickoff after green checks: memory-e2e, memory-weekly, memory-health" --reason "gate checks passed"`
+
+## Next Phase Plan (2026-02-21 to 2026-03-07)
 
 ### Objective
 
@@ -62,6 +84,36 @@ O11y acceptance gates for this phase:
 - Synthetic failure in one memory stage appears in `otel_events` with required metadata.
 - Warn/error event is visible in `/system/events` and via `joelclaw otel search` within one polling cycle.
 - Memory pipeline stall (`no successful memory stage events for >30 minutes`) is detectable from `otel_events` queries.
+
+### Kickoff Execution Slice (2026-02-21 to 2026-02-24)
+
+Execution order:
+
+1. Retrieval Quality V2 regression hardening
+   - add/extend tests for rewrite fallback + trust-pass output in:
+     - `packages/cli/src/commands/recall.ts`
+     - `packages/system-bus/src/memory/retrieval.ts`
+   - verify OTEL metadata includes rewrite + trust-pass diagnostics:
+     - `query`
+     - `rewrittenQuery`
+     - `filtersApplied`
+     - `droppedByTrustPass`
+2. Echo/Fizzle production wiring validation
+   - verify non-synthetic trigger path and usage-score writes in:
+     - `packages/system-bus/src/memory/echo-fizzle.ts`
+     - `packages/system-bus/src/inngest/functions/vip-email-received.ts`
+   - require OTEL evidence (`echo-fizzle.started|completed|failed`) discoverable via:
+     - `joelclaw otel search "echo-fizzle" --hours 24`
+3. Memory health schema + threshold closure
+   - add `stale` field support in memory schema migration path so stale ratio is not `staleMetricSupported=false`
+   - keep `memory-health` and `check-system-health` thresholds aligned in:
+     - `packages/cli/src/commands/inngest.ts`
+     - `packages/system-bus/src/inngest/functions/check-system-health.ts`
+
+Exit criteria for kickoff slice:
+- `memory-e2e`, `memory-weekly`, and `memory-health` stay green for two consecutive runs.
+- One real (non-synthetic) `memory/echo-fizzle` run is visible in OTEL with full metadata.
+- stale ratio is derived from schema field support (no fallback warning path).
 
 ### Workstream 1: Retrieval Quality V2
 
