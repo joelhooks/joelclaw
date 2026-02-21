@@ -254,7 +254,7 @@ Pi discovers extensions in two places:
 
 **Local extensions** — `.ts` files in `~/.pi/agent/extensions/`. Drop a directory there and pi loads it on session start. Good for system-specific extensions that don't belong in a shared package.
 
-I keep the inngest-monitor in the [joelclaw monorepo](https://github.com/joelhooks/joelclaw) (`packages/pi-extensions/`) and symlink it to `~/.pi/agent/extensions/`. Single source of truth, no copy drift.
+I keep the inngest-monitor in the [JoelClaw monorepo](https://github.com/joelhooks/joelclaw) (`packages/pi-extensions/`) and symlink it to `~/.pi/agent/extensions/`. Single source of truth, no copy drift.
 
 Extensions load at startup. Edit one mid-session, type `/reload`.
 

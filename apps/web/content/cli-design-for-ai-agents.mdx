@@ -292,7 +292,7 @@ type StreamEvent =
 
 ## Implementation notes
 
-The joelclaw CLI uses [Effect CLI](https://effect.website/docs/cli/introduction) (`@effect/cli`) with Bun. The streaming infrastructure subscribes to the same Redis pub/sub channels that the [gateway extension](/building-a-gateway-for-your-ai-agent) uses — `pushGatewayEvent()` middleware in every Inngest function is the emission point, and the CLI is just another subscriber.
+The JoelClaw CLI uses [Effect CLI](https://effect.website/docs/cli/introduction) (`@effect/cli`) with Bun. The streaming infrastructure subscribes to the same Redis pub/sub channels that the [gateway extension](/building-a-gateway-for-your-ai-agent) uses — `pushGatewayEvent()` middleware in every Inngest function is the emission point, and the CLI is just another subscriber.
 
 ```
 Inngest function step completes

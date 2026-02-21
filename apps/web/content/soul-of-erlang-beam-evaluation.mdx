@@ -33,7 +33,7 @@ If you've ever wrestled with a Kubernetes rolling update to fix a one-line bug, 
 
 ## Why I'm paying attention
 
-Here's my current joelclaw stack and what BEAM does instead:
+Here's my current JoelClaw stack and what BEAM does instead:
 
 | What I built | How I built it | What BEAM does natively |
 |---|---|---|
@@ -75,7 +75,7 @@ I'm not migrating tomorrow. Here's why:
 
 I opened [ADR-0064](/adrs/0064-elixir-beam-evaluation) to track this properly. Three options on the table:
 
-1. **Full replacement** — rewrite joelclaw on Elixir/Phoenix/OTP
+1. **Full replacement** — rewrite JoelClaw on Elixir/Phoenix/OTP
 2. **Selective adoption** — keep TS for LLM work, add an Elixir node for gateway supervision, pub/sub, and process management
 3. **Study and shelve** — document the tradeoffs, file it away, pull it out when a specific pain point justifies the move
 
