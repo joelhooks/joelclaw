@@ -182,7 +182,102 @@ async function commitAndPushMultiple(
     return false;
   }
 
+  // Safety gate: haiku agent reviews the diff before pushing.
+  // Ensures only content (markdown/MDX/frontmatter) reaches origin — never code.
+  const safe = await reviewDiffBeforePush();
+  if (!safe) {
+    // Unstage and reset — don't leave dirty staged state
+    const resetProc = Bun.spawn(["git", "reset", "HEAD"], {
+      cwd: REPO_ROOT,
+    });
+    await resetProc.exited;
+    console.log("[content-sync] ⛔ push blocked by safety review — diff contained non-content changes");
+    return false;
+  }
+
   await git("commit", "-m", message);
   await git("push", "origin", "main");
   return true;
+}
+
+const REPO_ROOT = "/Users/joel/Code/joelhooks/joelclaw/";
+
+const SAFETY_SYSTEM_PROMPT = `You are a git push safety gate for a content sync pipeline.
+
+Your job: review a git diff and determine if it contains ONLY content changes.
+
+SAFE to push (reply YES):
+- Markdown (.md) file additions, deletions, modifications
+- MDX (.mdx) file additions, deletions, modifications
+- YAML frontmatter changes inside .md/.mdx files
+- New content files in apps/web/content/ or similar content directories
+- .base files (Obsidian database views)
+
+NOT safe to push (reply NO):
+- TypeScript (.ts, .tsx) changes
+- JavaScript (.js, .jsx) changes
+- JSON config files (package.json, tsconfig.json, etc.)
+- Lock files (bun.lockb, pnpm-lock.yaml)
+- Any file outside content directories that isn't markdown
+- Build/config changes of any kind
+
+Reply with exactly one line: YES or NO followed by a brief reason.
+Example: "YES — 3 markdown files in apps/web/content/adrs/, frontmatter only"
+Example: "NO — includes changes to packages/system-bus/src/inngest/functions/observe.ts"`;
+
+/**
+ * Pipe staged diff to Claude Haiku for content-only verification.
+ * Returns true if safe to push, false if blocked.
+ */
+async function reviewDiffBeforePush(): Promise<boolean> {
+  try {
+    // Get the staged diff stat + file list (compact, cheap tokens)
+    const statProc = Bun.spawn(
+      ["git", "diff", "--cached", "--stat", "--name-only"],
+      { cwd: REPO_ROOT, stdout: "pipe", stderr: "pipe" }
+    );
+    const diffStat = await new Response(statProc.stdout).text();
+    await statProc.exited;
+
+    if (!diffStat.trim()) return true; // nothing staged
+
+    // Ask haiku
+    const proc = Bun.spawn(
+      [
+        "pi",
+        "--no-tools",
+        "--no-session",
+        "--no-extensions",
+        "--print",
+        "--mode", "text",
+        "--model", "anthropic/claude-haiku",
+        "--system-prompt", SAFETY_SYSTEM_PROMPT,
+        `Review this staged git diff for content-only safety:\n\n${diffStat.trim()}`,
+      ],
+      {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, TERM: "dumb" },
+      }
+    );
+
+    const [stdout, , exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+
+    if (exitCode !== 0) {
+      console.log("[content-sync] safety review failed to run, blocking push as precaution");
+      return false;
+    }
+
+    const answer = stdout.trim().toUpperCase();
+    const safe = answer.startsWith("YES");
+    console.log(`[content-sync] safety review: ${stdout.trim()}`);
+    return safe;
+  } catch (err) {
+    console.log(`[content-sync] safety review error: ${err}, blocking push`);
+    return false;
+  }
 }
