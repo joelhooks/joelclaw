@@ -52,7 +52,31 @@
   font-weight: 500;
 }
 
-/* Thin scrollbar for search results */
+/* ── Global scrollbar — dark, thin, unobtrusive ─────────────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #262626 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #262626;
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #404040;
+}
+
+/* Utility override for extra-thin scrollbar */
 .scrollbar-thin {
   scrollbar-width: thin;
   scrollbar-color: #404040 transparent;

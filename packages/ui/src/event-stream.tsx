@@ -147,7 +147,7 @@ export function EventStream({
 
   return (
     <ol
-      className={`divide-y divide-neutral-800/30 rounded-lg border border-neutral-800/50 overflow-hidden ${className ?? ""}`}
+      className={`divide-y divide-neutral-800/30 rounded-lg border border-neutral-800/40 overflow-hidden ${className ?? ""}`}
       style={maxHeight ? { maxHeight, overflowY: "auto" } : undefined}
     >
       {events.map((event) => (

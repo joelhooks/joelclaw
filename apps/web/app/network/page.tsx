@@ -132,7 +132,7 @@ export default async function NetworkPage() {
         <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">Nodes</h2>
         <div className="space-y-3">
           {nodes.map((node) => (
-            <article key={node.publicName} className="border border-neutral-800 rounded-lg p-5 space-y-3">
+            <article key={node.publicName} className="border border-neutral-800/40 rounded-lg p-5 space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <h3 className="text-base font-semibold text-neutral-100">{node.publicName}</h3>
@@ -170,10 +170,10 @@ export default async function NetworkPage() {
         <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">
           K8s Pods <span className="text-neutral-700 normal-case tracking-normal">joelclaw namespace</span>
         </h2>
-        <div className="border border-neutral-800 rounded-lg overflow-hidden">
+        <div className="border border-neutral-800/40 rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-neutral-800 text-left">
+              <tr className="border-b border-neutral-800/40 text-left">
                 <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-neutral-600 font-medium">Pod</th>
                 <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-neutral-600 font-medium">Role</th>
               </tr>
@@ -199,10 +199,10 @@ export default async function NetworkPage() {
         <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">
           Daemons <span className="text-neutral-700 normal-case tracking-normal">launchd</span>
         </h2>
-        <div className="border border-neutral-800 rounded-lg overflow-hidden">
+        <div className="border border-neutral-800/40 rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-neutral-800 text-left">
+              <tr className="border-b border-neutral-800/40 text-left">
                 <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-neutral-600 font-medium">Service</th>
                 <th className="px-4 py-2.5 text-[11px] uppercase tracking-wider text-neutral-600 font-medium">Purpose</th>
               </tr>
@@ -226,7 +226,7 @@ export default async function NetworkPage() {
 
       <section className="space-y-3">
         <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">Stack</h2>
-        <div className="border border-neutral-800 rounded-lg p-5">
+        <div className="border border-neutral-800/40 rounded-lg p-5">
           <pre className="font-mono text-xs leading-relaxed text-neutral-400 whitespace-pre-wrap">
             {architectureLayers.join("\n")}
           </pre>

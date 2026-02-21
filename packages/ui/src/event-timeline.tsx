@@ -56,7 +56,7 @@ export function EventTimeline({
         return (
           <li
             key={event.id}
-            className="rounded-xl border border-neutral-800/70 bg-neutral-900/30 px-3 py-3"
+            className="rounded-xl border border-neutral-800/40 bg-neutral-900/30 px-3 py-3"
           >
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge status={event.level ?? "info"} label={event.level ?? "info"} />
