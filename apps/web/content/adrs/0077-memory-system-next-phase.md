@@ -47,9 +47,23 @@ Gate checks were re-run before starting the next phase:
   - executes `memory-e2e` + `memory-weekly` + `memory-health` as one gate
   - latest gate run window: `2026-02-21T19:22:25.684Z -> 2026-02-21T19:22:43.742Z`
   - weekly run completed in gate: `01KJ0TEY3NGE0Q14C751T56TNW`
+- `joelclaw inngest memory-schema-reconcile --json`
+  - `ok: true`
+  - `memory_observations` schema now includes required memory fields (`stale`, `recall_count`, `retrieval_priority`, `last_used_at`, `observation_type`, merge/supersede fields)
+  - stale filter probe now succeeds (`stale:=true`)
+- `joelclaw inngest memory-gate --json` (post-schema closure)
+  - `ok: true`
+  - gate run window: `2026-02-21T19:27:14.441Z -> 2026-02-21T19:27:32.613Z`
+  - weekly run completed: `01KJ0TQR57NQ88B4DY40GZNZPW`
+  - `memory-health` now reports `staleMetricSupported: true`
+- Echo/fizzle production evidence:
+  - run: `01KJ0RRBHSK7XBNV21QNEBEW14` (`Track Memory Echo/Fizzle`, status `COMPLETED`)
+  - trigger event: `01KJ0RRB9RN15PV67WKTZHST86` (`memory/echo-fizzle.requested`)
+  - OTEL includes `echo-fizzle.started` and `echo-fizzle.completed` in last 24h
 
 Phase kickoff was logged via slog:
 - `slog write --action "memory.phase.kickoff" --tool "codex" --detail "0077 next phase kickoff after green checks: memory-e2e, memory-weekly, memory-health" --reason "gate checks passed"`
+- `slog write --action "memory.phase.gate-added" --tool "joelclaw inngest" --detail "Added and validated memory-gate command (memory-e2e + memory-weekly + memory-health)" --reason "0077 next-phase kickoff automation"`
 
 ## Next Phase Plan (2026-02-21 to 2026-03-07)
 
@@ -119,6 +133,11 @@ Exit criteria for kickoff slice:
 - `memory-e2e`, `memory-weekly`, and `memory-health` stay green for two consecutive runs.
 - One real (non-synthetic) `memory/echo-fizzle` run is visible in OTEL with full metadata.
 - stale ratio is derived from schema field support (no fallback warning path).
+
+Kickoff slice progress (as of 2026-02-21):
+- ✅ Memory health schema + threshold closure: stale ratio now reads from schema-backed `stale` field (`staleMetricSupported: true`).
+- ✅ Repeatable gate command added: `joelclaw inngest memory-gate`.
+- 🟡 Retrieval regression hardening tests still pending explicit test-file additions.
 
 ### Workstream 1: Retrieval Quality V2
 
