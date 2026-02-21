@@ -8,6 +8,7 @@
 
 import { inngest } from "../inngest/client";
 import * as typesense from "../lib/typesense";
+import { emitOtelEvent } from "../observability/emit";
 
 const OBSERVATIONS_COLLECTION = "memory_observations";
 
@@ -116,6 +117,17 @@ export const echoFizzle = inngest.createFunction(
   },
   { event: "memory/echo-fizzle.requested" },
   async ({ event }) => {
+    await emitOtelEvent({
+      level: "debug",
+      source: "worker",
+      component: "echo-fizzle",
+      action: "echo-fizzle.started",
+      success: true,
+      metadata: {
+        eventId: (event as { id?: string }).id ?? null,
+      },
+    });
+
     const recalledMemories = Array.isArray(event.data.recalledMemories)
       ? event.data.recalledMemories
       : [];
@@ -123,10 +135,56 @@ export const echoFizzle = inngest.createFunction(
       typeof event.data.agentResponse === "string" ? event.data.agentResponse : "";
 
     if (recalledMemories.length === 0 || agentResponse.length === 0) {
+      await emitOtelEvent({
+        level: "warn",
+        source: "worker",
+        component: "echo-fizzle",
+        action: "echo-fizzle.skipped",
+        success: false,
+        error: "missing_input",
+        metadata: {
+          eventId: (event as { id?: string }).id ?? null,
+          recalledMemories: recalledMemories.length,
+          responseLength: agentResponse.length,
+        },
+      });
       return { status: "skipped", reason: "missing-input" };
     }
 
-    const result = await trackEchoFizzle(recalledMemories, agentResponse);
+    let result;
+    try {
+      result = await trackEchoFizzle(recalledMemories, agentResponse);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await emitOtelEvent({
+        level: "error",
+        source: "worker",
+        component: "echo-fizzle",
+        action: "echo-fizzle.failed",
+        success: false,
+        error: message,
+        metadata: {
+          eventId: (event as { id?: string }).id ?? null,
+          recalledMemories: recalledMemories.length,
+        },
+      });
+      throw error;
+    }
+
+    await emitOtelEvent({
+      level: "info",
+      source: "worker",
+      component: "echo-fizzle",
+      action: "echo-fizzle.completed",
+      success: true,
+      metadata: {
+        eventId: (event as { id?: string }).id ?? null,
+        recalledMemories: recalledMemories.length,
+        echoes: result.echoes,
+        fizzles: result.fizzles,
+      },
+    });
+
     return {
       status: "ok",
       ...result,

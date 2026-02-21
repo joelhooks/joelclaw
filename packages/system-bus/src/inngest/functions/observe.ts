@@ -1,8 +1,7 @@
 // ADR-0067: Supersede pattern adapted from knowledge-graph by safatinaztepe (openclaw/skills, MIT).
-// ADR-0082: Dual-write to Qdrant + Typesense during migration. Typesense will become sole store.
+// ADR-0082: Typesense is the canonical memory store.
 import { inngest } from "../client.ts";
 import { NonRetriableError } from "inngest";
-import { QdrantClient } from "@qdrant/js-client-rest";
 import Redis from "ioredis";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
@@ -55,10 +54,11 @@ type TypesenseObservationDoc = {
   supersedes?: string | null;
 };
 
-const QDRANT_COLLECTION = "memory_observations";
-const QDRANT_HOST = process.env.QDRANT_HOST ?? "localhost";
-const QDRANT_PORT = Number.parseInt(process.env.QDRANT_PORT ?? "6333", 10);
 let redisClient: Redis | null = null;
+const OBSERVER_LLM_TIMEOUT_MS = Number.parseInt(
+  process.env.OBSERVER_LLM_TIMEOUT_MS ?? "30000",
+  10
+);
 
 function getRedisClient(): Redis {
   if (!redisClient) {
@@ -204,6 +204,23 @@ function normalizeTypesenseObservationDoc(input: Record<string, unknown> | null 
   };
 }
 
+function buildObserverFallback(input: ObserveInput, reason: string): string {
+  const lines = input.messages
+    .split(/\r?\n/gu)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .slice(0, 12);
+
+  const bullets =
+    lines.length > 0 ? lines.map((line) => `- ${line}`).join("\n") : "- (no transcript lines available)";
+
+  return [
+    `Observer fallback used (${input.trigger}) because LLM call failed: ${reason.slice(0, 220)}`,
+    "Session notes:",
+    bullets,
+  ].join("\n");
+}
+
 function readShellText(value: unknown): string {
   if (typeof value === "string") return value;
   if (value instanceof Uint8Array) return new TextDecoder().decode(value);
@@ -338,12 +355,29 @@ Session context:
 - dedupeKey: ${validatedInput.dedupeKey}`;
 
       try {
-        const result = await Bun.$`pi --no-tools --no-session --no-extensions --print --mode text --model anthropic/claude-haiku --system-prompt ${OBSERVER_SYSTEM_PROMPT} ${promptWithSessionContext}`
+        const runPromise = Bun.$`pi --no-tools --no-session --no-extensions --print --mode text --model anthropic/claude-haiku --system-prompt ${OBSERVER_SYSTEM_PROMPT} ${promptWithSessionContext}`
           .quiet()
           .nothrow();
 
-        const stdout = readShellText(result.stdout);
-        const stderr = readShellText(result.stderr);
+        const result = await new Promise<any>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            reject(new Error(`Observer LLM timed out after ${OBSERVER_LLM_TIMEOUT_MS}ms`));
+          }, OBSERVER_LLM_TIMEOUT_MS);
+
+          runPromise.then(
+            (value) => {
+              clearTimeout(timer);
+              resolve(value);
+            },
+            (error) => {
+              clearTimeout(timer);
+              reject(error);
+            }
+          );
+        });
+
+        const stdout = readShellText(result.stdout).trim();
+        const stderr = readShellText(result.stderr).trim();
 
         if (result.exitCode !== 0) {
           throw new Error(
@@ -356,7 +390,8 @@ Session context:
         return stdout;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Failed to run observer LLM subprocess: ${message}`);
+        console.warn(`[observe] observer LLM fallback: ${message}`);
+        return buildObserverFallback(validatedInput, message);
       }
 
     });
@@ -399,7 +434,7 @@ Session context:
       }
     );
 
-    // Append to daily log — durable fallback even if Redis/Qdrant are down
+    // Append to daily log — durable fallback even if Redis/Typesense are down
     const dailyLogResult = await step.run("append-daily-log", async () => {
       const date = isoDateFromTimestamp(validatedInput.capturedAt);
       const time = validatedInput.capturedAt
@@ -469,60 +504,6 @@ Session context:
       }
     });
 
-    const qdrantCollectionResult = await step.run(
-      "ensure-qdrant-collection",
-      async () => {
-        try {
-          const qdrantClient = new QdrantClient({
-            host: QDRANT_HOST,
-            port: QDRANT_PORT,
-          });
-
-          const collections = await qdrantClient.getCollections();
-          const exists = collections.collections.some(
-            (collection: { name: string }) => collection.name === QDRANT_COLLECTION
-          );
-
-          if (exists) {
-            return {
-              exists: true,
-              created: false,
-            };
-          }
-
-          await qdrantClient.createCollection(QDRANT_COLLECTION, {
-            vectors: {
-              size: 768,
-              distance: "Cosine",
-            },
-          });
-
-          return {
-            exists: false,
-            created: true,
-          };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          return {
-            exists: false,
-            created: false,
-            error: message,
-          };
-        }
-      }
-    );
-
-    // ADR-0082: Qdrant write disabled — all consumers migrated to Typesense
-    const qdrantStoreResult = await step.run("store-to-qdrant", async () => {
-      return {
-        stored: false,
-        disabled: true,
-        hasRealVectors: false,
-        reason: "ADR-0082 Typesense-only write path",
-        sourceSessionId: validatedInput.sessionId,
-      };
-    });
-
     // ADR-0082: Typesense is now canonical memory store.
     const typesenseStoreResult = await step.run("store-to-typesense", async () => {
       try {
@@ -537,15 +518,33 @@ Session context:
         let mergedCount = 0;
 
         for (const item of observationItems) {
-          const similar = await typesense.search({
-            collection: "memory_observations",
-            q: item.observation,
-            query_by: "observation",
-            vector_query: "embedding:([], k:1, distance_threshold: 0.5)",
-            per_page: 1,
-            include_fields:
-              "id,session_id,observation,observation_type,source,timestamp,merged_count,updated_at,superseded_by,supersedes",
-          });
+          const includeFields =
+            "id,session_id,observation,observation_type,source,timestamp,merged_count,updated_at,superseded_by,supersedes";
+          let similar;
+          try {
+            similar = await typesense.search({
+              collection: "memory_observations",
+              q: item.observation,
+              query_by: "embedding,observation",
+              vector_query: "embedding:([], k:1, distance_threshold: 0.5)",
+              per_page: 1,
+              include_fields: includeFields,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (!/embedded fields|vector query/iu.test(message)) {
+              throw error;
+            }
+
+            // Fallback: text-only dedupe if vector field/search config is unavailable.
+            similar = await typesense.search({
+              collection: "memory_observations",
+              q: item.observation,
+              query_by: "observation",
+              per_page: 1,
+              include_fields: includeFields,
+            });
+          }
           const top = Array.isArray(similar.hits) ? similar.hits[0] : undefined;
           const existing = normalizeTypesenseObservationDoc(
             (top?.document ?? {}) as Record<string, unknown>
@@ -672,8 +671,13 @@ Session context:
           message_count: validatedInput.messageCount,
           captured_at: capturedAt,
           date,
-          qdrant_collection: qdrantCollectionResult,
-          qdrant: qdrantStoreResult,
+          typesense: {
+            stored: typesenseStoreResult.stored,
+            count: "count" in typesenseStoreResult ? typesenseStoreResult.count : 0,
+            errors: "errors" in typesenseStoreResult ? typesenseStoreResult.errors : 0,
+            merged_count: "mergedCount" in typesenseStoreResult ? typesenseStoreResult.mergedCount : 0,
+            error: "error" in typesenseStoreResult ? typesenseStoreResult.error : undefined,
+          },
         },
       };
 
@@ -762,8 +766,8 @@ Session context:
           sessionId: validatedInput.sessionId,
           trigger: validatedInput.trigger,
           observations: observationCount,
-          qdrantStored: qdrantStoreResult.stored && "count" in qdrantStoreResult ? qdrantStoreResult.count : 0,
-          hasRealVectors: qdrantStoreResult.hasRealVectors ?? false,
+          typesenseStored: typesenseStoreResult.stored && "count" in typesenseStoreResult ? typesenseStoreResult.count : 0,
+          mergedCount: "mergedCount" in typesenseStoreResult ? typesenseStoreResult.mergedCount : 0,
         });
       } catch (err) {
         console.error("[observe] Gateway notify failed:", err);
@@ -789,6 +793,13 @@ Session context:
     return {
       sessionId: validatedInput.sessionId,
       accumulatedEvent,
+      typesense: {
+        stored: typesenseStoreResult.stored,
+        count: "count" in typesenseStoreResult ? typesenseStoreResult.count : 0,
+        errors: "errors" in typesenseStoreResult ? typesenseStoreResult.errors : 0,
+        mergedCount: "mergedCount" in typesenseStoreResult ? typesenseStoreResult.mergedCount : 0,
+        error: "error" in typesenseStoreResult ? typesenseStoreResult.error : undefined,
+      },
     };
   }
 );

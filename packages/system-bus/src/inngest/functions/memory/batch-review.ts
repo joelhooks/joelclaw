@@ -18,6 +18,7 @@ import { rename, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import Redis from "ioredis";
 import { inngest } from "../../client";
+import { emitOtelEvent } from "../../../observability/emit";
 
 const LLM_PENDING_KEY = "memory:review:llm-pending";
 // ADR-0078: Use explicit versioned model IDs. Bare "claude-haiku" may resolve to deprecated Haiku 3.
@@ -199,136 +200,229 @@ export const batchReview = inngest.createFunction(
     { event: "memory/batch-review.requested" },
     { cron: "*/30 * * * *" },
   ],
-  async ({ step }) => {
-    // Load all pending proposals
-    const proposals = await step.run("load-pending-proposals", async () => {
-      const redis = getRedis();
-      const ids = await redis.lrange(LLM_PENDING_KEY, 0, -1);
-      if (ids.length === 0) return [];
+  async ({ event, step }) => {
+    const startedAt = Date.now();
+    const eventId = (event as { id?: string }).id ?? null;
+    let proposalCount = 0;
 
-      const results: PendingProposal[] = [];
-      for (const id of ids) {
-        const rawJson = await redis.get(`memory:proposal:${id}`);
-        if (!rawJson) continue;
+    await step.run("otel-batch-review-start", async () => {
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "batch-review",
+        action: "batch-review.started",
+        success: true,
+        metadata: {
+          eventId,
+        },
+      });
+    });
+
+    try {
+      // Load all pending proposals
+      const proposals = await step.run("load-pending-proposals", async () => {
+        const redis = getRedis();
+        const ids = await redis.lrange(LLM_PENDING_KEY, 0, -1);
+        if (ids.length === 0) return [];
+
+        const results: PendingProposal[] = [];
+        for (const id of ids) {
+          const rawJson = await redis.get(`memory:proposal:${id}`);
+          if (!rawJson) continue;
+          try {
+            const parsed = JSON.parse(rawJson) as Partial<PendingProposal>;
+            if (parsed.change?.trim()) {
+              results.push({
+                id,
+                section: parsed.section?.trim() ?? "Patterns",
+                change: parsed.change.trim(),
+                source: parsed.source,
+                timestamp: parsed.timestamp,
+              });
+            }
+          } catch {}
+        }
+        return results;
+      });
+
+      proposalCount = proposals.length;
+
+      if (proposals.length === 0) {
+        const result = { status: "noop", reason: "no proposals pending LLM review" };
+        await step.run("otel-batch-review-completed", async () => {
+          await emitOtelEvent({
+            level: "info",
+            source: "worker",
+            component: "batch-review",
+            action: "batch-review.completed",
+            success: true,
+            duration_ms: Date.now() - startedAt,
+            metadata: {
+              eventId,
+              proposalCount,
+              promoted: 0,
+              rejected: 0,
+              flagged: 0,
+            },
+          });
+        });
+        return result;
+      }
+
+      // Read current MEMORY.md
+      const currentMemory = await step.run("read-memory", async () => {
+        const memoryPath = getMemoryPath();
+        const file = Bun.file(memoryPath);
+        if (!(await file.exists())) return "";
+        return (await file.text()).trim();
+      });
+
+      // Call pi CLI for LLM review
+      const llmOutput = await step.run("llm-review-proposals", async () => {
+        const userPrompt = buildUserPrompt(proposals, currentMemory);
+
+        // Write prompt to temp file to avoid shell escaping issues with large prompts
+        const tmpFile = `/tmp/batch-review-prompt-${Date.now()}.txt`;
+        await writeFile(tmpFile, userPrompt, "utf-8");
+
         try {
-          const parsed = JSON.parse(rawJson) as Partial<PendingProposal>;
-          if (parsed.change?.trim()) {
-            results.push({
-              id,
-              section: parsed.section?.trim() ?? "Patterns",
-              change: parsed.change.trim(),
-              source: parsed.source,
-              timestamp: parsed.timestamp,
-            });
+          const result = await Bun.$`pi --no-tools --no-session --no-extensions --print --mode text --model ${REVIEW_MODEL} --system-prompt ${SYSTEM_PROMPT} ${await Bun.file(tmpFile).text()}`
+            .quiet()
+            .nothrow();
+
+          const stdout = readShellText(result.stdout);
+          const stderr = readShellText(result.stderr);
+
+          if (result.exitCode !== 0 && !stdout) {
+            throw new Error(`pi CLI failed (exit ${result.exitCode}): ${stderr.slice(0, 500)}`);
           }
-        } catch {}
-      }
-      return results;
-    });
 
-    if (proposals.length === 0) {
-      return { status: "noop", reason: "no proposals pending LLM review" };
-    }
+          return stdout.trim();
+        } finally {
+          try { await unlink(tmpFile); } catch {}
+        }
+      });
 
-    // Read current MEMORY.md
-    const currentMemory = await step.run("read-memory", async () => {
-      const memoryPath = getMemoryPath();
-      const file = Bun.file(memoryPath);
-      if (!(await file.exists())) return "";
-      return (await file.text()).trim();
-    });
+      // Parse decisions
+      const decisions = await step.run("parse-decisions", () => {
+        const parsed = parseDecisions(llmOutput);
 
-    // Call pi CLI for LLM review
-    const llmOutput = await step.run("llm-review-proposals", async () => {
-      const userPrompt = buildUserPrompt(proposals, currentMemory);
-
-      // Write prompt to temp file to avoid shell escaping issues with large prompts
-      const tmpFile = `/tmp/batch-review-prompt-${Date.now()}.txt`;
-      await writeFile(tmpFile, userPrompt, "utf-8");
-
-      try {
-        const result = await Bun.$`pi --no-tools --no-session --no-extensions --print --mode text --model ${REVIEW_MODEL} --system-prompt ${SYSTEM_PROMPT} ${await Bun.file(tmpFile).text()}`
-          .quiet()
-          .nothrow();
-
-        const stdout = readShellText(result.stdout);
-        const stderr = readShellText(result.stderr);
-
-        if (result.exitCode !== 0 && !stdout) {
-          throw new Error(`pi CLI failed (exit ${result.exitCode}): ${stderr.slice(0, 500)}`);
+        if (parsed.length === 0) {
+          console.error("[batch-review] LLM returned 0 parseable decisions from", proposals.length, "proposals");
+          return { decisions: [] as ReviewDecision[], unparsed: true };
         }
 
-        return stdout.trim();
-      } finally {
-        try { await unlink(tmpFile); } catch {}
+        console.log(`[batch-review] ${parsed.length} decisions: ${parsed.map(d => `${d.id}=${d.action}`).join(", ")}`);
+        return { decisions: parsed, unparsed: false };
+      });
+
+      if (decisions.unparsed || decisions.decisions.length === 0) {
+        const result = { status: "error", reason: "LLM response unparseable", proposalCount: proposals.length };
+        await step.run("otel-batch-review-completed", async () => {
+          await emitOtelEvent({
+            level: "warn",
+            source: "worker",
+            component: "batch-review",
+            action: "batch-review.completed",
+            success: false,
+            error: "LLM response unparseable",
+            duration_ms: Date.now() - startedAt,
+            metadata: {
+              eventId,
+              proposalCount,
+              promoted: 0,
+              rejected: 0,
+              flagged: 0,
+            },
+          });
+        });
+        return result;
       }
-    });
 
-    // Parse decisions
-    const decisions = await step.run("parse-decisions", () => {
-      const parsed = parseDecisions(llmOutput);
+      // Apply decisions
+      const results = await step.run("apply-decisions", async () => {
+        const redis = getRedis();
+        const memoryPath = getMemoryPath();
+        let memoryText = await Bun.file(memoryPath).text();
+        let promoted = 0;
+        let rejected = 0;
+        let flagged = 0;
 
-      if (parsed.length === 0) {
-        console.error("[batch-review] LLM returned 0 parseable decisions from", proposals.length, "proposals");
-        return { decisions: [] as ReviewDecision[], unparsed: true };
-      }
+        for (const decision of decisions.decisions) {
+          if (decision.action === "promote" && decision.entry) {
+            const proposal = proposals.find((p) => p.id === decision.id);
+            const date = proposal?.timestamp?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
+            const section = normalizeSection(decision.section);
+            const bullet = `- (${date}) ${decision.entry}`;
 
-      console.log(`[batch-review] ${parsed.length} decisions: ${parsed.map(d => `${d.id}=${d.action}`).join(", ")}`);
-      return { decisions: parsed, unparsed: false };
-    });
+            memoryText = appendBulletToSection(memoryText, section, bullet);
+            promoted++;
 
-    if (decisions.unparsed || decisions.decisions.length === 0) {
-      return { status: "error", reason: "LLM response unparseable", proposalCount: proposals.length };
-    }
-
-    // Apply decisions
-    const results = await step.run("apply-decisions", async () => {
-      const redis = getRedis();
-      const memoryPath = getMemoryPath();
-      let memoryText = await Bun.file(memoryPath).text();
-      let promoted = 0;
-      let rejected = 0;
-      let flagged = 0;
-
-      for (const decision of decisions.decisions) {
-        if (decision.action === "promote" && decision.entry) {
-          const proposal = proposals.find((p) => p.id === decision.id);
-          const date = proposal?.timestamp?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
-          const section = normalizeSection(decision.section);
-          const bullet = `- (${date}) ${decision.entry}`;
-
-          memoryText = appendBulletToSection(memoryText, section, bullet);
-          promoted++;
-
-          // Clean up Redis
-          await redis.lrem(LLM_PENDING_KEY, 0, decision.id);
-          await redis.del(`memory:proposal:${decision.id}`);
-          await redis.del(`memory:review:proposal:${decision.id}`);
-        } else if (decision.action === "reject") {
-          rejected++;
-          await redis.lrem(LLM_PENDING_KEY, 0, decision.id);
-          await redis.del(`memory:proposal:${decision.id}`);
-          await redis.del(`memory:review:proposal:${decision.id}`);
-        } else {
-          flagged++;
+            // Clean up Redis
+            await redis.lrem(LLM_PENDING_KEY, 0, decision.id);
+            await redis.del(`memory:proposal:${decision.id}`);
+            await redis.del(`memory:review:proposal:${decision.id}`);
+          } else if (decision.action === "reject") {
+            rejected++;
+            await redis.lrem(LLM_PENDING_KEY, 0, decision.id);
+            await redis.del(`memory:proposal:${decision.id}`);
+            await redis.del(`memory:review:proposal:${decision.id}`);
+          } else {
+            flagged++;
+          }
         }
-      }
 
-      // Write updated MEMORY.md atomically
-      if (promoted > 0) {
-        const tmpPath = `${memoryPath}.tmp`;
-        await Bun.write(tmpPath, memoryText);
-        await rename(tmpPath, memoryPath);
-      }
+        // Write updated MEMORY.md atomically
+        if (promoted > 0) {
+          const tmpPath = `${memoryPath}.tmp`;
+          await Bun.write(tmpPath, memoryText);
+          await rename(tmpPath, memoryPath);
+        }
 
-      return { promoted, rejected, flagged, total: decisions.decisions.length };
-    });
+        return { promoted, rejected, flagged, total: decisions.decisions.length };
+      });
 
-    console.log(`[batch-review] done: ${results.promoted} promoted, ${results.rejected} rejected, ${results.flagged} flagged`);
+      console.log(`[batch-review] done: ${results.promoted} promoted, ${results.rejected} rejected, ${results.flagged} flagged`);
 
-    return {
-      status: "ok",
-      ...results,
-    };
+      await step.run("otel-batch-review-completed", async () => {
+        await emitOtelEvent({
+          level: "info",
+          source: "worker",
+          component: "batch-review",
+          action: "batch-review.completed",
+          success: true,
+          duration_ms: Date.now() - startedAt,
+          metadata: {
+            eventId,
+            proposalCount,
+            promoted: results.promoted,
+            rejected: results.rejected,
+            flagged: results.flagged,
+          },
+        });
+      });
+
+      return {
+        status: "ok",
+        ...results,
+      };
+    } catch (error) {
+      await step.run("otel-batch-review-failed", async () => {
+        await emitOtelEvent({
+          level: "error",
+          source: "worker",
+          component: "batch-review",
+          action: "batch-review.failed",
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+          duration_ms: Date.now() - startedAt,
+          metadata: {
+            eventId,
+            proposalCount,
+          },
+        });
+      });
+      throw error;
+    }
   }
 );

@@ -9,6 +9,7 @@ import {
   REFLECTOR_USER_PROMPT,
   validateCompression,
 } from "./reflect-prompt";
+import { emitOtelEvent } from "../../observability/emit";
 
 type ObservationRecord = {
   summary?: unknown;
@@ -54,6 +55,10 @@ function readShellText(value: unknown): string {
   if (value instanceof Uint8Array) return new TextDecoder().decode(value);
   if (value == null) return "";
   return String(value);
+}
+
+function shouldSkipExternalEventSends(): boolean {
+  return process.env.NODE_ENV === "test" || process.env.BUN_TEST === "1";
 }
 
 function estimateTokens(text: string): number {
@@ -260,186 +265,261 @@ export const reflect = inngest.createFunction(
   },
   [{ event: "memory/observations.accumulated" }, { cron: "0 6 * * *" }],
   async ({ event, step }) => {
-    const loaded = await step.run("load-observations", async () => {
-      const redis = getRedisClient();
-      const anchorDate =
-        event.name === "memory/observations.accumulated"
-          ? event.data.date
-          : toISODate(new Date());
-      const dates = getRecentDates(anchorDate, 7);
-      const observations: string[] = [];
+    const startedAt = Date.now();
+    const eventId = (event as { id?: string }).id ?? null;
+    let anchorDate: string | null = null;
+    let observationCount = 0;
+    let proposalCount = 0;
+    let retryLevel = 0;
 
-      for (const date of dates) {
-        const key = `memory:observations:${date}`;
-        const entries = await redis.lrange(key, 0, -1);
+    await step.run("otel-reflect-start", async () => {
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "reflect",
+        action: "reflect.started",
+        success: true,
+        metadata: {
+          eventId,
+        },
+      });
+    });
 
-        for (const entry of entries) {
-          const parsed = parseObservation(entry);
-          if (parsed) {
-            observations.push(parsed);
+    try {
+      const loaded = await step.run("load-observations", async () => {
+        const redis = getRedisClient();
+        const loadedAnchorDate =
+          event.name === "memory/observations.accumulated"
+            ? event.data.date
+            : toISODate(new Date());
+        const dates = getRecentDates(loadedAnchorDate, 7);
+        const observations: string[] = [];
+
+        for (const date of dates) {
+          const key = `memory:observations:${date}`;
+          const entries = await redis.lrange(key, 0, -1);
+
+          for (const entry of entries) {
+            const parsed = parseObservation(entry);
+            if (parsed) {
+              observations.push(parsed);
+            }
           }
         }
-      }
 
-      const memoryContent = await readMemoryContent();
+        const memoryContent = await readMemoryContent();
 
-      return {
-        anchorDate,
-        dates,
-        observationCount: observations.length,
-        observationsText:
-          observations.length > 0 ? observations.join("\n\n") : "No observations available.",
-        memoryContent,
-      };
-    });
-
-    const initial = await step.run("call-reflector-llm", async () =>
-      runReflectorLLM(loaded.observationsText, loaded.memoryContent, 0)
-    );
-
-    const validated = await step.run("validate-compression", async () => {
-      let retryLevel = 0;
-      let run = initial;
-
-      while (!validateCompression(run.inputTokens, run.outputTokens) && retryLevel < 2) {
-        retryLevel += 1;
-        run = await runReflectorLLM(loaded.observationsText, loaded.memoryContent, retryLevel);
-      }
-
-      const compressionRatio = run.inputTokens > 0 ? run.outputTokens / run.inputTokens : 0;
-
-      return {
-        ...run,
-        compressionRatio,
-        retryLevel,
-      };
-    });
-
-    const staged = await step.run("stage-review", async () => {
-      const redis = getRedisClient();
-      const proposals = parseProposals(validated.raw);
-      const capturedAt = new Date().toISOString();
-      let nextSequence = 1;
-      if (proposals.length > 0) {
-        nextSequence = await getNextProposalSequence(redis, loaded.anchorDate);
-      }
-      const stagedProposals: StagedProposal[] = proposals.map((proposal) => {
-        const id = formatProposalId(loaded.anchorDate, nextSequence);
-        nextSequence += 1;
         return {
-          id,
-          section: proposal.section,
-          change: proposal.change,
+          anchorDate: loadedAnchorDate,
+          dates,
+          observationCount: observations.length,
+          observationsText:
+            observations.length > 0 ? observations.join("\n\n") : "No observations available.",
+          memoryContent,
         };
       });
 
-      for (const proposal of stagedProposals) {
-        await redis.hset(
-          `memory:review:proposal:${proposal.id}`,
-          "id",
-          proposal.id,
-          "date",
-          loaded.anchorDate,
-          "section",
-          proposal.section,
-          "change",
-          proposal.change,
-          "status",
-          "pending",
-          "capturedAt",
-          capturedAt
-        );
-        await redis.rpush("memory:review:pending", proposal.id);
+      anchorDate = loaded.anchorDate;
+      observationCount = loaded.observationCount;
 
-        // Todoist task creation removed — proposal-triage.ts (ADR-0068)
-        // now decides whether to create a task (only for needs-review).
-        // This eliminates 50+ junk tasks per compaction from instruction-text
-        // proposals that triage would auto-reject anyway.
-      }
+      const initial = await step.run("call-reflector-llm", async () =>
+        runReflectorLLM(loaded.observationsText, loaded.memoryContent, 0)
+      );
 
-      const grouped = groupBySection(stagedProposals);
+      const validated = await step.run("validate-compression", async () => {
+        let compressionRetryLevel = 0;
+        let run = initial;
 
-      return {
-        proposals: stagedProposals,
-        proposalCount: stagedProposals.length,
-        capturedAt,
-        sections: [...grouped.keys()],
-      };
-    });
+        while (!validateCompression(run.inputTokens, run.outputTokens) && compressionRetryLevel < 2) {
+          compressionRetryLevel += 1;
+          run = await runReflectorLLM(loaded.observationsText, loaded.memoryContent, compressionRetryLevel);
+        }
 
-    const dailyLog = await step.run("append-daily-log", async () => {
-      const dailyLogPath = join(getWorkspaceRoot(), "memory", `${loaded.anchorDate}.md`);
-      const existingDailyLog = Bun.file(dailyLogPath);
-      if ((await existingDailyLog.exists()) && (await existingDailyLog.text()).includes("### 🔭 Reflected")) {
+        const compressionRatio = run.inputTokens > 0 ? run.outputTokens / run.inputTokens : 0;
+
         return {
-          appended: false,
-          path: dailyLogPath,
-          reason: "already reflected today",
+          ...run,
+          compressionRatio,
+          retryLevel: compressionRetryLevel,
         };
-      }
-      const sectionSummary =
-        staged.sections.length > 0 ? staged.sections.join(", ") : "none";
-      const lines = [
-        "### 🔭 Reflected",
-        `- Proposals staged: ${staged.proposalCount}`,
-        `- Sections: ${sectionSummary}`,
-        `- Compression ratio: ${validated.compressionRatio}`,
-        `- Captured at: ${staged.capturedAt}`,
-        "",
-      ];
-      const writeResult = appendToFile(dailyLogPath, lines.join("\n"));
-      return {
-        appended: writeResult.ok,
-        path: dailyLogPath,
-        reason: writeResult.ok ? undefined : "append failed",
-        error: writeResult.error,
-      };
-    });
+      });
 
-    const emittedEvent = {
-      name: "memory/observations.reflected" as const,
-      data: {
-        date: loaded.anchorDate,
+      retryLevel = validated.retryLevel;
+
+      const staged = await step.run("stage-review", async () => {
+        const redis = getRedisClient();
+        const proposals = parseProposals(validated.raw);
+        const capturedAt = new Date().toISOString();
+        let nextSequence = 1;
+        if (proposals.length > 0) {
+          nextSequence = await getNextProposalSequence(redis, loaded.anchorDate);
+        }
+        const stagedProposals: StagedProposal[] = proposals.map((proposal) => {
+          const id = formatProposalId(loaded.anchorDate, nextSequence);
+          nextSequence += 1;
+          return {
+            id,
+            section: proposal.section,
+            change: proposal.change,
+          };
+        });
+
+        for (const proposal of stagedProposals) {
+          await redis.hset(
+            `memory:review:proposal:${proposal.id}`,
+            "id",
+            proposal.id,
+            "date",
+            loaded.anchorDate,
+            "section",
+            proposal.section,
+            "change",
+            proposal.change,
+            "status",
+            "pending",
+            "capturedAt",
+            capturedAt
+          );
+          await redis.rpush("memory:review:pending", proposal.id);
+
+          // Todoist task creation removed — proposal-triage.ts (ADR-0068)
+          // now decides whether to create a task (only for needs-review).
+          // This eliminates 50+ junk tasks per compaction from instruction-text
+          // proposals that triage would auto-reject anyway.
+        }
+
+        const grouped = groupBySection(stagedProposals);
+
+        return {
+          proposals: stagedProposals,
+          proposalCount: stagedProposals.length,
+          capturedAt,
+          sections: [...grouped.keys()],
+        };
+      });
+
+      proposalCount = staged.proposalCount;
+
+      const dailyLog = await step.run("append-daily-log", async () => {
+        const dailyLogPath = join(getWorkspaceRoot(), "memory", `${loaded.anchorDate}.md`);
+        const existingDailyLog = Bun.file(dailyLogPath);
+        if ((await existingDailyLog.exists()) && (await existingDailyLog.text()).includes("### 🔭 Reflected")) {
+          return {
+            appended: false,
+            path: dailyLogPath,
+            reason: "already reflected today",
+          };
+        }
+        const sectionSummary =
+          staged.sections.length > 0 ? staged.sections.join(", ") : "none";
+        const lines = [
+          "### 🔭 Reflected",
+          `- Proposals staged: ${staged.proposalCount}`,
+          `- Sections: ${sectionSummary}`,
+          `- Compression ratio: ${validated.compressionRatio}`,
+          `- Captured at: ${staged.capturedAt}`,
+          "",
+        ];
+        const writeResult = appendToFile(dailyLogPath, lines.join("\n"));
+        return {
+          appended: writeResult.ok,
+          path: dailyLogPath,
+          reason: writeResult.ok ? undefined : "append failed",
+          error: writeResult.error,
+        };
+      });
+
+      const emittedEvent = {
+        name: "memory/observations.reflected" as const,
+        data: {
+          date: loaded.anchorDate,
+          inputTokens: validated.inputTokens,
+          outputTokens: validated.outputTokens,
+          compressionRatio: validated.compressionRatio,
+          proposalCount: staged.proposalCount,
+          capturedAt: staged.capturedAt,
+        },
+      };
+
+      const skipExternalSends = shouldSkipExternalEventSends();
+
+      if (!skipExternalSends && staged.proposals.length > 0) {
+        await step.sendEvent(
+          "emit-proposal-created-events",
+          staged.proposals.map((proposal) => ({
+            name: "memory/proposal.created" as const,
+            data: {
+              proposalId: proposal.id,
+              id: proposal.id,
+              section: proposal.section,
+              change: proposal.change,
+              source: "reflect",
+              timestamp: staged.capturedAt,
+            },
+          }))
+        );
+      }
+
+      let emitCompleteError: string | undefined;
+      if (!skipExternalSends) {
+        step.sendEvent("emit-complete", [emittedEvent]).catch((error) => {
+          emitCompleteError = error instanceof Error ? error.message : String(error);
+        });
+      }
+
+      const result = {
+        raw: validated.raw,
         inputTokens: validated.inputTokens,
         outputTokens: validated.outputTokens,
         compressionRatio: validated.compressionRatio,
+        retryLevel: validated.retryLevel,
         proposalCount: staged.proposalCount,
-        capturedAt: staged.capturedAt,
-      },
-    };
+        dailyLogPath: dailyLog.path,
+        emittedEvent,
+        emitCompleteError,
+      };
 
-    if (staged.proposals.length > 0) {
-      await step.sendEvent(
-        "emit-proposal-created-events",
-        staged.proposals.map((proposal) => ({
-          name: "memory/proposal.created" as const,
-          data: {
-            proposalId: proposal.id,
-            id: proposal.id,
-            section: proposal.section,
-            change: proposal.change,
-            source: "reflect",
-            timestamp: staged.capturedAt,
+      await step.run("otel-reflect-completed", async () => {
+        await emitOtelEvent({
+          level: "info",
+          source: "worker",
+          component: "reflect",
+          action: "reflect.completed",
+          success: true,
+          duration_ms: Date.now() - startedAt,
+          metadata: {
+            eventId,
+            observationCount,
+            proposalCount,
+            retryLevel,
+            date: loaded.anchorDate,
+            inputTokens: validated.inputTokens,
+            outputTokens: validated.outputTokens,
           },
-        }))
-      );
+        });
+      });
+
+      return result;
+    } catch (error) {
+      await step.run("otel-reflect-failed", async () => {
+        await emitOtelEvent({
+          level: "error",
+          source: "worker",
+          component: "reflect",
+          action: "reflect.failed",
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+          duration_ms: Date.now() - startedAt,
+          metadata: {
+            eventId,
+            date: anchorDate,
+            observationCount,
+            proposalCount,
+            retryLevel,
+          },
+        });
+      });
+      throw error;
     }
-
-    let emitCompleteError: string | undefined;
-    step.sendEvent("emit-complete", [emittedEvent]).catch((error) => {
-      emitCompleteError = error instanceof Error ? error.message : String(error);
-    });
-
-    return {
-      raw: validated.raw,
-      inputTokens: validated.inputTokens,
-      outputTokens: validated.outputTokens,
-      compressionRatio: validated.compressionRatio,
-      retryLevel: validated.retryLevel,
-      proposalCount: staged.proposalCount,
-      dailyLogPath: dailyLog.path,
-      emittedEvent,
-      emitCompleteError,
-    };
   }
 );

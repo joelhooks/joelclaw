@@ -1,6 +1,7 @@
 import { inngest } from "../../client";
 import { DEDUP_THRESHOLD, STALENESS_DAYS } from "../../../memory/retrieval";
 import * as typesense from "../../../lib/typesense";
+import { emitOtelEvent } from "../../../observability/emit";
 
 const OBSERVATIONS_COLLECTION = "memory_observations";
 const PAGE_SIZE = 250;
@@ -158,112 +159,163 @@ export const nightlyMaintenance = inngest.createFunction(
     concurrency: 1,
   },
   { cron: "0 10 * * *" },
-  async ({ step }) => {
-    const today = await step.run("scan-today", async () => {
-      const { startUnix, endUnix, date } = getTodayUtcRange();
-      const points = await queryAllObservations(`timestamp:>=${startUnix} && timestamp:<${endUnix}`);
-      return { date, points, scanned: points.length, startUnix, endUnix };
+  async ({ event, step }) => {
+    const startedAt = Date.now();
+    const eventId = (event as { id?: string }).id ?? null;
+
+    await step.run("otel-nightly-maintenance-start", async () => {
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "nightly-maintenance",
+        action: "nightly-maintenance.started",
+        success: true,
+        metadata: {
+          eventId,
+        },
+      });
     });
 
-    const mergeResult = await step.run("merge-duplicates", async () => {
-      const mergedPointIds = new Set<string>();
-      const keeperUpdates: Array<Record<string, unknown>> = [];
-      const duplicateUpdates: Array<Record<string, unknown>> = [];
-      let merged = 0;
-
-      for (const keeper of today.points) {
-        if (mergedPointIds.has(keeper.id)) continue;
-        if (keeper.superseded_by) continue;
-
-        const similar = await typesense.search({
-          collection: OBSERVATIONS_COLLECTION,
-          q: keeper.observation,
-          query_by: "observation",
-          vector_query: `embedding:([], k:${SEMANTIC_K}, distance_threshold: ${SEMANTIC_DISTANCE_THRESHOLD})`,
-          filter_by: `timestamp:>=${today.startUnix} && timestamp:<${today.endUnix}`,
-          per_page: SEMANTIC_K,
-          include_fields: "id,observation,timestamp,merged_count,recall_count,superseded_by",
-        });
-
-        const hits = Array.isArray(similar.hits) ? similar.hits : [];
-        let keeperMergeIncrement = 0;
-        let fresherObservation: string | null = null;
-
-        for (const hit of hits) {
-          const candidate = normalizeObservationDoc((hit.document ?? {}) as Record<string, unknown>);
-          if (!candidate) continue;
-          if (candidate.id === keeper.id) continue;
-          if (mergedPointIds.has(candidate.id)) continue;
-          if (candidate.superseded_by) continue;
-
-          const similarity = textSimilarity(keeper.observation, candidate.observation);
-          if (similarity < DEDUP_THRESHOLD) continue;
-
-          mergedPointIds.add(candidate.id);
-          keeperMergeIncrement += 1;
-          merged += 1;
-
-          const fresher = chooseFresherObservationText(keeper, candidate);
-          if (fresher) {
-            fresherObservation = fresher;
-          }
-
-          duplicateUpdates.push({
-            id: candidate.id,
-            superseded_by: keeper.id,
-            updated_at: new Date().toISOString(),
-          });
-        }
-
-        if (keeperMergeIncrement > 0) {
-          keeperUpdates.push({
-            id: keeper.id,
-            merged_count: asFiniteNumber(keeper.merged_count, 1) + keeperMergeIncrement,
-            ...(fresherObservation ? { observation: fresherObservation } : {}),
-            updated_at: new Date().toISOString(),
-          });
-        }
-      }
-
-      await bulkUpdateDocs([...keeperUpdates, ...duplicateUpdates]);
-      return { merged };
-    });
-
-    const staleResult = await step.run("tag-stale", async () => {
-      const cutoffUnix = getStaleCutoffUnix();
-      const candidates = await queryAllObservations(`timestamp:<${cutoffUnix}`);
-
-      const staleCandidates = candidates.filter((point) => {
-        const recallCount = asFiniteNumber(point.recall_count, 0);
-        return recallCount === 0;
+    try {
+      const today = await step.run("scan-today", async () => {
+        const { startUnix, endUnix, date } = getTodayUtcRange();
+        const points = await queryAllObservations(`timestamp:>=${startUnix} && timestamp:<${endUnix}`);
+        return { date, points, scanned: points.length, startUnix, endUnix };
       });
 
-      await bulkUpdateDocs(
-        staleCandidates.map((point) => ({
-          id: point.id,
-          stale: true,
-          stale_tagged_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }))
-      );
+      const mergeResult = await step.run("merge-duplicates", async () => {
+        const mergedPointIds = new Set<string>();
+        const keeperUpdates: Array<Record<string, unknown>> = [];
+        const duplicateUpdates: Array<Record<string, unknown>> = [];
+        let merged = 0;
 
-      return { staleTagged: staleCandidates.length };
-    });
+        for (const keeper of today.points) {
+          if (mergedPointIds.has(keeper.id)) continue;
+          if (keeper.superseded_by) continue;
 
-    const stats = await step.run("log-stats", async () => {
-      const payload = {
-        date: today.date,
-        scanned: today.scanned,
-        merged: mergeResult.merged,
-        staleTagged: staleResult.staleTagged,
+          const similar = await typesense.search({
+            collection: OBSERVATIONS_COLLECTION,
+            q: keeper.observation,
+            query_by: "observation",
+            vector_query: `embedding:([], k:${SEMANTIC_K}, distance_threshold: ${SEMANTIC_DISTANCE_THRESHOLD})`,
+            filter_by: `timestamp:>=${today.startUnix} && timestamp:<${today.endUnix}`,
+            per_page: SEMANTIC_K,
+            include_fields: "id,observation,timestamp,merged_count,recall_count,superseded_by",
+          });
+
+          const hits = Array.isArray(similar.hits) ? similar.hits : [];
+          let keeperMergeIncrement = 0;
+          let fresherObservation: string | null = null;
+
+          for (const hit of hits) {
+            const candidate = normalizeObservationDoc((hit.document ?? {}) as Record<string, unknown>);
+            if (!candidate) continue;
+            if (candidate.id === keeper.id) continue;
+            if (mergedPointIds.has(candidate.id)) continue;
+            if (candidate.superseded_by) continue;
+
+            const similarity = textSimilarity(keeper.observation, candidate.observation);
+            if (similarity < DEDUP_THRESHOLD) continue;
+
+            mergedPointIds.add(candidate.id);
+            keeperMergeIncrement += 1;
+            merged += 1;
+
+            const fresher = chooseFresherObservationText(keeper, candidate);
+            if (fresher) {
+              fresherObservation = fresher;
+            }
+
+            duplicateUpdates.push({
+              id: candidate.id,
+              superseded_by: keeper.id,
+              updated_at: new Date().toISOString(),
+            });
+          }
+
+          if (keeperMergeIncrement > 0) {
+            keeperUpdates.push({
+              id: keeper.id,
+              merged_count: asFiniteNumber(keeper.merged_count, 1) + keeperMergeIncrement,
+              ...(fresherObservation ? { observation: fresherObservation } : {}),
+              updated_at: new Date().toISOString(),
+            });
+          }
+        }
+
+        await bulkUpdateDocs([...keeperUpdates, ...duplicateUpdates]);
+        return { merged };
+      });
+
+      const staleResult = await step.run("tag-stale", async () => {
+        const cutoffUnix = getStaleCutoffUnix();
+        const candidates = await queryAllObservations(`timestamp:<${cutoffUnix}`);
+
+        const staleCandidates = candidates.filter((point) => {
+          const recallCount = asFiniteNumber(point.recall_count, 0);
+          return recallCount === 0;
+        });
+
+        await bulkUpdateDocs(
+          staleCandidates.map((point) => ({
+            id: point.id,
+            stale: true,
+            stale_tagged_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }))
+        );
+
+        return { staleTagged: staleCandidates.length };
+      });
+
+      const stats = await step.run("log-stats", async () => {
+        const payload = {
+          date: today.date,
+          scanned: today.scanned,
+          merged: mergeResult.merged,
+          staleTagged: staleResult.staleTagged,
+        };
+        console.log(JSON.stringify(payload));
+        return payload;
+      });
+
+      await step.run("otel-nightly-maintenance-completed", async () => {
+        await emitOtelEvent({
+          level: "info",
+          source: "worker",
+          component: "nightly-maintenance",
+          action: "nightly-maintenance.completed",
+          success: true,
+          duration_ms: Date.now() - startedAt,
+          metadata: {
+            eventId,
+            observationCount: stats.scanned,
+            mergeCount: stats.merged,
+            staleCount: stats.staleTagged,
+          },
+        });
+      });
+
+      return {
+        status: "ok",
+        ...stats,
       };
-      console.log(JSON.stringify(payload));
-      return payload;
-    });
-
-    return {
-      status: "ok",
-      ...stats,
-    };
+    } catch (error) {
+      await step.run("otel-nightly-maintenance-failed", async () => {
+        await emitOtelEvent({
+          level: "error",
+          source: "worker",
+          component: "nightly-maintenance",
+          action: "nightly-maintenance.failed",
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+          duration_ms: Date.now() - startedAt,
+          metadata: {
+            eventId,
+          },
+        });
+      });
+      throw error;
+    }
   }
 );

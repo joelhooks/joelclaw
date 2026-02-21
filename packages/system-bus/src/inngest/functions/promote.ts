@@ -4,6 +4,7 @@ import Redis from "ioredis";
 import { inngest } from "../client";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import { PROMOTE_SYSTEM_PROMPT, PROMOTE_USER_PROMPT } from "./promote-prompt";
+import { emitOtelEvent } from "../../observability/emit";
 
 type RedisLike = {
   lrange(key: string, start: number, stop: number): Promise<string[]>;
@@ -313,60 +314,179 @@ const promoteFunction =
     },
     [{ event: "memory/proposal.approved" }, { event: "memory/proposal.rejected" }, { cron: "0 8 * * *" }],
     async ({ event, step }) => {
-      if (event.name === "memory/proposal.approved") {
-        const proposalId = await step.run("resolve-approved-proposal-id", async () => {
-          const id = (event.data as { proposalId?: unknown }).proposalId;
-          if (typeof id !== "string" || id.trim().length === 0) {
-            throw new Error("memory/proposal.approved requires event.data.proposalId");
-          }
-          return id;
+      const startedAt = Date.now();
+      const eventId = (event as { id?: string }).id ?? null;
+      let proposalId: string | null = null;
+      let mode: "approved" | "rejected" | "expire" = "expire";
+      let approvedCount = 0;
+      let rejectedCount = 0;
+      let expiredCount = 0;
+
+      await step.run("otel-promote-start", async () => {
+        await emitOtelEvent({
+          level: "info",
+          source: "worker",
+          component: "promote",
+          action: "promote.started",
+          success: true,
+          metadata: {
+            eventId,
+            eventName: event.name,
+          },
         });
-
-        await step.run("promote-approved-proposal", async () => promoteToMemory(proposalId));
-        return { approved: [proposalId] };
-      }
-
-      if (event.name === "memory/proposal.rejected") {
-        const payload = await step.run("resolve-rejected-payload", async () => {
-          const id = (event.data as { proposalId?: unknown }).proposalId;
-          const reason = (event.data as { reason?: unknown }).reason;
-          if (typeof id !== "string" || id.trim().length === 0) {
-            throw new Error("memory/proposal.rejected requires event.data.proposalId");
-          }
-          if (typeof reason !== "string" || reason.trim().length === 0) {
-            throw new Error("memory/proposal.rejected requires event.data.reason");
-          }
-          return { proposalId: id, reason };
-        });
-
-        await step.run("archive-rejected-proposal", async () => archiveProposal(payload.proposalId, payload.reason));
-        return { rejected: [payload.proposalId], reason: payload.reason };
-      }
-
-      const expiredIds = await step.run("expire-stale-proposals", async () => {
-        const redis = getRedisClient();
-        const pending = await redis.lrange(REVIEW_PENDING_KEY, 0, -1);
-        const expired: string[] = [];
-
-        for (const proposalId of pending) {
-          if (!isProposalOlderThanSevenDays(proposalId)) continue;
-          await expireProposal(proposalId);
-          try {
-            await completeTodoistProposalTasks(proposalId);
-          } catch (error) {
-            console.error(
-              `Failed to complete Todoist task for expired proposal ${proposalId}: ${
-                error instanceof Error ? error.message : String(error)
-              }`
-            );
-          }
-          expired.push(proposalId);
-        }
-
-        return expired;
       });
 
-      return { expired: expiredIds };
+      try {
+        if (event.name === "memory/proposal.approved") {
+          mode = "approved";
+          const approvedProposalId = await step.run("resolve-approved-proposal-id", async () => {
+            const id = (event.data as { proposalId?: unknown }).proposalId;
+            if (typeof id !== "string" || id.trim().length === 0) {
+              throw new Error("memory/proposal.approved requires event.data.proposalId");
+            }
+            return id;
+          });
+          proposalId = approvedProposalId;
+
+          await step.run("promote-approved-proposal", async () => promoteToMemory(approvedProposalId));
+          approvedCount = 1;
+
+          const result = { approved: [approvedProposalId] };
+          await step.run("otel-promote-completed", async () => {
+            await emitOtelEvent({
+              level: "info",
+              source: "worker",
+              component: "promote",
+              action: "promote.completed",
+              success: true,
+              duration_ms: Date.now() - startedAt,
+              metadata: {
+                eventId,
+                eventName: event.name,
+                mode,
+                proposalId,
+                proposalCount: 1,
+                approvedCount,
+                rejectedCount,
+                expiredCount,
+              },
+            });
+          });
+          return result;
+        }
+
+        if (event.name === "memory/proposal.rejected") {
+          mode = "rejected";
+          const payload = await step.run("resolve-rejected-payload", async () => {
+            const id = (event.data as { proposalId?: unknown }).proposalId;
+            const reason = (event.data as { reason?: unknown }).reason;
+            if (typeof id !== "string" || id.trim().length === 0) {
+              throw new Error("memory/proposal.rejected requires event.data.proposalId");
+            }
+            if (typeof reason !== "string" || reason.trim().length === 0) {
+              throw new Error("memory/proposal.rejected requires event.data.reason");
+            }
+            return { proposalId: id, reason };
+          });
+
+          proposalId = payload.proposalId;
+          await step.run("archive-rejected-proposal", async () => archiveProposal(payload.proposalId, payload.reason));
+          rejectedCount = 1;
+
+          const result = { rejected: [payload.proposalId], reason: payload.reason };
+          await step.run("otel-promote-completed", async () => {
+            await emitOtelEvent({
+              level: "info",
+              source: "worker",
+              component: "promote",
+              action: "promote.completed",
+              success: true,
+              duration_ms: Date.now() - startedAt,
+              metadata: {
+                eventId,
+                eventName: event.name,
+                mode,
+                proposalId,
+                proposalCount: 1,
+                approvedCount,
+                rejectedCount,
+                expiredCount,
+              },
+            });
+          });
+          return result;
+        }
+
+        const expiredIds = await step.run("expire-stale-proposals", async () => {
+          const redis = getRedisClient();
+          const pending = await redis.lrange(REVIEW_PENDING_KEY, 0, -1);
+          const expired: string[] = [];
+
+          for (const pendingProposalId of pending) {
+            if (!isProposalOlderThanSevenDays(pendingProposalId)) continue;
+            await expireProposal(pendingProposalId);
+            try {
+              await completeTodoistProposalTasks(pendingProposalId);
+            } catch (error) {
+              console.error(
+                `Failed to complete Todoist task for expired proposal ${pendingProposalId}: ${
+                  error instanceof Error ? error.message : String(error)
+                }`
+              );
+            }
+            expired.push(pendingProposalId);
+          }
+
+          return expired;
+        });
+
+        expiredCount = expiredIds.length;
+        const result = { expired: expiredIds };
+        await step.run("otel-promote-completed", async () => {
+          await emitOtelEvent({
+            level: "info",
+            source: "worker",
+            component: "promote",
+            action: "promote.completed",
+            success: true,
+            duration_ms: Date.now() - startedAt,
+            metadata: {
+              eventId,
+              eventName: event.name,
+              mode,
+              proposalId,
+              proposalCount: expiredCount,
+              approvedCount,
+              rejectedCount,
+              expiredCount,
+            },
+          });
+        });
+        return result;
+      } catch (error) {
+        await step.run("otel-promote-failed", async () => {
+          await emitOtelEvent({
+            level: "error",
+            source: "worker",
+            component: "promote",
+            action: "promote.failed",
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+            duration_ms: Date.now() - startedAt,
+            metadata: {
+              eventId,
+              eventName: event.name,
+              mode,
+              proposalId,
+              proposalCount: approvedCount + rejectedCount + expiredCount,
+              approvedCount,
+              rejectedCount,
+              expiredCount,
+            },
+          });
+        });
+        throw error;
+      }
     }
   );
 

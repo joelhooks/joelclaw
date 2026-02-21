@@ -4,6 +4,7 @@ import Redis from "ioredis";
 import { inngest } from "../../client";
 import { triageProposal, type Proposal } from "../../../memory/triage";
 import { TodoistTaskAdapter } from "../../../tasks/adapters/todoist";
+import { emitOtelEvent } from "../../../observability/emit";
 
 const REVIEW_PENDING_KEY = "memory:review:pending";
 
@@ -210,122 +211,182 @@ export const proposalTriage = inngest.createFunction(
   },
   { event: "memory/proposal.created" },
   async ({ event, step }) => {
-    const proposalId = await step.run("resolve-proposal-id", async () => {
-      const idFromEvent = (event.data as { proposalId?: unknown }).proposalId;
-      const id = typeof idFromEvent === "string" && idFromEvent.trim().length > 0
-        ? idFromEvent
-        : typeof (event.data as { id?: unknown }).id === "string"
-          ? String((event.data as { id?: unknown }).id)
-          : "";
+    const startedAt = Date.now();
+    const eventId = (event as { id?: string }).id ?? null;
+    let proposalId: string | null = null;
 
-      if (!id) {
-        throw new Error("memory/proposal.created requires proposalId or id");
-      }
-
-      return id;
+    await step.run("otel-proposal-triage-start", async () => {
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "proposal-triage",
+        action: "proposal-triage.started",
+        success: true,
+        metadata: {
+          eventId,
+        },
+      });
     });
 
-    const triaged = await step.run("triage-proposal", async () => {
-      const redis = getRedis();
-      const proposal = await readProposal(redis, proposalId);
-      if (!proposal) {
-        return {
-          action: "auto-reject" as const,
-          reason: "proposal missing in redis",
-          mergeWith: undefined,
-        };
-      }
+    try {
+      const resolvedProposalId = await step.run("resolve-proposal-id", async () => {
+        const idFromEvent = (event.data as { proposalId?: unknown }).proposalId;
+        const id = typeof idFromEvent === "string" && idFromEvent.trim().length > 0
+          ? idFromEvent
+          : typeof (event.data as { id?: unknown }).id === "string"
+            ? String((event.data as { id?: unknown }).id)
+            : "";
 
-      const memoryText = await Bun.file(getMemoryPath()).text();
-      const pending = await loadPendingProposals(redis, proposalId);
-      const result = triageProposal(proposal, memoryText, pending);
-
-      if (result.action === "auto-promote") {
-        // Don't append raw text — queue for LLM batch review (ADR-0068).
-        // Sonnet reviews proposals against current MEMORY.md and outputs clean entries.
-        const LLM_PENDING_KEY = "memory:review:llm-pending";
-        await redis.rpush(LLM_PENDING_KEY, proposal.id);
-        // Reclassify as llm-pending so downstream knows the path
-        return {
-          action: "llm-pending" as const,
-          reason: result.reason + " — queued for LLM batch review",
-          mergeWith: undefined,
-        };
-      } else if (result.action === "auto-reject") {
-        await deleteProposal(redis, proposal.id);
-      } else if (result.action === "auto-merge") {
-        const mergeTargetId = result.mergeWith;
-        if (!mergeTargetId) {
-          return {
-            action: "needs-review" as const,
-            reason: "auto-merge target missing; requires manual review",
-            mergeWith: undefined,
-          };
+        if (!id) {
+          throw new Error("memory/proposal.created requires proposalId or id");
         }
 
-        const target = await readProposal(redis, mergeTargetId);
-        if (!target) {
-          return {
-            action: "needs-review" as const,
-            reason: `merge target ${mergeTargetId} missing; requires manual review`,
-            mergeWith: undefined,
-          };
-        }
+        return id;
+      });
+      proposalId = resolvedProposalId;
 
-        const merged: Proposal = {
-          ...target,
-          change: mergeChanges(target.change, proposal.change),
-          timestamp: target.timestamp ?? proposal.timestamp,
-          source: target.source ?? proposal.source,
-        };
-
-        await writeProposal(redis, merged);
-        await deleteProposal(redis, proposal.id);
-      }
-
-      return result;
-    });
-
-    console.log(`[memory/proposal-triage] ${proposalId} -> ${triaged.action}: ${triaged.reason}`);
-
-    // Only create Todoist task for proposals that need human review.
-    // Auto-promoted and auto-rejected proposals don't need tasks.
-    // This prevents 50+ junk tasks per compaction from instruction-text artifacts.
-    if (triaged.action === "needs-review") {
-      await step.run("create-review-task", async () => {
+      const triaged = await step.run("triage-proposal", async () => {
         const redis = getRedis();
-        const proposal = await readProposal(redis, proposalId);
-        if (!proposal) return;
+        const proposal = await readProposal(redis, resolvedProposalId);
+        if (!proposal) {
+          return {
+            action: "auto-reject" as const,
+            reason: "proposal missing in redis",
+            mergeWith: undefined,
+          };
+        }
 
-        const taskAdapter = new TodoistTaskAdapter();
-        const summary = proposal.change.replace(/\s+/gu, " ").trim().slice(0, 90);
-        await taskAdapter.createTask({
-          content: `Memory: ${proposal.section} — ${summary}`,
-          description: [
-            `Proposal: ${proposalId}`,
-            `Section: ${proposal.section}`,
-            `Change: ${proposal.change}`,
-          ].join("\n"),
-          labels: ["memory-review", "agent"],
-          projectId: "Agent Work",
+        const memoryText = await Bun.file(getMemoryPath()).text();
+        const pending = await loadPendingProposals(redis, resolvedProposalId);
+        const result = triageProposal(proposal, memoryText, pending);
+
+        if (result.action === "auto-promote") {
+          // Don't append raw text — queue for LLM batch review (ADR-0068).
+          // Sonnet reviews proposals against current MEMORY.md and outputs clean entries.
+          const LLM_PENDING_KEY = "memory:review:llm-pending";
+          await redis.rpush(LLM_PENDING_KEY, proposal.id);
+          // Reclassify as llm-pending so downstream knows the path
+          return {
+            action: "llm-pending" as const,
+            reason: result.reason + " — queued for LLM batch review",
+            mergeWith: undefined,
+          };
+        } else if (result.action === "auto-reject") {
+          await deleteProposal(redis, proposal.id);
+        } else if (result.action === "auto-merge") {
+          const mergeTargetId = result.mergeWith;
+          if (!mergeTargetId) {
+            return {
+              action: "needs-review" as const,
+              reason: "auto-merge target missing; requires manual review",
+              mergeWith: undefined,
+            };
+          }
+
+          const target = await readProposal(redis, mergeTargetId);
+          if (!target) {
+            return {
+              action: "needs-review" as const,
+              reason: `merge target ${mergeTargetId} missing; requires manual review`,
+              mergeWith: undefined,
+            };
+          }
+
+          const merged: Proposal = {
+            ...target,
+            change: mergeChanges(target.change, proposal.change),
+            timestamp: target.timestamp ?? proposal.timestamp,
+            source: target.source ?? proposal.source,
+          };
+
+          await writeProposal(redis, merged);
+          await deleteProposal(redis, proposal.id);
+        }
+
+        return result;
+      });
+
+      console.log(`[memory/proposal-triage] ${proposalId} -> ${triaged.action}: ${triaged.reason}`);
+
+      // Only create Todoist task for proposals that need human review.
+      // Auto-promoted and auto-rejected proposals don't need tasks.
+      // This prevents 50+ junk tasks per compaction from instruction-text artifacts.
+      if (triaged.action === "needs-review") {
+        await step.run("create-review-task", async () => {
+          const redis = getRedis();
+          const proposal = await readProposal(redis, resolvedProposalId);
+          if (!proposal) return;
+
+          const taskAdapter = new TodoistTaskAdapter();
+          const summary = proposal.change.replace(/\s+/gu, " ").trim().slice(0, 90);
+          await taskAdapter.createTask({
+            content: `Memory: ${proposal.section} — ${summary}`,
+            description: [
+              `Proposal: ${proposalId}`,
+              `Section: ${proposal.section}`,
+              `Change: ${proposal.change}`,
+            ].join("\n"),
+            labels: ["memory-review", "agent"],
+            projectId: "Agent Work",
+          });
+        });
+      }
+
+      const triagedMergeWith = "mergeWith" in triaged ? triaged.mergeWith : undefined;
+
+      await step.sendEvent("emit-triage-result", {
+        name: "memory/proposal.triaged",
+        data: {
+          proposalId: resolvedProposalId,
+          action: triaged.action,
+          reason: triaged.reason,
+          mergeWith: triagedMergeWith,
+          triagedAt: new Date().toISOString(),
+        },
+      });
+
+      const result = {
+        proposalId: resolvedProposalId,
+        ...triaged,
+      };
+
+      await step.run("otel-proposal-triage-completed", async () => {
+        await emitOtelEvent({
+          level: "info",
+          source: "worker",
+          component: "proposal-triage",
+          action: "proposal-triage.completed",
+          success: true,
+          duration_ms: Date.now() - startedAt,
+          metadata: {
+            eventId,
+            proposalId,
+            proposalCount: 1,
+            action: triaged.action,
+            mergeWith: triagedMergeWith ?? null,
+          },
         });
       });
+
+      return result;
+    } catch (error) {
+      await step.run("otel-proposal-triage-failed", async () => {
+        await emitOtelEvent({
+          level: "error",
+          source: "worker",
+          component: "proposal-triage",
+          action: "proposal-triage.failed",
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+          duration_ms: Date.now() - startedAt,
+          metadata: {
+            eventId,
+            proposalId,
+            proposalCount: proposalId ? 1 : 0,
+          },
+        });
+      });
+      throw error;
     }
-
-    await step.sendEvent("emit-triage-result", {
-      name: "memory/proposal.triaged",
-      data: {
-        proposalId,
-        action: triaged.action,
-        reason: triaged.reason,
-        mergeWith: triaged.mergeWith,
-        triagedAt: new Date().toISOString(),
-      },
-    });
-
-    return {
-      proposalId,
-      ...triaged,
-    };
   }
 );

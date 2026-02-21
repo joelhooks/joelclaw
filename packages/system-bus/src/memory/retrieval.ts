@@ -1,6 +1,6 @@
 /**
  * Memory retrieval utilities — ADR-0077 Increment 1
- * Score decay and inject cap for Qdrant search results.
+ * Score decay and inject cap for semantic search results.
  */
 
 /** Decay constant: 0.01 means a fact from 70 days ago gets ~50% weight */
@@ -32,7 +32,7 @@ export function applyScoreDecay<T extends ScoredResult>(
   now: Date = new Date(),
 ): (T & { decayedScore: number })[] {
   return results.map((r) => {
-    // Qdrant points store ISO timestamp in `timestamp` field (set by observe.ts)
+    // Memory observations store ISO timestamp in `timestamp` field (set by observe.ts)
     const createdAt = r.payload?.timestamp
       ? new Date(r.payload.timestamp as string)
       : now;

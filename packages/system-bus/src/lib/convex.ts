@@ -79,6 +79,18 @@ export async function removeVaultNotes(paths: string[]) {
   }
 }
 
+/** Remove arbitrary contentResources by resource id. */
+export async function removeContentResources(resourceIds: string[]) {
+  if (resourceIds.length === 0) return;
+  const client = getConvexClient();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ref = (anyApi as any).contentResources.remove as FunctionReference<"mutation">;
+
+  for (const resourceId of resourceIds) {
+    await client.mutation(ref, { resourceId });
+  }
+}
+
 /** Push a memory observation to Convex */
 export async function pushMemoryObservation(obs: {
   observationId: string;

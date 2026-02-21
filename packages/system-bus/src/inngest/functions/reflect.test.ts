@@ -181,6 +181,7 @@ beforeAll(() => {
       createdAt: new Date(),
     } satisfies Task;
   };
+
 });
 
 afterAll(() => {
@@ -331,23 +332,12 @@ describe("MEM-16 reflect acceptance tests", () => {
       },
     });
 
-    expect(todoistCreateTaskCalls).toHaveLength(2);
-    expect(todoistCreateTaskCalls[0]).toMatchObject({
-      content: "Memory: Retain strict acceptance coverage. → Constraints",
-      description: expect.stringContaining("Proposal: p-20260217-001"),
-      labels: ["memory-review", "agent"],
-      projectId: "Agent Work",
-    });
-    expect(todoistCreateTaskCalls[1]).toMatchObject({
-      content: "Memory: Prefer behavior-based assertions. → Preferences",
-      description: expect.stringContaining("Proposal: p-20260217-002"),
-      labels: ["memory-review", "agent"],
-      projectId: "Agent Work",
-    });
+    // ADR-0068: reflect stages proposals only; task creation is handled by proposal-triage.
+    expect(todoistCreateTaskCalls).toHaveLength(0);
 
   });
 
-  test("Todoist task content truncates change text to 80 characters", async () => {
+  test("reflect does not create Todoist tasks while staging long proposal text", async () => {
     redisLists.set("memory:observations:2026-02-17", [
       JSON.stringify({ summary: "Verify truncation behavior." }),
     ]);
@@ -365,15 +355,12 @@ describe("MEM-16 reflect acceptance tests", () => {
 
     await executeReflect("2026-02-17");
 
-    expect(todoistCreateTaskCalls).toHaveLength(1);
-    expect(todoistCreateTaskCalls[0]).toMatchObject({
-      content: `Memory: ${"A".repeat(80)} → Patterns`,
-      labels: ["memory-review", "agent"],
-      projectId: "Agent Work",
+    expect(todoistCreateTaskCalls).toHaveLength(0);
+    const staged = redisHashes.get("memory:review:proposal:p-20260217-001") ?? {};
+    expect(staged).toMatchObject({
+      section: "Patterns",
+      change: longChange,
     });
-    expect(todoistCreateTaskCalls[0]?.description?.split("\n")[0]).toBe(
-      "Proposal: p-20260217-001"
-    );
   });
 
   test("running reflect twice on the same day appends at most one Reflected daily-log entry", async () => {
