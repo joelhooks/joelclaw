@@ -21,6 +21,8 @@ import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands
 import { TRIPWIRE_PATH, startHeartbeatRunner } from "./heartbeat";
 import { init as initMessageStore, trimOld } from "./message-store";
 import { emitGatewayOtel } from "./observability";
+import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
+import { registerChannel, routeResponse } from "./outbound/router";
 
 const HOME = homedir();
 const AGENT_DIR = join(HOME, ".pi/agent");
@@ -84,6 +86,23 @@ function describeModel(model: unknown): string {
   return `${provider}/${id}`;
 }
 
+function normalizeOutboundMessage(message: OutboundEnvelope | string): OutboundEnvelope {
+  return typeof message === "string" ? createEnvelope(message) : message;
+}
+
+function shouldForwardToTelegram(text: string): boolean {
+  const trimmed = text.trim();
+  const lower = trimmed.toLowerCase();
+
+  const isHeartbeatOk = trimmed === "HEARTBEAT_OK"
+    || (trimmed.includes("HEARTBEAT_OK") && trimmed.length < 300);
+  const isTrivial = trimmed.length < 80;
+  const isEcho = lower === "echo." || lower === "echo"
+    || lower.startsWith("echo.") || lower.startsWith("completion echo");
+
+  return !isHeartbeatOk && !isTrivial && !isEcho;
+}
+
 mkdirSync(GATEWAY_SESSION_DIR, { recursive: true });
 
 // Always resume the existing session — context continuity is critical.
@@ -137,6 +156,45 @@ const channelInfo = {
   console: true,
   telegram: Boolean(TELEGRAM_TOKEN && TELEGRAM_USER_ID),
 };
+
+registerChannel("console", {
+  send: async (message, context) => {
+    const envelope = normalizeOutboundMessage(message);
+    if (!TELEGRAM_TOKEN || !TELEGRAM_USER_ID) return;
+    if (context?.source?.startsWith("telegram:")) return;
+    if (!shouldForwardToTelegram(envelope.text)) return;
+
+    try {
+      await sendTelegram(TELEGRAM_USER_ID, envelope.text, {
+        buttons: envelope.buttons,
+        silent: envelope.silent,
+        replyTo: envelope.replyTo,
+      });
+    } catch (error) {
+      console.error("[gateway] telegram notification failed", { error: String(error) });
+    }
+  },
+});
+
+if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
+  registerChannel("telegram", {
+    send: async (message, context) => {
+      const envelope = normalizeOutboundMessage(message);
+      const chatId = context?.source ? parseChatId(context.source) ?? TELEGRAM_USER_ID : TELEGRAM_USER_ID;
+      if (!chatId) return;
+
+      try {
+        await sendTelegram(chatId, envelope.text, {
+          buttons: envelope.buttons,
+          silent: envelope.silent,
+          replyTo: envelope.replyTo,
+        });
+      } catch (error) {
+        console.error("[gateway] telegram send failed", { error: String(error) });
+      }
+    },
+  });
+}
 
 type WsServerMessage =
   | { type: "text_delta"; delta: string }
@@ -302,48 +360,17 @@ session.subscribe((event: any) => {
 
     const source = getCurrentSource() ?? "console";
     console.log("[gateway] response ready", { source, length: fullText.length });
-
-    // Route to Telegram if source is telegram:*
-    if (source.startsWith("telegram:") && TELEGRAM_TOKEN) {
-      const chatId = parseChatId(source) ?? TELEGRAM_USER_ID;
-      if (chatId) {
-        sendTelegram(chatId, fullText).catch((e: any) =>
-          console.error("[gateway] telegram send failed", { error: e.message })
-        );
-      }
-    } else {
-      // Console channel — log
-      console.log("[gateway] assistant:", fullText.slice(0, 200));
-
-      // Forward non-telegram responses to Telegram as proactive notifications (ADR-0069)
-      // Filter: skip noise, only forward actionable/substantial content
-      if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
-        const trimmed = fullText.trim();
-        const lower = trimmed.toLowerCase();
-
-        // Skip heartbeat OKs
-        const isHeartbeatOk = trimmed === "HEARTBEAT_OK"
-          || (trimmed.includes("HEARTBEAT_OK") && trimmed.length < 300);
-
-        // Skip trivial acknowledgments (Echo., Archived., etc.)
-        const isTrivial = trimmed.length < 80;
-
-        // Skip completion echo responses (agent just says "echo" to its own task closes)
-        const isEcho = lower === "echo." || lower === "echo"
-          || lower.startsWith("echo.") || lower.startsWith("completion echo");
-
-        const shouldForward = !isHeartbeatOk && !isTrivial && !isEcho;
-
-        if (shouldForward) {
-          sendTelegram(TELEGRAM_USER_ID, fullText).catch((e: any) =>
-            console.error("[gateway] telegram notification failed", { error: e.message })
-          );
-        }
-      }
-    }
+    routeResponse(source, fullText);
   }
 
   if (event.type === "tool_call") {
+    if (event.toolName === "mcq") {
+      // TODO(ADR-0086/phase5): Intercept `mcq` tool execution here and route to
+      // registerMcqAdapter(...).handleMcqToolCall(...) before native tool execution.
+      // Current event subscription is post-hoc; actual interception must hook the
+      // pi session tool executor so the tool call is suspended until Telegram input resolves.
+    }
+
     broadcastWs({
       type: "tool_call",
       id: event.toolCallId,

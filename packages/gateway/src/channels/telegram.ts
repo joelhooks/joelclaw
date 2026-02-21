@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { extname } from "node:path";
 import { Bot, InputFile } from "grammy";
 import type { EnqueueFn } from "./redis";
+import type { OutboundEnvelope } from "../outbound/envelope";
 import { enrichPromptWithVaultContext } from "../vault-read";
 import { emitGatewayOtel } from "../observability";
 
@@ -38,6 +39,34 @@ export interface RichSendOptions {
 
 export type TelegramStartOptions = {
   configureBot?: (bot: Bot) => void | Promise<void>;
+}
+
+function resolveSendInput(
+  message: string | OutboundEnvelope,
+  options?: RichSendOptions,
+): { text: string; options?: RichSendOptions; format?: OutboundEnvelope["format"] } {
+  if (typeof message === "string") {
+    return { text: message, options };
+  }
+
+  const mergedOptions: RichSendOptions = {
+    ...(message.replyTo !== undefined ? { replyTo: message.replyTo } : {}),
+    ...(message.buttons ? { buttons: message.buttons } : {}),
+    ...(message.silent !== undefined ? { silent: message.silent } : {}),
+    ...(options ?? {}),
+  };
+
+  return {
+    text: message.text,
+    options: mergedOptions,
+    format: message.format,
+  };
+}
+
+function formatByEnvelope(text: string, format: OutboundEnvelope["format"] | undefined): string {
+  if (format === "html") return text;
+  if (format === "plain") return escapeHtml(text);
+  return mdToTelegramHtml(text);
 }
 
 // Human-readable labels shown after button press
@@ -744,7 +773,7 @@ export async function start(
  */
 export async function send(
   chatId: number,
-  message: string,
+  message: string | OutboundEnvelope,
   options?: RichSendOptions,
 ): Promise<void> {
   if (!bot) {
@@ -766,10 +795,14 @@ export async function send(
     // non-critical
   }
 
+  const sendInput = resolveSendInput(message, options);
+  const text = sendInput.text;
+  const mergedOptions = sendInput.options;
+
   // Build inline keyboard if buttons provided
-  const replyMarkup = options?.buttons
+  const replyMarkup = mergedOptions?.buttons
     ? {
-        inline_keyboard: options.buttons.map(row =>
+        inline_keyboard: mergedOptions.buttons.map(row =>
           row.map(btn => btn.url
             ? { text: btn.text, url: btn.url }
             : { text: btn.text, callback_data: btn.action ?? btn.text }
@@ -778,7 +811,7 @@ export async function send(
       }
     : undefined;
 
-  const html = mdToTelegramHtml(message);
+  const html = formatByEnvelope(text, sendInput.format);
   const chunks = chunkMessage(html);
 
   for (let i = 0; i < chunks.length; i++) {
@@ -791,9 +824,9 @@ export async function send(
         parse_mode: "HTML",
         // Only attach buttons to the last chunk
         ...(isLast && replyMarkup ? { reply_markup: replyMarkup } : {}),
-        ...(options?.replyTo ? { reply_parameters: { message_id: options.replyTo } } : {}),
-        ...(options?.silent ? { disable_notification: true } : {}),
-        ...(options?.noPreview ? { link_preview_options: { is_disabled: true } } : {}),
+        ...(mergedOptions?.replyTo ? { reply_parameters: { message_id: mergedOptions.replyTo } } : {}),
+        ...(mergedOptions?.silent ? { disable_notification: true } : {}),
+        ...(mergedOptions?.noPreview ? { link_preview_options: { is_disabled: true } } : {}),
       });
     } catch (error) {
       // Fallback: send as plain text if HTML parsing fails
@@ -807,9 +840,9 @@ export async function send(
         metadata: { chatId },
       });
       try {
-        await bot.api.sendMessage(chatId, message.slice(0, CHUNK_MAX), {
-          ...(options?.replyTo ? { reply_parameters: { message_id: options.replyTo } } : {}),
-          ...(options?.silent ? { disable_notification: true } : {}),
+        await bot.api.sendMessage(chatId, text.slice(0, CHUNK_MAX), {
+          ...(mergedOptions?.replyTo ? { reply_parameters: { message_id: mergedOptions.replyTo } } : {}),
+          ...(mergedOptions?.silent ? { disable_notification: true } : {}),
           ...(isLast && replyMarkup ? { reply_markup: replyMarkup } : {}),
         });
       } catch (fallbackError) {
@@ -834,7 +867,7 @@ export async function send(
     metadata: {
       chatId,
       chunks: chunks.length,
-      length: message.length,
+      length: text.length,
     },
   });
 }

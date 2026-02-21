@@ -1,3 +1,7 @@
+import type { InlineButton } from "../channels/telegram";
+import { applyFormatRules } from "./format";
+import { createEnvelope, type OutboundEnvelope } from "./envelope";
+
 // Lazy reference to avoid static import binding pollution across test files.
 // Updated at wireSession() call time via re-import so mock.module() takes effect.
 let _commandQueueModule: { getCurrentSource?: () => string | undefined } = {};
@@ -47,14 +51,19 @@ type SessionLike = {
   subscribe: (listener: (event: any) => unknown) => unknown;
 };
 
+export type OutboundChannelContext = {
+  source?: string;
+  buttons?: InlineButton[][];
+};
+
 export type OutboundChannelHandler = {
-  send: (message: string, context?: { source?: string }) => unknown | Promise<unknown>;
+  send: (message: OutboundEnvelope | string, context?: OutboundChannelContext) => unknown | Promise<unknown>;
 };
 
 const channels = new Map<string, OutboundChannelHandler>();
 
-function consoleSend(message: string): void {
-  console.log(message);
+function consoleSend(message: OutboundEnvelope | string): void {
+  console.log(typeof message === "string" ? message : message.text);
 }
 
 function ensureDefaultChannels(): void {
@@ -68,7 +77,7 @@ ensureDefaultChannels();
 export function registerChannel(id: string, handler: OutboundChannelHandler): void {
   if (id === "console") {
     channels.set(id, {
-      send: (message: string, context?: { source?: string }) => {
+      send: (message: OutboundEnvelope | string, context?: OutboundChannelContext) => {
         consoleSend(message);
         return handler.send(message, context);
       },
@@ -109,9 +118,50 @@ function reportSendError(source: string, error: unknown): void {
   });
 }
 
-function routeResponse(source: string, message: string): void {
-  if (!message.trim()) return;
-  if (filterHeartbeatResponse(message, { source })) return;
+function mergeButtons(
+  existing?: InlineButton[][],
+  injected?: InlineButton[][],
+): InlineButton[][] | undefined {
+  if (!existing && !injected) return undefined;
+  if (!existing) return injected?.map((row) => [...row]);
+  if (!injected) return existing.map((row) => [...row]);
+  return [...existing.map((row) => [...row]), ...injected.map((row) => [...row])];
+}
+
+function normalizeMessage(
+  message: OutboundEnvelope | string,
+  context?: OutboundChannelContext,
+): OutboundEnvelope {
+  const base = typeof message === "string" ? createEnvelope(message) : message;
+  const formatted = applyFormatRules(base.text);
+  const mergedButtons = mergeButtons(base.buttons ?? context?.buttons, formatted.buttons);
+
+  if (!mergedButtons) {
+    return {
+      ...base,
+      text: formatted.text,
+    };
+  }
+
+  return {
+    ...base,
+    text: formatted.text,
+    buttons: mergedButtons,
+  };
+}
+
+function isStringCompatible(envelope: OutboundEnvelope): boolean {
+  return !envelope.buttons && envelope.silent === undefined && envelope.replyTo === undefined && envelope.format === undefined;
+}
+
+export function routeResponse(
+  source: string,
+  message: OutboundEnvelope | string,
+  context?: OutboundChannelContext,
+): void {
+  const normalized = normalizeMessage(message, context);
+  if (!normalized.text.trim()) return;
+  if (filterHeartbeatResponse(normalized.text, { source })) return;
 
   ensureDefaultChannels();
 
@@ -124,8 +174,15 @@ function routeResponse(source: string, message: string): void {
   if (!target) target = channels.get("console");
   if (!target) return;
 
+  const payload: OutboundEnvelope | string = isStringCompatible(normalized)
+    ? normalized.text
+    : normalized;
+
   try {
-    const maybePromise = target.send(message, { source });
+    const maybePromise = target.send(payload, {
+      source,
+      buttons: normalized.buttons,
+    });
     if (maybePromise && typeof (maybePromise as PromiseLike<unknown>).then === "function") {
       void (maybePromise as PromiseLike<unknown>).then(undefined, (error: unknown) => {
         reportSendError(source, error);
