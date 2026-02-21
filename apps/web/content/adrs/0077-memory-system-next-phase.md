@@ -1,6 +1,6 @@
 ---
 type: adr
-status: proposed
+status: implementing
 date: 2026-02-20
 tags: [adr, memory, architecture]
 deciders: [joel]
@@ -12,6 +12,46 @@ supersedes: []
 ## Status
 
 implementing
+
+## Audit (2026-02-21)
+
+Deep code audit revealed significant gaps between what was claimed and what's wired:
+
+### Actually Working
+- Observer triple-writes (Qdrant + Typesense + Convex + Redis + daily log)
+- Reflect → proposal staging → triage → batch review → promote pipeline
+- Friction detection + friction-fix codex agent
+- Nightly maintenance + staleness tagging (Qdrant-only)
+- Dedup at write time (Qdrant similarity check)
+
+### Critical Gaps Found
+1. **`recall` CLI does keyword search, not semantic** — no `vector_query` sent to Typesense despite auto-embedding being enabled. Typesense vectors sit unused
+2. **Score decay implemented but never called** — `applyScoreDecay`/`rankAndCap` in `retrieval.ts` are dead code
+3. **Friction + nightly maintenance still Qdrant-only** — blocks Qdrant retirement
+4. **Echo/fizzle file exists but not registered** as Inngest function
+5. **Convex dual-write silently swallows errors** — `catch(() => {})` masks failures
+6. **`memory/proposal.triaged` and `memory/friction.fix.completed` events emitted but have no consumers**
+7. **Inject cap constant exists but not enforced** in recall path
+8. **Query rewriting not started**
+
+### Qdrant Migration Status (ADR-0082)
+- Observer: writes both ✅
+- Recall: Typesense-only ✅ (but keyword-only, not semantic)
+- Friction: Qdrant-only ❌
+- Nightly maintenance: Qdrant-only ❌
+- Dedup-at-write: Qdrant-only ❌
+- **Qdrant cannot be retired until friction + nightly + dedup are ported**
+
+### Sprint (2026-02-21): Fix All Gaps
+Codex dispatched to implement all fixes in one pass:
+1. Make recall semantic (add vector_query to Typesense call)
+2. Wire score decay + inject cap into recall results
+3. Port friction from Qdrant → Typesense
+4. Port nightly maintenance from Qdrant → Typesense
+5. Port dedup-at-write from Qdrant → Typesense
+6. Register echo-fizzle as Inngest function
+7. Replace silent Convex error swallowing with logging
+8. Clean up dead event emissions
 
 ## Context
 
