@@ -155,15 +155,19 @@ Export from `src/inngest/functions/index.ts`:
 export { myProviderEventNotify } from "./my-provider-notify";
 ```
 
-Add to the `registeredFunctions` array in `src/serve.ts`:
+Add to the active role list in `src/inngest/functions/index.host.ts` (or `index.cluster.ts` for cluster-owned functions):
 
 ```typescript
-import { myProviderEventNotify } from "./inngest/functions";
-// ... in the array:
+// in src/inngest/functions/index.host.ts
+import { myProviderEventNotify } from "./my-provider-notify";
+
+export const hostFunctionDefinitions = [
+  // ...existing functions
   myProviderEventNotify,
+];
 ```
 
-Update the health endpoint's `webhooks.providers` and `events` sections in `serve.ts`.
+Update the health endpoint's `webhooks.providers` and `events` sections in `serve.ts` when introducing a new provider/event family.
 
 ## 5. Store Secrets
 
@@ -175,7 +179,7 @@ secrets add my_provider_webhook_secret --value "the-actual-secret"
 secrets add my_provider_api_token --value "the-api-token"
 ```
 
-Add to `~/Code/system-bus-worker/packages/system-bus/start.sh`:
+Add to `~/Code/joelhooks/joelclaw/packages/system-bus/start.sh`:
 
 ```bash
 MY_SECRET=$(secrets lease my_provider_webhook_secret --ttl 24h 2>/dev/null)
@@ -189,14 +193,8 @@ fi
 ## 6. Deploy
 
 ```bash
-# Sync worker clone
-cd ~/Code/system-bus-worker && git pull
-
-# Restart worker (reloads code + re-leases secrets)
-joelclaw worker restart
-
-# REQUIRED — Inngest won't trigger functions for events sent before registration
-joelclaw refresh
+# Restart + register in one command (reloads code + re-leases secrets)
+joelclaw inngest restart-worker --register
 ```
 
 ## 7. Register Webhook URL with External Service
@@ -242,7 +240,7 @@ curl -X POST http://localhost:3111/webhooks/my-provider \
   -d "$BODY"
 
 # Check Inngest received events
-joelclaw runs --limit 3
+joelclaw runs --count 3
 
 # Check gateway got the notification
 joelclaw gateway events
@@ -254,7 +252,7 @@ joelclaw gateway events
 |---------|-------|-----|
 | 401 Unauthorized | Wrong secret or encoding mismatch | Check algorithm + encoding in provider docs |
 | 404 Not Found | Provider not registered in server.ts | Add to providers Map |
-| Events arrive but no Inngest run | Function not registered in serve.ts | Add to registeredFunctions + `joelclaw refresh` |
+| Events arrive but no Inngest run | Function not registered in role list | Add to `index.host.ts` (or `index.cluster.ts`) + `joelclaw inngest restart-worker --register` |
 | Inngest runs but gateway doesn't notify | No gateway session or null check | Check `joelclaw gateway status` |
 | Webhook works locally but not from internet | Funnel not configured | `tailscale serve status` — verify :443 → :3111 |
 | Body hash doesn't match | Caddy or proxy modifying body | Route Funnel directly to worker, not through Caddy |

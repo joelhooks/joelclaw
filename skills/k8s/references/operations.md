@@ -6,8 +6,6 @@ Traffic path: `Mac:port → Lima SSH tunnel → Docker port map → Talos NodePo
 
 | Mac Port | Docker Container Port | NodePort | Service | Notes |
 |----------|----------------------|----------|---------|-------|
-| 6333 | 6333 | 6333 | Qdrant HTTP | REST API + dashboard |
-| 6334 | 6334 | 6334 | Qdrant gRPC | |
 | 6379 | 6379 | 6379 | Redis | AOF, 256MB maxmem, allkeys-lru |
 | 7880 | 7880 | 7880 | LiveKit HTTP/WS | hostNetwork:true |
 | 7881 | 7881 | 7881 | LiveKit WebRTC TCP | |
@@ -54,6 +52,71 @@ kubectl get pods -n joelclaw
 curl localhost:8288/health
 ```
 
+If `kubectl` fails with `connection refused` after Colima is up, verify Talos container state and start it manually:
+
+```bash
+ssh -F ~/.colima/_lima/colima/ssh.config lima-colima \
+  "docker ps -a --format '{{.Names}}\t{{.Status}}'"
+ssh -F ~/.colima/_lima/colima/ssh.config lima-colima \
+  "docker start joelclaw-controlplane-1"
+```
+
+Then verify single-node scheduling is enabled (the control-plane taint may return after reboot):
+
+```bash
+kubectl taint nodes joelclaw-controlplane-1 \
+  node-role.kubernetes.io/control-plane:NoSchedule- || true
+```
+
+Finally, if pods are `Unknown`, restart flannel and stale pods:
+
+```bash
+kubectl get pods -n kube-system | grep kube-flannel
+kubectl logs -n kube-system <kube-flannel-pod-name> --tail=80
+ssh -F ~/.colima/_lima/colima/ssh.config lima-colima \
+  "sudo modprobe br_netfilter"
+kubectl delete pod -n kube-system <kube-flannel-pod-name>
+```
+
+For stale `Unknown` workloads in `joelclaw`, delete the pod and let the controller recreate it:
+
+```bash
+kubectl delete pod -n joelclaw <pod-name> --force --grace-period=0
+```
+
+### Reboot Hardening
+
+Ensure the Talos container restart policy is persistent in the Colima VM:
+
+```bash
+ssh -F ~/.colima/_lima/colima/ssh.config lima-colima \
+  "docker update --restart unless-stopped joelclaw-controlplane-1"
+ssh -F ~/.colima/_lima/colima/ssh.config lima-colima \
+  "docker inspect joelclaw-controlplane-1 --format '{{.HostConfig.RestartPolicy.Name}}'"
+```
+
+Expected inspect output: `unless-stopped`.
+
+Add a periodic local healer to recover common reboot races (Colima stopped, Talos stopped, taint restored, flannel unhealthy):
+
+```bash
+cp ~/Code/joelhooks/joelclaw/infra/launchd/com.joel.k8s-reboot-heal.plist \
+  ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/com.joel.k8s-reboot-heal.plist
+```
+
+Script path: `~/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh`  
+Logs: `~/.local/log/k8s-reboot-heal.log`
+
+Also set Colima launch agent to retry every 5 minutes after login:
+
+```bash
+cp ~/Code/joelhooks/joelclaw/infra/launchd/com.joel.colima.plist \
+  ~/Library/LaunchAgents/
+launchctl unload -w ~/Library/LaunchAgents/com.joel.colima.plist 2>/dev/null || true
+launchctl load -w ~/Library/LaunchAgents/com.joel.colima.plist
+```
+
 ### Flannel br_netfilter Crash
 
 Symptoms: Flannel pods crash, `stat /proc/sys/net/bridge/bridge-nf-call-iptables: no such file or directory`
@@ -97,7 +160,7 @@ talosctl cluster create docker \
   --name joelclaw \
   --cpus-controlplanes "2.0" \
   --memory-controlplanes "4GiB" \
-  --exposed-ports "6333:6333/tcp,6334:6334/tcp,6379:6379/tcp,7880:7880/tcp,7881:7881/tcp,8288:8288/tcp,8289:8289/tcp,9627:3000/tcp" \
+  --exposed-ports "6379:6379/tcp,7880:7880/tcp,7881:7881/tcp,8288:8288/tcp,8289:8289/tcp,9627:3000/tcp" \
   --workers 0 \
   --config-patch @/tmp/talos-patch.yaml \
   --subnet "10.5.0.0/24"
@@ -134,14 +197,8 @@ kubectl label namespace joelclaw \
 # 11. Deploy core services
 kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/
 
-# 12. Deploy LiveKit (Helm)
-helm install livekit-server livekit/livekit-server \
-  -n joelclaw -f ~/Projects/livekit-spike/values-joelclaw.yaml
-kubectl patch svc livekit-server -n joelclaw --type='json' -p='[
-  {"op":"replace","path":"/spec/type","value":"NodePort"},
-  {"op":"replace","path":"/spec/ports/0/nodePort","value":7880},
-  {"op":"replace","path":"/spec/ports/1/nodePort","value":7881}
-]'
+# 12. Deploy LiveKit (Helm + reconcile patches)
+~/Code/joelhooks/joelclaw/k8s/reconcile-livekit.sh joelclaw
 
 # 13. Deploy PDS (Helm) — NodePort MUST be 3000
 helm install bluesky-pds nerkho/bluesky-pds \
@@ -163,7 +220,6 @@ TLS certs: `~/.local/certs/panda.tail7af24.ts.net.{crt,key}`
 | `https://panda.tail7af24.ts.net:9443` | Inngest dashboard (8288) |
 | `https://panda.tail7af24.ts.net:8290` | Inngest WS connect (8289) |
 | `https://panda.tail7af24.ts.net:3443` | Worker (3111) |
-| `https://panda.tail7af24.ts.net:6443` | Qdrant (6333) |
 | `panda.tail7af24.ts.net:6379` | Redis (direct TCP, no TLS) |
 | `https://panda.tail7af24.ts.net:7443` | LiveKit WSS signaling (7880) |
 | `http://localhost:8443` | Funnel webhook gateway → worker/inngest |
@@ -212,7 +268,7 @@ livekit  https://helm.livekit.io     # LiveKit server
 |-------|---------|------|
 | `com.joel.colima` | Colima VM | — |
 | `com.joel.system-bus-worker` | Inngest worker | 3111 |
-| `com.joel.caddy` | HTTPS proxy | 443/8290/3443/6443/8443 |
+| `com.joel.caddy` | HTTPS proxy | 443/8290/3443/8443 |
 | `com.joel.gateway` | Pi gateway daemon | — (Redis pub/sub) |
 
 ## Known Issues
@@ -225,4 +281,22 @@ livekit  https://helm.livekit.io     # LiveKit server
 
 4. **No metrics-server** — `kubectl top` doesn't work. Install if needed: `kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml`.
 
-5. **`serveHost` in serve.ts** — Worker has `serveHost: "http://host.docker.internal:3111"` in `~/Code/system-bus-worker/packages/system-bus/src/serve.ts`. Stale from Docker Compose era. Works because worker uses connect mode (outbound to Inngest at `localhost:8288`), but should be cleaned up.
+5. **`serveHost` in serve.ts** — Host worker may use `INNGEST_SERVE_HOST=http://host.docker.internal:3111` for Docker callback compatibility, but cluster worker should leave `INNGEST_SERVE_HOST` unset/empty in connect mode.
+
+6. **Control-plane taint can reappear after reboot** — Single-node workloads may remain `Pending` with `untolerated taint(s)` until `node-role.kubernetes.io/control-plane:NoSchedule` is removed again.
+
+7. **LiveKit hostNetwork probe target** — With `hostNetwork: true`, probing pod IP (`10.5.0.2`) can fail even while LiveKit serves on `127.0.0.1:7880`, causing CrashLoopBackOff (`exit code 0`, then kubelet SIGTERM on failed liveness/startup checks). Keep probe host pinned to loopback and use `Recreate` strategy for single-node hostPort scheduling:
+
+```bash
+kubectl patch deployment livekit-server -n joelclaw --type='strategic' -p '{
+  "spec":{
+    "strategy":{"type":"Recreate"},
+    "template":{"spec":{"containers":[{"name":"livekit-server",
+      "startupProbe":{"httpGet":{"host":"127.0.0.1","path":"/","port":"http","scheme":"HTTP"}},
+      "livenessProbe":{"httpGet":{"host":"127.0.0.1","path":"/","port":"http","scheme":"HTTP"}},
+      "readinessProbe":{"httpGet":{"host":"127.0.0.1","path":"/","port":"http","scheme":"HTTP"}}
+    }]}}
+  }
+}'
+kubectl rollout restart deployment/livekit-server -n joelclaw
+```

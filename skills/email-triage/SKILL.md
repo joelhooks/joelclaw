@@ -1,6 +1,10 @@
 ---
 name: email-triage
+displayName: Email Triage
 description: "Triage Joel's email inboxes via the joelclaw email CLI. Scan, categorize, archive noise, surface actionable items, and draft replies. Use when: 'check my email', 'scan inbox', 'triage email', 'what needs a reply', 'clean up inbox', 'archive junk', 'email summary', 'anything important in email', or any request involving email inbox review or cleanup."
+version: 1.0.0
+author: Joel Hooks
+tags: [joelclaw, email, triage, inbox, front]
 ---
 
 # Email Triage

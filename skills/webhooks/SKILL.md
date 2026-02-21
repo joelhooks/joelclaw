@@ -1,6 +1,10 @@
 ---
 name: webhooks
+displayName: Webhooks
 description: "Add, debug, and manage webhook providers in the joelclaw webhook gateway. Use when: adding a new webhook integration (GitHub, Stripe, Vercel, etc.), debugging webhook signature failures, checking webhook delivery, testing webhook endpoints, registering webhooks with external services, or reviewing webhook provider implementations. Triggers on: 'add a webhook', 'new webhook provider', 'webhook not working', 'webhook signature failed', 'register webhook', 'webhook debug', 'verify webhook', 'add Vercel/GitHub/Stripe webhook', 'webhook 401', 'test webhook endpoint', or any external service webhook integration task."
+version: 1.0.0
+author: Joel Hooks
+tags: [joelclaw, webhooks, integrations, signatures, inngest]
 ---
 
 # Webhook Gateway Operations
@@ -15,7 +19,7 @@ External Service → Tailscale Funnel :443 → Worker :3111 → /webhooks/:provi
 ```
 
 - **ADR-0048**: Webhook Gateway for External Service Integration
-- **Gateway-comms skill**: How Inngest functions notify the gateway session
+- **Gateway skill**: Use `gateway push`/`gateway test` patterns for delivery checks
 
 ## Current Providers
 
@@ -24,6 +28,7 @@ External Service → Tailscale Funnel :443 → Worker :3111 → /webhooks/:provi
 | todoist | comment.added, task.completed, task.created | HMAC-SHA256 (`x-todoist-hmac-sha256`) | `https://panda.tail7af24.ts.net/webhooks/todoist` |
 | front | message.received, message.sent, assignee.changed | HMAC-SHA1 (`x-front-signature`) | `https://panda.tail7af24.ts.net/webhooks/front` |
 | vercel | deploy.succeeded, deploy.error, deploy.created, deploy.canceled | HMAC-SHA1 (`x-vercel-signature`) | `https://panda.tail7af24.ts.net/webhooks/vercel` |
+| github | workflow_run.completed, package.published | HMAC-SHA256 (`x-hub-signature-256`) | `https://panda.tail7af24.ts.net/webhooks/github` |
 
 ## Adding a New Provider
 
@@ -33,9 +38,9 @@ See [references/new-provider-checklist.md](references/new-provider-checklist.md)
 1. Create `providers/{name}.ts` implementing `WebhookProvider` interface
 2. Register in `server.ts` provider map
 3. Create Inngest notify function(s) in `functions/{name}-notify.ts`
-4. Export from `functions/index.ts` and register in `serve.ts`
+4. Export from `functions/index.ts` and add to `functions/index.host.ts` (or `index.cluster.ts` when cluster-owned)
 5. Store webhook secret in `agent-secrets` → add lease to `start.sh`
-6. Deploy: `joelclaw worker restart && joelclaw refresh`
+6. Deploy: `joelclaw inngest restart-worker --register`
 7. Register webhook URL with external service
 8. Verify E2E with `curl` + real webhook
 
@@ -48,8 +53,10 @@ See [references/new-provider-checklist.md](references/new-provider-checklist.md)
 | `packages/system-bus/src/webhooks/providers/` | Provider implementations (one file per service) |
 | `packages/system-bus/src/inngest/functions/*-notify.ts` | Gateway notification functions per provider |
 | `packages/system-bus/src/inngest/functions/index.ts` | Function exports barrel |
-| `packages/system-bus/src/serve.ts` | Function registration + health endpoint |
-| `~/Code/system-bus-worker/packages/system-bus/start.sh` | Secret leasing on worker startup |
+| `packages/system-bus/src/inngest/functions/index.host.ts` | Host worker function registration (current active role) |
+| `packages/system-bus/src/inngest/functions/index.cluster.ts` | Cluster worker function registration (future/role split) |
+| `packages/system-bus/src/serve.ts` | Worker role selection + health endpoint + webhook provider list |
+| `~/Code/joelhooks/joelclaw/packages/system-bus/start.sh` | Secret leasing on host worker startup |
 
 ## Debugging Webhooks
 
@@ -57,7 +64,7 @@ See [references/new-provider-checklist.md](references/new-provider-checklist.md)
 
 ```bash
 # Watch worker logs
-docker logs -f inngest-worker 2>&1 | grep webhooks
+joelclaw logs worker --follow --grep webhook
 
 # Or directly
 curl -s http://localhost:3111/ | jq .webhooks
@@ -86,7 +93,7 @@ Common failures:
 ### Check Inngest received events
 
 ```bash
-joelclaw runs --limit 5
+joelclaw runs --count 5
 # Look for vercel-deploy-*, todoist-*, front-* function runs
 ```
 
@@ -147,7 +154,7 @@ Rules webhooks scope to specific inboxes at the rule layer.
 ## Gotchas
 
 - **Caddy drops Funnel POST bodies** — Point Tailscale Funnel directly at worker `:3111`, not through Caddy
-- **`joelclaw refresh` after deploy** — Inngest won't trigger new functions until registered
+- **`joelclaw inngest restart-worker --register` after deploy** — ensures restart + registration in one step
 - **Vercel webhooks are Pro/Enterprise only** — free plans cannot create account-level webhooks
 - **Front has TWO webhook types** — App-level (SHA256, challenges) vs Rules-based (SHA1, no challenges). We use Rules-based
 - **agent-secrets v0.5.0+** — raw output is default, don't pass `--raw` flag

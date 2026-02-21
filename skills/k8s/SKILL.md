@@ -1,5 +1,6 @@
 ---
 name: k8s
+displayName: K8s
 description: >-
   Operate the joelclaw Kubernetes cluster — Talos Linux on Colima (Mac Mini).
   Deploy services, check health, debug pods, recover from restarts, add ports,
@@ -9,6 +10,9 @@ description: >-
   'cluster not working', 'add a port', 'PVC', 'storage', any k8s/Talos/Colima
   infrastructure task. Also triggers on service-specific deploy: 'deploy redis',
   'redeploy inngest', 'livekit helm', 'pds not responding'.
+version: 1.0.0
+author: Joel Hooks
+tags: [joelclaw, kubernetes, talos, colima, infrastructure]
 ---
 
 # k8s Cluster Operations — joelclaw on Talos
@@ -33,7 +37,6 @@ For port mappings, recovery procedures, and cluster recreation steps, read [refe
 kubectl get pods -n joelclaw                          # all pods
 curl -s localhost:7880/                                # LiveKit → "OK"
 curl -s localhost:8288/health                          # Inngest → {"status":200}
-curl -s localhost:6333/healthz                         # Qdrant
 curl -s localhost:9627/xrpc/_health                    # PDS → {"version":"..."}
 kubectl exec -n joelclaw redis-0 -- redis-cli ping     # → PONG
 ```
@@ -43,7 +46,7 @@ kubectl exec -n joelclaw redis-0 -- redis-cli ping     # → PONG
 | Service | Type | Pod | Ports (Mac→NodePort) | Helm? |
 |---------|------|-----|---------------------|-------|
 | Redis | StatefulSet | redis-0 | 6379→6379 | No |
-| Qdrant | StatefulSet | qdrant-0 | 6333→6333, 6334→6334 | No |
+| Typesense | StatefulSet | typesense-0 | 8108→8108 | No |
 | Inngest | StatefulSet | inngest-0 | 8288→8288, 8289→8289 | No |
 | LiveKit | Deployment | livekit-server-* | 7880→7880, 7881→7881 | Yes (livekit/livekit-server 1.9.0) |
 | PDS | Deployment | bluesky-pds-* | 9627→**3000** | Yes (nerkho/bluesky-pds 0.4.2) |
@@ -55,25 +58,33 @@ kubectl exec -n joelclaw redis-0 -- redis-cli ping     # → PONG
 ## Deploy Commands
 
 ```bash
-# Manifests (redis, qdrant, inngest)
+# Manifests (redis, typesense, inngest)
 kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/
 
-# LiveKit (Helm)
-helm upgrade --install livekit-server livekit/livekit-server \
-  -n joelclaw -f ~/Projects/livekit-spike/values-joelclaw.yaml
-# Then patch NodePort if fresh install:
-kubectl patch svc livekit-server -n joelclaw --type='json' -p='[
-  {"op":"replace","path":"/spec/type","value":"NodePort"},
-  {"op":"replace","path":"/spec/ports/0/nodePort","value":7880},
-  {"op":"replace","path":"/spec/ports/1/nodePort","value":7881}
-]'
+# system-bus worker (build + push GHCR + apply + rollout wait)
+~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh
+
+# LiveKit (Helm + reconcile patches)
+~/Code/joelhooks/joelclaw/k8s/reconcile-livekit.sh joelclaw
 
 # PDS (Helm) — always patch NodePort to 3000
+# (export current values first if the release already exists)
+helm get values bluesky-pds -n joelclaw > /tmp/pds-values-live.yaml 2>/dev/null || true
 helm upgrade --install bluesky-pds nerkho/bluesky-pds \
-  -n joelclaw -f ~/Projects/livekit-spike/k8s-backup/pds-values-live.yaml
+  -n joelclaw -f /tmp/pds-values-live.yaml
 kubectl patch svc bluesky-pds -n joelclaw --type='json' \
   -p='[{"op":"replace","path":"/spec/ports/0/nodePort","value":3000}]'
 ```
+
+## Auto Deploy (GitHub Actions)
+
+- Workflow: `.github/workflows/system-bus-worker-deploy.yml`
+- Trigger: push to `main` touching `packages/system-bus/**` or worker deploy files
+- Behavior:
+  - builds/pushes `ghcr.io/joelhooks/system-bus-worker:${GITHUB_SHA}` + `:latest`
+  - runs deploy job on `self-hosted` runner
+  - updates k8s deployment image + waits for rollout + probes worker health
+- If deploy job is queued forever, check that a `self-hosted` runner is online on the Mac Mini.
 
 ## Danger Zones
 
@@ -86,8 +97,12 @@ kubectl patch svc bluesky-pds -n joelclaw --type='json' \
 | Path | What |
 |------|------|
 | `~/Code/joelhooks/joelclaw/k8s/*.yaml` | Service manifests |
-| `~/Projects/livekit-spike/values-joelclaw.yaml` | LiveKit Helm values |
-| `~/Projects/livekit-spike/CLUSTER.md` | Cluster creation notes |
+| `~/Code/joelhooks/joelclaw/k8s/livekit-values.yaml` | LiveKit Helm values (source controlled) |
+| `~/Code/joelhooks/joelclaw/k8s/reconcile-livekit.sh` | LiveKit Helm deploy + post-upgrade reconcile |
+| `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh` | Build/push/deploy system-bus worker to k8s |
+| `~/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh` | Reboot auto-heal script for Colima/Talos/taint/flannel |
+| `~/Code/joelhooks/joelclaw/infra/launchd/com.joel.k8s-reboot-heal.plist` | launchd timer for reboot auto-heal |
+| `~/Code/joelhooks/joelclaw/skills/k8s/references/operations.md` | Cluster operations + recovery notes |
 | `~/.talos/config` | Talos client config |
 | `~/.kube/config` | Kubeconfig (context: `admin@joelclaw-1`) |
 | `~/.colima/default/colima.yaml` | Colima VM config |
