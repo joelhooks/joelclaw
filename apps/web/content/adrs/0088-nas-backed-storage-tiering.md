@@ -38,11 +38,12 @@ When the Mac Studio arrives (April 10, 2026), both machines will need shared acc
 
 ### NAS Capabilities
 
-- **Network**: 10GbE LAN (~1.2 GB/s wire speed, ~0.1-0.3ms NFS latency on LAN). Also reachable via Tailscale when off-LAN (slower, relay-dependent)
-- **Protocols**: NFS, SMB, SSH/rsync, Synology Drive
-- **Reliability**: RAID with redundancy, UPS-backed
-- **Performance**: Spinning disks, ~150-250 MB/s sequential, ~1-5ms seek for random I/O. 10GbE network is NOT the bottleneck — disk seek time is. Sequential reads/writes are excellent. Random I/O (MMAP, database pages) is the limiting factor for spinning media
-- **Implication**: With 10GbE, NFS overhead is negligible. The question is disk access pattern, not network. Sequential-heavy workloads (logs, backups, model weights, archives, large reads) perform nearly as well on NAS as local SSD. Random-I/O-heavy workloads (Typesense HNSW traversal, Redis AOF fsync) still benefit from SSD
+- **Hardware**: Asustor NAS (ADM OS, Linux-based, Docker capable)
+- **Network**: 10GbE LAN (~1.2 GB/s wire speed, ~0.1-0.3ms NFS latency). Also reachable via Tailscale when off-LAN (slower)
+- **Protocols**: NFS, SMB, SSH/rsync, iSCSI
+- **HDD tier**: 8x ~10TB RAID5 → 64TB usable, 57TB free (`/volume1`, md1). All 8 disks healthy [UUUUUUUU]. ~150-250 MB/s sequential, ~1-5ms seek
+- **NVMe tier**: 2x Seagate IronWolf ZP2000NM30002 NVMe (2TB each) — **currently unmounted and unused**. Can be configured in ADM as: (a) SSD read/write cache for HDD RAID, (b) separate NVMe volume (e.g. `/volume2` as RAID1 for ~2TB fast storage), or (c) raw block devices
+- **Implication**: NVMe volume over 10GbE ≈ 0.1ms network + SSD-speed random I/O. Fast enough for database workloads (Typesense HNSW, potentially Redis persistence). The NAS effectively becomes two tiers: NVMe for hot shared data, HDD RAID for warm/cold. Both accessible from any machine on the 10GbE LAN. This means Tier 1 workloads CAN live on NAS (on NVMe), not just Tier 2/3
 
 ## Decision
 
