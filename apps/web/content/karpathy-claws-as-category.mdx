@@ -2,7 +2,7 @@
 title: "Karpathy Says We're Building \"Claws\""
 type: "note"
 date: "2026-02-21T08:00:00"
-description: "Andrej Karpathy bought a Mac Mini to tinker with Claws. Simon Willison thinks 'Claw' is becoming a term of art. I think they're both right — and joelclaw has been one this whole time."
+description: "Andrej Karpathy bought a Mac Mini to tinker with Claws. Simon Willison thinks 'Claw' is becoming a term of art. I've been building one for a week and today I coded while driving."
 tags: ["claws", "openclaw", "terminology"]
 source: "https://simonwillison.net/2026/Feb/21/claws/"
 ---
@@ -13,57 +13,38 @@ His definition:
 
 > Just like LLM agents were a new layer on top of LLMs, Claws are now a new layer on top of LLM agents, taking the orchestration, scheduling, context, tool calls and a kind of persistence to a next level.
 
-That's... exactly what I've been building. joelclaw is a Claw by this definition and I didn't know the word existed until today.
+That's exactly what I've been building. [joelclaw](/building-my-own-openclaw) is a Claw by this definition and I didn't know the word existed until today.
 
-## The security argument for building your own
+## The machine IS the agent
+
+The thing that's fascinating about Claws is the idea of the machine as the agent. Not an agent running on a machine — the machine itself. The scope of its power is "anything you can do on a Mac," which is huge.
+
+What is it missing? Hands. It can't physically do things. I'm the hands. That's the actual interface boundary between me and joelclaw — I'm the physical layer, it's everything else.
+
+That's the ceiling, not the current reality. We're a long way from that. But it gives you a problem-solving space. It makes you think about problems differently in terms of what's possible.
+
+## Agentic clay
+
+I'm actually most excited about the [Pi harness](https://github.com/mariozechner/pi-coding-agent). It's what spawned OpenClaw and gives an agentic substrate that is moldable like clay. Agentic clay. The harness is the medium, not the product. You shape it into whatever the problem needs.
+
+Karpathy flagged NanoClaw's skills-as-configuration approach — no config files, skills teach the agent to modify its own code. Pi already does this with SKILL.md files. It's likely a mix of both in practice. joelclaw leans on both — skills for behavior, config for infrastructure. You don't want a skill teaching the agent to rewrite your Redis connection string.
+
+## Building your own vs. running OpenClaw
 
 Karpathy is blunt about OpenClaw specifically:
 
 > Giving my private data/keys to 400K lines of vibe coded monster that is being actively attacked at scale is not very appealing at all. Already seeing reports of exposed instances, RCE vulnerabilities, supply chain poisoning, malicious or compromised skills in the registry.
 
-This is why I [built my own](/building-my-own-openclaw) instead of deploying OpenClaw. When a system has access to your keys, your files, your email, your calendar — the attack surface isn't theoretical. A compromised skill in the registry can exfiltrate everything. A 400K-line codebase that grew at 6,600 commits/month is not something any human has audited.
+They'll figure it out. OpenClaw is a long way from "enterprise ready" but the concept is proven. For my own purposes, building my own Claw helps with peace of mind. More control. There's nothing to say I'm not causing my own problems — your own bugs are at least your bugs — but I know every line of joelclaw because I wrote it. Well, me and the agents.
 
-Building from scratch means I know every line. The system-bus, the gateway, the memory pipeline — I wrote it (well, me and the agents). That's not just satisfying, it's a security posture.
+Making these systems durable and secure is an interesting problem in its own right. When a system has access to your keys, your files, your email, your calendar — the attack surface isn't theoretical.
 
-## What makes a Claw a Claw
+## "Call me when it's done"
 
-Karpathy doesn't give a formal spec, but reading between the lines plus Willison's gloss, a Claw is:
+I don't anthropomorphize these things too hard. It's a machine. A robot. Karpathy describes the Mac Mini as "a physical device possessed by a little ghost of a personal digital house elf" and that's charming, but joelclaw is a tool.
 
-- **Runs on personal hardware** — Mac Mini, home server, your own metal
-- **Communicates via messaging protocols** — Telegram, WhatsApp, SMS, voice
-- **Handles both direct instructions and scheduled tasks** — you can tell it things AND it does things on its own
-- **Orchestration + persistence** — not just a chat session that forgets everything
+A tool that today let me do my first "code while I drive" session.
 
-joelclaw checks every box. [Inngest for durable workflows](/inngest-is-the-nervous-system). [Gateway daemon](/building-a-gateway-for-your-ai-agent) for messaging. Qdrant + Redis + Vault for persistence. Cron heartbeats. Voice via LiveKit SIP. Todoist as async conversation channel. It's a Claw. It's been a Claw. We just didn't have the word.
+I gave joelclaw a task via voice, told it to implement the feature, and said "call me when it's done for review and next steps." Then I drove. It coded. When it finished, it called my phone. That's crazy. That's the moment where Claws stop being a concept and start being a workflow.
 
-## Skills as configuration
-
-The NanoClaw detail that actually blew my mind: they don't use config files. Configuration is done via *skills*. `/add-telegram` instructs your AI agent how to modify the actual code to integrate Telegram. Not a YAML file. Not an environment variable. A skill that teaches the agent to fork the codebase.
-
-Karpathy calls this "a new, AI-enabled approach to preventing config mess and if-then-else monsters." The meta becomes: write the most maximally forkable repo, then have skills that fork it into any desired configuration.
-
-This is close to what [pi skills](https://github.com/mariozechner/pi-coding-agent) already do — SKILL.md files that teach the agent how to perform specialized tasks. But NanoClaw takes it further by making skills the *only* configuration mechanism. No config files at all. That's a strong opinion and I think it's mostly right.
-
-## The proliferation
-
-NanoClaw (~4,000 lines core engine, runs in containers), nanobot, zeroclaw, ironclaw, picoclaw — the prefix game is real. Plus cloud-hosted alternatives, though Karpathy doesn't love those because "it feels much harder to tinker with" and you lose local network access for home automation.
-
-The architectural pattern is clear enough that implementations are converging independently. OpenClaw proved the idea works. Whether you run their code or build your own, you end up in roughly the same place.
-
-## The "fits in your head" constraint
-
-The NanoClaw detail that stuck with me: ~4,000 lines for the core engine, which "fits into both my head and that of AI agents." That's a real design constraint worth taking seriously. joelclaw's system-bus is larger than that, but it also does more — durable workflows, [multi-phase memory](/observation-pipeline-persistent-ai-memory), multi-channel gateway, [voice agent](/voice-agent-deployment-deep-dive).
-
-The question isn't whether 4K lines is the right number. It's whether your agent can read its own source code and understand what it does. That's the bar for self-improvement. If the system is too complex for the agent to reason about, you've built a system the agent can use but never fix.
-
-joelclaw can read its own code. It regularly does — codex sessions modify the system-bus, the gateway extension, the CLI. Whether it truly *understands* the full system is a different question. But the architecture is legible enough that agents can work on it. That matters more than line count.
-
-## The name
-
-"Claw" is good. It's short, it's concrete, it implies grabbing things and doing stuff. Better than "personal AI agent system" or "OpenClaw-inspired architecture." And 🦞 is a fine emoji.
-
-Karpathy has an ear for this — he gave us "vibe coding" and "agentic engineering." Both stuck. I think "Claw" sticks too.
-
-And his best line: "there is something aesthetically pleasing about there being a physical device 'possessed' by a little ghost of a personal digital house elf."
-
-Yeah. That's joelclaw. A Mac Mini possessed by a house elf that reads my email, manages my tasks, transcribes my voice, and sometimes calls me on the phone to tell me it finished building something. 🦞
+The name is good. Short, concrete, implies grabbing things and doing stuff. Karpathy has an ear for terminology — he gave us "vibe coding" and "agentic engineering." Both stuck. I think "Claw" sticks too. 🦞
