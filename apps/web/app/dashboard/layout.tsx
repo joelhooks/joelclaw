@@ -1,26 +1,16 @@
-import { isAuthenticated, fetchAuthQuery } from "../../lib/auth-server";
-import { redirect } from "next/navigation";
+/**
+ * Dashboard layout — static shell, auth checked client-side.
+ * Full route cache: this layout is pre-rendered at build time.
+ */
 import Link from "next/link";
-import { api } from "../../convex/_generated/api";
 
-export default async function DashboardLayout({
+export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const authed = await isAuthenticated();
-  if (!authed) {
-    redirect("/signin");
-  }
-
-  // Only Joel (GitHub ID 86834) gets past this gate
-  const isOwner = await fetchAuthQuery(api.auth.isOwner);
-  if (!isOwner) {
-    redirect("/");
-  }
-
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Dashboard header */}
       <div className="flex items-center justify-between border-b border-neutral-700/50 pb-4">
         <div className="flex items-center gap-3">

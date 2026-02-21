@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import { authClient } from "../../lib/auth-client";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 // ── Section colors ──────────────────────────────────────────────
 
@@ -221,8 +223,24 @@ function NoteViewer({ path, onClose }: { path: string; onClose: () => void }) {
 // ── Main ────────────────────────────────────────────────────────
 
 export default function VaultPage() {
+  const router = useRouter();
+  const { data: session, isPending } = authClient.useSession();
+  const isOwner = useQuery(api.auth.isOwner);
   const data = useQuery(api.vaultNotes.listBySection);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+
+  // Auth gate — client-side, shell is static cached
+  if (isPending || isOwner === undefined) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-neutral-700 border-t-claw" />
+      </div>
+    );
+  }
+  if (!session?.user || !isOwner) {
+    router.replace("/");
+    return null;
+  }
 
   return (
     <div className="space-y-6">

@@ -2,6 +2,8 @@
 
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import { authClient } from "../../lib/auth-client";
+import { useRouter } from "next/navigation";
 import { useState, useCallback } from "react";
 
 // ── Status indicator ────────────────────────────────────────────
@@ -306,6 +308,23 @@ function StatsBar() {
 // ── Main ────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
+  const router = useRouter();
+  const { data: session, isPending } = authClient.useSession();
+  const isOwner = useQuery(api.auth.isOwner);
+
+  // Auth gate — client-side, shell is static cached
+  if (isPending || isOwner === undefined) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-neutral-700 border-t-claw" />
+      </div>
+    );
+  }
+  if (!session?.user || !isOwner) {
+    router.replace("/");
+    return null;
+  }
+
   return (
     <div className="space-y-6">
       <StatsBar />
