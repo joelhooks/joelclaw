@@ -15,12 +15,20 @@ export const checkTriggers = inngest.createFunction(
       try {
         return await auditTriggers();
       } catch (err) {
-        return { ok: true, checked: 0, drifted: [] as string[], missing: [] as string[], extra: [] as string[], error: String(err) };
+        return {
+          ok: true,
+          checked: 0,
+          drifted: [] as Array<{ slug: string; name: string; expected: string[]; registered: string[] }>,
+          missing: [] as string[],
+          extra: [] as string[],
+          changed: false,
+          error: String(err),
+        };
       }
     });
 
     // NOOP: only notify gateway when triggers have drifted
-    if (!audit.ok) {
+    if (!audit.ok && audit.changed) {
       await step.run("notify-drift", async () => {
         await pushGatewayEvent({
           type: "cron.heartbeat.drift",

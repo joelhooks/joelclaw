@@ -56,6 +56,14 @@ Gate checks were re-run before starting the next phase:
   - gate run window: `2026-02-21T19:27:14.441Z -> 2026-02-21T19:27:32.613Z`
   - weekly run completed: `01KJ0TQR57NQ88B4DY40GZNZPW`
   - `memory-health` now reports `staleMetricSupported: true`
+- Retrieval hardening tests:
+  - new: `packages/cli/src/commands/recall.test.ts`
+  - validates rewrite disabled/fallback/success behavior and trust-pass fallback diagnostics
+  - `bun test packages/cli/src/commands/recall.test.ts` => `5 pass, 0 fail`
+- `joelclaw inngest memory-gate --json` (post-refresh stabilization)
+  - `ok: true`
+  - gate run window: `2026-02-21T19:39:22.987Z -> 2026-02-21T19:39:37.238Z`
+  - weekly run completed: `01KJ0VDVWMA12FSHHRRRZXPB25`
 - Echo/fizzle production evidence:
   - run: `01KJ0RRBHSK7XBNV21QNEBEW14` (`Track Memory Echo/Fizzle`, status `COMPLETED`)
   - trigger event: `01KJ0RRB9RN15PV67WKTZHST86` (`memory/echo-fizzle.requested`)
@@ -137,7 +145,7 @@ Exit criteria for kickoff slice:
 Kickoff slice progress (as of 2026-02-21):
 - ✅ Memory health schema + threshold closure: stale ratio now reads from schema-backed `stale` field (`staleMetricSupported: true`).
 - ✅ Repeatable gate command added: `joelclaw inngest memory-gate`.
-- 🟡 Retrieval regression hardening tests still pending explicit test-file additions.
+- ✅ Retrieval regression hardening tests added for rewrite fallback + trust-pass diagnostics (`packages/cli/src/commands/recall.test.ts`).
 
 ### Workstream 1: Retrieval Quality V2
 

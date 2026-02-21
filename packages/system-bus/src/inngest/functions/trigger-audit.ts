@@ -15,17 +15,25 @@
  *   - Returns actionable diff for auto-refresh decisions
  */
 
+import { createHash } from "node:crypto";
+
 const INNGEST_URL = process.env.INNGEST_URL ?? "http://localhost:8288";
 const GQL = `${INNGEST_URL}/v0/gql`;
 
+type WorkerRole = "host" | "cluster";
 type TriggerSpec = { type: string; value: string; condition?: string };
 type FunctionSpec = { id: string; slug: string; name: string; triggers: TriggerSpec[] };
+type AppSpec = { name: string; functions: FunctionSpec[] };
 type DriftResult = {
   ok: boolean;
   checked: number;
   drifted: DriftEntry[];
   missing: string[];
   extra: string[];
+  changed: boolean;
+  hash: string;
+  appId: string;
+  workerRole: WorkerRole;
 };
 type DriftEntry = {
   slug: string;
@@ -33,6 +41,21 @@ type DriftEntry = {
   expected: string[];
   registered: string[];
 };
+type AuditConfig = {
+  appId: string;
+  workerRole: WorkerRole;
+  baseUrl: URL;
+};
+type InngestFunctionConfig = {
+  id: string;
+  name: string;
+  triggers?: Record<string, unknown>[];
+};
+type ConfigurableInngestFunction = {
+  getConfig: (opts: { baseUrl: URL; appPrefix: string }) => InngestFunctionConfig[];
+};
+
+let lastAuditHash: string | null = null;
 
 async function gql(query: string) {
   const res = await fetch(GQL, {
@@ -41,7 +64,7 @@ async function gql(query: string) {
     body: JSON.stringify({ query }),
   });
   const json = (await res.json()) as { errors?: Array<{ message: string }>; data: any };
-  if (json.errors?.length) throw new Error(json.errors[0].message);
+  if (json.errors?.length) throw new Error(json.errors[0]?.message ?? "Inngest GQL error");
   return json.data;
 }
 
@@ -61,39 +84,107 @@ function normalizeCodeTrigger(t: Record<string, unknown>): string {
   return `UNKNOWN:${JSON.stringify(t)}`;
 }
 
-/** Get registered functions from Inngest server via GraphQL */
-async function getRegistered(): Promise<Map<string, FunctionSpec>> {
-  const data = await gql(`{
-    functions {
-      id slug name
-      triggers { type value condition }
+function parseWorkerRole(value: string | undefined): WorkerRole {
+  const normalized = (value ?? "host").trim().toLowerCase();
+  return normalized === "cluster" ? "cluster" : "host";
+}
+
+function getConfig(): AuditConfig {
+  const workerRole = parseWorkerRole(process.env.WORKER_ROLE);
+  const explicitAppId = process.env.INNGEST_APP_ID?.trim();
+  const appId = explicitAppId && explicitAppId.length > 0
+    ? explicitAppId
+    : `system-bus-${workerRole}`;
+  return {
+    appId,
+    workerRole,
+    baseUrl: new URL("http://localhost:3111"),
+  };
+}
+
+function escapeGqlString(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"");
+}
+
+async function getApps(appId: string): Promise<AppSpec[]> {
+  const escapedAppId = escapeGqlString(appId);
+
+  try {
+    const filtered = await gql(`{
+      apps(name: "${escapedAppId}") {
+        name
+        functions {
+          id slug name
+          triggers { type value condition }
+        }
+      }
+    }`);
+    if (Array.isArray(filtered.apps)) {
+      return filtered.apps as AppSpec[];
+    }
+  } catch {
+    // Older Inngest builds may not support apps(name: "...").
+  }
+
+  const unfiltered = await gql(`{
+    apps {
+      name
+      functions {
+        id slug name
+        triggers { type value condition }
+      }
     }
   }`);
+
+  return Array.isArray(unfiltered.apps) ? (unfiltered.apps as AppSpec[]) : [];
+}
+
+/** Get registered functions for this worker app from Inngest server via GraphQL */
+async function getRegistered(appId: string): Promise<Map<string, FunctionSpec>> {
+  const apps = await getApps(appId);
+  const app = apps.find((candidate) => candidate.name === appId);
+
   const map = new Map<string, FunctionSpec>();
-  for (const fn of data.functions as FunctionSpec[]) {
+  for (const fn of app?.functions ?? []) {
     map.set(fn.slug, fn);
   }
   return map;
 }
 
-/** Get expected functions from worker code */
-async function getExpected(): Promise<Map<string, { name: string; triggers: string[] }>> {
-  const fns = await import("./index");
-  const allFunctions = Object.values(fns)
-    .flat()
-    .filter((f): f is any => f && typeof (f as any).getConfig === "function");
+function isConfigurableInngestFunction(fn: unknown): fn is ConfigurableInngestFunction {
+  return typeof fn === "object"
+    && fn !== null
+    && typeof (fn as { getConfig?: unknown }).getConfig === "function";
+}
+
+async function getRoleFunctionDefinitions(workerRole: WorkerRole): Promise<unknown[]> {
+  if (workerRole === "cluster") {
+    const mod = await import("./index.cluster");
+    return mod.clusterFunctionDefinitions;
+  }
+
+  const mod = await import("./index.host");
+  return mod.hostFunctionDefinitions;
+}
+
+/** Get expected functions from worker code for the current worker role */
+async function getExpected(config: AuditConfig): Promise<Map<string, { name: string; triggers: string[] }>> {
+  const roleFunctions = await getRoleFunctionDefinitions(config.workerRole);
 
   const map = new Map<string, { name: string; triggers: string[] }>();
-  for (const fn of allFunctions) {
+  for (const fn of roleFunctions) {
+    if (!isConfigurableInngestFunction(fn)) continue;
+
     try {
       const configs = fn.getConfig({
-        baseUrl: new URL("http://localhost:3111"),
-        appPrefix: "system-bus",
+        baseUrl: config.baseUrl,
+        appPrefix: config.appId,
       });
+
       for (const c of configs) {
         map.set(c.id, {
           name: c.name,
-          triggers: (c.triggers as Record<string, unknown>[]).map(normalizeCodeTrigger).sort(),
+          triggers: (c.triggers ?? []).map(normalizeCodeTrigger).sort(),
         });
       }
     } catch {
@@ -103,10 +194,27 @@ async function getExpected(): Promise<Map<string, { name: string; triggers: stri
   return map;
 }
 
+function hashDriftState(drifted: DriftEntry[], missing: string[], extra: string[]): string {
+  const normalized = {
+    drifted: drifted
+      .map((entry) => ({
+        ...entry,
+        expected: [...entry.expected].sort(),
+        registered: [...entry.registered].sort(),
+      }))
+      .sort((a, b) => a.slug.localeCompare(b.slug)),
+    missing: [...missing].sort(),
+    extra: [...extra].sort(),
+  };
+
+  return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
+}
+
 /** Compare registered vs expected triggers. Returns drift report. */
 export async function auditTriggers(): Promise<DriftResult> {
-  const registered = await getRegistered();
-  const expected = await getExpected();
+  const config = getConfig();
+  const registered = await getRegistered(config.appId);
+  const expected = await getExpected(config);
 
   const drifted: DriftEntry[] = [];
   const missing: string[] = [];
@@ -140,11 +248,23 @@ export async function auditTriggers(): Promise<DriftResult> {
     }
   }
 
+  drifted.sort((a, b) => a.slug.localeCompare(b.slug));
+  missing.sort();
+  extra.sort();
+
+  const hash = hashDriftState(drifted, missing, extra);
+  const changed = hash !== lastAuditHash;
+  lastAuditHash = hash;
+
   return {
     ok: drifted.length === 0 && missing.length === 0,
     checked: expected.size,
     drifted,
     missing,
     extra,
+    changed,
+    hash,
+    appId: config.appId,
+    workerRole: config.workerRole,
   };
 }
