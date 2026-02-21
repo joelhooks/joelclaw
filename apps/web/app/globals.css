@@ -228,3 +228,108 @@ label.margin-toggle:not(.sidenote-number) {
     border-radius: 0 0.375rem 0.375rem 0;
   }
 }
+
+/* ── Vault prose — pre-rendered markdown viewer ──────────────── */
+
+.vault-prose {
+  @apply font-mono text-[13px] leading-[1.8] text-neutral-300;
+}
+
+.vault-prose h1 {
+  @apply mt-6 mb-3 text-lg font-semibold text-neutral-100;
+}
+.vault-prose h2 {
+  @apply mt-5 mb-2 text-base font-semibold text-neutral-100 border-b border-neutral-800/40 pb-1;
+}
+.vault-prose h3 {
+  @apply mt-4 mb-2 text-sm font-semibold text-neutral-200;
+}
+.vault-prose h4, .vault-prose h5, .vault-prose h6 {
+  @apply mt-3 mb-1 text-sm font-medium text-neutral-300;
+}
+
+.vault-prose p {
+  @apply mb-3;
+}
+
+.vault-prose a {
+  @apply text-claw/80 underline decoration-claw/30 underline-offset-2 transition-colors hover:text-claw hover:decoration-claw/60;
+}
+
+.vault-prose strong {
+  @apply font-semibold text-neutral-100;
+}
+
+.vault-prose em {
+  @apply italic text-neutral-400;
+}
+
+.vault-prose ul {
+  @apply mb-3 ml-4 list-disc;
+}
+.vault-prose ol {
+  @apply mb-3 ml-4 list-decimal;
+}
+.vault-prose li {
+  @apply mb-1;
+}
+.vault-prose li > ul, .vault-prose li > ol {
+  @apply mt-1 mb-0;
+}
+
+.vault-prose code {
+  @apply rounded bg-neutral-800/60 px-1.5 py-0.5 text-[12px] text-claw/80;
+}
+
+.vault-prose pre {
+  @apply mb-3 overflow-x-auto rounded-lg border border-neutral-800/50 bg-neutral-950 p-3;
+}
+.vault-prose pre code {
+  @apply bg-transparent p-0 text-neutral-300;
+}
+
+.vault-prose blockquote {
+  @apply mb-3 border-l-2 border-neutral-700/60 pl-3 text-neutral-400 italic;
+}
+
+.vault-prose table {
+  @apply mb-3 w-full border-collapse text-[12px];
+}
+.vault-prose th {
+  @apply border border-neutral-800/50 bg-neutral-900/50 px-2 py-1 text-left font-medium text-neutral-300;
+}
+.vault-prose td {
+  @apply border border-neutral-800/30 px-2 py-1 text-neutral-400;
+}
+
+.vault-prose hr {
+  @apply my-4 border-neutral-800/40;
+}
+
+.vault-prose img {
+  @apply my-3 rounded-lg border border-neutral-800/30;
+}
+
+/* Obsidian callouts */
+.vault-prose .callout {
+  @apply mb-3 rounded-lg border border-neutral-700/40 bg-neutral-900/30 p-3;
+}
+.vault-prose .callout-title {
+  @apply mb-1 font-semibold text-neutral-200;
+}
+.vault-prose .callout-info { @apply border-l-2 border-l-blue-500/60; }
+.vault-prose .callout-warning { @apply border-l-2 border-l-amber-500/60; }
+.vault-prose .callout-danger, .vault-prose .callout-error { @apply border-l-2 border-l-red-500/60; }
+.vault-prose .callout-tip { @apply border-l-2 border-l-emerald-500/60; }
+.vault-prose .callout-note { @apply border-l-2 border-l-purple-500/60; }
+.vault-prose .callout-example { @apply border-l-2 border-l-cyan-500/60; }
+
+/* Unresolved wikilinks */
+.vault-prose .wikilink-unresolved {
+  @apply rounded bg-neutral-800/40 px-1 py-0.5 text-neutral-500;
+}
+
+/* Foldable callouts (details/summary) */
+.vault-prose details.callout summary {
+  @apply cursor-pointer font-semibold text-neutral-200;
+}

@@ -203,9 +203,16 @@ function NoteViewer({ path, onClose }: { path: string; onClose: () => void }) {
 
       {/* Content */}
       <div className="max-h-[70vh] overflow-y-auto rounded-lg border border-neutral-800/30 bg-neutral-950/50 p-4">
-        <pre className="whitespace-pre-wrap break-words font-mono text-[13px] leading-[1.7] text-neutral-300">
-          {note.content}
-        </pre>
+        {note.html ? (
+          <div
+            className="vault-prose"
+            dangerouslySetInnerHTML={{ __html: note.html }}
+          />
+        ) : (
+          <pre className="whitespace-pre-wrap break-words font-mono text-[13px] leading-[1.7] text-neutral-300">
+            {note.content}
+          </pre>
+        )}
       </div>
     </div>
   );

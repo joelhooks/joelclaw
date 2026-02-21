@@ -65,6 +65,7 @@ export default defineSchema({
     path: v.string(), // relative path from vault root, e.g. "Projects/09-joelclaw/index.md"
     title: v.string(),
     content: v.string(), // markdown body (up to 32KB)
+    html: v.optional(v.string()), // pre-rendered HTML (Obsidian-flavored)
     type: v.string(), // "adr", "project", "tool", "note", etc.
     tags: v.array(v.string()),
     section: v.string(), // top-level PARA section: "Projects", "Resources", etc.

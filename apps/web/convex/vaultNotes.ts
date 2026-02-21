@@ -70,6 +70,7 @@ export const upsert = mutation({
     path: v.string(),
     title: v.string(),
     content: v.string(),
+    html: v.optional(v.string()),
     type: v.string(),
     tags: v.array(v.string()),
     section: v.string(),

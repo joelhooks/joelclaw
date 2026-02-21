@@ -13,6 +13,7 @@
 import { inngest } from "../client";
 import * as typesense from "../../lib/typesense";
 import { pushVaultNote } from "../../lib/convex";
+import { renderVaultMarkdown } from "../../lib/vault-render";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname, basename, relative } from "node:path";
 
@@ -181,9 +182,12 @@ export const typesenseVaultSync = inngest.createFunction(
       return indexVaultNotes();
     });
 
-    // Sync to Convex for real-time dashboard access
+    // Sync to Convex with pre-rendered HTML for real-time dashboard access
     await step.run("sync-vault-to-convex", async () => {
       const files = walkDir(VAULT_PATH, ".md");
+      // Build path set for wikilink resolution
+      const allPaths = new Set(files.map((f) => relative(VAULT_PATH, f)));
+
       let synced = 0;
       let errors = 0;
 
@@ -197,11 +201,21 @@ export const typesenseVaultSync = inngest.createFunction(
           const tags = (frontmatter.tags || "").split(",").map((t: string) => t.trim()).filter(Boolean);
           const stat = statSync(file);
           const section = relPath.split("/")[0] || "root";
+          const content = body.slice(0, 32000);
+
+          // Pre-render markdown → HTML with Obsidian features
+          let html: string | undefined;
+          try {
+            html = await renderVaultMarkdown(content, allPaths);
+          } catch {
+            // Fall back to no HTML — client will show raw markdown
+          }
 
           await pushVaultNote({
             path: relPath,
             title,
-            content: body.slice(0, 32000),
+            content,
+            html,
             type,
             tags,
             section,

@@ -35,6 +35,7 @@ export async function pushVaultNote(note: {
   path: string;
   title: string;
   content: string;
+  html?: string;
   type: string;
   tags: string[];
   section: string;
