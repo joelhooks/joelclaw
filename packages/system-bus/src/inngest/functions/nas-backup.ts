@@ -9,31 +9,32 @@ import { emitMeasuredOtelEvent } from "../../observability/emit";
 
 const HOME_DIR = process.env.HOME ?? "/Users/joel";
 
-const NAS_NVME_ROOT = "/Volumes/nas-nvme";
+const NAS_NVME_ROOT = "/Volumes/nas-nvme"; // fast shared storage (1.78TB NVMe)
+const NAS_HDD_ROOT = "/Volumes/three-body"; // bulk archive (57TB HDD RAID5)
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
 const TYPESENSE_POD = "typesense-0";
 const TYPESENSE_NAMESPACE = "joelclaw";
 const TYPESENSE_SNAPSHOT_ROOT = "/data/snapshots";
-const TYPESENSE_BACKUP_ROOT = `${NAS_NVME_ROOT}/backups/typesense`;
+const TYPESENSE_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/typesense`;
 const TYPESENSE_STAGE_ROOT = "/tmp/joelclaw/typesense-snapshots";
 
 const REDIS_POD = "redis-0";
 const REDIS_NAMESPACE = "joelclaw";
-const REDIS_BACKUP_ROOT = `${NAS_NVME_ROOT}/backups/redis`;
+const REDIS_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/redis`;
 
-const SESSIONS_BACKUP_ROOT = `${NAS_NVME_ROOT}/sessions`;
+const SESSIONS_BACKUP_ROOT = `${NAS_HDD_ROOT}/sessions`;
 const CLAUDE_PROJECTS_ROOT = `${HOME_DIR}/.claude/projects`;
 const PI_SESSIONS_ROOT = `${HOME_DIR}/.pi/sessions`;
 
 const OTEL_COLLECTION = "otel_events";
 const OTEL_QUERY_BY = "action,error,component,source,metadata_json,search_text";
-const OTEL_EXPORT_ROOT = `${NAS_NVME_ROOT}/otel`;
+const OTEL_EXPORT_ROOT = `${NAS_HDD_ROOT}/otel`;
 
 const MEMORY_LOG_ROOT = `${HOME_DIR}/.joelclaw/workspace/memory`;
-const MEMORY_LOG_BACKUP_ROOT = `${NAS_NVME_ROOT}/backups/logs`;
+const MEMORY_LOG_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/logs`;
 const SLOG_PATH = `${HOME_DIR}/Vault/system/system-log.jsonl`;
-const SLOG_BACKUP_ROOT = `${NAS_NVME_ROOT}/backups/slog`;
+const SLOG_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/slog`;
 
 type ShellResult = {
   exitCode: number;
@@ -113,11 +114,11 @@ function getTypesenseApiKey(): string {
 }
 
 async function ensureNasMounted(): Promise<void> {
-  const result = await $`stat ${NAS_NVME_ROOT}`.quiet().nothrow();
+  const result = await $`stat ${NAS_HDD_ROOT}`.quiet().nothrow();
   if (result.exitCode !== 0) {
     const stderr = toText(result.stderr);
     throw new NonRetriableError(
-      `NAS mount unavailable at ${NAS_NVME_ROOT}${stderr ? `: ${stderr}` : ""}`
+      `NAS mount unavailable at ${NAS_HDD_ROOT}${stderr ? `: ${stderr}` : ""}`
     );
   }
 }
@@ -312,7 +313,7 @@ export const backupTypesense = inngest.createFunction(
   async ({ step }) => {
     const metadata: Record<string, unknown> = {
       schedule: "daily_3am_pt",
-      mount: NAS_NVME_ROOT,
+      mount: NAS_HDD_ROOT,
     };
 
     return emitMeasuredOtelEvent(
@@ -392,7 +393,7 @@ export const backupRedis = inngest.createFunction(
   async ({ step }) => {
     const metadata: Record<string, unknown> = {
       schedule: "daily_330am_pt",
-      mount: NAS_NVME_ROOT,
+      mount: NAS_HDD_ROOT,
     };
 
     return emitMeasuredOtelEvent(
@@ -454,7 +455,7 @@ export const rotateSessions = inngest.createFunction(
   async ({ step }) => {
     const metadata: Record<string, unknown> = {
       schedule: "weekly_sunday_4am_pt",
-      mount: NAS_NVME_ROOT,
+      mount: NAS_HDD_ROOT,
     };
 
     return emitMeasuredOtelEvent(
@@ -517,7 +518,7 @@ export const rotateOtel = inngest.createFunction(
   async ({ step }) => {
     const metadata: Record<string, unknown> = {
       schedule: "monthly_1st_4am_pt",
-      mount: NAS_NVME_ROOT,
+      mount: NAS_HDD_ROOT,
       retentionDays: 90,
     };
 
@@ -577,7 +578,7 @@ export const rotateLogs = inngest.createFunction(
   async ({ step }) => {
     const metadata: Record<string, unknown> = {
       schedule: "monthly_1st_430am_pt",
-      mount: NAS_NVME_ROOT,
+      mount: NAS_HDD_ROOT,
       retentionDays: 30,
     };
 
