@@ -1,6 +1,7 @@
-import { isAuthenticated } from "../../lib/auth-server";
+import { isAuthenticated, fetchAuthQuery } from "../../lib/auth-server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { api } from "../../convex/_generated/api";
 
 export default async function DashboardLayout({
   children,
@@ -10,6 +11,12 @@ export default async function DashboardLayout({
   const authed = await isAuthenticated();
   if (!authed) {
     redirect("/signin");
+  }
+
+  // Only Joel (GitHub ID 86834) gets past this gate
+  const isOwner = await fetchAuthQuery(api.auth.isOwner);
+  if (!isOwner) {
+    redirect("/");
   }
 
   return (

@@ -38,3 +38,24 @@ export const getCurrentUser = query({
     return authComponent.getAuthUser(ctx);
   },
 });
+
+/** Check if current user is the owner (Joel, GitHub ID 86834) */
+export const isOwner = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await authComponent.getAuthUser(ctx);
+    if (!user) return false;
+    // Check accounts table for GitHub provider with Joel's ID
+    const account = await ctx.db
+      .query("accounts")
+      .withIndex("by_userId", (q) => q.eq("userId", user._id))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("providerId"), "github"),
+          q.eq(q.field("accountId"), "86834")
+        )
+      )
+      .first();
+    return !!account;
+  },
+});
