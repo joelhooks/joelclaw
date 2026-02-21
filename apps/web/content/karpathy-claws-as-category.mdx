@@ -1,0 +1,47 @@
+---
+title: "Karpathy Says We're Building \"Claws\""
+type: "note"
+date: "2026-02-21T08:00:00"
+description: "Andrej Karpathy bought a Mac Mini to tinker with Claws. Simon Willison thinks 'Claw' is becoming a term of art. I think they're both right — and joelclaw has been one this whole time."
+tags: ["claws", "openclaw", "terminology"]
+source: "https://simonwillison.net/2026/Feb/21/claws/"
+---
+
+[Simon Willison flagged](https://simonwillison.net/2026/Feb/21/claws/) an Andrej Karpathy tweet that caught my attention. Karpathy bought a Mac Mini — apparently Apple stores are "selling like hotcakes and everyone is confused" — to tinker with what he's calling **Claws**.
+
+His definition:
+
+> Just like LLM agents were a new layer on top of LLMs, Claws are now a new layer on top of LLM agents, taking the orchestration, scheduling, context, tool calls and a kind of persistence to a next level.
+
+That's... exactly what I've been building. joelclaw is a Claw by this definition and I didn't know the word existed until today.
+
+## What makes a Claw a Claw
+
+Karpathy doesn't give a formal spec, but reading between the lines plus Willison's gloss, a Claw is:
+
+- **Runs on personal hardware** — Mac Mini, home server, your own metal
+- **Communicates via messaging protocols** — Telegram, WhatsApp, SMS, voice
+- **Handles both direct instructions and scheduled tasks** — you can tell it things AND it does things on its own
+- **Orchestration + persistence** — not just a chat session that forgets everything
+
+joelclaw checks every box. [Inngest for durable workflows](/inngest-is-the-nervous-system). [Gateway daemon](/building-a-gateway-for-your-ai-agent) for messaging. Qdrant + Redis + Vault for persistence. Cron heartbeats. Voice via LiveKit SIP. Todoist as async conversation channel. It's a Claw. It's been a Claw. We just didn't have the word.
+
+## The proliferation
+
+Karpathy notes NanoClaw (~4,000 lines core engine, runs in containers), plus nanobot, zeroclaw, ironclaw, picoclaw. The prefix game is real.
+
+He's "sus'd" on OpenClaw specifically but loves the concept. I get it. OpenClaw is the one that proved the idea works. Whether you run their code or build your own — and I [chose to build my own](/building-my-own-openclaw) — the architectural pattern is clear enough that implementations are converging independently.
+
+## The "fits in your head" constraint
+
+The NanoClaw detail that stuck with me: ~4,000 lines for the core engine, which "fits into both my head and that of AI agents." That's a real design constraint worth taking seriously. joelclaw's system-bus is larger than that, but it also does more — durable workflows, [multi-phase memory](/observation-pipeline-persistent-ai-memory), multi-channel gateway, [voice agent](/voice-agent-deployment-deep-dive).
+
+The question isn't whether 4K lines is the right number. It's whether your agent can read its own source code and understand what it does. That's the bar for self-improvement. If the system is too complex for the agent to reason about, you've built a system the agent can use but never fix.
+
+joelclaw can read its own code. It regularly does — codex sessions modify the system-bus, the gateway extension, the CLI. Whether it truly *understands* the full system is a different question. But the architecture is legible enough that agents can work on it. That matters more than line count.
+
+## The name
+
+"Claw" is good. It's short, it's concrete, it implies grabbing things and doing stuff. Better than "personal AI agent system" or "OpenClaw-inspired architecture." And 🦞 is a fine emoji.
+
+Karpathy has an ear for this — he gave us "vibe coding" and "agentic engineering." Both stuck. I think "Claw" sticks too.
