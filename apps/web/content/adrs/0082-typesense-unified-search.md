@@ -236,17 +236,20 @@ probes:
 - Add synonyms (e.g., "k8s" = "kubernetes", "ADR" = "architecture decision record")
 - Add curations (pin important results for common queries)
 
-### Typesense vs Qdrant — Coexistence
+### Qdrant Replacement
 
-| Concern | Qdrant | Typesense |
-|---------|--------|-----------|
-| **Role** | Memory pipeline vector store | User-facing unified search |
-| **Query type** | Pure semantic (nearest neighbor) | Hybrid (keyword + semantic + filters) |
-| **Used by** | `agent/memory.observed` pipeline, `joelclaw recall` | `joelclaw search`, voice agent, web UI |
-| **Data scope** | Memory observations only | All data sources |
-| **Embedding** | External (system-bus generates) | Auto-embedding (server-side) |
+Typesense fully replaces Qdrant. At 1,355 memory observations, Qdrant's specialized vector DB features (quantization, sharding) are irrelevant. Typesense provides the same vector operations plus keyword search, typo tolerance, and faceting.
 
-Long-term, Typesense could subsume Qdrant's role since it supports the same vector operations with auto-embedding. But for now, Qdrant stays for the established memory pipeline — we don't break working things.
+| Qdrant operation | Typesense equivalent |
+|---|---|
+| Upsert point with 768-dim vector | Upsert document with auto-embedding field |
+| Nearest-neighbor search | `vector_query: "embedding:([], k:10)"` |
+| Cosine similarity dedup | Search before insert with `distance_threshold` |
+| Local sentence-transformers (embed.py) | Typesense built-in model or OpenAI-compatible API |
+
+**Migration**: Bulk import 1,355 existing points → update `observe.ts` and `recall.ts` → remove `embed.py` → delete Qdrant pod/PVC/service → remove Caddy `:6443` entry.
+
+**What we gain**: Eliminate `embed.py` Python dependency, one fewer pod, one fewer port mapping, hybrid search on memories (keyword + semantic), faceted memory queries by source/date/session.
 
 ### Resource Impact
 
@@ -269,9 +272,8 @@ Current cluster load (5 pods): Redis, Qdrant, Inngest, PDS, LiveKit. Adding Type
 - **Future web UI**: joelclaw.com gets a proper search bar with instant results
 
 ### Negative
-- **Another service to maintain**: 6th pod in k8s (manageable)
 - **Indexing pipeline work**: Must build Inngest functions to keep Typesense in sync
-- **Temporary Qdrant overlap**: Two systems storing vectors until potential consolidation
+- **Migration effort**: Port observe.ts/recall.ts from Qdrant client to Typesense client
 
 ### Risks
 - **Data freshness**: Index must stay in sync with source data — solved by event-driven indexing via Inngest
