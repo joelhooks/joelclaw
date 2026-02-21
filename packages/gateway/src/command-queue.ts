@@ -113,12 +113,44 @@ export async function drain(): Promise<void> {
   return drainPromise;
 }
 
+/**
+ * Replay unacked messages on startup — but only RECENT ones.
+ * Without a max age, a gateway restart replays the ENTIRE DAY of messages,
+ * flooding Telegram with hundreds of duplicate responses.
+ * Default: only replay messages from the last 2 minutes.
+ */
+const REPLAY_MAX_AGE_MS = 10 * 60 * 1000;
+
 export async function replayUnacked(): Promise<void> {
   try {
     const pendingMessages = await getUnacked();
     if (pendingMessages.length === 0) return;
 
-    for (const pending of pendingMessages) {
+    const cutoff = Date.now() - REPLAY_MAX_AGE_MS;
+    const recent = pendingMessages.filter((m) => m.timestamp >= cutoff);
+    const stale = pendingMessages.filter((m) => m.timestamp < cutoff);
+
+    // Ack stale messages so they never replay again
+    for (const msg of stale) {
+      await ack(msg.id);
+    }
+
+    if (stale.length > 0) {
+      console.log("[gateway:store] acked stale messages (skipped replay)", {
+        staleCount: stale.length,
+        oldestStaleAge: `${Math.round((Date.now() - Math.min(...stale.map((m) => m.timestamp))) / 1000)}s`,
+      });
+    }
+
+    if (recent.length === 0) {
+      console.log("[gateway:store] no recent unacked messages to replay", {
+        totalPending: pendingMessages.length,
+        allStale: true,
+      });
+      return;
+    }
+
+    for (const pending of recent) {
       queue.push({
         source: pending.source,
         prompt: pending.prompt,
@@ -127,8 +159,10 @@ export async function replayUnacked(): Promise<void> {
       });
     }
 
-    console.log("[gateway:store] replayed unacked messages into queue", {
-      count: pendingMessages.length,
+    console.log("[gateway:store] replayed recent unacked messages into queue", {
+      replayedCount: recent.length,
+      skippedStale: stale.length,
+      maxAgeMs: REPLAY_MAX_AGE_MS,
     });
   } catch (error) {
     console.error("[gateway:store] replay failed", { error });

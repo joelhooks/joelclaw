@@ -6,17 +6,26 @@ import { CLAW_PATH } from "../lib/claw";
 import { SITE_NAME } from "../lib/constants";
 import { SearchDialog } from "./search-dialog";
 import { MobileNav } from "./mobile-nav";
+import { authClient } from "../lib/auth-client";
 
-const NAV_ITEMS = [
+const PUBLIC_NAV = [
   { href: "/", label: "Writing" },
   { href: "/cool", label: "Cool" },
   { href: "/adrs", label: "ADRs" },
   { href: "/network", label: "Network" },
+];
+
+const OWNER_NAV = [
+  { href: "/vault", label: "Vault" },
   { href: "/dashboard", label: "System" },
 ];
 
 export function SiteHeader() {
   const pathname = usePathname();
+  const { data: session } = authClient.useSession();
+  const isOwner = !!session?.user;
+
+  const navItems = isOwner ? [...PUBLIC_NAV, ...OWNER_NAV] : PUBLIC_NAV;
 
   return (
     <header className="mb-16">
@@ -35,7 +44,7 @@ export function SiteHeader() {
         </Link>
         <div className="flex items-center gap-6">
           <nav className="hidden md:flex items-center gap-6 text-sm">
-            {NAV_ITEMS.map((item) => {
+            {navItems.map((item) => {
               const isActive =
                 item.href === "/"
                   ? pathname === "/"

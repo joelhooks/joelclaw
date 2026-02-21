@@ -5,17 +5,25 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { Menu, X } from "lucide-react";
 import { CLAW_PATH } from "../lib/claw";
+import { authClient } from "../lib/auth-client";
 
-const NAV_ITEMS = [
+const PUBLIC_NAV = [
   { href: "/", label: "Writing" },
   { href: "/cool", label: "Cool" },
   { href: "/adrs", label: "ADRs" },
   { href: "/network", label: "Network" },
 ];
 
+const OWNER_NAV = [
+  { href: "/vault", label: "Vault" },
+  { href: "/dashboard", label: "System" },
+];
+
 export function MobileNav() {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
+  const { data: session } = authClient.useSession();
+  const navItems = session?.user ? [...PUBLIC_NAV, ...OWNER_NAV] : PUBLIC_NAV;
 
   // Close on route change
   useEffect(() => {
@@ -87,7 +95,7 @@ export function MobileNav() {
 
             {/* Nav links */}
             <nav className="mt-16 flex flex-col">
-              {NAV_ITEMS.map((item, i) => {
+              {navItems.map((item, i) => {
                 const isActive =
                   item.href === "/"
                     ? pathname === "/"
