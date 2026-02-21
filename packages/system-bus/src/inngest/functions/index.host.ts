@@ -60,6 +60,13 @@ import {
   typesenseFullSync,
 } from "./typesense-sync";
 import { nasSoakSample, nasSoakReview } from "./nas-soak";
+import {
+  backupTypesense,
+  backupRedis,
+  rotateSessions,
+  rotateOtel,
+  rotateLogs,
+} from "./nas-backup";
 
 function getFunctionId(fn: { opts?: { id?: string } }): string {
   return fn.opts?.id ?? "unknown";
@@ -126,6 +133,11 @@ export const hostFunctionDefinitions = [
   typesenseFullSync,
   nasSoakSample,
   nasSoakReview,
+  backupTypesense,
+  backupRedis,
+  rotateSessions,
+  rotateOtel,
+  rotateLogs,
 ];
 
 export const hostFunctionIds = hostFunctionDefinitions.map(getFunctionId);
