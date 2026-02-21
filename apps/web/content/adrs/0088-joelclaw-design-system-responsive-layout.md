@@ -1,6 +1,6 @@
 ---
 type: adr
-status: proposed
+status: accepted
 date: 2026-02-21
 tags:
   - adr
@@ -19,7 +19,7 @@ deciders:
 
 ## Status
 
-proposed
+accepted
 
 ## Context
 
