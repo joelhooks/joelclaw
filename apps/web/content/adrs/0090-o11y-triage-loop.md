@@ -38,16 +38,25 @@ Examples:
 - Intermittent failures (<3 in 30min, not sustained)
 - Function success rate drops below 95% but above 80%
 
-### Tier 3: Escalate (Telegram, Codex-Ready)
+### Tier 3: Escalate (Telegram + Todoist Task, Codex-Ready)
 
-Sustained failures, data loss risk, or anything the agent can't auto-fix. **Every tier 3 escalation must include:**
+Sustained failures, data loss risk, or anything the agent can't auto-fix. **Every tier 3 escalation creates two artifacts:**
 
-1. **What broke** — component, action, error message, first occurrence, count
-2. **Impact** — what's not working for Joel as a result
-3. **Root cause analysis** — agent's best diagnosis from logs, recent deploys, config changes
-4. **Proposed fix** — specific file paths, code changes, config tweaks
-5. **Codex prompt** — a ready-to-dispatch prompt that Joel can approve with one tap. The prompt must be specific enough that codex can execute without further context
-6. **Rollback** — what to do if the fix makes things worse
+**A. Todoist task** (the tracking artifact) in the "Agent Work" project with:
+1. **Title**: short problem summary
+2. **Description** containing:
+   - **What broke** — component, action, error message, first occurrence, count
+   - **Impact** — what's not working for Joel as a result
+   - **Root cause analysis** — agent's best diagnosis from logs, recent deploys, config changes
+   - **Proposed fix** — specific file paths, code changes, config tweaks
+   - **Codex prompt** — a ready-to-dispatch prompt. Must be specific enough that codex can execute without further context
+   - **Rollback** — what to do if the fix makes things worse
+3. **Priority**: p1 (data loss / sustained outage) or p2 (degraded but functional)
+4. **Labels**: `o11y, escalation`
+
+**B. Telegram message** (the alert) — terse summary + Todoist task link + inline keyboard: `[Approve Fix] [Snooze 4h] [View Task]`
+
+The task is the source of truth. Telegram is just the push notification. When the fix is applied (by codex or manually), the agent completes the task.
 
 Examples:
 - Typesense unreachable >10min (after auto-fix retry failed)

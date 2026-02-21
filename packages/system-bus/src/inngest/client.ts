@@ -413,6 +413,15 @@ export type Events = {
       schemaVersion: 1;
     };
   };
+  "session/observation.noted": {
+    data: {
+      observations: Array<{
+        category: string;
+        summary: string;
+        metadata?: Record<string, unknown>;
+      }>;
+    };
+  };
   "memory/observations.accumulated": {
     data: {
       date: string;

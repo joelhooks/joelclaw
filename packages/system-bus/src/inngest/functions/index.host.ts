@@ -51,6 +51,7 @@ import { checkEmail } from "./check-email";
 import { vipEmailReceived } from "./vip-email-received";
 import { checkCalendar } from "./check-calendar";
 import { checkLoops } from "./check-loops";
+import { o11yTriage } from "./o11y-triage";
 import { dailyDigest } from "./daily-digest";
 import {
   typesenseVaultSync,
@@ -116,6 +117,7 @@ export const hostFunctionDefinitions = [
   vipEmailReceived,
   checkCalendar,
   checkLoops,
+  o11yTriage,
   dailyDigest,
   typesenseVaultSync,
   typesenseBlogSync,
