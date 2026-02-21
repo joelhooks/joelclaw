@@ -22,83 +22,132 @@ proposed
 
 ## Context
 
-The gateway Telegram channel (`packages/gateway/src/channels/telegram.ts`, 764 lines) currently supports:
+The gateway Telegram channel (`packages/gateway/src/channels/telegram.ts`, 764 lines) supports text messages, inbound media, outbound rich messages with inline keyboards (ADR-0070), callback queries, and reply threading. But three gaps prevent Telegram from being a productive operational interface:
 
-- Text messages routed to pi agent sessions through the command queue
-- Inbound media download for photo/voice/audio/video/document into the Inngest media pipeline
-- Outbound rich messaging with HTML formatting (`<b>`, `<i>`, `<code>`, `<pre>`, `<a>`, `<blockquote>`) and optional inline keyboards
-- Callback query handling for inline buttons (`telegram/callback.received`)
-- Reply threading and media send helpers
+1. **No slash commands** — every interaction requires a full LLM round-trip, even quick ops like `/status`
+2. **Channel-unaware agent session** — the pi session generates plain markdown; ADR-0070's inline buttons never appear because the outbound router only passes strings
+3. **No proactive button templates** — Inngest notifications push plain text, can't attach action buttons
 
-Related decisions already landed:
-
-- ADR-0042 established rich Telegram replies, outbound media, and media pipeline integration
-- ADR-0069 enabled proactive non-Telegram notifications routed to Telegram
-- ADR-0070 proposed inline keyboard-rich notifications, but implementation is only partial
-
-Current implementation gap analysis:
-
-1. **No slash command bypass path**
-Quick operations such as status checks still require full LLM round-trips. Commands like `/status`, `/runs`, and `/loops` should execute directly (local checks or direct Inngest event fire) and return in under 2 seconds.
-
-2. **Outbound routing is channel-unaware**
-`packages/gateway/src/outbound/router.ts` collects text deltas and calls `send(message: string)`. The Telegram channel `send()` supports `RichSendOptions` (`buttons`, `replyTo`, `silent`, `noPreview`), but the router has no structured payload path, so button metadata is dropped.
-
-3. **No proactive button templates in gateway event payloads**
-Inngest-originated notifications (health, email, task signals) currently send plain text prompts. They cannot attach structured actions even when a notification is inherently actionable.
+OpenClaw has a mature command system that solves all three. Rather than reinvent, we adopt their architecture directly.
 
 ## Decision
 
-### 1. Add Slash Commands That Bypass Agent Sessions
+### Adopt OpenClaw's Command Registry Pattern
 
-The Telegram channel will register native commands via `bot.command()` and publish command menus via `setMyCommands()`.
+Credit: OpenClaw (`src/auto-reply/commands-registry.data.ts`, `src/telegram/bot-native-commands.ts`, `src/auto-reply/skill-commands.ts`).
 
-Priority command set:
+#### Command Registry
 
-- `/status` -> local health summary (`joelclaw` CLI, target under 1s)
-- `/runs` -> recent Inngest runs (local check)
-- `/loops` -> agent loop status (local check)
-- `/email` -> fire email triage event (async response)
-- `/tasks` -> Todoist summary (async response)
-- `/cal` -> today calendar summary (async response)
-- `/vault <query>` -> vault search
-- `/recall <query>` -> memory search
-- `/send <event> [data]` -> fire arbitrary Inngest event
-- `/network` -> live network status from Convex
+A centralized `CommandDefinition` registry at `packages/gateway/src/commands/registry.ts`:
 
-Execution model:
+```typescript
+type CommandDefinition = {
+  key: string;                          // unique id
+  nativeName: string;                   // telegram /slash_name
+  description: string;                  // shown in menu
+  category: "ops" | "search" | "system" | "session";
+  args?: CommandArgDefinition[];        // typed args
+  argsMenu?: "auto" | { arg: string; title?: string };  // button grid
+  execute: "direct" | "agent" | "inngest";  // execution model
+  handler?: (args: CommandArgs) => Promise<CommandResult>;  // for direct commands
+  inngestEvent?: string;                // for inngest commands
+};
 
-- Synchronous commands run local checks and reply immediately in Telegram
-- Asynchronous commands fire Inngest events and return immediate ack plus later callback result
-- No pi session round-trip for command handlers unless explicitly delegated
+type CommandArgDefinition = {
+  name: string;
+  description: string;
+  type: "string" | "number";
+  required?: boolean;
+  choices?: Array<string | { value: string; label: string }>;
+  captureRemaining?: boolean;
+};
 
-### 2. Make Agent Responses Channel-Aware
+type CommandResult = {
+  text: string;
+  buttons?: InlineButton[][];
+  silent?: boolean;
+};
+```
 
-Three approaches were evaluated:
+Three execution models (extending OpenClaw's pattern):
 
-- **Option A: Structured response markers in text stream**
-Agent emits parseable marker blocks that the outbound router strips and converts into button metadata.
-- **Option B: Channel metadata in session context**
-Inject Telegram capability metadata into system/prompt context so formatting choices are channel-appropriate.
-- **Option C: Post-processing layer between router and channel**
-Deterministic rules inspect response payloads and attach actions/templates independent of LLM formatting compliance.
+| Model | Path | Latency | Use case |
+|---|---|---|---|
+| `direct` | Command handler runs locally, returns result | <2s | `/status`, `/runs`, `/loops`, `/network` |
+| `agent` | Prompt routed to pi session (OpenClaw's default) | 5-30s | `/vault`, `/recall` (agent can reason about results) |
+| `inngest` | Fires event, acks immediately, callback delivers result | 5-60s | `/email`, `/tasks`, `/cal` |
 
-**Decision:** adopt **Option C as primary** for reliability and consistent production behavior, and **Option B as secondary** to improve formatting quality. Option A is deferred.
+#### Button Grid Menus (from OpenClaw)
 
-Implementation direction:
+When a command has `argsMenu` and the user sends it without arguments, render an inline keyboard:
 
-- Extend outbound payload model from `string` to structured message envelope
-- Add formatter/policy layer that maps content + source to `RichSendOptions`
-- Inject channel capabilities into session context for Telegram-originated turns
+```
+User: /send
+Bot: Choose event to send:
+     [🏥 Health Check] [🔄 Network Update]
+     [📧 Email Triage] [📝 Content Sync]
+     [🧠 Memory Review] [🔧 Friction Fix]
+```
 
-### 3. Add Notification Button Templates in Gateway Event Payloads
+Each button's `callback_data` is the full command text (e.g., `/send system/health.check`). On tap, processed as if typed. Same pattern as OpenClaw's `argsMenu: "auto"`.
 
-Inngest functions that emit gateway notifications will support button definitions in payload data.
+#### Command Set
 
-Canonical payload shape:
+**Phase 1 — Direct (bypass agent):**
 
-```ts
-{
+| Command | Description | Execute |
+|---|---|---|
+| `/status` | System health summary | `direct` — shells to `joelclaw status` |
+| `/runs` | Recent Inngest runs | `direct` — shells to `joelclaw runs` |
+| `/loops` | Agent loop status | `direct` — shells to `joelclaw loop status` |
+| `/network` | Live network status | `direct` — reads from Convex |
+| `/help` | List available commands | `direct` |
+| `/send <event>` | Fire Inngest event | `direct` — with argsMenu for common events |
+
+**Phase 2 — Agent-routed:**
+
+| Command | Description | Execute |
+|---|---|---|
+| `/vault <query>` | Vault search | `agent` — agent summarizes results |
+| `/recall <query>` | Memory search | `agent` — agent contextualizes |
+
+**Phase 3 — Async via Inngest:**
+
+| Command | Description | Execute |
+|---|---|---|
+| `/email` | Email triage summary | `inngest` → `check/email-triage` |
+| `/tasks` | Todoist summary | `inngest` → fires event, callback delivers |
+| `/cal` | Today's calendar | `inngest` → fires event, callback delivers |
+
+#### Menu Sync
+
+On bot startup, call `bot.api.setMyCommands()` with all registered commands. Telegram shows the `/` menu autocomplete.
+
+### Channel-Aware Formatting
+
+**Post-processing layer (Option C)** — a formatter between the outbound router and the Telegram channel that attaches buttons based on content patterns:
+
+- Health check results → `[🔄 Restart Worker] [📋 Full Details]`
+- Email notifications → `[📦 Archive] [⭐ Flag] [📝 Reply Later]`
+- Loop completions → `[📊 Results] [🔁 Re-run]`
+- Memory proposals → `[✅ Approve] [❌ Reject]`
+
+Rules are deterministic — don't depend on LLM cooperation.
+
+**Channel context injection (Option B)** — inject channel metadata into the pi session prompt for Telegram-originated turns:
+
+```
+[Channel: telegram | Format: HTML (b/i/code/pre/a/blockquote) | Max: 4096 chars | Supports: inline-keyboards, reply-threading, voice-notes]
+```
+
+This nudges the agent toward compact HTML formatting instead of long markdown.
+
+### Notification Button Templates
+
+Inngest functions include button definitions in gateway event payloads:
+
+```typescript
+await pushGatewayEvent({
   type: "system.health.degraded",
   payload: {
     prompt: "## 🚨 Health Degradation\n- ❌ Redis: down",
@@ -107,93 +156,54 @@ Canonical payload shape:
       [{ text: "🔇 Mute 1h", action: "mute:redis:3600" }]
     ]
   }
-}
+});
 ```
 
-Gateway behavior:
+Gateway extracts `buttons` from payload, passes to `telegram.send()` as `RichSendOptions`.
 
-- Preserve existing text-only compatibility
-- If `buttons` exist, pass through to Telegram `send()` as inline keyboard rows
-- Keep callback handling centralized in `telegram/callback.received`
+### Outbound Router Evolution
 
-### 4. Deliver in Four Phases
+Extend the router from `send(string)` to `send(envelope)`:
 
-1. **Phase 1: Slash Commands (highest value, lowest risk)**
-Implement `/status`, `/runs`, `/loops` with direct local execution and Telegram replies.
+```typescript
+type OutboundEnvelope = {
+  text: string;
+  buttons?: InlineButton[][];
+  silent?: boolean;
+  replyTo?: number;
+  format?: "html" | "markdown" | "plain";
+};
+```
 
-2. **Phase 2: Notification Button Templates**
-Extend gateway event ingestion and outbound send path to honor payload button definitions.
+The formatter layer sits between the router's text collection and the channel's send, transforming `string → OutboundEnvelope` based on channel + content rules.
 
-3. **Phase 3: Channel-Aware Formatting**
-Introduce post-processing formatter (Option C) and add channel capability context injection (Option B).
+## Implementation Phases
 
-4. **Phase 4: Async Command Responses**
-Add `/email`, `/tasks`, `/cal` async workflows using event fire + callback delivery.
+1. **Phase 1: Command registry + direct commands** — `/status`, `/runs`, `/loops`, `/network`, `/help`, `/send`. Menu sync. Button grids for `/send`.
+2. **Phase 2: Notification button templates** — extend gateway event payloads, pass buttons through to Telegram
+3. **Phase 3: Channel-aware formatting** — post-processor rules + channel context injection
+4. **Phase 4: Agent-routed commands** — `/vault`, `/recall` through pi session
+5. **Phase 5: Async Inngest commands** — `/email`, `/tasks`, `/cal` with callback delivery
 
 ## Consequences
 
 ### Positive
-
-- Fast operational commands without LLM latency/cost
-- Rich interactions become reliable in production (buttons actually render)
-- Proactive alerts become actionable from Telegram without terminal context switching
-- Cleaner separation between command execution, formatting policy, and agent conversation
+- Fast operational commands without LLM cost/latency
+- Buttons actually render in production (not just tests)
+- Telegram becomes a real ops dashboard, not just a text pipe
+- Pattern is proven in OpenClaw across Telegram + Discord
+- Button grids eliminate typo-prone argument entry
+- Deterministic post-processing is more reliable than hoping the LLM formats correctly
 
 ### Negative
-
-- More gateway complexity: command registry, formatter layer, and structured payload contracts
-- Additional testing burden across sync/async command flows and callback lifecycle
-- Potential command/event authorization risks if `/send` is not tightly scoped
-- Slight drift risk between LLM-composed text and deterministic button attachment rules
-
-## Implementation Plan
-
-### Phase 1: Slash Commands
-
-- Update `packages/gateway/src/channels/telegram.ts`:
-  - Register native command handlers with `bot.command(...)`
-  - Add command menu sync with `bot.api.setMyCommands(...)`
-  - Implement `/status`, `/runs`, `/loops` local command executors
-- Add minimal command execution helpers (shell wrappers with timeout + output formatting)
-- Add tests for command authorization and happy-path responses
-
-### Phase 2: Notification Button Templates
-
-- Update gateway event-to-Telegram path in `packages/gateway/src/daemon.ts`
-- Define shared payload typing for notification buttons
-- Pass `buttons` into Telegram `send(chatId, message, options)`
-- Add backward-compatible handling for existing plain-text events
-
-### Phase 3: Channel-Aware Formatting
-
-- Extend `packages/gateway/src/outbound/router.ts` to route structured outbound envelopes
-- Add post-processing formatter/policy module for Telegram action attachment (Option C)
-- Add channel capability context injection for Telegram-originated prompts (Option B)
-- Add tests validating deterministic button attachment and no regression for console/other channels
-
-### Phase 4: Async Command Responses
-
-- Add async command handlers for `/email`, `/tasks`, `/cal`, `/vault`, `/recall`, `/send`, `/network`
-- Fire Inngest events with correlation IDs and return immediate ack message
-- Deliver async completion back into originating Telegram thread/chat
-- Add timeout/error UX for long-running commands
-
-## Verification
-
-- [ ] `/status`, `/runs`, `/loops` return direct Telegram responses without creating pi session turns
-- [ ] Event payloads with `buttons` render inline keyboards in Telegram
-- [ ] Callback actions from proactive notifications emit `telegram/callback.received`
-- [ ] Outbound router can pass structured options to Telegram sender
-- [ ] Telegram-originated agent replies include channel context-aware formatting improvements
-- [ ] ADR-0070 status is updated to `partially-implemented`
-
-## ADR Updates
-
-This ADR updates ADR-0070 from `proposed` to `partially-implemented` to reflect that rich Telegram send and callback infrastructure exist, while channel-aware routing and reliable button propagation are still incomplete.
+- Command registry adds ~300 lines of infrastructure
+- Must keep menu synced on bot startup (but this is one API call)
+- Callback data limited to 64 bytes — need compact action encoding
+- Two execution paths (direct vs agent) adds routing complexity
 
 ## Credits
 
-Slash command shape and Telegram native command registration patterns are informed by OpenClaw references:
-
-- `~/Code/openclaw/openclaw/src/telegram/bot-native-commands.ts`
-- `~/Code/openclaw/openclaw/src/telegram/button-types.ts`
+- **OpenClaw** — command registry architecture, `defineChatCommand()` pattern, `argsMenu` button grids, skill-derived commands, Telegram menu sync. Reference: `src/auto-reply/commands-registry.data.ts`, `src/telegram/bot-native-commands.ts`, `src/auto-reply/skill-commands.ts`, `src/telegram/button-types.ts`
+- ADR-0070 — inline keyboard infrastructure (partially implemented, to be completed by this ADR)
+- ADR-0042 — rich Telegram replies and media
+- ADR-0069 — proactive gateway notifications
