@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search, X, FileText, GitBranch, Sparkles } from "lucide-react";
+import { Search, X, FileText, GitBranch, Sparkles, BookOpen } from "lucide-react";
+import { authClient } from "../lib/auth-client";
 
 type PagefindResultData = {
   url: string;
@@ -18,6 +19,7 @@ type SearchResult = {
 };
 
 function inferType(url: string): string {
+  if (url.startsWith("/vault/")) return "vault";
   if (url.startsWith("/adrs/")) return "ADR";
   if (url.startsWith("/cool/")) return "discovery";
   return "article";
@@ -26,6 +28,8 @@ function inferType(url: string): string {
 function TypeIcon({ type }: { type: string }) {
   const base = "w-4 h-4 mt-0.5 shrink-0";
   switch (type.toLowerCase()) {
+    case "vault":
+      return <BookOpen className={`${base} text-emerald-400`} />;
     case "adr":
       return <GitBranch className={`${base} text-blue-400`} />;
     case "discovery":
@@ -37,6 +41,7 @@ function TypeIcon({ type }: { type: string }) {
 
 function TypeBadge({ type }: { type: string }) {
   const colors: Record<string, string> = {
+    vault: "text-emerald-400 border-emerald-800",
     adr: "text-blue-400 border-blue-800",
     discovery: "text-purple-400 border-purple-800",
     article: "text-claw border-pink-800",
@@ -67,6 +72,8 @@ export function SearchDialog() {
   const pagefindRef = useRef<any>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+  const { data: session } = authClient.useSession();
+  const isAuthed = !!session?.user;
 
   // Load pagefind lazily on first open
   useEffect(() => {
@@ -127,7 +134,7 @@ export function SearchDialog() {
     }
   }, [open]);
 
-  // Search handler
+  // Search handler — Pagefind for public content + Typesense vault for authed users
   const handleSearch = useCallback(async (value: string) => {
     setQuery(value);
     setActiveIndex(0);
@@ -139,16 +146,14 @@ export function SearchDialog() {
 
     setLoading(true);
     try {
-      const search = await pagefindRef.current.debouncedSearch(value);
-      if (!search) return; // debounced, superseded by newer search
-
-      const loaded = await Promise.all(
-        search.results
-          .slice(0, 10)
-          .map(
+      // Pagefind: public content (blog, ADRs, discoveries)
+      const pagefindPromise = (async () => {
+        const search = await pagefindRef.current.debouncedSearch(value);
+        if (!search) return [];
+        return Promise.all(
+          search.results.slice(0, 10).map(
             async (r: { data: () => Promise<PagefindResultData> }) => {
               const data = await r.data();
-              // Normalize Next.js pre-render paths
               const url =
                 data.url
                   .replace(/\/page(\.html)?$/, "")
@@ -161,14 +166,37 @@ export function SearchDialog() {
               };
             },
           ),
-      );
-      setResults(loaded);
+        );
+      })();
+
+      // Typesense vault: only for authenticated users
+      const vaultPromise = isAuthed
+        ? fetch(`/api/vault?q=${encodeURIComponent(value)}`)
+            .then((r) => r.json())
+            .then((data) =>
+              (data.hits || []).slice(0, 5).map((h: any) => ({
+                url: `/vault/${h.path}`,
+                title: h.title,
+                excerpt: h.snippet || "",
+                type: "vault",
+              }))
+            )
+            .catch(() => [])
+        : Promise.resolve([]);
+
+      const [pagefindResults, vaultResults] = await Promise.all([
+        pagefindPromise,
+        vaultPromise,
+      ]);
+
+      // Merge: vault results first, then pagefind
+      setResults([...vaultResults, ...pagefindResults]);
     } catch {
       setResults([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAuthed]);
 
   const navigateTo = useCallback(
     (url: string) => {
@@ -243,7 +271,7 @@ export function SearchDialog() {
                 value={query}
                 onChange={(e) => handleSearch(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Search articles, ADRs, discoveries…"
+                placeholder={isAuthed ? "Search vault, articles, ADRs, discoveries…" : "Search articles, ADRs, discoveries…"}
                 className="flex-1 bg-transparent text-lg text-neutral-100 placeholder:text-neutral-600 outline-none"
                 autoComplete="off"
                 spellCheck={false}
