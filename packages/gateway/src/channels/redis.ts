@@ -2,7 +2,8 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import Redis from "ioredis";
 import { enrichPromptWithVaultContext } from "../vault-read";
-import { send as sendTelegram } from "./telegram";
+import { send as sendTelegram, type InlineButton } from "./telegram";
+import type { OutboundEnvelope } from "../outbound/envelope";
 import { emitGatewayOtel } from "../observability";
 
 export type EnqueueFn = (
@@ -213,13 +214,70 @@ function isImmediateTelegramEvent(event: SystemEvent): boolean {
   );
 }
 
+function isTelegramOnlyImmediateEvent(event: SystemEvent): boolean {
+  if (!isImmediateTelegramEvent(event)) return false;
+  const payload = event.payload as Record<string, unknown>;
+  return payload.telegramOnly === true;
+}
+
+function isInlineButton(value: unknown): value is InlineButton {
+  if (!value || typeof value !== "object") return false;
+  const button = value as Record<string, unknown>;
+  if (typeof button.text !== "string" || button.text.trim().length === 0) return false;
+  if (button.url != null && typeof button.url !== "string") return false;
+  if (button.action != null && typeof button.action !== "string") return false;
+  return true;
+}
+
+function parseInlineButtons(value: unknown): InlineButton[][] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const rows: InlineButton[][] = [];
+  for (const rowValue of value) {
+    if (!Array.isArray(rowValue)) continue;
+    const row = rowValue.filter(isInlineButton).map((button) => ({
+      text: button.text,
+      ...(button.action ? { action: button.action } : {}),
+      ...(button.url ? { url: button.url } : {}),
+    }));
+    if (row.length > 0) rows.push(row);
+  }
+  return rows.length > 0 ? rows : undefined;
+}
+
+function parseEnvelopeFormat(value: unknown): OutboundEnvelope["format"] | undefined {
+  if (value === "html" || value === "markdown" || value === "plain") return value;
+  return undefined;
+}
+
 async function sendImmediateTelegramEscalation(events: SystemEvent[]): Promise<void> {
   if (!TELEGRAM_USER_ID || events.length === 0) return;
+
+  const legacyEvents: SystemEvent[] = [];
+
+  for (const event of events) {
+    const payload = event.payload as Record<string, unknown>;
+    const directMessage = typeof payload.telegramMessage === "string"
+      ? payload.telegramMessage.trim()
+      : "";
+
+    if (!directMessage) {
+      legacyEvents.push(event);
+      continue;
+    }
+
+    await sendTelegram(TELEGRAM_USER_ID, {
+      text: directMessage,
+      format: parseEnvelopeFormat(payload.telegramFormat),
+      buttons: parseInlineButtons(payload.telegramButtons),
+    });
+  }
+
+  if (legacyEvents.length === 0) return;
 
   const lines = [
     "## Immediate Escalation",
     "",
-    ...events.slice(0, 5).map((event) => {
+    ...legacyEvents.slice(0, 5).map((event) => {
       const prompt = typeof event.payload.prompt === "string" ? event.payload.prompt : "";
       const detail = prompt ? `\n${prompt}` : "";
       return `- ${event.type} (${event.source})${detail}`;
@@ -363,6 +421,20 @@ async function drainEvents(): Promise<void> {
         metadata: {
           count: immediateTelegramEvents.length,
           eventTypes: immediateTelegramEvents.map((event) => event.type),
+        },
+      });
+    }
+
+    const immediateTelegramOnlyCount = actionable.filter(isTelegramOnlyImmediateEvent).length;
+    if (immediateTelegramOnlyCount > 0) {
+      actionable = actionable.filter((event) => !isTelegramOnlyImmediateEvent(event));
+      void emitGatewayOtel({
+        level: "debug",
+        component: "redis-channel",
+        action: "events.immediate_telegram_only",
+        success: true,
+        metadata: {
+          count: immediateTelegramOnlyCount,
         },
       });
     }

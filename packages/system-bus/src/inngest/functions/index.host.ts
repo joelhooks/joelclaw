@@ -13,6 +13,7 @@ import { backfillObserve } from "./backfill-observe";
 import { heartbeatCron, heartbeatWake } from "./heartbeat";
 import { agentDispatch } from "./agent-dispatch";
 import { mediaProcess } from "./media-process";
+import { telegramCallbackReceived } from "./telegram-callback";
 import {
   agentLoopPlan,
   agentLoopTestWriter,
@@ -90,6 +91,7 @@ export const hostFunctionDefinitions = [
   agentLoopComplete,
   agentLoopRetro,
   mediaProcess,
+  telegramCallbackReceived,
   vercelDeploySucceeded,
   vercelDeployError,
   vercelDeployCreated,

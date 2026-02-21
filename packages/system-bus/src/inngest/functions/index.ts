@@ -30,6 +30,7 @@ export { o11yTriage } from "./o11y-triage";
 export { vipEmailReceived } from "./vip-email-received";
 export { dailyDigest } from "./daily-digest";
 export { mediaProcess } from "./media-process";
+export { telegramCallbackReceived } from "./telegram-callback";
 export {
   todoistCommentAdded,
   todoistTaskCompleted,

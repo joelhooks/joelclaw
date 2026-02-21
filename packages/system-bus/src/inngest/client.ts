@@ -590,6 +590,17 @@ export type Events = {
     };
   };
 
+  // --- Telegram callbacks (inline keyboard actions) ---
+  "telegram/callback.received": {
+    data: {
+      action: string;
+      context: string;
+      rawData: string;
+      chatId?: number;
+      messageId?: number;
+    };
+  };
+
   // --- Media pipeline (ADR-0041) ---
   "media/received": {
     data: {

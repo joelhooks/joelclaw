@@ -79,6 +79,7 @@ const ACTION_LABELS: Record<string, string> = {
   skip: "⏭ <b>Skipped</b>",
   ack: "👍 <b>Acknowledged</b>",
   investigate: "🔍 <b>Investigating...</b>",
+  s4h: "⏰ <b>Snoozed for 4h</b>",
 }
 
 function mimeFromExt(ext: string): string {
