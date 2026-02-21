@@ -138,7 +138,7 @@ function NotificationFeed() {
                 {typeIcons[n.type] || "·"}
               </span>
               <div className="min-w-0 flex-1">
-                <div className="flex items-baseline gap-2">
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                   <span className="font-mono text-xs text-neutral-300">
                     {n.title}
                   </span>
@@ -220,7 +220,7 @@ function Search() {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSearch()}
           placeholder="vault, memory, blog, system log..."
-          className="w-full rounded-lg border border-neutral-800/60 bg-neutral-950 px-4 py-3 pl-8 font-mono text-sm text-neutral-200 placeholder:text-neutral-700 transition-colors focus:border-neutral-700 focus:outline-none focus:ring-1 focus:ring-neutral-800"
+          className="w-full rounded-lg border border-neutral-800/60 bg-neutral-950 px-4 py-3 pl-8 font-mono text-base text-neutral-200 placeholder:text-neutral-700 transition-colors focus:border-neutral-700 focus:outline-none focus:ring-1 focus:ring-neutral-800"
         />
         <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-mono text-xs text-neutral-700">
           /
@@ -282,7 +282,7 @@ function Search() {
 
 function StatsBar() {
   return (
-    <div className="flex items-center gap-6 border-b border-neutral-800/40 pb-4 font-pixel text-[11px] text-neutral-600">
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-1 border-b border-neutral-800/40 pb-4 font-pixel text-[11px] text-neutral-600">
       <div className="flex items-center gap-1.5">
         <span className="text-neutral-500">collections</span>
         <span className="text-neutral-300">6</span>
@@ -310,7 +310,7 @@ export default function DashboardPage() {
     <div className="space-y-8">
       <StatsBar />
       <Search />
-      <div className="grid gap-8 lg:grid-cols-2">
+      <div className="grid gap-8 md:grid-cols-2">
         <SystemHealth />
         <NotificationFeed />
       </div>
