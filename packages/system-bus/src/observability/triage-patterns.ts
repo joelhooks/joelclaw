@@ -40,6 +40,16 @@ export const TRIAGE_PATTERNS: TriagePattern[] = [
     handler: "ignore",
     dedup_hours: 24,
   },
+  {
+    match: {
+      component: "check-system-health",
+      action: "system.health.critical_failure",
+      error: /\bworker\b/iu,
+    },
+    tier: 1,
+    handler: "restartWorker",
+    dedup_hours: 1,
+  },
 
   // Tier 2: note + batch
   {
@@ -57,6 +67,16 @@ export const TRIAGE_PATTERNS: TriagePattern[] = [
   },
 ];
 
+function patternSpecificity(pattern: TriagePattern): number {
+  const { match } = pattern;
+  let score = 0;
+  if (match.component) score += 1;
+  if (match.action) score += 1;
+  if (match.error) score += 1;
+  if (match.level) score += 1;
+  return score;
+}
+
 function matchesPattern(event: OtelEvent, pattern: TriagePattern): boolean {
   const { match } = pattern;
   if (match.component && match.component !== event.component) return false;
@@ -67,15 +87,23 @@ function matchesPattern(event: OtelEvent, pattern: TriagePattern): boolean {
 }
 
 export function classifyEvent(event: OtelEvent): { tier: 1 | 2 | 3; pattern?: TriagePattern } {
-  let matched: { tier: 1 | 2 | 3; pattern?: TriagePattern } | null = null;
+  let matched: { pattern: TriagePattern; specificity: number } | null = null;
   for (const pattern of TRIAGE_PATTERNS) {
-    if (matchesPattern(event, pattern)) {
-      if (!matched || pattern.tier > matched.tier) {
-        matched = { tier: pattern.tier, pattern };
-      }
+    if (!matchesPattern(event, pattern)) continue;
+    const specificity = patternSpecificity(pattern);
+    if (!matched) {
+      matched = { pattern, specificity };
+      continue;
+    }
+    if (specificity > matched.specificity) {
+      matched = { pattern, specificity };
+      continue;
+    }
+    if (specificity === matched.specificity && pattern.tier > matched.pattern.tier) {
+      matched = { pattern, specificity };
     }
   }
-  return matched ?? { tier: 2 };
+  return matched ? { tier: matched.pattern.tier, pattern: matched.pattern } : { tier: 2 };
 }
 
 export function dedupKey(event: OtelEvent): string {

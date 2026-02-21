@@ -2,6 +2,7 @@ import { execSync } from "node:child_process";
 import { inngest } from "../client";
 import type { GatewayContext } from "../middleware/gateway";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import * as typesense from "../../lib/typesense";
 import { emitOtelEvent } from "../../observability/emit";
 import type { OtelEvent } from "../../observability/otel-event";
 import {
@@ -10,7 +11,8 @@ import {
   triageFailures,
   type ClassifiedEvent,
 } from "../../observability/triage";
-import { dedupKey } from "../../observability/triage-patterns";
+import { AUTO_FIX_HANDLERS } from "../../observability/auto-fixes";
+import { classifyEvent, dedupKey } from "../../observability/triage-patterns";
 
 const AGENT_WORK_PROJECT_ID = "6g3VPph7cFfm8GjJ";
 const TRIAGE_CATEGORY = "o11y-triage";
@@ -18,9 +20,21 @@ const TRIAGE_PATTERN_PROPOSAL_CATEGORY = "o11y-pattern-proposal";
 const TRIAGE_LABELS = "o11y,escalation";
 const ESCALATION_CODEX_MODEL = "gpt-5.3-codex";
 const ESCALATION_CODEX_CWD = "/Users/joel/Code/joelhooks/joelclaw";
+const OTEL_COLLECTION = "otel_events";
+const OTEL_QUERY_BY = "action,error,component,source,metadata_json,search_text";
+const TELEGRAM_ESCALATION_MAX_PER_HOUR = 3;
+const TELEGRAM_ESCALATION_WINDOW_MS = 60 * 60 * 1000;
+const TELEGRAM_SNOOZE_HOURS = 4;
+const localTelegramEscalationSentAt: number[] = [];
 
 type TodoistTaskResult = {
   id?: string;
+  url?: string;
+};
+
+type GatewayInlineButton = {
+  text: string;
+  action?: string;
   url?: string;
 };
 
@@ -237,21 +251,104 @@ function updateTodoistTaskDescription(taskId: string, description: string): bool
   }
 }
 
-function buildTelegramText(
-  event: OtelEvent,
+function escapeTelegramHtml(value: string): string {
+  return value
+    .replace(/&/gu, "&amp;")
+    .replace(/</gu, "&lt;")
+    .replace(/>/gu, "&gt;");
+}
+
+function pruneLocalTelegramEscalations(now = Date.now()): void {
+  const cutoff = now - TELEGRAM_ESCALATION_WINDOW_MS;
+  while (localTelegramEscalationSentAt.length > 0 && (localTelegramEscalationSentAt[0] ?? 0) < cutoff) {
+    localTelegramEscalationSentAt.shift();
+  }
+}
+
+function getLocalTelegramEscalationCount(now = Date.now()): number {
+  pruneLocalTelegramEscalations(now);
+  return localTelegramEscalationSentAt.length;
+}
+
+function recordLocalTelegramEscalation(now = Date.now()): void {
+  pruneLocalTelegramEscalations(now);
+  localTelegramEscalationSentAt.push(now);
+}
+
+async function countRecentTelegramEscalations(): Promise<number> {
+  const cutoff = Date.now() - TELEGRAM_ESCALATION_WINDOW_MS;
+  const localCount = getLocalTelegramEscalationCount();
+
+  try {
+    const result = await typesense.search({
+      collection: OTEL_COLLECTION,
+      q: "*",
+      query_by: OTEL_QUERY_BY,
+      per_page: 1,
+      include_fields: "id",
+      filter_by: `timestamp:>=${Math.floor(cutoff)} && component:=\`o11y-triage\` && action:=triage.telegram_sent && success:=true`,
+    });
+    const remoteCount = typeof result.found === "number" ? result.found : 0;
+    return Math.max(remoteCount, localCount);
+  } catch {
+    return localCount;
+  }
+}
+
+async function isSnoozedDedupKey(key: string): Promise<boolean> {
+  const cutoff = Date.now() - TELEGRAM_SNOOZE_HOURS * 60 * 60 * 1000;
+
+  try {
+    const result = await typesense.search({
+      collection: OTEL_COLLECTION,
+      q: key,
+      query_by: OTEL_QUERY_BY,
+      per_page: 1,
+      include_fields: "id",
+      filter_by: `timestamp:>=${Math.floor(cutoff)} && component:=\`o11y-triage\` && action:=triage.snoozed && success:=true`,
+    });
+    return (result.found ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+function encodeDedupKeyForSnoozeCallback(key: string): string {
+  if (!/^[a-f0-9]{64}$/iu.test(key)) return key.slice(0, 40);
+  return Buffer.from(key, "hex").toString("base64url");
+}
+
+function buildSnoozeCallbackData(key: string): string {
+  return `s4h:${encodeDedupKeyForSnoozeCallback(key)}`;
+}
+
+function buildTelegramButtons(
   taskUrl: string | undefined,
-  codexDispatched: boolean,
-  codexDispatchError?: string
-): string {
-  const summary = summarizeIssue(event);
-  const impact = inferImpact(event);
+  key: string
+): GatewayInlineButton[][] {
+  const rows: GatewayInlineButton[][] = [];
+  if (taskUrl) {
+    rows.push([{ text: "View Task", url: taskUrl }]);
+  }
+  rows.push([{ text: "Snooze 4h", action: buildSnoozeCallbackData(key) }]);
+  return rows;
+}
+
+function buildTelegramText(event: OtelEvent, llmReasoning: string | undefined): string {
+  const reasoning = llmReasoning?.trim().length
+    ? llmReasoning.trim()
+    : "No additional classification reasoning returned by Haiku.";
+
   return [
-    `O11y triage escalation: ${summary}`,
-    `Impact: ${impact}`,
-    taskUrl ? `Task: ${taskUrl}` : "Task created in Agent Work.",
-    codexDispatched
-      ? "Codex investigation dispatched."
-      : `Codex dispatch failed: ${compact(codexDispatchError ?? "unknown_error", 180)}`,
+    "⚠️ <b>O11y Escalation</b>",
+    "",
+    `<b>Component:</b> ${escapeTelegramHtml(event.component)}`,
+    `<b>Action:</b> ${escapeTelegramHtml(event.action)}`,
+    `<b>Error:</b> ${escapeTelegramHtml(event.error ?? "operation_failed")}`,
+    "",
+    `<b>Haiku says:</b> ${escapeTelegramHtml(compact(reasoning, 280))}`,
+    "",
+    "📋 Task created, codex investigating.",
   ].join("\n");
 }
 
@@ -396,39 +493,74 @@ export const o11yTriage = inngest.createFunction(
       return { queued: true, count: proposed.length };
     });
 
-    await step.run("handle-tier1", async () => {
+    const tier1Result = await step.run("handle-tier1", async () => {
+      const promoted: OtelEvent[] = [];
+
       for (const event of finalBuckets.tier1) {
+        const handlerName = classifyEvent(event).pattern?.handler;
+        let result: { fixed: boolean; detail: string };
+
+        if (!handlerName) {
+          result = {
+            fixed: false,
+            detail: "tier1 event has no configured auto-fix handler",
+          };
+        } else {
+          const handler = AUTO_FIX_HANDLERS[handlerName];
+          if (!handler) {
+            result = {
+              fixed: false,
+              detail: `auto-fix handler not found: ${handlerName}`,
+            };
+          } else {
+            try {
+              result = await handler(event);
+            } catch (error) {
+              result = {
+                fixed: false,
+                detail: error instanceof Error ? error.message : String(error),
+              };
+            }
+          }
+        }
+
         await emitOtelEvent({
           level: "info",
           source: "worker",
           component: "o11y-triage",
           action: "auto_fix.applied",
-          success: true,
+          success: result.fixed,
+          error: result.fixed ? undefined : result.detail,
           metadata: {
-            phase: "phase-1.5",
-            strategy: "log-ignore",
-            dedupKey: dedupKey(event),
-            event: {
-              id: event.id,
-              component: event.component,
-              action: event.action,
-              error: event.error ?? null,
-            },
+            handler: handlerName ?? null,
+            event_action: event.action,
+            detail: result.detail,
           },
         });
+
+        if (!result.fixed) {
+          promoted.push(event);
+        }
       }
-      return { handled: finalBuckets.tier1.length };
+      return { handled: finalBuckets.tier1.length, promoted };
     });
 
+    const tier2Events: OtelEvent[] = [...finalBuckets.tier2];
+    for (const event of tier1Result.promoted) {
+      if (!tier2Events.some((candidate) => candidate.id === event.id)) {
+        tier2Events.push(event);
+      }
+    }
+
     await step.run("handle-tier2", async () => {
-      if (finalBuckets.tier2.length === 0) {
+      if (tier2Events.length === 0) {
         return { handled: 0, queuedObservation: false };
       }
 
       await inngest.send({
         name: "session/observation.noted",
         data: {
-          observations: finalBuckets.tier2.map((event) => {
+          observations: tier2Events.map((event) => {
             const llm = reclassifiedByDedupKey.get(dedupKey(event));
             return {
               category: TRIAGE_CATEGORY,
@@ -448,12 +580,38 @@ export const o11yTriage = inngest.createFunction(
         },
       });
 
-      return { handled: finalBuckets.tier2.length, queuedObservation: true };
+      return { handled: tier2Events.length, queuedObservation: true };
     });
 
     await step.run("handle-tier3", async () => {
+      let sentTelegramInWindow = await countRecentTelegramEscalations();
+
       for (const event of finalBuckets.tier3) {
-        const llmReasoning = reclassifiedByDedupKey.get(dedupKey(event))?.reasoning;
+        const eventDedupKey = dedupKey(event);
+        const llmReasoning = reclassifiedByDedupKey.get(eventDedupKey)?.reasoning;
+
+        if (await isSnoozedDedupKey(eventDedupKey)) {
+          await emitOtelEvent({
+            level: "info",
+            source: "worker",
+            component: "o11y-triage",
+            action: "triage.snooze_suppressed",
+            success: true,
+            metadata: {
+              dedupKey: eventDedupKey,
+              snoozeHours: TELEGRAM_SNOOZE_HOURS,
+              event: {
+                id: event.id,
+                component: event.component,
+                action: event.action,
+                error: event.error ?? null,
+                level: event.level,
+              },
+            },
+          });
+          continue;
+        }
+
         const candidateFiles = collectCandidateFiles(event);
         const gitLog = collectGitLog(candidateFiles);
         const preliminaryDescription = buildPreliminaryTaskDescription(
@@ -508,24 +666,73 @@ export const o11yTriage = inngest.createFunction(
           codexDispatchError = "Todoist task creation failed to return a task ID; codex dispatch skipped.";
         }
 
-        const text = buildTelegramText(event, taskUrl, codexDispatched, codexDispatchError);
-        if (gateway) {
-          await gateway.alert(text, {
+        const text = buildTelegramText(event, llmReasoning);
+        const buttons = buildTelegramButtons(taskUrl, eventDedupKey);
+        const canSendTelegram = sentTelegramInWindow < TELEGRAM_ESCALATION_MAX_PER_HOUR;
+        let telegramSent = false;
+        let telegramRateLimited = false;
+
+        if (canSendTelegram) {
+          const telegramPayload = {
+            immediateTelegram: true,
+            telegramOnly: true,
             channel: "telegram",
+            level: "error",
             taskId: taskId ?? null,
             taskUrl: taskUrl ?? null,
-            dedupKey: dedupKey(event),
-          });
-        } else {
-          await pushGatewayEvent({
-            type: "alert",
-            source: "inngest/check/o11y-triage",
-            payload: {
-              message: text,
-              channel: "telegram",
+            dedupKey: eventDedupKey,
+            telegramMessage: text,
+            telegramFormat: "html" as const,
+            telegramButtons: buttons,
+          };
+
+          if (gateway) {
+            await gateway.alert(text, telegramPayload);
+          } else {
+            await pushGatewayEvent({
+              type: "alert",
+              source: "inngest/check/o11y-triage",
+              payload: {
+                message: text,
+                ...telegramPayload,
+              },
+            });
+          }
+
+          telegramSent = true;
+          sentTelegramInWindow += 1;
+          recordLocalTelegramEscalation();
+
+          await emitOtelEvent({
+            level: "info",
+            source: "worker",
+            component: "o11y-triage",
+            action: "triage.telegram_sent",
+            success: true,
+            metadata: {
+              dedupKey: eventDedupKey,
               taskId: taskId ?? null,
               taskUrl: taskUrl ?? null,
-              dedupKey: dedupKey(event),
+              sentInLastHour: sentTelegramInWindow,
+              hourlyCap: TELEGRAM_ESCALATION_MAX_PER_HOUR,
+              hasButtons: buttons.length > 0,
+            },
+          });
+        } else {
+          telegramRateLimited = true;
+          await emitOtelEvent({
+            level: "warn",
+            source: "worker",
+            component: "o11y-triage",
+            action: "triage.telegram_rate_limited",
+            success: false,
+            error: "hourly_limit_reached",
+            metadata: {
+              dedupKey: eventDedupKey,
+              taskId: taskId ?? null,
+              taskUrl: taskUrl ?? null,
+              sentInLastHour: sentTelegramInWindow,
+              hourlyCap: TELEGRAM_ESCALATION_MAX_PER_HOUR,
             },
           });
         }
@@ -554,7 +761,10 @@ export const o11yTriage = inngest.createFunction(
             codexDispatched,
             codexRequestId: codexRequestId ?? null,
             codexDispatchError: codexDispatchError ?? null,
-            dedupKey: dedupKey(event),
+            dedupKey: eventDedupKey,
+            telegramSent,
+            telegramRateLimited,
+            telegramButtons: buttons.length > 0,
           },
         });
       }
@@ -564,7 +774,7 @@ export const o11yTriage = inngest.createFunction(
     return {
       scanned: events.length,
       tier1: finalBuckets.tier1.length,
-      tier2: finalBuckets.tier2.length,
+      tier2: tier2Events.length,
       tier3: finalBuckets.tier3.length,
       unknownTier2: triaged.unmatchedTier2.length,
       llmReclassified: reclassifiedUnknowns.length,
