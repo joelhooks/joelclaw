@@ -37,16 +37,21 @@ function sectionSort(a: string, b: string) {
   return a.localeCompare(b);
 }
 
+type VaultTreeNode = {
+  path: string;
+  title: string;
+  type: string;
+  tags: string[];
+};
+
 // ── Tree sidebar ────────────────────────────────────────────────
 
 function VaultTree({
   tree,
   selectedPath,
-  onSelect,
 }: {
-  tree: Record<string, { path: string; title: string; type: string; tags: string[] }[]>;
+  tree: Record<string, VaultTreeNode[]>;
   selectedPath: string | null;
-  onSelect: (path: string) => void;
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const toggle = (s: string) => setExpanded((p) => ({ ...p, [s]: !p[s] }));
@@ -106,7 +111,34 @@ export default function VaultPage() {
   const router = useRouter();
   const { data: session, isPending } = authClient.useSession();
   const isOwner = useQuery(api.auth.isOwner);
-  const data = useQuery(api.vaultNotes.listBySection);
+  const resources = useQuery(api.contentResources.listByType, {
+    type: "vault_note",
+    limit: 5000,
+  });
+
+  const notes = (resources ?? []).map((doc) => {
+    const fields = (doc.fields ?? {}) as Record<string, unknown>;
+    return {
+      path: String(fields.path ?? ""),
+      title: String(fields.title ?? "untitled"),
+      type: String(fields.type ?? "note"),
+      tags: Array.isArray(fields.tags)
+        ? fields.tags.map((tag) => String(tag))
+        : [],
+      section: String(fields.section ?? "root"),
+    };
+  });
+
+  const tree = notes.reduce<Record<string, VaultTreeNode[]>>((acc, note) => {
+    if (!acc[note.section]) acc[note.section] = [];
+    acc[note.section]!.push({
+      path: note.path,
+      title: note.title,
+      type: note.type,
+      tags: note.tags,
+    });
+    return acc;
+  }, {});
 
   // Auth gate
   if (isPending || isOwner === undefined) {
@@ -124,22 +156,22 @@ export default function VaultPage() {
   return (
     <div className="space-y-6">
       {/* Stats */}
-      {data && (
+      {resources && (
         <div className="font-mono text-sm text-neutral-500">
-          {data.total} notes · {Object.keys(data.tree).length} sections
+          {notes.length} notes · {Object.keys(tree).length} sections
         </div>
       )}
 
       {/* Tree browser — full width, notes link to /vault/{path} */}
       <div className="overflow-y-auto rounded-lg border border-neutral-700/30 bg-neutral-900/20 p-4">
-        {!data ? (
+        {!resources ? (
           <div className="space-y-2">
             {[...Array(8)].map((_, i) => (
               <div key={i} className="h-7 animate-pulse rounded bg-neutral-800/30" />
             ))}
           </div>
         ) : (
-          <VaultTree tree={data.tree} selectedPath={null} onSelect={() => {}} />
+          <VaultTree tree={tree} selectedPath={null} />
         )}
       </div>
     </div>

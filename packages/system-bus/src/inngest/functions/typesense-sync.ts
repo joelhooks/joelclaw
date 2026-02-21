@@ -12,7 +12,7 @@
 
 import { inngest } from "../client";
 import * as typesense from "../../lib/typesense";
-import { pushVaultNote } from "../../lib/convex";
+import { pushContentResource } from "../../lib/convex";
 import { renderVaultMarkdown } from "../../lib/vault-render";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname, basename, relative } from "node:path";
@@ -142,7 +142,7 @@ async function indexSystemLog(): Promise<{ success: number; errors: number }> {
       try {
         const e = JSON.parse(lines[i]!);
         const doc: Record<string, unknown> = {
-          id: `slog-${i}`,
+          id: String(i),
           action: e.action || "",
           tool: e.tool || "",
           detail: e.detail || "",
@@ -162,16 +162,20 @@ async function indexSystemLog(): Promise<{ success: number; errors: number }> {
   const result = await typesense.bulkImport("system_log", docs);
 
   // Dual-write to Convex
-  const { pushSystemLogEntry } = await import("../../lib/convex");
   for (const doc of docs) {
-    await pushSystemLogEntry({
-      entryId: String(doc.id),
-      action: String(doc.action || ""),
-      tool: String(doc.tool || ""),
-      detail: String(doc.detail || ""),
-      reason: doc.reason ? String(doc.reason) : undefined,
-      timestamp: Number(doc.timestamp || 0),
-    }).catch(() => {});
+    const entryId = String(doc.id);
+    const action = String(doc.action || "");
+    const tool = String(doc.tool || "");
+    const detail = String(doc.detail || "");
+    const reason = doc.reason ? String(doc.reason) : undefined;
+    const timestamp = Number(doc.timestamp || 0);
+
+    await pushContentResource(
+      `slog:${entryId}`,
+      "system_log",
+      { entryId, action, tool, detail, reason, timestamp },
+      [action, tool, detail, reason].filter(Boolean).join(" ")
+    ).catch(() => {});
   }
 
   return result;
@@ -226,16 +230,22 @@ export const typesenseVaultSync = inngest.createFunction(
             // Fall back to no HTML — client will show raw markdown
           }
 
-          await pushVaultNote({
-            path: relPath,
-            title,
-            content,
-            html,
-            type,
-            tags,
-            section,
-            updatedAt: Math.floor(stat.mtimeMs / 1000),
-          });
+          const updatedAt = Math.floor(stat.mtimeMs / 1000);
+          await pushContentResource(
+            `vault:${relPath}`,
+            "vault_note",
+            {
+              path: relPath,
+              title,
+              content,
+              html,
+              type,
+              tags,
+              section,
+              updatedAt,
+            },
+            [title, content, tags.join(" "), section, type].filter(Boolean).join(" ")
+          );
           synced++;
         } catch (err) {
           errors++;

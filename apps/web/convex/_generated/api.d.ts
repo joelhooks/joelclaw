@@ -9,6 +9,7 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as contentResources from "../contentResources.js";
 import type * as http from "../http.js";
 import type * as memoryObservations from "../memoryObservations.js";
 import type * as notifications from "../notifications.js";
@@ -24,6 +25,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  contentResources: typeof contentResources;
   http: typeof http;
   memoryObservations: typeof memoryObservations;
   notifications: typeof notifications;

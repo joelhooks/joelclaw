@@ -33,7 +33,9 @@ export default function VaultNotePage() {
   const pathSegments = params.path as string[];
   const vaultPath = pathSegments.join("/");
 
-  const note = useQuery(api.vaultNotes.getByPath, { path: vaultPath });
+  const resource = useQuery(api.contentResources.getByResourceId, {
+    resourceId: `vault:${vaultPath}`,
+  });
 
   // Auth gate
   if (isPending || isOwner === undefined) {
@@ -49,7 +51,7 @@ export default function VaultNotePage() {
   }
 
   // Loading
-  if (note === undefined) {
+  if (resource === undefined) {
     return (
       <div className="flex h-64 items-center justify-center">
         <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-neutral-700 border-t-claw" />
@@ -58,7 +60,7 @@ export default function VaultNotePage() {
   }
 
   // Not found
-  if (!note) {
+  if (!resource) {
     return (
       <div className="space-y-6">
         <nav className="flex items-center gap-3 text-sm">
@@ -74,8 +76,17 @@ export default function VaultNotePage() {
     );
   }
 
-  const section = note.section || vaultPath.split("/")[0] || "";
-  const style = sectionStyle(section);
+  const fields = (resource.fields ?? {}) as Record<string, unknown>;
+  const note = {
+    title: String(fields.title ?? "untitled"),
+    section: String(fields.section ?? vaultPath.split("/")[0] ?? ""),
+    type: String(fields.type ?? "note"),
+    tags: Array.isArray(fields.tags) ? fields.tags.map((tag) => String(tag)) : [],
+    html: typeof fields.html === "string" ? fields.html : undefined,
+    content: String(fields.content ?? ""),
+  };
+
+  const style = sectionStyle(note.section);
 
   // Breadcrumb from path
   const crumbs = vaultPath.split("/");
@@ -115,7 +126,7 @@ export default function VaultNotePage() {
         </h1>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <span className={`rounded px-1.5 py-0.5 font-pixel text-[10px] uppercase tracking-wider ${style.color} ${style.bg}`}>
-            {section}
+            {note.section}
           </span>
           <span className="rounded bg-neutral-800/60 px-1.5 py-0.5 font-pixel text-[10px] uppercase tracking-wider text-neutral-400">
             {note.type}

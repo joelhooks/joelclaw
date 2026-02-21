@@ -20,10 +20,21 @@ function sectionStyle(s: string) {
 
 function VaultSearchBar() {
   const [query, setQuery] = useState("");
-  const results = useQuery(
-    api.vaultNotes.search,
-    query.trim().length > 1 ? { query: query.trim() } : "skip"
+  const resources = useQuery(
+    api.contentResources.searchByType,
+    query.trim().length > 1
+      ? { type: "vault_note", query: query.trim(), limit: 30 }
+      : "skip"
   );
+  const results = (resources ?? []).map((doc) => {
+    const fields = (doc.fields ?? {}) as Record<string, unknown>;
+    return {
+      path: String(fields.path ?? ""),
+      title: String(fields.title ?? "untitled"),
+      type: String(fields.type ?? "note"),
+      section: String(fields.section ?? "root"),
+    };
+  });
   const router = useRouter();
 
   return (
@@ -40,7 +51,7 @@ function VaultSearchBar() {
           /
         </span>
       </div>
-      {results && results.length > 0 && (
+      {results.length > 0 && (
         <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 space-y-0.5 overflow-y-auto rounded-lg border border-neutral-700/30 bg-neutral-900 p-1 shadow-xl">
           {results.map((r) => {
             const style = sectionStyle(r.section);

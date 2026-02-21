@@ -25,15 +25,30 @@ export default function MemoryPage() {
   const [category, setCategory] = useState<string | undefined>();
 
   const listData = useQuery(
-    api.memoryObservations.list,
-    !query.trim() ? { category, limit: 100 } : "skip"
+    api.contentResources.listByType,
+    !query.trim() ? { type: "memory_observation", limit: 300 } : "skip"
   );
   const searchData = useQuery(
-    api.memoryObservations.search,
-    query.trim().length > 1 ? { query: query.trim(), limit: 100 } : "skip"
+    api.contentResources.searchByType,
+    query.trim().length > 1
+      ? { type: "memory_observation", query: query.trim(), limit: 300 }
+      : "skip"
   );
 
-  const observations = query.trim().length > 1 ? searchData : listData;
+  const rawObservations = query.trim().length > 1 ? searchData : listData;
+  const observations = (rawObservations ?? [])
+    .map((doc) => {
+      const fields = (doc.fields ?? {}) as Record<string, unknown>;
+      return {
+        resourceId: doc.resourceId,
+        observation: String(fields.observation ?? ""),
+        category: String(fields.category ?? "general"),
+        source: String(fields.source ?? "unknown"),
+        superseded: Boolean(fields.superseded ?? false),
+        timestamp: Number(fields.timestamp ?? 0),
+      };
+    })
+    .filter((obs) => (category ? obs.category === category : true));
 
   if (isPending || isOwner === undefined) {
     return (
@@ -89,7 +104,7 @@ export default function MemoryPage() {
       </div>
 
       <div className="space-y-2">
-        {observations === undefined ? (
+        {rawObservations === undefined ? (
           <div className="space-y-2">
             {[...Array(5)].map((_, i) => (
               <div key={i} className="h-20 animate-pulse rounded-lg bg-neutral-800/30" />
@@ -102,7 +117,7 @@ export default function MemoryPage() {
         ) : (
           observations.map((obs) => (
             <div
-              key={obs._id}
+              key={obs.resourceId}
               className={`rounded-lg border border-neutral-700/30 bg-neutral-900/30 p-4 space-y-2 ${obs.superseded ? "opacity-50" : ""}`}
             >
               <div className="flex items-center gap-2 flex-wrap">

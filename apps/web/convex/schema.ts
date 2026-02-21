@@ -120,6 +120,34 @@ export default defineSchema({
       filterFields: ["action", "tool"],
     }),
 
+  // ── Unified content resources (ADR-0084) ───────────────────────────
+
+  contentResources: defineTable({
+    resourceId: v.string(), // deterministic, e.g. "vault:Projects/foo.md"
+    type: v.string(), // discriminator: "vault_note", "memory_observation", etc.
+    fields: v.any(), // type-specific payload bag
+    searchText: v.string(), // concatenated searchable text from fields
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    deletedAt: v.optional(v.number()),
+  })
+    .index("by_resourceId", ["resourceId"])
+    .index("by_type", ["type"])
+    .index("by_type_updatedAt", ["type", "updatedAt"])
+    .searchIndex("search_text", {
+      searchField: "searchText",
+      filterFields: ["type"],
+    }),
+
+  contentResourceResource: defineTable({
+    parentId: v.string(), // resourceId of parent
+    childId: v.string(), // resourceId of child
+    position: v.optional(v.number()),
+    metadata: v.optional(v.any()),
+  })
+    .index("by_parentId", ["parentId"])
+    .index("by_childId", ["childId"]),
+
   // ── Dashboard tables ──────────────────────────────────────────────
 
   systemStatus: defineTable({
@@ -137,4 +165,5 @@ export default defineSchema({
     read: v.boolean(),
     createdAt: v.number(),
   }).index("by_createdAt", ["createdAt"]),
+
 });

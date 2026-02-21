@@ -24,19 +24,34 @@ export default function SyslogPage() {
   const [toolFilter, setToolFilter] = useState<string | undefined>();
 
   const listData = useQuery(
-    api.systemLog.list,
-    !query.trim() ? { tool: toolFilter, limit: 100 } : "skip"
+    api.contentResources.listByType,
+    !query.trim() ? { type: "system_log", limit: 300 } : "skip"
   );
   const searchData = useQuery(
-    api.systemLog.search,
-    query.trim().length > 1 ? { query: query.trim(), limit: 100 } : "skip"
+    api.contentResources.searchByType,
+    query.trim().length > 1
+      ? { type: "system_log", query: query.trim(), limit: 300 }
+      : "skip"
   );
 
-  const entries = query.trim().length > 1 ? searchData : listData;
+  const rawEntries = query.trim().length > 1 ? searchData : listData;
+  const allEntries = (rawEntries ?? [])
+    .map((doc) => {
+      const fields = (doc.fields ?? {}) as Record<string, unknown>;
+      return {
+        resourceId: doc.resourceId,
+        action: String(fields.action ?? ""),
+        tool: String(fields.tool ?? ""),
+        detail: String(fields.detail ?? ""),
+        reason: fields.reason ? String(fields.reason) : undefined,
+        timestamp: Number(fields.timestamp ?? 0),
+      };
+    });
+  const entries = allEntries.filter((entry) => (toolFilter ? entry.tool === toolFilter : true));
 
   // Derive unique tools from data for filter chips
-  const tools = listData
-    ? [...new Set(listData.map((e) => e.tool))].sort()
+  const tools = allEntries.length > 0
+    ? [...new Set(allEntries.map((e) => e.tool))].sort()
     : [];
 
   if (isPending || isOwner === undefined) {
@@ -93,7 +108,7 @@ export default function SyslogPage() {
       </div>
 
       <div className="space-y-1">
-        {entries === undefined ? (
+        {rawEntries === undefined ? (
           <div className="space-y-1">
             {[...Array(8)].map((_, i) => (
               <div key={i} className="h-16 animate-pulse rounded-lg bg-neutral-800/30" />
@@ -106,7 +121,7 @@ export default function SyslogPage() {
         ) : (
           entries.map((entry) => (
             <div
-              key={entry._id}
+              key={entry.resourceId}
               className="rounded-lg border border-neutral-700/30 bg-neutral-900/30 px-4 py-3 space-y-1.5"
             >
               <div className="flex items-center gap-2 flex-wrap">

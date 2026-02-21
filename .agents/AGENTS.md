@@ -1,5 +1,9 @@
 # Agent Instructions
 
+## Model Policy
+
+**Codex tasks MUST use `gpt-5.3-codex`.** Never use o3, o3-mini, o1, o1-mini, or o1-preview — they are unreliable for agentic coding. If no model is specified, explicitly pass `model: "gpt-5.3-codex"`. This is enforced by the `model-guard` pi extension but agents should never reach that gate.
+
 ## Core Principles
 
 ### 1. Consult and update the Vault

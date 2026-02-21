@@ -29,7 +29,19 @@ function Pulse({ status }: { status: string }) {
 // ── System Health Panel ─────────────────────────────────────────
 
 function SystemHealth() {
-  const status = useQuery(api.systemStatus.list);
+  const statusResources = useQuery(api.contentResources.listByType, {
+    type: "system_status",
+    limit: 50,
+  });
+  const status = (statusResources ?? []).map((doc) => {
+    const fields = (doc.fields ?? {}) as Record<string, unknown>;
+    return {
+      resourceId: doc.resourceId,
+      component: String(fields.component ?? ""),
+      status: String(fields.status ?? "down"),
+      detail: typeof fields.detail === "string" ? fields.detail : undefined,
+    };
+  });
 
   return (
     <div className="space-y-3">
@@ -40,7 +52,7 @@ function SystemHealth() {
         <div className="h-px flex-1 bg-neutral-700/40" />
       </div>
 
-      {!status ? (
+      {!statusResources ? (
         <div className="grid grid-cols-2 gap-2">
           {[...Array(6)].map((_, i) => (
             <div
@@ -62,7 +74,7 @@ function SystemHealth() {
         <div className="grid grid-cols-2 gap-2">
           {status.map((s) => (
             <div
-              key={s._id}
+              key={s.resourceId}
               className="group flex items-center gap-3 rounded-lg border border-neutral-700/40 bg-neutral-900/30 px-3 py-2.5 transition-colors hover:border-neutral-600/60 hover:bg-neutral-900/50"
             >
               <Pulse status={s.status} />
@@ -87,8 +99,22 @@ function SystemHealth() {
 // ── Notification Feed ───────────────────────────────────────────
 
 function NotificationFeed() {
-  const notifications = useQuery(api.notifications.list, { limit: 8 });
-  const unreadCount = useQuery(api.notifications.unreadCount);
+  const notificationResources = useQuery(api.contentResources.listByType, {
+    type: "notification",
+    limit: 200,
+  });
+  const notifications = (notificationResources ?? []).map((doc) => {
+    const fields = (doc.fields ?? {}) as Record<string, unknown>;
+    return {
+      resourceId: doc.resourceId,
+      notificationType: String(fields.notificationType ?? "notification"),
+      title: String(fields.title ?? ""),
+      body: typeof fields.body === "string" ? fields.body : undefined,
+      read: Boolean(fields.read),
+      createdAt: Number(fields.createdAt ?? doc.updatedAt),
+    };
+  });
+  const unreadCount = notifications.filter((n) => !n.read).length;
 
   const typeIcons: Record<string, string> = {
     deploy: "▲",
@@ -112,7 +138,7 @@ function NotificationFeed() {
         <div className="h-px flex-1 bg-neutral-700/40" />
       </div>
 
-      {!notifications ? (
+      {!notificationResources ? (
         <div className="space-y-2">
           {[...Array(4)].map((_, i) => (
             <div
@@ -129,15 +155,15 @@ function NotificationFeed() {
         </div>
       ) : (
         <div className="space-y-1">
-          {notifications.map((n) => (
+          {notifications.slice(0, 8).map((n) => (
             <div
-              key={n._id}
+              key={n.resourceId}
               className={`flex items-start gap-2.5 rounded-lg px-2.5 py-2 transition-colors hover:bg-neutral-900/40 ${
                 n.read ? "opacity-50" : ""
               }`}
             >
               <span className="mt-0.5 font-mono text-[10px] text-neutral-500">
-                {typeIcons[n.type] || "·"}
+                {typeIcons[n.notificationType] || "·"}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">

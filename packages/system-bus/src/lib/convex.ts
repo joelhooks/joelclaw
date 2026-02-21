@@ -4,6 +4,7 @@
  *
  * ADR-0075: Dashboard wiring.
  */
+import { randomUUID } from "node:crypto";
 import { ConvexHttpClient } from "convex/browser";
 import { anyApi, type FunctionReference } from "convex/server";
 
@@ -18,16 +19,31 @@ export function getConvexClient(): ConvexHttpClient {
   return _client;
 }
 
+/** Upsert a unified content resource to Convex */
+export async function pushContentResource(
+  resourceId: string,
+  type: string,
+  fields: Record<string, unknown>,
+  searchText?: string
+) {
+  const client = getConvexClient();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ref = (anyApi as any).contentResources.upsert as FunctionReference<"mutation">;
+  await client.mutation(ref, { resourceId, type, fields, searchText });
+}
+
 /** Push system health status to Convex dashboard */
 export async function pushSystemStatus(
   component: string,
   status: "healthy" | "degraded" | "down",
   detail?: string
 ) {
-  const client = getConvexClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ref = (anyApi as any).systemStatus.upsert as FunctionReference<"mutation">;
-  await client.mutation(ref, { component, status, detail });
+  await pushContentResource(
+    `status:${component}`,
+    "system_status",
+    { component, status, detail, checkedAt: Date.now() },
+    [component, status, detail].filter(Boolean).join(" ")
+  );
 }
 
 /** Upsert a vault note to Convex */
@@ -41,17 +57,26 @@ export async function pushVaultNote(note: {
   section: string;
   updatedAt: number;
 }) {
-  const client = getConvexClient();
-  const ref = (anyApi as any).vaultNotes.upsert as FunctionReference<"mutation">;
-  await client.mutation(ref, note);
+  await pushContentResource(
+    `vault:${note.path}`,
+    "vault_note",
+    note,
+    [note.title, note.content, note.tags.join(" "), note.section, note.type]
+      .filter(Boolean)
+      .join(" ")
+  );
 }
 
 /** Remove vault notes that no longer exist */
 export async function removeVaultNotes(paths: string[]) {
   if (paths.length === 0) return;
   const client = getConvexClient();
-  const ref = (anyApi as any).vaultNotes.removeByPaths as FunctionReference<"mutation">;
-  await client.mutation(ref, { paths });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ref = (anyApi as any).contentResources.remove as FunctionReference<"mutation">;
+
+  for (const path of paths) {
+    await client.mutation(ref, { resourceId: `vault:${path}` });
+  }
 }
 
 /** Push a memory observation to Convex */
@@ -64,9 +89,12 @@ export async function pushMemoryObservation(obs: {
   superseded: boolean;
   timestamp: number;
 }) {
-  const client = getConvexClient();
-  const ref = (anyApi as any).memoryObservations.upsert as FunctionReference<"mutation">;
-  await client.mutation(ref, obs);
+  await pushContentResource(
+    `obs:${obs.observationId}`,
+    "memory_observation",
+    obs,
+    [obs.observation, obs.category, obs.source].filter(Boolean).join(" ")
+  );
 }
 
 /** Push a system log entry to Convex */
@@ -78,9 +106,12 @@ export async function pushSystemLogEntry(entry: {
   reason?: string;
   timestamp: number;
 }) {
-  const client = getConvexClient();
-  const ref = (anyApi as any).systemLog.upsert as FunctionReference<"mutation">;
-  await client.mutation(ref, entry);
+  await pushContentResource(
+    `slog:${entry.entryId}`,
+    "system_log",
+    entry,
+    [entry.action, entry.tool, entry.detail, entry.reason].filter(Boolean).join(" ")
+  );
 }
 
 /** Push a notification to Convex dashboard */
@@ -90,8 +121,21 @@ export async function pushNotification(
   body?: string,
   metadata?: Record<string, unknown>
 ) {
-  const client = getConvexClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ref = (anyApi as any).notifications.create as FunctionReference<"mutation">;
-  await client.mutation(ref, { type, title, body, metadata });
+  const notificationId =
+    (typeof metadata?.id === "string" && metadata.id) ||
+    (typeof metadata?.notificationId === "string" && metadata.notificationId) ||
+    randomUUID();
+  await pushContentResource(
+    `notif:${notificationId}`,
+    "notification",
+    {
+      notificationType: type,
+      title,
+      body,
+      metadata,
+      read: false,
+      createdAt: Date.now(),
+    },
+    [type, title, body].filter(Boolean).join(" ")
+  );
 }

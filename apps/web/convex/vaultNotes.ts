@@ -21,7 +21,9 @@ export const listBySection = query({
 
     for (const note of notes) {
       if (!tree[note.section]) tree[note.section] = [];
-      tree[note.section].push({
+      const sectionNotes = tree[note.section];
+      if (!sectionNotes) continue;
+      sectionNotes.push({
         path: note.path,
         title: note.title,
         type: note.type,
