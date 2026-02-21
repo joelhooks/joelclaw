@@ -1,6 +1,6 @@
 ---
 type: adr
-status: proposed
+status: implemented
 date: 2026-02-21
 tags: [adr, inngest, k8s, system-bus, architecture]
 deciders: [joel]
@@ -12,7 +12,7 @@ related: ["0025-k3s-cluster-for-joelclaw-network", "0028-inngest-rig-alignment-w
 
 ## Status
 
-proposed
+implemented
 
 ## Context
 
@@ -164,6 +164,21 @@ Adopt a **single source of truth** for Inngest worker code in the `joelclaw` mon
   - gateway events drained
   - `source=gateway` events written into `otel_events`
   - immediate fatal escalation path recorded (`events.immediate_telegram`).
+
+### Live verification snapshot (2026-02-21 18:06 UTC)
+
+- `joelclaw gateway test` pushed `test.gateway-e2e` event id `67c7130c-de7a-4756-b67d-d0be4f6e0bc4`; gateway drained queue (`joelclaw gateway events` returned `totalCount: 0`).
+- `joelclaw otel list --source gateway --hours 1 --limit 20` confirmed active gateway ingestion with `found: 124` and recent events including:
+  - `redis-channel.events.triaged`
+  - `redis-channel.events.dispatched`
+  - `command-queue.queue.enqueued`
+- Fatal escalation probe:
+  - `joelclaw gateway push --type system.fatal ...` pushed event id `ed718c28-5475-439c-9865-51de1b55480f`.
+  - `joelclaw otel search "events.immediate_telegram" --source gateway --hours 1 --limit 5` returned `found: 2` including fresh event id `ad68ee74-98f5-4568-a620-88e59a87d32e`.
+- Canonical worker write-path probe:
+  - `POST http://localhost:3111/observability/emit` with fatal event id `f2018c37-ca71-4393-a522-c9dc34c81cca` returned `typesense.written=true` and `convex.written=true`.
+  - `joelclaw otel list --source verification --hours 1 --limit 5` returned the same fatal event with action `probe.convex.mirror`.
+  - Direct Convex query to `contentResources.listByType(type=\"otel_event\")` returned `resourceId: otel:f2018c37-ca71-4393-a522-c9dc34c81cca` with `level: fatal`.
 
 ### Remaining for full completion
 
