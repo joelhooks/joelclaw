@@ -1,4 +1,5 @@
 // ADR-0067: Supersede pattern adapted from knowledge-graph by safatinaztepe (openclaw/skills, MIT).
+// ADR-0082: Dual-write to Qdrant + Typesense during migration. Typesense will become sole store.
 import { inngest } from "../client.ts";
 import { NonRetriableError } from "inngest";
 import { QdrantClient } from "@qdrant/js-client-rest";
@@ -10,6 +11,7 @@ import { parseObserverOutput } from "./observe-parser";
 import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
 import { embedText } from "./embed";
 import { DEDUP_THRESHOLD } from "../../memory/retrieval";
+import * as typesense from "../../lib/typesense";
 
 type ObserveCompactionInput = {
   sessionId: string;
@@ -568,6 +570,32 @@ Session context:
           sourceSessionId: validatedInput.sessionId,
           error: message,
         };
+      }
+    });
+
+    // ADR-0082: Dual-write observations to Typesense (migration phase)
+    const typesenseStoreResult = await step.run("store-to-typesense", async () => {
+      try {
+        const observationItems = createObservationItems(parsedObservations);
+        if (observationItems.length === 0) {
+          return { stored: true, count: 0 };
+        }
+
+        const timestamp = validatedInput.capturedAt ?? new Date().toISOString();
+        const docs = observationItems.map((item, index) => ({
+          id: randomUUID(),
+          session_id: validatedInput.sessionId,
+          observation: item.observation,
+          observation_type: item.observationType,
+          source: validatedInput.trigger,
+          timestamp: Math.floor(new Date(timestamp).getTime() / 1000),
+        }));
+
+        const result = await typesense.bulkImport("memory_observations", docs);
+        return { stored: true, count: result.success, errors: result.errors };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { stored: false, count: 0, error: message };
       }
     });
 
