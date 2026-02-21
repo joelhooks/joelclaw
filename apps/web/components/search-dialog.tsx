@@ -25,6 +25,7 @@ type SearchResult = {
 function collectionToUrl(hit: {
   collection: string;
   path?: string;
+  id?: string;
   title: string;
 }): string {
   switch (hit.collection) {
@@ -34,6 +35,12 @@ function collectionToUrl(hit: {
       return `/${hit.path || ""}`;
     case "discoveries":
       return `/cool`;
+    case "memory_observations":
+      return `/memory`;
+    case "system_log":
+      return `/syslog`;
+    case "voice_transcripts":
+      return `/voice`;
     default:
       return "#";
   }
@@ -167,11 +174,6 @@ export function SearchDialog() {
       const data = await resp.json();
 
       const mapped: SearchResult[] = (data.hits || [])
-        .filter(
-          (h: any) =>
-            // Only show navigable results
-            ["vault_notes", "blog_posts", "discoveries"].includes(h.collection)
-        )
         .map((h: any) => ({
           url: collectionToUrl(h),
           title: h.title,

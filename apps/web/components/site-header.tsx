@@ -17,6 +17,8 @@ const PUBLIC_NAV = [
 
 const OWNER_NAV = [
   { href: "/vault", label: "Vault" },
+  { href: "/memory", label: "Memory" },
+  { href: "/syslog", label: "Syslog" },
   { href: "/dashboard", label: "System" },
 ];
 
