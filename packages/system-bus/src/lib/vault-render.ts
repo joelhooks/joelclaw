@@ -12,9 +12,24 @@ import { renderMarkdown } from "@joelclaw/mdx-pipeline/render";
  */
 export async function renderVaultMarkdown(
   markdown: string,
-  allPaths: Set<string> = new Set()
+  allPaths: Set<string> = new Set(),
+  notePath?: string
 ): Promise<string> {
-  return renderMarkdown(markdown, {
+  // Rewrite relative image paths to API routes
+  let processed = markdown;
+  if (notePath) {
+    const noteDir = notePath.split("/").slice(0, -1).join("/");
+    // Match markdown images: ![alt](relative/path.ext)
+    processed = processed.replace(
+      /!\[([^\]]*)\]\((?!https?:\/\/|\/)(.*?)\)/g,
+      (_match, alt, src) => {
+        const resolvedPath = noteDir ? `${noteDir}/${src}` : src;
+        return `![${alt}](/api/vault/image/${encodeURI(resolvedPath)})`;
+      }
+    );
+  }
+
+  return renderMarkdown(processed, {
     resolveLink: (target) => {
       const targetLower = target.toLowerCase().trim();
       for (const p of allPaths) {
@@ -26,6 +41,6 @@ export async function renderVaultMarkdown(
       // Unresolved — fall back to search
       return `/vault?q=${encodeURIComponent(target)}`;
     },
-    resolveImage: (target) => `/images/${encodeURI(target)}`,
+    resolveImage: (target) => `/api/vault/image/${encodeURI(target)}`,
   });
 }

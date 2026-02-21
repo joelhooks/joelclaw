@@ -206,7 +206,7 @@ export const typesenseVaultSync = inngest.createFunction(
           // Pre-render markdown → HTML with Obsidian features
           let html: string | undefined;
           try {
-            html = await renderVaultMarkdown(content, allPaths);
+            html = await renderVaultMarkdown(content, allPaths, relPath);
           } catch {
             // Fall back to no HTML — client will show raw markdown
           }
