@@ -1,25 +1,11 @@
 import { Args, Command, Options } from "@effect/cli";
 import { Console, Effect } from "effect";
 import { respond, respondError } from "../response";
+import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth";
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108";
 const COLLECTION = "otel_events";
 const QUERY_BY = "action,error,component,source,metadata_json,search_text";
-
-function getApiKey(): string {
-  const envKey = process.env.TYPESENSE_API_KEY;
-  if (envKey) return envKey;
-  try {
-    const { execSync } = require("node:child_process");
-    return execSync("secrets lease typesense_api_key --ttl 15m", {
-      encoding: "utf-8",
-      timeout: 10_000,
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-  } catch {
-    throw new Error("No TYPESENSE_API_KEY and secrets lease failed");
-  }
-}
 
 function parseOptionText(value: { _tag: "Some"; value: string } | { _tag: "None" }): string | undefined {
   return value._tag === "Some" ? value.value : undefined;
@@ -68,7 +54,12 @@ function buildFilter(input: {
   return filters.length > 0 ? filters.join(" && ") : undefined;
 }
 
-type OtelQueryResult = { ok: true; data: any } | { ok: false; error: string };
+type OtelQueryResult = { ok: true; data: any } | {
+  ok: false;
+  error: string;
+  code?: string;
+  fix?: string;
+};
 
 async function queryOtel(options: {
   q: string;
@@ -78,7 +69,7 @@ async function queryOtel(options: {
   facetBy?: string;
 }): Promise<OtelQueryResult> {
   try {
-    const apiKey = getApiKey();
+    const apiKey = resolveTypesenseApiKey();
     const searchParams = new URLSearchParams({
       q: options.q,
       query_by: QUERY_BY,
@@ -102,6 +93,14 @@ async function queryOtel(options: {
     }
     return { ok: true, data: await resp.json() };
   } catch (error) {
+    if (isTypesenseApiKeyError(error)) {
+      return {
+        ok: false,
+        error: error.message,
+        code: error.code,
+        fix: error.fix,
+      };
+    }
     return { ok: false, error: String(error) };
   }
 }
@@ -203,8 +202,8 @@ const otelListCmd = Command.make(
           respondError(
             "otel list",
             result.error,
-            "OTEL_QUERY_FAILED",
-            "Check Typesense health and API key",
+            result.code ?? "OTEL_QUERY_FAILED",
+            result.fix ?? "Check Typesense health and API key",
             [{ command: "joelclaw status", description: "Check worker/server health" }]
           )
         );
@@ -270,8 +269,8 @@ const otelSearchCmd = Command.make(
           respondError(
             "otel search",
             result.error,
-            "OTEL_QUERY_FAILED",
-            "Check Typesense health and API key",
+            result.code ?? "OTEL_QUERY_FAILED",
+            result.fix ?? "Check Typesense health and API key",
             [{ command: "joelclaw status", description: "Check worker/server health" }]
           )
         );
@@ -345,8 +344,8 @@ const otelStatsCmd = Command.make(
           respondError(
             "otel stats",
             windowData.error,
-            "OTEL_STATS_FAILED",
-            "Check Typesense health and API key",
+            windowData.code ?? "OTEL_STATS_FAILED",
+            windowData.fix ?? "Check Typesense health and API key",
             [{ command: "joelclaw status", description: "Check worker/server health" }]
           )
         );
@@ -358,8 +357,8 @@ const otelStatsCmd = Command.make(
           respondError(
             "otel stats",
             recentData.error,
-            "OTEL_STATS_FAILED",
-            "Check Typesense health and API key",
+            recentData.code ?? "OTEL_STATS_FAILED",
+            recentData.fix ?? "Check Typesense health and API key",
             [{ command: "joelclaw status", description: "Check worker/server health" }]
           )
         );

@@ -46,7 +46,7 @@ describe("otel store adapter", () => {
 
   test("writes to Typesense and mirrors high severity to Convex", async () => {
     process.env.OTEL_EVENTS_ENABLED = "true";
-    process.env.OTEL_EVENTS_CONVEX_WINDOW_HOURS = "24";
+    process.env.OTEL_EVENTS_CONVEX_WINDOW_HOURS = "0.5";
     delete process.env.SENTRY_DSN;
 
     const calls = {
@@ -80,7 +80,7 @@ describe("otel store adapter", () => {
         listContentResourcesByType: async () => [
           {
             resourceId: "otel:old",
-            fields: { timestamp: now - 1000 * 60 * 60 * 30 },
+            fields: { timestamp: now - 1000 * 60 * 45 },
           },
           {
             resourceId: "otel:new",
@@ -99,6 +99,41 @@ describe("otel store adapter", () => {
     expect(calls.upsert).toBe(1);
     expect(calls.convexUpsert).toBe(1);
     expect(calls.convexRemove).toBeGreaterThanOrEqual(1);
+    restoreEnv();
+  });
+
+  test("skips Convex mirror for high-severity events outside convex window", async () => {
+    process.env.OTEL_EVENTS_ENABLED = "true";
+    process.env.OTEL_EVENTS_CONVEX_WINDOW_HOURS = "0.5";
+    delete process.env.SENTRY_DSN;
+
+    let convexUpsertCalls = 0;
+    const result = await storeOtelEvent(
+      createOtelEvent({
+        level: "error",
+        source: "worker",
+        component: "observe",
+        action: "observe.store.failed",
+        success: false,
+        error: "timeout",
+        timestamp: Date.now() - 1000 * 60 * 31,
+      }),
+      {
+        ensureCollection: async () => {},
+        upsert: async () => {},
+        pushContentResource: async () => {
+          convexUpsertCalls += 1;
+        },
+        listContentResourcesByType: async () => [],
+        removeContentResource: async () => {},
+        postSentry: async () => ({ written: false, skipped: true }),
+      }
+    );
+
+    expect(result.stored).toBe(true);
+    expect(result.convex.written).toBe(false);
+    expect(result.convex.skipped).toBe(true);
+    expect(convexUpsertCalls).toBe(0);
     restoreEnv();
   });
 
@@ -133,4 +168,3 @@ describe("otel store adapter", () => {
     restoreEnv();
   });
 });
-

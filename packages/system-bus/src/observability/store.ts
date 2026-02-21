@@ -5,7 +5,7 @@ import { getConvexClient, pushContentResource } from "../lib/convex";
 
 const OTEL_COLLECTION = "otel_events";
 const OTEL_EVENTS_ENABLED_DEFAULT = true;
-const OTEL_CONVEX_WINDOW_HOURS_DEFAULT = 24;
+const OTEL_CONVEX_WINDOW_HOURS_DEFAULT = 0.5; // 30 minutes for live dashboard watch window
 const DEBUG_WINDOW_MS = 60_000;
 const DEBUG_MAX_EVENTS_PER_KEY = 12;
 const CONVEX_PRUNE_INTERVAL_MS = 15 * 60 * 1000;
@@ -88,9 +88,9 @@ function parseBooleanFlag(value: string | undefined, fallback: boolean): boolean
   return fallback;
 }
 
-function parsePositiveInt(value: string | undefined, fallback: number): number {
+function parsePositiveNumber(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
-  const parsed = Number.parseInt(value, 10);
+  const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return parsed;
 }
@@ -100,7 +100,7 @@ function getOtelEventsEnabled(): boolean {
 }
 
 function getConvexWindowHours(): number {
-  return parsePositiveInt(process.env.OTEL_EVENTS_CONVEX_WINDOW_HOURS, OTEL_CONVEX_WINDOW_HOURS_DEFAULT);
+  return parsePositiveNumber(process.env.OTEL_EVENTS_CONVEX_WINDOW_HOURS, OTEL_CONVEX_WINDOW_HOURS_DEFAULT);
 }
 
 function safeJson(value: unknown): string {
