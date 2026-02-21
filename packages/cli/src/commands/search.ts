@@ -8,23 +8,9 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { respond, respondError } from "../response"
+import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
-
-function getApiKey(): string {
-  const envKey = process.env.TYPESENSE_API_KEY
-  if (envKey) return envKey
-  try {
-    const { execSync } = require("node:child_process")
-    return execSync("secrets lease typesense_api_key --ttl 15m", {
-      encoding: "utf-8",
-      timeout: 10_000,
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim()
-  } catch {
-    throw new Error("No TYPESENSE_API_KEY and secrets lease failed")
-  }
-}
 
 interface SearchHit {
   collection: string
@@ -183,7 +169,7 @@ export const search = Command.make(
   ({ query, collection, limit, filter, facet, semantic }) =>
     Effect.gen(function* () {
       try {
-        const apiKey = getApiKey()
+        const apiKey = resolveTypesenseApiKey()
         const collValue = collection._tag === "Some" ? collection.value : undefined
         const filterValue = filter._tag === "Some" ? filter.value : undefined
         const facetValue = facet._tag === "Some" ? facet.value : undefined
@@ -218,7 +204,31 @@ export const search = Command.make(
           },
         ]))
       } catch (err: any) {
-        yield* Console.log(respondError("joelclaw search", err.message))
+        if (isTypesenseApiKeyError(err)) {
+          yield* Console.log(respondError(
+            "joelclaw search",
+            err.message,
+            err.code,
+            err.fix,
+            [
+              { command: "joelclaw status", description: "Check system health" },
+              { command: "joelclaw inngest status", description: "Check worker/server status" },
+            ]
+          ))
+          return
+        }
+
+        const message = err instanceof Error ? err.message : String(err)
+        const isUnreachable = message.includes("ECONNREFUSED") || message.includes("Connection refused")
+        yield* Console.log(respondError(
+          "joelclaw search",
+          message,
+          isUnreachable ? "TYPESENSE_UNREACHABLE" : "SEARCH_FAILED",
+          isUnreachable
+            ? "Start Typesense port-forward: kubectl port-forward -n joelclaw svc/typesense 8108:8108 &"
+            : "Check Typesense health and search parameters",
+          [{ command: "joelclaw status", description: "Check all services" }]
+        ))
       }
     })
 )

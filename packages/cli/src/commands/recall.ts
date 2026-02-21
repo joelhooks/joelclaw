@@ -1,45 +1,111 @@
 // ADR-0067: Supersede pattern adapted from knowledge-graph by safatinaztepe (openclaw/skills, MIT).
 // ADR-0082: Migrated from Qdrant+embed.py to Typesense with built-in auto-embedding.
+// ADR-0077 Workstream 1/2: query rewrite + trust pass + usage-signal-aware ranking.
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
+import { randomUUID } from "node:crypto"
 import { respond, respondError } from "../response"
+import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
+const OTEL_INGEST_URL = process.env.JOELCLAW_OTEL_INGEST_URL || "http://localhost:3111/observability/emit"
+const OTEL_INGEST_TOKEN = process.env.OTEL_EMIT_TOKEN?.trim()
 const MAX_INJECT = 10
 const DECAY_CONSTANT = 0.01
+const STALENESS_DAYS = 90
+const MIN_OBSERVATION_CHARS = 12
+const REWRITE_TIMEOUT_MS = Number.parseInt(process.env.JOELCLAW_RECALL_REWRITE_TIMEOUT_MS ?? "2500", 10)
+const RECALL_OTEL_ENABLED = (process.env.JOELCLAW_RECALL_OTEL ?? "1") !== "0"
+const RECALL_REWRITE_ENABLED = (process.env.JOELCLAW_RECALL_REWRITE ?? "1") !== "0"
 
-function getApiKey(): string {
-  const envKey = process.env.TYPESENSE_API_KEY
-  if (envKey) return envKey
-  try {
-    const { execSync } = require("node:child_process")
-    return execSync("secrets lease typesense_api_key --ttl 15m", {
-      encoding: "utf-8",
-      timeout: 10_000,
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim()
-  } catch {
-    throw new Error("No TYPESENSE_API_KEY and secrets lease failed")
-  }
-}
+type RewriteStrategy = "haiku" | "fallback" | "disabled"
 
 interface TypesenseHit {
   document: {
     id: string
     session_id?: string
     timestamp?: number
+    updated_at?: string
     observation_type?: string
     observation: string
     source?: string
+    merged_count?: number | string
+    stale?: boolean
+    recall_count?: number | string
+    retrieval_priority?: number | string
   }
   highlights?: Array<{ field: string; snippet?: string }>
-  text_match_info?: { score: number }
-  hybrid_search_info?: { rank_fusion_score: number }
+  text_match_info?: { score?: number | string }
+  hybrid_search_info?: { rank_fusion_score?: number | string }
 }
 
 interface RankedRecallHit extends TypesenseHit {
   score: number
   decayedScore: number
+  usageBoost: number
+}
+
+type RewrittenQuery = {
+  inputQuery: string
+  rewrittenQuery: string
+  rewritten: boolean
+  strategy: RewriteStrategy
+  error?: string
+}
+
+type TrustPassDroppedHit = {
+  id: string
+  observation: string
+  reasons: string[]
+}
+
+type RewriteRunnerOptions = {
+  rewriteEnabled?: boolean
+  context?: string
+  timeoutMs?: number
+  spawn?: (
+    args: string[],
+    prompt: string,
+    timeoutMs: number
+  ) => {
+    exitCode: number | null
+    stdout: unknown
+    stderr: unknown
+  }
+}
+
+function readShellText(value: unknown): string {
+  if (typeof value === "string") return value
+  if (value instanceof Uint8Array) return new TextDecoder().decode(value)
+  if (value == null) return ""
+  return String(value)
+}
+
+function asFiniteNumber(value: unknown, fallback = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return fallback
+}
+
+function clamp(value: number, min: number, max: number): number {
+  if (value < min) return min
+  if (value > max) return max
+  return value
+}
+
+function normalizeQuery(text: string): string {
+  return text.trim().replace(/\s+/gu, " ").slice(0, 300)
+}
+
+function sanitizeRewriteResult(text: string): string {
+  return normalizeQuery(
+    text
+      .replace(/^["'`]+/u, "")
+      .replace(/["'`]+$/u, "")
+  )
 }
 
 function toIsoTimestamp(value: number | undefined): string | null {
@@ -47,41 +113,218 @@ function toIsoTimestamp(value: number | undefined): string | null {
   return new Date(value * 1000).toISOString()
 }
 
+function toAgeDays(timestampSeconds: number | undefined): number {
+  if (typeof timestampSeconds !== "number" || !Number.isFinite(timestampSeconds)) return 0
+  const createdAt = timestampSeconds * 1000
+  return Math.max(0, (Date.now() - createdAt) / (1000 * 60 * 60 * 24))
+}
+
+function usageBoostFromDoc(doc: TypesenseHit["document"]): number {
+  const priority = clamp(asFiniteNumber(doc.retrieval_priority, 0), -1, 1)
+  const recallCount = Math.max(0, asFiniteNumber(doc.recall_count, 0))
+  const priorityFactor = 1 + priority * 0.15
+  const recallFactor = 1 + Math.min(0.3, Math.log1p(recallCount) * 0.06)
+  return Math.max(0.35, priorityFactor * recallFactor)
+}
+
 function applyScoreDecay(hits: TypesenseHit[]): RankedRecallHit[] {
   const now = Date.now()
   return hits.map((hit) => {
-    const rawScore = hit.text_match_info?.score || hit.hybrid_search_info?.rank_fusion_score || 0
+    const rawScore = asFiniteNumber(
+      hit.text_match_info?.score ?? hit.hybrid_search_info?.rank_fusion_score ?? 0,
+      0
+    )
     const createdAt = typeof hit.document.timestamp === "number"
       ? hit.document.timestamp * 1000
       : now
     const daysSince = Math.max(0, (now - createdAt) / (1000 * 60 * 60 * 24))
-    const decayedScore = rawScore * Math.exp(-DECAY_CONSTANT * daysSince)
+    const decayedScore = rawScore * Math.exp(-DECAY_CONSTANT * daysSince) * usageBoostFromDoc(hit.document)
     return {
       ...hit,
       score: rawScore,
       decayedScore,
+      usageBoost: usageBoostFromDoc(hit.document),
     }
   })
 }
 
-function rankAndCap(hits: TypesenseHit[], maxInject = MAX_INJECT): RankedRecallHit[] {
+function rankHits(hits: TypesenseHit[]): RankedRecallHit[] {
   const decayed = applyScoreDecay(hits)
   decayed.sort((a, b) => b.decayedScore - a.decayedScore)
-  return decayed.slice(0, maxInject)
+  return decayed
+}
+
+function trustPassFilter(
+  hits: RankedRecallHit[],
+  minScore: number
+): { kept: RankedRecallHit[]; dropped: TrustPassDroppedHit[]; filtersApplied: string[] } {
+  const dropped: TrustPassDroppedHit[] = []
+  const kept: RankedRecallHit[] = []
+  const filtersApplied = ["score-decay", "usage-signal", "inject-cap"] as string[]
+
+  for (const hit of hits) {
+    const reasons: string[] = []
+    const observation = hit.document.observation?.trim() ?? ""
+    const recallCount = Math.max(0, asFiniteNumber(hit.document.recall_count, 0))
+    const ageDays = toAgeDays(hit.document.timestamp)
+
+    if (observation.length < MIN_OBSERVATION_CHARS) reasons.push("too_short")
+    if (hit.document.stale === true) reasons.push("stale_tagged")
+    if (ageDays > STALENESS_DAYS && recallCount <= 0) reasons.push("stale_age")
+    if (!Number.isFinite(hit.decayedScore) || hit.decayedScore <= 0) reasons.push("invalid_score")
+    if (hit.decayedScore < minScore) reasons.push("below_min_score")
+
+    if (reasons.length > 0) {
+      dropped.push({
+        id: hit.document.id,
+        observation: observation.slice(0, 220),
+        reasons,
+      })
+    } else {
+      kept.push(hit)
+    }
+  }
+
+  if (dropped.length > 0) filtersApplied.push("trust-pass")
+  if (kept.length === 0 && hits.length > 0) {
+    filtersApplied.push("trust-pass-fallback")
+    kept.push(hits[0]!)
+  }
+
+  return { kept, dropped, filtersApplied }
+}
+
+async function emitRecallOtel(input: {
+  level: "debug" | "info" | "warn" | "error"
+  action: string
+  success: boolean
+  durationMs?: number
+  error?: string
+  metadata?: Record<string, unknown>
+}): Promise<void> {
+  if (!RECALL_OTEL_ENABLED) return
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" }
+  if (OTEL_INGEST_TOKEN) headers["x-otel-emit-token"] = OTEL_INGEST_TOKEN
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 1500)
+  try {
+    await fetch(OTEL_INGEST_URL, {
+      method: "POST",
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify({
+        id: randomUUID(),
+        timestamp: Date.now(),
+        level: input.level,
+        source: "cli",
+        component: "recall-cli",
+        action: input.action,
+        success: input.success,
+        duration_ms: input.durationMs,
+        error: input.error,
+        metadata: input.metadata ?? {},
+      }),
+    })
+  } catch {
+    // never fail recall on telemetry transport issues
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function runRewriteQueryWith(query: string, options: RewriteRunnerOptions = {}): RewrittenQuery {
+  const normalized = normalizeQuery(query)
+  const rewriteEnabled = options.rewriteEnabled ?? RECALL_REWRITE_ENABLED
+  if (!rewriteEnabled || normalized.length < 4) {
+    return {
+      inputQuery: normalized,
+      rewrittenQuery: normalized,
+      rewritten: false,
+      strategy: "disabled",
+    }
+  }
+
+  const context = options.context ?? process.env.JOELCLAW_RECALL_CONTEXT?.trim()
+  const rewritePrompt = [
+    "Rewrite the memory recall query for semantic retrieval.",
+    "Return ONLY the rewritten query text.",
+    `Original query: ${normalized}`,
+    context ? `Recent context: ${context}` : "",
+  ].filter(Boolean).join("\n")
+
+  try {
+    const timeoutMs = options.timeoutMs ?? REWRITE_TIMEOUT_MS
+    const args = [
+      "pi",
+      "--no-tools",
+      "--no-session",
+      "--no-extensions",
+      "--print",
+      "--mode",
+      "text",
+      "--model",
+      "anthropic/claude-haiku",
+      rewritePrompt,
+    ]
+    const proc = options.spawn
+      ? options.spawn(args, rewritePrompt, timeoutMs)
+      : Bun.spawnSync(args, {
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+          timeout: timeoutMs,
+          env: { ...process.env, TERM: "dumb" },
+        })
+
+    const stdout = sanitizeRewriteResult(readShellText(proc.stdout))
+    const stderr = readShellText(proc.stderr).trim()
+    const exitCode = typeof proc.exitCode === "number" ? proc.exitCode : -1
+    if (exitCode === 0 && stdout.length > 0) {
+      return {
+        inputQuery: normalized,
+        rewrittenQuery: stdout,
+        rewritten: stdout.toLowerCase() !== normalized.toLowerCase(),
+        strategy: "haiku",
+      }
+    }
+
+    return {
+      inputQuery: normalized,
+      rewrittenQuery: normalized,
+      rewritten: false,
+      strategy: "fallback",
+      error: (stderr || `rewrite_exit_${exitCode}`).slice(0, 220),
+    }
+  } catch (error) {
+    return {
+      inputQuery: normalized,
+      rewrittenQuery: normalized,
+      rewritten: false,
+      strategy: "fallback",
+      error: (error instanceof Error ? error.message : String(error)).slice(0, 220),
+    }
+  }
+}
+
+function runRewriteQuery(query: string): RewrittenQuery {
+  return runRewriteQueryWith(query)
 }
 
 /** Hybrid semantic+keyword search over memory_observations */
 async function searchTypesense(
   query: string,
   limit: number,
+  apiKey: string,
 ): Promise<{ hits: TypesenseHit[]; found: number }> {
-  const apiKey = getApiKey()
-  const cappedLimit = Math.min(Math.max(limit, 1), MAX_INJECT)
+  const bounded = Math.min(Math.max(limit, 1), MAX_INJECT)
+  const fetchLimit = Math.min(Math.max(bounded * 3, bounded + 4), 40)
   const params = new URLSearchParams({
     q: query,
     query_by: "embedding,observation",
     vector_query: "embedding:([], alpha: 0.7)",
-    per_page: String(cappedLimit),
+    per_page: String(fetchLimit),
     exclude_fields: "embedding",
   })
 
@@ -101,19 +344,58 @@ async function searchTypesense(
 
 const query = Args.text({ name: "query" })
 const limit = Options.integer("limit").pipe(Options.withDefault(5))
+const minScore = Options.float("min-score").pipe(Options.withDefault(0))
 const raw = Options.boolean("raw").pipe(Options.withDefault(false))
 
 export const recallCmd = Command.make(
   "recall",
-  { query, limit, raw },
-  ({ query, limit, raw }) =>
+  { query, limit, minScore, raw },
+  ({ query, limit, minScore, raw }) =>
     Effect.gen(function* () {
+      const startedAt = Date.now()
+      const rewrite = runRewriteQuery(query)
+
       try {
-        const result = yield* Effect.promise(() => searchTypesense(query, limit))
-        const rankedHits = rankAndCap(result.hits, MAX_INJECT)
+        const apiKey = resolveTypesenseApiKey()
+        yield* Effect.promise(() => emitRecallOtel({
+          level: "debug",
+          action: "memory.recall.started",
+          success: true,
+          metadata: {
+            query,
+            rewrittenQuery: rewrite.rewrittenQuery,
+            rewriteStrategy: rewrite.strategy,
+            rewriteError: rewrite.error,
+          },
+        }))
+
+        const result = yield* Effect.promise(() =>
+          searchTypesense(rewrite.rewrittenQuery, limit, apiKey)
+        )
+
+        const ranked = rankHits(result.hits)
+        const trust = trustPassFilter(ranked, Math.max(0, minScore))
+        const cappedLimit = Math.min(Math.max(limit, 1), MAX_INJECT)
+        const finalHits = trust.kept.slice(0, cappedLimit)
+
+        yield* Effect.promise(() => emitRecallOtel({
+          level: "info",
+          action: "memory.recall.completed",
+          success: true,
+          durationMs: Date.now() - startedAt,
+          metadata: {
+            query,
+            rewrittenQuery: rewrite.rewrittenQuery,
+            rewriteStrategy: rewrite.strategy,
+            filtersApplied: trust.filtersApplied,
+            droppedByTrustPass: trust.dropped.length,
+            found: result.found,
+            returned: finalHits.length,
+          },
+        }))
 
         if (raw) {
-          const lines = rankedHits.map((h) => h.document.observation)
+          const lines = finalHits.map((h) => h.document.observation)
           yield* Console.log(lines.join("\n"))
           return
         }
@@ -121,15 +403,29 @@ export const recallCmd = Command.make(
         yield* Console.log(
           respond("recall", {
             query,
-            hits: rankedHits.map((h) => ({
+            rewrittenQuery: rewrite.rewrittenQuery,
+            rewrite: {
+              rewritten: rewrite.rewritten,
+              strategy: rewrite.strategy,
+              error: rewrite.error,
+            },
+            filtersApplied: trust.filtersApplied,
+            droppedByTrustPass: trust.dropped.length,
+            droppedDiagnostics: trust.dropped.slice(0, 10),
+            hits: finalHits.map((h) => ({
+              id: h.document.id,
               score: h.decayedScore,
               rawScore: h.score,
+              usageBoost: h.usageBoost,
               observation: h.document.observation,
               type: h.document.observation_type || "unknown",
+              source: h.document.source || "unknown",
               session: h.document.session_id || "unknown",
               timestamp: toIsoTimestamp(h.document.timestamp) || "unknown",
+              recallCount: asFiniteNumber(h.document.recall_count, 0),
+              retrievalPriority: asFiniteNumber(h.document.retrieval_priority, 0),
             })),
-            count: rankedHits.length,
+            count: finalHits.length,
             found: result.found,
             backend: "typesense",
           }, [
@@ -149,6 +445,32 @@ export const recallCmd = Command.make(
         )
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
+        yield* Effect.promise(() => emitRecallOtel({
+          level: "error",
+          action: "memory.recall.failed",
+          success: false,
+          durationMs: Date.now() - startedAt,
+          error: message,
+          metadata: {
+            query,
+            rewrittenQuery: rewrite.rewrittenQuery,
+            rewriteStrategy: rewrite.strategy,
+          },
+        }))
+
+        if (isTypesenseApiKeyError(error)) {
+          yield* Console.log(respondError(
+            "recall",
+            error.message,
+            error.code,
+            error.fix,
+            [
+              { command: "joelclaw status", description: "Check system health" },
+              { command: "joelclaw inngest status", description: "Check worker/server status" },
+            ]
+          ))
+          return
+        }
 
         if (message.includes("Typesense") || message.includes("Connection refused") || message.includes("ECONNREFUSED")) {
           yield* Console.log(respondError(
@@ -167,3 +489,12 @@ export const recallCmd = Command.make(
       }
     })
 )
+
+export const __recallTestUtils = {
+  normalizeQuery,
+  sanitizeRewriteResult,
+  applyScoreDecay,
+  rankHits,
+  trustPassFilter,
+  runRewriteQueryWith,
+}

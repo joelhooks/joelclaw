@@ -5,13 +5,13 @@ import { constants as fsConstants } from "node:fs"
 import { homedir } from "node:os"
 import { basename, isAbsolute, join, normalize } from "node:path"
 import { respond, respondError } from "../response"
+import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
 
 const VAULT_ROOT = normalize(process.env.VAULT_PATH ?? join(homedir(), "Vault"))
 const READ_MAX_LINES = 500
 const READ_MAX_MATCHES = 3
 const DEFAULT_LIMIT = 10
-const QDRANT_URL = "http://localhost:6333"
-const QDRANT_COLLECTION = "observations"
+const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 
 type ProcessResult = {
   exitCode: number
@@ -260,39 +260,39 @@ async function readFileForContext(path: string): Promise<{
   }
 }
 
-async function embedWithNomic(query: string): Promise<number[]> {
-  const script = [
-    "import json, sys",
-    "from sentence_transformers import SentenceTransformer",
-    "text = sys.argv[1]",
-    "model = SentenceTransformer('nomic-ai/nomic-embed-text-v1.5', trust_remote_code=True)",
-    "vec = model.encode([text], normalize_embeddings=True)[0].tolist()",
-    "print(json.dumps(vec))",
-  ].join("; ")
+type VaultSemanticHit = {
+  document?: Record<string, unknown>
+  highlights?: Array<{ field?: string; snippet?: string }>
+  text_match_info?: { score?: number }
+  hybrid_search_info?: { rank_fusion_score?: number }
+}
 
-  const result = await runProcess([
-    "uv",
-    "run",
-    "--with",
-    "sentence-transformers",
-    "python",
-    "-c",
-    script,
-    query,
-  ], undefined, {
-    UV_CACHE_DIR: process.env.UV_CACHE_DIR ?? "/tmp/uv-cache",
+async function searchVaultSemantic(
+  query: string,
+  limit: number,
+  apiKey: string
+): Promise<{ found: number; hits: VaultSemanticHit[] }> {
+  const params = new URLSearchParams({
+    q: query,
+    query_by: "embedding,title,content",
+    vector_query: "embedding:([], alpha: 0.7)",
+    per_page: String(limit),
+    highlight_full_fields: "title,content",
+    exclude_fields: "embedding",
   })
 
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr.trim() || "Failed to generate nomic embedding")
+  const resp = await fetch(
+    `${TYPESENSE_URL}/collections/vault_notes/documents/search?${params}`,
+    { headers: { "X-TYPESENSE-API-KEY": apiKey } }
+  )
+
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(`Typesense semantic search failed (${resp.status}): ${text}`)
   }
 
-  const parsed = JSON.parse(result.stdout.trim()) as number[]
-  if (!Array.isArray(parsed) || parsed.length === 0) {
-    throw new Error("nomic embedding returned an empty vector")
-  }
-
-  return parsed
+  const payload = await resp.json() as { found?: number; hits?: VaultSemanticHit[] }
+  return { found: payload.found ?? 0, hits: payload.hits ?? [] }
 }
 
 function extractFrontmatterStatus(markdown: string): string | null {
@@ -387,57 +387,23 @@ const searchCmd = Command.make(
 
       if (semantic) {
         try {
-          const embedResult = yield* Effect.tryPromise(() =>
-            embedWithNomic(query)
-              .then((vector) => ({ ok: true as const, vector }))
-              .catch((error) => ({ ok: false as const, error }))
-          )
-
-          if (!embedResult.ok) {
-            const message = embedResult.error instanceof Error ? embedResult.error.message : String(embedResult.error)
-            yield* Console.log(respondError(
-              "vault search",
-              message,
-              "SEMANTIC_SEARCH_FAILED",
-              "Verify Qdrant at localhost:6333 and that nomic embeddings can be generated via uv",
-              [
-                {
-                  command: "joelclaw vault search <query>",
-                  description: "Use ripgrep text search instead",
-                  params: {
-                    query: { description: "Text query", value: query, required: true },
-                  },
-                },
-              ]
-            ))
-            return
-          }
-
-          const vector = embedResult.vector
-          const payload = JSON.stringify({
-            vector,
-            limit: safeLimit,
-            with_payload: true,
-          })
-
-          const search = yield* Effect.tryPromise(() =>
-            runShell(
-              `curl -sS -X POST ${shq(`${QDRANT_URL}/collections/${QDRANT_COLLECTION}/points/search`)} -H 'Content-Type: application/json' -d ${shq(payload)}`
-            )
-          )
-
-          if (search.exitCode !== 0) {
-            throw new Error(search.stderr.trim() || "Qdrant semantic search failed")
-          }
-
-          const json = JSON.parse(search.stdout || "{}") as { result?: Array<any> }
-          const hits = (json.result ?? []).slice(0, safeLimit).map((hit: any) => {
-            const payload = hit?.payload ?? {}
+          const apiKey = resolveTypesenseApiKey()
+          const semanticResult = yield* Effect.tryPromise(() => searchVaultSemantic(query, safeLimit, apiKey))
+          const hits = semanticResult.hits.slice(0, safeLimit).map((hit) => {
+            const payload = hit.document ?? {}
+            const highlight = (hit.highlights ?? []).find((entry) => entry?.snippet)
+            const context = typeof highlight?.snippet === "string"
+              ? highlight.snippet
+              : typeof payload.content === "string"
+                ? payload.content.slice(0, 220)
+                : typeof payload.title === "string"
+                  ? payload.title
+                  : null
             return {
-              score: hit?.score ?? 0,
-              path: payload.path ?? payload.file ?? payload.source ?? null,
-              line: payload.line ?? payload.line_number ?? null,
-              context: payload.text ?? payload.content ?? payload.observation ?? null,
+              score: hit.text_match_info?.score ?? hit.hybrid_search_info?.rank_fusion_score ?? 0,
+              path: typeof payload.path === "string" ? payload.path : null,
+              line: null,
+              context,
               payload,
             }
           })
@@ -446,7 +412,9 @@ const searchCmd = Command.make(
             query,
             mode: "semantic",
             limit: safeLimit,
-            collection: QDRANT_COLLECTION,
+            backend: "typesense",
+            collection: "vault_notes",
+            found: semanticResult.found,
             hits,
           }, [
             {
@@ -468,12 +436,34 @@ const searchCmd = Command.make(
           ]))
           return
         } catch (error) {
+          if (isTypesenseApiKeyError(error)) {
+            yield* Console.log(respondError(
+              "vault search",
+              error.message,
+              error.code,
+              error.fix,
+              [
+                {
+                  command: "joelclaw vault search <query>",
+                  description: "Use ripgrep text search instead",
+                  params: {
+                    query: { description: "Text query", value: query, required: true },
+                  },
+                },
+              ]
+            ))
+            return
+          }
+
           const message = error instanceof Error ? error.message : String(error)
+          const unreachable = message.includes("ECONNREFUSED") || message.includes("Connection refused")
           yield* Console.log(respondError(
             "vault search",
             message,
-            "SEMANTIC_SEARCH_FAILED",
-            "Verify Qdrant at localhost:6333 and that nomic embeddings can be generated via uv",
+            unreachable ? "TYPESENSE_UNREACHABLE" : "SEMANTIC_SEARCH_FAILED",
+            unreachable
+              ? "Start Typesense port-forward: kubectl port-forward -n joelclaw svc/typesense 8108:8108 &"
+              : "Check Typesense health and vault_notes indexing",
             [
               {
                 command: "joelclaw vault search <query>",
@@ -556,7 +546,7 @@ const searchCmd = Command.make(
         },
         {
           command: "joelclaw vault search <query> --semantic [--limit <limit>]",
-          description: "Try semantic search in Qdrant",
+          description: "Try semantic search in Typesense",
           params: {
             query: { description: "Semantic query", value: query, required: true },
             limit: { description: "Max hits", value: safeLimit, default: DEFAULT_LIMIT },

@@ -352,15 +352,44 @@ import { existsSync, readFileSync } from "node:fs"
 const gatewayRestart = Command.make("restart", {}, () =>
   Effect.gen(function* () {
     const LAUNCHD_LABEL = "com.joel.gateway"
+    const DAEMON_MATCH = "/Users/joel/Code/joelhooks/joelclaw/packages/gateway/src/daemon.ts"
     const PID_FILE = "/tmp/joelclaw/gateway.pid"
     const LOG_FILE = "/tmp/joelclaw/gateway.log"
+    const MAX_RESTART_WAIT_SECONDS = 30
 
-    let oldPid: string | null = null
-    try {
-      if (existsSync(PID_FILE)) {
-        oldPid = readFileSync(PID_FILE, "utf-8").trim()
+    const readGatewayPidFile = (): string | null => {
+      try {
+        if (!existsSync(PID_FILE)) return null
+        const pid = readFileSync(PID_FILE, "utf-8").trim()
+        return /^\d+$/.test(pid) ? pid : null
+      } catch {
+        return null
       }
-    } catch {}
+    }
+
+    const isPidAlive = (pid: string): boolean => {
+      try {
+        execSync(`kill -0 ${pid} 2>/dev/null`, { stdio: "pipe" })
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    const findDaemonPid = (): string | null => {
+      try {
+        const pid = execSync(`pgrep -f '${DAEMON_MATCH}' | head -n 1`, {
+          encoding: "utf-8",
+          timeout: 2_000,
+          stdio: "pipe",
+        }).trim()
+        return /^\d+$/.test(pid) ? pid : null
+      } catch {
+        return null
+      }
+    }
+
+    const oldPid = readGatewayPidFile() ?? findDaemonPid()
 
     // Clean stale Redis state (in case shutdown doesn't complete cleanly)
     const redis = yield* makeRedis()
@@ -384,9 +413,7 @@ const gatewayRestart = Command.make("restart", {}, () =>
     // Wait for old process to exit
     let waited = 0
     while (waited < 5000 && oldPid) {
-      try {
-        execSync(`kill -0 ${oldPid} 2>/dev/null`, { stdio: "pipe" })
-      } catch {
+      if (!isPidAlive(oldPid)) {
         break
       }
       yield* Effect.promise(() => new Promise(r => setTimeout(r, 500)))
@@ -405,18 +432,18 @@ const gatewayRestart = Command.make("restart", {}, () =>
       })
     } catch {}
 
-    // Wait for new PID
+    // Wait for new PID (PID file can lag startup; fall back to pgrep)
     let newPid: string | null = null
     let attempts = 0
-    while (attempts < 10) {
+    while (attempts < MAX_RESTART_WAIT_SECONDS) {
       yield* Effect.promise(() => new Promise(r => setTimeout(r, 1000)))
       attempts++
-      try {
-        if (existsSync(PID_FILE)) {
-          newPid = readFileSync(PID_FILE, "utf-8").trim()
-          if (newPid && newPid !== oldPid) break
-        }
-      } catch {}
+      const pidCandidate = readGatewayPidFile() ?? findDaemonPid()
+      if (!pidCandidate) continue
+      if (oldPid && pidCandidate === oldPid && isPidAlive(pidCandidate)) continue
+      if (!isPidAlive(pidCandidate)) continue
+      newPid = pidCandidate
+      break
     }
 
     let logTail = ""

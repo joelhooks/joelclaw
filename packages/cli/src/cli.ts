@@ -80,7 +80,7 @@ const root = Command.make("joelclaw", {}, () =>
           email: "joelclaw email {inboxes|inbox|read|archive|archive-bulk}",
           nas: "joelclaw nas {status|runs|review}",
           otel: "joelclaw otel {list|search|stats}",
-          inngest: "joelclaw inngest {status|register|restart-worker|reconcile}",
+          inngest: "joelclaw inngest {status|workers|register|restart-worker|reconcile|memory-e2e|memory-weekly|memory-gate|memory-schema-reconcile|memory-health}",
           schema: "joelclaw schema",
           refresh: "joelclaw refresh",
         },
