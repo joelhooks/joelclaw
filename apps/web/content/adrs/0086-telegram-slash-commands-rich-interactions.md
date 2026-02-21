@@ -1,6 +1,6 @@
 ---
 type: adr
-status: proposed
+status: partially-implemented
 date: 2026-02-21
 tags:
   - gateway
