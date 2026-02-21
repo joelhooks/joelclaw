@@ -19,7 +19,11 @@ const ENABLE_OPUS_ESCALATION = (process.env.JOELCLAW_VIP_ENABLE_OPUS_ESCALATION 
 const TOTAL_BUDGET_MS = Number(process.env.JOELCLAW_VIP_TOTAL_BUDGET_MS ?? "10000");
 const FRONT_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_FRONT_TIMEOUT_MS ?? "2000");
 const GRANOLA_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_GRANOLA_TIMEOUT_MS ?? "2500");
-const QDRANT_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_QDRANT_TIMEOUT_MS ?? "3500");
+const MEMORY_RECALL_TIMEOUT_MS = Number(
+  process.env.JOELCLAW_VIP_MEMORY_RECALL_TIMEOUT_MS
+  ?? process.env.JOELCLAW_VIP_QDRANT_TIMEOUT_MS
+  ?? "7000"
+);
 const GITHUB_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_GITHUB_TIMEOUT_MS ?? "1500");
 const TRIAGE_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_TRIAGE_TIMEOUT_MS ?? "4500");
 const OPUS_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_OPUS_TIMEOUT_MS ?? "7000");
@@ -106,6 +110,21 @@ type VipAnalysis = {
   todos: VipTodo[];
   missing_information: MissingInfo[];
   questions_for_human: string[];
+};
+
+type RecallCliHit = {
+  id?: unknown;
+  observation?: unknown;
+};
+
+type RecallCliEnvelope = {
+  ok?: unknown;
+  result?: {
+    hits?: RecallCliHit[];
+  };
+  error?: {
+    message?: unknown;
+  };
 };
 
 function emptyVipAnalysis(summary = "No actionable follow-up required."): VipAnalysis {
@@ -631,12 +650,12 @@ export const vipEmailReceived = inngest.createFunction(
           rangeDurations,
         };
       }),
-      step.run("search-memory-qdrant", async () => {
+      step.run("search-memory-recall", async () => {
         const t0 = Date.now();
         const query = `${fromName || from} ${subject}`.trim();
-        const proc = spawnSync("joelclaw", ["recall", query, "--limit", "8", "--raw"], {
+        const proc = spawnSync("joelclaw", ["recall", query, "--limit", "8", "--json"], {
           encoding: "utf-8",
-          timeout: QDRANT_TIMEOUT_MS,
+          timeout: MEMORY_RECALL_TIMEOUT_MS,
           stdio: ["ignore", "pipe", "pipe"],
           env: { ...process.env, TERM: "dumb" },
         });
@@ -646,19 +665,62 @@ export const vipEmailReceived = inngest.createFunction(
         if (proc.status !== 0) {
           return {
             lines: [] as string[],
+            recalledMemories: [] as Array<{ id: string; observation: string }>,
             durationMs,
             gap: {
-              item: "Memory/Qdrant recall",
+              item: "Memory recall",
               why_missing: (proc.stderr ?? proc.stdout ?? "recall command failed").slice(0, 180),
-              how_to_get_it: "Ensure Qdrant is up and `joelclaw recall` works in this environment",
+              how_to_get_it: "Ensure Typesense is reachable and `joelclaw recall` works in this environment",
             },
           };
         }
 
+        const parsed = (() => {
+          try {
+            return JSON.parse(proc.stdout ?? "{}") as RecallCliEnvelope;
+          } catch {
+            return null;
+          }
+        })();
+
+        if (!parsed || parsed.ok !== true) {
+          const envelopeError = parsed?.error?.message;
+          const detail =
+            typeof envelopeError === "string" && envelopeError.trim().length > 0
+              ? envelopeError.trim()
+              : "recall returned invalid JSON envelope";
+          return {
+            lines: [] as string[],
+            recalledMemories: [] as Array<{ id: string; observation: string }>,
+            durationMs,
+            gap: {
+              item: "Memory recall",
+              why_missing: detail.slice(0, 180),
+              how_to_get_it: "Ensure `joelclaw recall --json` returns ok=true with hit IDs",
+            },
+          };
+        }
+
+        const hits = Array.isArray(parsed.result?.hits) ? parsed.result.hits : [];
+        const recalledMemories = hits
+          .map((hit) => ({
+            id: typeof hit.id === "string" ? hit.id.trim() : "",
+            observation: typeof hit.observation === "string" ? hit.observation.trim() : "",
+          }))
+          .filter((hit) => hit.id.length > 0 && hit.observation.length > 0)
+          .slice(0, 8);
+
         return {
-          lines: toLines(proc.stdout ?? "").slice(0, 8),
+          lines: recalledMemories.map((hit) => hit.observation),
+          recalledMemories,
           durationMs,
-          gap: null,
+          gap: recalledMemories.length > 0
+            ? null
+            : {
+                item: "Memory recall",
+                why_missing: "Recall returned zero usable memory hits",
+                how_to_get_it: "Check memory corpus population and recall query quality",
+              },
         };
       }),
       step.run("search-github-projects", async () => {
@@ -696,7 +758,7 @@ export const vipEmailReceived = inngest.createFunction(
 
     timings["fetch-front-context"] = frontResult.durationMs;
     timings["search-granola-related"] = granolaResult.durationMs;
-    timings["search-memory-qdrant"] = memoryResult.durationMs;
+    timings["search-memory-recall"] = memoryResult.durationMs;
     timings["search-github-projects"] = githubResult.durationMs;
 
     if (frontResult.gap?.item) accessGaps.push(frontResult.gap as MissingInfo);
@@ -707,6 +769,7 @@ export const vipEmailReceived = inngest.createFunction(
     const frontContext = (frontResult.context ?? null) as { summary: Record<string, unknown>; recentMessages: string[] } | null;
     const granolaMeetings = (granolaResult.meetings ?? []) as GranolaMeeting[];
     const memoryContext = (memoryResult.lines ?? []) as string[];
+    const recalledMemories = (memoryResult.recalledMemories ?? []) as Array<{ id: string; observation: string }>;
     const githubRepos = (githubResult.repos ?? []) as GitHubRepo[];
 
     const analysisPrompt = buildAnalysisPrompt({
@@ -898,7 +961,7 @@ export const vipEmailReceived = inngest.createFunction(
       lines.push("", "Timing profile (ms):");
       lines.push(`- fetch-front-context: ${timings["fetch-front-context"] ?? 0}`);
       lines.push(`- search-granola-related: ${timings["search-granola-related"] ?? 0}`);
-      lines.push(`- search-memory-qdrant: ${timings["search-memory-qdrant"] ?? 0}`);
+      lines.push(`- search-memory-recall: ${timings["search-memory-recall"] ?? 0}`);
       lines.push(`- search-github-projects: ${timings["search-github-projects"] ?? 0}${githubResult.skipped ? " (skipped)" : ""}`);
       lines.push(`- sonnet-initial-triage: ${timings["sonnet-initial-triage"] ?? 0}`);
       lines.push(`- opus-vip-analysis: ${timings["opus-vip-analysis"] ?? 0}`);
@@ -931,6 +994,40 @@ export const vipEmailReceived = inngest.createFunction(
       return { durationMs: Date.now() - t0 };
     });
 
+    const echoFizzleResponseText = [
+      `Summary: ${analysis.executive_summary}`,
+      ...analysis.interaction_signals.slice(0, 6).map((signal) => `Signal: ${signal}`),
+      ...createdTodos.created.slice(0, 6).map((todo) => `Todo: ${todo.content}`),
+      ...analysis.questions_for_human.slice(0, 3).map((question) => `Question: ${question}`),
+    ].join("\n").trim();
+
+    const echoFizzleDispatch =
+      recalledMemories.length > 0 && echoFizzleResponseText.length > 0
+        ? await step.sendEvent("emit-memory-echo-fizzle", {
+            name: "memory/echo-fizzle.requested",
+            data: {
+              recalledMemories: recalledMemories.slice(0, 8).map((memory) => ({
+                id: memory.id,
+                observation: memory.observation,
+              })),
+              agentResponse: echoFizzleResponseText,
+            },
+          })
+            .then(() => ({
+              emitted: true,
+              recalledMemories: recalledMemories.length,
+            }))
+            .catch((error) => ({
+              emitted: false,
+              recalledMemories: recalledMemories.length,
+              error: error instanceof Error ? error.message.slice(0, 220) : String(error).slice(0, 220),
+            }))
+        : {
+            emitted: false,
+            recalledMemories: recalledMemories.length,
+            reason: "missing-memory-context-or-response",
+          };
+
     const totalDurationMs = Date.now() - startedAt;
 
     return {
@@ -948,6 +1045,7 @@ export const vipEmailReceived = inngest.createFunction(
       ranOpus: shouldRunOpus,
       timings,
       granolaRangeDurations: granolaResult.rangeDurations,
+      echoFizzleDispatch,
       totalDurationMs,
       budgetMs: TOTAL_BUDGET_MS,
       budgetExceeded: totalDurationMs > TOTAL_BUDGET_MS,

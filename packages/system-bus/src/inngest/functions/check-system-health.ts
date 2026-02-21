@@ -55,15 +55,6 @@ async function checkRedis(): Promise<ServiceStatus> {
   }
 }
 
-async function checkQdrant(): Promise<ServiceStatus> {
-  try {
-    const res = await fetch("http://localhost:6333/healthz", { signal: AbortSignal.timeout(3000) });
-    return { name: "Qdrant", ok: res.ok };
-  } catch (err) {
-    return { name: "Qdrant", ok: false, detail: String(err) };
-  }
-}
-
 async function checkInngest(): Promise<ServiceStatus> {
   try {
     const res = await fetch("http://localhost:8288/health", { signal: AbortSignal.timeout(3000) });
@@ -235,7 +226,6 @@ export const checkSystemHealth = inngest.createFunction(
     const services = await step.run("ping-services", async () => {
       const results = await Promise.all([
         checkRedis(),
-        checkQdrant(),
         checkInngest(),
         checkWorker(),
         checkGateway(),

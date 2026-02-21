@@ -65,6 +65,15 @@ export type Events = {
       source: string;
     };
   };
+  "transcript/web.fetched": {
+    data: {
+      url: string;
+      title: string;
+      channel?: string;
+      sourceUrl?: string;
+      type: "video" | "meeting";
+    };
+  };
 
   // --- Content enrichment ---
   "content/summarize.requested": {
@@ -672,6 +681,47 @@ export type Events = {
     };
   };
 
+  // --- GitHub ---
+  "github/workflow_run.completed": {
+    data: {
+      action: string;
+      runId: number;
+      runNumber: number | null;
+      runAttempt: number | null;
+      workflowId: number;
+      workflowName: string;
+      event: string;
+      status: string;
+      conclusion: string;
+      htmlUrl: string;
+      jobsUrl: string;
+      logsUrl: string;
+      branch: string;
+      headSha: string;
+      actorLogin: string;
+      repository: string;
+      repositoryUrl: string;
+      headRepository: string;
+      createdAt: string;
+      updatedAt: string;
+      completedAt: string;
+    };
+  };
+  "github/package.published": {
+    data: {
+      action: string;
+      ecosystem: string;
+      packageName: string;
+      packageType: string;
+      packageHtmlUrl: string;
+      versionName: string;
+      versionHtmlUrl: string;
+      repository: string;
+      repositoryUrl: string;
+      sender: string;
+    };
+  };
+
   // --- VIP Email ---
   "vip/email.received": {
     data: {
@@ -763,6 +813,12 @@ export type Events = {
       agentResponse: string;
     };
   };
+  "memory/maintenance.weekly.requested": {
+    data: {
+      reason?: string;
+      requestedBy?: string;
+    };
+  };
   "vault/sync.check": {
     data: Record<string, never>;
   };
@@ -777,6 +833,12 @@ export type Events = {
   };
   "loops/stale.check": {
     data: Record<string, never>;
+  };
+  "nas/soak.review.requested": {
+    data: {
+      reason?: string;
+      requestedBy?: string;
+    };
   };
 
   // --- Legacy ---
@@ -793,7 +855,14 @@ export type Events = {
 };
 
 export const inngest = new Inngest({
-  id: "system-bus",
+  // Ensure host and cluster workers register independently and cannot
+  // overwrite each other's function graph in Inngest.
+  id: (() => {
+    const explicit = process.env.INNGEST_APP_ID?.trim()
+    if (explicit) return explicit
+    const role = process.env.WORKER_ROLE === "cluster" ? "cluster" : "host"
+    return `system-bus-${role}`
+  })(),
   schemas: new EventSchemas().fromRecord<Events>(),
   middleware: [gatewayMiddleware],
 });

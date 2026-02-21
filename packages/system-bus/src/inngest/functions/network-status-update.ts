@@ -1,9 +1,7 @@
 import { execSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { anyApi, type FunctionReference } from "convex/server";
 import { inngest } from "../client";
-import { getConvexClient, pushContentResource } from "../../lib/convex";
+import { getConvexClient, pushContentResource, removeContentResources } from "../../lib/convex";
 
 type ResourceDoc = {
   resourceId: string;
@@ -24,6 +22,7 @@ type LaunchdRow = {
 };
 
 const KNOWN_DAEMONS = [
+  "agent-secrets",
   "system-bus-worker",
   "gateway",
   "gateway-tripwire",
@@ -31,11 +30,11 @@ const KNOWN_DAEMONS = [
   "colima",
   "vault-log-sync",
   "content-sync-watcher",
-  "system-bus-sync",
   "typesense-portforward",
 ] as const;
 
 const DEFAULT_DAEMON_DESCRIPTIONS: Record<string, string> = {
+  "agent-secrets": "Encrypted secrets daemon (leases API keys/tokens)",
   "system-bus-worker": "Inngest function worker (66 functions)",
   gateway: "Pi agent gateway daemon + Telegram bridge",
   "gateway-tripwire": "Gateway watchdog (auto-restart on failure)",
@@ -43,7 +42,6 @@ const DEFAULT_DAEMON_DESCRIPTIONS: Record<string, string> = {
   colima: "Container runtime (VZ framework → Talos k8s)",
   "vault-log-sync": "system-log.jsonl → Obsidian markdown notes",
   "content-sync-watcher": "Vault content → web deploy trigger",
-  "system-bus-sync": "Monorepo → worker clone sync",
   "typesense-portforward": "kubectl port-forward for Typesense :8108",
 };
 
@@ -117,31 +115,19 @@ function normalizeDaemonStatus(row: LaunchdRow | undefined): string {
   return "offline";
 }
 
-function getFunctionCountFromServeTs(): number {
-  try {
-    const servePath = join(process.cwd(), "src/serve.ts");
-    const content = readFileSync(servePath, "utf8");
-    const arrayMatch = content.match(/const registeredFunctions = \[([\s\S]*?)\];/);
-    if (!arrayMatch?.[1]) return 0;
-
-    const entries = arrayMatch[1]
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0 && !line.startsWith("//") && !line.startsWith("/*") && !line.startsWith("*"))
-      .filter((line) => !line.startsWith("]"))
-      .map((line) => line.replace(/,$/, ""))
-      .filter(Boolean);
-
-    return entries.length;
-  } catch {
-    return 0;
-  }
-}
-
 function parseFunctionsCountFromWorkerApi(raw: string): number {
   try {
-    const data = JSON.parse(raw) as { count?: unknown };
-    const count = typeof data.count === "number" ? data.count : 0;
+    const data = JSON.parse(raw) as {
+      count?: unknown;
+      worker?: {
+        roleCounts?: {
+          active?: unknown;
+        };
+      };
+    };
+    const count = typeof data.count === "number"
+      ? data.count
+      : (typeof data.worker?.roleCounts?.active === "number" ? data.worker.roleCounts.active : 0);
     return Number.isFinite(count) ? count : 0;
   } catch {
     return 0;
@@ -171,12 +157,18 @@ export const networkStatusUpdate = inngest.createFunction(
       const rows = parsePods(podsOutput);
       const existing = await listByType("network_pod");
       const descriptionByName = new Map<string, string>();
+      const currentPodResourceIds = new Set(rows.map((row) => `pod:${row.name}`));
 
       for (const doc of existing) {
         const name = typeof doc.fields?.name === "string" ? doc.fields.name : doc.resourceId.replace(/^pod:/, "");
         const description = typeof doc.fields?.description === "string" ? doc.fields.description : "";
         if (name) descriptionByName.set(name, description);
       }
+
+      const staleResourceIds = existing
+        .map((doc) => doc.resourceId)
+        .filter((resourceId) => resourceId.startsWith("pod:") && !currentPodResourceIds.has(resourceId));
+      await removeContentResources(staleResourceIds);
 
       for (const row of rows) {
         await pushContentResource(`pod:${row.name}`, "network_pod", {
@@ -270,10 +262,6 @@ export const networkStatusUpdate = inngest.createFunction(
         functionCount = parseFunctionsCountFromWorkerApi(apiJson);
       } catch {
         functionCount = 0;
-      }
-
-      if (!functionCount) {
-        functionCount = getFunctionCountFromServeTs();
       }
 
       const skillsCount = getSkillsCount();

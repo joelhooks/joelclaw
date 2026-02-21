@@ -71,14 +71,6 @@ async function seedNetwork(): Promise<void> {
       age: "",
     },
     {
-      name: "qdrant-0",
-      status: "Running",
-      namespace: "joelclaw",
-      description: "Vector search (legacy, being replaced by Typesense)",
-      restarts: 0,
-      age: "",
-    },
-    {
       name: "bluesky-pds",
       status: "Running",
       namespace: "joelclaw",
@@ -104,7 +96,6 @@ async function seedNetwork(): Promise<void> {
     { name: "colima", status: "running", description: "Container runtime (VZ framework → Talos k8s)" },
     { name: "vault-log-sync", status: "running", description: "system-log.jsonl → Obsidian markdown notes" },
     { name: "content-sync-watcher", status: "running", description: "Vault content → web deploy trigger" },
-    { name: "system-bus-sync", status: "running", description: "Monorepo → worker clone sync" },
     { name: "typesense-portforward", status: "running", description: "kubectl port-forward for Typesense :8108" },
   ];
 

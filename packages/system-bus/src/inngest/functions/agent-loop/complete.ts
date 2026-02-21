@@ -20,7 +20,7 @@ export const agentLoopComplete = inngest.createFunction(
   [{ event: "agent/loop.completed" }],
   async ({ event, step, ...rest }) => {
     const gateway = (rest as any).gateway as import("../../middleware/gateway").GatewayContext | undefined;
-    const { loopId, project, branchName, storiesCompleted, storiesFailed, workDir, originSession } = event.data;
+    const { loopId, project, branchName, storiesCompleted, storiesFailed, originSession } = event.data;
 
     // Only proceed if branchName is present (set by planner v2)
     if (!branchName) {
@@ -117,36 +117,7 @@ export const agentLoopComplete = inngest.createFunction(
       }
     });
 
-    // Step 3: Sync worker clone (if merge succeeded)
-    // The worker runs from a separate clone (~/Code/system-bus-worker/) for stability —
-    // editing the monorepo during sessions won't break the running worker.
-    // After merging to monorepo, pull changes into the worker clone and restart it.
-    let syncResult: { synced: boolean; error?: string } = { synced: false };
-    if (mergeResult.merged) {
-      syncResult = await step.run("sync-worker-clone", async () => {
-        try {
-          const workerRoot = `${process.env.HOME}/Code/system-bus-worker`;
-          // Pull from monorepo (worker's origin)
-          const pull = await $`cd ${workerRoot} && git pull --ff-only`.quiet().nothrow();
-          if (pull.exitCode !== 0) {
-            // If not fast-forward, force-sync worker clone from origin/main
-            await $`cd ${workerRoot} && git fetch origin && git reset --hard origin/main && git clean -fd`
-              .quiet()
-              .nothrow();
-          }
-          // Install deps in case new packages were added
-          await $`cd ${workerRoot} && bun install --silent`.quiet().nothrow();
-          // Restart worker via launchctl
-          const uid = (await $`id -u`.quiet()).text().trim();
-          await $`launchctl kickstart -k gui/${uid}/com.joel.system-bus-worker`.quiet().nothrow();
-          return { synced: true };
-        } catch (e: any) {
-          return { synced: false, error: e?.message?.slice(0, 500) };
-        }
-      });
-    }
-
-    // Step 4: Push to remote (if merge succeeded)
+    // Step 3: Push to remote (if merge succeeded)
     let pushResult: string = "skipped";
     if (mergeResult.merged) {
       pushResult = await step.run("push-to-remote", async () => {
@@ -172,7 +143,7 @@ export const agentLoopComplete = inngest.createFunction(
       });
     }
 
-    // Step 5: Emit best-effort gateway event for loop completion outcome.
+    // Step 4: Emit best-effort gateway event for loop completion outcome.
     // Notification failures must never fail the complete function.
     try {
       await step.run("emit-gateway-event", async () => {
@@ -201,7 +172,7 @@ export const agentLoopComplete = inngest.createFunction(
       branchName,
       mergeResult,
       cleanupResult,
-      syncResult,
+      deploymentModel: "single-source-worker",
       pushResult,
     };
   }

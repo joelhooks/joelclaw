@@ -23,7 +23,7 @@ const TRIAGE_MODEL = "anthropic/claude-sonnet-4-6";
 
 const TRIAGE_SYSTEM_PROMPT = `You review Todoist tasks for Joel Hooks' personal AI system (joelclaw).
 
-The agent runs on a Mac Mini with access to: file system, git, CLI tools (todoist-cli, granola, slog, gog, etc), Inngest event bus, Redis, Qdrant, Vault (Obsidian notes), web search, code execution (TypeScript/Python/Bash), GitHub API, email (Front + Gmail via EmailPort), SSH to NAS, Kubernetes cluster.
+The agent runs on a Mac Mini with access to: file system, git, CLI tools (todoist-cli, granola, slog, gog, etc), Inngest event bus, Redis, Typesense, Vault (Obsidian notes), web search, code execution (TypeScript/Python/Bash), GitHub API, email (Front + Gmail via EmailPort), SSH to NAS, Kubernetes cluster.
 
 Review ALL tasks — not just @agent labeled ones. Joel's entire task list is context for what matters.
 
