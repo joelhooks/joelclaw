@@ -25,6 +25,39 @@ implemented
 
 Improve memory quality after migration hardening: better retrieval precision, real usage feedback loops, and explicit memory health controls.
 
+### Cross-Cutting O11y Requirements (ADR-0087)
+
+All memory-phase changes in this ADR must satisfy the implemented observability contract from ADR-0087:
+
+1. **Canonical event contract only**: memory functions emit via `packages/system-bus/src/observability/{otel-event.ts,emit.ts,store.ts}` (no ad-hoc logging as primary signal).
+2. **Required emission points**: for `observe`, `reflect`, `proposal-triage`, `batch-review`, `promote`, `echo-fizzle`, and maintenance flows:
+   - start
+   - success (with duration + counts)
+   - failure (with structured error + retry context)
+3. **Dual sink policy**:
+   - full event stream to Typesense `otel_events`
+   - warn/error/fatal mirror to Convex `contentResources` (`otel_event`) using rolling window controls.
+4. **Required metadata keys** on memory events (when available):
+   - `sessionId`
+   - `dedupeKey`
+   - `eventId`
+   - `runId`
+   - `proposalId`
+   - `observationCount`
+   - `proposalCount`
+   - `retryLevel`
+5. **Queryable diagnosis requirement**: any incident in memory pipeline must be diagnosable via:
+   - `joelclaw otel list`
+   - `joelclaw otel search`
+   - `joelclaw otel stats`
+   without direct pod log grepping.
+6. **Escalation requirement**: sustained memory failure/stall signals feed `check-system-health` error-rate evaluation and honor fatal immediate Telegram path.
+
+O11y acceptance gates for this phase:
+- Synthetic failure in one memory stage appears in `otel_events` with required metadata.
+- Warn/error event is visible in `/system/events` and via `joelclaw otel search` within one polling cycle.
+- Memory pipeline stall (`no successful memory stage events for >30 minutes`) is detectable from `otel_events` queries.
+
 ### Workstream 1: Retrieval Quality V2
 
 Scope:
@@ -36,6 +69,7 @@ Acceptance:
 - `joelclaw recall "what was that redis thing" --json` includes a populated rewrite field.
 - Recall output is still valid when rewrite fails (fallback path covered by tests).
 - P95 recall latency remains within local interactive bounds.
+- Retrieval execution emits contract-compliant otel events with `query`, `rewrittenQuery` (if set), and filter diagnostics metadata.
 
 ### Workstream 2: Echo/Fizzle Activation
 
@@ -48,6 +82,7 @@ Acceptance:
 - At least one production `memory/echo-fizzle` run from non-synthetic traffic.
 - Observable score updates on recalled memory documents.
 - Recalled items with repeated positive usage move up in ranking over time.
+- Echo/fizzle run quality is inspectable via `joelclaw otel search \"memory/echo-fizzle\" --hours 24`.
 
 ### Workstream 3: Memory Health and Governance
 
@@ -55,11 +90,13 @@ Scope:
 - Add a `joelclaw inngest memory-health` check for backlog, stale ratio, and failed memory runs.
 - Add weekly maintenance summary (merge count, stale count, triage backlog) to logs/events.
 - Define alert thresholds for sustained degradation (failed runs, backlog growth, zero recall hits).
+- Source memory-health status from `otel_events` as system of record (not only ad-hoc counters).
 
 Acceptance:
 - `memory-health` returns machine-readable pass/fail output with actionable next actions.
 - Weekly summary event is emitted and visible in run history.
 - Alert thresholds are documented and tested with synthetic failure inputs.
+- `memory-health` output includes an `otelEvidence` block (query window + event counts + error-rate basis).
 
 ## Audit (2026-02-21)
 
