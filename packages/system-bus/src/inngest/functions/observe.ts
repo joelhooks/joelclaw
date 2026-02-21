@@ -592,6 +592,21 @@ Session context:
         }));
 
         const result = await typesense.bulkImport("memory_observations", docs);
+
+        // Dual-write to Convex for real-time UI
+        const { pushMemoryObservation } = await import("../../lib/convex");
+        for (const doc of docs) {
+          await pushMemoryObservation({
+            observationId: doc.id,
+            observation: doc.observation,
+            category: doc.observation_type || "general",
+            source: doc.source,
+            sessionId: doc.session_id,
+            superseded: false,
+            timestamp: doc.timestamp,
+          }).catch(() => {}); // best-effort
+        }
+
         return { stored: true, count: result.success, errors: result.errors };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

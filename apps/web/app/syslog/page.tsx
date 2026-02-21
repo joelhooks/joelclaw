@@ -1,20 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { authClient } from "../../lib/auth-client";
 import { Terminal } from "lucide-react";
-
-type LogEntry = {
-  id: string;
-  action: string;
-  tool: string;
-  detail: string;
-  reason: string;
-  timestamp: number;
-};
 
 const ACTION_COLORS: Record<string, string> = {
   install: "text-emerald-400 bg-emerald-500/10",
@@ -29,23 +20,24 @@ export default function SyslogPage() {
   const router = useRouter();
   const { data: session, isPending } = authClient.useSession();
   const isOwner = useQuery(api.auth.isOwner);
-  const [data, setData] = useState<{ hits: LogEntry[]; found: number } | null>(null);
   const [query, setQuery] = useState("");
-  const [page, setPage] = useState(1);
+  const [toolFilter, setToolFilter] = useState<string | undefined>();
 
-  useEffect(() => {
-    if (!isOwner) return;
-    const q = query.trim() || "*";
-    fetch(`/api/typesense/system_log?q=${encodeURIComponent(q)}&page=${page}&per_page=50`)
-      .then((r) => r.json())
-      .then((d) =>
-        setData({
-          hits: (d.hits || []).map((h: any) => ({ id: h.document.id, ...h.document })),
-          found: d.found || 0,
-        })
-      )
-      .catch(() => {});
-  }, [isOwner, query, page]);
+  const listData = useQuery(
+    api.systemLog.list,
+    !query.trim() ? { tool: toolFilter, limit: 100 } : "skip"
+  );
+  const searchData = useQuery(
+    api.systemLog.search,
+    query.trim().length > 1 ? { query: query.trim(), limit: 100 } : "skip"
+  );
+
+  const entries = query.trim().length > 1 ? searchData : listData;
+
+  // Derive unique tools from data for filter chips
+  const tools = listData
+    ? [...new Set(listData.map((e) => e.tool))].sort()
+    : [];
 
   if (isPending || isOwner === undefined) {
     return (
@@ -64,71 +56,82 @@ export default function SyslogPage() {
       <div className="flex items-center gap-3">
         <Terminal className="w-6 h-6 text-blue-400" />
         <h1 className="font-mono text-xl font-bold text-neutral-100">System Log</h1>
-        {data && (
+        {entries && (
           <span className="font-mono text-sm text-neutral-500">
-            {data.found} entries
+            {entries.length} entries
           </span>
         )}
       </div>
 
-      <input
-        type="text"
-        value={query}
-        onChange={(e) => { setQuery(e.target.value); setPage(1); }}
-        placeholder="search syslog..."
-        className="w-full rounded-lg border border-neutral-700/50 bg-neutral-950 px-4 py-2.5 font-mono text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-700"
-      />
-
-      <div className="space-y-1">
-        {data?.hits.map((entry) => (
-          <div
-            key={entry.id}
-            className="rounded-lg border border-neutral-700/30 bg-neutral-900/30 px-4 py-3 space-y-1.5"
-          >
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className={`rounded px-1.5 py-0.5 font-pixel text-[10px] uppercase tracking-wider ${ACTION_COLORS[entry.action] || "text-neutral-400 bg-neutral-500/10"}`}>
-                {entry.action}
-              </span>
-              <span className="rounded bg-neutral-800/60 px-1.5 py-0.5 font-mono text-[10px] text-neutral-300">
-                {entry.tool}
-              </span>
-              <span className="ml-auto font-mono text-[10px] text-neutral-600">
-                {new Date(entry.timestamp * 1000).toLocaleString()}
-              </span>
-            </div>
-            <p className="font-mono text-sm leading-relaxed text-neutral-300">
-              {entry.detail}
-            </p>
-            {entry.reason && (
-              <p className="font-mono text-xs text-neutral-500 italic">
-                → {entry.reason}
-              </p>
-            )}
+      <div className="flex gap-3 flex-wrap">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="search syslog..."
+          className="flex-1 min-w-[200px] rounded-lg border border-neutral-700/50 bg-neutral-950 px-4 py-2.5 font-mono text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-700"
+        />
+        {tools.length > 0 && (
+          <div className="flex gap-1 flex-wrap">
+            <button
+              onClick={() => setToolFilter(undefined)}
+              className={`rounded px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${!toolFilter ? "bg-neutral-700 text-neutral-200" : "bg-neutral-800/40 text-neutral-500 hover:text-neutral-300"}`}
+            >
+              all
+            </button>
+            {tools.slice(0, 10).map((t) => (
+              <button
+                key={t}
+                onClick={() => setToolFilter(toolFilter === t ? undefined : t)}
+                className={`rounded px-2 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-colors ${toolFilter === t ? "bg-neutral-700 text-neutral-200" : "bg-neutral-800/40 text-neutral-500 hover:text-neutral-300"}`}
+              >
+                {t}
+              </button>
+            ))}
           </div>
-        ))}
+        )}
       </div>
 
-      {data && data.found > 50 && (
-        <div className="flex items-center justify-center gap-4">
-          <button
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page === 1}
-            className="rounded border border-neutral-700 px-3 py-1.5 font-mono text-xs text-neutral-400 hover:bg-neutral-800 disabled:opacity-30"
-          >
-            ← prev
-          </button>
-          <span className="font-mono text-xs text-neutral-500">
-            page {page} of {Math.ceil(data.found / 50)}
-          </span>
-          <button
-            onClick={() => setPage((p) => p + 1)}
-            disabled={page >= Math.ceil(data.found / 50)}
-            className="rounded border border-neutral-700 px-3 py-1.5 font-mono text-xs text-neutral-400 hover:bg-neutral-800 disabled:opacity-30"
-          >
-            next →
-          </button>
-        </div>
-      )}
+      <div className="space-y-1">
+        {entries === undefined ? (
+          <div className="space-y-1">
+            {[...Array(8)].map((_, i) => (
+              <div key={i} className="h-16 animate-pulse rounded-lg bg-neutral-800/30" />
+            ))}
+          </div>
+        ) : entries.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-neutral-700/40 p-8 text-center">
+            <p className="font-mono text-sm text-neutral-500">no entries found</p>
+          </div>
+        ) : (
+          entries.map((entry) => (
+            <div
+              key={entry._id}
+              className="rounded-lg border border-neutral-700/30 bg-neutral-900/30 px-4 py-3 space-y-1.5"
+            >
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`rounded px-1.5 py-0.5 font-pixel text-[10px] uppercase tracking-wider ${ACTION_COLORS[entry.action] || "text-neutral-400 bg-neutral-500/10"}`}>
+                  {entry.action}
+                </span>
+                <span className="rounded bg-neutral-800/60 px-1.5 py-0.5 font-mono text-[10px] text-neutral-300">
+                  {entry.tool}
+                </span>
+                <span className="ml-auto font-mono text-[10px] text-neutral-600">
+                  {new Date(entry.timestamp * 1000).toLocaleString()}
+                </span>
+              </div>
+              <p className="font-mono text-sm leading-relaxed text-neutral-300">
+                {entry.detail}
+              </p>
+              {entry.reason && (
+                <p className="font-mono text-xs text-neutral-500 italic">
+                  → {entry.reason}
+                </p>
+              )}
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }

@@ -81,6 +81,45 @@ export default defineSchema({
       filterFields: ["section", "type"],
     }),
 
+  // ── Memory tables ──────────────────────────────────────────────────
+
+  memoryObservations: defineTable({
+    observationId: v.string(), // Typesense doc ID for dedup
+    observation: v.string(),
+    category: v.string(), // "debugging", "architecture", "preference", etc.
+    source: v.string(), // "pi", "claude", "codex", "gateway"
+    sessionId: v.optional(v.string()),
+    superseded: v.boolean(),
+    timestamp: v.number(), // unix epoch seconds
+    syncedAt: v.number(),
+  })
+    .index("by_observationId", ["observationId"])
+    .index("by_category", ["category"])
+    .index("by_timestamp", ["timestamp"])
+    .index("by_source", ["source"])
+    .searchIndex("search_observation", {
+      searchField: "observation",
+      filterFields: ["category", "source", "superseded"],
+    }),
+
+  systemLog: defineTable({
+    entryId: v.string(), // dedup key (timestamp + action + tool)
+    action: v.string(), // "install", "configure", "remove", "fix", etc.
+    tool: v.string(),
+    detail: v.string(),
+    reason: v.optional(v.string()),
+    timestamp: v.number(), // unix epoch seconds
+    syncedAt: v.number(),
+  })
+    .index("by_entryId", ["entryId"])
+    .index("by_timestamp", ["timestamp"])
+    .index("by_tool", ["tool"])
+    .index("by_action", ["action"])
+    .searchIndex("search_detail", {
+      searchField: "detail",
+      filterFields: ["action", "tool"],
+    }),
+
   // ── Dashboard tables ──────────────────────────────────────────────
 
   systemStatus: defineTable({

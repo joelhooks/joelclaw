@@ -54,6 +54,35 @@ export async function removeVaultNotes(paths: string[]) {
   await client.mutation(ref, { paths });
 }
 
+/** Push a memory observation to Convex */
+export async function pushMemoryObservation(obs: {
+  observationId: string;
+  observation: string;
+  category: string;
+  source: string;
+  sessionId?: string;
+  superseded: boolean;
+  timestamp: number;
+}) {
+  const client = getConvexClient();
+  const ref = (anyApi as any).memoryObservations.upsert as FunctionReference<"mutation">;
+  await client.mutation(ref, obs);
+}
+
+/** Push a system log entry to Convex */
+export async function pushSystemLogEntry(entry: {
+  entryId: string;
+  action: string;
+  tool: string;
+  detail: string;
+  reason?: string;
+  timestamp: number;
+}) {
+  const client = getConvexClient();
+  const ref = (anyApi as any).systemLog.upsert as FunctionReference<"mutation">;
+  await client.mutation(ref, entry);
+}
+
 /** Push a notification to Convex dashboard */
 export async function pushNotification(
   type: string,

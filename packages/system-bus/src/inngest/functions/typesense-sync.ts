@@ -159,7 +159,22 @@ async function indexSystemLog(): Promise<{ success: number; errors: number }> {
   } catch {}
 
   if (docs.length === 0) return { success: 0, errors: 0 };
-  return typesense.bulkImport("system_log", docs);
+  const result = await typesense.bulkImport("system_log", docs);
+
+  // Dual-write to Convex
+  const { pushSystemLogEntry } = await import("../../lib/convex");
+  for (const doc of docs) {
+    await pushSystemLogEntry({
+      entryId: String(doc.id),
+      action: String(doc.action || ""),
+      tool: String(doc.tool || ""),
+      detail: String(doc.detail || ""),
+      reason: doc.reason ? String(doc.reason) : undefined,
+      timestamp: Number(doc.timestamp || 0),
+    }).catch(() => {});
+  }
+
+  return result;
 }
 
 // ── Inngest functions ───────────────────────────────────────────────
