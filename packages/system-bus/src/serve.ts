@@ -1,7 +1,35 @@
+import { execSync } from "node:child_process";
 import { Hono } from "hono";
 import { serve as inngestServe } from "inngest/hono";
 import { inngest } from "./inngest/client";
 import { webhookApp } from "./webhooks/server";
+
+// ── Load webhook secrets from agent-secrets at startup ──────────
+// ADR-0048: Webhook providers read from process.env at verification time.
+// Secrets are leased once at startup with a long TTL.
+const WEBHOOK_SECRETS = [
+  { env: "VERCEL_WEBHOOK_SECRET", secret: "vercel_webhook_secret" },
+  { env: "FRONT_WEBHOOK_SECRET", secret: "front_webhook_secret" },
+  { env: "TODOIST_CLIENT_SECRET", secret: "todoist_client_secret" },
+] as const;
+
+for (const { env, secret } of WEBHOOK_SECRETS) {
+  if (!process.env[env]) {
+    try {
+      const value = execSync(`secrets lease ${secret} --ttl 24h`, {
+        encoding: "utf8",
+        timeout: 5_000,
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+      if (value) {
+        process.env[env] = value;
+        console.log(`[secrets] loaded ${env} from agent-secrets`);
+      }
+    } catch {
+      console.warn(`[secrets] ⚠️ failed to load ${env} — ${secret} webhook verification will fail`);
+    }
+  }
+}
 import {
   videoDownload,
   transcriptProcess,
