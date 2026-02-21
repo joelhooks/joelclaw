@@ -18,6 +18,9 @@ implemented
 - Sprint closure complete: recall/search are Typesense-backed and `joelclaw inngest memory-e2e` is green.
 - Qdrant is retired from active memory ingestion and active k8s runtime.
 - Remaining Qdrant references in this ADR are retained as historical audit context from the original 2026-02-21 review.
+- API key resolution hardening is active for recall/search/otel via shared `typesense-auth` lease parsing (daemon outages now return actionable JSON errors, never header blobs).
+- `joelclaw inngest memory-health` is live with OTEL-backed evidence (stall/error-rate/failed-runs/backlog + stale ratio when schema supports it).
+- VIP memory lookup diagnostics were renamed from Qdrant-era timeout naming to Typesense memory recall naming.
 
 ## Next Phase Plan (2026-02-22 to 2026-03-07)
 
