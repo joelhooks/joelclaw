@@ -138,7 +138,7 @@ Adopt a **single source of truth** for Inngest worker code in the `joelclaw` mon
 - [x] New/updated function code is edited in exactly one repo path (`joelclaw` monorepo) before deployment.
 - [x] `joelclaw inngest status` (or equivalent) reports healthy worker registration without rsync sync step.
 - [ ] No code path references `~/Code/system-bus-worker` after migration completion.
-- [ ] Worker pods in k8s pass readiness and execute cluster-safe functions successfully.
+- [x] Worker pods in k8s pass readiness and execute cluster-safe functions successfully.
 - [x] Host-required functions continue to execute during transition without regressions.
 - [x] Duplicate function IDs across worker roles are detected and blocked.
 - [x] Gateway and worker are both running code derived from the same monorepo git SHA at deploy time.
@@ -182,9 +182,32 @@ Adopt a **single source of truth** for Inngest worker code in the `joelclaw` mon
 
 ### Remaining for full completion
 
-- Populate non-empty `cluster-safe` function ownership and move cluster role to k8s worker deployment.
 - Remove all residual references to `~/Code/system-bus-worker`.
+- Expand cluster-safe ownership beyond the initial activation set and retire host role over time.
 - Complete k8s worker deployment + readiness rollout/rollback runbook.
+
+### Cluster activation update (2026-02-21)
+
+- GHCR image published and deployed: `ghcr.io/joelhooks/system-bus-worker:20260221-110606`.
+- K8s deployment manifest now uses:
+  - `imagePullSecrets: ghcr-pull`
+  - `WORKER_ROLE=cluster`
+  - `INNGEST_APP_ID=system-bus-cluster` (role-specific app identity)
+  - `INNGEST_SERVE_HOST=""` (connect-mode default)
+- Publish/deploy flow is codified in:
+  - `k8s/publish-system-bus-worker.sh` (build + push GHCR + apply + rollout wait)
+- Live pod verification:
+  - Running pod: `system-bus-worker-5f6ffd6999-ggxkp`
+  - Health endpoint from inside pod: `status=200`, `count=9`
+  - Worker role counts: `host=55`, `cluster=9`, `active=9`
+  - Duplicate function IDs: none
+- Initial cluster-safe function set activated:
+  - `approvalRequest`, `approvalResolve`
+  - `todoistCommentAdded`, `todoistTaskCompleted`, `todoistTaskCreated`
+  - `frontMessageReceived`, `frontMessageSent`, `frontAssigneeChanged`
+  - `todoistMemoryReviewBridge`
+- Cluster boot logs no longer attempt local `secrets lease`:
+  - `"[secrets] skipping local webhook secret leasing in cluster worker role"`
 
 ## Migration Trigger to Revisit
 
