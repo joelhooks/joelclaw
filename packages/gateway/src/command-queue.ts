@@ -14,11 +14,13 @@ type PromptSession = {
 };
 
 type PromptCallback = () => void;
+type IdleWaiter = () => Promise<void>;
 
 const queue: QueueEntry[] = [];
 let sessionRef: PromptSession | undefined;
 let drainPromise: Promise<void> | undefined;
 let onPromptSent: PromptCallback | undefined;
+let idleWaiter: IdleWaiter | undefined;
 let consecutiveFailures = 0;
 
 export let currentSource: string | undefined;
@@ -30,6 +32,19 @@ export function setSession(session: PromptSession): void {
 /** Register a callback fired each time a prompt is dispatched to the session. */
 export function onPrompt(cb: PromptCallback): void {
   onPromptSent = cb;
+}
+
+/**
+ * Register a function that returns a Promise resolving when the session
+ * is idle (turn finished). Called after each prompt() to prevent the drain
+ * loop from firing the next message while the agent is still streaming.
+ *
+ * session.prompt() resolves when the message is *queued*, not when the
+ * full turn completes. Without this gate, back-to-back messages race
+ * and hit "Agent is already processing".
+ */
+export function setIdleWaiter(fn: IdleWaiter): void {
+  idleWaiter = fn;
 }
 
 export async function enqueue(
@@ -129,6 +144,13 @@ export async function drain(): Promise<void> {
 
         onPromptSent?.();
         await sessionRef.prompt(entry.prompt);
+
+        // session.prompt() resolves when the message is queued, not when
+        // the full turn (streaming + tool calls) completes. Wait for the
+        // session to become idle before processing the next queue entry.
+        if (idleWaiter) {
+          await idleWaiter();
+        }
 
         if (entry.streamId) {
           await ack(entry.streamId);

@@ -10,6 +10,7 @@ import {
   getQueueDepth,
   getCurrentSource,
   setSession,
+  setIdleWaiter,
   onPrompt,
   replayUnacked,
   getConsecutiveFailures,
@@ -329,6 +330,35 @@ let _lastTurnEndAt = Date.now();
 let _lastPromptAt = 0;
 onPrompt(() => { _lastPromptAt = Date.now(); });
 
+// ── Idle waiter: gate drain loop on turn_end ───────────
+// session.prompt() resolves when the message is queued, not when the
+// full turn finishes. The drain loop needs to wait for turn_end before
+// dispatching the next message, otherwise back-to-back prompts race.
+let _idleResolve: (() => void) | undefined;
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 min safety valve
+
+setIdleWaiter(() => {
+  return new Promise<void>((resolve) => {
+    _idleResolve = resolve;
+    // Safety timeout — if turn_end never fires (e.g. API hang),
+    // don't block the drain loop forever. The watchdog handles
+    // true stuck sessions separately.
+    const timer = setTimeout(() => {
+      if (_idleResolve === resolve) {
+        console.warn("[gateway] idle waiter timed out — releasing drain lock", {
+          timeoutMs: IDLE_TIMEOUT_MS,
+        });
+        _idleResolve = undefined;
+        resolve();
+      }
+    }, IDLE_TIMEOUT_MS);
+    // Don't keep the process alive for the timer
+    if (timer && typeof timer === "object" && "unref" in timer) {
+      (timer as NodeJS.Timeout).unref();
+    }
+  });
+});
+
 // ── Config ─────────────────────────────────────────────
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID
@@ -575,6 +605,12 @@ session.subscribe((event: any) => {
   if (event.type === "turn_end") {
     _lastTurnEndAt = Date.now();
     broadcastWs({ type: "turn_end" });
+    // Release the idle waiter so the drain loop can process the next entry
+    if (_idleResolve) {
+      const resolve = _idleResolve;
+      _idleResolve = undefined;
+      resolve();
+    }
     void drain();
   }
 });
