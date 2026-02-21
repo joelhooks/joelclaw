@@ -1,20 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
+import { useQuery } from "convex/react";
+import { api } from "../../convex/_generated/api";
 import Link from "next/link";
-
-// ── Types ───────────────────────────────────────────────────────
-
-interface VaultNote {
-  title: string;
-  path: string;
-  type?: string;
-  tags?: string[];
-}
-
-interface NoteContent extends VaultNote {
-  content: string;
-}
 
 // ── Section colors ──────────────────────────────────────────────
 
@@ -33,39 +22,25 @@ function sectionStyle(section: string) {
   return SECTION_STYLES[section] || { color: "text-neutral-400", bg: "bg-neutral-500/10" };
 }
 
+// PARA sort order
+const SECTION_ORDER = ["Projects", "Areas", "Resources", "Archive"];
+function sectionSort(a: string, b: string) {
+  const ai = SECTION_ORDER.indexOf(a);
+  const bi = SECTION_ORDER.indexOf(b);
+  if (ai !== -1 && bi !== -1) return ai - bi;
+  if (ai !== -1) return -1;
+  if (bi !== -1) return 1;
+  return a.localeCompare(b);
+}
+
 // ── Search ──────────────────────────────────────────────────────
 
-function VaultSearch({
-  onSelect,
-}: {
-  onSelect: (path: string) => void;
-}) {
+function VaultSearch({ onSelect }: { onSelect: (path: string) => void }) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<
-    { title: string; path: string; snippet: string }[]
-  >([]);
-  const [searching, setSearching] = useState(false);
-
-  const search = useCallback(async () => {
-    if (!query.trim()) {
-      setResults([]);
-      return;
-    }
-    setSearching(true);
-    try {
-      const resp = await fetch(`/api/vault?q=${encodeURIComponent(query)}`);
-      const data = await resp.json();
-      setResults(data.hits || []);
-    } catch {
-      setResults([]);
-    }
-    setSearching(false);
-  }, [query]);
-
-  useEffect(() => {
-    const timer = setTimeout(search, 300);
-    return () => clearTimeout(timer);
-  }, [query, search]);
+  const results = useQuery(
+    api.vaultNotes.search,
+    query.trim().length > 1 ? { query: query.trim() } : "skip"
+  );
 
   return (
     <div className="space-y-2">
@@ -80,13 +55,8 @@ function VaultSearch({
         <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-mono text-xs text-neutral-600">
           /
         </span>
-        {searching && (
-          <span className="absolute right-3 top-1/2 -translate-y-1/2">
-            <span className="inline-block h-3 w-3 animate-spin rounded-full border border-neutral-700 border-t-claw" />
-          </span>
-        )}
       </div>
-      {results.length > 0 && (
+      {results && results.length > 0 && (
         <div className="max-h-64 space-y-0.5 overflow-y-auto rounded-lg border border-neutral-700/30 bg-neutral-900/50 p-1">
           {results.map((r) => (
             <button
@@ -94,21 +64,17 @@ function VaultSearch({
               onClick={() => {
                 onSelect(r.path);
                 setQuery("");
-                setResults([]);
               }}
-              className="flex w-full flex-col gap-0.5 rounded-md px-3 py-2 text-left transition-colors hover:bg-neutral-800/50"
+              className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left transition-colors hover:bg-neutral-800/50"
             >
-              <span className="font-mono text-xs text-neutral-200">
+              <span className={`rounded px-1 py-0.5 font-pixel text-[9px] uppercase tracking-wider ${sectionStyle(r.section).color} ${sectionStyle(r.section).bg}`}>
+                {r.section}
+              </span>
+              <span className="truncate font-mono text-xs text-neutral-200">
                 {r.title}
               </span>
-              {r.snippet && (
-                <span
-                  className="font-mono text-[10px] text-neutral-500 [&_mark]:bg-transparent [&_mark]:text-claw"
-                  dangerouslySetInnerHTML={{ __html: r.snippet }}
-                />
-              )}
-              <span className="font-mono text-[10px] text-neutral-600">
-                {r.path}
+              <span className="ml-auto shrink-0 rounded bg-neutral-800/50 px-1 py-0.5 font-pixel text-[9px] text-neutral-500">
+                {r.type}
               </span>
             </button>
           ))}
@@ -125,31 +91,20 @@ function VaultTree({
   selectedPath,
   onSelect,
 }: {
-  tree: Record<string, VaultNote[]>;
+  tree: Record<string, { path: string; title: string; type: string; tags: string[] }[]>;
   selectedPath: string | null;
   onSelect: (path: string) => void;
 }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const toggle = (s: string) => setExpanded((p) => ({ ...p, [s]: !p[s] }));
 
-  const toggle = (section: string) =>
-    setExpanded((prev) => ({ ...prev, [section]: !prev[section] }));
-
-  const sections = Object.keys(tree).sort((a, b) => {
-    // PARA order: Projects, Areas, Resources, Archive, then rest
-    const order = ["Projects", "Areas", "Resources", "Archive"];
-    const ai = order.indexOf(a);
-    const bi = order.indexOf(b);
-    if (ai !== -1 && bi !== -1) return ai - bi;
-    if (ai !== -1) return -1;
-    if (bi !== -1) return 1;
-    return a.localeCompare(b);
-  });
+  const sections = Object.keys(tree).sort(sectionSort);
 
   return (
     <div className="space-y-1">
       {sections.map((section) => {
         const style = sectionStyle(section);
-        const notes = tree[section];
+        const notes = tree[section]!;
         const isOpen = expanded[section] ?? false;
 
         return (
@@ -158,20 +113,18 @@ function VaultTree({
               onClick={() => toggle(section)}
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-neutral-800/40"
             >
-              <span className="font-mono text-[10px] text-neutral-600">
+              <span className="font-mono text-[10px] text-neutral-500">
                 {isOpen ? "▼" : "▶"}
               </span>
-              <span
-                className={`rounded px-1.5 py-0.5 font-pixel text-[10px] uppercase tracking-wider ${style.color} ${style.bg}`}
-              >
+              <span className={`rounded px-1.5 py-0.5 font-pixel text-[10px] uppercase tracking-wider ${style.color} ${style.bg}`}>
                 {section}
               </span>
-              <span className="font-mono text-[10px] text-neutral-600">
+              <span className="font-mono text-[10px] text-neutral-500">
                 {notes.length}
               </span>
             </button>
             {isOpen && (
-              <div className="ml-4 space-y-0.5 border-l border-neutral-800/50 pl-3">
+              <div className="ml-4 space-y-0.5 border-l border-neutral-700/30 pl-3">
                 {notes.map((note) => (
                   <button
                     key={note.path}
@@ -182,7 +135,7 @@ function VaultTree({
                         : "text-neutral-400"
                     }`}
                   >
-                    {note.title || note.path.split("/").pop()?.replace(".md", "")}
+                    {note.title}
                   </button>
                 ))}
               </div>
@@ -196,32 +149,10 @@ function VaultTree({
 
 // ── Note viewer ─────────────────────────────────────────────────
 
-function NoteViewer({
-  path,
-  onClose,
-}: {
-  path: string;
-  onClose: () => void;
-}) {
-  const [note, setNote] = useState<NoteContent | null>(null);
-  const [loading, setLoading] = useState(true);
+function NoteViewer({ path, onClose }: { path: string; onClose: () => void }) {
+  const note = useQuery(api.vaultNotes.getByPath, { path });
 
-  useEffect(() => {
-    setLoading(true);
-    fetch(`/api/vault?path=${encodeURIComponent(path)}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.error) {
-          setNote(null);
-        } else {
-          setNote(data);
-        }
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, [path]);
-
-  if (loading) {
+  if (note === undefined) {
     return (
       <div className="flex h-64 items-center justify-center">
         <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-neutral-700 border-t-claw" />
@@ -240,29 +171,22 @@ function NoteViewer({
 
   return (
     <div className="space-y-4">
-      {/* Note header */}
+      {/* Header */}
       <div className="flex items-start justify-between border-b border-neutral-700/40 pb-3">
         <div className="min-w-0 flex-1 space-y-1">
           <h2 className="font-mono text-base font-medium text-neutral-100">
             {note.title}
           </h2>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[10px] text-neutral-500">
-              {note.path}
+            <span className="font-mono text-[10px] text-neutral-500">{note.path}</span>
+            <span className="rounded bg-neutral-800/60 px-1.5 py-0.5 font-pixel text-[9px] uppercase tracking-wider text-neutral-400">
+              {note.type}
             </span>
-            {note.type && (
-              <span className="rounded bg-neutral-800/60 px-1.5 py-0.5 font-pixel text-[9px] uppercase tracking-wider text-neutral-400">
-                {note.type}
-              </span>
-            )}
           </div>
-          {note.tags && note.tags.length > 0 && (
+          {note.tags.length > 0 && (
             <div className="flex flex-wrap gap-1.5 pt-1">
               {note.tags.map((tag) => (
-                <span
-                  key={tag}
-                  className="rounded-full bg-claw/8 px-2 py-0.5 font-mono text-[10px] text-claw/70"
-                >
+                <span key={tag} className="rounded-full bg-claw/10 px-2 py-0.5 font-mono text-[10px] text-claw/70">
                   #{tag}
                 </span>
               ))}
@@ -277,9 +201,9 @@ function NoteViewer({
         </button>
       </div>
 
-      {/* Note content — rendered as preformatted markdown */}
-      <div className="prose-vault max-h-[70vh] overflow-y-auto rounded-lg border border-neutral-800/30 bg-neutral-950/50 p-4 font-mono text-sm leading-relaxed text-neutral-300">
-        <pre className="whitespace-pre-wrap break-words font-mono text-[13px] leading-[1.7]">
+      {/* Content */}
+      <div className="max-h-[70vh] overflow-y-auto rounded-lg border border-neutral-800/30 bg-neutral-950/50 p-4">
+        <pre className="whitespace-pre-wrap break-words font-mono text-[13px] leading-[1.7] text-neutral-300">
           {note.content}
         </pre>
       </div>
@@ -290,21 +214,8 @@ function NoteViewer({
 // ── Main ────────────────────────────────────────────────────────
 
 export default function VaultPage() {
-  const [tree, setTree] = useState<Record<string, VaultNote[]> | null>(null);
-  const [total, setTotal] = useState(0);
+  const data = useQuery(api.vaultNotes.listBySection);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch("/api/vault")
-      .then((r) => r.json())
-      .then((data) => {
-        setTree(data.tree || {});
-        setTotal(data.total || 0);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, []);
 
   return (
     <div className="space-y-6">
@@ -315,9 +226,11 @@ export default function VaultPage() {
           <h1 className="font-pixel text-sm uppercase tracking-[0.12em] text-neutral-300">
             Vault
           </h1>
-          <span className="font-mono text-[11px] text-neutral-500">
-            {total} notes
-          </span>
+          {data && (
+            <span className="font-mono text-[11px] text-neutral-500">
+              {data.total} notes
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-4 font-mono text-[10px] text-neutral-500">
           <Link href="/dashboard" className="transition-colors hover:text-neutral-300">
@@ -333,47 +246,31 @@ export default function VaultPage() {
       {/* Search */}
       <VaultSearch onSelect={setSelectedPath} />
 
-      {/* Content area */}
+      {/* Content */}
       <div className="grid gap-6 md:grid-cols-[280px_1fr]">
-        {/* Sidebar — tree */}
+        {/* Sidebar */}
         <div className="max-h-[80vh] overflow-y-auto rounded-lg border border-neutral-700/30 bg-neutral-900/20 p-3">
-          {loading ? (
+          {!data ? (
             <div className="space-y-2">
               {[...Array(8)].map((_, i) => (
-                <div
-                  key={i}
-                  className="h-6 animate-pulse rounded bg-neutral-800/30"
-                />
+                <div key={i} className="h-6 animate-pulse rounded bg-neutral-800/30" />
               ))}
             </div>
-          ) : tree ? (
-            <VaultTree
-              tree={tree}
-              selectedPath={selectedPath}
-              onSelect={setSelectedPath}
-            />
           ) : (
-            <p className="font-mono text-xs text-neutral-600">
-              failed to load vault
-            </p>
+            <VaultTree tree={data.tree} selectedPath={selectedPath} onSelect={setSelectedPath} />
           )}
         </div>
 
-        {/* Main — note viewer */}
+        {/* Note viewer */}
         <div className="min-h-[400px]">
           {selectedPath ? (
-            <NoteViewer
-              path={selectedPath}
-              onClose={() => setSelectedPath(null)}
-            />
+            <NoteViewer path={selectedPath} onClose={() => setSelectedPath(null)} />
           ) : (
             <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-neutral-700/30 p-12">
-              <div className="text-center space-y-2">
-                <p className="font-mono text-sm text-neutral-500">
-                  select a note or search
-                </p>
+              <div className="space-y-2 text-center">
+                <p className="font-mono text-sm text-neutral-500">select a note or search</p>
                 <p className="font-mono text-[10px] text-neutral-600">
-                  PARA structure · markdown content · owner-only
+                  PARA structure · real-time sync · owner-only
                 </p>
               </div>
             </div>

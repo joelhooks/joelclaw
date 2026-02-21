@@ -12,6 +12,7 @@ import type * as auth from "../auth.js";
 import type * as http from "../http.js";
 import type * as notifications from "../notifications.js";
 import type * as systemStatus from "../systemStatus.js";
+import type * as vaultNotes from "../vaultNotes.js";
 
 import type {
   ApiFromModules,
@@ -24,6 +25,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   notifications: typeof notifications;
   systemStatus: typeof systemStatus;
+  vaultNotes: typeof vaultNotes;
 }>;
 
 /**

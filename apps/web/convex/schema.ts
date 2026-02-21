@@ -59,6 +59,27 @@ export default defineSchema({
     updatedAt: v.optional(v.number()),
   }).index("by_identifier", ["identifier"]),
 
+  // ── Vault tables ───────────────────────────────────────────────────
+
+  vaultNotes: defineTable({
+    path: v.string(), // relative path from vault root, e.g. "Projects/09-joelclaw/index.md"
+    title: v.string(),
+    content: v.string(), // markdown body (up to 32KB)
+    type: v.string(), // "adr", "project", "tool", "note", etc.
+    tags: v.array(v.string()),
+    section: v.string(), // top-level PARA section: "Projects", "Resources", etc.
+    updatedAt: v.number(), // file mtime as unix epoch seconds
+    syncedAt: v.number(), // when this record was last synced
+  })
+    .index("by_path", ["path"])
+    .index("by_section", ["section"])
+    .index("by_type", ["type"])
+    .index("by_updatedAt", ["updatedAt"])
+    .searchIndex("search_title_content", {
+      searchField: "title",
+      filterFields: ["section", "type"],
+    }),
+
   // ── Dashboard tables ──────────────────────────────────────────────
 
   systemStatus: defineTable({

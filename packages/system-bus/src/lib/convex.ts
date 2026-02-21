@@ -30,6 +30,29 @@ export async function pushSystemStatus(
   await client.mutation(ref, { component, status, detail });
 }
 
+/** Upsert a vault note to Convex */
+export async function pushVaultNote(note: {
+  path: string;
+  title: string;
+  content: string;
+  type: string;
+  tags: string[];
+  section: string;
+  updatedAt: number;
+}) {
+  const client = getConvexClient();
+  const ref = (anyApi as any).vaultNotes.upsert as FunctionReference<"mutation">;
+  await client.mutation(ref, note);
+}
+
+/** Remove vault notes that no longer exist */
+export async function removeVaultNotes(paths: string[]) {
+  if (paths.length === 0) return;
+  const client = getConvexClient();
+  const ref = (anyApi as any).vaultNotes.removeByPaths as FunctionReference<"mutation">;
+  await client.mutation(ref, { paths });
+}
+
 /** Push a notification to Convex dashboard */
 export async function pushNotification(
   type: string,

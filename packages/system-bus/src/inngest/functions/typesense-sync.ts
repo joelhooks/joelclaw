@@ -12,6 +12,7 @@
 
 import { inngest } from "../client";
 import * as typesense from "../../lib/typesense";
+import { pushVaultNote } from "../../lib/convex";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname, basename, relative } from "node:path";
 
@@ -178,6 +179,42 @@ export const typesenseVaultSync = inngest.createFunction(
   async ({ event, step }) => {
     const result = await step.run("index-vault-notes", async () => {
       return indexVaultNotes();
+    });
+
+    // Sync to Convex for real-time dashboard access
+    await step.run("sync-vault-to-convex", async () => {
+      const files = walkDir(VAULT_PATH, ".md");
+      let synced = 0;
+      let errors = 0;
+
+      for (const file of files) {
+        try {
+          const raw = readFileSync(file, "utf-8");
+          const { frontmatter, body } = parseMarkdownFrontmatter(raw);
+          const relPath = relative(VAULT_PATH, file);
+          const title = frontmatter.title || basename(file, ".md");
+          const type = classifyNote(relPath, frontmatter);
+          const tags = (frontmatter.tags || "").split(",").map((t: string) => t.trim()).filter(Boolean);
+          const stat = statSync(file);
+          const section = relPath.split("/")[0] || "root";
+
+          await pushVaultNote({
+            path: relPath,
+            title,
+            content: body.slice(0, 32000),
+            type,
+            tags,
+            section,
+            updatedAt: Math.floor(stat.mtimeMs / 1000),
+          });
+          synced++;
+        } catch (err) {
+          errors++;
+        }
+      }
+
+      console.log(`[convex-vault-sync] synced ${synced} notes (${errors} errors)`);
+      return { synced, errors };
     });
 
     console.log(`[typesense-vault-sync] indexed ${result.count} vault notes (${result.errors} errors) via ${event.name}`);
