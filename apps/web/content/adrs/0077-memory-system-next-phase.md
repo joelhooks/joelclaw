@@ -21,6 +21,8 @@ implemented
 - API key resolution hardening is active for recall/search/otel via shared `typesense-auth` lease parsing (daemon outages now return actionable JSON errors, never header blobs).
 - `joelclaw inngest memory-health` is live with OTEL-backed evidence (stall/error-rate/failed-runs/backlog + stale ratio when schema supports it).
 - VIP memory lookup diagnostics were renamed from Qdrant-era timeout naming to Typesense memory recall naming.
+- ADR-0087 observability contract is now enforced across memory stages with lifecycle OTEL events for `reflect`, `proposal-triage`, `batch-review`, `promote`, and maintenance flows (`nightly-maintenance` + weekly summary).
+- Weekly governance signal added: `system/memory-weekly-maintenance-summary` emits merge/stale/triage-backlog stats into `otel_events` for CLI and dashboard diagnosis.
 
 ## Next Phase Plan (2026-02-22 to 2026-03-07)
 
