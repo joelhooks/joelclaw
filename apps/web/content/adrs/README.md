@@ -37,3 +37,5 @@ tags:
 | [0075](0075-joelclaw-auth-better-auth-github-convex.md) | joelclaw.com Authentication with Better Auth + GitHub + Convex | proposed | 2026-02-20 |
 | [0076](0076-enhanced-agent-markdown-instructions.md) | Enhanced Agent-Specific Markdown Instructions | proposed | 2026-02-20 |
 | [0087](0087-observability-pipeline-joelclaw-design-system.md) | Full-Stack Observability + JoelClaw Design System | implemented | 2026-02-21 |
+| [0088](0088-nas-backed-storage-tiering.md) | NAS-Backed Storage Tiering | proposed | 2026-02-21 |
+| [0089](0089-single-source-inngest-worker-deployment.md) | Single-Source Inngest Worker Deployment (Retire Dual-Clone Sync) | implemented | 2026-02-21 |

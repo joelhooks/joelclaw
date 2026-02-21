@@ -1,6 +1,6 @@
 ---
 type: adr
-status: implementing
+status: implemented
 date: 2026-02-20
 tags: [adr, memory, architecture]
 deciders: [joel]
@@ -11,7 +11,13 @@ supersedes: []
 
 ## Status
 
-implementing
+implemented
+
+## Update (2026-02-21)
+
+- Sprint closure complete: recall/search are Typesense-backed and `joelclaw inngest memory-e2e` is green.
+- Qdrant is retired from active memory ingestion and active k8s runtime.
+- Remaining Qdrant references in this ADR are retained as historical audit context from the original 2026-02-21 review.
 
 ## Audit (2026-02-21)
 

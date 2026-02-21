@@ -13,6 +13,12 @@ type: adr
 
 # ADR-0082: Typesense as Unified Search Layer for the JoelClaw Network
 
+## Update (2026-02-21)
+
+- Qdrant is retired from the active k8s runtime and active memory ingestion path.
+- `observe.ts`, `joelclaw recall`, `joelclaw search`, and `joelclaw vault search --semantic` are now Typesense-backed.
+- `joelclaw inngest memory-e2e` validates observe ingest, Typesense mutation, vector retrieval, and recall in one probe.
+
 ## Context
 
 The JoelClaw network generates and stores knowledge across many systems: Obsidian vault (~2000+ markdown files), blog posts (14 MDX files), voice call transcripts, memory observations (Qdrant), ADRs, project docs, email summaries, task history, system logs, discovery captures, and video transcripts. Today, searching this corpus uses two mechanisms:

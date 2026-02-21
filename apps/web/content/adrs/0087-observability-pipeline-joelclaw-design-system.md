@@ -79,7 +79,7 @@ Sources:
 #### Storage Layer
 
 - **Typesense** `otel_events` collection: Primary store. Auto-embedding on `action + error + metadata` for semantic search. Faceted on `source`, `component`, `level`, `success`. High cardinality fields in metadata (function IDs, deployment IDs, session IDs). Retention: unlimited (storage is cheap, NAS-backed archive for cold data).
-- **Convex** `contentResources` with type `otel_event`: Real-time reactive feed for the UI. Rolling window — last 24h of warn/error/fatal events. Purge older events nightly. Debug/info events stay in Typesense only.
+- **Convex** `contentResources` with type `otel_event`: Real-time reactive feed for the UI. Rolling watch window — default last 30 minutes (`OTEL_EVENTS_CONVEX_WINDOW_HOURS=0.5`) of warn/error/fatal events. Purge older events opportunistically. Debug/info events stay in Typesense only.
 - **Redis streams**: Hot buffer for real-time alerting. Agent subscribes. Events older than 1h auto-trimmed.
 
 #### Agent Consumption
@@ -196,7 +196,7 @@ Decision:
 
 ### Negative
 - Instrumentation effort — every function/webhook/pipeline needs event emission added
-- Convex write volume increases (mitigated: only warn+ events, 24h rolling window)
+- Convex write volume increases (mitigated: only warn+ events, 30m rolling watch window)
 - Design system bootstrap is upfront work before it pays off
 - Two storage backends for events (Typesense + Convex) adds complexity
 
@@ -289,7 +289,7 @@ Decision:
 - [x] Typesense `otel_events` collection is auto-created on first write and accepts worker + gateway instrumentation events.
 - [x] `joelclaw otel list`, `joelclaw otel search`, and `joelclaw otel stats` are implemented and wired into the CLI.
 - [x] Warn/error/fatal events mirror to Convex `contentResources` as `otel_event` for real-time UI surfaces.
-- [x] Convex rolling window is enforced with `OTEL_EVENTS_CONVEX_WINDOW_HOURS` and opportunistic prune on high-severity writes.
+- [x] Convex rolling window is enforced with `OTEL_EVENTS_CONVEX_WINDOW_HOURS` (default `0.5` = 30 minutes) and opportunistic prune on high-severity writes.
 - [x] `/system` renders mobile-first health summary + event feed from the new `/api/otel` API.
 - [x] `/system/events` supports full-text search and facet filters for `source` and `level`.
 - [x] Heartbeat/system health now queries `otel_events` for recent error-rate escalation.
