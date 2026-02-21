@@ -754,6 +754,15 @@ export type Events = {
   "memory/review.check": {
     data: Record<string, never>;
   };
+  "memory/echo-fizzle.requested": {
+    data: {
+      recalledMemories: Array<{
+        id: string;
+        observation: string;
+      }>;
+      agentResponse: string;
+    };
+  };
   "vault/sync.check": {
     data: Record<string, never>;
   };

@@ -33,9 +33,14 @@ export interface TypesenseSearchParams {
   q: string;
   query_by: string;
   per_page?: number;
+  page?: number;
   filter_by?: string;
   sort_by?: string;
   exclude_fields?: string;
+  include_fields?: string;
+  vector_query?: string;
+  facet_by?: string;
+  max_facet_values?: number;
 }
 
 export interface TypesenseHit {
@@ -102,8 +107,15 @@ export async function search(params: TypesenseSearchParams): Promise<TypesenseSe
     per_page: String(params.per_page ?? 10),
     exclude_fields: params.exclude_fields ?? "embedding",
   });
+  if (params.page != null) searchParams.set("page", String(params.page));
   if (params.filter_by) searchParams.set("filter_by", params.filter_by);
   if (params.sort_by) searchParams.set("sort_by", params.sort_by);
+  if (params.include_fields) searchParams.set("include_fields", params.include_fields);
+  if (params.vector_query) searchParams.set("vector_query", params.vector_query);
+  if (params.facet_by) searchParams.set("facet_by", params.facet_by);
+  if (params.max_facet_values != null) {
+    searchParams.set("max_facet_values", String(params.max_facet_values));
+  }
 
   const resp = await fetch(
     `${TYPESENSE_URL}/collections/${params.collection}/documents/search?${searchParams}`,

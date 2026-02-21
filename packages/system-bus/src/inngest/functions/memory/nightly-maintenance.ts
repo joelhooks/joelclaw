@@ -1,76 +1,38 @@
-import { QdrantClient } from "@qdrant/js-client-rest";
 import { inngest } from "../../client";
 import { DEDUP_THRESHOLD, STALENESS_DAYS } from "../../../memory/retrieval";
+import * as typesense from "../../../lib/typesense";
 
-const QDRANT_COLLECTION = "memory_observations";
-const QDRANT_HOST = process.env.QDRANT_HOST ?? "localhost";
-const QDRANT_PORT = Number.parseInt(process.env.QDRANT_PORT ?? "6333", 10);
-const SCROLL_LIMIT = 256;
+const OBSERVATIONS_COLLECTION = "memory_observations";
+const PAGE_SIZE = 250;
+const SEMANTIC_K = 10;
+const SEMANTIC_DISTANCE_THRESHOLD = 0.5;
 
-type QdrantPointId = string | number;
-
-type ObservationPoint = {
-  id: QdrantPointId;
-  payload?: Record<string, unknown>;
-  vector?: unknown;
+type ObservationDoc = {
+  id: string;
+  observation: string;
+  timestamp: number;
+  merged_count?: number;
+  recall_count?: number;
+  superseded_by?: string | null;
+  updated_at?: string;
 };
 
-function getQdrantClient(): QdrantClient {
-  return new QdrantClient({
-    host: QDRANT_HOST,
-    port: QDRANT_PORT,
-  });
-}
-
-function getTodayUtcRange(now = new Date()): { startIso: string; endIso: string; date: string } {
+function getTodayUtcRange(now = new Date()): { startUnix: number; endUnix: number; date: string } {
   const start = new Date(now);
   start.setUTCHours(0, 0, 0, 0);
   const end = new Date(start);
   end.setUTCDate(end.getUTCDate() + 1);
   return {
-    startIso: start.toISOString(),
-    endIso: end.toISOString(),
+    startUnix: Math.floor(start.getTime() / 1000),
+    endUnix: Math.floor(end.getTime() / 1000),
     date: start.toISOString().slice(0, 10),
   };
 }
 
-function getStaleCutoffIso(now = new Date()): string {
+function getStaleCutoffUnix(now = new Date()): number {
   const cutoff = new Date(now);
   cutoff.setUTCDate(cutoff.getUTCDate() - STALENESS_DAYS);
-  return cutoff.toISOString();
-}
-
-function normalizeVector(input: unknown): number[] | null {
-  if (Array.isArray(input) && input.every((value) => typeof value === "number")) {
-    return input;
-  }
-
-  if (!input || typeof input !== "object") return null;
-  const values = Object.values(input as Record<string, unknown>);
-  for (const value of values) {
-    if (Array.isArray(value) && value.every((item) => typeof item === "number")) {
-      return value;
-    }
-  }
-  return null;
-}
-
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length === 0 || b.length === 0 || a.length !== b.length) return 0;
-
-  let dot = 0;
-  let normA = 0;
-  let normB = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    const av = a[i] ?? 0;
-    const bv = b[i] ?? 0;
-    dot += av * bv;
-    normA += av * av;
-    normB += bv * bv;
-  }
-
-  if (normA === 0 || normB === 0) return 0;
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  return Math.floor(cutoff.getTime() / 1000);
 }
 
 function asFiniteNumber(value: unknown, fallback = 0): number {
@@ -82,84 +44,111 @@ function asFiniteNumber(value: unknown, fallback = 0): number {
   return fallback;
 }
 
-function toIsoOrNull(value: unknown): string | null {
-  if (typeof value !== "string" || value.trim().length === 0) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString();
-}
+function normalizeObservationDoc(input: Record<string, unknown>): ObservationDoc | null {
+  const id = typeof input.id === "string" ? input.id : null;
+  const observation =
+    typeof input.observation === "string" ? input.observation.trim() : "";
+  const timestamp = asFiniteNumber(input.timestamp, Number.NaN);
 
-function chooseFresherObservationText(
-  currentPayload: Record<string, unknown> | undefined,
-  duplicatePayload: Record<string, unknown> | undefined
-): string | null {
-  const currentText =
-    typeof currentPayload?.observation === "string" ? currentPayload.observation : null;
-  const duplicateText =
-    typeof duplicatePayload?.observation === "string" ? duplicatePayload.observation : null;
-  if (!duplicateText) return null;
-
-  const currentCreatedAt = toIsoOrNull(currentPayload?.timestamp);
-  const duplicateCreatedAt = toIsoOrNull(duplicatePayload?.timestamp);
-  if (duplicateCreatedAt && currentCreatedAt && duplicateCreatedAt > currentCreatedAt) {
-    return duplicateText;
+  if (!id || !observation || !Number.isFinite(timestamp)) {
+    return null;
   }
 
-  if (!currentText || duplicateText.length > currentText.length) {
-    return duplicateText;
-  }
+  const supersededRaw = input.superseded_by;
+  const supersededBy =
+    typeof supersededRaw === "string"
+      ? supersededRaw
+      : supersededRaw === null
+        ? null
+        : undefined;
 
-  return null;
+  return {
+    id,
+    observation,
+    timestamp,
+    merged_count: asFiniteNumber(input.merged_count, 1),
+    recall_count: asFiniteNumber(input.recall_count, 0),
+    superseded_by: supersededBy,
+    updated_at: typeof input.updated_at === "string" ? input.updated_at : undefined,
+  };
 }
 
-async function updatePayload(pointId: QdrantPointId, payload: Record<string, unknown>): Promise<void> {
-  const response = await fetch(
-    `http://${QDRANT_HOST}:${QDRANT_PORT}/collections/${QDRANT_COLLECTION}/points/payload`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        wait: true,
-        payload,
-        points: [pointId],
-      }),
+async function queryAllObservations(filterBy: string): Promise<ObservationDoc[]> {
+  const points: ObservationDoc[] = [];
+  let page = 1;
+
+  for (;;) {
+    const response = await typesense.search({
+      collection: OBSERVATIONS_COLLECTION,
+      q: "*",
+      query_by: "observation",
+      filter_by: filterBy,
+      per_page: PAGE_SIZE,
+      page,
+      include_fields: "id,observation,timestamp,merged_count,recall_count,superseded_by,updated_at",
+    });
+
+    const hits = Array.isArray(response.hits) ? response.hits : [];
+    for (const hit of hits) {
+      const normalized = normalizeObservationDoc((hit.document ?? {}) as Record<string, unknown>);
+      if (normalized) points.push(normalized);
     }
-  );
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Qdrant payload update failed (${response.status}): ${text}`);
-  }
-}
-
-async function scrollAllPoints(
-  qdrant: QdrantClient,
-  filter: Record<string, unknown>,
-  withVector: boolean
-): Promise<ObservationPoint[]> {
-  const points: ObservationPoint[] = [];
-  let offset: unknown = undefined;
-
-  while (true) {
-    const response = (await qdrant.scroll(QDRANT_COLLECTION, {
-      limit: SCROLL_LIMIT,
-      offset,
-      with_payload: true,
-      with_vector: withVector,
-      filter,
-    })) as {
-      points?: ObservationPoint[];
-      next_page_offset?: unknown;
-    };
-
-    const batch = Array.isArray(response.points) ? response.points : [];
-    points.push(...batch);
-
-    if (!response.next_page_offset) break;
-    offset = response.next_page_offset;
+    if (hits.length < PAGE_SIZE) break;
+    page += 1;
   }
 
   return points;
+}
+
+function normalizeTokens(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/gu, " ")
+      .split(/\s+/u)
+      .filter((token) => token.length >= 3)
+  );
+}
+
+function textSimilarity(a: string, b: string): number {
+  const left = normalizeTokens(a);
+  const right = normalizeTokens(b);
+  if (left.size === 0 || right.size === 0) return 0;
+
+  let intersection = 0;
+  for (const token of left) {
+    if (right.has(token)) intersection += 1;
+  }
+
+  const union = left.size + right.size - intersection;
+  if (union <= 0) return 0;
+  return intersection / union;
+}
+
+function chooseFresherObservationText(current: ObservationDoc, candidate: ObservationDoc): string | null {
+  if (candidate.timestamp > current.timestamp) {
+    return candidate.observation;
+  }
+  if (candidate.observation.length > current.observation.length) {
+    return candidate.observation;
+  }
+  return null;
+}
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+async function bulkUpdateDocs(docs: Array<Record<string, unknown>>): Promise<void> {
+  if (docs.length === 0) return;
+  for (const chunk of chunkArray(docs, 100)) {
+    await typesense.bulkImport(OBSERVATIONS_COLLECTION, chunk, "update");
+  }
 }
 
 export const nightlyMaintenance = inngest.createFunction(
@@ -171,108 +160,92 @@ export const nightlyMaintenance = inngest.createFunction(
   { cron: "0 10 * * *" },
   async ({ step }) => {
     const today = await step.run("scan-today", async () => {
-      const qdrant = getQdrantClient();
-      const { startIso, endIso, date } = getTodayUtcRange();
-      const points = await scrollAllPoints(
-        qdrant,
-        {
-          must: [
-            {
-              key: "timestamp",
-              range: { gte: startIso, lt: endIso },
-            },
-          ],
-        },
-        true
-      );
-
-      return { date, points, scanned: points.length };
+      const { startUnix, endUnix, date } = getTodayUtcRange();
+      const points = await queryAllObservations(`timestamp:>=${startUnix} && timestamp:<${endUnix}`);
+      return { date, points, scanned: points.length, startUnix, endUnix };
     });
 
     const mergeResult = await step.run("merge-duplicates", async () => {
-      const mergedPointIds = new Set<QdrantPointId>();
-      const mergedByKeeper = new Map<
-        QdrantPointId,
-        { increment: number; fresherObservation?: string }
-      >();
+      const mergedPointIds = new Set<string>();
+      const keeperUpdates: Array<Record<string, unknown>> = [];
+      const duplicateUpdates: Array<Record<string, unknown>> = [];
       let merged = 0;
 
-      for (let i = 0; i < today.points.length; i += 1) {
-        const keeper = today.points[i];
-        if (!keeper || mergedPointIds.has(keeper.id)) continue;
+      for (const keeper of today.points) {
+        if (mergedPointIds.has(keeper.id)) continue;
+        if (keeper.superseded_by) continue;
 
-        const keeperVector = normalizeVector(keeper.vector);
-        if (!keeperVector) continue;
+        const similar = await typesense.search({
+          collection: OBSERVATIONS_COLLECTION,
+          q: keeper.observation,
+          query_by: "observation",
+          vector_query: `embedding:([], k:${SEMANTIC_K}, distance_threshold: ${SEMANTIC_DISTANCE_THRESHOLD})`,
+          filter_by: `timestamp:>=${today.startUnix} && timestamp:<${today.endUnix}`,
+          per_page: SEMANTIC_K,
+          include_fields: "id,observation,timestamp,merged_count,recall_count,superseded_by",
+        });
 
-        for (let j = i + 1; j < today.points.length; j += 1) {
-          const candidate = today.points[j];
-          if (!candidate || mergedPointIds.has(candidate.id)) continue;
+        const hits = Array.isArray(similar.hits) ? similar.hits : [];
+        let keeperMergeIncrement = 0;
+        let fresherObservation: string | null = null;
 
-          const candidateVector = normalizeVector(candidate.vector);
-          if (!candidateVector) continue;
+        for (const hit of hits) {
+          const candidate = normalizeObservationDoc((hit.document ?? {}) as Record<string, unknown>);
+          if (!candidate) continue;
+          if (candidate.id === keeper.id) continue;
+          if (mergedPointIds.has(candidate.id)) continue;
+          if (candidate.superseded_by) continue;
 
-          const similarity = cosineSimilarity(keeperVector, candidateVector);
-          if (similarity <= DEDUP_THRESHOLD) continue;
-
-          const existingMerge = mergedByKeeper.get(keeper.id) ?? { increment: 0 };
-          existingMerge.increment += 1;
-
-          const fresherText = chooseFresherObservationText(keeper.payload, candidate.payload);
-          if (fresherText) {
-            existingMerge.fresherObservation = fresherText;
-          }
-          mergedByKeeper.set(keeper.id, existingMerge);
+          const similarity = textSimilarity(keeper.observation, candidate.observation);
+          if (similarity < DEDUP_THRESHOLD) continue;
 
           mergedPointIds.add(candidate.id);
+          keeperMergeIncrement += 1;
           merged += 1;
+
+          const fresher = chooseFresherObservationText(keeper, candidate);
+          if (fresher) {
+            fresherObservation = fresher;
+          }
+
+          duplicateUpdates.push({
+            id: candidate.id,
+            superseded_by: keeper.id,
+            updated_at: new Date().toISOString(),
+          });
+        }
+
+        if (keeperMergeIncrement > 0) {
+          keeperUpdates.push({
+            id: keeper.id,
+            merged_count: asFiniteNumber(keeper.merged_count, 1) + keeperMergeIncrement,
+            ...(fresherObservation ? { observation: fresherObservation } : {}),
+            updated_at: new Date().toISOString(),
+          });
         }
       }
 
-      for (const [keeperId, data] of mergedByKeeper.entries()) {
-        const keeperPoint = today.points.find((point) => point.id === keeperId);
-        const keeperPayload = keeperPoint?.payload ?? {};
-        const mergedCount = asFiniteNumber(keeperPayload.merged_count, 0);
-        const payloadUpdate: Record<string, unknown> = {
-          merged_count: mergedCount + data.increment,
-          updated_at: new Date().toISOString(),
-        };
-        if (data.fresherObservation) {
-          payloadUpdate.observation = data.fresherObservation;
-        }
-        await updatePayload(keeperId, payloadUpdate);
-      }
-
+      await bulkUpdateDocs([...keeperUpdates, ...duplicateUpdates]);
       return { merged };
     });
 
     const staleResult = await step.run("tag-stale", async () => {
-      const qdrant = getQdrantClient();
-      const cutoffIso = getStaleCutoffIso();
-      const candidates = await scrollAllPoints(
-        qdrant,
-        {
-          must: [
-            {
-              key: "timestamp",
-              range: { lt: cutoffIso },
-            },
-          ],
-        },
-        false
-      );
+      const cutoffUnix = getStaleCutoffUnix();
+      const candidates = await queryAllObservations(`timestamp:<${cutoffUnix}`);
 
       const staleCandidates = candidates.filter((point) => {
-        const payload = point.payload ?? {};
-        const recallCount = payload.recall_count;
-        return recallCount == null || asFiniteNumber(recallCount, 0) === 0;
+        const recallCount = asFiniteNumber(point.recall_count, 0);
+        return recallCount === 0;
       });
 
-      for (const point of staleCandidates) {
-        await updatePayload(point.id, {
+      await bulkUpdateDocs(
+        staleCandidates.map((point) => ({
+          id: point.id,
           stale: true,
           stale_tagged_at: new Date().toISOString(),
-        });
-      }
+          updated_at: new Date().toISOString(),
+        }))
+      );
 
       return { staleTagged: staleCandidates.length };
     });

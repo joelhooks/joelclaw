@@ -52,6 +52,7 @@ export { telnyxNotify } from "./telnyx-notify";
 export { proposalTriage } from "./memory/proposal-triage";
 export { batchReview } from "./memory/batch-review";
 export { nightlyMaintenance } from "./memory/nightly-maintenance";
+export { echoFizzle } from "../../memory/echo-fizzle";
 export {
   agentLoopPlan,
   agentLoopTestWriter,

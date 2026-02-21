@@ -9,7 +9,6 @@ import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseObserverOutput } from "./observe-parser";
 import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
-import { embedText } from "./embed";
 import { DEDUP_THRESHOLD } from "../../memory/retrieval";
 import * as typesense from "../../lib/typesense";
 
@@ -42,27 +41,20 @@ type ObserveEndedInput = {
 };
 
 type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
-type QdrantPointPayload = {
+type TypesenseObservationDoc = {
+  id: string;
   session_id: string;
-  timestamp: string;
-  observation_type: string;
   observation: string;
-  merged_count: number;
-  updated_at: string;
-  superseded_by: string | null;
-  supersedes: string | null;
-};
-type QdrantPointId = string | number;
-type QdrantSearchPoint = {
-  id: QdrantPointId;
-  score: number;
-  payload?: Record<string, unknown>;
-  vector?: number[] | Record<string, number[]>;
+  observation_type: string;
+  source: string;
+  timestamp: number;
+  merged_count?: number;
+  updated_at?: string;
+  superseded_by?: string | null;
+  supersedes?: string | null;
 };
 
 const QDRANT_COLLECTION = "memory_observations";
-const QDRANT_VECTOR_DIMENSIONS = 768;
-const QDRANT_ZERO_VECTOR = Array.from({ length: QDRANT_VECTOR_DIMENSIONS }, () => 0);
 const QDRANT_HOST = process.env.QDRANT_HOST ?? "localhost";
 const QDRANT_PORT = Number.parseInt(process.env.QDRANT_PORT ?? "6333", 10);
 let redisClient: Redis | null = null;
@@ -76,7 +68,9 @@ function getRedisClient(): Redis {
       lazyConnect: true,
       retryStrategy: isTestEnv ? () => null : undefined,
     });
-    redisClient.on("error", () => {});
+    redisClient.on("error", (err) => {
+      console.error("[observe] Redis error:", err);
+    });
   }
   return redisClient;
 }
@@ -135,6 +129,78 @@ function createObservationItems(parsedObservations: {
   }
 
   return items;
+}
+
+function asFiniteNumber(value: unknown, fallback = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function normalizeTokens(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\\s]/gu, " ")
+      .split(/\\s+/u)
+      .filter((token) => token.length >= 3)
+  );
+}
+
+function textSimilarity(a: string, b: string): number {
+  const left = normalizeTokens(a);
+  const right = normalizeTokens(b);
+  if (left.size === 0 || right.size === 0) return 0;
+
+  let intersection = 0;
+  for (const token of left) {
+    if (right.has(token)) intersection += 1;
+  }
+
+  const union = left.size + right.size - intersection;
+  if (union <= 0) return 0;
+  return intersection / union;
+}
+
+function normalizeTypesenseObservationDoc(input: Record<string, unknown> | null | undefined): TypesenseObservationDoc | null {
+  if (!input) return null;
+  const id = typeof input.id === "string" ? input.id : null;
+  const session_id = typeof input.session_id === "string" ? input.session_id : "unknown";
+  const observation = typeof input.observation === "string" ? input.observation : "";
+  const observation_type = typeof input.observation_type === "string" ? input.observation_type : "observation_text";
+  const source = typeof input.source === "string" ? input.source : "unknown";
+  const timestamp = asFiniteNumber(input.timestamp, Number.NaN);
+
+  if (!id || observation.trim().length === 0 || !Number.isFinite(timestamp)) return null;
+
+  const superseded_by =
+    typeof input.superseded_by === "string"
+      ? input.superseded_by
+      : input.superseded_by === null
+        ? null
+        : undefined;
+  const supersedes =
+    typeof input.supersedes === "string"
+      ? input.supersedes
+      : input.supersedes === null
+        ? null
+        : undefined;
+
+  return {
+    id,
+    session_id,
+    observation,
+    observation_type,
+    source,
+    timestamp,
+    merged_count: asFiniteNumber(input.merged_count, 1),
+    updated_at: typeof input.updated_at === "string" ? input.updated_at : undefined,
+    superseded_by,
+    supersedes,
+  };
 }
 
 function readShellText(value: unknown): string {
@@ -397,7 +463,7 @@ Session context:
 
           await qdrantClient.createCollection(QDRANT_COLLECTION, {
             vectors: {
-              size: QDRANT_VECTOR_DIMENSIONS,
+              size: 768,
               distance: "Cosine",
             },
           });
@@ -417,163 +483,18 @@ Session context:
       }
     );
 
-    // Generate real embeddings via generic embedding function (all-mpnet-base-v2, 768-dim)
-    const observationItemsForEmbed = createObservationItems(parsedObservations);
-    let embeddingVectors: { id: string; vector: number[] }[] = [];
-
-    if (observationItemsForEmbed.length > 0) {
-      const result = await step.invoke("generate-embeddings", {
-        function: embedText,
-        data: {
-          texts: observationItemsForEmbed.map((item, i) => ({
-            id: String(i),
-            text: item.observation,
-          })),
-        },
-      });
-      if (result?.vectors) {
-        embeddingVectors = (result.vectors as { id: string; vector: number[] }[]).filter(
-          (v): v is { id: string; vector: number[] } => v != null
-        );
-      }
-    }
-
-    // Build a lookup: id → vector
-    const vectorMap = new Map<string, number[]>();
-    for (const v of embeddingVectors) {
-      vectorMap.set(v.id, v.vector);
-    }
-
+    // ADR-0082: Qdrant write disabled — all consumers migrated to Typesense
     const qdrantStoreResult = await step.run("store-to-qdrant", async () => {
-      try {
-        const qdrantClient = new QdrantClient({
-          host: QDRANT_HOST,
-          port: QDRANT_PORT,
-        });
-
-        const observationItems = createObservationItems(parsedObservations);
-        if (observationItems.length === 0) {
-          return {
-            stored: true,
-            count: 0,
-            hasRealVectors: false,
-            sourceSessionId: validatedInput.sessionId,
-          };
-        }
-
-        const timestamp = validatedInput.capturedAt ?? new Date().toISOString();
-        const points: Array<{
-          id: string;
-          vector: number[];
-          payload: QdrantPointPayload;
-        }> = observationItems.map((item, index) => ({
-          id: randomUUID(),
-          vector: vectorMap.get(String(index)) ?? QDRANT_ZERO_VECTOR,
-          payload: {
-            session_id: validatedInput.sessionId,
-            timestamp,
-            observation_type: item.observationType,
-            observation: item.observation,
-            merged_count: 1,
-            updated_at: timestamp,
-            superseded_by: null,
-            supersedes: null,
-          },
-        }));
-
-        let mergedCount = 0;
-        const pointsToUpsert: Array<{
-          id: QdrantPointId;
-          vector: number[];
-          payload: QdrantPointPayload;
-        }> = [];
-
-        for (const point of points) {
-          if (point.vector === QDRANT_ZERO_VECTOR) {
-            pointsToUpsert.push(point);
-            continue;
-          }
-
-          const matches = (await qdrantClient.search(QDRANT_COLLECTION, {
-            vector: point.vector,
-            limit: 1,
-            with_payload: true,
-          })) as QdrantSearchPoint[];
-          const topMatch = Array.isArray(matches) ? matches[0] : null;
-
-          if (!topMatch || topMatch.score <= DEDUP_THRESHOLD) {
-            pointsToUpsert.push(point);
-            continue;
-          }
-
-          const existingPayload = (topMatch.payload ?? {}) as Record<string, unknown>;
-          const rawMergedCount = existingPayload.merged_count;
-          const currentMergedCount =
-            typeof rawMergedCount === "number" && Number.isFinite(rawMergedCount)
-              ? rawMergedCount
-              : 1;
-          const nextMergedCount = currentMergedCount + 1;
-
-          pointsToUpsert.push({
-            id: topMatch.id,
-            vector: point.vector,
-            payload: {
-              session_id:
-                typeof existingPayload.session_id === "string"
-                  ? existingPayload.session_id
-                  : point.payload.session_id,
-              timestamp:
-                typeof existingPayload.timestamp === "string"
-                  ? existingPayload.timestamp
-                  : point.payload.timestamp,
-              observation_type:
-                typeof existingPayload.observation_type === "string"
-                  ? existingPayload.observation_type
-                  : point.payload.observation_type,
-              observation: point.payload.observation,
-              merged_count: nextMergedCount,
-              updated_at: timestamp,
-              superseded_by:
-                typeof existingPayload.superseded_by === "string"
-                  ? existingPayload.superseded_by
-                  : null,
-              supersedes:
-                typeof existingPayload.supersedes === "string"
-                  ? existingPayload.supersedes
-                  : null,
-            },
-          });
-          mergedCount += 1;
-        }
-
-        const hasReal = pointsToUpsert.some(
-          (p) => p.vector !== QDRANT_ZERO_VECTOR
-        );
-
-        await qdrantClient.upsert(QDRANT_COLLECTION, {
-          wait: true,
-          points: pointsToUpsert,
-        });
-
-        return {
-          stored: true,
-          count: pointsToUpsert.length,
-          hasRealVectors: hasReal,
-          mergedCount,
-          sourceSessionId: validatedInput.sessionId,
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        return {
-          stored: false,
-          hasRealVectors: false,
-          sourceSessionId: validatedInput.sessionId,
-          error: message,
-        };
-      }
+      return {
+        stored: false,
+        disabled: true,
+        hasRealVectors: false,
+        reason: "ADR-0082 Typesense-only write path",
+        sourceSessionId: validatedInput.sessionId,
+      };
     });
 
-    // ADR-0082: Dual-write observations to Typesense (migration phase)
+    // ADR-0082: Typesense is now canonical memory store.
     const typesenseStoreResult = await step.run("store-to-typesense", async () => {
       try {
         const observationItems = createObservationItems(parsedObservations);
@@ -581,15 +502,59 @@ Session context:
           return { stored: true, count: 0 };
         }
 
-        const timestamp = validatedInput.capturedAt ?? new Date().toISOString();
-        const docs = observationItems.map((item, index) => ({
-          id: randomUUID(),
-          session_id: validatedInput.sessionId,
-          observation: item.observation,
-          observation_type: item.observationType,
-          source: validatedInput.trigger,
-          timestamp: Math.floor(new Date(timestamp).getTime() / 1000),
-        }));
+        const timestampIso = validatedInput.capturedAt ?? new Date().toISOString();
+        const timestampUnix = Math.floor(new Date(timestampIso).getTime() / 1000);
+        const docs: TypesenseObservationDoc[] = [];
+        let mergedCount = 0;
+
+        for (const item of observationItems) {
+          const similar = await typesense.search({
+            collection: "memory_observations",
+            q: item.observation,
+            query_by: "observation",
+            vector_query: "embedding:([], k:1, distance_threshold: 0.5)",
+            per_page: 1,
+            include_fields:
+              "id,session_id,observation,observation_type,source,timestamp,merged_count,updated_at,superseded_by,supersedes",
+          });
+          const top = Array.isArray(similar.hits) ? similar.hits[0] : undefined;
+          const existing = normalizeTypesenseObservationDoc(
+            (top?.document ?? {}) as Record<string, unknown>
+          );
+          const isDedupMatch =
+            !!existing &&
+            !existing.superseded_by &&
+            textSimilarity(item.observation, existing.observation) >= DEDUP_THRESHOLD;
+
+          if (isDedupMatch && existing) {
+            mergedCount += 1;
+            docs.push({
+              id: existing.id,
+              session_id: existing.session_id || validatedInput.sessionId,
+              observation: item.observation,
+              observation_type: existing.observation_type || item.observationType,
+              source: validatedInput.trigger,
+              timestamp: existing.timestamp || timestampUnix,
+              merged_count: asFiniteNumber(existing.merged_count, 1) + 1,
+              updated_at: timestampIso,
+              superseded_by: existing.superseded_by ?? null,
+              supersedes: existing.supersedes ?? null,
+            });
+          } else {
+            docs.push({
+              id: randomUUID(),
+              session_id: validatedInput.sessionId,
+              observation: item.observation,
+              observation_type: item.observationType,
+              source: validatedInput.trigger,
+              timestamp: timestampUnix,
+              merged_count: 1,
+              updated_at: timestampIso,
+              superseded_by: null,
+              supersedes: null,
+            });
+          }
+        }
 
         const result = await typesense.bulkImport("memory_observations", docs);
 
@@ -610,10 +575,12 @@ Session context:
               timestamp: doc.timestamp,
             },
             [doc.observation, category, doc.source].filter(Boolean).join(" ")
-          ).catch(() => {}); // best-effort
+          ).catch((err) => {
+            console.error("[observe] Convex dual-write failed:", err);
+          });
         }
 
-        return { stored: true, count: result.success, errors: result.errors };
+        return { stored: true, count: result.success, errors: result.errors, mergedCount };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return { stored: false, count: 0, error: message };
@@ -735,7 +702,9 @@ Session context:
           qdrantStored: qdrantStoreResult.stored && "count" in qdrantStoreResult ? qdrantStoreResult.count : 0,
           hasRealVectors: qdrantStoreResult.hasRealVectors ?? false,
         });
-      } catch {}
+      } catch (err) {
+        console.error("[observe] Gateway notify failed:", err);
+      }
     });
 
     return {

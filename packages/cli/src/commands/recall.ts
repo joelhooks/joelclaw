@@ -5,6 +5,8 @@ import { Console, Effect } from "effect"
 import { respond, respondError } from "../response"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
+const MAX_INJECT = 10
+const DECAY_CONSTANT = 0.01
 
 function getApiKey(): string {
   const envKey = process.env.TYPESENSE_API_KEY
@@ -35,16 +37,51 @@ interface TypesenseHit {
   hybrid_search_info?: { rank_fusion_score: number }
 }
 
-/** Search Typesense memory_observations — keyword search with auto-embedding */
+interface RankedRecallHit extends TypesenseHit {
+  score: number
+  decayedScore: number
+}
+
+function toIsoTimestamp(value: number | undefined): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null
+  return new Date(value * 1000).toISOString()
+}
+
+function applyScoreDecay(hits: TypesenseHit[]): RankedRecallHit[] {
+  const now = Date.now()
+  return hits.map((hit) => {
+    const rawScore = hit.text_match_info?.score || hit.hybrid_search_info?.rank_fusion_score || 0
+    const createdAt = typeof hit.document.timestamp === "number"
+      ? hit.document.timestamp * 1000
+      : now
+    const daysSince = Math.max(0, (now - createdAt) / (1000 * 60 * 60 * 24))
+    const decayedScore = rawScore * Math.exp(-DECAY_CONSTANT * daysSince)
+    return {
+      ...hit,
+      score: rawScore,
+      decayedScore,
+    }
+  })
+}
+
+function rankAndCap(hits: TypesenseHit[], maxInject = MAX_INJECT): RankedRecallHit[] {
+  const decayed = applyScoreDecay(hits)
+  decayed.sort((a, b) => b.decayedScore - a.decayedScore)
+  return decayed.slice(0, maxInject)
+}
+
+/** Hybrid semantic+keyword search over memory_observations */
 async function searchTypesense(
   query: string,
   limit: number,
 ): Promise<{ hits: TypesenseHit[]; found: number }> {
   const apiKey = getApiKey()
+  const cappedLimit = Math.min(Math.max(limit, 1), MAX_INJECT)
   const params = new URLSearchParams({
     q: query,
     query_by: "observation",
-    per_page: String(limit),
+    vector_query: "embedding:([], k:10, distance_threshold: 0.5)",
+    per_page: String(cappedLimit),
     exclude_fields: "embedding",
   })
 
@@ -73,9 +110,10 @@ export const recallCmd = Command.make(
     Effect.gen(function* () {
       try {
         const result = yield* Effect.promise(() => searchTypesense(query, limit))
+        const rankedHits = rankAndCap(result.hits, MAX_INJECT)
 
         if (raw) {
-          const lines = result.hits.map((h) => h.document.observation)
+          const lines = rankedHits.map((h) => h.document.observation)
           yield* Console.log(lines.join("\n"))
           return
         }
@@ -83,16 +121,15 @@ export const recallCmd = Command.make(
         yield* Console.log(
           respond("recall", {
             query,
-            hits: result.hits.map((h) => ({
-              score: h.text_match_info?.score || h.hybrid_search_info?.rank_fusion_score || 0,
+            hits: rankedHits.map((h) => ({
+              score: h.decayedScore,
+              rawScore: h.score,
               observation: h.document.observation,
               type: h.document.observation_type || "unknown",
               session: h.document.session_id || "unknown",
-              timestamp: h.document.timestamp
-                ? new Date(h.document.timestamp * 1000).toISOString()
-                : "unknown",
+              timestamp: toIsoTimestamp(h.document.timestamp) || "unknown",
             })),
-            count: result.hits.length,
+            count: rankedHits.length,
             found: result.found,
             backend: "typesense",
           }, [

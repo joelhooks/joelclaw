@@ -1,21 +1,22 @@
-import { QdrantClient } from "@qdrant/js-client-rest";
 import { join, dirname } from "node:path";
 import { existsSync } from "node:fs";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import { inngest } from "../client";
+import * as typesense from "../../lib/typesense";
 import {
   FRICTION_SYSTEM_PROMPT,
   FRICTION_USER_PROMPT,
   type FrictionObservationGroup,
 } from "./friction-prompt";
 
-const QDRANT_COLLECTION = "memory_observations";
+const OBSERVATIONS_COLLECTION = "memory_observations";
 const MINIMUM_POINTS = 100;
-const SCROLL_LIMIT = 256;
+const PAGE_SIZE = 250;
 const MAX_MEMORY_CHARS = 12_000;
 const MAX_AGENTS_CHARS = 12_000;
 
-type ObservationPointPayload = {
+type ObservationDocument = {
+  id?: unknown;
   timestamp?: unknown;
   observation?: unknown;
   observation_type?: unknown;
@@ -43,13 +44,6 @@ function getHomeDirectory(): string {
 
 function getWorkspaceRoot(): string {
   return join(getHomeDirectory(), ".joelclaw", "workspace");
-}
-
-function getQdrantClient(): QdrantClient {
-  return new QdrantClient({
-    host: process.env.QDRANT_HOST ?? "localhost",
-    port: Number.parseInt(process.env.QDRANT_PORT ?? "6333", 10),
-  });
 }
 
 function readShellText(value: unknown): string {
@@ -110,70 +104,65 @@ function isoDateFromTimestamp(timestamp: string): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function getSevenDaysAgoIso(now = new Date()): string {
+function getRecentWindowStartIso(now = new Date()): string {
   const date = new Date(now);
-  date.setUTCDate(date.getUTCDate() - 7);
+  date.setUTCDate(date.getUTCDate() - 30);
   return date.toISOString();
 }
 
-function normalizeObservationRecord(payload: ObservationPointPayload): ObservationRecord | null {
-  const observation =
-    typeof payload.observation === "string" ? payload.observation.trim() : "";
+function isoToUnixSeconds(iso: string): number {
+  const millis = new Date(iso).getTime();
+  if (!Number.isFinite(millis)) return Math.floor(Date.now() / 1000);
+  return Math.floor(millis / 1000);
+}
+
+function normalizeObservationRecord(doc: ObservationDocument): ObservationRecord | null {
+  const observation = typeof doc.observation === "string" ? doc.observation.trim() : "";
   if (observation.length === 0) return null;
 
-  const timestamp =
-    typeof payload.timestamp === "string" && payload.timestamp.trim().length > 0
-      ? payload.timestamp
-      : new Date().toISOString();
+  const timestampValue = doc.timestamp;
+  let timestamp = new Date().toISOString();
+  if (typeof timestampValue === "number" && Number.isFinite(timestampValue)) {
+    timestamp = new Date(timestampValue * 1000).toISOString();
+  } else if (typeof timestampValue === "string" && timestampValue.trim().length > 0) {
+    timestamp = timestampValue;
+  }
 
   return {
     timestamp,
     date: isoDateFromTimestamp(timestamp),
     observation,
     observationType:
-      typeof payload.observation_type === "string" ? payload.observation_type : "observation_text",
-    sessionId: typeof payload.session_id === "string" ? payload.session_id : "unknown",
+      typeof doc.observation_type === "string" ? doc.observation_type : "observation_text",
+    sessionId: typeof doc.session_id === "string" ? doc.session_id : "unknown",
   };
 }
 
-async function fetchRecentObservations(
-  qdrant: QdrantClient,
-  sinceIso: string
-): Promise<ObservationRecord[]> {
+async function fetchRecentObservations(sinceIso: string): Promise<ObservationRecord[]> {
   const observations: ObservationRecord[] = [];
-  let offset: unknown = undefined;
+  let page = 1;
+  const sinceUnix = isoToUnixSeconds(sinceIso);
 
-  while (true) {
-    const response = (await qdrant.scroll(QDRANT_COLLECTION, {
-      limit: SCROLL_LIMIT,
-      offset,
-      with_payload: true,
-      with_vector: false,
-      filter: {
-        must: [
-          {
-            key: "timestamp",
-            range: {
-              gte: sinceIso,
-            },
-          },
-        ],
-      },
-    })) as {
-      points?: Array<{ payload?: ObservationPointPayload }>;
-      next_page_offset?: unknown;
-    };
+  for (;;) {
+    const response = await typesense.search({
+      collection: OBSERVATIONS_COLLECTION,
+      q: "*",
+      query_by: "observation",
+      filter_by: `timestamp:>=${sinceUnix}`,
+      per_page: PAGE_SIZE,
+      page,
+      facet_by: "observation_type",
+      max_facet_values: 50,
+    });
 
-    const points = Array.isArray(response.points) ? response.points : [];
-    for (const point of points) {
-      const record = normalizeObservationRecord(point.payload ?? {});
+    const hits = Array.isArray(response.hits) ? response.hits : [];
+    for (const hit of hits) {
+      const record = normalizeObservationRecord((hit.document ?? {}) as ObservationDocument);
       if (record) observations.push(record);
     }
 
-    if (!response.next_page_offset) {
-      break;
-    }
-    offset = response.next_page_offset;
+    if (hits.length < PAGE_SIZE) break;
+    page += 1;
   }
 
   return observations;
@@ -304,9 +293,13 @@ export const friction = inngest.createFunction(
   async ({ step, gateway }) => {
     const gate = await step.run("gate-minimum-points", async () => {
       try {
-        const qdrant = getQdrantClient();
-        const countResult = await qdrant.count(QDRANT_COLLECTION, { exact: true });
-        const totalPoints = Number(countResult?.count ?? 0);
+        const countResult = await typesense.search({
+          collection: OBSERVATIONS_COLLECTION,
+          q: "*",
+          query_by: "observation",
+          per_page: 1,
+        });
+        const totalPoints = Number(countResult?.found ?? 0);
         return {
           canRun: totalPoints >= MINIMUM_POINTS,
           totalPoints,
@@ -323,17 +316,16 @@ export const friction = inngest.createFunction(
     if (!gate.canRun) {
       return {
         status: "skipped",
-        reason: "insufficient-qdrant-points",
+        reason: "insufficient-observations",
         totalPoints: gate.totalPoints,
         threshold: MINIMUM_POINTS,
         error: gate.error,
       };
     }
 
-    const observations = await step.run("query-qdrant-observations", async () => {
-      const sinceIso = getSevenDaysAgoIso();
-      const qdrant = getQdrantClient();
-      const records = await fetchRecentObservations(qdrant, sinceIso);
+    const observations = await step.run("query-typesense-observations", async () => {
+      const sinceIso = getRecentWindowStartIso();
+      const records = await fetchRecentObservations(sinceIso);
       const grouped = groupObservationsByDate(records);
       return {
         sinceIso,

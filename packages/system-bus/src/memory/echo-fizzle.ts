@@ -1,23 +1,31 @@
 /**
  * Echo/Fizzle tracking — ADR-0077 Increment 3
- * 
+ *
  * After each retrieval, detect which memories were used vs ignored.
  * Boost echoes (+0.1 priority), penalize fizzles (-0.05 priority).
  * Over time, useful memories surface; irrelevant ones sink.
  */
 
-import { QdrantClient } from "@qdrant/js-client-rest";
+import { inngest } from "../inngest/client";
+import * as typesense from "../lib/typesense";
 
-const QDRANT_HOST = process.env.QDRANT_HOST ?? "localhost";
-const QDRANT_PORT = Number.parseInt(process.env.QDRANT_PORT ?? "6333", 10);
-const QDRANT_COLLECTION = "memory_observations";
+const OBSERVATIONS_COLLECTION = "memory_observations";
 
 export const ECHO_BOOST = 0.1;
 export const FIZZLE_PENALTY = -0.05;
 
 interface RecalledMemory {
-  id: string | number;
+  id: string;
   observation: string;
+}
+
+function asFiniteNumber(value: unknown, fallback = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
 }
 
 /**
@@ -27,20 +35,20 @@ interface RecalledMemory {
  * appear in the response, count it as referenced.
  */
 export function wasMemoryReferenced(observation: string, agentResponse: string): boolean {
-  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, '');
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, "");
   const normObs = normalize(observation);
   const normResp = normalize(agentResponse);
-  
+
   // Check for 3+ word phrase overlap
-  const words = normObs.split(/\s+/).filter(w => w.length > 3);
+  const words = normObs.split(/\s+/).filter((w) => w.length > 3);
   if (words.length === 0) return false;
-  
+
   // Check trigrams
   for (let i = 0; i <= words.length - 3; i++) {
-    const trigram = words.slice(i, i + 3).join(' ');
+    const trigram = words.slice(i, i + 3).join(" ");
     if (normResp.includes(trigram)) return true;
   }
-  
+
   // Check significant word overlap (>30%)
   const significantWords = new Set(words);
   const respWords = new Set(normResp.split(/\s+/));
@@ -48,7 +56,7 @@ export function wasMemoryReferenced(observation: string, agentResponse: string):
   for (const w of significantWords) {
     if (respWords.has(w)) matches++;
   }
-  return significantWords.size > 0 && (matches / significantWords.size) > 0.3;
+  return significantWords.size > 0 && matches / significantWords.size > 0.3;
 }
 
 /**
@@ -57,42 +65,72 @@ export function wasMemoryReferenced(observation: string, agentResponse: string):
  */
 export async function trackEchoFizzle(
   recalledMemories: RecalledMemory[],
-  agentResponse: string,
+  agentResponse: string
 ): Promise<{ echoes: number; fizzles: number }> {
-  const qdrant = new QdrantClient({ host: QDRANT_HOST, port: QDRANT_PORT });
   let echoes = 0;
   let fizzles = 0;
-  
+
   for (const memory of recalledMemories) {
     const isEcho = wasMemoryReferenced(memory.observation, agentResponse);
     const boost = isEcho ? ECHO_BOOST : FIZZLE_PENALTY;
-    
-    // Get current values
-    const points = await qdrant.retrieve(QDRANT_COLLECTION, {
-      ids: [memory.id],
-      with_payload: true,
+
+    const response = await typesense.search({
+      collection: OBSERVATIONS_COLLECTION,
+      q: "*",
+      query_by: "observation",
+      filter_by: `id:=${memory.id}`,
+      per_page: 1,
+      include_fields: "id,retrieval_priority,recall_count",
     });
-    const point = points[0];
-    const payload = (point?.payload ?? {}) as Record<string, unknown>;
-    const currentPriority = typeof payload.retrieval_priority === 'number' 
-      ? payload.retrieval_priority : 0;
-    const currentRecallCount = typeof payload.recall_count === 'number'
-      ? payload.recall_count : 0;
-    
-    // Update
-    await qdrant.setPayload(QDRANT_COLLECTION, {
-      payload: {
-        retrieval_priority: Math.max(-1, Math.min(1, currentPriority + boost)),
-        recall_count: currentRecallCount + 1,
-        last_recalled_at: new Date().toISOString(),
-        stale: false, // Referenced memory is not stale
-      },
-      points: [memory.id],
-    });
-    
+
+    const hit = Array.isArray(response.hits) ? response.hits[0] : undefined;
+    const doc = (hit?.document ?? {}) as Record<string, unknown>;
+    const currentPriority = asFiniteNumber(doc.retrieval_priority, 0);
+    const currentRecallCount = asFiniteNumber(doc.recall_count, 0);
+
+    await typesense.bulkImport(
+      OBSERVATIONS_COLLECTION,
+      [
+        {
+          id: memory.id,
+          retrieval_priority: Math.max(-1, Math.min(1, currentPriority + boost)),
+          recall_count: currentRecallCount + 1,
+          last_recalled_at: new Date().toISOString(),
+          stale: false, // Referenced memory is not stale
+        },
+      ],
+      "update"
+    );
+
     if (isEcho) echoes++;
     else fizzles++;
   }
-  
+
   return { echoes, fizzles };
 }
+
+export const echoFizzle = inngest.createFunction(
+  {
+    id: "memory/echo-fizzle",
+    name: "Track Memory Echo/Fizzle",
+  },
+  { event: "memory/echo-fizzle.requested" },
+  async ({ event }) => {
+    const recalledMemories = Array.isArray(event.data.recalledMemories)
+      ? event.data.recalledMemories
+      : [];
+    const agentResponse =
+      typeof event.data.agentResponse === "string" ? event.data.agentResponse : "";
+
+    if (recalledMemories.length === 0 || agentResponse.length === 0) {
+      return { status: "skipped", reason: "missing-input" };
+    }
+
+    const result = await trackEchoFizzle(recalledMemories, agentResponse);
+    return {
+      status: "ok",
+      ...result,
+      total: recalledMemories.length,
+    };
+  }
+);
