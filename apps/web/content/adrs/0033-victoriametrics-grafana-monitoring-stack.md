@@ -1,6 +1,7 @@
 ---
 title: "VictoriaMetrics + Grafana monitoring stack for Kubernetes"
-status: deferred
+status: superseded
+superseded-by: "[ADR-0087 — Full-Stack Observability + Design System](0087-observability-pipeline-joelclaw-design-system.md)"
 date: 2026-02-17
 deciders: Joel Hooks
 consulted: X community advice, Siderolabs reference architecture
