@@ -6,6 +6,7 @@
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
 import { getCurrentTasks, hasTaskMatching } from "../../tasks";
+import { pushSystemStatus, pushNotification } from "../../lib/convex";
 import { readFile } from "node:fs/promises";
 import Redis from "ioredis";
 
@@ -89,6 +90,19 @@ async function checkGateway(): Promise<ServiceStatus> {
   }
 }
 
+async function checkTypesense(): Promise<ServiceStatus> {
+  try {
+    const res = await fetch("http://localhost:8108/health", {
+      signal: AbortSignal.timeout(3000),
+      headers: { "X-TYPESENSE-API-KEY": process.env.TYPESENSE_API_KEY ?? "" },
+    });
+    const data = await res.json() as { ok?: boolean };
+    return { name: "Typesense", ok: data.ok === true };
+  } catch (err) {
+    return { name: "Typesense", ok: false, detail: String(err) };
+  }
+}
+
 async function checkWebhooks(): Promise<ServiceStatus> {
   try {
     // Probe webhook server locally (avoids TLS cert issues with Tailscale funnel)
@@ -117,8 +131,22 @@ export const checkSystemHealth = inngest.createFunction(
         checkWorker(),
         checkGateway(),
         checkWebhooks(),
+        checkTypesense(),
       ]);
       return results;
+    });
+
+    // Push all service statuses to Convex dashboard — ADR-0075
+    await step.run("push-to-convex", async () => {
+      await Promise.allSettled(
+        services.map((s) =>
+          pushSystemStatus(
+            s.name.toLowerCase(),
+            s.ok ? "healthy" : "down",
+            s.detail
+          )
+        )
+      );
     });
 
     const degraded = services.filter((s) => !s.ok);
@@ -139,6 +167,10 @@ export const checkSystemHealth = inngest.createFunction(
     }
 
     // Something's down and NOT already tracked → alert gateway
+    const typedDegraded = newDegraded as unknown as ServiceStatus[];
+    const degradedNames = typedDegraded.map((s) => s.name);
+    const degradedDetails = typedDegraded.map((s) => `${s.name}: ${s.detail ?? "down"}`);
+
     await step.run("notify-degradation", async () => {
       const lines = [
         "## 🚨 System Health Degradation",
@@ -158,6 +190,15 @@ export const checkSystemHealth = inngest.createFunction(
           degraded: degraded.map((s) => s.name),
         },
       });
+    });
+
+    // Push degradation notification to Convex dashboard — ADR-0075
+    await step.run("notify-convex-degradation", async () => {
+      await pushNotification(
+        "error",
+        `Health degradation: ${degradedNames.join(", ")}`,
+        degradedDetails.join("\n")
+      );
     });
 
     return { status: "degraded", degraded: degraded.map((s) => s.name), services };

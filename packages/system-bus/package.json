@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@qdrant/js-client-rest": "^1.16.2",
+    "convex": "^1.32.0",
     "hono": "^4.11.9",
     "inngest": "^3.52.0",
     "ioredis": "^5.9.3"
