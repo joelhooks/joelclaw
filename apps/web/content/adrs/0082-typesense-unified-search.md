@@ -59,7 +59,7 @@ Neither provides the unified, typo-tolerant, faceted, hybrid (keyword + semantic
 
 ## Decision
 
-Deploy Typesense v30.1 to the joelclaw k8s cluster as the unified search layer for the entire JoelClaw network. Build and maintain custom Helm charts at `~/Code/joelhooks/typesense-helm-charts/`. Typesense complements (not replaces) Qdrant — Qdrant remains the memory pipeline's vector store, while Typesense becomes the user-facing search interface.
+Deploy Typesense v30.1 to the joelclaw k8s cluster as the unified search layer for the entire JoelClaw network. Build and maintain custom Helm charts at `~/Code/joelhooks/typesense-helm-charts/`. **Typesense replaces Qdrant** — it handles both vector search (auto-embedding) and keyword search in one system, eliminating the need for a separate vector DB at our scale (1,355 observations).
 
 ### Architecture
 
