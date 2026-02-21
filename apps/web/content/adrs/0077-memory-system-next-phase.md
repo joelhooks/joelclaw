@@ -19,6 +19,48 @@ implemented
 - Qdrant is retired from active memory ingestion and active k8s runtime.
 - Remaining Qdrant references in this ADR are retained as historical audit context from the original 2026-02-21 review.
 
+## Next Phase Plan (2026-02-22 to 2026-03-07)
+
+### Objective
+
+Improve memory quality after migration hardening: better retrieval precision, real usage feedback loops, and explicit memory health controls.
+
+### Workstream 1: Retrieval Quality V2
+
+Scope:
+- Add query rewriting for `joelclaw recall` with deterministic fallback when rewrite fails.
+- Add trust-pass filtering in retrieval to de-prioritize low-confidence or stale results.
+- Extend recall JSON diagnostics (`rewrittenQuery`, `filtersApplied`, `droppedByTrustPass`).
+
+Acceptance:
+- `joelclaw recall "what was that redis thing" --json` includes a populated rewrite field.
+- Recall output is still valid when rewrite fails (fallback path covered by tests).
+- P95 recall latency remains within local interactive bounds.
+
+### Workstream 2: Echo/Fizzle Activation
+
+Scope:
+- Wire recall injection and response events so `memory/echo-fizzle` runs on real sessions.
+- Store and update usage signals per memory item (`recall_count`, `last_used_at`, usage score).
+- Apply usage signal as a ranking factor in recall.
+
+Acceptance:
+- At least one production `memory/echo-fizzle` run from non-synthetic traffic.
+- Observable score updates on recalled memory documents.
+- Recalled items with repeated positive usage move up in ranking over time.
+
+### Workstream 3: Memory Health and Governance
+
+Scope:
+- Add a `joelclaw inngest memory-health` check for backlog, stale ratio, and failed memory runs.
+- Add weekly maintenance summary (merge count, stale count, triage backlog) to logs/events.
+- Define alert thresholds for sustained degradation (failed runs, backlog growth, zero recall hits).
+
+Acceptance:
+- `memory-health` returns machine-readable pass/fail output with actionable next actions.
+- Weekly summary event is emitted and visible in run history.
+- Alert thresholds are documented and tested with synthetic failure inputs.
+
 ## Audit (2026-02-21)
 
 Deep code audit revealed significant gaps between what was claimed and what's wired:
