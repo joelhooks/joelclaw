@@ -236,10 +236,13 @@ function createConfigCommands(redis: Redis | undefined): CommandDefinition[] {
         await saveGatewayConfig(redis, next);
         await updatePinnedStatus();
 
-        return [
-          `<b>Model configured</b>: <code>${escapeHtml(next.model)}</code>`,
-          "Model will apply on next restart.",
-        ].join("\n");
+        // Send confirmation, then exit so launchd respawns with new model
+        setTimeout(() => {
+          console.log(`[gateway] Model changed to ${next.model}, exiting for launchd respawn...`);
+          process.exit(0);
+        }, 1500);
+
+        return `<b>Model set to</b> <code>${escapeHtml(next.model)}</code>\nRestarting now…`;
       },
     }),
     defineChatCommand({
