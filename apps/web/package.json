@@ -10,9 +10,11 @@
     "check-types": "next typegen && tsc --noEmit"
   },
   "dependencies": {
+    "@better-auth/cli": "^1.4.18",
+    "@convex-dev/better-auth": "^0.10.10",
     "@repo/ui": "workspace:*",
     "@types/mdast": "^4.0.4",
-    "better-auth": "^1.4.18",
+    "better-auth": "^1.4.9",
     "convex": "^1.32.0",
     "gray-matter": "^4.0.3",
     "lucide-react": "^0.564.0",

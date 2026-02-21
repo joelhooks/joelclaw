@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { NuqsAdapter } from "nuqs/adapters/next";
+import { ConvexClientProvider } from "./ConvexClientProvider";
 import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, AUTHOR } from "../lib/constants";
 import { personJsonLd } from "../lib/jsonld";
 import { Github } from "lucide-react";
@@ -84,9 +85,11 @@ export default function RootLayout({
       >
         <div className="mx-auto max-w-2xl px-6 py-16">
           <SiteHeader />
-          <NuqsAdapter>
-            <main>{children}</main>
-          </NuqsAdapter>
+          <ConvexClientProvider>
+            <NuqsAdapter>
+              <main>{children}</main>
+            </NuqsAdapter>
+          </ConvexClientProvider>
           <footer className="mt-24 pt-8 border-t border-neutral-800 text-sm text-neutral-500">
             <div className="flex items-center justify-between">
               <p>
