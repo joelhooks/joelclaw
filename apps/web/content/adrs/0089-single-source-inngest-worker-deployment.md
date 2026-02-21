@@ -135,14 +135,41 @@ Adopt a **single source of truth** for Inngest worker code in the `joelclaw` mon
 
 ## Verification
 
-- [ ] New/updated function code is edited in exactly one repo path (`joelclaw` monorepo) before deployment.
-- [ ] `joelclaw inngest status` (or equivalent) reports healthy worker registration without rsync sync step.
+- [x] New/updated function code is edited in exactly one repo path (`joelclaw` monorepo) before deployment.
+- [x] `joelclaw inngest status` (or equivalent) reports healthy worker registration without rsync sync step.
 - [ ] No code path references `~/Code/system-bus-worker` after migration completion.
 - [ ] Worker pods in k8s pass readiness and execute cluster-safe functions successfully.
-- [ ] Host-required functions continue to execute during transition without regressions.
-- [ ] Duplicate function IDs across worker roles are detected and blocked.
-- [ ] Gateway and worker are both running code derived from the same monorepo git SHA at deploy time.
-- [ ] A synthetic gateway event (`joelclaw gateway test` / `system.fatal` probe) lands in `otel_events` with `source=gateway` within the expected ingestion window.
+- [x] Host-required functions continue to execute during transition without regressions.
+- [x] Duplicate function IDs across worker roles are detected and blocked.
+- [x] Gateway and worker are both running code derived from the same monorepo git SHA at deploy time.
+- [x] A synthetic gateway event (`joelclaw gateway test` / `system.fatal` probe) lands in `otel_events` with `source=gateway` within the expected ingestion window.
+
+## Implementation Outcome (2026-02-21)
+
+### Shipped now
+
+- Worker `launchd` runtime now points at monorepo `packages/system-bus/start.sh` instead of `~/Code/system-bus-worker`.
+- Runtime startup mutation was removed from worker bootstrap (`git pull` / `bun install` no longer run at startup).
+- Explicit worker role split was implemented:
+  - `packages/system-bus/src/inngest/functions/index.host.ts`
+  - `packages/system-bus/src/inngest/functions/index.cluster.ts`
+  - `WORKER_ROLE` routing in `packages/system-bus/src/serve.ts`
+- Worker diagnostics surface was added and wired:
+  - `joelclaw inngest workers`
+  - role counts, duplicate function-id detection, last registration timestamp.
+- Dual-clone coupling was removed from primary operator paths:
+  - removed `joelclaw inngest sync-worker` command
+  - removed worker-clone sync/restart step from `agent-loop/complete.ts`.
+- Live observability verification passed with this runtime:
+  - gateway events drained
+  - `source=gateway` events written into `otel_events`
+  - immediate fatal escalation path recorded (`events.immediate_telegram`).
+
+### Remaining for full completion
+
+- Populate non-empty `cluster-safe` function ownership and move cluster role to k8s worker deployment.
+- Remove all residual references to `~/Code/system-bus-worker`.
+- Complete k8s worker deployment + readiness rollout/rollback runbook.
 
 ## Migration Trigger to Revisit
 
