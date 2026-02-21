@@ -133,13 +133,28 @@ export async function persist(msg: {
   return streamId;
 }
 
+/**
+ * Mark a message as resolved — removes it from the stream entirely.
+ *
+ * We use XDEL (not XACK) because inline messages go through persist() → XADD
+ * but are never claimed via XREADGROUP, so they're not in the consumer group's
+ * Pending Entries List. XACK on an unclaimed message is a silent no-op (returns 0).
+ * XDEL actually removes the entry, preventing replay on restart.
+ *
+ * For messages that WERE claimed (via replayUnacked → readNeverClaimed → XREADGROUP),
+ * we also XACK to clean up the PEL before deleting.
+ */
 export async function ack(streamId: string): Promise<void> {
   const redis = getClient();
-  const ackedCount = await redis.xack(STREAM_KEY, CONSUMER_GROUP, streamId);
 
-  console.log("[gateway:store] ack", {
+  // XACK first (cleans PEL if message was claimed; no-op if not)
+  await redis.xack(STREAM_KEY, CONSUMER_GROUP, streamId);
+  // XDEL actually removes the entry from the stream
+  const deleted = await redis.xdel(STREAM_KEY, streamId);
+
+  console.log("[gateway:store] resolved", {
     streamId,
-    acked: ackedCount,
+    deleted,
   });
 }
 
@@ -227,7 +242,14 @@ async function readNeverClaimed(): Promise<StoredMessage[]> {
   return out;
 }
 
-export async function getUnacked(): Promise<StoredMessage[]> {
+/**
+ * Get unacked messages, filtering by max age to prevent replay floods.
+ * Messages older than maxAgeMs are immediately acked (marked resolved)
+ * so they never appear again on future restarts.
+ *
+ * Without this, every gateway restart replays the ENTIRE stream history.
+ */
+export async function getUnacked(maxAgeMs: number = 10 * 60 * 1000): Promise<StoredMessage[]> {
   const pendingIds = await getPendingIds();
   const [pendingMessages, newMessages] = await Promise.all([
     claimPendingEntries(pendingIds),
@@ -235,23 +257,52 @@ export async function getUnacked(): Promise<StoredMessage[]> {
   ]);
 
   const seen = new Set<string>();
-  const combined: StoredMessage[] = [];
+  const allMessages: StoredMessage[] = [];
 
   for (const message of [...pendingMessages, ...newMessages]) {
     if (seen.has(message.id)) continue;
     seen.add(message.id);
-    combined.push(message);
+    allMessages.push(message);
   }
 
-  combined.sort((a, b) => a.timestamp - b.timestamp);
+  // Split into recent (replay-worthy) and stale (ack and discard)
+  const cutoff = Date.now() - maxAgeMs;
+  const recent: StoredMessage[] = [];
+  const stale: StoredMessage[] = [];
+
+  for (const msg of allMessages) {
+    if (msg.timestamp >= cutoff) {
+      recent.push(msg);
+    } else {
+      stale.push(msg);
+    }
+  }
+
+  // Delete stale messages from stream so they never replay again
+  if (stale.length > 0) {
+    const redis = getClient();
+    for (const msg of stale) {
+      await redis.xack(STREAM_KEY, CONSUMER_GROUP, msg.id);
+      await redis.xdel(STREAM_KEY, msg.id);
+    }
+    console.log("[gateway:store] deleted stale messages on load (won't replay)", {
+      staleCount: stale.length,
+      maxAgeMs,
+      oldestAge: `${Math.round((Date.now() - Math.min(...stale.map((m) => m.timestamp))) / 1000)}s`,
+    });
+  }
+
+  recent.sort((a, b) => a.timestamp - b.timestamp);
 
   console.log("[gateway:store] loaded unacked messages", {
-    count: combined.length,
+    replayable: recent.length,
+    staleAcked: stale.length,
     pending: pendingMessages.length,
     fresh: newMessages.length,
+    maxAgeMs,
   });
 
-  return combined;
+  return recent;
 }
 
 export async function trimOld(maxAge: number = DEFAULT_MAX_AGE_MS): Promise<number> {

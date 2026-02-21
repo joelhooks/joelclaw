@@ -151,6 +151,15 @@ export function startHeartbeatRunner(): HeartbeatRunner {
   lastHeartbeatTs = Date.now();
   watchdogAlarmFired = false;
 
+  // Initialize tripwire timestamp immediately on startup so reboot/startup
+  // does not trigger false "heartbeat file missing" alerts before first tick.
+  void writeTripwire(lastHeartbeatTs).catch((error) => {
+    console.error("[heartbeat] failed to initialize tripwire", {
+      path: TRIPWIRE_PATH,
+      error,
+    });
+  });
+
   const heartbeatTimer: TimerHandle = setInterval(async () => {
     await runHeartbeat();
   }, FIFTEEN_MINUTES_MS);
