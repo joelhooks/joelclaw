@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { href: "/cool", label: "Cool" },
   { href: "/adrs", label: "ADRs" },
   { href: "/network", label: "Network" },
+  { href: "/dashboard", label: "System" },
 ];
 
 export function SiteHeader() {
