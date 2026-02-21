@@ -8,6 +8,7 @@ export const ALLOWED_MODELS = [
   "claude-sonnet-4-5",
   "claude-haiku-4-5",
   "gpt-5.3-codex-spark",
+  "gpt-5.2",
 ] as const;
 
 /** Map model IDs to their provider. Models not listed default to "anthropic". */
@@ -17,6 +18,7 @@ export const MODEL_PROVIDERS: Record<string, string> = {
   "claude-sonnet-4-5": "anthropic",
   "claude-haiku-4-5": "anthropic",
   "gpt-5.3-codex-spark": "openai-codex",
+  "gpt-5.2": "openai",
 };
 
 export const ALLOWED_THINKING_LEVELS = ["none", "low", "medium", "high"] as const;
