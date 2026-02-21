@@ -94,7 +94,35 @@ const patterns: TriagePattern[] = [
 ];
 ```
 
-Unknown patterns (no match) default to tier 2, never tier 3. The agent must understand something before it escalates.
+Unknown patterns (no match) go through LLM classification before defaulting to tier 2.
+
+### LLM Classification for Unknown Failures
+
+When no pattern matches, the triage loop calls Haiku via `pi` CLI to classify:
+
+```
+pi --no-tools --no-session --no-extensions --print --mode text \
+  --model anthropic/claude-haiku-4-5 \
+  --system-prompt "<classification prompt>" \
+  "<event details + recent context>"
+```
+
+Haiku receives the event details and recent otel context, returns a JSON response:
+- `tier`: 1, 2, or 3
+- `reasoning`: one sentence explaining why
+- `proposed_pattern`: optional new TriagePattern entry for the registry
+
+This keeps unknowns from silently piling up as unclassified tier 2 noise. Haiku is fast and cheap enough for the handful of unmatched events per 15min window.
+
+### Codex as Escalation Planner (Tier 3)
+
+When an event is classified as tier 3 (by pattern or by Haiku), the triage loop dispatches codex to generate the full escalation plan:
+
+- Codex receives: the failing event, recent related events, relevant source files, git log
+- Codex produces: root cause analysis, proposed fix (specific files + changes), ready-to-dispatch codex prompt, rollback plan
+- Output goes into the Todoist task description
+
+This means Joel gets a task with a real fix plan, not a template. The agent did the investigation.
 
 ### The "Not Annoying" Contract
 
