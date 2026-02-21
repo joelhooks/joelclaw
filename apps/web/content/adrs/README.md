@@ -14,7 +14,7 @@ tags:
 | [0003](0003-joelclaw-over-openclaw.md) | Build joelclaw instead of deploying OpenClaw | accepted | 2026-02-14 |
 | [0004](0004-atproto-federation-native-app.md) | AT Protocol as bedrock + native iPhone app | accepted | 2026-02-14 |
 | [0005](0005-durable-multi-agent-coding-loops.md) | Adopt Inngest multi-agent pipeline for durable autonomous coding loops | implemented | 2026-02-14 |
-| [0006](0006-observability-prometheus-grafana.md) | Adopt Prometheus + Grafana for system observability | proposed | 2026-02-14 |
+| [0006](0006-observability-prometheus-grafana.md) | Adopt Prometheus + Grafana for system observability | superseded by 0087 | 2026-02-14 |
 | [0007](0007-agent-loop-v2-improvements.md) | Agent Loop V2 Improvements | proposed | 2026-02-14 |
 | [0008](0008-loop-retrospective-and-skill-evolution.md) | Loop Retrospective and Skill Evolution | proposed | 2026-02-14 |
 | [0009](0009-rename-igs-cli-to-joelclaw.md) | Rename igs CLI to joelclaw | proposed | 2026-02-15 |
@@ -30,8 +30,10 @@ tags:
 | [0019](0019-event-naming-past-tense.md) | Rename events to past-tense notifications | proposed | 2026-02-15 |
 | [0020](0020-observational-memory-pipeline.md) | Observational memory pipeline (Observer/Reflector) | superseded by 0021 | 2026-02-15 |
 | [0021](0021-agent-memory-system.md) | Comprehensive agent memory system (supersedes 0014, 0020) | proposed | 2026-02-15 |
+| [0033](0033-victoriametrics-grafana-monitoring-stack.md) | VictoriaMetrics + Grafana monitoring stack for Kubernetes | superseded by 0087 | 2026-02-17 |
 | [0072](0072-vip-email-intelligence-pipeline.md) | VIP Email Intelligence Pipeline | proposed | 2026-02-20 |
 | [0073](0073-person-dossier-system.md) | Automatic person dossier system from communication history | proposed | 2026-02-20 |
 | [0074](0074-sandbox-work-extraction-pattern.md) | Sandbox Work Extraction Pattern | proposed | 2026-02-20 |
 | [0075](0075-joelclaw-auth-better-auth-github-convex.md) | joelclaw.com Authentication with Better Auth + GitHub + Convex | proposed | 2026-02-20 |
 | [0076](0076-enhanced-agent-markdown-instructions.md) | Enhanced Agent-Specific Markdown Instructions | proposed | 2026-02-20 |
+| [0087](0087-observability-pipeline-joelclaw-design-system.md) | Full-Stack Observability + JoelClaw Design System | implemented | 2026-02-21 |

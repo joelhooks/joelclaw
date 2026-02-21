@@ -19,6 +19,7 @@ const OWNER_NAV = [
   { href: "/vault", label: "Vault" },
   { href: "/memory", label: "Memory" },
   { href: "/syslog", label: "Syslog" },
+  { href: "/system", label: "Ops" },
   { href: "/dashboard", label: "System" },
 ];
 

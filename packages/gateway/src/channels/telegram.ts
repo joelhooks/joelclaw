@@ -4,6 +4,7 @@ import { extname } from "node:path";
 import { Bot, InputFile } from "grammy";
 import type { EnqueueFn } from "./redis";
 import { enrichPromptWithVaultContext } from "../vault-read";
+import { emitGatewayOtel } from "../observability";
 
 // ── Telegram HTML formatting ───────────────────────────
 // Telegram's HTML mode supports: <b>, <i>, <code>, <pre>, <a href="">
@@ -35,6 +36,10 @@ export interface RichSendOptions {
   noPreview?: boolean;         // disable_web_page_preview
 }
 
+export type TelegramStartOptions = {
+  configureBot?: (bot: Bot) => void | Promise<void>;
+}
+
 // Human-readable labels shown after button press
 const ACTION_LABELS: Record<string, string> = {
   archive: "📦 <b>Archived</b>",
@@ -45,7 +50,7 @@ const ACTION_LABELS: Record<string, string> = {
   skip: "⏭ <b>Skipped</b>",
   ack: "👍 <b>Acknowledged</b>",
   investigate: "🔍 <b>Investigating...</b>",
-};
+}
 
 function mimeFromExt(ext: string): string {
   const map: Record<string, string> = {
@@ -83,10 +88,25 @@ async function downloadTelegramFile(
       const msg = String(err);
       if (msg.includes("file is too big")) {
         console.warn("[gateway:telegram] file too big for Bot API download", { fileId });
+        void emitGatewayOtel({
+          level: "warn",
+          component: "telegram-channel",
+          action: "telegram.media.too_big",
+          success: false,
+          metadata: { fileId },
+        });
         return null;
       }
       if (attempt === MAX_DOWNLOAD_RETRIES) {
         console.error("[gateway:telegram] getFile failed after retries", { fileId, error: msg });
+        void emitGatewayOtel({
+          level: "error",
+          component: "telegram-channel",
+          action: "telegram.media.get_file_failed",
+          success: false,
+          error: msg,
+          metadata: { fileId },
+        });
         return null;
       }
       await new Promise(r => setTimeout(r, RETRY_DELAY_MS * attempt));
@@ -100,6 +120,14 @@ async function downloadTelegramFile(
     const response = await fetch(url);
     if (!response.ok) {
       console.error("[gateway:telegram] file download HTTP error", { status: response.status });
+      void emitGatewayOtel({
+        level: "error",
+        component: "telegram-channel",
+        action: "telegram.media.download_http_error",
+        success: false,
+        error: `http_${response.status}`,
+        metadata: { fileId },
+      });
       return null;
     }
 
@@ -115,9 +143,27 @@ async function downloadTelegramFile(
     const fileSize = file.file_size ?? (await Bun.file(localPath).size);
 
     console.log("[gateway:telegram] file downloaded", { localPath, mimeType, fileSize });
+    void emitGatewayOtel({
+      level: "debug",
+      component: "telegram-channel",
+      action: "telegram.media.downloaded",
+      success: true,
+      metadata: {
+        mimeType,
+        fileSize,
+      },
+    });
     return { localPath, mimeType, fileSize };
   } catch (err) {
     console.error("[gateway:telegram] file download failed", { error: String(err) });
+    void emitGatewayOtel({
+      level: "error",
+      component: "telegram-channel",
+      action: "telegram.media.download_failed",
+      success: false,
+      error: String(err),
+      metadata: { fileId },
+    });
     return null;
   }
 }
@@ -138,6 +184,13 @@ async function emitMediaReceived(data: {
 }): Promise<boolean> {
   if (!INNGEST_EVENT_KEY) {
     console.warn("[gateway:telegram] no INNGEST_EVENT_KEY — can't emit media/received");
+    void emitGatewayOtel({
+      level: "warn",
+      component: "telegram-channel",
+      action: "telegram.media.emit_skipped",
+      success: false,
+      error: "missing_inngest_event_key",
+    });
     return false;
   }
   try {
@@ -153,12 +206,38 @@ async function emitMediaReceived(data: {
     });
     if (!res.ok) {
       console.error("[gateway:telegram] inngest event failed", { status: res.status });
+      void emitGatewayOtel({
+        level: "error",
+        component: "telegram-channel",
+        action: "telegram.media.emit_failed",
+        success: false,
+        error: `http_${res.status}`,
+        metadata: { type: data.type },
+      });
       return false;
     }
     console.log("[gateway:telegram] media/received event sent", { type: data.type });
+    void emitGatewayOtel({
+      level: "info",
+      component: "telegram-channel",
+      action: "telegram.media.emit_sent",
+      success: true,
+      metadata: {
+        type: data.type,
+        source: data.source,
+      },
+    });
     return true;
   } catch (err) {
     console.error("[gateway:telegram] inngest event error", { error: String(err) });
+    void emitGatewayOtel({
+      level: "error",
+      component: "telegram-channel",
+      action: "telegram.media.emit_error",
+      success: false,
+      error: String(err),
+      metadata: { type: data.type },
+    });
     return false;
   }
 }
@@ -304,6 +383,7 @@ export async function start(
   token: string,
   userId: number,
   enqueue: EnqueueFn,
+  options?: TelegramStartOptions,
 ): Promise<void> {
   if (started) return;
 
@@ -329,6 +409,10 @@ export async function start(
     await next();
   });
 
+  if (options?.configureBot) {
+    await options.configureBot(bot);
+  }
+
   // Text messages → command queue
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text;
@@ -340,6 +424,16 @@ export async function start(
     });
 
     const prompt = await enrichPromptWithVaultContext(text);
+    void emitGatewayOtel({
+      level: "debug",
+      component: "telegram-channel",
+      action: "telegram.message.received",
+      success: true,
+      metadata: {
+        chatId,
+        length: text.length,
+      },
+    });
 
     enqueuePrompt!(`telegram:${chatId}`, prompt, {
       telegramChatId: chatId,
@@ -539,6 +633,16 @@ export async function start(
     const messageId = ctx.callbackQuery.message?.message_id;
 
     console.log("[gateway:telegram] callback_query", { data, chatId, messageId });
+    void emitGatewayOtel({
+      level: "info",
+      component: "telegram-channel",
+      action: "telegram.callback.received",
+      success: true,
+      metadata: {
+        action: data,
+        chatId,
+      },
+    });
 
     // Always answer within 10s or button shows loading spinner
     try {
@@ -600,15 +704,35 @@ export async function start(
     }
   });
 
-  // Start long polling (non-blocking)
-  bot.start({
+  // Start long polling (non-blocking). Startup failures should not crash gateway.
+  void bot.start({
     onStart: (botInfo) => {
       console.log("[gateway:telegram] started", {
         botId: botInfo.id,
         botUsername: botInfo.username,
         allowedUserId,
       });
+      void emitGatewayOtel({
+        level: "info",
+        component: "telegram-channel",
+        action: "telegram.channel.started",
+        success: true,
+        metadata: {
+          botId: botInfo.id,
+          botUsername: botInfo.username,
+        },
+      });
     },
+  }).catch((error) => {
+    started = false;
+    console.error("[gateway:telegram] failed to start polling; telegram channel disabled", { error: String(error) });
+    void emitGatewayOtel({
+      level: "error",
+      component: "telegram-channel",
+      action: "telegram.channel.start_failed",
+      success: false,
+      error: String(error),
+    });
   });
 
   started = true;
@@ -625,6 +749,13 @@ export async function send(
 ): Promise<void> {
   if (!bot) {
     console.error("[gateway:telegram] bot not started, can't send");
+    void emitGatewayOtel({
+      level: "warn",
+      component: "telegram-channel",
+      action: "telegram.send.skipped",
+      success: false,
+      error: "bot_not_started",
+    });
     return;
   }
 
@@ -667,6 +798,14 @@ export async function send(
     } catch (error) {
       // Fallback: send as plain text if HTML parsing fails
       console.warn("[gateway:telegram] HTML send failed, trying plain text", { error });
+      void emitGatewayOtel({
+        level: "warn",
+        component: "telegram-channel",
+        action: "telegram.send.html_failed",
+        success: false,
+        error: String(error),
+        metadata: { chatId },
+      });
       try {
         await bot.api.sendMessage(chatId, message.slice(0, CHUNK_MAX), {
           ...(options?.replyTo ? { reply_parameters: { message_id: options.replyTo } } : {}),
@@ -675,10 +814,29 @@ export async function send(
         });
       } catch (fallbackError) {
         console.error("[gateway:telegram] send failed completely", { fallbackError });
+        void emitGatewayOtel({
+          level: "error",
+          component: "telegram-channel",
+          action: "telegram.send.failed",
+          success: false,
+          error: String(fallbackError),
+          metadata: { chatId },
+        });
       }
       break; // don't continue chunking if we had to fallback
     }
   }
+  void emitGatewayOtel({
+    level: "debug",
+    component: "telegram-channel",
+    action: "telegram.send.completed",
+    success: true,
+    metadata: {
+      chatId,
+      chunks: chunks.length,
+      length: message.length,
+    },
+  });
 }
 
 /**
@@ -692,6 +850,13 @@ export async function sendMedia(
 ): Promise<void> {
   if (!bot) {
     console.error("[gateway:telegram] bot not started, can't send media");
+    void emitGatewayOtel({
+      level: "warn",
+      component: "telegram-channel",
+      action: "telegram.send_media.skipped",
+      success: false,
+      error: "bot_not_started",
+    });
     return;
   }
 
@@ -736,12 +901,35 @@ export async function sendMedia(
         await bot.api.sendDocument(chatId, file, params);
     }
     console.log("[gateway:telegram] media sent", { chatId, kind, filePath });
+    void emitGatewayOtel({
+      level: "info",
+      component: "telegram-channel",
+      action: "telegram.send_media.completed",
+      success: true,
+      metadata: { chatId, kind },
+    });
   } catch (error) {
     console.error("[gateway:telegram] sendMedia failed, trying as document", { kind, error });
+    void emitGatewayOtel({
+      level: "error",
+      component: "telegram-channel",
+      action: "telegram.send_media.failed",
+      success: false,
+      error: String(error),
+      metadata: { chatId, kind },
+    });
     try {
       await bot.api.sendDocument(chatId, file, params);
     } catch (fallbackErr) {
       console.error("[gateway:telegram] sendMedia fallback failed", { fallbackErr });
+      void emitGatewayOtel({
+        level: "error",
+        component: "telegram-channel",
+        action: "telegram.send_media.fallback_failed",
+        success: false,
+        error: String(fallbackErr),
+        metadata: { chatId, kind },
+      });
     }
   }
 }
@@ -761,4 +949,10 @@ export async function shutdown(): Promise<void> {
   }
   started = false;
   console.log("[gateway:telegram] stopped");
+  void emitGatewayOtel({
+    level: "info",
+    component: "telegram-channel",
+    action: "telegram.channel.stopped",
+    success: true,
+  });
 }

@@ -91,10 +91,15 @@ import {
   typesenseVaultSync,
   typesenseBlogSync,
   typesenseFullSync,
+  nasSoakSample,
+  nasSoakReview,
+  emitInngestRegistryLoaded,
 } from "./inngest/functions";
 import { dailyDigest } from "./inngest/functions/daily-digest";
+import { emitOtelEvent, emitValidatedOtelEvent } from "./observability/emit";
 
 const app = new Hono();
+const OTEL_EMIT_TOKEN = process.env.OTEL_EMIT_TOKEN;
 
 // Single source of truth for registered functions — never maintain a separate list.
 const registeredFunctions = [
@@ -159,12 +164,17 @@ const registeredFunctions = [
   typesenseVaultSync,
   typesenseBlogSync,
   typesenseFullSync,
+  nasSoakSample,
+  nasSoakReview,
 ];
 
 // Derive function names from the actual array — no stale hardcoded list
 const functionNames = registeredFunctions.map(
   (fn) => (fn as any).opts?.id ?? "unknown"
 );
+void emitInngestRegistryLoaded(functionNames).catch((error) => {
+  console.warn("[otel] failed to emit registry snapshot", error);
+});
 
 app.get("/", (c) =>
   c.json({
@@ -194,9 +204,37 @@ app.get("/", (c) =>
       "granola/backfill.requested": "Backfill all historical Granola meetings (ADR-0055)",
       "memory/digest.created": "Structured daily digest generated from raw daily memory log",
       "notification/call.requested": "Place outbound call via Telnyx, fallback to SMS if unanswered",
+      "nas/soak.review.requested": "Evaluate NAS soak gates vs ADR-0088 and notify gateway",
+    },
+    observability: {
+      ingestEndpoint: "/observability/emit",
     },
   })
 );
+
+// Internal ingest endpoint so gateway can emit events through the single worker write path.
+app.post("/observability/emit", async (c) => {
+  if (OTEL_EMIT_TOKEN) {
+    const token = c.req.header("x-otel-emit-token");
+    if (!token || token !== OTEL_EMIT_TOKEN) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+  }
+
+  const payload = await c.req.json().catch(() => null);
+  if (!payload || typeof payload !== "object") {
+    return c.json({ error: "Invalid payload" }, 400);
+  }
+
+  const result = await emitValidatedOtelEvent(payload);
+  if (!result.stored && !result.dropped) {
+    return c.json(
+      { ok: false, error: result.error ?? result.typesense.error ?? "store_failed", result },
+      500
+    );
+  }
+  return c.json({ ok: true, result });
+});
 
 // Webhook gateway — external services POST here
 // ADR-0048: Webhook Gateway for External Service Integration
@@ -222,3 +260,16 @@ export default {
 console.log("🚌 system-bus worker running on http://localhost:3111");
 console.log("📡 Inngest endpoint: http://localhost:3111/api/inngest");
 console.log(`📋 ${registeredFunctions.length} functions registered`);
+void emitOtelEvent({
+  level: "info",
+  source: "worker",
+  component: "serve",
+  action: "worker.started",
+  success: true,
+  metadata: {
+    port: 3111,
+    registeredFunctions: registeredFunctions.length,
+  },
+}).catch((error) => {
+  console.warn("[otel] failed to emit worker start event", error);
+});

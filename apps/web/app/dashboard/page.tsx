@@ -5,26 +5,8 @@ import { api } from "../../convex/_generated/api";
 import { authClient } from "../../lib/auth-client";
 import { useRouter } from "next/navigation";
 import { useState, useCallback } from "react";
-
-// ── Status indicator ────────────────────────────────────────────
-
-function Pulse({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    healthy: "bg-emerald-500 shadow-emerald-500/50",
-    degraded: "bg-amber-500 shadow-amber-500/50",
-    down: "bg-red-500 shadow-red-500/50",
-  };
-  return (
-    <span className="relative flex h-2 w-2">
-      {status === "healthy" && (
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-40" />
-      )}
-      <span
-        className={`relative inline-flex h-2 w-2 rounded-full shadow-sm ${colors[status] || colors.down}`}
-      />
-    </span>
-  );
-}
+import { MetricCard } from "@repo/ui/metric-card";
+import { StatusBadge } from "@repo/ui/status-badge";
 
 // ── System Health Panel ─────────────────────────────────────────
 
@@ -77,7 +59,7 @@ function SystemHealth() {
               key={s.resourceId}
               className="group flex items-center gap-3 rounded-lg border border-neutral-700/40 bg-neutral-900/30 px-3 py-2.5 transition-colors hover:border-neutral-600/60 hover:bg-neutral-900/50"
             >
-              <Pulse status={s.status} />
+              <StatusBadge status={s.status} label={s.status} pulse={s.status === "healthy"} />
               <div className="min-w-0 flex-1">
                 <p className="truncate font-mono text-xs text-neutral-300">
                   {s.component}
@@ -310,23 +292,11 @@ function Search() {
 
 function StatsBar() {
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-1 border-b border-neutral-700/40 pb-4 font-pixel text-[11px] text-neutral-500">
-      <div className="flex items-center gap-1.5">
-        <span className="text-neutral-400">collections</span>
-        <span className="text-neutral-200">6</span>
-      </div>
-      <div className="flex items-center gap-1.5">
-        <span className="text-neutral-400">documents</span>
-        <span className="text-neutral-200">2,692</span>
-      </div>
-      <div className="flex items-center gap-1.5">
-        <span className="text-neutral-400">functions</span>
-        <span className="text-neutral-200">66</span>
-      </div>
-      <div className="flex items-center gap-1.5">
-        <span className="text-neutral-400">backend</span>
-        <span className="text-claw/70">typesense</span>
-      </div>
+    <div className="grid gap-2 border-b border-neutral-700/40 pb-4 sm:grid-cols-2 lg:grid-cols-4">
+      <MetricCard label="collections" value="6" />
+      <MetricCard label="documents" value="2,692" />
+      <MetricCard label="functions" value="66" />
+      <MetricCard label="backend" value="typesense" />
     </div>
   );
 }

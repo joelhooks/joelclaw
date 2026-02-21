@@ -1,4 +1,5 @@
 import { ack, getUnacked, persist } from "./message-store";
+import { emitGatewayOtel } from "./observability";
 
 export type QueueEntry = {
   source: string;
@@ -47,10 +48,40 @@ export async function enqueue(
         source,
         error,
       });
+      void emitGatewayOtel({
+        level: "warn",
+        component: "command-queue",
+        action: "queue.persist.failed",
+        success: false,
+        error: String(error),
+        metadata: { source },
+      });
     }
   }
 
   queue.push({ source, prompt, metadata, streamId });
+  void emitGatewayOtel({
+    level: "debug",
+    component: "command-queue",
+    action: "queue.enqueued",
+    success: true,
+    metadata: {
+      source,
+      depth: queue.length,
+      hasStreamId: Boolean(streamId),
+    },
+  });
+  if (queue.length >= 20) {
+    void emitGatewayOtel({
+      level: "warn",
+      component: "command-queue",
+      action: "queue.backpressure",
+      success: false,
+      metadata: {
+        depth: queue.length,
+      },
+    });
+  }
 }
 
 export function getCurrentSource(): string | undefined {
@@ -78,11 +109,20 @@ export async function drain(): Promise<void> {
       if (!entry) break;
 
       currentSource = entry.source;
+      const startedAt = Date.now();
 
       try {
         if (!sessionRef) {
           console.error("command-queue: no prompt session set; dropping queued prompt", {
             source: entry.source,
+          });
+          void emitGatewayOtel({
+            level: "error",
+            component: "command-queue",
+            action: "queue.session_missing",
+            success: false,
+            error: "no_prompt_session_set",
+            metadata: { source: entry.source },
           });
           continue;
         }
@@ -95,12 +135,36 @@ export async function drain(): Promise<void> {
         }
 
         consecutiveFailures = 0;
+        void emitGatewayOtel({
+          level: "debug",
+          component: "command-queue",
+          action: "queue.prompt.sent",
+          success: true,
+          duration_ms: Date.now() - startedAt,
+          metadata: {
+            source: entry.source,
+            depthAfterSend: queue.length,
+          },
+        });
       } catch (error) {
         consecutiveFailures += 1;
         console.error("command-queue: prompt failed", {
           source: entry.source,
           consecutiveFailures,
           error,
+        });
+        void emitGatewayOtel({
+          level: consecutiveFailures >= 3 ? "fatal" : "error",
+          component: "command-queue",
+          action: "queue.prompt.failed",
+          success: false,
+          duration_ms: Date.now() - startedAt,
+          error: String(error),
+          metadata: {
+            source: entry.source,
+            consecutiveFailures,
+            depthAfterFailure: queue.length,
+          },
         });
       } finally {
         currentSource = undefined;
@@ -114,58 +178,55 @@ export async function drain(): Promise<void> {
 }
 
 /**
- * Replay unacked messages on startup — but only RECENT ones.
- * Without a max age, a gateway restart replays the ENTIRE DAY of messages,
- * flooding Telegram with hundreds of duplicate responses.
- * Default: only replay messages from the last 2 minutes.
+ * Replay unacked messages on startup — only recent ones.
+ * Age filtering happens inside getUnacked() — stale messages are
+ * acked at the store level so they never surface again.
  */
-const REPLAY_MAX_AGE_MS = 10 * 60 * 1000;
-
 export async function replayUnacked(): Promise<void> {
   try {
-    const pendingMessages = await getUnacked();
-    if (pendingMessages.length === 0) return;
-
-    const cutoff = Date.now() - REPLAY_MAX_AGE_MS;
-    const recent = pendingMessages.filter((m) => m.timestamp >= cutoff);
-    const stale = pendingMessages.filter((m) => m.timestamp < cutoff);
-
-    // Ack stale messages so they never replay again
-    for (const msg of stale) {
-      await ack(msg.id);
-    }
-
-    if (stale.length > 0) {
-      console.log("[gateway:store] acked stale messages (skipped replay)", {
-        staleCount: stale.length,
-        oldestStaleAge: `${Math.round((Date.now() - Math.min(...stale.map((m) => m.timestamp))) / 1000)}s`,
-      });
-    }
-
-    if (recent.length === 0) {
-      console.log("[gateway:store] no recent unacked messages to replay", {
-        totalPending: pendingMessages.length,
-        allStale: true,
+    // getUnacked() handles age filtering and acks stale messages internally
+    const replayable = await getUnacked();
+    if (replayable.length === 0) {
+      console.log("[gateway:store] no messages to replay on startup");
+      void emitGatewayOtel({
+        level: "debug",
+        component: "command-queue",
+        action: "queue.replay.empty",
+        success: true,
       });
       return;
     }
 
-    for (const pending of recent) {
+    for (const msg of replayable) {
       queue.push({
-        source: pending.source,
-        prompt: pending.prompt,
-        metadata: pending.metadata,
-        streamId: pending.id,
+        source: msg.source,
+        prompt: msg.prompt,
+        metadata: msg.metadata,
+        streamId: msg.id,
       });
     }
 
-    console.log("[gateway:store] replayed recent unacked messages into queue", {
-      replayedCount: recent.length,
-      skippedStale: stale.length,
-      maxAgeMs: REPLAY_MAX_AGE_MS,
+    console.log("[gateway:store] replayed unacked messages into queue", {
+      count: replayable.length,
+    });
+    void emitGatewayOtel({
+      level: "info",
+      component: "command-queue",
+      action: "queue.replay.completed",
+      success: true,
+      metadata: {
+        replayCount: replayable.length,
+      },
     });
   } catch (error) {
     console.error("[gateway:store] replay failed", { error });
+    void emitGatewayOtel({
+      level: "error",
+      component: "command-queue",
+      action: "queue.replay.failed",
+      success: false,
+      error: String(error),
+    });
     return;
   }
 

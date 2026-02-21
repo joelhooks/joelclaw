@@ -5,7 +5,7 @@
  * Uses built-in auto-embedding (ts/all-MiniLM-L12-v2) — no external API calls.
  */
 
-const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108";
+export const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108";
 const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY || "";
 
 function getApiKey(): string {
@@ -27,6 +27,19 @@ const headers = () => ({
   "X-TYPESENSE-API-KEY": getApiKey(),
   "Content-Type": "application/json",
 });
+
+export async function typesenseRequest(
+  path: string,
+  init?: RequestInit
+): Promise<Response> {
+  return fetch(`${TYPESENSE_URL}${path}`, {
+    ...(init ?? {}),
+    headers: {
+      ...headers(),
+      ...(init?.headers ?? {}),
+    },
+  });
+}
 
 export interface TypesenseSearchParams {
   collection: string;
@@ -137,5 +150,31 @@ export async function deleteDoc(collection: string, id: string): Promise<void> {
   if (!resp.ok && resp.status !== 404) {
     const text = await resp.text();
     throw new Error(`Typesense delete failed (${resp.status}): ${text}`);
+  }
+}
+
+/** Create a collection if it does not already exist. */
+export async function ensureCollection(
+  collection: string,
+  schema: Record<string, unknown>
+): Promise<void> {
+  const exists = await typesenseRequest(`/collections/${collection}`, { method: "GET" });
+  if (exists.ok) return;
+  if (exists.status !== 404) {
+    const text = await exists.text();
+    throw new Error(`Typesense collection check failed (${exists.status}): ${text}`);
+  }
+
+  const create = await typesenseRequest("/collections", {
+    method: "POST",
+    body: JSON.stringify(schema),
+  });
+  if (!create.ok) {
+    const text = await create.text();
+    // Handle races where another process creates collection concurrently.
+    if (create.status === 409 || text.toLowerCase().includes("already exists")) {
+      return;
+    }
+    throw new Error(`Typesense collection create failed (${create.status}): ${text}`);
   }
 }

@@ -1,4 +1,5 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdirSync, readdirSync } from "node:fs";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@mariozechner/pi-ai";
@@ -15,8 +16,11 @@ import {
 } from "./command-queue";
 import { start as startRedisChannel, shutdown as shutdownRedisChannel, isHealthy as isRedisHealthy, getRedisClient } from "./channels/redis";
 import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, sendMedia as sendTelegramMedia, parseChatId } from "./channels/telegram";
-import { startHeartbeatRunner } from "./heartbeat";
+import { defaultGatewayConfig, loadGatewayConfig } from "./commands/config";
+import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands/telegram-handler";
+import { TRIPWIRE_PATH, startHeartbeatRunner } from "./heartbeat";
 import { init as initMessageStore, trimOld } from "./message-store";
+import { emitGatewayOtel } from "./observability";
 
 const HOME = homedir();
 const AGENT_DIR = join(HOME, ".pi/agent");
@@ -31,12 +35,35 @@ const GATEWAY_SESSION_DIR = join(JOELCLAW_DIR, "sessions", "gateway");
 // This keeps gateway compaction isolated from interactive pi sessions.
 const GATEWAY_CWD = join(JOELCLAW_DIR, "gateway");
 const DEFAULT_WS_PORT = 3018;
-const WS_PORT = Number.parseInt(process.env.PI_GATEWAY_WS_PORT ?? `${DEFAULT_WS_PORT}`, 10) || DEFAULT_WS_PORT;
+const WS_PORT = Number.parseInt(process.env.PI_GATEWAY_WS_PORT ?? String(DEFAULT_WS_PORT), 10) || DEFAULT_WS_PORT;
 const startedAt = Date.now();
 
-function resolveModel() {
+const startupGatewayConfig = await (async () => {
+  try {
+    const Redis = (await import("ioredis")).default;
+    const redis = new Redis({
+      host: process.env.REDIS_HOST ?? "localhost",
+      port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+      lazyConnect: true,
+      retryStrategy: () => null,
+      maxRetriesPerRequest: 1,
+      connectTimeout: 1_500,
+    });
+
+    try {
+      await redis.connect();
+      return await loadGatewayConfig(redis);
+    } finally {
+      redis.disconnect();
+    }
+  } catch {
+    return defaultGatewayConfig();
+  }
+})();
+
+function resolveModel(modelIdOverride: string | undefined) {
   const provider = process.env.PI_MODEL_PROVIDER;
-  const modelId = process.env.PI_MODEL ?? process.env.PI_MODEL_ID;
+  const modelId = modelIdOverride ?? process.env.PI_MODEL ?? process.env.PI_MODEL_ID;
 
   if (!provider || !modelId) return undefined;
 
@@ -57,11 +84,11 @@ function describeModel(model: unknown): string {
   return `${provider}/${id}`;
 }
 
-// Resume the most recent session in the gateway session dir, or create a new one.
-// SessionManager.continueRecent() finds the latest .jsonl by mtime — no hardcoded filename.
-// Restarts always resume context; survives launchd restarts.
-import { mkdirSync, readdirSync } from "node:fs";
 mkdirSync(GATEWAY_SESSION_DIR, { recursive: true });
+
+// Always resume the existing session — context continuity is critical.
+// Pi's compaction handles what gets sent to the API (reserveTokens/keepRecentTokens).
+// The JSONL file grows but that's fine — pi summarizes old turns automatically.
 const hasExistingSession = readdirSync(GATEWAY_SESSION_DIR).some(f => f.endsWith(".jsonl"));
 const sessionManager = hasExistingSession
   ? SessionManager.continueRecent(HOME, GATEWAY_SESSION_DIR)
@@ -76,9 +103,19 @@ console.log("[gateway] session", {
 const { session } = await createAgentSession({
   cwd: GATEWAY_CWD,
   agentDir: AGENT_DIR,
-  model: resolveModel(),
-  thinkingLevel: "low",
+  model: resolveModel(startupGatewayConfig.model),
+  thinkingLevel: startupGatewayConfig.thinkingLevel === "none" ? undefined : startupGatewayConfig.thinkingLevel,
   sessionManager,
+});
+void emitGatewayOtel({
+  level: "info",
+  component: "daemon",
+  action: "daemon.session.started",
+  success: true,
+  metadata: {
+    sessionId: session.sessionId,
+    model: describeModel(session.model),
+  },
 });
 
 setSession({
@@ -113,7 +150,6 @@ type WsClientMessage =
   | { type: "prompt"; text: string }
   | { type: "abort" }
   | { type: "status" };
-
 // ── Outbound: collect assistant responses and route to source channel ──
 let responseChunks: string[] = [];
 const wsClients = new Set<Bun.ServerWebSocket<unknown>>();
@@ -134,6 +170,38 @@ function getStatusPayload(): Record<string, unknown> {
       },
     },
     queueDepth: getQueueDepth(),
+  };
+}
+
+async function getLastHeartbeatAt(): Promise<number | undefined> {
+  try {
+    const content = await readFile(TRIPWIRE_PATH, "utf8");
+    const match = content.match(/lastHeartbeatTs\s*=\s*(\d+)/);
+    if (!match?.[1]) return undefined;
+    const parsed = Number.parseInt(match[1], 10);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+async function getGatewayStatusSnapshot(): Promise<{
+  modelName: string;
+  thinkingLevel: string;
+  verbose: boolean;
+  uptimeMs: number;
+  queueDepth: number;
+  lastHeartbeatAt?: number;
+}> {
+  const runtimeConfig = await loadGatewayConfig(getRedisClient());
+
+  return {
+    modelName: runtimeConfig.model,
+    thinkingLevel: runtimeConfig.thinkingLevel,
+    verbose: runtimeConfig.verbose,
+    uptimeMs: Date.now() - startedAt,
+    queueDepth: getQueueDepth(),
+    lastHeartbeatAt: await getLastHeartbeatAt(),
   };
 }
 
@@ -308,21 +376,13 @@ session.subscribe((event: any) => {
   }
 });
 
-// ── Telegram channel (start BEFORE Redis — Telegram doesn't need Redis) ──
-if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
-  await startTelegram(TELEGRAM_TOKEN, TELEGRAM_USER_ID, async (source, prompt, metadata) => {
-    await enqueue(source, prompt, metadata);
-    void drain();
-  });
-} else {
-  console.warn("[gateway] telegram disabled — set TELEGRAM_BOT_TOKEN and TELEGRAM_USER_ID env vars");
-}
-
-// ── Redis channel (self-healing — retries on failure, won't crash daemon) ──
-await startRedisChannel((async (source, prompt, metadata) => {
+const enqueueToGateway = async (source: string, prompt: string, metadata?: Record<string, unknown>) => {
   await enqueue(source, prompt, metadata);
   void drain();
-}));
+};
+
+// ── Redis channel (self-healing — retries on failure, won't crash daemon) ──
+await startRedisChannel(enqueueToGateway);
 
 const redisClient = getRedisClient();
 if (redisClient) {
@@ -331,6 +391,35 @@ if (redisClient) {
   await replayUnacked();
 } else {
   console.warn("[gateway:store] redis command client unavailable; durable replay skipped");
+}
+
+// ── Telegram channel ───────────────────────────────────
+if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
+  await startTelegram(TELEGRAM_TOKEN, TELEGRAM_USER_ID, enqueueToGateway, {
+    configureBot: async (bot) => {
+      await initializeTelegramCommandHandler({
+        bot,
+        enqueue: enqueueToGateway,
+        redis: redisClient,
+        chatId: TELEGRAM_USER_ID,
+        getStatusSnapshot: getGatewayStatusSnapshot,
+      });
+    },
+  });
+
+  try {
+    await updatePinnedStatus();
+  } catch (error) {
+    console.warn("[gateway] pinned status update failed after telegram startup; continuing", error);
+  }
+} else {
+  console.warn("[gateway] telegram disabled — set TELEGRAM_BOT_TOKEN and TELEGRAM_USER_ID env vars");
+  void emitGatewayOtel({
+    level: "warn",
+    component: "daemon",
+    action: "daemon.telegram.disabled",
+    success: false,
+  });
 }
 
 // ── Media outbound: satellite sessions push files, we deliver ──────
@@ -427,6 +516,16 @@ const watchdogTimer = setInterval(() => {
 
     if (isStuck) {
       console.error("[gateway:watchdog] session appears stuck — attempting abort");
+      void emitGatewayOtel({
+        level: "error",
+        component: "daemon.watchdog",
+        action: "watchdog.session_stuck",
+        success: false,
+        metadata: {
+          stuckForMs: stuckMs,
+          queueDepth: getQueueDepth(),
+        },
+      });
       session.abort().catch((e: any) =>
         console.error("[gateway:watchdog] abort failed", { error: e?.message })
       );
@@ -437,6 +536,18 @@ const watchdogTimer = setInterval(() => {
     if (isDead) {
       console.error("[gateway:watchdog] session appears dead — too many consecutive prompt failures", {
         consecutiveFailures: failures,
+      });
+      void emitGatewayOtel({
+        level: "fatal",
+        component: "daemon.watchdog",
+        action: "watchdog.session_dead",
+        success: false,
+        error: "session_recovery_restart",
+        metadata: {
+          consecutiveFailures: failures,
+          queueDepth: getQueueDepth(),
+          immediateTelegram: true,
+        },
       });
       // Self-restart: the launchd service will bring us back
       // Messages are persisted in Redis Stream, so they'll replay on restart
@@ -482,6 +593,17 @@ console.log("[gateway] daemon started", {
   wsPort: wsServer.port,
   wsPortFile: WS_PORT_FILE,
 });
+void emitGatewayOtel({
+  level: "info",
+  component: "daemon",
+  action: "daemon.started",
+  success: true,
+  metadata: {
+    pid: process.pid,
+    wsPort: wsServer.port,
+    telegramEnabled: Boolean(TELEGRAM_TOKEN && TELEGRAM_USER_ID),
+  },
+});
 
 let shuttingDown = false;
 
@@ -490,6 +612,13 @@ async function gracefulShutdown(signal: string): Promise<void> {
   shuttingDown = true;
 
   console.log("[gateway] shutting down", { signal });
+  void emitGatewayOtel({
+    level: "warn",
+    component: "daemon",
+    action: "daemon.shutdown.started",
+    success: true,
+    metadata: { signal },
+  });
 
   clearInterval(queueDrainTimer);
   clearInterval(watchdogTimer);
@@ -559,10 +688,25 @@ setInterval(() => {}, 30_000);
 
 process.on("uncaughtException", (error) => {
   console.error("[gateway] uncaught exception", { error: error.message, stack: error.stack });
+  void emitGatewayOtel({
+    level: "fatal",
+    component: "daemon",
+    action: "daemon.uncaught_exception",
+    success: false,
+    error: error.message,
+    metadata: { stack: error.stack, immediateTelegram: true },
+  });
   broadcastWs({ type: "error", message: error.message });
 });
 
 process.on("unhandledRejection", (reason) => {
   console.error("[gateway] unhandled rejection", { reason });
+  void emitGatewayOtel({
+    level: "error",
+    component: "daemon",
+    action: "daemon.unhandled_rejection",
+    success: false,
+    error: String(reason),
+  });
   broadcastWs({ type: "error", message: `Unhandled rejection: ${String(reason)}` });
 });

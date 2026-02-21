@@ -1,6 +1,6 @@
 ---
 type: adr
-status: proposed
+status: implemented
 date: 2026-02-21
 tags: [adr, observability, design-system, infrastructure, pipeline]
 deciders: [joel]
@@ -11,7 +11,7 @@ supersedes: ["0006-observability-prometheus-grafana", "0033-victoriametrics-graf
 
 ## Status
 
-proposed
+implemented
 
 ## Context
 
@@ -170,6 +170,20 @@ Full event explorer. Typesense-powered search across all otel_events. Faceted fi
 - **/syslog**: Replace manual slog entries with auto-collected otel_events filtered to infrastructure actions.
 - **/dashboard**: Add pipeline health widgets using design system components.
 
+### 4. Sentry Role (and "Sentry at Home" Decision)
+
+Sentry is adopted as a **secondary** signal for exception tracking, stack traces, and distributed tracing UX. It is **not** the system of record for joelclaw observability; Typesense + Convex + joelclaw.com remain canonical.
+
+For this system, **self-hosted Sentry is deferred** until there is an explicit hard requirement (air-gapped ops, policy requirement, or sustained traffic that justifies dedicated ops overhead). Current rationale:
+
+- Sentry self-hosted is positioned as low-volume / proof-of-concept deployment and requires meaningful host resources (minimum 4 CPU, 16 GB RAM + 16 GB swap, 20 GB disk).
+- Self-hosted releases are monthly CalVer snapshots, with regular upgrade pressure and expected downtime during upgrades.
+- Sentry self-hosted docs do not provide direct scaling guidance for custom Kubernetes topologies; maintenance burden shifts fully to us.
+
+Decision:
+- **Now**: instrument Sentry SDKs for web + worker/gateway paths where it accelerates diagnosis.
+- **Later (optional)**: deploy self-hosted Sentry only on a dedicated host profile and explicit ops runbook, not on the main single-node control-plane by default.
+
 ## Consequences
 
 ### Positive
@@ -192,29 +206,145 @@ Full event explorer. Typesense-powered search across all otel_events. Faceted fi
 
 ## Implementation Plan
 
-### Phase 1: Foundation (week 1)
-1. Define `OtelEvent` schema in shared types package
-2. Create `packages/ui/` with shadcn registry, seed with 3-4 core components (status-badge, metric-card, event-timeline, filter-chips)
-3. Create Typesense `otel_events` collection with auto-embedding
-4. Create `/api/otel` API route for querying events
-5. Add `joelclaw otel` CLI command (list, search, stats)
+### Phase 0: Contracts and Guardrails (day 1)
+1. Add canonical event contract in `packages/system-bus/src/observability/otel-event.ts` (new), including runtime validation.
+2. Add emitter helpers in `packages/system-bus/src/observability/emit.ts` (new) with severity mapping and source/component conventions.
+3. Add storage adapter in `packages/system-bus/src/observability/store.ts` (new) that dual-writes:
+   - Typesense collection `otel_events` (full retention window)
+   - Convex `contentResources` type `otel_event` (warn+ rolling window)
+4. Document env contract in `.env.example` / ops docs:
+   - `OTEL_EVENTS_ENABLED`
+   - `OTEL_EVENTS_CONVEX_WINDOW_HOURS`
+   - `SENTRY_DSN` (optional)
+   - `SENTRY_ENVIRONMENT`
+5. Rollout gate: no ingestion unless contract + adapter tests pass.
 
-### Phase 2: Instrumentation (week 1-2)
-6. Instrument worker: function start/complete/fail, webhook receipt/verify/emit
-7. Instrument gateway: drain cycles, message store ops, Telegram delivery
-8. Instrument memory pipeline: observe/reflect/triage/promote with event emission
-9. Instrument content-sync, friction, nightly-maintenance
+### Phase 1: Worker and Gateway Instrumentation (week 1)
+1. Worker:
+   - Add event emission at ingress/egress in `packages/system-bus/src/serve.ts`.
+   - Wrap critical functions in `packages/system-bus/src/inngest/functions/index.ts` registration path (start/success/fail envelopes).
+   - Add explicit instrumentation in high-impact functions:
+     - `packages/system-bus/src/inngest/functions/observe.ts`
+     - `packages/system-bus/src/inngest/functions/heartbeat.ts`
+     - `packages/system-bus/src/inngest/functions/check-system-health.ts`
+     - `packages/system-bus/src/inngest/functions/content-sync.ts`
+2. Gateway:
+   - Emit drain / queue / send outcomes from:
+     - `packages/gateway/src/channels/redis.ts`
+     - `packages/gateway/src/command-queue.ts`
+     - `packages/gateway/src/channels/telegram.ts`
+     - `packages/gateway/src/daemon.ts`
+3. Add backpressure + drop protections (sampling for debug-level chatter) in `packages/system-bus/src/observability/store.ts`.
+4. Rollout gate: event volume < configured threshold, no queue regressions on gateway.
 
-### Phase 3: Dashboard (week 2)
-10. Build /system page with health summary + event feed + pipeline stages
-11. Build /system/events explorer page
-12. Enhance existing pages with design system components
-13. Wire heartbeat check function to query otel_events for error rate
+### Phase 2: Query Surfaces (week 1)
+1. Web API:
+   - Add `apps/web/app/api/otel/route.ts` (new) for typed query/filter over `otel_events`.
+2. CLI:
+   - Add `packages/cli/src/commands/otel.ts` (new) with:
+     - `joelclaw otel list`
+     - `joelclaw otel search`
+     - `joelclaw otel stats`
+   - Register command in `packages/cli/src/cli.ts`.
+3. Add schema docs and examples under `apps/web/content/adrs/0087...` + runbook.
+4. Rollout gate: on-call triage possible from CLI alone (no direct DB access).
 
-### Phase 4: Agent Loop (week 2-3)
-14. Gateway extension subscribes to error/fatal Redis stream
-15. Agent auto-diagnosis: on error spike, query recent events, attempt fix, escalate if stuck
-16. Telegram escalation with structured alert format + action buttons
+### Phase 3: UI and Design System (week 2)
+1. Expand shared UI in `packages/ui/src/`:
+   - `status-badge.tsx` (new)
+   - `metric-card.tsx` (new)
+   - `event-timeline.tsx` (new)
+   - `filter-chips.tsx` (new)
+2. Add observability pages:
+   - `apps/web/app/system/page.tsx` (new)
+   - `apps/web/app/system/events/page.tsx` (new)
+3. Migrate existing pages to shared components:
+   - `apps/web/app/syslog/page.tsx`
+   - `apps/web/app/network/page.tsx`
+   - `apps/web/app/dashboard/page.tsx`
+4. Rollout gate: mobile render + auth checks + query latency SLOs met.
+
+### Phase 4: Agent Loop and Escalation (week 2-3)
+1. Add error-rate evaluator function in `packages/system-bus/src/inngest/functions/check-system-health.ts` (or dedicated `check-otel.ts` new function).
+2. Wire gateway notification path through:
+   - `packages/system-bus/src/inngest/middleware/gateway.ts`
+   - `packages/gateway/src/commands/telegram-handler.ts`
+3. Fatal-event fast path bypasses normal batching and posts immediate Telegram alert.
+4. Rollout gate: synthetic fatal event reaches Telegram within SLA.
+
+### Phase 5: Sentry Integration (optional, parallel)
+1. Web SDK integration:
+   - `apps/web/sentry.client.config.ts` (new)
+   - `apps/web/sentry.server.config.ts` (new)
+   - `apps/web/sentry.edge.config.ts` (new)
+   - `apps/web/next.config.js` Sentry plugin wiring
+2. Worker/gateway optional `@sentry/node` init in:
+   - `packages/system-bus/src/serve.ts`
+   - `packages/gateway/src/daemon.ts`
+3. Keep Sentry as secondary sink: do not replace Typesense/Convex ingestion paths.
+4. Self-hosted Sentry only after separate infra ADR addendum with host sizing, backup, upgrade, and rollback runbook.
+
+## Verification
+
+- [x] Typesense `otel_events` collection is auto-created on first write and accepts worker + gateway instrumentation events.
+- [x] `joelclaw otel list`, `joelclaw otel search`, and `joelclaw otel stats` are implemented and wired into the CLI.
+- [x] Warn/error/fatal events mirror to Convex `contentResources` as `otel_event` for real-time UI surfaces.
+- [x] Convex rolling window is enforced with `OTEL_EVENTS_CONVEX_WINDOW_HOURS` and opportunistic prune on high-severity writes.
+- [x] `/system` renders mobile-first health summary + event feed from the new `/api/otel` API.
+- [x] `/system/events` supports full-text search and facet filters for `source` and `level`.
+- [x] Heartbeat/system health now queries `otel_events` for recent error-rate escalation.
+- [x] Fatal path uses `immediateTelegram` signaling and bypasses normal batch digest delay in gateway Redis drain.
+- [x] `packages/ui` shared components (`status-badge`, `metric-card`, `event-timeline`, `filter-chips`) are consumed by `/system`, `/syslog`, `/network`, and `/dashboard`.
+- [x] No Grafana dependency was added.
+- [x] Canonical write path is centralized in `packages/system-bus/src/observability/{otel-event.ts,emit.ts,store.ts}`.
+- [x] Sentry remains optional + secondary (`SENTRY_DSN` / `SENTRY_ENVIRONMENT`), and no self-hosted Sentry infra was added.
+
+## Implementation Outcome (2026-02-21)
+
+### Completed
+- Implemented canonical observability contract and storage adapters under `packages/system-bus/src/observability/`.
+- Added worker ingest endpoint (`/observability/emit`) so gateway emissions go through the single worker write path.
+- Instrumented worker and gateway hot paths listed in this ADR with debug flood guardrails.
+- Added owner-authenticated web query API at `apps/web/app/api/otel/route.ts`.
+- Added CLI surface `joelclaw otel {list|search|stats}`.
+- Added `/system` and `/system/events` pages and reused shared UI components across existing pages.
+- Wired error-rate escalation in `check-system-health` with immediate fatal Telegram path.
+
+### Exact Paths Touched
+- `packages/system-bus/src/observability/otel-event.ts`
+- `packages/system-bus/src/observability/emit.ts`
+- `packages/system-bus/src/observability/store.ts`
+- `packages/system-bus/src/observability/otel-event.test.ts`
+- `packages/system-bus/src/observability/store.test.ts`
+- `packages/system-bus/src/lib/typesense.ts`
+- `packages/system-bus/src/serve.ts`
+- `packages/system-bus/src/inngest/functions/index.ts`
+- `packages/system-bus/src/inngest/functions/observe.ts`
+- `packages/system-bus/src/inngest/functions/heartbeat.ts`
+- `packages/system-bus/src/inngest/functions/check-system-health.ts`
+- `packages/system-bus/src/inngest/functions/content-sync.ts`
+- `packages/gateway/src/observability.ts`
+- `packages/gateway/src/channels/redis.ts`
+- `packages/gateway/src/command-queue.ts`
+- `packages/gateway/src/channels/telegram.ts`
+- `packages/gateway/src/daemon.ts`
+- `apps/web/app/api/otel/route.ts`
+- `packages/cli/src/commands/otel.ts`
+- `packages/cli/src/cli.ts`
+- `packages/ui/src/status-badge.tsx`
+- `packages/ui/src/metric-card.tsx`
+- `packages/ui/src/event-timeline.tsx`
+- `packages/ui/src/filter-chips.tsx`
+- `apps/web/app/system/page.tsx`
+- `apps/web/app/system/events/page.tsx`
+- `apps/web/app/syslog/page.tsx`
+- `apps/web/app/network/page.tsx`
+- `apps/web/app/dashboard/page.tsx`
+- `apps/web/components/site-header.tsx`
+- `apps/web/components/mobile-nav.tsx`
+- `apps/web/app/api/search/route.ts`
+- `apps/web/app/api/typesense/[collection]/route.ts`
+- `apps/web/app/api/typesense/[collection]/[id]/route.ts`
 
 ## References
 
@@ -226,6 +356,9 @@ Full event explorer. Typesense-powered search across all otel_events. Faceted fi
 - ADR-0075: Better Auth + Convex (owner-only auth for dashboards)
 - [shadcn registry docs](https://ui.shadcn.com/docs/registry)
 - [Vercel composition patterns skill](~/.agents/skills/vercel-composition-patterns/SKILL.md)
+- [Sentry self-hosted docs](https://develop.sentry.dev/self-hosted/)
+- [Sentry self-hosted releases/upgrades](https://develop.sentry.dev/self-hosted/releases/)
+- [Sentry Node OpenTelemetry support](https://docs.sentry.io/platforms/node/performance/instrumentation/opentelemetry)
 
 ## Notes
 
