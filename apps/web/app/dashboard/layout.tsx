@@ -18,7 +18,7 @@ export default async function DashboardLayout({
       <div className="flex items-center justify-between border-b border-neutral-800/60 pb-4">
         <div className="flex items-center gap-3">
           <div className="h-2 w-2 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50 animate-pulse" />
-          <h1 className="font-mono text-sm uppercase tracking-[0.15em] text-neutral-400">
+          <h1 className="font-pixel text-sm uppercase tracking-[0.12em] text-neutral-400">
             System Dashboard
           </h1>
         </div>

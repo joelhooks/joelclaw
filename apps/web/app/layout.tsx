@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
+import { GeistPixelSquare } from "geist/font/pixel";
 import { NuqsAdapter } from "nuqs/adapters/next";
 import { ConvexClientProvider } from "./ConvexClientProvider";
 import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, AUTHOR } from "../lib/constants";
@@ -81,7 +82,7 @@ export default function RootLayout({
         />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${dankMono.variable} font-sans bg-neutral-950 text-neutral-100 antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${dankMono.variable} ${GeistPixelSquare.variable} font-sans bg-neutral-950 text-neutral-100 antialiased`}
       >
         <div className="mx-auto max-w-2xl px-6 py-16">
           <SiteHeader />

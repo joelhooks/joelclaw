@@ -32,7 +32,7 @@ function SystemHealth() {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <h2 className="font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-600">
+        <h2 className="font-pixel text-[11px] uppercase tracking-[0.15em] text-neutral-600">
           Infrastructure
         </h2>
         <div className="h-px flex-1 bg-neutral-800/40" />
@@ -99,7 +99,7 @@ function NotificationFeed() {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <h2 className="font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-600">
+        <h2 className="font-pixel text-[11px] uppercase tracking-[0.15em] text-neutral-600">
           Activity
         </h2>
         {unreadCount != null && unreadCount > 0 && (
@@ -201,7 +201,7 @@ function Search() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <h2 className="font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-600">
+        <h2 className="font-pixel text-[11px] uppercase tracking-[0.15em] text-neutral-600">
           Search
         </h2>
         {searched && !searching && (
@@ -242,7 +242,7 @@ function Search() {
             >
               <div className="flex items-center gap-2">
                 <span
-                  className={`rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider ${
+                  className={`rounded px-1.5 py-0.5 font-pixel text-[9px] uppercase tracking-wider ${
                     collectionColors[hit.collection] ||
                     "text-neutral-400 bg-neutral-800/50"
                   }`}
@@ -282,22 +282,22 @@ function Search() {
 
 function StatsBar() {
   return (
-    <div className="flex items-center gap-6 border-b border-neutral-800/40 pb-4 font-mono text-[10px] text-neutral-600">
+    <div className="flex items-center gap-6 border-b border-neutral-800/40 pb-4 font-pixel text-[11px] text-neutral-600">
       <div className="flex items-center gap-1.5">
         <span className="text-neutral-500">collections</span>
-        <span className="text-neutral-400">6</span>
+        <span className="text-neutral-300">6</span>
       </div>
       <div className="flex items-center gap-1.5">
         <span className="text-neutral-500">documents</span>
-        <span className="text-neutral-400">2,692</span>
+        <span className="text-neutral-300">2,692</span>
       </div>
       <div className="flex items-center gap-1.5">
         <span className="text-neutral-500">functions</span>
-        <span className="text-neutral-400">66</span>
+        <span className="text-neutral-300">66</span>
       </div>
       <div className="flex items-center gap-1.5">
         <span className="text-neutral-500">backend</span>
-        <span className="text-claw/60">typesense</span>
+        <span className="text-claw/70">typesense</span>
       </div>
     </div>
   );

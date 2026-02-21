@@ -20,7 +20,7 @@ export default function SignInPage() {
         <div className="relative space-y-8 rounded-xl border border-neutral-800/60 bg-neutral-950/80 p-8 shadow-2xl shadow-claw/5 backdrop-blur-sm">
           {/* Header */}
           <div className="space-y-1">
-            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-600">
+            <p className="font-pixel text-[11px] uppercase tracking-[0.15em] text-neutral-600">
               authenticate
             </p>
             <h1 className="font-mono text-lg text-neutral-200">
@@ -48,7 +48,7 @@ export default function SignInPage() {
           </button>
 
           {/* Footer */}
-          <p className="text-center font-mono text-[10px] text-neutral-700">
+          <p className="text-center font-pixel text-[10px] text-neutral-700">
             restricted access
           </p>
         </div>
