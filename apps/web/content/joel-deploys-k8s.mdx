@@ -72,7 +72,7 @@ I looked at the homelab landscape before committing.
 
 **microk8s** runs in a Multipass VM on macOS (~4 GB RAM, comparable to Docker Desktop's own VM). It can do multi-node — remote microk8s instances join via `microk8s add-node`. But you're running a second VM alongside Docker Desktop, and Multipass has [documented disk I/O problems](https://github.com/canonical/multipass/issues/2440) on Apple Silicon — one user measured 16 MB/s writes on an M1 where you'd expect 100+.
 
-**Talos Linux** is an immutable OS that *is* the cluster. No SSH, no package manager, API-driven. It can run in a VM on macOS — people do it with QEMU — but its strengths are wasted inside a VM on a Mac. Talos shines on dedicated Linux hardware where the API-driven lifecycle actually matters.
+**Talos Linux** is an immutable OS that *is* the cluster. No SSH, no package manager, API-driven. It can run in a VM on macOS — people do it with QEMU — but its strengths are wasted inside a VM on a Mac. Talos shines on dedicated Linux hardware where the API-driven lifecycle matters.
 
 **Nomad** by HashiCorp is simpler than k8s and handles containers, VMs, and batch jobs. But HashiCorp relicensed everything to BSL in August 2023, and IBM acquired them for $6.4B in 2024. Unlike Terraform (which got OpenTofu) and Vault (which got OpenBao), nobody's forked Nomad — the community was always smaller. It's not that everyone's migrating away. It's that nobody's starting new projects on it.
 
