@@ -3,9 +3,10 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "convex/react";
-import { Terminal } from "lucide-react";
-import { EventTimeline, type TimelineEvent } from "@repo/ui/event-timeline";
-import { FilterChips } from "@repo/ui/filter-chips";
+import { EventStream, type StreamEvent } from "@repo/ui/event-stream";
+import { FilterBar } from "@repo/ui/filter-bar";
+import { PageHeader } from "@repo/ui/page-header";
+import { SearchBar } from "@repo/ui/search-bar";
 import { api } from "../../convex/_generated/api";
 import { authClient } from "../../lib/auth-client";
 
@@ -51,7 +52,7 @@ export default function SyslogPage() {
     [allEntries]
   );
 
-  const timelineEvents: TimelineEvent[] = entries.map((entry) => ({
+  const streamEvents: StreamEvent[] = entries.map((entry) => ({
     id: entry.resourceId,
     timestamp: entry.timestamp,
     level: entry.action === "remove" ? "warn" : entry.action === "fix" ? "error" : "info",
@@ -74,23 +75,18 @@ export default function SyslogPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-5 px-4 py-6">
-      <div className="flex items-center gap-3">
-        <Terminal className="h-6 w-6 text-blue-400" />
-        <h1 className="font-mono text-xl font-bold text-neutral-100">System Log</h1>
-        <span className="font-mono text-xs text-neutral-500">{entries.length} entries</span>
-      </div>
+    <div className="mx-auto max-w-[1800px] space-y-5">
+      <PageHeader title="System Log" count={entries.length} />
 
-      <input
-        type="text"
+      <SearchBar
         value={query}
-        onChange={(event) => setQuery(event.target.value)}
+        onChange={setQuery}
         placeholder="search syslog..."
-        className="w-full rounded-lg border border-neutral-700/50 bg-neutral-950 px-4 py-3 font-mono text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-700"
       />
 
       {toolOptions.length > 0 ? (
-        <FilterChips
+        <FilterBar
+          label="tool"
           options={toolOptions}
           selected={toolFilter}
           onSelect={(value) => setToolFilter(value)}
@@ -104,7 +100,7 @@ export default function SyslogPage() {
           ))}
         </div>
       ) : (
-        <EventTimeline events={timelineEvents} emptyLabel="no syslog entries found" />
+        <EventStream events={streamEvents} emptyLabel="no syslog entries found" maxHeight="70vh" />
       )}
     </div>
   );

@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useQuery } from "convex/react";
-import { EventTimeline, type TimelineEvent } from "@repo/ui/event-timeline";
-import { FilterChips } from "@repo/ui/filter-chips";
+import { EventStream, type StreamEvent } from "@repo/ui/event-stream";
+import { FilterBar } from "@repo/ui/filter-bar";
+import { DataGrid } from "@repo/ui/data-grid";
 import { MetricCard } from "@repo/ui/metric-card";
 import { StatusBadge } from "@repo/ui/status-badge";
-import { api } from "../../convex/_generated/api";
+import { PageHeader } from "@repo/ui/page-header";
+import { RefreshButton } from "@repo/ui/refresh-button";
 import { authClient } from "../../lib/auth-client";
 
 type OtelStats = {
@@ -52,7 +53,6 @@ function parseMetadata(value: string | undefined): Record<string, unknown> | und
 export default function SystemPage() {
   const router = useRouter();
   const { data: session, isPending } = authClient.useSession();
-  const isOwner = useQuery(api.auth.isOwner);
 
   const [stats, setStats] = useState<OtelStats | null>(null);
   const [events, setEvents] = useState<OtelHit[]>([]);
@@ -86,7 +86,7 @@ export default function SystemPage() {
     return () => clearInterval(interval);
   }, [load]);
 
-  const timeline = useMemo<TimelineEvent[]>(
+  const streamEvents = useMemo<StreamEvent[]>(
     () =>
       events.map((event) => ({
         id: event.id,
@@ -104,31 +104,28 @@ export default function SystemPage() {
   const recentHealth = stats?.recent15m.errorRate ?? 0;
   const healthKind = recentHealth >= 0.3 ? "down" : recentHealth >= 0.15 ? "degraded" : "healthy";
 
-  if (isPending || isOwner === undefined) {
+  if (isPending) {
     return (
       <div className="flex h-64 items-center justify-center">
         <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-neutral-700 border-t-claw" />
       </div>
     );
   }
-  if (!session?.user || !isOwner) {
+  if (!session?.user) {
     router.replace("/");
     return null;
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-4 py-6">
-      <header className="space-y-2">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-neutral-100">System Observability</h1>
-          <StatusBadge status={healthKind} label={healthKind} pulse={healthKind === "healthy"} />
-        </div>
-        <p className="font-mono text-xs text-neutral-500">
-          Canonical event stream from <code>otel_events</code> (Typesense) with warn/error/fatal mirror in Convex.
-        </p>
-      </header>
+    <div className="mx-auto max-w-[1800px] space-y-6">
+      <PageHeader
+        title="System Observability"
+        subtitle="Canonical event stream from otel_events (Typesense) with warn/error/fatal mirror in Convex."
+        badge={<StatusBadge status={healthKind} label={healthKind} pulse={healthKind === "healthy"} />}
+        actions={<RefreshButton onClick={() => void load()} loading={loading} />}
+      />
 
-      <section className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <DataGrid columns="metrics">
         <MetricCard label="24h events" value={stats?.total ?? 0} detail={loading ? "refreshing" : "hot path"} />
         <MetricCard label="24h errors" value={stats?.errors ?? 0} />
         <MetricCard
@@ -141,23 +138,12 @@ export default function SystemPage() {
           value={`${Math.round((stats?.recent15m.errorRate ?? 0) * 100)}%`}
           trend={recentHealth >= 0.15 ? "up" : "flat"}
         />
-      </section>
+      </DataGrid>
 
       <section className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="font-pixel text-[11px] uppercase tracking-[0.14em] text-neutral-400">Recent Events</h2>
-          <button
-            type="button"
-            onClick={() => void load()}
-            className="rounded border border-neutral-700/50 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-neutral-300 hover:border-neutral-600"
-          >
-            refresh
-          </button>
-        </div>
-        <FilterChips options={LEVEL_OPTIONS} selected={level} onSelect={setLevel} allLabel="all high-severity" />
-        <EventTimeline events={timeline} emptyLabel={loading ? "loading events..." : "no events in window"} />
+        <FilterBar label="severity" options={LEVEL_OPTIONS} selected={level} onSelect={setLevel} allLabel="all high-severity" />
+        <EventStream events={streamEvents} emptyLabel={loading ? "loading events..." : "no events in window"} maxHeight="70vh" />
       </section>
     </div>
   );
 }
-

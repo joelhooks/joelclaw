@@ -60,7 +60,7 @@ export default async function PostPage({ params }: Props) {
   ]);
 
   return (
-    <article data-pagefind-body data-pagefind-meta={`type:${meta.type}`}>
+    <article className="mx-auto max-w-2xl" data-pagefind-body data-pagefind-meta={`type:${meta.type}`}>
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(postJsonLd) }}

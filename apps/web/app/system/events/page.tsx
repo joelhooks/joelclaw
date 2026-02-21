@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useQuery } from "convex/react";
-import { EventTimeline, type TimelineEvent } from "@repo/ui/event-timeline";
-import { FilterChips } from "@repo/ui/filter-chips";
-import { api } from "../../../convex/_generated/api";
+import { EventStream, type StreamEvent } from "@repo/ui/event-stream";
+import { FilterBar } from "@repo/ui/filter-bar";
+import { PageHeader } from "@repo/ui/page-header";
+import { SearchBar } from "@repo/ui/search-bar";
 import { authClient } from "../../../lib/auth-client";
 
 type OtelHit = {
@@ -45,7 +45,6 @@ function parseMetadata(value: string | undefined): Record<string, unknown> | und
 export default function SystemEventsPage() {
   const router = useRouter();
   const { data: session, isPending } = authClient.useSession();
-  const isOwner = useQuery(api.auth.isOwner);
 
   const [query, setQuery] = useState("");
   const [level, setLevel] = useState<string | undefined>();
@@ -97,7 +96,7 @@ export default function SystemEventsPage() {
       }));
   }, [facets]);
 
-  const timeline = useMemo<TimelineEvent[]>(
+  const streamEvents = useMemo<StreamEvent[]>(
     () =>
       events.map((event) => ({
         id: event.id,
@@ -112,49 +111,40 @@ export default function SystemEventsPage() {
     [events]
   );
 
-  if (isPending || isOwner === undefined) {
+  if (isPending) {
     return (
       <div className="flex h-64 items-center justify-center">
         <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-neutral-700 border-t-claw" />
       </div>
     );
   }
-  if (!session?.user || !isOwner) {
+  if (!session?.user) {
     router.replace("/");
     return null;
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5 px-4 py-6">
-      <header className="space-y-1">
-        <h1 className="text-xl font-semibold text-neutral-100">Otel Event Explorer</h1>
-        <p className="font-mono text-xs text-neutral-500">
-          Full-text search over <code>otel_events</code> with source and level filters.
-        </p>
-      </header>
-
-      <input
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder="search action, error, component, metadata..."
-        className="w-full rounded-lg border border-neutral-700/50 bg-neutral-950 px-4 py-3 font-mono text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-700"
+    <div className="mx-auto max-w-[1800px] space-y-5">
+      <PageHeader
+        title="Event Explorer"
+        subtitle="Full-text search over otel_events with source and level filters."
       />
 
-      <div className="space-y-2">
-        <p className="font-pixel text-[11px] uppercase tracking-[0.14em] text-neutral-500">level</p>
-        <FilterChips options={LEVEL_OPTIONS} selected={level} onSelect={setLevel} />
-      </div>
+      <SearchBar
+        value={query}
+        onChange={setQuery}
+        placeholder="search action, error, component, metadata..."
+        loading={loading}
+      />
 
-      <div className="space-y-2">
-        <p className="font-pixel text-[11px] uppercase tracking-[0.14em] text-neutral-500">source</p>
-        <FilterChips options={sourceOptions} selected={source} onSelect={setSource} />
-      </div>
+      <FilterBar label="level" options={LEVEL_OPTIONS} selected={level} onSelect={setLevel} />
+      <FilterBar label="source" options={sourceOptions} selected={source} onSelect={setSource} />
 
-      <EventTimeline
-        events={timeline}
+      <EventStream
+        events={streamEvents}
         emptyLabel={loading ? "loading events..." : "no events match current filters"}
+        maxHeight="70vh"
       />
     </div>
   );
 }
-

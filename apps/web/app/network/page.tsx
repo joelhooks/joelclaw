@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { ConvexHttpClient } from "convex/browser";
 import { MetricCard } from "@repo/ui/metric-card";
+import { DataGrid } from "@repo/ui/data-grid";
 import { StatusBadge, normalizeStatusKind } from "@repo/ui/status-badge";
 import { api } from "../../convex/_generated/api";
 import { SITE_NAME } from "../../lib/constants";
@@ -75,7 +76,7 @@ export default async function NetworkPage() {
     .map((doc) => doc.fields as unknown as NetworkNode)
     .sort((a, b) => nodeOrder.indexOf(a.publicName) - nodeOrder.indexOf(b.publicName));
 
-  const podOrder = ["inngest-0", "redis-0", "typesense-0", "qdrant-0", "bluesky-pds", "livekit-server"];
+  const podOrder = ["inngest-0", "redis-0", "typesense-0", "bluesky-pds", "livekit-server"];
   const k8sPods = podDocs
     .map((doc) => doc.fields as unknown as NetworkPod)
     .sort((a, b) => podOrder.indexOf(a.name) - podOrder.indexOf(b.name));
@@ -107,7 +108,7 @@ export default async function NetworkPage() {
     .map((layer) => `Layer ${layer.layer}: ${layer.label.padEnd(13)} — ${layer.description}`);
 
   return (
-    <div className="space-y-12">
+    <div className="mx-auto max-w-[1800px] space-y-12">
       <header>
         <h1 className="text-2xl font-bold tracking-tight">Network</h1>
         <p className="mt-2 text-sm text-neutral-400 leading-relaxed">
@@ -120,11 +121,11 @@ export default async function NetworkPage() {
 
       <section className="space-y-3">
         <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">Cluster</h2>
-        <div className="grid gap-2 sm:grid-cols-2">
+        <DataGrid columns={{ sm: 1, md: 2, lg: 2, xl: 4 }}>
           {clusterOverview.map((item) => (
             <MetricCard key={item.label} label={item.label} value={item.value} />
           ))}
-        </div>
+        </DataGrid>
       </section>
 
       <section className="space-y-3">

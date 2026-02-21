@@ -7,6 +7,9 @@ import { useRouter } from "next/navigation";
 import { useState, useCallback } from "react";
 import { MetricCard } from "@repo/ui/metric-card";
 import { StatusBadge } from "@repo/ui/status-badge";
+import { PageHeader } from "@repo/ui/page-header";
+import { SearchBar } from "@repo/ui/search-bar";
+import { DataGrid } from "@repo/ui/data-grid";
 
 // ── System Health Panel ─────────────────────────────────────────
 
@@ -35,14 +38,14 @@ function SystemHealth() {
       </div>
 
       {!statusResources ? (
-        <div className="grid grid-cols-2 gap-2">
+        <DataGrid columns={{ sm: 2, md: 2, lg: 2, xl: 2 }}>
           {[...Array(6)].map((_, i) => (
             <div
               key={i}
               className="h-12 animate-pulse rounded-lg border border-neutral-700/40 bg-neutral-900/30"
             />
           ))}
-        </div>
+        </DataGrid>
       ) : status.length === 0 ? (
         <div className="rounded-lg border border-dashed border-neutral-800/60 p-6 text-center">
           <p className="font-mono text-xs text-neutral-600">
@@ -53,7 +56,7 @@ function SystemHealth() {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-2">
+        <DataGrid columns={{ sm: 2, md: 2, lg: 2, xl: 2 }}>
           {status.map((s) => (
             <div
               key={s.resourceId}
@@ -72,7 +75,7 @@ function SystemHealth() {
               </div>
             </div>
           ))}
-        </div>
+        </DataGrid>
       )}
     </div>
   );
@@ -222,25 +225,13 @@ function Search() {
         <div className="h-px flex-1 bg-neutral-700/40" />
       </div>
 
-      {/* Search input */}
-      <div className="relative">
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-          placeholder="vault, memory, blog, system log..."
-          className="w-full rounded-lg border border-neutral-800/60 bg-neutral-950 px-4 py-3 pl-8 font-mono text-base text-neutral-200 placeholder:text-neutral-700 transition-colors focus:border-neutral-700 focus:outline-none focus:ring-1 focus:ring-neutral-800"
-        />
-        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-mono text-xs text-neutral-700">
-          /
-        </span>
-        {searching && (
-          <span className="absolute right-3 top-1/2 -translate-y-1/2">
-            <span className="inline-block h-3 w-3 animate-spin rounded-full border border-neutral-700 border-t-claw" />
-          </span>
-        )}
-      </div>
+      <SearchBar
+        value={query}
+        onChange={setQuery}
+        onSubmit={handleSearch}
+        placeholder="vault, memory, blog, system log..."
+        loading={searching}
+      />
 
       {/* Results */}
       {results.length > 0 && (
@@ -292,12 +283,12 @@ function Search() {
 
 function StatsBar() {
   return (
-    <div className="grid gap-2 border-b border-neutral-700/40 pb-4 sm:grid-cols-2 lg:grid-cols-4">
+    <DataGrid columns="metrics" className="border-b border-neutral-700/40 pb-4">
       <MetricCard label="collections" value="6" />
       <MetricCard label="documents" value="2,692" />
       <MetricCard label="functions" value="66" />
       <MetricCard label="backend" value="typesense" />
-    </div>
+    </DataGrid>
   );
 }
 
@@ -322,13 +313,14 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-[1800px] space-y-6">
+      <PageHeader title="Dashboard" />
       <StatsBar />
       <Search />
-      <div className="grid gap-6 md:grid-cols-2">
+      <DataGrid columns="panels" gap="gap-6">
         <SystemHealth />
         <NotificationFeed />
-      </div>
+      </DataGrid>
     </div>
   );
 }
