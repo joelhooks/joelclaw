@@ -105,6 +105,10 @@ export class ModelFallbackController {
   onPromptDispatched(): void {
     this._promptDispatchedAt = Date.now();
     this._firstTokenAt = 0;
+    console.log("[gateway:fallback] prompt dispatched, starting timeout watch", {
+      timeoutMs: this.config.fallbackTimeoutMs,
+      fallback: `${this.config.fallbackProvider}/${this.config.fallbackModel}`,
+    });
     this._startTimeoutWatch();
   }
 
@@ -139,6 +143,11 @@ export class ModelFallbackController {
     this._clearTimeoutWatch();
 
     this._timeoutTimer = setTimeout(() => {
+      console.log("[gateway:fallback] timeout timer fired", {
+        firstTokenAt: this._firstTokenAt,
+        active: this._active,
+        elapsed: Date.now() - this._promptDispatchedAt,
+      });
       if (this._firstTokenAt > 0) return; // tokens arrived, we're fine
       if (this._active) return; // already on fallback
 
@@ -148,10 +157,8 @@ export class ModelFallbackController {
       });
       void this._activateFallback(`no streaming tokens after ${Math.round(this.config.fallbackTimeoutMs / 1000)}s`);
     }, this.config.fallbackTimeoutMs);
-
-    if (this._timeoutTimer && typeof this._timeoutTimer === "object" && "unref" in this._timeoutTimer) {
-      (this._timeoutTimer as NodeJS.Timeout).unref();
-    }
+    // NOTE: Do NOT unref() — this timer is critical for fallback detection.
+    // unref() in Bun may suppress the callback entirely.
   }
 
   private _clearTimeoutWatch(): void {
