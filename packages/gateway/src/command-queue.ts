@@ -15,11 +15,13 @@ type PromptSession = {
 
 type PromptCallback = () => void;
 type IdleWaiter = () => Promise<void>;
+type ErrorCallback = (consecutiveFailures: number) => void | Promise<void> | Promise<boolean>;
 
 const queue: QueueEntry[] = [];
 let sessionRef: PromptSession | undefined;
 let drainPromise: Promise<void> | undefined;
 let onPromptSent: PromptCallback | undefined;
+let onPromptError: ErrorCallback | undefined;
 let idleWaiter: IdleWaiter | undefined;
 let consecutiveFailures = 0;
 
@@ -32,6 +34,11 @@ export function setSession(session: PromptSession): void {
 /** Register a callback fired each time a prompt is dispatched to the session. */
 export function onPrompt(cb: PromptCallback): void {
   onPromptSent = cb;
+}
+
+/** Register a callback fired when a prompt fails. Receives the consecutive failure count. */
+export function onError(cb: ErrorCallback): void {
+  onPromptError = cb;
 }
 
 /**
@@ -175,6 +182,8 @@ export async function drain(): Promise<void> {
           consecutiveFailures,
           error,
         });
+        // Notify fallback controller (may trigger model swap)
+        try { await onPromptError?.(consecutiveFailures); } catch { /* swallow */ }
         void emitGatewayOtel({
           level: consecutiveFailures >= 3 ? "fatal" : "error",
           component: "command-queue",

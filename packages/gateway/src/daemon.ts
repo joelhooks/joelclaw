@@ -12,16 +12,18 @@ import {
   setSession,
   setIdleWaiter,
   onPrompt,
+  onError as onQueueError,
   replayUnacked,
   getConsecutiveFailures,
 } from "./command-queue";
 import { start as startRedisChannel, shutdown as shutdownRedisChannel, isHealthy as isRedisHealthy, getRedisClient } from "./channels/redis";
 import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, sendMedia as sendTelegramMedia, parseChatId } from "./channels/telegram";
-import { defaultGatewayConfig, loadGatewayConfig } from "./commands/config";
+import { defaultGatewayConfig, loadGatewayConfig, providerForModel } from "./commands/config";
 import { getActiveMcqAdapter, type McqParams } from "./commands/mcq-adapter";
 import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands/telegram-handler";
 import { TRIPWIRE_PATH, startHeartbeatRunner } from "./heartbeat";
 import { init as initMessageStore, trimOld } from "./message-store";
+import { ModelFallbackController } from "./model-fallback";
 import { emitGatewayOtel } from "./observability";
 import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
 import { registerChannel, routeResponse } from "./outbound/router";
@@ -325,10 +327,22 @@ setSession({
   prompt: (text: string) => session.prompt(text),
 });
 
+// ── Model fallback controller (ADR-0091) ───────────────
+const primaryProvider = providerForModel(startupGatewayConfig.model);
+const fallbackController = new ModelFallbackController(
+  startupGatewayConfig,
+  primaryProvider,
+  startupGatewayConfig.model,
+);
+
 // Track prompt dispatch timing for stuck-session detection
 let _lastTurnEndAt = Date.now();
 let _lastPromptAt = 0;
-onPrompt(() => { _lastPromptAt = Date.now(); });
+onPrompt(() => {
+  _lastPromptAt = Date.now();
+  fallbackController.onPromptDispatched();
+});
+onQueueError((failures) => fallbackController.onPromptError(failures));
 
 // ── Idle waiter: gate drain loop on turn_end ───────────
 // session.prompt() resolves when the message is queued, not when the
@@ -426,6 +440,7 @@ let responseChunks: string[] = [];
 const wsClients = new Set<Bun.ServerWebSocket<unknown>>();
 
 function getStatusPayload(): Record<string, unknown> {
+  const fb = fallbackController.state;
   return {
     sessionId: session.sessionId,
     isStreaming: responseChunks.length > 0,
@@ -441,6 +456,12 @@ function getStatusPayload(): Record<string, unknown> {
       },
     },
     queueDepth: getQueueDepth(),
+    fallback: fb.active ? {
+      active: true,
+      model: `${fb.fallbackProvider}/${fb.fallbackModel}`,
+      since: new Date(fb.activeSince).toISOString(),
+      activationCount: fb.activationCount,
+    } : { active: false },
   };
 }
 
@@ -561,6 +582,7 @@ session.subscribe((event: any) => {
       : "";
     if (!delta) return;
     responseChunks.push(delta);
+    fallbackController.onFirstToken();
     broadcastWs({ type: "text_delta", delta });
   }
 
@@ -604,6 +626,7 @@ session.subscribe((event: any) => {
 
   if (event.type === "turn_end") {
     _lastTurnEndAt = Date.now();
+    fallbackController.onTurnEnd();
     broadcastWs({ type: "turn_end" });
     // Release the idle waiter so the drain loop can process the next entry
     if (_idleResolve) {
@@ -659,6 +682,18 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
     success: false,
   });
 }
+
+// ── Init fallback controller (ADR-0091) ──────────────────
+// Must happen after Telegram starts so notify can send alerts.
+fallbackController.init(
+  { setModel: (m: unknown) => session.setModel(m), get model() { return session.model; } },
+  (text: string) => {
+    console.log("[gateway:fallback]", text);
+    if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
+      sendTelegram(TELEGRAM_USER_ID, text, { silent: false }).catch(() => {});
+    }
+  },
+);
 
 if (redisClient) {
   // Replay after channels initialize so telegram-originated turns can use command/callback adapters.
@@ -889,6 +924,10 @@ async function gracefulShutdown(signal: string): Promise<void> {
   } catch (error) {
     console.error("[gateway] redis shutdown failed", { error });
   }
+
+  try {
+    fallbackController.dispose();
+  } catch { /* swallow */ }
 
   try {
     session.dispose();
