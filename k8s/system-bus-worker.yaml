@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: system-bus-worker
+  namespace: joelclaw
+  labels:
+    app: system-bus-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: system-bus-worker
+  template:
+    metadata:
+      labels:
+        app: system-bus-worker
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: system-bus-worker
+          image: ghcr.io/joelhooks/system-bus-worker:20260221-113138
+          imagePullPolicy: Always
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          envFrom:
+            - secretRef:
+                name: system-bus-env
+          env:
+            - name: INNGEST_DEV
+              value: "0"
+            - name: WORKER_ROLE
+              value: "cluster"
+            - name: INNGEST_APP_ID
+              value: "system-bus-cluster"
+            # In connect mode from k8s, do not advertise host.docker.internal.
+            - name: INNGEST_SERVE_HOST
+              value: ""
+          ports:
+            - containerPort: 3111
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: system-bus-worker
+  namespace: joelclaw
+  labels:
+    app: system-bus-worker
+spec:
+  type: ClusterIP
+  selector:
+    app: system-bus-worker
+  ports:
+    - name: http
+      port: 3111
+      targetPort: 3111

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.joel.k8s-reboot-heal</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/joel/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>180</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/joel/.local/log/k8s-reboot-heal.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/joel/.local/log/k8s-reboot-heal.err</string>
+</dict>
+</plist>

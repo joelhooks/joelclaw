@@ -1,0 +1,86 @@
+replicaCount: 1
+
+image:
+  repository: livekit/livekit-server
+  pullPolicy: IfNotPresent
+
+terminationGracePeriodSeconds: 18000
+
+livekit:
+  keys:
+    joelclaw_da7b9907: YLhImqs19jXyQDY5vYQWzWzGxywYVmwf99JyUk21
+  log_level: info
+  port: 7880
+  redis:
+    address: redis.joelclaw.svc.cluster.local:6379
+  rtc:
+    tcp_port: 7881
+    port_range_start: 50000
+    port_range_end: 50100
+    use_external_ip: false
+  turn:
+    enabled: false
+    loadBalancerAnnotations: {}
+
+storeKeysInSecret:
+  enabled: false
+  existingSecret: ""
+  keys: {}
+
+loadBalancer:
+  type: disable
+  servicePort: 80
+  annotations: {}
+
+turnLoadbalancer:
+  enable: false
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 60
+
+nodeSelector: {}
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 1024Mi
+  requests:
+    cpu: 200m
+    memory: 256Mi
+
+serviceAccount:
+  create: false
+  annotations: {}
+  name: ""
+
+podHostNetwork: true
+
+podAnnotations:
+  sidecar.istio.io/inject: "false"
+  linkerd.io/inject: disabled
+
+podSecurityContext: {}
+securityContext: {}
+
+tolerations: []
+affinity: {}
+
+deploymentStrategy:
+  type: Recreate
+
+deploymentAnnotations: {}
+
+gcp:
+  backendConfig:
+    timeoutSec: 36000
+    connectionDraining:
+      drainingTimeoutSec: 60
+
+serviceMonitor:
+  create: false
+  annotations: {}
+  name: ""
+  interval: 30s

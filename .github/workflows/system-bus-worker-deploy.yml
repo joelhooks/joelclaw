@@ -1,0 +1,85 @@
+name: System Bus Worker Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/system-bus/**"
+      - "k8s/system-bus-worker.yaml"
+      - "k8s/publish-system-bus-worker.sh"
+      - ".github/workflows/system-bus-worker-deploy.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: system-bus-worker-deploy
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: system-bus-worker
+  NAMESPACE: joelclaw
+  DEPLOYMENT: system-bus-worker
+
+jobs:
+  build-and-push:
+    name: Build and Push GHCR Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set image metadata
+        id: meta
+        run: |
+          echo "image=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/system-bus/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image_tag }}
+            ${{ steps.meta.outputs.image }}:latest
+
+  deploy:
+    name: Deploy to Local K8s (self-hosted)
+    runs-on: self-hosted
+    needs: build-and-push
+    permissions:
+      contents: read
+    steps:
+      - name: Set image env
+        run: echo "IMAGE=${{ needs.build-and-push.outputs.image_tag }}" >> "$GITHUB_ENV"
+
+      - name: Verify cluster access
+        run: kubectl cluster-info
+
+      - name: Update deployment image
+        run: |
+          kubectl -n "$NAMESPACE" set image deployment/"$DEPLOYMENT" "$DEPLOYMENT"="$IMAGE"
+          kubectl -n "$NAMESPACE" rollout status deployment/"$DEPLOYMENT" --timeout=240s
+
+      - name: Verify worker health endpoint from pod
+        run: |
+          POD="$(kubectl -n "$NAMESPACE" get pods -l app=$DEPLOYMENT --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')"
+          kubectl -n "$NAMESPACE" exec "$POD" -- bun -e 'const r=await fetch("http://127.0.0.1:3111/"); if (r.status !== 200) { process.exit(1) }; const j=await r.json(); console.log(JSON.stringify({status:r.status,count:j.count,worker:j.worker},null,2)); if (!j.worker || j.worker.hasDuplicateFunctionIds) process.exit(1);'
