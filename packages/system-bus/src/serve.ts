@@ -58,6 +58,9 @@ import {
   vipEmailReceived,
   checkCalendar,
   checkLoops,
+  typesenseVaultSync,
+  typesenseBlogSync,
+  typesenseFullSync,
 } from "./inngest/functions";
 import { dailyDigest } from "./inngest/functions/daily-digest";
 
@@ -121,6 +124,9 @@ const registeredFunctions = [
   checkCalendar,
   checkLoops,
   dailyDigest,
+  typesenseVaultSync,
+  typesenseBlogSync,
+  typesenseFullSync,
 ];
 
 // Derive function names from the actual array — no stale hardcoded list

@@ -60,3 +60,8 @@ export {
   agentLoopComplete,
   agentLoopRetro,
 } from "./agent-loop";
+export {
+  typesenseVaultSync,
+  typesenseBlogSync,
+  typesenseFullSync,
+} from "./typesense-sync";

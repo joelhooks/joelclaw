@@ -1,0 +1,222 @@
+/**
+ * Typesense index sync — keeps collections fresh after content changes.
+ * ADR-0082: Typesense as unified search layer.
+ *
+ * Triggers:
+ * - content/updated, discovery/captured, system/adr.sync.requested → re-index vault notes
+ * - vercel/deploy.succeeded → re-index blog posts
+ * - cron daily 3am → full re-index of vault + slog
+ *
+ * Uses auto-embedding (ts/all-MiniLM-L12-v2) — no external API calls.
+ */
+
+import { inngest } from "../client";
+import * as typesense from "../../lib/typesense";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, extname, basename, relative } from "node:path";
+
+const VAULT_PATH = process.env.VAULT_PATH || join(process.env.HOME || "/Users/joel", "Vault");
+const BLOG_PATH = join(process.env.HOME || "/Users/joel", "Code/joelhooks/joelclaw/apps/web/content");
+const SLOG_PATH = join(VAULT_PATH, "system/system-log.jsonl");
+
+// ── Vault indexing ──────────────────────────────────────────────────
+
+function parseMarkdownFrontmatter(content: string): { frontmatter: Record<string, string>; body: string } {
+  const fm: Record<string, string> = {};
+  if (!content.startsWith("---")) return { frontmatter: fm, body: content };
+  const end = content.indexOf("\n---", 3);
+  if (end === -1) return { frontmatter: fm, body: content };
+
+  const fmBlock = content.slice(4, end);
+  for (const line of fmBlock.split("\n")) {
+    const match = line.match(/^(\w[\w-]*):\s*(.+)/);
+    if (match && match[1] && match[2]) fm[match[1]] = match[2].replace(/^["']|["']$/g, "").trim();
+  }
+  return { frontmatter: fm, body: content.slice(end + 4).trim() };
+}
+
+function classifyNote(path: string, fm: Record<string, string>): string {
+  if (path.includes("docs/decisions/")) return "adr";
+  if (path.includes("Resources/discoveries/")) return "discovery";
+  if (path.includes("Resources/tools/")) return "tool";
+  if (path.includes("Projects/")) return "project";
+  if (path.includes("system/log/")) return "log-entry";
+  return fm.type || "note";
+}
+
+function walkDir(dir: string, ext: string): string[] {
+  const results: string[] = [];
+  try {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory() && !entry.name.startsWith(".")) {
+        results.push(...walkDir(full, ext));
+      } else if (entry.isFile() && extname(entry.name) === ext) {
+        results.push(full);
+      }
+    }
+  } catch {}
+  return results;
+}
+
+async function indexVaultNotes(): Promise<{ count: number; errors: number }> {
+  const files = walkDir(VAULT_PATH, ".md");
+  const docs: Record<string, unknown>[] = [];
+
+  for (const file of files) {
+    try {
+      const raw = readFileSync(file, "utf-8");
+      const { frontmatter, body } = parseMarkdownFrontmatter(raw);
+      const relPath = relative(VAULT_PATH, file);
+      const title = frontmatter.title || basename(file, ".md");
+      const type = classifyNote(relPath, frontmatter);
+      const tags = (frontmatter.tags || "").split(",").map((t: string) => t.trim()).filter(Boolean);
+      const stat = statSync(file);
+
+      docs.push({
+        id: relPath,
+        title,
+        content: body.slice(0, 32000),
+        path: relPath,
+        type,
+        tags,
+        updated_at: Math.floor(stat.mtimeMs / 1000),
+      });
+    } catch {}
+  }
+
+  if (docs.length === 0) return { count: 0, errors: 0 };
+
+  // Batch in chunks of 100
+  let totalSuccess = 0;
+  let totalErrors = 0;
+  for (let i = 0; i < docs.length; i += 100) {
+    const batch = docs.slice(i, i + 100);
+    const result = await typesense.bulkImport("vault_notes", batch);
+    totalSuccess += result.success;
+    totalErrors += result.errors;
+  }
+
+  return { count: totalSuccess, errors: totalErrors };
+}
+
+// ── Blog indexing ───────────────────────────────────────────────────
+
+async function indexBlogPosts(): Promise<{ success: number; errors: number }> {
+  const files = walkDir(BLOG_PATH, ".mdx").filter(
+    (f) => !f.includes("/adrs/") && !f.includes("/discoveries/")
+  );
+  const docs: Record<string, unknown>[] = [];
+
+  for (const file of files) {
+    try {
+      const raw = readFileSync(file, "utf-8");
+      const { frontmatter, body } = parseMarkdownFrontmatter(raw);
+      const slug = basename(file, ".mdx");
+
+      docs.push({
+        id: slug,
+        title: frontmatter.title || slug,
+        slug,
+        content: body.slice(0, 32000),
+        summary: frontmatter.summary || frontmatter.description || "",
+        tags: (frontmatter.tags || "").split(",").map((t: string) => t.trim()).filter(Boolean),
+        ...(frontmatter.date ? { published_at: Math.floor(new Date(frontmatter.date).getTime() / 1000) } : {}),
+      });
+    } catch {}
+  }
+
+  if (docs.length === 0) return { success: 0, errors: 0 };
+  return typesense.bulkImport("blog_posts", docs);
+}
+
+// ── Slog indexing ───────────────────────────────────────────────────
+
+async function indexSystemLog(): Promise<{ success: number; errors: number }> {
+  const docs: Record<string, unknown>[] = [];
+  try {
+    const lines = readFileSync(SLOG_PATH, "utf-8").trim().split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      try {
+        const e = JSON.parse(lines[i]!);
+        const doc: Record<string, unknown> = {
+          id: `slog-${i}`,
+          action: e.action || "",
+          tool: e.tool || "",
+          detail: e.detail || "",
+          reason: e.reason || "",
+        };
+        if (e.timestamp) {
+          try {
+            doc.timestamp = Math.floor(new Date(e.timestamp).getTime() / 1000);
+          } catch {}
+        }
+        docs.push(doc);
+      } catch {}
+    }
+  } catch {}
+
+  if (docs.length === 0) return { success: 0, errors: 0 };
+  return typesense.bulkImport("system_log", docs);
+}
+
+// ── Inngest functions ───────────────────────────────────────────────
+
+/** Incremental vault re-index — triggered by content changes */
+export const typesenseVaultSync = inngest.createFunction(
+  {
+    id: "typesense/vault-sync",
+    name: "Typesense: Vault Re-index",
+    concurrency: { limit: 1, key: "typesense-vault-sync" },
+    debounce: { period: "30s", key: '"typesense-vault"' },
+  },
+  [
+    { event: "content/updated" },
+    { event: "discovery/captured" },
+    { event: "system/adr.sync.requested" },
+  ],
+  async ({ event, step }) => {
+    const result = await step.run("index-vault-notes", async () => {
+      return indexVaultNotes();
+    });
+
+    console.log(`[typesense-vault-sync] indexed ${result.count} vault notes (${result.errors} errors) via ${event.name}`);
+    return { collection: "vault_notes", ...result, trigger: event.name };
+  }
+);
+
+/** Blog re-index — triggered by successful Vercel deploy */
+export const typesenseBlogSync = inngest.createFunction(
+  {
+    id: "typesense/blog-sync",
+    name: "Typesense: Blog Re-index",
+    concurrency: { limit: 1, key: "typesense-blog-sync" },
+  },
+  [{ event: "vercel/deploy.succeeded" } as any],
+  async ({ event, step }) => {
+    const result = await step.run("index-blog-posts", async () => {
+      return indexBlogPosts();
+    });
+
+    console.log(`[typesense-blog-sync] indexed ${result.success} blog posts (${result.errors} errors)`);
+    return { collection: "blog_posts", ...result, trigger: event.name };
+  }
+);
+
+/** Daily full re-index — safety net at 3am PST */
+export const typesenseFullSync = inngest.createFunction(
+  {
+    id: "typesense/full-sync",
+    name: "Typesense: Full Re-index (Daily)",
+    concurrency: { limit: 1, key: "typesense-full-sync" },
+  },
+  [{ cron: "0 11 * * *" }], // 3am PST = 11:00 UTC
+  async ({ step }) => {
+    const vault = await step.run("index-vault", indexVaultNotes);
+    const blog = await step.run("index-blog", indexBlogPosts);
+    const slog = await step.run("index-slog", indexSystemLog);
+
+    console.log(`[typesense-full-sync] vault=${vault.count} blog=${blog.success} slog=${slog.success}`);
+    return { vault, blog, slog };
+  }
+);
