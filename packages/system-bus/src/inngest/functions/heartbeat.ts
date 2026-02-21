@@ -13,8 +13,9 @@
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
 import Redis from "ioredis";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { emitOtelEvent } from "../../observability/emit";
 
 const HEARTBEAT_EVENTS = [
   { name: "tasks/triage.requested" as const, data: {} },
@@ -77,10 +78,56 @@ function isDailyDigestWindow(hour: number, minute: number): boolean {
   return hour === 23 && minute >= 45;
 }
 
+function listFilesRecursive(root: string): string[] {
+  if (!existsSync(root)) return [];
+  const entries = readdirSync(root, { withFileTypes: true });
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listFilesRecursive(fullPath));
+    } else if (entry.isFile()) {
+      files.push(fullPath);
+    }
+  }
+
+  return files;
+}
+
+function pruneOldSessionFiles(now = Date.now()): { prunedCount: number } {
+  const cutoffMs = now - 30 * 24 * 60 * 60 * 1000;
+  const home = getHomeDirectory();
+  const piSessionsRoot = join(home, ".pi", "agent", "sessions");
+  const claudeDebugRoot = join(home, ".claude", "debug");
+
+  const targets = [
+    ...listFilesRecursive(piSessionsRoot).filter((path) => path.endsWith(".jsonl")),
+    ...listFilesRecursive(claudeDebugRoot),
+  ];
+
+  let prunedCount = 0;
+  for (const filePath of targets) {
+    try {
+      const stats = statSync(filePath);
+      if (stats.mtimeMs < cutoffMs) {
+        rmSync(filePath, { force: true });
+        prunedCount += 1;
+      }
+    } catch {
+      // Best-effort pruning; continue on filesystem races.
+    }
+  }
+
+  return { prunedCount };
+}
+
 export const heartbeatCron = inngest.createFunction(
   { id: "system-heartbeat" },
   [{ cron: "*/15 * * * *" }],
   async ({ step }) => {
+    await step.run("prune-old-sessions", async () => pruneOldSessionFiles());
+
     // Fan out all checks as independent events
     await step.sendEvent("fan-out-checks", HEARTBEAT_EVENTS);
 
@@ -104,6 +151,19 @@ export const heartbeatCron = inngest.createFunction(
         data: {},
       });
     }
+    await step.run("otel-heartbeat-cron", async () => {
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "heartbeat",
+        action: "heartbeat.cron.fanout",
+        success: true,
+        metadata: {
+          fanoutCount: HEARTBEAT_EVENTS.length,
+          digestRequested: shouldRequestDigest,
+        },
+      });
+    });
 
     // Push cron.heartbeat to gateway — triggers HEARTBEAT.md checklist
     await step.run("push-gateway-heartbeat", async () => {
@@ -120,6 +180,8 @@ export const heartbeatWake = inngest.createFunction(
   { id: "system-heartbeat-wake" },
   [{ event: "system/heartbeat.wake" }],
   async ({ step }) => {
+    await step.run("prune-old-sessions", async () => pruneOldSessionFiles());
+
     // Same fan-out on manual wake
     await step.sendEvent("fan-out-checks", HEARTBEAT_EVENTS);
 
@@ -142,6 +204,19 @@ export const heartbeatWake = inngest.createFunction(
         data: {},
       });
     }
+    await step.run("otel-heartbeat-wake", async () => {
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "heartbeat",
+        action: "heartbeat.wake.fanout",
+        success: true,
+        metadata: {
+          fanoutCount: HEARTBEAT_EVENTS.length,
+          digestRequested: shouldRequestDigest,
+        },
+      });
+    });
 
     await step.run("push-gateway-heartbeat", async () => {
       await pushGatewayEvent({

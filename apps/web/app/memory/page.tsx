@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { authClient } from "../../lib/auth-client";
-import { Brain } from "lucide-react";
+import { PageHeader } from "@repo/ui/page-header";
+import { SearchBar } from "@repo/ui/search-bar";
 
 const CATEGORY_COLORS: Record<string, string> = {
   debugging: "text-red-400 bg-red-500/10",
@@ -65,24 +66,15 @@ export default function MemoryPage() {
   const categories = ["debugging", "architecture", "preference", "workflow", "tool", "decision"];
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 space-y-6">
-      <div className="flex items-center gap-3">
-        <Brain className="w-6 h-6 text-amber-400" />
-        <h1 className="font-mono text-xl font-bold text-neutral-100">Memory</h1>
-        {observations && (
-          <span className="font-mono text-sm text-neutral-500">
-            {observations.length} observations
-          </span>
-        )}
-      </div>
+    <div className="mx-auto max-w-[1800px] space-y-6">
+      <PageHeader title="Memory" count={observations?.length} />
 
       <div className="flex gap-3 flex-wrap">
-        <input
-          type="text"
+        <SearchBar
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={setQuery}
           placeholder="search observations..."
-          className="flex-1 min-w-[200px] rounded-lg border border-neutral-700/50 bg-neutral-950 px-4 py-2.5 font-mono text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-700"
+          className="flex-1 min-w-[200px]"
         />
         <div className="flex gap-1 flex-wrap">
           <button

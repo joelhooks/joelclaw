@@ -11,6 +11,7 @@ const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY || "";
 const COLLECTION_CONFIG: Record<string, { queryBy: string; sortBy: string }> = {
   memory_observations: { queryBy: "observation,category,source", sortBy: "timestamp:desc" },
   system_log: { queryBy: "detail,tool,action", sortBy: "timestamp:desc" },
+  otel_events: { queryBy: "action,error,component,source,metadata_json,search_text", sortBy: "timestamp:desc" },
   voice_transcripts: { queryBy: "content,room", sortBy: "timestamp:desc" },
   discoveries: { queryBy: "title,summary", sortBy: "timestamp:desc" },
 };

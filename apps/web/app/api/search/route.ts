@@ -21,6 +21,7 @@ const ALL_COLLECTIONS = [
   { name: "memory_observations", queryBy: "observation" },
   { name: "blog_posts", queryBy: "title,content" },
   { name: "system_log", queryBy: "detail,tool,action" },
+  { name: "otel_events", queryBy: "action,error,component,source,metadata_json,search_text" },
   { name: "discoveries", queryBy: "title,summary" },
   { name: "voice_transcripts", queryBy: "content" },
 ];
@@ -81,7 +82,12 @@ export async function GET(request: NextRequest) {
 
         hits.push({
           collection: collName,
-          title: doc.title || doc.observation?.slice(0, 100) || doc.detail?.slice(0, 100) || "",
+          title:
+            doc.title ||
+            doc.action ||
+            doc.observation?.slice(0, 100) ||
+            doc.detail?.slice(0, 100) ||
+            "",
           snippet: snippet.slice(0, 300),
           path: doc.path || doc.slug || undefined,
           type: doc.type || collName,

@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { ConvexHttpClient } from "convex/browser";
+import { MetricCard } from "@repo/ui/metric-card";
+import { DataGrid } from "@repo/ui/data-grid";
+import { StatusBadge, normalizeStatusKind } from "@repo/ui/status-badge";
 import { api } from "../../convex/_generated/api";
 import { SITE_NAME } from "../../lib/constants";
-
-type NodeStatus = "Online" | "Offline" | "Idle";
 
 type NetworkNode = {
   publicName: string;
@@ -56,31 +57,6 @@ export const metadata: Metadata = {
     "The joelclaw network — Talos k8s on Apple Silicon with 66 Inngest functions, Typesense search, AT Protocol PDS, Convex real-time data, and 64TB archival storage.",
 };
 
-function toNodeStatus(status: string): NodeStatus {
-  const normalized = status.toLowerCase();
-  if (normalized === "idle") return "Idle";
-  if (normalized === "online" || normalized === "running") return "Online";
-  return "Offline";
-}
-
-function StatusDot({ status }: { status: NodeStatus }) {
-  const color =
-    status === "Online"
-      ? "bg-emerald-400"
-      : status === "Idle"
-        ? "bg-yellow-400"
-        : "bg-neutral-600";
-
-  return (
-    <span className="relative flex h-2 w-2">
-      {status === "Online" && (
-        <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${color} opacity-40`} />
-      )}
-      <span className={`relative inline-flex h-2 w-2 rounded-full ${color}`} />
-    </span>
-  );
-}
-
 async function listByType(type: string): Promise<ContentResourceDoc[]> {
   const docs = await convex.query(api.contentResources.listByType, { type, limit: 500 });
   return Array.isArray(docs) ? (docs as ContentResourceDoc[]) : [];
@@ -100,7 +76,7 @@ export default async function NetworkPage() {
     .map((doc) => doc.fields as unknown as NetworkNode)
     .sort((a, b) => nodeOrder.indexOf(a.publicName) - nodeOrder.indexOf(b.publicName));
 
-  const podOrder = ["inngest-0", "redis-0", "typesense-0", "qdrant-0", "bluesky-pds", "livekit-server"];
+  const podOrder = ["inngest-0", "redis-0", "typesense-0", "bluesky-pds", "livekit-server"];
   const k8sPods = podDocs
     .map((doc) => doc.fields as unknown as NetworkPod)
     .sort((a, b) => podOrder.indexOf(a.name) - podOrder.indexOf(b.name));
@@ -132,7 +108,7 @@ export default async function NetworkPage() {
     .map((layer) => `Layer ${layer.layer}: ${layer.label.padEnd(13)} — ${layer.description}`);
 
   return (
-    <div className="space-y-12">
+    <div className="mx-auto max-w-[1800px] space-y-12">
       <header>
         <h1 className="text-2xl font-bold tracking-tight">Network</h1>
         <p className="mt-2 text-sm text-neutral-400 leading-relaxed">
@@ -145,16 +121,11 @@ export default async function NetworkPage() {
 
       <section className="space-y-3">
         <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">Cluster</h2>
-        <div className="border border-neutral-800 rounded-lg p-5">
-          <dl className="grid gap-4 sm:grid-cols-2">
-            {clusterOverview.map((item) => (
-              <div key={item.label} className="space-y-0.5">
-                <dt className="text-[11px] uppercase tracking-wider text-neutral-600">{item.label}</dt>
-                <dd className="font-mono text-sm text-neutral-200">{item.value}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
+        <DataGrid columns={{ sm: 1, md: 2, lg: 2, xl: 4 }}>
+          {clusterOverview.map((item) => (
+            <MetricCard key={item.label} label={item.label} value={item.value} />
+          ))}
+        </DataGrid>
       </section>
 
       <section className="space-y-3">
@@ -163,14 +134,15 @@ export default async function NetworkPage() {
           {nodes.map((node) => (
             <article key={node.publicName} className="border border-neutral-800 rounded-lg p-5 space-y-3">
               <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <StatusDot status={toNodeStatus(node.status)} />
-                  <div>
-                    <h3 className="text-base font-semibold text-neutral-100">{node.publicName}</h3>
-                    {node.privateName && <p className="font-mono text-xs text-neutral-600">{node.privateName}</p>}
-                  </div>
+                <div>
+                  <h3 className="text-base font-semibold text-neutral-100">{node.publicName}</h3>
+                  {node.privateName && <p className="font-mono text-xs text-neutral-600">{node.privateName}</p>}
                 </div>
-                <span className="text-[11px] text-neutral-600 uppercase tracking-wider">{node.status}</span>
+                <StatusBadge
+                  status={normalizeStatusKind(node.status)}
+                  label={node.status}
+                  pulse={node.status.toLowerCase() === "online" || node.status.toLowerCase() === "running"}
+                />
               </div>
 
               <p className="text-sm text-neutral-400 leading-relaxed">{node.role}</p>
@@ -211,7 +183,7 @@ export default async function NetworkPage() {
                 <tr key={pod.name} className="border-b border-neutral-800/50 last:border-0">
                   <td className="px-4 py-2.5 font-mono text-xs text-neutral-200">
                     <div className="flex items-center gap-2">
-                      <StatusDot status={toNodeStatus(pod.status)} />
+                      <StatusBadge status={normalizeStatusKind(pod.status)} label={pod.status} />
                       <span>{pod.name}</span>
                     </div>
                   </td>
@@ -240,7 +212,7 @@ export default async function NetworkPage() {
                 <tr key={svc.name} className="border-b border-neutral-800/50 last:border-0">
                   <td className="px-4 py-2.5 font-mono text-xs text-neutral-200 whitespace-nowrap">
                     <div className="flex items-center gap-2">
-                      <StatusDot status={toNodeStatus(svc.status)} />
+                      <StatusBadge status={normalizeStatusKind(svc.status)} label={svc.status} />
                       <span>{svc.name}</span>
                     </div>
                   </td>

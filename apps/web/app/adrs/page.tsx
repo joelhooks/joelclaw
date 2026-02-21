@@ -33,7 +33,7 @@ export default async function AdrsPage({ searchParams }: Props) {
     .map(([s]) => s);
 
   return (
-    <>
+    <div className="mx-auto max-w-2xl">
       <header className="mb-0">
         <h1 className="text-2xl font-bold tracking-tight">
           Architecture Decision Records
@@ -58,6 +58,6 @@ export default async function AdrsPage({ searchParams }: Props) {
         counts={counts}
         allStatuses={allStatuses}
       />
-    </>
+    </div>
   );
 }

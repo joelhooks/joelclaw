@@ -84,14 +84,14 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${dankMono.variable} ${GeistPixelSquare.variable} font-sans bg-neutral-950 text-neutral-100 antialiased`}
       >
-        <div className="mx-auto max-w-2xl px-6 py-16">
+        <div className="mx-auto max-w-[1800px] px-4 sm:px-6 lg:px-8 xl:px-12 py-8 sm:py-12 lg:py-16">
           <SiteHeader />
           <ConvexClientProvider>
             <NuqsAdapter>
               <main>{children}</main>
             </NuqsAdapter>
           </ConvexClientProvider>
-          <footer className="mt-24 pt-8 border-t border-neutral-800 text-sm text-neutral-500">
+          <footer className="mt-12 sm:mt-16 lg:mt-24 pt-6 sm:pt-8 border-t border-neutral-800 text-sm text-neutral-500">
             <div className="flex items-center justify-between">
               <p>
                 © {new Date().getFullYear()} {AUTHOR.name}

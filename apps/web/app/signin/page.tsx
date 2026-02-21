@@ -12,7 +12,7 @@ export default function SignInPage() {
   };
 
   return (
-    <div className="flex min-h-[60vh] flex-col items-center justify-center">
+    <div className="mx-auto max-w-md flex min-h-[60vh] flex-col items-center justify-center">
       <div className="relative w-full max-w-xs">
         {/* Decorative glow */}
         <div className="absolute -inset-px rounded-xl bg-gradient-to-b from-claw/20 via-transparent to-transparent blur-xl" />

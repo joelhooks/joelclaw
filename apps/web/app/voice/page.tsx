@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { authClient } from "../../lib/auth-client";
-import { Mic } from "lucide-react";
+import { PageHeader } from "@repo/ui/page-header";
+import { SearchBar } from "@repo/ui/search-bar";
 
 type Transcript = {
   id: string;
@@ -49,23 +50,13 @@ export default function VoicePage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 space-y-6">
-      <div className="flex items-center gap-3">
-        <Mic className="w-6 h-6 text-cyan-400" />
-        <h1 className="font-mono text-xl font-bold text-neutral-100">Voice Transcripts</h1>
-        {data && (
-          <span className="font-mono text-sm text-neutral-500">
-            {data.found} transcripts
-          </span>
-        )}
-      </div>
+    <div className="mx-auto max-w-[1800px] space-y-6">
+      <PageHeader title="Voice Transcripts" count={data?.found} />
 
-      <input
-        type="text"
+      <SearchBar
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={setQuery}
         placeholder="search transcripts..."
-        className="w-full rounded-lg border border-neutral-700/50 bg-neutral-950 px-4 py-2.5 font-mono text-sm text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-600 focus:outline-none focus:ring-1 focus:ring-neutral-700"
       />
 
       {data?.found === 0 && (

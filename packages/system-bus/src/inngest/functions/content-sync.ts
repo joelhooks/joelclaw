@@ -1,5 +1,6 @@
 import { inngest } from "../client";
-import { syncFiles, commitAndPush, type SyncResult } from "./vault-sync";
+import { syncFiles, type SyncResult } from "./vault-sync";
+import { emitOtelEvent } from "../../observability/emit";
 
 /**
  * Content directories to sync from Vault → website.
@@ -55,6 +56,19 @@ export const contentSync = inngest.createFunction(
     console.log(
       `[content-sync] started via ${event.name} at ${new Date().toISOString()}`
     );
+    await step.run("otel-content-sync-start", async () => {
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "content-sync",
+        action: "content_sync.started",
+        success: true,
+        metadata: {
+          trigger: event.name,
+          directoryCount: CONTENT_DIRS.length,
+        },
+      });
+    });
 
     // Sync all content directories in one step
     const results: ContentSyncResult[] = await step.run(
@@ -137,6 +151,26 @@ export const contentSync = inngest.createFunction(
         } catch {}
       });
     }
+    await step.run("otel-content-sync-finish", async () => {
+      const level = allSynced.length > 0 && !committed ? "warn" : "info";
+      await emitOtelEvent({
+        level,
+        source: "worker",
+        component: "content-sync",
+        action: "content_sync.completed",
+        success: committed || allSynced.length === 0,
+        error: allSynced.length > 0 && !committed ? "changes_not_committed" : undefined,
+        metadata: {
+          trigger: event.name,
+          totalSynced: allSynced.length,
+          committed,
+          content: results.map((result) => ({
+            name: result.name,
+            syncedCount: result.synced.length,
+          })),
+        },
+      });
+    });
 
     return {
       status: "completed",

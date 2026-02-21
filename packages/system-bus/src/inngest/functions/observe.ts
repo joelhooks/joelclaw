@@ -11,6 +11,7 @@ import { parseObserverOutput } from "./observe-parser";
 import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
 import { DEDUP_THRESHOLD } from "../../memory/retrieval";
 import * as typesense from "../../lib/typesense";
+import { emitOtelEvent } from "../../observability/emit";
 
 type ObserveCompactionInput = {
   sessionId: string;
@@ -269,6 +270,21 @@ export const observeSessionFunction = inngest.createFunction(
     const validatedInput = await step.run("validate-input", async () =>
       validateObserveInput(event.name, event.data)
     );
+    await step.run("otel-observe-start", async () => {
+      await emitOtelEvent({
+        level: "debug",
+        source: "worker",
+        component: "observe",
+        action: "observe.started",
+        success: true,
+        metadata: {
+          sessionId: validatedInput.sessionId,
+          trigger: validatedInput.trigger,
+          messageCount: validatedInput.messageCount,
+          dedupeKey: validatedInput.dedupeKey,
+        },
+      });
+    });
 
     // Dedupe guard — prevent Inngest retries from re-processing
     const dedupeResult = await step.run("dedupe-check", async () => {
@@ -287,6 +303,19 @@ export const observeSessionFunction = inngest.createFunction(
     });
 
     if (dedupeResult.dedupe) {
+      await step.run("otel-observe-dedupe", async () => {
+        await emitOtelEvent({
+          level: "debug",
+          source: "worker",
+          component: "observe",
+          action: "observe.deduplicated",
+          success: true,
+          metadata: {
+            sessionId: validatedInput.sessionId,
+            dedupeKey: validatedInput.dedupeKey,
+          },
+        });
+      });
       return {
         status: "deduplicated",
         sessionId: validatedInput.sessionId,
@@ -586,6 +615,40 @@ Session context:
         return { stored: false, count: 0, error: message };
       }
     });
+    await step.run("otel-observe-store-result", async () => {
+      const storeError = "error" in typesenseStoreResult ? typesenseStoreResult.error : undefined;
+      const mergedCount = "mergedCount" in typesenseStoreResult ? typesenseStoreResult.mergedCount : 0;
+      const storeErrors = "errors" in typesenseStoreResult ? typesenseStoreResult.errors : 0;
+      if (!typesenseStoreResult.stored) {
+        await emitOtelEvent({
+          level: "error",
+          source: "worker",
+          component: "observe",
+          action: "observe.store.failed",
+          success: false,
+          error: storeError ?? "typesense_store_failed",
+          metadata: {
+            sessionId: validatedInput.sessionId,
+            trigger: validatedInput.trigger,
+          },
+        });
+        return;
+      }
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "observe",
+        action: "observe.store.completed",
+        success: true,
+        metadata: {
+          sessionId: validatedInput.sessionId,
+          trigger: validatedInput.trigger,
+          storedCount: typesenseStoreResult.count,
+          mergedCount,
+          errors: storeErrors,
+        },
+      });
+    });
 
     const observationItems = createObservationItems(parsedObservations);
     const observationCount = observationItems.length;
@@ -705,6 +768,22 @@ Session context:
       } catch (err) {
         console.error("[observe] Gateway notify failed:", err);
       }
+    });
+    await step.run("otel-observe-finish", async () => {
+      await emitOtelEvent({
+        level: "debug",
+        source: "worker",
+        component: "observe",
+        action: "observe.completed",
+        success: Boolean(redisStateResult.updated),
+        metadata: {
+          sessionId: validatedInput.sessionId,
+          trigger: validatedInput.trigger,
+          observationCount,
+          redisUpdated: redisStateResult.updated,
+          dailyLogAppended: dailyLogResult.appended,
+        },
+      });
     });
 
     return {

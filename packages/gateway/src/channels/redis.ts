@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import Redis from "ioredis";
 import { enrichPromptWithVaultContext } from "../vault-read";
+import { send as sendTelegram } from "./telegram";
+import { emitGatewayOtel } from "../observability";
 
 export type EnqueueFn = (
   source: string,
@@ -27,6 +29,9 @@ const BATCH_LIST = "joelclaw:events:batch";
 const MODE_KEY = "joelclaw:mode";
 const HEARTBEAT_PATH = `${homedir()}/Vault/HEARTBEAT.md`;
 const DEDUP_MAX = 500;
+const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID
+  ? parseInt(process.env.TELEGRAM_USER_ID, 10)
+  : undefined;
 
 const redisOpts = {
   host: process.env.REDIS_HOST ?? "localhost",
@@ -76,6 +81,17 @@ async function appendToBatch(events: SystemEvent[], reason: string): Promise<voi
     await cmd.rpush(BATCH_LIST, JSON.stringify(event));
   }
   console.log(`[redis] batched ${events.length} event(s) (${reason}): ${events.map((e) => e.type).join(", ")}`);
+  void emitGatewayOtel({
+    level: "debug",
+    component: "redis-channel",
+    action: "batch.appended",
+    success: true,
+    metadata: {
+      reason,
+      count: events.length,
+      eventTypes: events.map((event) => event.type),
+    },
+  });
 }
 
 export async function sleepGateway(): Promise<void> {
@@ -193,6 +209,31 @@ function parseEvent(raw: string): SystemEvent | undefined {
   }
 }
 
+function isImmediateTelegramEvent(event: SystemEvent): boolean {
+  const payload = event.payload as Record<string, unknown>;
+  return (
+    event.type === "system.fatal" ||
+    payload.immediateTelegram === true ||
+    payload.level === "fatal"
+  );
+}
+
+async function sendImmediateTelegramEscalation(events: SystemEvent[]): Promise<void> {
+  if (!TELEGRAM_USER_ID || events.length === 0) return;
+
+  const lines = [
+    "## Immediate Escalation",
+    "",
+    ...events.slice(0, 5).map((event) => {
+      const prompt = typeof event.payload.prompt === "string" ? event.payload.prompt : "";
+      const detail = prompt ? `\n${prompt}` : "";
+      return `- ${event.type} (${event.source})${detail}`;
+    }),
+  ];
+
+  await sendTelegram(TELEGRAM_USER_ID, lines.join("\n"));
+}
+
 async function drainEvents(): Promise<void> {
   if (draining || !cmd || !enqueuePrompt) return;
   draining = true;
@@ -264,6 +305,18 @@ async function drainEvents(): Promise<void> {
     if (suppressed.length > 0) {
       console.log(`[redis] suppressed ${suppressed.length} noise event(s): ${suppressed.map(e => e.type).join(", ")}`);
     }
+    void emitGatewayOtel({
+      level: "debug",
+      component: "redis-channel",
+      action: "events.triaged",
+      success: true,
+      metadata: {
+        total: events.length,
+        immediate: immediate.length,
+        batched: batched.length,
+        suppressed: suppressed.length,
+      },
+    });
 
     let actionable = immediate;
     const modeEvents = actionable.filter((event) => event.type === "gateway/sleep" || event.type === "gateway/wake");
@@ -302,9 +355,32 @@ async function drainEvents(): Promise<void> {
       wokeFromTelegram = telegramWhileSleep.length > 0;
     }
 
+    const immediateTelegramEvents = actionable.filter(isImmediateTelegramEvent);
+    if (immediateTelegramEvents.length > 0) {
+      await sendImmediateTelegramEscalation(immediateTelegramEvents).catch((error) => {
+        console.error("[gateway:redis] immediate telegram escalation failed", { error });
+      });
+      void emitGatewayOtel({
+        level: "info",
+        component: "redis-channel",
+        action: "events.immediate_telegram",
+        success: true,
+        metadata: {
+          count: immediateTelegramEvents.length,
+          eventTypes: immediateTelegramEvents.map((event) => event.type),
+        },
+      });
+    }
+
     // Nothing immediate? Clear the queue and wait
     if (actionable.length === 0) {
       await cmd.del(EVENT_LIST);
+      void emitGatewayOtel({
+        level: "debug",
+        component: "redis-channel",
+        action: "events.noop",
+        success: true,
+      });
       return;
     }
 
@@ -323,6 +399,16 @@ async function drainEvents(): Promise<void> {
       eventIds: actionable.map((event) => event.id),
       originSession,
     });
+    void emitGatewayOtel({
+      level: "info",
+      component: "redis-channel",
+      action: "events.dispatched",
+      success: true,
+      metadata: {
+        source,
+        eventCount: actionable.length,
+      },
+    });
 
     if (wokeFromTelegram) {
       await wakeGateway({ flushDigest: false });
@@ -332,6 +418,13 @@ async function drainEvents(): Promise<void> {
     await cmd.del(EVENT_LIST);
   } catch (error) {
     console.error("[gateway:redis] failed to drain events", { error });
+    void emitGatewayOtel({
+      level: "error",
+      component: "redis-channel",
+      action: "events.drain.failed",
+      success: false,
+      error: String(error),
+    });
   } finally {
     draining = false;
   }
@@ -388,9 +481,23 @@ async function doStart(enqueue: EnqueueFn): Promise<void> {
 
   sub.on("error", (error: unknown) => {
     console.error("[gateway:redis] subscriber error", { error });
+    void emitGatewayOtel({
+      level: "error",
+      component: "redis-channel",
+      action: "redis.subscriber.error",
+      success: false,
+      error: String(error),
+    });
   });
   cmd.on("error", (error: unknown) => {
     console.error("[gateway:redis] command client error", { error });
+    void emitGatewayOtel({
+      level: "error",
+      component: "redis-channel",
+      action: "redis.command.error",
+      success: false,
+      error: String(error),
+    });
   });
 
   // On disconnect, mark as not started and schedule reconnect
@@ -428,6 +535,15 @@ async function doStart(enqueue: EnqueueFn): Promise<void> {
     sessionId: SESSION_ID,
     channels: [NOTIFY_CHANNEL, LEGACY_NOTIFY_CHANNEL],
     list: EVENT_LIST,
+  });
+  void emitGatewayOtel({
+    level: "info",
+    component: "redis-channel",
+    action: "redis.channel.started",
+    success: true,
+    metadata: {
+      sessionId: SESSION_ID,
+    },
   });
 }
 
@@ -495,6 +611,16 @@ export async function flushBatchDigest(): Promise<number> {
   });
 
   console.log(`[redis] flushed batch digest: ${events.length} events across ${counts.size} types`);
+  void emitGatewayOtel({
+    level: "info",
+    component: "redis-channel",
+    action: "batch.flushed",
+    success: true,
+    metadata: {
+      count: events.length,
+      kinds: counts.size,
+    },
+  });
   return events.length;
 }
 

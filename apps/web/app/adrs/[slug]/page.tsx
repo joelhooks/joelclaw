@@ -51,7 +51,7 @@ export default async function AdrPage({ params }: Props) {
     STATUS_COLORS[meta.status] ?? "text-neutral-500 border-neutral-700";
 
   return (
-    <article data-pagefind-body data-pagefind-meta={`type:ADR, status:${meta.status}`}>
+    <article className="mx-auto max-w-2xl" data-pagefind-body data-pagefind-meta={`type:ADR, status:${meta.status}`}>
       <header className="mb-10">
         <div className="flex items-center gap-3 mb-2">
           <span className="font-mono text-sm text-neutral-500">

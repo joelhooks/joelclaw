@@ -19,6 +19,7 @@ const OWNER_NAV = [
   { href: "/vault", label: "Vault" },
   { href: "/memory", label: "Memory" },
   { href: "/syslog", label: "Syslog" },
+  { href: "/system", label: "Ops" },
   { href: "/dashboard", label: "System" },
 ];
 
@@ -45,7 +46,7 @@ export function SiteHeader() {
           </span>
         </Link>
         <div className="flex items-center gap-6">
-          <nav className="hidden md:flex items-center gap-6 text-sm">
+          <nav className="hidden md:flex items-center gap-6 lg:gap-8 text-sm">
             {navItems.map((item) => {
               const isActive =
                 item.href === "/"

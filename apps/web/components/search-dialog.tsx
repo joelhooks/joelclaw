@@ -39,6 +39,8 @@ function collectionToUrl(hit: {
       return `/memory`;
     case "system_log":
       return `/syslog`;
+    case "otel_events":
+      return `/system/events`;
     case "voice_transcripts":
       return `/voice`;
     default:
@@ -59,6 +61,8 @@ function TypeIcon({ collection }: { collection: string }) {
       return <Brain className={`${base} text-amber-400`} />;
     case "system_log":
       return <Terminal className={`${base} text-blue-400`} />;
+    case "otel_events":
+      return <Terminal className={`${base} text-rose-400`} />;
     case "voice_transcripts":
       return <Mic className={`${base} text-cyan-400`} />;
     default:
@@ -72,6 +76,7 @@ const COLLECTION_LABELS: Record<string, string> = {
   discoveries: "discovery",
   memory_observations: "memory",
   system_log: "syslog",
+  otel_events: "otel",
   voice_transcripts: "voice",
 };
 
@@ -81,6 +86,7 @@ const COLLECTION_COLORS: Record<string, string> = {
   discoveries: "text-purple-400 border-purple-800",
   memory_observations: "text-amber-400 border-amber-800",
   system_log: "text-blue-400 border-blue-800",
+  otel_events: "text-rose-300 border-rose-800",
   voice_transcripts: "text-cyan-400 border-cyan-800",
 };
 

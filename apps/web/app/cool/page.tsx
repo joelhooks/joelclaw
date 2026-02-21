@@ -27,7 +27,7 @@ export default function CoolPage() {
   const discoveries = getAllDiscoveries();
 
   return (
-    <>
+    <div className="mx-auto max-w-2xl">
       <header className="mb-10">
         <h1 className="text-2xl font-bold tracking-tight">Cool Finds</h1>
         <p className="mt-2 text-sm text-neutral-500">
@@ -82,6 +82,6 @@ export default function CoolPage() {
           <p className="text-neutral-500 text-sm">No discoveries yet.</p>
         )}
       </div>
-    </>
+    </div>
   );
 }

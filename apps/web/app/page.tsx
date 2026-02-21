@@ -7,7 +7,7 @@ export default function Home() {
   const posts = getAllPosts();
 
   return (
-    <>
+    <div className="mx-auto max-w-2xl">
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(blogJsonLd()) }}
@@ -46,6 +46,6 @@ export default function Home() {
           </li>
         ))}
       </ul>
-    </>
+    </div>
   );
 }

@@ -92,7 +92,7 @@ export default function VaultNotePage() {
   const crumbs = vaultPath.split("/");
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       {/* Breadcrumb nav */}
       <nav className="flex flex-wrap items-center gap-1.5 text-sm">
         <Link href="/vault" className="text-neutral-500 transition-colors hover:text-neutral-300">
