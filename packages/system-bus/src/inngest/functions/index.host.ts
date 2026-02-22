@@ -6,6 +6,7 @@ import { systemLogger } from "./system-logger";
 import { observeSessionFunction } from "./observe";
 import { reflect } from "./reflect";
 import { contentSync } from "./content-sync";
+import { adrReviewSubmitted } from "./adr-review";
 import { discoveryCapture } from "./discovery-capture";
 import { promote } from "./promote";
 import { embedText } from "./embed";
@@ -71,6 +72,7 @@ import {
   rotateOtel,
   rotateLogs,
 } from "./nas-backup";
+import { manifestArchive } from "./manifest-archive";
 
 function getFunctionId(fn: { opts?: { id?: string } }): string {
   return fn.opts?.id ?? "unknown";
@@ -87,6 +89,7 @@ export const hostFunctionDefinitions = [
   observeSessionFunction,
   reflect,
   contentSync,
+  adrReviewSubmitted,
   discoveryCapture,
   promote,
   embedText,
@@ -146,6 +149,7 @@ export const hostFunctionDefinitions = [
   rotateSessions,
   rotateOtel,
   rotateLogs,
+  manifestArchive,
 ];
 
 export const hostFunctionIds = hostFunctionDefinitions.map(getFunctionId);
