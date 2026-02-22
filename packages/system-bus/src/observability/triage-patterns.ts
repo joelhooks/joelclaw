@@ -17,10 +17,12 @@ export type TriagePattern = {
 export const TRIAGE_PATTERNS: TriagePattern[] = [
   // Tier 1: auto-fix or ignore
   {
+    // Content sync can intentionally skip commits when safety gate blocks push.
+    // Keep this visible as Tier 2 signal, but never auto-commit from triage.
     match: { action: "content_sync.completed", error: /changes_not_committed/iu },
-    tier: 1,
-    handler: "autoCommitAndRetry",
-    dedup_hours: 24,
+    tier: 2,
+    dedup_hours: 6,
+    escalate_after: 20,
   },
   {
     match: { action: "telegram.send.skipped", error: /bot_not_started/iu },

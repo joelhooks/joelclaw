@@ -1,6 +1,7 @@
 import { DECAY_CONSTANT } from "./retrieval";
 import { allowsDefaultRetrieval } from "./write-gate";
 import * as typesense from "../lib/typesense";
+import { emitOtelEvent } from "../observability/emit";
 
 const OBSERVATIONS_COLLECTION = "memory_observations";
 const DEFAULT_LIMIT = 5;
@@ -127,13 +128,20 @@ export async function prefetchMemoryContext(
     budgetProfile?: BudgetProfile;
   }
 ): Promise<string> {
+  const startedAt = Date.now();
   const trimmed = query.trim();
   if (!trimmed) return "";
 
+  const requestedBudget = normalizeBudgetProfile(options?.budgetProfile);
   const budget = resolveBudgetPlan(trimmed, options?.budgetProfile);
   const limit = normalizeLimit(options?.limit ?? budget.defaultLimit);
   const perPage = Math.max(Math.ceil(limit * budget.fetchMultiplier), limit);
   const includeFields = "id,observation,observation_type,source,timestamp,updated_at,write_verdict";
+
+  let vectorFallbackUsed = false;
+  let hitsFound = 0;
+  let scannedHits = 0;
+  let droppedByWriteGate = 0;
 
   try {
     let response: typesense.TypesenseSearchResult;
@@ -151,6 +159,7 @@ export async function prefetchMemoryContext(
       if (!/embedded fields|vector query/iu.test(message)) {
         throw error;
       }
+      vectorFallbackUsed = true;
       response = await typesense.search({
         collection: OBSERVATIONS_COLLECTION,
         q: trimmed,
@@ -160,8 +169,11 @@ export async function prefetchMemoryContext(
       });
     }
 
+    hitsFound = typeof response.found === "number" ? response.found : 0;
+
     const nowSeconds = Math.floor(Date.now() / 1000);
     const hits = Array.isArray(response.hits) ? response.hits : [];
+    scannedHits = hits.length;
     const scored: RankedMemory[] = [];
 
     for (const [index, hit] of hits.entries()) {
@@ -177,6 +189,7 @@ export async function prefetchMemoryContext(
         includeHold: options?.includeHold,
         includeDiscard: options?.includeDiscard,
       })) {
+        droppedByWriteGate += 1;
         continue;
       }
 
@@ -204,8 +217,6 @@ export async function prefetchMemoryContext(
       });
     }
 
-    if (scored.length === 0) return "";
-
     scored.sort((a, b) => b.finalScore - a.finalScore);
 
     const seen = new Set<string>();
@@ -218,15 +229,71 @@ export async function prefetchMemoryContext(
       if (top.length >= limit) break;
     }
 
-    if (top.length === 0) return "";
-
     const lines = top.map(
       (item, index) =>
         `${index + 1}. (${item.finalScore.toFixed(3)}) [${item.observationType} | ${item.source}] ${item.observation}`
     );
+    const contextText = lines.join("\n");
 
-    return lines.join("\n");
-  } catch {
+    await emitOtelEvent({
+      level: "info",
+      source: "worker",
+      component: "memory-context-prefetch",
+      action: "memory.context_prefetch.completed",
+      success: true,
+      duration_ms: Date.now() - startedAt,
+      metadata: {
+        query: trimmed,
+        budgetRequested: requestedBudget,
+        budgetApplied: budget.profile,
+        budgetReason: budget.reason,
+        budget_profile: budget.profile,
+        limitRequested: options?.limit ?? null,
+        limitApplied: limit,
+        fetchMultiplier: budget.fetchMultiplier,
+        perPage,
+        includeHold: Boolean(options?.includeHold),
+        includeDiscard: Boolean(options?.includeDiscard),
+        vectorFallbackUsed,
+        found: hitsFound,
+        scannedHits,
+        droppedByWriteGate,
+        rankedCount: scored.length,
+        returned: top.length,
+      },
+    });
+
+    return contextText;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    await emitOtelEvent({
+      level: "error",
+      source: "worker",
+      component: "memory-context-prefetch",
+      action: "memory.context_prefetch.failed",
+      success: false,
+      error: message,
+      duration_ms: Date.now() - startedAt,
+      metadata: {
+        query: trimmed,
+        budgetRequested: requestedBudget,
+        budgetApplied: budget.profile,
+        budgetReason: budget.reason,
+        budget_profile: budget.profile,
+        limitRequested: options?.limit ?? null,
+        limitApplied: limit,
+        fetchMultiplier: budget.fetchMultiplier,
+        perPage,
+        includeHold: Boolean(options?.includeHold),
+        includeDiscard: Boolean(options?.includeDiscard),
+        vectorFallbackUsed,
+        found: hitsFound,
+        scannedHits,
+        droppedByWriteGate,
+      },
+    });
+
     return "";
   }
 }

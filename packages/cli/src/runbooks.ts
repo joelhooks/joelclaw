@@ -199,7 +199,7 @@ const RUNBOOK_LIST: readonly ErrorRunbook[] = [
         { command: "joelclaw logs errors --lines 120", description: "Inspect worker stderr around the run window" },
       ],
       fix: [
-        { command: "joelclaw inngest sync-worker --restart", description: "Restart and re-register worker", destructive: true },
+        { command: "joelclaw inngest sync-worker --restart", description: "Enforce single-source binding, restart, and re-register worker", destructive: true }
       ],
       verify: [
         { command: "joelclaw runs --status FAILED --count 5 --hours 1", description: "Confirm failure rate has dropped" },
@@ -326,7 +326,7 @@ const RUNBOOK_LIST: readonly ErrorRunbook[] = [
         { command: "joelclaw inngest memory-health", description: "Confirm memory health checks pass" },
       ],
       rollback: [
-        { command: "joelclaw inngest sync-worker --restart", description: "Restart worker if memory handlers are stuck", destructive: true },
+        { command: "joelclaw inngest sync-worker --restart", description: "Enforce single-source binding and restart worker if memory handlers are stuck", destructive: true }
       ],
     },
   },

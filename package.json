@@ -9,7 +9,8 @@
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "check-types": "turbo run check-types",
-    "validate:cli-contracts": "bun scripts/validate-cli-contracts.ts"
+    "validate:cli-contracts": "bun scripts/validate-cli-contracts.ts",
+    "validate:llm-observability-guards": "bun scripts/validate-llm-observability-guards.ts"
   },
   "devDependencies": {
     "oxfmt": "^0.32.0",

@@ -753,6 +753,37 @@ Session context:
         const discardCount = docs.filter((doc) => doc.write_verdict === "discard").length;
         const fallbackCount = docs.filter((doc) => doc.write_gate_fallback === true).length;
 
+        const categoryCounts = new Map<string, number>();
+        const categorySourceCounts = new Map<string, number>();
+        let categorizedCount = 0;
+        let highConfidenceCategoryCount = 0;
+
+        for (const doc of docs) {
+          const categoryId = typeof doc.category_id === "string" ? doc.category_id : "";
+          if (categoryId.length > 0) {
+            categorizedCount += 1;
+            categoryCounts.set(categoryId, (categoryCounts.get(categoryId) ?? 0) + 1);
+          }
+
+          const categorySource = typeof doc.category_source === "string" ? doc.category_source : "unknown";
+          categorySourceCounts.set(categorySource, (categorySourceCounts.get(categorySource) ?? 0) + 1);
+
+          const confidence = asFiniteNumber(doc.category_confidence, 0);
+          if (confidence >= 0.8) {
+            highConfidenceCategoryCount += 1;
+          }
+        }
+
+        const categoryBuckets = [...categoryCounts.entries()]
+          .map(([id, count]) => ({ id, count }))
+          .sort((a, b) => b.count - a.count);
+        const categorySourceBuckets = [...categorySourceCounts.entries()]
+          .map(([source, count]) => ({ source, count }))
+          .sort((a, b) => b.count - a.count);
+        const taxonomyVersions = [...new Set(docs
+          .map((doc) => (typeof doc.taxonomy_version === "string" ? doc.taxonomy_version : ""))
+          .filter((value) => value.length > 0))];
+
         // Dual-write to Convex for real-time UI
         const { pushContentResource } = await import("../../lib/convex");
         for (const doc of docs) {
@@ -784,6 +815,12 @@ Session context:
           holdCount,
           discardCount,
           fallbackCount,
+          categorizedCount,
+          uncategorizedCount: Math.max(0, docs.length - categorizedCount),
+          highConfidenceCategoryCount,
+          categoryBuckets,
+          categorySourceBuckets,
+          taxonomyVersions,
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -798,6 +835,14 @@ Session context:
       const holdCount = "holdCount" in typesenseStoreResult ? typesenseStoreResult.holdCount : 0;
       const discardCount = "discardCount" in typesenseStoreResult ? typesenseStoreResult.discardCount : 0;
       const fallbackCount = "fallbackCount" in typesenseStoreResult ? typesenseStoreResult.fallbackCount : 0;
+      const categorizedCount = "categorizedCount" in typesenseStoreResult ? typesenseStoreResult.categorizedCount : 0;
+      const uncategorizedCount = "uncategorizedCount" in typesenseStoreResult ? typesenseStoreResult.uncategorizedCount : 0;
+      const highConfidenceCategoryCount = "highConfidenceCategoryCount" in typesenseStoreResult
+        ? typesenseStoreResult.highConfidenceCategoryCount
+        : 0;
+      const categoryBuckets = "categoryBuckets" in typesenseStoreResult ? typesenseStoreResult.categoryBuckets : [];
+      const categorySourceBuckets = "categorySourceBuckets" in typesenseStoreResult ? typesenseStoreResult.categorySourceBuckets : [];
+      const taxonomyVersions = "taxonomyVersions" in typesenseStoreResult ? typesenseStoreResult.taxonomyVersions : [];
       if (!typesenseStoreResult.stored) {
         await emitOtelEvent({
           level: "error",
@@ -829,6 +874,16 @@ Session context:
           holdCount,
           discardCount,
           fallbackCount,
+          categorizedCount,
+          uncategorizedCount,
+          categoryCoverageRatio: typesenseStoreResult.count > 0 ? categorizedCount / typesenseStoreResult.count : 0,
+          highConfidenceCategoryCount,
+          highConfidenceCategoryRatio: typesenseStoreResult.count > 0
+            ? highConfidenceCategoryCount / typesenseStoreResult.count
+            : 0,
+          categoryBuckets: categoryBuckets.slice(0, 10),
+          categorySourceBuckets: categorySourceBuckets.slice(0, 10),
+          taxonomyVersions,
         },
       });
     });
@@ -968,6 +1023,9 @@ Session context:
           holdCount: "holdCount" in typesenseStoreResult ? typesenseStoreResult.holdCount : 0,
           discardCount: "discardCount" in typesenseStoreResult ? typesenseStoreResult.discardCount : 0,
           fallbackCount: "fallbackCount" in typesenseStoreResult ? typesenseStoreResult.fallbackCount : 0,
+          categorizedCount: "categorizedCount" in typesenseStoreResult ? typesenseStoreResult.categorizedCount : 0,
+          uncategorizedCount: "uncategorizedCount" in typesenseStoreResult ? typesenseStoreResult.uncategorizedCount : 0,
+          taxonomyVersions: "taxonomyVersions" in typesenseStoreResult ? typesenseStoreResult.taxonomyVersions : [],
         });
       } catch (err) {
         console.error("[observe] Gateway notify failed:", err);
@@ -989,6 +1047,16 @@ Session context:
           holdCount: "holdCount" in typesenseStoreResult ? typesenseStoreResult.holdCount : 0,
           discardCount: "discardCount" in typesenseStoreResult ? typesenseStoreResult.discardCount : 0,
           fallbackCount: "fallbackCount" in typesenseStoreResult ? typesenseStoreResult.fallbackCount : 0,
+          categorizedCount: "categorizedCount" in typesenseStoreResult ? typesenseStoreResult.categorizedCount : 0,
+          uncategorizedCount: "uncategorizedCount" in typesenseStoreResult ? typesenseStoreResult.uncategorizedCount : 0,
+          highConfidenceCategoryCount: "highConfidenceCategoryCount" in typesenseStoreResult
+            ? typesenseStoreResult.highConfidenceCategoryCount
+            : 0,
+          categoryBuckets: "categoryBuckets" in typesenseStoreResult ? typesenseStoreResult.categoryBuckets.slice(0, 10) : [],
+          categorySourceBuckets: "categorySourceBuckets" in typesenseStoreResult
+            ? typesenseStoreResult.categorySourceBuckets.slice(0, 10)
+            : [],
+          taxonomyVersions: "taxonomyVersions" in typesenseStoreResult ? typesenseStoreResult.taxonomyVersions : [],
           redisUpdated: redisStateResult.updated,
           dailyLogAppended: dailyLogResult.appended,
         },
@@ -1009,6 +1077,16 @@ Session context:
         holdCount: "holdCount" in typesenseStoreResult ? typesenseStoreResult.holdCount : 0,
         discardCount: "discardCount" in typesenseStoreResult ? typesenseStoreResult.discardCount : 0,
         fallbackCount: "fallbackCount" in typesenseStoreResult ? typesenseStoreResult.fallbackCount : 0,
+        categorizedCount: "categorizedCount" in typesenseStoreResult ? typesenseStoreResult.categorizedCount : 0,
+        uncategorizedCount: "uncategorizedCount" in typesenseStoreResult ? typesenseStoreResult.uncategorizedCount : 0,
+        highConfidenceCategoryCount: "highConfidenceCategoryCount" in typesenseStoreResult
+          ? typesenseStoreResult.highConfidenceCategoryCount
+          : 0,
+        categoryBuckets: "categoryBuckets" in typesenseStoreResult ? typesenseStoreResult.categoryBuckets : [],
+        categorySourceBuckets: "categorySourceBuckets" in typesenseStoreResult
+          ? typesenseStoreResult.categorySourceBuckets
+          : [],
+        taxonomyVersions: "taxonomyVersions" in typesenseStoreResult ? typesenseStoreResult.taxonomyVersions : [],
         error: "error" in typesenseStoreResult ? typesenseStoreResult.error : undefined,
       },
     };

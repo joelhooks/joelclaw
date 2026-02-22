@@ -44,7 +44,7 @@ export const contentSync = inngest.createFunction(
     id: "system/content-sync",
     retries: 1,
     concurrency: { limit: 1, key: "content-sync" },
-    debounce: { period: "5s", key: '"vault-sync"' },
+    debounce: { period: "45s", timeout: "3m", key: '"vault-sync"' },
   },
   [
     { cron: "0 * * * *" },
@@ -153,18 +153,19 @@ export const contentSync = inngest.createFunction(
       });
     }
     await step.run("otel-content-sync-finish", async () => {
-      const level = allSynced.length > 0 && !committed ? "warn" : "info";
+      const commitSkipped = allSynced.length > 0 && !committed;
+      const level = commitSkipped ? "warn" : "info";
       await emitOtelEvent({
         level,
         source: "worker",
         component: "content-sync",
         action: "content_sync.completed",
-        success: committed || allSynced.length === 0,
-        error: allSynced.length > 0 && !committed ? "changes_not_committed" : undefined,
+        success: true,
         metadata: {
           trigger: event.name,
           totalSynced: allSynced.length,
           committed,
+          commitSkipped,
           content: results.map((result) => ({
             name: result.name,
             syncedCount: result.synced.length,

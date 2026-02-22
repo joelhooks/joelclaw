@@ -43,6 +43,31 @@ type StagedProposal = ParsedProposal & {
 
 let redisClient: Redis | null = null;
 
+const MAX_STEP_OBSERVATIONS_CHARS = Number.parseInt(
+  process.env.REFLECT_MAX_OBSERVATIONS_CHARS ?? "120000",
+  10
+);
+const MAX_STEP_MEMORY_CHARS = Number.parseInt(
+  process.env.REFLECT_MAX_MEMORY_CHARS ?? "80000",
+  10
+);
+const MAX_RESULT_RAW_CHARS = Number.parseInt(
+  process.env.REFLECT_MAX_RESULT_RAW_CHARS ?? "6000",
+  10
+);
+
+function truncateForStepOutput(text: string, maxChars: number): { value: string; truncated: boolean } {
+  if (!Number.isFinite(maxChars) || maxChars <= 0 || text.length <= maxChars) {
+    return { value: text, truncated: false };
+  }
+
+  // Keep tail to preserve most recent context in accumulated observations.
+  return {
+    value: text.slice(-maxChars),
+    truncated: true,
+  };
+}
+
 function getRedisClient(): Redis {
   if (!redisClient) {
     const isTestEnv = process.env.NODE_ENV === "test" || process.env.BUN_TEST === "1";
@@ -385,15 +410,29 @@ export const reflect = inngest.createFunction(
           }
         }
 
-        const memoryContent = await readMemoryContent();
+        const memoryContentRaw = await readMemoryContent();
+        const observationsTextRaw =
+          observations.length > 0 ? observations.join("\n\n") : "No observations available.";
+
+        const observationsText = truncateForStepOutput(
+          observationsTextRaw,
+          MAX_STEP_OBSERVATIONS_CHARS
+        );
+        const memoryContent = truncateForStepOutput(
+          memoryContentRaw,
+          MAX_STEP_MEMORY_CHARS
+        );
 
         return {
           anchorDate: loadedAnchorDate,
           dates,
           observationCount: observations.length,
-          observationsText:
-            observations.length > 0 ? observations.join("\n\n") : "No observations available.",
-          memoryContent,
+          observationsText: observationsText.value,
+          observationsTextTruncated: observationsText.truncated,
+          observationsTextChars: observationsTextRaw.length,
+          memoryContent: memoryContent.value,
+          memoryContentTruncated: memoryContent.truncated,
+          memoryContentChars: memoryContentRaw.length,
         };
       });
 
@@ -545,8 +584,15 @@ export const reflect = inngest.createFunction(
         });
       }
 
+      const rawPreviewLimit = Number.isFinite(MAX_RESULT_RAW_CHARS)
+        ? Math.max(0, MAX_RESULT_RAW_CHARS)
+        : 6000;
+      const rawPreview = validated.raw.slice(0, rawPreviewLimit);
+
       const result = {
-        raw: validated.raw,
+        rawPreview,
+        rawLength: validated.raw.length,
+        rawPreviewTruncated: validated.raw.length > rawPreviewLimit,
         inputTokens: validated.inputTokens,
         outputTokens: validated.outputTokens,
         compressionRatio: validated.compressionRatio,
@@ -573,6 +619,10 @@ export const reflect = inngest.createFunction(
             date: loaded.anchorDate,
             inputTokens: validated.inputTokens,
             outputTokens: validated.outputTokens,
+            observationsTextChars: loaded.observationsTextChars,
+            observationsTextTruncated: loaded.observationsTextTruncated,
+            memoryContentChars: loaded.memoryContentChars,
+            memoryContentTruncated: loaded.memoryContentTruncated,
           },
         });
       });

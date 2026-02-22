@@ -158,7 +158,7 @@ Adopt a **single source of truth** for Inngest worker code in the `joelclaw` mon
   - `joelclaw inngest workers`
   - role counts, duplicate function-id detection, last registration timestamp.
 - Dual-clone coupling was removed from primary operator paths:
-  - removed `joelclaw inngest sync-worker` command
+  - `joelclaw inngest sync-worker` now acts as a compatibility alias for restart/register only (no file copy)
   - removed worker-clone sync/restart step from `agent-loop/complete.ts`.
 - Live observability verification passed with this runtime:
   - gateway events drained
@@ -208,6 +208,17 @@ Adopt a **single source of truth** for Inngest worker code in the `joelclaw` mon
   - `todoistMemoryReviewBridge`
 - Cluster boot logs no longer attempt local `secrets lease`:
   - `"[secrets] skipping local webhook secret leasing in cluster worker role"`
+
+### Enforcement update (2026-02-22)
+
+- Added hard runtime guard in `packages/system-bus/start.sh`:
+  - worker startup exits non-zero when launched from legacy clone path `~/Code/system-bus-worker`.
+- Added explicit source-verification surface in CLI:
+  - `joelclaw inngest source [--repair]` inspects launchd binding and can re-install the monorepo plist.
+- Added automatic source enforcement on worker lifecycle commands:
+  - `joelclaw inngest restart-worker` and `joelclaw inngest sync-worker` now enforce ADR-0089 launchd binding before restart/register.
+- Added runtime source telemetry:
+  - worker health payload now includes `runtime.cwd`, `runtime.deploymentModel`, and `runtime.legacyCloneDetected`.
 
 ## Migration Trigger to Revisit
 

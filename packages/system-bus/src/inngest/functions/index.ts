@@ -64,6 +64,7 @@ export { proposalTriage } from "./memory/proposal-triage";
 export { batchReview } from "./memory/batch-review";
 export { nightlyMaintenance } from "./memory/nightly-maintenance";
 export { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
+export { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 export { echoFizzle } from "../../memory/echo-fizzle";
 export {
   agentLoopPlan,

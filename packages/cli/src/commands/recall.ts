@@ -634,6 +634,7 @@ export const recallCmd = Command.make(
             categoryFilterBy: categoryFilterBy ?? null,
             budgetRequested: budgetPlan.requested,
             budgetApplied: budgetPlan.applied,
+            budget_profile: budgetPlan.applied,
             budgetReason: budgetPlan.reason,
           },
         }))
@@ -701,6 +702,7 @@ export const recallCmd = Command.make(
             categoryFilterReason,
             budgetRequested: budgetPlan.requested,
             budgetApplied: budgetPlan.applied,
+            budget_profile: budgetPlan.applied,
             budgetReason: budgetPlan.reason,
             found: result.found,
             returned: finalHits.length,
@@ -813,6 +815,7 @@ export const recallCmd = Command.make(
             categoryFilterBy: categoryFilterBy ?? null,
             budgetRequested: budgetPlan.requested,
             budgetApplied: budgetPlan.applied,
+            budget_profile: budgetPlan.applied,
             budgetReason: budgetPlan.reason,
           },
         }))

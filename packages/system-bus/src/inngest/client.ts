@@ -947,6 +947,48 @@ export type Events = {
       };
     };
   };
+  "memory/adr-evidence.capture.requested": {
+    data: {
+      reason?: string;
+      requestedBy?: string;
+      windowHours?: number;
+    };
+  };
+  "memory/adr-evidence.daily.captured": {
+    data: {
+      generatedAt: string;
+      date: string;
+      windowHours: number;
+      adr0095: {
+        observeRuns: number;
+        categoryEvidenceRuns: number;
+        totalStoredCount: number;
+        totalCategorizedCount: number;
+        categoryCoverageRatio: number;
+        taxonomyVersions: string[];
+        weeklyCategorySummaryEvents: number;
+      };
+      adr0096: {
+        recallEvents: number;
+        prefetchEvents: number;
+        recallWithBudgetDiagnostics: number;
+        prefetchWithBudgetDiagnostics: number;
+        recallBudgetBreakdown: Array<{ profile: string; count: number; avgDurationMs: number }>;
+        prefetchBudgetBreakdown: Array<{ profile: string; count: number; avgDurationMs: number }>;
+        deepVsLeanLatencyDeltaMs: number | null;
+      };
+      rollingWindow: {
+        windowDays: number;
+        daysCaptured: number;
+        missingDates: string[];
+        ready: boolean;
+      };
+      gates: {
+        adr0095SignalReady: boolean;
+        adr0096SignalReady: boolean;
+      };
+    };
+  };
   "vault/sync.check": {
     data: Record<string, never>;
   };
@@ -968,6 +1010,12 @@ export type Events = {
   };
   "loops/stale.check": {
     data: Record<string, never>;
+  };
+  "check/o11y-triage.requested": {
+    data: {
+      reason?: string;
+      requestedBy?: string;
+    };
   };
   "nas/soak.review.requested": {
     data: {

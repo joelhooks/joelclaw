@@ -52,6 +52,9 @@ import { emitOtelEvent, emitValidatedOtelEvent } from "./observability/emit";
 const app = new Hono();
 const OTEL_EMIT_TOKEN = process.env.OTEL_EMIT_TOKEN;
 const WORKER_STARTED_AT = new Date().toISOString();
+const WORKER_CWD = process.cwd();
+const LEGACY_WORKER_CLONE_FRAGMENT = "/Code/system-bus-worker/";
+const LEGACY_WORKER_CLONE_DETECTED = WORKER_CWD.includes(LEGACY_WORKER_CLONE_FRAGMENT);
 
 type WorkerRole = "host" | "cluster";
 type FunctionDefinition = { opts?: { id?: string } };
@@ -122,6 +125,11 @@ app.get("/", (c) =>
       },
       duplicateFunctionIds,
       hasDuplicateFunctionIds: duplicateFunctionIds.length > 0,
+    },
+    runtime: {
+      cwd: WORKER_CWD,
+      deploymentModel: "single-source",
+      legacyCloneDetected: LEGACY_WORKER_CLONE_DETECTED,
     },
     webhooks: {
       endpoint: "/webhooks/:provider",
@@ -241,6 +249,9 @@ void emitOtelEvent({
     duplicateFunctionIds,
     serveHost: serveHost ?? null,
     startedAt: WORKER_STARTED_AT,
+    deploymentModel: "single-source",
+    workerCwd: WORKER_CWD,
+    legacyCloneDetected: LEGACY_WORKER_CLONE_DETECTED,
   },
 }).catch((error) => {
   console.warn("[otel] failed to emit worker start event", error);

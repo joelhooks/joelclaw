@@ -41,6 +41,7 @@ import { proposalTriage } from "./memory/proposal-triage";
 import { batchReview } from "./memory/batch-review";
 import { nightlyMaintenance } from "./memory/nightly-maintenance";
 import { weeklyMaintenanceSummary } from "./memory/weekly-maintenance-summary";
+import { adrEvidenceCapture } from "./memory/adr-evidence-capture";
 import { echoFizzle } from "../../memory/echo-fizzle";
 import { taskTriage } from "./task-triage";
 import { checkSessions } from "./check-sessions";
@@ -118,6 +119,7 @@ export const hostFunctionDefinitions = [
   batchReview,
   nightlyMaintenance,
   weeklyMaintenanceSummary,
+  adrEvidenceCapture,
   echoFizzle,
   taskTriage,
   checkSessions,

@@ -211,6 +211,14 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
         params: { hours: { description: "Lookback hours", value: 24, default: 24 } },
       },
       {
+        command: "langfuse aggregate [--hours <hours>] [--project <project>]",
+        description: "Aggregate cloud LLM trace cost/latency/signature trends",
+        params: {
+          hours: { description: "Lookback hours", value: 24, default: 24 },
+          project: { description: "Optional Langfuse project ID" },
+        },
+      },
+      {
         command: "otel search <query> [--hours <hours>]",
         description: "Search event stream for issue signatures",
         params: {

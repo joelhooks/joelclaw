@@ -6,6 +6,14 @@
 # Startup is immutable: no runtime git pull / bun install mutation.
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+LEGACY_WORKER_ROOT="$HOME/Code/system-bus-worker"
+
+if [[ "$REPO_ROOT" == "$LEGACY_WORKER_ROOT"* ]]; then
+  echo "FATAL: legacy worker clone runtime blocked by ADR-0089" >&2
+  echo "Expected start script: $HOME/Code/joelhooks/joelclaw/packages/system-bus/start.sh" >&2
+  echo "Fix: reinstall launch agent from monorepo and restart worker" >&2
+  exit 78
+fi
 
 cd "$(dirname "$0")"
 

@@ -1,4 +1,4 @@
-import { Command, Options } from "@effect/cli"
+import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { loadConfig } from "../config"
 import { Inngest } from "../inngest"
@@ -6,9 +6,15 @@ import { respond, respondError } from "../response"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
 
 const cfg = loadConfig()
+const HOME_DIR = process.env.HOME ?? "/Users/joel"
 const WORKER_URL = cfg.workerUrl
 const WORKER_REGISTER_URL = `${WORKER_URL}/api/inngest`
 const WORKER_LABEL = "com.joel.system-bus-worker"
+const WORKER_LAUNCHD_PLIST_SOURCE = `${HOME_DIR}/Code/joelhooks/joelclaw/infra/launchd/${WORKER_LABEL}.plist`
+const WORKER_LAUNCHD_PLIST_TARGET = `${HOME_DIR}/Library/LaunchAgents/${WORKER_LABEL}.plist`
+const WORKER_EXPECTED_START = `${HOME_DIR}/Code/joelhooks/joelclaw/packages/system-bus/start.sh`
+const WORKER_EXPECTED_CWD = `${HOME_DIR}/Code/joelhooks/joelclaw/packages/system-bus`
+const LEGACY_WORKER_PATH_FRAGMENT = "/Code/system-bus-worker/"
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 const OTEL_QUERY_BY = "action,error,component,source,metadata_json,search_text"
 const MEMORY_COMPONENTS = [
@@ -53,6 +59,11 @@ type WorkerApiBody = {
     }
     duplicateFunctionIds?: string[]
     hasDuplicateFunctionIds?: boolean
+  }
+  runtime?: {
+    cwd?: string
+    deploymentModel?: string
+    legacyCloneDetected?: boolean
   }
 }
 
@@ -394,26 +405,198 @@ function runJoelclawJsonCommand(
   )
 }
 
-const restartWorker = () =>
+type WorkerLaunchdBinding = {
+  uid: number
+  service: string
+  plistPath: string | null
+  program: string | null
+  workingDirectory: string | null
+  state: string | null
+}
+
+type WorkerSourceEvaluation = {
+  compliant: boolean
+  programMatches: boolean
+  workingDirectoryMatches: boolean
+  legacyPathDetected: boolean
+}
+
+function parseLaunchctlField(raw: string, field: string): string | null {
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const match = raw.match(new RegExp(`^\\s*${escaped}\\s*=\\s*(.+)$`, "mi"))
+  return match?.[1]?.trim() ?? null
+}
+
+const inspectWorkerLaunchdBinding = () =>
   Effect.try({
     try: () => {
       const uid = process.getuid?.() ?? 0
-      const proc = Bun.spawnSync([
-        "launchctl",
-        "kickstart",
-        "-k",
-        `gui/${uid}/${WORKER_LABEL}`,
-      ])
+      const service = `gui/${uid}/${WORKER_LABEL}`
+      const proc = Bun.spawnSync(["launchctl", "print", service], {
+        stdout: "pipe",
+        stderr: "pipe",
+      })
 
       if (proc.exitCode !== 0) {
-        const stderr = proc.stderr.toString().trim()
-        throw new Error(stderr || `launchctl exited with ${proc.exitCode}`)
+        const stderr = decodeText(proc.stderr).trim()
+        throw new Error(stderr || `launchctl print exited with ${proc.exitCode}`)
       }
 
-      return { ok: true }
+      const output = decodeText(proc.stdout)
+      return {
+        uid,
+        service,
+        plistPath: parseLaunchctlField(output, "path"),
+        program: parseLaunchctlField(output, "program"),
+        workingDirectory: parseLaunchctlField(output, "working directory"),
+        state: parseLaunchctlField(output, "state"),
+      } as WorkerLaunchdBinding
     },
-    catch: (e) => new Error(`Failed to restart worker: ${e}`),
+    catch: (e) => new Error(`Failed to inspect worker launchd binding: ${e}`),
   })
+
+function evaluateWorkerSource(binding: WorkerLaunchdBinding): WorkerSourceEvaluation {
+  const program = binding.program ?? ""
+  const workingDirectory = binding.workingDirectory ?? ""
+  const programMatches = program === WORKER_EXPECTED_START
+  const workingDirectoryMatches = workingDirectory === WORKER_EXPECTED_CWD
+  const legacyPathDetected =
+    program.includes(LEGACY_WORKER_PATH_FRAGMENT)
+    || workingDirectory.includes(LEGACY_WORKER_PATH_FRAGMENT)
+
+  return {
+    compliant: programMatches && workingDirectoryMatches && !legacyPathDetected,
+    programMatches,
+    workingDirectoryMatches,
+    legacyPathDetected,
+  }
+}
+
+const repairWorkerLaunchdBinding = () =>
+  Effect.try({
+    try: () => {
+      const uid = process.getuid?.() ?? 0
+      const copyProc = Bun.spawnSync([
+        "cp",
+        WORKER_LAUNCHD_PLIST_SOURCE,
+        WORKER_LAUNCHD_PLIST_TARGET,
+      ], {
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+
+      if (copyProc.exitCode !== 0) {
+        const stderr = decodeText(copyProc.stderr).trim()
+        throw new Error(stderr || `cp exited with ${copyProc.exitCode}`)
+      }
+
+      Bun.spawnSync([
+        "launchctl",
+        "bootout",
+        `gui/${uid}/${WORKER_LABEL}`,
+      ], {
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+
+      const bootstrapProc = Bun.spawnSync([
+        "launchctl",
+        "bootstrap",
+        `gui/${uid}`,
+        WORKER_LAUNCHD_PLIST_TARGET,
+      ], {
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+
+      if (bootstrapProc.exitCode !== 0) {
+        const stderr = decodeText(bootstrapProc.stderr).trim()
+        const alreadyLoaded = /already loaded|in progress|service is disabled/iu.test(stderr)
+        if (!alreadyLoaded) {
+          throw new Error(stderr || `launchctl bootstrap exited with ${bootstrapProc.exitCode}`)
+        }
+      }
+
+      return {
+        repaired: true,
+        sourcePlist: WORKER_LAUNCHD_PLIST_SOURCE,
+        targetPlist: WORKER_LAUNCHD_PLIST_TARGET,
+      }
+    },
+    catch: (e) => new Error(`Failed to repair worker launchd binding: ${e}`),
+  })
+
+const ensureSingleSourceWorkerBinding = (repair: boolean) =>
+  Effect.gen(function* () {
+    const before = yield* inspectWorkerLaunchdBinding()
+    const beforeEvaluation = evaluateWorkerSource(before)
+
+    if (beforeEvaluation.compliant) {
+      return {
+        compliant: true,
+        repaired: false,
+        before,
+        after: before,
+        evaluation: beforeEvaluation,
+      }
+    }
+
+    if (!repair) {
+      throw new Error(
+        `Worker launchd drift detected: program=${before.program ?? "unknown"}, cwd=${before.workingDirectory ?? "unknown"}`
+      )
+    }
+
+    const repairResult = yield* repairWorkerLaunchdBinding()
+    const after = yield* inspectWorkerLaunchdBinding()
+    const afterEvaluation = evaluateWorkerSource(after)
+
+    if (!afterEvaluation.compliant) {
+      throw new Error(
+        `Worker launchd drift persisted after repair: program=${after.program ?? "unknown"}, cwd=${after.workingDirectory ?? "unknown"}`
+      )
+    }
+
+    return {
+      compliant: true,
+      repaired: true,
+      before,
+      after,
+      evaluation: afterEvaluation,
+      repairResult,
+    }
+  })
+
+const restartWorker = (options: { enforceSingleSource?: boolean } = {}) =>
+  Effect.gen(function* () {
+    const enforceSingleSource = options.enforceSingleSource ?? true
+    const sourceCheck = enforceSingleSource
+      ? (yield* ensureSingleSourceWorkerBinding(true))
+      : null
+
+    const uid = process.getuid?.() ?? 0
+    const proc = Bun.spawnSync([
+      "launchctl",
+      "kickstart",
+      "-k",
+      `gui/${uid}/${WORKER_LABEL}`,
+    ], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+
+    if (proc.exitCode !== 0) {
+      const stderr = decodeText(proc.stderr).trim()
+      throw new Error(stderr || `launchctl exited with ${proc.exitCode}`)
+    }
+
+    return {
+      ok: true,
+      sourceCheck,
+    }
+  }).pipe(
+    Effect.mapError((e) => new Error(`Failed to restart worker: ${e}`))
+  )
 
 const registerWorkerFunctions = () =>
   Effect.tryPromise({
@@ -443,9 +626,30 @@ const workerProbe = () =>
     catch: (e) => new Error(`Failed to reach worker: ${e}`),
   })
 
+const activeRunsSnapshot = (inngestClient: any) =>
+  Effect.gen(function* () {
+    const [running, queued] = yield* Effect.all([
+      inngestClient.runs({ count: 25, status: "RUNNING", hours: 2 }),
+      inngestClient.runs({ count: 25, status: "QUEUED", hours: 2 }),
+    ])
+
+    return [...running, ...queued]
+      .filter((run: any) => run.status === "RUNNING" || run.status === "QUEUED")
+      .map((run: any) => ({
+        id: String(run.id ?? ""),
+        status: String(run.status ?? "UNKNOWN"),
+        functionName: String(run.functionName ?? run.functionID ?? "unknown"),
+      }))
+  })
+
 const workerDiagnostics = (body: unknown) => {
   const data = (body ?? {}) as WorkerApiBody
   const worker = data.worker ?? {}
+  const runtime = data.runtime ?? {}
+  const runtimeCwd = typeof runtime.cwd === "string" ? runtime.cwd : null
+  const runtimeLegacyCloneDetected = runtime.legacyCloneDetected === true
+    || (runtimeCwd?.includes(LEGACY_WORKER_PATH_FRAGMENT) ?? false)
+
   return {
     functionCount: typeof data.count === "number" ? data.count : null,
     role: typeof worker.role === "string" ? worker.role : "unknown",
@@ -462,6 +666,11 @@ const workerDiagnostics = (body: unknown) => {
       ? worker.duplicateFunctionIds
       : [],
     hasDuplicateFunctionIds: worker.hasDuplicateFunctionIds === true,
+    runtime: {
+      cwd: runtimeCwd,
+      deploymentModel: typeof runtime.deploymentModel === "string" ? runtime.deploymentModel : null,
+      legacyCloneDetected: runtimeLegacyCloneDetected,
+    },
   }
 }
 
@@ -473,6 +682,94 @@ function isMemoryFunctionName(value: unknown): boolean {
 function isTypesenseUnreachableMessage(message: string): boolean {
   return /ECONNREFUSED|Connection refused|TYPESENSE_UNREACHABLE|fetch failed/iu.test(message)
 }
+
+function toMapPayload(raw: string): { ok: true; value: Record<string, unknown> } | { ok: false; error: string } {
+  try {
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { ok: false, error: "--data must decode to a JSON object" }
+    }
+    return { ok: true, value: parsed as Record<string, unknown> }
+  } catch (error) {
+    return { ok: false, error: `Invalid JSON in --data: ${error instanceof Error ? error.message : String(error)}` }
+  }
+}
+
+async function invokeFunctionBySlug(functionSlug: string, data: Record<string, unknown>): Promise<{ accepted: boolean; raw: unknown }> {
+  const query = `mutation InvokeFunction($slug: String!, $data: Map) { invokeFunction(functionSlug: $slug, data: $data) }`
+  const resp = await fetch(`${cfg.inngestUrl}/v0/gql`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      variables: {
+        slug: functionSlug,
+        data,
+      },
+    }),
+  })
+
+  if (!resp.ok) {
+    throw new Error(`Inngest GQL invoke failed (${resp.status})`)
+  }
+
+  const body = await resp.json() as {
+    data?: { invokeFunction?: boolean }
+    errors?: Array<{ message?: string }>
+  }
+
+  if (Array.isArray(body.errors) && body.errors.length > 0) {
+    throw new Error(body.errors[0]?.message ?? "Inngest GQL invoke returned errors")
+  }
+
+  return {
+    accepted: body.data?.invokeFunction === true,
+    raw: body,
+  }
+}
+
+async function appUrlForFunctionSlug(functionSlug: string): Promise<string | null> {
+  const query = `{
+    apps {
+      name
+      url
+      functions { slug }
+    }
+  }`
+
+  const resp = await fetch(`${cfg.inngestUrl}/v0/gql`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  })
+
+  if (!resp.ok) return null
+
+  const body = await resp.json() as {
+    data?: {
+      apps?: Array<{
+        name?: string
+        url?: string
+        functions?: Array<{ slug?: string }>
+      }>
+    }
+  }
+
+  for (const app of body.data?.apps ?? []) {
+    const hasFunction = (app.functions ?? []).some((fn) => fn.slug === functionSlug)
+    if (hasFunction && typeof app.url === "string" && app.url.trim().length > 0) {
+      return app.url
+    }
+  }
+
+  return null
+}
+
+function hasSdkUrlError(runDetail: unknown): boolean {
+  return /Unable to reach SDK URL/iu.test(JSON.stringify(runDetail ?? {}))
+}
+
+const TERMINAL_RUN_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED"])
 
 const inngestStatusCmd = Command.make("status", {}, () =>
   Effect.gen(function* () {
@@ -497,6 +794,11 @@ const inngestStatusCmd = Command.make("status", {}, () =>
           roleCounts: { host: null, cluster: null, active: null },
           duplicateFunctionIds: [],
           hasDuplicateFunctionIds: false,
+          runtime: {
+            cwd: null,
+            deploymentModel: null,
+            legacyCloneDetected: false,
+          },
           error: worker.left.message,
         }
 
@@ -507,11 +809,131 @@ const inngestStatusCmd = Command.make("status", {}, () =>
       registeredFunctionCount: functions.length,
       worker: workerInfo,
     }, [
+      { command: "joelclaw inngest source", description: "Verify single-source worker binding" },
       { command: "joelclaw inngest register", description: "Register functions from worker" },
       { command: "joelclaw inngest restart-worker", description: "Restart system-bus worker" },
       { command: "joelclaw refresh", description: "Full delete + re-register reconciliation" },
     ], ok))
   })
+)
+
+const inngestSourceCmd = Command.make(
+  "source",
+  {
+    repair: Options.boolean("repair").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Repair launchd binding to monorepo single-source path when drift is detected")
+    ),
+  },
+  ({ repair }) =>
+    Effect.gen(function* () {
+      const beforeResult = yield* inspectWorkerLaunchdBinding().pipe(Effect.either)
+
+      if (beforeResult._tag === "Left" && !repair) {
+        yield* Console.log(respondError(
+          "inngest source",
+          beforeResult.left.message,
+          "WORKER_SOURCE_UNKNOWN",
+          "Run `joelclaw inngest source --repair` to re-install launchd worker binding",
+          [
+            { command: "joelclaw inngest source --repair", description: "Repair launchd binding to monorepo source" },
+            { command: "joelclaw inngest workers", description: "Inspect runtime worker diagnostics" },
+          ],
+        ))
+        return
+      }
+
+      const before = beforeResult._tag === "Right" ? beforeResult.right : null
+      const beforeEvaluation = before ? evaluateWorkerSource(before) : null
+
+      let repaired = false
+      let repairResult: unknown = null
+      let after = before
+
+      if ((!beforeEvaluation || !beforeEvaluation.compliant) && repair) {
+        repairResult = yield* repairWorkerLaunchdBinding().pipe(Effect.either)
+        if ((repairResult as any)?._tag === "Left") {
+          yield* Console.log(respondError(
+            "inngest source",
+            (repairResult as any).left?.message ?? "Failed to repair worker launchd binding",
+            "WORKER_SOURCE_REPAIR_FAILED",
+            "Check launchctl permissions and retry",
+            [
+              { command: "joelclaw inngest source --repair", description: "Retry launchd binding repair" },
+              { command: `launchctl print gui/$(id -u)/${WORKER_LABEL}`, description: "Inspect current worker launchd binding" },
+            ],
+          ))
+          return
+        }
+
+        repaired = true
+        const afterResult = yield* inspectWorkerLaunchdBinding().pipe(Effect.either)
+        if (afterResult._tag === "Left") {
+          yield* Console.log(respondError(
+            "inngest source",
+            afterResult.left.message,
+            "WORKER_SOURCE_UNKNOWN",
+            "Launchd repair completed but binding is still unreadable; inspect launchctl state",
+            [
+              { command: `launchctl print gui/$(id -u)/${WORKER_LABEL}`, description: "Inspect launchd state" },
+            ],
+          ))
+          return
+        }
+        after = afterResult.right
+      }
+
+      if (!after) {
+        yield* Console.log(respondError(
+          "inngest source",
+          "Worker launchd binding unavailable",
+          "WORKER_SOURCE_UNKNOWN",
+          "Repair launchd binding to the monorepo source",
+          [
+            { command: "joelclaw inngest source --repair", description: "Repair launchd binding" },
+          ],
+        ))
+        return
+      }
+
+      const evaluation = evaluateWorkerSource(after)
+      const ok = evaluation.compliant
+
+      if (!ok) {
+        yield* Console.log(respondError(
+          "inngest source",
+          "Worker launchd binding is not ADR-0089 compliant",
+          "WORKER_SOURCE_DRIFT",
+          "Run `joelclaw inngest source --repair` to force monorepo single-source binding",
+          [
+            { command: "joelclaw inngest source --repair", description: "Repair launchd binding" },
+            { command: "joelclaw inngest restart-worker --register", description: "Restart worker after repair" },
+          ],
+        ))
+        return
+      }
+
+      yield* Console.log(respond("inngest source", {
+        adr: "0089-single-source-inngest-worker-deployment",
+        compliant: true,
+        repaired,
+        expected: {
+          program: WORKER_EXPECTED_START,
+          workingDirectory: WORKER_EXPECTED_CWD,
+          plistSource: WORKER_LAUNCHD_PLIST_SOURCE,
+          plistTarget: WORKER_LAUNCHD_PLIST_TARGET,
+        },
+        launchd: {
+          before,
+          after,
+          evaluation,
+        },
+        repairResult,
+      }, [
+        { command: "joelclaw inngest workers", description: "Verify runtime worker diagnostics" },
+        { command: "joelclaw inngest restart-worker --register", description: "Restart + register worker after source verification" },
+      ], true))
+    })
 )
 
 const inngestRegisterCmd = Command.make(
@@ -563,10 +985,45 @@ const inngestRestartWorkerCmd = Command.make(
       Options.withDefault(1500),
       Options.withDescription("Wait after restart before next step (default: 1500ms)")
     ),
+    force: Options.boolean("force").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Restart even when RUNNING/QUEUED runs exist")
+    ),
   },
-  ({ register, waitMs }) =>
+  ({ register, waitMs, force }) =>
     Effect.gen(function* () {
-      yield* restartWorker()
+      const sourceCheck = yield* ensureSingleSourceWorkerBinding(true)
+      const inngestClient = yield* Inngest
+      const activeRuns = yield* activeRunsSnapshot(inngestClient)
+      const hasActiveRuns = activeRuns.length > 0
+
+      if (!force && hasActiveRuns) {
+        let reg: unknown = null
+        if (register) {
+          reg = yield* registerWorkerFunctions().pipe(Effect.either)
+        }
+
+        const probe = yield* workerProbe().pipe(Effect.either)
+        const probeOk = probe._tag === "Right" ? probe.right.ok : false
+        const regOk = !register || (reg as any)?._tag === "Right"
+
+        yield* Console.log(respond("inngest restart-worker", {
+          restarted: false,
+          skippedDueToActiveRuns: true,
+          activeRunCount: activeRuns.length,
+          activeRuns: activeRuns.slice(0, 5),
+          autoRegister: register,
+          registerResult: reg,
+          workerProbe: probe,
+          sourceCheck,
+        }, [
+          { command: "joelclaw runs --status RUNNING --count 10", description: "Inspect active runs before forcing restart" },
+          { command: "joelclaw inngest restart-worker --force", description: "Force restart anyway (disruptive)" },
+        ], probeOk && regOk))
+        return
+      }
+
+      const restartResult = yield* restartWorker({ enforceSingleSource: false })
 
       if (waitMs > 0) {
         yield* sleepMs(waitMs)
@@ -583,9 +1040,11 @@ const inngestRestartWorkerCmd = Command.make(
 
       yield* Console.log(respond("inngest restart-worker", {
         restarted: true,
+        forced: force,
         autoRegister: register,
         registerResult: reg,
         workerProbe: probe,
+        sourceCheck: restartResult.sourceCheck ?? sourceCheck,
       }, [
         { command: "joelclaw inngest status", description: "Confirm steady state" },
         { command: "joelclaw logs errors -n 80", description: "Inspect worker stderr if needed" },
@@ -604,15 +1063,30 @@ const inngestSyncWorkerCmd = Command.make(
       Options.withDefault(1500),
       Options.withDescription("Wait between restart/register/probe checks (default: 1500ms)")
     ),
+    force: Options.boolean("force").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Allow restart even when RUNNING/QUEUED runs exist")
+    ),
   },
-  ({ restart, waitMs }) =>
+  ({ restart, waitMs, force }) =>
     Effect.gen(function* () {
+      const sourceCheck = yield* ensureSingleSourceWorkerBinding(true)
       let restarted = false
+      let restartSkippedDueToActiveRuns = false
+      let activeRuns: Array<{ id: string; status: string; functionName: string }> = []
+
       if (restart) {
-        yield* restartWorker()
-        restarted = true
-        if (waitMs > 0) {
-          yield* sleepMs(waitMs)
+        const inngestClient = yield* Inngest
+        activeRuns = yield* activeRunsSnapshot(inngestClient)
+
+        if (!force && activeRuns.length > 0) {
+          restartSkippedDueToActiveRuns = true
+        } else {
+          yield* restartWorker({ enforceSingleSource: false })
+          restarted = true
+          if (waitMs > 0) {
+            yield* sleepMs(waitMs)
+          }
         }
       }
 
@@ -626,12 +1100,20 @@ const inngestSyncWorkerCmd = Command.make(
       const probeOk = probe._tag === "Right" ? probe.right.ok : false
 
       yield* Console.log(respond("inngest sync-worker", {
+        mode: "single-source",
+        note: "No file copy occurs; this command only enforces launchd source + register/probe",
         restarted,
+        restartSkippedDueToActiveRuns,
+        forced: force,
+        activeRunCount: activeRuns.length,
+        activeRuns: restartSkippedDueToActiveRuns ? activeRuns.slice(0, 5) : [],
         registerResult,
         workerProbe: probe,
+        sourceCheck,
       }, [
         { command: "joelclaw inngest status", description: "Confirm worker + registration health" },
         { command: "joelclaw functions", description: "List currently registered functions" },
+        { command: "joelclaw inngest sync-worker --restart --force", description: "Force restart despite active runs (disruptive)" },
       ], regOk && probeOk))
     })
 )
@@ -676,6 +1158,323 @@ const inngestReconcileCmd = Command.make(
     })
 )
 
+const invokeFunctionSlugArg = Args.text({ name: "function-slug" }).pipe(
+  Args.withDescription("Function slug, id, or name")
+)
+
+const inngestInvokeCmd = Command.make(
+  "invoke",
+  {
+    functionSlug: invokeFunctionSlugArg,
+    data: Options.text("data").pipe(
+      Options.withDefault("{}"),
+      Options.withDescription("JSON object payload for invokeFunction data (default: {})")
+    ),
+    waitMs: Options.integer("wait-ms").pipe(
+      Options.withDefault(30_000),
+      Options.withDescription("Max wait for terminal run status (default: 30000)")
+    ),
+    pollMs: Options.integer("poll-ms").pipe(
+      Options.withDefault(1000),
+      Options.withDescription("Polling interval while waiting for run completion (default: 1000)")
+    ),
+    mode: Options.text("mode").pipe(
+      Options.withDefault("auto"),
+      Options.withDescription("Dispatch mode: auto|event|invoke (default: auto)")
+    ),
+    healSdk: Options.boolean("heal-sdk").pipe(
+      Options.withDefault(true),
+      Options.withDescription("Retry once after SDK reachability healing when run shows 'Unable to reach SDK URL' (default: true)")
+    ),
+    restartOnHeal: Options.boolean("restart-on-heal").pipe(
+      Options.withDefault(true),
+      Options.withDescription("Restart + register worker before retry when heal-sdk is enabled (default: true)")
+    ),
+  },
+  ({ functionSlug, data, waitMs, pollMs, mode, healSdk, restartOnHeal }) =>
+    Effect.gen(function* () {
+      const parsedData = toMapPayload(data)
+      if (!parsedData.ok) {
+        yield* Console.log(respondError(
+          "inngest invoke",
+          parsedData.error,
+          "INVALID_JSON",
+          "Pass --data as a valid JSON object",
+          [
+            {
+              command: "joelclaw inngest invoke <function-slug> [--data <data>]",
+              description: "Retry with valid JSON payload",
+              params: {
+                "function-slug": { description: "Function slug/id/name", value: functionSlug, required: true },
+                data: { description: "JSON object", value: "{}", default: "{}" },
+              },
+            },
+          ],
+        ))
+        return
+      }
+
+      const safeWaitMs = Math.max(2_000, waitMs)
+      const safePollMs = Math.max(250, pollMs)
+      const maxAttempts = healSdk ? 2 : 1
+
+      const inngestClient = yield* Inngest
+      const functions = yield* inngestClient.functions()
+      const target = functions.find((fn) =>
+        fn.slug === functionSlug
+        || fn.id === functionSlug
+        || fn.name.toLowerCase() === functionSlug.toLowerCase()
+      )
+
+      if (!target) {
+        yield* Console.log(respondError(
+          "inngest invoke",
+          `Function not found: ${functionSlug}`,
+          "FUNCTION_NOT_FOUND",
+          "Use `joelclaw functions` and pass a valid function slug/id/name",
+          [
+            { command: "joelclaw functions", description: "List available function slugs" },
+            {
+              command: "joelclaw inngest invoke <function-slug> [--data <data>]",
+              description: "Retry with valid function slug",
+              params: {
+                "function-slug": { description: "Function slug/id/name", required: true },
+                data: { description: "JSON object", value: data, default: "{}" },
+              },
+            },
+          ],
+        ))
+        return
+      }
+
+      const normalizedMode = mode.trim().toLowerCase()
+      if (normalizedMode !== "auto" && normalizedMode !== "event" && normalizedMode !== "invoke") {
+        yield* Console.log(respondError(
+          "inngest invoke",
+          `Invalid mode: ${mode}`,
+          "INVALID_MODE",
+          "Use --mode auto|event|invoke",
+          [
+            {
+              command: "joelclaw inngest invoke <function-slug> [--mode <mode>]",
+              description: "Retry with supported mode",
+              params: {
+                "function-slug": { description: "Function slug/id/name", value: functionSlug, required: true },
+                mode: { description: "Dispatch mode", value: "auto", enum: ["auto", "event", "invoke"] },
+              },
+            },
+          ],
+        ))
+        return
+      }
+
+      const eventTrigger = target.triggers.find((trigger) =>
+        trigger.type === "EVENT" && typeof trigger.value === "string"
+      )
+
+      const dispatchMode = normalizedMode === "auto"
+        ? (eventTrigger ? "event" : "invoke")
+        : normalizedMode
+
+      if (dispatchMode === "event" && !eventTrigger) {
+        yield* Console.log(respondError(
+          "inngest invoke",
+          `Function ${target.slug} has no EVENT trigger`,
+          "EVENT_TRIGGER_MISSING",
+          "Use --mode invoke for cron-only functions",
+          [
+            {
+              command: "joelclaw inngest invoke <function-slug> [--mode <mode>]",
+              description: "Retry with invoke mode",
+              params: {
+                "function-slug": { description: "Function slug/id/name", value: target.slug, required: true },
+                mode: { description: "Dispatch mode", value: "invoke", enum: ["auto", "event", "invoke"] },
+              },
+            },
+            { command: "joelclaw functions", description: "Inspect function triggers" },
+          ],
+        ))
+        return
+      }
+
+      const appUrl = yield* Effect.tryPromise({
+        try: () => appUrlForFunctionSlug(target.slug),
+        catch: () => null,
+      })
+
+      const attempts: Array<Record<string, unknown>> = []
+      let finalRunId: string | null = null
+      let finalStatus: string | null = null
+      let finalRunDetail: Record<string, unknown> | null = null
+      let sdkUrlError = false
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const startedAt = Date.now()
+
+        const dispatch = dispatchMode === "event"
+          ? yield* Effect.gen(function* () {
+              const triggerEvent = eventTrigger!.value
+              const sendResult = yield* inngestClient.send(triggerEvent, parsedData.value)
+              const eventIds = Array.isArray((sendResult as any)?.ids)
+                ? (sendResult as any).ids.filter((value: unknown) => typeof value === "string")
+                : []
+
+              return {
+                mode: "event",
+                accepted: eventIds.length > 0,
+                triggerEvent,
+                raw: sendResult,
+                eventIds,
+              }
+            })
+          : yield* Effect.tryPromise({
+              try: () => invokeFunctionBySlug(target.slug, parsedData.value),
+              catch: (error) => new Error(error instanceof Error ? error.message : String(error)),
+            }).pipe(
+              Effect.map((invoke) => ({
+                mode: "invoke",
+                accepted: invoke.accepted,
+                triggerEvent: null,
+                raw: invoke.raw,
+                eventIds: [],
+              }))
+            )
+
+        if (!dispatch.accepted) {
+          throw new Error(`Dispatch not accepted in ${dispatch.mode} mode`)
+        }
+
+        let matchedRun: { id: string; status: string; startedAt: string; functionID: string } | null = null
+        const deadline = Date.now() + safeWaitMs
+
+        while (Date.now() <= deadline) {
+          const recentRuns = yield* inngestClient.runs({ count: 120, hours: 2 })
+          matchedRun = recentRuns
+            .filter((run) =>
+              String(run.functionID) === target.id
+              && Date.parse(String(run.startedAt ?? "")) >= startedAt
+            )
+            .sort((a, b) => Date.parse(String(b.startedAt ?? "")) - Date.parse(String(a.startedAt ?? "")))[0] as any ?? null
+
+          if (matchedRun && TERMINAL_RUN_STATUSES.has(String(matchedRun.status))) {
+            break
+          }
+
+          yield* sleepMs(safePollMs)
+        }
+
+        if (!matchedRun) {
+          throw new Error(`No run observed for ${target.slug} within ${safeWaitMs}ms`)
+        }
+
+        const runDetail = (yield* inngestClient.run(matchedRun.id)) as Record<string, unknown>
+
+        const run = (runDetail.run ?? {}) as Record<string, unknown>
+        const status = typeof run.status === "string" ? run.status : String(matchedRun.status)
+        const runErrors = runDetail.errors
+        const hasSdkError = hasSdkUrlError(runErrors)
+
+        const summary: Record<string, unknown> = {
+          attempt,
+          dispatchMode: dispatch.mode,
+          triggerEvent: dispatch.triggerEvent,
+          eventIds: dispatch.eventIds,
+          accepted: dispatch.accepted,
+          runId: matchedRun.id,
+          status,
+          sdkUrlError: hasSdkError,
+        }
+
+        if (hasSdkError && attempt < maxAttempts) {
+          const heal: Record<string, unknown> = {
+            restartOnHeal,
+            restarted: false,
+            registerResult: null,
+          }
+
+          if (restartOnHeal) {
+            yield* restartWorker()
+            heal.restarted = true
+            yield* sleepMs(1500)
+          }
+
+          heal.registerResult = yield* registerWorkerFunctions().pipe(Effect.either)
+          attempts.push({
+            ...summary,
+            healed: true,
+            heal,
+          })
+          continue
+        }
+
+        attempts.push(summary)
+        finalRunId = matchedRun.id
+        finalStatus = status
+        finalRunDetail = runDetail
+        sdkUrlError = hasSdkError
+        break
+      }
+
+      const ok = finalStatus === "COMPLETED" && !sdkUrlError
+
+      if (!ok) {
+        const reason = sdkUrlError
+          ? "Invocation reached SDK URL error after retry"
+          : `Invocation finished with status ${finalStatus ?? "unknown"}`
+
+        yield* Console.log(respondError(
+          "inngest invoke",
+          reason,
+          sdkUrlError ? "SDK_URL_UNREACHABLE" : "INVOKE_FAILED",
+          sdkUrlError
+            ? "Run `joelclaw inngest sync-worker --restart` and retry invoke"
+            : "Inspect run trace + server logs and retry",
+          [
+            finalRunId
+              ? {
+                  command: "joelclaw run <run-id>",
+                  description: "Inspect run trace and failed spans",
+                  params: { "run-id": { description: "Run ID", value: finalRunId, required: true } },
+                }
+              : {
+                  command: "joelclaw runs --count 10 --hours 1",
+                  description: "Find invoke run ID",
+                },
+            { command: "joelclaw inngest sync-worker --restart", description: "Restart + re-register worker" },
+            { command: "joelclaw logs server --lines 120 --grep 'Unable to reach SDK URL'", description: "Check Inngest server SDK reachability errors" },
+          ],
+        ))
+        return
+      }
+
+      yield* Console.log(respond("inngest invoke", {
+        target: {
+          id: target.id,
+          slug: target.slug,
+          name: target.name,
+          appUrl,
+        },
+        payload: parsedData.value,
+        wait: {
+          waitMs: safeWaitMs,
+          pollMs: safePollMs,
+        },
+        run: finalRunDetail,
+        attempts,
+      }, [
+        {
+          command: "joelclaw run <run-id>",
+          description: "Inspect invoked run details",
+          params: {
+            "run-id": { description: "Run ID", value: finalRunId ?? "", required: true },
+          },
+        },
+        { command: "joelclaw logs server --lines 120 --grep 'Unable to reach SDK URL'", description: "Check SDK reachability noise" },
+        { command: "joelclaw inngest status", description: "Verify worker + server health" },
+      ], true))
+    })
+)
+
 const inngestWorkersCmd = Command.make("workers", {}, () =>
   Effect.gen(function* () {
     const probe = yield* workerProbe().pipe(Effect.either)
@@ -692,7 +1491,8 @@ const inngestWorkersCmd = Command.make("workers", {}, () =>
     }
 
     const diag = workerDiagnostics(probe.right.body)
-    const ok = probe.right.ok && !diag.hasDuplicateFunctionIds
+    const runtimeSourceCompliant = !diag.runtime.legacyCloneDetected
+    const ok = probe.right.ok && !diag.hasDuplicateFunctionIds && runtimeSourceCompliant
 
     yield* Console.log(respond("inngest workers", {
       reachable: probe.right.ok,
@@ -700,9 +1500,11 @@ const inngestWorkersCmd = Command.make("workers", {}, () =>
       diagnostics: diag,
       checks: {
         duplicateIdsBlocked: diag.duplicateFunctionIds.length === 0,
+        runtimeSourceCompliant,
       },
     }, [
       { command: "joelclaw inngest status", description: "Service + registration snapshot" },
+      { command: "joelclaw inngest source", description: "Verify/repair ADR-0089 single-source binding" },
       { command: "joelclaw inngest register", description: "Force registration refresh" },
       { command: "joelclaw functions", description: "List Inngest registered functions" },
     ], ok))
@@ -764,7 +1566,22 @@ const inngestMemoryE2ECmd = Command.make(
       let observeRunStatus: string | null = null
       let pendingRuns: number | null = null
       let totalRuns: number | null = null
-      let observeStore: { stored: boolean; count: number; mergedCount: number; errors: number; error?: string } | null = null
+      let observeStore: {
+        stored: boolean
+        count: number
+        mergedCount: number
+        errors: number
+        allowCount: number
+        holdCount: number
+        discardCount: number
+        fallbackCount: number
+        categorizedCount: number
+        uncategorizedCount: number
+        categoryBuckets: Array<{ id: string; count: number }>
+        categorySourceBuckets: Array<{ source: string; count: number }>
+        taxonomyVersions: string[]
+        error?: string
+      } | null = null
       const startedAt = Date.now()
 
       while (Date.now() - startedAt <= safeWaitMs) {
@@ -793,6 +1610,39 @@ const inngestMemoryE2ECmd = Command.make(
                   count: Number(typesense.count ?? 0) || 0,
                   mergedCount: Number(typesense.mergedCount ?? 0) || 0,
                   errors: Number(typesense.errors ?? 0) || 0,
+                  allowCount: Number(typesense.allowCount ?? 0) || 0,
+                  holdCount: Number(typesense.holdCount ?? 0) || 0,
+                  discardCount: Number(typesense.discardCount ?? 0) || 0,
+                  fallbackCount: Number(typesense.fallbackCount ?? 0) || 0,
+                  categorizedCount: Number(typesense.categorizedCount ?? 0) || 0,
+                  uncategorizedCount: Number(typesense.uncategorizedCount ?? 0) || 0,
+                  categoryBuckets: Array.isArray(typesense.categoryBuckets)
+                    ? typesense.categoryBuckets
+                      .map((value: unknown) => {
+                        if (!value || typeof value !== "object") return null
+                        const id = typeof (value as Record<string, unknown>).id === "string"
+                          ? (value as Record<string, unknown>).id
+                          : ""
+                        const count = Number((value as Record<string, unknown>).count ?? 0) || 0
+                        return id.length > 0 ? { id, count } : null
+                      })
+                      .filter((value): value is { id: string; count: number } => value != null)
+                    : [],
+                  categorySourceBuckets: Array.isArray(typesense.categorySourceBuckets)
+                    ? typesense.categorySourceBuckets
+                      .map((value: unknown) => {
+                        if (!value || typeof value !== "object") return null
+                        const source = typeof (value as Record<string, unknown>).source === "string"
+                          ? (value as Record<string, unknown>).source
+                          : ""
+                        const count = Number((value as Record<string, unknown>).count ?? 0) || 0
+                        return source.length > 0 ? { source, count } : null
+                      })
+                      .filter((value): value is { source: string; count: number } => value != null)
+                    : [],
+                  taxonomyVersions: Array.isArray(typesense.taxonomyVersions)
+                    ? typesense.taxonomyVersions.filter((value: unknown): value is string => typeof value === "string")
+                    : [],
                   error: typeof typesense.error === "string" ? typesense.error : undefined,
                 }
               }
@@ -933,25 +1783,14 @@ const inngestMemoryWeeklyCmd = Command.make(
           throw new Error("Weekly maintenance function is not registered")
         }
 
-        const invokeMutation = `mutation { invokeFunction(functionSlug: "${weeklyFunction.slug}", data: { reason: "manual weekly memory governance check", requestedBy: "joelclaw inngest memory-weekly" }) }`
-        const invoked = yield* Effect.tryPromise({
-          try: async () => {
-            const resp = await fetch(`${cfg.inngestUrl}/v0/gql`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ query: invokeMutation }),
-            })
-            if (!resp.ok) {
-              throw new Error(`Inngest GQL invoke failed (${resp.status})`)
-            }
-            const body = await resp.json() as { data?: { invokeFunction?: boolean }; errors?: Array<{ message?: string }> }
-            if (Array.isArray(body.errors) && body.errors.length > 0) {
-              throw new Error(body.errors[0]?.message ?? "Inngest GQL invoke returned errors")
-            }
-            return body.data?.invokeFunction === true
-          },
+        const invoke = yield* Effect.tryPromise({
+          try: () => invokeFunctionBySlug(weeklyFunction.slug, {
+            reason: "manual weekly memory governance check",
+            requestedBy: "joelclaw inngest memory-weekly",
+          }),
           catch: (error) => new Error(error instanceof Error ? error.message : String(error)),
         })
+        const invoked = invoke.accepted
         if (!invoked) {
           throw new Error("Inngest invokeFunction returned false for weekly maintenance")
         }
@@ -1645,9 +2484,11 @@ export const inngestCmd = Command.make("inngest", {}, () =>
     subcommands: {
       status: "joelclaw inngest status",
       workers: "joelclaw inngest workers",
-      register: "joelclaw inngest register [--wait-ms 1200]",
-      "restart-worker": "joelclaw inngest restart-worker [--register] [--wait-ms 1500]",
-      "sync-worker": "joelclaw inngest sync-worker [--restart] [--wait-ms 1500]",
+      source: "joelclaw inngest source [--repair]",
+      invoke: "joelclaw inngest invoke <function-slug> [--mode auto|event|invoke] [--data '{}'] [--wait-ms 30000]",
+      register: "joelclaw inngest register [--wait-ms 1200]", 
+      "restart-worker": "joelclaw inngest restart-worker [--register] [--wait-ms 1500] [--force]",
+      "sync-worker": "joelclaw inngest sync-worker [--restart] [--wait-ms 1500] [--force] (single-source; no file copy)",
       reconcile: "joelclaw inngest reconcile [--deep]",
       "memory-e2e": "joelclaw inngest memory-e2e [--wait-ms 90000] [--poll-ms 1500]",
       "memory-weekly": "joelclaw inngest memory-weekly [--wait-ms 30000] [--poll-ms 1000]",
@@ -1659,9 +2500,11 @@ export const inngestCmd = Command.make("inngest", {}, () =>
   }, [
     { command: "joelclaw inngest status", description: "Check worker/server/function health" },
     { command: "joelclaw inngest workers", description: "Worker role + duplicate-id diagnostics" },
+    { command: "joelclaw inngest source", description: "Verify ADR-0089 single-source launchd binding" },
+    { command: "joelclaw inngest invoke <function-slug> --data '{}'", description: "Invoke one function and wait for terminal status" },
     { command: "joelclaw inngest register", description: "Register functions from worker" },
     { command: "joelclaw inngest restart-worker --register", description: "Restart worker and register functions" },
-    { command: "joelclaw inngest sync-worker --restart", description: "Compatibility alias: restart then register worker" },
+    { command: "joelclaw inngest sync-worker --restart", description: "Compatibility alias: restart then register worker (no file sync)" },
     { command: "joelclaw inngest reconcile", description: "Restart worker + register functions" },
     { command: "joelclaw inngest memory-e2e", description: "Run memory observe→Typesense→recall E2E check" },
     { command: "joelclaw inngest memory-weekly", description: "Manually run weekly memory maintenance summary and verify OTEL" },
@@ -1673,6 +2516,8 @@ export const inngestCmd = Command.make("inngest", {}, () =>
   Command.withSubcommands([
     inngestStatusCmd,
     inngestWorkersCmd,
+    inngestSourceCmd,
+    inngestInvokeCmd,
     inngestRegisterCmd,
     inngestRestartWorkerCmd,
     inngestSyncWorkerCmd,
