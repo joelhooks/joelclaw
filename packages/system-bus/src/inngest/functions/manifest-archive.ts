@@ -279,6 +279,16 @@ export const manifestArchive = inngest.createFunction(
 
     // Step 1: Validate prereqs (NAS mount + SSH connectivity)
     await step.run("validate-prereqs", async () => {
+      await emitMeasuredOtelEvent(
+        {
+          level: "info",
+          source: "worker",
+          component: "manifest-archive",
+          action: "manifest.archive.started",
+          metadata: { dryRun, reason: event.data.reason ?? null },
+        },
+        async () => ({ phase: "start" }),
+      );
       const nasCheck = await $`ls ${THREE_BODY}`.quiet().nothrow();
       if (nasCheck.exitCode !== 0) {
         throw new NonRetriableError(
@@ -302,6 +312,16 @@ export const manifestArchive = inngest.createFunction(
     // Step 2: Load manifest — returns compact index (id + routing info only)
     // Keep step output small to stay under 4MB limit
     const entries = await step.run("load-manifest", async () => {
+      await emitMeasuredOtelEvent(
+        {
+          level: "info",
+          source: "worker",
+          component: "manifest-archive",
+          action: "manifest.archive.prereqs-passed",
+          metadata: { dryRun },
+        },
+        async () => ({ phase: "prereqs-done" }),
+      );
       const manifest = await loadManifest();
       return manifest.map((e) => ({
         id: e.id,
