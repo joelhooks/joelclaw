@@ -13,6 +13,7 @@ import {
 } from "../../observability/triage";
 import { AUTO_FIX_HANDLERS } from "../../observability/auto-fixes";
 import { classifyEvent, dedupKey } from "../../observability/triage-patterns";
+import { prefetchMemoryContext } from "../../memory/context-prefetch";
 
 const AGENT_WORK_PROJECT_ID = "6g3VPph7cFfm8GjJ";
 const TRIAGE_CATEGORY = "o11y-triage";
@@ -426,10 +427,20 @@ export const o11yTriage = inngest.createFunction(
     const events = await step.run("scan", async () => scanRecentFailures(15));
 
     const triaged = await step.run("classify", async () => triageFailures(events));
+    const historicalFixesContext = await step.run("prefetch-memory", async () => {
+      if (triaged.unmatchedTier2.length === 0) return "";
+      const query = triaged.unmatchedTier2
+        .slice(0, 8)
+        .map((item) => [item.component, item.action, item.error ?? ""].filter(Boolean).join(" "))
+        .join(" | ");
+      const memory = await prefetchMemoryContext(query, { limit: 5 });
+      if (!memory) return "";
+      return `Previous fixes for similar issues:\n${memory}`;
+    });
 
     const reclassifiedUnknowns = await step.run(
       "classify-unknown-tier2-with-llm",
-      async () => classifyWithLLM(triaged.unmatchedTier2)
+      async () => classifyWithLLM(triaged.unmatchedTier2, historicalFixesContext)
     );
 
     const finalBuckets = mergeReclassifiedBuckets(triaged, reclassifiedUnknowns);

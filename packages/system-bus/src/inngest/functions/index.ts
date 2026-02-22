@@ -31,6 +31,8 @@ export { vipEmailReceived } from "./vip-email-received";
 export { dailyDigest } from "./daily-digest";
 export { mediaProcess } from "./media-process";
 export { telegramCallbackReceived } from "./telegram-callback";
+export { voiceCallCompleted } from "./voice-call-completed";
+export { observeSessionNoted } from "./observe-session-noted";
 export {
   todoistCommentAdded,
   todoistTaskCompleted,

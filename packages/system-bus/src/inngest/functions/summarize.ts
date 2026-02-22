@@ -1,6 +1,7 @@
 import { inngest } from "../client";
 import { $ } from "bun";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import { prefetchMemoryContext } from "../../memory/context-prefetch";
 
 const DEFAULT_PROMPT = `Read the joel-writing-style skill at ~/.pi/agent/skills/joel-writing-style/SKILL.md first. All writing in this note MUST match Joel's voice — conversational first person, short punchy paragraphs, strategic profanity where it earns its place, bold for emphasis, direct and honest tone. No corporate voice. No "In this video..." openings.
 
@@ -54,11 +55,18 @@ export const summarize = inngest.createFunction(
       return match?.[1] ?? vaultPath.split("/").pop() ?? "unknown";
     });
 
+    const memoryContext = await step.run("prefetch-memory", async () =>
+      prefetchMemoryContext(title, { limit: 5 })
+    );
+    const promptWithMemory = memoryContext
+      ? `${summaryPrompt}\n\nPrevious related memory:\n${memoryContext}`
+      : summaryPrompt;
+
     // Run pi in print mode — it reads the file, researches, and edits in place
     await step.run("pi-enrich", async () => {
       // pi -p with @file reads the file content into context
       // pi with tools will use edit/write to modify the file directly
-      await $`pi -p --no-session --no-extensions "Read the file at ${vaultPath} and enrich it. ${summaryPrompt}"`
+      await $`pi -p --no-session --no-extensions "Read the file at ${vaultPath} and enrich it. ${promptWithMemory}"`
         .env({ ...process.env, TERM: "dumb" })
         .quiet();
     });

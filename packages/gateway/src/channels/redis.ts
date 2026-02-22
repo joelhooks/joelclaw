@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import { spawnSync } from "node:child_process";
 import Redis from "ioredis";
 import { enrichPromptWithVaultContext } from "../vault-read";
 import { send as sendTelegram, type InlineButton } from "./telegram";
@@ -131,6 +132,97 @@ function formatEvents(events: SystemEvent[]): string {
     .join("\n");
 }
 
+type RecallHit = {
+  score?: unknown;
+  observation?: unknown;
+  type?: unknown;
+  source?: unknown;
+};
+
+function asFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function normalizePrompt(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.trim();
+}
+
+function extractLastHumanMessage(events: SystemEvent[]): string | null {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (!event) continue;
+    const payload = event.payload ?? {};
+    const prompt = normalizePrompt(payload.prompt);
+    if (!prompt) continue;
+
+    if (/^(telegram|imessage|slack)\.message\.received$/u.test(event.type)) {
+      return prompt.slice(0, 500);
+    }
+  }
+
+  return null;
+}
+
+function buildRecallSectionFromMessage(message: string): string {
+  try {
+    const result = spawnSync(
+      "joelclaw",
+      ["recall", message, "--limit", "3", "--json"],
+      {
+        encoding: "utf-8",
+        timeout: 5_000,
+        stdio: ["ignore", "pipe", "pipe"],
+      }
+    );
+
+    if (result.status !== 0) {
+      const stderr = (result.stderr ?? "").trim();
+      throw new Error(stderr || `recall exited with code ${result.status ?? "unknown"}`);
+    }
+
+    const raw = (result.stdout ?? "").trim();
+    if (!raw) return "";
+
+    const parsed = JSON.parse(raw) as {
+      result?: { hits?: RecallHit[] };
+    };
+
+    const hits = Array.isArray(parsed.result?.hits) ? parsed.result?.hits : [];
+    if (!hits || hits.length === 0) return "";
+
+    const lines = hits.slice(0, 3).flatMap((hit, index) => {
+      const observation = typeof hit.observation === "string" ? hit.observation.trim() : "";
+      if (!observation) return [];
+      const score = asFiniteNumber(hit.score);
+      const type = typeof hit.type === "string" ? hit.type : "memory";
+      const source = typeof hit.source === "string" ? hit.source : "unknown";
+      const prefix = score != null ? `(${score.toFixed(2)}) ` : "";
+      return [`${index + 1}. ${prefix}[${type}/${source}] ${observation}`];
+    });
+
+    if (lines.length === 0) return "";
+    return ["Relevant memory:", ...lines].join("\n");
+  } catch (error) {
+    void emitGatewayOtel({
+      level: "warn",
+      component: "redis-channel",
+      action: "memory.recall.failed",
+      success: false,
+      error: String(error),
+      metadata: {
+        queryPreview: message.slice(0, 120),
+      },
+    });
+    return "";
+  }
+}
+
 async function buildPrompt(events: SystemEvent[]): Promise<string> {
   const footer = "Take action on anything that needs it, otherwise acknowledge briefly.";
   const ts = new Date().toISOString();
@@ -179,6 +271,14 @@ async function buildPrompt(events: SystemEvent[]): Promise<string> {
   } else {
     const eventBlock = formatEvents(events);
     parts.push(eventBlock);
+  }
+
+  const lastHumanMessage = extractLastHumanMessage(events);
+  if (lastHumanMessage) {
+    const recallSection = buildRecallSectionFromMessage(lastHumanMessage);
+    if (recallSection) {
+      parts.push("", recallSection);
+    }
   }
 
   parts.push("", footer);

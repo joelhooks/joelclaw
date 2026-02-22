@@ -15,6 +15,7 @@
 import { inngest } from "../client";
 import { parseClaudeOutput, pushGatewayEvent } from "./agent-loop/utils";
 import { getCurrentTasks, hasTaskMatching } from "../../tasks";
+import { prefetchMemoryContext } from "../../memory/context-prefetch";
 import Redis from "ioredis";
 
 const COOLDOWN_KEY = "email:triage:last-run";
@@ -192,6 +193,14 @@ export const checkEmail = inngest.createFunction(
       return { status: "noop", reason: "inbox zero" };
     }
 
+    const memoryContext = await step.run("prefetch-memory", async () => {
+      const query = allConvos
+        .slice(0, 12)
+        .map((c) => `${c.subject} ${c.from}`)
+        .join(" | ");
+      return prefetchMemoryContext(query, { limit: 5 });
+    });
+
     // Step 2: LLM triage — categorize all emails
     const triageItems = await step.run("llm-triage", async () => {
       const emailLines = allConvos.map((c) => [
@@ -205,12 +214,16 @@ export const checkEmail = inngest.createFunction(
 
       const prompt = [
         `Triage these ${allConvos.length} emails. Return one entry per ID.`,
+        memoryContext ? `\nRelevant prior context:\n${memoryContext}` : "",
         "",
         emailLines.join("\n\n---\n\n"),
       ].join("\n");
+      const systemPrompt = memoryContext
+        ? `${TRIAGE_SYSTEM_PROMPT}\n\nUse this memory context when judging sender patterns and urgency:\n${memoryContext}`
+        : TRIAGE_SYSTEM_PROMPT;
 
       const proc = Bun.spawn(
-        ["pi", "-p", "--no-session", "--no-extensions", "--model", TRIAGE_MODEL, "--system-prompt", TRIAGE_SYSTEM_PROMPT, prompt],
+        ["pi", "-p", "--no-session", "--no-extensions", "--model", TRIAGE_MODEL, "--system-prompt", systemPrompt, prompt],
         { env: { ...process.env, TERM: "dumb" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" },
       );
 

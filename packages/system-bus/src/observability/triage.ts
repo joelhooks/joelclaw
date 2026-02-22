@@ -368,7 +368,10 @@ export async function scanRecentFailures(windowMinutes: number): Promise<OtelEve
   return events;
 }
 
-export async function classifyWithLLM(events: OtelEvent[]): Promise<ClassifiedEvent[]> {
+export async function classifyWithLLM(
+  events: OtelEvent[],
+  memoryContext = ""
+): Promise<ClassifiedEvent[]> {
   if (events.length === 0) return [];
 
   const fallback = (reason: string) => fallbackClassifications(events, reason);
@@ -406,6 +409,7 @@ export async function classifyWithLLM(events: OtelEvent[]): Promise<ClassifiedEv
       `Classify ${events.length} failed OTEL events.`,
       "Return ONLY valid JSON array, same order as input.",
       "Each item must match schema: {\"tier\":1|2|3,\"reasoning\":\"one sentence\",\"proposed_pattern\":{\"match\":{\"component\":\"...\",\"action\":\"...\",\"error\":\"regex\"},\"tier\":1|2|3,\"dedup_hours\":N}|null}.",
+      memoryContext.trim().length > 0 ? `\n${memoryContext.trim()}` : "",
       "",
       JSON.stringify(payload, null, 2),
     ].join("\n");

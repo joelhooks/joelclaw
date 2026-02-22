@@ -36,6 +36,7 @@ const originalTodoistCreateTask = TodoistTaskAdapter.prototype.createTask;
 const redisLists = new Map<string, string[]>();
 const redisHashes = new Map<string, Record<string, string>>();
 let shellCalls: string[] = [];
+let shellPromptContents: string[] = [];
 let shellResultQueue: MockShellResult[] = [];
 let todoistCreateTaskCalls: CreateTaskInput[] = [];
 let tempHome = "";
@@ -145,6 +146,15 @@ beforeAll(() => {
   // @ts-expect-error test monkey patch for deterministic subprocess behavior.
   Bun.$ = ((strings: TemplateStringsArray, ...values: unknown[]) => {
     shellCalls.push(buildCommandText(strings, values));
+    for (const value of values) {
+      if (typeof value !== "string" || !value.startsWith("@")) continue;
+      const path = value.slice(1);
+      try {
+        shellPromptContents.push(readFileSync(path, "utf8"));
+      } catch {
+        // Prompt file may be gone for failed runs; ignore in tests.
+      }
+    }
     const next = shellResultQueue.shift() ?? {
       exitCode: 0,
       stdout: "<proposals></proposals>",
@@ -194,6 +204,7 @@ beforeEach(() => {
   redisLists.clear();
   redisHashes.clear();
   shellCalls = [];
+  shellPromptContents = [];
   shellResultQueue = [];
   todoistCreateTaskCalls = [];
   tempHome = mkdtempSync(join(tmpdir(), "mem-16-home-"));
@@ -242,7 +253,7 @@ describe("MEM-16 reflect acceptance tests", () => {
 
     const { result } = await executeReflect("2026-02-17");
 
-    expect(shellCalls[0]).toContain("Observation from Redis list entry.");
+    expect(shellPromptContents[0]).toContain("Observation from Redis list entry.");
     expect(result).toMatchObject({
       raw: expect.any(String),
       proposalCount: expect.any(Number),
@@ -430,7 +441,7 @@ describe("MEM-16 reflect acceptance tests", () => {
     const cronResult = (result ?? {}) as Record<string, unknown>;
     const pending = redisLists.get("memory:review:pending") ?? [];
 
-    expect(shellCalls[0]).toContain("Backfill summary block available for cron reflect.");
+    expect(shellPromptContents[0]).toContain("Backfill summary block available for cron reflect.");
     expect({
       proposalCount: cronResult.proposalCount,
       emittedEvent: cronResult.emittedEvent,

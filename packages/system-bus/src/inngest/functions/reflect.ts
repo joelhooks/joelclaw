@@ -1,6 +1,8 @@
 import { inngest } from "../client";
 import Redis from "ioredis";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 // TodoistTaskAdapter removed — task creation moved to proposal-triage.ts (ADR-0068)
 import {
@@ -223,6 +225,21 @@ async function readMemoryContent(): Promise<string> {
   return memoryFile.text();
 }
 
+async function withPromptFile<T>(
+  content: string,
+  run: (promptFileArg: string) => Promise<T>
+): Promise<T> {
+  const dir = await mkdtemp(join(tmpdir(), "reflect-prompt-"));
+  const promptPath = join(dir, "prompt.md");
+  await writeFile(promptPath, content, "utf8");
+
+  try {
+    return await run(`@${promptPath}`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 async function runReflectorLLM(
   observations: string,
   memoryContent: string,
@@ -233,9 +250,11 @@ async function runReflectorLLM(
     ? `${REFLECTOR_SYSTEM_PROMPT}\n\n${guidance}`
     : REFLECTOR_SYSTEM_PROMPT;
   const userPrompt = REFLECTOR_USER_PROMPT(observations, memoryContent);
-  const result = await Bun.$`pi --no-tools --no-session --no-extensions --print --mode text --model anthropic/claude-haiku --system-prompt ${systemPrompt} ${userPrompt}`
-    .quiet()
-    .nothrow();
+  const result = await withPromptFile(userPrompt, (promptFileArg) =>
+    Bun.$`pi --no-tools --no-session --no-extensions --print --mode text --model anthropic/claude-haiku --system-prompt ${systemPrompt} ${promptFileArg}`
+      .quiet()
+      .nothrow()
+  );
 
   const stdout = readShellText(result.stdout);
   const stderr = readShellText(result.stderr);

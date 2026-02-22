@@ -14,6 +14,8 @@ import { heartbeatCron, heartbeatWake } from "./heartbeat";
 import { agentDispatch } from "./agent-dispatch";
 import { mediaProcess } from "./media-process";
 import { telegramCallbackReceived } from "./telegram-callback";
+import { voiceCallCompleted } from "./voice-call-completed";
+import { observeSessionNoted } from "./observe-session-noted";
 import {
   agentLoopPlan,
   agentLoopTestWriter,
@@ -99,6 +101,8 @@ export const hostFunctionDefinitions = [
   agentLoopRetro,
   mediaProcess,
   telegramCallbackReceived,
+  voiceCallCompleted,
+  observeSessionNoted,
   vercelDeploySucceeded,
   vercelDeployError,
   vercelDeployCreated,

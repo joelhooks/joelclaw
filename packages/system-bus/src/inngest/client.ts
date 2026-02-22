@@ -468,6 +468,7 @@ export type Events = {
     data: {
       proposalId: string;
       approvedBy: string;
+      proposalContext?: Record<string, unknown>;
     };
   };
   "memory/proposal.rejected": {
@@ -475,6 +476,7 @@ export type Events = {
       proposalId: string;
       reason: string;
       rejectedBy: string;
+      proposalContext?: Record<string, unknown>;
     };
   };
   // ADR-0067: Daily digest lifecycle events.
@@ -587,6 +589,17 @@ export type Events = {
   "embedding/text.requested": {
     data: {
       texts: Array<{ id: string; text: string }>;
+    };
+  };
+
+  "voice/call.completed": {
+    data: {
+      transcript: string;
+      room?: string;
+      timestamp?: string;
+      turns?: number;
+      duration?: number;
+      sessionId?: string;
     };
   };
 

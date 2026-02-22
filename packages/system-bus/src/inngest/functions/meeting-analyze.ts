@@ -18,6 +18,7 @@ import { inngest } from "../client";
 import type { GatewayContext } from "../middleware/gateway";
 import { spawnSync } from "node:child_process";
 import Redis from "ioredis";
+import { prefetchMemoryContext } from "../../memory/context-prefetch";
 
 const REDIS_KEY_PROCESSED = "granola:processed";
 const REDIS_TTL_DAYS = 90;
@@ -49,7 +50,7 @@ function granolaCli(args: string[]): { ok: boolean; data?: any; raw?: string; er
   }
 }
 
-function analyzeMeeting(details: string, transcript: string): {
+function analyzeMeeting(details: string, transcript: string, memoryContext = ""): {
   action_items: MeetingActionItem[];
   decisions: Array<{ decision: string; rationale: string }>;
   follow_ups: Array<{ item: string; frequency?: string }>;
@@ -62,6 +63,8 @@ ${details}
 
 ## Transcript
 ${transcript}
+
+${memoryContext ? `## Related Memory\n${memoryContext}\n` : ""}
 
 Extract:
 1. ACTION ITEMS — include ONLY if all are true:
@@ -268,6 +271,16 @@ export const meetingAnalyze = inngest.createFunction(
       return text;
     });
 
+    const memoryContext = await step.run("prefetch-memory", async () => {
+      const participants = Array.isArray(event.data?.participants)
+        ? (event.data?.participants as unknown[])
+          .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+          .join(", ")
+        : "";
+      const query = [meetingTitle, participants].filter(Boolean).join(" ");
+      return prefetchMemoryContext(query, { limit: 5 });
+    });
+
     // Step 4: LLM analysis
     const analysis = await step.run("analyze", () => {
       // Context protection: cap transcript for LLM
@@ -275,7 +288,7 @@ export const meetingAnalyze = inngest.createFunction(
         ? transcript.slice(0, 30_000) + "\n...(truncated)"
         : transcript;
 
-      return analyzeMeeting(details.details, cappedTranscript);
+      return analyzeMeeting(details.details, cappedTranscript, memoryContext);
     });
 
     const qualifiedActionItems = await step.run("quality-gate-action-items", () => {
