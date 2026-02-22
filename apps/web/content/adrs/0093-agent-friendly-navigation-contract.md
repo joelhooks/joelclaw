@@ -120,12 +120,22 @@ Phase 1 kickoff started.
 - Phase-2 CLI path-hardening follow-up implemented:
   - added compatibility subcommand `joelclaw inngest sync-worker [--restart] [--wait-ms]` to align with operational command contract in AGENTS docs.
   - `Inngest.health` worker probing now uses resilient endpoint fallback (`$INNGEST_WORKER_URL`, `$INNGEST_WORKER_URL/health`, `$INNGEST_WORKER_URL/api/inngest`) and robust response parsing to prevent transient false `worker unreachable` path errors.
+  - `joelclaw inngest restart-worker` and `joelclaw inngest sync-worker --restart` now include active-run guards: restarts are skipped when RUNNING/QUEUED runs exist unless `--force` is passed.
 - Phase-2 CLI path-hardening validation passed:
   - `cd packages/cli && bunx tsc --noEmit -p tsconfig.json`
   - `cd packages/cli && bun src/cli.ts inngest sync-worker --help`
-  - `joelclaw inngest sync-worker --restart --wait-ms 500`
+  - `joelclaw send system/network.update -d '{"source":"restart-guard-test"}'`
+  - `joelclaw inngest sync-worker --restart` (expected: `restartSkippedDueToActiveRuns: true` while runs active)
+  - `joelclaw inngest restart-worker` (expected: `skippedDueToActiveRuns: true` while runs active)
   - `joelclaw status`
   - `joelclaw inngest status`
+- Phase-2 aggregate log analysis follow-up implemented:
+  - `joelclaw logs analyze` added to aggregate worker stdout, worker stderr, and Inngest server logs into severity/source/component/action rollups with top signatures and sample lines.
+  - new helper tests added at `packages/cli/src/commands/logs.test.ts`.
+- Phase-2 aggregate log analysis validation passed:
+  - `bun test packages/cli/src/commands/logs.test.ts`
+  - `cd packages/cli && bunx tsc --noEmit -p tsconfig.json`
+  - `cd packages/cli && bun src/cli.ts logs analyze --lines 80`
 
 ## Design Contract
 
