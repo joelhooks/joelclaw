@@ -78,6 +78,20 @@ Phase 1 kickoff started.
   - `cd packages/cli && bun src/cli.ts status`
   - `cd packages/cli && bun src/cli.ts otel`
   - `bun run validate:cli-contracts`
+- Phase-2 scaffold implemented (dry-run-first recovery):
+  - `packages/cli/src/error-codes.ts` added (canonical code list + normalizer)
+  - `packages/cli/src/runbooks.ts` added (runbook registry + placeholder resolution)
+  - `packages/cli/src/commands/recover.ts` added (`recover list`, dry-run preview, `--execute` phase execution)
+  - `packages/cli/src/commands/recover.test.ts` and `packages/cli/src/commands/runbooks.test.ts` added
+  - root CLI wiring updated in `packages/cli/src/cli.ts` (`joelclaw recover ...`)
+  - capabilities map extended with deterministic recovery flow
+  - baseline refreshed: `docs/agent-contracts/phase1-baseline.json` (`Commands scanned: 27`)
+- Phase-2 scaffold validation passed:
+  - `cd packages/cli && bun src/cli.ts recover list`
+  - `cd packages/cli && bun src/cli.ts recover TYPESENSE_UNREACHABLE --phase fix --context '{"run-id":"01TEST"}'`
+  - `cd packages/cli && bun src/cli.ts recover BAD_CODE`
+  - `bun test packages/cli/src/commands/recover.test.ts packages/cli/src/commands/runbooks.test.ts`
+  - `bun run validate:cli-contracts`
 
 ## Design Contract
 
