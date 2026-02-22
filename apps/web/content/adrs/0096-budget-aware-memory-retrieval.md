@@ -11,6 +11,15 @@ superseded-by: []
 
 # ADR-0096: Budget-Aware Memory Retrieval Policy
 
+## Update (2026-02-22)
+
+- Initial implementation slice landed:
+  - `joelclaw recall` now supports `--budget lean|balanced|deep|auto`
+  - budget plan controls rewrite enablement, fetch depth, and inject cap behavior
+  - recall OTEL metadata now includes budget selection diagnostics
+  - memory context prefetch now supports budget-profile-based fetch scaling
+- ADR status remains `proposed` until quality/latency validation gates are met.
+
 ## Context
 
 ADR-0077 deferred budget-aware retrieval. ADR-0078 established token-cost pressure as a system concern. Current memory retrieval uses mostly fixed behavior (rewrite attempts, fetch depth, inject caps), which is suboptimal across contexts:
