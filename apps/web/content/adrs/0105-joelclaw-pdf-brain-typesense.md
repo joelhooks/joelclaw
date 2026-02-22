@@ -49,16 +49,14 @@ This system must be built with the full joelclaw idiom stack. Each concern maps 
 
 ---
 
-## Open Questions (the `???`)
+## Decisions (previously open questions — resolved 2026-02-22)
 
-Before implementation begins, these idiom choices need to be confirmed:
-
-| # | Question | Options | Recommendation |
+| # | Question | Decision | Rationale |
 |---|---|---|---|
-| 1 | **Effect-TS** — pdf-brain already uses Effect for schema/error modeling. Bring it into joelclaw system-bus? | (a) Use Effect for ingest services (b) Plain async/Bun patterns | Decide before coding — don't mix within the package |
-| 2 | **PDS records** — store `dev.joelclaw.docs.document` records in the AT Proto PDS for portability? | (a) Typesense-only (b) Typesense + PDS | Cheap to add, durable, portable across machines |
-| 3 | **Convex UI** — surface the library at `joelclaw.com/docs` with real-time search? | (a) joelclaw.com page backed by Typesense (b) Convex for real-time updates | If yes, design the Convex schema alongside Typesense |
-| 4 | **joelclaw pi skill** — a `docs` skill so pi can query the library mid-conversation | (a) Add `docs` skill to `~/Code/joelhooks/joelclaw/skills/` (b) Handle ad-hoc via Typesense search | Recommend yes — makes the library actually pi-first |
+| 1 | **Effect-TS** | ❌ Plain async/Bun — match existing system-bus patterns | No style split inside the package. Effect stays in pdf-brain standalone. |
+| 2 | **PDS records** | ❌ Typesense-only for Phase 1 | YAGNI. Lexicon design not settled. Add in a follow-on ADR when needed. |
+| 3 | **Convex UI** | ✅ Yes — design Convex schema alongside Typesense | Full search UI at `joelclaw.com/docs` from the start. Dope search capability is part of the spec. |
+| 4 | **pi skill** | ✅ Yes — build `docs` skill in Phase 1, keep it current | Library is only useful if pi can query it mid-conversation. Ship the skill with the pipeline. |
 
 ---
 
@@ -304,22 +302,22 @@ Copy 806 manifest entries to `three-body` **in category sub-folders** using the 
 
 This ADR's ingest pipeline runs on the archived files in Phase 1.
 
-### Phase 1: Typesense collections + `docs-ingest`
-- Create `pdf_documents` + `pdf_chunks` collections
-- Implement `docs-ingest` function
-- Wire CLI subcommands
-- Verify Langfuse traces appearing for enrichment + embedding calls
+### Phase 1: Typesense collections + `docs-ingest` + pi skill + Convex schema
+- Create `pdf_documents` + `pdf_chunks` Typesense collections
+- Implement `docs-ingest` Inngest function (plain async/Bun, no Effect)
+- Wire `joelclaw docs` CLI subcommands
+- Build `docs` pi skill at `~/Code/joelhooks/joelclaw/skills/docs/` — ship with pipeline
+- Design Convex `docs` schema alongside Typesense (documents + search index)
+- `joelclaw.com/docs` route with Convex-backed real-time search UI
+- Verify Langfuse traces for all LLM calls
 
 ### Phase 2: Bulk ingest
 - Trigger `docs/ingest.requested` for all Phase 0 archived files
-- Backfill enrichment from `manifest.clean.jsonl` (summaries + categories already computed — skip enrichment steps for those, write directly)
+- Backfill enrichment from `manifest.clean.jsonl` (summaries + categories already computed — skip LLM steps, write directly to Typesense + Convex)
 - Verify `joelclaw docs status` shows full coverage
+- Verify pi skill returns real results mid-conversation
 
-### Phase 3: Decide open questions
-- Effect-TS usage, PDS records, Convex UI, pi skill
-- Implement whichever are accepted
-
-### Phase 4: Retire standalone pdf-brain
+### Phase 3: Retire standalone pdf-brain
 - Archive repo, point README to joelclaw
 - Remove dark-wizard pdf-library dependency
 
