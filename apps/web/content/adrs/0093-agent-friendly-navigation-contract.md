@@ -106,6 +106,17 @@ Phase 1 kickoff started.
   - `cd packages/cli && bun src/cli.ts recover MEMORY_HEALTH_FAILED --phase rollback`
   - `bun run validate:cli-contracts`
   - `cd packages/system-bus && bunx tsc --noEmit`
+- Phase-2 o11y alignment tranche implemented:
+  - focused integration test added: `packages/system-bus/src/inngest/functions/o11y-triage.test.ts` asserts `auto_fix.applied` metadata includes `runbookCode` + `recoverCommand`
+  - shared runbook event resolver expanded: `packages/system-bus/src/observability/recovery-runbooks.ts` (`resolveRunbookPlanForEvent`, normalized code fallback)
+  - tier2 escalation payloads now include runbook metadata (`runbookCode`, `runbookPhase`, `recoverCommand`, `runbookCommands`) in `session/observation.noted`
+  - tier3 escalation context now carries runbook metadata through Todoist description, Telegram message/payload, and OTEL telemetry (`triage.telegram_sent`, `triage.telegram_rate_limited`, `triage.escalated`)
+- Phase-2 o11y alignment validation passed:
+  - `bun test packages/system-bus/src/inngest/functions/o11y-triage.test.ts`
+  - `cd packages/system-bus && bunx tsc --noEmit`
+  - live trigger (no dedicated CLI invoke surface yet): `POST /v0/gql invokeFunction(functionSlug: "system-bus-host-check/o11y-triage")`
+  - `joelclaw otel search "auto_fix.applied" --hours 1` shows metadata keys including `runbookCode`, `runbookPhase`, `recoverCommand`, `runbookCommands`
+  - `joelclaw otel search "joelclaw recover" --hours 1` returns the emitted `auto_fix.applied` event, confirming runbook recovery command is queryable
 
 ## Design Contract
 
