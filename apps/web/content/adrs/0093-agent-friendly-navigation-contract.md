@@ -80,14 +80,14 @@ Phase 1 kickoff started.
 
 ### Day 1 Execution Checklist (Phase 1 kickoff)
 
-- [ ] Baseline command-surface + contract drift inventory
+- [x] Baseline command-surface + contract drift inventory
   - inspect:
     - `packages/cli/src/cli.ts`
     - `packages/cli/src/commands/*.ts`
     - `packages/cli/src/response.ts`
   - artifact:
     - `docs/agent-contracts/phase1-baseline.json` (new)
-- [ ] Add contract validator scaffold (failing-first)
+- [x] Add contract validator scaffold (failing-first)
   - `scripts/validate-cli-contracts.ts` (new)
   - `package.json` script: `validate:cli-contracts` (new)
 - [ ] Reproduce and pin current navigation failure as regression test
