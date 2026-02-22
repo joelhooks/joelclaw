@@ -199,7 +199,7 @@ export function ReviewWrapper({
     <>
       <div
         onClick={handleClick}
-        className="[&_[data-paragraph-id]]:transition-colors [&_[data-paragraph-id]:hover]:bg-neutral-800/15 [&_[data-paragraph-id]]:rounded [&_[data-paragraph-id]]:cursor-pointer [&_[data-paragraph-id]]:-mx-2 [&_[data-paragraph-id]]:px-2 [&_[data-paragraph-id]]:py-0.5"
+        className="[&_[data-paragraph-id]]:transition-colors [&_[data-paragraph-id]:hover]:bg-neutral-800/15 [&_[data-paragraph-id]]:rounded [&_[data-paragraph-id]]:cursor-pointer"
       >
         {children}
       </div>

@@ -43,7 +43,13 @@ export const getCurrentUser = query({
 export const isOwner = query({
   args: {},
   handler: async (ctx) => {
-    const user = await authComponent.getAuthUser(ctx);
+    let user;
+    try {
+      user = await authComponent.getAuthUser(ctx);
+    } catch {
+      // No valid session token — not authenticated
+      return false;
+    }
     if (!user) return false;
     // Check component's accounts table for GitHub provider with Joel's ID
     const account = await ctx.runQuery(
