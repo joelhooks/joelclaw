@@ -87,12 +87,18 @@ interface TriagePattern {
 
 const patterns: TriagePattern[] = [
   // Tier 1: Auto-fix
-  { match: { action: "content_sync.completed", error: /changes_not_committed/ }, tier: 1, handler: "autoCommitAndRetry", dedup_hours: 24 },
   { match: { action: "telegram.send.skipped", error: /bot_not_started/ }, tier: 1, handler: "ignore", dedup_hours: 1 },
   { match: { component: "command-queue", error: /already processing/ }, tier: 1, handler: "ignore", dedup_hours: 1 },
   { match: { action: "probe.emit" }, tier: 1, handler: "ignore", dedup_hours: 24 },
+  {
+    match: { component: "check-system-health", action: "system.health.critical_failure", error: /\bworker\b/ },
+    tier: 1,
+    handler: "restartWorker",
+    dedup_hours: 1,
+  },
 
   // Tier 2: Note + batch
+  { match: { action: "content_sync.completed", error: /changes_not_committed/ }, tier: 2, dedup_hours: 6, escalate_after: 20 },
   { match: { action: "observe.store.failed" }, tier: 2, dedup_hours: 4, escalate_after: 10 },
 
   // Tier 3: Escalate immediately
@@ -164,7 +170,8 @@ Goal: the patterns registry grows over time. The system gets quieter as more fai
 
 ### Phase 2: Auto-Fix Handlers
 - `packages/system-bus/src/observability/auto-fixes/` — handler functions
-- `autoCommitAndRetry`, `reestablishPortForward`, `restartWorker`
+- Active default handlers: `ignore`, `restartWorker` (cooldown-guarded)
+- `autoCommitAndRetry` remains available but is no longer the default path for `content_sync.completed`
 - Each handler emits `auto_fix.applied` otel event on success
 
 ### Phase 3: Escalation Templates
