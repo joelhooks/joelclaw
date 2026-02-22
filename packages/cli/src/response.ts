@@ -42,13 +42,18 @@ export interface NextAction {
   readonly params?: Record<string, NextActionParam>
 }
 
-export interface JoelclawResponse {
+export interface JoelclawEnvelope {
   readonly ok: boolean
   readonly command: string
   readonly result: unknown
   readonly error?: { message: string; code: string }
   readonly fix?: string
   readonly next_actions: readonly NextAction[]
+}
+
+export interface EnvelopeValidationResult {
+  readonly valid: boolean
+  readonly errors: readonly string[]
 }
 
 const normalizeCommand = (command: string): string => {
@@ -62,12 +67,106 @@ const normalizeCommand = (command: string): string => {
   return `joelclaw ${trimmed}`
 }
 
+const normalizeNextActions = (nextActions: readonly NextAction[]): readonly NextAction[] =>
+  nextActions.map((action) => ({
+    ...action,
+    command: normalizeCommand(action.command),
+  }))
+
+export const buildSuccessEnvelope = (
+  command: string,
+  result: unknown,
+  nextActions: readonly NextAction[],
+  ok = true
+): JoelclawEnvelope => ({
+  ok,
+  command: normalizeCommand(command),
+  result,
+  next_actions: normalizeNextActions(nextActions),
+})
+
+export const buildErrorEnvelope = (
+  command: string,
+  message: string,
+  code: string,
+  fix: string,
+  nextActions: readonly NextAction[],
+): JoelclawEnvelope => ({
+  ok: false,
+  command: normalizeCommand(command),
+  result: null,
+  error: { message, code },
+  fix,
+  next_actions: normalizeNextActions(nextActions),
+})
+
+export const validateJoelclawEnvelope = (value: unknown): EnvelopeValidationResult => {
+  const errors: string[] = []
+
+  if (!value || typeof value !== "object") {
+    return { valid: false, errors: ["Envelope must be an object"] }
+  }
+
+  const envelope = value as Record<string, unknown>
+
+  if (typeof envelope.ok !== "boolean") {
+    errors.push("ok must be boolean")
+  }
+
+  if (typeof envelope.command !== "string" || envelope.command.trim().length === 0) {
+    errors.push("command must be non-empty string")
+  }
+
+  if (!("result" in envelope)) {
+    errors.push("result field is required")
+  }
+
+  if (!Array.isArray(envelope.next_actions)) {
+    errors.push("next_actions must be an array")
+  } else {
+    envelope.next_actions.forEach((action, index) => {
+      if (!action || typeof action !== "object") {
+        errors.push(`next_actions[${index}] must be an object`)
+        return
+      }
+      const a = action as Record<string, unknown>
+      if (typeof a.command !== "string" || a.command.trim().length === 0) {
+        errors.push(`next_actions[${index}].command must be non-empty string`)
+      }
+      if (typeof a.description !== "string" || a.description.trim().length === 0) {
+        errors.push(`next_actions[${index}].description must be non-empty string`)
+      }
+    })
+  }
+
+  if ("error" in envelope && envelope.error != null) {
+    if (!envelope.error || typeof envelope.error !== "object") {
+      errors.push("error must be an object when present")
+    } else {
+      const e = envelope.error as Record<string, unknown>
+      if (typeof e.message !== "string" || e.message.trim().length === 0) {
+        errors.push("error.message must be non-empty string")
+      }
+      if (typeof e.code !== "string" || e.code.trim().length === 0) {
+        errors.push("error.code must be non-empty string")
+      }
+    }
+    if (typeof envelope.fix !== "string" || envelope.fix.trim().length === 0) {
+      errors.push("fix must be non-empty string when error is present")
+    }
+  }
+
+  return { valid: errors.length === 0, errors }
+}
+
 export const respond = (
   command: string,
   result: unknown,
   nextActions: readonly NextAction[],
   ok = true
 ): string => {
+  const envelope = buildSuccessEnvelope(command, result, nextActions, ok)
+
   if (toonEnabled) {
     // Hybrid output: JSON envelope with TOON-encoded result
     // Envelope stays JSON for parseability, result gets token savings
@@ -78,31 +177,20 @@ export const respond = (
       // Fall back to JSON if TOON can't encode (primitives, etc.)
       toonResult = JSON.stringify(result, null, 2)
     }
-    const envelope = {
-      ok,
-      command: normalizeCommand(command),
-      result_format: "toon" as const,
-      next_actions: nextActions.map((action) => ({
-        ...action,
-        command: normalizeCommand(action.command),
-      })),
-    }
-    return JSON.stringify(envelope, null, 2) + "\n---TOON---\n" + toonResult
+
+    return JSON.stringify(
+      {
+        ok: envelope.ok,
+        command: envelope.command,
+        result_format: "toon" as const,
+        next_actions: envelope.next_actions,
+      },
+      null,
+      2
+    ) + "\n---TOON---\n" + toonResult
   }
 
-  return JSON.stringify(
-    {
-      ok,
-      command: normalizeCommand(command),
-      result,
-      next_actions: nextActions.map((action) => ({
-        ...action,
-        command: normalizeCommand(action.command),
-      })),
-    } satisfies JoelclawResponse,
-    null,
-    2
-  )
+  return JSON.stringify(envelope satisfies JoelclawEnvelope, null, 2)
 }
 
 export const respondError = (
@@ -113,17 +201,7 @@ export const respondError = (
   nextActions: readonly NextAction[],
 ): string =>
   JSON.stringify(
-    {
-      ok: false,
-      command: normalizeCommand(command),
-      result: null,
-      error: { message, code },
-      fix,
-      next_actions: nextActions.map((action) => ({
-        ...action,
-        command: normalizeCommand(action.command),
-      })),
-    } satisfies JoelclawResponse,
+    buildErrorEnvelope(command, message, code, fix, nextActions) satisfies JoelclawEnvelope,
     null,
     2
   )
