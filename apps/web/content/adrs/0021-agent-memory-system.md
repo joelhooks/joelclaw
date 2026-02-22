@@ -3,6 +3,7 @@ title: Adopt comprehensive agent memory system
 status: accepted
 accepted: 2026-02-17
 date: 2026-02-15
+updated: 2026-02-21
 deciders: Joel Hooks
 consulted: Claude (pi session 2026-02-15)
 informed: All agents operating on this machine
@@ -21,6 +22,8 @@ credits:
 ---
 
 # ADR-0021: Adopt Comprehensive Agent Memory System
+
+> **2026-02-21 Update**: Qdrant has been fully deprecated and removed. Typesense (ADR-0082) is now the sole memory backend, providing hybrid search (vector + text via rank fusion). The Qdrant pod, PVC, k8s manifests, client dependency, and all code references have been deleted. Historical Qdrant details below are preserved for context but no longer reflect the running system.
 
 ## Context and Problem Statement
 
