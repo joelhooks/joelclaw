@@ -1,0 +1,122 @@
+---
+title: "The One Where Joel Deploys Kubernetes... Again"
+date: "2026-02-16T12:00:00"
+description: "Three containers and a spike that turned into a production migration. Why I moved my personal AI infrastructure from Docker Compose to k3d — and the gotchas nobody warns you about."
+type: "essay"
+tags: ["kubernetes", "talos", "infrastructure"]
+draft: false
+---
+
+> **🌱 This is a draft.** The single-node migration happened and works. The multi-node plan is settled — a Raspberry Pi 5 running native k3s becomes the control plane, and the Mac Mini joins as an agent over Tailscale. Hardware is ordered. The manifests don't change.
+
+I deployed Kubernetes to run three containers on a Mac Mini in my office.
+
+Three. Redis, Qdrant, Inngest. They were running fine in Docker Compose. Nobody asked for this.
+
+This isn't my first time. In [2023 I wrote about self-hosting](/self-hosting) and compared Kubernetes to Vim — "you'll install it and use somebody's dotfiles or follow a tutorial and add ALL of the plugins, only to be left with a confusing soup of keybindings and features that you don't understand. 🤡" I also tried running [Kubeflow on microk8s](/charmed-kubeflow-on-ubuntu-2204-with-microk8s) that same summer. Both times I learned a lot and shipped nothing.
+
+![Miller Hooks](/images/miller-handstand.jpg)
+
+But I want to add more machines to the network and distribute workloads across them. Docker Compose doesn't do that. The moment you want to schedule a job on a different node, or health-check services across machines, or route inference to a GPU box — you need an orchestrator. That's what Kubernetes is.
+
+Whether three containers on a single machine justifies Kubernetes is a question I've decided not to think too hard about. The manifests are the same whether it's one node or five.
+
+I spiked it. The spike worked. So I kept going. The whole migration was one session.
+
+## Nineteen seconds to a cluster
+
+k3d runs k3s inside Docker — which is already running on this machine. No new VMs, no new dependencies. Docker Desktop is free for personal use, so the only thing I added was the `k3d` binary. The portable layer is the k8s manifests — same `kubectl apply` whether it's k3d on macOS or native k3s on Linux.
+
+```bash
+k3d cluster create joelclaw \
+  --servers 1 \
+  --port "6379:6379@server:0" \
+  --port "6333:6333@server:0" \
+  --port "8288:8288@server:0" \
+  --k3s-arg "--disable=traefik@server:0" \
+  --k3s-arg "--kube-apiserver-arg=service-node-port-range=80-32767@server:0" \
+  --wait
+```
+
+Nineteen seconds. Three StatefulSets later, everything's running.
+
+## The gotchas nobody warns you about
+
+**The service naming collision.** First deploy — Redis comes up, Qdrant comes up, Inngest crashes:
+
+```
+strconv.Atoi: parsing "tcp://10.43.53.131:8288": invalid syntax
+```
+
+Kubernetes auto-injects environment variables based on Service names. A Service named `inngest` creates `INNGEST_PORT=tcp://10.43.x.x:8288`. The Inngest binary has its own `INNGEST_PORT` — expects an integer. Gets a URL. Crash. Fix: name the Service `inngest-svc`. Two characters, thirty minutes of debugging.
+
+Never name a k8s Service the same as the binary it runs.
+
+**The NodePort range.** Default is 30000-32767. My services need 6379, 6333, 8288. You set `--service-node-port-range=80-32767` at cluster creation.
+
+**k3d is immutable after creation.** Port mappings, k3s args — all locked at `cluster create` time. Forget a port, delete the cluster, start over. I recreated it three times. Plan your ports first.
+
+## The overhead
+
+The k8s tax is ~380 MB for the control plane, CoreDNS, metrics-server, and the storage provisioner. Total for everything — control plane plus all three services — is about 915 MB. Docker Compose was 536 MB for the same three services. On a 64 GB machine that's 0.6% overhead for a real orchestrator.
+
+The cutover was anticlimactic. Stop Compose, deploy manifests, restart the worker. The worker still connects to `localhost:6379`, `localhost:6333`, `localhost:8288` — same as before. The ports are just served by k8s NodePorts now instead of Docker port bindings. `docker compose down`. Done.
+
+Not everything moved. The system-bus worker stays on launchd — it needs the host filesystem for git, Whisper transcription, and writing all over the machine. Caddy stays too. Not everything needs to be in a cluster.
+
+## Why k3d
+
+I looked at the homelab landscape before committing.
+
+**k3d** wraps k3s inside Docker containers. Since Docker Desktop is already running on this Mac, k3d adds zero new infrastructure — no VMs, no Multipass, no new daemon. Cluster up in 19 seconds, cluster down in 3. The catch: it's single-machine only. k3d nodes are containers on one host — remote machines can't join the cluster.
+
+**microk8s** runs in a Multipass VM on macOS (~4 GB RAM, comparable to Docker Desktop's own VM). It can do multi-node — remote microk8s instances join via `microk8s add-node`. But you're running a second VM alongside Docker Desktop, and Multipass has [documented disk I/O problems](https://github.com/canonical/multipass/issues/2440) on Apple Silicon — one user measured 16 MB/s writes on an M1 where you'd expect 100+.
+
+**Talos Linux** is an immutable OS that *is* the cluster. No SSH, no package manager, API-driven. It can run in a VM on macOS — people do it with QEMU — but its strengths are wasted inside a VM on a Mac. Talos shines on dedicated Linux hardware where the API-driven lifecycle matters.
+
+**Nomad** by HashiCorp is simpler than k8s and handles containers, VMs, and batch jobs. But HashiCorp relicensed everything to BSL in August 2023, and IBM acquired them for $6.4B in 2024. Unlike Terraform (which got OpenTofu) and Vault (which got OpenBao), nobody's forked Nomad — the community was always smaller. It's not that everyone's migrating away. It's that nobody's starting new projects on it.
+
+k3d wins for single-machine k8s on a Mac that's already running Docker. If a second machine needs to join, that's a different decision — probably native k3s on Linux, or OrbStack on Mac. The manifests are portable. The [network page](/network) shows the current state.
+
+## Appendix: does it have to be Kubernetes
+
+No. Here's the real landscape:
+
+| Approach | Good at | Bad at |
+|---|---|---|
+| **k3d / k3s / k8s** | Continuous reconciliation — health checks, rescheduling, GPU routing, self-healing | YAML, complexity, learning curve |
+| **Kamal** (37signals) | Zero-downtime web app deploys across multiple servers | Not designed for stateful infrastructure — no PVCs, no self-healing |
+| **Ansible + Docker Compose** | Familiar, idempotent, works across machines | No runtime loop — if a container dies at 3am, it stays dead |
+| **Nomad** | Simpler than k8s, handles containers + VMs + batch | BSL licensed, IBM-owned, no community fork, smaller ecosystem |
+| **systemd + Podman** | Zero overhead, OS-native | No cross-machine anything |
+| **Docker Swarm** | Built into Docker | Effectively abandoned |
+| **Talos Linux** | Immutable, API-driven — no OS to manage | Best on dedicated hardware, not in a VM on your Mac |
+| **NixOS** | Reproducible machine state, atomic rollbacks | Different paradigm entirely |
+
+The real question isn't "scheduler vs. declarative" — Kubernetes is declarative too. You write YAML, it reconciles.
+
+The question is whether you need something **running after you deploy**. k8s and Nomad keep a reconciliation loop going — a container dies, it restarts. A node fills up, pods move. Kamal and Ansible push configuration and then stop watching. If something breaks overnight, you find out in the morning.
+
+For three services on one machine, Docker Compose with `restart: always` honestly does the job. The moment you want heterogeneous nodes — GPU jobs to the GPU box, stateful services on the Mac, batch work wherever there's capacity — you need something that knows about all the nodes and can schedule across them.
+
+Docker Compose is the off-ramp if this ever feels like too much. The manifests translate back to a compose file in about ten minutes.
+
+## What's next
+
+k3d is a dead end for multi-node. It runs k3s inside Docker on one host — remote machines can't join. That was always the known tradeoff: get started fast, graduate later.
+
+The graduation plan: a Raspberry Pi 5 (16 GB) running native k3s as the control plane. The Mac Mini joins as a k3s agent over Tailscale. k3s has [built-in Tailscale integration](https://docs.k3s.io/networking/distributed-multicloud) — pass `--vpn-auth="name=tailscale,joinKey=..."` and it handles the mesh networking between nodes automatically.
+
+Why a Pi and not the Mac? The control plane — API server, scheduler, etcd — just decides where things run. It doesn't need 64 GB of RAM or an M4 Pro. It needs to be always on, always reachable, and running native Linux (no VM layer). A Pi 5 with 16 GB on a USB SSD is perfect for that. k3s server uses 500–800 MB. The Pi won't break a sweat.
+
+The Mac Mini stays where the real compute happens. Redis, Qdrant, Inngest, agent workloads — all schedule there as k3s agent pods. If a GPU box joins later, it's one command: `curl -sfL https://get.k3s.io | K3S_URL=... K3S_TOKEN=... sh -`. Same manifests. Same cluster.
+
+The PDS (AT Protocol Personal Data Server) is just another pod. It's a lightweight process — Bluesky recommends 1 CPU, 1 GB RAM. It could run on the Pi itself or schedule to the Mac alongside everything else. Either way, it's a StatefulSet with a PVC, managed the same way as Redis or Qdrant.
+
+Two layers of federation in one cluster. Kubernetes federates compute — where containers run. AT Protocol federates data — who owns what, how agents communicate. The Pi runs both control planes.
+
+Hardware is ordered. The manifests don't change.
+
+---
+
+*This is part of a series about building a personal AI system. Previous: [Inngest is the Nervous System](/inngest-is-the-nervous-system).*

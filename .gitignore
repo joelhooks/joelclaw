@@ -1,0 +1,87 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Local env files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Testing
+coverage
+
+# Turbo
+.turbo
+
+# Vercel
+.vercel
+
+# Build Outputs
+.next/
+out/
+build
+dist
+
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Third-party skills — installed via ./install-skills.sh from canonical sources.
+# Custom joelclaw skills are force-tracked (git add -f).
+.agents/skills/*
+!.agents/skills/cli-design/
+!.agents/skills/discovery/
+!.agents/skills/docker-sandbox/
+!.agents/skills/gateway-setup/
+!.agents/skills/inngest-local/
+!.agents/skills/joel-writing-style/
+!.agents/skills/joelclaw-system-check/
+!.agents/skills/recall/
+!.agents/skills/task-management/
+!.agents/skills/video-note/
+!.agents/skills/joelclaw-web/
+.claude/skills/*
+# Root skills/ dir created by npx skills add
+skills/
+
+# Agent tool dirs created by `npx skills add --all`
+.adal/
+.agent/
+.augment/
+.cline/
+.codebuddy/
+.commandcode/
+.continue/
+.crush/
+.cursor/
+.factory/
+.goose/
+.iflow/
+.junie/
+.kilocode/
+.kiro/
+.kode/
+.mcpjam/
+.mux/
+.neovate/
+.openhands/
+.pi/
+.pochi/
+.qoder/
+.qwen/
+.roo/
+.trae/
+.vibe/
+.windsurf/
+.zencoder/
+
+# Misc
+.DS_Store
+*.pem

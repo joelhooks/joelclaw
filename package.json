@@ -1,0 +1,33 @@
+{
+  "name": "joelclaw",
+  "private": true,
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "check-types": "turbo run check-types",
+    "validate:cli-contracts": "bun scripts/validate-cli-contracts.ts",
+    "validate:llm-observability-guards": "bun scripts/validate-llm-observability-guards.ts",
+    "validate:no-legacy-worker-clone": "bun scripts/validate-no-legacy-worker-clone.ts"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.32.0",
+    "oxlint": "^1.47.0",
+    "turbo": "^2.8.8",
+    "typescript": "5.9.2"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "dependencies": {
+    "ioredis": "^5.9.3"
+  }
+}

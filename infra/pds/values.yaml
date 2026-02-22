@@ -1,0 +1,50 @@
+# Bluesky PDS — Private-first deployment (Tailscale only)
+# No public exposure, no federation, no crawlers
+# Path A: prove the data model with custom dev.joelclaw.* records
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/bluesky-social/pds
+  pullPolicy: IfNotPresent
+  tag: "0.4.204"
+
+pds:
+  config:
+    # Tailscale hostname — private, not internet-reachable
+    hostname: "pds.panda.tail7af24.ts.net"
+    secrets:
+      # Stored in agent-secrets: pds_jwt_secret, pds_admin_password, pds_plc_rotation_key
+      # Use: secrets lease pds_admin_password
+      existingSecret: "bluesky-pds-secrets"
+      # No SMTP — personal use, no email verification needed
+      emailSmtpUrl: ""
+    dataDir: "/pds"
+    blobstoreLocation: "/pds/blocks"
+    didPlcUrl: "https://plc.directory"
+    bskyAppViewUrl: "https://api.bsky.app"
+    bskyAppViewDid: "did:web:api.bsky.app"
+    reportSvcUrl: "https://mod.bsky.app"
+    reportSvcDid: "did:plc:ar7c4by46qjdydhdevvrndac"
+    # No crawlers — not federating yet
+    crawlers: ""
+    pdsEmailFromAddress: ""
+  dataStorage:
+    size: 10Gi
+    mountPath: "/pds"
+    storageClass: "local-path"
+
+service:
+  type: NodePort
+  port: 3000
+
+ingress:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

@@ -1,0 +1,57 @@
+{
+  "title": "Migrate igs CLI into joelclaw monorepo as @joelclaw/cli",
+  "description": "Move the igs CLI from ~/Code/joelhooks/igs into joelhooks/joelclaw/packages/cli as @joelclaw/cli. Rename the binary from 'igs' to 'joelclaw'. Update internal references. The CLI is an Effect-based Bun app that talks to the Inngest API. Source files: cli.ts, config.ts, inngest.ts, response.ts. This is ADR-0009 implementation.",
+  "stories": [
+    {
+      "id": "CLI-1",
+      "title": "Scaffold @joelclaw/cli package in monorepo",
+      "description": "Create packages/cli/ in the joelclaw monorepo. Copy the 4 source files from the igs CLI (src/cli.ts, src/config.ts, src/inngest.ts, src/response.ts) into packages/cli/src/. Create a package.json with name '@joelclaw/cli', bin field pointing to src/cli.ts, and the same dependencies (Effect, @effect/cli, @effect/platform, @effect/platform-bun). Create a tsconfig.json. The CLI should be runnable with 'bun run packages/cli/src/cli.ts'.",
+      "acceptance_criteria": [
+        "packages/cli/package.json exists with name '@joelclaw/cli'",
+        "packages/cli/package.json has bin field: { 'joelclaw': 'src/cli.ts' }",
+        "packages/cli/src/ contains cli.ts, config.ts, inngest.ts, response.ts",
+        "packages/cli/tsconfig.json exists",
+        "Source files are copied from the igs CLI without modification yet",
+        "bun run packages/cli/src/cli.ts --help shows the CLI help",
+        "TypeScript compiles with no errors: cd packages/cli && bunx tsc --noEmit"
+      ],
+      "priority": 1,
+      "passes": false
+    },
+    {
+      "id": "CLI-2",
+      "title": "Rename CLI from igs to joelclaw",
+      "description": "Update all references in the CLI source from 'igs' to 'joelclaw'. This includes: the Command.run root name, the version string, the Command.make name for the root command, all help text and descriptions that say 'igs', all next_action command suggestions that start with 'igs'. The respond() function's command prefix. The CLI should work identically but say 'joelclaw' everywhere instead of 'igs'.",
+      "acceptance_criteria": [
+        "Root command name is 'joelclaw' not 'igs'",
+        "Command.run uses name: 'joelclaw'",
+        "All respond() calls use 'joelclaw' prefix in command field",
+        "All next_actions suggestions use 'joelclaw' instead of 'igs'",
+        "Description strings say 'joelclaw' not 'igs'",
+        "No remaining references to 'igs' in CLI output (grep for 'igs ' in source)",
+        "bun run packages/cli/src/cli.ts --help shows 'joelclaw'",
+        "TypeScript compiles with no errors"
+      ],
+      "priority": 2,
+      "passes": false
+    },
+    {
+      "id": "CLI-3",
+      "title": "Add note subcommand",
+      "description": "Add a 'joelclaw note' subcommand that captures a thought to the Redis note queue. It should accept a text argument and optional --source and --tags flags. It sends a system/note event to Inngest with the note data AND directly writes to Redis using the joelclaw-notes pattern (RPUSH to joelclaw:notes:queue as JSON with id, text, source, createdAt, tags, status=pending). Import ioredis for the Redis write. Add the ioredis dependency to package.json.",
+      "acceptance_criteria": [
+        "joelclaw note 'some thought' captures the note",
+        "Note is written to Redis list at key 'joelclaw:notes:queue'",
+        "Note JSON has fields: id, text, source, createdAt, tags, status",
+        "Default source is 'cli', default tags is empty array",
+        "--source flag overrides the source field",
+        "--tags flag accepts comma-separated tags",
+        "Output is HATEOAS JSON with the created note and next_actions",
+        "ioredis is in package.json dependencies",
+        "TypeScript compiles with no errors"
+      ],
+      "priority": 3,
+      "passes": false
+    }
+  ]
+}

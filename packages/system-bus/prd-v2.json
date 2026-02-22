@@ -1,0 +1,129 @@
+{
+  "title": "ADR-0007: Agent Loop v2 Improvements",
+  "description": "Implement the v2 upgrades from ADR-0007. Docker sandboxing, richer prompts, branch lifecycle, loop controls, duration tracking, double-commit prevention. See ~/Vault/docs/decisions/0007-agent-loop-v2-improvements.md for full spec.",
+  "stories": [
+    {
+      "id": "V2-1",
+      "title": "Enforce maxIterations in PLANNER",
+      "description": "The maxIterations parameter is accepted in agent/loop.start but never checked. PLANNER should count completed + skipped stories and stop when maxIterations is reached. Pass maxIterations through the event chain (start → plan). When the limit is hit, emit agent/loop.complete with summary indicating max_iterations_reached.",
+      "acceptance_criteria": [
+        "PLANNER reads maxIterations from agent/loop.start event data (default 100)",
+        "PLANNER counts stories where passes===true OR skipped===true",
+        "When attemptedStories >= maxIterations, emits agent/loop.complete with reason 'max_iterations_reached'",
+        "maxIterations is passed through agent/loop.plan events so re-entry planner calls respect it",
+        "TypeScript compiles with no errors"
+      ],
+      "priority": 1,
+      "passes": true
+    },
+    {
+      "id": "V2-2",
+      "title": "Double-commit prevention in IMPLEMENTOR",
+      "description": "codex in --full-auto may commit on its own. The harness then tries to commit again, creating duplicates. The gitCommit helper in utils.ts already handles 'nothing to commit' gracefully (returns HEAD sha), but the implementor should also detect if the tool already committed with a meaningful message and use that sha. Additionally, prefer checking for uncommitted changes before attempting commit.",
+      "acceptance_criteria": [
+        "If git status shows no uncommitted changes after tool execution, skip harness commit",
+        "If tool already committed, detect the new commit sha and use it for the review event",
+        "No duplicate commits are created when codex auto-commits",
+        "Commit message still contains loopId, storyId, attempt for idempotency tracking",
+        "TypeScript compiles with no errors"
+      ],
+      "priority": 2,
+      "passes": true
+    },
+    {
+      "id": "V2-3",
+      "title": "Duration tracking across the pipeline",
+      "description": "Record story start time at IMPLEMENTOR entry. Pass the timestamp through REVIEWER and JUDGE event payloads. Emit actual durationMs in agent/loop.story.pass and agent/loop.story.fail events. Update the event types in client.ts to include startedAt and durationMs fields.",
+      "acceptance_criteria": [
+        "IMPLEMENTOR records Date.now() as storyStartedAt in its first step",
+        "storyStartedAt is included in agent/loop.review event data",
+        "storyStartedAt is included in agent/loop.judge event data",
+        "JUDGE calculates durationMs = Date.now() - storyStartedAt",
+        "agent/loop.story.pass event includes non-zero duration field",
+        "agent/loop.story.fail event includes non-zero duration field",
+        "Event types in client.ts updated to include storyStartedAt and duration fields",
+        "TypeScript compiles with no errors"
+      ],
+      "priority": 3,
+      "passes": true
+    },
+    {
+      "id": "V2-4",
+      "title": "Rich implementor prompt assembly",
+      "description": "Upgrade buildPrompt() in implement.ts to include project context. Read progress.txt codebase patterns section, CLAUDE.md, AGENTS.md if they exist. Include a brief file listing of the project root. Include prior attempt feedback. Cap total prompt length to avoid overwhelming the tool. The prompt should give the implementor enough context to work effectively on real codebases, not just toy projects.",
+      "acceptance_criteria": [
+        "buildPrompt reads progress.txt and extracts the '## Codebase Patterns' section if present",
+        "buildPrompt reads CLAUDE.md from project root if it exists",
+        "buildPrompt reads AGENTS.md from project root if it exists",
+        "buildPrompt includes a file listing (ls-style, top-level + src/ if exists, capped at 50 lines)",
+        "Prior attempt feedback is included when present",
+        "Total prompt is capped at ~8000 chars with deterministic truncation (patterns > file listing > CLAUDE.md)",
+        "TypeScript compiles with no errors"
+      ],
+      "priority": 4,
+      "passes": true
+    },
+    {
+      "id": "V2-5",
+      "title": "Feature branch lifecycle in PLANNER",
+      "description": "PLANNER creates a feature branch at loop start. Branch name: agent-loop/{loopId}. All stories commit to this branch. On agent/loop.complete, the branch name is included in the event data. The branch is NOT pushed automatically (human decides). Update agent/loop.start handler to create the branch, and agent/loop.plan handler to verify it's checked out.",
+      "acceptance_criteria": [
+        "On agent/loop.start, PLANNER creates and checks out branch agent-loop/{loopId}",
+        "On agent/loop.plan (re-entry), PLANNER verifies the branch is checked out",
+        "agent/loop.complete event includes branchName field",
+        "All story commits land on the feature branch, not on the default branch",
+        "Event types in client.ts updated to include branchName in complete event",
+        "TypeScript compiles with no errors"
+      ],
+      "priority": 5,
+      "passes": true
+    },
+    {
+      "id": "V2-6",
+      "title": "Dockerfile for agent-loop-runner",
+      "description": "Create a Docker image that contains all tools needed for loop execution: bun, git, codex CLI, claude CLI. The image should be minimal but functional. Create docker/agent-loop-runner/Dockerfile. Include an entrypoint script that accepts a GitHub App token, clones a repo, checks out a branch, and runs a command. This is the foundation for Docker-isolated loop execution.",
+      "acceptance_criteria": [
+        "Dockerfile at docker/agent-loop-runner/Dockerfile builds successfully",
+        "Image contains: bun (latest), git, codex CLI, claude CLI",
+        "Entrypoint script accepts env vars: REPO_URL, BRANCH, GITHUB_TOKEN, WORK_DIR",
+        "Entrypoint clones repo with token auth, checks out branch, runs CMD",
+        "Image size is under 2GB",
+        "docker build completes without errors"
+      ],
+      "priority": 6,
+      "passes": true
+    },
+    {
+      "id": "V2-7",
+      "title": "Container runner utility for IMPLEMENTOR and REVIEWER",
+      "description": "Create a spawnInContainer() function in agent-loop utils that replaces direct tool spawning with Docker container execution. It should: mint a GitHub App token, start a container from the agent-loop-runner image, mount nothing from host (pure clone), capture stdout, and return exit code + output. The existing spawnTool() becomes a thin wrapper that delegates to spawnInContainer() when Docker is available, falling back to host execution.",
+      "acceptance_criteria": [
+        "spawnInContainer(tool, prompt, repoUrl, branch, loopId, storyId) function exists in utils",
+        "Function mints GitHub App installation token using secrets",
+        "Function starts docker container with the agent-loop-runner image",
+        "Container clones repo via HTTPS with token, checks out branch",
+        "Tool output is captured and returned",
+        "Existing spawnTool() delegates to spawnInContainer() when AGENT_LOOP_DOCKER=1 env is set",
+        "Falls back to host execution when Docker is not available",
+        "TypeScript compiles with no errors"
+      ],
+      "priority": 7,
+      "passes": true
+    },
+    {
+      "id": "V2-8",
+      "title": "Push branch on loop completion",
+      "description": "When the loop completes (all stories done or maxIterations reached), push the feature branch to the remote. Use the GitHub App token for auth. This enables PR workflow — human reviews the branch and merges. Add a --push flag to igs loop start (default: true). Include the remote URL and branch name in the complete event.",
+      "acceptance_criteria": [
+        "On agent/loop.complete, if push is enabled, push the feature branch to origin",
+        "Push uses GitHub App HTTPS token for auth (not SSH)",
+        "igs loop start accepts --push flag (default true)",
+        "agent/loop.complete event includes branchName and pushResult fields",
+        "If push fails, the loop still completes successfully (push failure is logged, not fatal)",
+        "slog entry written on push success or failure"
+      ],
+      "priority": 8,
+      "passes": true
+    }
+  ]
+}

@@ -1,0 +1,145 @@
+/**
+ * Granola new meeting check — detect meetings since last check.
+ * ADR-0055. Uses granola-cli via mcporter MCP.
+ * Emits meeting/noted for each new meeting found.
+ * Only notifies gateway if new meetings detected.
+ */
+
+import { inngest } from "../client";
+import { pushGatewayEvent } from "./agent-loop/utils";
+import { getCurrentTasks, hasTaskMatching } from "../../tasks";
+import Redis from "ioredis";
+
+const PROCESSED_SET = "granola:processed";
+
+let redisClient: Redis | null = null;
+
+function getRedis(): Redis {
+  if (redisClient) return redisClient;
+  const isTest = process.env.NODE_ENV === "test" || process.env.BUN_TEST === "1";
+  redisClient = new Redis({
+    host: process.env.REDIS_HOST ?? "localhost",
+    port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+    lazyConnect: true,
+    retryStrategy: isTest ? () => null : undefined,
+  });
+  redisClient.on("error", () => {});
+  return redisClient;
+}
+
+async function readStream(stream: ReadableStream<Uint8Array> | null): Promise<string> {
+  if (!stream) return "";
+  return new Response(stream).text();
+}
+
+type GranolaMeeting = { id: string; title: string; date?: string; participants?: string[] };
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return Boolean(v) && typeof v === "object";
+}
+
+export const checkGranola = inngest.createFunction(
+  {
+    id: "check/granola-meetings",
+    concurrency: [{ scope: "account", key: '"granola-mcp"', limit: 1 }],
+    retries: 2,
+  },
+  { event: "granola/check.requested" },
+  async ({ step }) => {
+    // Step 1: List recent meetings via granola-cli
+    const meetings = await step.run("list-recent-meetings", async (): Promise<GranolaMeeting[]> => {
+      const proc = Bun.spawn(["granola", "meetings", "--range", "today"], {
+        env: { ...process.env, TERM: "dumb" },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, , exitCode] = await Promise.all([
+        readStream(proc.stdout),
+        readStream(proc.stderr),
+        proc.exited,
+      ]);
+
+      if (exitCode !== 0 || !stdout.trim()) return [];
+
+      try {
+        const parsed = JSON.parse(stdout.trim());
+        if (!isRecord(parsed) || !parsed.ok) return [];
+        const result = parsed.result;
+        const items = isRecord(result) && Array.isArray(result.meetings)
+          ? result.meetings
+          : Array.isArray(result) ? result : [];
+        return items
+          .filter((m): m is Record<string, unknown> => isRecord(m) && typeof m.id === "string")
+          .map((m) => ({
+            id: String(m.id),
+            title: String(m.title ?? "Untitled"),
+            date: typeof m.date === "string" ? m.date : undefined,
+            participants: Array.isArray(m.participants) ? m.participants.filter((p): p is string => typeof p === "string") : undefined,
+          }));
+      } catch {
+        return [];
+      }
+    });
+
+    // NOOP: no meetings today or granola-cli not working
+    if (meetings.length === 0) {
+      return { status: "noop", reason: "no meetings found" };
+    }
+
+    // Step 2: Filter out already-processed meetings
+    const newMeetings = await step.run("filter-processed", async (): Promise<GranolaMeeting[]> => {
+      const redis = getRedis();
+      const results: GranolaMeeting[] = [];
+      for (const m of meetings) {
+        const processed = await redis.sismember(PROCESSED_SET, m.id);
+        if (!processed) results.push(m);
+      }
+      return results;
+    });
+
+    // NOOP: all meetings already processed
+    if (newMeetings.length === 0) {
+      return { status: "noop", reason: "all meetings already processed", totalChecked: meetings.length };
+    }
+
+    const untrackedMeetings = await step.run("filter-meetings-against-tasks", async (): Promise<GranolaMeeting[]> => {
+      const tasks = await getCurrentTasks();
+      return newMeetings.filter((meeting) => !hasTaskMatching(tasks, meeting.title));
+    });
+
+    if (untrackedMeetings.length === 0) {
+      return { status: "noop", reason: "already tracked in tasks", totalChecked: meetings.length };
+    }
+
+    // Step 3: Emit meeting/noted events for each new meeting
+    await step.sendEvent(
+      "emit-new-meetings",
+      untrackedMeetings.map((m) => ({
+        name: "meeting/noted" as const,
+        data: {
+          meetingId: m.id,
+          title: m.title,
+          date: m.date,
+          participants: m.participants,
+          source: "heartbeat" as const,
+        },
+      }))
+    );
+
+    // Step 4: Notify gateway about new meetings (actionable)
+    await step.run("notify-new-meetings", async () => {
+      const list = untrackedMeetings.map((m) => `- **${m.title}**${m.date ? ` (${m.date})` : ""}`).join("\n");
+      await pushGatewayEvent({
+        type: "granola.new.meetings",
+        source: "inngest/check-granola",
+        payload: {
+          prompt: `## 📝 ${untrackedMeetings.length} New Meeting${untrackedMeetings.length > 1 ? "s" : ""} Detected\n\n${list}\n\nMeeting analysis pipeline triggered automatically.`,
+        },
+      });
+    });
+
+    return { status: "new-meetings", count: untrackedMeetings.length, meetings: untrackedMeetings.map((m) => m.title) };
+  }
+);

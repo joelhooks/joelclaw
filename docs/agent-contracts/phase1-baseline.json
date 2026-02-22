@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "scope": "packages/cli/src/commands/*.ts",
+  "commandFiles": [
+    "packages/cli/src/commands/approvals.ts",
+    "packages/cli/src/commands/call.ts",
+    "packages/cli/src/commands/capabilities.ts",
+    "packages/cli/src/commands/diagnose.ts",
+    "packages/cli/src/commands/discover.ts",
+    "packages/cli/src/commands/email.ts",
+    "packages/cli/src/commands/event.ts",
+    "packages/cli/src/commands/events.ts",
+    "packages/cli/src/commands/gateway.ts",
+    "packages/cli/src/commands/inngest.ts",
+    "packages/cli/src/commands/langfuse.ts",
+    "packages/cli/src/commands/logs.ts",
+    "packages/cli/src/commands/loop.ts",
+    "packages/cli/src/commands/nas.ts",
+    "packages/cli/src/commands/note.ts",
+    "packages/cli/src/commands/otel.ts",
+    "packages/cli/src/commands/recall.ts",
+    "packages/cli/src/commands/recover.ts",
+    "packages/cli/src/commands/refresh.ts",
+    "packages/cli/src/commands/review.ts",
+    "packages/cli/src/commands/runs.ts",
+    "packages/cli/src/commands/schema.ts",
+    "packages/cli/src/commands/search.ts",
+    "packages/cli/src/commands/send.ts",
+    "packages/cli/src/commands/status.ts",
+    "packages/cli/src/commands/tui.ts",
+    "packages/cli/src/commands/vault.ts",
+    "packages/cli/src/commands/watch.ts"
+  ],
+  "envelopeCommandFiles": [
+    "packages/cli/src/commands/approvals.ts",
+    "packages/cli/src/commands/call.ts",
+    "packages/cli/src/commands/capabilities.ts",
+    "packages/cli/src/commands/diagnose.ts",
+    "packages/cli/src/commands/discover.ts",
+    "packages/cli/src/commands/email.ts",
+    "packages/cli/src/commands/event.ts",
+    "packages/cli/src/commands/events.ts",
+    "packages/cli/src/commands/gateway.ts",
+    "packages/cli/src/commands/inngest.ts",
+    "packages/cli/src/commands/langfuse.ts",
+    "packages/cli/src/commands/logs.ts",
+    "packages/cli/src/commands/loop.ts",
+    "packages/cli/src/commands/nas.ts",
+    "packages/cli/src/commands/note.ts",
+    "packages/cli/src/commands/otel.ts",
+    "packages/cli/src/commands/recall.ts",
+    "packages/cli/src/commands/recover.ts",
+    "packages/cli/src/commands/refresh.ts",
+    "packages/cli/src/commands/review.ts",
+    "packages/cli/src/commands/runs.ts",
+    "packages/cli/src/commands/schema.ts",
+    "packages/cli/src/commands/search.ts",
+    "packages/cli/src/commands/send.ts",
+    "packages/cli/src/commands/status.ts",
+    "packages/cli/src/commands/tui.ts",
+    "packages/cli/src/commands/vault.ts"
+  ],
+  "rawOutputCommandFiles": [
+    "packages/cli/src/commands/diagnose.ts",
+    "packages/cli/src/commands/loop.ts",
+    "packages/cli/src/commands/note.ts",
+    "packages/cli/src/commands/recall.ts",
+    "packages/cli/src/commands/tui.ts"
+  ],
+  "rawOutputByFile": {
+    "packages/cli/src/commands/diagnose.ts": {
+      "count": 2,
+      "kinds": [
+        "Console.log"
+      ]
+    },
+    "packages/cli/src/commands/loop.ts": {
+      "count": 1,
+      "kinds": [
+        "Console.log"
+      ]
+    },
+    "packages/cli/src/commands/note.ts": {
+      "count": 1,
+      "kinds": [
+        "Console.log"
+      ]
+    },
+    "packages/cli/src/commands/recall.ts": {
+      "count": 1,
+      "kinds": [
+        "Console.log"
+      ]
+    },
+    "packages/cli/src/commands/tui.ts": {
+      "count": 16,
+      "kinds": [
+        "Console.log",
+        "process.stdout.write"
+      ]
+    }
+  },
+  "unclassifiedCommandFiles": [
+    "packages/cli/src/commands/watch.ts"
+  ]
+}

@@ -1,0 +1,50 @@
+---
+title: "Karpathy Says We're Building \"Claws\""
+type: "note"
+date: "2026-02-21T08:00:00"
+description: "Andrej Karpathy bought a Mac Mini to tinker with Claws. Simon Willison thinks 'Claw' is becoming a term of art. I've been building one for a week and today I coded while driving."
+tags: ["claws", "openclaw", "terminology"]
+source: "https://simonwillison.net/2026/Feb/21/claws/"
+---
+
+[Simon Willison flagged](https://simonwillison.net/2026/Feb/21/claws/) an Andrej Karpathy tweet that caught my attention. Karpathy bought a Mac Mini — apparently Apple stores are "selling like hotcakes and everyone is confused" — to tinker with what he's calling **Claws**.
+
+His definition:
+
+> Just like LLM agents were a new layer on top of LLMs, Claws are now a new layer on top of LLM agents, taking the orchestration, scheduling, context, tool calls and a kind of persistence to a next level.
+
+That's exactly what I've been building. I named mine Joel**Claw** — it's not like the word is a surprise. But seeing Karpathy crystallize it as a category, distinct from "AI agent," is the moment it becomes a real thing other people can point at.
+
+## The machine IS the agent
+
+The thing that's fascinating about Claws is the idea of the machine as the agent. Not an agent running on a machine — the machine itself. The scope of its power is "anything you can do on a Mac," which is huge.
+
+What is it missing? Hands. It can't physically do things. I'm the hands. That's the interface boundary between me and JoelClaw — I'm the physical layer, it's everything else.
+
+That's the ceiling, not the current reality. We're a long way from that. But it gives you a problem-solving space. It makes you think about problems differently in terms of what's possible.
+
+## Agentic clay
+
+I'm most excited about the [Pi harness](https://github.com/mariozechner/pi-coding-agent). It's what spawned OpenClaw and gives an agentic substrate that is moldable like clay. Agentic clay. The harness is the medium, not the product. You shape it into whatever the problem needs.
+
+Karpathy flagged NanoClaw's skills-as-configuration approach — no config files, skills teach the agent to modify its own code. Pi already does this with SKILL.md files. It's likely a mix of both in practice. JoelClaw leans on both — skills for behavior, config for infrastructure. You don't want a skill teaching the agent to rewrite your Redis connection string.
+
+## Building your own vs. running OpenClaw
+
+Karpathy is blunt about OpenClaw specifically:
+
+> Giving my private data/keys to 400K lines of vibe coded monster that is being actively attacked at scale is not very appealing at all. Already seeing reports of exposed instances, RCE vulnerabilities, supply chain poisoning, malicious or compromised skills in the registry.
+
+They'll figure it out. OpenClaw is a long way from "enterprise ready" but the concept is proven. For my own purposes, building my own Claw helps with peace of mind. More control. There's nothing to say I'm not causing my own problems — your own bugs are at least your bugs — but I know every line of JoelClaw because I wrote it. Well, me and the agents.
+
+Making these systems durable and secure is an interesting problem in its own right. When a system has access to your keys, your files, your email, your calendar — the attack surface isn't theoretical.
+
+## "Call me when it's done"
+
+I don't anthropomorphize these things too hard. It's a machine. A robot. Karpathy describes the Mac Mini as "a physical device possessed by a little ghost of a personal digital house elf" and that's charming, but JoelClaw is a tool.
+
+A tool that today let me do my first "code while I drive" session.
+
+I gave JoelClaw a task via voice, told it to implement the feature, and said "call me when it's done for review and next steps." Then I drove. It coded. When it finished, it called my phone. That's crazy. That's the moment where Claws stop being a concept and start being a workflow.
+
+The name is good. Short, concrete, implies grabbing things and doing stuff. Karpathy has an ear for terminology — he gave us "vibe coding" and "agentic engineering." Both stuck. I think "Claw" sticks too. 🦞

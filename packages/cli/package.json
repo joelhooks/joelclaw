@@ -1,0 +1,31 @@
+{
+  "name": "@joelclaw/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "joelclaw": "src/cli.ts",
+    "igs": "src/cli.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/cli": "^0.73.2",
+    "@effect/platform": "^0.94.5",
+    "@effect/platform-bun": "^0.87.1",
+    "@langfuse/otel": "^4.6.1",
+    "@langfuse/tracing": "^4.6.1",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/core": "^2.5.1",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.212.0",
+    "@opentelemetry/sdk-trace-base": "^2.5.1",
+    "@toon-format/toon": "^2.1.0",
+    "effect": "^3.19.17",
+    "ioredis": "^5.9.3"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "5.9.2"
+  }
+}

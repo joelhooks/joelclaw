@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.joel.system-bus-worker</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/joel/Code/joelhooks/joelclaw/packages/system-bus/start.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/joel/Code/joelhooks/joelclaw/packages/system-bus</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/joel</string>
+        <key>PATH</key>
+        <string>/Users/joel/.bun/bin:/Users/joel/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>INNGEST_DEV</key>
+        <string>0</string>
+        <key>WORKER_ROLE</key>
+        <string>host</string>
+        <key>VAULT_PATH</key>
+        <string>/Users/joel/Vault</string>
+        <key>NODE_EXTRA_CA_CERTS</key>
+        <string>/etc/ssl/cert.pem</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/joel/.local/log/system-bus-worker.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/joel/.local/log/system-bus-worker.err</string>
+
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+</dict>
+</plist>

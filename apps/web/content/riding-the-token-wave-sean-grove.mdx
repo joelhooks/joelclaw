@@ -1,0 +1,83 @@
+---
+title: "Riding the Token Wave: Sean Grove at Everything NYC"
+type: "note"
+date: "2026-02-14T14:00:00"
+description: "Notes on Sean Grove's talk at Sanity's Everything NYC 2025 — spec-driven development, the steam engine metaphor for token power, and why everyone becomes a leader when you have a million agents."
+tags: ["ai", "video-note", "agents"]
+source: "https://www.youtube.com/watch?v=gnUxZA7Ew1E"
+channel: "Sanity"
+duration: "00:33:11"
+---
+
+<YouTube id="gnUxZA7Ew1E" />
+
+Sean Grove — former OpenAI alignment researcher, OneGraph founder (acquired by Netlify), now building Linzumi — gave this talk at Sanity's inaugural dev conference at Pioneer Works in Brooklyn. It's a sequel to his ["The New Code"](https://www.youtube.com/watch?v=8rABwKRsec4) keynote from AI Engineer World's Fair 2025, where he argued that specifications are becoming the fundamental unit of programming. Here he extends that from *what* to *how*.
+
+## The Three Jobs
+
+Grove frames the human's role through a conductor metaphor. When you have a million agents working for you, three things remain yours:
+
+1. **Know the purpose.** Domain expertise matters more, not less. You know how the work gets applied in the real world, what problems it solves, where the edge cases live.
+2. **Arrange the ensemble.** Orchestrate agents so they make forward progress. Which specialists, in what order, with what constraints. The conductor doesn't play every instrument — they know how to compose them.
+3. **Review the result.** Judge whether the output is faithful to your vision and intent. Taste and judgment become the bottleneck. Not execution capacity.
+
+Everything else in the talk — the steam engine metaphor, the four requirements, the spec-driven demo — is infrastructure for making these three jobs possible at scale.
+
+## The Steam Engine Metaphor
+
+The central metaphor lands hard. Steam power was useless until humanity reshaped the earth with railroad tracks and reshaped their problems into train-sized containers. Token power demands the same:
+
+1. **Build connective infrastructure** — tools, APIs, monitoring that let LLMs perceive and modify your domain
+2. **Reshape your problems** — make it so adding more compute yields monotonically better results
+
+The AI labs are building the general infrastructure. Your leverage is in un-hobbling LLMs *in your specific domain*.
+
+## Four Requirements
+
+Grove's framework for riding the wave:
+
+- **Express** — State what you want with precision. Way harder than it sounds.
+- **Shape** — Structure the problem so more tokens = better results.
+- **Prove** — Verify in the small that agents are faithfully executing your vision.
+- **Scale** — Once proof works, pour in compute with confidence.
+
+## The Demo
+
+He shows a spec-driven development tool where a conversational interview extracts intent, generates mood boards and screen mock-ups, identifies ambiguities and contradictions in the specification, and creates a closed loop where agents self-correct against the spec.
+
+The key insight: once you have visual mock-ups and behavioral claims in a spec, agents can self-evaluate. Generate → screenshot → compare to spec → fix. That's a problem where more compute = more iterations = better results.
+
+## Ambiguity as the Enemy
+
+Before launching a thousand agents, you have to extract and resolve ambiguities. The demo shows automated claim extraction — finding where you said "kid-friendly" but never defined age range, or where anonymous publishing contradicts content safety.
+
+This is the part that maps directly to what I'm building. The [memory system](/teaching-my-system-to-remember) is doing the same thing at a different level — extracting structured observations from unstructured sessions so the system can detect its own contradictions and recurring failures.
+
+## Trust and Legibility
+
+> "What would it take for you to trust a 14-million-line PR that touches something incredibly sensitive and business critical?"
+
+His answer: it's not about the size of the change. It's about the **legibility** of the change. If you don't understand a small change, don't accept it. If you understand the properties of a large change, it should be fine.
+
+Rubber-stamping isn't human-in-the-loop — it's a liability sink. You need evidence that properties hold, not just sign-off.
+
+## Everyone Becomes a Leader
+
+> "If you have a hundred thousand agents or a million agents working for you, you are by definition one of the most powerful leaders in the history of humanity."
+
+Domain expertise, taste, and judgment become the bottleneck — not execution capacity. The conductor metaphor works: you're a master of dozens of skills who knows how to put them together.
+
+## Amateur vs. Professional
+
+The Q&A pushes on what happens to people who love writing code. Grove's answer:
+
+> "One of my favorite terms is amateur. We use it as a pejorative right now. But the meaning is really beautiful. It's someone who does something for the love of it."
+
+If you love programming, do it for the love. But competing professionally as a hand-coder may become like artisanal hat-making — the market for "locally produced, handcrafted code" might exist, but it'll cost more and be a niche.
+
+## Related
+
+- [The New Code — Sean Grove, AI Engineer World's Fair 2025](https://www.youtube.com/watch?v=8rABwKRsec4) — the predecessor talk on spec-driven development
+- [OpenAI Model Spec](https://model-spec.openai.com/) — the living specification document Grove helped build at OpenAI
+- [Deliberative Alignment paper (OpenAI)](https://openai.com/index/deliberative-alignment/) — models reasoning over safety specifications
+- [Everything NYC 2025 — All Talks](https://www.sanity.io/blog/everything-nyc-2025-all-talks)

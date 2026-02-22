@@ -1,0 +1,79 @@
+{
+  "name": "ADR-0077: Memory System Next Phase — Increment 1",
+  "description": "Implement Increment 1 (Retrieval Quality) from ADR-0077. Three changes to how agents query memory: score decay, query rewriting, and inject cap. All changes are in the retrieval path — no storage schema changes needed.",
+  "repo": "~/Code/joelhooks/joelclaw",
+  "stories": [
+    {
+      "id": "score-decay",
+      "title": "Score Decay — time-weighted relevance for Typesense search",
+      "description": "After retrieving results from Typesense, apply time-based decay: final_score = raw_score × exp(-0.01 × days_since_created). This means a 0.8-relevance fact from 3 days ago outranks a 0.8-relevance fact from 200 days ago. Modify the recall/search utility used by observe.ts and friction.ts. The Typesense search results include raw scores; apply decay in post-processing before returning results. The decay constant 0.01 should be a named constant, not magic number. Use the `created_at` field already stored in Typesense document metadata.",
+      "priority": 1,
+      "status": "done",
+      "acceptance": [
+        "A utility function `applyScoreDecay(results, decayConstant)` exists in packages/system-bus/src/memory/",
+        "The function applies exp(-decayConstant * daysSinceCreated) to each result's score",
+        "DECAY_CONSTANT = 0.01 is exported as a named constant",
+        "All Typesense search call sites in the codebase use the decay function before returning results",
+        "TypeScript compiles cleanly: bunx tsc --noEmit passes"
+      ]
+    },
+    {
+      "id": "inject-cap",
+      "title": "Inject Cap — hard limit of 10 memories per retrieval",
+      "description": "Add a hard cap of 10 results returned from any memory retrieval path. After score decay is applied and results are sorted, take only the top 10. This should be a named constant MAX_INJECT = 10 in the same memory utility module. Apply it at the final return point of retrieval, after decay sorting.",
+      "priority": 2,
+      "status": "done",
+      "acceptance": [
+        "MAX_INJECT = 10 is exported as a named constant from packages/system-bus/src/memory/",
+        "All retrieval paths slice results to MAX_INJECT after decay + sort",
+        "TypeScript compiles cleanly: bunx tsc --noEmit passes"
+      ]
+    },
+    {
+      "id": "dedup-observations",
+      "title": "Dedup at observation time — cosine similarity check before Typesense upsert",
+      "description": "In observe.ts, before upserting a new observation to Typesense, search for existing points with cosine similarity > 0.85. If a near-duplicate exists: keep the fresher wording (the new observation's text), preserve the older point's ID, and add a `merged_count` metadata field (increment by 1). This prevents the same insight from appearing 5+ times across sessions. Use the same embedding that was just generated for the new observation to search. The similarity threshold 0.85 should be a named constant DEDUP_THRESHOLD.",
+      "priority": 3,
+      "status": "done",
+      "acceptance": [
+        "DEDUP_THRESHOLD = 0.85 is exported as a named constant",
+        "Before Typesense upsert in observe.ts, a similarity search is performed",
+        "If similarity > DEDUP_THRESHOLD, the existing point is updated (not a new point created)",
+        "merged_count metadata field is incremented on merge",
+        "New observation text replaces old text (fresher wording wins)",
+        "TypeScript compiles cleanly: bunx tsc --noEmit passes"
+      ]
+    },
+    {
+      "id": "nightly-maintenance",
+      "title": "Nightly maintenance cron — merge duplicates and log stats",
+      "description": "Create a new Inngest cron function at packages/system-bus/src/inngest/functions/memory/nightly-maintenance.ts. Runs at 2 AM Pacific daily. Steps: (1) Scroll all observations created today from Typesense, (2) For each pair, check cosine similarity > 0.85 and merge duplicates (same logic as dedup story), (3) Count total observations, merged count, and orphaned resources, (4) Log stats via console.log with structured JSON. Register the function in the Inngest function index. Model this after friction.ts which already does Typesense queries on a cron schedule.",
+      "priority": 4,
+      "status": "done",
+      "acceptance": [
+        "New file: packages/system-bus/src/inngest/functions/memory/nightly-maintenance.ts",
+        "Inngest cron trigger: '0 2 * * *' (2 AM daily)",
+        "Function is registered in the Inngest function index (packages/system-bus/src/inngest/index.ts or equivalent)",
+        "Scrolls today's observations from Typesense",
+        "Merges duplicates with cosine sim > 0.85 (reuses DEDUP_THRESHOLD constant)",
+        "Logs structured stats JSON: { total, merged, date }",
+        "TypeScript compiles cleanly: bunx tsc --noEmit passes"
+      ]
+    },
+    {
+      "id": "staleness-tagging",
+      "title": "Staleness tagging — mark old unreferenced observations",
+      "description": "Extend the nightly maintenance function to also tag observations older than 90 days that have zero recall hits as `stale: true` in Typesense metadata. Add a `recall_count` field to observation metadata (default 0) — this will be incremented by the echo/fizzle feature later. For now, just check if recall_count is 0 or missing AND created_at is > 90 days ago. The recall/search utility should deprioritize (but not exclude) stale results by applying an additional 0.5 multiplier to their decayed score. STALENESS_DAYS = 90 as a named constant.",
+      "priority": 5,
+      "status": "done",
+      "acceptance": [
+        "STALENESS_DAYS = 90 is exported as a named constant",
+        "Nightly maintenance tags observations where created_at > 90 days ago AND recall_count is 0 or missing",
+        "Stale observations get stale: true in Typesense metadata via document update",
+        "The score decay utility applies a 0.5 multiplier to stale results",
+        "recall_count field is documented in metadata schema",
+        "TypeScript compiles cleanly: bunx tsc --noEmit passes"
+      ]
+    }
+  ]
+}

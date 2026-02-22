@@ -1,0 +1,89 @@
+{
+  "title": "Harden Agent Loop Infrastructure: complete.ts fixes + onFailure handlers",
+  "description": "[historical] Legacy hardening PRD from pre-ADR-0089 loop era. Keep for audit context only; single-source worker deployment supersedes clone-sync assumptions.",
+  "context": {
+    "repo": "~/Code/joelhooks/joelclaw/packages/system-bus",
+    "known_bugs": [
+      "complete.ts merge fails when untracked files exist (prd.json, .out files) — need git clean or .gitignore before merge",
+      "[historical] complete.ts legacy worker-sync step hardcoded system-bus path — superseded by ADR-0089 single-source model",
+      "Loop artifacts (.out files, prd.json, progress.txt) get committed to repos — should be cleaned before merge"
+    ],
+    "onFailure_rationale": "Currently all Inngest functions fail silently. ADR-0028 added NonRetriableError for validation but no onFailure handlers. When a function exhausts retries, nothing is logged — you only find out by checking the dashboard or Docker logs.",
+    "inngest_event_key": "37aa349b89692d657d276a40e0e47a15",
+    "test_command": "bun test",
+    "typecheck_command": "bunx tsc --noEmit"
+  },
+  "stories": [
+    {
+      "id": "CLEAN-1",
+      "title": "Clean loop artifacts before merge in complete.ts",
+      "description": "In complete.ts merge-back step, before running git merge, remove common loop artifacts from the worktree branch: *.out files, prd.json, progress.txt, __tests__/ directory, *.acceptance.test.ts files. Use git rm or delete + git add. This prevents untracked files from blocking the merge and stops test pollution from landing on main.",
+      "acceptance_criteria": [
+        "complete.ts removes *.out files from worktree before merge",
+        "complete.ts removes prd.json and progress.txt from worktree before merge",
+        "complete.ts removes __tests__/ directory if it exists",
+        "complete.ts removes *.acceptance.test.ts files",
+        "git stash --include-untracked before merge still works",
+        "TypeScript compiles cleanly",
+        "Existing tests pass"
+      ]
+    },
+    {
+      "id": "CLEAN-2",
+      "title": "[historical] Legacy worker-sync gating by project path",
+      "description": "[historical] Before ADR-0089, complete.ts had a legacy worker-sync step. This story documented project-path gating; now retained for audit only.",
+      "acceptance_criteria": [
+        "[historical] legacy worker-sync step was gated to system-bus/joelclaw projects",
+        "Other projects skip the sync step cleanly",
+        "Returns a clear message like { skipped: true, reason: 'not system-bus project' }",
+        "TypeScript compiles cleanly"
+      ]
+    },
+    {
+      "id": "FAIL-1",
+      "title": "Add onFailure handler to video-download and transcript-process",
+      "description": "Add onFailure handlers to video-download.ts and transcript-process.ts that log the failure to the system log via slog and emit a system/log.written event. The handler should capture the function name, error message, event data summary, and attempt count.",
+      "acceptance_criteria": [
+        "video-download has onFailure that logs to slog",
+        "transcript-process has onFailure that logs to slog",
+        "onFailure emits system/log.written event with action='error'",
+        "Error message and function ID included in the log",
+        "TypeScript compiles cleanly"
+      ]
+    },
+    {
+      "id": "FAIL-2",
+      "title": "Add onFailure handler to observe, reflect, and promote",
+      "description": "Add onFailure handlers to observe.ts, reflect.ts, and promote.ts (memory pipeline functions). Same pattern as FAIL-1: log via slog, emit system/log.written event.",
+      "acceptance_criteria": [
+        "observe.ts has onFailure handler",
+        "reflect.ts has onFailure handler",
+        "promote.ts has onFailure handler",
+        "Each logs function name + error + event data summary",
+        "TypeScript compiles cleanly"
+      ]
+    },
+    {
+      "id": "FAIL-3",
+      "title": "Add onFailure handler to all agent-loop functions",
+      "description": "Add onFailure handlers to all 7 agent-loop functions (plan, test-writer, implement, review, judge, complete, retro). The handler should log the failure AND update the loop progress in Redis to mark the story as failed so loop status shows the failure.",
+      "acceptance_criteria": [
+        "All 7 agent-loop functions have onFailure handlers",
+        "Each logs to slog with function name + loopId + storyId + error",
+        "Loop progress in Redis is updated to reflect the failure",
+        "TypeScript compiles cleanly",
+        "Existing tests pass"
+      ]
+    },
+    {
+      "id": "VERIFY-1",
+      "title": "Verify all changes compile and tests pass",
+      "description": "Run bunx tsc --noEmit and bun test to verify everything compiles and all tests pass after all changes.",
+      "acceptance_criteria": [
+        "bunx tsc --noEmit exits 0",
+        "bun test shows 0 failures",
+        "No regressions in existing functionality"
+      ]
+    }
+  ]
+}

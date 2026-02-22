@@ -1,0 +1,21 @@
+{
+  "name": "@joelclaw/things-cloud",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Things Cloud HTTP client — TypeScript port of the reverse-engineered sync protocol. Credit: https://github.com/arthursoares/things-cloud-sdk",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "effect": "^3.0.0"
+  },
+  "devDependencies": {
+    "@repo/typescript-config": "workspace:*",
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  }
+}

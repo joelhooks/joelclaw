@@ -1,0 +1,117 @@
+---
+title: "Voice Agent: A Rough Edge Experiment"
+date: "2026-02-20T14:00:00"
+description: "Building a janky voice interface for my AI assistant. It's not natural, the lag is real, and it needs tons of work — but it beats typing while walking."
+type: "essay"
+tags: ["voice", "livekit", "experiments"]
+---
+
+I've wanted voice dictation for years — ramble into the aether and have coherent notes come out. Tools like [SuperWhisper](https://superwhisper.com) and [Wispr Flow](https://wisprflow.ai) do amazing local transcription but they're stuck on your device. No CarPlay means they can't help when I need hands-free.
+
+So I built my own. It's rough, but it works.
+
+## Why Voice At All
+
+Voice is a UI for getting shit done when typing is impractical. Walking the dog. Making dinner. Driving. The dream is CarPlay integration — "Hey, implement that feature from yesterday's PRD." The agent asks clarifying questions during the commute, and there's a PR waiting when I get home.
+
+That's the vision. The reality is way jankier.
+
+## What I Built
+
+[ADR-0043](/adrs/0043-agent-voice-conversations) laid out the plan. Self-hosted LiveKit for the media server, but I'm not kidding myself — this thing depends on cloud services for everything that matters. Deepgram for speech-to-text. Claude for the actual thinking. ElevenLabs for voice. Telnyx for phone connectivity.
+
+The architecture splits across two machines because Tailscale Funnel doesn't do UDP:
+
+- **Mac Mini**: Runs LiveKit, the voice agent, all the core stuff
+- **DigitalOcean droplet**: Public IP for SIP, routes calls back through Tailscale
+
+When you call, it goes: Phone → Telnyx → SIP gateway → LiveKit room → Voice agent wakes up. The agent has all my tools — calendar, tasks, email, vault search. Same capabilities as text, just through voice.
+
+## The Honest State of It
+
+I've barely used it. Talking to an AI isn't natural for me and probably won't be without a lot of practice and tuning.
+
+What's annoying:
+- **The lag**: 1-2 seconds feels like forever in conversation
+- **Response sensitivity**: Doesn't feel natural, timing is off
+- **Personality**: Panda's Australian accent and swearing is fun in theory but still feels forced
+- **The whole vibe**: It's just awkward talking to nobody
+
+It beats the shit out of Siri (admittedly a low bar 💀) but this is rough edge baby voice integration. Lots of very smart people at big companies are working on making voice feel natural.
+
+## What Actually Works
+
+A few things are useful already:
+
+**Q&A for writing**: Voice conversations avoid AI writing slop. When I talk through ideas, the agent asks questions, I give real answers in my actual voice. No "In today's rapidly evolving technological landscape" bullshit. This article came from exactly that process.
+
+**Quick tasks while moving**: "Add a task to call the dentist tomorrow" while making coffee. "What's on my calendar today?" while getting dressed. Basic, but it works.
+
+**Emails and messages**: Voice-to-text for mundane communication. Not revolutionary but saves the context switch.
+
+## Iterating to Actually Good™
+
+Key improvements needed:
+
+1. **Native app + CarPlay**: This is everything. Voice without CarPlay is pointless.
+2. **Way lower latency**: Sub-second or it's unusable for real conversation
+3. **Better interruption handling**: Let me cut the agent off naturally
+4. **Personality that doesn't annoy me**: Still searching for the right voice/vibe
+
+I'm also building a public mode — anyone can call and ask about JoelClaw, browse ADRs, understand the architecture. Different context, restricted tools. Like office hours but 24/7 and automated.
+
+<AgentOnly>
+## Agent Implementation Appendix
+
+### Runtime Topology
+
+- **LiveKit** runs in the Talos k8s cluster.
+- **SIP gateway** runs on a public droplet and bridges calls back over Tailscale.
+- **Voice agent** runs from `~/Projects/joelclaw-voice-agent/`.
+
+### Verify the path end-to-end
+
+```bash
+# LiveKit health
+curl http://100.93.201.72:7880/health
+
+# Voice worker process
+ps aux | grep "python main.py start"
+
+# Active rooms
+lk room list
+```
+
+### Common failure modes
+
+1. **No audio / worker unreachable**: agent defaulted to localhost instead of Tailscale LiveKit URL.
+2. **Dev mode loop crashes**: `python main.py dev` file watcher restarts repeatedly from log writes.
+3. **SIP trunk conflicts**: duplicate Telnyx number mapping causes trunk match errors.
+
+### Required secrets
+
+- `livekit_api_key` / `livekit_api_secret`
+- `openrouter_api_key`
+- `elevenlabs_api_key`
+- `deepgram_api_key`
+- `gog_keyring_password`
+- `todoist_cli_token`
+</AgentOnly>
+
+## Reality Check
+
+My kids weren't impressed. They're the ultimate bullshit detectors — they just didn't give a fuck or see it as novel. 
+
+But that's fine. I'll use this janky version to work towards making it Actually Good™ over time. Every awkward conversation teaches me what needs fixing. And if I can make it good enough, other JoelClaw users get a voice interface without suffering through the rough prototype phase. They get the polished version while I talk to laggy Australian Panda today.
+
+## The Real Point
+
+It's about learning what matters for voice interactions with my own tools. Every jank conversation teaches me something about what needs to be better. Building it myself means I can iterate on exactly what bugs me.
+
+Maybe in six months this evolves into something actually good. Maybe voice stays a party trick. But I had to try building it to find out.
+
+The code works. The experience needs everything.
+
+---
+
+_Part of the JoelClaw deployment series. Working code at [github.com/joelhooks/joelclaw](https://github.com/joelhooks/joelclaw)_

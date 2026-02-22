@@ -1,0 +1,365 @@
+/**
+ * Model fallback controller (ADR-0091).
+ *
+ * Monitors prompt latency and failures. When the primary model is
+ * unresponsive (timeout) or broken (consecutive errors), hot-swaps
+ * to a fallback model via session.setModel(). Periodically probes
+ * the primary model to recover automatically.
+ */
+import { getModel } from "@mariozechner/pi-ai";
+import type { FallbackConfig } from "./commands/config";
+import { providerForModel } from "./commands/config";
+import { emitGatewayOtel } from "./observability";
+
+type ModelRef = { provider: string; id: string };
+
+type FallbackSession = {
+  setModel: (model: unknown) => Promise<void>;
+  readonly model: { provider: string; id: string } | undefined;
+};
+
+type FallbackNotifier = (text: string) => void;
+
+export type FallbackState = {
+  /** Are we currently on the fallback model? */
+  active: boolean;
+  /** When we switched to fallback (0 if not active) */
+  activeSince: number;
+  /** Number of times fallback has activated this session */
+  activationCount: number;
+  /** Primary model ID */
+  primaryModel: string;
+  /** Primary provider */
+  primaryProvider: string;
+  /** Fallback model ID */
+  fallbackModel: string;
+  /** Fallback provider */
+  fallbackProvider: string;
+  /** Last recovery probe timestamp */
+  lastRecoveryProbe: number;
+};
+
+export class ModelFallbackController {
+  private session: FallbackSession | undefined;
+  private notify: FallbackNotifier = () => {};
+  private config: FallbackConfig;
+  private primaryModel: ModelRef;
+
+  private _active = false;
+  private _activeSince = 0;
+  private _activationCount = 0;
+  private _lastRecoveryProbe = 0;
+  private _probesSinceFallback = 0;
+
+  // Streaming timeout tracking
+  private _promptDispatchedAt = 0;
+  private _firstTokenAt = 0;
+  private _timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // Recovery probe timer
+  private _recoveryTimer: ReturnType<typeof setInterval> | undefined;
+
+  constructor(
+    config: FallbackConfig,
+    primaryProvider: string,
+    primaryModelId: string,
+  ) {
+    this.config = config;
+    this.primaryModel = { provider: primaryProvider, id: primaryModelId };
+  }
+
+  /** Wire up the pi session and notification callback. Call after session creation. */
+  init(session: FallbackSession, notify: FallbackNotifier): void {
+    this.session = session;
+    this.notify = notify;
+
+    // Start recovery probe timer
+    this._recoveryTimer = setInterval(() => {
+      void this._maybeRecoverPrimary();
+    }, this.config.recoveryProbeIntervalMs);
+    if (this._recoveryTimer && typeof this._recoveryTimer === "object" && "unref" in this._recoveryTimer) {
+      (this._recoveryTimer as NodeJS.Timeout).unref();
+    }
+  }
+
+  /** Current fallback state for status endpoints. */
+  get state(): FallbackState {
+    return {
+      active: this._active,
+      activeSince: this._activeSince,
+      activationCount: this._activationCount,
+      primaryModel: this.primaryModel.id,
+      primaryProvider: this.primaryModel.provider,
+      fallbackModel: this.config.fallbackModel,
+      fallbackProvider: this.config.fallbackProvider,
+      lastRecoveryProbe: this._lastRecoveryProbe,
+    };
+  }
+
+  get isActive(): boolean {
+    return this._active;
+  }
+
+  // ── Event hooks (called by daemon) ──────────────────────
+
+  /** Called when a prompt is dispatched to the session. */
+  onPromptDispatched(): void {
+    this._promptDispatchedAt = Date.now();
+    this._firstTokenAt = 0;
+    console.log("[gateway:fallback] prompt dispatched, starting timeout watch", {
+      timeoutMs: this.config.fallbackTimeoutMs,
+      fallback: `${this.config.fallbackProvider}/${this.config.fallbackModel}`,
+    });
+    this._startTimeoutWatch();
+  }
+
+  /** Called when the first streaming token arrives. */
+  onFirstToken(): void {
+    if (this._firstTokenAt === 0) {
+      this._firstTokenAt = Date.now();
+      this._clearTimeoutWatch();
+    }
+  }
+
+  /** Called on turn_end — prompt completed successfully. */
+  onTurnEnd(): void {
+    this._clearTimeoutWatch();
+
+    const endedAt = Date.now();
+    if (this._promptDispatchedAt > 0) {
+      const totalDuration = endedAt - this._promptDispatchedAt;
+      const ttftMs =
+        this._firstTokenAt > this._promptDispatchedAt
+          ? this._firstTokenAt - this._promptDispatchedAt
+          : undefined;
+      const nearMissThreshold = this.config.fallbackTimeoutMs * 0.75;
+      const nearMiss = totalDuration > nearMissThreshold;
+      const currentModel = this.session?.model;
+      const model = currentModel
+        ? `${currentModel.provider}/${currentModel.id}`
+        : `${this.primaryModel.provider}/${this.primaryModel.id}`;
+
+      void emitGatewayOtel({
+        level: totalDuration > 60_000 ? "info" : "debug",
+        component: "daemon.fallback",
+        action: "prompt.latency",
+        success: true,
+        duration_ms: totalDuration,
+        metadata: {
+          total_ms: totalDuration,
+          model,
+          on_fallback: this._active,
+          near_miss: nearMiss,
+          ...(ttftMs !== undefined ? { ttft_ms: ttftMs } : {}),
+        },
+      });
+
+      if (nearMiss) {
+        void emitGatewayOtel({
+          level: "warn",
+          component: "daemon.fallback",
+          action: "prompt.near_miss",
+          success: true,
+          metadata: {
+            total_ms: totalDuration,
+            threshold_ms: this.config.fallbackTimeoutMs,
+            pct_of_timeout: Number(((totalDuration / this.config.fallbackTimeoutMs) * 100).toFixed(1)),
+            ...(ttftMs !== undefined ? { ttft_ms: ttftMs } : {}),
+          },
+        });
+      }
+    }
+
+    this._promptDispatchedAt = 0;
+    this._firstTokenAt = 0;
+  }
+
+  /** Called when prompt() throws. Returns true if fallback was activated. */
+  async onPromptError(consecutiveFailures: number): Promise<boolean> {
+    this._clearTimeoutWatch();
+
+    if (this._active) return false; // already on fallback
+    if (consecutiveFailures < this.config.fallbackAfterFailures) return false;
+
+    return this._activateFallback(`${consecutiveFailures} consecutive prompt failures`, consecutiveFailures);
+  }
+
+  // ── Internals ───────────────────────────────────────────
+
+  private _startTimeoutWatch(): void {
+    this._clearTimeoutWatch();
+
+    this._timeoutTimer = setTimeout(() => {
+      console.log("[gateway:fallback] timeout timer fired", {
+        firstTokenAt: this._firstTokenAt,
+        active: this._active,
+        elapsed: Date.now() - this._promptDispatchedAt,
+      });
+      if (this._firstTokenAt > 0) return; // tokens arrived, we're fine
+      if (this._active) return; // already on fallback
+
+      console.warn("[gateway:fallback] timeout — no tokens received", {
+        timeoutMs: this.config.fallbackTimeoutMs,
+        promptDispatchedAt: new Date(this._promptDispatchedAt).toISOString(),
+      });
+      void this._activateFallback(`no streaming tokens after ${Math.round(this.config.fallbackTimeoutMs / 1000)}s`);
+    }, this.config.fallbackTimeoutMs);
+    // NOTE: Do NOT unref() — this timer is critical for fallback detection.
+    // unref() in Bun may suppress the callback entirely.
+  }
+
+  private _clearTimeoutWatch(): void {
+    if (this._timeoutTimer) {
+      clearTimeout(this._timeoutTimer);
+      this._timeoutTimer = undefined;
+    }
+  }
+
+  private async _activateFallback(reason: string, consecutiveFailures?: number): Promise<boolean> {
+    if (!this.session) return false;
+
+    const currentModel = this.session.model;
+    const fromModel = currentModel
+      ? `${currentModel.provider}/${currentModel.id}`
+      : `${this.primaryModel.provider}/${this.primaryModel.id}`;
+    const toModel = `${this.config.fallbackProvider}/${this.config.fallbackModel}`;
+
+    const fallbackModelObj = getModel(
+      this.config.fallbackProvider as any,
+      this.config.fallbackModel as any,
+    );
+    if (!fallbackModelObj) {
+      console.error("[gateway:fallback] fallback model not found", {
+        provider: this.config.fallbackProvider,
+        model: this.config.fallbackModel,
+      });
+      void emitGatewayOtel({
+        level: "error",
+        component: "daemon.fallback",
+        action: "fallback.model_not_found",
+        success: false,
+        error: `${this.config.fallbackProvider}/${this.config.fallbackModel} not found`,
+      });
+      return false;
+    }
+
+    const now = Date.now();
+    const promptElapsedMs = this._promptDispatchedAt > 0 ? now - this._promptDispatchedAt : 0;
+    const ttftMs =
+      this._firstTokenAt > this._promptDispatchedAt && this._promptDispatchedAt > 0
+        ? this._firstTokenAt - this._promptDispatchedAt
+        : undefined;
+
+    try {
+      await this.session.setModel(fallbackModelObj);
+      this._active = true;
+      this._activeSince = Date.now();
+      this._activationCount += 1;
+      this._probesSinceFallback = 0;
+
+      const msg = `⚠️ Gateway falling back to ${this.config.fallbackProvider}/${this.config.fallbackModel}\nReason: ${reason}\nWill probe primary every ${Math.round(this.config.recoveryProbeIntervalMs / 60_000)}min`;
+      console.warn("[gateway:fallback] activated", {
+        reason,
+        fallback: `${this.config.fallbackProvider}/${this.config.fallbackModel}`,
+        activationCount: this._activationCount,
+      });
+      this.notify(msg);
+
+      void emitGatewayOtel({
+        level: "warn",
+        component: "daemon.fallback",
+        action: "model_fallback.swapped",
+        success: true,
+        metadata: {
+          from: fromModel,
+          to: toModel,
+          reason,
+          consecutiveFailures: consecutiveFailures ?? 0,
+          prompt_elapsed_ms: promptElapsedMs,
+          threshold_timeout_ms: this.config.fallbackTimeoutMs,
+          threshold_failures: this.config.fallbackAfterFailures,
+          ...(ttftMs !== undefined ? { ttft_ms: ttftMs } : {}),
+        },
+      });
+
+      return true;
+    } catch (error) {
+      console.error("[gateway:fallback] setModel failed", { error: String(error) });
+      void emitGatewayOtel({
+        level: "error",
+        component: "daemon.fallback",
+        action: "fallback.setModel.failed",
+        success: false,
+        error: String(error),
+      });
+      return false;
+    }
+  }
+
+  private async _maybeRecoverPrimary(): Promise<void> {
+    if (!this._active || !this.session) return;
+
+    this._lastRecoveryProbe = Date.now();
+    this._probesSinceFallback += 1;
+    const probeCount = this._probesSinceFallback;
+    const primary = `${this.primaryModel.provider}/${this.primaryModel.id}`;
+    const downtimeMs = this._activeSince > 0 ? Date.now() - this._activeSince : 0;
+
+    const primaryModelObj = getModel(
+      this.primaryModel.provider as any,
+      this.primaryModel.id as any,
+    );
+    if (!primaryModelObj) return;
+
+    try {
+      await this.session.setModel(primaryModelObj);
+      this._active = false;
+      this._activeSince = 0;
+      this._probesSinceFallback = 0;
+
+      const msg = `✅ Gateway recovered to primary model: ${this.primaryModel.provider}/${this.primaryModel.id}`;
+      console.log("[gateway:fallback] recovered to primary", {
+        primary,
+      });
+      this.notify(msg);
+
+      void emitGatewayOtel({
+        level: "info",
+        component: "daemon.fallback",
+        action: "model_fallback.primary_restored",
+        success: true,
+        metadata: {
+          primary,
+          downtime_ms: downtimeMs,
+          activationCount: this._activationCount,
+        },
+      });
+    } catch (error) {
+      // Primary still broken — stay on fallback
+      console.warn("[gateway:fallback] recovery probe failed — staying on fallback", {
+        error: String(error),
+      });
+      void emitGatewayOtel({
+        level: "info",
+        component: "daemon.fallback",
+        action: "model_fallback.probe_failed",
+        success: false,
+        error: String(error),
+        metadata: {
+          primary,
+          downtime_ms: downtimeMs,
+          probeCount,
+          error: String(error),
+        },
+      });
+    }
+  }
+
+  dispose(): void {
+    this._clearTimeoutWatch();
+    if (this._recoveryTimer) {
+      clearInterval(this._recoveryTimer);
+      this._recoveryTimer = undefined;
+    }
+  }
+}

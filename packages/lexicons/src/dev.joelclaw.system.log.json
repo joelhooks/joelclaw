@@ -1,0 +1,21 @@
+{
+  "lexicon": 1,
+  "id": "dev.joelclaw.system.log",
+  "defs": {
+    "main": {
+      "type": "record",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["timestamp", "action", "tool", "detail"],
+        "properties": {
+          "timestamp": {"type": "string", "format": "datetime"},
+          "action": {"type": "string"},
+          "tool": {"type": "string"},
+          "detail": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    }
+  }
+}
