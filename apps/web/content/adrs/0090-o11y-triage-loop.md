@@ -11,6 +11,8 @@ deciders: joel
 - `content_sync.completed` now reports `success: true` when sync work completes but commit/push is intentionally skipped by the safety gate.
 - `content_sync.completed + changes_not_committed` is no longer treated as a tier-1 auto-fix path; it is now tier-2 signal only (no auto-commit mutation from triage).
 - `restartWorker` auto-fix gained a cooldown guard to prevent repeated `launchctl kickstart` loops from cascading into SDK callback instability.
+- `restartWorker` now checks recent Inngest runs before kickstart and skips restart when RUNNING/QUEUED work is active, reducing restart-induced finalization drops.
+- `restartWorker` now stamps cooldown immediately after successful `kickstart`, even if post-restart health probing fails, to stop rapid retry thrash.
 
 ## Context
 
