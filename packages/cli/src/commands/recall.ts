@@ -14,11 +14,11 @@ const MAX_INJECT = 10
 const DECAY_CONSTANT = 0.01
 const STALENESS_DAYS = 90
 const MIN_OBSERVATION_CHARS = 12
-const REWRITE_TIMEOUT_MS = 3000
+const REWRITE_TIMEOUT_MS = 10_000
 const RECALL_OTEL_ENABLED = (process.env.JOELCLAW_RECALL_OTEL ?? "1") !== "0"
 const RECALL_REWRITE_ENABLED = (process.env.JOELCLAW_RECALL_REWRITE ?? "1") !== "0"
 
-type RewriteStrategy = "haiku" | "openai" | "fallback" | "disabled"
+type RewriteStrategy = "haiku" | "fallback" | "disabled"
 
 interface TypesenseHit {
   document: {
@@ -71,11 +71,7 @@ type RewriteRunnerOptions = {
     exitCode: number | null
     stdout: unknown
     stderr: unknown
-  } | Promise<{
-    exitCode: number | null
-    stdout: unknown
-    stderr: unknown
-  }>
+  }
 }
 
 function asFiniteNumber(value: unknown, fallback = 0): number {
@@ -116,99 +112,11 @@ function toAgeDays(timestampSeconds: number | undefined): number {
   return Math.max(0, (Date.now() - createdAt) / (1000 * 60 * 60 * 24))
 }
 
-function coerceText(value: unknown): string {
+function readShellText(value: unknown): string {
   if (typeof value === "string") return value
-  if (Array.isArray(value)) return value.map(coerceText).join(" ").trim()
   if (value instanceof Uint8Array) return new TextDecoder().decode(value)
-  if (value && typeof value === "object") {
-    const candidate = (value as { text?: unknown }).text
-    if (typeof candidate === "string") return candidate
-  }
   if (value == null) return ""
   return String(value)
-}
-
-async function parseJsonResponse<T>(response: Response): Promise<T> {
-  const text = await response.text()
-  if (!text) return {} as T
-  try {
-    return JSON.parse(text) as T
-  } catch {
-    throw new Error(`invalid_json_response_${response.status}`)
-  }
-}
-
-async function fetchWithTimeout(
-  url: string,
-  init: RequestInit,
-  timeoutMs: number
-): Promise<Response> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    return await fetch(url, { ...init, signal: controller.signal })
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
-async function rewriteWithAnthropic(rewritePrompt: string, apiKey: string, timeoutMs: number): Promise<string> {
-  const model = "claude-haiku-4-20250414"
-  const response = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 150,
-      messages: [{ role: "user", content: rewritePrompt }],
-    }),
-  }, timeoutMs)
-
-  const payload = await parseJsonResponse<{
-    content?: Array<{ text?: string }>
-    error?: { message?: string }
-  }>(response)
-
-  if (!response.ok) {
-    throw new Error((payload.error?.message || `anthropic_http_${response.status}`).slice(0, 220))
-  }
-
-  const rewritten = sanitizeRewriteResult(payload.content?.[0]?.text ?? "")
-  if (!rewritten) throw new Error("anthropic_empty_response")
-  return rewritten
-}
-
-async function rewriteWithOpenAi(rewritePrompt: string, apiKey: string, timeoutMs: number): Promise<string> {
-  const model = "gpt-5.3-codex-spark"
-  const response = await fetchWithTimeout("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 150,
-      messages: [{ role: "user", content: rewritePrompt }],
-    }),
-  }, timeoutMs)
-
-  const payload = await parseJsonResponse<{
-    choices?: Array<{ message?: { content?: unknown } }>
-    error?: { message?: string }
-  }>(response)
-
-  if (!response.ok) {
-    throw new Error((payload.error?.message || `openai_http_${response.status}`).slice(0, 220))
-  }
-
-  const rewritten = sanitizeRewriteResult(coerceText(payload.choices?.[0]?.message?.content))
-  if (!rewritten) throw new Error("openai_empty_response")
-  return rewritten
 }
 
 function usageBoostFromDoc(doc: TypesenseHit["document"]): number {
@@ -219,13 +127,22 @@ function usageBoostFromDoc(doc: TypesenseHit["document"]): number {
   return Math.max(0.35, priorityFactor * recallFactor)
 }
 
+// Typesense text_match_info.score is on a ~1e18 scale; rank_fusion_score is 0–1.
+// When only text_match is available, normalize to 0–1 so scores are comparable.
+const TEXT_MATCH_MAX = 1.7e18
+
+function normalizeRawScore(hit: TypesenseHit): number {
+  const fusionScore = asFiniteNumber(hit.hybrid_search_info?.rank_fusion_score, -1)
+  if (fusionScore >= 0) return fusionScore
+  const textScore = asFiniteNumber(hit.text_match_info?.score, 0)
+  if (textScore > 1) return Math.min(textScore / TEXT_MATCH_MAX, 1)
+  return textScore
+}
+
 function applyScoreDecay(hits: TypesenseHit[]): RankedRecallHit[] {
   const now = Date.now()
   return hits.map((hit) => {
-    const rawScore = asFiniteNumber(
-      hit.hybrid_search_info?.rank_fusion_score ?? hit.text_match_info?.score ?? 0,
-      0
-    )
+    const rawScore = normalizeRawScore(hit)
     const createdAt = typeof hit.document.timestamp === "number"
       ? hit.document.timestamp * 1000
       : now
@@ -326,7 +243,7 @@ async function emitRecallOtel(input: {
   }
 }
 
-async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions = {}): Promise<RewrittenQuery> {
+function runRewriteQueryWith(query: string, options: RewriteRunnerOptions = {}): RewrittenQuery {
   const normalized = normalizeQuery(query)
   const rewriteEnabled = options.rewriteEnabled ?? RECALL_REWRITE_ENABLED
   if (!rewriteEnabled || normalized.length < 4) {
@@ -346,102 +263,61 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
     context ? `Recent context: ${context}` : "",
   ].filter(Boolean).join("\n")
 
-  const timeoutMs = options.timeoutMs ?? REWRITE_TIMEOUT_MS
+  try {
+    const timeoutMs = options.timeoutMs ?? REWRITE_TIMEOUT_MS
+    const args = [
+      "pi",
+      "--no-tools",
+      "--no-session",
+      "--no-extensions",
+      "--print",
+      "--mode",
+      "text",
+      "--model",
+      "anthropic/claude-haiku",
+      rewritePrompt,
+    ]
+    const proc = options.spawn
+      ? options.spawn(args, rewritePrompt, timeoutMs)
+      : Bun.spawnSync(args, {
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+          timeout: timeoutMs,
+          env: { ...process.env, TERM: "dumb" },
+        })
 
-  if (options.spawn) {
-    try {
-      const proc = await options.spawn(
-        ["rewrite-hook", "anthropic:claude-haiku-4-20250414", "openai:gpt-5.3-codex-spark"],
-        rewritePrompt,
-        timeoutMs
-      )
-      const stdout = sanitizeRewriteResult(coerceText(proc.stdout))
-      const stderr = coerceText(proc.stderr).trim()
-      const exitCode = typeof proc.exitCode === "number" ? proc.exitCode : -1
-      if (exitCode === 0 && stdout.length > 0) {
-        return {
-          inputQuery: normalized,
-          rewrittenQuery: stdout,
-          rewritten: stdout.toLowerCase() !== normalized.toLowerCase(),
-          strategy: "haiku",
-        }
-      }
-
+    const stdout = sanitizeRewriteResult(readShellText(proc.stdout))
+    const stderr = readShellText(proc.stderr).trim()
+    const exitCode = typeof proc.exitCode === "number" ? proc.exitCode : -1
+    if (exitCode === 0 && stdout.length > 0) {
       return {
         inputQuery: normalized,
-        rewrittenQuery: normalized,
-        rewritten: false,
-        strategy: "fallback",
-        error: (stderr || `rewrite_exit_${exitCode}`).slice(0, 220),
-      }
-    } catch (error) {
-      return {
-        inputQuery: normalized,
-        rewrittenQuery: normalized,
-        rewritten: false,
-        strategy: "fallback",
-        error: (error instanceof Error ? error.message : String(error)).slice(0, 220),
+        rewrittenQuery: stdout,
+        rewritten: stdout.toLowerCase() !== normalized.toLowerCase(),
+        strategy: "haiku",
       }
     }
-  }
 
-  const anthropicApiKey = process.env.ANTHROPIC_API_KEY?.trim()
-  const openAiApiKey = process.env.OPENAI_API_KEY?.trim()
-  if (!anthropicApiKey && !openAiApiKey) {
     return {
       inputQuery: normalized,
       rewrittenQuery: normalized,
       rewritten: false,
-      strategy: "disabled",
+      strategy: "fallback",
+      error: (stderr || `rewrite_exit_${exitCode}`).slice(0, 220),
     }
-  }
-
-  let anthropicError: string | undefined
-  if (anthropicApiKey) {
-    try {
-      const rewrittenQuery = await rewriteWithAnthropic(rewritePrompt, anthropicApiKey, timeoutMs)
-      return {
-        inputQuery: normalized,
-        rewrittenQuery,
-        rewritten: rewrittenQuery.toLowerCase() !== normalized.toLowerCase(),
-        strategy: "haiku",
-      }
-    } catch (error) {
-      anthropicError = (error instanceof Error ? error.message : String(error)).slice(0, 220)
+  } catch (error) {
+    return {
+      inputQuery: normalized,
+      rewrittenQuery: normalized,
+      rewritten: false,
+      strategy: "fallback",
+      error: (error instanceof Error ? error.message : String(error)).slice(0, 220),
     }
-  }
-
-  if (openAiApiKey) {
-    try {
-      const rewrittenQuery = await rewriteWithOpenAi(rewritePrompt, openAiApiKey, timeoutMs)
-      return {
-        inputQuery: normalized,
-        rewrittenQuery,
-        rewritten: rewrittenQuery.toLowerCase() !== normalized.toLowerCase(),
-        strategy: "openai",
-      }
-    } catch (error) {
-      const openAiError = (error instanceof Error ? error.message : String(error)).slice(0, 220)
-      return {
-        inputQuery: normalized,
-        rewrittenQuery: normalized,
-        rewritten: false,
-        strategy: "fallback",
-        error: [anthropicError, openAiError].filter(Boolean).join(" | ").slice(0, 220),
-      }
-    }
-  }
-
-  return {
-    inputQuery: normalized,
-    rewrittenQuery: normalized,
-    rewritten: false,
-    strategy: "fallback",
-    error: anthropicError,
   }
 }
 
-async function runRewriteQuery(query: string): Promise<RewrittenQuery> {
+function runRewriteQuery(query: string): RewrittenQuery {
   return runRewriteQueryWith(query)
 }
 
@@ -486,7 +362,7 @@ export const recallCmd = Command.make(
   ({ query, limit, minScore, raw }) =>
     Effect.gen(function* () {
       const startedAt = Date.now()
-      const rewrite = yield* Effect.promise(() => runRewriteQuery(query))
+      const rewrite = runRewriteQuery(query)
 
       try {
         const apiKey = resolveTypesenseApiKey()
