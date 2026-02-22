@@ -29,7 +29,7 @@ const NOTIFY_CHANNEL = "joelclaw:notify:gateway";
 const LEGACY_NOTIFY_CHANNEL = "joelclaw:notify:main";
 const BATCH_LIST = "joelclaw:events:batch";
 const MODE_KEY = "joelclaw:mode";
-const HEARTBEAT_PATH = `${homedir()}/Vault/HEARTBEAT.md`;
+// HEARTBEAT_PATH removed — gateway no longer processes HEARTBEAT.md (ADR-0103)
 const DEDUP_MAX = 500;
 const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID
   ? parseInt(process.env.TELEGRAM_USER_ID, 10)
@@ -112,13 +112,7 @@ export async function wakeGateway(options?: { flushDigest?: boolean }): Promise<
   }
 }
 
-async function readHeartbeatChecklist(): Promise<string> {
-  try {
-    return await readFile(HEARTBEAT_PATH, "utf8");
-  } catch {
-    return "# Heartbeat\n\n_No HEARTBEAT.md found at ~/Vault/HEARTBEAT.md_";
-  }
-}
+// readHeartbeatChecklist removed — gateway no longer processes HEARTBEAT.md (ADR-0103)
 
 function formatEvents(events: SystemEvent[]): string {
   if (events.length === 0) return "_No pending events._";
@@ -226,22 +220,12 @@ function buildRecallSectionFromMessage(message: string): string {
 async function buildPrompt(events: SystemEvent[]): Promise<string> {
   const footer = "Take action on anything that needs it, otherwise acknowledge briefly.";
   const ts = new Date().toISOString();
-  const firstEvent = events[0];
-  const isHeartbeatOnly = events.length === 1 && firstEvent?.type === "cron.heartbeat";
 
-  if (isHeartbeatOnly) {
-    const eventBlock = formatEvents(events);
-    const heartbeat = await readHeartbeatChecklist();
-    return [
-      `## 🔔 Heartbeat — ${ts}`,
-      "",
-      eventBlock,
-      "",
-      heartbeat,
-      "",
-      footer,
-    ].join("\n");
-  }
+  // cron.heartbeat no longer triggers HEARTBEAT.md checklist in the gateway.
+  // Health checks run as Inngest check/* functions and push here only when actionable.
+  // Filter out stale cron.heartbeat events if they somehow arrive.
+  events = events.filter((event) => event.type !== "cron.heartbeat");
+  if (events.length === 0) return ""; // nothing actionable
 
   const promptEvents = events.filter(
     (event) => typeof event.payload?.prompt === "string" && event.payload.prompt
@@ -561,6 +545,10 @@ async function drainEvents(): Promise<void> {
     const source = originSession?.includes(":") ? originSession : SESSION_ID;
 
     const prompt = await buildPrompt(actionable);
+    if (!prompt) {
+      // All events filtered (e.g. stale cron.heartbeat) — nothing to enqueue
+      return;
+    }
     await enqueuePrompt(source, prompt, {
       eventCount: actionable.length,
       eventIds: actionable.map((event) => event.id),

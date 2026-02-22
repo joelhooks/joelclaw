@@ -11,7 +11,6 @@
  */
 
 import { inngest } from "../client";
-import { pushGatewayEvent } from "./agent-loop/utils";
 import Redis from "ioredis";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -165,14 +164,8 @@ export const heartbeatCron = inngest.createFunction(
       });
     });
 
-    // Push cron.heartbeat to gateway — triggers HEARTBEAT.md checklist
-    await step.run("push-gateway-heartbeat", async () => {
-      await pushGatewayEvent({
-        type: "cron.heartbeat",
-        source: "inngest",
-        payload: {},
-      });
-    });
+    // Check functions handle gateway notifications independently.
+    // No cron.heartbeat push — gateway pi session stays free for messages.
   }
 );
 
@@ -215,14 +208,6 @@ export const heartbeatWake = inngest.createFunction(
           fanoutCount: HEARTBEAT_EVENTS.length,
           digestRequested: shouldRequestDigest,
         },
-      });
-    });
-
-    await step.run("push-gateway-heartbeat", async () => {
-      await pushGatewayEvent({
-        type: "cron.heartbeat",
-        source: "inngest",
-        payload: {},
       });
     });
   }

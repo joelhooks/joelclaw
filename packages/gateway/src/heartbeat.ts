@@ -1,18 +1,30 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+/**
+ * Gateway heartbeat — tripwire, watchdog, and digest flush.
+ *
+ * NO LONGER injects HEARTBEAT.md prompts into the pi session.
+ * Health checks are handled by Inngest check/* functions (ADR-0062)
+ * which push to gateway only when actionable.
+ *
+ * This module only:
+ * 1. Writes a tripwire file so launchd can detect a dead gateway
+ * 2. Runs a watchdog alarm if tripwire goes stale
+ * 3. Flushes batched event digests hourly
+ */
+
+import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { enqueue, getConsecutiveFailures, getQueueDepth } from "./command-queue";
+import { getConsecutiveFailures, getQueueDepth } from "./command-queue";
 import { flushBatchDigest, getGatewayMode, isHealthy as isRedisHealthy } from "./channels/redis";
+import { emitGatewayOtel } from "./observability";
 
 const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const THIRTY_MINUTES_MS = 30 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
 
-const HEARTBEAT_SOURCE = "heartbeat";
 const HEARTBEAT_CHECKLIST_PATH = `${homedir()}/Vault/HEARTBEAT.md`;
 const TRIPWIRE_DIR = "/tmp/joelclaw";
 const TRIPWIRE_PATH = `${TRIPWIRE_DIR}/last-heartbeat.ts`;
-const HEARTBEAT_OK = "HEARTBEAT_OK";
 
 type TimerHandle = ReturnType<typeof setInterval>;
 
@@ -24,80 +36,35 @@ export type HeartbeatRunner = {
 let lastHeartbeatTs: number | undefined;
 let watchdogAlarmFired = false;
 
-function buildAgentHealthBlock(): string {
-  const failures = getConsecutiveFailures();
-  const queueDepth = getQueueDepth();
-  const redisOk = isRedisHealthy();
-  const sessionOk = failures < 3;
-  const allGreen = redisOk && sessionOk && queueDepth <= 2;
-
-  if (allGreen) {
-    return "## Agent Health: ✅ all green";
-  }
-
-  const lines = ["## Agent Health: ⚠️ NEEDS ATTENTION"];
-  if (!redisOk) lines.push("- ❌ Redis: DEGRADED — channels may be dropping events");
-  if (!sessionOk) lines.push(`- ❌ Session: DEAD — ${failures} consecutive prompt failures (auto-restart pending)`);
-  if (queueDepth > 2) lines.push(`- ⚠️ Queue depth: ${queueDepth} — messages backing up`);
-  return lines.join("\n");
-}
-
-function buildHeartbeatPrompt(checklistContent: string): string {
-  const timestamp = new Date().toISOString();
-  const agentHealth = buildAgentHealthBlock();
-
-  return [
-    "HEARTBEAT",
-    "",
-    `Timestamp: ${timestamp}`,
-    "",
-    agentHealth,
-    "",
-    "Run this checklist now. Keep the response short and operational.",
-    `If nothing needs attention, reply exactly: ${HEARTBEAT_OK}`,
-    "If anything needs attention, report issue + next action.",
-    "",
-    "HEARTBEAT.md",
-    "----",
-    checklistContent,
-    "----",
-  ].join("\n");
-}
-
 async function writeTripwire(ts: number): Promise<void> {
   await mkdir(TRIPWIRE_DIR, { recursive: true });
   await writeFile(TRIPWIRE_PATH, `export const lastHeartbeatTs = ${ts};\n`);
 }
 
-async function runHeartbeat(): Promise<void> {
+/**
+ * Lightweight local health snapshot — no tool calls, no API hits.
+ * Checks in-process state only. Used for OTEL and watchdog decisions.
+ */
+function getLocalHealth(): { healthy: boolean; redis: boolean; session: boolean; queueDepth: number } {
+  const failures = getConsecutiveFailures();
+  const queueDepth = getQueueDepth();
+  const redis = isRedisHealthy();
+  const session = failures < 3;
+  return { healthy: redis && session && queueDepth <= 2, redis, session, queueDepth };
+}
+
+async function tickHeartbeat(): Promise<void> {
   const mode = await getGatewayMode();
   if (mode === "sleep") {
-    console.log("[heartbeat] skipped heartbeat injection (sleep mode)");
+    console.log("[heartbeat] skipped tick (sleep mode)");
     return;
   }
 
-  let checklistContent = "";
-
-  try {
-    checklistContent = await readFile(HEARTBEAT_CHECKLIST_PATH, "utf8");
-  } catch (error) {
-    console.error("[heartbeat] failed to read checklist", {
-      path: HEARTBEAT_CHECKLIST_PATH,
-      error,
-    });
-  }
-
   const ts = Date.now();
-  const prompt = buildHeartbeatPrompt(checklistContent);
-
-  await enqueue(HEARTBEAT_SOURCE, prompt, {
-    checklistPath: HEARTBEAT_CHECKLIST_PATH,
-    ts,
-  });
-
   lastHeartbeatTs = ts;
   watchdogAlarmFired = false;
 
+  // Write tripwire for launchd watchdog
   try {
     await writeTripwire(ts);
   } catch (error) {
@@ -105,6 +72,24 @@ async function runHeartbeat(): Promise<void> {
       path: TRIPWIRE_PATH,
       error,
     });
+  }
+
+  // Emit local health snapshot (no tool calls)
+  const health = getLocalHealth();
+  void emitGatewayOtel({
+    level: health.healthy ? "debug" : "warn",
+    component: "heartbeat",
+    action: "heartbeat.tick",
+    success: health.healthy,
+    metadata: {
+      redis: health.redis ? "ok" : "degraded",
+      session: health.session ? "ok" : "degraded",
+      queueDepth: health.queueDepth,
+    },
+  });
+
+  if (!health.healthy) {
+    console.warn("[heartbeat] local health degraded", health);
   }
 }
 
@@ -124,35 +109,24 @@ function runWatchdog(): void {
   });
 }
 
+/**
+ * Filter heartbeat responses — kept for backward compatibility
+ * but will no longer fire since we don't inject heartbeat prompts.
+ */
 export function filterHeartbeatResponse(response: unknown, context?: { source?: unknown }): boolean {
   const source = typeof context?.source === "string" ? context.source : undefined;
-  if (source !== HEARTBEAT_SOURCE) return false;
+  if (source !== "heartbeat") return false;
 
   if (typeof response !== "string") return false;
-
   const trimmed = response.trim();
-  const heartBeatOkAtStart = trimmed.startsWith(HEARTBEAT_OK);
-  const heartBeatOkAtEnd = trimmed.endsWith(HEARTBEAT_OK);
-
-  let suppressed = trimmed === HEARTBEAT_OK;
-  if (!suppressed && (heartBeatOkAtStart || heartBeatOkAtEnd)) {
-    const withoutOk = trimmed.replace(HEARTBEAT_OK, "").trim();
-    suppressed = withoutOk.length <= 300;
-  }
-
-  if (suppressed) {
-    console.log("[heartbeat] received HEARTBEAT_OK; suppressing outbound response routing");
-  }
-
-  return suppressed;
+  return trimmed === "HEARTBEAT_OK" || (trimmed.includes("HEARTBEAT_OK") && trimmed.length < 300);
 }
 
 export function startHeartbeatRunner(): HeartbeatRunner {
   lastHeartbeatTs = Date.now();
   watchdogAlarmFired = false;
 
-  // Initialize tripwire timestamp immediately on startup so reboot/startup
-  // does not trigger false "heartbeat file missing" alerts before first tick.
+  // Initialize tripwire immediately on startup
   void writeTripwire(lastHeartbeatTs).catch((error) => {
     console.error("[heartbeat] failed to initialize tripwire", {
       path: TRIPWIRE_PATH,
@@ -160,18 +134,16 @@ export function startHeartbeatRunner(): HeartbeatRunner {
     });
   });
 
+  // Tripwire tick — lightweight, no pi session involvement
   const heartbeatTimer: TimerHandle = setInterval(async () => {
-    await runHeartbeat();
+    await tickHeartbeat();
   }, FIFTEEN_MINUTES_MS);
 
   const watchdogTimer: TimerHandle = setInterval(() => {
     runWatchdog();
   }, FIVE_MINUTES_MS);
 
-  // ── Hourly batch digest flush ─────────────────────────
-  // Flushes accumulated BATCHED-tier events as a single digest.
-  // Runs independently of heartbeat — digest only fires when
-  // there are events to report.
+  // Hourly batch digest flush
   const digestTimer: TimerHandle = setInterval(async () => {
     try {
       const mode = await getGatewayMode();
