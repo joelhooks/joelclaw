@@ -8,7 +8,7 @@ import { mdxComponents } from "@/lib/mdx";
 import { remarkPlugins, rehypePlugins } from "@/lib/mdx-plugins";
 import { remarkAdrLinks } from "@/lib/remark-adr-links";
 import { SITE_URL, SITE_NAME } from "@/lib/constants";
-import { formatDateStatic } from "@/lib/date";
+import { toDateString } from "@/lib/date";
 import { LazyReviewGate } from "@/components/review/lazy-review-gate";
 
 type Props = { params: Promise<{ slug: string }> };
@@ -77,7 +77,7 @@ export default async function AdrPage({ params }: Props) {
         <h1 className="text-3xl font-bold tracking-tight">{meta.title}</h1>
         {meta.date && (
           <time className="mt-2 block text-sm text-neutral-500">
-            {formatDateStatic(meta.date)}
+            {toDateString(meta.date)}
           </time>
         )}
         {meta.supersededBy && (
