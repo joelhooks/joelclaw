@@ -1,0 +1,14 @@
+name: nextjs-static-shells
+displayName: Next.js Static Shells
+description: >
+  Static-first Next.js 16 architecture patterns: cached shells with dynamic slots,
+  provider islands, 'use cache' boundaries, and link preloading strategy.
+version: 1.0.0
+author: Joel Hooks
+tags:
+  - nextjs
+  - architecture
+  - caching
+  - performance
+  - rsc
+  - static
