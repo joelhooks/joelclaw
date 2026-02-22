@@ -73,6 +73,34 @@ Phase kickoff was logged via slog:
 - `slog write --action "memory.phase.kickoff" --tool "codex" --detail "0077 next phase kickoff after green checks: memory-e2e, memory-weekly, memory-health" --reason "gate checks passed"`
 - `slog write --action "memory.phase.gate-added" --tool "joelclaw inngest" --detail "Added and validated memory-gate command (memory-e2e + memory-weekly + memory-health)" --reason "0077 next-phase kickoff automation"`
 
+## Update (2026-02-22)
+
+### Audit-to-actuals (ADR-0077)
+
+- Rollout status: **implemented**
+- P0 completed:
+  - `voice/call.completed` now flows into memory via `voice-call-completed`.
+  - `session/observation.noted` now flows into memory via `observe-session-noted`.
+  - Telegram memory button callbacks now support `memory:approve:{proposalId}` and `memory:reject:{proposalId}`.
+- P1 completed:
+  - Added shared memory prefetch helper `packages/system-bus/src/memory/context-prefetch.ts` and wired it into `check-email`, `meeting-analyze`, `summarize`, and `o11y-triage`.
+  - Fixed memory search field mismatch for `/api/typesense` memory route (`observation_type` + `source`).
+  - Added bounded gateway memory enrichment in `packages/gateway/src/channels/redis.ts` for human messages.
+  - Archived the full audit as `docs/notes/2026-02-22-memory-integration-audit.md`.
+  - Removed orphaned `packages/system-bus/src/memory/behavior-loop.ts`.
+- Remaining next steps:
+  - Validate scoring/tuning of retrieval results in real traffic.
+  - Confirm Telegram callback handling for approve/reject in production dashboards and error rates.
+  - Continue audit-based closure of any residual memory quality gaps.
+
+### Evidence and provenance
+
+- Commit: `559e018` (`feat(memory): implement full memory integration audit findings (ADR-0077)`).
+- Inngest deployment validation: `curl -X PUT http://127.0.0.1:3111/api/inngest` returned `{"message":"Successfully registered","modified":true}`.
+- Audit archival path: `/Users/joel/Vault/docs/notes/2026-02-22-memory-integration-audit.md`.
+- Operational log entry: `slog write --action deploy --tool memory ...` written at `2026-02-22T00:30:09.735Z`.
+- ADR status impact: no ADR status regressions detected; no existing ADR was superseded by this implementation.
+
 ## Next Phase Plan (2026-02-21 to 2026-03-07)
 
 ### Objective
