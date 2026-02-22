@@ -1,6 +1,6 @@
 ---
 type: adr
-status: proposed
+status: accepted
 date: 2026-02-22
 tags: [adr, observability, llm, langfuse, self-hosting]
 deciders: [joel]
@@ -96,13 +96,14 @@ Those stay in ADR-0087 OTEL/Typesense.
 
 ## Decision
 
-Adopt **self-hosted Langfuse as a separate LLM-only observability plane** with hard boundaries:
+Adopt **Langfuse as a separate LLM-only observability plane** with hard boundaries and phased deployment:
 
 1. **Langfuse is scoped to LLM usage only.**
 2. **ADR-0087 OTEL/Typesense remains canonical for system observability.**
 3. **No non-LLM spans/events are sent to Langfuse.**
-4. **Deployment must not contend with existing single-node control-plane capacity**; use dedicated infra (new node or external managed datastore topology).
-5. **All LLM instrumentation must fail-open** (Langfuse outages cannot block command/function execution).
+4. **Rollout is phased:** hosted Langfuse Cloud first (to start instrumentation now), then full self-host after hardware expansion.
+5. **Self-host phase must not contend with existing single-node control-plane capacity**; use dedicated infra (new node or external managed datastore topology).
+6. **All LLM instrumentation must fail-open** (Langfuse outages cannot block command/function execution).
 
 ## Boundary Contract
 
@@ -243,7 +244,8 @@ Migrate LLM subprocess callsites in:
 - 2026-02-21: Operator directive changed rollout sequence to **hosted-first** (Langfuse Cloud) while keeping this ADR's LLM-only boundary contract intact.
 - Self-hosted deployment remains the target state after new hardware capacity is available.
 - Secrets for hosted phase were stored via `secrets` CLI as `langfuse_secret_key`, `langfuse_public_key`, and `langfuse_base_url`.
+- 2026-02-21: Phase 1 pilot started in `packages/cli/src/commands/recall.ts` with Langfuse generation traces for query rewrite (provider/model/usage/cost captured from `pi --mode json`).
 
 ## Status
 
-Proposed.
+Accepted.
