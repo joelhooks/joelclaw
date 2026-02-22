@@ -18,6 +18,9 @@ type: adr
 - Qdrant is retired from the active k8s runtime and active memory ingestion path.
 - `observe.ts`, `joelclaw recall`, `joelclaw search`, and `joelclaw vault search --semantic` are now Typesense-backed.
 - `joelclaw inngest memory-e2e` validates observe ingest, Typesense mutation, vector retrieval, and recall in one probe.
+- Vault re-indexing was hardened into a queued flow: noisy upstream events (`content/updated`, `discovery/captured`, `system/adr.sync.requested`) now debounce through `typesense/vault-sync-queue` and emit `typesense/vault-sync.requested`.
+- `typesense/vault-sync` now processes only `typesense/vault-sync.requested` with single concurrency + throttling, preventing overlapping full-vault scans.
+- Targeted indexing is supported with `path`/`paths` payloads: existing files upsert, deleted files remove from `vault_notes`, and full re-index remains fallback.
 
 ## Context
 
