@@ -151,6 +151,35 @@
   font-variant-ligatures: contextual;
 }
 
+/* Apply token colors emitted by rehype-pretty-code/Shiki */
+[data-rehype-pretty-code-figure] [style*="--shiki-light"] {
+  color: var(--shiki-light);
+}
+
+html.dark [data-rehype-pretty-code-figure] [style*="--shiki-dark"] {
+  color: var(--shiki-dark);
+}
+
+[data-rehype-pretty-code-figure] [style*="--shiki-light-font-style"] {
+  font-style: var(--shiki-light-font-style);
+  font-weight: var(--shiki-light-font-weight, inherit);
+  text-decoration: var(--shiki-light-text-decoration, none);
+}
+
+html.dark [data-rehype-pretty-code-figure] [style*="--shiki-dark-font-style"] {
+  font-style: var(--shiki-dark-font-style);
+  font-weight: var(--shiki-dark-font-weight, inherit);
+  text-decoration: var(--shiki-dark-text-decoration, none);
+}
+
+[data-rehype-pretty-code-figure] pre {
+  background-color: var(--shiki-light-bg, #1f1f1f) !important;
+}
+
+html.dark [data-rehype-pretty-code-figure] pre {
+  background-color: var(--shiki-dark-bg, #1f1f1f) !important;
+}
+
 [data-rehype-pretty-code-figure] [data-line] {
   @apply px-4 -mx-4;
 }

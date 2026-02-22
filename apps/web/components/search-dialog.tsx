@@ -29,12 +29,14 @@ function collectionToUrl(hit: {
   title: string;
 }): string {
   switch (hit.collection) {
+    case "adrs":
+      return hit.path || "/adrs";
     case "vault_notes":
-      return `/vault/${hit.path}`;
+      return hit.path ? `/vault/${hit.path}` : "/vault";
     case "blog_posts":
-      return `/${hit.path || ""}`;
+      return hit.path ? `/${hit.path}` : "#";
     case "discoveries":
-      return `/cool`;
+      return hit.path ? `/cool/${hit.path}` : "/cool";
     case "memory_observations":
       return `/memory`;
     case "system_log":
@@ -51,6 +53,8 @@ function collectionToUrl(hit: {
 function TypeIcon({ collection }: { collection: string }) {
   const base = "w-4 h-4 mt-0.5 shrink-0";
   switch (collection) {
+    case "adrs":
+      return <GitBranch className={`${base} text-sky-400`} />;
     case "vault_notes":
       return <BookOpen className={`${base} text-emerald-400`} />;
     case "blog_posts":
@@ -71,9 +75,10 @@ function TypeIcon({ collection }: { collection: string }) {
 }
 
 const COLLECTION_LABELS: Record<string, string> = {
+  adrs: "adr",
   vault_notes: "vault",
   blog_posts: "article",
-  discoveries: "discovery",
+  discoveries: "cool",
   memory_observations: "memory",
   system_log: "syslog",
   otel_events: "otel",
@@ -81,6 +86,7 @@ const COLLECTION_LABELS: Record<string, string> = {
 };
 
 const COLLECTION_COLORS: Record<string, string> = {
+  adrs: "text-sky-400 border-sky-800",
   vault_notes: "text-emerald-400 border-emerald-800",
   blog_posts: "text-claw border-pink-800",
   discoveries: "text-purple-400 border-purple-800",
@@ -181,7 +187,7 @@ export function SearchDialog() {
 
       const mapped: SearchResult[] = (data.hits || [])
         .map((h: any) => ({
-          url: collectionToUrl(h),
+          url: h.url || collectionToUrl(h),
           title: h.title,
           excerpt: h.snippet || "",
           type: COLLECTION_LABELS[h.collection] || h.collection,

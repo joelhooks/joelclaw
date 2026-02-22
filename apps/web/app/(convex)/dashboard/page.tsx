@@ -209,6 +209,7 @@ function Search() {
   }, [query]);
 
   const collectionColors: Record<string, string> = {
+    adrs: "text-sky-400 bg-sky-500/10",
     vault_notes: "text-blue-400 bg-blue-500/10",
     memory_observations: "text-purple-400 bg-purple-500/10",
     blog_posts: "text-claw bg-claw/10",
