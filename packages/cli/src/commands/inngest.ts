@@ -1448,7 +1448,9 @@ const inngestMemoryHealthCmd = Command.make(
         staleRatio: staleState.supported ? (memoryCount >= 25 ? staleRatio <= maxStaleRatio : true) : true,
         categoryCoverage:
           categoryCoverageState.supported
-            ? (memoryCount >= 25 ? categoryCoverageState.coverageRatio >= minCategoryCoverage : true)
+            ? (categoryCoverageState.categorizedCount >= 25
+              ? categoryCoverageState.coverageRatio >= minCategoryCoverage
+              : true)
             : true,
         categoryConfidence:
           categoryConfidenceState.supported
