@@ -327,6 +327,9 @@ void emitGatewayOtel({
 
 setSession({
   prompt: (text: string) => session.prompt(text),
+  reload: () => session.reload(),
+  compact: (instructions?: string) => session.compact(instructions),
+  newSession: () => session.newSession().then(() => {}),
 });
 
 // ── Model fallback controller (ADR-0091) ───────────────

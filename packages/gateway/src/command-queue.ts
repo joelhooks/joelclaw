@@ -11,6 +11,9 @@ export type QueueEntry = {
 
 type PromptSession = {
   prompt: (text: string) => unknown | Promise<unknown>;
+  reload: () => Promise<void>;
+  compact: (customInstructions?: string) => Promise<unknown>;
+  newSession: () => Promise<void>;
 };
 
 type PromptCallback = () => void;
@@ -29,6 +32,21 @@ export let currentSource: string | undefined;
 
 export function setSession(session: PromptSession): void {
   sessionRef = session;
+}
+
+export function reloadSession(): Promise<void> {
+  if (!sessionRef) throw new Error("No session");
+  return sessionRef.reload();
+}
+
+export function compactSession(instructions?: string): Promise<unknown> {
+  if (!sessionRef) throw new Error("No session");
+  return sessionRef.compact(instructions);
+}
+
+export function newSession(): Promise<void> {
+  if (!sessionRef) throw new Error("No session");
+  return sessionRef.newSession();
 }
 
 /** Register a callback fired each time a prompt is dispatched to the session. */

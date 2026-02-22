@@ -6,6 +6,7 @@ import {
   type ParsedArgs,
 } from "./registry";
 import { getCommands } from "./registry";
+import { compactSession, newSession, reloadSession } from "../command-queue";
 
 const MAX_PRE_CHARS = 3400;
 
@@ -122,6 +123,36 @@ async function handleHealth(): Promise<string> {
   return formatCliResult("joelclaw gateway status", result);
 }
 
+async function handleReload(): Promise<string> {
+  try {
+    await reloadSession();
+    return "✅ Reloaded extensions, skills, and prompts.";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `<b>Reload failed</b>\n<code>${escapeHtml(message)}</code>`;
+  }
+}
+
+async function handleCompact(): Promise<string> {
+  try {
+    await compactSession();
+    return "✅ Context compacted.";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `<b>Compact failed</b>\n<code>${escapeHtml(message)}</code>`;
+  }
+}
+
+async function handleNewSession(): Promise<string> {
+  try {
+    await newSession();
+    return "✅ New session started.";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `<b>New session failed</b>\n<code>${escapeHtml(message)}</code>`;
+  }
+}
+
 async function handleSearch(parsed: ParsedArgs): Promise<string> {
   const query = (getStringArg(parsed, "query") ?? parsed.raw).trim();
   if (!query) {
@@ -182,6 +213,30 @@ export const BUILTIN_COMMANDS: CommandDefinition[] = [
     category: "ops",
     execution: "direct",
     directHandler: handleHealth,
+  }),
+  defineChatCommand({
+    key: "reload",
+    nativeName: "reload",
+    description: "Reload extensions, skills, and prompts",
+    category: "session",
+    execution: "direct",
+    directHandler: handleReload,
+  }),
+  defineChatCommand({
+    key: "compact",
+    nativeName: "compact",
+    description: "Compact current session context",
+    category: "session",
+    execution: "direct",
+    directHandler: handleCompact,
+  }),
+  defineChatCommand({
+    key: "new",
+    nativeName: "new",
+    description: "Start a new gateway session",
+    category: "session",
+    execution: "direct",
+    directHandler: handleNewSession,
   }),
   defineChatCommand({
     key: "search",
