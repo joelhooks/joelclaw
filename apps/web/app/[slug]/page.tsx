@@ -1,8 +1,6 @@
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
 import type { Metadata } from "next";
 import { MDXRemote } from "next-mdx-remote/rsc";
-import { headers } from "next/headers";
 import { getPost, getPostSlugs } from "@/lib/posts";
 import { mdxComponents } from "@/lib/mdx";
 import { remarkPlugins, rehypePlugins } from "@/lib/mdx-plugins";
@@ -99,23 +97,20 @@ export default async function PostPage({ params }: Props) {
           </div>
         )}
       </header>
-      <Suspense>
-        <LazyReviewGate
-          contentId={`post:${slug}`}
-          contentType="post"
-          contentSlug={slug}
-        >
-          <PostContent content={content} />
-        </LazyReviewGate>
-      </Suspense>
+      <LazyReviewGate
+        contentId={`post:${slug}`}
+        contentType="post"
+        contentSlug={slug}
+      >
+        <PostContent content={content} />
+      </LazyReviewGate>
     </article>
   );
 }
 
 /** MDX rendering for static post content. */
 async function PostContent({ content }: { content: string }) {
-  // next-mdx-remote currently reads Date.now(); mark this as a dynamic hole.
-  await headers();
+  "use cache";
 
   return (
     <div className="prose-joelclaw">

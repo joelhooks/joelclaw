@@ -1,8 +1,6 @@
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
 import type { Metadata } from "next";
 import { MDXRemote } from "next-mdx-remote/rsc";
-import { headers } from "next/headers";
 import { getAdr, getAdrSlugs } from "@/lib/adrs";
 import { mdxComponents } from "@/lib/mdx";
 import { remarkPlugins, rehypePlugins } from "@/lib/mdx-plugins";
@@ -87,24 +85,20 @@ export default async function AdrPage({ params }: Props) {
         )}
       </header>
 
-      {/* Dynamic hole: MDX (next-mdx-remote uses Date.now() internally) */}
-      <Suspense>
-        <LazyReviewGate
-          contentId={`adr:${slug}`}
-          contentType="adr"
-          contentSlug={slug}
-        >
-          <AdrContent content={content} />
-        </LazyReviewGate>
-      </Suspense>
+      <LazyReviewGate
+        contentId={`adr:${slug}`}
+        contentType="adr"
+        contentSlug={slug}
+      >
+        <AdrContent content={content} />
+      </LazyReviewGate>
     </article>
   );
 }
 
 /** MDX rendering for static ADR content. */
 async function AdrContent({ content }: { content: string }) {
-  // next-mdx-remote currently reads Date.now(); mark this as a dynamic hole.
-  await headers();
+  "use cache";
 
   return (
     <div className="prose-joelclaw">
