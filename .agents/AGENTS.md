@@ -140,5 +140,5 @@ When architecture/behavior changes:
 
 ## Notes
 
-- `skills/` is currently gitignored in the joelclaw repo; skill updates may be local unless intentionally force-tracked.
+- `skills/` in the joelclaw repo is **sacred and fully tracked**. Every custom skill must be committed. Never gitignore this directory.
 - If command contracts change in `packages/cli`, update dependent skills the same session.
