@@ -64,6 +64,20 @@ Phase 1 kickoff started.
   - `cd packages/cli && bun src/cli.ts search "telegram.callback.received" --collection otel_events --limit 5`
   - `bun test packages/cli/src/commands/search.test.ts`
   - `bun run validate:cli-contracts`
+- Phase-1 core command hardening completed for high-traffic set:
+  - `send.ts`: invalid JSON now returns `respondError` (`INVALID_JSON` + fix)
+  - `runs.ts`: `--compact` now returns terse JSON rows (no plain-text output)
+  - `run` next actions now use CLI-first log commands (no raw `tail`/`docker logs` suggestions)
+  - `gateway.ts`: invalid payload now returns `respondError` (`INVALID_JSON` + fix)
+  - `status.ts` and `otel.ts` revalidated against JSON envelope contract
+  - baseline refreshed: `docs/agent-contracts/phase1-baseline.json` (`rawOutputCommandFiles: 5`)
+- Core hardening validation passed:
+  - `cd packages/cli && bun src/cli.ts runs -c --count 3 --hours 1`
+  - `cd packages/cli && bun src/cli.ts send test.event --data '{bad json}'`
+  - `cd packages/cli && bun src/cli.ts gateway push --type test --payload '{bad json}'`
+  - `cd packages/cli && bun src/cli.ts status`
+  - `cd packages/cli && bun src/cli.ts otel`
+  - `bun run validate:cli-contracts`
 
 ## Design Contract
 
@@ -117,7 +131,7 @@ Phase 1 kickoff started.
     - deterministic success or structured recoverable error envelope (never raw Typesense parser failure)
   - test file:
     - `packages/cli/src/commands/search.test.ts` (new)
-- [ ] Upgrade first high-traffic command set to strict contract quality
+- [x] Upgrade first high-traffic command set to strict contract quality
   - `packages/cli/src/commands/status.ts`
   - `packages/cli/src/commands/runs.ts`
   - `packages/cli/src/commands/gateway.ts`
