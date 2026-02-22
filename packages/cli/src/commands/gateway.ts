@@ -115,7 +115,7 @@ const gatewayStatus = Command.make("status", {}, () =>
       pong === "PONG"
     ))
   })
-)
+).pipe(Command.withDescription("Active sessions, queue depths, Redis health"))
 
 // ── gateway events ──────────────────────────────────────────────────
 
@@ -179,7 +179,7 @@ const gatewayEvents = Command.make("events", {}, () =>
       true
     ))
   })
-)
+).pipe(Command.withDescription("Peek at all pending events per session"))
 
 // ── gateway push ────────────────────────────────────────────────────
 
@@ -259,7 +259,7 @@ const gatewayPush = Command.make("push", { type: pushType, payload: pushPayload 
       true
     ))
   })
-)
+).pipe(Command.withDescription("Push event to all gateway sessions"))
 
 // ── gateway drain ───────────────────────────────────────────────────
 
@@ -294,7 +294,7 @@ const gatewayDrain = Command.make("drain", {}, () =>
       true
     ))
   })
-)
+).pipe(Command.withDescription("Clear all event queues"))
 
 // ── gateway test ────────────────────────────────────────────────────
 
@@ -348,7 +348,7 @@ const gatewayTest = Command.make("test", {}, () =>
       true
     ))
   })
-)
+).pipe(Command.withDescription("Push test event and verify delivery"))
 
 // ── gateway restart ─────────────────────────────────────────────────
 
@@ -475,7 +475,7 @@ const gatewayRestart = Command.make("restart", {}, () =>
       ok
     ))
   })
-)
+).pipe(Command.withDescription("Restart daemon (kill, clean Redis, respawn)"))
 
 // ── gateway stream (ADR-0058) ───────────────────────────────────────
 
@@ -602,7 +602,7 @@ const gatewayStream = Command.make(
         { command: `joelclaw gateway stream`, description: "Resume streaming" },
       ])
     }),
-)
+).pipe(Command.withDescription("NDJSON stream of gateway events (ADR-0058)"))
 
 // ── gateway diagnose ────────────────────────────────────────────────
 
@@ -883,7 +883,7 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       healthy,
     ))
   })
-)
+).pipe(Command.withDescription("Layer-by-layer health check (process → model → Redis)"))
 
 // ── gateway review ──────────────────────────────────────────────────
 
@@ -1087,7 +1087,7 @@ const gatewayReview = Command.make("review", { hours: reviewHours, max: reviewMa
       true,
     ))
   })
-)
+).pipe(Command.withDescription("Recent session context (exchanges, tools, errors)"))
 
 // ── Root gateway command ────────────────────────────────────────────
 
