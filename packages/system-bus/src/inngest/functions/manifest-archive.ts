@@ -323,7 +323,8 @@ export const manifestArchive = inngest.createFunction(
         async () => ({ phase: "prereqs-done" }),
       );
       const manifest = await loadManifest();
-      return manifest.map((e) => ({
+      console.log(`[manifest-archive] loaded ${manifest.length} entries, mapping...`);
+      const mapped = manifest.map((e) => ({
         id: e.id,
         filename: e.filename,
         sourcePath: e.sourcePath,
@@ -333,6 +334,8 @@ export const manifestArchive = inngest.createFunction(
         sourceFileType: e.sourceFileType,
         sourceSizeBytes: e.sourceSizeBytes ?? 0,
       }));
+      console.log(`[manifest-archive] mapped ${mapped.length} entries (${JSON.stringify(mapped).length} bytes), returning from step`);
+      return mapped;
     });
 
     // Steps 3..N: One step per file (806 files = 806 steps, under 1,000 limit)
