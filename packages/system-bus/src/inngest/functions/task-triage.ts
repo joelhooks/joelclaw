@@ -149,10 +149,10 @@ export const taskTriage = inngest.createFunction(
   { event: "tasks/triage.requested" },
   async ({ step }) => {
     // Step 1: Fetch ALL open tasks via TaskPort
-    const tasks = await step.run("fetch-all-tasks", async (): Promise<Task[]> => {
+    const tasks = await (async (): Promise<Task[]> => {
       const adapter = new TodoistTaskAdapter();
       return adapter.listTasks();
-    });
+    })();
 
     if (tasks.length === 0) {
       return { status: "noop", reason: "no tasks" };

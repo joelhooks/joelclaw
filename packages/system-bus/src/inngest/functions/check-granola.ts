@@ -89,7 +89,7 @@ export const checkGranola = inngest.createFunction(
     }
 
     // Step 2: Filter out already-processed meetings
-    const newMeetings = await step.run("filter-processed", async () => {
+    const newMeetings = await step.run("filter-processed", async (): Promise<GranolaMeeting[]> => {
       const redis = getRedis();
       const results: GranolaMeeting[] = [];
       for (const m of meetings) {
@@ -104,7 +104,7 @@ export const checkGranola = inngest.createFunction(
       return { status: "noop", reason: "all meetings already processed", totalChecked: meetings.length };
     }
 
-    const untrackedMeetings = await step.run("filter-meetings-against-tasks", async () => {
+    const untrackedMeetings = await step.run("filter-meetings-against-tasks", async (): Promise<GranolaMeeting[]> => {
       const tasks = await getCurrentTasks();
       return newMeetings.filter((meeting) => !hasTaskMatching(tasks, meeting.title));
     });

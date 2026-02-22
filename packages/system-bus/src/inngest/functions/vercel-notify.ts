@@ -66,7 +66,7 @@ export const vercelDeploySucceeded = inngest.createFunction(
 
 export const vercelDeployError = inngest.createFunction(
   { id: "vercel-deploy-error-notify", name: "Vercel → Gateway: Deploy Error → Fix" },
-  { event: "vercel/deploy.error" },
+  { event: "vercel/deploy.error" as any },
   async ({ event, step, ...rest }) => {
     const gateway = (rest as any).gateway as GatewayContext | undefined;
     const {
@@ -156,7 +156,7 @@ export const vercelDeployError = inngest.createFunction(
 
 export const vercelDeployCreated = inngest.createFunction(
   { id: "vercel-deploy-created-notify", name: "Vercel → Gateway: Deploy Created" },
-  { event: "vercel/deploy.created" },
+  { event: "vercel/deploy.created" as any },
   async ({ event, step, ...rest }) => {
     const gateway = (rest as any).gateway as GatewayContext | undefined;
     const {

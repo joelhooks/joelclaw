@@ -18,6 +18,12 @@ import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import { prefetchMemoryContext } from "../../memory/context-prefetch";
 import Redis from "ioredis";
 
+type EmailModule = typeof import("../../../../email/src/index.ts");
+
+async function loadEmailModule(): Promise<EmailModule> {
+  return import("../../../../email/src/index.ts");
+}
+
 const COOLDOWN_KEY = "email:triage:last-run";
 const COOLDOWN_TTL = 2 * 60 * 60; // 2 hours
 // Sonnet 4.6 for email triage — decisions have real consequences (archive wrong = missed reply).
@@ -142,7 +148,7 @@ export const checkEmail = inngest.createFunction(
     const [frontConvos, gmailConvos] = await Promise.all([
       step.run("fetch-front-unread", async () => {
         try {
-          const email = await import("@joelclaw/email");
+          const email = await loadEmailModule();
           const adapter = email.createFrontAdapter({ apiToken: process.env.FRONT_API_TOKEN ?? "" });
           const inboxes = await adapter.listInboxes();
           const inboxId = inboxes[0]?.id ?? "default";
@@ -162,7 +168,7 @@ export const checkEmail = inngest.createFunction(
       }),
       step.run("fetch-gmail-unread", async () => {
         try {
-          const email = await import("@joelclaw/email");
+          const email = await loadEmailModule();
           const adapter = email.createGmailAdapter("joelhooks@gmail.com");
           const convos = await adapter.listConversations("default", { unread: true, limit: 25 });
           return convos.map((c) => ({
@@ -244,7 +250,7 @@ export const checkEmail = inngest.createFunction(
     const summary = await step.run("execute-triage", async (): Promise<ActionSummary> => {
       const result: ActionSummary = { archived: 0, unsubscribed: 0, labeled: 0, escalated: [] };
       const triageById = new Map(triageItems.map((t) => [t.id, t]));
-      const email = await import("@joelclaw/email");
+      const email = await loadEmailModule();
 
       for (const convo of allConvos) {
         const triage = triageById.get(convo.id);
@@ -296,9 +302,10 @@ export const checkEmail = inngest.createFunction(
     // Step 5: Filter escalations against existing tasks — don't nag about what's already tracked
     const filteredEscalations = await step.run("filter-against-tasks", async () => {
       const tasks = await getCurrentTasks();
-      return summary.escalated.filter(
-        (e) => !hasTaskMatching(tasks, e.subject) && !hasTaskMatching(tasks, e.from.split("<")[0].trim()),
-      );
+      return summary.escalated.filter((e) => {
+        const senderPrefix = e.from.split("<")[0]?.trim() ?? e.from;
+        return !hasTaskMatching(tasks, e.subject) && !hasTaskMatching(tasks, senderPrefix);
+      });
     });
 
     // NOOP: nothing to escalate (all handled silently or already have tasks)

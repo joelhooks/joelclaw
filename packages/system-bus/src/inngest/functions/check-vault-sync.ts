@@ -32,9 +32,25 @@ export const checkVaultSync = inngest.createFunction(
   async ({ step }) => {
     const vaultPath = `${process.env.HOME ?? "/Users/joel"}/Vault`;
 
-    const state = await step.run("check-git-status", async () => {
+    const state = await step.run("check-git-status", async (): Promise<{
+      error?: string;
+      dirty: boolean;
+      dirtyCount: number;
+      unpushed: number;
+      behind: number;
+      diverged: boolean;
+    }> => {
       const status = await git(["status", "--porcelain"], vaultPath);
-      if (!status.ok) return { error: status.stderr, dirty: false, unpushed: 0, diverged: false };
+      if (!status.ok) {
+        return {
+          error: status.stderr,
+          dirty: false,
+          dirtyCount: 0,
+          unpushed: 0,
+          behind: 0,
+          diverged: false,
+        };
+      }
 
       const dirty = status.stdout.length > 0;
       const dirtyCount = dirty ? status.stdout.split("\n").filter(Boolean).length : 0;

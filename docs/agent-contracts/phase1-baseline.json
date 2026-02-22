@@ -4,6 +4,7 @@
   "commandFiles": [
     "packages/cli/src/commands/approvals.ts",
     "packages/cli/src/commands/call.ts",
+    "packages/cli/src/commands/capabilities.ts",
     "packages/cli/src/commands/diagnose.ts",
     "packages/cli/src/commands/discover.ts",
     "packages/cli/src/commands/email.ts",
@@ -31,6 +32,7 @@
   "envelopeCommandFiles": [
     "packages/cli/src/commands/approvals.ts",
     "packages/cli/src/commands/call.ts",
+    "packages/cli/src/commands/capabilities.ts",
     "packages/cli/src/commands/diagnose.ts",
     "packages/cli/src/commands/discover.ts",
     "packages/cli/src/commands/email.ts",

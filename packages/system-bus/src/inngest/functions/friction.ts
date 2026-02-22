@@ -291,7 +291,11 @@ export const friction = inngest.createFunction(
   },
   [{ cron: "0 7 * * *" }, { event: "memory/friction.requested" }],
   async ({ step, gateway }) => {
-    const gate = await step.run("gate-minimum-points", async () => {
+    const gate = await step.run("gate-minimum-points", async (): Promise<{
+      canRun: boolean;
+      totalPoints: number;
+      error?: string;
+    }> => {
       try {
         const countResult = await typesense.search({
           collection: OBSERVATIONS_COLLECTION,

@@ -6,6 +6,7 @@ import { Console, Effect } from "effect"
 import { randomUUID } from "node:crypto"
 import { respond, respondError } from "../response"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
+import { traceRecallRewrite } from "../langfuse"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 const OTEL_INGEST_URL = process.env.JOELCLAW_OTEL_INGEST_URL || "http://localhost:3111/observability/emit"
@@ -19,6 +20,16 @@ const RECALL_OTEL_ENABLED = (process.env.JOELCLAW_RECALL_OTEL ?? "1") !== "0"
 const RECALL_REWRITE_ENABLED = (process.env.JOELCLAW_RECALL_REWRITE ?? "1") !== "0"
 
 type RewriteStrategy = "haiku" | "openai" | "fallback" | "disabled"
+type BudgetProfile = "lean" | "balanced" | "deep" | "auto"
+
+type BudgetPlan = {
+  requested: BudgetProfile
+  applied: Exclude<BudgetProfile, "auto">
+  reason: string
+  rewriteEnabled: boolean
+  fetchMultiplier: number
+  maxInject: number
+}
 
 interface TypesenseHit {
   document: {
@@ -46,11 +57,27 @@ interface RankedRecallHit extends TypesenseHit {
   usageBoost: number
 }
 
+type RewriteUsage = {
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  costInput?: number
+  costOutput?: number
+  costTotal?: number
+}
+
 type RewrittenQuery = {
   inputQuery: string
+  rewritePrompt: string
   rewrittenQuery: string
   rewritten: boolean
   strategy: RewriteStrategy
+  model?: string
+  provider?: string
+  usage?: RewriteUsage
+  durationMs?: number
   error?: string
 }
 
@@ -94,6 +121,56 @@ function normalizeQuery(text: string): string {
   return text.trim().replace(/\s+/gu, " ").slice(0, 300)
 }
 
+function normalizeBudgetProfile(input: string): BudgetProfile {
+  const normalized = input.trim().toLowerCase()
+  if (normalized === "lean") return "lean"
+  if (normalized === "balanced") return "balanced"
+  if (normalized === "deep") return "deep"
+  return "auto"
+}
+
+function resolveBudgetPlan(requestedRaw: string, query: string): BudgetPlan {
+  const requested = normalizeBudgetProfile(requestedRaw)
+  const normalizedQuery = normalizeQuery(query)
+
+  const applied: Exclude<BudgetProfile, "auto"> = requested === "auto"
+    ? normalizedQuery.length > 90 || normalizedQuery.includes(" and ") || normalizedQuery.includes("why")
+      ? "deep"
+      : "balanced"
+    : requested
+
+  switch (applied) {
+    case "lean":
+      return {
+        requested,
+        applied,
+        reason: requested === "auto" ? "auto-short-query" : "explicit",
+        rewriteEnabled: false,
+        fetchMultiplier: 1.8,
+        maxInject: 5,
+      }
+    case "deep":
+      return {
+        requested,
+        applied,
+        reason: requested === "auto" ? "auto-complex-query" : "explicit",
+        rewriteEnabled: true,
+        fetchMultiplier: 5,
+        maxInject: 10,
+      }
+    case "balanced":
+    default:
+      return {
+        requested,
+        applied,
+        reason: requested === "auto" ? "auto-default" : "explicit",
+        rewriteEnabled: true,
+        fetchMultiplier: 3,
+        maxInject: 10,
+      }
+  }
+}
+
 function sanitizeRewriteResult(text: string): string {
   return normalizeQuery(
     text
@@ -118,6 +195,84 @@ function readShellText(value: unknown): string {
   if (value instanceof Uint8Array) return new TextDecoder().decode(value)
   if (value == null) return ""
   return String(value)
+}
+
+type PiAssistantMessage = {
+  provider?: string
+  model?: string
+  usage?: {
+    input?: number
+    output?: number
+    cacheRead?: number
+    cacheWrite?: number
+    totalTokens?: number
+    cost?: {
+      input?: number
+      output?: number
+      total?: number
+    }
+  }
+  content?: Array<{ type?: string; text?: string }>
+}
+
+function parsePiRewriteJsonOutput(stdout: string): {
+  rewrittenQuery: string
+  provider?: string
+  model?: string
+  usage?: RewriteUsage
+} | null {
+  const lines = stdout.split(/\r?\n/gu)
+  let assistant: PiAssistantMessage | null = null
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0 || !trimmed.startsWith("{")) continue
+
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        type?: string
+        message?: PiAssistantMessage & { role?: string }
+      }
+
+      if ((parsed.type === "turn_end" || parsed.type === "message_end") && parsed.message?.role === "assistant") {
+        assistant = parsed.message
+      }
+    } catch {
+      // ignore malformed lines
+    }
+  }
+
+  if (!assistant) return null
+
+  const rewrittenText = sanitizeRewriteResult(
+    (assistant.content ?? [])
+      .filter((part) => part?.type === "text")
+      .map((part) => part?.text ?? "")
+      .join("")
+  )
+
+  if (!rewrittenText) return null
+
+  const usageRaw = assistant.usage
+  const usage: RewriteUsage | undefined = usageRaw
+    ? {
+        inputTokens: asFiniteNumber(usageRaw.input, 0),
+        outputTokens: asFiniteNumber(usageRaw.output, 0),
+        totalTokens: asFiniteNumber(usageRaw.totalTokens, 0),
+        cacheReadTokens: asFiniteNumber(usageRaw.cacheRead, 0),
+        cacheWriteTokens: asFiniteNumber(usageRaw.cacheWrite, 0),
+        costInput: asFiniteNumber(usageRaw.cost?.input, 0),
+        costOutput: asFiniteNumber(usageRaw.cost?.output, 0),
+        costTotal: asFiniteNumber(usageRaw.cost?.total, 0),
+      }
+    : undefined
+
+  return {
+    rewrittenQuery: rewrittenText,
+    provider: assistant.provider,
+    model: assistant.model,
+    usage,
+  }
 }
 
 function usageBoostFromDoc(doc: TypesenseHit["document"]): number {
@@ -259,6 +414,7 @@ function runRewriteQueryWith(query: string, options: RewriteRunnerOptions = {}):
   if (!rewriteEnabled || normalized.length < 4) {
     return {
       inputQuery: normalized,
+      rewritePrompt: normalized,
       rewrittenQuery: normalized,
       rewritten: false,
       strategy: "disabled",
@@ -284,6 +440,7 @@ function runRewriteQueryWith(query: string, options: RewriteRunnerOptions = {}):
   let lastError = ""
   for (const { model, strategy, timeout: attemptTimeout } of attempts) {
     const effectiveTimeout = options.timeoutMs ?? attemptTimeout
+    const attemptStartedAt = Date.now()
     try {
       const args = [
         "pi",
@@ -292,7 +449,7 @@ function runRewriteQueryWith(query: string, options: RewriteRunnerOptions = {}):
         "--no-extensions",
         "--print",
         "--mode",
-        "text",
+        "json",
         "--model",
         model,
         rewritePrompt,
@@ -307,15 +464,23 @@ function runRewriteQueryWith(query: string, options: RewriteRunnerOptions = {}):
             env: { ...process.env, TERM: "dumb" },
           })
 
-      const stdout = sanitizeRewriteResult(readShellText(proc.stdout))
+      const stdoutText = readShellText(proc.stdout)
+      const parsedJson = parsePiRewriteJsonOutput(stdoutText)
+      const rewrittenQuery = parsedJson?.rewrittenQuery ?? sanitizeRewriteResult(stdoutText)
       const stderr = readShellText(proc.stderr).trim()
       const exitCode = typeof proc.exitCode === "number" ? proc.exitCode : -1
-      if (exitCode === 0 && stdout.length > 0) {
+
+      if (exitCode === 0 && rewrittenQuery.length > 0) {
         return {
           inputQuery: normalized,
-          rewrittenQuery: stdout,
-          rewritten: stdout.toLowerCase() !== normalized.toLowerCase(),
+          rewritePrompt,
+          rewrittenQuery,
+          rewritten: rewrittenQuery.toLowerCase() !== normalized.toLowerCase(),
           strategy,
+          provider: parsedJson?.provider,
+          model: parsedJson?.model ?? model,
+          usage: parsedJson?.usage,
+          durationMs: Date.now() - attemptStartedAt,
         }
       }
       lastError = (stderr || `rewrite_exit_${exitCode}`).slice(0, 220)
@@ -326,9 +491,11 @@ function runRewriteQueryWith(query: string, options: RewriteRunnerOptions = {}):
 
   return {
     inputQuery: normalized,
+    rewritePrompt,
     rewrittenQuery: normalized,
     rewritten: false,
     strategy: "fallback",
+    durationMs: timeoutMs,
     error: lastError,
   }
 }
@@ -342,9 +509,13 @@ async function searchTypesense(
   query: string,
   limit: number,
   apiKey: string,
+  options?: { fetchMultiplier?: number },
 ): Promise<{ hits: TypesenseHit[]; found: number }> {
   const bounded = Math.min(Math.max(limit, 1), MAX_INJECT)
-  const fetchLimit = Math.min(Math.max(bounded * 3, bounded + 4), 40)
+  const fetchMultiplier = options?.fetchMultiplier && Number.isFinite(options.fetchMultiplier)
+    ? Math.max(1, options.fetchMultiplier)
+    : 3
+  const fetchLimit = Math.min(Math.max(Math.ceil(bounded * fetchMultiplier), bounded + 4), 60)
   const params = new URLSearchParams({
     q: query,
     query_by: "embedding,observation",
@@ -373,14 +544,34 @@ const minScore = Options.float("min-score").pipe(Options.withDefault(0))
 const raw = Options.boolean("raw").pipe(Options.withDefault(false))
 const includeHold = Options.boolean("include-hold").pipe(Options.withDefault(false))
 const includeDiscard = Options.boolean("include-discard").pipe(Options.withDefault(false))
+const budget = Options.text("budget").pipe(Options.withDefault("auto"))
 
 export const recallCmd = Command.make(
   "recall",
-  { query, limit, minScore, raw, includeHold, includeDiscard },
-  ({ query, limit, minScore, raw, includeHold, includeDiscard }) =>
+  { query, limit, minScore, raw, includeHold, includeDiscard, budget },
+  ({ query, limit, minScore, raw, includeHold, includeDiscard, budget }) =>
     Effect.gen(function* () {
       const startedAt = Date.now()
-      const rewrite = runRewriteQuery(query)
+      const budgetPlan = resolveBudgetPlan(budget, query)
+      const rewrite = runRewriteQueryWith(query, {
+        rewriteEnabled: budgetPlan.rewriteEnabled,
+      })
+
+      yield* Effect.promise(() => traceRecallRewrite({
+        query,
+        rewritePrompt: rewrite.rewritePrompt,
+        rewrittenQuery: rewrite.rewrittenQuery,
+        rewritten: rewrite.rewritten,
+        strategy: rewrite.strategy,
+        provider: rewrite.provider,
+        model: rewrite.model,
+        usage: rewrite.usage,
+        durationMs: rewrite.durationMs,
+        error: rewrite.error,
+        budgetRequested: budgetPlan.requested,
+        budgetApplied: budgetPlan.applied,
+        budgetReason: budgetPlan.reason,
+      }))
 
       try {
         const apiKey = resolveTypesenseApiKey()
@@ -392,14 +583,23 @@ export const recallCmd = Command.make(
             query,
             rewrittenQuery: rewrite.rewrittenQuery,
             rewriteStrategy: rewrite.strategy,
+            rewriteModel: rewrite.model,
+            rewriteProvider: rewrite.provider,
+            rewriteUsage: rewrite.usage,
+            rewriteDurationMs: rewrite.durationMs,
             rewriteError: rewrite.error,
             includeHold,
             includeDiscard,
+            budgetRequested: budgetPlan.requested,
+            budgetApplied: budgetPlan.applied,
+            budgetReason: budgetPlan.reason,
           },
         }))
 
         const result = yield* Effect.promise(() =>
-          searchTypesense(rewrite.rewrittenQuery, limit, apiKey)
+          searchTypesense(rewrite.rewrittenQuery, limit, apiKey, {
+            fetchMultiplier: budgetPlan.fetchMultiplier,
+          })
         )
 
         const ranked = rankHits(result.hits)
@@ -407,7 +607,7 @@ export const recallCmd = Command.make(
           includeHold,
           includeDiscard,
         })
-        const cappedLimit = Math.min(Math.max(limit, 1), MAX_INJECT)
+        const cappedLimit = Math.min(Math.max(limit, 1), budgetPlan.maxInject, MAX_INJECT)
         const finalHits = trust.kept.slice(0, cappedLimit)
 
         yield* Effect.promise(() => emitRecallOtel({
@@ -419,10 +619,17 @@ export const recallCmd = Command.make(
             query,
             rewrittenQuery: rewrite.rewrittenQuery,
             rewriteStrategy: rewrite.strategy,
+            rewriteModel: rewrite.model,
+            rewriteProvider: rewrite.provider,
+            rewriteUsage: rewrite.usage,
+            rewriteDurationMs: rewrite.durationMs,
             filtersApplied: trust.filtersApplied,
             droppedByTrustPass: trust.dropped.length,
             includeHold,
             includeDiscard,
+            budgetRequested: budgetPlan.requested,
+            budgetApplied: budgetPlan.applied,
+            budgetReason: budgetPlan.reason,
             found: result.found,
             returned: finalHits.length,
           },
@@ -441,11 +648,23 @@ export const recallCmd = Command.make(
             rewrite: {
               rewritten: rewrite.rewritten,
               strategy: rewrite.strategy,
+              model: rewrite.model,
+              provider: rewrite.provider,
+              usage: rewrite.usage,
+              durationMs: rewrite.durationMs,
               error: rewrite.error,
             },
             filtersApplied: trust.filtersApplied,
             includeHold,
             includeDiscard,
+            budget: {
+              requested: budgetPlan.requested,
+              applied: budgetPlan.applied,
+              reason: budgetPlan.reason,
+              fetchMultiplier: budgetPlan.fetchMultiplier,
+              maxInject: budgetPlan.maxInject,
+              rewriteEnabled: budgetPlan.rewriteEnabled,
+            },
             droppedByTrustPass: trust.dropped.length,
             droppedDiagnostics: trust.dropped.slice(0, 10),
             hits: finalHits.map((h) => ({
@@ -478,6 +697,10 @@ export const recallCmd = Command.make(
               command: `joelclaw recall "${query}" --raw`,
               description: "Raw observations for injection",
             },
+            {
+              command: `joelclaw recall "${query}" --budget deep --limit 10`,
+              description: "Run deeper retrieval for difficult queries",
+            },
           ])
         )
       } catch (error) {
@@ -492,8 +715,15 @@ export const recallCmd = Command.make(
             query,
             rewrittenQuery: rewrite.rewrittenQuery,
             rewriteStrategy: rewrite.strategy,
+            rewriteModel: rewrite.model,
+            rewriteProvider: rewrite.provider,
+            rewriteUsage: rewrite.usage,
+            rewriteDurationMs: rewrite.durationMs,
             includeHold,
             includeDiscard,
+            budgetRequested: budgetPlan.requested,
+            budgetApplied: budgetPlan.applied,
+            budgetReason: budgetPlan.reason,
           },
         }))
 

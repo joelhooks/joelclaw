@@ -602,6 +602,12 @@ export type Events = {
       sessionId?: string;
     };
   };
+  "notification/call.requested": {
+    data: {
+      message: string;
+      to?: string;
+    };
+  };
 
   // --- Telegram callbacks (inline keyboard actions) ---
   "telegram/callback.received": {
@@ -711,6 +717,56 @@ export type Events = {
       conversationId: string;
       assigneeEmail: string;
       assigneeName: string;
+    };
+  };
+
+  // --- Vercel ---
+  "vercel/deploy.succeeded": {
+    data: {
+      deploymentId: string;
+      deploymentUrl?: string;
+      projectName?: string;
+      target?: string;
+      gitCommitMessage?: string;
+      gitCommitAuthor?: string;
+      gitBranch?: string;
+      dashboardUrl?: string;
+    };
+  };
+  "vercel/deploy.error": {
+    data: {
+      deploymentId: string;
+      deploymentUrl?: string;
+      projectName?: string;
+      target?: string;
+      gitCommitMessage?: string;
+      gitCommitAuthor?: string;
+      gitBranch?: string;
+      dashboardUrl?: string;
+    };
+  };
+  "vercel/deploy.created": {
+    data: {
+      deploymentId: string;
+      deploymentUrl?: string;
+      projectName?: string;
+      target?: string;
+      gitCommitMessage?: string;
+      gitCommitAuthor?: string;
+      gitBranch?: string;
+      dashboardUrl?: string;
+    };
+  };
+  "vercel/deploy.canceled": {
+    data: {
+      deploymentId: string;
+      deploymentUrl?: string;
+      projectName?: string;
+      target?: string;
+      gitCommitMessage?: string;
+      gitCommitAuthor?: string;
+      gitBranch?: string;
+      dashboardUrl?: string;
     };
   };
 
@@ -860,6 +916,13 @@ export type Events = {
   };
   "email/triage.requested": {
     data: Record<string, never>;
+  };
+  "email/inbox.cleanup": {
+    data: {
+      query?: string;
+      maxPages?: number;
+      dryRun?: boolean;
+    };
   };
   "calendar/daily.check": {
     data: Record<string, never>;

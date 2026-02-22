@@ -12,7 +12,7 @@ import { join, relative, basename } from "path";
 
 const VAULT_PATH = process.env.HOME + "/Vault";
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108";
-const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY!;
+const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY ?? "";
 
 if (!TYPESENSE_API_KEY) {
   console.error("TYPESENSE_API_KEY required. Run: export TYPESENSE_API_KEY=$(secrets lease typesense_api_key)");
@@ -36,7 +36,7 @@ function parseFrontmatter(raw: string): { meta: Record<string, any>; body: strin
   if (!match) return { meta: {}, body: raw };
 
   const meta: Record<string, any> = {};
-  const lines = match[1].split("\n");
+  const lines = (match[1] ?? "").split("\n");
   let currentKey = "";
   let inArray = false;
   const arrayValues: string[] = [];
@@ -47,34 +47,41 @@ function parseFrontmatter(raw: string): { meta: Record<string, any>; body: strin
         arrayValues.push(line.replace(/^\s+-\s+/, "").trim());
         continue;
       } else {
-        meta[currentKey] = arrayValues.slice();
+        if (currentKey) {
+          meta[currentKey] = arrayValues.slice();
+        }
         arrayValues.length = 0;
         inArray = false;
       }
     }
+
     const kvMatch = line.match(/^(\w[\w-]*)\s*:\s*(.*)$/);
-    if (kvMatch) {
-      const [, key, val] = kvMatch;
-      if (val.trim() === "") {
-        // might be array
-        currentKey = key;
-        inArray = true;
-        continue;
-      }
-      // Handle inline arrays [a, b]
-      const arrMatch = val.match(/^\[(.+)\]$/);
-      if (arrMatch) {
-        meta[key] = arrMatch[1].split(",").map((s) => s.trim().replace(/['"]/g, ""));
-      } else {
-        meta[key] = val.trim().replace(/^['"]|['"]$/g, "");
-      }
+    if (!kvMatch) continue;
+
+    const key = (kvMatch[1] ?? "").trim();
+    const val = kvMatch[2] ?? "";
+    if (!key) continue;
+
+    if (val.trim() === "") {
+      // might be array
+      currentKey = key;
+      inArray = true;
+      continue;
+    }
+
+    // Handle inline arrays [a, b]
+    const arrMatch = val.match(/^\[(.+)\]$/);
+    if (arrMatch && arrMatch[1]) {
+      meta[key] = arrMatch[1].split(",").map((s) => s.trim().replace(/['"]/g, ""));
+    } else {
+      meta[key] = val.trim().replace(/^['"]|['"]$/g, "");
     }
   }
-  if (inArray && arrayValues.length > 0) {
+  if (inArray && arrayValues.length > 0 && currentKey) {
     meta[currentKey] = arrayValues;
   }
 
-  return { meta, body: match[2] };
+  return { meta, body: match[2] ?? "" };
 }
 
 function classifyNote(path: string, meta: Record<string, any>): string {
@@ -94,7 +101,7 @@ function classifyNote(path: string, meta: Record<string, any>): string {
 
 function extractProject(path: string): string | undefined {
   const match = path.match(/Projects\/(\d+-[^/]+)/);
-  return match ? match[1] : undefined;
+  return match?.[1];
 }
 
 function walkDir(dir: string, ext: string = ".md"): string[] {

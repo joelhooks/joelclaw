@@ -1,0 +1,62 @@
+name: Agent Contracts
+
+on:
+  pull_request:
+    paths:
+      - "packages/cli/**"
+      - "scripts/validate-cli-contracts.ts"
+      - "docs/agent-contracts/**"
+      - ".github/workflows/agent-contracts.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/cli/**"
+      - "scripts/validate-cli-contracts.ts"
+      - "docs/agent-contracts/**"
+      - ".github/workflows/agent-contracts.yml"
+  workflow_dispatch:
+
+jobs:
+  contracts:
+    name: CLI Envelope + Discoverability Contracts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate CLI contract baseline
+        run: bun scripts/validate-cli-contracts.ts
+
+      - name: Envelope contract tests
+        run: bun test packages/cli/src/commands/contract-envelope.test.ts
+
+      - name: Capabilities tests
+        run: bun test packages/cli/src/commands/capabilities.test.ts
+
+      - name: Search predictability tests
+        run: bun test packages/cli/src/commands/search.test.ts
+
+      - name: CLI typecheck
+        run: pnpm --filter @joelclaw/cli check-types

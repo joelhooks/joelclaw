@@ -3,7 +3,8 @@
  * ADR-0082: Typesense as unified search layer.
  *
  * Supports hybrid search (keyword + semantic), typo tolerance, faceting.
- * Searches vault_notes, memory_observations, blog_posts, system_log, discoveries, voice_transcripts.
+ * Searches vault_notes, memory_observations, blog_posts, system_log,
+ * discoveries, voice_transcripts, and otel_events.
  */
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
@@ -21,14 +22,83 @@ interface SearchHit {
   type?: string
 }
 
-const COLLECTIONS = [
-  { name: "vault_notes", queryBy: "title,content", titleField: "title" },
-  { name: "memory_observations", queryBy: "observation", titleField: "observation" },
-  { name: "blog_posts", queryBy: "title,content", titleField: "title" },
-  { name: "system_log", queryBy: "detail,tool,action", titleField: "detail" },
-  { name: "discoveries", queryBy: "title,summary", titleField: "title" },
-  { name: "voice_transcripts", queryBy: "content", titleField: "content" },
+type SearchCollection = {
+  readonly name: string
+  readonly queryBy: string
+  readonly titleField: string
+  readonly supportsSemantic: boolean
+}
+
+const COLLECTIONS: readonly SearchCollection[] = [
+  { name: "vault_notes", queryBy: "title,content", titleField: "title", supportsSemantic: true },
+  { name: "memory_observations", queryBy: "observation", titleField: "observation", supportsSemantic: true },
+  { name: "blog_posts", queryBy: "title,content", titleField: "title", supportsSemantic: true },
+  { name: "system_log", queryBy: "detail,tool,action", titleField: "detail", supportsSemantic: false },
+  { name: "discoveries", queryBy: "title,summary", titleField: "title", supportsSemantic: true },
+  { name: "voice_transcripts", queryBy: "content", titleField: "content", supportsSemantic: true },
+  { name: "otel_events", queryBy: "action,error,component,source,metadata_json,search_text", titleField: "action", supportsSemantic: false },
 ]
+
+const COLLECTION_NAMES = COLLECTIONS.map((c) => c.name)
+
+class CollectionSelectionError extends Error {
+  readonly code = "INVALID_COLLECTION"
+
+  constructor(readonly collection: string) {
+    super(
+      `Unsupported collection '${collection}'. Allowed: ${COLLECTION_NAMES.join(", ")}`
+    )
+    this.name = "CollectionSelectionError"
+  }
+}
+
+function resolveRequestedCollections(collection?: string): readonly SearchCollection[] {
+  if (!collection) return COLLECTIONS
+
+  const requested = collection.trim()
+  if (requested.length === 0) return COLLECTIONS
+
+  const matches = COLLECTIONS.filter(
+    (candidate) =>
+      candidate.name === requested || candidate.name.startsWith(requested)
+  )
+
+  if (matches.length === 0) {
+    throw new CollectionSelectionError(requested)
+  }
+
+  return matches
+}
+
+function buildSearchRequest(
+  collection: SearchCollection,
+  query: string,
+  options: {
+    perPage: number
+    semantic?: boolean
+    filter?: string
+    facet?: string
+  }
+): Record<string, unknown> {
+  const search: Record<string, unknown> = {
+    collection: collection.name,
+    q: query,
+    query_by: collection.queryBy,
+    per_page: options.perPage,
+    highlight_full_fields: collection.queryBy,
+    exclude_fields: "embedding",
+  }
+
+  if (options.facet) search.facet_by = options.facet
+  if (options.filter) search.filter_by = options.filter
+
+  if (options.semantic && collection.supportsSemantic) {
+    search.query_by = `${collection.queryBy},embedding`
+    search.vector_query = `embedding:([], k:${options.perPage * 2})`
+  }
+
+  return search
+}
 
 async function multiSearch(
   query: string,
@@ -41,32 +111,16 @@ async function multiSearch(
     semantic?: boolean
   }
 ): Promise<{ hits: SearchHit[]; facets: Record<string, { value: string; count: number }[]>; totalFound: number }> {
-  const collections = options.collection
-    ? COLLECTIONS.filter((c) => c.name === options.collection || c.name.startsWith(options.collection!))
-    : COLLECTIONS
+  const collections = resolveRequestedCollections(options.collection)
 
-  const searches = collections.map((c) => {
-    const search: any = {
-      collection: c.name,
-      q: query,
-      query_by: c.queryBy,
-      per_page: options.perPage,
-      highlight_full_fields: c.queryBy,
-    }
-    if (options.facet) search.facet_by = options.facet
-    if (options.filter) search.filter_by = options.filter
-
-    // If collection has embedding field and semantic requested, do hybrid
-    if (options.semantic && c.name !== "system_log") {
-      search.query_by = `${c.queryBy},embedding`
-      search.vector_query = `embedding:([], k:${options.perPage * 2})`
-      search.exclude_fields = "embedding"
-    } else {
-      search.exclude_fields = "embedding"
-    }
-
-    return search
-  })
+  const searches = collections.map((collection) =>
+    buildSearchRequest(collection, query, {
+      perPage: options.perPage,
+      semantic: options.semantic,
+      filter: options.filter,
+      facet: options.facet,
+    })
+  )
 
   const resp = await fetch(`${TYPESENSE_URL}/multi_search`, {
     method: "POST",
@@ -136,7 +190,7 @@ const queryArg = Args.text({ name: "query" }).pipe(Args.withDescription("Search 
 
 const collectionOpt = Options.text("collection").pipe(
   Options.withAlias("c"),
-  Options.withDescription("Limit to a specific collection (vault_notes, memory_observations, blog_posts, system_log, discoveries, voice_transcripts)"),
+  Options.withDescription(`Limit to a specific collection (${COLLECTION_NAMES.join(", ")})`),
   Options.optional
 )
 
@@ -184,51 +238,80 @@ export const search = Command.make(
           })
         )
 
-        yield* Console.log(respond("joelclaw search", {
+        yield* Console.log(respond("search", {
           query,
+          collection: collValue,
+          semantic,
           totalFound: result.totalFound,
           hits: result.hits,
           facets: Object.keys(result.facets).length > 0 ? result.facets : undefined,
         }, [
           {
-            command: `joelclaw search "${query}" --semantic`,
+            command: `search "${query}" --semantic`,
             description: "Re-run with hybrid semantic search",
           },
           {
-            command: `joelclaw search "${query}" --collection vault_notes --facet type`,
+            command: `search "${query}" --collection otel_events`,
+            description: "Search observability events only",
+          },
+          {
+            command: `search "${query}" --collection vault_notes --facet type`,
             description: "Search vault with type facets",
           },
           {
-            command: `joelclaw search "${query}" --filter "type:=adr"`,
+            command: `search "${query}" --filter "type:=adr"`,
             description: "Filter to ADRs only",
           },
         ]))
       } catch (err: any) {
         if (isTypesenseApiKeyError(err)) {
           yield* Console.log(respondError(
-            "joelclaw search",
+            "search",
             err.message,
             err.code,
             err.fix,
             [
-              { command: "joelclaw status", description: "Check system health" },
-              { command: "joelclaw inngest status", description: "Check worker/server status" },
+              { command: "status", description: "Check system health" },
+              { command: "inngest status", description: "Check worker/server status" },
             ]
           ))
+          return
+        }
+
+        if (err instanceof CollectionSelectionError) {
+          yield* Console.log(
+            respondError(
+              "search",
+              err.message,
+              err.code,
+              `Use one of: ${COLLECTION_NAMES.join(", ")}`,
+              [
+                { command: "capabilities", description: "Discover supported search flows" },
+                { command: "otel search <query>", description: "Search OTEL events", params: { query: { required: true } } },
+              ]
+            )
+          )
           return
         }
 
         const message = err instanceof Error ? err.message : String(err)
         const isUnreachable = message.includes("ECONNREFUSED") || message.includes("Connection refused")
         yield* Console.log(respondError(
-          "joelclaw search",
+          "search",
           message,
           isUnreachable ? "TYPESENSE_UNREACHABLE" : "SEARCH_FAILED",
           isUnreachable
             ? "Start Typesense port-forward: kubectl port-forward -n joelclaw svc/typesense 8108:8108 &"
             : "Check Typesense health and search parameters",
-          [{ command: "joelclaw status", description: "Check all services" }]
+          [{ command: "status", description: "Check all services" }]
         ))
       }
     })
 )
+
+export const __searchTestUtils = {
+  COLLECTIONS,
+  resolveRequestedCollections,
+  buildSearchRequest,
+  CollectionSelectionError,
+}

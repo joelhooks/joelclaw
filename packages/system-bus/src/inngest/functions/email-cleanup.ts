@@ -237,6 +237,7 @@ export const emailInboxCleanup = inngest.createFunction(
 
       for (let b = 0; b < batches.length; b++) {
         const batch = batches[b];
+        if (!batch || batch.length === 0) continue;
 
         const classification = await step.run(
           `classify-page-${page}-batch-${b}`,

@@ -9,6 +9,7 @@ import { respond } from "./response"
 import { sendCmd } from "./commands/send"
 import { runsCmd, runCmd } from "./commands/runs"
 import { statusCmd, functionsCmd } from "./commands/status"
+import { capabilitiesCmd } from "./commands/capabilities"
 import { schemaCmd } from "./commands/schema"
 import { loopCmd } from "./commands/loop"
 import { discoverCmd } from "./commands/discover"
@@ -64,6 +65,7 @@ const root = Command.make("joelclaw", {}, () =>
           events: "joelclaw events [--prefix P] [--hours H] [--count N]",
           functions: "joelclaw functions",
           status: "joelclaw status",
+          capabilities: "joelclaw capabilities",
           logs: "joelclaw logs [worker|errors|server] [-n lines] [--grep text]",
           loop: "joelclaw loop {start|status|list|cancel|restart|nuke}",
           watch: "joelclaw watch [LOOP_ID] [-i 15]",
@@ -87,6 +89,7 @@ const root = Command.make("joelclaw", {}, () =>
       },
       [
         { command: "joelclaw status", description: "Health check all components" },
+        { command: "joelclaw capabilities", description: "Discover goal-oriented command flows" },
         { command: "joelclaw loop status", description: "Active loop status (Redis)" },
         { command: "joelclaw runs", description: "List recent runs" },
         { command: "joelclaw schema", description: "Event types and payloads" },
@@ -95,7 +98,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, emailCmd, callCmd, search, nasCmd, otelCmd, inngestCmd])
+  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, emailCmd, callCmd, search, nasCmd, otelCmd, inngestCmd])
 )
 
 const cli = Command.run(root, {
