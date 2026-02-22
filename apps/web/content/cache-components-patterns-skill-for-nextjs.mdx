@@ -1,0 +1,272 @@
+---
+title: "Cache Components Patterns Skill for Next.js 16+ Applications"
+date: "2026-02-22T12:00:00"
+type: "essay"
+description: "The slots pattern for Next.js cache components — pass ReactNode through cached boundaries to keep static shells fast while streaming personalized UI through Suspense holes."
+tags: ["nextjs", "architecture", "caching", "skills"]
+---
+
+The default Next.js route is dynamic. Call `cookies()` anywhere in the tree and the whole thing opts out of caching. Most apps end up fully dynamic not because they need to be, but because one auth check or theme preference read infected the entire render path.
+
+```bash
+npx skills add joelhooks/joelclaw --skill nextjs-static-shells
+```
+
+Cache Components in Next.js 16 flip this. You mark boundaries with `'use cache'`, and everything inside that boundary becomes deterministic — cacheable, prerenderable, fast. The interesting part isn't the directive itself. It's what happens when you need *both* a cached shell and per-user content in the same route.
+
+## The slots pattern
+
+Here's the core idea: a cached component can accept `ReactNode` as a prop. The cache boundary doesn't serialize or inspect that node — it's opaque. So you can pass request-specific JSX *through* a cached shell, and it renders inside a Suspense boundary on the other side.
+
+```tsx
+type PageProps = { params: Promise<{ slug: string }> };
+
+export default async function PageEntry({ params }: PageProps) {
+  const { slug } = await params;
+  const staticData = await getStaticData(slug);
+  const userData = await getUserData();
+
+  const dynamicPanel = <PersonalizedPanel userData={userData} />;
+
+  return <PageStatic data={staticData} panel={dynamicPanel} />;
+}
+```
+
+```tsx
+async function PageStatic({ data, panel }: { data: StaticData; panel?: ReactNode }) {
+  'use cache';
+
+  return (
+    <main>
+      <Hero data={data.hero} />
+      <Content data={data.content} />
+      <Suspense fallback={<PanelSkeleton />}>{panel}</Suspense>
+    </main>
+  );
+}
+```
+
+Two components, strict separation of concerns. The entry reads cookies, resolves sessions, does all the request-specific work. The static renderer is pure — deterministic for its inputs, cached aggressively. The dynamic bits pass through as slots and render inside Suspense boundaries.
+
+This means the cached shell serves instantly from cache. The personalized panel streams in behind it. First paint is the static shell. Personalization arrives without blocking it.
+
+<AgentNote>
+You have the nextjs-static-shells skill installed. It contains the full architecture reference — Entry+Static+Slots pattern, `'use cache'` boundary rules, cacheLife/cacheTag/updateTag mechanics, provider island patterns, RSC boundary constraints, Suspense requirements, link preloading strategy, failure mode catalog, migration table from unstable_cache, and PR acceptance criteria.
+
+When implementing this pattern:
+1. Entry component handles ALL request-volatile reads (cookies, headers, searchParams, auth)
+2. Static renderer uses `'use cache'` — no runtime APIs allowed inside
+3. Dynamic content passed as ReactNode slot props
+4. Suspense wraps every slot render point
+5. Client providers scoped to feature, not root
+
+Key constraints inside `'use cache'` boundaries:
+- No `cookies()`, `headers()`, `searchParams`
+- No session/auth reads
+- No `Math.random()`, `Date.now()` (execute once at build time)
+- Exception: `'use cache: private'` allows runtime APIs for compliance
+
+Use `cacheLife('hours')` for data that changes infrequently, `cacheTag('products')` + `updateTag('products')` for on-demand invalidation.
+</AgentNote>
+
+## Why slots, not conditional rendering
+
+The instinct is to do this inside the cached component:
+
+```tsx
+// Don't do this
+async function PageStatic({ data, userId }: { data: StaticData; userId?: string }) {
+  'use cache';
+
+  return (
+    <main>
+      <Hero data={data.hero} />
+      {userId && <PersonalizedPanel userId={userId} />}
+    </main>
+  );
+}
+```
+
+This looks fine until `PersonalizedPanel` calls `cookies()` or reads session state internally. Now the cache boundary is broken. Worse — `userId` becomes part of the cache key, so you get a separate cached version per user. That's not caching, that's a memory leak shaped like a cache.
+
+Slots avoid both problems. The cached component never touches user data. It declares *where* dynamic content goes. The entry component decides *what* fills those holes. The cache key stays small and deterministic.
+
+## The three content types
+
+With `cacheComponents: true` in your config, every piece of UI falls into one of three buckets:
+
+**Static** — synchronous code, pure computation, prerendered at build time. Your nav, your footer, your headings. Zero cost.
+
+**Cached** — async but deterministic. Database queries, CMS fetches, anything that doesn't change per-request. Mark with `'use cache'`, control lifetime with `cacheLife()`.
+
+```tsx
+async function BlogPosts() {
+  'use cache'
+  cacheLife('hours')
+  cacheTag('blog-posts')
+
+  const posts = await db.posts.findMany()
+  return <PostList posts={posts} />
+}
+```
+
+**Dynamic** — must be fresh every request. User data, notifications, anything behind `cookies()`. Wrap in Suspense, stream it in.
+
+The static shell pattern is about being intentional with these boundaries instead of letting one `cookies()` call make your entire route dynamic.
+
+## What breaks `'use cache'`
+
+The rule is simple: nothing request-specific inside a cached boundary. In practice, it's easy to violate accidentally.
+
+| Banned inside `'use cache'` | Why |
+|---|---|
+| `cookies()`, `headers()` | Request-specific |
+| `searchParams` | Request-specific |
+| Session/auth reads | User-specific |
+| Helper functions that internally read cookies | Hidden dependency — the sneaky one |
+| `Date.now()`, `Math.random()` | Execute once at build time, then frozen |
+
+The fix is always the same: extract the volatile read to the entry component, pass the result as a prop or a slot. The prop becomes part of the cache key automatically. The slot passes through opaque.
+
+```tsx
+// Wrong
+async function CachedProfile() {
+  'use cache'
+  const session = (await cookies()).get('session')?.value
+  return <div>{session}</div>
+}
+
+// Right
+async function ProfilePage() {
+  const session = (await cookies()).get('session')?.value
+  return <CachedProfile sessionId={session} />
+}
+
+async function CachedProfile({ sessionId }: { sessionId: string }) {
+  'use cache'
+  const data = await fetchUserData(sessionId)
+  return <div>{data.name}</div>
+}
+```
+
+If you genuinely can't refactor — compliance requirements, legacy code — `'use cache: private'` is the escape hatch. It allows runtime APIs inside the boundary. Use it sparingly.
+
+## Provider islands
+
+The same "push it down" principle applies to client providers. A global `ThemeProvider` at your root layout means every component is inside a client boundary. That's not necessary if only your sidebar uses theme switching.
+
+Mount providers at the feature level:
+
+```tsx
+'use client';
+
+export function FeatureProvider({
+  children,
+  initialState,
+}: {
+  children: React.ReactNode;
+  initialState: FeatureState;
+}) {
+  const value = useMemo(() => ({ state: initialState }), [initialState]);
+  return <FeatureContext.Provider value={value}>{children}</FeatureContext.Provider>;
+}
+```
+
+Server entry passes the initial state. Provider resolves it inside the `'use client'` boundary. Hooks stay inside the island. The rest of the tree stays server-rendered.
+
+## Prefetch rules
+
+Static routes — let Next.js prefetch. It's free and makes navigation instant.
+
+Personalized routes — `prefetch={false}`. Speculatively fetching a URL with query params and user IDs wastes bandwidth and pollutes caches.
+
+```tsx
+<Link href={`/docs/${slug}`}>Read next</Link>
+
+<Link href={`/dashboard?user=${userId}`} prefetch={false}>
+  Dashboard
+</Link>
+```
+
+`generateStaticParams` for high-traffic static routes makes prefetch even more effective — the shell is already built, the CDN already has it.
+
+## The Suspense gotcha
+
+`useSearchParams()` without a Suspense boundary causes the entire page to bail out to client-side rendering. Not just the component — the whole route. This is the most common accidental dynamic bailout after `cookies()` in a cached shell.
+
+```tsx
+// This kills your static shell
+'use client'
+export default function SearchBar() {
+  const searchParams = useSearchParams()
+  return <div>{searchParams.get('q')}</div>
+}
+
+// This preserves it
+<Suspense fallback={<SearchSkeleton />}>
+  <SearchBar />
+</Suspense>
+```
+
+Same applies to `usePathname()` in dynamic routes. Wrap it.
+
+## Cache invalidation
+
+Two flavors, different semantics:
+
+**`updateTag()`** — immediate. The caller sees fresh data in the same response. Use in Server Actions where the mutation and the read happen in one request cycle.
+
+**`revalidateTag()`** — background. Next request gets fresh data. Stale-while-revalidate. Use when eventual consistency is fine.
+
+```tsx
+'use server'
+
+export async function updateProduct(id: string, data: FormData) {
+  await db.products.update({ where: { id }, data })
+  updateTag(`product-${id}`)   // immediate — this response sees fresh data
+}
+
+export async function bulkImport(data: FormData) {
+  await db.products.bulkCreate(data)
+  revalidateTag('products')    // background — next request picks it up
+}
+```
+
+Tag your cached functions with `cacheTag()` and invalidation just works. No manual cache keys, no `unstable_cache` key arrays.
+
+## Migration
+
+If you're coming from older Next.js patterns:
+
+| Old | New |
+|---|---|
+| `experimental.ppr` | `cacheComponents: true` |
+| `dynamic = 'force-static'` | `'use cache'` + `cacheLife('max')` |
+| `revalidate = 60` | `cacheLife({ revalidate: 60 })` |
+| `unstable_cache(fn, keys, opts)` | `'use cache'` + `cacheTag()` + `cacheLife()` |
+
+The big win: no manual cache key management. `'use cache'` derives keys from function location + arguments + closures. One less thing to get wrong.
+
+<AgentNote>
+Migration from `unstable_cache`:
+- Remove the `unstable_cache` wrapper and key arrays
+- Add `'use cache'` directive inside the function body
+- Replace `options.tags` with `cacheTag()` calls
+- Replace `options.revalidate` with `cacheLife({ revalidate: N })`
+- Cache keys are now automatic from function arguments and closure variables
+
+Limitations to flag in code review:
+- Edge runtime not supported (requires Node.js)
+- Static export not supported (needs server)
+- Non-deterministic values frozen at build time inside `'use cache'`
+</AgentNote>
+
+## The skill
+
+The [nextjs-static-shells skill](https://github.com/joelhooks/joelclaw) has the full reference — every pattern here plus the decision matrix, failure mode catalog, implementation sequence, and PR acceptance checklist. Install it and your agent has the complete architecture playbook:
+
+```bash
+npx skills add joelhooks/joelclaw --skill nextjs-static-shells --yes --global
+```
+
+{/* TODO: Video walkthrough showing the refactor of a real route from fully-dynamic to static shell + slots. Before/after TTFB comparison. */}
