@@ -51,7 +51,7 @@ async function executeCron() {
 }
 
 beforeAll(() => {
-  // @ts-expect-error deterministic subprocess shim for tests.
+  // @ts-ignore deterministic subprocess shim for tests.
   Bun.spawn = ((args: string[]) => {
     spawnCalls.push(args);
     return {

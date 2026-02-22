@@ -306,9 +306,6 @@ importers:
       '@joelclaw/mdx-pipeline':
         specifier: workspace:^
         version: link:../mdx-pipeline
-      '@qdrant/js-client-rest':
-        specifier: ^1.16.2
-        version: 1.16.2(typescript@5.9.2)
       convex:
         specifier: ^1.32.0
         version: 1.32.0(react@19.2.0)
@@ -2380,16 +2377,6 @@ packages:
 
   '@protobufjs/utf8@1.1.0':
     resolution: {integrity: sha512-Vvn3zZrhQZkkBE8LSuW3em98c0FwgO4nxzv6OdSxPKJIEKY2bGbHn+mhGIPerzI4twdxaP8/0+06HBpwf345Lw==}
-
-  '@qdrant/js-client-rest@1.16.2':
-    resolution: {integrity: sha512-Zm4wEZURrZ24a+Hmm4l1QQYjiz975Ep3vF0yzWR7ICGcxittNz47YK2iBOk8kb8qseCu8pg7WmO1HOIsO8alvw==}
-    engines: {node: '>=18.17.0', pnpm: '>=8'}
-    peerDependencies:
-      typescript: '>=4.7'
-
-  '@qdrant/openapi-typescript-fetch@1.2.6':
-    resolution: {integrity: sha512-oQG/FejNpItrxRHoyctYvT3rwGZOnK4jr3JdppO/c78ktDvkWiPXPHNsrDf33K9sZdRb6PR7gi4noIapu5q4HA==}
-    engines: {node: '>=18.0.0', pnpm: '>=8'}
 
   '@shikijs/core@3.22.0':
     resolution: {integrity: sha512-iAlTtSDDbJiRpvgL5ugKEATDtHdUVkqgHDm/gbD2ZS9c88mx7G1zSYjjOxp5Qa0eaW0MAQosFRmJSk354PRoQA==}
@@ -5028,10 +5015,6 @@ packages:
 
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
-
-  undici@6.23.0:
-    resolution: {integrity: sha512-VfQPToRA5FZs/qJxLIinmU59u0r7LXqoJkCzinq3ckNJp3vKEh7jTWN589YQ5+aoAC/TGRLyJLCPKcLQbM8r9g==}
-    engines: {node: '>=18.17'}
 
   undici@7.22.0:
     resolution: {integrity: sha512-RqslV2Us5BrllB+JeiZnK4peryVTndy9Dnqq62S3yYRRTj0tFQCwEniUy2167skdGOy3vqRzEvl1Dm4sV2ReDg==}
@@ -7768,14 +7751,6 @@ snapshots:
   '@protobufjs/pool@1.1.0': {}
 
   '@protobufjs/utf8@1.1.0': {}
-
-  '@qdrant/js-client-rest@1.16.2(typescript@5.9.2)':
-    dependencies:
-      '@qdrant/openapi-typescript-fetch': 1.2.6
-      typescript: 5.9.2
-      undici: 6.23.0
-
-  '@qdrant/openapi-typescript-fetch@1.2.6': {}
 
   '@shikijs/core@3.22.0':
     dependencies:
@@ -10847,8 +10822,6 @@ snapshots:
   undici-types@6.21.0: {}
 
   undici-types@7.18.2: {}
-
-  undici@6.23.0: {}
 
   undici@7.22.0: {}
 
