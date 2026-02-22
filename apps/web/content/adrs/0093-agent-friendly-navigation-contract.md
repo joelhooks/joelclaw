@@ -55,6 +55,15 @@ Phase 1 kickoff started.
   - `cd packages/cli && bun src/cli.ts capabilities`
   - `bun test packages/cli/src/commands/capabilities.test.ts`
   - `bun run validate:cli-contracts`
+- AF30-003 implemented in monorepo:
+  - `packages/cli/src/commands/search.ts` hardened for deterministic collection selection
+  - `packages/cli/src/commands/search.test.ts` added (predictability + semantic guard coverage)
+  - `.github/workflows/agent-contracts.yml` added (contract CI gate)
+  - `otel_events` now supported as a first-class collection in `joelclaw search`
+- AF30-003 validation passed:
+  - `cd packages/cli && bun src/cli.ts search "telegram.callback.received" --collection otel_events --limit 5`
+  - `bun test packages/cli/src/commands/search.test.ts`
+  - `bun run validate:cli-contracts`
 
 ## Design Contract
 
@@ -101,7 +110,7 @@ Phase 1 kickoff started.
 - [x] Add contract validator scaffold (failing-first)
   - `scripts/validate-cli-contracts.ts` (new)
   - `package.json` script: `validate:cli-contracts` (new)
-- [ ] Reproduce and pin current navigation failure as regression test
+- [x] Reproduce and pin current navigation failure as regression test
   - failing command to codify:
     - `joelclaw search "telegram.callback.received" --collection otel_events --limit 5`
   - expected behavior:
