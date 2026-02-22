@@ -136,6 +136,18 @@ Phase 1 kickoff started.
   - `bun test packages/cli/src/commands/logs.test.ts`
   - `cd packages/cli && bunx tsc --noEmit -p tsconfig.json`
   - `cd packages/cli && bun src/cli.ts logs analyze --lines 80`
+- Phase-2 invoke + finalization hardening implemented:
+  - added `joelclaw inngest invoke <function-slug>` with deterministic wait/poll behavior and dispatch modes (`auto|event|invoke`) in `packages/cli/src/commands/inngest.ts`
+  - `auto` dispatch prefers EVENT triggers when present (CLI-first path, no raw GQL in operator flow)
+  - added explicit manual trigger for triage function (`check/o11y-triage.requested`) in `packages/system-bus/src/inngest/functions/o11y-triage.ts`
+  - addressed invoked-run finalization instability by syncing active host-worker code and re-registering worker functions (eliminated repeated `Unable to reach SDK URL` during validation window)
+- Phase-2 invoke + finalization hardening validation passed:
+  - `cd packages/cli && bun run check-types`
+  - `cd packages/system-bus && bunx tsc --noEmit`
+  - `bun test packages/system-bus/src/inngest/functions/o11y-triage.test.ts`
+  - `cd packages/cli && bun src/cli.ts inngest invoke system-bus-host-check/o11y-triage --data '{"reason":"cli invoke event route"}' --wait-ms 90000`
+  - `cd packages/cli && bun src/cli.ts inngest invoke system-bus-host-check/o11y-triage --mode invoke --data '{"reason":"invoke mode regression check"}' --wait-ms 90000`
+  - `joelclaw logs server --lines 200 --grep 'Unable to reach SDK URL'` (0 matches)
 
 ## Design Contract
 

@@ -106,7 +106,7 @@ Files:
 
 ## Acceptance Criteria
 
-- [ ] Every retrieval path emits `budget_profile` and budget diagnostics in OTEL.
+- [x] Every retrieval path emits `budget_profile` and budget diagnostics in OTEL.
 - [x] `joelclaw recall --budget <profile>` deterministically changes retrieval behavior.
 - [x] Lean profile reduces latency/cost for simple queries without catastrophic quality loss.
 - [ ] Deep profile improves difficult-query hit quality compared to balanced baseline.
@@ -158,12 +158,13 @@ Observed behavior:
 - Lean consistently disables rewrite and returns quickly.
 - Deep consistently enables rewrite and higher fetch depth.
 - Auto mode surfaces explicit selection reason in output/OTEL (`budgetRequested`, `budgetApplied`, `budgetReason`).
+- Context prefetch now emits dedicated OTEL budget diagnostics (`memory.context_prefetch.completed`) with `budget_profile`, fetch depth, and filter/drop metrics.
+- Added daily ADR evidence capture loop (`system/memory-adr-evidence-capture`) so `memory/adr-evidence.daily.captured` records rolling budget diagnostics across a 7-day window.
 - Quality uplift from deep over baseline is mixed in this corpus; not yet consistently better.
 
 Remaining acceptance gaps:
-- Context prefetch path does not yet emit explicit budget-profile OTEL diagnostics.
 - Deep-quality superiority gate is not yet met.
 
 ## Status
 
-Proposed (pending full retrieval-path OTEL parity and deep-quality evidence gate).
+Proposed (pending deep-quality evidence gate).

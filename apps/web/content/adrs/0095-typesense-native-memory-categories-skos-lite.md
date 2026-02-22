@@ -152,6 +152,7 @@ Ensure category fields exist and are reported by memory health.
 - `joelclaw recall "memory-e2e-mlx5t4fl-z1sg4r" --category memory --limit 5 --json` validates alias normalization (`memory -> jc:memory-system`) and category-constrained recall behavior.
 - `joelclaw otel search "weekly-category-summary.emitted" --hours 24 --json` confirms weekly category summary emission.
 - Latest `observe.store.completed` OTEL metadata includes category assignment evidence: `categoryBuckets` (with canonical `category_id`s), `categorySourceBuckets`, and `taxonomyVersions`.
+- Added daily ADR evidence capture loop (`system/memory-adr-evidence-capture`) emitting `memory/adr-evidence.daily.captured` snapshots for rolling 7-day gate tracking.
 
 Remaining acceptance gap: sustained 7-day category summary evidence and broader backfill/coverage migration.
 
