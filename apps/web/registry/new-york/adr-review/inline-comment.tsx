@@ -69,7 +69,16 @@ export function InlineComment({
     // Focus textarea after mount
     setTimeout(() => textareaRef.current?.focus(), 100);
 
+    // Document-level Esc handler
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", handleEsc);
+
     return () => {
+      document.removeEventListener("keydown", handleEsc);
       target.classList.remove(
         "ring-1",
         "ring-claw/30",
@@ -102,6 +111,8 @@ export function InlineComment({
       else handleSubmit();
     }
     if (e.key === "Escape") {
+      setDraft("");
+      setEditingId(null);
       onClose();
     }
   };
