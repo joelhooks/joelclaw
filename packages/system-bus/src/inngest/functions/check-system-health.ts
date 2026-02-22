@@ -264,8 +264,8 @@ async function checkOtelErrorRate(): Promise<OtelErrorRateSummary> {
 
 async function checkWriteGateDrift(): Promise<WriteGateDriftSummary> {
   const windowMinutes = getNumericEnv("MEMORY_WRITE_GATE_DRIFT_WINDOW_MINUTES", 60);
-  const minEvents = getNumericEnv("MEMORY_WRITE_GATE_DRIFT_MIN_EVENTS", 10);
-  const fallbackRateThreshold = getNumericEnv("MEMORY_WRITE_GATE_FALLBACK_RATE_THRESHOLD", 0.2);
+  const minEvents = getNumericEnv("MEMORY_WRITE_GATE_DRIFT_MIN_EVENTS", 30);
+  const fallbackRateThreshold = getNumericEnv("MEMORY_WRITE_GATE_FALLBACK_RATE_THRESHOLD", 0.35);
   const holdRatioThreshold = getNumericEnv("MEMORY_WRITE_GATE_HOLD_RATIO_THRESHOLD", 0.75);
   const discardRatioThreshold = getNumericEnv("MEMORY_WRITE_GATE_DISCARD_RATIO_THRESHOLD", 0.6);
   const cutoff = Date.now() - windowMinutes * 60 * 1000;
