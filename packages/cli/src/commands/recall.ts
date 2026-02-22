@@ -14,11 +14,11 @@ const MAX_INJECT = 10
 const DECAY_CONSTANT = 0.01
 const STALENESS_DAYS = 90
 const MIN_OBSERVATION_CHARS = 12
-const REWRITE_TIMEOUT_MS = 10_000
+const REWRITE_TIMEOUT_MS = 20_000
 const RECALL_OTEL_ENABLED = (process.env.JOELCLAW_RECALL_OTEL ?? "1") !== "0"
 const RECALL_REWRITE_ENABLED = (process.env.JOELCLAW_RECALL_REWRITE ?? "1") !== "0"
 
-type RewriteStrategy = "haiku" | "fallback" | "disabled"
+type RewriteStrategy = "haiku" | "openai" | "fallback" | "disabled"
 
 interface TypesenseHit {
   document: {
@@ -263,57 +263,61 @@ function runRewriteQueryWith(query: string, options: RewriteRunnerOptions = {}):
     context ? `Recent context: ${context}` : "",
   ].filter(Boolean).join("\n")
 
-  try {
-    const timeoutMs = options.timeoutMs ?? REWRITE_TIMEOUT_MS
-    const args = [
-      "pi",
-      "--no-tools",
-      "--no-session",
-      "--no-extensions",
-      "--print",
-      "--mode",
-      "text",
-      "--model",
-      "anthropic/claude-haiku",
-      rewritePrompt,
-    ]
-    const proc = options.spawn
-      ? options.spawn(args, rewritePrompt, timeoutMs)
-      : Bun.spawnSync(args, {
-          stdout: "pipe",
-          stderr: "pipe",
-          stdin: "ignore",
-          timeout: timeoutMs,
-          env: { ...process.env, TERM: "dumb" },
-        })
+  const timeoutMs = options.timeoutMs ?? REWRITE_TIMEOUT_MS
 
-    const stdout = sanitizeRewriteResult(readShellText(proc.stdout))
-    const stderr = readShellText(proc.stderr).trim()
-    const exitCode = typeof proc.exitCode === "number" ? proc.exitCode : -1
-    if (exitCode === 0 && stdout.length > 0) {
-      return {
-        inputQuery: normalized,
-        rewrittenQuery: stdout,
-        rewritten: stdout.toLowerCase() !== normalized.toLowerCase(),
-        strategy: "haiku",
+  const models: Array<{ model: string; strategy: RewriteStrategy }> = [
+    { model: "anthropic/claude-haiku", strategy: "haiku" },
+    { model: "openai/gpt-5.3-codex-spark", strategy: "openai" },
+  ]
+
+  let lastError = ""
+  for (const { model, strategy } of models) {
+    try {
+      const args = [
+        "pi",
+        "--no-tools",
+        "--no-session",
+        "--no-extensions",
+        "--print",
+        "--mode",
+        "text",
+        "--model",
+        model,
+        rewritePrompt,
+      ]
+      const proc = options.spawn
+        ? options.spawn(args, rewritePrompt, timeoutMs)
+        : Bun.spawnSync(args, {
+            stdout: "pipe",
+            stderr: "pipe",
+            stdin: "ignore",
+            timeout: timeoutMs,
+            env: { ...process.env, TERM: "dumb" },
+          })
+
+      const stdout = sanitizeRewriteResult(readShellText(proc.stdout))
+      const stderr = readShellText(proc.stderr).trim()
+      const exitCode = typeof proc.exitCode === "number" ? proc.exitCode : -1
+      if (exitCode === 0 && stdout.length > 0) {
+        return {
+          inputQuery: normalized,
+          rewrittenQuery: stdout,
+          rewritten: stdout.toLowerCase() !== normalized.toLowerCase(),
+          strategy,
+        }
       }
+      lastError = (stderr || `rewrite_exit_${exitCode}`).slice(0, 220)
+    } catch (error) {
+      lastError = (error instanceof Error ? error.message : String(error)).slice(0, 220)
     }
+  }
 
-    return {
-      inputQuery: normalized,
-      rewrittenQuery: normalized,
-      rewritten: false,
-      strategy: "fallback",
-      error: (stderr || `rewrite_exit_${exitCode}`).slice(0, 220),
-    }
-  } catch (error) {
-    return {
-      inputQuery: normalized,
-      rewrittenQuery: normalized,
-      rewritten: false,
-      strategy: "fallback",
-      error: (error instanceof Error ? error.message : String(error)).slice(0, 220),
-    }
+  return {
+    inputQuery: normalized,
+    rewrittenQuery: normalized,
+    rewritten: false,
+    strategy: "fallback",
+    error: lastError,
   }
 }
 
