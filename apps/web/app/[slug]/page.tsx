@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import { MDXRemote } from "next-mdx-remote/rsc";
@@ -111,8 +112,9 @@ export default async function PostPage({ params }: Props) {
   );
 }
 
-/** MDX rendering — isolated in Suspense because next-mdx-remote uses Date.now(). */
+/** MDX rendering — connection() opts into dynamic rendering before Date.now(). */
 async function PostContent({ content }: { content: string }) {
+  await connection();
   return (
     <div className="prose-joelclaw">
       <MDXRemote

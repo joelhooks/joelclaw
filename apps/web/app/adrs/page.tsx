@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import type { SearchParams } from "nuqs/server";
 import { getAllAdrs } from "@/lib/adrs";
@@ -17,7 +18,6 @@ type Props = {
 };
 
 export default async function AdrsPage({ searchParams }: Props) {
-  const { status } = await loadAdrSearchParams(searchParams);
   const allAdrs = getAllAdrs();
 
   const counts = allAdrs.reduce(
@@ -53,11 +53,13 @@ export default async function AdrsPage({ searchParams }: Props) {
           npx skills add skillrecordings/adr-skill --skill adr-skill --yes --global
         </CodeBlock>
       </header>
-      <AdrListWithFilters
-        adrs={allAdrs}
-        counts={counts}
-        allStatuses={allStatuses}
-      />
+      <Suspense>
+        <AdrListWithFilters
+          adrs={allAdrs}
+          counts={counts}
+          allStatuses={allStatuses}
+        />
+      </Suspense>
     </div>
   );
 }
