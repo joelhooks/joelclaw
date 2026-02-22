@@ -35,7 +35,7 @@ const RAW_BULLET_DATE_RE = /^\s*-\s*\(\d{4}-\d{2}-\d{2}\)\s+/u;
 const DATE_IN_PARENS_RE = /\(\d{4}-\d{2}-\d{2}\)/u;
 const ADR_RE = /\bADR[-\s]?\d{3,4}\b/iu;
 const FILE_PATH_RE = /(?:~\/|\/|\.\/|\.\.\/)[\w./-]+|\b[\w.-]+\/[\w./-]+\b/u;
-const COMMAND_RE = /`[^`]+`|\b(?:bunx?|pnpm|npm|node|kubectl|redis-cli|git|pi|codex|claude|inngest|qdrant|todoist-cli)\b/iu;
+const COMMAND_RE = /`[^`]+`|\b(?:bunx?|pnpm|npm|node|kubectl|redis-cli|git|pi|codex|claude|inngest|typesense|todoist-cli)\b/iu;
 const CONFIG_RE = /\.(?:json|ya?ml|toml|ini|env|conf|lock)\b/iu;
 
 function normalizeForSimilarity(input: string): string {

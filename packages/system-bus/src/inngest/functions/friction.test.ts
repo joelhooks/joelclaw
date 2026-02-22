@@ -11,28 +11,16 @@ import { InngestTestEngine } from "@inngest/test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { QdrantClient } from "@qdrant/js-client-rest";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import type { CreateTaskInput, Task } from "../../tasks/port";
 import { friction, parseFrictionPatterns } from "./friction";
 
-type MockQdrantPage = {
-  points?: Array<{ payload?: Record<string, unknown> }>;
-  next_page_offset?: unknown;
-};
-
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
-const originalQdrantMethods = {
-  count: (QdrantClient.prototype as any).count,
-  scroll: (QdrantClient.prototype as any).scroll,
-};
 const originalSpawn = Bun.spawn;
 const originalTodoistCreateTask = TodoistTaskAdapter.prototype.createTask;
 
 let tempHome = "";
-let qdrantCount = 0;
-let qdrantPages: MockQdrantPage[] = [];
 let spawnCalls: string[][] = [];
 let spawnExitCode = 0;
 let spawnStdout = "";
@@ -63,14 +51,6 @@ async function executeCron() {
 }
 
 beforeAll(() => {
-  (QdrantClient.prototype as any).count = async function () {
-    return { count: qdrantCount };
-  };
-
-  (QdrantClient.prototype as any).scroll = async function () {
-    return qdrantPages.shift() ?? { points: [], next_page_offset: undefined };
-  };
-
   // @ts-expect-error deterministic subprocess shim for tests.
   Bun.spawn = ((args: string[]) => {
     spawnCalls.push(args);
@@ -104,8 +84,6 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  (QdrantClient.prototype as any).count = originalQdrantMethods.count;
-  (QdrantClient.prototype as any).scroll = originalQdrantMethods.scroll;
   Bun.spawn = originalSpawn;
   TodoistTaskAdapter.prototype.createTask = originalTodoistCreateTask;
 });
@@ -115,8 +93,6 @@ beforeEach(() => {
   process.env.HOME = tempHome;
   process.env.USERPROFILE = tempHome;
 
-  qdrantCount = 0;
-  qdrantPages = [];
   spawnCalls = [];
   spawnExitCode = 0;
   spawnStdout = "<frictions></frictions>";
@@ -147,45 +123,7 @@ describe("MEM-FRICTION-1 friction function", () => {
     expect(opts?.concurrency).toBe(1);
   });
 
-  test("skips analysis when Qdrant has fewer than 100 points", async () => {
-    qdrantCount = 99;
-
-    const { result } = await executeCron();
-
-    expect(result).toMatchObject({
-      status: "skipped",
-      reason: "insufficient-qdrant-points",
-      totalPoints: 99,
-      threshold: 100,
-    });
-    expect(spawnCalls).toHaveLength(0);
-    expect(createdTasks).toHaveLength(0);
-  });
-
   test("parses friction patterns and creates Todoist tasks with friction labels", async () => {
-    qdrantCount = 120;
-    qdrantPages = [
-      {
-        points: [
-          {
-            payload: {
-              timestamp: new Date().toISOString(),
-              observation: "Reflector proposals are created but not reviewed quickly.",
-              observation_type: "segment_fact",
-              session_id: "s-1",
-            },
-          },
-          {
-            payload: {
-              timestamp: new Date().toISOString(),
-              observation: "Promotion waits for manual triage when task context is ambiguous.",
-              observation_type: "segment_fact",
-              session_id: "s-2",
-            },
-          },
-        ],
-      },
-    ];
     spawnStdout = [
       "<frictions>",
       "<pattern><title>Review queue ambiguity</title><summary>Review tasks lack enough context.</summary><suggestion>Add clearer task descriptions.</suggestion><evidence><item>Tasks wait for manual interpretation.</item></evidence></pattern>",
