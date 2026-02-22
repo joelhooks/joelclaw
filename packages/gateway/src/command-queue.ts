@@ -155,8 +155,33 @@ export async function drain(): Promise<void> {
         // await it. If prompt() returns early, we correctly wait.
         const idlePromise = idleWaiter?.();
 
-        onPromptSent?.();
-        await sessionRef.prompt(entry.prompt);
+        // Retry loop: pi SDK throws "Agent is already processing" if
+        // isStreaming hasn't cleared yet after turn_end. Small delay
+        // between retries gives the session time to settle.
+        const MAX_PROMPT_RETRIES = 3;
+        const RETRY_DELAY_MS = 2000;
+        let promptSent = false;
+        for (let attempt = 0; attempt < MAX_PROMPT_RETRIES; attempt++) {
+          try {
+            onPromptSent?.();
+            await sessionRef.prompt(entry.prompt);
+            promptSent = true;
+            break;
+          } catch (retryError: any) {
+            const isStreamingRace = typeof retryError?.message === "string"
+              && retryError.message.includes("already processing");
+            if (!isStreamingRace || attempt >= MAX_PROMPT_RETRIES - 1) {
+              throw retryError; // not a race, or exhausted retries
+            }
+            console.warn("command-queue: session still streaming, retrying", {
+              attempt: attempt + 1,
+              source: entry.source,
+              delayMs: RETRY_DELAY_MS,
+            });
+            await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+          }
+        }
+        if (!promptSent) throw new Error("prompt retries exhausted");
 
         if (idlePromise) {
           await idlePromise;

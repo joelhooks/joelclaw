@@ -68,14 +68,16 @@ const startupGatewayConfig = await (async () => {
 })();
 
 function resolveModel(modelIdOverride: string | undefined) {
-  const provider = process.env.PI_MODEL_PROVIDER;
   const modelId = modelIdOverride ?? process.env.PI_MODEL ?? process.env.PI_MODEL_ID;
+  if (!modelId) return undefined;
 
-  if (!provider || !modelId) return undefined;
+  // Use the model's actual provider (supports cross-provider fallback)
+  const resolvedProvider = providerForModel(modelId) || process.env.PI_MODEL_PROVIDER;
+  if (!resolvedProvider) return undefined;
 
-  const model = getModel(provider as any, modelId as any);
+  const model = getModel(resolvedProvider as any, modelId as any);
   if (!model) {
-    console.warn("[gateway] requested model not found; using SDK default", { provider, modelId });
+    console.warn("[gateway] requested model not found; using SDK default", { provider: resolvedProvider, modelId });
     return undefined;
   }
 
