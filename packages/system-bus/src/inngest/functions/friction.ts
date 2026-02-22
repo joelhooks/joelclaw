@@ -151,8 +151,6 @@ async function fetchRecentObservations(sinceIso: string): Promise<ObservationRec
       filter_by: `timestamp:>=${sinceUnix}`,
       per_page: PAGE_SIZE,
       page,
-      facet_by: "observation_type",
-      max_facet_values: 50,
     });
 
     const hits = Array.isArray(response.hits) ? response.hits : [];

@@ -230,12 +230,12 @@ describe("AC-5: Emits agent/loop.tests.written after committing tests", () => {
     expect(source).toContain("testFiles");
   });
 
-  test("inngest.send is used to emit the event", async () => {
+  test("step.sendEvent is used to emit the event", async () => {
     const source = await Bun.file(
       new URL("./test-writer.ts", import.meta.url).pathname
     ).text();
 
-    expect(source).toContain("inngest.send");
+    expect(source).toContain("step.sendEvent");
   });
 });
 

@@ -26,6 +26,16 @@ const originalTodoistMethods = {
   listTasks: TodoistTaskAdapter.prototype.listTasks,
   completeTask: TodoistTaskAdapter.prototype.completeTask,
 };
+const originalSpawn = Bun.spawn;
+
+function textStream(text: string): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(text));
+      controller.close();
+    },
+  });
+}
 
 let redisState: RedisMockState = {
   hashes: new Map(),
@@ -190,6 +200,19 @@ beforeAll(() => {
   (TodoistTaskAdapter.prototype as any).completeTask = async function (id: string) {
     completedTodoistTaskIds.push(String(id));
   };
+
+  Bun.spawn = ((args: string[]) => {
+    if (args[0] === "pi") {
+      const output = `- (promoted) ${args.includes("--system-prompt") ? "formatted" : "formatted"}`;
+      return {
+        stdout: textStream(`${output}\n`),
+        stderr: textStream(""),
+        exited: Promise.resolve(0),
+      } as unknown as ReturnType<typeof Bun.spawn>;
+    }
+
+    return originalSpawn(args) as unknown as ReturnType<typeof Bun.spawn>;
+  }) as typeof Bun.spawn;
 });
 
 afterAll(() => {
@@ -201,6 +224,7 @@ afterAll(() => {
   Redis.prototype.rpush = originalRedisMethods.rpush;
   TodoistTaskAdapter.prototype.listTasks = originalTodoistMethods.listTasks;
   TodoistTaskAdapter.prototype.completeTask = originalTodoistMethods.completeTask;
+  Bun.spawn = originalSpawn;
 });
 
 beforeEach(() => {

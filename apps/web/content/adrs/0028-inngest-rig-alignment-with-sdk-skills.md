@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: implemented
 date: 2026-02-16
 ---
 
@@ -139,10 +139,10 @@ The skills confirmed several patterns are correct:
 
 ## Verification
 
-- [ ] `grep -r "inngest.send" src/inngest/functions/ --include="*.ts" | grep -v test` returns 0 matches
-- [ ] `grep -r "NonRetriableError" src/inngest/functions/ --include="*.ts"` returns matches in observe, transcript-process, plan, video-download
-- [ ] `grep -r "cancelOn" src/inngest/functions/agent-loop/ --include="*.ts"` returns matches in all 7 loop functions
-- [ ] `systemLogger` function body contains `step.run`
-- [ ] `pipeline/video.ingested` removed from Events type and systemLogger triggers
-- [ ] `bunx tsc --noEmit` passes
-- [ ] `bun test` passes
+- [x] `grep -r "inngest.send" src/inngest/functions/ --include="*.ts" | grep -v test` returns 0 matches
+- [x] `grep -r "NonRetriableError" src/inngest/functions/ --include="*.ts"` returns matches in observe, transcript-process, plan, video-download
+- [x] `grep -r "cancelOn" src/inngest/functions/agent-loop/ --include="*.ts"` returns matches in all 7 loop functions
+- [x] `systemLogger` function body contains `step.run`
+- [x] `pipeline/video.ingested` removed from Events type and systemLogger triggers
+- [x] `bunx tsc --noEmit` passes
+- [ ] `bun test` passes (full suite currently has unrelated pre-existing failures; ADR-critical tests pass as of last targeted run)

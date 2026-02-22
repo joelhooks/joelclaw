@@ -534,7 +534,7 @@ export const o11yTriage = inngest.createFunction(
         return { queued: false, count: 0 };
       }
 
-      await inngest.send({
+      await step.sendEvent("emit-pattern-observations", {
         name: "session/observation.noted",
         data: {
           observations: proposed.map((item) => ({
@@ -625,7 +625,7 @@ export const o11yTriage = inngest.createFunction(
         return { handled: 0, queuedObservation: false };
       }
 
-      await inngest.send({
+      await step.sendEvent("emit-tier2-observations", {
         name: "session/observation.noted",
         data: {
           observations: tier2Events.map((event) => {
@@ -733,7 +733,7 @@ export const o11yTriage = inngest.createFunction(
           );
 
           try {
-            await inngest.send({
+            await step.sendEvent(`dispatch-codex-${eventDedupKey}`, {
               name: "system/agent.requested",
               data: {
                 requestId: codexRequestId,

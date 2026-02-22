@@ -62,7 +62,7 @@ describe("MEM-BRIDGE-1 todoist memory review bridge", () => {
       sendEventCallCount: sendEventCalls.length,
     }).toMatchObject({
       status: "noop",
-      reason: "missing-memory-review-label",
+      reason: "not-memory-review",
       sendEventCallCount: 0,
     });
   });

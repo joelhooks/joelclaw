@@ -322,6 +322,8 @@ export const proposalTriage = inngest.createFunction(
           await taskAdapter.createTask({
             content: `Memory: ${proposal.section} — ${summary}`,
             description: [
+              `Reason: ${triaged.reason}`,
+              "Decision: Complete = approve. Add @rejected label, then complete = reject.",
               `Proposal: ${proposalId}`,
               `Section: ${proposal.section}`,
               `Change: ${proposal.change}`,

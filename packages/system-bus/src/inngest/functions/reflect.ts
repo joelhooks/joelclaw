@@ -590,6 +590,7 @@ export const reflect = inngest.createFunction(
       const rawPreview = validated.raw.slice(0, rawPreviewLimit);
 
       const result = {
+        raw: validated.raw,
         rawPreview,
         rawLength: validated.raw.length,
         rawPreviewTruncated: validated.raw.length > rawPreviewLimit,

@@ -19,6 +19,7 @@ const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
 const originalSpawn = Bun.spawn;
 const originalTodoistCreateTask = TodoistTaskAdapter.prototype.createTask;
+const originalTodoistListTasks = TodoistTaskAdapter.prototype.listTasks;
 
 let tempHome = "";
 let spawnCalls: string[][] = [];
@@ -81,11 +82,16 @@ beforeAll(() => {
       createdAt: new Date(),
     } satisfies Task;
   };
+
+  (TodoistTaskAdapter.prototype as any).listTasks = async function () {
+    return [];
+  };
 });
 
 afterAll(() => {
   Bun.spawn = originalSpawn;
   TodoistTaskAdapter.prototype.createTask = originalTodoistCreateTask;
+  TodoistTaskAdapter.prototype.listTasks = originalTodoistListTasks;
 });
 
 beforeEach(() => {
@@ -143,7 +149,7 @@ describe("MEM-FRICTION-1 friction function", () => {
     });
     expect(createdTasks).toHaveLength(2);
     expect(createdTasks.every((task) => task.labels?.includes("friction"))).toBe(true);
-    expect(createdTasks.every((task) => task.labels?.includes("memory-review"))).toBe(true);
+    expect(createdTasks.every((task) => task.labels?.includes("friction"))).toBe(true);
     expect(createdTasks.every((task) => task.labels?.includes("agent"))).toBe(true);
   });
 

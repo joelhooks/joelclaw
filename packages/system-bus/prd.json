@@ -1,6 +1,6 @@
 {
   "title": "Loop Resilience: Fix Silent Stalls with Inngest Durability Patterns",
-  "description": "The agent loop infrastructure has silent stalls from three root causes: (1) judge→plan event chain breaks when worker restarts mid-loop, (2) complete.ts worker clone sync fails on dirty git state, (3) no onFailure handlers, no flow control. This PRD applies Inngest SDK patterns (onFailure, NonRetriableError, debounce, throttle, singleton, idempotency) to make loops self-healing.",
+  "description": "[historical] Legacy loop resilience PRD from pre-ADR-0089 era. Kept for audit context; clone-sync assumptions are superseded by single-source worker deployment.",
   "context": "From debugging: `igs loop diagnose` found CHAIN_BROKEN and ORPHANED_CLAIM as the two most common failures. Inngest skills (inngest-durable-functions, inngest-flow-control) provide the exact patterns needed. Key insight: onFailure handlers can emit recovery events, turning crashes into retries instead of silent stalls.",
   "stories": [
     {
@@ -17,10 +17,10 @@
     },
     {
       "id": "SYNC-1",
-      "title": "Make complete.ts worker sync handle dirty state",
-      "description": "In complete.ts sync-worker-clone step, replace `git pull --ff-only` with a resilient sequence: try `git pull --ff-only` first (fast path), if it fails then `git fetch origin && git reset --hard origin/main && git clean -fd` (nuclear path). The worker clone is never edited directly so hard reset is always safe. Keep `bun install --silent` after either path.",
+      "title": "[historical] Legacy complete.ts worker-sync dirty-state handling",
+      "description": "[historical] Before ADR-0089, complete.ts included a worker-sync step. This story documented hardening via fast-path pull with reset fallback; retained for audit only.",
       "acceptance_criteria": [
-        "sync-worker-clone tries git pull --ff-only first",
+        "[historical] legacy worker-sync used git pull --ff-only as fast path",
         "On pull failure, falls back to git fetch + reset --hard origin/main + clean -fd",
         "bun install --silent runs after sync regardless of path taken",
         "TypeScript compiles (bunx tsc --noEmit)"

@@ -216,7 +216,7 @@ export const agentLoopTestWriter = inngest.createFunction(
         );
         return { blocked: true as const, reason: guard.reason };
       }
-      await inngest.send({
+      await step.sendEvent("emit-tests-written", {
         name: "agent/loop.tests.written",
         data: {
           loopId,

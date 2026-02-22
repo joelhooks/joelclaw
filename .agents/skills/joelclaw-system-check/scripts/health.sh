@@ -100,7 +100,7 @@ else
 fi
 
 # ── tests ────────────────────────────────────────────────
-SBUS_DIR=~/Code/system-bus-worker/packages/system-bus
+SBUS_DIR=~/Code/joelhooks/joelclaw/packages/system-bus
 TEST_OUTPUT=$(cd "$SBUS_DIR" && bun test 2>&1)
 TEST_PASS=$(echo "$TEST_OUTPUT" | grep -oE '[0-9]+ pass' | head -1 | grep -oE '[0-9]+' || echo 0)
 TEST_FAIL=$(echo "$TEST_OUTPUT" | grep " fail" | head -1 | grep -oE '^[[:space:]]*[0-9]+' | tr -d ' ' || echo 0)
@@ -123,15 +123,20 @@ else
   check "tsc" 3 "${TSC_ERRORS} type errors"
 fi
 
-# ── repo sync ────────────────────────────────────────────
-WORKER_SHA=$(cd ~/Code/system-bus-worker && git rev-parse --short HEAD 2>/dev/null)
-MONO_SHA=$(cd ~/Code/joelhooks/joelclaw && git rev-parse --short HEAD 2>/dev/null)
-if [[ "$WORKER_SHA" == "$MONO_SHA" ]]; then
-  check "repo sync" 10 "worker=monorepo ($WORKER_SHA)"
+# ── worker source (ADR-0089 single-source) ───────────────
+EXPECTED_PROGRAM="$HOME/Code/joelhooks/joelclaw/packages/system-bus/start.sh"
+EXPECTED_CWD="$HOME/Code/joelhooks/joelclaw/packages/system-bus"
+LAUNCHD=$(launchctl print gui/$(id -u)/com.joel.system-bus-worker 2>/dev/null || echo "")
+WORKER_PROGRAM=$(echo "$LAUNCHD" | awk -F' = ' '/^[[:space:]]*program =/{print $2; exit}')
+WORKER_CWD=$(echo "$LAUNCHD" | awk -F' = ' '/^[[:space:]]*working directory =/{print $2; exit}')
+RUNTIME_LEGACY=$(curl -sf http://localhost:3111/ 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(str(d.get('runtime',{}).get('legacyCloneDetected', False)).lower())" 2>/dev/null || echo "unknown")
+
+if [[ "$WORKER_PROGRAM" == "$EXPECTED_PROGRAM" && "$WORKER_CWD" == "$EXPECTED_CWD" && "$RUNTIME_LEGACY" != "true" ]]; then
+  check "worker source" 10 "single-source compliant"
+elif [[ -n "$WORKER_PROGRAM" || -n "$WORKER_CWD" ]]; then
+  check "worker source" 4 "drift: program='${WORKER_PROGRAM:-?}', cwd='${WORKER_CWD:-?}', runtimeLegacy=${RUNTIME_LEGACY}"
 else
-  BEHIND=$(cd ~/Code/system-bus-worker && git log --oneline HEAD..origin/main 2>/dev/null | wc -l | tr -d ' ')
-  AHEAD=$(cd ~/Code/system-bus-worker && git log --oneline origin/main..HEAD 2>/dev/null | wc -l | tr -d ' ')
-  check "repo sync" 3 "DRIFT: worker=$WORKER_SHA mono=$MONO_SHA (${AHEAD} ahead, ${BEHIND} behind)"
+  check "worker source" 1 "launchd binding missing for com.joel.system-bus-worker"
 fi
 
 # ── memory pipeline ──────────────────────────────────────

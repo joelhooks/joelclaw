@@ -150,6 +150,20 @@ Phase 1 kickoff started.
   - `cd packages/cli && bun src/cli.ts inngest invoke system-bus-host-check/o11y-triage --data '{"reason":"cli invoke event route"}' --wait-ms 90000`
   - `cd packages/cli && bun src/cli.ts inngest invoke system-bus-host-check/o11y-triage --mode invoke --data '{"reason":"invoke mode regression check"}' --wait-ms 90000`
   - `joelclaw logs server --lines 200 --grep 'Unable to reach SDK URL'` (0 matches)
+- Policy validator consolidation implemented (single shared workflow):
+  - `.github/workflows/agent-contracts.yml` now runs:
+    - CLI contract baseline + envelope/capabilities/search contract tests + CLI typecheck
+    - LLM observability guard (`validate:llm-observability-guards`)
+    - legacy worker-clone reference guard (`validate:no-legacy-worker-clone`)
+  - removed dedicated workflows:
+    - `.github/workflows/llm-observability-guards.yml`
+    - `.github/workflows/legacy-worker-clone-guard.yml`
+- Policy validator consolidation validation passed:
+  - `bun run validate:cli-contracts`
+  - `bun run validate:llm-observability-guards`
+  - `bun run validate:no-legacy-worker-clone`
+- Shared policy contract documentation added:
+  - `docs/agent-contracts/README.md` now defines the canonical shared workflow contract and expected validator set to prevent scope drift.
 
 ## Design Contract
 

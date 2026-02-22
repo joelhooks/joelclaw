@@ -1,25 +1,37 @@
-name: Agent Contracts
+name: Policy Validators
 
 on:
   pull_request:
     paths:
-      - "packages/cli/**"
+      - "packages/**"
+      - "apps/**"
+      - "docs/**"
       - "scripts/validate-cli-contracts.ts"
+      - "scripts/validate-llm-observability-guards.ts"
+      - "scripts/validate-no-legacy-worker-clone.ts"
       - "docs/agent-contracts/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
       - ".github/workflows/agent-contracts.yml"
   push:
     branches:
       - main
     paths:
-      - "packages/cli/**"
+      - "packages/**"
+      - "apps/**"
+      - "docs/**"
       - "scripts/validate-cli-contracts.ts"
+      - "scripts/validate-llm-observability-guards.ts"
+      - "scripts/validate-no-legacy-worker-clone.ts"
       - "docs/agent-contracts/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
       - ".github/workflows/agent-contracts.yml"
   workflow_dispatch:
 
 jobs:
-  contracts:
-    name: CLI Envelope + Discoverability Contracts
+  policy-validators:
+    name: Shared policy validators
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -47,7 +59,13 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Validate CLI contract baseline
-        run: bun scripts/validate-cli-contracts.ts
+        run: bun run validate:cli-contracts
+
+      - name: Validate LLM observability guards
+        run: bun run validate:llm-observability-guards
+
+      - name: Validate no legacy worker-clone references
+        run: bun run validate:no-legacy-worker-clone
 
       - name: Envelope contract tests
         run: bun test packages/cli/src/commands/contract-envelope.test.ts

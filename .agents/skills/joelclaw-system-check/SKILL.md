@@ -23,7 +23,7 @@ Run `scripts/health.sh` for a full system health report with 1-10 score.
 | qdrant | memory_observations collection | points + real vectors | points, zero vectors | no points |
 | tests | `bun test` in system-bus | 0 fail | — | failures |
 | tsc | `tsc --noEmit` | clean | — | type errors |
-| repo sync | worker vs monorepo HEAD | same commit | — | drifted |
+| worker source | launchd + runtime path | monorepo binding + single-source runtime | partially configured | legacy/drifted |
 | memory pipeline | observations in Redis | 50+ obs, 7+ days | collecting (<50) | none |
 | pi-tools | extension deps installed | all 3 deps | — | missing |
 | git config | user.name + email set | set | — | missing |
@@ -40,7 +40,7 @@ Run `scripts/health.sh` for a full system health report with 1-10 score.
 
 ## Fixing Common Issues
 
-**Repo drift**: `cd ~/Code/system-bus-worker && git fetch origin && git reset --hard origin/main`
+**Worker source drift**: `joelclaw inngest source --repair && joelclaw inngest restart-worker --register`
 
 **pi-tools broken**: `cd ~/.pi/agent/git/github.com/joelhooks/pi-tools && bun add @sinclair/typebox @mariozechner/pi-coding-agent @mariozechner/pi-tui @mariozechner/pi-ai`
 

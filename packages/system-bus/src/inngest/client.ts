@@ -1025,16 +1025,6 @@ export type Events = {
   };
 
   // --- Legacy ---
-  "pipeline/video.ingested": {
-    data: {
-      slug: string;
-      title: string;
-      channel: string;
-      duration: string;
-      vaultPath: string;
-      nasPath: string;
-    };
-  };
 };
 
 export const inngest = new Inngest({

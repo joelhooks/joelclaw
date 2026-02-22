@@ -11,7 +11,6 @@ export const systemLogger = inngest.createFunction(
   { id: "system-logger" },
   [
     { event: "pipeline/video.downloaded" },
-    { event: "pipeline/video.ingested" },
     { event: "pipeline/transcript.processed" },
     { event: "content/summarized" },
     { event: "pipeline/book.downloaded" },
@@ -38,10 +37,12 @@ export const systemLogger = inngest.createFunction(
       ...(reason ? { reason } : {}),
     });
 
-    await Bun.write(
-      Bun.file(logPath),
-      (await Bun.file(logPath).text()) + entry + "\n"
-    );
+    await step.run("append-log", async () => {
+      await Bun.write(
+        Bun.file(logPath),
+        (await Bun.file(logPath).text()) + entry + "\n"
+      );
+    });
 
     if (event.name !== "system/log.written") {
       await step.sendEvent("emit-system-log-written", {
