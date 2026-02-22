@@ -104,6 +104,30 @@ export type Events = {
     };
   };
 
+  // --- Manifest archive pipeline ---
+  "manifest/archive.requested": {
+    data: {
+      reason?: string;
+      dryRun?: boolean;
+    };
+  };
+  "manifest/archive.completed": {
+    data: {
+      dryRun: boolean;
+      scanned: number;
+      wouldCopy: number;
+      wouldSkip: number;
+      failed: number;
+      totalBytes: number;
+      plan: Array<{
+        id: string;
+        src: string;
+        dest: string;
+        bytes: number;
+      }>;
+    };
+  };
+
   // --- Agent Loop pipeline (ADR-0005, ADR-0019) ---
 
   /** CLI started a loop → triggers planner */

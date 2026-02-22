@@ -81,6 +81,7 @@ export {
   typesenseFullSync,
 } from "./typesense-sync";
 export { nasSoakSample, nasSoakReview } from "./nas-soak";
+export { manifestArchive } from "./manifest-archive";
 export { hostFunctionDefinitions, hostFunctionIds } from "./index.host";
 export { clusterFunctionDefinitions, clusterFunctionIds } from "./index.cluster";
 
