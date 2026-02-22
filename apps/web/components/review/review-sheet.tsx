@@ -1,16 +1,15 @@
 "use client";
 
 /**
- * ReviewSheet — full-page overlay showing all draft comments for an ADR.
+ * ReviewSheet — full-page overlay showing all draft comments.
  *
- * ADR-0106. This is the "PR review summary" — see everything before submitting.
+ * ADR-0106. Generic — works for any content type.
  * Comments grouped by paragraph, with inline edit/delete.
  * Submit button fires the mutation then POST to the API route.
  */
 import { useState, useCallback } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
 import {
   Drawer,
   DrawerContent,
@@ -21,24 +20,32 @@ import {
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Pencil, Send, Loader2, X, CheckCircle2 } from "lucide-react";
+import { Trash2, Pencil, Send, Loader2, CheckCircle2 } from "lucide-react";
 
 interface ReviewSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  adrSlug: string;
+  contentId: string;
+  contentType: string;
+  contentSlug: string;
 }
 
-export function ReviewSheet({ open, onOpenChange, adrSlug }: ReviewSheetProps) {
+export function ReviewSheet({
+  open,
+  onOpenChange,
+  contentId,
+  contentType,
+  contentSlug,
+}: ReviewSheetProps) {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [editingId, setEditingId] = useState<Id<"adrComments"> | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
 
-  const allComments = useQuery(api.adrComments.getByAdr, { adrSlug });
-  const submitReview = useMutation(api.adrComments.submitReview);
-  const updateComment = useMutation(api.adrComments.updateComment);
-  const deleteComment = useMutation(api.adrComments.deleteComment);
+  const allComments = useQuery(api.reviewComments.getByContent, { contentId });
+  const submitReview = useMutation(api.reviewComments.submitReview);
+  const updateComment = useMutation(api.reviewComments.updateComment);
+  const deleteComment = useMutation(api.reviewComments.deleteComment);
 
   const drafts = allComments?.filter((c) => c.status === "draft") ?? [];
 
@@ -57,14 +64,12 @@ export function ReviewSheet({ open, onOpenChange, adrSlug }: ReviewSheetProps) {
     if (drafts.length === 0) return;
     setSubmitting(true);
     try {
-      // Mark all as submitted in Convex
-      await submitReview({ adrSlug });
+      await submitReview({ contentId });
 
-      // Fire the Inngest event via API route
-      const res = await fetch("/api/adrs/submit-review", {
+      const res = await fetch("/api/review/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ adrSlug }),
+        body: JSON.stringify({ contentSlug, contentType }),
       });
 
       if (!res.ok) {
@@ -81,11 +86,11 @@ export function ReviewSheet({ open, onOpenChange, adrSlug }: ReviewSheetProps) {
     } finally {
       setSubmitting(false);
     }
-  }, [drafts.length, adrSlug, submitReview, onOpenChange]);
+  }, [drafts.length, contentId, contentSlug, contentType, submitReview, onOpenChange]);
 
   const handleSaveEdit = useCallback(async () => {
     if (!editingId || !editContent.trim()) return;
-    await updateComment({ id: editingId, content: editContent.trim() });
+    await updateComment({ resourceId: editingId, content: editContent.trim() });
     setEditingId(null);
     setEditContent("");
   }, [editingId, editContent, updateComment]);
@@ -101,7 +106,7 @@ export function ReviewSheet({ open, onOpenChange, adrSlug }: ReviewSheetProps) {
                   Review
                 </DrawerTitle>
                 <p className="mt-0.5 text-xs text-neutral-600 font-mono">
-                  {adrSlug}
+                  {contentType}:{contentSlug}
                 </p>
               </div>
               <Badge
@@ -127,13 +132,12 @@ export function ReviewSheet({ open, onOpenChange, adrSlug }: ReviewSheetProps) {
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <p className="text-sm text-neutral-500 font-mono">No draft comments</p>
                 <p className="text-xs text-neutral-600 mt-1">
-                  Tap paragraphs in the ADR to add comments
+                  Tap paragraphs to add comments
                 </p>
               </div>
             ) : (
               Object.entries(grouped).map(([paragraphId, comments]) => (
                 <div key={paragraphId} className="space-y-1.5">
-                  {/* Paragraph anchor */}
                   <button
                     onClick={() => {
                       onOpenChange(false);
@@ -149,13 +153,12 @@ export function ReviewSheet({ open, onOpenChange, adrSlug }: ReviewSheetProps) {
                     #{paragraphId}
                   </button>
 
-                  {/* Comments */}
                   {comments.map((comment) => (
                     <div
-                      key={comment._id}
+                      key={comment.resourceId}
                       className="group relative rounded-md border border-neutral-800/40 bg-neutral-900/30 px-3 py-2 ml-2.5 border-l-2 border-l-claw/20"
                     >
-                      {editingId === comment._id ? (
+                      {editingId === comment.resourceId ? (
                         <div className="space-y-2">
                           <Textarea
                             value={editContent}
@@ -195,7 +198,7 @@ export function ReviewSheet({ open, onOpenChange, adrSlug }: ReviewSheetProps) {
                           <div className="absolute top-1.5 right-1.5 flex gap-0.5 opacity-0 group-hover:opacity-100 sm:transition-opacity">
                             <button
                               onClick={() => {
-                                setEditingId(comment._id);
+                                setEditingId(comment.resourceId);
                                 setEditContent(comment.content);
                               }}
                               className="p-1 rounded text-neutral-600 hover:text-neutral-300 hover:bg-neutral-800 transition-colors"
@@ -203,7 +206,9 @@ export function ReviewSheet({ open, onOpenChange, adrSlug }: ReviewSheetProps) {
                               <Pencil className="w-3 h-3" />
                             </button>
                             <button
-                              onClick={() => deleteComment({ id: comment._id })}
+                              onClick={() =>
+                                deleteComment({ resourceId: comment.resourceId })
+                              }
                               className="p-1 rounded text-neutral-600 hover:text-red-400 hover:bg-neutral-800 transition-colors"
                             >
                               <Trash2 className="w-3 h-3" />
@@ -218,7 +223,6 @@ export function ReviewSheet({ open, onOpenChange, adrSlug }: ReviewSheetProps) {
             )}
           </div>
 
-          {/* Submit */}
           {!submitted && drafts.length > 0 && (
             <DrawerFooter className="flex-shrink-0 border-t border-neutral-800/50 pt-3">
               <Button

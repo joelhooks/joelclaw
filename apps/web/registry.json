@@ -4,31 +4,31 @@
   "homepage": "https://joelclaw.com",
   "items": [
     {
-      "name": "adr-review",
+      "name": "content-review",
       "type": "registry:block",
-      "title": "ADR Review System",
-      "description": "Paragraph-level inline comment system for reviewing Architecture Decision Records. Mobile-first bottom drawer, threaded comments, batch submit to agent. Requires Convex for storage and better-auth for authentication.",
+      "title": "Content Review System",
+      "description": "Paragraph-level inline comment system for reviewing any content. Mobile-first, inline under paragraph, batch submit to agent pipeline. Uses contentResources for storage. Requires Convex and better-auth.",
       "registryDependencies": ["drawer", "button", "textarea", "badge"],
       "dependencies": ["convex", "lucide-react"],
       "files": [
         {
-          "path": "registry/new-york/adr-review/adr-review-gate.tsx",
+          "path": "registry/new-york/review/review-gate.tsx",
           "type": "registry:component"
         },
         {
-          "path": "registry/new-york/adr-review/adr-review-wrapper.tsx",
+          "path": "registry/new-york/review/review-wrapper.tsx",
           "type": "registry:component"
         },
         {
-          "path": "registry/new-york/adr-review/comment-drawer.tsx",
+          "path": "registry/new-york/review/inline-comment.tsx",
           "type": "registry:component"
         },
         {
-          "path": "registry/new-york/adr-review/review-sheet.tsx",
+          "path": "registry/new-york/review/review-sheet.tsx",
           "type": "registry:component"
         },
         {
-          "path": "registry/new-york/adr-review/review-fab.tsx",
+          "path": "registry/new-york/review/review-fab.tsx",
           "type": "registry:component"
         }
       ]

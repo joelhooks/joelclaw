@@ -6,7 +6,7 @@ import { mdxComponents } from "@/lib/mdx";
 import { remarkPlugins, rehypePlugins } from "@/lib/mdx-plugins";
 import { remarkAdrLinks } from "@/lib/remark-adr-links";
 import { SITE_URL, SITE_NAME } from "@/lib/constants";
-import { AdrReviewGate } from "@/components/adr-review/adr-review-gate";
+import { ReviewGate } from "@/components/review/review-gate";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -81,7 +81,7 @@ export default async function AdrPage({ params }: Props) {
           </p>
         )}
       </header>
-      <AdrReviewGate adrSlug={slug}>
+      <ReviewGate contentId={`adr:${slug}`} contentType="adr" contentSlug={slug}>
         <div className="prose-joelclaw">
           <MDXRemote
             source={content.replace(/^#\s+(?:ADR-\d+:\s*)?.*$/m, "").trim()}
@@ -89,7 +89,7 @@ export default async function AdrPage({ params }: Props) {
             options={{ mdxOptions: { remarkPlugins: [...remarkPlugins, remarkAdrLinks], rehypePlugins, format: "md" } }}
           />
         </div>
-      </AdrReviewGate>
+      </ReviewGate>
     </article>
   );
 }

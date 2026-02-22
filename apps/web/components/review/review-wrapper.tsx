@@ -1,29 +1,34 @@
 "use client";
 
 /**
- * AdrReviewWrapper — wraps ADR content to enable paragraph-level commenting.
+ * ReviewWrapper — wraps any content to enable paragraph-level commenting.
  *
- * ADR-0106. Handles:
- * - Click detection on paragraphs with [data-paragraph-id]
- * - Inline comment editor below the selected paragraph (via portal)
- * - Comment count indicators on annotated paragraphs
- * - ReviewFab for the "Submit Review" flow
+ * ADR-0106. Generic — works for ADRs, posts, discoveries, any MDX content.
+ * Handles click detection on [data-paragraph-id] elements, inline comment
+ * editor, comment count indicators, and the submit review FAB.
  */
 import { useState, useCallback, useEffect } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { InlineComment } from "@/components/adr-review/inline-comment";
-import { ReviewFab } from "@/components/adr-review/review-fab";
+import { InlineComment } from "@/components/review/inline-comment";
+import { ReviewFab } from "@/components/review/review-fab";
 
-interface AdrReviewWrapperProps {
-  adrSlug: string;
+interface ReviewWrapperProps {
+  contentId: string; // resourceId, e.g. "adr:0106-slug"
+  contentType: string; // "adr" | "post" | "discovery"
+  contentSlug: string; // slug for Inngest event
   children: React.ReactNode;
 }
 
-export function AdrReviewWrapper({ adrSlug, children }: AdrReviewWrapperProps) {
+export function ReviewWrapper({
+  contentId,
+  contentType,
+  contentSlug,
+  children,
+}: ReviewWrapperProps) {
   const [activeParagraph, setActiveParagraph] = useState<string | null>(null);
 
-  const allComments = useQuery(api.adrComments.getByAdr, { adrSlug });
+  const allComments = useQuery(api.reviewComments.getByContent, { contentId });
   const draftsByParagraph = new Map<string, number>();
 
   if (allComments) {
@@ -41,7 +46,6 @@ export function AdrReviewWrapper({ adrSlug, children }: AdrReviewWrapperProps) {
   useEffect(() => {
     if (!allComments) return;
 
-    // Clean up previous indicators
     document
       .querySelectorAll("[data-comment-indicator]")
       .forEach((el) => el.remove());
@@ -76,7 +80,6 @@ export function AdrReviewWrapper({ adrSlug, children }: AdrReviewWrapperProps) {
     (e: React.MouseEvent) => {
       const target = e.target as HTMLElement;
 
-      // Don't intercept link clicks or clicks inside the inline comment
       if (target.closest("a")) return;
       if (target.closest("[data-inline-comment]")) return;
 
@@ -88,7 +91,6 @@ export function AdrReviewWrapper({ adrSlug, children }: AdrReviewWrapperProps) {
       const paragraphId = commentable.getAttribute("data-paragraph-id");
       if (!paragraphId) return;
 
-      // Toggle — click same paragraph to close
       if (activeParagraph === paragraphId) {
         setActiveParagraph(null);
       } else {
@@ -109,13 +111,17 @@ export function AdrReviewWrapper({ adrSlug, children }: AdrReviewWrapperProps) {
 
       {activeParagraph && (
         <InlineComment
-          adrSlug={adrSlug}
+          contentId={contentId}
           paragraphId={activeParagraph}
           onClose={() => setActiveParagraph(null)}
         />
       )}
 
-      <ReviewFab adrSlug={adrSlug} />
+      <ReviewFab
+        contentId={contentId}
+        contentType={contentType}
+        contentSlug={contentSlug}
+      />
     </>
   );
 }

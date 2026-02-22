@@ -8,6 +8,7 @@ export { systemLogger } from "./system-logger";
 export { observeSessionFunction } from "./observe";
 export { reflect } from "./reflect";
 export { contentSync } from "./content-sync";
+export { contentReviewSubmitted } from "./content-review";
 export { discoveryCapture } from "./discovery-capture";
 export { promote } from "./promote";
 export { embedText } from "./embed";

@@ -86,6 +86,26 @@ kubectl patch svc bluesky-pds -n joelclaw --type='json' \
   - updates k8s deployment image + waits for rollout + probes worker health
 - If deploy job is queued forever, check that a `self-hosted` runner is online on the Mac Mini.
 
+### GHCR push 403 Forbidden
+
+**Cause:** `GITHUB_TOKEN` (default Actions token) does not have `packages:write` scope for this repo. A dedicated PAT is required.
+
+**Fix already applied:** Workflow uses `secrets.GHCR_PAT` (not `secrets.GITHUB_TOKEN`) for the GHCR login step. The PAT is stored in:
+- GitHub repo secrets as `GHCR_PAT` (set via GitHub UI)
+- agent-secrets as `ghcr_pat` (`secrets lease ghcr_pat`)
+
+**If this breaks again:** PAT may have expired. Regenerate at github.com → Settings → Developer settings → PATs, update both stores.
+
+**Local fallback (bypass GHA entirely):**
+```bash
+DOCKER_CONFIG_DIR=$(mktemp -d)
+echo '{"credsStore":""}' > "$DOCKER_CONFIG_DIR/config.json"
+export DOCKER_CONFIG="$DOCKER_CONFIG_DIR"
+secrets lease ghcr_pat | docker login ghcr.io -u joelhooks --password-stdin
+~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh
+```
+Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh auth` is stale, use the Docker login above before running the script, or patch it to use `secrets lease ghcr_pat` directly.
+
 ## Danger Zones
 
 1. **Never kill processes on forwarded ports** — Lima SSH mux master handles ALL tunnels. Killing anything on 6379/8288/etc may kill mux → all ports die.

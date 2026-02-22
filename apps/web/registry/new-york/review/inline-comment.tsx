@@ -3,39 +3,38 @@
 /**
  * InlineComment — comment editor that renders directly below a paragraph.
  *
- * ADR-0106. Replaces the bottom drawer approach.
- * Mounts via portal into a container div inserted after the target paragraph.
+ * ADR-0106. Portal-based: mounts a container div after the target paragraph.
+ * Works on any content type (ADRs, posts, discoveries).
  */
 import { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Trash2, Send, Pencil, X } from "lucide-react";
 
 interface InlineCommentProps {
-  adrSlug: string;
+  contentId: string;
   paragraphId: string;
   onClose: () => void;
 }
 
 export function InlineComment({
-  adrSlug,
+  contentId,
   paragraphId,
   onClose,
 }: InlineCommentProps) {
   const [draft, setDraft] = useState("");
-  const [editingId, setEditingId] = useState<Id<"adrComments"> | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
   const [container, setContainer] = useState<HTMLElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const allComments = useQuery(api.adrComments.getByAdr, { adrSlug });
-  const addComment = useMutation(api.adrComments.addComment);
-  const updateComment = useMutation(api.adrComments.updateComment);
-  const deleteComment = useMutation(api.adrComments.deleteComment);
+  const allComments = useQuery(api.reviewComments.getByContent, { contentId });
+  const addComment = useMutation(api.reviewComments.addComment);
+  const updateComment = useMutation(api.reviewComments.updateComment);
+  const deleteComment = useMutation(api.reviewComments.deleteComment);
 
   const comments =
     allComments?.filter(
@@ -49,7 +48,6 @@ export function InlineComment({
     );
     if (!target) return;
 
-    // Highlight the paragraph
     target.classList.add(
       "ring-1",
       "ring-claw/30",
@@ -57,16 +55,13 @@ export function InlineComment({
       "rounded",
     );
 
-    // Scroll into view
     target.scrollIntoView({ behavior: "smooth", block: "center" });
 
-    // Create container
     const div = document.createElement("div");
     div.setAttribute("data-inline-comment", paragraphId);
     target.after(div);
     setContainer(div);
 
-    // Focus textarea after mount
     setTimeout(() => textareaRef.current?.focus(), 100);
 
     // Document-level Esc handler
@@ -87,19 +82,19 @@ export function InlineComment({
       );
       div.remove();
     };
-  }, [paragraphId]);
+  }, [paragraphId, onClose]);
 
   const handleSubmit = useCallback(async () => {
     const text = draft.trim();
     if (!text) return;
-    await addComment({ adrSlug, paragraphId, content: text });
+    await addComment({ contentId, paragraphId, content: text });
     setDraft("");
     textareaRef.current?.focus();
-  }, [draft, adrSlug, paragraphId, addComment]);
+  }, [draft, contentId, paragraphId, addComment]);
 
   const handleSaveEdit = useCallback(async () => {
     if (!editingId || !editContent.trim()) return;
-    await updateComment({ id: editingId, content: editContent.trim() });
+    await updateComment({ resourceId: editingId, content: editContent.trim() });
     setEditingId(null);
     setEditContent("");
   }, [editingId, editContent, updateComment]);
@@ -140,10 +135,10 @@ export function InlineComment({
         <div className="px-3 pt-2 space-y-1.5">
           {comments.map((comment) => (
             <div
-              key={comment._id}
+              key={comment.resourceId}
               className="group relative rounded border border-neutral-800/30 bg-neutral-950/40 px-2.5 py-1.5"
             >
-              {editingId === comment._id ? (
+              {editingId === comment.resourceId ? (
                 <div className="space-y-1.5">
                   <Textarea
                     value={editContent}
@@ -178,7 +173,7 @@ export function InlineComment({
                   <div className="absolute top-1 right-1 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
                       onClick={() => {
-                        setEditingId(comment._id);
+                        setEditingId(comment.resourceId);
                         setEditContent(comment.content);
                       }}
                       className="p-1 rounded text-neutral-600 hover:text-neutral-300 hover:bg-neutral-800 transition-colors"
@@ -186,7 +181,9 @@ export function InlineComment({
                       <Pencil className="w-3 h-3" />
                     </button>
                     <button
-                      onClick={() => deleteComment({ id: comment._id })}
+                      onClick={() =>
+                        deleteComment({ resourceId: comment.resourceId })
+                      }
                       className="p-1 rounded text-neutral-600 hover:text-red-400 hover:bg-neutral-800 transition-colors"
                     >
                       <Trash2 className="w-3 h-3" />

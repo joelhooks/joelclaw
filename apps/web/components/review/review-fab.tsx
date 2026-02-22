@@ -9,16 +9,18 @@
 import { useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { ReviewSheet } from "@/components/adr-review/review-sheet";
+import { ReviewSheet } from "@/components/review/review-sheet";
 import { MessageSquarePlus } from "lucide-react";
 
 interface ReviewFabProps {
-  adrSlug: string;
+  contentId: string;
+  contentType: string;
+  contentSlug: string;
 }
 
-export function ReviewFab({ adrSlug }: ReviewFabProps) {
+export function ReviewFab({ contentId, contentType, contentSlug }: ReviewFabProps) {
   const [open, setOpen] = useState(false);
-  const count = useQuery(api.adrComments.draftCount, { adrSlug });
+  const count = useQuery(api.reviewComments.draftCount, { contentId });
 
   if (!count || count === 0) return null;
 
@@ -33,7 +35,13 @@ export function ReviewFab({ adrSlug }: ReviewFabProps) {
         <span className="font-mono text-xs text-claw tabular-nums">{count}</span>
       </button>
 
-      <ReviewSheet open={open} onOpenChange={setOpen} adrSlug={adrSlug} />
+      <ReviewSheet
+        open={open}
+        onOpenChange={setOpen}
+        contentId={contentId}
+        contentType={contentType}
+        contentSlug={contentSlug}
+      />
     </>
   );
 }

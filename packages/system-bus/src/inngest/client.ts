@@ -556,6 +556,19 @@ export type Events = {
       requestedBy?: string;
     };
   };
+  "adr/review.submitted": {
+    data: {
+      adrSlug: string;
+      source: string;
+    };
+  };
+  "content/review.submitted": {
+    data: {
+      contentSlug: string;
+      contentType: "adr" | "post" | "discovery" | "video-note";
+      source: string;
+    };
+  };
   "system/heartbeat.wake": {
     data: Record<string, never>;
   };

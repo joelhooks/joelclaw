@@ -8,12 +8,12 @@
  * @module
  */
 
-import type * as adrComments from "../adrComments.js";
 import type * as auth from "../auth.js";
 import type * as contentResources from "../contentResources.js";
 import type * as http from "../http.js";
 import type * as memoryObservations from "../memoryObservations.js";
 import type * as notifications from "../notifications.js";
+import type * as reviewComments from "../reviewComments.js";
 import type * as systemLog from "../systemLog.js";
 import type * as systemStatus from "../systemStatus.js";
 import type * as vaultNotes from "../vaultNotes.js";
@@ -25,12 +25,12 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  adrComments: typeof adrComments;
   auth: typeof auth;
   contentResources: typeof contentResources;
   http: typeof http;
   memoryObservations: typeof memoryObservations;
   notifications: typeof notifications;
+  reviewComments: typeof reviewComments;
   systemLog: typeof systemLog;
   systemStatus: typeof systemStatus;
   vaultNotes: typeof vaultNotes;

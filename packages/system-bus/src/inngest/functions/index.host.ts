@@ -6,7 +6,7 @@ import { systemLogger } from "./system-logger";
 import { observeSessionFunction } from "./observe";
 import { reflect } from "./reflect";
 import { contentSync } from "./content-sync";
-import { adrReviewSubmitted } from "./adr-review";
+import { contentReviewSubmitted } from "./content-review";
 import { discoveryCapture } from "./discovery-capture";
 import { promote } from "./promote";
 import { embedText } from "./embed";
@@ -89,7 +89,7 @@ export const hostFunctionDefinitions = [
   observeSessionFunction,
   reflect,
   contentSync,
-  adrReviewSubmitted,
+  contentReviewSubmitted,
   discoveryCapture,
   promote,
   embedText,
