@@ -6,6 +6,12 @@ deciders: joel
 
 # ADR-0090: Autonomous O11y Triage Loop
 
+## Update (2026-02-22)
+
+- `content_sync.completed` now reports `success: true` when sync work completes but commit/push is intentionally skipped by the safety gate.
+- `content_sync.completed + changes_not_committed` is no longer treated as a tier-1 auto-fix path; it is now tier-2 signal only (no auto-commit mutation from triage).
+- `restartWorker` auto-fix gained a cooldown guard to prevent repeated `launchctl kickstart` loops from cascading into SDK callback instability.
+
 ## Context
 
 ADR-0087 shipped the observability pipeline — structured events flow to Typesense, Convex mirrors critical state, CLI and web surfaces exist. But nothing watches the data proactively. The agent scans otel_events during heartbeats, but only when prompted. Failures accumulate silently between heartbeats, and the agent has no framework for deciding what deserves attention vs. what to handle quietly.
@@ -21,10 +27,10 @@ Implement a three-tier autonomous triage loop that scans otel_events on a 15-min
 Agent detects, fixes, emits `auto_fix.applied` otel event. Joel never sees it unless he looks.
 
 Examples:
-- Content sync blocked by dirty tree → commit and retry
-- Port-forward dropped → re-establish
 - Transient Telegram bot_not_started → ignore (self-heals)
-- Stale consumer group messages → XDEL
+- Command queue already-processing races → ignore
+- Probe/test events (`probe.emit`) → ignore
+- Worker health critical failure (`check-system-health`) → guarded restart with cooldown
 
 Implementation: Each auto-fix is a named handler function. The triage loop matches `{component, action, error}` tuples against a handler registry. If a handler exists and succeeds, tier 1. If it fails, promote to tier 2.
 
