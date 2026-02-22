@@ -13,7 +13,7 @@ tags:
 | [0002](0002-personal-assistant-system-architecture.md) | Adopt PARA vault + OpenClaw orchestration for always-on personal assistant | accepted (partially superseded by 0003) | 2026-02-14 |
 | [0003](0003-joelclaw-over-openclaw.md) | Build joelclaw instead of deploying OpenClaw | accepted | 2026-02-14 |
 | [0004](0004-atproto-federation-native-app.md) | AT Protocol as bedrock + native iPhone app | accepted | 2026-02-14 |
-| [0005](0005-durable-multi-agent-coding-loops.md) | Adopt Inngest multi-agent pipeline for durable autonomous coding loops | implemented | 2026-02-14 |
+| [0005](0005-durable-multi-agent-coding-loops.md) | Adopt Inngest multi-agent pipeline for durable autonomous coding loops | shipped | 2026-02-14 |
 | [0006](0006-observability-prometheus-grafana.md) | Adopt Prometheus + Grafana for system observability | superseded by 0087 | 2026-02-14 |
 | [0007](0007-agent-loop-v2-improvements.md) | Agent Loop V2 Improvements | proposed | 2026-02-14 |
 | [0008](0008-loop-retrospective-and-skill-evolution.md) | Loop Retrospective and Skill Evolution | proposed | 2026-02-14 |
@@ -36,6 +36,6 @@ tags:
 | [0074](0074-sandbox-work-extraction-pattern.md) | Sandbox Work Extraction Pattern | proposed | 2026-02-20 |
 | [0075](0075-joelclaw-auth-better-auth-github-convex.md) | joelclaw.com Authentication with Better Auth + GitHub + Convex | proposed | 2026-02-20 |
 | [0076](0076-enhanced-agent-markdown-instructions.md) | Enhanced Agent-Specific Markdown Instructions | proposed | 2026-02-20 |
-| [0087](0087-observability-pipeline-joelclaw-design-system.md) | Full-Stack Observability + JoelClaw Design System | implemented | 2026-02-21 |
+| [0087](0087-observability-pipeline-joelclaw-design-system.md) | Full-Stack Observability + JoelClaw Design System | shipped | 2026-02-21 |
 | [0088](0088-nas-backed-storage-tiering.md) | NAS-Backed Storage Tiering | proposed | 2026-02-21 |
-| [0089](0089-single-source-inngest-worker-deployment.md) | Single-Source Inngest Worker Deployment (Retire Dual-Clone Sync) | implemented | 2026-02-21 |
+| [0089](0089-single-source-inngest-worker-deployment.md) | Single-Source Inngest Worker Deployment (Retire Dual-Clone Sync) | shipped | 2026-02-21 |

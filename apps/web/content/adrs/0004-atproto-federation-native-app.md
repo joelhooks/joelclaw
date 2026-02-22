@@ -1,6 +1,6 @@
 ---
 type: adr
-status: implemented
+status: shipped
 tags:
   - adr
   - atproto

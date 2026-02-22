@@ -1,5 +1,5 @@
 ---
-status: implemented
+status: shipped
 date: 2026-02-14
 implemented: 2026-02-15
 decision-makers: "Joel Hooks"

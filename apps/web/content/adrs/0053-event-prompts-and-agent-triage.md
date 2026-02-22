@@ -1,5 +1,5 @@
 ---
-status: implemented
+status: shipped
 date: 2026-02-18
 decision-makers: Joel Hooks
 tags: [gateway, events, prompts, soul, agency, todoist, front, cli-design]

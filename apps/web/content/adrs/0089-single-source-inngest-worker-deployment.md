@@ -1,6 +1,6 @@
 ---
 type: adr
-status: implemented
+status: shipped
 date: 2026-02-21
 tags: [adr, inngest, k8s, system-bus, architecture]
 deciders: [joel]

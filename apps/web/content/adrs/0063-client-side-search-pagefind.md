@@ -1,7 +1,7 @@
 ---
 title: Client-Side Search with Pagefind
 date: 2026-02-19
-status: implemented
+status: shipped
 ---
 
 # ADR-0063: Client-Side Search with Pagefind

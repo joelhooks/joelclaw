@@ -1,5 +1,5 @@
 ---
-status: implemented
+status: shipped
 date: 2026-02-20
 decision-makers: Joel
 consulted: Agent

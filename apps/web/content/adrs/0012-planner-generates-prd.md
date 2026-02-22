@@ -1,6 +1,6 @@
 ---
 title: Planner generates PRD from goal
-status: implemented
+status: shipped
 date: 2026-02-14
 implemented: 2026-02-15
 deciders: Joel Hooks
