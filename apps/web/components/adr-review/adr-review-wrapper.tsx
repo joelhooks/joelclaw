@@ -1,20 +1,18 @@
 "use client";
 
 /**
- * AdrReviewWrapper — wraps ADR content area to enable paragraph-level commenting.
+ * AdrReviewWrapper — wraps ADR content to enable paragraph-level commenting.
  *
  * ADR-0106. Handles:
  * - Click detection on paragraphs with [data-paragraph-id]
- * - Opening CommentDrawer for the selected paragraph
- * - Rendering comment count indicators on annotated paragraphs
+ * - Inline comment editor below the selected paragraph (via portal)
+ * - Comment count indicators on annotated paragraphs
  * - ReviewFab for the "Submit Review" flow
- *
- * Mobile-first: tap to comment, no hover states required.
  */
 import { useState, useCallback, useEffect } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { CommentDrawer } from "@/components/adr-review/comment-drawer";
+import { InlineComment } from "@/components/adr-review/inline-comment";
 import { ReviewFab } from "@/components/adr-review/review-fab";
 
 interface AdrReviewWrapperProps {
@@ -23,10 +21,7 @@ interface AdrReviewWrapperProps {
 }
 
 export function AdrReviewWrapper({ adrSlug, children }: AdrReviewWrapperProps) {
-  const [selectedParagraph, setSelectedParagraph] = useState<{
-    id: string;
-    snippet: string;
-  } | null>(null);
+  const [activeParagraph, setActiveParagraph] = useState<string | null>(null);
 
   const allComments = useQuery(api.adrComments.getByAdr, { adrSlug });
   const draftsByParagraph = new Map<string, number>();
@@ -42,7 +37,7 @@ export function AdrReviewWrapper({ adrSlug, children }: AdrReviewWrapperProps) {
     }
   }
 
-  // Inject comment indicators into the DOM
+  // Inject comment count indicators into the DOM
   useEffect(() => {
     if (!allComments) return;
 
@@ -55,15 +50,13 @@ export function AdrReviewWrapper({ adrSlug, children }: AdrReviewWrapperProps) {
       const el = document.querySelector(
         `[data-paragraph-id="${paragraphId}"]`,
       );
-      if (!el) continue;
+      if (!el || paragraphId === activeParagraph) continue;
 
-      // Position relative for the indicator
       const htmlEl = el as HTMLElement;
       if (getComputedStyle(htmlEl).position === "static") {
         htmlEl.style.position = "relative";
       }
 
-      // Create indicator
       const indicator = document.createElement("span");
       indicator.setAttribute("data-comment-indicator", "true");
       indicator.className =
@@ -77,49 +70,51 @@ export function AdrReviewWrapper({ adrSlug, children }: AdrReviewWrapperProps) {
         .querySelectorAll("[data-comment-indicator]")
         .forEach((el) => el.remove());
     };
-  }, [allComments]);
+  }, [allComments, activeParagraph]);
 
-  const handleClick = useCallback((e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
+  const handleClick = useCallback(
+    (e: React.MouseEvent) => {
+      const target = e.target as HTMLElement;
 
-    // Walk up to find a commentable element
-    const commentable = target.closest("[data-paragraph-id]") as HTMLElement | null;
-    if (!commentable) return;
+      // Don't intercept link clicks or clicks inside the inline comment
+      if (target.closest("a")) return;
+      if (target.closest("[data-inline-comment]")) return;
 
-    // Don't intercept link clicks
-    if (target.closest("a")) return;
+      const commentable = target.closest(
+        "[data-paragraph-id]",
+      ) as HTMLElement | null;
+      if (!commentable) return;
 
-    const paragraphId = commentable.getAttribute("data-paragraph-id");
-    if (!paragraphId) return;
+      const paragraphId = commentable.getAttribute("data-paragraph-id");
+      if (!paragraphId) return;
 
-    // Get snippet text
-    const snippet = (commentable.textContent ?? "").trim().slice(0, 120);
-
-    setSelectedParagraph({ id: paragraphId, snippet });
-  }, []);
+      // Toggle — click same paragraph to close
+      if (activeParagraph === paragraphId) {
+        setActiveParagraph(null);
+      } else {
+        setActiveParagraph(paragraphId);
+      }
+    },
+    [activeParagraph],
+  );
 
   return (
     <>
-      {/* Content area — click handler for paragraph selection */}
       <div
         onClick={handleClick}
-        className="cursor-text [&_[data-paragraph-id]]:relative [&_[data-paragraph-id]]:transition-colors [&_[data-paragraph-id]:hover]:bg-neutral-800/20 [&_[data-paragraph-id]]:rounded [&_[data-paragraph-id]]:cursor-pointer [&_[data-paragraph-id]]:-mx-2 [&_[data-paragraph-id]]:px-2"
+        className="[&_[data-paragraph-id]]:transition-colors [&_[data-paragraph-id]:hover]:bg-neutral-800/15 [&_[data-paragraph-id]]:rounded [&_[data-paragraph-id]]:cursor-pointer [&_[data-paragraph-id]]:-mx-2 [&_[data-paragraph-id]]:px-2 [&_[data-paragraph-id]]:py-0.5"
       >
         {children}
       </div>
 
-      {/* Comment drawer */}
-      <CommentDrawer
-        open={!!selectedParagraph}
-        onOpenChange={(open) => {
-          if (!open) setSelectedParagraph(null);
-        }}
-        adrSlug={adrSlug}
-        paragraphId={selectedParagraph?.id ?? ""}
-        paragraphSnippet={selectedParagraph?.snippet ?? ""}
-      />
+      {activeParagraph && (
+        <InlineComment
+          adrSlug={adrSlug}
+          paragraphId={activeParagraph}
+          onClose={() => setActiveParagraph(null)}
+        />
+      )}
 
-      {/* FAB for review summary */}
       <ReviewFab adrSlug={adrSlug} />
     </>
   );
