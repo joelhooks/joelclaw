@@ -552,6 +552,7 @@ async function drainEvents(): Promise<void> {
     await enqueuePrompt(source, prompt, {
       eventCount: actionable.length,
       eventIds: actionable.map((event) => event.id),
+      eventTypes: Array.from(new Set(actionable.map((event) => event.type))),
       originSession,
     });
     void emitGatewayOtel({

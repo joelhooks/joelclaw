@@ -69,6 +69,58 @@ function formatByEnvelope(text: string, format: OutboundEnvelope["format"] | und
   return mdToTelegramHtml(text);
 }
 
+const TELEGRAM_ALLOWED_TAGS = new Set([
+  "a",
+  "b",
+  "blockquote",
+  "code",
+  "em",
+  "i",
+  "pre",
+  "s",
+  "strong",
+  "tg-spoiler",
+  "u",
+]);
+
+function isWellFormedTelegramHtml(html: string): boolean {
+  const stack: string[] = [];
+  const tagPattern = /<\/?([a-zA-Z0-9-]+)(?:\s+[^<>]*?)?>/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = tagPattern.exec(html)) !== null) {
+    const fullTag = match[0] ?? "";
+    const tagName = (match[1] ?? "").toLowerCase();
+    if (!tagName) continue;
+    if (!TELEGRAM_ALLOWED_TAGS.has(tagName)) return false;
+
+    const isClosing = fullTag.startsWith("</");
+    const isSelfClosing = fullTag.endsWith("/>");
+    if (isClosing) {
+      const lastOpen = stack.pop();
+      if (lastOpen !== tagName) return false;
+      continue;
+    }
+    if (!isSelfClosing) {
+      stack.push(tagName);
+    }
+  }
+
+  return stack.length === 0;
+}
+
+function stripHtmlTags(input: string): string {
+  return input
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .trim();
+}
+
 // Human-readable labels shown after button press
 const ACTION_LABELS: Record<string, string> = {
   archive: "📦 <b>Archived</b>",
@@ -815,7 +867,21 @@ export async function send(
     : undefined;
 
   const html = formatByEnvelope(text, sendInput.format);
-  const chunks = chunkMessage(html);
+  const htmlIsValid = isWellFormedTelegramHtml(html);
+  const parseAsHtml = htmlIsValid;
+  const outboundText = htmlIsValid ? html : stripHtmlTags(html);
+  if (!htmlIsValid) {
+    void emitGatewayOtel({
+      level: "warn",
+      component: "telegram-channel",
+      action: "telegram.send.html_invalid",
+      success: false,
+      metadata: {
+        chatId,
+      },
+    });
+  }
+  const chunks = chunkMessage(outboundText);
   const sendStartedAt = Date.now();
 
   for (let i = 0; i < chunks.length; i++) {
@@ -825,7 +891,7 @@ export async function send(
 
     try {
       await bot.api.sendMessage(chatId, chunk, {
-        parse_mode: "HTML",
+        ...(parseAsHtml ? { parse_mode: "HTML" as const } : {}),
         // Only attach buttons to the last chunk
         ...(isLast && replyMarkup ? { reply_markup: replyMarkup } : {}),
         ...(mergedOptions?.replyTo ? { reply_parameters: { message_id: mergedOptions.replyTo } } : {}),
@@ -833,6 +899,19 @@ export async function send(
         ...(mergedOptions?.noPreview ? { link_preview_options: { is_disabled: true } } : {}),
       });
     } catch (error) {
+      if (!parseAsHtml) {
+        console.error("[gateway:telegram] plain send failed", { error });
+        void emitGatewayOtel({
+          level: "error",
+          component: "telegram-channel",
+          action: "telegram.send.failed",
+          success: false,
+          error: String(error),
+          metadata: { chatId },
+        });
+        break;
+      }
+
       // Fallback: send as plain text if HTML parsing fails
       console.warn("[gateway:telegram] HTML send failed, trying plain text", { error });
       void emitGatewayOtel({
@@ -844,7 +923,7 @@ export async function send(
         metadata: { chatId },
       });
       try {
-        await bot.api.sendMessage(chatId, text.slice(0, CHUNK_MAX), {
+        await bot.api.sendMessage(chatId, stripHtmlTags(text).slice(0, CHUNK_MAX), {
           ...(mergedOptions?.replyTo ? { reply_parameters: { message_id: mergedOptions.replyTo } } : {}),
           ...(mergedOptions?.silent ? { disable_notification: true } : {}),
           ...(isLast && replyMarkup ? { reply_markup: replyMarkup } : {}),
