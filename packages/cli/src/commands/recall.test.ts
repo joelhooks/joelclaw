@@ -24,8 +24,8 @@ function rankedHit(overrides: Partial<RankedHit> = {}): RankedHit {
 }
 
 describe("recall rewrite", () => {
-  test("disables rewrite deterministically when rewrite is disabled", () => {
-    const result = runRewriteQueryWith("   redis   dedupe   ", { rewriteEnabled: false })
+  test("disables rewrite deterministically when rewrite is disabled", async () => {
+    const result = await runRewriteQueryWith("   redis   dedupe   ", { rewriteEnabled: false })
     expect(result).toMatchObject({
       inputQuery: "redis dedupe",
       rewrittenQuery: "redis dedupe",
@@ -34,8 +34,8 @@ describe("recall rewrite", () => {
     })
   })
 
-  test("falls back cleanly when rewrite subprocess fails", () => {
-    const result = runRewriteQueryWith("redis setnx pattern", {
+  test("falls back cleanly when rewrite subprocess fails", async () => {
+    const result = await runRewriteQueryWith("redis setnx pattern", {
       rewriteEnabled: true,
       spawn: () => ({ exitCode: 1, stdout: "", stderr: "mock rewrite failure" }),
     })
@@ -46,8 +46,8 @@ describe("recall rewrite", () => {
     expect(result.error).toContain("mock rewrite failure")
   })
 
-  test("accepts successful rewrite output and sanitizes quotes", () => {
-    const result = runRewriteQueryWith("redis setnx pattern", {
+  test("accepts successful rewrite output and sanitizes quotes", async () => {
+    const result = await runRewriteQueryWith("redis setnx pattern", {
       rewriteEnabled: true,
       spawn: () => ({ exitCode: 0, stdout: "\"Redis SETNX idempotency strategy\"", stderr: "" }),
     })
