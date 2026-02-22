@@ -1,11 +1,12 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { MDXRemote } from "next-mdx-remote/rsc";
-import { getAdr, getAdrSlugs } from "../../../lib/adrs";
-import { mdxComponents } from "../../../lib/mdx";
-import { remarkPlugins, rehypePlugins } from "../../../lib/mdx-plugins";
-import { remarkAdrLinks } from "../../../lib/remark-adr-links";
-import { SITE_URL, SITE_NAME } from "../../../lib/constants";
+import { getAdr, getAdrSlugs } from "@/lib/adrs";
+import { mdxComponents } from "@/lib/mdx";
+import { remarkPlugins, rehypePlugins } from "@/lib/mdx-plugins";
+import { remarkAdrLinks } from "@/lib/remark-adr-links";
+import { SITE_URL, SITE_NAME } from "@/lib/constants";
+import { AdrReviewGate } from "@/components/adr-review/adr-review-gate";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -35,6 +36,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 const STATUS_COLORS: Record<string, string> = {
   accepted: "text-green-400 border-green-800",
   proposed: "text-yellow-400 border-yellow-800",
+  shipped: "text-blue-400 border-blue-800",
   superseded: "text-neutral-500 border-neutral-700",
   implemented: "text-blue-400 border-blue-800",
   deprecated: "text-red-400 border-red-800",
@@ -79,13 +81,15 @@ export default async function AdrPage({ params }: Props) {
           </p>
         )}
       </header>
-      <div className="prose-joelclaw">
-        <MDXRemote
-          source={content.replace(/^#\s+(?:ADR-\d+:\s*)?.*$/m, "").trim()}
-          components={mdxComponents}
-          options={{ mdxOptions: { remarkPlugins: [...remarkPlugins, remarkAdrLinks], rehypePlugins, format: "md" } }}
-        />
-      </div>
+      <AdrReviewGate adrSlug={slug}>
+        <div className="prose-joelclaw">
+          <MDXRemote
+            source={content.replace(/^#\s+(?:ADR-\d+:\s*)?.*$/m, "").trim()}
+            components={mdxComponents}
+            options={{ mdxOptions: { remarkPlugins: [...remarkPlugins, remarkAdrLinks], rehypePlugins, format: "md" } }}
+          />
+        </div>
+      </AdrReviewGate>
     </article>
   );
 }

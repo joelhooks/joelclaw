@@ -12,6 +12,7 @@ import rehypeUnwrapImages from "rehype-unwrap-images";
 
 import { prettyCodeOptions } from "./config";
 import { rehypeNormalizeCodeLangs } from "./rehype-normalize-code-langs";
+import { rehypeParagraphIds } from "./rehype-paragraph-ids";
 import { remarkObsidian, type RemarkObsidianOptions } from "./remark-obsidian";
 import { remarkStripAgentOnly } from "./remark-strip-agent-only";
 
@@ -31,6 +32,7 @@ export function getRemarkPlugins(obsidianOptions?: RemarkObsidianOptions): any[]
 /** Standard rehype plugins for joelclaw content. */
 export const rehypePlugins: any[] = [
   rehypeSlug,
+  rehypeParagraphIds,
   [rehypeAutolinkHeadings, { behavior: "wrap" }],
   rehypeNormalizeCodeLangs,
   [rehypePrettyCode, prettyCodeOptions],

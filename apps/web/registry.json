@@ -1,0 +1,37 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry.json",
+  "name": "joelclaw",
+  "homepage": "https://joelclaw.com",
+  "items": [
+    {
+      "name": "adr-review",
+      "type": "registry:block",
+      "title": "ADR Review System",
+      "description": "Paragraph-level inline comment system for reviewing Architecture Decision Records. Mobile-first bottom drawer, threaded comments, batch submit to agent. Requires Convex for storage and better-auth for authentication.",
+      "registryDependencies": ["drawer", "button", "textarea", "badge"],
+      "dependencies": ["convex", "lucide-react"],
+      "files": [
+        {
+          "path": "registry/new-york/adr-review/adr-review-gate.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "registry/new-york/adr-review/adr-review-wrapper.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "registry/new-york/adr-review/comment-drawer.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "registry/new-york/adr-review/review-sheet.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "registry/new-york/adr-review/review-fab.tsx",
+          "type": "registry:component"
+        }
+      ]
+    }
+  ]
+}

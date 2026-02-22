@@ -9,6 +9,7 @@
     "./render": "./src/render.ts"
   },
   "dependencies": {
+    "hast-util-to-string": "^3.0.1",
     "rehype-autolink-headings": "^7.1.0",
     "rehype-external-links": "^3.0.0",
     "rehype-pretty-code": "^0.14.1",
@@ -24,7 +25,8 @@
     "unist-util-visit": "^5.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.9.0",
-    "@types/mdast": "^4.0.0"
+    "@types/hast": "^3.0.4",
+    "@types/mdast": "^4.0.0",
+    "typescript": "^5.9.0"
   }
 }

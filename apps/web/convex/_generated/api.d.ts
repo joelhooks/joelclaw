@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as adrComments from "../adrComments.js";
 import type * as auth from "../auth.js";
 import type * as contentResources from "../contentResources.js";
 import type * as http from "../http.js";
@@ -24,6 +25,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  adrComments: typeof adrComments;
   auth: typeof auth;
   contentResources: typeof contentResources;
   http: typeof http;

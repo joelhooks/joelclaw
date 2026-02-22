@@ -19,6 +19,7 @@ export { getRemarkPlugins, rehypePlugins } from "./plugins";
 export { remarkObsidian, type RemarkObsidianOptions } from "./remark-obsidian";
 export { remarkStripAgentOnly } from "./remark-strip-agent-only";
 export { rehypeNormalizeCodeLangs } from "./rehype-normalize-code-langs";
+export { rehypeParagraphIds } from "./rehype-paragraph-ids";
 
 // Standalone renderer
 export { renderMarkdown } from "./render";

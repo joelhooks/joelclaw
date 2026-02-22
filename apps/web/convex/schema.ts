@@ -166,4 +166,25 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_createdAt", ["createdAt"]),
 
+  // ── ADR Review Comments (ADR-0106) ────────────────────────────────
+
+  adrComments: defineTable({
+    adrSlug: v.string(),            // e.g. "0106-adr-review-pipeline"
+    paragraphId: v.string(),         // stable ID from rehype-paragraph-ids
+    content: v.string(),             // comment text (markdown)
+    threadId: v.string(),            // groups comments on same paragraph
+    parentId: v.optional(v.id("adrComments")), // replies
+    status: v.union(
+      v.literal("draft"),           // in progress
+      v.literal("submitted"),       // sent to agent
+      v.literal("resolved"),        // agent applied it
+    ),
+    authorId: v.string(),            // better-auth user ID
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_adr", ["adrSlug"])
+    .index("by_thread", ["threadId"])
+    .index("by_adr_status", ["adrSlug", "status"]),
+
 });
