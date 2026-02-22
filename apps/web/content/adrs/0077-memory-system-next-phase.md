@@ -93,6 +93,7 @@ Phase kickoff was logged via slog:
   - Confirm Telegram callback handling for approve/reject in production dashboards and error rates.
   - Continue audit-based closure of any residual memory quality gaps.
   - Write gate implementation is split to ADR-0094 (proposed) for independent rollout and verification.
+  - Remaining deferred memory-vision slices are now tracked in ADR-0095 through ADR-0100 (categories, budget-aware retrieval, forward triggers, write-gate calibration, knowledge-graph substrate, dual search).
 
 ### Evidence and provenance
 
