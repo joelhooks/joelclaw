@@ -1,5 +1,5 @@
 ---
-status: implementing
+status: accepted
 date: 2026-02-21
 decision-makers: Joel
 tags:
@@ -12,6 +12,10 @@ type: adr
 ---
 
 # ADR-0075: JoelClaw Web Auth & Dashboard — Better Auth + Convex
+
+## Status
+
+accepted
 
 ## Context
 
@@ -134,6 +138,15 @@ Convex stores **live operational data** (not content — that stays in Typesense
 ### Risks
 - Convex free tier limits (should be fine for single-user dashboard)
 - Better Auth is newer than NextAuth — less community knowledge (but better DX)
+
+## Audit (2026-02-22)
+
+- Status normalized to `accepted` (from `implementing`) to match canonical ADR taxonomy while preserving ongoing implementation scope.
+- Operational evidence reviewed from `system/system-log.jsonl`:
+  - `2026-02-21T03:41:06.999Z` (`tool: convex`) project and core schema/functions configured.
+  - `2026-02-21T03:44:23.189Z` (`tool: better-auth`) Better Auth + Convex integration deployed with GitHub OAuth and `/api/auth/[...all]`.
+  - `2026-02-21T03:59:46.921Z` (`tool: convex`) health pipeline wired into real-time dashboard data flow.
+- Full end-to-end closure criteria for all planned phases are not yet captured as complete in this ADR, so status remains `accepted` rather than `implemented`.
 
 ## References
 

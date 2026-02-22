@@ -1,6 +1,6 @@
 ---
 type: adr
-status: partially-implemented
+status: accepted
 date: 2026-02-21
 tags:
   - gateway
@@ -18,7 +18,7 @@ related:
 
 ## Status
 
-proposed
+accepted
 
 ## Context
 
@@ -448,7 +448,16 @@ No adapter = tool runs headless with text-only output. Graceful degradation.
 - Pinned message can go stale if edit fails silently
 
 ### ADR Updates
-- ADR-0070: updated to `partially-implemented`
+- ADR-0070: updated to `accepted`
+
+## Audit (2026-02-22)
+
+- Status normalized to `accepted` (from `partially-implemented`) to match canonical ADR taxonomy while preserving that rollout is still in progress.
+- Operational evidence reviewed from `system/system-log.jsonl`:
+  - `2026-02-21T21:35:47.705Z` (`action: deploy`, `tool: gateway`) records ADR-0086 command registry + MCQ Telegram interception live.
+  - `2026-02-21T18:42:27.084Z` (`action: configure`, `tool: gateway`) confirms skill loading path tied to `~/.pi/agent/skills` for `/skills` runtime behavior.
+  - `2026-02-21T22:58:44.292Z` (`action: deploy`, `tool: gateway`) confirms additional Telegram channel/runtime improvements aligned with this ADR direction.
+- Implementation phases 4-9 in this ADR remain open, so status is not upgraded to `implemented`.
 
 ## Credits
 

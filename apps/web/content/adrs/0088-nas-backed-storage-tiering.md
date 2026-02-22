@@ -1,6 +1,6 @@
 ---
 type: adr
-status: partially-implemented
+status: accepted
 date: 2026-02-21
 tags: [adr, infrastructure, storage, nas, tiering]
 deciders: [joel]
@@ -12,7 +12,7 @@ related: ["0029-replace-docker-desktop-with-colima", "0082-typesense-unified-sea
 
 ## Status
 
-partially-implemented — NVMe RAID1 created, NFS tuned, soak gates passed. Backup functions and tier 2 migration pending.
+accepted — Phase 1 is complete and backup rollout has begun; remaining migration and Mac Studio readiness work is still tracked below.
 
 ## Context
 
@@ -171,6 +171,16 @@ All backup jobs run as Inngest cron functions for observability, retry, and gate
 - NAS disk failure → RAID5 (HDD) and RAID1 (NVMe) provide redundancy. Monitor via ADM alerts
 - Off-LAN access via Tailscale relay much slower than 10GbE LAN → only affects laptop, not always-on nodes
 - NFS file locking with concurrent writers → only one machine writes to any given path
+
+## Audit (2026-02-22)
+
+- Status normalized to `accepted` (from `partially-implemented`) to match canonical ADR taxonomy while preserving the staged rollout state.
+- Operational evidence reviewed from `system/system-log.jsonl`:
+  - `2026-02-21T15:22:40.529Z` (`tool: nas-nvme`) NVMe RAID1 + directory topology created per ADR.
+  - `2026-02-21T15:40:58.023Z` (`tool: nas-nfs`) NFS exports + mounts configured for `/volume2/data` and `/volume1/joelclaw`.
+  - `2026-02-21T21:50:17.009Z` (`tool: nas-nfs`) MTU/NFS tuning deployed with measured throughput gains.
+  - `2026-02-21T22:05:38.918Z` (`action: deploy`, `tool: nas-backup`) Phase 2 backup/rotation crons deployed to NAS NVMe.
+- Phase 3/4 migration and validation tasks remain open in this ADR, so status is not upgraded to `implemented`.
 
 ## References
 
