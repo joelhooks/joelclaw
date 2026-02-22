@@ -604,6 +604,491 @@ const gatewayStream = Command.make(
     }),
 )
 
+// ── gateway diagnose ────────────────────────────────────────────────
+
+const diagnoseHours = Options.integer("hours").pipe(
+  Options.withDefault(1),
+  Options.withDescription("How far back to scan logs (hours, default: 1)"),
+)
+
+const diagnoseLines = Options.integer("lines").pipe(
+  Options.withDefault(100),
+  Options.withDescription("Max log lines to scan per source (default: 100)"),
+)
+
+const LOG_FILE = "/tmp/joelclaw/gateway.log"
+const ERR_FILE = "/tmp/joelclaw/gateway.err"
+const PID_FILE = "/tmp/joelclaw/gateway.pid"
+const SESSION_DIR = `${process.env.HOME}/.joelclaw/sessions/gateway`
+
+type DiagLayer = {
+  layer: string
+  status: "ok" | "degraded" | "failed" | "skipped"
+  detail: string
+  findings?: string[]
+}
+
+const KNOWN_ERR_PATTERNS: Array<{ pattern: RegExp; label: string; severity: "error" | "warn" }> = [
+  { pattern: /Agent is already processing/i, label: "session-busy", severity: "error" },
+  { pattern: /fallback activated/i, label: "model-fallback", severity: "error" },
+  { pattern: /no streaming tokens after/i, label: "model-timeout", severity: "error" },
+  { pattern: /session still streaming, retrying/i, label: "streaming-retry", severity: "warn" },
+  { pattern: /session appears stuck/i, label: "watchdog-stuck", severity: "error" },
+  { pattern: /session appears dead/i, label: "watchdog-dead", severity: "error" },
+  { pattern: /prompt failed.*consecutiveFailures/i, label: "prompt-failure", severity: "error" },
+  { pattern: /OTEL emit request failed/i, label: "otel-timeout", severity: "warn" },
+  { pattern: /Redis connection failed|ECONNREFUSED/i, label: "redis-down", severity: "error" },
+  { pattern: /gracefulShutdown/i, label: "self-restart", severity: "warn" },
+]
+
+function tailFile(path: string, maxLines: number): string[] {
+  try {
+    const out = execSync(`tail -${maxLines} "${path}" 2>/dev/null`, {
+      encoding: "utf-8",
+      timeout: 3000,
+    })
+    return out.split("\n").filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+function scanForPatterns(lines: string[]): Array<{ label: string; severity: string; count: number; lastLine: string }> {
+  const hits = new Map<string, { severity: string; count: number; lastLine: string }>()
+  for (const line of lines) {
+    for (const { pattern, label, severity } of KNOWN_ERR_PATTERNS) {
+      if (pattern.test(line)) {
+        const existing = hits.get(label)
+        if (existing) {
+          existing.count++
+          existing.lastLine = line.slice(0, 200)
+        } else {
+          hits.set(label, { severity, count: 1, lastLine: line.slice(0, 200) })
+        }
+      }
+    }
+  }
+  return Array.from(hits.entries()).map(([label, info]) => ({
+    label,
+    severity: info.severity,
+    count: info.count,
+    lastLine: info.lastLine,
+  }))
+}
+
+const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: diagnoseLines }, ({ hours, lines: maxLines }) =>
+  Effect.gen(function* () {
+    const layers: DiagLayer[] = []
+    const ts = new Date().toISOString()
+    const cutoffMs = Date.now() - hours * 60 * 60 * 1000
+
+    // ── Layer 0: Process Health ──
+    let daemonPid: string | null = null
+    let launchdOk = false
+    try {
+      const launchctl = execSync("launchctl list 2>/dev/null | grep gateway", {
+        encoding: "utf-8",
+        timeout: 3000,
+      }).trim()
+      launchdOk = launchctl.includes("com.joel.gateway")
+      const match = launchctl.match(/^(\d+)\s/)
+      if (match) daemonPid = match[1]
+    } catch { /* not running */ }
+
+    let pidFileValue: string | null = null
+    try {
+      pidFileValue = readFileSync(PID_FILE, "utf-8").trim()
+    } catch { /* missing */ }
+
+    const processAlive = daemonPid ? isPidAlive(parseInt(daemonPid, 10)) : false
+    const pidMatch = daemonPid && pidFileValue && daemonPid === pidFileValue
+
+    if (processAlive && pidMatch) {
+      layers.push({ layer: "process", status: "ok", detail: `PID ${daemonPid} alive, launchd registered` })
+    } else if (processAlive) {
+      layers.push({ layer: "process", status: "degraded", detail: `PID ${daemonPid} alive but PID file ${pidMatch ? "matches" : `stale (file: ${pidFileValue})`}` })
+    } else {
+      layers.push({ layer: "process", status: "failed", detail: `Daemon not running (launchd: ${launchdOk}, pidFile: ${pidFileValue})` })
+    }
+
+    // ── Layer 1: CLI Status ──
+    let redisOk = false
+    let sessionCount = 0
+    let totalPending = 0
+    try {
+      const raw = execSync("joelclaw gateway status 2>/dev/null", { encoding: "utf-8", timeout: 10000 })
+      const parsed = JSON.parse(raw)
+      redisOk = parsed.result?.redis === "connected"
+      const sessions = parsed.result?.activeSessions ?? []
+      sessionCount = sessions.length
+      totalPending = sessions.reduce((s: number, sess: any) => s + (sess.pending ?? 0), 0)
+
+      if (redisOk && sessionCount > 0 && totalPending === 0) {
+        layers.push({ layer: "cli-status", status: "ok", detail: `Redis connected, ${sessionCount} session(s), 0 pending` })
+      } else if (redisOk) {
+        layers.push({ layer: "cli-status", status: totalPending > 3 ? "degraded" : "ok", detail: `Redis connected, ${sessionCount} session(s), ${totalPending} pending` })
+      } else {
+        layers.push({ layer: "cli-status", status: "failed", detail: "Redis not connected or no sessions" })
+      }
+    } catch (e) {
+      layers.push({ layer: "cli-status", status: "failed", detail: `CLI status failed: ${e}` })
+    }
+
+    // ── Layer 2: Error Log ──
+    const errLines = tailFile(ERR_FILE, maxLines)
+    const errPatterns = scanForPatterns(errLines)
+    const hasErrors = errPatterns.some((p) => p.severity === "error")
+
+    if (errLines.length === 0) {
+      layers.push({ layer: "error-log", status: "ok", detail: "No error log or empty" })
+    } else if (errPatterns.length === 0) {
+      layers.push({ layer: "error-log", status: "ok", detail: `${errLines.length} lines scanned, no known failure patterns` })
+    } else {
+      layers.push({
+        layer: "error-log",
+        status: hasErrors ? "failed" : "degraded",
+        detail: `${errPatterns.length} pattern(s) found in last ${maxLines} lines`,
+        findings: errPatterns.map((p) => `[${p.severity}] ${p.label} ×${p.count}`),
+      })
+    }
+
+    // ── Layer 3: Stdout Log ──
+    const outLines = tailFile(LOG_FILE, maxLines)
+    const lastStartup = outLines.findLast((l) => l.includes("[gateway] daemon started"))
+    const fallbackActive = outLines.findLast((l) => l.includes("[gateway:fallback] activated"))
+    const fallbackRecovered = outLines.findLast((l) => l.includes("recovered to primary"))
+    const onFallback = fallbackActive && (!fallbackRecovered || outLines.indexOf(fallbackActive) > outLines.indexOf(fallbackRecovered))
+    const replayLine = outLines.findLast((l) => l.includes("replayed unacked messages"))
+
+    const stdoutFindings: string[] = []
+    if (lastStartup) stdoutFindings.push(`last startup: ${lastStartup.slice(0, 120)}`)
+    if (onFallback) stdoutFindings.push("⚠️ currently on fallback model")
+    if (replayLine) stdoutFindings.push(`replay: ${replayLine.slice(0, 120)}`)
+
+    layers.push({
+      layer: "stdout-log",
+      status: onFallback ? "degraded" : "ok",
+      detail: `${outLines.length} lines scanned`,
+      ...(stdoutFindings.length > 0 ? { findings: stdoutFindings } : {}),
+    })
+
+    // ── Layer 4: E2E Test ──
+    let e2eOk = false
+    try {
+      execSync("joelclaw gateway test 2>/dev/null", { encoding: "utf-8", timeout: 10000 })
+      yield* Effect.promise(() => new Promise((r) => setTimeout(r, 3000)))
+      const eventsRaw = execSync("joelclaw gateway events 2>/dev/null", { encoding: "utf-8", timeout: 10000 })
+      const events = JSON.parse(eventsRaw)
+      // If test event was drained, totalCount should be 0 (or only non-test events)
+      const testStuck = (events.result?.sessions ?? []).some((s: any) =>
+        s.events?.some((e: any) => e.type === "test.gateway-e2e")
+      )
+      e2eOk = !testStuck
+      layers.push({
+        layer: "e2e-test",
+        status: e2eOk ? "ok" : "failed",
+        detail: e2eOk ? "Test event pushed and drained within 3s" : "Test event stuck in queue — session not draining",
+      })
+    } catch (e) {
+      layers.push({ layer: "e2e-test", status: "failed", detail: `E2E test failed: ${e}` })
+    }
+
+    // ── Layer 5: Model API ──
+    let apiReachable = false
+    try {
+      const out = execSync(
+        'curl -s -m 10 https://api.anthropic.com/v1/messages -H "x-api-key: test" -H "anthropic-version: 2023-06-01" -H "content-type: application/json" -d "{}" 2>/dev/null',
+        { encoding: "utf-8", timeout: 15000 }
+      )
+      apiReachable = out.includes("authentication_error")
+      layers.push({
+        layer: "model-api",
+        status: apiReachable ? "ok" : "degraded",
+        detail: apiReachable ? "Anthropic API reachable" : `Unexpected response: ${out.slice(0, 100)}`,
+      })
+    } catch (e) {
+      layers.push({ layer: "model-api", status: "failed", detail: `API unreachable: ${e}` })
+    }
+
+    // ── Layer 6: Redis Direct ──
+    try {
+      const redis = yield* makeRedis()
+      const queueLen = yield* Effect.tryPromise({
+        try: () => redis.llen("joelclaw:events:gateway"),
+        catch: (e) => new Error(`${e}`),
+      })
+      const streamLen = yield* Effect.tryPromise({
+        try: () => redis.xlen("gateway:messages"),
+        catch: () => new Error("xlen failed"),
+      })
+      yield* Effect.tryPromise({ try: () => redis.quit(), catch: () => {} })
+
+      layers.push({
+        layer: "redis-state",
+        status: "ok",
+        detail: `event queue: ${queueLen}, message stream: ${streamLen}`,
+      })
+    } catch (e) {
+      layers.push({ layer: "redis-state", status: "failed", detail: `Redis query failed: ${e}` })
+    }
+
+    // ── Summary ──
+    const failed = layers.filter((l) => l.status === "failed")
+    const degraded = layers.filter((l) => l.status === "degraded")
+    const allOk = failed.length === 0 && degraded.length === 0
+    const healthy = failed.length === 0
+
+    const nextActions: NextAction[] = []
+    if (!allOk) {
+      nextActions.push({ command: "joelclaw gateway restart", description: "Restart the gateway daemon" })
+    }
+    if (errPatterns.length > 0) {
+      nextActions.push({
+        command: "joelclaw gateway diagnose [--hours <hours>] [--lines <lines>]",
+        description: "Re-run with wider window",
+        params: {
+          hours: { value: hours * 2, default: 1, description: "Hours to scan" },
+          lines: { value: maxLines * 2, default: 100, description: "Max lines per source" },
+        },
+      })
+    }
+    nextActions.push(
+      { command: "joelclaw gateway status", description: "Quick status check" },
+      { command: "joelclaw gateway test", description: "E2E delivery test" },
+    )
+    if (hasErrors) {
+      nextActions.push({
+        command: "joelclaw otel search <query> [--hours <hours>]",
+        description: "Search OTEL telemetry",
+        params: {
+          query: { value: "gateway", description: "Search query" },
+          hours: { value: hours, default: 1 },
+        },
+      })
+    }
+
+    yield* Console.log(respond(
+      "gateway diagnose",
+      {
+        timestamp: ts,
+        window: `${hours}h`,
+        healthy,
+        summary: allOk
+          ? "All layers healthy"
+          : `${failed.length} failed, ${degraded.length} degraded`,
+        layers,
+        ...(errPatterns.length > 0 ? { errorPatterns: errPatterns } : {}),
+      },
+      nextActions,
+      healthy,
+    ))
+  })
+)
+
+// ── gateway review ──────────────────────────────────────────────────
+
+const reviewHours = Options.integer("hours").pipe(
+  Options.withDefault(1),
+  Options.withDescription("How far back to review (hours, default: 1)"),
+)
+
+const reviewMaxExchanges = Options.integer("max").pipe(
+  Options.withDefault(20),
+  Options.withDescription("Max exchanges to return (default: 20)"),
+)
+
+function findLatestSessionFile(): string | null {
+  try {
+    const files = execSync(`ls -t "${SESSION_DIR}"/*.jsonl 2>/dev/null | head -1`, {
+      encoding: "utf-8",
+      timeout: 3000,
+    }).trim()
+    return files || null
+  } catch {
+    return null
+  }
+}
+
+type SessionExchange = {
+  ts: string
+  role: "user" | "assistant"
+  preview: string
+  tools?: string[]
+}
+
+type SessionReview = {
+  sessionFile: string
+  sessionId: string
+  windowHours: number
+  totalEntries: number
+  exchanges: SessionExchange[]
+  compactions: number
+  toolCallSummary: Record<string, number>
+  errorLogHighlights: string[]
+  stdoutHighlights: string[]
+}
+
+const gatewayReview = Command.make("review", { hours: reviewHours, max: reviewMaxExchanges }, ({ hours, max }) =>
+  Effect.gen(function* () {
+    const sessionFile = findLatestSessionFile()
+    if (!sessionFile) {
+      yield* Console.log(respondError(
+        "gateway review",
+        "No gateway session files found",
+        "NO_SESSION",
+        `Check ${SESSION_DIR} for .jsonl files. Gateway may not have run yet.`,
+        [{ command: "joelclaw gateway restart", description: "Start the gateway" }],
+      ))
+      return
+    }
+
+    const sessionIdMatch = sessionFile.match(/([a-f0-9-]{36})\.jsonl$/)
+    const sessionId = sessionIdMatch?.[1] ?? "unknown"
+
+    // Parse the session JSONL for the time window
+    const cutoffIso = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString()
+
+    // Write python script to temp file to avoid shell escaping issues on large JSONL
+    let reviewData: SessionReview | null = null
+    try {
+      const tmpScript = `/tmp/joelclaw/gateway-review.py`
+      const scriptContent = [
+        `import json, sys`,
+        `from collections import Counter`,
+        ``,
+        `cutoff = "${cutoffIso}"`,
+        `exchanges = []`,
+        `compactions = 0`,
+        `tool_counts = Counter()`,
+        `total = 0`,
+        ``,
+        `with open("${sessionFile}") as f:`,
+        `    for line in f:`,
+        `        total += 1`,
+        `        try:`,
+        `            obj = json.loads(line.strip())`,
+        `            ts = obj.get("timestamp", "")`,
+        `            if ts < cutoff:`,
+        `                continue`,
+        `            if obj.get("type") == "compaction":`,
+        `                compactions += 1`,
+        `                continue`,
+        `            if obj.get("type") != "message":`,
+        `                continue`,
+        `            msg = obj.get("message", {})`,
+        `            role = msg.get("role", "")`,
+        `            if role not in ("user", "assistant"):`,
+        `                continue`,
+        `            content = msg.get("content", "")`,
+        `            tools = []`,
+        `            if isinstance(content, list):`,
+        `                texts = []`,
+        `                for c in content:`,
+        `                    if isinstance(c, dict):`,
+        `                        if c.get("type") == "text" and c.get("text"):`,
+        `                            texts.append(c["text"])`,
+        `                        elif c.get("type") == "toolCall":`,
+        `                            name = c.get("name", "?")`,
+        `                            tools.append(name)`,
+        `                            tool_counts[name] += 1`,
+        `                content = " ".join(texts)`,
+        `            if not content and not tools:`,
+        `                continue`,
+        `            exchanges.append({`,
+        `                "ts": ts[:19],`,
+        `                "role": role,`,
+        `                "preview": (content or "(tool calls only)")[:200],`,
+        `                **({"tools": tools} if tools else {}),`,
+        `            })`,
+        `        except:`,
+        `            pass`,
+        ``,
+        `exchanges = exchanges[-${max}:]`,
+        ``,
+        `json.dump({`,
+        `    "totalEntries": total,`,
+        `    "exchanges": exchanges,`,
+        `    "compactions": compactions,`,
+        `    "toolCallSummary": dict(tool_counts.most_common(10)),`,
+        `}, sys.stdout)`,
+      ].join("\n")
+
+      const { writeFileSync, mkdirSync } = require("node:fs")
+      mkdirSync("/tmp/joelclaw", { recursive: true })
+      writeFileSync(tmpScript, scriptContent)
+
+      const raw = execSync(`python3 "${tmpScript}"`, {
+        encoding: "utf-8",
+        timeout: 15000,
+      })
+      const parsed = JSON.parse(raw)
+
+      // Get log highlights
+      const errLines = tailFile(ERR_FILE, 50)
+      const outLines = tailFile(LOG_FILE, 50)
+
+      const errHighlights = errLines
+        .filter((l) => KNOWN_ERR_PATTERNS.some((p) => p.pattern.test(l)))
+        .slice(-5)
+        .map((l) => l.slice(0, 200))
+
+      const outHighlights = outLines
+        .filter((l) =>
+          l.includes("daemon started") ||
+          l.includes("fallback") ||
+          l.includes("replayed unacked") ||
+          l.includes("response ready") ||
+          l.includes("telegram] message received")
+        )
+        .slice(-10)
+        .map((l) => l.slice(0, 200))
+
+      reviewData = {
+        sessionFile: sessionFile.replace(process.env.HOME ?? "", "~"),
+        sessionId,
+        windowHours: hours,
+        totalEntries: parsed.totalEntries,
+        exchanges: parsed.exchanges,
+        compactions: parsed.compactions,
+        toolCallSummary: parsed.toolCallSummary,
+        errorLogHighlights: errHighlights,
+        stdoutHighlights: outHighlights,
+      }
+    } catch (e) {
+      yield* Console.log(respondError(
+        "gateway review",
+        `Failed to parse session: ${e}`,
+        "PARSE_FAILED",
+        "Session file may be corrupted or too large for the timeout.",
+        [
+          { command: "joelclaw gateway diagnose", description: "Run automated diagnostics instead" },
+        ],
+      ))
+      return
+    }
+
+    if (!reviewData) return
+
+    yield* Console.log(respond(
+      "gateway review",
+      reviewData,
+      [
+        {
+          command: "joelclaw gateway review [--hours <hours>] [--max <max>]",
+          description: "Adjust time window or exchange count",
+          params: {
+            hours: { value: hours * 2, default: 1, description: "Hours to review" },
+            max: { value: max, default: 20, description: "Max exchanges" },
+          },
+        },
+        { command: "joelclaw gateway diagnose", description: "Automated health check" },
+        { command: "joelclaw gateway status", description: "Quick status" },
+      ],
+      true,
+    ))
+  })
+)
+
 // ── Root gateway command ────────────────────────────────────────────
 
 export const gatewayCmd = Command.make("gateway", {}, () =>
@@ -619,10 +1104,14 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
         test: "joelclaw gateway test — Push test event to all sessions",
         restart: "joelclaw gateway restart — Roll the pi session, clean Redis, restart daemon",
         stream: "joelclaw gateway stream — NDJSON stream of all gateway events (ADR-0058)",
+        diagnose: "joelclaw gateway diagnose [--hours N] — Full diagnostic across all layers",
+        review: "joelclaw gateway review [--hours N] — Recent session context (exchanges, tools, errors)",
       },
     },
     [
       { command: "joelclaw gateway status", description: "Check gateway health" },
+      { command: "joelclaw gateway diagnose", description: "Full diagnostic (process → redis → model → delivery)" },
+      { command: "joelclaw gateway review", description: "Recent session context (what happened?)" },
       { command: "joelclaw gateway stream", description: "Stream all gateway events (NDJSON)" },
       { command: "joelclaw gateway test", description: "Push test event + verify" },
       { command: "joelclaw gateway restart", description: "Restart the gateway daemon" },
@@ -630,5 +1119,5 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
     true
   ))
 ).pipe(
-  Command.withSubcommands([gatewayStatus, gatewayEvents, gatewayPush, gatewayDrain, gatewayTest, gatewayRestart, gatewayStream])
+  Command.withSubcommands([gatewayStatus, gatewayEvents, gatewayPush, gatewayDrain, gatewayTest, gatewayRestart, gatewayStream, gatewayDiagnose, gatewayReview])
 )
