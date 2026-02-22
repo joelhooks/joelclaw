@@ -1,6 +1,6 @@
 ---
 type: adr
-status: partially-implemented
+status: accepted
 date: 2026-02-19
 tags:
   - gateway
@@ -14,7 +14,7 @@ tags:
 
 ## Status
 
-proposed
+accepted
 
 ## Context
 
@@ -106,3 +106,11 @@ Phase 2: Email notification buttons (highest frequency, highest value)
 Phase 3: Memory proposal buttons
 Phase 4: Priority tiers + silent notifications
 Phase 5: System alert buttons
+
+## Audit (2026-02-22)
+
+- Status normalized to `accepted` (from `partially-implemented`) to match canonical ADR taxonomy while preserving in-progress scope.
+- Operational evidence reviewed:
+  - `system/system-log.jsonl` at `2026-02-20T00:28:32.688Z` (`action: configure`, `tool: telegram`) records ADR-0070 rich notification primitives (`send()` buttons, callback handler, silent/noPreview options).
+  - `system/system-log.jsonl` at `2026-02-21T21:35:47.705Z` (`action: deploy`, `tool: gateway`) confirms inline-keyboard command infrastructure deployed.
+- Remaining scope is still open in this ADR's Phase 2-5 plan (email/memory/alerts templates and full rollout completion).
