@@ -1,6 +1,6 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
-import { respond } from "../response"
+import { respond, respondError } from "../response"
 
 const SESSIONS_SET = "joelclaw:gateway:sessions"
 
@@ -201,7 +201,13 @@ const gatewayPush = Command.make("push", { type: pushType, payload: pushPayload 
     try {
       parsedPayload = JSON.parse(payload)
     } catch {
-      yield* Console.log(respond("gateway push", { error: "Invalid JSON payload" }, [], false))
+      yield* Console.log(respondError(
+        "gateway push",
+        "Invalid JSON payload",
+        "INVALID_JSON",
+        "Check your --payload value is valid JSON",
+        [{ command: "joelclaw gateway push --type <type> --payload <payload>", description: "Retry with valid JSON payload" }],
+      ))
       yield* Effect.tryPromise({ try: () => redis.quit(), catch: () => {} })
       return
     }

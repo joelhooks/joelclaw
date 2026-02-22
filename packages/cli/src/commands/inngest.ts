@@ -59,6 +59,10 @@ type WorkerApiBody = {
 type TypesenseSearchResponse = {
   found?: number
   hits?: Array<{ document?: Record<string, unknown> }>
+  facet_counts?: Array<{
+    field_name?: string
+    counts?: Array<{ value?: string | number; count?: number }>
+  }>
 }
 
 type TypesenseCollectionField = {
@@ -122,6 +126,44 @@ async function typesenseCount(
   }
   const data = await resp.json() as TypesenseSearchResponse
   return typeof data.found === "number" ? data.found : 0
+}
+
+async function typesenseFacetCounts(
+  apiKey: string,
+  collection: "memory_observations" | "otel_events",
+  queryBy: string,
+  facetBy: string,
+  filterBy?: string,
+): Promise<Array<{ value: string; count: number }>> {
+  const params = new URLSearchParams({
+    q: "*",
+    query_by: queryBy,
+    per_page: "1",
+    facet_by: facetBy,
+    max_facet_values: "100",
+    exclude_fields: "embedding",
+  })
+  if (filterBy) params.set("filter_by", filterBy)
+
+  const resp = await fetch(
+    `${TYPESENSE_URL}/collections/${collection}/documents/search?${params}`,
+    { headers: { "X-TYPESENSE-API-KEY": apiKey } }
+  )
+  if (!resp.ok) {
+    const body = await resp.text()
+    throw new Error(`Typesense facet query failed (${resp.status}): ${body}`)
+  }
+
+  const data = await resp.json() as TypesenseSearchResponse
+  const facet = (data.facet_counts ?? []).find((entry) => entry.field_name === facetBy)
+  const counts = facet?.counts ?? []
+  return counts
+    .map((entry) => ({
+      value: String(entry.value ?? "").trim(),
+      count: typeof entry.count === "number" ? entry.count : 0,
+    }))
+    .filter((entry) => entry.value.length > 0 && entry.count > 0)
+    .sort((a, b) => b.count - a.count)
 }
 
 async function typesenseCollectionSchema(
@@ -1201,8 +1243,35 @@ const inngestMemoryHealthCmd = Command.make(
       Options.withDefault(0.5),
       Options.withDescription("Fail threshold for stale memory ratio (default: 0.5)")
     ),
+    minCategoryCoverage: Options.float("min-category-coverage").pipe(
+      Options.withDefault(0.95),
+      Options.withDescription("Pass threshold for category_id coverage ratio (default: 0.95)")
+    ),
+    minCategoryHighConfidence: Options.float("min-category-high-confidence").pipe(
+      Options.withDefault(0.6),
+      Options.withDescription("Pass threshold for high-confidence category ratio (default: 0.6)")
+    ),
+    maxWriteGateFallbackRate: Options.float("max-write-gate-fallback-rate").pipe(
+      Options.withDefault(0.2),
+      Options.withDescription("Fail threshold for write gate fallback rate (default: 0.2)")
+    ),
+    maxWriteGateDiscardRatio: Options.float("max-write-gate-discard-ratio").pipe(
+      Options.withDefault(0.6),
+      Options.withDescription("Fail threshold for discard ratio among verdicted observations (default: 0.6)")
+    ),
   },
-  ({ hours, stallMinutes, maxErrorRate, maxFailedRuns, maxBacklog, maxStaleRatio }) =>
+  ({
+    hours,
+    stallMinutes,
+    maxErrorRate,
+    maxFailedRuns,
+    maxBacklog,
+    maxStaleRatio,
+    minCategoryCoverage,
+    minCategoryHighConfidence,
+    maxWriteGateFallbackRate,
+    maxWriteGateDiscardRatio,
+  }) =>
     Effect.gen(function* () {
       try {
         const inngestClient = yield* Inngest
@@ -1265,10 +1334,140 @@ const inngestMemoryHealthCmd = Command.make(
         ? (Date.now() - latestSuccess.timestamp) / 60000
         : Number.POSITIVE_INFINITY
 
+      const categoryCoverageState = yield* Effect.tryPromise(() =>
+        typesenseFacetCounts(apiKey, "memory_observations", "observation", "category_id")
+          .then((buckets) => {
+            const categorizedCount = buckets.reduce((sum, bucket) => sum + bucket.count, 0)
+            const uncategorizedCount = Math.max(0, memoryCount - categorizedCount)
+            const coverageRatio = memoryCount > 0 ? categorizedCount / memoryCount : 0
+            return {
+              supported: true,
+              reason: null as string | null,
+              buckets,
+              categorizedCount,
+              uncategorizedCount,
+              coverageRatio,
+            }
+          })
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error)
+            if (/facet|category_id/iu.test(message)) {
+              return {
+                supported: false,
+                reason: "category_id facet missing in Typesense schema",
+                buckets: [] as Array<{ value: string; count: number }>,
+                categorizedCount: 0,
+                uncategorizedCount: memoryCount,
+                coverageRatio: 0,
+              }
+            }
+            throw error
+          })
+      )
+
+      const categoryConfidenceState = yield* Effect.tryPromise(() =>
+        Promise.all([
+          typesenseCount(apiKey, "memory_observations", "observation", "category_confidence:>=0.8"),
+          typesenseCount(apiKey, "memory_observations", "observation", "category_confidence:>=0.6 && category_confidence:<0.8"),
+          typesenseCount(apiKey, "memory_observations", "observation", "category_confidence:<0.6"),
+        ])
+          .then(([high, medium, low]) => {
+            const knownCount = high + medium + low
+            return {
+              supported: true,
+              reason: null as string | null,
+              knownCount,
+              high,
+              medium,
+              low,
+              highRatio: knownCount > 0 ? high / knownCount : 0,
+            }
+          })
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error)
+            if (/filter field named `category_confidence`/iu.test(message)) {
+              return {
+                supported: false,
+                reason: "category_confidence field missing in Typesense schema",
+                knownCount: 0,
+                high: 0,
+                medium: 0,
+                low: 0,
+                highRatio: 0,
+              }
+            }
+            throw error
+          })
+      )
+
+      const writeGateState = yield* Effect.tryPromise(() =>
+        Promise.all([
+          typesenseCount(apiKey, "memory_observations", "observation", "write_verdict:=allow"),
+          typesenseCount(apiKey, "memory_observations", "observation", "write_verdict:=hold"),
+          typesenseCount(apiKey, "memory_observations", "observation", "write_verdict:=discard"),
+          typesenseCount(apiKey, "memory_observations", "observation", "write_gate_fallback:=true"),
+        ])
+          .then(([allow, hold, discard, fallback]) => {
+            const totalWithVerdict = allow + hold + discard
+            return {
+              supported: true,
+              reason: null as string | null,
+              allow,
+              hold,
+              discard,
+              fallback,
+              totalWithVerdict,
+              holdRatio: totalWithVerdict > 0 ? hold / totalWithVerdict : 0,
+              discardRatio: totalWithVerdict > 0 ? discard / totalWithVerdict : 0,
+              fallbackRate: totalWithVerdict > 0 ? fallback / totalWithVerdict : 0,
+            }
+          })
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error)
+            if (/filter field named `write_verdict`|filter field named `write_gate_fallback`/iu.test(message)) {
+              return {
+                supported: false,
+                reason: "write gate fields missing in Typesense schema",
+                allow: 0,
+                hold: 0,
+                discard: 0,
+                fallback: 0,
+                totalWithVerdict: 0,
+                holdRatio: 0,
+                discardRatio: 0,
+                fallbackRate: 0,
+              }
+            }
+            throw error
+          })
+      )
+
       const checks = {
         memoryStageStall: minutesSinceSuccess <= safeStallMinutes,
         otelErrorRate: otelTotal >= 20 ? errorRate <= maxErrorRate : true,
         staleRatio: staleState.supported ? (memoryCount >= 25 ? staleRatio <= maxStaleRatio : true) : true,
+        categoryCoverage:
+          categoryCoverageState.supported
+            ? (memoryCount >= 25 ? categoryCoverageState.coverageRatio >= minCategoryCoverage : true)
+            : true,
+        categoryConfidence:
+          categoryConfidenceState.supported
+            ? (categoryConfidenceState.knownCount >= 25
+              ? categoryConfidenceState.highRatio >= minCategoryHighConfidence
+              : true)
+            : true,
+        writeGateFallbackRate:
+          writeGateState.supported
+            ? (writeGateState.totalWithVerdict >= 25
+              ? writeGateState.fallbackRate <= maxWriteGateFallbackRate
+              : true)
+            : true,
+        writeGateDiscardRatio:
+          writeGateState.supported
+            ? (writeGateState.totalWithVerdict >= 25
+              ? writeGateState.discardRatio <= maxWriteGateDiscardRatio
+              : true)
+            : true,
         failedMemoryRuns: failedRuns.length <= maxFailedRuns,
         memoryBacklog: activeRuns.length <= maxBacklog,
       }
@@ -1285,6 +1484,10 @@ const inngestMemoryHealthCmd = Command.make(
             maxFailedRuns,
             maxBacklog,
             maxStaleRatio,
+            minCategoryCoverage,
+            minCategoryHighConfidence,
+            maxWriteGateFallbackRate,
+            maxWriteGateDiscardRatio,
           },
           memory: {
             count: memoryCount,
@@ -1292,6 +1495,35 @@ const inngestMemoryHealthCmd = Command.make(
             staleRatio,
             staleMetricSupported: staleState.supported,
             staleMetricReason: staleState.reason,
+            categories: {
+              supported: categoryCoverageState.supported,
+              reason: categoryCoverageState.reason,
+              categorizedCount: categoryCoverageState.categorizedCount,
+              uncategorizedCount: categoryCoverageState.uncategorizedCount,
+              coverageRatio: categoryCoverageState.coverageRatio,
+              topCategories: categoryCoverageState.buckets.slice(0, 10),
+              confidence: {
+                supported: categoryConfidenceState.supported,
+                reason: categoryConfidenceState.reason,
+                knownCount: categoryConfidenceState.knownCount,
+                highCount: categoryConfidenceState.high,
+                mediumCount: categoryConfidenceState.medium,
+                lowCount: categoryConfidenceState.low,
+                highRatio: categoryConfidenceState.highRatio,
+              },
+            },
+            writeGate: {
+              supported: writeGateState.supported,
+              reason: writeGateState.reason,
+              allowCount: writeGateState.allow,
+              holdCount: writeGateState.hold,
+              discardCount: writeGateState.discard,
+              fallbackCount: writeGateState.fallback,
+              totalWithVerdict: writeGateState.totalWithVerdict,
+              holdRatio: writeGateState.holdRatio,
+              discardRatio: writeGateState.discardRatio,
+              fallbackRate: writeGateState.fallbackRate,
+            },
           },
           runs: {
             totalWindowRuns: runs.length,

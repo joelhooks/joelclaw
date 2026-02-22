@@ -1,4 +1,5 @@
 import { inngest } from "../client";
+import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
 import { syncFiles, type SyncResult } from "./vault-sync";
 import { emitOtelEvent } from "../../observability/emit";
 
@@ -275,6 +276,9 @@ async function reviewDiffBeforePush(): Promise<boolean> {
 
     if (!diffStat.trim()) return true; // nothing staged
 
+    const safetyModel = "anthropic/claude-haiku";
+    const safetyStartedAt = Date.now();
+
     // Ask haiku
     const proc = Bun.spawn(
       [
@@ -283,8 +287,8 @@ async function reviewDiffBeforePush(): Promise<boolean> {
         "--no-session",
         "--no-extensions",
         "--print",
-        "--mode", "text",
-        "--model", "anthropic/claude-haiku",
+        "--mode", "json",
+        "--model", safetyModel,
         "--system-prompt", SAFETY_SYSTEM_PROMPT,
         `Review this staged git diff for content-only safety:\n\n${diffStat.trim()}`,
       ],
@@ -295,19 +299,61 @@ async function reviewDiffBeforePush(): Promise<boolean> {
       }
     );
 
-    const [stdout, , exitCode] = await Promise.all([
+    const [stdoutRaw, stderr, exitCode] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
       proc.exited,
     ]);
 
+    const parsedPi = parsePiJsonAssistant(stdoutRaw);
+    const stdout = parsedPi?.text ?? stdoutRaw;
+
     if (exitCode !== 0) {
+      await traceLlmGeneration({
+        traceName: "joelclaw.content-sync",
+        generationName: "content-sync.safety-review",
+        component: "content-sync",
+        action: "content-sync.safety.review",
+        input: {
+          diffStat: diffStat.trim().slice(0, 4000),
+        },
+        output: {
+          stderr: stderr.trim().slice(0, 500),
+        },
+        provider: parsedPi?.provider,
+        model: parsedPi?.model ?? safetyModel,
+        usage: parsedPi?.usage,
+        durationMs: Date.now() - safetyStartedAt,
+        error: `safety_review_exit_${exitCode}`,
+      });
       console.log("[content-sync] safety review failed to run, blocking push as precaution");
       return false;
     }
 
     const answer = stdout.trim().toUpperCase();
     const safe = answer.startsWith("YES");
+
+    await traceLlmGeneration({
+      traceName: "joelclaw.content-sync",
+      generationName: "content-sync.safety-review",
+      component: "content-sync",
+      action: "content-sync.safety.review",
+      input: {
+        diffStat: diffStat.trim().slice(0, 4000),
+      },
+      output: {
+        reviewerAnswer: stdout.trim().slice(0, 500),
+        safe,
+      },
+      provider: parsedPi?.provider,
+      model: parsedPi?.model ?? safetyModel,
+      usage: parsedPi?.usage,
+      durationMs: Date.now() - safetyStartedAt,
+      metadata: {
+        safe,
+      },
+    });
+
     console.log(`[content-sync] safety review: ${stdout.trim()}`);
     return safe;
   } catch (err) {

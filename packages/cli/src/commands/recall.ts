@@ -45,6 +45,10 @@ interface TypesenseHit {
     recall_count?: number | string
     retrieval_priority?: number | string
     write_verdict?: "allow" | "hold" | "discard"
+    category_id?: string
+    category_confidence?: number | string
+    category_source?: string
+    taxonomy_version?: string
   }
   highlights?: Array<{ field: string; snippet?: string }>
   text_match_info?: { score?: number | string }
@@ -127,6 +131,35 @@ function normalizeBudgetProfile(input: string): BudgetProfile {
   if (normalized === "balanced") return "balanced"
   if (normalized === "deep") return "deep"
   return "auto"
+}
+
+function normalizeCategoryFilter(input: string): string | null {
+  const normalized = input.trim().toLowerCase()
+  if (!normalized) return null
+
+  const aliasMap: Record<string, string> = {
+    "preferences": "jc:preferences",
+    "jc:preferences": "jc:preferences",
+    "rules": "jc:rules-conventions",
+    "conventions": "jc:rules-conventions",
+    "jc:rules-conventions": "jc:rules-conventions",
+    "architecture": "jc:system-architecture",
+    "system-architecture": "jc:system-architecture",
+    "jc:system-architecture": "jc:system-architecture",
+    "operations": "jc:operations",
+    "ops": "jc:operations",
+    "jc:operations": "jc:operations",
+    "memory": "jc:memory-system",
+    "memory-system": "jc:memory-system",
+    "jc:memory-system": "jc:memory-system",
+    "projects": "jc:projects",
+    "jc:projects": "jc:projects",
+    "people": "jc:people-relationships",
+    "relationships": "jc:people-relationships",
+    "jc:people-relationships": "jc:people-relationships",
+  }
+
+  return aliasMap[normalized] ?? null
 }
 
 function resolveBudgetPlan(requestedRaw: string, query: string): BudgetPlan {
@@ -509,7 +542,7 @@ async function searchTypesense(
   query: string,
   limit: number,
   apiKey: string,
-  options?: { fetchMultiplier?: number },
+  options?: { fetchMultiplier?: number; filterBy?: string },
 ): Promise<{ hits: TypesenseHit[]; found: number }> {
   const bounded = Math.min(Math.max(limit, 1), MAX_INJECT)
   const fetchMultiplier = options?.fetchMultiplier && Number.isFinite(options.fetchMultiplier)
@@ -523,6 +556,9 @@ async function searchTypesense(
     per_page: String(fetchLimit),
     exclude_fields: "embedding",
   })
+  if (options?.filterBy) {
+    params.set("filter_by", options.filterBy)
+  }
 
   const resp = await fetch(
     `${TYPESENSE_URL}/collections/memory_observations/documents/search?${params}`,
@@ -545,14 +581,17 @@ const raw = Options.boolean("raw").pipe(Options.withDefault(false))
 const includeHold = Options.boolean("include-hold").pipe(Options.withDefault(false))
 const includeDiscard = Options.boolean("include-discard").pipe(Options.withDefault(false))
 const budget = Options.text("budget").pipe(Options.withDefault("auto"))
+const category = Options.text("category").pipe(Options.withDefault(""))
 
 export const recallCmd = Command.make(
   "recall",
-  { query, limit, minScore, raw, includeHold, includeDiscard, budget },
-  ({ query, limit, minScore, raw, includeHold, includeDiscard, budget }) =>
+  { query, limit, minScore, raw, includeHold, includeDiscard, budget, category },
+  ({ query, limit, minScore, raw, includeHold, includeDiscard, budget, category }) =>
     Effect.gen(function* () {
       const startedAt = Date.now()
       const budgetPlan = resolveBudgetPlan(budget, query)
+      const resolvedCategory = normalizeCategoryFilter(category)
+      const categoryFilterBy = resolvedCategory ? `category_id:=${resolvedCategory}` : undefined
       const rewrite = runRewriteQueryWith(query, {
         rewriteEnabled: budgetPlan.rewriteEnabled,
       })
@@ -590,23 +629,51 @@ export const recallCmd = Command.make(
             rewriteError: rewrite.error,
             includeHold,
             includeDiscard,
+            categoryInput: category,
+            categoryResolved: resolvedCategory,
+            categoryFilterBy: categoryFilterBy ?? null,
             budgetRequested: budgetPlan.requested,
             budgetApplied: budgetPlan.applied,
             budgetReason: budgetPlan.reason,
           },
         }))
 
-        const result = yield* Effect.promise(() =>
-          searchTypesense(rewrite.rewrittenQuery, limit, apiKey, {
-            fetchMultiplier: budgetPlan.fetchMultiplier,
-          })
-        )
+        let categoryFilterApplied = Boolean(categoryFilterBy)
+        let categoryFilterReason = categoryFilterBy ? "applied" : "none"
+
+        const result = yield* Effect.tryPromise({
+          try: async () => {
+            try {
+              return await searchTypesense(rewrite.rewrittenQuery, limit, apiKey, {
+                fetchMultiplier: budgetPlan.fetchMultiplier,
+                filterBy: categoryFilterBy,
+              })
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error)
+              if (categoryFilterBy && /filter field named `category_id`/iu.test(message)) {
+                categoryFilterApplied = false
+                categoryFilterReason = "schema_missing_fallback"
+                return await searchTypesense(rewrite.rewrittenQuery, limit, apiKey, {
+                  fetchMultiplier: budgetPlan.fetchMultiplier,
+                })
+              }
+              throw error
+            }
+          },
+          catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+        })
 
         const ranked = rankHits(result.hits)
         const trust = trustPassFilter(ranked, Math.max(0, minScore), {
           includeHold,
           includeDiscard,
         })
+        if (categoryFilterBy && categoryFilterApplied) {
+          trust.filtersApplied.push("category-filter")
+        }
+        if (categoryFilterBy && !categoryFilterApplied) {
+          trust.filtersApplied.push("category-filter-fallback")
+        }
         const cappedLimit = Math.min(Math.max(limit, 1), budgetPlan.maxInject, MAX_INJECT)
         const finalHits = trust.kept.slice(0, cappedLimit)
 
@@ -627,6 +694,11 @@ export const recallCmd = Command.make(
             droppedByTrustPass: trust.dropped.length,
             includeHold,
             includeDiscard,
+            categoryInput: category,
+            categoryResolved: resolvedCategory,
+            categoryFilterBy: categoryFilterBy ?? null,
+            categoryFilterApplied,
+            categoryFilterReason,
             budgetRequested: budgetPlan.requested,
             budgetApplied: budgetPlan.applied,
             budgetReason: budgetPlan.reason,
@@ -657,6 +729,13 @@ export const recallCmd = Command.make(
             filtersApplied: trust.filtersApplied,
             includeHold,
             includeDiscard,
+            categoryFilter: {
+              input: category,
+              resolved: resolvedCategory,
+              queryFilter: categoryFilterBy ?? null,
+              applied: categoryFilterApplied,
+              reason: categoryFilterReason,
+            },
             budget: {
               requested: budgetPlan.requested,
               applied: budgetPlan.applied,
@@ -676,6 +755,10 @@ export const recallCmd = Command.make(
               type: h.document.observation_type || "unknown",
               source: h.document.source || "unknown",
               writeVerdict: h.document.write_verdict || "allow",
+              categoryId: h.document.category_id || "unknown",
+              categoryConfidence: asFiniteNumber(h.document.category_confidence, 0),
+              categorySource: h.document.category_source || "unknown",
+              taxonomyVersion: h.document.taxonomy_version || "unknown",
               session: h.document.session_id || "unknown",
               timestamp: toIsoTimestamp(h.document.timestamp) || "unknown",
               recallCount: asFiniteNumber(h.document.recall_count, 0),
@@ -701,6 +784,10 @@ export const recallCmd = Command.make(
               command: `joelclaw recall "${query}" --budget deep --limit 10`,
               description: "Run deeper retrieval for difficult queries",
             },
+            {
+              command: `joelclaw recall "${query}" --category jc:memory-system --limit 10`,
+              description: "Constrain retrieval to a specific memory category",
+            },
           ])
         )
       } catch (error) {
@@ -721,6 +808,9 @@ export const recallCmd = Command.make(
             rewriteDurationMs: rewrite.durationMs,
             includeHold,
             includeDiscard,
+            categoryInput: category,
+            categoryResolved: resolvedCategory,
+            categoryFilterBy: categoryFilterBy ?? null,
             budgetRequested: budgetPlan.requested,
             budgetApplied: budgetPlan.applied,
             budgetReason: budgetPlan.reason,

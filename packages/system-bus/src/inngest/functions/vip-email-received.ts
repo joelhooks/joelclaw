@@ -7,6 +7,7 @@
 import { spawnSync } from "node:child_process";
 import { inngest } from "../client";
 import { parseClaudeOutput, pushGatewayEvent } from "./agent-loop/utils";
+import { parsePiJsonAssistant, traceLlmGeneration, type LlmUsage } from "../../lib/langfuse";
 import { TodoistTaskAdapter } from "../../tasks";
 import { isVipSender } from "./vip-utils";
 
@@ -424,10 +425,15 @@ type TriageDecision = {
   analysis: VipAnalysis;
 };
 
-function runModelAnalysis(model: string, systemPrompt: string, prompt: string, timeoutMs: number): { analysis: VipAnalysis; error?: string } {
+function runModelAnalysis(
+  model: string,
+  systemPrompt: string,
+  prompt: string,
+  timeoutMs: number
+): { analysis: VipAnalysis; error?: string; provider?: string; model?: string; usage?: LlmUsage } {
   const proc = spawnSync(
     "pi",
-    ["-p", "--no-session", "--no-extensions", "--model", model, "--system-prompt", systemPrompt, prompt],
+    ["-p", "--no-session", "--no-extensions", "--mode", "json", "--model", model, "--system-prompt", systemPrompt, prompt],
     {
       encoding: "utf-8",
       timeout: timeoutMs,
@@ -436,17 +442,28 @@ function runModelAnalysis(model: string, systemPrompt: string, prompt: string, t
     }
   );
 
-  const stdout = (proc.stdout ?? "").trim();
+  const stdoutRaw = (proc.stdout ?? "").trim();
+  const parsedPi = parsePiJsonAssistant(stdoutRaw);
+  const stdout = (parsedPi?.text ?? stdoutRaw).trim();
   const stderr = (proc.stderr ?? "").trim();
 
   if (proc.status !== 0 && !stdout) {
     return {
       analysis: parseVipAnalysis(""),
       error: `model failure (${proc.status ?? "unknown"}): ${stderr.slice(0, 250)}`,
+      provider: parsedPi?.provider,
+      model: parsedPi?.model ?? model,
+      usage: parsedPi?.usage,
     };
   }
 
-  return { analysis: parseVipAnalysis(stdout), error: proc.status !== 0 ? stderr.slice(0, 250) : undefined };
+  return {
+    analysis: parseVipAnalysis(stdout),
+    error: proc.status !== 0 ? stderr.slice(0, 250) : undefined,
+    provider: parsedPi?.provider,
+    model: parsedPi?.model ?? model,
+    usage: parsedPi?.usage,
+  };
 }
 
 function parseTriageDecision(raw: string): TriageDecision {
@@ -787,7 +804,18 @@ export const vipEmailReceived = inngest.createFunction(
       const t0 = Date.now();
       const proc = spawnSync(
         "pi",
-        ["-p", "--no-session", "--no-extensions", "--model", TRIAGE_MODEL, "--system-prompt", VIP_TRIAGE_PROMPT, analysisPrompt],
+        [
+          "-p",
+          "--no-session",
+          "--no-extensions",
+          "--mode",
+          "json",
+          "--model",
+          TRIAGE_MODEL,
+          "--system-prompt",
+          VIP_TRIAGE_PROMPT,
+          analysisPrompt,
+        ],
         {
           encoding: "utf-8",
           timeout: TRIAGE_TIMEOUT_MS,
@@ -796,11 +824,38 @@ export const vipEmailReceived = inngest.createFunction(
         }
       );
 
-      const stdout = (proc.stdout ?? "").trim();
+      const stdoutRaw = (proc.stdout ?? "").trim();
+      const parsedPi = parsePiJsonAssistant(stdoutRaw);
+      const stdout = (parsedPi?.text ?? stdoutRaw).trim();
       const stderr = (proc.stderr ?? "").trim();
       const durationMs = Date.now() - t0;
 
       if (proc.status !== 0 && !stdout) {
+        const error = stderr.slice(0, 250);
+        await traceLlmGeneration({
+          traceName: "joelclaw.vip-email",
+          generationName: "vip-email.initial-triage",
+          component: "vip-email-received",
+          action: "vip-email.triage",
+          input: {
+            senderDisplay,
+            subject,
+            conversationId,
+            prompt: analysisPrompt.slice(0, 6000),
+          },
+          output: {
+            stderr: error,
+          },
+          provider: parsedPi?.provider,
+          model: parsedPi?.model ?? TRIAGE_MODEL,
+          usage: parsedPi?.usage,
+          durationMs,
+          error,
+          metadata: {
+            senderDisplay,
+          },
+        });
+
         return {
           decision: {
             needs_opus: false,
@@ -809,12 +864,39 @@ export const vipEmailReceived = inngest.createFunction(
             analysis: parseVipAnalysis(""),
           },
           durationMs,
-          error: stderr.slice(0, 250),
+          error,
         };
       }
 
+      const decision = parseTriageDecision(stdout);
+
+      await traceLlmGeneration({
+        traceName: "joelclaw.vip-email",
+        generationName: "vip-email.initial-triage",
+        component: "vip-email-received",
+        action: "vip-email.triage",
+        input: {
+          senderDisplay,
+          subject,
+          conversationId,
+          prompt: analysisPrompt.slice(0, 6000),
+        },
+        output: {
+          needsOpus: decision.needs_opus,
+          complexity: decision.complexity,
+          reason: decision.reason,
+        },
+        provider: parsedPi?.provider,
+        model: parsedPi?.model ?? TRIAGE_MODEL,
+        usage: parsedPi?.usage,
+        durationMs,
+        metadata: {
+          senderDisplay,
+        },
+      });
+
       return {
-        decision: parseTriageDecision(stdout),
+        decision,
         durationMs,
         error: proc.status !== 0 ? stderr.slice(0, 250) : undefined,
       };
@@ -841,15 +923,47 @@ export const vipEmailReceived = inngest.createFunction(
           const t0 = Date.now();
           const timeoutMs = Math.min(OPUS_TIMEOUT_MS, Math.max(2_000, remainingBudgetMs - 1_000));
           const result = runModelAnalysis(VIP_MODEL, VIP_SYSTEM_PROMPT, analysisPrompt, timeoutMs);
+          const durationMs = Date.now() - t0;
+
+          await traceLlmGeneration({
+            traceName: "joelclaw.vip-email",
+            generationName: "vip-email.deep-analysis",
+            component: "vip-email-received",
+            action: "vip-email.deep-analysis",
+            input: {
+              senderDisplay,
+              subject,
+              conversationId,
+              prompt: analysisPrompt.slice(0, 6000),
+            },
+            output: {
+              todos: result.analysis.todos.length,
+              questions: result.analysis.questions_for_human.length,
+              missingInfo: result.analysis.missing_information.length,
+            },
+            provider: result.provider,
+            model: result.model ?? VIP_MODEL,
+            usage: result.usage,
+            durationMs,
+            error: result.error,
+            metadata: {
+              senderDisplay,
+              timeoutMs,
+            },
+          });
+
           return {
             ...result,
-            durationMs: Date.now() - t0,
+            durationMs,
           };
         })
       : {
           analysis: triageResult.decision.analysis,
           error: undefined,
           durationMs: 0,
+          provider: triageResult.decision.needs_opus ? undefined : TRIAGE_MODEL,
+          model: TRIAGE_MODEL,
+          usage: undefined,
         };
 
     timings["opus-vip-analysis"] = finalAnalysis.durationMs;

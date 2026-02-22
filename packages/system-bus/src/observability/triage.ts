@@ -1,4 +1,5 @@
 import * as typesense from "../lib/typesense";
+import { parsePiJsonAssistant, traceLlmGeneration } from "../lib/langfuse";
 import { emitOtelEvent } from "./emit";
 import { createOtelEvent, type OtelEvent } from "./otel-event";
 import { classifyEvent, dedupKey, type TriagePattern } from "./triage-patterns";
@@ -414,7 +415,9 @@ export async function classifyWithLLM(
       JSON.stringify(payload, null, 2),
     ].join("\n");
 
-    const runPromise = Bun.$`pi --no-tools --no-session --no-extensions --print --mode text --model ${CLASSIFIER_MODEL} --system-prompt ${CLASSIFIER_SYSTEM_PROMPT} ${userPrompt}`
+    const classifierStartedAt = Date.now();
+
+    const runPromise = Bun.$`pi --no-tools --no-session --no-extensions --print --mode json --model ${CLASSIFIER_MODEL} --system-prompt ${CLASSIFIER_SYSTEM_PROMPT} ${userPrompt}`
       .quiet()
       .nothrow();
 
@@ -435,10 +438,35 @@ export async function classifyWithLLM(
       );
     });
 
-    const stdout = readShellText(result.stdout);
+    const stdoutRaw = readShellText(result.stdout);
+    const parsedPi = parsePiJsonAssistant(stdoutRaw);
+    const stdout = parsedPi?.text ?? stdoutRaw;
     const stderr = readShellText(result.stderr).trim();
     if (result.exitCode !== 0) {
-      throw new Error(`pi exit ${result.exitCode}${stderr ? `: ${stderr}` : ""}`);
+      const exitError = `pi exit ${result.exitCode}${stderr ? `: ${stderr}` : ""}`;
+      await traceLlmGeneration({
+        traceName: "joelclaw.triage.classifier",
+        generationName: "triage.llm-classifier",
+        component: TRIAGE_COMPONENT,
+        action: "triage.llm_classification",
+        input: {
+          eventCount: events.length,
+          prompt: userPrompt.slice(0, 6000),
+        },
+        output: {
+          stderr: stderr.slice(0, 500),
+        },
+        provider: parsedPi?.provider,
+        model: parsedPi?.model ?? CLASSIFIER_MODEL,
+        usage: parsedPi?.usage,
+        durationMs: Date.now() - classifierStartedAt,
+        error: exitError,
+        metadata: {
+          eventCount: events.length,
+          runType: "classifier",
+        },
+      });
+      throw new Error(exitError);
     }
 
     const parsedArray = parseClassificationArray(stdout);
@@ -459,6 +487,32 @@ export async function classifyWithLLM(
     const tier3Count = normalized.filter((item) => item.tier === 3).length;
     const proposedPatternCount = normalized.filter((item) => item.proposed_pattern != null).length;
 
+    await traceLlmGeneration({
+      traceName: "joelclaw.triage.classifier",
+      generationName: "triage.llm-classifier",
+      component: TRIAGE_COMPONENT,
+      action: "triage.llm_classification",
+      input: {
+        eventCount: events.length,
+        prompt: userPrompt.slice(0, 6000),
+      },
+      output: {
+        classifiedCount: normalized.length,
+        tier1Count,
+        tier2Count,
+        tier3Count,
+        proposedPatternCount,
+      },
+      provider: parsedPi?.provider,
+      model: parsedPi?.model ?? CLASSIFIER_MODEL,
+      usage: parsedPi?.usage,
+      durationMs: Date.now() - classifierStartedAt,
+      metadata: {
+        eventCount: events.length,
+        runType: "classifier",
+      },
+    });
+
     await emitOtelEvent({
       level: "info",
       source: "worker",
@@ -478,6 +532,27 @@ export async function classifyWithLLM(
     return normalized;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+
+    await traceLlmGeneration({
+      traceName: "joelclaw.triage.classifier",
+      generationName: "triage.llm-classifier",
+      component: TRIAGE_COMPONENT,
+      action: "triage.llm_classification",
+      input: {
+        eventCount: events.length,
+      },
+      output: {
+        fallbackTier: 2,
+      },
+      model: CLASSIFIER_MODEL,
+      error: message,
+      metadata: {
+        eventCount: events.length,
+        fallbackTier: 2,
+        runType: "classifier",
+      },
+    });
+
     await emitOtelEvent({
       level: "warn",
       source: "worker",

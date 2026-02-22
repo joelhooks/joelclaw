@@ -10,6 +10,7 @@
 
 import { inngest } from "../client";
 import { parseClaudeOutput, pushGatewayEvent } from "./agent-loop/utils";
+import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import type { Task } from "../../tasks/port";
 import Redis from "ioredis";
@@ -191,22 +192,87 @@ export const taskTriage = inngest.createFunction(
         taskBlocks.join("\n\n---\n\n"),
       ].join("\n");
 
+      const triageStartedAt = Date.now();
+
       const proc = Bun.spawn(
-        ["pi", "-p", "--no-session", "--no-extensions", "--model", TRIAGE_MODEL, "--system-prompt", TRIAGE_SYSTEM_PROMPT, userPrompt],
+        [
+          "pi",
+          "-p",
+          "--no-session",
+          "--no-extensions",
+          "--mode",
+          "json",
+          "--model",
+          TRIAGE_MODEL,
+          "--system-prompt",
+          TRIAGE_SYSTEM_PROMPT,
+          userPrompt,
+        ],
         { env: { ...process.env, TERM: "dumb" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" },
       );
 
-      const [stdout, stderr, exitCode] = await Promise.all([
+      const [stdoutRaw, stderr, exitCode] = await Promise.all([
         readStream(proc.stdout),
         readStream(proc.stderr),
         proc.exited,
       ]);
 
-      if (exitCode !== 0 && !stdout.trim()) {
-        throw new Error(`pi triage failed (${exitCode}): ${stderr.trim()}`);
+      const parsedPi = parsePiJsonAssistant(stdoutRaw);
+      const assistantText = parsedPi?.text ?? stdoutRaw;
+
+      if (exitCode !== 0 && !assistantText.trim()) {
+        const error = `pi triage failed (${exitCode}): ${stderr.trim()}`;
+        await traceLlmGeneration({
+          traceName: "joelclaw.task-triage",
+          generationName: "tasks.triage",
+          component: "task-triage",
+          action: "tasks.triage.classify",
+          input: {
+            taskCount: tasks.length,
+            prompt: userPrompt.slice(0, 6000),
+          },
+          output: {
+            stderr: stderr.trim().slice(0, 500),
+          },
+          provider: parsedPi?.provider,
+          model: parsedPi?.model ?? TRIAGE_MODEL,
+          usage: parsedPi?.usage,
+          durationMs: Date.now() - triageStartedAt,
+          error,
+          metadata: {
+            taskCount: tasks.length,
+            source: "task-triage",
+          },
+        });
+        throw new Error(error);
       }
 
-      return parseTriageResult(stdout);
+      const triage = parseTriageResult(assistantText);
+
+      await traceLlmGeneration({
+        traceName: "joelclaw.task-triage",
+        generationName: "tasks.triage",
+        component: "task-triage",
+        action: "tasks.triage.classify",
+        input: {
+          taskCount: tasks.length,
+          prompt: userPrompt.slice(0, 6000),
+        },
+        output: {
+          triageCount: triage.triage.length,
+          insightsCount: triage.insights.length,
+        },
+        provider: parsedPi?.provider,
+        model: parsedPi?.model ?? TRIAGE_MODEL,
+        usage: parsedPi?.usage,
+        durationMs: Date.now() - triageStartedAt,
+        metadata: {
+          taskCount: tasks.length,
+          source: "task-triage",
+        },
+      });
+
+      return triage;
     });
 
     // Step 5: Build gateway notification — only if actionable

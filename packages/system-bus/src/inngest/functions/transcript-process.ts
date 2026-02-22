@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { pushGatewayEvent } from "./agent-loop/utils";
 import { execSync } from "node:child_process";
 import { pushContentResource } from "../../lib/convex";
+import { traceLlmGeneration } from "../../lib/langfuse";
 import * as typesense from "../../lib/typesense";
 import { chunkBySegments, chunkBySpeakerTurns } from "../../lib/transcript-chunk";
 
@@ -298,6 +299,9 @@ Rules:
 - Return ONLY the JSON array, no markdown fences or explanation`,
         });
 
+        const reviewModel = "claude-sonnet-4-20250514";
+        const reviewStartedAt = Date.now();
+
         const response = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
@@ -306,13 +310,36 @@ Rules:
             "anthropic-version": "2023-06-01",
           },
           body: JSON.stringify({
-            model: "claude-sonnet-4-20250514",
+            model: reviewModel,
             max_tokens: 2048,
             messages: [{ role: "user", content: imageContents }],
           }),
         });
 
         if (!response.ok) {
+          const errorBody = (await response.text()).slice(0, 500);
+          await traceLlmGeneration({
+            traceName: "joelclaw.transcript-process",
+            generationName: "transcript.screenshot-review",
+            component: "transcript-process",
+            action: "transcript.screenshot.review",
+            input: {
+              slug,
+              title,
+              screenshotCount: screenshots.length,
+            },
+            output: {
+              status: response.status,
+              body: errorBody,
+            },
+            model: reviewModel,
+            durationMs: Date.now() - reviewStartedAt,
+            error: `anthropic_http_${response.status}`,
+            metadata: {
+              screenshotCount: screenshots.length,
+            },
+          });
+
           // Non-fatal: return originals
           return screenshots.map((s) => ({
             name: s.name,
@@ -323,6 +350,11 @@ Rules:
 
         const data = (await response.json()) as {
           content?: Array<{ text?: string }>;
+          usage?: {
+            input_tokens?: number;
+            output_tokens?: number;
+          };
+          model?: string;
         };
         const rawText = data.content?.[0]?.text ?? "[]";
 
@@ -339,7 +371,33 @@ Rules:
               .replace(/```/g, "")
               .trim(),
           );
-        } catch {
+        } catch (error) {
+          await traceLlmGeneration({
+            traceName: "joelclaw.transcript-process",
+            generationName: "transcript.screenshot-review",
+            component: "transcript-process",
+            action: "transcript.screenshot.review",
+            input: {
+              slug,
+              title,
+              screenshotCount: screenshots.length,
+            },
+            output: {
+              rawText: rawText.slice(0, 3000),
+            },
+            model: data.model ?? reviewModel,
+            usage: {
+              inputTokens: data.usage?.input_tokens,
+              outputTokens: data.usage?.output_tokens,
+            },
+            durationMs: Date.now() - reviewStartedAt,
+            error: error instanceof Error ? error.message : String(error),
+            metadata: {
+              screenshotCount: screenshots.length,
+              parseFailed: true,
+            },
+          });
+
           return screenshots.map((s) => ({
             name: s.name,
             altText: s.name.replace(".jpg", "").replace(/-/g, " "),
@@ -402,6 +460,32 @@ Rules:
             }
           }
         }
+
+        await traceLlmGeneration({
+          traceName: "joelclaw.transcript-process",
+          generationName: "transcript.screenshot-review",
+          component: "transcript-process",
+          action: "transcript.screenshot.review",
+          input: {
+            slug,
+            title,
+            screenshotCount: screenshots.length,
+          },
+          output: {
+            keptCount: result.length,
+            discardedCount: Math.max(0, screenshots.length - result.length),
+          },
+          provider: "anthropic",
+          model: data.model ?? reviewModel,
+          usage: {
+            inputTokens: data.usage?.input_tokens,
+            outputTokens: data.usage?.output_tokens,
+          },
+          durationMs: Date.now() - reviewStartedAt,
+          metadata: {
+            screenshotCount: screenshots.length,
+          },
+        });
 
         return result;
       },

@@ -18,6 +18,7 @@ import { rename, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import Redis from "ioredis";
 import { inngest } from "../../client";
+import { parsePiJsonAssistant, traceLlmGeneration } from "../../../lib/langfuse";
 import { emitOtelEvent } from "../../../observability/emit";
 
 const LLM_PENDING_KEY = "memory:review:llm-pending";
@@ -280,24 +281,70 @@ export const batchReview = inngest.createFunction(
       // Call pi CLI for LLM review
       const llmOutput = await step.run("llm-review-proposals", async () => {
         const userPrompt = buildUserPrompt(proposals, currentMemory);
+        const reviewStartedAt = Date.now();
 
         // Write prompt to temp file to avoid shell escaping issues with large prompts
         const tmpFile = `/tmp/batch-review-prompt-${Date.now()}.txt`;
         await writeFile(tmpFile, userPrompt, "utf-8");
 
         try {
-          const result = await Bun.$`pi --no-tools --no-session --no-extensions --print --mode text --model ${REVIEW_MODEL} --system-prompt ${SYSTEM_PROMPT} ${await Bun.file(tmpFile).text()}`
+          const result = await Bun.$`pi --no-tools --no-session --no-extensions --print --mode json --model ${REVIEW_MODEL} --system-prompt ${SYSTEM_PROMPT} ${await Bun.file(tmpFile).text()}`
             .quiet()
             .nothrow();
 
-          const stdout = readShellText(result.stdout);
+          const stdoutRaw = readShellText(result.stdout);
+          const parsedPi = parsePiJsonAssistant(stdoutRaw);
+          const stdout = (parsedPi?.text ?? stdoutRaw).trim();
           const stderr = readShellText(result.stderr);
 
           if (result.exitCode !== 0 && !stdout) {
-            throw new Error(`pi CLI failed (exit ${result.exitCode}): ${stderr.slice(0, 500)}`);
+            const error = `pi CLI failed (exit ${result.exitCode}): ${stderr.slice(0, 500)}`;
+            await traceLlmGeneration({
+              traceName: "joelclaw.memory.batch-review",
+              generationName: "memory.batch-review",
+              component: "batch-review",
+              action: "memory.batch_review.llm",
+              input: {
+                proposalCount: proposals.length,
+                prompt: userPrompt.slice(0, 6000),
+              },
+              output: {
+                stderr: stderr.slice(0, 500),
+              },
+              provider: parsedPi?.provider,
+              model: parsedPi?.model ?? REVIEW_MODEL,
+              usage: parsedPi?.usage,
+              durationMs: Date.now() - reviewStartedAt,
+              error,
+              metadata: {
+                proposalCount: proposals.length,
+              },
+            });
+            throw new Error(error);
           }
 
-          return stdout.trim();
+          await traceLlmGeneration({
+            traceName: "joelclaw.memory.batch-review",
+            generationName: "memory.batch-review",
+            component: "batch-review",
+            action: "memory.batch_review.llm",
+            input: {
+              proposalCount: proposals.length,
+              prompt: userPrompt.slice(0, 6000),
+            },
+            output: {
+              llmOutput: stdout.slice(0, 6000),
+            },
+            provider: parsedPi?.provider,
+            model: parsedPi?.model ?? REVIEW_MODEL,
+            usage: parsedPi?.usage,
+            durationMs: Date.now() - reviewStartedAt,
+            metadata: {
+              proposalCount: proposals.length,
+            },
+          });
+
+          return stdout;
         } finally {
           try { await unlink(tmpFile); } catch {}
         }

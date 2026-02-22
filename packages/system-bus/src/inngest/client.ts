@@ -538,6 +538,15 @@ export type Events = {
   "content/updated": {
     data: {
       source?: string; // "fswatch" | "agent" | "manual"
+      path?: string;
+      paths?: string[];
+    };
+  };
+  "typesense/vault-sync.requested": {
+    data: {
+      source: string;
+      triggerEvent?: string;
+      paths?: string[];
     };
   };
 
@@ -906,6 +915,36 @@ export type Events = {
     data: {
       reason?: string;
       requestedBy?: string;
+    };
+  };
+  "memory/category-summary.weekly.created": {
+    data: {
+      generatedAt: string;
+      windowHours: number;
+      memoryCount: number;
+      categoryCoverageRatio: number;
+      categories: Array<{ id: string; count: number; ratio: number }>;
+      confidence: {
+        supported: boolean;
+        reason?: string;
+        knownCount: number;
+        highCount: number;
+        mediumCount: number;
+        lowCount: number;
+        highRatio: number;
+      };
+      writeGate: {
+        supported: boolean;
+        reason?: string;
+        allowCount: number;
+        holdCount: number;
+        discardCount: number;
+        fallbackCount: number;
+        totalWithVerdict: number;
+        holdRatio: number;
+        discardRatio: number;
+        fallbackRate: number;
+      };
     };
   };
   "vault/sync.check": {

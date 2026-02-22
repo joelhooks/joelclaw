@@ -14,6 +14,7 @@ joelclaw capabilities
 |---|---|---|
 | `system-health` | operations | Determine whether joelclaw is healthy now |
 | `run-failure-triage` | diagnostics | Diagnose failed runs and identify next repair step |
+| `deterministic-recovery` | diagnostics | Apply dry-run-first deterministic runbooks for known error codes |
 | `event-delivery` | operations | Send an event and verify function-run delivery |
 | `gateway-operations` | gateway | Operate the always-on gateway session |
 | `memory-health` | memory | Verify memory pipeline quality and retrieval behavior |

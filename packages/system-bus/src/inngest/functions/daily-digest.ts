@@ -6,6 +6,7 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { traceLlmGeneration } from "../../lib/langfuse";
 import { inngest } from "../client";
 import { DIGEST_SYSTEM_PROMPT, DIGEST_USER_PROMPT } from "./daily-digest-prompt";
 
@@ -95,6 +96,9 @@ export const dailyDigest = inngest.createFunction(
       return { status: "noop", reason: "daily log missing or empty", date, sourcePath };
     }
 
+    const digestPrompt = DIGEST_USER_PROMPT(date, rawLog);
+    const digestStartedAt = Date.now();
+
     const digestBody = await step.ai.infer("generate-digest-with-claude", {
       model: step.ai.models.anthropic({
         model: DIGEST_MODEL,
@@ -103,7 +107,7 @@ export const dailyDigest = inngest.createFunction(
       body: {
         max_tokens: 2200,
         system: DIGEST_SYSTEM_PROMPT,
-        messages: [{ role: "user", content: DIGEST_USER_PROMPT(date, rawLog) }],
+        messages: [{ role: "user", content: digestPrompt }],
       },
     });
 
@@ -111,6 +115,27 @@ export const dailyDigest = inngest.createFunction(
       const text = stripMarkdownFences(extractTextFromAiResponse(digestBody));
       if (!text) throw new Error("Digest generation returned empty output");
       return text;
+    });
+
+    await step.run("trace-digest-llm", async () => {
+      await traceLlmGeneration({
+        traceName: "joelclaw.daily-digest",
+        generationName: "memory.daily-digest",
+        component: "daily-digest",
+        action: "memory.digest.generate",
+        input: {
+          date,
+          prompt: digestPrompt.slice(0, 6000),
+        },
+        output: {
+          digest: digestText.slice(0, 6000),
+        },
+        model: DIGEST_MODEL,
+        durationMs: Date.now() - digestStartedAt,
+        metadata: {
+          date,
+        },
+      });
     });
 
     await step.run("write-digest-file", async () => {

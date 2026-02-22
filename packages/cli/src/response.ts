@@ -13,6 +13,9 @@
  *
  */
 
+import { normalizeErrorCode } from "./error-codes"
+import { getRunbook } from "./runbooks"
+
 export interface NextActionParam {
   readonly description?: string
   /** Pre-filled value from current context */
@@ -47,6 +50,8 @@ export interface EnvelopeValidationResult {
   readonly errors: readonly string[]
 }
 
+const RECOVER_PHASES = ["diagnose", "fix", "verify", "rollback", "all"] as const
+
 const normalizeCommand = (command: string): string => {
   const trimmed = command.trim()
   if (trimmed.length === 0) {
@@ -63,6 +68,48 @@ const normalizeNextActions = (nextActions: readonly NextAction[]): readonly Next
     ...action,
     command: normalizeCommand(action.command),
   }))
+
+function hasRecoverAction(nextActions: readonly NextAction[]): boolean {
+  return nextActions.some((action) => normalizeCommand(action.command).startsWith("joelclaw recover"))
+}
+
+function recoverActionForCode(code: string): NextAction | null {
+  const normalizedCode = normalizeErrorCode(code)
+  const runbook = getRunbook(normalizedCode)
+  if (!runbook) return null
+
+  return {
+    command: "recover <error-code> [--phase <phase>] [--context <context>]",
+    description: `Preview deterministic recovery runbook for ${runbook.code}`,
+    params: {
+      "error-code": {
+        description: "Runbook error code",
+        value: runbook.code,
+        required: true,
+      },
+      phase: {
+        description: "Runbook phase",
+        value: "fix",
+        enum: RECOVER_PHASES,
+      },
+      context: {
+        description: "Optional JSON context for command placeholders",
+        value: "{}",
+        default: "{}",
+      },
+    },
+  }
+}
+
+export function withRecoverNextActions(
+  code: string,
+  nextActions: readonly NextAction[]
+): readonly NextAction[] {
+  if (hasRecoverAction(nextActions)) return nextActions
+  const recoverAction = recoverActionForCode(code)
+  if (!recoverAction) return nextActions
+  return [...nextActions, recoverAction]
+}
 
 export const buildSuccessEnvelope = (
   command: string,
@@ -88,7 +135,7 @@ export const buildErrorEnvelope = (
   result: null,
   error: { message, code },
   fix,
-  next_actions: normalizeNextActions(nextActions),
+  next_actions: normalizeNextActions(withRecoverNextActions(code, nextActions)),
 })
 
 export const validateJoelclawEnvelope = (value: unknown): EnvelopeValidationResult => {

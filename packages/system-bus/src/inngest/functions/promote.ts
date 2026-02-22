@@ -3,6 +3,7 @@ import { mkdir, rename } from "node:fs/promises";
 import Redis from "ioredis";
 import { inngest } from "../client";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
+import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
 import { PROMOTE_SYSTEM_PROMPT, PROMOTE_USER_PROMPT } from "./promote-prompt";
 import { emitOtelEvent } from "../../observability/emit";
 
@@ -190,21 +191,51 @@ async function formatProposalForMemoryIfNeeded(
     currentSectionContent,
   });
 
-  const proc = Bun.spawn(["pi", "-p", "--no-session", "--no-extensions", "--model", "haiku", "--system-prompt", PROMOTE_SYSTEM_PROMPT, userPrompt], {
+  const formatModel = "anthropic/claude-haiku";
+  const startedAt = Date.now();
+
+  const proc = Bun.spawn(["pi", "-p", "--no-session", "--no-extensions", "--mode", "json", "--model", formatModel, "--system-prompt", PROMOTE_SYSTEM_PROMPT, userPrompt], {
     env: { ...process.env, TERM: "dumb" },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
+  const [stdoutRaw, stderr, exitCode] = await Promise.all([
     readProcessStream(proc.stdout),
     readProcessStream(proc.stderr),
     proc.exited,
   ]);
 
+  const parsedPi = parsePiJsonAssistant(stdoutRaw);
+  const stdout = parsedPi?.text ?? stdoutRaw;
+
   if (exitCode !== 0) {
-    console.error(`promoteToMemory formatting failed (${exitCode}): ${stderr || "unknown error"}`);
+    const error = `promoteToMemory formatting failed (${exitCode}): ${stderr || "unknown error"}`;
+    console.error(error);
+
+    await traceLlmGeneration({
+      traceName: "joelclaw.promote",
+      generationName: "memory.promote.format",
+      component: "promote",
+      action: "memory.promote.format",
+      input: {
+        section,
+        proposedText,
+      },
+      output: {
+        stderr: stderr.slice(0, 500),
+      },
+      provider: parsedPi?.provider,
+      model: parsedPi?.model ?? formatModel,
+      usage: parsedPi?.usage,
+      durationMs: Date.now() - startedAt,
+      error,
+      metadata: {
+        section,
+      },
+    });
+
     return proposedText;
   }
 
@@ -213,6 +244,27 @@ async function formatProposalForMemoryIfNeeded(
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .find((line) => line.length > 0);
+
+  await traceLlmGeneration({
+    traceName: "joelclaw.promote",
+    generationName: "memory.promote.format",
+    component: "promote",
+    action: "memory.promote.format",
+    input: {
+      section,
+      proposedText,
+    },
+    output: {
+      formatted: formatted ?? proposedText,
+    },
+    provider: parsedPi?.provider,
+    model: parsedPi?.model ?? formatModel,
+    usage: parsedPi?.usage,
+    durationMs: Date.now() - startedAt,
+    metadata: {
+      section,
+    },
+  });
 
   return formatted ?? proposedText;
 }

@@ -12,6 +12,7 @@ import { DEDUP_THRESHOLD } from "../../memory/retrieval";
 import { TAXONOMY_VERSION, classifyObservationCategory, normalizeCategoryId, type CategorySource, type MemoryCategoryId } from "../../memory/taxonomy-v1";
 import { allowsReflect, resolveWriteGate, type WriteVerdict } from "../../memory/write-gate";
 import * as typesense from "../../lib/typesense";
+import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
 import { emitOtelEvent } from "../../observability/emit";
 
 type ObserveCompactionInput = {
@@ -423,8 +424,11 @@ Session context:
 - sessionId: ${validatedInput.sessionId}
 - dedupeKey: ${validatedInput.dedupeKey}`;
 
+      const observerModel = "anthropic/claude-haiku";
+      const observerStartedAt = Date.now();
+
       try {
-        const runPromise = Bun.$`pi --no-tools --no-session --no-extensions --print --mode text --model anthropic/claude-haiku --system-prompt ${OBSERVER_SYSTEM_PROMPT} ${promptWithSessionContext}`
+        const runPromise = Bun.$`pi --no-tools --no-session --no-extensions --print --mode json --model ${observerModel} --system-prompt ${OBSERVER_SYSTEM_PROMPT} ${promptWithSessionContext}`
           .quiet()
           .nothrow();
 
@@ -445,21 +449,93 @@ Session context:
           );
         });
 
-        const stdout = readShellText(result.stdout).trim();
+        const stdoutRaw = readShellText(result.stdout);
+        const parsedPi = parsePiJsonAssistant(stdoutRaw);
+        const stdout = (parsedPi?.text ?? stdoutRaw).trim();
         const stderr = readShellText(result.stderr).trim();
 
         if (result.exitCode !== 0) {
-          throw new Error(
-            `Observer LLM subprocess failed with exit code ${result.exitCode}${
-              stderr ? `: ${stderr}` : ""
-            }`
-          );
+          const error = `Observer LLM subprocess failed with exit code ${result.exitCode}${
+            stderr ? `: ${stderr}` : ""
+          }`;
+
+          await traceLlmGeneration({
+            traceName: "joelclaw.observe",
+            generationName: "memory.observe",
+            component: "observe",
+            action: "observe.llm.extract",
+            input: {
+              sessionId: validatedInput.sessionId,
+              trigger: validatedInput.trigger,
+              prompt: promptWithSessionContext.slice(0, 6000),
+            },
+            output: {
+              stderr: stderr.slice(0, 500),
+            },
+            provider: parsedPi?.provider,
+            model: parsedPi?.model ?? observerModel,
+            usage: parsedPi?.usage,
+            durationMs: Date.now() - observerStartedAt,
+            error,
+            metadata: {
+              sessionId: validatedInput.sessionId,
+              trigger: validatedInput.trigger,
+            },
+          });
+
+          throw new Error(error);
         }
+
+        await traceLlmGeneration({
+          traceName: "joelclaw.observe",
+          generationName: "memory.observe",
+          component: "observe",
+          action: "observe.llm.extract",
+          input: {
+            sessionId: validatedInput.sessionId,
+            trigger: validatedInput.trigger,
+            prompt: promptWithSessionContext.slice(0, 6000),
+          },
+          output: {
+            observationXml: stdout.slice(0, 6000),
+          },
+          provider: parsedPi?.provider,
+          model: parsedPi?.model ?? observerModel,
+          usage: parsedPi?.usage,
+          durationMs: Date.now() - observerStartedAt,
+          metadata: {
+            sessionId: validatedInput.sessionId,
+            trigger: validatedInput.trigger,
+          },
+        });
 
         return stdout;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`[observe] observer LLM fallback: ${message}`);
+
+        await traceLlmGeneration({
+          traceName: "joelclaw.observe",
+          generationName: "memory.observe",
+          component: "observe",
+          action: "observe.llm.extract",
+          input: {
+            sessionId: validatedInput.sessionId,
+            trigger: validatedInput.trigger,
+          },
+          output: {
+            fallback: true,
+          },
+          model: observerModel,
+          durationMs: Date.now() - observerStartedAt,
+          error: message,
+          metadata: {
+            sessionId: validatedInput.sessionId,
+            trigger: validatedInput.trigger,
+            fallback: true,
+          },
+        });
+
         return buildObserverFallback(validatedInput, message);
       }
 

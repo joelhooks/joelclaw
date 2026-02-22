@@ -166,7 +166,7 @@ export const emailInboxCleanup = inngest.createFunction(
   },
   { event: "email/inbox.cleanup" },
   async ({ event, step, ...rest }) => {
-    const gateway = (rest as any).gateway as GatewayContext | undefined;
+    const gateway = (rest as { gateway?: GatewayContext }).gateway;
     const query = event.data?.query ?? "is:open";
     const maxPages = Math.min(event.data?.maxPages ?? MAX_PAGES, MAX_PAGES);
     const dryRun = event.data?.dryRun ?? false;

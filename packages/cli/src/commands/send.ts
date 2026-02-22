@@ -9,7 +9,7 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { Inngest } from "../inngest"
-import { respond } from "../response"
+import { respond, respondError } from "../response"
 import {
   emitStart,
   emitStep,
@@ -57,7 +57,13 @@ export const sendCmd = Command.make(
           emitError("send", "Invalid JSON in --data", "INVALID_JSON",
             "Check your -d payload is valid JSON", [])
         } else {
-          yield* Console.log(respond("send", { error: "Invalid JSON in --data" }, [], false))
+          yield* Console.log(respondError(
+            "send",
+            "Invalid JSON in --data",
+            "INVALID_JSON",
+            "Check your -d payload is valid JSON",
+            [{ command: "joelclaw send <event> --data <data>", description: "Retry with valid JSON payload" }],
+          ))
         }
         return
       }

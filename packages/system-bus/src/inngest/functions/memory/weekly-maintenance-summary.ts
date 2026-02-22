@@ -14,6 +14,43 @@ type WeeklyNightlyStats = {
   lastRunAt: number | null;
 };
 
+type CategoryBucket = {
+  id: string;
+  count: number;
+  ratio: number;
+};
+
+type CategorySummary = {
+  supported: boolean;
+  reason?: string;
+  buckets: CategoryBucket[];
+  categorizedCount: number;
+  uncategorizedCount: number;
+  coverageRatio: number;
+  confidence: {
+    supported: boolean;
+    reason?: string;
+    knownCount: number;
+    highCount: number;
+    mediumCount: number;
+    lowCount: number;
+    highRatio: number;
+  };
+};
+
+type WriteGateSummary = {
+  supported: boolean;
+  reason?: string;
+  allowCount: number;
+  holdCount: number;
+  discardCount: number;
+  fallbackCount: number;
+  totalWithVerdict: number;
+  holdRatio: number;
+  discardRatio: number;
+  fallbackRate: number;
+};
+
 let redisClient: Redis | null = null;
 
 function getRedisClient(): Redis {
@@ -69,6 +106,134 @@ async function countMemoryDocuments(filterBy?: string): Promise<{ count: number;
     }
     throw error;
   }
+}
+
+async function countMemoryDocumentsByField(
+  filterBy: string,
+  fieldName: string,
+): Promise<{ count: number; supported: boolean; reason?: string }> {
+  try {
+    const result = await typesense.search({
+      collection: "memory_observations",
+      q: "*",
+      query_by: "observation",
+      per_page: 1,
+      filter_by: filterBy,
+    });
+    return { count: result.found ?? 0, supported: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.toLowerCase().includes(`filter field named \`${fieldName.toLowerCase()}\``)) {
+      return {
+        count: 0,
+        supported: false,
+        reason: `${fieldName} field missing in Typesense schema`,
+      };
+    }
+    throw error;
+  }
+}
+
+async function collectCategorySummary(memoryCount: number): Promise<CategorySummary> {
+  let buckets: CategoryBucket[] = [];
+  let categorizedCount = 0;
+  let uncategorizedCount = memoryCount;
+  let coverageRatio = 0;
+  let categorySupported = true;
+  let categoryReason: string | undefined;
+
+  try {
+    const facetResult = await typesense.search({
+      collection: "memory_observations",
+      q: "*",
+      query_by: "observation",
+      per_page: 1,
+      facet_by: "category_id",
+      max_facet_values: 50,
+      include_fields: "id,category_id",
+    });
+
+    const categoryFacet = (facetResult.facet_counts ?? []).find(
+      (facet) => facet.field_name === "category_id"
+    );
+
+    buckets = (categoryFacet?.counts ?? [])
+      .map((entry) => {
+        const id = String(entry.value ?? "").trim();
+        const count = asFiniteNumber(entry.count, 0);
+        return {
+          id,
+          count,
+          ratio: memoryCount > 0 ? count / memoryCount : 0,
+        };
+      })
+      .filter((entry) => entry.id.length > 0 && entry.count > 0)
+      .sort((a, b) => b.count - a.count);
+
+    categorizedCount = buckets.reduce((sum, entry) => sum + entry.count, 0);
+    uncategorizedCount = Math.max(0, memoryCount - categorizedCount);
+    coverageRatio = memoryCount > 0 ? categorizedCount / memoryCount : 0;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/facet|category_id/iu.test(message)) {
+      categorySupported = false;
+      categoryReason = "category_id facet unsupported or missing in Typesense schema";
+    } else {
+      throw error;
+    }
+  }
+
+  const [high, medium, low] = await Promise.all([
+    countMemoryDocumentsByField("category_confidence:>=0.8", "category_confidence"),
+    countMemoryDocumentsByField("category_confidence:>=0.6 && category_confidence:<0.8", "category_confidence"),
+    countMemoryDocumentsByField("category_confidence:<0.6", "category_confidence"),
+  ]);
+
+  const confidenceSupported = high.supported && medium.supported && low.supported;
+  const knownCount = high.count + medium.count + low.count;
+
+  return {
+    supported: categorySupported,
+    reason: categoryReason,
+    buckets,
+    categorizedCount,
+    uncategorizedCount,
+    coverageRatio,
+    confidence: {
+      supported: confidenceSupported,
+      reason: confidenceSupported ? undefined : high.reason ?? medium.reason ?? low.reason,
+      knownCount,
+      highCount: high.count,
+      mediumCount: medium.count,
+      lowCount: low.count,
+      highRatio: knownCount > 0 ? high.count / knownCount : 0,
+    },
+  };
+}
+
+async function collectWriteGateSummary(): Promise<WriteGateSummary> {
+  const [allow, hold, discard, fallback] = await Promise.all([
+    countMemoryDocumentsByField("write_verdict:=allow", "write_verdict"),
+    countMemoryDocumentsByField("write_verdict:=hold", "write_verdict"),
+    countMemoryDocumentsByField("write_verdict:=discard", "write_verdict"),
+    countMemoryDocumentsByField("write_gate_fallback:=true", "write_gate_fallback"),
+  ]);
+
+  const supported = allow.supported && hold.supported && discard.supported && fallback.supported;
+  const totalWithVerdict = allow.count + hold.count + discard.count;
+
+  return {
+    supported,
+    reason: supported ? undefined : allow.reason ?? hold.reason ?? discard.reason ?? fallback.reason,
+    allowCount: allow.count,
+    holdCount: hold.count,
+    discardCount: discard.count,
+    fallbackCount: fallback.count,
+    totalWithVerdict,
+    holdRatio: totalWithVerdict > 0 ? hold.count / totalWithVerdict : 0,
+    discardRatio: totalWithVerdict > 0 ? discard.count / totalWithVerdict : 0,
+    fallbackRate: totalWithVerdict > 0 ? fallback.count / totalWithVerdict : 0,
+  };
 }
 
 async function collectNightlyStats(cutoffUnix: number): Promise<WeeklyNightlyStats> {
@@ -158,12 +323,15 @@ export const weeklyMaintenanceSummary = inngest.createFunction(
         const cutoffUnix = Date.now() - 7 * 24 * 60 * 60 * 1000;
         const nightly = await collectNightlyStats(cutoffUnix);
         const redis = getRedisClient();
-        const [pendingBacklog, llmPendingBacklog, memoryCount, stale] = await Promise.all([
+        const [pendingBacklog, llmPendingBacklog, memoryCountState, stale] = await Promise.all([
           redis.llen("memory:review:pending"),
           redis.llen("memory:review:llm-pending"),
           countMemoryDocuments(),
           countMemoryDocuments("stale:=true"),
         ]);
+
+        const categorySummary = await collectCategorySummary(memoryCountState.count);
+        const writeGateSummary = await collectWriteGateSummary();
 
         return {
           windowHours: 7 * 24,
@@ -174,15 +342,17 @@ export const weeklyMaintenanceSummary = inngest.createFunction(
             total: pendingBacklog + llmPendingBacklog,
           },
           memory: {
-            count: memoryCount.count,
+            count: memoryCountState.count,
             staleCount: stale.count,
             staleSupported: stale.supported,
             staleReason: stale.reason,
             staleRatio:
-              memoryCount.count > 0 && stale.supported
-                ? stale.count / memoryCount.count
+              memoryCountState.count > 0 && stale.supported
+                ? stale.count / memoryCountState.count
                 : 0,
           },
+          categories: categorySummary,
+          writeGate: writeGateSummary,
         };
       });
 
@@ -206,6 +376,46 @@ export const weeklyMaintenanceSummary = inngest.createFunction(
             lastNightlyRunAt: summary.nightly.lastRunAt,
             triageBacklog: summary.triageBacklog,
             staleRatio: summary.memory.staleRatio,
+            categoryCoverageRatio: summary.categories.coverageRatio,
+            categorizedCount: summary.categories.categorizedCount,
+            uncategorizedCount: summary.categories.uncategorizedCount,
+            categoryConfidenceHighRatio: summary.categories.confidence.highRatio,
+            categoryConfidenceKnownCount: summary.categories.confidence.knownCount,
+            topCategories: summary.categories.buckets.slice(0, 5),
+            writeGateAllowCount: summary.writeGate.allowCount,
+            writeGateHoldCount: summary.writeGate.holdCount,
+            writeGateDiscardCount: summary.writeGate.discardCount,
+            writeGateFallbackCount: summary.writeGate.fallbackCount,
+            writeGateFallbackRate: summary.writeGate.fallbackRate,
+          },
+        });
+      });
+
+      await step.sendEvent("emit-weekly-category-summary", {
+        name: "memory/category-summary.weekly.created",
+        data: {
+          generatedAt: new Date().toISOString(),
+          windowHours: summary.windowHours,
+          memoryCount: summary.memory.count,
+          categoryCoverageRatio: summary.categories.coverageRatio,
+          categories: summary.categories.buckets,
+          confidence: summary.categories.confidence,
+          writeGate: summary.writeGate,
+        },
+      });
+
+      await step.run("otel-weekly-category-summary-emitted", async () => {
+        await emitOtelEvent({
+          level: "info",
+          source: "worker",
+          component: "weekly-maintenance",
+          action: "weekly-category-summary.emitted",
+          success: true,
+          metadata: {
+            eventId,
+            categoryCoverageRatio: summary.categories.coverageRatio,
+            topCategories: summary.categories.buckets.slice(0, 5),
+            writeGateFallbackRate: summary.writeGate.fallbackRate,
           },
         });
       });

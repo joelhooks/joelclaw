@@ -14,14 +14,15 @@
 
 import { inngest } from "../client";
 import { parseClaudeOutput, pushGatewayEvent } from "./agent-loop/utils";
+import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
 import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import { prefetchMemoryContext } from "../../memory/context-prefetch";
 import Redis from "ioredis";
 
-type EmailModule = typeof import("../../../../email/src/index.ts");
+type EmailModule = typeof import("@joelclaw/email");
 
 async function loadEmailModule(): Promise<EmailModule> {
-  return import("../../../../email/src/index.ts");
+  return import("@joelclaw/email");
 }
 
 const COOLDOWN_KEY = "email:triage:last-run";
@@ -169,7 +170,7 @@ export const checkEmail = inngest.createFunction(
       step.run("fetch-gmail-unread", async () => {
         try {
           const email = await loadEmailModule();
-          const adapter = email.createGmailAdapter("joelhooks@gmail.com");
+          const adapter = email.createGmailAdapter({ account: "joelhooks@gmail.com" });
           const convos = await adapter.listConversations("default", { unread: true, limit: 25 });
           return convos.map((c) => ({
             id: c.id,
@@ -228,22 +229,86 @@ export const checkEmail = inngest.createFunction(
         ? `${TRIAGE_SYSTEM_PROMPT}\n\nUse this memory context when judging sender patterns and urgency:\n${memoryContext}`
         : TRIAGE_SYSTEM_PROMPT;
 
+      const triageStartedAt = Date.now();
+
       const proc = Bun.spawn(
-        ["pi", "-p", "--no-session", "--no-extensions", "--model", TRIAGE_MODEL, "--system-prompt", systemPrompt, prompt],
+        [
+          "pi",
+          "-p",
+          "--no-session",
+          "--no-extensions",
+          "--mode",
+          "json",
+          "--model",
+          TRIAGE_MODEL,
+          "--system-prompt",
+          systemPrompt,
+          prompt,
+        ],
         { env: { ...process.env, TERM: "dumb" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" },
       );
 
-      const [stdout, stderr, exitCode] = await Promise.all([
+      const [stdoutRaw, stderr, exitCode] = await Promise.all([
         readStream(proc.stdout),
         readStream(proc.stderr),
         proc.exited,
       ]);
 
-      if (exitCode !== 0 && !stdout.trim()) {
-        throw new Error(`pi triage failed (${exitCode}): ${stderr.trim()}`);
+      const parsedPi = parsePiJsonAssistant(stdoutRaw);
+      const assistantText = parsedPi?.text ?? stdoutRaw;
+
+      if (exitCode !== 0 && !assistantText.trim()) {
+        const error = `pi triage failed (${exitCode}): ${stderr.trim()}`;
+        await traceLlmGeneration({
+          traceName: "joelclaw.check-email",
+          generationName: "email.triage",
+          component: "check-email",
+          action: "email.triage.classify",
+          input: {
+            emailCount: allConvos.length,
+            prompt: prompt.slice(0, 6000),
+          },
+          output: {
+            stderr: stderr.trim().slice(0, 500),
+          },
+          provider: parsedPi?.provider,
+          model: parsedPi?.model ?? TRIAGE_MODEL,
+          usage: parsedPi?.usage,
+          durationMs: Date.now() - triageStartedAt,
+          error,
+          metadata: {
+            emailCount: allConvos.length,
+            source: "check-email",
+          },
+        });
+        throw new Error(error);
       }
 
-      return parseTriageResult(stdout);
+      const triage = parseTriageResult(assistantText);
+
+      await traceLlmGeneration({
+        traceName: "joelclaw.check-email",
+        generationName: "email.triage",
+        component: "check-email",
+        action: "email.triage.classify",
+        input: {
+          emailCount: allConvos.length,
+          prompt: prompt.slice(0, 6000),
+        },
+        output: {
+          triageCount: triage.length,
+        },
+        provider: parsedPi?.provider,
+        model: parsedPi?.model ?? TRIAGE_MODEL,
+        usage: parsedPi?.usage,
+        durationMs: Date.now() - triageStartedAt,
+        metadata: {
+          emailCount: allConvos.length,
+          source: "check-email",
+        },
+      });
+
+      return triage;
     });
 
     // Step 3: Execute autonomous actions (archive, unsubscribe, label)
@@ -259,7 +324,7 @@ export const checkEmail = inngest.createFunction(
         try {
           const adapter = convo.provider === "front"
             ? email.createFrontAdapter({ apiToken: process.env.FRONT_API_TOKEN ?? "" })
-            : email.createGmailAdapter("joelhooks@gmail.com");
+            : email.createGmailAdapter({ account: "joelhooks@gmail.com" });
 
           switch (triage.action) {
             case "archive":

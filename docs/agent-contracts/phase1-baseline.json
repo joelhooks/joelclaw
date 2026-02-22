@@ -18,6 +18,7 @@
     "packages/cli/src/commands/note.ts",
     "packages/cli/src/commands/otel.ts",
     "packages/cli/src/commands/recall.ts",
+    "packages/cli/src/commands/recover.ts",
     "packages/cli/src/commands/refresh.ts",
     "packages/cli/src/commands/review.ts",
     "packages/cli/src/commands/runs.ts",
@@ -46,6 +47,7 @@
     "packages/cli/src/commands/note.ts",
     "packages/cli/src/commands/otel.ts",
     "packages/cli/src/commands/recall.ts",
+    "packages/cli/src/commands/recover.ts",
     "packages/cli/src/commands/refresh.ts",
     "packages/cli/src/commands/review.ts",
     "packages/cli/src/commands/runs.ts",
@@ -61,7 +63,6 @@
     "packages/cli/src/commands/loop.ts",
     "packages/cli/src/commands/note.ts",
     "packages/cli/src/commands/recall.ts",
-    "packages/cli/src/commands/runs.ts",
     "packages/cli/src/commands/tui.ts"
   ],
   "rawOutputByFile": {
@@ -84,12 +85,6 @@
       ]
     },
     "packages/cli/src/commands/recall.ts": {
-      "count": 1,
-      "kinds": [
-        "Console.log"
-      ]
-    },
-    "packages/cli/src/commands/runs.ts": {
       "count": 1,
       "kinds": [
         "Console.log"

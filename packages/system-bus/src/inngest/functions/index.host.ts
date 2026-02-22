@@ -57,6 +57,7 @@ import { checkLoops } from "./check-loops";
 import { o11yTriage } from "./o11y-triage";
 import { dailyDigest } from "./daily-digest";
 import {
+  typesenseVaultSyncQueue,
   typesenseVaultSync,
   typesenseBlogSync,
   typesenseFullSync,
@@ -132,6 +133,7 @@ export const hostFunctionDefinitions = [
   checkLoops,
   o11yTriage,
   dailyDigest,
+  typesenseVaultSyncQueue,
   typesenseVaultSync,
   typesenseBlogSync,
   typesenseFullSync,

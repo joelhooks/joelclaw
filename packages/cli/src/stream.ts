@@ -10,7 +10,7 @@
  * extension already writes to via pushGatewayEvent().
  */
 
-import type { NextAction } from "./response"
+import { withRecoverNextActions, type NextAction } from "./response"
 import Redis from "ioredis"
 
 // ── Stream Event Types ──────────────────────────────────────────────
@@ -140,7 +140,7 @@ export function emitError(
     command,
     error: { message, code },
     fix,
-    next_actions: nextActions,
+    next_actions: withRecoverNextActions(code, nextActions),
   })
 }
 

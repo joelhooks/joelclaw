@@ -3,9 +3,10 @@
  * ADR-0082: Typesense as unified search layer.
  *
  * Triggers:
- * - content/updated, discovery/captured, system/adr.sync.requested → re-index vault notes
- * - vercel/deploy.succeeded → re-index blog posts
- * - cron daily 3am → full re-index of vault + slog
+ * - content/updated, discovery/captured, system/adr.sync.requested -> queue vault re-index
+ * - typesense/vault-sync.requested -> perform vault re-index (targeted when paths provided)
+ * - vercel/deploy.succeeded -> re-index blog posts
+ * - cron daily 3am -> full re-index of vault + slog
  *
  * Uses auto-embedding (ts/all-MiniLM-L12-v2) — no external API calls.
  */
@@ -14,12 +15,14 @@ import { inngest } from "../client";
 import * as typesense from "../../lib/typesense";
 import { pushContentResource } from "../../lib/convex";
 import { renderVaultMarkdown } from "../../lib/vault-render";
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, extname, basename, relative } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { basename, extname, isAbsolute, join, relative } from "node:path";
 
 const VAULT_PATH = process.env.VAULT_PATH || join(process.env.HOME || "/Users/joel", "Vault");
 const BLOG_PATH = join(process.env.HOME || "/Users/joel", "Code/joelhooks/joelclaw/apps/web/content");
 const SLOG_PATH = join(VAULT_PATH, "system/system-log.jsonl");
+
+const TYPESENSE_VAULT_QUEUE_KEY = '"typesense-vault-sync"';
 
 // ── Vault indexing ──────────────────────────────────────────────────
 
@@ -61,33 +64,129 @@ function walkDir(dir: string, ext: string): string[] {
   return results;
 }
 
-async function indexVaultNotes(): Promise<{ count: number; errors: number }> {
+function normalizeVaultRelativePath(pathLike: string): string | null {
+  const raw = pathLike.trim();
+  if (!raw) return null;
+
+  const absolute = isAbsolute(raw) ? raw : join(VAULT_PATH, raw);
+  const relPath = relative(VAULT_PATH, absolute);
+
+  if (!relPath || relPath.startsWith("..") || isAbsolute(relPath)) return null;
+  if (extname(relPath) !== ".md") return null;
+
+  return relPath;
+}
+
+function normalizeTargetPaths(paths?: string[]): string[] {
+  if (!paths || paths.length === 0) return [];
+  const unique = new Set<string>();
+  for (const path of paths) {
+    const relPath = normalizeVaultRelativePath(path);
+    if (relPath) unique.add(relPath);
+  }
+  return [...unique];
+}
+
+function extractTargetPathsFromTrigger(event: {
+  name: string;
+  data: Record<string, unknown> | undefined;
+}): string[] {
+  const paths: string[] = [];
+  const data = event.data ?? {};
+
+  if (typeof data.path === "string") paths.push(data.path);
+  if (Array.isArray(data.paths)) {
+    for (const path of data.paths) {
+      if (typeof path === "string") paths.push(path);
+    }
+  }
+  if (typeof data.vaultPath === "string") paths.push(data.vaultPath);
+
+  return normalizeTargetPaths(paths);
+}
+
+function buildVaultDoc(file: string): Record<string, unknown> | null {
+  try {
+    const raw = readFileSync(file, "utf-8");
+    const { frontmatter, body } = parseMarkdownFrontmatter(raw);
+    const relPath = relative(VAULT_PATH, file);
+    const title = frontmatter.title || basename(file, ".md");
+    const type = classifyNote(relPath, frontmatter);
+    const tags = (frontmatter.tags || "").split(",").map((t: string) => t.trim()).filter(Boolean);
+    const stat = statSync(file);
+
+    return {
+      id: relPath,
+      title,
+      content: body.slice(0, 32000),
+      path: relPath,
+      type,
+      tags,
+      updated_at: Math.floor(stat.mtimeMs / 1000),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function indexVaultNotes(targetPaths?: string[]): Promise<{
+  count: number;
+  errors: number;
+  mode: "targeted" | "full";
+  targetCount: number;
+}> {
+  const normalizedTargets = normalizeTargetPaths(targetPaths);
+
+  if (normalizedTargets.length > 0) {
+    let count = 0;
+    let errors = 0;
+
+    for (const relPath of normalizedTargets) {
+      const file = join(VAULT_PATH, relPath);
+      try {
+        if (!existsSync(file)) {
+          await typesense.deleteDoc("vault_notes", relPath);
+          count++;
+          continue;
+        }
+
+        const doc = buildVaultDoc(file);
+        if (!doc) {
+          errors++;
+          continue;
+        }
+
+        await typesense.upsert("vault_notes", doc);
+        count++;
+      } catch {
+        errors++;
+      }
+    }
+
+    return {
+      count,
+      errors,
+      mode: "targeted",
+      targetCount: normalizedTargets.length,
+    };
+  }
+
   const files = walkDir(VAULT_PATH, ".md");
   const docs: Record<string, unknown>[] = [];
 
   for (const file of files) {
-    try {
-      const raw = readFileSync(file, "utf-8");
-      const { frontmatter, body } = parseMarkdownFrontmatter(raw);
-      const relPath = relative(VAULT_PATH, file);
-      const title = frontmatter.title || basename(file, ".md");
-      const type = classifyNote(relPath, frontmatter);
-      const tags = (frontmatter.tags || "").split(",").map((t: string) => t.trim()).filter(Boolean);
-      const stat = statSync(file);
-
-      docs.push({
-        id: relPath,
-        title,
-        content: body.slice(0, 32000),
-        path: relPath,
-        type,
-        tags,
-        updated_at: Math.floor(stat.mtimeMs / 1000),
-      });
-    } catch {}
+    const doc = buildVaultDoc(file);
+    if (doc) docs.push(doc);
   }
 
-  if (docs.length === 0) return { count: 0, errors: 0 };
+  if (docs.length === 0) {
+    return {
+      count: 0,
+      errors: 0,
+      mode: "full",
+      targetCount: 0,
+    };
+  }
 
   // Batch in chunks of 100
   let totalSuccess = 0;
@@ -99,7 +198,83 @@ async function indexVaultNotes(): Promise<{ count: number; errors: number }> {
     totalErrors += result.errors;
   }
 
-  return { count: totalSuccess, errors: totalErrors };
+  return {
+    count: totalSuccess,
+    errors: totalErrors,
+    mode: "full",
+    targetCount: 0,
+  };
+}
+
+async function syncVaultToConvex(targetPaths?: string[]): Promise<{
+  synced: number;
+  errors: number;
+  mode: "targeted" | "full";
+  targetCount: number;
+}> {
+  const allFiles = walkDir(VAULT_PATH, ".md");
+  const allPaths = new Set(allFiles.map((f) => relative(VAULT_PATH, f)));
+
+  const normalizedTargets = normalizeTargetPaths(targetPaths);
+  const files = normalizedTargets.length > 0
+    ? normalizedTargets
+      .map((path) => join(VAULT_PATH, path))
+      .filter((file) => existsSync(file))
+    : allFiles;
+
+  let synced = 0;
+  let errors = 0;
+
+  for (const file of files) {
+    try {
+      const raw = readFileSync(file, "utf-8");
+      const { frontmatter, body } = parseMarkdownFrontmatter(raw);
+      const relPath = relative(VAULT_PATH, file);
+      const title = frontmatter.title || basename(file, ".md");
+      const type = classifyNote(relPath, frontmatter);
+      const tags = (frontmatter.tags || "").split(",").map((t: string) => t.trim()).filter(Boolean);
+      const stat = statSync(file);
+      const section = relPath.split("/")[0] || "root";
+      const content = body.slice(0, 32000);
+
+      // Pre-render markdown -> HTML with Obsidian features
+      let html: string | undefined;
+      try {
+        html = await renderVaultMarkdown(content, allPaths, relPath);
+      } catch {
+        // Fall back to no HTML — client will show raw markdown
+      }
+
+      const updatedAt = Math.floor(stat.mtimeMs / 1000);
+      await pushContentResource(
+        `vault:${relPath}`,
+        "vault_note",
+        {
+          path: relPath,
+          title,
+          content,
+          html,
+          type,
+          tags,
+          section,
+          updatedAt,
+        },
+        [title, content, tags.join(" "), section, type].filter(Boolean).join(" ")
+      );
+      synced++;
+    } catch {
+      errors++;
+    }
+  }
+
+  console.log(`[convex-vault-sync] synced ${synced} notes (${errors} errors)`);
+
+  return {
+    synced,
+    errors,
+    mode: normalizedTargets.length > 0 ? "targeted" : "full",
+    targetCount: normalizedTargets.length,
+  };
 }
 
 // ── Blog indexing ───────────────────────────────────────────────────
@@ -183,13 +358,13 @@ async function indexSystemLog(): Promise<{ success: number; errors: number }> {
 
 // ── Inngest functions ───────────────────────────────────────────────
 
-/** Incremental vault re-index — triggered by content changes */
-export const typesenseVaultSync = inngest.createFunction(
+/** Queue vault re-index requests from noisy upstream events */
+export const typesenseVaultSyncQueue = inngest.createFunction(
   {
-    id: "typesense/vault-sync",
-    name: "Typesense: Vault Re-index",
-    concurrency: { limit: 1, key: "typesense-vault-sync" },
-    debounce: { period: "30s", key: '"typesense-vault"' },
+    id: "typesense/vault-sync-queue",
+    name: "Typesense: Queue Vault Re-index",
+    concurrency: { limit: 1, key: "typesense-vault-sync-queue" },
+    debounce: { period: "45s", timeout: "3m", key: TYPESENSE_VAULT_QUEUE_KEY },
   },
   [
     { event: "content/updated" },
@@ -197,67 +372,64 @@ export const typesenseVaultSync = inngest.createFunction(
     { event: "system/adr.sync.requested" },
   ],
   async ({ event, step }) => {
+    const targetPaths = extractTargetPathsFromTrigger({
+      name: event.name,
+      data: event.data as Record<string, unknown> | undefined,
+    });
+
+    await step.sendEvent("queue-vault-sync-request", {
+      name: "typesense/vault-sync.requested",
+      data: {
+        source: (event.data as { source?: string } | undefined)?.source || event.name,
+        triggerEvent: event.name,
+        paths: targetPaths,
+      },
+    });
+
+    console.log(
+      `[typesense-vault-sync-queue] queued via ${event.name} (${targetPaths.length > 0 ? `${targetPaths.length} targeted` : "full"})`
+    );
+
+    return {
+      queued: true,
+      trigger: event.name,
+      mode: targetPaths.length > 0 ? "targeted" : "full",
+      targetCount: targetPaths.length,
+    };
+  }
+);
+
+/** Vault re-index worker — consumes queued requests */
+export const typesenseVaultSync = inngest.createFunction(
+  {
+    id: "typesense/vault-sync",
+    name: "Typesense: Vault Re-index",
+    concurrency: { limit: 1, key: "typesense-vault-sync" },
+    throttle: { limit: 1, period: "90s", key: TYPESENSE_VAULT_QUEUE_KEY },
+    retries: 2,
+  },
+  [{ event: "typesense/vault-sync.requested" }],
+  async ({ event, step }) => {
+    const targetPaths = normalizeTargetPaths((event.data as { paths?: string[] } | undefined)?.paths);
+
     const result = await step.run("index-vault-notes", async () => {
-      return indexVaultNotes();
+      return indexVaultNotes(targetPaths);
     });
 
-    // Sync to Convex with pre-rendered HTML for real-time dashboard access
-    await step.run("sync-vault-to-convex", async () => {
-      const files = walkDir(VAULT_PATH, ".md");
-      // Build path set for wikilink resolution
-      const allPaths = new Set(files.map((f) => relative(VAULT_PATH, f)));
-
-      let synced = 0;
-      let errors = 0;
-
-      for (const file of files) {
-        try {
-          const raw = readFileSync(file, "utf-8");
-          const { frontmatter, body } = parseMarkdownFrontmatter(raw);
-          const relPath = relative(VAULT_PATH, file);
-          const title = frontmatter.title || basename(file, ".md");
-          const type = classifyNote(relPath, frontmatter);
-          const tags = (frontmatter.tags || "").split(",").map((t: string) => t.trim()).filter(Boolean);
-          const stat = statSync(file);
-          const section = relPath.split("/")[0] || "root";
-          const content = body.slice(0, 32000);
-
-          // Pre-render markdown → HTML with Obsidian features
-          let html: string | undefined;
-          try {
-            html = await renderVaultMarkdown(content, allPaths, relPath);
-          } catch {
-            // Fall back to no HTML — client will show raw markdown
-          }
-
-          const updatedAt = Math.floor(stat.mtimeMs / 1000);
-          await pushContentResource(
-            `vault:${relPath}`,
-            "vault_note",
-            {
-              path: relPath,
-              title,
-              content,
-              html,
-              type,
-              tags,
-              section,
-              updatedAt,
-            },
-            [title, content, tags.join(" "), section, type].filter(Boolean).join(" ")
-          );
-          synced++;
-        } catch (err) {
-          errors++;
-        }
-      }
-
-      console.log(`[convex-vault-sync] synced ${synced} notes (${errors} errors)`);
-      return { synced, errors };
+    const convexResult = await step.run("sync-vault-to-convex", async () => {
+      return syncVaultToConvex(targetPaths);
     });
 
-    console.log(`[typesense-vault-sync] indexed ${result.count} vault notes (${result.errors} errors) via ${event.name}`);
-    return { collection: "vault_notes", ...result, trigger: event.name };
+    console.log(
+      `[typesense-vault-sync] mode=${result.mode} indexed ${result.count} vault notes (${result.errors} errors) via ${(event.data as { triggerEvent?: string } | undefined)?.triggerEvent || event.name}`
+    );
+
+    return {
+      collection: "vault_notes",
+      ...result,
+      convex: convexResult,
+      trigger: (event.data as { triggerEvent?: string } | undefined)?.triggerEvent || event.name,
+    };
   }
 );
 

@@ -31,7 +31,7 @@ describe("CLI contract envelope", () => {
     expect(validation.errors).toHaveLength(0)
   })
 
-  test("error envelope includes error metadata and fix", () => {
+  test("error envelope includes error metadata, fix, and recover action", () => {
     const envelope = buildErrorEnvelope(
       "search",
       "Typesense unavailable",
@@ -44,6 +44,13 @@ describe("CLI contract envelope", () => {
     expect(envelope.command).toBe("joelclaw search")
     expect(envelope.error?.code).toBe("TYPESENSE_UNREACHABLE")
     expect(envelope.fix).toBe("Check port-forward and retry")
+
+    const recoverAction = envelope.next_actions.find((action) =>
+      action.command.startsWith("joelclaw recover")
+    )
+
+    expect(recoverAction).toBeTruthy()
+    expect(recoverAction?.params?.["error-code"]?.value).toBe("TYPESENSE_UNREACHABLE")
 
     const validation = validateJoelclawEnvelope(envelope)
     expect(validation.valid).toBe(true)

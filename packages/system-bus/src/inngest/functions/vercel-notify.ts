@@ -16,7 +16,7 @@ export const vercelDeploySucceeded = inngest.createFunction(
   { id: "vercel-deploy-succeeded-notify", name: "Vercel → Gateway: Deploy Succeeded" },
   { event: "vercel/deploy.succeeded" },
   async ({ event, step, ...rest }) => {
-    const gateway = (rest as any).gateway as GatewayContext | undefined;
+    const gateway = (rest as { gateway?: GatewayContext }).gateway;
     const {
       deploymentId, deploymentUrl, projectName, target,
       gitCommitMessage, gitCommitAuthor, gitBranch, dashboardUrl,
@@ -68,7 +68,7 @@ export const vercelDeployError = inngest.createFunction(
   { id: "vercel-deploy-error-notify", name: "Vercel → Gateway: Deploy Error → Fix" },
   { event: "vercel/deploy.error" },
   async ({ event, step, ...rest }) => {
-    const gateway = (rest as any).gateway as GatewayContext | undefined;
+    const gateway = (rest as { gateway?: GatewayContext }).gateway;
     const {
       deploymentId, deploymentUrl, projectName, target,
       gitCommitMessage, gitCommitAuthor, gitBranch, dashboardUrl,
@@ -158,7 +158,7 @@ export const vercelDeployCreated = inngest.createFunction(
   { id: "vercel-deploy-created-notify", name: "Vercel → Gateway: Deploy Created" },
   { event: "vercel/deploy.created" },
   async ({ event, step, ...rest }) => {
-    const gateway = (rest as any).gateway as GatewayContext | undefined;
+    const gateway = (rest as { gateway?: GatewayContext }).gateway;
     const {
       deploymentId, projectName, target,
       gitCommitMessage, gitCommitAuthor, gitBranch,
@@ -202,7 +202,7 @@ export const vercelDeployCanceled = inngest.createFunction(
   { id: "vercel-deploy-canceled-notify", name: "Vercel → Gateway: Deploy Canceled" },
   { event: "vercel/deploy.canceled" },
   async ({ event, step, ...rest }) => {
-    const gateway = (rest as any).gateway as GatewayContext | undefined;
+    const gateway = (rest as { gateway?: GatewayContext }).gateway;
     const { deploymentId, projectName, target } = event.data;
 
     const result = await step.run("notify-gateway", async () => {

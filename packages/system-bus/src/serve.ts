@@ -133,6 +133,7 @@ app.get("/", (c) =>
         "Transcribe audio or accept text → vault note → emits content/summarize.requested",
       "content/summarize.requested": "Enrich any vault note with pi + web research",
       "content/updated": "Vault content changed → sync ADRs + discoveries to website",
+      "typesense/vault-sync.requested": "Queue request for debounced/targeted vault re-index",
       "discovery/noted": "Investigate interesting find → vault note in Resources/discoveries/",
       "system/log.written": "Write canonical log entry",
       "media/received": "Process media from channels → vision/transcribe → notify gateway",

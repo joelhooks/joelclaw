@@ -91,6 +91,37 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
     ],
   },
   {
+    id: "deterministic-recovery",
+    category: "diagnostics",
+    goal: "Apply dry-run-first deterministic runbooks for known failure codes.",
+    prerequisites: ["Known error code from previous command response"],
+    commands: [
+      { command: "recover list", description: "List available recovery runbooks" },
+      {
+        command: "recover <error-code> [--phase <phase>] [--context <context>]",
+        description: "Preview runbook steps (dry-run)",
+        params: {
+          "error-code": { description: "Runbook error code", required: true },
+          phase: { description: "Phase to preview", value: "fix", enum: ["diagnose", "fix", "verify", "rollback", "all"] },
+          context: { description: "JSON context for placeholders", value: "{}", default: "{}" },
+        },
+      },
+      {
+        command: "recover <error-code> --phase <phase> --execute [--context <context>]",
+        description: "Execute selected runbook phase",
+        params: {
+          "error-code": { description: "Runbook error code", required: true },
+          phase: { description: "Phase to execute", value: "fix", enum: ["diagnose", "fix", "verify", "rollback", "all"] },
+          context: { description: "JSON context for placeholders", value: "{}", default: "{}" },
+        },
+      },
+    ],
+    verification: [
+      "Dry-run preview inspected before execute",
+      "Verify phase run after fix phase",
+    ],
+  },
+  {
     id: "event-delivery",
     category: "operations",
     goal: "Send an event and verify it reached function runs.",

@@ -11,6 +11,7 @@ import {
   REFLECTOR_USER_PROMPT,
   validateCompression,
 } from "./reflect-prompt";
+import { parsePiJsonAssistant, traceLlmGeneration, type LlmUsage } from "../../lib/langfuse";
 import { emitOtelEvent } from "../../observability/emit";
 
 type ObservationRecord = {
@@ -25,6 +26,10 @@ type ReflectRunResult = {
   raw: string;
   inputTokens: number;
   outputTokens: number;
+  provider?: string;
+  model?: string;
+  usage?: LlmUsage;
+  durationMs?: number;
 };
 
 type ParsedProposal = {
@@ -250,30 +255,84 @@ async function runReflectorLLM(
     ? `${REFLECTOR_SYSTEM_PROMPT}\n\n${guidance}`
     : REFLECTOR_SYSTEM_PROMPT;
   const userPrompt = REFLECTOR_USER_PROMPT(observations, memoryContent);
+  const reflectorModel = "anthropic/claude-haiku";
+  const startedAt = Date.now();
+
   const result = await withPromptFile(userPrompt, (promptFileArg) =>
-    Bun.$`pi --no-tools --no-session --no-extensions --print --mode text --model anthropic/claude-haiku --system-prompt ${systemPrompt} ${promptFileArg}`
+    Bun.$`pi --no-tools --no-session --no-extensions --print --mode json --model ${reflectorModel} --system-prompt ${systemPrompt} ${promptFileArg}`
       .quiet()
       .nothrow()
   );
 
-  const stdout = readShellText(result.stdout);
+  const stdoutRaw = readShellText(result.stdout);
+  const parsedPi = parsePiJsonAssistant(stdoutRaw);
+  const stdout = parsedPi?.text ?? stdoutRaw;
   const stderr = readShellText(result.stderr);
 
   if (result.exitCode !== 0) {
-    throw new Error(
-      `Reflector subprocess failed with exit code ${result.exitCode}${
-        stderr ? `: ${stderr}` : ""
-      }`
-    );
+    const error = `Reflector subprocess failed with exit code ${result.exitCode}${
+      stderr ? `: ${stderr}` : ""
+    }`;
+
+    await traceLlmGeneration({
+      traceName: "joelclaw.reflect",
+      generationName: "memory.reflect",
+      component: "reflect",
+      action: "reflect.llm.summarize",
+      input: {
+        retryLevel,
+        prompt: userPrompt.slice(0, 6000),
+      },
+      output: {
+        stderr: stderr.slice(0, 500),
+      },
+      provider: parsedPi?.provider,
+      model: parsedPi?.model ?? reflectorModel,
+      usage: parsedPi?.usage,
+      durationMs: Date.now() - startedAt,
+      error,
+      metadata: {
+        retryLevel,
+      },
+    });
+
+    throw new Error(error);
   }
 
   const inputTokens = estimateTokens(`${systemPrompt}\n\n${userPrompt}`);
   const outputTokens = estimateTokens(stdout);
 
+  await traceLlmGeneration({
+    traceName: "joelclaw.reflect",
+    generationName: "memory.reflect",
+    component: "reflect",
+    action: "reflect.llm.summarize",
+    input: {
+      retryLevel,
+      prompt: userPrompt.slice(0, 6000),
+    },
+    output: {
+      reflectorXml: stdout.slice(0, 6000),
+      inputTokens,
+      outputTokens,
+    },
+    provider: parsedPi?.provider,
+    model: parsedPi?.model ?? reflectorModel,
+    usage: parsedPi?.usage,
+    durationMs: Date.now() - startedAt,
+    metadata: {
+      retryLevel,
+    },
+  });
+
   return {
     raw: stdout,
     inputTokens,
     outputTokens,
+    provider: parsedPi?.provider,
+    model: parsedPi?.model ?? reflectorModel,
+    usage: parsedPi?.usage,
+    durationMs: Date.now() - startedAt,
   };
 }
 

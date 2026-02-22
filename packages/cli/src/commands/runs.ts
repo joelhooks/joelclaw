@@ -24,7 +24,7 @@ export const runsCmd = Command.make(
     compact: Options.boolean("compact").pipe(
       Options.withAlias("c"),
       Options.withDefault(false),
-      Options.withDescription("Terse plain-text output")
+      Options.withDescription("Terse JSON row output")
     ),
   },
   ({ count, status, hours, compact }) =>
@@ -34,12 +34,49 @@ export const runsCmd = Command.make(
       const result = yield* inngestClient.runs({ count, status: statusVal, hours })
 
       if (compact) {
-        for (const r of result as any[]) {
-          const st = r.status === "COMPLETED" ? "✅" : r.status === "FAILED" ? "❌" : r.status === "RUNNING" ? "▶" : "⏳"
-          const name = (r.functionName ?? r.functionID ?? "?").slice(0, 35).padEnd(35)
-          const time = r.startedAt ? new Date(r.startedAt).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" }) : "?"
-          yield* Console.log(`${st} ${name} ${time}  ${r.id.slice(0, 12)}`)
-        }
+        const firstRunId = (result as any[])[0]?.id ?? "RUN_ID"
+        const rows = (result as any[]).map((r) => {
+          const statusBadge = r.status === "COMPLETED"
+            ? "✅"
+            : r.status === "FAILED"
+              ? "❌"
+              : r.status === "RUNNING"
+                ? "▶"
+                : "⏳"
+          const functionName = (r.functionName ?? r.functionID ?? "?").slice(0, 35)
+          const started = r.startedAt
+            ? new Date(r.startedAt).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" })
+            : "?"
+          return {
+            statusBadge,
+            functionName,
+            started,
+            runIdShort: String(r.id).slice(0, 12),
+            status: r.status,
+          }
+        })
+
+        yield* Console.log(respond("runs", { count: rows.length, compact: true, rows }, [
+          {
+            command: "joelclaw runs [--status <status>] [--hours <hours>]",
+            description: "Refine compact list with filters",
+            params: {
+              status: {
+                description: "Run status filter",
+                value: statusVal ?? "FAILED",
+                enum: ["COMPLETED", "FAILED", "RUNNING", "QUEUED", "CANCELLED"],
+              },
+              hours: { description: "Lookback window in hours", value: hours, default: 24 },
+            },
+          },
+          {
+            command: "joelclaw run <run-id>",
+            description: "Inspect one run in detail",
+            params: {
+              "run-id": { description: "Run ID", value: firstRunId, required: true },
+            },
+          },
+        ]))
         return
       }
 
@@ -96,8 +133,11 @@ export const runCmd = Command.make(
 
       if (result.run.status === "FAILED" && result.errors) {
         next.push({
-          command: `tail -30 ~/.local/log/system-bus-worker.err`,
+          command: "joelclaw logs errors [--lines <lines>]",
           description: "Check worker stderr for full stack trace",
+          params: {
+            lines: { description: "Number of lines", value: 120, default: 120 },
+          },
         })
       }
       if (result.run.status === "RUNNING") {
@@ -127,10 +167,11 @@ export const runCmd = Command.make(
           },
         },
         {
-          command: 'docker logs system-bus-inngest-1 2>&1 | grep "<run-id>" | tail -5',
+          command: "joelclaw logs server [--lines <lines>] [--grep <text>]",
           description: "Server-side logs for this run",
           params: {
-            "run-id": { description: "Run ID", value: runId, required: true },
+            lines: { description: "Number of lines", value: 80, default: 80 },
+            text: { description: "Grep filter", value: runId },
           },
         },
       )
