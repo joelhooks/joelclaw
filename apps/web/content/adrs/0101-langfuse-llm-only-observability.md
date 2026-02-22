@@ -249,6 +249,7 @@ Migrate LLM subprocess callsites in:
 - 2026-02-22: Post-rollout validation confirmed new trace names in hosted Langfuse, including `joelclaw.agent-dispatch`.
 - 2026-02-22: Remaining `step.ai.infer` callsite inventory in `@joelclaw/system-bus` reduced to `daily-digest`; callsite now emits Langfuse traces on both success and failure with inferred provider/model and extracted usage token fields when available.
 - 2026-02-22: Added CI guardrail to prevent untraced `step.ai.infer` additions (`scripts/validate-llm-observability-guards.ts`, workflow `.github/workflows/llm-observability-guards.yml`), enforcing nearby `traceLlmGeneration` coverage.
+- 2026-02-22: Added `joelclaw langfuse aggregate` CLI surface for project-level cloud trace rollups (cost/latency/signature trends) so Langfuse + OTEL + local logs can be queried through one agent-facing CLI.
 
 ## Status
 

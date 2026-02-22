@@ -131,11 +131,13 @@ Phase 1 kickoff started.
   - `joelclaw inngest status`
 - Phase-2 aggregate log analysis follow-up implemented:
   - `joelclaw logs analyze` added to aggregate worker stdout, worker stderr, and Inngest server logs into severity/source/component/action rollups with top signatures and sample lines.
-  - new helper tests added at `packages/cli/src/commands/logs.test.ts`.
+  - `joelclaw langfuse aggregate` added for project-level cloud LLM trace rollups (cost/latency/signature trends) with project URL/ID targeting.
+  - new helper tests added at `packages/cli/src/commands/logs.test.ts` and `packages/cli/src/commands/langfuse.test.ts`.
 - Phase-2 aggregate log analysis validation passed:
-  - `bun test packages/cli/src/commands/logs.test.ts`
+  - `bun test packages/cli/src/commands/logs.test.ts packages/cli/src/commands/langfuse.test.ts`
   - `cd packages/cli && bunx tsc --noEmit -p tsconfig.json`
   - `cd packages/cli && bun src/cli.ts logs analyze --lines 80`
+  - `cd packages/cli && bun src/cli.ts langfuse aggregate --hours 24 --bucket-minutes 60 --max-traces 300 --project-url https://us.cloud.langfuse.com/project/cmlx4cd4901lyad07ih16f95i/`
 - Phase-2 invoke + finalization hardening implemented:
   - added `joelclaw inngest invoke <function-slug>` with deterministic wait/poll behavior and dispatch modes (`auto|event|invoke`) in `packages/cli/src/commands/inngest.ts`
   - `auto` dispatch prefers EVENT triggers when present (CLI-first path, no raw GQL in operator flow)
