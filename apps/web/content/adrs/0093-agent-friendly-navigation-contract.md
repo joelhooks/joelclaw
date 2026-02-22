@@ -92,6 +92,20 @@ Phase 1 kickoff started.
   - `cd packages/cli && bun src/cli.ts recover BAD_CODE`
   - `bun test packages/cli/src/commands/recover.test.ts packages/cli/src/commands/runbooks.test.ts`
   - `bun run validate:cli-contracts`
+- Phase-2 completion tranche implemented (top-20 coverage + recovery wiring):
+  - expanded runbook registry to canonical top 20 error codes in `packages/cli/src/runbooks.ts`
+  - enforced runbook completeness (`diagnose`, `fix`, `verify`, `rollback` all non-empty) via `runbooks.test.ts`
+  - `respondError` and stream `emitError` now auto-append `recover` next action when a runbook exists (`packages/cli/src/response.ts`, `packages/cli/src/stream.ts`)
+  - o11y auto-fix handlers now declare runbook mapping metadata (`packages/system-bus/src/observability/auto-fixes/index.ts`)
+  - o11y triage emits runbook-backed recovery hints (`recoverCommand`, `runbookCommands`) using shared resolver (`packages/system-bus/src/observability/recovery-runbooks.ts`, `packages/system-bus/src/inngest/functions/o11y-triage.ts`)
+- Phase-2 completion tranche validation passed:
+  - `cd packages/cli && bun run check-types`
+  - `bun test packages/cli/src/commands/contract-envelope.test.ts packages/cli/src/commands/recover.test.ts packages/cli/src/commands/runbooks.test.ts packages/cli/src/commands/capabilities.test.ts`
+  - `cd packages/cli && bun src/cli.ts send test.event --data '{bad json}'`
+  - `cd packages/cli && bun src/cli.ts recover list`
+  - `cd packages/cli && bun src/cli.ts recover MEMORY_HEALTH_FAILED --phase rollback`
+  - `bun run validate:cli-contracts`
+  - `cd packages/system-bus && bunx tsc --noEmit`
 
 ## Design Contract
 
@@ -282,4 +296,4 @@ Phase 1 kickoff started.
 
 ## Status
 
-Proposed.
+Accepted (execution in progress: Phase 1 complete, Phase 2 actively implementing deterministic runbooks/recovery wiring).
