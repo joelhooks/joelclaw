@@ -219,6 +219,12 @@ Adopt a **single source of truth** for Inngest worker code in the `joelclaw` mon
   - `joelclaw inngest restart-worker` and `joelclaw inngest sync-worker` now enforce ADR-0089 launchd binding before restart/register.
 - Added runtime source telemetry:
   - worker health payload now includes `runtime.cwd`, `runtime.deploymentModel`, and `runtime.legacyCloneDetected`.
+- Swept legacy clone wording from non-ADR historical artifacts:
+  - marked `packages/system-bus/prd.json` and `packages/system-bus/prd-harden.json` as `[historical]` and removed `sync-worker-clone` references.
+- Added CI policy guard for future drift:
+  - `scripts/validate-no-legacy-worker-clone.ts`
+  - `.github/workflows/legacy-worker-clone-guard.yml`
+  - fails when `Code/system-bus-worker` appears outside ADR history and runtime guard allowlist.
 
 ## Migration Trigger to Revisit
 
