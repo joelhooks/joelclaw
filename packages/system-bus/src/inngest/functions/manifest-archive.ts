@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import Redis from "ioredis";
 import { NonRetriableError } from "inngest";
+import { access, readFile } from "node:fs/promises";
 import { join, parse } from "node:path";
 import { inngest } from "../client";
 import { emitMeasuredOtelEvent } from "../../observability/emit";
@@ -9,7 +10,8 @@ import { pushGatewayEvent } from "./agent-loop/utils";
 const DARK_WIZARD = "joel@100.86.171.79";
 const CLANKER = "joel@100.95.167.75";
 const THREE_BODY = "/Volumes/three-body";
-const MANIFEST_PATH = `${process.env.HOME}/Documents/manifest.clean.jsonl`;
+const TMP_MANIFEST_PATH = "/tmp/manifest.clean.jsonl";
+const DEFAULT_MANIFEST_PATH = `${process.env.HOME}/Documents/manifest.clean.jsonl`;
 const REDIS_KEY = "manifest:archive:state";
 
 type ManifestEntry = {
@@ -32,6 +34,23 @@ type FileResult = {
   error?: string;
 };
 
+type BookCategory =
+  | "programming"
+  | "business"
+  | "education"
+  | "design"
+  | "other"
+  | "uncategorized";
+
+const BOOK_CATEGORIES: BookCategory[] = [
+  "programming",
+  "business",
+  "education",
+  "design",
+  "other",
+  "uncategorized",
+];
+
 let redisClient: Redis | null = null;
 
 function getRedis(): Redis {
@@ -41,6 +60,9 @@ function getRedis(): Redis {
   redisClient = new Redis({
     host: process.env.REDIS_HOST ?? "localhost",
     port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+    connectTimeout: 3_000,
+    commandTimeout: 5_000,
+    maxRetriesPerRequest: 1,
     lazyConnect: true,
     retryStrategy: isTest ? () => null : undefined,
   });
@@ -67,6 +89,17 @@ function normalizeBytes(value: unknown): number {
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
   return 0;
+}
+
+function normalizeMaxEntries(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
 }
 
 function isCopiedState(raw: string | null): boolean {
@@ -115,6 +148,10 @@ export function getCategoryDir(category: string | null): string {
     default:
       return "uncategorized";
   }
+}
+
+function isBookCategory(value: string): value is BookCategory {
+  return BOOK_CATEGORIES.includes(value as BookCategory);
 }
 
 export function getDestPath(entry: ManifestEntry): string {
@@ -175,15 +212,23 @@ function parseManifestEntry(
   };
 }
 
-async function loadManifest(): Promise<ManifestEntry[]> {
-  const file = Bun.file(MANIFEST_PATH);
-  if (!(await file.exists())) {
+async function loadManifest(manifestPath: string): Promise<ManifestEntry[]> {
+  try {
+    await access(manifestPath);
+  } catch {
     throw new NonRetriableError(
-      `Manifest not found at ${MANIFEST_PATH}`,
+      `Manifest not found at ${manifestPath}`,
     );
   }
 
-  const text = await file.text();
+  let text = "";
+  try {
+    text = await readFile(manifestPath, "utf8");
+  } catch (error) {
+    throw new NonRetriableError(
+      `Manifest read failed at ${manifestPath}: ${formatError(error)}`,
+    );
+  }
   const entries: ManifestEntry[] = [];
   const lines = text.split("\n");
 
@@ -206,6 +251,22 @@ async function loadManifest(): Promise<ManifestEntry[]> {
   return entries;
 }
 
+async function resolveManifestPath(requestedPath: unknown): Promise<string> {
+  if (typeof requestedPath === "string" && requestedPath.trim().length > 0) {
+    return requestedPath.trim();
+  }
+
+  const envPath = process.env.MANIFEST_ARCHIVE_MANIFEST_PATH?.trim();
+  if (envPath) return envPath;
+
+  try {
+    await access(TMP_MANIFEST_PATH);
+    return TMP_MANIFEST_PATH;
+  } catch {
+    return DEFAULT_MANIFEST_PATH;
+  }
+}
+
 /**
  * Process a single file: check Redis, plan or copy, update state.
  * Each file is its own Inngest step → individual retry + memoization.
@@ -214,14 +275,6 @@ async function processFile(
   entry: ManifestEntry,
   dryRun: boolean,
 ): Promise<FileResult> {
-  const redis = getRedis();
-
-  // Already copied? Skip.
-  const copiedState = await redis.hget(REDIS_KEY, entry.id);
-  if (isCopiedState(copiedState)) {
-    return { id: entry.id, action: "skip" };
-  }
-
   const srcHost = entry.sourceExists ? DARK_WIZARD : CLANKER;
   const src = `${srcHost}:${entry.sourcePath}`;
   const dest = getDestPath(entry);
@@ -229,6 +282,14 @@ async function processFile(
 
   if (dryRun) {
     return { id: entry.id, action: "would-copy", src, dest, bytes };
+  }
+
+  const redis = getRedis();
+
+  // Already copied? Skip.
+  const copiedState = await redis.hget(REDIS_KEY, entry.id);
+  if (isCopiedState(copiedState)) {
+    return { id: entry.id, action: "skip" };
   }
 
   // Live mode: mkdir + scp + mark copied
@@ -276,6 +337,13 @@ export const manifestArchive = inngest.createFunction(
   [{ event: "manifest/archive.requested" }],
   async ({ event, step }) => {
     const dryRun = event.data.dryRun ?? true;
+    const eventData = event.data as {
+      maxEntries?: unknown;
+      manifestPath?: unknown;
+      reason?: string;
+    };
+    const maxEntries = normalizeMaxEntries(eventData.maxEntries);
+    const manifestPath = await resolveManifestPath(eventData.manifestPath);
 
     // Step 1: Validate prereqs (NAS mount + SSH connectivity)
     await step.run("validate-prereqs", async () => {
@@ -285,7 +353,12 @@ export const manifestArchive = inngest.createFunction(
           source: "worker",
           component: "manifest-archive",
           action: "manifest.archive.started",
-          metadata: { dryRun, reason: event.data.reason ?? null },
+          metadata: {
+            dryRun,
+            reason: eventData.reason ?? null,
+            maxEntries,
+            manifestPath,
+          },
         },
         async () => ({ phase: "start" }),
       );
@@ -309,34 +382,23 @@ export const manifestArchive = inngest.createFunction(
       }
     });
 
-    // Step 2: Load manifest — returns compact index (id + routing info only)
-    // Keep step output small to stay under 4MB limit
-    const entries = await step.run("load-manifest", async () => {
+    await step.run("prereqs-passed", async () => {
       await emitMeasuredOtelEvent(
         {
           level: "info",
           source: "worker",
           component: "manifest-archive",
           action: "manifest.archive.prereqs-passed",
-          metadata: { dryRun },
+          metadata: { dryRun, maxEntries, manifestPath },
         },
         async () => ({ phase: "prereqs-done" }),
       );
-      const manifest = await loadManifest();
-      console.log(`[manifest-archive] loaded ${manifest.length} entries, mapping...`);
-      const mapped = manifest.map((e) => ({
-        id: e.id,
-        filename: e.filename,
-        sourcePath: e.sourcePath,
-        sourceExists: e.sourceExists,
-        enrichmentCategory: e.enrichmentCategory,
-        enrichmentDocumentType: e.enrichmentDocumentType,
-        sourceFileType: e.sourceFileType,
-        sourceSizeBytes: e.sourceSizeBytes ?? 0,
-      }));
-      console.log(`[manifest-archive] mapped ${mapped.length} entries (${JSON.stringify(mapped).length} bytes), returning from step`);
-      return mapped;
     });
+
+    const manifestEntries = await loadManifest(manifestPath);
+    const entries = maxEntries
+      ? manifestEntries.slice(0, Math.min(maxEntries, manifestEntries.length))
+      : manifestEntries;
 
     // Steps 3..N: One step per file (806 files = 806 steps, under 1,000 limit)
     // Each step is independently retried and memoized.
@@ -345,26 +407,61 @@ export const manifestArchive = inngest.createFunction(
     for (const entry of entries) {
       const result = await step.run(
         `file-${entry.id}`,
-        async () => processFile(entry as ManifestEntry, dryRun),
+        async () => processFile(entry, dryRun),
       );
       results.push(result);
     }
 
     // Aggregate
-    const copied = results.filter(
-      (r) => r.action === "copy" || r.action === "would-copy",
-    );
+    const copied = results.filter((r) => r.action === "copy");
+    const wouldCopy = results.filter((r) => r.action === "would-copy");
     const skipped = results.filter((r) => r.action === "skip");
     const errors = results.filter((r) => r.action === "error");
-    const totalBytes = copied.reduce((sum, r) => sum + (r.bytes ?? 0), 0);
+    const planned = [...copied, ...wouldCopy];
+    const totalBytes = planned.reduce((sum, r) => sum + (r.bytes ?? 0), 0);
+
+    const booksRouting: Record<BookCategory, number> = {
+      programming: 0,
+      business: 0,
+      education: 0,
+      design: 0,
+      other: 0,
+      uncategorized: 0,
+    };
+    let podcasts = 0;
+
+    for (const item of planned) {
+      if (!item.dest) continue;
+      if (item.dest.includes(`${THREE_BODY}/podcasts/`)) {
+        podcasts += 1;
+        continue;
+      }
+      const booksPrefix = `${THREE_BODY}/books/`;
+      if (!item.dest.includes(booksPrefix)) continue;
+      const route = item.dest.slice(item.dest.indexOf(booksPrefix) + booksPrefix.length);
+      const category = route.split("/")[0] ?? "uncategorized";
+      if (isBookCategory(category)) {
+        booksRouting[category] = booksRouting[category] + 1;
+      } else {
+        booksRouting.uncategorized = booksRouting.uncategorized + 1;
+      }
+    }
 
     const summary = {
       dryRun,
       scanned: results.length,
       copied: copied.length,
+      wouldCopy: wouldCopy.length,
       skipped: skipped.length,
-      errors: errors.length,
+      wouldSkip: skipped.length,
+      failed: errors.length,
       totalBytes,
+      routing: {
+        podcasts,
+        books: booksRouting,
+      },
+      maxEntries,
+      manifestPath,
       errorDetails: errors.slice(0, 20).map((e) => ({
         id: e.id,
         error: e.error,

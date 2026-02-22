@@ -228,7 +228,7 @@ export function ReviewSheet({
               <Button
                 onClick={handleSubmit}
                 disabled={submitting}
-                className="w-full bg-claw/10 text-claw hover:bg-claw/20 border border-claw/30 font-mono text-sm h-11 transition-all active:scale-[0.98]"
+                className="w-full bg-claw/10 text-claw hover:bg-claw/20 border border-claw/30 font-mono text-sm h-11 transition-[color,background-color,border-color,transform] duration-200 ease-out active:scale-[0.97] motion-reduce:transition-none motion-reduce:active:scale-100"
               >
                 {submitting ? (
                   <>

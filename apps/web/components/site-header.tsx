@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { CLAW_PATH } from "../lib/claw";
 import { SITE_NAME } from "../lib/constants";
 import { SearchDialog } from "./search-dialog";
@@ -30,23 +31,72 @@ export function SiteHeader() {
 
   const navItems = isOwner ? [...PUBLIC_NAV, ...OWNER_NAV] : PUBLIC_NAV;
 
+  const navRef = useRef<HTMLElement>(null);
+  const [indicator, setIndicator] = useState<{
+    left: number;
+    width: number;
+  } | null>(null);
+
+  const updateIndicator = useCallback(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const activeLink = nav.querySelector("[data-active]") as HTMLElement | null;
+    if (!activeLink) {
+      setIndicator(null);
+      return;
+    }
+    const navRect = nav.getBoundingClientRect();
+    const linkRect = activeLink.getBoundingClientRect();
+    setIndicator({
+      left: linkRect.left - navRect.left,
+      width: linkRect.width,
+    });
+  }, []);
+
+  // Update on pathname or nav items change
+  useEffect(() => {
+    updateIndicator();
+  }, [pathname, isOwner, updateIndicator]);
+
+  // Recalculate on resize
+  useEffect(() => {
+    window.addEventListener("resize", updateIndicator);
+    return () => window.removeEventListener("resize", updateIndicator);
+  }, [updateIndicator]);
+
   return (
     <header className="mb-16">
       <div className="flex items-center justify-between">
         <Link href="/" className="group flex items-center gap-3">
           <svg
             viewBox="0 0 512 512"
-            className="w-8 h-8 shrink-0 text-claw transition-transform group-hover:rotate-[-8deg]"
+            className="w-8 h-8 shrink-0 text-claw transition-transform duration-200 ease-out group-hover:rotate-[-8deg] motion-reduce:transition-none"
             aria-hidden="true"
           >
             <path fill="currentColor" d={CLAW_PATH} />
           </svg>
-          <span className="text-lg font-semibold group-hover:text-white transition-colors">
+          <span className="text-lg font-semibold group-hover:text-white transition-colors duration-200 ease-out">
             {SITE_NAME}
           </span>
         </Link>
         <div className="flex items-center gap-6">
-          <nav className="hidden md:flex items-center gap-6 lg:gap-8 text-sm">
+          <nav
+            ref={navRef}
+            className="hidden md:flex items-center gap-6 lg:gap-8 text-sm relative"
+          >
+            {/* Sliding indicator */}
+            {indicator && (
+              <span
+                className="absolute -bottom-1.5 h-px bg-claw/60 transition-[left,width] duration-200 motion-reduce:transition-none"
+                style={{
+                  left: indicator.left,
+                  width: indicator.width,
+                  // Slightly sharper than default ease-out
+                  transitionTimingFunction: "cubic-bezier(0.22, 1, 0.36, 1)",
+                }}
+              />
+            )}
+
             {navItems.map((item) => {
               const isActive =
                 item.href === "/"
@@ -56,7 +106,8 @@ export function SiteHeader() {
                 <Link
                   key={item.href}
                   href={item.href}
-                  className={`transition-colors ${
+                  {...(isActive ? { "data-active": true } : {})}
+                  className={`transition-colors duration-200 ease-out ${
                     isActive
                       ? "text-white"
                       : "text-neutral-500 hover:text-white"

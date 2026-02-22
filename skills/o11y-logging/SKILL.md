@@ -2,7 +2,7 @@
 name: o11y-logging
 displayName: O11y Logging
 description: "Implement and verify joelclaw observability on every change so failures cannot stay silent. Use when adding/updating Inngest functions, gateway channels, webhook providers, APIs, workers, or any pipeline step. Enforces canonical OTEL contract, storage path, and verification gates. Triggers on: 'o11y', 'observability', 'logging', 'otel', 'instrument this', 'silent failure', 'add telemetry', 'log this function'."
-version: 1.0.0
+version: 1.1.0
 author: Joel Hooks
 tags: [joelclaw, observability, logging, o11y, otel, typesense, convex, inngest, gateway]
 ---
@@ -24,6 +24,7 @@ Prevent silent failure by default. Observability is not optional polish: it is p
 6. High-cardinality values go in `metadata`, not in facet fields (`source`, `component`, `level`, `success`).
 7. Failures must set `success: false` with a meaningful `error`.
 8. For warn/error/fatal, verify Convex mirror behavior (rolling window) in addition to Typesense write.
+9. In Inngest durable functions, any "emit once" telemetry must live inside `step.run(...)` to avoid replay duplication after resume.
 
 ## Event Conventions
 
@@ -92,6 +93,38 @@ await emitGatewayOtel({
 - Smoke probe passes (`scripts/otel-smoke.sh`).
 - `joelclaw otel list` and `joelclaw otel stats` show expected behavior.
 - New failure modes are queryable by `source`, `component`, and `action`.
+
+## Inngest Replay + Hang Triage
+
+Use this when step code appears to run but runs remain `RUNNING`/`CANCELLED` with `Finalization` errors.
+
+1. Inspect run trace first.
+
+```bash
+joelclaw run <run-id>
+```
+
+Look for `errors.Finalization.stack` containing `Unable to reach SDK URL`.
+
+2. Confirm whether this is true network reachability or worker-side blocking.
+
+```bash
+joelclaw inngest status
+joelclaw logs worker --lines 200
+joelclaw logs errors --lines 200
+```
+
+3. Check for replay-noise in OTEL.
+
+If an action that should emit once (for example `manifest.archive.prereqs-passed`) appears hundreds of times in one run window, move that emit into its own `step.run`.
+
+```bash
+joelclaw otel search "manifest.archive.prereqs-passed" --hours 1
+```
+
+4. Treat `Unable to reach SDK URL` as an ambiguous symptom.
+
+It can indicate ingress problems, but in practice it can also happen when a function handler blocks on local IO/dependencies long enough that finalization cannot complete.
 
 ## Helper Script
 

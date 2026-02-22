@@ -38,7 +38,7 @@ export default function SignInPage() {
           {/* Sign in button */}
           <button
             onClick={handleGitHubSignIn}
-            className="group flex w-full items-center gap-3 rounded-lg border border-neutral-800 bg-neutral-900/50 px-4 py-3.5 font-mono text-sm text-neutral-300 transition-all duration-200 hover:border-neutral-700 hover:bg-neutral-900 hover:text-white hover:shadow-lg hover:shadow-claw/5"
+            className="group flex w-full items-center gap-3 rounded-lg border border-neutral-800 bg-neutral-900/50 px-4 py-3.5 font-mono text-sm text-neutral-300 transition-[color,background-color,border-color,box-shadow] duration-200 ease-out hover:border-neutral-700 hover:bg-neutral-900 hover:text-white hover:shadow-lg hover:shadow-claw/5 motion-reduce:transition-none"
           >
             <Github className="h-4 w-4 text-neutral-500 transition-colors group-hover:text-claw" />
             <span className="flex-1 text-left">Continue with GitHub</span>

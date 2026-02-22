@@ -109,21 +109,36 @@ export type Events = {
     data: {
       reason?: string;
       dryRun?: boolean;
+      maxEntries?: number;
+      manifestPath?: string;
     };
   };
   "manifest/archive.completed": {
     data: {
       dryRun: boolean;
       scanned: number;
+      copied: number;
       wouldCopy: number;
+      skipped: number;
       wouldSkip: number;
       failed: number;
       totalBytes: number;
-      plan: Array<{
+      routing: {
+        podcasts: number;
+        books: {
+          programming: number;
+          business: number;
+          education: number;
+          design: number;
+          other: number;
+          uncategorized: number;
+        };
+      };
+      maxEntries: number | null;
+      manifestPath: string;
+      errorDetails: Array<{
         id: string;
-        src: string;
-        dest: string;
-        bytes: number;
+        error?: string;
       }>;
     };
   };

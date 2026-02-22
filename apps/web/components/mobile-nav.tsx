@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { Menu, X } from "lucide-react";
@@ -24,14 +24,25 @@ const OWNER_NAV = [
 
 export function MobileNav() {
   const [open, setOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
   const pathname = usePathname();
   const { data: session } = authClient.useSession();
   const navItems = session?.user ? [...PUBLIC_NAV, ...OWNER_NAV] : PUBLIC_NAV;
+  const overlayRef = useRef<HTMLDivElement>(null);
+
+  const close = useCallback(() => {
+    setClosing(true);
+    // Match the exit animation duration
+    setTimeout(() => {
+      setOpen(false);
+      setClosing(false);
+    }, 150);
+  }, []);
 
   // Close on route change
   useEffect(() => {
-    setOpen(false);
-  }, [pathname]);
+    if (open) close();
+  }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Lock body scroll
   useEffect(() => {
@@ -48,32 +59,34 @@ export function MobileNav() {
   // Escape to close
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape" && open) setOpen(false);
+      if (e.key === "Escape" && open) close();
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open]);
+  }, [open, close]);
 
   return (
     <>
-      {/* Hamburger trigger — mobile only */}
       <button
         onClick={() => setOpen(true)}
-        className="md:hidden flex items-center text-neutral-500 hover:text-white transition-colors"
+        className="md:hidden flex items-center text-neutral-500 hover:text-white transition-colors duration-200 ease-out"
         aria-label="Open menu"
       >
         <Menu className="w-5 h-5" />
       </button>
 
-      {/* Full-screen overlay */}
       {open && (
-        <div className="fixed inset-0 z-50 bg-neutral-950 mobile-nav-overlay md:hidden">
+        <div
+          ref={overlayRef}
+          className={`fixed inset-0 z-50 bg-neutral-950 md:hidden ${
+            closing ? "mobile-nav-overlay-exit" : "mobile-nav-overlay"
+          }`}
+        >
           <div className="flex flex-col h-full px-6 py-8">
-            {/* Header row — logo + close */}
             <div className="flex items-center justify-between">
               <Link
                 href="/"
-                onClick={() => setOpen(false)}
+                onClick={close}
                 className="flex items-center gap-3"
               >
                 <svg
@@ -88,15 +101,14 @@ export function MobileNav() {
                 </span>
               </Link>
               <button
-                onClick={() => setOpen(false)}
-                className="p-1 text-neutral-500 hover:text-white transition-colors"
+                onClick={close}
+                className="p-1 text-neutral-500 hover:text-white transition-colors duration-200 ease-out"
                 aria-label="Close menu"
               >
                 <X className="w-6 h-6" />
               </button>
             </div>
 
-            {/* Nav links */}
             <nav className="mt-16 flex flex-col">
               {navItems.map((item, i) => {
                 const isActive =
@@ -107,14 +119,18 @@ export function MobileNav() {
                   <Link
                     key={item.href}
                     href={item.href}
-                    onClick={() => setOpen(false)}
-                    className={`mobile-nav-link py-5 text-2xl font-semibold transition-colors border-b border-neutral-800/50 ${
+                    onClick={close}
+                    className={`py-5 text-2xl font-semibold transition-colors duration-200 ease-out border-b border-neutral-800/50 ${
+                      closing ? "mobile-nav-link-exit" : "mobile-nav-link"
+                    } ${
                       isActive
                         ? "text-white"
                         : "text-neutral-400 hover:text-white"
                     }`}
                     style={{
-                      animationDelay: `${i * 60}ms`,
+                      animationDelay: closing
+                        ? `${(navItems.length - 1 - i) * 30}ms`
+                        : `${i * 60}ms`,
                     }}
                   >
                     {item.label}
@@ -123,7 +139,6 @@ export function MobileNav() {
               })}
             </nav>
 
-            {/* Footer */}
             <div className="mt-auto pb-4 text-sm text-neutral-600">
               <span className="font-mono">⌘K</span> to search
             </div>

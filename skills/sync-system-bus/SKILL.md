@@ -2,7 +2,7 @@
 name: sync-system-bus
 displayName: Sync System Bus
 description: "Deploy the system-bus-worker to the joelclaw Kubernetes cluster from local machine. Use when syncing changes in packages/system-bus to k8s, especially because the GitHub Actions deploy job targets a non-existent self-hosted runner and cannot complete deploys automatically."
-version: 1.0.0
+version: 1.1.0
 author: Joel Hooks
 tags: [joelclaw, system-bus, kubernetes, deploy, ghcr, inngest]
 ---
@@ -117,6 +117,18 @@ fi
 
 - Credential hygiene.
   Always clean Docker auth after push; do not leave GHCR PAT credentials in `~/.docker/config.json`.
+
+- Runs stuck after first step with `Finalization -> "Unable to reach SDK URL"`.
+  This is not always a pure network problem. Confirm SDK URL reachability, then inspect function code for blocking calls before step completion (filesystem access, Redis calls, shell subprocesses).
+
+- Stale app registrations can mislead dispatch debugging.
+  If Inngest shows multiple apps for the same worker (for example old `host.k3d.internal` plus current `host.docker.internal`), delete stale registrations to remove routing ambiguity.
+
+- launchd worker path assumptions.
+  Files under `~/Documents` can behave differently under daemonized worker context. For large manifest-style jobs, pass an explicit path in event payload or env and prefer `/tmp/...` when practical.
+
+- Dry-run must avoid side-effect dependencies.
+  If dry-run still hits Redis or network APIs per item, it can stall and look like dispatch failure. Keep dry-run dependency-light and set strict Redis timeouts (`connectTimeout`, `commandTimeout`, low retries).
 
 ## Key Paths
 

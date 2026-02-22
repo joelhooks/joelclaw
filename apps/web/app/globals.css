@@ -40,13 +40,42 @@
   animation: search-panel-in 150ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+@keyframes mobile-nav-overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes mobile-nav-link-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(8px); }
+}
+
 .mobile-nav-overlay {
   animation: search-overlay-in 150ms ease-out;
+}
+
+.mobile-nav-overlay-exit {
+  animation: mobile-nav-overlay-out 150ms ease-in forwards;
 }
 
 .mobile-nav-link {
   opacity: 0;
   animation: mobile-nav-link-in 200ms ease-out forwards;
+}
+
+.mobile-nav-link-exit {
+  animation: mobile-nav-link-out 120ms ease-in forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-nav-overlay,
+  .mobile-nav-overlay-exit,
+  .mobile-nav-link,
+  .mobile-nav-link-exit {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* Pagefind excerpt highlighting */

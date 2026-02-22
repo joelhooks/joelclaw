@@ -2,7 +2,7 @@
 name: joelclaw-system-check
 displayName: Joelclaw System Check
 description: "Run a comprehensive health check of the joelclaw system — k8s cluster, worker, Inngest, Redis, Typesense/OTEL, tests, TypeScript, repo sync, memory pipeline, pi-tools, git config, active loops, disk, stale tests. Outputs a 1-10 score with per-component breakdown. Use when: 'system health', 'health check', 'is everything working', 'system status', 'how's the system', 'check everything', or at session start to orient."
-version: 1.0.0
+version: 1.1.0
 author: Joel Hooks
 tags: [joelclaw, health, diagnostics, checks, operations]
 ---
@@ -56,3 +56,24 @@ Run `scripts/health.sh` for a full system health report with 1-10 score.
 **Stale tests**: `rm -rf ~/Code/joelhooks/joelclaw/packages/system-bus/__tests__/ && find ~/Code/joelhooks/joelclaw/packages/system-bus/src -name "*.acceptance.test.ts" -delete`
 
 **Loop tmp bloat**: `rm -rf /tmp/agent-loop/loop-*/` (only when no loops are running)
+
+## Inngest Hung-Run Quick Triage
+
+When a run appears stuck after first step:
+
+```bash
+joelclaw run <run-id>
+```
+
+If trace shows `Finalization` failure with `"Unable to reach SDK URL"`:
+
+1. Verify registration/health:
+`joelclaw inngest status`
+
+2. Verify function is present where expected:
+`joelclaw functions | rg -i "manifest-archive|<function-name>"`
+
+3. Check for stale app registrations in Inngest UI/API and remove stale SDK URLs.
+
+4. Assume possible handler blocking (not just network):
+review recent step code for filesystem/Redis/subprocess blocking before step response.
