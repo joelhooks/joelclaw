@@ -238,6 +238,12 @@ Migrate LLM subprocess callsites in:
 - Langfuse health/readiness docs (`/self-hosting/configuration/health-readiness-endpoints`)
 - Langfuse license key split (`/self-hosting/license-key`)
 
+## More Information
+
+- 2026-02-21: Operator directive changed rollout sequence to **hosted-first** (Langfuse Cloud) while keeping this ADR's LLM-only boundary contract intact.
+- Self-hosted deployment remains the target state after new hardware capacity is available.
+- Secrets for hosted phase were stored via `secrets` CLI as `langfuse_secret_key`, `langfuse_public_key`, and `langfuse_base_url`.
+
 ## Status
 
 Proposed.
