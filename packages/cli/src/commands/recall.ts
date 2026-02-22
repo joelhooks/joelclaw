@@ -265,13 +265,15 @@ function runRewriteQueryWith(query: string, options: RewriteRunnerOptions = {}):
 
   const timeoutMs = options.timeoutMs ?? REWRITE_TIMEOUT_MS
 
-  const models: Array<{ model: string; strategy: RewriteStrategy }> = [
-    { model: "anthropic/claude-haiku", strategy: "haiku" },
-    { model: "openai/gpt-5.3-codex-spark", strategy: "openai" },
+  const attempts: Array<{ model: string; strategy: RewriteStrategy; timeout: number }> = [
+    { model: "anthropic/claude-haiku", strategy: "haiku", timeout: 10_000 },
+    { model: "anthropic/claude-haiku", strategy: "haiku", timeout: 15_000 },
+    { model: "openai/gpt-5.3-codex-spark", strategy: "openai", timeout: 20_000 },
   ]
 
   let lastError = ""
-  for (const { model, strategy } of models) {
+  for (const { model, strategy, timeout: attemptTimeout } of attempts) {
+    const effectiveTimeout = options.timeoutMs ?? attemptTimeout
     try {
       const args = [
         "pi",
@@ -286,12 +288,12 @@ function runRewriteQueryWith(query: string, options: RewriteRunnerOptions = {}):
         rewritePrompt,
       ]
       const proc = options.spawn
-        ? options.spawn(args, rewritePrompt, timeoutMs)
+        ? options.spawn(args, rewritePrompt, effectiveTimeout)
         : Bun.spawnSync(args, {
             stdout: "pipe",
             stderr: "pipe",
             stdin: "ignore",
-            timeout: timeoutMs,
+            timeout: effectiveTimeout,
             env: { ...process.env, TERM: "dumb" },
           })
 
