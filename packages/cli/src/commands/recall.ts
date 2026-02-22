@@ -33,6 +33,7 @@ interface TypesenseHit {
     stale?: boolean
     recall_count?: number | string
     retrieval_priority?: number | string
+    write_verdict?: "allow" | "hold" | "discard"
   }
   highlights?: Array<{ field: string; snippet?: string }>
   text_match_info?: { score?: number | string }
@@ -165,23 +166,32 @@ function rankHits(hits: TypesenseHit[]): RankedRecallHit[] {
 
 function trustPassFilter(
   hits: RankedRecallHit[],
-  minScore: number
+  minScore: number,
+  options: { includeHold?: boolean; includeDiscard?: boolean } = {}
 ): { kept: RankedRecallHit[]; dropped: TrustPassDroppedHit[]; filtersApplied: string[] } {
   const dropped: TrustPassDroppedHit[] = []
   const kept: RankedRecallHit[] = []
-  const filtersApplied = ["score-decay", "usage-signal", "inject-cap"] as string[]
+  const filtersApplied = ["score-decay", "usage-signal", "inject-cap", "write-gate"] as string[]
 
   for (const hit of hits) {
     const reasons: string[] = []
     const observation = hit.document.observation?.trim() ?? ""
     const recallCount = Math.max(0, asFiniteNumber(hit.document.recall_count, 0))
     const ageDays = toAgeDays(hit.document.timestamp)
+    const writeVerdict = hit.document.write_verdict
 
     if (observation.length < MIN_OBSERVATION_CHARS) reasons.push("too_short")
     if (hit.document.stale === true) reasons.push("stale_tagged")
     if (ageDays > STALENESS_DAYS && recallCount <= 0) reasons.push("stale_age")
     if (!Number.isFinite(hit.decayedScore) || hit.decayedScore <= 0) reasons.push("invalid_score")
     if (hit.decayedScore < minScore) reasons.push("below_min_score")
+
+    if (writeVerdict === "hold" && !options.includeHold) {
+      reasons.push("held_by_write_gate")
+    }
+    if (writeVerdict === "discard" && !options.includeDiscard) {
+      reasons.push("discarded_by_write_gate")
+    }
 
     if (reasons.length > 0) {
       dropped.push({
@@ -361,11 +371,13 @@ const query = Args.text({ name: "query" })
 const limit = Options.integer("limit").pipe(Options.withDefault(5))
 const minScore = Options.float("min-score").pipe(Options.withDefault(0))
 const raw = Options.boolean("raw").pipe(Options.withDefault(false))
+const includeHold = Options.boolean("include-hold").pipe(Options.withDefault(false))
+const includeDiscard = Options.boolean("include-discard").pipe(Options.withDefault(false))
 
 export const recallCmd = Command.make(
   "recall",
-  { query, limit, minScore, raw },
-  ({ query, limit, minScore, raw }) =>
+  { query, limit, minScore, raw, includeHold, includeDiscard },
+  ({ query, limit, minScore, raw, includeHold, includeDiscard }) =>
     Effect.gen(function* () {
       const startedAt = Date.now()
       const rewrite = runRewriteQuery(query)
@@ -381,6 +393,8 @@ export const recallCmd = Command.make(
             rewrittenQuery: rewrite.rewrittenQuery,
             rewriteStrategy: rewrite.strategy,
             rewriteError: rewrite.error,
+            includeHold,
+            includeDiscard,
           },
         }))
 
@@ -389,7 +403,10 @@ export const recallCmd = Command.make(
         )
 
         const ranked = rankHits(result.hits)
-        const trust = trustPassFilter(ranked, Math.max(0, minScore))
+        const trust = trustPassFilter(ranked, Math.max(0, minScore), {
+          includeHold,
+          includeDiscard,
+        })
         const cappedLimit = Math.min(Math.max(limit, 1), MAX_INJECT)
         const finalHits = trust.kept.slice(0, cappedLimit)
 
@@ -404,6 +421,8 @@ export const recallCmd = Command.make(
             rewriteStrategy: rewrite.strategy,
             filtersApplied: trust.filtersApplied,
             droppedByTrustPass: trust.dropped.length,
+            includeHold,
+            includeDiscard,
             found: result.found,
             returned: finalHits.length,
           },
@@ -425,6 +444,8 @@ export const recallCmd = Command.make(
               error: rewrite.error,
             },
             filtersApplied: trust.filtersApplied,
+            includeHold,
+            includeDiscard,
             droppedByTrustPass: trust.dropped.length,
             droppedDiagnostics: trust.dropped.slice(0, 10),
             hits: finalHits.map((h) => ({
@@ -435,6 +456,7 @@ export const recallCmd = Command.make(
               observation: h.document.observation,
               type: h.document.observation_type || "unknown",
               source: h.document.source || "unknown",
+              writeVerdict: h.document.write_verdict || "allow",
               session: h.document.session_id || "unknown",
               timestamp: toIsoTimestamp(h.document.timestamp) || "unknown",
               recallCount: asFiniteNumber(h.document.recall_count, 0),
@@ -470,6 +492,8 @@ export const recallCmd = Command.make(
             query,
             rewrittenQuery: rewrite.rewrittenQuery,
             rewriteStrategy: rewrite.strategy,
+            includeHold,
+            includeDiscard,
           },
         }))
 

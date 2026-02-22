@@ -17,11 +17,26 @@ Tag individual facts with exactly one priority marker:
 - 🟡 Medium: recurring patterns, repeated actions, consistent workflows
 - 🟢 Low: minor notes, incidental context, low-impact details
 
+For every fact bullet, include a write-gate annotation immediately after the priority marker:
+- format: [gate=<allow|hold|discard> confidence=<0..1> category=<category-id> reason=<short_reason>]
+- use 'allow' for durable factual signal
+- use 'hold' for ambiguous/contextual statements that should be preserved but not default-injected
+- use 'discard' for low-signal noise
+
+Category IDs (choose one):
+- jc:preferences
+- jc:rules-conventions
+- jc:system-architecture
+- jc:operations
+- jc:memory-system
+- jc:projects
+- jc:people-relationships
+
 Output must be valid XML using these tags:
 - <observations> (required): container for segment-aware distillation
 - <segment>: one coherent segment
 - <narrative>: operational context for that segment (1-3 sentences)
-- <facts>: bullet list of retained facts for that segment, each bullet prefixed with 🔴/🟡/🟢
+- <facts>: bullet list of retained facts for that segment, each bullet prefixed with 🔴/🟡/🟢 and gate annotation
 - <current-task> (optional): what the user is currently working on
 - <suggested-response> (optional): a concise greeting/context suggestion for the next session
 
@@ -30,9 +45,9 @@ Use this structure:
   <segment>
     <narrative>...</narrative>
     <facts>
-      - 🔴 ...
-      - 🟡 ...
-      - 🟢 ...
+      - 🔴 [gate=allow confidence=0.92 category=jc:rules-conventions reason=explicit_user_rule] ...
+      - 🟡 [gate=hold confidence=0.61 category=jc:operations reason=contextual_pattern] ...
+      - 🟢 [gate=discard confidence=0.84 category=jc:projects reason=low_signal_minor_note] ...
     </facts>
   </segment>
 </observations>

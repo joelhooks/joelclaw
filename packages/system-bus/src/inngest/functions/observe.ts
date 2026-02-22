@@ -9,6 +9,8 @@ import { join } from "node:path";
 import { parseObserverOutput } from "./observe-parser";
 import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
 import { DEDUP_THRESHOLD } from "../../memory/retrieval";
+import { TAXONOMY_VERSION, classifyObservationCategory, normalizeCategoryId, type CategorySource, type MemoryCategoryId } from "../../memory/taxonomy-v1";
+import { allowsReflect, resolveWriteGate, type WriteVerdict } from "../../memory/write-gate";
 import * as typesense from "../../lib/typesense";
 import { emitOtelEvent } from "../../observability/emit";
 
@@ -41,6 +43,21 @@ type ObserveEndedInput = {
 };
 
 type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
+
+type ObservationItem = {
+  observationType: string;
+  observation: string;
+  writeVerdict: WriteVerdict;
+  writeConfidence: number;
+  writeReason: string;
+  writeGateVersion: string;
+  writeGateFallback: boolean;
+  categoryId: MemoryCategoryId;
+  categoryConfidence: number;
+  categorySource: CategorySource;
+  taxonomyVersion: string;
+};
+
 type TypesenseObservationDoc = {
   id: string;
   session_id: string;
@@ -52,6 +69,15 @@ type TypesenseObservationDoc = {
   updated_at?: string;
   superseded_by?: string | null;
   supersedes?: string | null;
+  write_verdict?: WriteVerdict;
+  write_confidence?: number;
+  write_reason?: string;
+  write_gate_version?: string;
+  write_gate_fallback?: boolean;
+  category_id?: MemoryCategoryId;
+  category_confidence?: number;
+  category_source?: CategorySource;
+  taxonomy_version?: string;
 };
 
 let redisClient: Redis | null = null;
@@ -86,20 +112,48 @@ function isoDateFromTimestamp(value: string | undefined): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function buildObservationItem(observationType: string, rawText: string): ObservationItem | null {
+  const resolved = resolveWriteGate(rawText);
+  const observation = resolved.observation.trim();
+  if (observation.length === 0) return null;
+
+  const hintedCategory = normalizeCategoryId(resolved.hintedCategoryId ?? null);
+  const category = hintedCategory
+    ? {
+        categoryId: hintedCategory,
+        categoryConfidence: Math.max(0.65, resolved.writeConfidence),
+        categorySource: "llm" as const,
+        taxonomyVersion: TAXONOMY_VERSION,
+      }
+    : classifyObservationCategory(observation);
+
+  return {
+    observationType,
+    observation,
+    writeVerdict: resolved.writeVerdict,
+    writeConfidence: resolved.writeConfidence,
+    writeReason: resolved.writeReason,
+    writeGateVersion: resolved.writeGateVersion,
+    writeGateFallback: resolved.writeGateFallback,
+    categoryId: category.categoryId,
+    categoryConfidence: category.categoryConfidence,
+    categorySource: category.categorySource,
+    taxonomyVersion: category.taxonomyVersion,
+  };
+}
+
 function createObservationItems(parsedObservations: {
   observations: string;
   segments: unknown[];
 }) {
-  const items: Array<{ observationType: string; observation: string }> = [];
+  const items: ObservationItem[] = [];
 
   for (const rawSegment of parsedObservations.segments) {
     const segment = rawSegment as { narrative?: unknown; facts?: unknown };
     const narrative = typeof segment.narrative === "string" ? segment.narrative.trim() : "";
     if (narrative.length > 0) {
-      items.push({
-        observationType: "segment_narrative",
-        observation: narrative,
-      });
+      const item = buildObservationItem("segment_narrative", narrative);
+      if (item) items.push(item);
     }
 
     const facts = Array.isArray(segment.facts) ? segment.facts : [];
@@ -107,13 +161,8 @@ function createObservationItems(parsedObservations: {
       if (typeof fact !== "string") {
         continue;
       }
-      const trimmedFact = fact.trim();
-      if (trimmedFact.length > 0) {
-        items.push({
-          observationType: "segment_fact",
-          observation: trimmedFact,
-        });
-      }
+      const item = buildObservationItem("segment_fact", fact);
+      if (item) items.push(item);
     }
   }
 
@@ -123,10 +172,8 @@ function createObservationItems(parsedObservations: {
 
   const fallbackObservation = parsedObservations.observations.trim();
   if (fallbackObservation.length > 0) {
-    items.push({
-      observationType: "observation_text",
-      observation: fallbackObservation,
-    });
+    const item = buildObservationItem("observation_text", fallbackObservation);
+    if (item) items.push(item);
   }
 
   return items;
@@ -174,6 +221,13 @@ function normalizeTypesenseObservationDoc(input: Record<string, unknown> | null 
   const observation_type = typeof input.observation_type === "string" ? input.observation_type : "observation_text";
   const source = typeof input.source === "string" ? input.source : "unknown";
   const timestamp = asFiniteNumber(input.timestamp, Number.NaN);
+  const write_verdict =
+    input.write_verdict === "allow" || input.write_verdict === "hold" || input.write_verdict === "discard"
+      ? input.write_verdict
+      : "allow";
+  const category_id = normalizeCategoryId(
+    typeof input.category_id === "string" ? input.category_id : null
+  ) ?? "jc:operations";
 
   if (!id || observation.trim().length === 0 || !Number.isFinite(timestamp)) return null;
 
@@ -201,6 +255,21 @@ function normalizeTypesenseObservationDoc(input: Record<string, unknown> | null 
     updated_at: typeof input.updated_at === "string" ? input.updated_at : undefined,
     superseded_by,
     supersedes,
+    write_verdict,
+    write_confidence: asFiniteNumber(input.write_confidence, 0.35),
+    write_reason: typeof input.write_reason === "string" ? input.write_reason : "existing_doc",
+    write_gate_version: typeof input.write_gate_version === "string" ? input.write_gate_version : "v1",
+    write_gate_fallback: input.write_gate_fallback === true,
+    category_id,
+    category_confidence: asFiniteNumber(input.category_confidence, 0.35),
+    category_source:
+      input.category_source === "rules" ||
+      input.category_source === "llm" ||
+      input.category_source === "fallback" ||
+      input.category_source === "external"
+        ? input.category_source
+        : "fallback",
+    taxonomy_version: typeof input.taxonomy_version === "string" ? input.taxonomy_version : TAXONOMY_VERSION,
   };
 }
 
@@ -519,7 +588,7 @@ Session context:
 
         for (const item of observationItems) {
           const includeFields =
-            "id,session_id,observation,observation_type,source,timestamp,merged_count,updated_at,superseded_by,supersedes";
+            "id,session_id,observation,observation_type,source,timestamp,merged_count,updated_at,superseded_by,supersedes,write_verdict,write_confidence,write_reason,write_gate_version,write_gate_fallback,category_id,category_confidence,category_source,taxonomy_version";
           let similar;
           try {
             similar = await typesense.search({
@@ -567,6 +636,15 @@ Session context:
               updated_at: timestampIso,
               superseded_by: existing.superseded_by ?? null,
               supersedes: existing.supersedes ?? null,
+              write_verdict: item.writeVerdict,
+              write_confidence: item.writeConfidence,
+              write_reason: item.writeReason,
+              write_gate_version: item.writeGateVersion,
+              write_gate_fallback: item.writeGateFallback,
+              category_id: item.categoryId,
+              category_confidence: item.categoryConfidence,
+              category_source: item.categorySource,
+              taxonomy_version: item.taxonomyVersion,
             });
           } else {
             docs.push({
@@ -580,11 +658,24 @@ Session context:
               updated_at: timestampIso,
               superseded_by: null,
               supersedes: null,
+              write_verdict: item.writeVerdict,
+              write_confidence: item.writeConfidence,
+              write_reason: item.writeReason,
+              write_gate_version: item.writeGateVersion,
+              write_gate_fallback: item.writeGateFallback,
+              category_id: item.categoryId,
+              category_confidence: item.categoryConfidence,
+              category_source: item.categorySource,
+              taxonomy_version: item.taxonomyVersion,
             });
           }
         }
 
         const result = await typesense.bulkImport("memory_observations", docs);
+        const allowCount = docs.filter((doc) => doc.write_verdict === "allow").length;
+        const holdCount = docs.filter((doc) => doc.write_verdict === "hold").length;
+        const discardCount = docs.filter((doc) => doc.write_verdict === "discard").length;
+        const fallbackCount = docs.filter((doc) => doc.write_gate_fallback === true).length;
 
         // Dual-write to Convex for real-time UI
         const { pushContentResource } = await import("../../lib/convex");
@@ -608,7 +699,16 @@ Session context:
           });
         }
 
-        return { stored: true, count: result.success, errors: result.errors, mergedCount };
+        return {
+          stored: true,
+          count: result.success,
+          errors: result.errors,
+          mergedCount,
+          allowCount,
+          holdCount,
+          discardCount,
+          fallbackCount,
+        };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return { stored: false, count: 0, error: message };
@@ -618,6 +718,10 @@ Session context:
       const storeError = "error" in typesenseStoreResult ? typesenseStoreResult.error : undefined;
       const mergedCount = "mergedCount" in typesenseStoreResult ? typesenseStoreResult.mergedCount : 0;
       const storeErrors = "errors" in typesenseStoreResult ? typesenseStoreResult.errors : 0;
+      const allowCount = "allowCount" in typesenseStoreResult ? typesenseStoreResult.allowCount : 0;
+      const holdCount = "holdCount" in typesenseStoreResult ? typesenseStoreResult.holdCount : 0;
+      const discardCount = "discardCount" in typesenseStoreResult ? typesenseStoreResult.discardCount : 0;
+      const fallbackCount = "fallbackCount" in typesenseStoreResult ? typesenseStoreResult.fallbackCount : 0;
       if (!typesenseStoreResult.stored) {
         await emitOtelEvent({
           level: "error",
@@ -645,15 +749,22 @@ Session context:
           storedCount: typesenseStoreResult.count,
           mergedCount,
           errors: storeErrors,
+          allowCount,
+          holdCount,
+          discardCount,
+          fallbackCount,
         },
       });
     });
 
     const observationItems = createObservationItems(parsedObservations);
     const observationCount = observationItems.length;
+    const reflectableItems = observationItems.filter((item) => allowsReflect(item.writeVerdict));
+    const reflectableCount = reflectableItems.length;
+    const fallbackSummary = parsedObservations.observations.trim();
     const observationSummary =
-      parsedObservations.observations.trim() ||
-      observationItems.map((item) => item.observation).join("\n");
+      reflectableItems.map((item) => item.observation).join("\n") ||
+      fallbackSummary;
     const capturedAt = validatedInput.capturedAt ?? new Date().toISOString();
     const date = isoDateFromTimestamp(capturedAt);
     const redisKey = `memory:latest:${date}`;
@@ -668,6 +779,7 @@ Session context:
           dedupe_key: validatedInput.dedupeKey,
           trigger: validatedInput.trigger,
           observation_count: observationCount,
+          reflectable_count: reflectableCount,
           message_count: validatedInput.messageCount,
           captured_at: capturedAt,
           date,
@@ -676,6 +788,10 @@ Session context:
             count: "count" in typesenseStoreResult ? typesenseStoreResult.count : 0,
             errors: "errors" in typesenseStoreResult ? typesenseStoreResult.errors : 0,
             merged_count: "mergedCount" in typesenseStoreResult ? typesenseStoreResult.mergedCount : 0,
+            allow_count: "allowCount" in typesenseStoreResult ? typesenseStoreResult.allowCount : 0,
+            hold_count: "holdCount" in typesenseStoreResult ? typesenseStoreResult.holdCount : 0,
+            discard_count: "discardCount" in typesenseStoreResult ? typesenseStoreResult.discardCount : 0,
+            fallback_count: "fallbackCount" in typesenseStoreResult ? typesenseStoreResult.fallbackCount : 0,
             error: "error" in typesenseStoreResult ? typesenseStoreResult.error : undefined,
           },
         },
@@ -697,6 +813,7 @@ Session context:
           listKey,
           listLength,
           observationCount,
+          reflectableCount,
           summaryLength: observationSummary.length,
         };
       } catch (error) {
@@ -706,6 +823,7 @@ Session context:
           key: redisKey,
           error: message,
           observationCount,
+          reflectableCount,
         };
       }
     });
@@ -714,6 +832,7 @@ Session context:
       date,
       totalTokens,
       observationCount,
+      reflectableCount,
       capturedAt,
     };
 
@@ -766,8 +885,13 @@ Session context:
           sessionId: validatedInput.sessionId,
           trigger: validatedInput.trigger,
           observations: observationCount,
+          reflectableObservations: reflectableCount,
           typesenseStored: typesenseStoreResult.stored && "count" in typesenseStoreResult ? typesenseStoreResult.count : 0,
           mergedCount: "mergedCount" in typesenseStoreResult ? typesenseStoreResult.mergedCount : 0,
+          allowCount: "allowCount" in typesenseStoreResult ? typesenseStoreResult.allowCount : 0,
+          holdCount: "holdCount" in typesenseStoreResult ? typesenseStoreResult.holdCount : 0,
+          discardCount: "discardCount" in typesenseStoreResult ? typesenseStoreResult.discardCount : 0,
+          fallbackCount: "fallbackCount" in typesenseStoreResult ? typesenseStoreResult.fallbackCount : 0,
         });
       } catch (err) {
         console.error("[observe] Gateway notify failed:", err);
@@ -784,6 +908,11 @@ Session context:
           sessionId: validatedInput.sessionId,
           trigger: validatedInput.trigger,
           observationCount,
+          reflectableCount,
+          allowCount: "allowCount" in typesenseStoreResult ? typesenseStoreResult.allowCount : 0,
+          holdCount: "holdCount" in typesenseStoreResult ? typesenseStoreResult.holdCount : 0,
+          discardCount: "discardCount" in typesenseStoreResult ? typesenseStoreResult.discardCount : 0,
+          fallbackCount: "fallbackCount" in typesenseStoreResult ? typesenseStoreResult.fallbackCount : 0,
           redisUpdated: redisStateResult.updated,
           dailyLogAppended: dailyLogResult.appended,
         },
@@ -793,11 +922,17 @@ Session context:
     return {
       sessionId: validatedInput.sessionId,
       accumulatedEvent,
+      observationCount,
+      reflectableCount,
       typesense: {
         stored: typesenseStoreResult.stored,
         count: "count" in typesenseStoreResult ? typesenseStoreResult.count : 0,
         errors: "errors" in typesenseStoreResult ? typesenseStoreResult.errors : 0,
         mergedCount: "mergedCount" in typesenseStoreResult ? typesenseStoreResult.mergedCount : 0,
+        allowCount: "allowCount" in typesenseStoreResult ? typesenseStoreResult.allowCount : 0,
+        holdCount: "holdCount" in typesenseStoreResult ? typesenseStoreResult.holdCount : 0,
+        discardCount: "discardCount" in typesenseStoreResult ? typesenseStoreResult.discardCount : 0,
+        fallbackCount: "fallbackCount" in typesenseStoreResult ? typesenseStoreResult.fallbackCount : 0,
         error: "error" in typesenseStoreResult ? typesenseStoreResult.error : undefined,
       },
     };

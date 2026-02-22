@@ -103,7 +103,8 @@ const cli = Command.run(root, {
   version: "0.2.0",
 })
 
-// Strip --toon/--json before Effect CLI sees it (handled in response.ts via process.argv check)
+// Backward-compatibility no-op flags: --json/--toon.
+// CLI now always emits JSON envelopes; these are ignored to avoid breaking older callers.
 const argv = process.argv.filter(a => a !== "--toon" && a !== "--json")
 
 cli(argv).pipe(

@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { inngest } from "../client";
 import * as typesense from "../../lib/typesense";
 import { pushContentResource } from "../../lib/convex";
+import { TAXONOMY_VERSION, classifyObservationCategory, normalizeCategoryId } from "../../memory/taxonomy-v1";
+import { WRITE_GATE_VERSION } from "../../memory/write-gate";
 import { emitMeasuredOtelEvent } from "../../observability/emit";
 
 type NotedObservationInput = {
@@ -21,6 +23,15 @@ type MemoryObservationDoc = {
   updated_at: string;
   superseded_by: null;
   supersedes: null;
+  write_verdict: "allow";
+  write_confidence: number;
+  write_reason: string;
+  write_gate_version: string;
+  write_gate_fallback: boolean;
+  category_id: string;
+  category_confidence: number;
+  category_source: string;
+  taxonomy_version: string;
 };
 
 function asFiniteNumber(value: unknown): number | null {
@@ -85,6 +96,18 @@ function normalizeObservations(
         ? input.category.trim()
         : "observation_text";
 
+    const hintedCategory = normalizeCategoryId(
+      typeof input.category === "string" ? input.category : null
+    );
+    const classifiedCategory = hintedCategory
+      ? {
+          categoryId: hintedCategory,
+          categoryConfidence: 0.75,
+          categorySource: "external",
+          taxonomyVersion: TAXONOMY_VERSION,
+        }
+      : classifyObservationCategory(summary);
+
     docs.push({
       id: randomUUID(),
       session_id: sessionId,
@@ -96,6 +119,15 @@ function normalizeObservations(
       updated_at: nowIso,
       superseded_by: null,
       supersedes: null,
+      write_verdict: "allow",
+      write_confidence: 0.5,
+      write_reason: "session_observation_noted",
+      write_gate_version: WRITE_GATE_VERSION,
+      write_gate_fallback: false,
+      category_id: classifiedCategory.categoryId,
+      category_confidence: classifiedCategory.categoryConfidence,
+      category_source: classifiedCategory.categorySource,
+      taxonomy_version: classifiedCategory.taxonomyVersion,
     });
   }
 

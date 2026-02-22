@@ -1,4 +1,5 @@
 import { DECAY_CONSTANT } from "./retrieval";
+import { allowsDefaultRetrieval } from "./write-gate";
 import * as typesense from "../lib/typesense";
 
 const OBSERVATIONS_COLLECTION = "memory_observations";
@@ -12,6 +13,7 @@ type PrefetchDoc = {
   source?: unknown;
   timestamp?: unknown;
   updated_at?: unknown;
+  write_verdict?: unknown;
 };
 
 type RankedMemory = {
@@ -85,14 +87,14 @@ function extractRawScore(hit: typesense.TypesenseHit, rank: number): number {
 
 export async function prefetchMemoryContext(
   query: string,
-  options?: { limit?: number }
+  options?: { limit?: number; includeHold?: boolean; includeDiscard?: boolean }
 ): Promise<string> {
   const trimmed = query.trim();
   if (!trimmed) return "";
 
   const limit = normalizeLimit(options?.limit);
   const perPage = Math.max(limit * 3, limit);
-  const includeFields = "id,observation,observation_type,source,timestamp,updated_at";
+  const includeFields = "id,observation,observation_type,source,timestamp,updated_at,write_verdict";
 
   try {
     let response: typesense.TypesenseSearchResult;
@@ -127,6 +129,17 @@ export async function prefetchMemoryContext(
       const doc = (hit.document ?? {}) as PrefetchDoc;
       const observation = normalizedObservation(doc);
       if (observation.length === 0) continue;
+
+      const writeVerdict =
+        doc.write_verdict === "allow" || doc.write_verdict === "hold" || doc.write_verdict === "discard"
+          ? doc.write_verdict
+          : undefined;
+      if (!allowsDefaultRetrieval(writeVerdict, {
+        includeHold: options?.includeHold,
+        includeDiscard: options?.includeDiscard,
+      })) {
+        continue;
+      }
 
       const timestamp =
         toUnixSeconds(doc.timestamp) ??

@@ -11,16 +11,7 @@
  * When `params` is absent, `command` is a literal. Agent runs it as-is.
  * When a param has `value`, it's pre-filled from context (agent can override).
  *
- * TOON support (spike): pass --toon flag to encode the result field in
- * Token-Oriented Object Notation for ~40% token savings on array data.
- * Envelope (ok, command, next_actions) stays JSON. Only result changes.
- * Revert: remove @toon-format/toon dep and toonEnabled/encodeToon code.
  */
-
-import { encode as toonEncode } from "@toon-format/toon"
-
-/** TOON is default. Pass --json to get plain JSON output. */
-export const toonEnabled = !process.argv.includes("--json")
 
 export interface NextActionParam {
   readonly description?: string
@@ -166,30 +157,6 @@ export const respond = (
   ok = true
 ): string => {
   const envelope = buildSuccessEnvelope(command, result, nextActions, ok)
-
-  if (toonEnabled) {
-    // Hybrid output: JSON envelope with TOON-encoded result
-    // Envelope stays JSON for parseability, result gets token savings
-    let toonResult: string
-    try {
-      toonResult = toonEncode(result as Record<string, unknown>)
-    } catch {
-      // Fall back to JSON if TOON can't encode (primitives, etc.)
-      toonResult = JSON.stringify(result, null, 2)
-    }
-
-    return JSON.stringify(
-      {
-        ok: envelope.ok,
-        command: envelope.command,
-        result_format: "toon" as const,
-        next_actions: envelope.next_actions,
-      },
-      null,
-      2
-    ) + "\n---TOON---\n" + toonResult
-  }
-
   return JSON.stringify(envelope satisfies JoelclawEnvelope, null, 2)
 }
 

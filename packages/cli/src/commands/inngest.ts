@@ -87,6 +87,15 @@ const MEMORY_OBSERVATIONS_REQUIRED_FIELDS: TypesenseCollectionField[] = [
   { name: "last_used_at", type: "string", optional: true },
   { name: "superseded_by", type: "string", optional: true },
   { name: "supersedes", type: "string", optional: true },
+  { name: "write_verdict", type: "string", optional: true, facet: true },
+  { name: "write_confidence", type: "float", optional: true, sort: true },
+  { name: "write_reason", type: "string", optional: true },
+  { name: "write_gate_version", type: "string", optional: true, facet: true },
+  { name: "write_gate_fallback", type: "bool", optional: true, sort: true },
+  { name: "category_id", type: "string", optional: true, facet: true },
+  { name: "category_confidence", type: "float", optional: true, sort: true },
+  { name: "category_source", type: "string", optional: true, facet: true },
+  { name: "taxonomy_version", type: "string", optional: true, facet: true },
 ]
 
 async function typesenseCount(
