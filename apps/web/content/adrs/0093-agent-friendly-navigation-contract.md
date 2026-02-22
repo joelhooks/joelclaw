@@ -30,6 +30,21 @@ Adopt a 30-day architecture program in three strict phases:
 
 The order is mandatory: no broad memory routing expansion until command contracts and recovery behaviors are deterministic.
 
+## Update (2026-02-22)
+
+Phase 1 kickoff started.
+
+- AF30-001 implemented in monorepo:
+  - `scripts/validate-cli-contracts.ts` added (baseline drift validator)
+  - `docs/agent-contracts/phase1-baseline.json` generated
+  - envelope helpers/validator added in `packages/cli/src/response.ts`
+  - contract test added at `packages/cli/src/commands/contract-envelope.test.ts`
+  - root script `validate:cli-contracts` added in `package.json`
+- Validation passed:
+  - `bun run validate:cli-contracts`
+  - `bun test packages/cli/src/commands/contract-envelope.test.ts`
+  - `cd packages/cli && bun run check-types`
+
 ## Design Contract
 
 1. **CLI-first discoverability**: an agent must find the right next command in 1 call.
