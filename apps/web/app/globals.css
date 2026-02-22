@@ -128,7 +128,7 @@
   border-radius: 2px;
 }
 
-/* Code blocks — Dank Mono + Catppuccin Macchiato */
+/* Code blocks — Dank Mono + Catppuccin Mocha */
 [data-rehype-pretty-code-figure] {
   @apply my-6;
 }

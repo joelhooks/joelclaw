@@ -5,7 +5,7 @@
 import type { Options as PrettyCodeOptions } from "rehype-pretty-code";
 import { getSingletonHighlighter } from "shiki";
 
-export const SHIKI_THEME = "catppuccin-macchiato";
+export const SHIKI_THEME = "catppuccin-mocha";
 
 export const SHIKI_LANGS = [
   "plaintext",
