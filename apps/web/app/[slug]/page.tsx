@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import { getPost, getPostSlugs } from "@/lib/posts";
@@ -7,6 +8,7 @@ import { remarkPlugins, rehypePlugins } from "@/lib/mdx-plugins";
 import { blogPostingJsonLd, breadcrumbJsonLd } from "@/lib/jsonld";
 import { SITE_URL, SITE_NAME } from "@/lib/constants";
 import { RelativeTime } from "@/lib/relative-time";
+import { LazyReviewGate } from "@/components/review/lazy-review-gate";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -96,13 +98,28 @@ export default async function PostPage({ params }: Props) {
           </div>
         )}
       </header>
-      <div className="prose-joelclaw">
-        <MDXRemote
-              source={content}
-              components={mdxComponents}
-              options={{ mdxOptions: { remarkPlugins, rehypePlugins } }}
-            />
-      </div>
+      <Suspense>
+        <LazyReviewGate
+          contentId={`post:${slug}`}
+          contentType="post"
+          contentSlug={slug}
+        >
+          <PostContent content={content} />
+        </LazyReviewGate>
+      </Suspense>
     </article>
+  );
+}
+
+/** MDX rendering — isolated in Suspense because next-mdx-remote uses Date.now(). */
+async function PostContent({ content }: { content: string }) {
+  return (
+    <div className="prose-joelclaw">
+      <MDXRemote
+        source={content}
+        components={mdxComponents}
+        options={{ mdxOptions: { remarkPlugins, rehypePlugins } }}
+      />
+    </div>
   );
 }
