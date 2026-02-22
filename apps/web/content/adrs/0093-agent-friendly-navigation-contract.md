@@ -45,6 +45,16 @@ Phase 1 kickoff started.
   - `bun run validate:cli-contracts`
   - `bun test packages/cli/src/commands/contract-envelope.test.ts`
   - `cd packages/cli && bun run check-types`
+- AF30-002 implemented in monorepo:
+  - `packages/cli/src/commands/capabilities.ts` added (goal-oriented discoverability command)
+  - `packages/cli/src/commands/capabilities.test.ts` added
+  - `docs/agent-contracts/capabilities-map.md` added
+  - root CLI wiring updated in `packages/cli/src/cli.ts`
+  - baseline refreshed at `docs/agent-contracts/phase1-baseline.json`
+- AF30-002 validation passed:
+  - `cd packages/cli && bun src/cli.ts capabilities`
+  - `bun test packages/cli/src/commands/capabilities.test.ts`
+  - `bun run validate:cli-contracts`
 
 ## Design Contract
 
