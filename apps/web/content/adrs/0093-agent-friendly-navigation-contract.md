@@ -40,6 +40,7 @@ Phase 1 kickoff started.
   - envelope helpers/validator added in `packages/cli/src/response.ts`
   - contract test added at `packages/cli/src/commands/contract-envelope.test.ts`
   - root script `validate:cli-contracts` added in `package.json`
+  - response output aligned to JSON-only envelope (TOON result mode removed); legacy `--json/--toon` accepted as no-op for compatibility
 - Validation passed:
   - `bun run validate:cli-contracts`
   - `bun test packages/cli/src/commands/contract-envelope.test.ts`
