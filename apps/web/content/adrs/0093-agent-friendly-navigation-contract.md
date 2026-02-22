@@ -63,6 +63,79 @@ The order is mandatory: no broad memory routing expansion until command contract
 - 0 commands missing actionable `next_actions`.
 - `joelclaw capabilities` can enumerate major operational flows (status, runs, gateway, otel, memory).
 
+### Day 1 Execution Checklist (Phase 1 kickoff)
+
+- [ ] Baseline command-surface + contract drift inventory
+  - inspect:
+    - `packages/cli/src/cli.ts`
+    - `packages/cli/src/commands/*.ts`
+    - `packages/cli/src/response.ts`
+  - artifact:
+    - `docs/agent-contracts/phase1-baseline.json` (new)
+- [ ] Add contract validator scaffold (failing-first)
+  - `scripts/validate-cli-contracts.ts` (new)
+  - `package.json` script: `validate:cli-contracts` (new)
+- [ ] Reproduce and pin current navigation failure as regression test
+  - failing command to codify:
+    - `joelclaw search "telegram.callback.received" --collection otel_events --limit 5`
+  - expected behavior:
+    - deterministic success or structured recoverable error envelope (never raw Typesense parser failure)
+  - test file:
+    - `packages/cli/src/commands/search.test.ts` (new)
+- [ ] Upgrade first high-traffic command set to strict contract quality
+  - `packages/cli/src/commands/status.ts`
+  - `packages/cli/src/commands/runs.ts`
+  - `packages/cli/src/commands/gateway.ts`
+  - `packages/cli/src/commands/otel.ts`
+  - `packages/cli/src/commands/send.ts`
+
+### First 3 PR-sized stories (Phase 1)
+
+#### Story AF30-001 — CLI Contract Harness + Baseline
+
+**Goal**: make contract drift visible and testable before broad refactors.
+
+**Files**
+- `packages/cli/src/response.ts`
+- `scripts/validate-cli-contracts.ts` (new)
+- `packages/cli/src/commands/contract-envelope.test.ts` (new)
+- `package.json`
+- `docs/agent-contracts/phase1-baseline.json` (new)
+
+**Acceptance checks**
+- `bun run validate:cli-contracts`
+- `bun test packages/cli/src/commands/contract-envelope.test.ts`
+
+#### Story AF30-002 — Capabilities Command (Discoverability Surface)
+
+**Goal**: one-call discovery for agents (`goal -> commands -> next_actions -> prerequisites`).
+
+**Files**
+- `packages/cli/src/commands/capabilities.ts` (new)
+- `packages/cli/src/cli.ts`
+- `packages/cli/src/commands/capabilities.test.ts` (new)
+- `docs/agent-contracts/capabilities-map.md` (new)
+
+**Acceptance checks**
+- `joelclaw capabilities`
+- `joelclaw capabilities | jq '.result.flows | length'`
+- `bun test packages/cli/src/commands/capabilities.test.ts`
+
+#### Story AF30-003 — Predictable Search + Contract CI Gate
+
+**Goal**: eliminate known navigation surprise and enforce contract checks on every push.
+
+**Files**
+- `packages/cli/src/commands/search.ts`
+- `packages/cli/src/commands/search.test.ts` (new)
+- `.github/workflows/agent-contracts.yml` (new)
+- `package.json`
+
+**Acceptance checks**
+- `joelclaw search "telegram.callback.received" --collection otel_events --limit 5`
+- `bun test packages/cli/src/commands/search.test.ts`
+- CI workflow `agent-contracts` passes on PR
+
 ### Phase 2 (Days 11–20): deterministic recovery runbooks
 
 **Deliverables**

@@ -92,6 +92,7 @@ Phase kickoff was logged via slog:
   - Validate scoring/tuning of retrieval results in real traffic.
   - Confirm Telegram callback handling for approve/reject in production dashboards and error rates.
   - Continue audit-based closure of any residual memory quality gaps.
+  - Write gate implementation is split to ADR-0094 (proposed) for independent rollout and verification.
 
 ### Evidence and provenance
 
