@@ -1,8 +1,8 @@
 "use client";
 
 import { useQuery } from "convex/react";
-import { api } from "../../../convex/_generated/api";
-import { authClient } from "../../../lib/auth-client";
+import { api } from "@/convex/_generated/api";
+import { authClient } from "@/lib/auth-client";
 import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 

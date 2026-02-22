@@ -7,7 +7,7 @@
  * GET /api/vault?q=search+term — search vault_notes only
  */
 import { NextRequest, NextResponse } from "next/server";
-import { isAuthenticated } from "../../../lib/auth-server";
+import { isAuthenticated } from "@/lib/auth-server";
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108";
 const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY || "";

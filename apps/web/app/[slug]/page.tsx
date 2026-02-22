@@ -1,12 +1,12 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { MDXRemote } from "next-mdx-remote/rsc";
-import { getPost, getPostSlugs } from "../../lib/posts";
-import { mdxComponents } from "../../lib/mdx";
-import { remarkPlugins, rehypePlugins } from "../../lib/mdx-plugins";
-import { blogPostingJsonLd, breadcrumbJsonLd } from "../../lib/jsonld";
-import { SITE_URL, SITE_NAME } from "../../lib/constants";
-import { RelativeTime } from "../../lib/relative-time";
+import { getPost, getPostSlugs } from "@/lib/posts";
+import { mdxComponents } from "@/lib/mdx";
+import { remarkPlugins, rehypePlugins } from "@/lib/mdx-plugins";
+import { blogPostingJsonLd, breadcrumbJsonLd } from "@/lib/jsonld";
+import { SITE_URL, SITE_NAME } from "@/lib/constants";
+import { RelativeTime } from "@/lib/relative-time";
 
 type Props = { params: Promise<{ slug: string }> };
 

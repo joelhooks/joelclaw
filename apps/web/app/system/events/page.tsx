@@ -6,7 +6,7 @@ import { EventStream, type StreamEvent } from "@repo/ui/event-stream";
 import { FilterBar } from "@repo/ui/filter-bar";
 import { PageHeader } from "@repo/ui/page-header";
 import { SearchBar } from "@repo/ui/search-bar";
-import { authClient } from "../../../lib/auth-client";
+import { authClient } from "@/lib/auth-client";
 
 type OtelHit = {
   id: string;

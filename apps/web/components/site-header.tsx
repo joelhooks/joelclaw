@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRef, useEffect, useState, useCallback } from "react";
-import { CLAW_PATH } from "../lib/claw";
-import { SITE_NAME } from "../lib/constants";
+import { CLAW_PATH } from "@/lib/claw";
+import { SITE_NAME } from "@/lib/constants";
 import { SearchDialog } from "./search-dialog";
 import { MobileNav } from "./mobile-nav";
-import { authClient } from "../lib/auth-client";
+import { authClient } from "@/lib/auth-client";
 
 const PUBLIC_NAV = [
   { href: "/", label: "Writing" },

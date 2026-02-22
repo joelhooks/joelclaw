@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import type { AdrMeta } from "../../lib/adrs";
+import type { AdrMeta } from "@/lib/adrs";
 import { STATUS_CONFIG } from "./status-config";
 import { AdrFilterBar, useStatusFilter } from "./adr-filters";
 

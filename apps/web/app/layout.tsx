@@ -3,10 +3,10 @@ import localFont from "next/font/local";
 import { GeistPixelSquare } from "geist/font/pixel";
 import { NuqsAdapter } from "nuqs/adapters/next";
 import { ConvexClientProvider } from "./ConvexClientProvider";
-import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, AUTHOR } from "../lib/constants";
-import { personJsonLd } from "../lib/jsonld";
+import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, AUTHOR } from "@/lib/constants";
+import { personJsonLd } from "@/lib/jsonld";
 import { Github } from "lucide-react";
-import { SiteHeader } from "../components/site-header";
+import { SiteHeader } from "@/components/site-header";
 import "./globals.css";
 
 const geistSans = localFont({

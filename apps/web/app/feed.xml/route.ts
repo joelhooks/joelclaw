@@ -1,6 +1,6 @@
-import { getAllPosts } from "../../lib/posts";
-import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, AUTHOR } from "../../lib/constants";
-import { parseDateValue } from "../../lib/date";
+import { getAllPosts } from "@/lib/posts";
+import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, AUTHOR } from "@/lib/constants";
+import { parseDateValue } from "@/lib/date";
 
 export function GET() {
   const posts = getAllPosts();

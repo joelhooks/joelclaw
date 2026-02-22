@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { getAllDiscoveries } from "../../lib/discoveries";
-import { SITE_NAME } from "../../lib/constants";
+import { getAllDiscoveries } from "@/lib/discoveries";
+import { SITE_NAME } from "@/lib/constants";
 
 export const metadata: Metadata = {
   title: `Cool Finds — ${SITE_NAME}`,

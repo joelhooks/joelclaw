@@ -7,8 +7,8 @@ import { EventStream, type StreamEvent } from "@repo/ui/event-stream";
 import { FilterBar } from "@repo/ui/filter-bar";
 import { PageHeader } from "@repo/ui/page-header";
 import { SearchBar } from "@repo/ui/search-bar";
-import { api } from "../../convex/_generated/api";
-import { authClient } from "../../lib/auth-client";
+import { api } from "@/convex/_generated/api";
+import { authClient } from "@/lib/auth-client";
 
 export default function SyslogPage() {
   const router = useRouter();

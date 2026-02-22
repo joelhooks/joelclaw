@@ -3,8 +3,8 @@ import { ConvexHttpClient } from "convex/browser";
 import { MetricCard } from "@repo/ui/metric-card";
 import { DataGrid } from "@repo/ui/data-grid";
 import { StatusBadge, normalizeStatusKind } from "@repo/ui/status-badge";
-import { api } from "../../convex/_generated/api";
-import { SITE_NAME } from "../../lib/constants";
+import { api } from "@/convex/_generated/api";
+import { SITE_NAME } from "@/lib/constants";
 
 type NetworkNode = {
   publicName: string;

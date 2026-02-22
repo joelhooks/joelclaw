@@ -2,10 +2,10 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { MDXRemote } from "next-mdx-remote/rsc";
-import { getDiscovery, getDiscoverySlugs } from "../../../lib/discoveries";
-import { mdxComponents } from "../../../lib/mdx";
-import { remarkPlugins, rehypePlugins } from "../../../lib/mdx-plugins";
-import { SITE_URL, SITE_NAME } from "../../../lib/constants";
+import { getDiscovery, getDiscoverySlugs } from "@/lib/discoveries";
+import { mdxComponents } from "@/lib/mdx";
+import { remarkPlugins, rehypePlugins } from "@/lib/mdx-plugins";
+import { SITE_URL, SITE_NAME } from "@/lib/constants";
 
 type Props = { params: Promise<{ slug: string }> };
 

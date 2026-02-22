@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
-import { getAllDiscoveries } from "../../lib/discoveries";
-import { clawSvg, CLAW_COLOR } from "../../lib/claw";
+import { getAllDiscoveries } from "@/lib/discoveries";
+import { clawSvg, CLAW_COLOR } from "@/lib/claw";
 
 export const alt = "Cool Finds — JoelClaw";
 export const size = { width: 1200, height: 630 };

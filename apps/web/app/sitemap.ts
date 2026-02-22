@@ -1,8 +1,8 @@
 import type { MetadataRoute } from "next";
-import { getAllPosts } from "../lib/posts";
-import { getAllAdrs } from "../lib/adrs";
-import { SITE_URL } from "../lib/constants";
-import { parseDateValue } from "../lib/date";
+import { getAllPosts } from "@/lib/posts";
+import { getAllAdrs } from "@/lib/adrs";
+import { SITE_URL } from "@/lib/constants";
+import { parseDateValue } from "@/lib/date";
 
 function getLastModified(...candidates: unknown[]): Date {
   for (const candidate of candidates) {

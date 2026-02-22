@@ -1,5 +1,5 @@
 import { ImageResponse } from "next/og";
-import { clawSvg } from "../lib/claw";
+import { clawSvg } from "@/lib/claw";
 
 export const runtime = "edge";
 export const alt = "JoelClaw";

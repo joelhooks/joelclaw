@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
-import { authClient } from "../../lib/auth-client";
+import { api } from "@/convex/_generated/api";
+import { authClient } from "@/lib/auth-client";
 import { PageHeader } from "@repo/ui/page-header";
 import { SearchBar } from "@repo/ui/search-bar";
 

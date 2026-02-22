@@ -3,7 +3,7 @@
  * GET /api/vault/image/{path} → reads from ~/Vault/{path}
  */
 import { NextRequest, NextResponse } from "next/server";
-import { isAuthenticated } from "../../../../../lib/auth-server";
+import { isAuthenticated } from "@/lib/auth-server";
 import { readFileSync, existsSync } from "node:fs";
 import { join, extname } from "node:path";
 

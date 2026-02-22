@@ -1,8 +1,8 @@
 "use client";
 
 import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
-import { authClient } from "../../lib/auth-client";
+import { api } from "@/convex/_generated/api";
+import { authClient } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 import { useState, useCallback } from "react";
 import { MetricCard } from "@repo/ui/metric-card";

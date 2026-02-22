@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import type { SearchParams } from "nuqs/server";
-import { getAllAdrs } from "../../lib/adrs";
-import { SITE_NAME } from "../../lib/constants";
+import { getAllAdrs } from "@/lib/adrs";
+import { SITE_NAME } from "@/lib/constants";
 import { loadAdrSearchParams } from "./search-params";
 import { AdrListWithFilters } from "./adr-list";
-import { CodeBlock } from "../../components/copy-button";
+import { CodeBlock } from "@/components/copy-button";
 
 export const metadata: Metadata = {
   title: `ADRs — ${SITE_NAME}`,

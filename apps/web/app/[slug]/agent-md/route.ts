@@ -1,4 +1,4 @@
-import { getPostSlugs } from "../../../lib/posts";
+import { getPostSlugs } from "@/lib/posts";
 
 export async function generateStaticParams() {
   return getPostSlugs().map((slug) => ({ slug }));

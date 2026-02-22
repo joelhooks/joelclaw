@@ -4,8 +4,8 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { Menu, X } from "lucide-react";
-import { CLAW_PATH } from "../lib/claw";
-import { authClient } from "../lib/auth-client";
+import { CLAW_PATH } from "@/lib/claw";
+import { authClient } from "@/lib/auth-client";
 
 const PUBLIC_NAV = [
   { href: "/", label: "Writing" },

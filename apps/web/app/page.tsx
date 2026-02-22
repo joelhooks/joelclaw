@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { getAllPosts } from "../lib/posts";
-import { blogJsonLd } from "../lib/jsonld";
-import { RelativeTime } from "../lib/relative-time";
+import { getAllPosts } from "@/lib/posts";
+import { blogJsonLd } from "@/lib/jsonld";
+import { RelativeTime } from "@/lib/relative-time";
 
 export default function Home() {
   const posts = getAllPosts();

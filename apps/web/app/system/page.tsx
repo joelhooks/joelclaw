@@ -9,7 +9,7 @@ import { MetricCard } from "@repo/ui/metric-card";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { PageHeader } from "@repo/ui/page-header";
 import { RefreshButton } from "@repo/ui/refresh-button";
-import { authClient } from "../../lib/auth-client";
+import { authClient } from "@/lib/auth-client";
 
 type OtelStats = {
   total: number;

@@ -1,5 +1,5 @@
 import { ImageResponse } from "next/og";
-import { clawSvg, CLAW_COLOR } from "../../lib/claw";
+import { clawSvg, CLAW_COLOR } from "@/lib/claw";
 
 export const alt = "Network — JoelClaw";
 export const size = { width: 1200, height: 630 };

@@ -1,10 +1,10 @@
-import { getPost, getAllPosts, getPostSlugs, type PostMeta } from "../../../lib/posts";
-import { SITE_URL, SITE_NAME } from "../../../lib/constants";
+import { getPost, getAllPosts, getPostSlugs, type PostMeta } from "@/lib/posts";
+import { SITE_URL, SITE_NAME } from "@/lib/constants";
 import { remark } from "remark";
 import remarkGfm from "remark-gfm";
 import remarkMdx from "remark-mdx";
-import { remarkMdLinks } from "../../../lib/remark-md-links";
-import { remarkStripMdxComments } from "../../../lib/remark-strip-mdx-comments";
+import { remarkMdLinks } from "@/lib/remark-md-links";
+import { remarkStripMdxComments } from "@/lib/remark-strip-mdx-comments";
 
 export async function generateStaticParams() {
   return getPostSlugs().map((slug) => ({ slug }));
