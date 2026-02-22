@@ -121,6 +121,61 @@ const inboxesCmd = Command.make("inboxes", {}, () =>
   }),
 )
 
+/**
+ * Build a Front search query from structured options.
+ *
+ * Front search API reference (authoritative):
+ *   Endpoint: GET /conversations/search/{url_encoded_query}
+ *   Filters (AND logic between different filters, OR for multiple from:/to:/cc:/bcc:):
+ *     is:open|archived|assigned|unassigned|snoozed|trashed|unreplied|waiting|resolved
+ *     from:<handle>        — sender handle (email, social, etc.)
+ *     to:<handle>          — recipient (to/cc/bcc)
+ *     cc:<handle>          — CC recipient
+ *     bcc:<handle>         — BCC recipient
+ *     recipient:<handle>   — any role (from, to, cc, bcc)
+ *     inbox:<inbox_id>     — e.g. inbox:inb_41w25
+ *     tag:<tag_id>         — e.g. tag:tag_13o8r1
+ *     link:<link_id>       — linked record
+ *     contact:<contact_id> — contact in any recipient role
+ *     assignee:<tea_id>    — assigned teammate
+ *     participant:<tea_id> — any participating teammate
+ *     author:<tea_id>      — message author (teammate)
+ *     mention:<tea_id>     — mentioned teammate
+ *     commenter:<tea_id>   — commenting teammate
+ *     before:<unix_ts>     — messages/comments before timestamp (seconds)
+ *     after:<unix_ts>      — messages/comments after timestamp (seconds)
+ *     during:<unix_ts>     — messages/comments on same day as timestamp
+ *     custom_field:"<name>=<value>"
+ *   Free text: searches subject + body. Phrases in quotes.
+ *   No negation support (no -from:, no NOT).
+ *   Results sorted by last activity date (not configurable).
+ *   Pagination via _pagination.next URL with page_token param.
+ */
+function dateToUnix(dateStr: string): number | null {
+  const ts = Math.floor(new Date(dateStr).getTime() / 1000)
+  return isNaN(ts) ? null : ts
+}
+
+function buildFrontQuery(opts: {
+  base?: string
+  from?: string
+  before?: string  // YYYY-MM-DD → converted to unix ts
+  after?: string   // YYYY-MM-DD → converted to unix ts
+}): string {
+  const parts: string[] = []
+  if (opts.base) parts.push(opts.base)
+  if (opts.from) parts.push(`from:${opts.from}`)
+  if (opts.before) {
+    const ts = dateToUnix(opts.before)
+    if (ts) parts.push(`before:${ts}`)
+  }
+  if (opts.after) {
+    const ts = dateToUnix(opts.after)
+    if (ts) parts.push(`after:${ts}`)
+  }
+  return parts.join(" ") || "is:open"
+}
+
 const inboxCmd = Command.make(
   "inbox",
   {
@@ -132,22 +187,72 @@ const inboxCmd = Command.make(
       Options.withAlias("q"),
       Options.optional,
     ),
+    from: Options.text("from").pipe(
+      Options.withDescription("Filter by sender email/handle"),
+      Options.optional,
+    ),
+    before: Options.text("before").pipe(
+      Options.withDescription("Before date (YYYY-MM-DD) — converted to unix timestamp"),
+      Options.optional,
+    ),
+    after: Options.text("after").pipe(
+      Options.withDescription("After date (YYYY-MM-DD) — converted to unix timestamp"),
+      Options.optional,
+    ),
+    pageToken: Options.text("page-token").pipe(
+      Options.withDescription("Pagination token from previous response"),
+      Options.optional,
+    ),
   },
-  ({ limit, query }) =>
+  ({ limit, query, from, before, after, pageToken }) =>
     Effect.gen(function* () {
       const token = frontToken()
-      const q = query._tag === "Some" ? query.value : "is:open"
+      const baseQ = query._tag === "Some" ? query.value : "is:open"
+      const q = buildFrontQuery({
+        base: baseQ,
+        from: from._tag === "Some" ? from.value : undefined,
+        before: before._tag === "Some" ? before.value : undefined,
+        after: after._tag === "Some" ? after.value : undefined,
+      })
       const searchQ = encodeURIComponent(q)
+      let url = `/conversations/search/${searchQ}?limit=${Math.min(limit, 100)}`
+      if (pageToken._tag === "Some" && pageToken.value) {
+        url += `&page_token=${encodeURIComponent(pageToken.value)}`
+      }
 
       const data = yield* Effect.tryPromise(() =>
-        frontGet(
-          `/conversations/search/${searchQ}?limit=${Math.min(limit, 100)}`,
-          token,
-        ),
+        frontGet(url, token),
       )
 
       const total = data._total ?? "?"
       const conversations = (data._results ?? []).map(mapConversation)
+      const nextPageToken = data._pagination?.next
+        ? new URL(data._pagination.next).searchParams.get("page_token")
+        : null
+
+      const actions: any[] = [
+        {
+          command: "joelclaw email archive --id <conversation-id>",
+          description: "Archive a conversation",
+          params: {
+            "conversation-id": { description: "Conversation ID", required: true },
+          },
+        },
+        {
+          command: "joelclaw email archive-ids --ids <id1,id2,...>",
+          description: "Archive multiple conversations by ID (comma-separated)",
+        },
+        {
+          command: `joelclaw email archive-bulk -q "${q}" --confirm`,
+          description: "Bulk archive all matching conversations",
+        },
+      ]
+      if (nextPageToken) {
+        actions.unshift({
+          command: `joelclaw email inbox -q "${q}" -n ${limit} --page-token "${nextPageToken}"`,
+          description: "Next page of results",
+        })
+      }
 
       yield* Console.log(
         respond(
@@ -157,31 +262,9 @@ const inboxCmd = Command.make(
             showing: conversations.length,
             query: q,
             conversations,
+            ...(nextPageToken ? { next_page_token: nextPageToken } : {}),
           },
-          [
-            {
-              command: "joelclaw email inbox [--query <query>] [--limit <limit>]",
-              description: "Show only unread",
-              params: {
-                query: { description: "Front search query", value: "is:open is:unread", default: "is:open" },
-                limit: { description: "Maximum conversations", value: 25, default: 50 },
-              },
-            },
-            {
-              command: "joelclaw email archive --id <conversation-id>",
-              description: "Archive a conversation",
-              params: {
-                "conversation-id": { description: "Conversation ID", required: true },
-              },
-            },
-            {
-              command: "joelclaw email archive-bulk --query <query> [--confirm]",
-              description: "Bulk archive old conversations",
-              params: {
-                query: { description: "Front search query", value: "is:open before:2026-01-01", required: true },
-              },
-            },
-          ],
+          actions,
         ),
       )
     }),
@@ -203,6 +286,75 @@ const archiveCmd = Command.make(
         respond(
           "email archive",
           { archived: conversationId },
+          [
+            {
+              command: "joelclaw email inbox",
+              description: "Check remaining open conversations",
+            },
+          ],
+        ),
+      )
+    }),
+)
+
+const archiveIdsCmd = Command.make(
+  "archive-ids",
+  {
+    ids: Options.text("ids").pipe(
+      Options.withDescription("Comma-separated conversation IDs to archive"),
+    ),
+  },
+  ({ ids }) =>
+    Effect.gen(function* () {
+      const token = frontToken()
+      const idList = ids.split(",").map((s) => s.trim()).filter(Boolean)
+
+      if (idList.length === 0) {
+        yield* Console.log(
+          respondError(
+            "email archive-ids",
+            "No conversation IDs provided",
+            "MISSING_IDS",
+            "Pass comma-separated IDs: --ids cnv_abc,cnv_def",
+          ),
+        )
+        return
+      }
+
+      // Archive in parallel batches of 10 (Front rate limit: 50 req/s)
+      const batchSize = 10
+      let archived = 0
+      let errors = 0
+      const failed: string[] = []
+
+      for (let i = 0; i < idList.length; i += batchSize) {
+        const batch = idList.slice(i, i + batchSize)
+        const results = yield* Effect.all(
+          batch.map((id) =>
+            Effect.tryPromise(() =>
+              frontPatch(`/conversations/${id}`, { status: "archived" }, token),
+            ).pipe(
+              Effect.map(() => ({ id, ok: true })),
+              Effect.catchAll(() => Effect.succeed({ id, ok: false })),
+            ),
+          ),
+          { concurrency: batchSize },
+        )
+        for (const r of results) {
+          if (r.ok) archived++
+          else { errors++; failed.push(r.id) }
+        }
+      }
+
+      yield* Console.log(
+        respond(
+          "email archive-ids",
+          {
+            archived,
+            errors,
+            total: idList.length,
+            ...(failed.length > 0 ? { failed } : {}),
+          },
           [
             {
               command: "joelclaw email inbox",
@@ -385,11 +537,16 @@ export const emailCmd = Command.make("email", {}, () =>
               usage: "joelclaw email archive --id cnv_xxx",
             },
             {
+              name: "archive-ids",
+              description: "Archive multiple conversations by ID (parallel, batched)",
+              usage: "joelclaw email archive-ids --ids cnv_abc,cnv_def,cnv_ghi",
+            },
+            {
               name: "archive-bulk",
               description:
-                "Bulk archive conversations matching a query. Dry-run by default; pass --confirm to execute.",
+                "Bulk archive conversations matching a Front search query. Dry-run by default; pass --confirm to execute.",
               usage:
-                'joelclaw email archive-bulk -q "is:open before:2026-01-18" --confirm',
+                'joelclaw email archive-bulk -q "is:open before:1705536000" --confirm',
             },
           ],
         },
@@ -400,19 +557,24 @@ export const emailCmd = Command.make("email", {}, () =>
           },
           {
             command: "joelclaw email inbox",
-            description: "Scan open conversations",
+            description: "Scan open conversations (default: is:open)",
           },
           {
-            command: "joelclaw email inbox [--query <query>]",
-            description: "Show unread only",
-            params: {
-              query: { description: "Front search query", value: "is:open is:unread", default: "is:open" },
-            },
+            command: 'joelclaw email inbox -q "is:open is:unreplied"',
+            description: "Show conversations awaiting reply",
+          },
+          {
+            command: 'joelclaw email inbox --from notifications@github.com',
+            description: "Filter by sender",
+          },
+          {
+            command: 'joelclaw email inbox --before 2026-01-01',
+            description: "Conversations with messages before a date",
           },
         ],
       ),
     )
   }),
 ).pipe(
-  Command.withSubcommands([inboxesCmd, inboxCmd, readCmd, archiveCmd, archiveBulkCmd]),
+  Command.withSubcommands([inboxesCmd, inboxCmd, readCmd, archiveCmd, archiveIdsCmd, archiveBulkCmd]),
 )
