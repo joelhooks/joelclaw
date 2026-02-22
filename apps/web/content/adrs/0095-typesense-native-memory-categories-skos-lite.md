@@ -2,11 +2,15 @@
 type: adr
 status: proposed
 date: 2026-02-22
-tags: [adr, memory, categories, skos, typesense]
+tags: [adr, memory, categories, skos, typesense, taxonomy, concepts]
 deciders: [joel]
 consulted: [pi session 2026-02-22]
 supersedes: []
 superseded-by: []
+related:
+  - "0109-system-wide-taxonomy-concept-contract"
+  - "0099-memory-knowledge-graph-substrate"
+  - "0105-joelclaw-pdf-brain-typesense"
 ---
 
 # ADR-0095: Typesense-Native Memory Categories (SKOS-Lite V1)
@@ -14,6 +18,8 @@ superseded-by: []
 ## Context
 
 ADR-0077 deferred categories as a high-leverage memory quality upgrade. ADR-0024 contains strong taxonomy/SKOS direction but is deferred and Qdrant-centric. The current memory system is Typesense-native.
+
+ADR-0109 now establishes the system-wide concept contract. This ADR remains the memory-focused implementation slice of that global contract.
 
 Without explicit categories:
 
@@ -29,7 +35,7 @@ Constraints:
 
 ## Decision
 
-Adopt a **SKOS-lite category layer** for `memory_observations` with a fixed, curated top-level taxonomy in V1.
+Adopt a **SKOS-lite category layer** for `memory_observations` with a fixed, curated top-level taxonomy in V1, aligned to ADR-0109 system-wide concept rules.
 
 ### V1 taxonomy (fixed)
 
@@ -48,6 +54,12 @@ V1 policy:
 3. Category summaries are generated weekly and used as a retrieval acceleration/tiering surface.
 4. Taxonomy is versioned (`taxonomy_version=v1`) and explicitly migratable.
 
+Additional alignment policy:
+
+5. `category_id` values must resolve to canonical concept IDs (or alias-resolved IDs) from the shared taxonomy registry.
+6. Free-form tags cannot affect memory retrieval/routing unless mapped to canonical concepts.
+7. New concept creation from memory flows is `candidate`-only (no direct canonical growth in hot path).
+
 ## SKOS-Lite Contract
 
 For each category concept:
@@ -65,9 +77,11 @@ This is SKOS-inspired and migration-friendly to deeper graph work later.
 
 ### 1) Canonical taxonomy source
 
-Create a single source file for category definitions and aliases.
+Use the shared taxonomy registry from ADR-0109.
 
-- `packages/system-bus/src/memory/taxonomy-v1.ts` (new)
+- `packages/system-bus/src/taxonomy/core-v1.*`
+- `packages/system-bus/src/taxonomy/aliases-v1.*`
+- `packages/system-bus/src/memory/taxonomy-mapper.ts` (memory-specific adapter)
 
 ### 2) Ingest-time category assignment
 
@@ -82,6 +96,7 @@ Add fields on `memory_observations` docs:
 - `category_confidence` (float)
 - `category_source` (`rules|llm|fallback`)
 - `taxonomy_version` (string)
+- `concept_ids` (string[], optional in V1 but preferred)
 
 ### 3) Retrieval/category filtering
 
@@ -89,6 +104,8 @@ Add category-aware filters and diagnostics.
 
 - `packages/cli/src/commands/recall.ts`
 - `packages/system-bus/src/memory/context-prefetch.ts`
+
+Require alias normalization before filter execution.
 
 ### 4) Weekly category summaries
 
@@ -109,6 +126,7 @@ Ensure category fields exist and are reported by memory health.
 - [x] `joelclaw recall` supports category-constrained retrieval.
 - [x] Weekly summary emits per-category counts and confidence distribution.
 - [x] OTEL contains category assignment evidence (`category_id`, `category_source`, `taxonomy_version`).
+- [ ] Alias normalization reports unmapped category/tag drift <= 2% weekly.
 - [ ] Category summaries are generated and queryable for at least 7 days of data.
 
 ## Verification Commands
@@ -124,6 +142,7 @@ Ensure category fields exist and are reported by memory health.
 - Dynamic category creation in V1.
 - Full knowledge graph/triple extraction.
 - Replacing ADR-0024 strategic taxonomy direction.
+- Defining non-memory domain behavior (covered by ADR-0109).
 
 ## Consequences
 
@@ -143,6 +162,7 @@ Ensure category fields exist and are reported by memory health.
 - ADR-0077: Memory System — Next Phase
 - ADR-0094: Memory Write Gate V1
 - ADR-0024: Taxonomy-Enhanced Session Search (deferred strategic reference)
+- ADR-0109: System-Wide Taxonomy + Concept Contract
 
 ## More Information
 

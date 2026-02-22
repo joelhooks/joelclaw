@@ -7,6 +7,9 @@ deciders: [joel]
 consulted: [pi session 2026-02-22]
 supersedes: []
 superseded-by: []
+related:
+  - "0109-system-wide-taxonomy-concept-contract"
+  - "0095-typesense-native-memory-categories-skos-lite"
 ---
 
 # ADR-0099: Memory Knowledge-Graph Substrate (Deferred, Activation-Gated)
@@ -21,6 +24,8 @@ With Typesense now canonical, we need a graph path that:
 - avoids premature database migration,
 - activates only when measurable relation-blind retrieval gaps justify it.
 
+ADR-0109 establishes system-wide concept IDs. This graph substrate must build on those shared IDs, not memory-only tags.
+
 ## Decision
 
 Define a **Typesense-compatible graph substrate** as the next graph step, but keep implementation deferred behind explicit activation gates.
@@ -28,17 +33,18 @@ Define a **Typesense-compatible graph substrate** as the next graph step, but ke
 ### Planned substrate (when activated)
 
 1. Add relation records (triple-style facts + temporal validity) in Typesense-side collections.
-2. Link relations to category concepts (SKOS-lite IDs from ADR-0095).
+2. Link relations to canonical concept IDs (ADR-0109; ADR-0095 categories are one scheme).
 3. Keep graph extraction and graph retrieval independent from core ingest until quality gates pass.
 
 No Datomic or dedicated graph database is adopted in this ADR.
 
 ## Activation Gates (all required)
 
-1. **Category maturity**: ADR-0095 implemented and stable (`category_id` coverage ≥ 95%).
-2. **Write-gate maturity**: ADR-0094 live with acceptable fallback/error rates.
-3. **Miss evidence**: at least 20% of analyzed difficult-query misses are relation/multi-hop misses not solved by vector + categories.
-4. **Operational readiness**: memory health remains green for 14 consecutive days while instrumentation is active.
+1. **Concept contract maturity**: ADR-0109 Phase 1 complete for memory/docs with stable concept IDs.
+2. **Category maturity**: ADR-0095 implemented and stable (`category_id` coverage >= 95%).
+3. **Write-gate maturity**: ADR-0094 live with acceptable fallback/error rates.
+4. **Miss evidence**: at least 20% of analyzed difficult-query misses are relation/multi-hop misses not solved by vector + categories.
+5. **Operational readiness**: memory health remains green for 14 consecutive days while instrumentation is active.
 
 If these gates are not met, graph work remains deferred.
 
@@ -111,6 +117,7 @@ Target files when activated:
 - ADR-0077: Memory System — Next Phase
 - ADR-0024: Taxonomy-Enhanced Session Search (deferred strategic source)
 - ADR-0095: Typesense-Native Memory Categories
+- ADR-0109: System-Wide Taxonomy + Concept Contract
 
 ## Status
 

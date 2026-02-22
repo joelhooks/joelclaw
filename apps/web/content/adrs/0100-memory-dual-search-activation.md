@@ -7,6 +7,9 @@ deciders: [joel]
 consulted: [pi session 2026-02-22]
 supersedes: []
 superseded-by: []
+related:
+  - "0109-system-wide-taxonomy-concept-contract"
+  - "0099-memory-knowledge-graph-substrate"
 ---
 
 # ADR-0100: Memory Dual Search (Vector + Graph) Activation Plan
@@ -14,6 +17,8 @@ superseded-by: []
 ## Context
 
 ADR-0077 deferred dual search because vector retrieval alone was sufficient at current scale and graph infrastructure was not yet justified. ADR-0099 defines a deferred, activation-gated graph substrate.
+
+ADR-0109 defines the shared concept taxonomy contract that graph retrieval must use to mesh across domains.
 
 Dual search should only be introduced when it can demonstrate measurable retrieval gains beyond category-aware vector search.
 
@@ -30,9 +35,10 @@ Dual search activation is contingent on ADR-0099 gates and objective benchmark g
 ## Activation Gates (all required)
 
 1. ADR-0099 graph substrate activation approved and implemented for a pilot scope.
-2. Benchmark set shows meaningful quality gain (target: ≥10% nDCG or precision@k lift on hard queries).
-3. Latency remains within interactive bounds for default budget profiles.
-4. Failure fallback to vector-only path is verified and observable.
+2. ADR-0109 concept contract has stable IDs across memory + docs (minimum cross-domain scope).
+3. Benchmark set shows meaningful quality gain (target: >=10% nDCG or precision@k lift on hard queries).
+4. Latency remains within interactive bounds for default budget profiles.
+5. Failure fallback to vector-only path is verified and observable.
 
 ## Fusion Contract (planned)
 
@@ -102,6 +108,7 @@ Target files when activated:
 - ADR-0077: Memory System — Next Phase
 - ADR-0096: Budget-Aware Memory Retrieval Policy
 - ADR-0099: Memory Knowledge-Graph Substrate
+- ADR-0109: System-Wide Taxonomy + Concept Contract
 
 ## Status
 

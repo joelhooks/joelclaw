@@ -9,6 +9,7 @@ related:
   - "[ADR-0021 — Agent memory system](0021-agent-memory-system.md)"
   - "[ADR-0002 — Personal assistant system architecture](0002-personal-assistant-system-architecture.md)"
   - "[ADR-0019 — Event naming past tense](0019-event-naming-past-tense.md)"
+  - "[ADR-0109 — System-wide taxonomy + concept contract](0109-system-wide-taxonomy-concept-contract.md)"
 credits:
   - "W3C SKOS (Simple Knowledge Organization System) — concept schemes, broader/narrower hierarchies, preferred/alternate labels, cross-scheme mapping. W3C Recommendation 2009. https://www.w3.org/2004/02/skos/"
   - "Squirro (2026 RAG report) — GraphRAG pattern: structured taxonomy + vector search achieving 99% precision for enterprise knowledge bases"
@@ -27,6 +28,16 @@ credits:
 ---
 
 # ADR-0024: Taxonomy-Enhanced Session Search with SKOS Concept Layer
+
+## Update (2026-02-22)
+
+This ADR remains **deferred** and historically important, but it is Qdrant-era design.
+
+Current execution path:
+
+- ADR-0095 carries the memory SKOS-lite implementation on Typesense.
+- ADR-0105 carries docs taxonomy integration.
+- ADR-0109 now defines the system-wide concept contract so taxonomy meshes across the whole joelclaw graph.
 
 ## Context and Problem Statement
 

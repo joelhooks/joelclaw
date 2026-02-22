@@ -5,7 +5,7 @@ date: 2026-02-22
 tags: [adr, pdf-brain, typesense, inngest, joelclaw, knowledge-management, langfuse, otel]
 deciders: [joel]
 supersedes: []
-related: ["0082-typesense-unified-search", "0088-nas-backed-storage-tiering", "0095-typesense-native-memory-categories-skos-lite", "0101-langfuse-llm-only-observability", "0093-agent-friendly-navigation-contract"]
+related: ["0082-typesense-unified-search", "0088-nas-backed-storage-tiering", "0095-typesense-native-memory-categories-skos-lite", "0101-langfuse-llm-only-observability", "0093-agent-friendly-navigation-contract", "0109-system-wide-taxonomy-concept-contract"]
 ---
 
 # ADR-0105: joelclaw PDF Brain — Document Library as First-Class Network Utility
@@ -38,6 +38,8 @@ This system must be built with the full joelclaw idiom stack. Each concern maps 
 | Durable ingest pipeline | Inngest functions + steps | `inngest-durable-functions`, `inngest-steps` |
 | Event naming + schema | joelclaw event conventions | `inngest-events` |
 | Pipeline throughput | Concurrency + throttle | `inngest-flow-control` |
+| Cross-cutting execution concerns | Inngest middleware | `inngest-middleware` |
+| Local/self-host operational parity | Inngest local setup/ops | `inngest-local` |
 | Non-LLM telemetry | OTEL via `emitMeasuredOtelEvent` | `o11y-logging` |
 | LLM tracing | Langfuse generation spans | `langfuse-observability` |
 | Search + indexing | Typesense FTS + vector | (existing `joelclaw` OTEL patterns) |
@@ -70,7 +72,21 @@ Implement **joelclaw PDF Brain** as a first-class subsystem inside the joelclaw 
 - **Langfuse traces** on every LLM call — enrichment, embedding, taxonomy classification
 - **OTEL events** on every non-LLM step — file ops, chunk counts, index writes
 - **joelclaw CLI** subcommands following the HATEOAS JSON contract (ADR-0093)
-- **Taxonomy** carried from `pdf-brain/data/taxonomy.json` — SKOS-lite aligned with ADR-0095
+- **Taxonomy** uses ADR-0109 global concept contract, seeded from `pdf-brain/data/taxonomy.json`
+- **Memory-grade retrieval contract**: hierarchical chunking + rerank + progressive context expansion so books behave as durable evidence memory, not flat tag/search blobs
+
+### Taxonomy Policy (2026-02-22 update)
+
+1. **Canonical source**: the system-wide concept registry from ADR-0109.
+2. **Storage vs semantics**:
+   - storage routing remains coarse (`books/{category}`, `podcasts`) for filesystem operations.
+   - semantic concepts (`concept_ids`) are separate and drive retrieval/graph behavior.
+3. **Legacy `library.db` use**:
+   - legacy concepts/tags are treated as alias/candidate input only.
+   - they are not a canonical ontology source.
+4. **No tag soup**:
+   - free-form tags can be stored, but retrieval/routing uses mapped concept IDs.
+   - unresolvable tags are diagnostics, not category truth.
 
 ---
 
@@ -83,7 +99,8 @@ All LLM calls route through the joelclaw gateway. Explicit model choices:
 | Document enrichment (summary, category, docType) | `anthropic/claude-haiku-4-5` | Fast, cheap per-doc batch |
 | Taxonomy classification | `anthropic/claude-haiku-4-5` | Structured output, classification task |
 | Complex re-enrichment (on request) | `anthropic/claude-sonnet-4-5` | Higher quality for important docs |
-| Chunk embedding | `text-embedding-3-small` (1536d) via OpenAI gateway | No Ollama dependency; consistent dims |
+| Chunk embedding (baseline recall) | Typesense built-in embedding (`ts/all-MiniLM-L12-v2`) | Fast local/index-time vectors, zero external embedding dependency |
+| Optional high-quality rerank/contextualization | `anthropic/claude-haiku-4-5` default, `anthropic/claude-sonnet-4-5` for deep profile | Spend inference where it improves retrieval precision most |
 
 Every model call emits a **Langfuse generation span** per ADR-0101. Required correlation fields on every trace:
 ```
@@ -93,6 +110,49 @@ joelclaw.run_id      = <Inngest run id>
 joelclaw.event_id    = <triggering event id>
 environment          = "prod"
 ```
+
+---
+
+## Retrieval Quality Contract (Books As Memory)
+
+### Hierarchical chunking (required)
+
+Ingest must produce two linked chunk tiers:
+
+- **Section chunks**: target ~1200-2200 tokens, semantic unit for broad recall
+- **Snippet chunks**: target ~250-600 tokens, high-precision retrieval unit
+- Every snippet carries `parent_chunk_id`, and both tiers carry `prev_chunk_id`/`next_chunk_id`
+- Every chunk stores `heading_path[]` + `context_prefix` for structure-aware retrieval
+
+### Contextual retrieval text (required)
+
+Embedding/search text must include a short structural prefix:
+
+```
+[DOC: <title>]
+[PATH: <heading_path joined>]
+[CONCEPTS: <top concept labels/ids if present>]
+
+<chunk text>
+```
+
+This preserves chapter/section semantics in vector space and improves hit quality on dense technical books.
+
+### Retrieval pipeline (required)
+
+`docs search` must follow:
+
+1. **Snippet-first recall**: hybrid lexical + vector on `chunk_type=snippet`
+2. **Concept-aware filtering/boosting**: `concept_ids`, `primary_concept_id`, `taxonomy_version`
+3. **Rerank top-K**: inference rerank/judge pass for precision on complex queries
+4. **Progressive expansion** (on demand):
+   - `snippet-window` (local precision context)
+   - `parent-section` (full local argument)
+   - `section-neighborhood` (parent + adjacent sections)
+
+### Distillation layer (required)
+
+Each ingested book should additionally emit durable, citation-backed distillates (narrative + retained facts) that reference source chunk IDs. This mirrors ADR-0021 memory patterns: evidence and distillate are separate but linked.
 
 ---
 
@@ -111,6 +171,10 @@ environment          = "prod"
     { "name": "document_type", "type": "string",   "facet": true, "optional": true },
     { "name": "file_type",     "type": "string",   "facet": true },
     { "name": "tags",          "type": "string[]", "facet": true },
+    { "name": "primary_concept_id", "type": "string",   "facet": true, "optional": true },
+    { "name": "concept_ids",        "type": "string[]", "facet": true, "optional": true },
+    { "name": "concept_source",     "type": "string",   "facet": true, "optional": true },
+    { "name": "taxonomy_version",   "type": "string",   "facet": true, "optional": true },
     { "name": "summary",       "type": "string",   "optional": true },
     { "name": "page_count",    "type": "int32",    "optional": true },
     { "name": "size_bytes",    "type": "int64",    "optional": true },
@@ -129,18 +193,36 @@ environment          = "prod"
 {
   "name": "pdf_chunks",
   "fields": [
-    { "name": "id",          "type": "string" },
-    { "name": "doc_id",      "type": "string",    "facet": true },
-    { "name": "title",       "type": "string" },
-    { "name": "page",        "type": "int32" },
-    { "name": "chunk_index", "type": "int32" },
-    { "name": "content",     "type": "string" },
-    { "name": "embedding",   "type": "float[]",   "num_dim": 1536, "optional": true }
+    { "name": "id",                 "type": "string" },
+    { "name": "doc_id",             "type": "string",    "facet": true },
+    { "name": "title",              "type": "string" },
+    { "name": "chunk_type",         "type": "string",    "facet": true },
+    { "name": "chunk_index",        "type": "int32" },
+    { "name": "page_start",         "type": "int32",     "optional": true },
+    { "name": "page_end",           "type": "int32",     "optional": true },
+    { "name": "heading_path",       "type": "string[]",  "facet": true, "optional": true },
+    { "name": "context_prefix",     "type": "string",    "optional": true },
+    { "name": "parent_chunk_id",    "type": "string",    "facet": true, "optional": true },
+    { "name": "prev_chunk_id",      "type": "string",    "optional": true },
+    { "name": "next_chunk_id",      "type": "string",    "optional": true },
+    { "name": "primary_concept_id", "type": "string",    "facet": true, "optional": true },
+    { "name": "concept_ids",        "type": "string[]",  "facet": true, "optional": true },
+    { "name": "taxonomy_version",   "type": "string",    "facet": true, "optional": true },
+    { "name": "content",            "type": "string" },
+    { "name": "retrieval_text",     "type": "string" },
+    {
+      "name": "embedding",
+      "type": "float[]",
+      "embed": {
+        "from": ["retrieval_text"],
+        "model_config": { "model_name": "ts/all-MiniLM-L12-v2" }
+      }
+    }
   ]
 }
 ```
 
-Check installed Typesense version supports `float[]` before creating: `joelclaw otel search "typesense" --hours 1` or `kubectl -n joelclaw exec typesense-0 -- typesense-server --version`.
+Check installed Typesense version supports `embed` with `float[]` before creating: `joelclaw otel search "typesense" --hours 1` or `kubectl -n joelclaw exec typesense-0 -- typesense-server --version`.
 
 ---
 
@@ -152,7 +234,7 @@ Check installed Typesense version supports `float[]` before creating: `joelclaw 
 "docs/ingest.requested":    { data: { nasPath: string; title?: string; tags?: string[] } }
 "docs/ingest.completed":    { data: { docId: string; title: string; category?: string; chunksIndexed: number } }
 "docs/enrich.requested":    { data: { docId: string } }   // re-run enrichment only
-"docs/reindex.requested":   { data: { docId?: string } }  // rebuild chunks + embeddings; all if docId omitted
+"docs/reindex.requested":   { data: { docId?: string } }  // rebuild hierarchical chunks + vectors; all if docId omitted
 "docs/search.requested":    { data: { query: string; filters?: string; limit?: number } }
 ```
 
@@ -167,27 +249,28 @@ docs/ingest.requested  { stagingPath | nasPath, title?, tags? }
     Step 1: validate-file         — confirm file exists; sha256; size; detect file type
                                     → OTEL: docs.file.validated { bytes, sha256, fileType }
 
-    Step 2: extract-text          — pdf-parse (PDF) or read (md/txt) → chunks[]
-                                    → OTEL: docs.text.extracted { pages, chunks }
+    Step 2: extract-text          — pdf-parse (PDF) or read (md/txt) → rawText
+                                    → OTEL: docs.text.extracted { pages, characters }
 
     Step 3: upsert-document       — Typesense pdf_documents upsert at staging path
                                     (nas_path = staging path; will be updated in Step 8)
                                     → OTEL: docs.document.upserted { docId }
 
-    Step 4: embed-chunks          — batch text-embedding-3-small (50 chunks/batch)
-                                    → Langfuse: generation span per batch { model, tokens, latency }
-                                    → OTEL: docs.chunks.embedded { count, totalTokens }
+    Step 4: build-hierarchical-chunks
+                                  — section chunks + snippet chunks + links + retrieval_text
+                                    → OTEL: docs.chunking.profiled { sectionCount, snippetCount, avgSectionTokens, avgSnippetTokens, profileVersion }
 
     Step 5: upsert-chunks         — Typesense pdf_chunks bulk upsert (delete old first)
-                                    → OTEL: docs.chunks.indexed { count }
+                                    (Typesense built-in embedding generated from retrieval_text)
+                                    → OTEL: docs.chunks.indexed { count, sectionCount, snippetCount }
 
     Step 6: enrich-metadata       — claude-haiku-4-5: summary + documentType from text sample
                                     → Langfuse: generation span { model, tokens, inputChars }
                                     → OTEL: docs.document.enriched { docType }
 
-    Step 7: classify-taxonomy     — claude-haiku-4-5: map to taxonomy concept → category
-                                    → Langfuse: generation span { model, conceptId, category }
-                                    → OTEL: docs.taxonomy.classified { category }
+    Step 7: classify-taxonomy     — claude-haiku-4-5: map to concept IDs + storage category
+                                    → Langfuse: generation span { model, primaryConceptId, conceptIds }
+                                    → OTEL: docs.taxonomy.classified { primaryConceptId, conceptIds, storageCategory }
 
     Step 8: move-to-final-path    — mv staging → /Volumes/three-body/{type-folder}/{category}/{filename}
                                     Type routing:
@@ -196,8 +279,8 @@ docs/ingest.requested  { stagingPath | nasPath, title?, tags? }
                                       uncategorized   → books/uncategorized/
                                     → OTEL: docs.file.placed { finalNasPath, category }
 
-    Step 9: update-nas-path       — Typesense patch: nas_path = finalNasPath, category, tags
-                                    → OTEL: docs.document.finalized { docId, nas_path, category }
+    Step 9: update-nas-path       — Typesense patch: nas_path = finalNasPath, category, concept fields, tags
+                                    → OTEL: docs.document.finalized { docId, nas_path, category, primaryConceptId, conceptCount }
 
     Step 10: emit-completion      — step.sendEvent docs/ingest.completed
                                     → pushGatewayEvent (title, category, finalNasPath)
@@ -238,6 +321,16 @@ Triggered by `docs/enrich.requested`. Steps 6–8 from above only. Useful for re
 
 Triggered by `docs/reindex.requested`. Queries Typesense for all docs (or one), re-runs steps 2–5.
 
+### `docs-context` retrieval helper
+
+`docs-context` expands a snippet hit into broader context using deterministic modes:
+
+- `snippet-window`
+- `parent-section`
+- `section-neighborhood`
+
+This is the primary mechanism for getting more complete source text into context while keeping default queries fast.
+
 ---
 
 ## CLI Subcommands
@@ -247,6 +340,9 @@ Location: `packages/cli/src/commands/docs.ts`
 ```bash
 joelclaw docs search "<query>"                 # hybrid FTS + vector, returns ranked docs
 joelclaw docs search "<query>" --category business --limit 10
+joelclaw docs context <chunk-id> --mode snippet-window
+joelclaw docs context <chunk-id> --mode parent-section
+joelclaw docs context <chunk-id> --mode section-neighborhood
 joelclaw docs add /Volumes/three-body/books/x.pdf
 joelclaw docs status                           # counts, pending enrichment, embedding coverage
 joelclaw docs list [--category X] [--limit 20]
@@ -266,7 +362,8 @@ Every step emits via `emitMeasuredOtelEvent`. Required fields per ADR-0087:
 ```typescript
 {
   action:     "docs.file.validated" | "docs.text.extracted" | "docs.document.upserted"
-              | "docs.chunks.embedded" | "docs.chunks.indexed" | "docs.document.enriched",
+              | "docs.chunking.profiled" | "docs.chunks.indexed" | "docs.document.enriched"
+              | "docs.retrieve.reranked" | "docs.context.expanded",
   component:  "docs-ingest" | "docs-enrich" | "docs-reindex",
   source:     "inngest",
   metadata_json: JSON.stringify({ docId, nasPath, ...stepMetrics })
@@ -305,6 +402,8 @@ This ADR's ingest pipeline runs on the archived files in Phase 1.
 ### Phase 1: Typesense collections + `docs-ingest` + pi skill + Convex schema
 - Create `pdf_documents` + `pdf_chunks` Typesense collections
 - Implement `docs-ingest` Inngest function (plain async/Bun, no Effect)
+- Implement hierarchical chunking profile (`section` + `snippet`) with links + retrieval text
+- Add rerank path for `docs search` and deterministic `docs context` expansion modes
 - Wire `joelclaw docs` CLI subcommands
 - Build `docs` pi skill at `~/Code/joelhooks/joelclaw/skills/docs/` — ship with pipeline
 - Design Convex `docs` schema alongside Typesense (documents + search index)
@@ -339,8 +438,8 @@ This ADR's ingest pipeline runs on the archived files in Phase 1.
 - `float[]` vector support must be verified against installed Typesense version
 
 ### Risks
-- Typesense collection size: 800 docs × 20 chunks = 16k chunk documents. Monitor with `joelclaw otel search "typesense" --hours 24`
-- Embedding API rate limits: mitigated by `throttle` flow control on `docs-ingest`
+- Typesense collection size: hierarchical chunking will increase chunk cardinality (expected 2-4x over flat chunking). Monitor with `joelclaw otel search "typesense|docs.chunks.indexed" --hours 24`
+ - Rerank/enrichment API rate limits: mitigated by `throttle`/concurrency controls on docs workflows
 
 ---
 
@@ -360,7 +459,9 @@ Implementors should load these skills before working on this system:
 - `inngest-durable-functions` — step structure, memoization, retry patterns
 - `inngest-steps` — step.run, step.sendEvent, step.ai.infer
 - `inngest-events` — event naming conventions, payload schema
-- `inngest-flow-control` — concurrency + throttle for embedding pipeline
+ - `inngest-flow-control` — concurrency + throttle for chunking/rerank pipeline
+- `inngest-middleware` — shared context injection, request correlation, cross-cutting safeguards
+- `inngest-local` — self-hosted local/k8s parity for workflow testing and operations
 - `o11y-logging` — OTEL contract, emitMeasuredOtelEvent usage, verification commands
 - `langfuse-observability` — Langfuse tracing setup, generation spans, correlation fields *(newly installed)*
 - `cli-design` — HATEOAS JSON envelope, agent-friendly output, next_actions

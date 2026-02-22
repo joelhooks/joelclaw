@@ -1,6 +1,6 @@
 # ADR-0108: Next.js Best Practices Audit
 
-- **Status**: proposed
+- **Status**: shipped
 - **Date**: 2026-02-22
 - **Deciders**: Joel, Panda
 
