@@ -261,6 +261,32 @@ describe("MEM-16 reflect acceptance tests", () => {
     });
   });
 
+  test("reflect ignores polluted summaries containing tool-call XML traces", async () => {
+    redisLists.set("memory:observations:2026-02-17", [
+      JSON.stringify({
+        summary:
+          '<toolCall><id>toolu_deadbeef</id><name>bash</name><arguments>{"command":"git status"}</arguments></toolCall>',
+      }),
+      JSON.stringify({ summary: "Valid observation retained for reflection." }),
+    ]);
+
+    shellResultQueue = [
+      {
+        exitCode: 0,
+        stdout: "<proposals><proposal><section>Facts</section><change>Keep clean memory inputs.</change></proposal></proposals>",
+        stderr: "",
+      },
+    ];
+
+    await executeReflect("2026-02-17");
+
+    expect(shellPromptContents[0]).toContain("Valid observation retained for reflection.");
+    expect(shellPromptContents[0]).not.toContain("<toolCall>");
+    expect(shellPromptContents[0]).not.toContain("<arguments>");
+    expect(shellPromptContents[0]).not.toContain("toolu_");
+    expect(shellPromptContents[0]).not.toContain("bash -lc");
+  });
+
   test("proposal IDs are deterministic and follow p-YYYYMMDD-NNN format", async () => {
     redisLists.set("memory:review:pending", ["p-20260217-009"]);
     redisLists.set("memory:observations:2026-02-17", [

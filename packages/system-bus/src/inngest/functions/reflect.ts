@@ -11,6 +11,7 @@ import {
   REFLECTOR_USER_PROMPT,
   validateCompression,
 } from "./reflect-prompt";
+import { sanitizeObservationText } from "./observation-sanitize";
 import { parsePiJsonAssistant, traceLlmGeneration, type LlmUsage } from "../../lib/langfuse";
 import { emitOtelEvent } from "../../observability/emit";
 
@@ -135,7 +136,7 @@ function parseObservation(raw: string): string | null {
   try {
     const parsed = JSON.parse(raw) as ObservationRecord;
     if (typeof parsed.summary === "string" && parsed.summary.trim().length > 0) {
-      return parsed.summary.trim();
+      return sanitizeObservationText(parsed.summary);
     }
   } catch {
     // Skip malformed entries.

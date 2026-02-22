@@ -626,6 +626,9 @@ const workerProbe = () =>
     catch: (e) => new Error(`Failed to reach worker: ${e}`),
   })
 
+const UUID_LIKE_FUNCTION_NAME =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
 const activeRunsSnapshot = (inngestClient: any) =>
   Effect.gen(function* () {
     const [running, queued] = yield* Effect.all([
@@ -640,6 +643,7 @@ const activeRunsSnapshot = (inngestClient: any) =>
         status: String(run.status ?? "UNKNOWN"),
         functionName: String(run.functionName ?? run.functionID ?? "unknown"),
       }))
+      .filter((run) => !UUID_LIKE_FUNCTION_NAME.test(run.functionName))
   })
 
 const workerDiagnostics = (body: unknown) => {

@@ -212,4 +212,53 @@ describe("FRIC-1 observe acceptance tests", () => {
       persistedEntryCount: 1,
     });
   });
+
+  test("filters tool-call XML and internal shell traces from persisted summaries", async () => {
+    const capturedAt = "2026-02-18T17:00:00.000Z";
+    shellResultQueue = [
+      {
+        exitCode: 0,
+        stdout: `<observations>
+  <segment>
+    <narrative><toolCall><id>toolu_abc123</id><name>bash</name><arguments>{"command":"ls -la"}</arguments></toolCall></narrative>
+    <facts>
+      - 🔴 [gate=allow confidence=0.98 category=jc:operations reason=internal_trace] <toolCall><id>toolu_abc123</id><name>bash</name><arguments>{"command":"git status"}</arguments></toolCall>
+      - 🔴 [gate=allow confidence=0.97 category=jc:operations reason=internal_trace] bash -lc "bunx tsc --noEmit"
+    </facts>
+  </segment>
+</observations>`,
+        stderr: "",
+      },
+    ];
+
+    await executeObserve({
+      sessionId: "session-toolcall-filter",
+      dedupeKey: "toolcall-filter-dedupe",
+      trigger: "backfill",
+      messages: "Assistant: <toolCall><id>toolu_abc123</id></toolCall>",
+      messageCount: 4,
+      userMessageCount: 2,
+      duration: 42,
+      filesRead: [],
+      filesModified: [],
+      capturedAt,
+      schemaVersion: 1,
+    });
+
+    const listKey = "memory:observations:2026-02-18";
+    const persistedEntries = redisLists.get(listKey) ?? [];
+    expect(persistedEntries).toHaveLength(1);
+
+    const payload = JSON.parse(persistedEntries[0] ?? "{}") as {
+      summary?: string;
+      metadata?: { observation_count?: number };
+    };
+
+    expect(payload.summary ?? "").not.toContain("<toolCall>");
+    expect(payload.summary ?? "").not.toContain("<arguments>");
+    expect(payload.summary ?? "").not.toContain("toolu_");
+    expect(payload.summary ?? "").not.toContain("bash -lc");
+    expect((payload.summary ?? "").trim()).toBe("");
+    expect(payload.metadata?.observation_count ?? 0).toBe(0);
+  });
 });

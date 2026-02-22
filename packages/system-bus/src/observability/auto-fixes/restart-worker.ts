@@ -20,7 +20,7 @@ const ACTIVE_RUN_SCAN_LIMIT = Number.parseInt(
 type RecentRunNode = {
   id: string;
   status: string;
-  function?: { name?: string | null } | null;
+  function?: { name?: string | null; slug?: string | null } | null;
 };
 
 function trimOutput(output: unknown): string {
@@ -92,6 +92,7 @@ async function loadRecentActiveRuns(): Promise<RecentRunNode[]> {
             status
             function {
               name
+              slug
             }
           }
         }
@@ -133,9 +134,14 @@ async function loadRecentActiveRuns(): Promise<RecentRunNode[]> {
   for (const edge of edges) {
     const node = edge.node;
     if (!node) continue;
-    if (node.status === "RUNNING" || node.status === "QUEUED") {
-      active.push(node);
-    }
+    if (node.status !== "RUNNING" && node.status !== "QUEUED") continue;
+
+    const slug = node.function?.slug?.trim() ?? "";
+    const isLegacyArchivedSlug =
+      slug.startsWith("system-bus-") && !slug.startsWith("system-bus-host-");
+    if (isLegacyArchivedSlug) continue;
+
+    active.push(node);
   }
 
   return active;

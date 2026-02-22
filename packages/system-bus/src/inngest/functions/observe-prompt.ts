@@ -17,6 +17,12 @@ Tag individual facts with exactly one priority marker:
 - 🟡 Medium: recurring patterns, repeated actions, consistent workflows
 - 🟢 Low: minor notes, incidental context, low-impact details
 
+Never include agent-internal tooling traces in output. Ignore and exclude:
+- <toolCall>...</toolCall> XML
+- <arguments>...</arguments> XML blocks
+- <id>toolu_... IDs
+- shell/tool invocation logs like bash -lc, zsh -lc, or raw command dumps
+
 For every fact bullet, include a write-gate annotation immediately after the priority marker:
 - format: [gate=<allow|hold|discard> confidence=<0..1> category=<category-id> reason=<short_reason>]
 - use 'allow' for durable factual signal

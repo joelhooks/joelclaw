@@ -8,6 +8,7 @@ import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseObserverOutput } from "./observe-parser";
 import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
+import { sanitizeObservationText, sanitizeObservationTranscript } from "./observation-sanitize";
 import { DEDUP_THRESHOLD } from "../../memory/retrieval";
 import { TAXONOMY_VERSION, classifyObservationCategory, normalizeCategoryId, type CategorySource, type MemoryCategoryId } from "../../memory/taxonomy-v1";
 import { allowsReflect, resolveWriteGate, type WriteVerdict } from "../../memory/write-gate";
@@ -114,9 +115,12 @@ function isoDateFromTimestamp(value: string | undefined): string {
 }
 
 function buildObservationItem(observationType: string, rawText: string): ObservationItem | null {
-  const resolved = resolveWriteGate(rawText);
-  const observation = resolved.observation.trim();
-  if (observation.length === 0) return null;
+  const sanitizedInput = sanitizeObservationText(rawText);
+  if (!sanitizedInput) return null;
+
+  const resolved = resolveWriteGate(sanitizedInput);
+  const observation = sanitizeObservationText(resolved.observation);
+  if (!observation || observation.length === 0) return null;
 
   const hintedCategory = normalizeCategoryId(resolved.hintedCategoryId ?? null);
   const category = hintedCategory
@@ -168,6 +172,10 @@ function createObservationItems(parsedObservations: {
   }
 
   if (items.length > 0) {
+    return items;
+  }
+
+  if (Array.isArray(parsedObservations.segments) && parsedObservations.segments.length > 0) {
     return items;
   }
 
@@ -274,8 +282,8 @@ function normalizeTypesenseObservationDoc(input: Record<string, unknown> | null 
   };
 }
 
-function buildObserverFallback(input: ObserveInput, reason: string): string {
-  const lines = input.messages
+function buildObserverFallback(input: ObserveInput, sanitizedTranscript: string, reason: string): string {
+  const lines = sanitizedTranscript
     .split(/\r?\n/gu)
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
@@ -413,8 +421,13 @@ export const observeSessionFunction = inngest.createFunction(
     const llmOutput = await step.run("call-observer-llm", async () => {
       const sessionName =
         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
+      const sanitizedMessages = sanitizeObservationTranscript(validatedInput.messages);
+      const transcriptForPrompt =
+        sanitizedMessages.length > 0
+          ? sanitizedMessages
+          : "No user-facing transcript content available after tool-call sanitization.";
       const userPrompt = OBSERVER_USER_PROMPT(
-        validatedInput.messages,
+        transcriptForPrompt,
         validatedInput.trigger,
         sessionName
       );
@@ -536,7 +549,7 @@ Session context:
           },
         });
 
-        return buildObserverFallback(validatedInput, message);
+        return buildObserverFallback(validatedInput, sanitizedMessages, message);
       }
 
     });
@@ -548,13 +561,13 @@ Session context:
           const parsed = parseObserverOutput(llmOutput);
           const facts = parsed.segments
             .flatMap((segment) => segment.facts)
-            .map((fact) => fact.trim())
-            .filter((fact) => fact.length > 0);
+            .map((fact) => sanitizeObservationText(fact))
+            .filter((fact): fact is string => typeof fact === "string" && fact.length > 0);
           const concepts = [
             ...new Set(
               [parsed.currentTask, ...parsed.segments.map((segment) => segment.narrative)]
-                .map((concept) => (concept ?? "").trim())
-                .filter((concept) => concept.length > 0)
+                .map((concept) => sanitizeObservationText((concept ?? "").trim()))
+                .filter((concept): concept is string => typeof concept === "string" && concept.length > 0)
             ),
           ];
 
@@ -619,23 +632,35 @@ Session context:
       if (parsedObservations.segments && parsedObservations.segments.length > 0) {
         for (const seg of parsedObservations.segments) {
           const segment = seg as { narrative?: string; facts?: string[] };
-          if (segment.narrative) {
-            lines.push(`#### ${segment.narrative}\n`);
+          const narrative =
+            typeof segment.narrative === "string"
+              ? sanitizeObservationText(segment.narrative)
+              : null;
+          if (narrative) {
+            lines.push(`#### ${narrative}\n`);
           }
           if (Array.isArray(segment.facts)) {
             for (const fact of segment.facts) {
-              lines.push(`${fact}`);
+              const sanitizedFact = sanitizeObservationText(fact);
+              if (!sanitizedFact) continue;
+              lines.push(`${sanitizedFact}`);
             }
             lines.push("");
           }
         }
       } else if (parsedObservations.observations) {
-        lines.push(parsedObservations.observations);
-        lines.push("");
+        const fallbackObservation = sanitizeObservationText(parsedObservations.observations);
+        if (fallbackObservation) {
+          lines.push(fallbackObservation);
+          lines.push("");
+        }
       }
 
       if (parsedObservations.currentTask) {
-        lines.push(`**Current task**: ${parsedObservations.currentTask}\n`);
+        const currentTask = sanitizeObservationText(parsedObservations.currentTask);
+        if (currentTask) {
+          lines.push(`**Current task**: ${currentTask}\n`);
+        }
       }
 
       const markdown = lines.join("\n");
@@ -892,7 +917,10 @@ Session context:
     const observationCount = observationItems.length;
     const reflectableItems = observationItems.filter((item) => allowsReflect(item.writeVerdict));
     const reflectableCount = reflectableItems.length;
-    const fallbackSummary = parsedObservations.observations.trim();
+    const fallbackSummary =
+      Array.isArray(parsedObservations.segments) && parsedObservations.segments.length === 0
+        ? sanitizeObservationText(parsedObservations.observations) ?? ""
+        : "";
     const observationSummary =
       reflectableItems.map((item) => item.observation).join("\n") ||
       fallbackSummary;
