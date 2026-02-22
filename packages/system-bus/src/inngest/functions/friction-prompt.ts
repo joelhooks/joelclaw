@@ -13,15 +13,16 @@ Output requirements:
 - Use a <frictions> root.
 - Each pattern must be:
   <pattern>
-    <title>Short title</title>
-    <summary>What keeps going wrong and why it matters.</summary>
-    <suggestion>Action Joel can take to reduce this friction.</suggestion>
+    <title>Short title (include the specific tool/function/file involved)</title>
+    <summary>What keeps going wrong, WHERE in the codebase it happens (file path or function name), and what the observable symptom is (error message, silent failure, wrong output).</summary>
+    <suggestion>Concrete code change: which file to edit, what to change, expected outcome. NOT "investigate" or "consider" — state the fix.</suggestion>
     <evidence>
-      <item>One concrete observation</item>
+      <item>Verbatim observation text with timestamps, error messages, or file paths</item>
     </evidence>
   </pattern>
 - Emit at most 10 patterns.
-- If there is no meaningful friction, return <frictions></frictions>.`;
+- REJECT patterns that lack a specific file path, function name, or error message. Vague themes like "queue ambiguity" or "delayed approvals" are not friction — they are symptoms. Dig deeper into the evidence to find the concrete code location.
+- If there is no meaningful friction with concrete evidence, return <frictions></frictions>.`;
 
 export type FrictionObservationGroup = {
   date: string;

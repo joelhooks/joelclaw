@@ -6,7 +6,7 @@ import { inngest } from "../client";
 
 const HOME_DIR = process.env.HOME || "/Users/joel";
 const WORK_DIR = join(HOME_DIR, "Code", "joelhooks", "joelclaw");
-const TODOIST_API = "https://api.todoist.com/rest/v2";
+const TODOIST_API = "https://api.todoist.com/api/v1";
 
 type FixStatus = "fixed" | "documented" | "skipped";
 
