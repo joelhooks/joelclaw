@@ -12,6 +12,11 @@ import {
   type ClassifiedEvent,
 } from "../../observability/triage";
 import { AUTO_FIX_HANDLERS } from "../../observability/auto-fixes";
+import {
+  buildRunbookRecoverCommand,
+  resolveRunbookPlanForEvent,
+  type ResolvedRunbookPlan,
+} from "../../observability/recovery-runbooks";
 import { classifyEvent, dedupKey } from "../../observability/triage-patterns";
 import { prefetchMemoryContext } from "../../memory/context-prefetch";
 
@@ -96,11 +101,31 @@ function buildTaskTitle(event: OtelEvent): string {
   return compact(`[O11y] ${event.component}.${event.action}: ${event.error ?? "operation_failed"}`, 120);
 }
 
+function resolveRunbookForEvent(
+  event: OtelEvent,
+  phase: "diagnose" | "fix" | "verify" | "rollback",
+  preferredCode?: string
+): ResolvedRunbookPlan | null {
+  return resolveRunbookPlanForEvent({
+    id: event.id,
+    component: event.component,
+    action: event.action,
+    error: event.error,
+    metadata: event.metadata,
+  }, phase, preferredCode);
+}
+
+function runbookRecoverCommand(plan: ResolvedRunbookPlan | null): string | null {
+  if (!plan) return null;
+  return buildRunbookRecoverCommand(plan);
+}
+
 function buildPreliminaryTaskDescription(
   event: OtelEvent,
   llmReasoning: string | undefined,
   candidateFiles: string[],
-  gitLog: string
+  gitLog: string,
+  runbookPlan: ResolvedRunbookPlan | null
 ): string {
   const reasoning = llmReasoning && llmReasoning.trim().length > 0
     ? llmReasoning.trim()
@@ -124,10 +149,22 @@ function buildPreliminaryTaskDescription(
     "",
     "Haiku classification (suspects)",
     `- ${reasoning}`,
-    "",
-    "Candidate files",
   ];
 
+  if (runbookPlan) {
+    lines.push("");
+    lines.push("Deterministic recovery runbook");
+    lines.push(`- Code: ${runbookPlan.code}`);
+    lines.push(`- Phase: ${runbookPlan.phase}`);
+    lines.push(`- Recover command: ${runbookRecoverCommand(runbookPlan)}`);
+    lines.push("- Runbook commands:");
+    for (const command of runbookPlan.commands) {
+      lines.push(`  - ${command.command}`);
+    }
+  }
+
+  lines.push("");
+  lines.push("Candidate files");
   for (const file of candidateList) {
     lines.push(`- ${file}`);
   }
@@ -155,7 +192,8 @@ function buildCodexInvestigationTask(
   taskId: string,
   llmReasoning: string | undefined,
   candidateFiles: string[],
-  gitLog: string
+  gitLog: string,
+  runbookPlan: ResolvedRunbookPlan | null
 ): string {
   const reasoning = llmReasoning && llmReasoning.trim().length > 0
     ? llmReasoning.trim()
@@ -178,7 +216,9 @@ function buildCodexInvestigationTask(
     `Level: ${event.level}`,
     `Haiku's analysis: ${reasoning}`,
     `Candidate files: ${candidateFileList}`,
-    "",
+    runbookPlan ? `Runbook code: ${runbookPlan.code}` : "Runbook code: none",
+    runbookPlan ? `Recover command: ${runbookRecoverCommand(runbookPlan)}` : "Recover command: n/a",
+    "", 
     "Recent git log sample:",
     "```",
     gitPreview,
@@ -335,7 +375,11 @@ function buildTelegramButtons(
   return rows;
 }
 
-function buildTelegramText(event: OtelEvent, llmReasoning: string | undefined): string {
+function buildTelegramText(
+  event: OtelEvent,
+  llmReasoning: string | undefined,
+  runbookPlan: ResolvedRunbookPlan | null
+): string {
   const reasoning = llmReasoning?.trim().length
     ? llmReasoning.trim()
     : "No additional classification reasoning returned by Haiku.";
@@ -346,6 +390,9 @@ function buildTelegramText(event: OtelEvent, llmReasoning: string | undefined): 
     `<b>Component:</b> ${escapeTelegramHtml(event.component)}`,
     `<b>Action:</b> ${escapeTelegramHtml(event.action)}`,
     `<b>Error:</b> ${escapeTelegramHtml(event.error ?? "operation_failed")}`,
+    runbookPlan
+      ? `<b>Recover:</b> <code>${escapeTelegramHtml(runbookRecoverCommand(runbookPlan) ?? "")}</code>`
+      : "<b>Recover:</b> n/a",
     "",
     `<b>Haiku says:</b> ${escapeTelegramHtml(compact(reasoning, 280))}`,
     "",
@@ -508,7 +555,13 @@ export const o11yTriage = inngest.createFunction(
       const promoted: OtelEvent[] = [];
 
       for (const event of finalBuckets.tier1) {
-        const handlerName = classifyEvent(event).pattern?.handler;
+        const classified = classifyEvent(event);
+        const handlerName = classified.pattern?.handler;
+        const handlerDef = handlerName ? AUTO_FIX_HANDLERS[handlerName] : undefined;
+        const runbookPlan = handlerDef
+          ? resolveRunbookForEvent(event, handlerDef.runbookPhase, handlerDef.runbookCode)
+          : null;
+
         let result: { fixed: boolean; detail: string };
 
         if (!handlerName) {
@@ -516,22 +569,19 @@ export const o11yTriage = inngest.createFunction(
             fixed: false,
             detail: "tier1 event has no configured auto-fix handler",
           };
+        } else if (!handlerDef) {
+          result = {
+            fixed: false,
+            detail: `auto-fix handler not found: ${handlerName}`,
+          };
         } else {
-          const handler = AUTO_FIX_HANDLERS[handlerName];
-          if (!handler) {
+          try {
+            result = await handlerDef.handler(event);
+          } catch (error) {
             result = {
               fixed: false,
-              detail: `auto-fix handler not found: ${handlerName}`,
+              detail: error instanceof Error ? error.message : String(error),
             };
-          } else {
-            try {
-              result = await handler(event);
-            } catch (error) {
-              result = {
-                fixed: false,
-                detail: error instanceof Error ? error.message : String(error),
-              };
-            }
           }
         }
 
@@ -544,6 +594,10 @@ export const o11yTriage = inngest.createFunction(
           error: result.fixed ? undefined : result.detail,
           metadata: {
             handler: handlerName ?? null,
+            runbookCode: handlerDef?.runbookCode ?? null,
+            runbookPhase: handlerDef?.runbookPhase ?? null,
+            recoverCommand: runbookRecoverCommand(runbookPlan),
+            runbookCommands: runbookPlan?.commands ?? [],
             event_action: event.action,
             detail: result.detail,
           },
@@ -573,6 +627,15 @@ export const o11yTriage = inngest.createFunction(
         data: {
           observations: tier2Events.map((event) => {
             const llm = reclassifiedByDedupKey.get(dedupKey(event));
+            const tier2Classification = classifyEvent(event);
+            const tier2HandlerName = tier2Classification.pattern?.handler;
+            const tier2HandlerDef = tier2HandlerName ? AUTO_FIX_HANDLERS[tier2HandlerName] : undefined;
+            const runbookPlan = resolveRunbookForEvent(
+              event,
+              "diagnose",
+              tier2HandlerDef?.runbookCode
+            );
+
             return {
               category: TRIAGE_CATEGORY,
               summary: summarizeIssue(event),
@@ -585,6 +648,10 @@ export const o11yTriage = inngest.createFunction(
                 error: event.error ?? null,
                 dedupKey: dedupKey(event),
                 llmReasoning: llm?.reasoning ?? null,
+                runbookCode: runbookPlan?.code ?? null,
+                runbookPhase: runbookPlan?.phase ?? null,
+                recoverCommand: runbookRecoverCommand(runbookPlan),
+                runbookCommands: runbookPlan?.commands ?? [],
               },
             };
           }),
@@ -600,6 +667,14 @@ export const o11yTriage = inngest.createFunction(
       for (const event of finalBuckets.tier3) {
         const eventDedupKey = dedupKey(event);
         const llmReasoning = reclassifiedByDedupKey.get(eventDedupKey)?.reasoning;
+        const tier3Classification = classifyEvent(event);
+        const tier3HandlerName = tier3Classification.pattern?.handler;
+        const tier3HandlerDef = tier3HandlerName ? AUTO_FIX_HANDLERS[tier3HandlerName] : undefined;
+        const runbookPlan = resolveRunbookForEvent(
+          event,
+          "diagnose",
+          tier3HandlerDef?.runbookCode
+        );
 
         if (await isSnoozedDedupKey(eventDedupKey)) {
           await emitOtelEvent({
@@ -611,6 +686,9 @@ export const o11yTriage = inngest.createFunction(
             metadata: {
               dedupKey: eventDedupKey,
               snoozeHours: TELEGRAM_SNOOZE_HOURS,
+              runbookCode: runbookPlan?.code ?? null,
+              runbookPhase: runbookPlan?.phase ?? null,
+              recoverCommand: runbookRecoverCommand(runbookPlan),
               event: {
                 id: event.id,
                 component: event.component,
@@ -629,7 +707,8 @@ export const o11yTriage = inngest.createFunction(
           event,
           llmReasoning,
           candidateFiles,
-          gitLog
+          gitLog,
+          runbookPlan
         );
         const task = createTodoistEscalationTask(event, preliminaryDescription);
         const taskId = task.id;
@@ -646,7 +725,8 @@ export const o11yTriage = inngest.createFunction(
             taskId,
             llmReasoning,
             candidateFiles,
-            gitLog
+            gitLog,
+            runbookPlan
           );
 
           try {
@@ -677,7 +757,7 @@ export const o11yTriage = inngest.createFunction(
           codexDispatchError = "Todoist task creation failed to return a task ID; codex dispatch skipped.";
         }
 
-        const text = buildTelegramText(event, llmReasoning);
+        const text = buildTelegramText(event, llmReasoning, runbookPlan);
         const buttons = buildTelegramButtons(taskUrl, eventDedupKey);
         const canSendTelegram = sentTelegramInWindow < TELEGRAM_ESCALATION_MAX_PER_HOUR;
         let telegramSent = false;
@@ -692,6 +772,9 @@ export const o11yTriage = inngest.createFunction(
             taskId: taskId ?? null,
             taskUrl: taskUrl ?? null,
             dedupKey: eventDedupKey,
+            runbookCode: runbookPlan?.code ?? null,
+            runbookPhase: runbookPlan?.phase ?? null,
+            recoverCommand: runbookRecoverCommand(runbookPlan),
             telegramMessage: text,
             telegramFormat: "html" as const,
             telegramButtons: buttons,
@@ -724,6 +807,9 @@ export const o11yTriage = inngest.createFunction(
               dedupKey: eventDedupKey,
               taskId: taskId ?? null,
               taskUrl: taskUrl ?? null,
+              runbookCode: runbookPlan?.code ?? null,
+              runbookPhase: runbookPlan?.phase ?? null,
+              recoverCommand: runbookRecoverCommand(runbookPlan),
               sentInLastHour: sentTelegramInWindow,
               hourlyCap: TELEGRAM_ESCALATION_MAX_PER_HOUR,
               hasButtons: buttons.length > 0,
@@ -742,6 +828,9 @@ export const o11yTriage = inngest.createFunction(
               dedupKey: eventDedupKey,
               taskId: taskId ?? null,
               taskUrl: taskUrl ?? null,
+              runbookCode: runbookPlan?.code ?? null,
+              runbookPhase: runbookPlan?.phase ?? null,
+              recoverCommand: runbookRecoverCommand(runbookPlan),
               sentInLastHour: sentTelegramInWindow,
               hourlyCap: TELEGRAM_ESCALATION_MAX_PER_HOUR,
             },
@@ -765,6 +854,10 @@ export const o11yTriage = inngest.createFunction(
             llmReasoning: llmReasoning ?? null,
             taskId: taskId ?? null,
             taskUrl: taskUrl ?? null,
+            runbookCode: runbookPlan?.code ?? null,
+            runbookPhase: runbookPlan?.phase ?? null,
+            recoverCommand: runbookRecoverCommand(runbookPlan),
+            runbookCommands: runbookPlan?.commands ?? [],
             candidateFiles,
             gitLogSample: gitLog.trim().length > 0
               ? gitLog.split("\n").slice(0, 3)

@@ -31,6 +31,28 @@ function getNumericEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function asFiniteNumber(value: unknown, fallback = 0): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function parseMetadataJson(input: unknown): Record<string, unknown> {
+  if (input && typeof input === "object") {
+    return input as Record<string, unknown>;
+  }
+  if (typeof input !== "string" || input.trim().length === 0) return {};
+  try {
+    const parsed = JSON.parse(input) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
 type OtelErrorRateSummary = {
   total: number;
   errors: number;
@@ -38,6 +60,27 @@ type OtelErrorRateSummary = {
   windowMinutes: number;
   threshold: number;
   minEvents: number;
+  shouldEscalate: boolean;
+  unavailable?: string;
+};
+
+type WriteGateDriftSummary = {
+  totalEvents: number;
+  eventsWithGateCounts: number;
+  legacyEvents: number;
+  allowCount: number;
+  holdCount: number;
+  discardCount: number;
+  fallbackCount: number;
+  totalWithVerdict: number;
+  holdRatio: number;
+  discardRatio: number;
+  fallbackRate: number;
+  windowMinutes: number;
+  minEvents: number;
+  holdRatioThreshold: number;
+  discardRatioThreshold: number;
+  fallbackRateThreshold: number;
   shouldEscalate: boolean;
   unavailable?: string;
 };
@@ -219,6 +262,112 @@ async function checkOtelErrorRate(): Promise<OtelErrorRateSummary> {
   }
 }
 
+async function checkWriteGateDrift(): Promise<WriteGateDriftSummary> {
+  const windowMinutes = getNumericEnv("MEMORY_WRITE_GATE_DRIFT_WINDOW_MINUTES", 60);
+  const minEvents = getNumericEnv("MEMORY_WRITE_GATE_DRIFT_MIN_EVENTS", 10);
+  const fallbackRateThreshold = getNumericEnv("MEMORY_WRITE_GATE_FALLBACK_RATE_THRESHOLD", 0.2);
+  const holdRatioThreshold = getNumericEnv("MEMORY_WRITE_GATE_HOLD_RATIO_THRESHOLD", 0.75);
+  const discardRatioThreshold = getNumericEnv("MEMORY_WRITE_GATE_DISCARD_RATIO_THRESHOLD", 0.6);
+  const cutoff = Date.now() - windowMinutes * 60 * 1000;
+
+  const filterBy = `timestamp:>=${Math.floor(cutoff)} && component:=observe && action:=observe.store.completed && success:=true`;
+
+  try {
+    let page = 1;
+    const perPage = 100;
+    let totalEvents = 0;
+    let eventsWithGateCounts = 0;
+    let allowCount = 0;
+    let holdCount = 0;
+    let discardCount = 0;
+    let fallbackCount = 0;
+
+    for (;;) {
+      const result = await typesense.search({
+        collection: "otel_events",
+        q: "*",
+        query_by: "action,component,source,error,metadata_json,search_text",
+        per_page: perPage,
+        page,
+        include_fields: "id,metadata_json",
+        sort_by: "timestamp:desc",
+        filter_by: filterBy,
+      });
+
+      const hits = Array.isArray(result.hits) ? result.hits : [];
+      for (const hit of hits) {
+        totalEvents += 1;
+        const metadata = parseMetadataJson(hit.document?.metadata_json);
+        const hasCounts =
+          metadata.allowCount != null ||
+          metadata.holdCount != null ||
+          metadata.discardCount != null ||
+          metadata.fallbackCount != null;
+        if (!hasCounts) continue;
+
+        eventsWithGateCounts += 1;
+        allowCount += asFiniteNumber(metadata.allowCount, 0);
+        holdCount += asFiniteNumber(metadata.holdCount, 0);
+        discardCount += asFiniteNumber(metadata.discardCount, 0);
+        fallbackCount += asFiniteNumber(metadata.fallbackCount, 0);
+      }
+
+      if (hits.length < perPage) break;
+      page += 1;
+    }
+
+    const totalWithVerdict = allowCount + holdCount + discardCount;
+    const holdRatio = totalWithVerdict > 0 ? holdCount / totalWithVerdict : 0;
+    const discardRatio = totalWithVerdict > 0 ? discardCount / totalWithVerdict : 0;
+    const fallbackRate = totalWithVerdict > 0 ? fallbackCount / totalWithVerdict : 0;
+
+    return {
+      totalEvents,
+      eventsWithGateCounts,
+      legacyEvents: Math.max(0, totalEvents - eventsWithGateCounts),
+      allowCount,
+      holdCount,
+      discardCount,
+      fallbackCount,
+      totalWithVerdict,
+      holdRatio,
+      discardRatio,
+      fallbackRate,
+      windowMinutes,
+      minEvents,
+      holdRatioThreshold,
+      discardRatioThreshold,
+      fallbackRateThreshold,
+      shouldEscalate:
+        eventsWithGateCounts >= minEvents
+        && (fallbackRate >= fallbackRateThreshold
+          || holdRatio >= holdRatioThreshold
+          || discardRatio >= discardRatioThreshold),
+    };
+  } catch (error) {
+    return {
+      totalEvents: 0,
+      eventsWithGateCounts: 0,
+      legacyEvents: 0,
+      allowCount: 0,
+      holdCount: 0,
+      discardCount: 0,
+      fallbackCount: 0,
+      totalWithVerdict: 0,
+      holdRatio: 0,
+      discardRatio: 0,
+      fallbackRate: 0,
+      windowMinutes,
+      minEvents,
+      holdRatioThreshold,
+      discardRatioThreshold,
+      fallbackRateThreshold,
+      shouldEscalate: false,
+      unavailable: String(error),
+    };
+  }
+}
+
 export const checkSystemHealth = inngest.createFunction(
   { id: "check/system-health", concurrency: { limit: 1 }, retries: 1 },
   [{ event: "system/health.requested" }, { event: "system/health.check" }],
@@ -303,6 +452,10 @@ export const checkSystemHealth = inngest.createFunction(
       checkOtelErrorRate()
     );
 
+    const writeGateDrift = await step.run("check-memory-write-gate-drift", async () =>
+      checkWriteGateDrift()
+    );
+
     await step.run("emit-otel-health-summary", async () => {
       const degradedCount = services.filter((service) => !service.ok).length;
       await emitOtelEvent({
@@ -318,6 +471,7 @@ export const checkSystemHealth = inngest.createFunction(
             ok: service.ok,
           })),
           otelErrorRate,
+          writeGateDrift,
         },
       });
     });
@@ -367,6 +521,55 @@ export const checkSystemHealth = inngest.createFunction(
           `Elevated error rate: ${Math.round(otelErrorRate.rate * 100)}%`,
           `Errors ${otelErrorRate.errors}/${otelErrorRate.total} in ${otelErrorRate.windowMinutes}m`
         );
+      });
+    }
+
+    if (writeGateDrift.shouldEscalate) {
+      await step.run("notify-memory-write-gate-drift", async () => {
+        const prompt = [
+          "## ⚠️ Memory Write-Gate Drift",
+          "",
+          `Window: last ${writeGateDrift.windowMinutes} minutes`,
+          `Observe events with gate counts: ${writeGateDrift.eventsWithGateCounts}/${writeGateDrift.totalEvents}`,
+          `allow|hold|discard: ${writeGateDrift.allowCount}|${writeGateDrift.holdCount}|${writeGateDrift.discardCount}`,
+          `hold ratio: ${Math.round(writeGateDrift.holdRatio * 100)}% (threshold ${Math.round(writeGateDrift.holdRatioThreshold * 100)}%)`,
+          `discard ratio: ${Math.round(writeGateDrift.discardRatio * 100)}% (threshold ${Math.round(writeGateDrift.discardRatioThreshold * 100)}%)`,
+          `fallback rate: ${Math.round(writeGateDrift.fallbackRate * 100)}% (threshold ${Math.round(writeGateDrift.fallbackRateThreshold * 100)}%)`,
+          "",
+          "Investigate observe prompt/parser drift and recent ingest quality.",
+        ].join("\n");
+
+        await pushGatewayEvent({
+          type: "system.health.memory-write-gate-drift",
+          source: "inngest/check-system-health",
+          payload: {
+            prompt,
+            level: "warn",
+            immediateTelegram: true,
+            writeGateDrift,
+          },
+        });
+      });
+
+      await step.run("notify-convex-memory-write-gate-drift", async () => {
+        await pushNotification(
+          "error",
+          "Memory write-gate drift detected",
+          `hold=${Math.round(writeGateDrift.holdRatio * 100)}% discard=${Math.round(writeGateDrift.discardRatio * 100)}% fallback=${Math.round(writeGateDrift.fallbackRate * 100)}%`
+        );
+      });
+
+      await step.run("emit-memory-write-gate-drift", async () => {
+        await emitOtelEvent({
+          level: "warn",
+          source: "worker",
+          component: "check-system-health",
+          action: "memory.write_gate_drift.detected",
+          success: false,
+          metadata: {
+            writeGateDrift,
+          },
+        });
       });
     }
 

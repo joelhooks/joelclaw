@@ -593,6 +593,49 @@ const inngestRestartWorkerCmd = Command.make(
     })
 )
 
+const inngestSyncWorkerCmd = Command.make(
+  "sync-worker",
+  {
+    restart: Options.boolean("restart").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Restart worker before registration (default: false)")
+    ),
+    waitMs: Options.integer("wait-ms").pipe(
+      Options.withDefault(1500),
+      Options.withDescription("Wait between restart/register/probe checks (default: 1500ms)")
+    ),
+  },
+  ({ restart, waitMs }) =>
+    Effect.gen(function* () {
+      let restarted = false
+      if (restart) {
+        yield* restartWorker()
+        restarted = true
+        if (waitMs > 0) {
+          yield* sleepMs(waitMs)
+        }
+      }
+
+      const registerResult = yield* registerWorkerFunctions().pipe(Effect.either)
+      if (waitMs > 0) {
+        yield* sleepMs(Math.max(500, Math.floor(waitMs / 2)))
+      }
+
+      const probe = yield* workerProbe().pipe(Effect.either)
+      const regOk = registerResult._tag === "Right" && registerResult.right.ok
+      const probeOk = probe._tag === "Right" ? probe.right.ok : false
+
+      yield* Console.log(respond("inngest sync-worker", {
+        restarted,
+        registerResult,
+        workerProbe: probe,
+      }, [
+        { command: "joelclaw inngest status", description: "Confirm worker + registration health" },
+        { command: "joelclaw functions", description: "List currently registered functions" },
+      ], regOk && probeOk))
+    })
+)
+
 const inngestReconcileCmd = Command.make(
   "reconcile",
   {
@@ -1604,6 +1647,7 @@ export const inngestCmd = Command.make("inngest", {}, () =>
       workers: "joelclaw inngest workers",
       register: "joelclaw inngest register [--wait-ms 1200]",
       "restart-worker": "joelclaw inngest restart-worker [--register] [--wait-ms 1500]",
+      "sync-worker": "joelclaw inngest sync-worker [--restart] [--wait-ms 1500]",
       reconcile: "joelclaw inngest reconcile [--deep]",
       "memory-e2e": "joelclaw inngest memory-e2e [--wait-ms 90000] [--poll-ms 1500]",
       "memory-weekly": "joelclaw inngest memory-weekly [--wait-ms 30000] [--poll-ms 1000]",
@@ -1617,6 +1661,7 @@ export const inngestCmd = Command.make("inngest", {}, () =>
     { command: "joelclaw inngest workers", description: "Worker role + duplicate-id diagnostics" },
     { command: "joelclaw inngest register", description: "Register functions from worker" },
     { command: "joelclaw inngest restart-worker --register", description: "Restart worker and register functions" },
+    { command: "joelclaw inngest sync-worker --restart", description: "Compatibility alias: restart then register worker" },
     { command: "joelclaw inngest reconcile", description: "Restart worker + register functions" },
     { command: "joelclaw inngest memory-e2e", description: "Run memory observe→Typesense→recall E2E check" },
     { command: "joelclaw inngest memory-weekly", description: "Manually run weekly memory maintenance summary and verify OTEL" },
@@ -1630,6 +1675,7 @@ export const inngestCmd = Command.make("inngest", {}, () =>
     inngestWorkersCmd,
     inngestRegisterCmd,
     inngestRestartWorkerCmd,
+    inngestSyncWorkerCmd,
     inngestReconcileCmd,
     inngestMemoryE2ECmd,
     inngestMemoryWeeklyCmd,

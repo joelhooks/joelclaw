@@ -9,6 +9,7 @@ const cfg = loadConfig()
 const GQL = `${cfg.inngestUrl}/v0/gql`
 const EVENT_API = `${cfg.inngestUrl}/e/${cfg.eventKey}`
 const WORKER = cfg.workerUrl
+const INNGEST_HEALTH = `${cfg.inngestUrl}/health`
 
 // ── Errors ───────────────────────────────────────────────────────────
 
@@ -247,27 +248,15 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
     const health = Effect.fn("Inngest.health")(function* () {
       const checks: Record<string, { ok: boolean; detail?: string }> = {}
 
-      // inngest server
-      try {
-        const res = yield* Effect.tryPromise({
-          try: () => fetch("http://localhost:8288/health").then((r) => r.text()),
-          catch: () => new InngestError("server unreachable"),
-        })
-        checks.server = { ok: true, detail: res }
-      } catch {
-        checks.server = { ok: false, detail: "unreachable" }
-      }
+      checks.server = yield* Effect.tryPromise({
+        try: () => probeServerHealth(),
+        catch: () => ({ ok: false, detail: "unreachable" }),
+      })
 
-      // worker
-      try {
-        const res = yield* Effect.tryPromise({
-          try: () => fetch(WORKER).then((r) => r.json()),
-          catch: () => new InngestError("worker unreachable"),
-        })
-        checks.worker = { ok: true, detail: (res as any).functions?.join(", ") }
-      } catch {
-        checks.worker = { ok: false, detail: "unreachable" }
-      }
+      checks.worker = yield* Effect.tryPromise({
+        try: () => probeWorkerHealth(),
+        catch: () => ({ ok: false, detail: "unreachable" }),
+      })
 
       // k8s pods
       try {
@@ -288,6 +277,84 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
 }) {}
 
 // ── helpers ──────────────────────────────────────────────────────────
+
+type HealthCheck = { ok: boolean; detail: string }
+
+async function fetchTextWithTimeout(url: string, timeoutMs = 4000): Promise<{ ok: boolean; status: number; body: string }> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const res = await fetch(url, { signal: controller.signal })
+    const body = await res.text().catch(() => "")
+    return {
+      ok: res.ok,
+      status: res.status,
+      body,
+    }
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      body: "",
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function probeServerHealth(): Promise<HealthCheck> {
+  const res = await fetchTextWithTimeout(INNGEST_HEALTH)
+  if (!res.ok) return { ok: false, detail: `unreachable (${INNGEST_HEALTH})` }
+  return { ok: true, detail: res.body || `HTTP ${res.status}` }
+}
+
+function parseWorkerDetail(rawBody: string, endpoint: string, status: number): string {
+  if (!rawBody) return `ok (${endpoint})`
+
+  try {
+    const parsed = JSON.parse(rawBody) as Record<string, unknown>
+    const functions = Array.isArray(parsed.functions)
+      ? parsed.functions.filter((value): value is string => typeof value === "string")
+      : []
+
+    if (functions.length > 0) return functions.join(", ")
+
+    const workerStatus = typeof parsed.status === "string" ? parsed.status : undefined
+    if (workerStatus && workerStatus.length > 0) return `${workerStatus} (${endpoint})`
+
+    const service = typeof parsed.service === "string" ? parsed.service : undefined
+    if (service && service.length > 0) return `${service} (${endpoint})`
+  } catch {
+    // plain-text endpoint; fall through
+  }
+
+  const compact = rawBody.replace(/\s+/gu, " ").trim()
+  return compact.length > 0 ? compact.slice(0, 400) : `HTTP ${status} (${endpoint})`
+}
+
+async function probeWorkerHealth(): Promise<HealthCheck> {
+  const base = WORKER.replace(/\/$/u, "")
+  const candidates = [...new Set([base, `${base}/health`, `${base}/api/inngest`])]
+  let lastDetail = `unreachable (${base})`
+
+  for (const endpoint of candidates) {
+    const res = await fetchTextWithTimeout(endpoint)
+    if (!res.ok) {
+      lastDetail = res.status > 0
+        ? `HTTP ${res.status} (${endpoint})`
+        : `unreachable (${endpoint})`
+      continue
+    }
+
+    return {
+      ok: true,
+      detail: parseWorkerDetail(res.body, endpoint, res.status),
+    }
+  }
+
+  return { ok: false, detail: lastDetail }
+}
 
 function flattenSpans(span: any): Array<{ name: string; status: string; outputID?: string }> {
   const result: Array<{ name: string; status: string; outputID?: string }> = []
