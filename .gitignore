@@ -49,8 +49,6 @@ yarn-error.log*
 !.agents/skills/joelclaw-web/
 .claude/skills/*
 # Root skills/ dir created by npx skills add
-skills/
-
 # Agent tool dirs created by `npx skills add --all`
 .adal/
 .agent/
