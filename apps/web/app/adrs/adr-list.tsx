@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { AdrMeta } from "@/lib/adrs";
 import { STATUS_CONFIG } from "./status-config";
 import { AdrFilterBar, useStatusFilter } from "./adr-filters";
+import { formatDateStatic } from "@/lib/date";
 
 function StatusBadge({ status }: { status: string }) {
   const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.proposed!;
@@ -18,11 +19,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function formatDate(dateStr: string) {
   if (!dateStr) return "";
-  return new Date(dateStr).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+  return formatDateStatic(dateStr, { monthStyle: "short", includeYear: true });
 }
 
 function AdrRow({ adr, hidden }: { adr: AdrMeta; hidden: boolean }) {

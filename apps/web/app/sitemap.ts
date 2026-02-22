@@ -2,14 +2,14 @@ import type { MetadataRoute } from "next";
 import { getAllPosts } from "@/lib/posts";
 import { getAllAdrs } from "@/lib/adrs";
 import { SITE_URL } from "@/lib/constants";
-import { parseDateValue } from "@/lib/date";
+import { toDateString } from "@/lib/date";
 
-function getLastModified(...candidates: unknown[]): Date {
+function getLastModified(...candidates: unknown[]): string {
   for (const candidate of candidates) {
-    const parsed = parseDateValue(candidate);
+    const parsed = toDateString(candidate);
     if (parsed) return parsed;
   }
-  return new Date();
+  return "2026-01-01T00:00:00.000Z";
 }
 
 export default function sitemap(): MetadataRoute.Sitemap {
@@ -40,14 +40,14 @@ export default function sitemap(): MetadataRoute.Sitemap {
   return [
     {
       url: SITE_URL,
-      lastModified: new Date(),
+      lastModified: "2026-01-01T00:00:00.000Z",
       changeFrequency: "weekly",
       priority: 1,
     },
     ...postEntries,
     {
       url: `${SITE_URL}/adrs`,
-      lastModified: new Date(),
+      lastModified: "2026-01-01T00:00:00.000Z",
       changeFrequency: "weekly",
       priority: 0.6,
     },

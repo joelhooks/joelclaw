@@ -1,8 +1,8 @@
 import { notFound } from "next/navigation";
-import { connection } from "next/server";
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import { MDXRemote } from "next-mdx-remote/rsc";
+import { headers } from "next/headers";
 import { getPost, getPostSlugs } from "@/lib/posts";
 import { mdxComponents } from "@/lib/mdx";
 import { remarkPlugins, rehypePlugins } from "@/lib/mdx-plugins";
@@ -112,9 +112,11 @@ export default async function PostPage({ params }: Props) {
   );
 }
 
-/** MDX rendering — connection() opts into dynamic rendering before Date.now(). */
+/** MDX rendering for static post content. */
 async function PostContent({ content }: { content: string }) {
-  await connection();
+  // next-mdx-remote currently reads Date.now(); mark this as a dynamic hole.
+  await headers();
+
   return (
     <div className="prose-joelclaw">
       <MDXRemote

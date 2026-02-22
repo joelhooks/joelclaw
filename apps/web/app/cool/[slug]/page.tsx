@@ -1,7 +1,9 @@
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { MDXRemote } from "next-mdx-remote/rsc";
+import { headers } from "next/headers";
 import { getDiscovery, getDiscoverySlugs } from "@/lib/discoveries";
 import { mdxComponents } from "@/lib/mdx";
 import { remarkPlugins, rehypePlugins } from "@/lib/mdx-plugins";
@@ -91,15 +93,9 @@ export default async function DiscoveryPage({ params }: Props) {
           </p>
         )}
       </header>
-      <div className="prose-joelclaw">
-        <MDXRemote
-          source={content}
-          components={mdxComponents}
-          options={{
-            mdxOptions: { remarkPlugins, rehypePlugins, format: "md" },
-          }}
-        />
-      </div>
+      <Suspense>
+        <DiscoveryContent content={content} />
+      </Suspense>
       <div className="mt-12 pt-6 border-t border-neutral-800">
         <Link
           href="/cool"
@@ -109,5 +105,22 @@ export default async function DiscoveryPage({ params }: Props) {
         </Link>
       </div>
     </article>
+  );
+}
+
+async function DiscoveryContent({ content }: { content: string }) {
+  // next-mdx-remote currently reads Date.now(); mark this as a dynamic hole.
+  await headers();
+
+  return (
+    <div className="prose-joelclaw">
+      <MDXRemote
+        source={content}
+        components={mdxComponents}
+        options={{
+          mdxOptions: { remarkPlugins, rehypePlugins, format: "md" },
+        }}
+      />
+    </div>
   );
 }

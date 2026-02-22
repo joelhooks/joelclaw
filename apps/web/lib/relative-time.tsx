@@ -5,23 +5,7 @@
  * ("2d ago"). Caused CLS on hydration because server and client
  * rendered different strings. Static dates are deterministic.
  */
-
-function formatDate(date: Date): string {
-  return date.toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function formatFull(date: Date): string {
-  return date.toLocaleDateString("en-US", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-}
+import { formatDateStatic } from "@/lib/date";
 
 export function RelativeTime({
   date,
@@ -30,11 +14,12 @@ export function RelativeTime({
   date: string;
   className?: string;
 }) {
-  const parsed = new Date(date);
+  const title = formatDateStatic(date, { monthStyle: "long", includeYear: true });
+  const label = formatDateStatic(date, { monthStyle: "short", includeYear: true });
 
   return (
-    <time dateTime={date} title={formatFull(parsed)} className={className}>
-      {formatDate(parsed)}
+    <time dateTime={date} title={title} className={className}>
+      {label}
     </time>
   );
 }

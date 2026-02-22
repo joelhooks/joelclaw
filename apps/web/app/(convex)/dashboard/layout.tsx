@@ -3,6 +3,7 @@
  * Full route cache: this layout is pre-rendered at build time.
  */
 import Link from "next/link";
+import { SITE_COPYRIGHT_YEAR } from "@/lib/constants";
 
 export default function DashboardLayout({
   children,
@@ -27,9 +28,7 @@ export default function DashboardLayout({
             ← site
           </Link>
           <span className="text-neutral-600">|</span>
-          <span suppressHydrationWarning>
-            {new Date().toISOString().slice(0, 10)}
-          </span>
+          <span>{SITE_COPYRIGHT_YEAR}</span>
         </div>
       </div>
       {children}

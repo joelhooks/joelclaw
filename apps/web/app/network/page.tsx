@@ -1,4 +1,6 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { ConvexHttpClient } from "convex/browser";
 import { MetricCard } from "@repo/ui/metric-card";
 import { DataGrid } from "@repo/ui/data-grid";
@@ -49,8 +51,6 @@ type ContentResourceDoc = {
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
 // ADR-0085: Network page becomes data-driven from Convex contentResources.
-export const revalidate = 300;
-
 export const metadata: Metadata = {
   title: `Network — ${SITE_NAME}`,
   description:
@@ -58,11 +58,60 @@ export const metadata: Metadata = {
 };
 
 async function listByType(type: string): Promise<ContentResourceDoc[]> {
-  const docs = await convex.query(api.contentResources.listByType, { type, limit: 500 });
-  return Array.isArray(docs) ? (docs as ContentResourceDoc[]) : [];
+  try {
+    const docs = await convex.query(api.contentResources.listByType, { type, limit: 500 });
+    return Array.isArray(docs) ? (docs as ContentResourceDoc[]) : [];
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const digest =
+      typeof error === "object" && error !== null && "digest" in error
+        ? String((error as { digest?: unknown }).digest ?? "")
+        : "";
+
+    // Suspense may abort unresolved prerender fetches once the static shell is emitted.
+    if (digest === "HANGING_PROMISE_REJECTION" || message.includes("During prerendering, fetch() rejects")) {
+      return [];
+    }
+
+    // Offline-safe fallback for build environments where Convex is unreachable.
+    console.error(`[network] failed to load ${type}`, error);
+    return [];
+  }
 }
 
-export default async function NetworkPage() {
+export default function NetworkPage() {
+  return (
+    <div className="mx-auto max-w-[1800px] space-y-12">
+      <header>
+        <h1 className="text-2xl font-bold tracking-tight">Network</h1>
+        <p className="mt-2 text-sm text-neutral-400 leading-relaxed">
+          Always-on personal infrastructure. <span className="text-claw">Overlook</span> runs the cluster, agents,
+          and all pipelines. <span className="text-neutral-300">Blaine</span> bridges telephony.{" "}
+          <span className="text-neutral-300">Derry</span> holds 64 TB of archive. Everything connected via encrypted
+          WireGuard mesh.
+        </p>
+      </header>
+
+      <Suspense fallback={<NetworkSectionsFallback />}>
+        <NetworkSections />
+      </Suspense>
+    </div>
+  );
+}
+
+function NetworkSectionsFallback() {
+  return (
+    <section className="space-y-3">
+      <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">Loading network state</h2>
+      <div className="border border-neutral-800/40 rounded-lg p-5 text-sm text-neutral-500">Resolving live topology…</div>
+    </section>
+  );
+}
+
+async function NetworkSections() {
+  // Keep the network data panel request-time so static prerender never blocks on Convex.
+  await headers();
+
   const [nodeDocs, podDocs, daemonDocs, clusterDocs, stackDocs] = await Promise.all([
     listByType("network_node"),
     listByType("network_pod"),
@@ -108,17 +157,7 @@ export default async function NetworkPage() {
     .map((layer) => `Layer ${layer.layer}: ${layer.label.padEnd(13)} — ${layer.description}`);
 
   return (
-    <div className="mx-auto max-w-[1800px] space-y-12">
-      <header>
-        <h1 className="text-2xl font-bold tracking-tight">Network</h1>
-        <p className="mt-2 text-sm text-neutral-400 leading-relaxed">
-          Always-on personal infrastructure. <span className="text-claw">Overlook</span> runs the cluster, agents,
-          and all pipelines. <span className="text-neutral-300">Blaine</span> bridges telephony.{' '}
-          <span className="text-neutral-300">Derry</span> holds 64 TB of archive. Everything connected via encrypted
-          WireGuard mesh.
-        </p>
-      </header>
-
+    <>
       <section className="space-y-3">
         <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">Cluster</h2>
         <DataGrid columns={{ sm: 1, md: 2, lg: 2, xl: 4 }}>
@@ -232,6 +271,6 @@ export default async function NetworkPage() {
           </pre>
         </div>
       </section>
-    </div>
+    </>
   );
 }

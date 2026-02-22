@@ -1,6 +1,6 @@
 import { getAllPosts } from "@/lib/posts";
 import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, AUTHOR } from "@/lib/constants";
-import { parseDateValue } from "@/lib/date";
+import { formatRssPubDate } from "@/lib/date";
 
 export function GET() {
   const posts = getAllPosts();
@@ -13,7 +13,7 @@ export function GET() {
       <link>${SITE_URL}/${post.slug}</link>
       <guid isPermaLink="true">${SITE_URL}/${post.slug}</guid>
       <description><![CDATA[${post.description}]]></description>
-      <pubDate>${(parseDateValue(post.updated ?? post.date) ?? new Date()).toUTCString()}</pubDate>
+      <pubDate>${formatRssPubDate(post.updated ?? post.date)}</pubDate>
     </item>`,
     )
     .join("\n");

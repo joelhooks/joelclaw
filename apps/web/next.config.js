@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  cacheComponents: true,
   typescript: {
     // Convex component types require transient dependency references
     // that Next.js type checker can't resolve. Convex handles its own typing.

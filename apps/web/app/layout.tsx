@@ -1,9 +1,15 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { GeistPixelSquare } from "geist/font/pixel";
+import { Suspense } from "react";
 import { NuqsAdapter } from "nuqs/adapters/next";
-import { ConvexClientProvider } from "./ConvexClientProvider";
-import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, AUTHOR } from "@/lib/constants";
+import {
+  SITE_URL,
+  SITE_NAME,
+  SITE_DESCRIPTION,
+  AUTHOR,
+  SITE_COPYRIGHT_YEAR,
+} from "@/lib/constants";
 import { personJsonLd } from "@/lib/jsonld";
 import { Github } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
@@ -85,16 +91,16 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} ${dankMono.variable} ${GeistPixelSquare.variable} font-sans bg-neutral-950 text-neutral-100 antialiased`}
       >
         <div className="mx-auto max-w-[1800px] px-4 sm:px-6 lg:px-8 xl:px-12 py-8 sm:py-12 lg:py-16">
-          <SiteHeader />
-          <ConvexClientProvider>
-            <NuqsAdapter>
-              <main>{children}</main>
-            </NuqsAdapter>
-          </ConvexClientProvider>
+          <Suspense fallback={<header className="mb-16" />}>
+            <SiteHeader />
+          </Suspense>
+          <NuqsAdapter>
+            <main>{children}</main>
+          </NuqsAdapter>
           <footer className="mt-12 sm:mt-16 lg:mt-24 pt-6 sm:pt-8 border-t border-neutral-800 text-sm text-neutral-500">
             <div className="flex items-center justify-between">
               <p>
-                © {new Date().getFullYear()} {AUTHOR.name}
+                © {SITE_COPYRIGHT_YEAR} {AUTHOR.name}
               </p>
               <a
                 href="https://github.com/joelhooks/joelclaw"

@@ -2,6 +2,7 @@ import { ImageResponse } from "next/og";
 import { getPost, getPostSlugs } from "@/lib/posts";
 import type { ContentType } from "@/lib/posts";
 import { clawSvg, CLAW_COLOR } from "@/lib/claw";
+import { formatDateStatic } from "@/lib/date";
 
 export const alt = "JoelClaw";
 export const size = { width: 1200, height: 630 };
@@ -39,11 +40,7 @@ export default async function Image({
   const accentColor = TYPE_COLORS[type];
 
   const formattedDate = date
-    ? new Date(date).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      })
+    ? formatDateStatic(date, { monthStyle: "short", includeYear: true })
     : "";
 
   return new ImageResponse(

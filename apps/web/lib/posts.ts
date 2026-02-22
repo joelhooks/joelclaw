@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import matter from "gray-matter";
-import { parseDateValue, toDateString } from "./date";
+import { compareDateDesc, toDateString } from "./date";
 
 export type ContentType = "article" | "essay" | "note" | "tutorial";
 
@@ -45,10 +45,8 @@ export function getAllPosts(): PostMeta[] {
     })
     .filter((post) => process.env.NODE_ENV === "development" || !post.draft)
     .sort((a, b) => {
-      // Sort by most recent timestamp — use updated if available, fall back to date
-      const aTime = parseDateValue(a.updated ?? a.date)?.getTime() ?? 0;
-      const bTime = parseDateValue(b.updated ?? b.date)?.getTime() ?? 0;
-      return bTime - aTime;
+      // Dates are stored as ISO-ish strings; compare normalized keys directly.
+      return compareDateDesc(a.updated ?? a.date, b.updated ?? b.date);
     });
 }
 

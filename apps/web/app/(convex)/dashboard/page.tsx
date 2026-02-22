@@ -13,6 +13,16 @@ import { DataGrid } from "@repo/ui/data-grid";
 
 // ── System Health Panel ─────────────────────────────────────────
 
+function formatMillisTime(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "";
+  if (typeof window === "undefined") return String(ms);
+  return new Date(ms).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 function SystemHealth() {
   const statusResources = useQuery(api.contentResources.listByType, {
     type: "system_status",
@@ -156,11 +166,7 @@ function NotificationFeed() {
                     {n.title}
                   </span>
                   <span className="shrink-0 font-mono text-[10px] text-neutral-500">
-                    {new Date(n.createdAt).toLocaleTimeString("en-US", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                      hour12: false,
-                    })}
+                    {formatMillisTime(n.createdAt)}
                   </span>
                 </div>
                 {n.body && (

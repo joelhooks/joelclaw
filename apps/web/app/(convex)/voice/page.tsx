@@ -16,6 +16,12 @@ type Transcript = {
   timestamp: number;
 };
 
+function formatUnixSeconds(ts: number): string {
+  if (!Number.isFinite(ts) || ts <= 0) return "";
+  if (typeof window === "undefined") return String(ts);
+  return new Date(ts * 1000).toLocaleString();
+}
+
 export default function VoicePage() {
   const router = useRouter();
   const { data: session, isPending } = authClient.useSession();
@@ -82,7 +88,7 @@ export default function VoicePage() {
                 {t.turns} turns
               </span>
               <span className="ml-auto font-mono text-[10px] text-neutral-600">
-                {new Date(t.timestamp * 1000).toLocaleString()}
+                {formatUnixSeconds(t.timestamp)}
               </span>
             </div>
             <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-neutral-300">

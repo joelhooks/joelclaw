@@ -18,6 +18,12 @@ const CATEGORY_COLORS: Record<string, string> = {
   general: "text-neutral-400 bg-neutral-500/10",
 };
 
+function formatUnixSeconds(ts: number): string {
+  if (!Number.isFinite(ts) || ts <= 0) return "";
+  if (typeof window === "undefined") return String(ts);
+  return new Date(ts * 1000).toLocaleString();
+}
+
 export default function MemoryPage() {
   const router = useRouter();
   const { data: session, isPending } = authClient.useSession();
@@ -121,7 +127,7 @@ export default function MemoryPage() {
                   <span className="rounded bg-neutral-800 px-1.5 py-0.5 font-pixel text-[9px] text-neutral-500">superseded</span>
                 )}
                 <span className="ml-auto font-mono text-[10px] text-neutral-600">
-                  {new Date(obs.timestamp * 1000).toLocaleString()}
+                  {formatUnixSeconds(obs.timestamp)}
                 </span>
               </div>
               <p className="font-mono text-sm leading-relaxed text-neutral-300">

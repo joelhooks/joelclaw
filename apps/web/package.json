@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "next dev --port 3000",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "check-types": "next typegen && tsc --noEmit",
     "registry:build": "shadcn build"

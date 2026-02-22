@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { getAllDiscoveries } from "@/lib/discoveries";
 import { SITE_NAME } from "@/lib/constants";
+import { formatDateStatic } from "@/lib/date";
 
 export const metadata: Metadata = {
   title: `Cool Finds — ${SITE_NAME}`,
@@ -23,15 +24,8 @@ function typeBadge(tags: string[]) {
   return { label: "find", cls: "bg-neutral-800 text-neutral-400" };
 }
 
-function relativeDate(iso: string): string {
-  const d = new Date(iso + "T12:00:00");
-  const now = new Date();
-  const days = Math.floor((now.getTime() - d.getTime()) / 86400000);
-  if (days === 0) return "today";
-  if (days === 1) return "yesterday";
-  if (days < 7) return `${days}d ago`;
-  if (days < 30) return `${Math.floor(days / 7)}w ago`;
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+function discoveryDate(iso: string): string {
+  return formatDateStatic(iso, { monthStyle: "short", includeYear: false });
 }
 
 export default function CoolPage() {
@@ -62,7 +56,7 @@ export default function CoolPage() {
                     {badge.label}
                   </span>
                   <span className="text-[11px] text-neutral-600 tabular-nums">
-                    {d.discovered ? relativeDate(d.discovered) : ""}
+                    {d.discovered ? discoveryDate(d.discovered) : ""}
                   </span>
                 </div>
                 <h2 className="text-[15px] font-semibold leading-snug text-neutral-200 group-hover:text-white transition-colors">
