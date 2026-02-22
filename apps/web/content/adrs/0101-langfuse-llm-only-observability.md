@@ -247,6 +247,7 @@ Migrate LLM subprocess callsites in:
 - 2026-02-21: Phase 1 pilot started in `packages/cli/src/commands/recall.ts` with Langfuse generation traces for query rewrite (provider/model/usage/cost captured from `pi --mode json`).
 - 2026-02-22: Hosted rollout expanded in `@joelclaw/system-bus` with shared Langfuse LLM tracing helpers and instrumentation added to major inference paths (`observability/triage`, `check-email`, `task-triage`, `observe`, `reflect`, `memory/batch-review`, `content-sync`, `promote`, `vip-email-received`, `daily-digest`, `transcript-process`, `media-process`, `agent-dispatch` for `tool=pi`).
 - 2026-02-22: Post-rollout validation confirmed new trace names in hosted Langfuse, including `joelclaw.agent-dispatch`.
+- 2026-02-22: Remaining `step.ai.infer` callsite inventory in `@joelclaw/system-bus` reduced to `daily-digest`; callsite now emits Langfuse traces on both success and failure with inferred provider/model and extracted usage token fields when available.
 
 ## Status
 

@@ -117,6 +117,15 @@ Phase 1 kickoff started.
   - live trigger (no dedicated CLI invoke surface yet): `POST /v0/gql invokeFunction(functionSlug: "system-bus-host-check/o11y-triage")`
   - `joelclaw otel search "auto_fix.applied" --hours 1` shows metadata keys including `runbookCode`, `runbookPhase`, `recoverCommand`, `runbookCommands`
   - `joelclaw otel search "joelclaw recover" --hours 1` returns the emitted `auto_fix.applied` event, confirming runbook recovery command is queryable
+- Phase-2 CLI path-hardening follow-up implemented:
+  - added compatibility subcommand `joelclaw inngest sync-worker [--restart] [--wait-ms]` to align with operational command contract in AGENTS docs.
+  - `Inngest.health` worker probing now uses resilient endpoint fallback (`$INNGEST_WORKER_URL`, `$INNGEST_WORKER_URL/health`, `$INNGEST_WORKER_URL/api/inngest`) and robust response parsing to prevent transient false `worker unreachable` path errors.
+- Phase-2 CLI path-hardening validation passed:
+  - `cd packages/cli && bunx tsc --noEmit -p tsconfig.json`
+  - `cd packages/cli && bun src/cli.ts inngest sync-worker --help`
+  - `joelclaw inngest sync-worker --restart --wait-ms 500`
+  - `joelclaw status`
+  - `joelclaw inngest status`
 
 ## Design Contract
 
