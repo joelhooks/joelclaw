@@ -107,10 +107,10 @@ Files:
 ## Acceptance Criteria
 
 - [ ] Every retrieval path emits `budget_profile` and budget diagnostics in OTEL.
-- [ ] `joelclaw recall --budget <profile>` deterministically changes retrieval behavior.
-- [ ] Lean profile reduces latency/cost for simple queries without catastrophic quality loss.
+- [x] `joelclaw recall --budget <profile>` deterministically changes retrieval behavior.
+- [x] Lean profile reduces latency/cost for simple queries without catastrophic quality loss.
 - [ ] Deep profile improves difficult-query hit quality compared to balanced baseline.
-- [ ] Default `auto` profile is explainable in output (`why this profile was selected`).
+- [x] Default `auto` profile is explainable in output (`why this profile was selected`).
 
 ## Verification Commands
 
@@ -146,6 +146,24 @@ Files:
 - ADR-0078: Opus Token Reduction
 - ADR-0095: Typesense-Native Memory Categories (dependency for domain-aware budgeting)
 
+## More Information
+
+### 2026-02-22 validation snapshot
+
+Budget corpus run (6 queries, `--limit 5`, lean vs deep):
+- lean average latency: ~618ms
+- deep average latency: ~5375ms
+
+Observed behavior:
+- Lean consistently disables rewrite and returns quickly.
+- Deep consistently enables rewrite and higher fetch depth.
+- Auto mode surfaces explicit selection reason in output/OTEL (`budgetRequested`, `budgetApplied`, `budgetReason`).
+- Quality uplift from deep over baseline is mixed in this corpus; not yet consistently better.
+
+Remaining acceptance gaps:
+- Context prefetch path does not yet emit explicit budget-profile OTEL diagnostics.
+- Deep-quality superiority gate is not yet met.
+
 ## Status
 
-Proposed.
+Proposed (pending full retrieval-path OTEL parity and deep-quality evidence gate).

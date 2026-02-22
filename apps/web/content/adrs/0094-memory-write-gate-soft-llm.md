@@ -105,11 +105,11 @@ Adopt a **soft write gate** at memory ingest with these policies:
 
 ## Acceptance Criteria
 
-- [ ] Mixed-quality observation batches persist all documents with gate metadata in Typesense.
-- [ ] Reflect input excludes `hold` and `discard` by default.
-- [ ] Default recall/prefetch exclude `hold`/`discard`; debug path can surface `hold`.
-- [ ] Fallback path is explicit (`write_gate_fallback=true`) and visible in OTEL.
-- [ ] OTEL includes verdict counts per ingest run (`allowCount`, `holdCount`, `discardCount`, `fallbackCount`).
+- [x] Mixed-quality observation batches persist all documents with gate metadata in Typesense.
+- [x] Reflect input excludes `hold` and `discard` by default.
+- [x] Default recall/prefetch exclude `hold`/`discard`; debug path can surface `hold`.
+- [x] Fallback path is explicit (`write_gate_fallback=true`) and visible in OTEL.
+- [x] OTEL includes verdict counts per ingest run (`allowCount`, `holdCount`, `discardCount`, `fallbackCount`).
 - [ ] Proposal noise drops measurably after rollout (tracked window in OTEL/weekly summary).
 
 ## Verification Commands
@@ -148,6 +148,17 @@ Adopt a **soft write gate** at memory ingest with these policies:
 - ADR-0068: Memory Proposal Auto-Triage Pipeline
 - ADR-0087: Observability contract
 
+## More Information
+
+### 2026-02-22 validation snapshot
+
+- `joelclaw inngest memory-e2e --wait-ms 120000 --poll-ms 1500 --json` produced mixed write verdicts and fallback in one run (`allow=4`, `discard=1`, `fallback=1`) with persisted metadata in `memory_observations`.
+- `joelclaw recall "memory-e2e-mlx5t4fl-z1sg4r" --category memory --limit 5 --json` showed default `hold` exclusion (`held_by_write_gate` in dropped diagnostics) while surfacing `allow` observations.
+- `joelclaw otel search "memory.write_gate_drift.detected" --hours 2 --json` confirmed health-check alert hook emission for drift conditions.
+- `joelclaw otel search "system.health.checked" --hours 1 --json` now includes `writeGateDrift` in health metadata.
+
+Remaining acceptance gap: measurable proposal-noise reduction trend over a longer post-rollout window.
+
 ## Status
 
-Proposed.
+Proposed (pending long-window proposal-noise reduction evidence).

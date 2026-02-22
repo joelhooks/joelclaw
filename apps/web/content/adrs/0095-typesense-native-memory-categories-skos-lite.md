@@ -105,10 +105,10 @@ Ensure category fields exist and are reported by memory health.
 
 ## Acceptance Criteria
 
-- [ ] ≥95% of new observations have non-empty `category_id`.
-- [ ] `joelclaw recall` supports category-constrained retrieval.
-- [ ] Weekly summary emits per-category counts and confidence distribution.
-- [ ] OTEL contains category assignment evidence (`category_id`, `category_source`, `taxonomy_version`).
+- [x] ≥95% of new observations have non-empty `category_id`.
+- [x] `joelclaw recall` supports category-constrained retrieval.
+- [x] Weekly summary emits per-category counts and confidence distribution.
+- [x] OTEL contains category assignment evidence (`category_id`, `category_source`, `taxonomy_version`).
 - [ ] Category summaries are generated and queryable for at least 7 days of data.
 
 ## Verification Commands
@@ -144,6 +144,17 @@ Ensure category fields exist and are reported by memory health.
 - ADR-0094: Memory Write Gate V1
 - ADR-0024: Taxonomy-Enhanced Session Search (deferred strategic reference)
 
+## More Information
+
+### 2026-02-22 validation snapshot
+
+- `joelclaw inngest memory-e2e --wait-ms 120000 --poll-ms 1500 --json` shows category metrics in run output (`categorizedCount=5`, `uncategorizedCount=0`, populated category/source buckets, `taxonomyVersions=["v1"]`).
+- `joelclaw recall "memory-e2e-mlx5t4fl-z1sg4r" --category memory --limit 5 --json` validates alias normalization (`memory -> jc:memory-system`) and category-constrained recall behavior.
+- `joelclaw otel search "weekly-category-summary.emitted" --hours 24 --json` confirms weekly category summary emission.
+- Latest `observe.store.completed` OTEL metadata includes category assignment evidence: `categoryBuckets` (with canonical `category_id`s), `categorySourceBuckets`, and `taxonomyVersions`.
+
+Remaining acceptance gap: sustained 7-day category summary evidence and broader backfill/coverage migration.
+
 ## Status
 
-Proposed.
+Proposed (pending 7-day category summary evidence window).
