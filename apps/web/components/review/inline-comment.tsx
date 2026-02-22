@@ -14,6 +14,7 @@ import { api } from "@/convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Trash2, Send, Pencil, X } from "lucide-react";
+import { useAutoResize } from "@/components/review/use-auto-resize";
 
 interface InlineCommentProps {
   contentId: string;
@@ -32,7 +33,8 @@ export function InlineComment({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
   const [container, setContainer] = useState<HTMLElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { ref: composeRef, resize: resizeCompose } = useAutoResize(48, 240);
+  const { ref: editRef, resize: resizeEdit } = useAutoResize(48, 240);
 
   const selected = selectedParagraphs ?? [paragraphId];
   const isMulti = selected.length > 1;
@@ -63,7 +65,7 @@ export function InlineComment({
     target.after(div);
     setContainer(div);
 
-    setTimeout(() => textareaRef.current?.focus(), 100);
+    setTimeout(() => composeRef.current?.focus(), 100);
 
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -92,8 +94,12 @@ export function InlineComment({
       content: prefix + text,
     });
     setDraft("");
-    textareaRef.current?.focus();
-  }, [draft, contentId, paragraphId, addComment, isMulti, selected]);
+    // Reset height after clearing, then refocus
+    requestAnimationFrame(() => {
+      resizeCompose();
+      composeRef.current?.focus();
+    });
+  }, [draft, contentId, paragraphId, addComment, isMulti, selected, resizeCompose]);
 
   const handleSaveEdit = useCallback(async () => {
     if (!editingId || !editContent.trim()) return;
@@ -151,8 +157,12 @@ export function InlineComment({
               {editingId === comment.resourceId ? (
                 <div className="space-y-1.5">
                   <Textarea
+                    ref={editRef}
                     value={editContent}
-                    onChange={(e) => setEditContent(e.target.value)}
+                    onChange={(e) => {
+                      setEditContent(e.target.value);
+                      resizeEdit();
+                    }}
                     onKeyDown={handleKeyDown}
                     className="min-h-[48px] resize-none border-neutral-700 bg-neutral-900 text-sm text-neutral-200 placeholder:text-neutral-600 focus-visible:ring-claw/30"
                     autoFocus
@@ -185,6 +195,7 @@ export function InlineComment({
                       onClick={() => {
                         setEditingId(comment.resourceId);
                         setEditContent(comment.content);
+                        requestAnimationFrame(() => resizeEdit());
                       }}
                       className="p-1 rounded text-neutral-600 hover:text-neutral-300 hover:bg-neutral-800 transition-colors"
                     >
@@ -210,16 +221,19 @@ export function InlineComment({
       <div className="p-3">
         <div className="relative">
           <Textarea
-            ref={textareaRef}
+            ref={composeRef}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              resizeCompose();
+            }}
             onKeyDown={handleKeyDown}
             placeholder={
               isMulti
                 ? `Comment on ${selected.length} paragraphs…`
                 : "Add a comment…"
             }
-            rows={2}
+            rows={1}
             className="min-h-[48px] resize-none border-neutral-800 bg-neutral-950/60 text-sm text-neutral-200 placeholder:text-neutral-600 focus-visible:ring-claw/30 pr-9"
           />
           <button
