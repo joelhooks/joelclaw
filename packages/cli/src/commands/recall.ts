@@ -14,7 +14,7 @@ const MAX_INJECT = 10
 const DECAY_CONSTANT = 0.01
 const STALENESS_DAYS = 90
 const MIN_OBSERVATION_CHARS = 12
-const REWRITE_TIMEOUT_MS = Number.parseInt(process.env.JOELCLAW_RECALL_REWRITE_TIMEOUT_MS ?? "2500", 10)
+const REWRITE_TIMEOUT_MS = Number.parseInt(process.env.JOELCLAW_RECALL_REWRITE_TIMEOUT_MS ?? "5000", 10)
 const RECALL_OTEL_ENABLED = (process.env.JOELCLAW_RECALL_OTEL ?? "1") !== "0"
 const RECALL_REWRITE_ENABLED = (process.env.JOELCLAW_RECALL_REWRITE ?? "1") !== "0"
 
@@ -131,7 +131,7 @@ function applyScoreDecay(hits: TypesenseHit[]): RankedRecallHit[] {
   const now = Date.now()
   return hits.map((hit) => {
     const rawScore = asFiniteNumber(
-      hit.text_match_info?.score ?? hit.hybrid_search_info?.rank_fusion_score ?? 0,
+      hit.hybrid_search_info?.rank_fusion_score ?? hit.text_match_info?.score ?? 0,
       0
     )
     const createdAt = typeof hit.document.timestamp === "number"
