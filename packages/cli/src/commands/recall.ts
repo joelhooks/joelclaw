@@ -1,5 +1,5 @@
 // ADR-0067: Supersede pattern adapted from knowledge-graph by safatinaztepe (openclaw/skills, MIT).
-// ADR-0082: Migrated from Qdrant+embed.py to Typesense with built-in auto-embedding.
+// ADR-0082: Migrated from Qdrant+embed.py (Qdrant fully retired 2026-02-22) to Typesense with built-in auto-embedding.
 // ADR-0077 Workstream 1/2: query rewrite + trust pass + usage-signal-aware ranking.
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"

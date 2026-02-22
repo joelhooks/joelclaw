@@ -1,7 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { InngestTestEngine } from "@inngest/test";
 import Redis from "ioredis";
-import { QdrantClient } from "@qdrant/js-client-rest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,12 +20,6 @@ const originalRedisMethods = {
   rpush: Redis.prototype.rpush,
   expire: Redis.prototype.expire,
 };
-const originalQdrantMethods = {
-  getCollections: QdrantClient.prototype.getCollections,
-  createCollection: QdrantClient.prototype.createCollection,
-  upsert: QdrantClient.prototype.upsert,
-};
-
 const redisStrings = new Map<string, string>();
 const redisLists = new Map<string, string[]>();
 let shellResultQueue: MockShellResult[] = [];
@@ -89,20 +82,6 @@ beforeAll(() => {
     return 1;
   };
 
-  (QdrantClient.prototype as any).getCollections = async function () {
-    return {
-      collections: [{ name: "memory_observations" }],
-    };
-  };
-
-  (QdrantClient.prototype as any).createCollection = async function () {
-    return;
-  };
-
-  (QdrantClient.prototype as any).upsert = async function () {
-    return;
-  };
-
   // @ts-expect-error test monkey patch for deterministic subprocess behavior.
   Bun.$ = ((strings: TemplateStringsArray, ...values: unknown[]) => {
     buildCommandText(strings, values);
@@ -127,9 +106,6 @@ afterAll(() => {
   Redis.prototype.set = originalRedisMethods.set;
   Redis.prototype.rpush = originalRedisMethods.rpush;
   Redis.prototype.expire = originalRedisMethods.expire;
-  QdrantClient.prototype.getCollections = originalQdrantMethods.getCollections;
-  QdrantClient.prototype.createCollection = originalQdrantMethods.createCollection;
-  QdrantClient.prototype.upsert = originalQdrantMethods.upsert;
   Bun.$ = originalBunDollar;
 });
 
