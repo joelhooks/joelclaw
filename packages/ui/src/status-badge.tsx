@@ -43,6 +43,39 @@ const STATUS_LED_SIZES: Record<StatusLedSize, string> = {
   lg: "h-3 w-3",
 };
 
+const STATUS_PULSE_STYLES: Record<StatusKind, { dot: string; shadow: string }> = {
+  healthy: { dot: "bg-emerald-500", shadow: "shadow-emerald-500/50" },
+  degraded: { dot: "bg-amber-500", shadow: "shadow-amber-500/50" },
+  down: { dot: "bg-rose-500", shadow: "shadow-rose-500/50" },
+  unknown: { dot: "bg-neutral-500", shadow: "shadow-neutral-500/50" },
+  debug: { dot: "bg-neutral-500", shadow: "shadow-neutral-500/50" },
+  info: { dot: "bg-sky-500", shadow: "shadow-sky-500/50" },
+  warn: { dot: "bg-amber-500", shadow: "shadow-amber-500/50" },
+  error: { dot: "bg-orange-500", shadow: "shadow-orange-500/50" },
+  fatal: { dot: "bg-rose-500", shadow: "shadow-rose-500/50" },
+};
+
+const PULSE_OFFSET_WINDOW_MS = 1400;
+
+function hashPulseSeed(seed: string | number): number {
+  if (typeof seed === "number") {
+    return Math.abs(seed);
+  }
+
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash << 5) - hash + seed.charCodeAt(i);
+    hash |= 0;
+  }
+
+  return Math.abs(hash);
+}
+
+function getPulseDelayMs(seed: string | number): string {
+  const offset = hashPulseSeed(seed);
+  return `${offset % PULSE_OFFSET_WINDOW_MS}ms`;
+}
+
 export function normalizeStatusKind(value: string | undefined): StatusKind {
   if (!value) return "unknown";
   const normalized = value.toLowerCase();
@@ -57,15 +90,24 @@ export function StatusBadge({
   label,
   className,
   pulse = false,
+  pulseSeed,
+  pulseOffsetMs,
 }: {
   status: StatusKind | string;
   label?: string;
   className?: string;
   pulse?: boolean;
+  pulseSeed?: string | number;
+  pulseOffsetMs?: number;
 }): JSX.Element {
   const kind = normalizeStatusKind(typeof status === "string" ? status : String(status));
   const style = STATUS_STYLES[kind];
   const text = label ?? kind;
+  const pulseDelay = pulse
+    ? pulseOffsetMs != null
+      ? `${pulseOffsetMs}ms`
+      : getPulseDelayMs(pulseSeed ?? text)
+    : undefined;
 
   return (
     <span
@@ -73,7 +115,10 @@ export function StatusBadge({
     >
       <span className="relative inline-flex h-2 w-2">
         {pulse ? (
-          <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${style.dot} opacity-40`} />
+          <span
+            className={`absolute inline-flex h-full w-full animate-ping rounded-full ${style.dot} opacity-40`}
+            style={{ animationDelay: pulseDelay }}
+          />
         ) : null}
         <span className={`relative inline-flex h-2 w-2 rounded-full ${style.dot}`} />
       </span>
@@ -87,23 +132,72 @@ export function StatusLed({
   size = "md",
   className,
   pulse,
+  pulseSeed,
+  pulseOffsetMs,
+  label,
 }: {
   status: StatusKind | string;
   size?: StatusLedSize;
   className?: string;
   pulse?: boolean;
+  pulseSeed?: string | number;
+  pulseOffsetMs?: number;
+  label?: string;
 }): JSX.Element {
   const kind = normalizeStatusKind(typeof status === "string" ? status : String(status));
   const style = STATUS_LED_STYLES[kind];
   const sizeClass = STATUS_LED_SIZES[size];
   const shouldPulse = pulse ?? kind === "healthy";
+  const pulseDelay = shouldPulse ? (pulseOffsetMs != null ? `${pulseOffsetMs}ms` : getPulseDelayMs(pulseSeed ?? label ?? status)) : undefined;
 
   return (
     <span className={`relative inline-flex shrink-0 align-middle ${sizeClass} ${className ?? ""}`} aria-hidden="true">
       {shouldPulse ? (
-        <span className={`absolute inset-0 animate-ping rounded-full ${style.dot} opacity-35`} />
+        <span
+          className={`absolute inset-0 animate-ping rounded-full ${style.dot} opacity-35`}
+          style={{ animationDelay: pulseDelay }}
+        />
       ) : null}
       <span className={`relative inline-flex rounded-full ${sizeClass} ${style.dot} ${style.glow}`} />
     </span>
+  );
+}
+
+export function StatusPulseDot({
+  status,
+  size = "md",
+  className,
+  pulse,
+  label,
+  pulseSeed,
+  pulseOffsetMs,
+}: {
+  status: StatusKind | string;
+  size?: StatusLedSize;
+  className?: string;
+  pulse?: boolean;
+  label?: string;
+  pulseSeed?: string | number;
+  pulseOffsetMs?: number;
+}): JSX.Element {
+  const kind = normalizeStatusKind(typeof status === "string" ? status : String(status));
+  const style = STATUS_PULSE_STYLES[kind];
+  const sizeClass = STATUS_LED_SIZES[size];
+  const statusLabel = label ?? kind;
+  const shouldPulse = pulse ?? kind === "healthy";
+  const pulseDelay = shouldPulse
+    ? pulseOffsetMs != null
+      ? `${pulseOffsetMs}ms`
+      : getPulseDelayMs(pulseSeed ?? statusLabel)
+    : undefined;
+
+  return (
+    <span
+      className={`inline-flex shrink-0 rounded-full ${sizeClass} ${style.dot} shadow-sm ${style.shadow} ${shouldPulse ? "animate-pulse" : ""} ${className ?? ""}`}
+      role="img"
+      aria-label={statusLabel}
+      title={statusLabel}
+      style={{ animationDelay: pulseDelay }}
+    />
   );
 }

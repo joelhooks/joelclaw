@@ -133,8 +133,14 @@ type DocsDocumentRecord = {
   size_bytes: number;
   added_at: number;
   nas_path: string;
+  nas_paths: string[];
   source_host?: string;
   sha256: string;
+};
+
+type DocsPathAliases = {
+  canonicalNasPath: string;
+  nasPaths: string[];
 };
 
 export type DocsChunkRecord = {
@@ -277,38 +283,6 @@ async function runProcess(
   };
 }
 
-function decodeBytes(value: Uint8Array | null | undefined): string {
-  if (!value || value.byteLength === 0) return "";
-  return new TextDecoder().decode(value);
-}
-
-function runProcessSync(
-  cmd: string[],
-  timeoutMs?: number
-): { exitCode: number; stdout: string; stderr: string; timedOut: boolean } {
-  const proc = Bun.spawnSync(cmd, {
-    stdout: "pipe",
-    stderr: "pipe",
-    ...(typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
-      ? { timeout: timeoutMs }
-      : {}),
-  });
-
-  const timedOut =
-    typeof timeoutMs === "number" &&
-    Number.isFinite(timeoutMs) &&
-    timeoutMs > 0 &&
-    proc.exitCode == null &&
-    proc.success === false;
-
-  return {
-    exitCode: typeof proc.exitCode === "number" ? proc.exitCode : -1,
-    stdout: decodeBytes(proc.stdout),
-    stderr: decodeBytes(proc.stderr),
-    timedOut,
-  };
-}
-
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<T>((_, reject) => {
@@ -326,6 +300,53 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
 
 function normalizePathKey(path: string): string {
   return path.replace(/\\/g, "/").trim().toLowerCase();
+}
+
+function normalizeNasPath(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeNasPathArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => normalizeNasPath(item))
+    .filter((item): item is string => item != null);
+}
+
+export function mergeDocumentPathAliases(input: {
+  currentNasPath: string;
+  existingNasPath?: string | null;
+  existingNasPaths?: string[];
+}): DocsPathAliases {
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  const add = (path: string | null | undefined) => {
+    const normalized = normalizeNasPath(path);
+    if (!normalized) return;
+    const key = normalizePathKey(normalized);
+    if (seen.has(key)) return;
+    seen.add(key);
+    deduped.push(normalized);
+  };
+
+  add(input.existingNasPath);
+  add(input.currentNasPath);
+  for (const path of input.existingNasPaths ?? []) add(path);
+
+  if (deduped.length === 0) {
+    throw new NonRetriableError("docs-ingest requires at least one path alias");
+  }
+
+  const preferredCanonical = normalizeNasPath(input.existingNasPath);
+  const canonicalNasPath = preferredCanonical
+    ? deduped.find((path) => normalizePathKey(path) === normalizePathKey(preferredCanonical)) ?? deduped[0]!
+    : deduped[0]!;
+  return {
+    canonicalNasPath,
+    nasPaths: deduped,
+  };
 }
 
 function sanitizeFilenameForManifest(raw: string): string {
@@ -642,6 +663,28 @@ Rules:
   const provider = parsedPi?.provider;
   const model = parsedPi?.model ?? DOCS_TAXONOMY_MODEL;
   const usage = parsedPi?.usage;
+
+  if (proc.timedOut) {
+    await emitOtelEvent({
+      level: "warn",
+      source: "worker",
+      component: "docs-ingest",
+      action: "docs.taxonomy.classify.timeout",
+      success: false,
+      error: `timeout_after_${DOCS_TAXONOMY_TIMEOUT_MS}ms`,
+      metadata: {
+        docId: input.file.docId,
+        nasPath: input.file.nasPath,
+        timeoutMs: DOCS_TAXONOMY_TIMEOUT_MS,
+        exitCode: proc.exitCode,
+        stderr: proc.stderr.slice(0, 500),
+        provider,
+        model,
+        runId: input.runId,
+        eventId: input.eventId,
+      },
+    });
+  }
 
   if ((proc.exitCode !== 0 || proc.timedOut) && !assistantText) {
     await traceLlmGeneration({
@@ -1115,6 +1158,49 @@ export function buildChunkRecords(input: {
   return chunks;
 }
 
+type ExistingDocumentPathAliases = {
+  canonicalNasPath: string | null;
+  nasPaths: string[];
+};
+
+async function getExistingDocumentPathAliases(docId: string): Promise<ExistingDocumentPathAliases> {
+  const response = await typesense.typesenseRequest(
+    `/collections/${DOCS_COLLECTION}/documents/${encodeURIComponent(docId)}?include_fields=nas_path,nas_paths`,
+    { method: "GET" }
+  );
+
+  if (response.status === 404) {
+    return {
+      canonicalNasPath: null,
+      nasPaths: [],
+    };
+  }
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to fetch existing docs aliases for ${docId}: ${errorText}`);
+  }
+
+  const payload = (await response.json()) as Record<string, unknown>;
+  const existingNasPath = normalizeNasPath(payload.nas_path);
+  const existingNasPaths = normalizeNasPathArray(payload.nas_paths);
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  const add = (path: string | null | undefined) => {
+    const normalized = normalizeNasPath(path);
+    if (!normalized) return;
+    const key = normalizePathKey(normalized);
+    if (seen.has(key)) return;
+    seen.add(key);
+    deduped.push(normalized);
+  };
+  add(existingNasPath);
+  for (const path of existingNasPaths) add(path);
+  return {
+    canonicalNasPath: existingNasPath,
+    nasPaths: deduped,
+  };
+}
+
 function buildDocumentRecord(input: {
   file: ValidatedFile;
   extracted: ExtractedTextArtifact;
@@ -1126,6 +1212,7 @@ function buildDocumentRecord(input: {
   conceptSource: ConceptSource;
   taxonomyVersion: string;
   summary: string;
+  pathAliases: DocsPathAliases;
   sourceHost?: string;
   addedAt: number;
 }): DocsDocumentRecord {
@@ -1146,10 +1233,61 @@ function buildDocumentRecord(input: {
     ...(pageCount != null ? { page_count: pageCount } : {}),
     size_bytes: input.file.sizeBytes,
     added_at: input.addedAt,
-    nas_path: input.file.nasPath,
+    nas_path: input.pathAliases.canonicalNasPath,
+    nas_paths: input.pathAliases.nasPaths,
     ...(input.sourceHost ? { source_host: input.sourceHost } : {}),
     sha256: input.file.sha256,
   };
+}
+
+type TypesenseCollectionSchemaField = {
+  name?: string;
+};
+
+type TypesenseCollectionSchema = {
+  fields?: TypesenseCollectionSchemaField[];
+};
+
+async function ensureCollectionFields(
+  collection: string,
+  fields: Array<Record<string, unknown>>
+): Promise<void> {
+  if (fields.length === 0) return;
+  const schemaResponse = await typesense.typesenseRequest(`/collections/${collection}`, {
+    method: "GET",
+  });
+  if (!schemaResponse.ok) {
+    const errorText = await schemaResponse.text();
+    throw new Error(
+      `Failed to inspect Typesense schema for ${collection}: ${schemaResponse.status} ${errorText}`
+    );
+  }
+
+  const schema = (await schemaResponse.json()) as TypesenseCollectionSchema;
+  const existing = new Set(
+    (schema.fields ?? [])
+      .map((field) => (typeof field.name === "string" ? field.name : null))
+      .filter((field): field is string => field != null)
+  );
+
+  const missing = fields.filter((field) => {
+    const name = typeof field.name === "string" ? field.name : null;
+    if (!name) return false;
+    return !existing.has(name);
+  });
+
+  if (missing.length === 0) return;
+
+  const patchResponse = await typesense.typesenseRequest(`/collections/${collection}`, {
+    method: "PATCH",
+    body: JSON.stringify({ fields: missing }),
+  });
+  if (!patchResponse.ok) {
+    const errorText = await patchResponse.text();
+    throw new Error(
+      `Failed to patch Typesense schema for ${collection}: ${patchResponse.status} ${errorText}`
+    );
+  }
 }
 
 async function ensureDocsCollections(): Promise<void> {
@@ -1172,11 +1310,16 @@ async function ensureDocsCollections(): Promise<void> {
       { name: "size_bytes", type: "int64", optional: true },
       { name: "added_at", type: "int64" },
       { name: "nas_path", type: "string" },
+      { name: "nas_paths", type: "string[]", optional: true },
       { name: "source_host", type: "string", optional: true },
       { name: "sha256", type: "string", optional: true },
     ],
     default_sorting_field: "added_at",
   });
+
+  await ensureCollectionFields(DOCS_COLLECTION, [
+    { name: "nas_paths", type: "string[]", optional: true },
+  ]);
 
   await typesense.ensureCollection(DOCS_CHUNKS_COLLECTION, {
     name: DOCS_CHUNKS_COLLECTION,
@@ -1449,6 +1592,12 @@ export const docsIngest = inngest.createFunction(
     await step.run("upsert-document", async () => {
       const text = await readFile(extracted.textPath, "utf8");
       const documentType = inferDocumentType(validated, classification.storageCategory);
+      const existingAliases = await getExistingDocumentPathAliases(validated.docId);
+      const pathAliases = mergeDocumentPathAliases({
+        currentNasPath: validated.nasPath,
+        existingNasPath: existingAliases.canonicalNasPath,
+        existingNasPaths: existingAliases.nasPaths,
+      });
       const document = buildDocumentRecord({
         file: validated,
         extracted,
@@ -1460,13 +1609,29 @@ export const docsIngest = inngest.createFunction(
         conceptSource: classification.conceptSource,
         taxonomyVersion: classification.taxonomyVersion,
         summary: summarizeText(text),
+        pathAliases,
         sourceHost,
         addedAt,
       });
 
       await typesense.upsert(DOCS_COLLECTION, document as unknown as Record<string, unknown>);
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "docs-ingest",
+        action: "docs.path.aliases.updated",
+        success: true,
+        metadata: {
+          docId: validated.docId,
+          canonicalNasPath: pathAliases.canonicalNasPath,
+          aliasCount: pathAliases.nasPaths.length,
+          nasPaths: pathAliases.nasPaths,
+        },
+      });
       return {
         docId: document.id,
+        canonicalNasPath: pathAliases.canonicalNasPath,
+        aliasCount: pathAliases.nasPaths.length,
       };
     });
 

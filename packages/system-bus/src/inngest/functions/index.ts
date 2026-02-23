@@ -26,7 +26,7 @@ export {
 export { networkStatusUpdate } from "./network-status-update";
 export { checkMemoryReview } from "./check-memory-review";
 export { checkVaultSync } from "./check-vault-sync";
-export { checkGranola } from "./check-granola";
+export { checkGranola, granolaCheckCron } from "./check-granola";
 export { checkEmail } from "./check-email";
 export { checkCalendar } from "./check-calendar";
 export { checkLoops } from "./check-loops";
@@ -60,6 +60,7 @@ export {
 } from "./github-notify";
 export { emailInboxCleanup } from "./email-cleanup";
 export { meetingAnalyze } from "./meeting-analyze";
+export { meetingTranscriptIndex } from "./meeting-transcript-index";
 export { granolaBackfill } from "./granola-backfill";
 export { friction } from "./friction";
 export { frictionFix } from "./friction-fix";
@@ -86,6 +87,7 @@ export {
 } from "./typesense-sync";
 export { nasSoakSample, nasSoakReview } from "./nas-soak";
 export { manifestArchive } from "./manifest-archive";
+export { bookDownload } from "./book-download";
 export { docsIngest } from "./docs-ingest";
 export {
   docsBacklog,

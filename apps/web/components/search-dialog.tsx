@@ -43,6 +43,8 @@ function collectionToUrl(hit: {
       return `/syslog`;
     case "otel_events":
       return `/system/events`;
+    case "transcripts":
+      return "/voice";
     case "voice_transcripts":
       return `/voice`;
     default:
@@ -67,6 +69,8 @@ function TypeIcon({ collection }: { collection: string }) {
       return <Terminal className={`${base} text-blue-400`} />;
     case "otel_events":
       return <Terminal className={`${base} text-rose-400`} />;
+    case "transcripts":
+      return <Mic className={`${base} text-teal-400`} />;
     case "voice_transcripts":
       return <Mic className={`${base} text-cyan-400`} />;
     default:
@@ -82,6 +86,7 @@ const COLLECTION_LABELS: Record<string, string> = {
   memory_observations: "memory",
   system_log: "syslog",
   otel_events: "otel",
+  transcripts: "transcript",
   voice_transcripts: "voice",
 };
 
@@ -93,6 +98,7 @@ const COLLECTION_COLORS: Record<string, string> = {
   memory_observations: "text-amber-400 border-amber-800",
   system_log: "text-blue-400 border-blue-800",
   otel_events: "text-rose-300 border-rose-800",
+  transcripts: "text-teal-300 border-teal-800",
   voice_transcripts: "text-cyan-400 border-cyan-800",
 };
 
@@ -209,6 +215,10 @@ export function SearchDialog() {
   const navigateTo = useCallback(
     (url: string) => {
       setOpen(false);
+      if (/^https?:\/\//i.test(url)) {
+        window.location.href = url;
+        return;
+      }
       router.push(url);
     },
     [router],

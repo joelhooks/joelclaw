@@ -54,13 +54,14 @@ import {
 import { networkStatusUpdate } from "./network-status-update";
 import { checkMemoryReview } from "./check-memory-review";
 import { checkVaultSync } from "./check-vault-sync";
-import { checkGranola } from "./check-granola";
+import { checkGranola, granolaCheckCron } from "./check-granola";
 import { checkEmail } from "./check-email";
 import { vipEmailReceived } from "./vip-email-received";
 import { checkCalendar } from "./check-calendar";
 import { checkLoops } from "./check-loops";
 import { o11yTriage } from "./o11y-triage";
 import { dailyDigest } from "./daily-digest";
+import { meetingTranscriptIndex } from "./meeting-transcript-index";
 import {
   typesenseVaultSyncQueue,
   typesenseVaultSync,
@@ -84,6 +85,7 @@ import {
   docsIngestJanitor,
   docsReindex,
 } from "./docs-maintenance";
+import { bookDownload } from "./book-download";
 
 function getFunctionId(fn: { opts?: { id?: string } }): string {
   return fn.opts?.id ?? "unknown";
@@ -125,6 +127,7 @@ export const hostFunctionDefinitions = [
   vercelDeployCanceled,
   emailInboxCleanup,
   meetingAnalyze,
+  meetingTranscriptIndex,
   granolaBackfill,
   friction,
   frictionFix,
@@ -144,6 +147,7 @@ export const hostFunctionDefinitions = [
   checkMemoryReview,
   checkVaultSync,
   checkGranola,
+  granolaCheckCron,
   checkEmail,
   vipEmailReceived,
   checkCalendar,
@@ -162,6 +166,7 @@ export const hostFunctionDefinitions = [
   rotateOtel,
   rotateLogs,
   manifestArchive,
+  bookDownload,
   docsBacklog,
   docsBacklogDriver,
   docsIngest,

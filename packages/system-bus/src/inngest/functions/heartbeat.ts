@@ -26,7 +26,6 @@ const HEARTBEAT_EVENTS = [
   },
   { name: "memory/review.check" as const, data: {} },
   { name: "vault/sync.check" as const, data: {} },
-  { name: "granola/check.requested" as const, data: {} },
   { name: "email/triage.requested" as const, data: {} },
   { name: "calendar/daily.check" as const, data: {} },
   { name: "loops/stale.check" as const, data: {} },

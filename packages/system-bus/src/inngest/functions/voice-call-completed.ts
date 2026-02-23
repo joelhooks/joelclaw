@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { inngest } from "../client";
 import { emitMeasuredOtelEvent } from "../../observability/emit";
+import * as typesense from "../../lib/typesense";
 
 type VoiceCallCompletedData = {
   transcript?: unknown;
@@ -110,6 +111,8 @@ export const voiceCallCompleted = inngest.createFunction(
       return {
         room,
         capturedAt,
+        dedupeKey,
+        transcript,
         messageCount,
         userMessageCount,
         eventPayload: {
@@ -136,6 +139,20 @@ export const voiceCallCompleted = inngest.createFunction(
       return { forwarded: false, reason: "missing_transcript" };
     }
 
+    const indexing = await step.run("index-voice-transcript", async () => {
+      await typesense.ensureVoiceTranscriptsCollection();
+      const timestamp = Math.floor(new Date(normalized.capturedAt).getTime() / 1000);
+      await typesense.upsert(typesense.VOICE_TRANSCRIPTS_COLLECTION, {
+        id: normalized.dedupeKey,
+        content: normalized.transcript,
+        room: normalized.room,
+        turns: normalized.messageCount,
+        timestamp,
+      });
+
+      return { indexed: true, timestamp };
+    });
+
     await emitMeasuredOtelEvent(
       {
         level: "info",
@@ -158,6 +175,7 @@ export const voiceCallCompleted = inngest.createFunction(
       room: normalized.room,
       messageCount: normalized.messageCount,
       userMessageCount: normalized.userMessageCount,
+      indexed: indexing.indexed,
     };
   }
 );

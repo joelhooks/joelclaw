@@ -39,6 +39,7 @@ const ALL_COLLECTIONS: CollectionConfig[] = [
   { name: "system_log", queryBy: "detail,tool,action" },
   { name: "otel_events", queryBy: "action,error,component,source,metadata_json,search_text" },
   { name: "discoveries", queryBy: "title,summary" },
+  { name: "transcripts", queryBy: "title,text,speaker,channel" },
   { name: "voice_transcripts", queryBy: "content" },
 ];
 
@@ -169,6 +170,11 @@ function resolveUrl(collection: string, doc: Record<string, unknown>): string | 
       return "/syslog";
     case "otel_events":
       return "/system/events";
+    case "transcripts": {
+      const sourceUrl = asString(doc.source_url);
+      if (sourceUrl) return sourceUrl;
+      return "/voice";
+    }
     case "voice_transcripts":
       return "/voice";
     default:
@@ -206,6 +212,7 @@ function resolveSnippet(
   const fallback =
     asString(doc.summary) ??
     asString(doc.description) ??
+    asString(doc.text) ??
     asString(doc.content) ??
     asString(doc.detail) ??
     asString(doc.observation) ??

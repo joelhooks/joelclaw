@@ -53,6 +53,7 @@ export const checkGranola = inngest.createFunction(
   {
     id: "check/granola-meetings",
     concurrency: { scope: "account", key: "granola-mcp", limit: 1 },
+    throttle: { limit: 1, period: "10m" },
     retries: 2,
   },
   { event: "granola/check.requested" },
@@ -158,5 +159,28 @@ export const checkGranola = inngest.createFunction(
     });
 
     return { status: "new-meetings", count: untrackedMeetings.length, meetings: untrackedMeetings.map((m) => m.title) };
+  }
+);
+
+/**
+ * Dedicated Granola scheduler.
+ * Heartbeat runs broad system checks; this cron keeps Granola polling explicit.
+ */
+export const granolaCheckCron = inngest.createFunction(
+  {
+    id: "granola-check-cron",
+    name: "Granola Check Cron",
+  },
+  [{ cron: "7 * * * *" }],
+  async ({ step }) => {
+    await step.sendEvent("request-granola-check", {
+      name: "granola/check.requested",
+      data: {},
+    });
+
+    return {
+      scheduled: true,
+      cadence: "hourly",
+    };
   }
 );

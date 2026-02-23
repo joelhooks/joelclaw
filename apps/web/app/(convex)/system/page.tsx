@@ -6,7 +6,7 @@ import { EventStream, type StreamEvent } from "@repo/ui/event-stream";
 import { FilterBar } from "@repo/ui/filter-bar";
 import { DataGrid } from "@repo/ui/data-grid";
 import { MetricCard } from "@repo/ui/metric-card";
-import { StatusBadge } from "@repo/ui/status-badge";
+import { StatusPulseDot } from "@repo/ui/status-badge";
 import { PageHeader } from "@repo/ui/page-header";
 import { RefreshButton } from "@repo/ui/refresh-button";
 import { authClient } from "@/lib/auth-client";
@@ -121,7 +121,7 @@ export default function SystemPage() {
       <PageHeader
         title="System Observability"
         subtitle="Canonical event stream from otel_events (Typesense) with warn/error/fatal mirror in Convex."
-        badge={<StatusBadge status={healthKind} label={healthKind} pulse={healthKind === "healthy"} />}
+        badge={<StatusPulseDot status={healthKind} label={`System is ${healthKind}`} />}
         actions={<RefreshButton onClick={() => void load()} loading={loading} />}
       />
 

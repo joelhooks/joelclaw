@@ -92,15 +92,29 @@ export type Events = {
   // --- Book pipeline ---
   "pipeline/book.download": {
     data: {
-      query: string;
+      query?: string;
+      md5?: string;
       format?: string;
+      title?: string;
+      reason?: string;
+      outputDir?: string;
+      tags?: string[];
+      storageCategory?: string;
+      idempotencyKey?: string;
     };
   };
   "pipeline/book.downloaded": {
     data: {
       title: string;
-      author: string;
+      author?: string;
       nasPath: string;
+      md5?: string;
+      query?: string;
+      reason?: string;
+      format?: string;
+      outputDir?: string;
+      selectedBy?: "provided" | "inference" | "fallback";
+      tags?: string[];
     };
   };
 
@@ -987,6 +1001,21 @@ export type Events = {
       date?: string;
       participants?: string[];
       source?: "heartbeat" | "backfill" | "manual";
+    };
+  };
+  "meeting/transcript.fetched": {
+    data: {
+      meetingId: string;
+      title: string;
+      date?: string;
+      participants?: string[];
+      source?: "heartbeat" | "backfill" | "manual";
+      sourceUrl?: string;
+      /**
+       * Optional raw transcript payload.
+       * Usually omitted to keep event payloads small; fetch from cache via meetingId.
+       */
+      transcript?: string;
     };
   };
   "granola/backfill.requested": {

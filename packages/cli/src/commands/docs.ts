@@ -1,5 +1,8 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
+import { access, readFile } from "node:fs/promises"
+import { homedir } from "node:os"
+import { basename, extname } from "node:path"
 import { Inngest } from "../inngest"
 import { respond, respondError } from "../response"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
@@ -9,6 +12,10 @@ const DOCS_COLLECTION = "docs"
 const DOCS_CHUNKS_COLLECTION = "docs_chunks"
 const DEFAULT_LIMIT = 10
 const DEFAULT_LIST_LIMIT = 20
+const DEFAULT_RECONCILE_SAMPLE = 20
+const THREE_BODY_ROOT = "/Volumes/three-body"
+const BOOKS_ROOT = `${THREE_BODY_ROOT}/books`
+const MANIFEST_FILE_NAME = "manifest.clean.jsonl"
 
 type TypesenseHit = {
   document?: Record<string, unknown>
@@ -32,6 +39,7 @@ type DocsDocument = {
   title: string
   filename?: string
   nasPath: string
+  nasPaths: string[]
   storageCategory?: string
   documentType?: string
   fileType?: string
@@ -99,6 +107,173 @@ function parseTagsCsv(input: string | undefined): string[] {
     .filter((value) => value.length > 0)
 }
 
+function normalizePathKey(path: string): string {
+  return path.replace(/\\/g, "/").trim().toLowerCase()
+}
+
+function normalizeNasPath(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+function dedupeNasPaths(paths: Array<string | undefined>): string[] {
+  const deduped: string[] = []
+  const seen = new Set<string>()
+  for (const path of paths) {
+    if (!path) continue
+    const key = normalizePathKey(path)
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(path)
+  }
+  return deduped
+}
+
+function sanitizeFilenameForManifest(raw: string): string {
+  const parsed = {
+    base: basename(raw),
+    ext: extname(raw),
+  }
+  const ext = parsed.ext.replace(/[^a-zA-Z0-9.]/g, "").slice(0, 20)
+  const maxBaseLength = Math.max(1, 200 - ext.length)
+
+  let base = basename(parsed.base, parsed.ext)
+    .replace(/[^a-zA-Z0-9.\s_-]/g, " ")
+    .replace(/[\s-]+/g, "-")
+    .replace(/_+/g, "_")
+    .replace(/\.+/g, ".")
+    .replace(/^[-_.]+|[-_.]+$/g, "")
+
+  if (!base) base = "document"
+  if (base.length > maxBaseLength) {
+    base = base.slice(0, maxBaseLength).replace(/^[-_.]+|[-_.]+$/g, "")
+  }
+  if (!base) base = "document"
+
+  return `${base}${ext}`
+}
+
+function manifestCategoryDir(category: string | null | undefined): string {
+  const normalized = category?.trim().toLowerCase()
+  if (
+    normalized === "programming"
+    || normalized === "business"
+    || normalized === "education"
+    || normalized === "design"
+    || normalized === "other"
+  ) {
+    return normalized
+  }
+  return "uncategorized"
+}
+
+function buildManifestDestinationPath(
+  filename: string,
+  sourcePath: string,
+  enrichmentCategory: string | null | undefined
+): string {
+  const sanitized = sanitizeFilenameForManifest(filename)
+  const lowerSourcePath = sourcePath.toLowerCase()
+  if (lowerSourcePath.includes("/clawd/podcasts/")) {
+    return `${THREE_BODY_ROOT}/podcasts/${sanitized}`
+  }
+  return `${BOOKS_ROOT}/${manifestCategoryDir(enrichmentCategory)}/${sanitized}`
+}
+
+function getManifestCandidatePaths(): string[] {
+  return [
+    process.env.MANIFEST_ARCHIVE_MANIFEST_PATH?.trim(),
+    `/tmp/${MANIFEST_FILE_NAME}`,
+    "/Volumes/three-body/.ingest-staging/manifest.clean.jsonl",
+    process.env.HOME ? `${process.env.HOME}/Documents/${MANIFEST_FILE_NAME}` : undefined,
+    `${homedir()}/Documents/${MANIFEST_FILE_NAME}`,
+    "/Users/joel/Documents/manifest.clean.jsonl",
+  ].filter((value): value is string => Boolean(value && value.length > 0))
+}
+
+async function resolveManifestPath(explicitPath?: string): Promise<string> {
+  if (explicitPath && explicitPath.trim().length > 0) {
+    const requestedPath = explicitPath.trim()
+    await access(requestedPath)
+    return requestedPath
+  }
+
+  for (const candidate of getManifestCandidatePaths()) {
+    try {
+      await access(candidate)
+      return candidate
+    } catch {
+      // continue
+    }
+  }
+
+  throw new Error("No manifest.clean.jsonl found in known candidate paths")
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function contentEquivalentKey(path: string): string {
+  const normalized = normalizePathKey(path)
+  const booksPrefix = `${normalizePathKey(BOOKS_ROOT)}/`
+  if (normalized.startsWith(booksPrefix)) {
+    const relative = normalized.slice(booksPrefix.length)
+    const segments = relative.split("/").filter((segment) => segment.length > 0)
+    const withoutCategory = segments.length > 1 ? segments.slice(1).join("/") : segments.join("/")
+    return `books:${withoutCategory}`
+  }
+  return `path:${normalized}`
+}
+
+type IndexedBookRow = {
+  id: string
+  nasPath?: string
+  nasPaths: string[]
+}
+
+async function fetchAllIndexedBookRows(apiKey: string): Promise<IndexedBookRow[]> {
+  const rows: IndexedBookRow[] = []
+  const perPage = 250
+  const maxPages = 1000
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const params = new URLSearchParams({
+      q: "*",
+      query_by: "title",
+      filter_by: "document_type:book",
+      per_page: String(perPage),
+      page: String(page),
+      include_fields: "id,nas_path,nas_paths",
+      exclude_fields: "embedding",
+    })
+    const result = await typesenseSearch(apiKey, DOCS_COLLECTION, params)
+    const hits = result.hits ?? []
+    if (hits.length === 0) break
+
+    for (const hit of hits) {
+      const doc = hit.document ?? {}
+      const id = asString(doc.id)
+      if (!id) continue
+      rows.push({
+        id,
+        nasPath: normalizeNasPath(doc.nas_path),
+        nasPaths: asStringArray(doc.nas_paths),
+      })
+    }
+
+    if (hits.length < perPage) break
+  }
+
+  return rows
+}
+
 function normalizeDocument(document: Record<string, unknown>): DocsDocument | null {
   const id = asString(document.id)
   const title = asString(document.title)
@@ -110,6 +285,7 @@ function normalizeDocument(document: Record<string, unknown>): DocsDocument | nu
     title,
     filename: asString(document.filename),
     nasPath,
+    nasPaths: dedupeNasPaths([nasPath, ...asStringArray(document.nas_paths)]),
     storageCategory: asString(document.storage_category),
     documentType: asString(document.document_type),
     fileType: asString(document.file_type),
@@ -760,7 +936,7 @@ const listCmd = Command.make(
           query_by: "title",
           per_page: String(limit),
           sort_by: "added_at:desc",
-          include_fields: "id,title,filename,nas_path,storage_category,document_type,file_type,tags,primary_concept_id,concept_ids,taxonomy_version,added_at,size_bytes",
+          include_fields: "id,title,filename,nas_path,nas_paths,storage_category,document_type,file_type,tags,primary_concept_id,concept_ids,taxonomy_version,added_at,size_bytes",
           exclude_fields: "embedding",
         })
         if (categoryValue) {
@@ -968,6 +1144,173 @@ const statusCmd = Command.make(
     })
 )
 
+const reconcileCmd = Command.make(
+  "reconcile",
+  {
+    manifest: Options.text("manifest").pipe(Options.optional),
+    sample: Options.integer("sample").pipe(Options.withDefault(DEFAULT_RECONCILE_SAMPLE)),
+  },
+  ({ manifest, sample }) =>
+    Effect.gen(function* () {
+      try {
+        const apiKey = resolveTypesenseApiKey()
+        const manifestPathInput = manifest._tag === "Some" ? manifest.value.trim() : undefined
+        const manifestPath = yield* Effect.promise(() => resolveManifestPath(manifestPathInput))
+        const manifestText = yield* Effect.promise(() => readFile(manifestPath, "utf8"))
+        const lines = manifestText.split(/\r?\n/).filter((line) => line.trim().length > 0)
+
+        const manifestBookTargets = new Set<string>()
+        let parseableManifestLines = 0
+        for (const line of lines) {
+          let parsed: Record<string, unknown>
+          try {
+            const raw = JSON.parse(line) as unknown
+            if (!raw || typeof raw !== "object") continue
+            parsed = raw as Record<string, unknown>
+          } catch {
+            continue
+          }
+
+          const id = asString(parsed.id)
+          const filename = asString(parsed.filename)
+          const sourcePath = asString(parsed.sourcePath)
+          if (!id || !filename || !sourcePath) continue
+          parseableManifestLines += 1
+
+          const destinationPath = buildManifestDestinationPath(
+            filename,
+            sourcePath,
+            asString(parsed.enrichmentCategory) ?? null
+          )
+
+          if (normalizePathKey(destinationPath).startsWith(`${normalizePathKey(BOOKS_ROOT)}/`)) {
+            manifestBookTargets.add(destinationPath)
+          }
+        }
+
+        const manifestBookTargetsList = [...manifestBookTargets]
+        const diskPresence = yield* Effect.promise(() =>
+          Promise.all(
+            manifestBookTargetsList.map(async (path) => ({
+              path,
+              exists: await pathExists(path),
+            }))
+          )
+        )
+
+        const manifestBookTargetsExisting = diskPresence
+          .filter((entry) => entry.exists)
+          .map((entry) => entry.path)
+        const manifestBookTargetsMissingOnDisk = diskPresence
+          .filter((entry) => !entry.exists)
+          .map((entry) => entry.path)
+
+        const indexedRows = yield* Effect.promise(() => fetchAllIndexedBookRows(apiKey))
+        const indexedPathExactSet = new Set<string>()
+        const indexedContentEquivalentSet = new Set<string>()
+        let indexedAliasPaths = 0
+
+        for (const row of indexedRows) {
+          const aliases = dedupeNasPaths([row.nasPath, ...row.nasPaths])
+          indexedAliasPaths += aliases.length
+          for (const alias of aliases) {
+            indexedPathExactSet.add(normalizePathKey(alias))
+            indexedContentEquivalentSet.add(contentEquivalentKey(alias))
+          }
+        }
+
+        const pathExactPresent = manifestBookTargetsExisting.filter((path) =>
+          indexedPathExactSet.has(normalizePathKey(path))
+        )
+        const pathExactMissing = manifestBookTargetsExisting.filter((path) =>
+          !indexedPathExactSet.has(normalizePathKey(path))
+        )
+
+        const contentEquivalentPresent = manifestBookTargetsExisting.filter((path) =>
+          indexedContentEquivalentSet.has(contentEquivalentKey(path))
+        )
+        const contentEquivalentMissing = manifestBookTargetsExisting.filter((path) =>
+          !indexedContentEquivalentSet.has(contentEquivalentKey(path))
+        )
+
+        const falseMissingChurn = pathExactMissing.filter((path) =>
+          indexedContentEquivalentSet.has(contentEquivalentKey(path))
+        )
+
+        const denominator = manifestBookTargetsExisting.length
+        const toPercent = (value: number) =>
+          denominator === 0 ? 0 : Number(((value / denominator) * 100).toFixed(2))
+        const sampleSize = Math.max(1, Math.min(200, sample))
+
+        yield* Console.log(respond("docs reconcile", {
+          manifestPath,
+          coverage: {
+            path_exact: {
+              present: pathExactPresent.length,
+              missing: pathExactMissing.length,
+              coveragePct: toPercent(pathExactPresent.length),
+            },
+            content_equivalent: {
+              present: contentEquivalentPresent.length,
+              missing: contentEquivalentMissing.length,
+              coveragePct: toPercent(contentEquivalentPresent.length),
+            },
+          },
+          totals: {
+            manifestLines: lines.length,
+            parseableManifestLines,
+            manifestUniqueBookTargets: manifestBookTargets.size,
+            manifestBookTargetsExistingOnDisk: manifestBookTargetsExisting.length,
+            manifestBookTargetsMissingOnDisk: manifestBookTargetsMissingOnDisk.length,
+            indexedBookDocs: indexedRows.length,
+            indexedAliasPaths,
+            indexedPathExactUnique: indexedPathExactSet.size,
+            indexedContentEquivalentUnique: indexedContentEquivalentSet.size,
+            falseMissingChurn: falseMissingChurn.length,
+          },
+          samples: {
+            pathExactMissing: pathExactMissing.slice(0, sampleSize),
+            contentEquivalentMissing: contentEquivalentMissing.slice(0, sampleSize),
+            falseMissingChurn: falseMissingChurn.slice(0, sampleSize),
+            missingOnDisk: manifestBookTargetsMissingOnDisk.slice(0, sampleSize),
+          },
+          strategy: {
+            pathExact: "exact normalized nas path match (alias-aware via docs.nas_paths)",
+            contentEquivalent:
+              "books key match with category segment removed (/books/<category>/<rest> -> /books/<rest>)",
+          },
+        }, [
+          { command: "joelclaw docs status", description: "Verify docs/chunks collection health" },
+          { command: "joelclaw docs list --limit 20", description: "Inspect current indexed docs" },
+          { command: "joelclaw otel search \"docs.path.aliases.updated\" --hours 24", description: "Confirm alias writes from ingest" },
+        ]))
+      } catch (error: unknown) {
+        if (isTypesenseApiKeyError(error)) {
+          yield* Console.log(respondError(
+            "docs reconcile",
+            error.message,
+            error.code,
+            error.fix,
+            [{ command: "joelclaw status", description: "Check system status" }]
+          ))
+          return
+        }
+
+        const message = error instanceof Error ? error.message : String(error)
+        yield* Console.log(respondError(
+          "docs reconcile",
+          message,
+          "DOCS_RECONCILE_FAILED",
+          "Ensure manifest path exists and Typesense docs collection is reachable",
+          [
+            { command: "joelclaw docs status", description: "Check docs collection health" },
+            { command: "joelclaw runs --count 10 --hours 24", description: "Inspect recent docs pipeline runs" },
+          ]
+        ))
+      }
+    })
+)
+
 const enrichCmd = Command.make(
   "enrich",
   {
@@ -1043,6 +1386,7 @@ export const docsCmd = Command.make(
         list: "joelclaw docs list [--category <category>] [--limit N]",
         show: "joelclaw docs show <doc-id>",
         status: "joelclaw docs status",
+        reconcile: "joelclaw docs reconcile [--manifest <path>] [--sample N]",
         enrich: "joelclaw docs enrich <doc-id>",
         reindex: "joelclaw docs reindex [--doc <doc-id>]",
       },
@@ -1061,6 +1405,7 @@ export const docsCmd = Command.make(
     listCmd,
     showCmd,
     statusCmd,
+    reconcileCmd,
     enrichCmd,
     reindexCmd,
   ])

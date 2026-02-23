@@ -121,6 +121,7 @@ export interface TypesenseSearchResult {
 }
 
 export const TRANSCRIPTS_COLLECTION = "transcripts";
+export const VOICE_TRANSCRIPTS_COLLECTION = "voice_transcripts";
 export const DEFAULT_VECTOR_FIELD = "embedding";
 
 type TypesenseCollectionField = {
@@ -169,6 +170,24 @@ export const TRANSCRIPTS_COLLECTION_SCHEMA = {
     },
   ],
   default_sorting_field: "source_date",
+} satisfies Record<string, unknown>;
+
+export const VOICE_TRANSCRIPTS_COLLECTION_SCHEMA = {
+  name: VOICE_TRANSCRIPTS_COLLECTION,
+  fields: [
+    { name: "content", type: "string" },
+    { name: "room", type: "string", facet: true, optional: true },
+    { name: "turns", type: "int32", optional: true },
+    { name: "timestamp", type: "int64", optional: true },
+    {
+      name: "embedding",
+      type: "float[]",
+      embed: {
+        from: ["content"],
+        model_config: MINI_LM_MODEL_CONFIG,
+      },
+    },
+  ],
 } satisfies Record<string, unknown>;
 
 function asTrimmedString(value: unknown): string | null {
@@ -335,4 +354,8 @@ export async function ensureCollection(
 
 export async function ensureTranscriptsCollection(): Promise<void> {
   await ensureCollection(TRANSCRIPTS_COLLECTION, TRANSCRIPTS_COLLECTION_SCHEMA);
+}
+
+export async function ensureVoiceTranscriptsCollection(): Promise<void> {
+  await ensureCollection(VOICE_TRANSCRIPTS_COLLECTION, VOICE_TRANSCRIPTS_COLLECTION_SCHEMA);
 }

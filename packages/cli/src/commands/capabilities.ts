@@ -290,7 +290,7 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
           query: { description: "Search query", required: true },
           collection: {
             description: "Optional collection filter",
-            enum: ["vault_notes", "memory_observations", "blog_posts", "system_log", "discoveries", "voice_transcripts"],
+            enum: ["vault_notes", "memory_observations", "blog_posts", "system_log", "discoveries", "transcripts", "voice_transcripts"],
           },
           limit: { description: "Results per collection", value: 5, default: 5 },
         },

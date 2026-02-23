@@ -13,6 +13,7 @@ const COLLECTION_CONFIG: Record<string, { queryBy: string; sortBy: string }> = {
   system_log: { queryBy: "detail,tool,action", sortBy: "timestamp:desc" },
   otel_events: { queryBy: "action,error,component,source,metadata_json,search_text", sortBy: "timestamp:desc" },
   voice_transcripts: { queryBy: "content,room", sortBy: "timestamp:desc" },
+  transcripts: { queryBy: "title,text,speaker,channel", sortBy: "source_date:desc" },
   discoveries: { queryBy: "title,summary", sortBy: "timestamp:desc" },
 };
 

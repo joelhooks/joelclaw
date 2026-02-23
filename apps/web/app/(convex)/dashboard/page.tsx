@@ -72,7 +72,12 @@ function SystemHealth() {
               key={s.resourceId}
               className="group flex items-center gap-3 rounded-lg border border-neutral-700/40 bg-neutral-900/30 px-3 py-2.5 transition-colors hover:border-neutral-600/60 hover:bg-neutral-900/50"
             >
-              <StatusBadge status={s.status} label={s.status} pulse={s.status === "healthy"} />
+              <StatusBadge
+                status={s.status}
+                label={s.status}
+                pulse={s.status === "healthy"}
+                pulseSeed={s.resourceId}
+              />
               <div className="min-w-0 flex-1">
                 <p className="truncate font-mono text-xs text-neutral-300">
                   {s.component}
@@ -215,6 +220,7 @@ function Search() {
     blog_posts: "text-claw bg-claw/10",
     system_log: "text-amber-400 bg-amber-500/10",
     discoveries: "text-emerald-400 bg-emerald-500/10",
+    transcripts: "text-teal-300 bg-teal-500/10",
     voice_transcripts: "text-cyan-400 bg-cyan-500/10",
   };
 

@@ -4,7 +4,7 @@
  *
  * Supports hybrid search (keyword + semantic), typo tolerance, faceting.
  * Searches vault_notes, memory_observations, blog_posts, system_log,
- * discoveries, voice_transcripts, and otel_events.
+ * discoveries, transcripts, voice_transcripts, docs, docs_chunks, and otel_events.
  */
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
@@ -35,6 +35,7 @@ const COLLECTIONS: readonly SearchCollection[] = [
   { name: "blog_posts", queryBy: "title,content", titleField: "title", supportsSemantic: true },
   { name: "system_log", queryBy: "detail,tool,action", titleField: "detail", supportsSemantic: false },
   { name: "discoveries", queryBy: "title,summary", titleField: "title", supportsSemantic: true },
+  { name: "transcripts", queryBy: "title,text,speaker,channel", titleField: "title", supportsSemantic: true },
   { name: "voice_transcripts", queryBy: "content", titleField: "content", supportsSemantic: true },
   { name: "docs", queryBy: "title,summary,filename", titleField: "title", supportsSemantic: false },
   { name: "docs_chunks", queryBy: "retrieval_text,content", titleField: "title", supportsSemantic: true },
@@ -171,7 +172,7 @@ async function multiSearch(
         collection: collName,
         title: typeof title === "string" ? title.slice(0, 120) : String(title).slice(0, 120),
         snippet: snippet.slice(0, 300),
-        path: doc.path || doc.slug || undefined,
+        path: doc.path || doc.slug || doc.source_url || undefined,
         score: h.text_match_info?.score || h.hybrid_search_info?.rank_fusion_score || undefined,
         type: doc.type || collName.replace("_", "-"),
       })

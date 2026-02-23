@@ -1,6 +1,7 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "bun:test";
 import { chunkBookText } from "../../lib/book-chunk";
 import { resolveConcepts } from "../../taxonomy/resolve";
@@ -8,6 +9,7 @@ import {
   buildBackfillClassification,
   buildExtractedTextPath,
   buildChunkRecords,
+  mergeDocumentPathAliases,
   resetManifestInferenceCache,
   resolveBackfillConcepts,
   resolveManifestInference,
@@ -114,6 +116,33 @@ test("docs-ingest temp text artifacts use run-unique paths", () => {
   expect(second.startsWith("/tmp/docs-ingest/doc-test-1-")).toBe(true);
   expect(first.endsWith(".txt")).toBe(true);
   expect(second.endsWith(".txt")).toBe(true);
+});
+
+test("docs-ingest path alias merge preserves canonical path and dedupes variants", () => {
+  const merged = mergeDocumentPathAliases({
+    currentNasPath: "/Volumes/three-body/books/business/The-Learning-Game.pdf",
+    existingNasPath: "/Volumes/three-body/books/programming/The-Learning-Game.pdf",
+    existingNasPaths: [
+      "/Volumes/three-body/books/programming/The-Learning-Game.pdf",
+      "/Volumes/three-body/books/business/The-Learning-Game.pdf",
+    ],
+  });
+
+  expect(merged.canonicalNasPath).toBe("/Volumes/three-body/books/programming/The-Learning-Game.pdf");
+  expect(merged.nasPaths).toEqual([
+    "/Volumes/three-body/books/programming/The-Learning-Game.pdf",
+    "/Volumes/three-body/books/business/The-Learning-Game.pdf",
+  ]);
+});
+
+test("docs-ingest taxonomy subprocess guard enforces async timeout instrumentation", async () => {
+  const sourcePath = fileURLToPath(new URL("./docs-ingest.ts", import.meta.url));
+  const source = await readFile(sourcePath, "utf8");
+
+  expect(source.includes("Bun.spawnSync(")).toBe(false);
+  expect(source.includes("runProcess(")).toBe(true);
+  expect(source.includes("DOCS_TAXONOMY_TIMEOUT_MS")).toBe(true);
+  expect(source.includes("docs.taxonomy.classify.timeout")).toBe(true);
 });
 
 test("docs-ingest backfill taxonomy uses inferred storage category as primary concept", () => {

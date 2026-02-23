@@ -74,6 +74,59 @@ describe("MEM-2 client event schema acceptance tests", () => {
     });
   });
 
+  test("supports pipeline/book.download with inference controls", async () => {
+    const bookRequest: Events["pipeline/book.download"]["data"] = {
+      query: "designing data-intensive applications",
+      format: "pdf",
+      reason: "memory backfill",
+      outputDir: "/Users/joel/clawd/data/pdf-brain/incoming",
+      tags: ["books", "aa-book"],
+      storageCategory: "programming",
+      idempotencyKey: "book:ddia:request",
+    };
+
+    const result = await captureEvent({
+      name: "pipeline/book.download",
+      data: bookRequest,
+    });
+
+    expect(result).toMatchObject({
+      name: "pipeline/book.download",
+      data: {
+        query: "designing data-intensive applications",
+        format: "pdf",
+        reason: "memory backfill",
+      },
+    });
+  });
+
+  test("supports pipeline/book.downloaded with selection metadata", async () => {
+    const downloaded: Events["pipeline/book.downloaded"]["data"] = {
+      title: "Designing Data-Intensive Applications",
+      nasPath: "/Users/joel/clawd/data/pdf-brain/incoming/ddia.pdf",
+      md5: "0123456789abcdef0123456789abcdef",
+      query: "designing data-intensive applications",
+      selectedBy: "inference",
+      outputDir: "/Users/joel/clawd/data/pdf-brain/incoming",
+      format: "pdf",
+      tags: ["aa-book", "book"],
+    };
+
+    const result = await captureEvent({
+      name: "pipeline/book.downloaded",
+      data: downloaded,
+    });
+
+    expect(result).toMatchObject({
+      name: "pipeline/book.downloaded",
+      data: {
+        title: "Designing Data-Intensive Applications",
+        selectedBy: "inference",
+        format: "pdf",
+      },
+    });
+  });
+
   test("supports manifest/archive.requested docs queue controls", async () => {
     const archiveData: Events["manifest/archive.requested"]["data"] = {
       reason: "docs backlog catch-up",
@@ -191,6 +244,31 @@ describe("MEM-2 client event schema acceptance tests", () => {
         lookbackHours: 12,
         scanLimit: 90,
         staleMinutes: 20,
+      },
+    });
+  });
+
+  test("supports meeting/transcript.fetched for transcript indexing fanout", async () => {
+    const transcriptFetched: Events["meeting/transcript.fetched"]["data"] = {
+      meetingId: "meeting_123",
+      title: "AI Hero planning sync",
+      date: "2026-02-23T16:00:00.000Z",
+      participants: ["Joel", "Amy"],
+      source: "heartbeat",
+      sourceUrl: "https://notes.granola.ai/d/meeting_123",
+      transcript: "Joel: We should launch the new cohort next week.",
+    };
+
+    const result = await captureEvent({
+      name: "meeting/transcript.fetched",
+      data: transcriptFetched,
+    });
+
+    expect(result).toMatchObject({
+      name: "meeting/transcript.fetched",
+      data: {
+        meetingId: "meeting_123",
+        title: "AI Hero planning sync",
       },
     });
   });

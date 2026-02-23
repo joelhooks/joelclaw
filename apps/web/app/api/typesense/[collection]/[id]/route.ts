@@ -8,7 +8,14 @@ import { isAuthenticated } from "@/lib/auth-server";
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108";
 const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY || "";
 
-const ALLOWED = new Set(["memory_observations", "system_log", "otel_events", "voice_transcripts", "discoveries"]);
+const ALLOWED = new Set([
+  "memory_observations",
+  "system_log",
+  "otel_events",
+  "voice_transcripts",
+  "transcripts",
+  "discoveries",
+]);
 
 export async function GET(
   _request: NextRequest,

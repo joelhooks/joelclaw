@@ -349,8 +349,9 @@ export const meetingAnalyze = inngest.createFunction(
         `meeting:${meetingId}:transcript`,
         {
           namespace: "granola",
-          tier: "hot",
+          tier: "warm",
           hotTtlSeconds: 1800,
+          warmTtlSeconds: 7 * 24 * 60 * 60,
         },
         async () => {
           const result = granolaCli(["meeting", meetingId, "--transcript"]);
@@ -366,6 +367,22 @@ export const meetingAnalyze = inngest.createFunction(
           return text;
         }
       );
+    });
+
+    await step.sendEvent("emit-meeting-transcript-fetched", {
+      name: "meeting/transcript.fetched",
+      data: {
+        meetingId,
+        title: meetingTitle,
+        date: details.date ?? event.data?.date,
+        participants: Array.isArray(event.data?.participants)
+          ? event.data.participants
+          : [],
+        source: event.data?.source,
+        sourceUrl: `https://notes.granola.ai/d/${meetingId}`,
+        // Keep payload bounded; the indexer can hydrate from shared cache by meetingId.
+        ...(transcript.length <= 120_000 ? { transcript } : {}),
+      },
     });
 
     const memoryContext = await step.run("prefetch-memory", async () => {

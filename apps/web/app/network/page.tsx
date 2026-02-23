@@ -4,7 +4,12 @@ import { headers } from "next/headers";
 import { ConvexHttpClient } from "convex/browser";
 import { MetricCard } from "@repo/ui/metric-card";
 import { DataGrid } from "@repo/ui/data-grid";
-import { StatusLed, normalizeStatusKind } from "@repo/ui/status-badge";
+import {
+  StatusLed,
+  normalizeStatusKind,
+  StatusPulseDot,
+  type StatusKind,
+} from "@repo/ui/status-badge";
 import { api } from "@/convex/_generated/api";
 import { SITE_NAME } from "@/lib/constants";
 
@@ -79,6 +84,26 @@ async function listByType(type: string): Promise<ContentResourceDoc[]> {
   }
 }
 
+function getNetworkHealth(statuses: StatusKind[]): StatusKind {
+  if (statuses.length === 0) {
+    return "unknown";
+  }
+
+  if (statuses.includes("down")) {
+    return "down";
+  }
+
+  if (statuses.includes("error") || statuses.includes("fatal") || statuses.includes("warn") || statuses.includes("degraded")) {
+    return "degraded";
+  }
+
+  if (statuses.includes("unknown") || statuses.includes("debug")) {
+    return "unknown";
+  }
+
+  return "healthy";
+}
+
 export default function NetworkPage() {
   return (
     <div className="mx-auto max-w-[1800px] space-y-12">
@@ -86,9 +111,7 @@ export default function NetworkPage() {
         <h1 className="text-2xl font-bold tracking-tight">Network</h1>
         <p className="mt-2 text-sm text-neutral-400 leading-relaxed">
           Always-on personal infrastructure. <span className="text-claw">Overlook</span> runs the cluster, agents,
-          and all pipelines. <span className="text-neutral-300">Blaine</span> bridges telephony.{" "}
-          <span className="text-neutral-300">Derry</span> holds 64 TB of archive. Everything connected via encrypted
-          WireGuard mesh.
+          and all pipelines. <span className="text-neutral-300">Blaine</span> bridges telephony. <span className="text-neutral-300">Derry</span> holds 64 TB of archive. Everything connected via encrypted WireGuard mesh.
         </p>
       </header>
 
@@ -145,6 +168,11 @@ async function NetworkSections() {
     .map((doc) => doc.fields as unknown as NetworkDaemon)
     .sort((a, b) => daemonOrder.indexOf(a.name) - daemonOrder.indexOf(b.name));
 
+  const nodeStatuses: StatusKind[] = nodes.map((node) => normalizeStatusKind(node.status));
+  const podStatuses: StatusKind[] = k8sPods.map((pod) => normalizeStatusKind(pod.status));
+  const daemonStatuses: StatusKind[] = launchdServices.map((svc) => normalizeStatusKind(svc.status));
+  const networkStatus = getNetworkHealth([...nodeStatuses, ...podStatuses, ...daemonStatuses]);
+
   const clusterOrder = ["Orchestration", "Memory", "CPU", "GPU", "Storage", "Functions", "Skills", "Interconnect"];
   const clusterOverview = clusterDocs
     .map((doc) => doc.fields as unknown as NetworkCluster)
@@ -158,6 +186,11 @@ async function NetworkSections() {
 
   return (
     <>
+      <section className="space-y-3">
+        <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">Network Health</h2>
+        <StatusPulseDot status={networkStatus} label={`Network is ${networkStatus}`} />
+      </section>
+
       <section className="space-y-3">
         <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">Cluster</h2>
         <DataGrid columns={{ sm: 1, md: 2, lg: 2, xl: 4 }}>
@@ -176,7 +209,13 @@ async function NetworkSections() {
             return (
               <article key={node.publicName} className="border border-neutral-800/40 rounded-lg p-5 space-y-3">
                 <div className="flex items-start gap-3">
-                  <StatusLed status={nodeStatus} size="lg" pulse={nodeStatus === "healthy"} className="mt-1" />
+                  <StatusLed
+                    status={nodeStatus}
+                    size="lg"
+                    pulse={nodeStatus === "healthy"}
+                    className="mt-1"
+                    pulseSeed={node.publicName}
+                  />
                   <div className="min-w-0">
                     <h3 className="text-base font-semibold text-neutral-100">{node.publicName}</h3>
                     {node.privateName && <p className="font-mono text-xs text-neutral-600">{node.privateName}</p>}
@@ -225,7 +264,7 @@ async function NetworkSections() {
                   <tr key={pod.name} className="border-b border-neutral-800/50 last:border-0">
                     <td className="px-4 py-2.5 font-mono text-xs text-neutral-200">
                       <div className="flex items-center gap-2">
-                        <StatusLed status={podStatus} pulse={podStatus === "healthy"} />
+                        <StatusLed status={podStatus} pulse={podStatus === "healthy"} pulseSeed={pod.name} />
                         <span>{pod.name}</span>
                       </div>
                     </td>
@@ -258,7 +297,7 @@ async function NetworkSections() {
                   <tr key={svc.name} className="border-b border-neutral-800/50 last:border-0">
                     <td className="px-4 py-2.5 font-mono text-xs text-neutral-200 whitespace-nowrap">
                       <div className="flex items-center gap-2">
-                        <StatusLed status={serviceStatus} pulse={serviceStatus === "healthy"} />
+                        <StatusLed status={serviceStatus} pulse={serviceStatus === "healthy"} pulseSeed={svc.name} />
                         <span>{svc.name}</span>
                       </div>
                     </td>
