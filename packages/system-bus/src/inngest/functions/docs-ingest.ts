@@ -28,6 +28,18 @@ const DOCS_CHUNKS_COLLECTION = "docs_chunks";
 const DOCS_TMP_DIR = "/tmp/docs-ingest";
 const THREE_BODY_ROOT = "/Volumes/three-body";
 const MANIFEST_FILE_NAME = "manifest.clean.jsonl";
+const DOCS_INGEST_CONCURRENCY = Math.max(
+  1,
+  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_CONCURRENCY ?? "1", 10)
+);
+const DOCS_INGEST_THROTTLE_LIMIT = Math.max(
+  1,
+  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_THROTTLE_LIMIT ?? "20", 10)
+);
+const DOCS_INGEST_THROTTLE_PERIOD = `${Math.max(
+  1,
+  Number.parseInt(process.env.JOELCLAW_DOCS_INGEST_THROTTLE_PERIOD_SECONDS ?? "60", 10)
+)}s` as `${number}s`;
 
 function getManifestCandidatePaths(): string[] {
   return [
@@ -1163,10 +1175,10 @@ async function deleteDocChunks(docId: string): Promise<void> {
 export const docsIngest = inngest.createFunction(
   {
     id: "docs-ingest",
-    concurrency: { limit: 3 },
+    concurrency: { limit: DOCS_INGEST_CONCURRENCY },
     throttle: {
-      limit: 100,
-      period: "60s",
+      limit: DOCS_INGEST_THROTTLE_LIMIT,
+      period: DOCS_INGEST_THROTTLE_PERIOD,
       key: '"docs-ingest"',
     },
     retries: 4,

@@ -10,6 +10,10 @@ const GQL = `${cfg.inngestUrl}/v0/gql`
 const EVENT_API = `${cfg.inngestUrl}/e/${cfg.eventKey}`
 const WORKER = cfg.workerUrl
 const INNGEST_HEALTH = `${cfg.inngestUrl}/health`
+const GQL_TIMEOUT_MS = Math.max(
+  5000,
+  Number.parseInt(process.env.JOELCLAW_INNGEST_GQL_TIMEOUT_MS ?? "20000", 10)
+)
 
 // ── Errors ───────────────────────────────────────────────────────────
 
@@ -24,7 +28,7 @@ const gql = (query: string) =>
   Effect.tryPromise({
     try: async () => {
       const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 5000)
+      const timer = setTimeout(() => controller.abort(), GQL_TIMEOUT_MS)
       try {
         const res = await fetch(GQL, {
           method: "POST",

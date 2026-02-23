@@ -7,6 +7,19 @@
 
 export const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108";
 const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY || "";
+const TYPESENSE_WRITE_MAX_RETRIES = Math.max(
+  0,
+  Number.parseInt(process.env.TYPESENSE_WRITE_MAX_RETRIES ?? "5", 10)
+);
+const TYPESENSE_WRITE_BASE_BACKOFF_MS = Math.max(
+  50,
+  Number.parseInt(process.env.TYPESENSE_WRITE_BASE_BACKOFF_MS ?? "250", 10)
+);
+const TYPESENSE_WRITE_MAX_BACKOFF_MS = Math.max(
+  TYPESENSE_WRITE_BASE_BACKOFF_MS,
+  Number.parseInt(process.env.TYPESENSE_WRITE_MAX_BACKOFF_MS ?? "4000", 10)
+);
+const TYPESENSE_RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 
 function getApiKey(): string {
   if (TYPESENSE_API_KEY) return TYPESENSE_API_KEY;
@@ -27,6 +40,44 @@ const headers = () => ({
   "X-TYPESENSE-API-KEY": getApiKey(),
   "Content-Type": "application/json",
 });
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function retryTypesenseWrite(request: () => Promise<Response>): Promise<Response> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= TYPESENSE_WRITE_MAX_RETRIES; attempt += 1) {
+    try {
+      const response = await request();
+      if (response.ok) return response;
+
+      const retryable = TYPESENSE_RETRYABLE_STATUSES.has(response.status);
+      if (!retryable || attempt >= TYPESENSE_WRITE_MAX_RETRIES) {
+        return response;
+      }
+
+      // Drain transient error body before retry to avoid leaking readers.
+      await response.text().catch(() => {});
+    } catch (error) {
+      lastError = error;
+      if (attempt >= TYPESENSE_WRITE_MAX_RETRIES) {
+        throw error;
+      }
+    }
+
+    const backoff = Math.min(
+      TYPESENSE_WRITE_MAX_BACKOFF_MS,
+      TYPESENSE_WRITE_BASE_BACKOFF_MS * 2 ** attempt
+    );
+    const jitter = Math.floor(Math.random() * Math.max(25, Math.floor(backoff * 0.2)));
+    await sleep(backoff + jitter);
+  }
+
+  if (lastError) throw lastError;
+  throw new Error("Typesense write failed after retries");
+}
 
 export async function typesenseRequest(
   path: string,
@@ -110,9 +161,12 @@ export const TRANSCRIPTS_COLLECTION_SCHEMA = {
 
 /** Upsert a single document */
 export async function upsert(collection: string, doc: Record<string, unknown>): Promise<void> {
-  const resp = await fetch(
-    `${TYPESENSE_URL}/collections/${collection}/documents?action=upsert`,
-    { method: "POST", headers: headers(), body: JSON.stringify(doc) }
+  const resp = await retryTypesenseWrite(() =>
+    fetch(`${TYPESENSE_URL}/collections/${collection}/documents?action=upsert`, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(doc),
+    })
   );
   if (!resp.ok) {
     const text = await resp.text();
@@ -127,9 +181,12 @@ export async function bulkImport(
   action: "upsert" | "create" | "update" = "upsert"
 ): Promise<{ success: number; errors: number }> {
   const body = docs.map((d) => JSON.stringify(d)).join("\n");
-  const resp = await fetch(
-    `${TYPESENSE_URL}/collections/${collection}/documents/import?action=${action}`,
-    { method: "POST", headers: headers(), body }
+  const resp = await retryTypesenseWrite(() =>
+    fetch(`${TYPESENSE_URL}/collections/${collection}/documents/import?action=${action}`, {
+      method: "POST",
+      headers: headers(),
+      body,
+    })
   );
   if (!resp.ok) {
     const text = await resp.text();

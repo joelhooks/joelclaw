@@ -77,7 +77,7 @@ import {
 } from "./nas-backup";
 import { manifestArchive } from "./manifest-archive";
 import { docsIngest } from "./docs-ingest";
-import { docsEnrich, docsReindex } from "./docs-maintenance";
+import { docsBacklog, docsEnrich, docsReindex } from "./docs-maintenance";
 
 function getFunctionId(fn: { opts?: { id?: string } }): string {
   return fn.opts?.id ?? "unknown";
@@ -156,6 +156,7 @@ export const hostFunctionDefinitions = [
   rotateOtel,
   rotateLogs,
   manifestArchive,
+  docsBacklog,
   docsIngest,
   docsEnrich,
   docsReindex,

@@ -12,6 +12,7 @@ type McqQuestion = {
 export type McqParams = {
   title?: string;
   questions: McqQuestion[];
+  timeout?: number;
 };
 
 export type McqAdapterRuntime = {
@@ -29,6 +30,7 @@ type PendingQuestion = {
   questionText: string;
   context?: string;
   options: string[];
+  cancelAutoSelectTimer: () => void;
   settle: (answer: string) => void;
 };
 
@@ -37,7 +39,7 @@ type PendingFreeText = {
 };
 
 const MCQ_PREFIX = "mcq:";
-const QUESTION_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_AUTO_SELECT_TIMEOUT_SECS = 30;
 const MAX_BUTTON_LABEL_CHARS = 8;
 const OTHER_OPTION_LABEL = "Other";
 
@@ -107,7 +109,12 @@ function formatQuestionHtml(question: McqQuestion): string {
   return lines.join("\n\n");
 }
 
-function selectedHtml(questionText: string, context: string | undefined, answer: string): string {
+function selectedHtml(
+  questionText: string,
+  context: string | undefined,
+  answer: string,
+  autoSelectedOption?: number,
+): string {
   const lines: string[] = [`<b>${escapeHtml(questionText)}</b>`];
 
   if (context?.trim()) {
@@ -115,7 +122,37 @@ function selectedHtml(questionText: string, context: string | undefined, answer:
   }
 
   lines.push(`✅ Selected: <code>${escapeHtml(answer)}</code>`);
+  if (typeof autoSelectedOption === "number") {
+    lines.push(`⏱ Auto-selected: option ${autoSelectedOption}`);
+  }
   return lines.join("\n\n");
+}
+
+function resolveAutoSelectTimeoutSecs(value: unknown): number {
+  const raw = typeof value === "number" ? value : DEFAULT_AUTO_SELECT_TIMEOUT_SECS;
+  if (!Number.isFinite(raw)) {
+    return DEFAULT_AUTO_SELECT_TIMEOUT_SECS;
+  }
+  return Math.max(0, Math.trunc(raw));
+}
+
+function getRecommendedSelection(question: McqQuestion): { optionNumber: number; option: string } | null {
+  if (!Number.isInteger(question.recommended)) {
+    return null;
+  }
+  if (!question.recommended || question.recommended < 1 || question.recommended > question.options.length) {
+    return null;
+  }
+
+  const option = question.options[question.recommended - 1];
+  if (typeof option !== "string") {
+    return null;
+  }
+
+  return {
+    optionNumber: question.recommended,
+    option,
+  };
 }
 
 function buildKeyboard(
@@ -194,6 +231,7 @@ export function registerMcqAdapter(bot: Bot, chatId: number): McqAdapterRuntime 
     }
 
     if (optionToken === "other") {
+      pending.cancelAutoSelectTimer();
       pendingFreeText.set(pending.chatId, { questionId });
       try {
         await bot.api.sendMessage(pending.chatId, "Reply with your custom answer.", {
@@ -217,6 +255,7 @@ export function registerMcqAdapter(bot: Bot, chatId: number): McqAdapterRuntime 
       return;
     }
 
+    pending.cancelAutoSelectTimer();
     pending.settle(selectedOption);
   });
 
@@ -239,7 +278,11 @@ export function registerMcqAdapter(bot: Bot, chatId: number): McqAdapterRuntime 
     pendingQuestion.settle(text.length > 0 ? text : "(empty)");
   });
 
-  const askQuestion = async (question: McqQuestion, targetChatId: number): Promise<string> => {
+  const askQuestion = async (
+    question: McqQuestion,
+    targetChatId: number,
+    autoSelectTimeoutSecs: number,
+  ): Promise<string> => {
     const callbackQuestionId = question.id.length > 40
       ? `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
       : question.id;
@@ -259,26 +302,32 @@ export function registerMcqAdapter(bot: Bot, chatId: number): McqAdapterRuntime 
       return "(timeout)";
     }
 
+    const recommendedSelection = getRecommendedSelection(question);
+    const shouldStartAutoSelectTimer = autoSelectTimeoutSecs > 0 && recommendedSelection !== null;
+    let autoSelectedOptionNumber: number | undefined;
+
     const answer = await new Promise<string>((resolve) => {
       let settled = false;
-      const timeout = setTimeout(() => {
-        if (settled) return;
-        settled = true;
+      let autoSelectTimer: ReturnType<typeof setTimeout> | undefined;
+
+      const cancelAutoSelectTimer = (): void => {
+        if (!autoSelectTimer) return;
+        clearTimeout(autoSelectTimer);
+        autoSelectTimer = undefined;
+      };
+
+      const cleanup = (): void => {
+        cancelAutoSelectTimer();
         pendingQuestions.delete(callbackQuestionId);
         if (pendingFreeText.get(targetChatId)?.questionId === callbackQuestionId) {
           pendingFreeText.delete(targetChatId);
         }
-        resolve("(timeout)");
-      }, QUESTION_TIMEOUT_MS);
+      };
 
       const settle = (selected: string): void => {
         if (settled) return;
         settled = true;
-        clearTimeout(timeout);
-        pendingQuestions.delete(callbackQuestionId);
-        if (pendingFreeText.get(targetChatId)?.questionId === callbackQuestionId) {
-          pendingFreeText.delete(targetChatId);
-        }
+        cleanup();
         resolve(selected);
       };
 
@@ -289,15 +338,25 @@ export function registerMcqAdapter(bot: Bot, chatId: number): McqAdapterRuntime 
         questionText: question.question,
         context: question.context,
         options: question.options,
+        cancelAutoSelectTimer,
         settle,
       });
+
+      if (shouldStartAutoSelectTimer && recommendedSelection) {
+        autoSelectTimer = setTimeout(() => {
+          const pending = pendingQuestions.get(callbackQuestionId);
+          if (!pending) return;
+          autoSelectedOptionNumber = recommendedSelection.optionNumber;
+          pending.settle(recommendedSelection.option);
+        }, autoSelectTimeoutSecs * 1000);
+      }
     });
 
     try {
       await bot.api.editMessageText(
         targetChatId,
         messageId,
-        selectedHtml(question.question, question.context, answer),
+        selectedHtml(question.question, question.context, answer, autoSelectedOptionNumber),
         {
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: [] },
@@ -338,10 +397,11 @@ export function registerMcqAdapter(bot: Bot, chatId: number): McqAdapterRuntime 
           }
         }
 
+        const autoSelectTimeoutSecs = resolveAutoSelectTimeoutSecs(params.timeout);
         const answers: Record<string, string> = {};
         for (const question of params.questions) {
           try {
-            answers[question.id] = await askQuestion(question, targetChatId);
+            answers[question.id] = await askQuestion(question, targetChatId, autoSelectTimeoutSecs);
           } catch (error) {
             console.error("[gateway:mcq] question handling failed", {
               questionId: question.id,

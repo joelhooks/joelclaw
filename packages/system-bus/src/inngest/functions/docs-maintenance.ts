@@ -11,7 +11,22 @@ const THREE_BODY_ROOT = "/Volumes/three-body";
 const MANIFEST_FILE_NAME = "manifest.clean.jsonl";
 const PAGE_SIZE = 250;
 const MAX_PAGES = 40;
-const DOCS_BACKLOG_BATCH_SIZE = 75;
+const DOCS_BACKLOG_BATCH_SIZE = Math.max(
+  1,
+  Number.parseInt(process.env.JOELCLAW_DOCS_BACKLOG_BATCH_SIZE ?? "12", 10)
+);
+const DOCS_BACKLOG_BATCH_SLEEP_SECONDS = Math.max(
+  0,
+  Number.parseInt(process.env.JOELCLAW_DOCS_BACKLOG_BATCH_SLEEP_SECONDS ?? "2", 10)
+);
+const DOCS_REINDEX_BATCH_SIZE = Math.max(
+  1,
+  Number.parseInt(process.env.JOELCLAW_DOCS_REINDEX_BATCH_SIZE ?? "12", 10)
+);
+const DOCS_REINDEX_BATCH_SLEEP_SECONDS = Math.max(
+  0,
+  Number.parseInt(process.env.JOELCLAW_DOCS_REINDEX_BATCH_SLEEP_SECONDS ?? "2", 10)
+);
 const SUPPORTED_DOCS_EXTENSIONS = new Set([".pdf", ".md", ".txt"]);
 
 type DocsRecord = {
@@ -543,6 +558,14 @@ export const docsBacklog = inngest.createFunction(
       );
       queued += sendResult.ids.length;
       batchSizes.push(sendResult.ids.length);
+
+      const isLastBatch = offset + DOCS_BACKLOG_BATCH_SIZE >= planning.candidates.length;
+      if (!isLastBatch && DOCS_BACKLOG_BATCH_SLEEP_SECONDS > 0) {
+        await step.sleep(
+          `pace-backlog-batch-${batchNumber}`,
+          `${DOCS_BACKLOG_BATCH_SLEEP_SECONDS}s`
+        );
+      }
     }
 
     await step.run("emit-backlog-otel", async () => {
@@ -558,6 +581,8 @@ export const docsBacklog = inngest.createFunction(
             queueable: planning.candidates.length,
             queued,
             batches: batchSizes.length,
+            batchSize: DOCS_BACKLOG_BATCH_SIZE,
+            batchSleepSeconds: DOCS_BACKLOG_BATCH_SLEEP_SECONDS,
             batchSizes,
             maxEntries,
             booksOnly,
@@ -579,6 +604,8 @@ export const docsBacklog = inngest.createFunction(
       queueable: planning.candidates.length,
       queued,
       batches: batchSizes.length,
+      batchSize: DOCS_BACKLOG_BATCH_SIZE,
+      batchSleepSeconds: DOCS_BACKLOG_BATCH_SLEEP_SECONDS,
       batchSizes,
       maxEntries,
       booksOnly,
@@ -632,13 +659,12 @@ export const docsReindex = inngest.createFunction(
       };
     }
 
-    const batchSize = 100;
     const batches: number[] = [];
     let queued = 0;
 
-    for (let index = 0; index < docs.length; index += batchSize) {
-      const batch = docs.slice(index, index + batchSize);
-      const batchIndex = Math.floor(index / batchSize) + 1;
+    for (let index = 0; index < docs.length; index += DOCS_REINDEX_BATCH_SIZE) {
+      const batch = docs.slice(index, index + DOCS_REINDEX_BATCH_SIZE);
+      const batchIndex = Math.floor(index / DOCS_REINDEX_BATCH_SIZE) + 1;
       const sendResult = await step.sendEvent(
         `queue-batch-${batchIndex}`,
         batch.map((doc, docOffset) =>
@@ -647,6 +673,14 @@ export const docsReindex = inngest.createFunction(
       );
       queued += sendResult.ids.length;
       batches.push(sendResult.ids.length);
+
+      const isLastBatch = index + DOCS_REINDEX_BATCH_SIZE >= docs.length;
+      if (!isLastBatch && DOCS_REINDEX_BATCH_SLEEP_SECONDS > 0) {
+        await step.sleep(
+          `pace-reindex-batch-${batchIndex}`,
+          `${DOCS_REINDEX_BATCH_SLEEP_SECONDS}s`
+        );
+      }
     }
 
     await step.run("emit-reindex-otel", async () => {
@@ -661,6 +695,8 @@ export const docsReindex = inngest.createFunction(
             docsResolved: docs.length,
             queued,
             batches: batches.length,
+            batchSize: DOCS_REINDEX_BATCH_SIZE,
+            batchSleepSeconds: DOCS_REINDEX_BATCH_SLEEP_SECONDS,
             batchSizes: batches,
           },
         },
@@ -673,6 +709,8 @@ export const docsReindex = inngest.createFunction(
       docsResolved: docs.length,
       queued,
       batches: batches.length,
+      batchSize: DOCS_REINDEX_BATCH_SIZE,
+      batchSleepSeconds: DOCS_REINDEX_BATCH_SLEEP_SECONDS,
       batchSizes: batches,
     };
   }
