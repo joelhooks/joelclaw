@@ -236,31 +236,20 @@ export const frictionFix = inngest.createFunction(
 
     await step.run("notify-gateway", async () => {
       try {
-        // Only notify gateway on actual fixes or Todoist escalations — skips are noise
-        if (status === "fixed" && commitSha) {
-          await gateway.notify("friction-fix", {
-            message: `Friction fixed: ${title}. Commit: ${commitSha}. Revert: \`git revert ${commitSha}\``,
-            patternId,
-            status,
-            commitSha,
-            filesChanged,
-          });
-          return { notified: true };
-        }
-
-        if (status === "skipped" && !escalationTaskId) {
-          // Silent skip — no commits, no escalation, not worth notifying
-          return { notified: false, reason: "silent-skip" };
-        }
-
+        // All friction-fix per-pattern notifications are silent.
+        // Only the parent friction.ts summary ("10 patterns → N tasks") reaches Joel.
+        // Individual fix results are logged via OTEL for observability.
         await gateway.notify("friction-fix", {
-          message: `Friction fix ${status}: ${title}. ${message}`,
+          message: status === "fixed" && commitSha
+            ? `Friction fixed: ${title}. Commit: ${commitSha}`
+            : `Friction fix ${status}: ${title}. ${message}`,
           patternId,
           status,
-          filesChanged,
-          escalationTaskId,
-        });
-        return { notified: true };
+          ...(commitSha ? { commitSha } : {}),
+          ...(filesChanged.length > 0 ? { filesChanged } : {}),
+          ...(escalationTaskId ? { escalationTaskId } : {}),
+        }, { silent: true });
+        return { notified: false, reason: "silent-per-pattern" };
       } catch (error) {
         return {
           notified: false,
