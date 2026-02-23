@@ -24,6 +24,8 @@ prompts where a compact indicator is needed.
 - Use it in `/network` for the top-level network health summary.
 - Use `StatusPulseDot` props `status` and `label` for accessible/hover text rather than rendering explicit text labels adjacent
   to the dot in those contexts.
+- Add pulse phase variation in `StatusLed` and `StatusPulseDot` via deterministic seeding (`pulseSeed`/`pulseOffsetMs`) so
+  multiple indicators do not stay in lockstep. For loops (`/network` node/pod/service rows), pass the item label as the seed.
 
 For richer status chips that include status text, keep `StatusBadge` where explicitly needed.
 
