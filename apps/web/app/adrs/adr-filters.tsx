@@ -1,29 +1,21 @@
 "use client";
 
-import { useQueryStates } from "nuqs";
-import { adrSearchParams } from "./search-params";
+import { useState } from "react";
 import { STATUS_CONFIG } from "./status-config";
 
 export function useStatusFilter(allStatuses: string[]) {
-  const [{ status: included }, setParams] = useQueryStates(adrSearchParams, {
-    shallow: true,
-  });
-
-  // null = all active (no URL param). Array = only those active.
-  const active = new Set(included ?? allStatuses);
+  const [active, setActive] = useState<Set<string>>(() => new Set(allStatuses));
 
   const toggle = (status: string) => {
-    const next = new Set(active);
-    if (next.has(status)) {
-      if (next.size <= 1) return; // Can't empty
-      next.delete(status);
-    } else {
-      next.add(status);
-    }
-    // All active = clear param. Otherwise set included list.
-    const arr = [...next];
-    setParams({
-      status: arr.length >= allStatuses.length ? null : arr,
+    setActive((prev) => {
+      const next = new Set(prev);
+      if (next.has(status)) {
+        if (next.size <= 1) return prev; // Can't empty
+        next.delete(status);
+      } else {
+        next.add(status);
+      }
+      return next;
     });
   };
 

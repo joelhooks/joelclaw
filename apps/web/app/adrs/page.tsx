@@ -1,9 +1,6 @@
-import { Suspense } from "react";
 import type { Metadata } from "next";
-import type { SearchParams } from "nuqs/server";
 import { getAllAdrs } from "@/lib/adrs";
 import { SITE_NAME } from "@/lib/constants";
-import { loadAdrSearchParams } from "./search-params";
 import { AdrListWithFilters } from "./adr-list";
 import { CodeBlock } from "@/components/copy-button";
 
@@ -13,11 +10,7 @@ export const metadata: Metadata = {
     "Architecture Decision Records — how this system is built and why.",
 };
 
-type Props = {
-  searchParams: Promise<SearchParams>;
-};
-
-export default async function AdrsPage({ searchParams }: Props) {
+export default async function AdrsPage() {
   const allAdrs = getAllAdrs();
 
   const counts = allAdrs.reduce(
@@ -53,13 +46,11 @@ export default async function AdrsPage({ searchParams }: Props) {
           npx skills add skillrecordings/adr-skill --skill adr-skill --yes --global
         </CodeBlock>
       </header>
-      <Suspense>
-        <AdrListWithFilters
-          adrs={allAdrs}
-          counts={counts}
-          allStatuses={allStatuses}
-        />
-      </Suspense>
+      <AdrListWithFilters
+        adrs={allAdrs}
+        counts={counts}
+        allStatuses={allStatuses}
+      />
     </div>
   );
 }
