@@ -261,25 +261,39 @@ Run Elixir alongside TypeScript. Migrate functions incrementally.
 
 ## Alternatives Considered
 
-### Elixir without Jido (OTP + Phoenix + Oban)
-- [Oban](https://github.com/sorentwo/oban) is a mature, well-funded Elixir job processor (Inngest-like)
-- Phoenix for web + API
-- Raw OTP for process management
-- **Pro**: No dependency on young framework. Battle-tested stack.
-- **Con**: No agent abstractions. Build everything from primitives.
+### Option A: Jido (full agent framework)
+- Agent-as-process, signals, directives, plugins, FSM strategies
+- ~1 year old, single maintainer, ~250 stars
+- Ecosystem: jido_ai, jido_memory, jido_shell, jido_chat
+- **Pro**: Strongest agent abstractions, signal routing maps to Inngest events
+- **Con**: Young, small community, unclear production usage. Dependency risk.
 
-### Stay TypeScript, reduce infrastructure
+### Option B: OTP + Oban + Phoenix (recommended if migrating)
+- [Oban](https://github.com/oban-bg/oban) — mature, funded, production-proven job processor. Direct Inngest replacement with durable jobs, cron, retries, priorities, workflows (fan-out/fan-in), queue isolation, telemetry. Oban Web provides dashboard (replaces Inngest dashboard).
+- [LangChain Elixir](https://github.com/brainlid/langchain) — LLM integration (OpenAI, Anthropic, Google, Bumblebee). Maintained by Mark Ericksen (Fly.io). 2+ years, production-used.
+- Raw OTP GenServers for gateway agent, memory pipeline, long-lived processes
+- Phoenix LiveView for web (or keep Next.js, Phoenix serves API)
+- Cachex/ETS replaces Redis cache. Phoenix.PubSub replaces Redis pub/sub.
+- **Pro**: Battle-tested stack, no dependency on young frameworks. Oban is 6+ years old with thousands of production deployments.
+- **Con**: No pre-built agent patterns. ~500 lines of custom GenServer code to build signal routing / directive execution.
+- **Assessment**: AppUnite and George Guimarães both conclude the Elixir community doesn't need agent frameworks — OTP primitives are the agent framework. "Effective agent-based systems rely on software architecture... teams should retain control over system design."
+
+### Option C: SwarmEx
+- Lightweight agent orchestration, early stage, author acknowledges bugs
+- **Pro**: Minimal. **Con**: Not production-ready. Skip.
+
+### Option D: Stay TypeScript, reduce infrastructure
 - Replace Inngest with [Trigger.dev](https://trigger.dev) or self-hosted Temporal
 - Simplify launchd to fewer services
 - Accept the maintenance burden as cost of TypeScript ecosystem benefits
 - **Pro**: No migration. Incremental improvements.
 - **Con**: Fundamental process model limitations remain.
 
-### Deno + TypeScript
+### Option E: Deno + TypeScript
 - Better process model than Node/Bun
 - Still single-threaded per isolate
 - Doesn't solve the fundamental "processes as first-class" problem
-- **Pro**: Stay in TypeScript. Con: Marginal improvement.**
+- **Pro**: Stay in TypeScript. **Con**: Marginal improvement.
 
 ## Consequences
 
