@@ -11,7 +11,7 @@ tags:
   - automation
 ---
 
-# ADR-0111: Channel Routing Engine
+# ADR-0111: Channel Routing Engine (Conversations + Events)
 
 ## Context
 
@@ -85,6 +85,64 @@ channels: defineTable({
 ```
 
 The key generalization: `eventPatterns` matches against the Inngest event name (e.g. `front/message.received`, `github/pr.opened`, `vercel/deploy.failed`), and `matchers` operates on `event.data` fields regardless of source. Same channel can match multiple event types.
+
+### Event Cache Layer (Typesense + Redis)
+
+Every event that flows through the bus should be indexed locally so we never re-hit external APIs for historical lookups. This is the same pattern as `vault_notes`, `otel_events`, `memory_observations` — Typesense is already the unified search layer (ADR-0082).
+
+**Typesense collections — the conversation index:**
+
+All conversational and event data indexed locally. Query any of it with `joelclaw search`. Never re-hit external APIs for historical lookups.
+
+| Collection | Source | Indexed via | Notes |
+|-----------|--------|------------|-------|
+| `front_messages` | Front email | `front/message.received` webhook | Full thread history, attachments noted |
+| `granola_meetings` | Granola | Nightly sync via `granola meetings` CLI | Transcripts, summaries, participants, action items. Backfill existing. Granola rate-limits aggressively — index once, search forever |
+| `voice_transcripts` | System voice | `voice/call.completed` event | Collection exists but empty — wire up |
+| `telegram_messages` | Telegram | `telegram/callback.received` webhook | Gateway conversations |
+| `imessage_threads` | iMessage | Periodic sync via `imsg` CLI | Opt-in per contact/thread |
+| `session_transcripts` | Pi/Claude/Codex sessions | `session/observation.noted` + compaction | Session summaries + key observations (already partially covered by `memory_observations`) |
+| `github_events` | GitHub | `github/*` webhooks | PR/issue/deploy history |
+| `todoist_events` | Todoist | `todoist/*` webhooks | Task lifecycle |
+
+The shared principle: **every conversation or event is indexed on arrival (or periodic sync for pull-based sources). The channel router matches against Typesense, not external APIs.**
+
+Schema for `front_messages` (example):
+
+```typescript
+{
+  name: "front_messages",
+  fields: [
+    { name: "id", type: "string" },                    // Front message ID
+    { name: "conversationId", type: "string", facet: true },
+    { name: "subject", type: "string" },
+    { name: "from", type: "string", facet: true },
+    { name: "fromName", type: "string", facet: true },
+    { name: "bodyPlain", type: "string" },              // searchable body
+    { name: "tags", type: "string[]", facet: true },
+    { name: "isInbound", type: "bool", facet: true },
+    { name: "timestamp", type: "int64", sort: true },
+    { name: "channelsMatched", type: "string[]", facet: true },  // which channels fired
+    { name: "embedding", type: "float[]", embed: {      // auto-embed for semantic search
+        from: ["subject", "bodyPlain"],
+        model_config: { model_name: "ts/all-MiniLM-L12-v2" }
+      }
+    },
+  ],
+  default_sorting_field: "timestamp",
+}
+```
+
+**Redis for hot state:**
+- `channel:{name}:last-seen` — timestamp of last matched event (TTL: none)
+- `channel:{name}:doc-dedup` — SET of recently-downloaded Google Doc IDs (TTL: 7d)
+- `channel:{name}:stats` — HASH with match count, action success/fail counts (TTL: 30d)
+
+**Flow:** webhook → Inngest event → index to Typesense (always, unconditionally) → channel router evaluates → channel processor runs actions. The indexing happens before routing — every event is preserved regardless of whether any channel matches.
+
+This means `joelclaw search "ai hero alex"` finds email threads, meeting transcripts, Telegram conversations, and voice notes — all without touching any external API. Channel actions like `correlate-vault` can query across all conversation collections to find related context.
+
+**Granola-specific notes:** Granola has aggressive rate limits (hourly+ cooldown on transcript pulls). Current state: we hit rate limits today pulling 6 meetings manually. With a nightly sync indexing all new meetings into Typesense, we'd never need to hit Granola's API in real-time again. The `search-granola` channel action becomes a Typesense query against `granola_meetings`, not a CLI call.
 
 ### Action Types (v1)
 
@@ -196,25 +254,39 @@ This system routes real business email — names, addresses, financial discussio
 - Action composition — mix and match per channel
 - Web UI for channel management from day one (Convex dashboard + joelclaw.com/system)
 - Existing VIP logic preserved as config, not lost
+- Every event indexed to Typesense — full-text + semantic search across all history, zero external API calls for lookups
+- Redis hot state for dedup and rate-awareness
 
 ### Bad
-- Convex query on every inbound email (should be fast, but adds a dependency)
+- Convex query on every event (should be fast, but adds a dependency)
 - Action implementations need to be modular — refactoring 600 lines of VIP into pluggable steps is real work
 - Google Doc download requires `gog` CLI + auth — worker environment needs access
+- Typesense indexing on every event adds write volume (manageable — already doing it for OTEL)
 
 ### Risks
-- Matcher overlap: two channels match the same email. Mitigation: priority ordering + "first match wins" default, with option for "all matches fire" per channel.
+- Matcher overlap: two channels match the same event. Mitigation: all matches fire by default (an email can be relevant to multiple projects). Priority field for ordering, not exclusion.
 - Action failures: one step fails, rest of pipeline stalls. Mitigation: Inngest step retries + `continueOnError` flag per action.
-- Rate limits: aggressive doc downloading on every email. Mitigation: dedup by doc ID (Redis set of recently-downloaded doc IDs).
+- Rate limits: aggressive doc downloading on every email. Mitigation: dedup by doc ID (Redis SET with TTL).
+- Typesense storage growth: emails accumulate. Mitigation: retention policy per collection (e.g. 1 year), old docs auto-pruned by nightly maintenance.
 
 ## Implementation Order
 
-1. Convex schema + seed `ai-hero` and `vip-people` channels
-2. Channel router Inngest function (matcher evaluation)
-3. Channel processor Inngest function (action pipeline executor)
-4. Port VIP actions into modular action implementations
-5. Add new actions: `extract-google-links`, `download-gdocs`, `vault-sync`
-6. CLI commands: `joelclaw channels list/show/add/edit/disable`
-7. Wire into `front-message-received-notify` (replace hardcoded VIP check)
-8. Deprecate `vip-email-received.ts`
-9. Web UI surface on joelclaw.com/system/channels
+### Phase 1: Conversation Index (immediate value, no routing needed)
+1. **`front_messages` collection** — schema + index on `front/message.received` webhook. Backfill existing conversations.
+2. **`granola_meetings` collection** — schema + nightly sync cron. Backfill all accessible meetings. Biggest bang — eliminates rate limit pain.
+3. **Wire `voice_transcripts`** — collection exists, just needs the `voice/call.completed` handler to index.
+4. **`telegram_messages` collection** — index on `telegram/callback.received` webhook.
+
+### Phase 2: Channel Routing Engine
+5. Convex `channels` schema + seed initial channels
+6. Channel router Inngest function (matcher evaluation against any event type)
+7. Channel processor Inngest function (action pipeline executor)
+8. Port VIP actions into modular action implementations
+9. Add new actions: `extract-google-links`, `download-gdocs`, `vault-sync`, `correlate-vault`
+
+### Phase 3: Surface + Migration
+10. CLI commands: `joelclaw channels list/show/add/edit/disable`
+11. Wire router into the event bus (all events flow through)
+12. Deprecate `vip-email-received.ts`
+13. Web UI on joelclaw.com/system/channels
+14. Add remaining collections (`github_events`, `todoist_events`, `imessage_threads`, `session_transcripts`) as needed
