@@ -87,6 +87,9 @@ const OBSERVER_LLM_TIMEOUT_MS = Number.parseInt(
   process.env.OBSERVER_LLM_TIMEOUT_MS ?? "30000",
   10
 );
+const OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS = 3;
+const OBSERVER_LLM_LOCKFILE_RETRY_BASE_MS = 500;
+const OBSERVER_LLM_LOCKFILE_RETRY_JITTER_MS = 500;
 
 function getRedisClient(): Redis {
   if (!redisClient) {
@@ -313,6 +316,23 @@ function readShellText(value: unknown): string {
   return String(value);
 }
 
+function isLockfileContentionError(message: string): boolean {
+  return /Lock file is already being held/iu.test(message) || /proper-lockf/iu.test(message);
+}
+
+function getLockfileRetryDelayMs(): number {
+  return (
+    OBSERVER_LLM_LOCKFILE_RETRY_BASE_MS +
+    Math.floor(Math.random() * OBSERVER_LLM_LOCKFILE_RETRY_JITTER_MS)
+  );
+}
+
+function sleepForMs(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function assertRequiredStringField(
   payload: Record<string, unknown>,
   fieldName: "sessionId" | "dedupeKey" | "trigger" | "messages"
@@ -448,26 +468,68 @@ Session context:
       const observerStartedAt = Date.now();
 
       try {
-        const runPromise = Bun.$`pi --no-tools --no-session --no-extensions --print --mode json --model ${observerModel} --system-prompt ${OBSERVER_SYSTEM_PROMPT} ${promptWithSessionContext}`
-          .quiet()
-          .nothrow();
+        let result: any;
+        for (let attempt = 1; attempt <= OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS; attempt += 1) {
+          try {
+            const runPromise = Bun.$`pi --no-tools --no-session --no-extensions --print --mode json --model ${observerModel} --system-prompt ${OBSERVER_SYSTEM_PROMPT} ${promptWithSessionContext}`
+              .quiet()
+              .nothrow();
 
-        const result = await new Promise<any>((resolve, reject) => {
-          const timer = setTimeout(() => {
-            reject(new Error(`Observer LLM timed out after ${OBSERVER_LLM_TIMEOUT_MS}ms`));
-          }, OBSERVER_LLM_TIMEOUT_MS);
+            const attemptResult = await new Promise<any>((resolve, reject) => {
+              const timer = setTimeout(() => {
+                reject(new Error(`Observer LLM timed out after ${OBSERVER_LLM_TIMEOUT_MS}ms`));
+              }, OBSERVER_LLM_TIMEOUT_MS);
 
-          runPromise.then(
-            (value) => {
-              clearTimeout(timer);
-              resolve(value);
-            },
-            (error) => {
-              clearTimeout(timer);
-              reject(error);
+              runPromise.then(
+                (value) => {
+                  clearTimeout(timer);
+                  resolve(value);
+                },
+                (error) => {
+                  clearTimeout(timer);
+                  reject(error);
+                }
+              );
+            });
+
+            const attemptStderr = readShellText(attemptResult.stderr).trim();
+            const shouldRetry =
+              attemptResult.exitCode !== 0 &&
+              attempt < OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS &&
+              isLockfileContentionError(attemptStderr);
+
+            if (shouldRetry) {
+              const delayMs = getLockfileRetryDelayMs();
+              console.warn(
+                `[observe] observer LLM lockfile contention; retrying attempt ${attempt + 1}/${OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS} in ${delayMs}ms`
+              );
+              await sleepForMs(delayMs);
+              continue;
             }
-          );
-        });
+
+            result = attemptResult;
+            break;
+          } catch (attemptError) {
+            const attemptMessage =
+              attemptError instanceof Error ? attemptError.message : String(attemptError);
+            const shouldRetry =
+              attempt < OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS &&
+              isLockfileContentionError(attemptMessage);
+            if (!shouldRetry) {
+              throw attemptError;
+            }
+
+            const delayMs = getLockfileRetryDelayMs();
+            console.warn(
+              `[observe] observer LLM lockfile contention; retrying attempt ${attempt + 1}/${OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS} in ${delayMs}ms`
+            );
+            await sleepForMs(delayMs);
+          }
+        }
+
+        if (!result) {
+          throw new Error("Observer LLM subprocess failed before producing a result");
+        }
 
         const stdoutRaw = readShellText(result.stdout);
         const parsedPi = parsePiJsonAssistant(stdoutRaw);

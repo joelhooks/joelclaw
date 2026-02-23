@@ -1,12 +1,14 @@
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
+import type { TaskPort } from "../../tasks/port";
 import { MODEL } from "../../lib/models";
 import { inngest } from "../client";
 
 const HOME_DIR = process.env.HOME || "/Users/joel";
 const WORK_DIR = join(HOME_DIR, "Code", "joelhooks", "joelclaw");
 const TODOIST_API = "https://api.todoist.com/api/v1";
+const CODEX_TIMEOUT_MS = 600_000;
 
 type FixStatus = "fixed" | "documented" | "skipped";
 
@@ -122,7 +124,7 @@ export const frictionFix = inngest.createFunction(
         const result = execSync(cmd.join(" "), {
           cwd: WORK_DIR,
           encoding: "utf-8",
-          timeout: 300_000,
+          timeout: CODEX_TIMEOUT_MS,
           env: { ...process.env },
           maxBuffer: 10 * 1024 * 1024,
         });
@@ -148,6 +150,7 @@ export const frictionFix = inngest.createFunction(
     let message = "No fix commit was created";
     let commitSha: string | undefined;
     let filesChanged: string[] = [];
+    let escalationTaskId: string | undefined;
 
     if (dispatch.status === "failed") {
       status = "documented";
@@ -191,6 +194,46 @@ export const frictionFix = inngest.createFunction(
       }
     }
 
+    if (status === "skipped") {
+      const escalation = await step.run("create-skip-escalation-task", async () => {
+        try {
+          const taskPort: TaskPort = new TodoistTaskAdapter();
+          const rawContent = `Manual friction fix: ${title}`;
+          const content = rawContent.length > 220 ? `${rawContent.slice(0, 217)}...` : rawContent;
+          const descriptionLines = [
+            `Pattern: ${patternId}`,
+            `Auto-fix status: skipped (no commits found on ${branchName})`,
+            `Summary: ${summary}`,
+            `Suggestion: ${suggestion}`,
+          ];
+          if (evidence.length > 0) {
+            descriptionLines.push("Evidence:");
+            descriptionLines.push(...evidence.map((item: string) => `- ${item}`));
+          }
+
+          const task = await taskPort.createTask({
+            content,
+            description: descriptionLines.join("\n"),
+            labels: ["agent", "friction", "friction-fix-skipped"],
+            projectId: "Agent Work",
+          });
+          return { created: true as const, taskId: task.id };
+        } catch (error) {
+          return {
+            created: false as const,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      });
+
+      if (escalation.created) {
+        escalationTaskId = escalation.taskId;
+        message = `${message}. Escalated to Todoist task ${escalation.taskId}`;
+      } else {
+        message = `${message}. Failed to create escalation task: ${escalation.error}`;
+      }
+    }
+
     await step.run("notify-gateway", async () => {
       try {
         if (status === "fixed" && commitSha) {
@@ -209,6 +252,7 @@ export const frictionFix = inngest.createFunction(
           patternId,
           status,
           filesChanged,
+          escalationTaskId,
         });
         return { notified: true };
       } catch (error) {
@@ -233,6 +277,9 @@ export const frictionFix = inngest.createFunction(
         ];
         if (commitSha) {
           commentLines.push(`Commit: ${commitSha}`);
+        }
+        if (escalationTaskId) {
+          commentLines.push(`Escalation task: ${escalationTaskId}`);
         }
 
         await addTodoistComment(todoistTaskId, commentLines.join("\n"));

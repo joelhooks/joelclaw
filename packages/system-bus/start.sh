@@ -79,4 +79,21 @@ else
   echo "WARNING: Failed to lease front_api_token" >&2
 fi
 
-exec bun run src/serve.ts
+VERCEL_SECRET=$(secrets lease vercel_webhook_secret --ttl 24h 2>/dev/null)
+if [ -n "$VERCEL_SECRET" ]; then
+  export VERCEL_WEBHOOK_SECRET="$VERCEL_SECRET"
+else
+  echo "WARNING: Failed to lease vercel_webhook_secret" >&2
+fi
+
+# Start worker, then force Inngest function sync after startup
+bun run src/serve.ts &
+WORKER_PID=$!
+
+# Wait for worker to bind, then PUT sync to prevent stale registry
+sleep 5
+curl -sf -X PUT http://127.0.0.1:3111/api/inngest >/dev/null 2>&1 \
+  && echo "[start.sh] Inngest function sync OK" \
+  || echo "WARNING: Inngest function sync failed" >&2
+
+wait $WORKER_PID
