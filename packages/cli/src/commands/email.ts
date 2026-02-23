@@ -1,5 +1,8 @@
 import { Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
+import * as os from "node:os"
+import * as path from "node:path"
 import { respond, respondError } from "../response"
 
 /**
@@ -92,6 +95,292 @@ function mapConversation(c: any): Conversation {
     },
     date: new Date(ts * 1000).toISOString().slice(0, 10),
     tags: (c.tags ?? []).map((t: any) => t.name),
+  }
+}
+
+type ReadAttachment = {
+  id: string
+  name: string
+  content_type: string | null
+  size: number | null
+  source_url: string | null
+  cache_path: string | null
+  cache_status: "cached" | "metadata_only" | "cache_error"
+  cache_error?: string
+}
+
+type ReadMessage = {
+  id: string
+  from: {
+    name: string
+    email: string
+  }
+  date: string
+  is_inbound: boolean
+  body_preview: string
+  attachments: ReadAttachment[]
+}
+
+type ReadConversationPayload = {
+  conversation: Conversation
+  messages: ReadMessage[]
+  attachment_summary: {
+    total: number
+    cached: number
+    metadata_only: number
+    cache_errors: number
+  }
+  fetched_at: string
+}
+
+const EMAIL_CACHE_ROOT =
+  process.env.JOELCLAW_EMAIL_CACHE_DIR ??
+  path.join(os.homedir(), ".cache", "joelclaw", "email")
+
+function threadCachePath(conversationId: string): string {
+  return path.join(EMAIL_CACHE_ROOT, "threads", `${conversationId}.json`)
+}
+
+function sanitizeFileName(name: string): string {
+  const trimmed = name.trim()
+  if (!trimmed) return "attachment.bin"
+  return trimmed.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 180)
+}
+
+function attachmentSourceUrl(attachment: any): string | null {
+  if (typeof attachment?.download_url === "string") return attachment.download_url
+  if (typeof attachment?.url === "string") return attachment.url
+  const maybeRelated = attachment?._links?.related
+  if (typeof maybeRelated === "string") return maybeRelated
+  if (typeof maybeRelated?.href === "string") return maybeRelated.href
+  return null
+}
+
+function resolveFrontUrl(raw: string): string {
+  if (raw.startsWith("http://") || raw.startsWith("https://")) return raw
+  const normalized = raw.startsWith("/") ? raw : `/${raw}`
+  return `https://api2.frontapp.com${normalized}`
+}
+
+async function readThreadCache(conversationId: string): Promise<{
+  payload: ReadConversationPayload
+  cache_path: string
+  age_seconds: number
+} | null> {
+  const cachePath = threadCachePath(conversationId)
+  try {
+    const [raw, info] = await Promise.all([
+      readFile(cachePath, "utf8"),
+      stat(cachePath),
+    ])
+    const payload = JSON.parse(raw) as ReadConversationPayload
+    const ageSeconds = Math.max(0, Math.floor((Date.now() - info.mtimeMs) / 1000))
+    return {
+      payload,
+      cache_path: cachePath,
+      age_seconds: ageSeconds,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function writeThreadCache(
+  conversationId: string,
+  payload: ReadConversationPayload,
+): Promise<string> {
+  const cachePath = threadCachePath(conversationId)
+  await mkdir(path.dirname(cachePath), { recursive: true })
+  await writeFile(cachePath, JSON.stringify(payload, null, 2), "utf8")
+  return cachePath
+}
+
+async function cacheFrontAttachment({
+  attachment,
+  token,
+  conversationId,
+  messageId,
+  index,
+}: {
+  attachment: any
+  token: string
+  conversationId: string
+  messageId: string
+  index: number
+}): Promise<ReadAttachment> {
+  const attachmentId =
+    typeof attachment?.id === "string" && attachment.id
+      ? attachment.id
+      : `${messageId}-att-${index}`
+  const fileName = sanitizeFileName(
+    typeof attachment?.filename === "string" && attachment.filename
+      ? attachment.filename
+      : typeof attachment?.name === "string" && attachment.name
+        ? attachment.name
+        : `attachment-${index}.bin`,
+  )
+  const sourceUrl = attachmentSourceUrl(attachment)
+  const contentType =
+    typeof attachment?.content_type === "string"
+      ? attachment.content_type
+      : typeof attachment?.mimetype === "string"
+        ? attachment.mimetype
+        : null
+  const size =
+    typeof attachment?.size === "number"
+      ? attachment.size
+      : typeof attachment?.file_size === "number"
+        ? attachment.file_size
+        : null
+
+  if (!sourceUrl) {
+    return {
+      id: attachmentId,
+      name: fileName,
+      content_type: contentType,
+      size,
+      source_url: null,
+      cache_path: null,
+      cache_status: "metadata_only",
+    }
+  }
+
+  const targetDir = path.join(
+    EMAIL_CACHE_ROOT,
+    "attachments",
+    conversationId,
+    messageId,
+  )
+  const targetPath = path.join(targetDir, `${attachmentId}-${fileName}`)
+  await mkdir(targetDir, { recursive: true })
+
+  try {
+    await stat(targetPath)
+    return {
+      id: attachmentId,
+      name: fileName,
+      content_type: contentType,
+      size,
+      source_url: sourceUrl,
+      cache_path: targetPath,
+      cache_status: "cached",
+    }
+  } catch {
+    // cache miss, fall through to fetch
+  }
+
+  try {
+    const url = resolveFrontUrl(sourceUrl)
+    const needsFrontAuth = url.startsWith("https://api2.frontapp.com")
+    const headers: Record<string, string> = { Accept: "*/*" }
+    if (needsFrontAuth) {
+      headers.Authorization = `Bearer ${token}`
+    }
+    const res = await fetch(url, { headers })
+    if (!res.ok) {
+      return {
+        id: attachmentId,
+        name: fileName,
+        content_type: contentType,
+        size,
+        source_url: sourceUrl,
+        cache_path: null,
+        cache_status: "cache_error",
+        cache_error: `HTTP ${res.status}`,
+      }
+    }
+    const bytes = await res.arrayBuffer()
+    await writeFile(targetPath, Buffer.from(bytes))
+    return {
+      id: attachmentId,
+      name: fileName,
+      content_type: contentType,
+      size,
+      source_url: sourceUrl,
+      cache_path: targetPath,
+      cache_status: "cached",
+    }
+  } catch (error) {
+    return {
+      id: attachmentId,
+      name: fileName,
+      content_type: contentType,
+      size,
+      source_url: sourceUrl,
+      cache_path: null,
+      cache_status: "cache_error",
+      cache_error: error instanceof Error ? error.message : "Attachment cache failed",
+    }
+  }
+}
+
+async function fetchConversationReadPayload(
+  conversationId: string,
+  token: string,
+): Promise<ReadConversationPayload> {
+  const conv = await frontGet(`/conversations/${conversationId}`, token)
+  const msgs = await frontGet(`/conversations/${conversationId}/messages`, token)
+
+  const rawMessages: any[] = Array.isArray(msgs?._results) ? msgs._results : []
+  const messages: ReadMessage[] = []
+  let totalAttachments = 0
+  let cachedAttachments = 0
+  let metadataOnlyAttachments = 0
+  let cacheErrorAttachments = 0
+
+  for (const m of rawMessages) {
+    const messageId = typeof m?.id === "string" ? m.id : "msg_unknown"
+    const rawAttachments: any[] = Array.isArray(m?.attachments)
+      ? m.attachments
+      : []
+    const attachments: ReadAttachment[] = []
+
+    for (let i = 0; i < rawAttachments.length; i++) {
+      const att = rawAttachments[i]
+      const cached = await cacheFrontAttachment({
+        attachment: att,
+        token,
+        conversationId,
+        messageId,
+        index: i,
+      })
+      attachments.push(cached)
+      totalAttachments++
+      if (cached.cache_status === "cached") cachedAttachments++
+      if (cached.cache_status === "metadata_only") metadataOnlyAttachments++
+      if (cached.cache_status === "cache_error") cacheErrorAttachments++
+    }
+
+    messages.push({
+      id: messageId,
+      from: {
+        name:
+          m?.author?.first_name
+            ? `${m.author.first_name} ${m.author.last_name ?? ""}`.trim()
+            : (m?.recipients?.find((r: any) => r?.role === "from")?.name ??
+              "unknown"),
+        email:
+          m?.author?.email ??
+          m?.recipients?.find((r: any) => r?.role === "from")?.handle ??
+          "unknown",
+      },
+      date: new Date((m?.created_at ?? 0) * 1000).toISOString(),
+      is_inbound: Boolean(m?.is_inbound),
+      body_preview: String(m?.text ?? m?.body ?? "").slice(0, 500),
+      attachments,
+    })
+  }
+
+  return {
+    conversation: mapConversation(conv),
+    messages,
+    attachment_summary: {
+      total: totalAttachments,
+      cached: cachedAttachments,
+      metadata_only: metadataOnlyAttachments,
+      cache_errors: cacheErrorAttachments,
+    },
+    fetched_at: new Date().toISOString(),
   }
 }
 
@@ -449,48 +738,152 @@ const readCmd = Command.make(
   "read",
   {
     conversationId: Options.text("id").pipe(Options.withAlias("i")),
+    refresh: Options.boolean("refresh").pipe(
+      Options.withDescription("Bypass cache and force fresh Front API fetch"),
+      Options.withDefault(false),
+    ),
+    cacheTtlMinutes: Options.integer("cache-ttl-minutes").pipe(
+      Options.withDescription("Use cache if newer than this many minutes"),
+      Options.withDefault(60),
+    ),
   },
-  ({ conversationId }) =>
+  ({ conversationId, refresh, cacheTtlMinutes }) =>
     Effect.gen(function* () {
-      const token = frontToken()
-      const conv = yield* Effect.tryPromise(() =>
-        frontGet(`/conversations/${conversationId}`, token),
+      const ttlSeconds = Math.max(0, cacheTtlMinutes) * 60
+      const cacheHit = yield* Effect.tryPromise(() =>
+        readThreadCache(conversationId),
       )
-      const msgs = yield* Effect.tryPromise(() =>
-        frontGet(`/conversations/${conversationId}/messages`, token),
-      )
+      const cacheFresh =
+        cacheHit !== null && cacheHit.age_seconds <= ttlSeconds
 
-      const messages = (msgs._results ?? []).map((m: any) => ({
-        id: m.id,
-        from: {
-          name:
-            m.author?.first_name
-              ? `${m.author.first_name} ${m.author.last_name ?? ""}`.trim()
-              : (
-                  m.recipients?.find((r: any) => r.role === "from")?.name ??
-                  "unknown"
-                ),
-          email:
-            m.author?.email ??
-            m.recipients?.find((r: any) => r.role === "from")?.handle ??
-            "unknown",
-        },
-        date: new Date((m.created_at ?? 0) * 1000).toISOString(),
-        is_inbound: m.is_inbound,
-        body_preview: (m.text ?? m.body ?? "").slice(0, 500),
-      }))
+      if (cacheFresh && !refresh) {
+        yield* Console.log(
+          respond(
+            "email read",
+            {
+              ...cacheHit.payload,
+              cache: {
+                hit: true,
+                source: "local",
+                cache_path: cacheHit.cache_path,
+                age_seconds: cacheHit.age_seconds,
+                ttl_seconds: ttlSeconds,
+              },
+            },
+            [
+              {
+                command: "joelclaw email archive --id <conversation-id>",
+                description: "Archive this conversation",
+                params: {
+                  "conversation-id": { description: "Conversation ID", value: conversationId, required: true },
+                },
+              },
+              {
+                command: "joelclaw email read --id <conversation-id> --refresh",
+                description: "Refresh from Front and update cache",
+                params: {
+                  "conversation-id": {
+                    description: "Conversation ID",
+                    value: conversationId,
+                    required: true,
+                  },
+                },
+              },
+              {
+                command: "joelclaw email inbox",
+                description: "Back to inbox",
+              },
+            ],
+          ),
+        )
+        return
+      }
+
+      const token = frontToken()
+      const fetched = yield* Effect.tryPromise(() =>
+        fetchConversationReadPayload(conversationId, token),
+      ).pipe(Effect.either)
+
+      if (fetched._tag === "Left") {
+        if (cacheHit) {
+          yield* Console.log(
+            respond(
+              "email read",
+              {
+                ...cacheHit.payload,
+                cache: {
+                  hit: true,
+                  source: "local-stale-fallback",
+                  cache_path: cacheHit.cache_path,
+                  age_seconds: cacheHit.age_seconds,
+                  ttl_seconds: ttlSeconds,
+                  refresh_requested: refresh,
+                },
+                warning: "Front API read failed; returned stale cache.",
+              },
+              [
+                {
+                  command: "joelclaw email read --id <conversation-id> --refresh",
+                  description: "Retry fresh fetch from Front",
+                  params: {
+                    "conversation-id": {
+                      description: "Conversation ID",
+                      value: conversationId,
+                      required: true,
+                    },
+                  },
+                },
+                {
+                  command: "joelclaw email inbox",
+                  description: "Back to inbox",
+                },
+              ],
+            ),
+          )
+          return
+        }
+
+        yield* Console.log(
+          respondError(
+            "email read",
+            fetched.left instanceof Error
+              ? fetched.left.message
+              : "Failed to read conversation from Front",
+            "FRONT_READ_FAILED",
+            "Retry with --refresh or check Front API auth and connectivity.",
+          ),
+        )
+        return
+      }
+
+      const cachePath = yield* Effect.tryPromise(() =>
+        writeThreadCache(conversationId, fetched.right),
+      )
 
       yield* Console.log(
         respond(
           "email read",
           {
-            conversation: mapConversation(conv),
-            messages,
+            ...fetched.right,
+            cache: {
+              hit: false,
+              source: "front",
+              cache_path: cachePath,
+              ttl_seconds: ttlSeconds,
+              refresh_requested: refresh,
+            },
           },
           [
             {
               command: "joelclaw email archive --id <conversation-id>",
               description: "Archive this conversation",
+              params: {
+                "conversation-id": { description: "Conversation ID", value: conversationId, required: true },
+              },
+            },
+            {
+              command: "joelclaw email read --id <conversation-id>",
+              description: "Read from cache (if still fresh)",
               params: {
                 "conversation-id": { description: "Conversation ID", value: conversationId, required: true },
               },
@@ -528,8 +921,8 @@ export const emailCmd = Command.make("email", {}, () =>
             },
             {
               name: "read",
-              description: "Read a conversation's messages",
-              usage: "joelclaw email read --id cnv_xxx",
+              description: "Read a conversation's messages (with local thread+attachment cache)",
+              usage: "joelclaw email read --id cnv_xxx [--refresh] [--cache-ttl-minutes 60]",
             },
             {
               name: "archive",

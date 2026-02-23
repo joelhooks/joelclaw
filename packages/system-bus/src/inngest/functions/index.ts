@@ -87,7 +87,13 @@ export {
 export { nasSoakSample, nasSoakReview } from "./nas-soak";
 export { manifestArchive } from "./manifest-archive";
 export { docsIngest } from "./docs-ingest";
-export { docsBacklog, docsEnrich, docsReindex } from "./docs-maintenance";
+export {
+  docsBacklog,
+  docsBacklogDriver,
+  docsEnrich,
+  docsIngestJanitor,
+  docsReindex,
+} from "./docs-maintenance";
 export { hostFunctionDefinitions, hostFunctionIds } from "./index.host";
 export { clusterFunctionDefinitions, clusterFunctionIds } from "./index.cluster";
 

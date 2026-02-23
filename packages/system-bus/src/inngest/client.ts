@@ -199,6 +199,29 @@ export type Events = {
       idempotencyPrefix?: string;
     };
   };
+  "docs/backlog.drive.requested": {
+    data: {
+      force?: boolean;
+      reason?: string;
+      maxEntries?: number;
+      maxRunning?: number;
+      maxQueued?: number;
+      lookbackHours?: number;
+      booksOnly?: boolean;
+      onlyMissing?: boolean;
+      includePodcasts?: boolean;
+      idempotencyPrefix?: string;
+    };
+  };
+  "docs/ingest.janitor.requested": {
+    data: {
+      reason?: string;
+      lookbackHours?: number;
+      scanLimit?: number;
+      staleMinutes?: number;
+      maxRecoveries?: number;
+    };
+  };
   "docs/search.requested": {
     data: {
       query: string;

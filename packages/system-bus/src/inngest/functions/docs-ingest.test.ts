@@ -6,6 +6,7 @@ import { chunkBookText } from "../../lib/book-chunk";
 import { resolveConcepts } from "../../taxonomy/resolve";
 import {
   buildBackfillClassification,
+  buildExtractedTextPath,
   buildChunkRecords,
   resetManifestInferenceCache,
   resolveBackfillConcepts,
@@ -102,6 +103,17 @@ test("docs-ingest chunk records include concept and evidence metadata", () => {
       expect(record.parent_evidence_id).toBe(record.parent_chunk_id);
     }
   }
+});
+
+test("docs-ingest temp text artifacts use run-unique paths", () => {
+  const first = buildExtractedTextPath("doc-test-1");
+  const second = buildExtractedTextPath("doc-test-1");
+
+  expect(first).not.toBe(second);
+  expect(first.startsWith("/tmp/docs-ingest/doc-test-1-")).toBe(true);
+  expect(second.startsWith("/tmp/docs-ingest/doc-test-1-")).toBe(true);
+  expect(first.endsWith(".txt")).toBe(true);
+  expect(second.endsWith(".txt")).toBe(true);
 });
 
 test("docs-ingest backfill taxonomy uses inferred storage category as primary concept", () => {

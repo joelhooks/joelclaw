@@ -140,4 +140,58 @@ describe("MEM-2 client event schema acceptance tests", () => {
       },
     });
   });
+
+  test("supports docs/backlog.drive.requested queue gate overrides", async () => {
+    const driverData: Events["docs/backlog.drive.requested"]["data"] = {
+      reason: "manual catch-up",
+      force: true,
+      maxEntries: 48,
+      maxRunning: 2,
+      maxQueued: 18,
+      lookbackHours: 6,
+      booksOnly: true,
+      onlyMissing: true,
+    };
+
+    const result = await captureEvent({
+      name: "docs/backlog.drive.requested",
+      data: driverData,
+    });
+
+    expect(result).toMatchObject({
+      name: "docs/backlog.drive.requested",
+      data: {
+        reason: "manual catch-up",
+        force: true,
+        maxEntries: 48,
+        maxRunning: 2,
+        maxQueued: 18,
+      },
+    });
+  });
+
+  test("supports docs/ingest.janitor.requested controls", async () => {
+    const janitorData: Events["docs/ingest.janitor.requested"]["data"] = {
+      reason: "recover stalled finalization",
+      lookbackHours: 12,
+      scanLimit: 90,
+      staleMinutes: 20,
+      maxRecoveries: 5,
+    };
+
+    const result = await captureEvent({
+      name: "docs/ingest.janitor.requested",
+      data: janitorData,
+    });
+
+    expect(result).toMatchObject({
+      name: "docs/ingest.janitor.requested",
+      data: {
+        reason: "recover stalled finalization",
+        lookbackHours: 12,
+        scanLimit: 90,
+        staleMinutes: 20,
+      },
+    });
+  });
 });

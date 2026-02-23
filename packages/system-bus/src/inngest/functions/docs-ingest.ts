@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, mkdir, readFile, rm, stat } from "node:fs/promises";
+import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname } from "node:path";
 import { NonRetriableError } from "inngest";
@@ -577,20 +577,64 @@ Rules:
   ].join("\n");
 
   const startedAt = Date.now();
-  const proc = runProcessSync([
-    "pi",
-    "--no-tools",
-    "--no-session",
-    "--no-extensions",
-    "--print",
-    "--mode",
-    "json",
-    "--model",
-    DOCS_TAXONOMY_MODEL,
-    "--system-prompt",
-    taxonomySystemPrompt,
-    taxonomyUserPrompt,
-  ], DOCS_TAXONOMY_TIMEOUT_MS);
+  const promptPath = buildTaxonomyPromptPath(input.file.docId);
+  await mkdir(DOCS_TMP_DIR, { recursive: true });
+  await writeFile(promptPath, taxonomyUserPrompt, "utf8");
+
+  let proc: {
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+    timedOut: boolean;
+  };
+  try {
+    // Use async subprocess execution so taxonomy inference cannot block the worker event loop.
+    proc = await runProcess(
+      [
+        "pi",
+        "--no-tools",
+        "--no-session",
+        "--no-extensions",
+        "--print",
+        "--mode",
+        "json",
+        "--model",
+        DOCS_TAXONOMY_MODEL,
+        "--system-prompt",
+        taxonomySystemPrompt,
+        `@${promptPath}`,
+      ],
+      undefined,
+      DOCS_TAXONOMY_TIMEOUT_MS
+    );
+  } catch (error) {
+    await traceLlmGeneration({
+      traceName: "joelclaw.docs.taxonomy",
+      generationName: "docs.taxonomy.classify",
+      component: "docs-ingest",
+      action: "docs.taxonomy.classify",
+      input: {
+        title: input.file.title,
+        nasPath: input.file.nasPath,
+        tags: input.tags,
+      },
+      output: {
+        spawnError: String(error),
+      },
+      model: DOCS_TAXONOMY_MODEL,
+      durationMs: Date.now() - startedAt,
+      error: "pi taxonomy classification spawn failed",
+      metadata: {
+        runId: input.runId,
+        eventId: input.eventId,
+      },
+      runId: input.runId,
+    });
+    await rm(promptPath, { force: true }).catch(() => {});
+    return null;
+  }
+
+  await rm(promptPath, { force: true }).catch(() => {});
 
   const parsedPi = parsePiJsonAssistant(proc.stdout);
   const assistantText = (parsedPi?.text ?? proc.stdout).trim();
@@ -808,7 +852,7 @@ async function extractTextToFile(file: ValidatedFile): Promise<ExtractedTextArti
     throw new NonRetriableError(`docs-ingest extracted empty text from ${file.nasPath}`);
   }
 
-  const textPath = `${DOCS_TMP_DIR}/${file.docId}.txt`;
+  const textPath = buildExtractedTextPath(file.docId);
   await Bun.write(textPath, normalized);
 
   return {
@@ -816,6 +860,16 @@ async function extractTextToFile(file: ValidatedFile): Promise<ExtractedTextArti
     characterCount,
     pageCount,
   };
+}
+
+export function buildExtractedTextPath(docId: string): string {
+  const entropy = randomUUID().replace(/-/g, "").slice(0, 12);
+  return `${DOCS_TMP_DIR}/${docId}-${Date.now()}-${entropy}.txt`;
+}
+
+function buildTaxonomyPromptPath(docId: string): string {
+  const entropy = randomUUID().replace(/-/g, "").slice(0, 12);
+  return `${DOCS_TMP_DIR}/${docId}-${Date.now()}-${entropy}.taxonomy.prompt.txt`;
 }
 
 function inferDocumentType(file: ValidatedFile, storageCategory: StorageCategory): string {

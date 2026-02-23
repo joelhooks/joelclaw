@@ -42,9 +42,12 @@ spec:
               value: "cluster"
             - name: INNGEST_APP_ID
               value: "system-bus-cluster"
-            # In connect mode from k8s, do not advertise host.docker.internal.
+            # Cluster worker must register against the in-cluster Inngest API.
+            - name: INNGEST_BASE_URL
+              value: "http://inngest-svc:8288"
+            # Advertise the in-cluster service URL for SDK callbacks.
             - name: INNGEST_SERVE_HOST
-              value: ""
+              value: "http://system-bus-worker:3111"
           ports:
             - containerPort: 3111
               name: http
