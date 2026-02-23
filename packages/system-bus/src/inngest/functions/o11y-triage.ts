@@ -556,6 +556,7 @@ export const o11yTriage = inngest.createFunction(
 
     const tier1Result = await step.run("handle-tier1", async () => {
       const promoted: OtelEvent[] = [];
+      const missingHandlerWarnings = new Set<string>();
 
       for (const event of finalBuckets.tier1) {
         const classified = classifyEvent(event);
@@ -565,27 +566,39 @@ export const o11yTriage = inngest.createFunction(
           ? resolveRunbookForEvent(event, handlerDef.runbookPhase, handlerDef.runbookCode)
           : null;
 
-        let result: { fixed: boolean; detail: string };
-
         if (!handlerName) {
           promoted.push(event);
           continue;
         }
 
         if (!handlerDef) {
+          if (!missingHandlerWarnings.has(handlerName)) {
+            missingHandlerWarnings.add(handlerName);
+            await emitOtelEvent({
+              level: "warn",
+              source: "worker",
+              component: "o11y-triage",
+              action: "triage.auto_fix_handler_missing",
+              success: true,
+              metadata: {
+                handler: handlerName,
+                event_action: event.action,
+                event_component: event.component,
+              },
+            });
+          }
+          promoted.push(event);
+          continue;
+        }
+
+        let result: { fixed: boolean; detail: string };
+        try {
+          result = await handlerDef.handler(event);
+        } catch (error) {
           result = {
             fixed: false,
-            detail: `auto-fix handler not found: ${handlerName}`,
+            detail: error instanceof Error ? error.message : String(error),
           };
-        } else {
-          try {
-            result = await handlerDef.handler(event);
-          } catch (error) {
-            result = {
-              fixed: false,
-              detail: error instanceof Error ? error.message : String(error),
-            };
-          }
         }
 
         await emitOtelEvent({

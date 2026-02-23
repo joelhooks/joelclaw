@@ -9,6 +9,13 @@ const OTEL_CONVEX_WINDOW_HOURS_DEFAULT = 0.5; // 30 minutes for live dashboard w
 const DEBUG_WINDOW_MS = 60_000;
 const DEBUG_MAX_EVENTS_PER_KEY = 12;
 const CONVEX_PRUNE_INTERVAL_MS = 15 * 60 * 1000;
+const MEMORY_OBSERVATIONS_COLLECTION = "memory_observations";
+const MEMORY_OBSERVATIONS_VECTOR_FIELD = "embedding";
+const MEMORY_OBSERVATIONS_VECTOR_MODEL = "ts/all-MiniLM-L12-v2";
+const MEMORY_OBSERVATIONS_VECTOR_DIMENSION = 384;
+const VECTOR_MODEL_DIMENSIONS: Record<string, number> = {
+  [MEMORY_OBSERVATIONS_VECTOR_MODEL]: MEMORY_OBSERVATIONS_VECTOR_DIMENSION,
+};
 
 type ConvexResourceDoc = {
   resourceId: string;
@@ -74,10 +81,25 @@ const defaultDeps: OtelStoreDeps = {
 };
 
 type DebugBudgetState = { windowStartMs: number; count: number; dropped: number };
+type TypesenseCollectionField = {
+  name?: unknown;
+  type?: unknown;
+  num_dim?: unknown;
+  embed?: {
+    model_config?: {
+      model_name?: unknown;
+    };
+  };
+};
+type TypesenseCollectionSchema = {
+  fields?: unknown;
+};
 
 const debugBudgetByKey = new Map<string, DebugBudgetState>();
 let collectionReady = false;
 let collectionReadyPromise: Promise<void> | null = null;
+let memoryObservationSchemaChecked = false;
+let memoryObservationSchemaPromise: Promise<void> | null = null;
 let lastConvexPruneAt = 0;
 
 function parseBooleanFlag(value: string | undefined, fallback: boolean): boolean {
@@ -101,6 +123,124 @@ function getOtelEventsEnabled(): boolean {
 
 function getConvexWindowHours(): number {
   return parsePositiveNumber(process.env.OTEL_EVENTS_CONVEX_WINDOW_HOURS, OTEL_CONVEX_WINDOW_HOURS_DEFAULT);
+}
+
+function asTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function asFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function inferVectorDimension(field: TypesenseCollectionField): number | undefined {
+  const explicitDimension = asFiniteNumber(field.num_dim);
+  if (typeof explicitDimension === "number") return explicitDimension;
+
+  const modelName = asTrimmedString(field.embed?.model_config?.model_name);
+  if (!modelName) return undefined;
+  return VECTOR_MODEL_DIMENSIONS[modelName];
+}
+
+function formatVectorFieldSummary(field: TypesenseCollectionField): {
+  name: string;
+  type: string;
+  dimension: number | "unknown";
+  model: string;
+} {
+  return {
+    name: asTrimmedString(field.name) ?? "unknown",
+    type: asTrimmedString(field.type) ?? "unknown",
+    dimension: inferVectorDimension(field) ?? "unknown",
+    model: asTrimmedString(field.embed?.model_config?.model_name) ?? "unknown",
+  };
+}
+
+async function validateMemoryObservationSchema(): Promise<void> {
+  const response = await typesense.typesenseRequest(`/collections/${MEMORY_OBSERVATIONS_COLLECTION}`, {
+    method: "GET",
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(
+      `Typesense collection schema check failed (${response.status}) for ${MEMORY_OBSERVATIONS_COLLECTION}: ${body}`
+    );
+  }
+
+  const schema = (await response.json()) as TypesenseCollectionSchema;
+  const fields = Array.isArray(schema.fields) ? (schema.fields as TypesenseCollectionField[]) : [];
+  const expectedField = fields.find(
+    (field) => asTrimmedString(field.name) === MEMORY_OBSERVATIONS_VECTOR_FIELD
+  );
+  const availableVectorFields = fields
+    .filter((field) => asTrimmedString(field.type) === "float[]")
+    .map((field) => formatVectorFieldSummary(field));
+
+  const actualFieldSummary = expectedField
+    ? formatVectorFieldSummary(expectedField)
+    : {
+      name: availableVectorFields[0]?.name ?? "missing",
+      type: availableVectorFields[0]?.type ?? "missing",
+      dimension: availableVectorFields[0]?.dimension ?? "unknown",
+      model: availableVectorFields[0]?.model ?? "unknown",
+    };
+
+  const hasField = !!expectedField;
+  const hasVectorType = expectedField && asTrimmedString(expectedField.type) === "float[]";
+  const actualDimension = expectedField ? inferVectorDimension(expectedField) : undefined;
+  const hasExpectedDimension = typeof actualDimension === "number" &&
+    actualDimension === MEMORY_OBSERVATIONS_VECTOR_DIMENSION;
+
+  if (!hasField || !hasVectorType || !hasExpectedDimension) {
+    const mismatchReasons: string[] = [];
+    if (!hasField) mismatchReasons.push("expected_vector_field_missing");
+    if (hasField && !hasVectorType) mismatchReasons.push("expected_vector_field_wrong_type");
+    if (hasField && !hasExpectedDimension) mismatchReasons.push("expected_vector_dimension_mismatch");
+
+    console.error("[observe] memory_observations Typesense vector schema mismatch", {
+      collection: MEMORY_OBSERVATIONS_COLLECTION,
+      expectedVectorField: MEMORY_OBSERVATIONS_VECTOR_FIELD,
+      expectedVectorDimension: MEMORY_OBSERVATIONS_VECTOR_DIMENSION,
+      expectedModel: MEMORY_OBSERVATIONS_VECTOR_MODEL,
+      actualVectorField: actualFieldSummary.name,
+      actualVectorType: actualFieldSummary.type,
+      actualVectorDimension: actualFieldSummary.dimension,
+      actualModel: actualFieldSummary.model,
+      availableVectorFields,
+      mismatchReasons,
+    });
+
+    throw new Error(
+      `memory_observations vector schema mismatch (expected ${MEMORY_OBSERVATIONS_VECTOR_FIELD}/${MEMORY_OBSERVATIONS_VECTOR_DIMENSION}, actual ${actualFieldSummary.name}/${actualFieldSummary.dimension})`
+    );
+  }
+}
+
+async function ensureMemoryObservationSchemaChecked(): Promise<void> {
+  if (memoryObservationSchemaChecked) return;
+  if (memoryObservationSchemaPromise) return memoryObservationSchemaPromise;
+
+  memoryObservationSchemaPromise = validateMemoryObservationSchema()
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[observe] memory_observations schema validation failed at worker startup", {
+        error: message,
+        collection: MEMORY_OBSERVATIONS_COLLECTION,
+      });
+    })
+    .finally(() => {
+      memoryObservationSchemaChecked = true;
+      memoryObservationSchemaPromise = null;
+    });
+
+  return memoryObservationSchemaPromise;
 }
 
 function safeJson(value: unknown): string {
@@ -350,6 +490,8 @@ export async function storeOtelEvent(
       sentry: { written: false, skipped: true },
     };
   }
+
+  await ensureMemoryObservationSchemaChecked();
 
   let typesenseError: string | undefined;
   try {

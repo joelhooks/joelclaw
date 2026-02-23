@@ -15,7 +15,7 @@ export type AutoFixDefinition = {
   runbookPhase: RunbookPhase;
 };
 
-export const AUTO_FIX_HANDLERS: Record<string, AutoFixDefinition> = {
+export const AUTO_FIX_HANDLERS = {
   autoCommitAndRetry: {
     handler: autoCommitAndRetry,
     runbookCode: "RUN_FAILED",
@@ -31,4 +31,6 @@ export const AUTO_FIX_HANDLERS: Record<string, AutoFixDefinition> = {
     runbookCode: "RUN_FAILED",
     runbookPhase: "fix",
   },
-};
+} satisfies Record<string, AutoFixDefinition>;
+
+export type AutoFixHandlerName = keyof typeof AUTO_FIX_HANDLERS;

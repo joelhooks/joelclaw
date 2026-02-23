@@ -236,6 +236,7 @@ export const frictionFix = inngest.createFunction(
 
     await step.run("notify-gateway", async () => {
       try {
+        // Only notify gateway on actual fixes or Todoist escalations — skips are noise
         if (status === "fixed" && commitSha) {
           await gateway.notify("friction-fix", {
             message: `Friction fixed: ${title}. Commit: ${commitSha}. Revert: \`git revert ${commitSha}\``,
@@ -245,6 +246,11 @@ export const frictionFix = inngest.createFunction(
             filesChanged,
           });
           return { notified: true };
+        }
+
+        if (status === "skipped" && !escalationTaskId) {
+          // Silent skip — no commits, no escalation, not worth notifying
+          return { notified: false, reason: "silent-skip" };
         }
 
         await gateway.notify("friction-fix", {

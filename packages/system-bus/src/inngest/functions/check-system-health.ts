@@ -61,6 +61,8 @@ const CRITICAL_COMPONENTS = new Set([
   "typesense",
   "agent secrets",
 ]);
+const WRITE_GATE_DRIFT_LAST_NOTIFIED_KEY = "memory:health:write_gate_drift:last_notified";
+const WRITE_GATE_DRIFT_NOTIFY_COOLDOWN_SECONDS = 6 * 60 * 60;
 
 function normalizeTimestampToMs(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -701,17 +703,43 @@ export const checkSystemHealth = inngest.createFunction(
 
       await withTiming(stepDurationsMs, "signals.emit-memory-write-gate-drift", async () =>
         step.run("emit-memory-write-gate-drift", async () => {
-          await emitOtelEvent({
-            level: "warn",
-            source: "worker",
-            component: "check-system-health",
-            action: "memory.write_gate_drift.detected",
-            success: false,
-            metadata: {
-              mode,
-              writeGateDrift,
-            },
+          const redis = new Redis({
+            host: "localhost",
+            port: 6379,
+            lazyConnect: true,
+            connectTimeout: 3000,
           });
+          redis.on("error", () => {});
+
+          try {
+            const lastNotified = await redis.get(WRITE_GATE_DRIFT_LAST_NOTIFIED_KEY);
+            if (lastNotified) {
+              return { emitted: false, reason: "cooldown" };
+            }
+
+            await emitOtelEvent({
+              level: "warn",
+              source: "worker",
+              component: "check-system-health",
+              action: "memory.write_gate_drift.detected",
+              success: false,
+              metadata: {
+                mode,
+                writeGateDrift,
+              },
+            });
+
+            await redis.set(
+              WRITE_GATE_DRIFT_LAST_NOTIFIED_KEY,
+              new Date().toISOString(),
+              "EX",
+              WRITE_GATE_DRIFT_NOTIFY_COOLDOWN_SECONDS,
+            );
+
+            return { emitted: true };
+          } finally {
+            redis.disconnect();
+          }
         })
       );
     }

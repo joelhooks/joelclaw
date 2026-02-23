@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { OtelEvent } from "./otel-event";
+import type { AutoFixHandlerName } from "./auto-fixes";
 
 export type TriagePattern = {
   match: {
@@ -9,7 +10,7 @@ export type TriagePattern = {
     level?: OtelEvent["level"];
   };
   tier: 1 | 2 | 3;
-  handler?: string;
+  handler?: AutoFixHandlerName;
   dedup_hours: number;
   escalate_after?: number;
 };
@@ -18,11 +19,12 @@ export const TRIAGE_PATTERNS: TriagePattern[] = [
   // Tier 1: auto-fix or ignore
   {
     // Content sync can intentionally skip commits when safety gate blocks push.
-    // Keep this visible as Tier 2 signal, but never auto-commit from triage.
+    // Keep as Tier 2 noise initially, then auto-fix via retry after repeated hits.
     match: { action: "content_sync.completed", error: /changes_not_committed/iu },
     tier: 2,
+    handler: "autoCommitAndRetry",
     dedup_hours: 6,
-    escalate_after: 20,
+    escalate_after: 5,
   },
   {
     match: { action: "telegram.send.skipped", error: /bot_not_started/iu },

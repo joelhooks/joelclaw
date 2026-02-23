@@ -405,7 +405,7 @@ async function drainEvents(): Promise<void> {
       "todoist.task.completed",  // echo from agent's own closes
       "memory.observed",         // telemetry confirmation
       "content.synced",          // vault sync confirmation
-      "media/received",          // duplicate progress events per image upload
+      "media/received",          // media pipeline progress - fires 5+ times per image, no agent action needed
       "progress",                // inngest step progress events — noisy, not actionable
     ]);
 

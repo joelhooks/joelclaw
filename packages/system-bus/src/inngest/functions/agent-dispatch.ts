@@ -25,6 +25,8 @@ type InboxResult = {
   durationMs: number;
 };
 
+const PI_FILE_HINT_PATTERN =
+  /(?:\/Users\/|~\/|(?:^|[\s"'`])[^\s"'`]+\.(?:ts|md)(?=$|[\s"'`]))/i;
 const FILE_PATH_PATTERN =
   /(?:^|[\s"'`])(?:~\/|\/|\.\.?\/|[A-Za-z0-9._-]+\/)[^\s"'`]+/;
 const FILE_CONTEXT_PATTERN =
@@ -36,6 +38,7 @@ function taskRequiresFileAccess(task: string): boolean {
   const normalizedTask = task.toLowerCase();
 
   return (
+    PI_FILE_HINT_PATTERN.test(task) ||
     FILE_PATH_PATTERN.test(task) ||
     (FILE_CONTEXT_PATTERN.test(normalizedTask) &&
       FILE_READ_OPERATION_PATTERN.test(normalizedTask))
@@ -86,7 +89,7 @@ export const agentDispatch = inngest.createFunction(
     }
     if (tool === "pi" && taskRequiresFileAccess(task)) {
       throw new NonRetriableError(
-        "pi tool cannot read files — use tool: 'codex' or tool: 'claude'"
+        "tool:'pi' runs with --no-tools and cannot read files. Use tool:'codex' or tool:'claude'."
       );
     }
 
