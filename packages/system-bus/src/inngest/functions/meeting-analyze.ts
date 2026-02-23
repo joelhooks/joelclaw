@@ -19,6 +19,7 @@ import type { GatewayContext } from "../middleware/gateway";
 import { spawnSync } from "node:child_process";
 import Redis from "ioredis";
 import { prefetchMemoryContext } from "../../memory/context-prefetch";
+import { cacheWrap } from "../../lib/cache";
 
 const REDIS_KEY_PROCESSED = "granola:processed";
 const REDIS_TTL_DAYS = 90;
@@ -313,34 +314,58 @@ export const meetingAnalyze = inngest.createFunction(
     if (alreadyProcessed) {
       return { skipped: true, reason: "already processed", meetingId };
     }
-
     // Step 2: Pull meeting details
-    const details = await step.run("pull-details", (): { details: string; date?: string } => {
-      const result = granolaCli(["meeting", meetingId]);
-      if (!result.ok) {
-        throwIfGranolaRateLimited(result.error ?? "", "pull-details");
-        throw new Error(`Failed to pull details: ${result.error}`);
-      }
-      const data = result.data ?? {};
-      return {
-        details: typeof data === "string" ? data : JSON.stringify(data, null, 2),
-        date: data?.date ?? data?.created_at,
-      };
+    const details = await step.run("pull-details", async (): Promise<{ details: string; date?: string }> => {
+      return cacheWrap(
+        `meeting:${meetingId}:details`,
+        {
+          namespace: "granola",
+          tier: "hot",
+          hotTtlSeconds: 1800,
+        },
+        async () => {
+          const result = granolaCli(["meeting", meetingId]);
+          if (!result.ok) {
+            throwIfGranolaRateLimited(result.error ?? "", "pull-details");
+            throw new Error(`Failed to pull details: ${result.error}`);
+          }
+          const data = result.data ?? {};
+          return {
+            details: typeof data === "string" ? data : JSON.stringify(data, null, 2),
+            date:
+              typeof data?.date === "string"
+                ? data.date
+                : typeof data?.created_at === "string"
+                  ? data.created_at
+                  : undefined,
+          };
+        }
+      );
     });
 
     // Step 3: Pull transcript (throws on rate limit → Inngest retries with backoff)
-    const transcript = await step.run("pull-transcript", (): string => {
-      const result = granolaCli(["meeting", meetingId, "--transcript"]);
-      if (!result.ok) {
-        throwIfGranolaRateLimited(result.error ?? "", "pull-transcript");
-        throw new Error(`Failed to pull transcript: ${result.error}`);
-      }
-      const data = result.data ?? {};
-      const raw = data?.transcript ?? data;
-      const text = typeof raw === "string" ? raw : JSON.stringify(raw, null, 2);
+    const transcript = await step.run("pull-transcript", async (): Promise<string> => {
+      return cacheWrap(
+        `meeting:${meetingId}:transcript`,
+        {
+          namespace: "granola",
+          tier: "hot",
+          hotTtlSeconds: 1800,
+        },
+        async () => {
+          const result = granolaCli(["meeting", meetingId, "--transcript"]);
+          if (!result.ok) {
+            throwIfGranolaRateLimited(result.error ?? "", "pull-transcript");
+            throw new Error(`Failed to pull transcript: ${result.error}`);
+          }
+          const data = result.data ?? {};
+          const raw = data?.transcript ?? data;
+          const text = typeof raw === "string" ? raw : JSON.stringify(raw, null, 2);
 
-      throwIfGranolaRateLimited(text, "pull-transcript");
-      return text;
+          throwIfGranolaRateLimited(text, "pull-transcript");
+          return text;
+        }
+      );
     });
 
     const memoryContext = await step.run("prefetch-memory", async () => {

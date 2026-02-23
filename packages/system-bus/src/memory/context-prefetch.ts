@@ -1,4 +1,4 @@
-import { DECAY_CONSTANT } from "./retrieval";
+import { DECAY_CONSTANT, searchTypesenseWithCache } from "./retrieval";
 import { allowsDefaultRetrieval } from "./write-gate";
 import * as typesense from "../lib/typesense";
 import { emitOtelEvent } from "../observability/emit";
@@ -146,7 +146,7 @@ export async function prefetchMemoryContext(
   try {
     let response: typesense.TypesenseSearchResult;
     try {
-      response = await typesense.search({
+      response = await searchTypesenseWithCache({
         collection: OBSERVATIONS_COLLECTION,
         q: trimmed,
         query_by: "embedding,observation",
@@ -160,7 +160,7 @@ export async function prefetchMemoryContext(
         throw error;
       }
       vectorFallbackUsed = true;
-      response = await typesense.search({
+      response = await searchTypesenseWithCache({
         collection: OBSERVATIONS_COLLECTION,
         q: trimmed,
         query_by: "observation",
