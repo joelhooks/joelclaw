@@ -2,14 +2,14 @@
 status: proposed
 date: 2026-02-23
 parent: ADR-0115
-credit: Sean Grove
+credit: Sean Grove (https://joelclaw.com/riding-the-token-wave-sean-grove)
 ---
 
 # ADR-0118: Koko Shadow Executor Mode
 
 ## Context
 
-ADR-0117 proposed novel workloads for Koko (health pulse, event digest, file watcher). Sean Grove suggested a better approach: **shadow execution** — Koko runs the same workloads as the TypeScript stack in parallel, on the same inputs, and we compare results. This is how you actually validate whether BEAM is better, worse, or equivalent for joelclaw's real workloads.
+ADR-0117 proposed novel workloads for Koko (health pulse, event digest, file watcher). [Sean Grove](https://joelclaw.com/riding-the-token-wave-sean-grove) suggested a better approach: **shadow execution** — Koko runs the same workloads as the TypeScript stack in parallel, on the same inputs, and we compare results. This is how you actually validate whether BEAM is better, worse, or equivalent for joelclaw's real workloads.
 
 Shadow execution eliminates the "apples to oranges" problem. Instead of "Koko can do X," the question becomes "Koko does X better/faster/more reliably than TypeScript does X, on the same data."
 
