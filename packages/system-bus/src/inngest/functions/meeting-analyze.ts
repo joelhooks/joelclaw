@@ -45,6 +45,13 @@ function emptyMeetingAnalysis(): MeetingAnalysis {
   return { action_items: [], decisions: [], follow_ups: [], people: [] };
 }
 
+function throwIfGranolaRateLimited(rawText: string, context: string): void {
+  if (!rawText.toLowerCase().includes("rate limit")) return;
+  throw new Error(
+    `Granola rate limited (~1 hour window) during ${context}; retrying: ${rawText.slice(0, 500)}`
+  );
+}
+
 function granolaCli(args: string[]): { ok: boolean; data?: any; raw?: string; error?: string } {
   const proc = spawnSync("granola", args, {
     encoding: "utf-8",
@@ -53,12 +60,18 @@ function granolaCli(args: string[]): { ok: boolean; data?: any; raw?: string; er
   });
 
   const stdout = (proc.stdout ?? "").trim();
+  const stderr = (proc.stderr ?? "").trim();
+  throwIfGranolaRateLimited(`${stdout}\n${stderr}`, `granolaCli:${args.join(" ")}`);
+
   if (!stdout) {
-    return { ok: false, error: proc.stderr?.trim() || "no output" };
+    return { ok: false, error: stderr || "no output" };
   }
 
   try {
     const parsed = JSON.parse(stdout);
+    if (parsed?.ok !== true) {
+      throwIfGranolaRateLimited(JSON.stringify(parsed), `granolaCli:${args.join(" ")}`);
+    }
     return { ok: parsed.ok === true, data: parsed.result, raw: stdout };
   } catch {
     return { ok: false, raw: stdout, error: "invalid JSON" };
@@ -265,14 +278,15 @@ function createTasks(
 
 // ── Main function ───────────────────────────────────────────────────
 
+/**
+ * Granola MCP transcript/list endpoints are aggressively rate-limited (~1 hour window).
+ * Keep this function account-scoped at concurrency 1 and throw on "rate limit" so Inngest retries.
+ */
 export const meetingAnalyze = inngest.createFunction(
   {
     id: "meeting-analyze",
     name: "Meeting → Analyze & Extract Intelligence",
-    concurrency: [
-      { limit: 1 }, // one meeting at a time (function-level)
-      { scope: "account", key: '"granola-mcp"', limit: 1 }, // shared across all Granola functions
-    ],
+    concurrency: { scope: "account", key: "granola-mcp", limit: 1 },
     retries: 5,
   },
   { event: "meeting/noted" },
@@ -303,7 +317,10 @@ export const meetingAnalyze = inngest.createFunction(
     // Step 2: Pull meeting details
     const details = await step.run("pull-details", (): { details: string; date?: string } => {
       const result = granolaCli(["meeting", meetingId]);
-      if (!result.ok) throw new Error(`Failed to pull details: ${result.error}`);
+      if (!result.ok) {
+        throwIfGranolaRateLimited(result.error ?? "", "pull-details");
+        throw new Error(`Failed to pull details: ${result.error}`);
+      }
       const data = result.data ?? {};
       return {
         details: typeof data === "string" ? data : JSON.stringify(data, null, 2),
@@ -314,14 +331,15 @@ export const meetingAnalyze = inngest.createFunction(
     // Step 3: Pull transcript (throws on rate limit → Inngest retries with backoff)
     const transcript = await step.run("pull-transcript", (): string => {
       const result = granolaCli(["meeting", meetingId, "--transcript"]);
-      if (!result.ok) throw new Error(`Failed to pull transcript: ${result.error}`);
+      if (!result.ok) {
+        throwIfGranolaRateLimited(result.error ?? "", "pull-transcript");
+        throw new Error(`Failed to pull transcript: ${result.error}`);
+      }
       const data = result.data ?? {};
       const raw = data?.transcript ?? data;
       const text = typeof raw === "string" ? raw : JSON.stringify(raw, null, 2);
 
-      if (text.toLowerCase().includes("rate limit")) {
-        throw new Error(`Granola rate limited — will retry: ${text}`);
-      }
+      throwIfGranolaRateLimited(text, "pull-transcript");
       return text;
     });
 

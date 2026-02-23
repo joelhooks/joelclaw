@@ -45,6 +45,31 @@ async function executeHeartbeatCron() {
   return engine.execute();
 }
 
+async function executeHeartbeatCronWithCapturedSendEvents() {
+  const sendEventCalls: unknown[][] = [];
+  const engine = new InngestTestEngine({
+    function: heartbeatCron as any,
+    events: [
+      {
+        name: "inngest/scheduled.timer",
+        data: {
+          cron: "*/15 * * * *",
+        },
+      } as any,
+    ],
+    transformCtx: (ctx: any) => {
+      ctx.step.sendEvent = async (...args: unknown[]) => {
+        sendEventCalls.push(args);
+        return { ids: ["mock-event-id"] };
+      };
+      ctx.step.sendEvent.mock = { calls: sendEventCalls };
+      return ctx;
+    },
+  });
+  const execution = await engine.execute();
+  return { ...execution, sendEventCalls };
+}
+
 beforeAll(() => {
   (Redis.prototype as any).smembers = async function () {
     return [];
@@ -147,6 +172,26 @@ describe("FRIC-4 heartbeat pruning acceptance tests", () => {
       oldClaudeDebugExists: false,
       newClaudeDebugExists: true,
       hasPruneCountInStepOutput: true,
+    });
+  });
+
+  test("fans out system health core slice on heartbeat cadence", async () => {
+    const { sendEventCalls } = await executeHeartbeatCronWithCapturedSendEvents();
+    const fanoutCall = sendEventCalls.find((call) => call[0] === "fan-out-checks");
+    const fanoutPayload = Array.isArray(fanoutCall?.[1]) ? fanoutCall?.[1] : [];
+    const healthEvent = fanoutPayload.find(
+      (item) =>
+        typeof item === "object" &&
+        item !== null &&
+        "name" in item &&
+        (item as { name?: string }).name === "system/health.requested"
+    ) as { data?: Record<string, unknown> } | undefined;
+
+    expect(healthEvent).toMatchObject({
+      data: {
+        mode: "core",
+        source: "heartbeat-15m",
+      },
     });
   });
 });

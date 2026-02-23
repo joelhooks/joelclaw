@@ -47,7 +47,10 @@ import { echoFizzle } from "../../memory/echo-fizzle";
 import { taskTriage } from "./task-triage";
 import { checkSessions } from "./check-sessions";
 import { checkTriggers } from "./check-triggers";
-import { checkSystemHealth } from "./check-system-health";
+import {
+  checkSystemHealth,
+  checkSystemHealthSignalsSchedule,
+} from "./check-system-health";
 import { networkStatusUpdate } from "./network-status-update";
 import { checkMemoryReview } from "./check-memory-review";
 import { checkVaultSync } from "./check-vault-sync";
@@ -73,6 +76,8 @@ import {
   rotateLogs,
 } from "./nas-backup";
 import { manifestArchive } from "./manifest-archive";
+import { docsIngest } from "./docs-ingest";
+import { docsEnrich, docsReindex } from "./docs-maintenance";
 
 function getFunctionId(fn: { opts?: { id?: string } }): string {
   return fn.opts?.id ?? "unknown";
@@ -128,6 +133,7 @@ export const hostFunctionDefinitions = [
   checkSessions,
   checkTriggers,
   checkSystemHealth,
+  checkSystemHealthSignalsSchedule,
   networkStatusUpdate,
   checkMemoryReview,
   checkVaultSync,
@@ -150,6 +156,9 @@ export const hostFunctionDefinitions = [
   rotateOtel,
   rotateLogs,
   manifestArchive,
+  docsIngest,
+  docsEnrich,
+  docsReindex,
 ];
 
 export const hostFunctionIds = hostFunctionDefinitions.map(getFunctionId);

@@ -32,6 +32,13 @@ interface MeetingSummary {
   participants: string[];
 }
 
+function throwIfGranolaRateLimited(rawText: string, context: string): void {
+  if (!rawText.toLowerCase().includes("rate limit")) return;
+  throw new Error(
+    `Granola rate limited (~1 hour window) during ${context}; retrying: ${rawText.slice(0, 500)}`
+  );
+}
+
 function listMeetings(range: string, start?: string, end?: string): MeetingSummary[] {
   const args = ["meetings", "--range", range];
   if (range === "custom" && start && end) {
@@ -45,11 +52,17 @@ function listMeetings(range: string, start?: string, end?: string): MeetingSumma
   });
 
   const stdout = (proc.stdout ?? "").trim();
+  const stderr = (proc.stderr ?? "").trim();
+  throwIfGranolaRateLimited(`${stdout}\n${stderr}`, `listMeetings:${range}`);
+
   if (!stdout) return [];
 
   try {
     const parsed = JSON.parse(stdout);
-    if (!parsed.ok) return [];
+    if (!parsed.ok) {
+      throwIfGranolaRateLimited(JSON.stringify(parsed), `listMeetings:${range}`);
+      return [];
+    }
     return parsed.result?.meetings ?? [];
   } catch {
     return [];
@@ -70,11 +83,15 @@ async function getAlreadyProcessed(): Promise<Set<string>> {
 
 // ── Main function ───────────────────────────────────────────────────
 
+/**
+ * Granola MCP transcript/list endpoints are aggressively rate-limited (~1 hour window).
+ * Keep this function account-scoped at concurrency 1 and throw on "rate limit" so Inngest retries.
+ */
 export const granolaBackfill = inngest.createFunction(
   {
     id: "granola-backfill",
     name: "Granola → Backfill All Meetings",
-    concurrency: [{ limit: 1 }], // only one backfill at a time
+    concurrency: { scope: "account", key: "granola-mcp", limit: 1 },
   },
   { event: "granola/backfill.requested" },
   async ({ event, step, ...rest }) => {

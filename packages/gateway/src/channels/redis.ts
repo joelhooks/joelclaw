@@ -219,7 +219,7 @@ function buildRecallSectionFromMessage(message: string): string {
 
 async function buildPrompt(events: SystemEvent[]): Promise<string> {
   const footer = "Take action on anything that needs it, otherwise acknowledge briefly.";
-  const ts = new Date().toISOString();
+  const ts = new Date().toLocaleString("sv-SE", { timeZone: "America/Los_Angeles" }).replace(" ", "T") + " PST";
 
   // cron.heartbeat no longer triggers HEARTBEAT.md checklist in the gateway.
   // Health checks run as Inngest check/* functions and push here only when actionable.
@@ -751,7 +751,7 @@ export async function flushBatchDigest(): Promise<number> {
     .sort((a, b) => b[1] - a[1])
     .map(([type, count]) => `- ${type}: ${count}`);
 
-  const ts = new Date().toISOString();
+  const ts = new Date().toLocaleString("sv-SE", { timeZone: "America/Los_Angeles" }).replace(" ", "T") + " PST";
   const prompt = [
     `## 📋 Batch Digest — ${ts}`,
     "",

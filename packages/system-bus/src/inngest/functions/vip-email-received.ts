@@ -211,6 +211,13 @@ function parseJsonOutput<T>(command: string, args: string[], timeoutMs = 30_000)
   }
 }
 
+function throwIfGranolaRateLimited(rawText: string, context: string): void {
+  if (!rawText.toLowerCase().includes("rate limit")) return;
+  throw new Error(
+    `Granola rate limited (~1 hour window) during ${context}; retrying: ${rawText.slice(0, 500)}`
+  );
+}
+
 function normalizePriority(priority?: number): 1 | 2 | 3 | 4 {
   if (priority === 4 || priority === 3 || priority === 2 || priority === 1) return priority;
   return 2;
@@ -539,11 +546,15 @@ function buildAnalysisPrompt(input: {
   ].join("\n");
 }
 
+/**
+ * Granola MCP transcript/list endpoints are aggressively rate-limited (~1 hour window).
+ * Keep this function account-scoped at concurrency 1 and throw on "rate limit" so Inngest retries.
+ */
 export const vipEmailReceived = inngest.createFunction(
   {
     id: "vip/email-received",
     name: "VIP Email Intelligence Pipeline",
-    concurrency: { limit: 1 },
+    concurrency: { scope: "account", key: "granola-mcp", limit: 1 },
     retries: 1,
   },
   { event: "vip/email.received" },
@@ -646,7 +657,15 @@ export const vipEmailReceived = inngest.createFunction(
             GRANOLA_TIMEOUT_MS
           );
           rangeDurations[range] = Date.now() - rangeStart;
-          if (!response.ok || !response.data) continue;
+          if (!response.ok) {
+            throwIfGranolaRateLimited(response.error ?? "", `vip/search-granola-related:${range}`);
+            continue;
+          }
+          if (!response.data) continue;
+          throwIfGranolaRateLimited(
+            JSON.stringify(response.data),
+            `vip/search-granola-related:${range}`
+          );
           allMeetings.push(...parseGranolaMeetingsResponse(response.data));
         }
 

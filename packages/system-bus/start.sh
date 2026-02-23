@@ -28,6 +28,20 @@ if [ -f "$HOME/.config/system-bus.env" ]; then
   set +a
 fi
 
+MANIFEST_SYNC_SOURCE="${MANIFEST_ARCHIVE_MANIFEST_PATH:-$HOME/Documents/manifest.clean.jsonl}"
+MANIFEST_SYNC_TARGET="${JOELCLAW_DOCS_MANIFEST_CACHE_PATH:-/tmp/manifest.clean.jsonl}"
+if [ -f "$MANIFEST_SYNC_SOURCE" ]; then
+  mkdir -p "$(dirname "$MANIFEST_SYNC_TARGET")" 2>/dev/null || true
+  if cp -f "$MANIFEST_SYNC_SOURCE" "$MANIFEST_SYNC_TARGET"; then
+    export MANIFEST_ARCHIVE_MANIFEST_PATH="$MANIFEST_SYNC_TARGET"
+    echo "[manifest-sync] mirrored $MANIFEST_SYNC_SOURCE -> $MANIFEST_SYNC_TARGET"
+  else
+    echo "WARNING: manifest sync failed ($MANIFEST_SYNC_SOURCE -> $MANIFEST_SYNC_TARGET)" >&2
+  fi
+else
+  echo "[manifest-sync] source not found: $MANIFEST_SYNC_SOURCE"
+fi
+
 # agent-secrets v0.5.0+: raw output is default (no --raw flag)
 CLAUDE_TOKEN=$(secrets lease claude_oauth_token --ttl 24h 2>/dev/null)
 if [ -n "$CLAUDE_TOKEN" ]; then

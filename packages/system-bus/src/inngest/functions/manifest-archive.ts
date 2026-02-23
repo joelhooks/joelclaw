@@ -2,7 +2,7 @@ import { $ } from "bun";
 import Redis from "ioredis";
 import { NonRetriableError } from "inngest";
 import { access, readFile } from "node:fs/promises";
-import { join, parse } from "node:path";
+import { basename, extname, join, parse } from "node:path";
 import { inngest } from "../client";
 import { emitMeasuredOtelEvent } from "../../observability/emit";
 import { pushGatewayEvent } from "./agent-loop/utils";
@@ -34,6 +34,30 @@ type FileResult = {
   error?: string;
 };
 
+type DocsQueueStats = {
+  enabled: boolean;
+  includeSkipped: boolean;
+  considered: number;
+  queueable: number;
+  queued: number;
+  batches: number;
+  skippedUnsupported: number;
+};
+
+type DocsIngestQueueMode = "copied" | "backfill";
+
+type DocsIngestEvent = {
+  name: "docs/ingest.requested";
+  data: {
+    nasPath: string;
+    title: string;
+    tags: string[];
+    storageCategory: string;
+    sourceHost: string;
+    idempotencyKey: string;
+  };
+};
+
 type BookCategory =
   | "programming"
   | "business"
@@ -50,6 +74,7 @@ const BOOK_CATEGORIES: BookCategory[] = [
   "other",
   "uncategorized",
 ];
+const SUPPORTED_DOCS_EXTENSIONS = new Set([".pdf", ".md", ".txt"]);
 
 let redisClient: Redis | null = null;
 
@@ -100,6 +125,17 @@ function normalizeMaxEntries(value: unknown): number | null {
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
   return null;
+}
+
+function normalizeBoolean(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value !== 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
+  }
+  return fallback;
 }
 
 function isCopiedState(raw: string | null): boolean {
@@ -165,6 +201,60 @@ export function getDestPath(entry: ManifestEntry): string {
     getCategoryDir(entry.enrichmentCategory),
     filename,
   );
+}
+
+function sourceHostLabel(entry: ManifestEntry): string {
+  return entry.sourceExists ? "dark-wizard" : "clanker";
+}
+
+function toDocsTitle(filename: string): string {
+  const title = basename(filename, extname(filename))
+    .replace(/[_-]+/g, " ")
+    .trim();
+  return title.length > 0 ? title : filename;
+}
+
+function toDocsStorageCategory(entry: ManifestEntry): string {
+  if (entry.sourcePath.includes("/clawd/podcasts/")) return "podcasts";
+  return getCategoryDir(entry.enrichmentCategory);
+}
+
+function toDocsTags(entry: ManifestEntry): string[] {
+  const tags = new Set<string>(["manifest", `manifest-entry:${entry.id}`]);
+  if (entry.enrichmentDocumentType) {
+    const documentTypeTag = entry.enrichmentDocumentType
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    if (documentTypeTag.length > 0) {
+      tags.add(`document-type:${documentTypeTag}`);
+    }
+  }
+  return [...tags];
+}
+
+function isSupportedDocsFile(filename: string): boolean {
+  return SUPPORTED_DOCS_EXTENSIONS.has(extname(filename).toLowerCase());
+}
+
+export function buildDocsIngestEvent(
+  entry: ManifestEntry,
+  mode: DocsIngestQueueMode,
+): DocsIngestEvent | null {
+  if (!isSupportedDocsFile(entry.filename)) return null;
+
+  return {
+    name: "docs/ingest.requested",
+    data: {
+      nasPath: getDestPath(entry),
+      title: toDocsTitle(entry.filename),
+      tags: toDocsTags(entry),
+      storageCategory: toDocsStorageCategory(entry),
+      sourceHost: sourceHostLabel(entry),
+      idempotencyKey: `manifest:${entry.id}:${mode}`,
+    },
+  };
 }
 
 function parseManifestEntry(
@@ -289,7 +379,7 @@ async function processFile(
   // Already copied? Skip.
   const copiedState = await redis.hget(REDIS_KEY, entry.id);
   if (isCopiedState(copiedState)) {
-    return { id: entry.id, action: "skip" };
+    return { id: entry.id, action: "skip", src, dest, bytes };
   }
 
   // Live mode: mkdir + scp + mark copied
@@ -341,9 +431,13 @@ export const manifestArchive = inngest.createFunction(
       maxEntries?: unknown;
       manifestPath?: unknown;
       reason?: string;
+      queueDocsIngest?: unknown;
+      queueSkipped?: unknown;
     };
     const maxEntries = normalizeMaxEntries(eventData.maxEntries);
     const manifestPath = await resolveManifestPath(eventData.manifestPath);
+    const queueDocsIngest = !dryRun && normalizeBoolean(eventData.queueDocsIngest, true);
+    const queueSkipped = queueDocsIngest && normalizeBoolean(eventData.queueSkipped, false);
 
     // Step 1: Validate prereqs (NAS mount + SSH connectivity)
     await step.run("validate-prereqs", async () => {
@@ -358,6 +452,8 @@ export const manifestArchive = inngest.createFunction(
             reason: eventData.reason ?? null,
             maxEntries,
             manifestPath,
+            queueDocsIngest,
+            queueSkipped,
           },
         },
         async () => ({ phase: "start" }),
@@ -389,7 +485,7 @@ export const manifestArchive = inngest.createFunction(
           source: "worker",
           component: "manifest-archive",
           action: "manifest.archive.prereqs-passed",
-          metadata: { dryRun, maxEntries, manifestPath },
+          metadata: { dryRun, maxEntries, manifestPath, queueDocsIngest, queueSkipped },
         },
         async () => ({ phase: "prereqs-done" }),
       );
@@ -447,6 +543,52 @@ export const manifestArchive = inngest.createFunction(
       }
     }
 
+    let docsQueueStats: DocsQueueStats = {
+      enabled: queueDocsIngest,
+      includeSkipped: queueSkipped,
+      considered: 0,
+      queueable: 0,
+      queued: 0,
+      batches: 0,
+      skippedUnsupported: 0,
+    };
+
+    if (queueDocsIngest) {
+      const eventsToQueue: DocsIngestEvent[] = [];
+
+      for (let index = 0; index < entries.length; index += 1) {
+        const entry = entries[index];
+        const result = results[index];
+        if (!entry || !result) continue;
+
+        const mode: DocsIngestQueueMode | null =
+          result.action === "copy"
+            ? "copied"
+            : queueSkipped && result.action === "skip"
+              ? "backfill"
+              : null;
+        if (!mode) continue;
+
+        docsQueueStats.considered += 1;
+        const ingestEvent = buildDocsIngestEvent(entry, mode);
+        if (!ingestEvent) {
+          docsQueueStats.skippedUnsupported += 1;
+          continue;
+        }
+        eventsToQueue.push(ingestEvent);
+      }
+
+      docsQueueStats.queueable = eventsToQueue.length;
+      const docsBatchSize = 75;
+      for (let offset = 0; offset < eventsToQueue.length; offset += docsBatchSize) {
+        const batch = eventsToQueue.slice(offset, offset + docsBatchSize);
+        const batchNumber = Math.floor(offset / docsBatchSize) + 1;
+        const enqueue = await step.sendEvent(`queue-docs-ingest-${batchNumber}`, batch);
+        docsQueueStats.queued += enqueue.ids.length;
+        docsQueueStats.batches += 1;
+      }
+    }
+
     const summary = {
       dryRun,
       scanned: results.length,
@@ -462,6 +604,7 @@ export const manifestArchive = inngest.createFunction(
       },
       maxEntries,
       manifestPath,
+      docsQueue: docsQueueStats,
       errorDetails: errors.slice(0, 20).map((e) => ({
         id: e.id,
         error: e.error,

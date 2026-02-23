@@ -8,6 +8,7 @@ import type {
   TaskPort,
   UpdateTaskInput,
 } from "../port";
+import { markTodoistTaskAgentClosed, unmarkTodoistTaskAgentClosed } from "../../lib/todoist-agent-closed";
 
 type TodoistEnvelope = {
   ok?: boolean;
@@ -221,7 +222,13 @@ export class TodoistTaskAdapter implements TaskPort {
   }
 
   async completeTask(id: string): Promise<void> {
-    await this.runCli(["complete", id]);
+    await markTodoistTaskAgentClosed(id);
+    try {
+      await this.runCli(["complete", id]);
+    } catch (error) {
+      await unmarkTodoistTaskAgentClosed(id).catch(() => {});
+      throw error;
+    }
   }
 
   async deleteTask(id: string): Promise<void> {
@@ -259,4 +266,3 @@ export class TodoistTaskAdapter implements TaskPort {
     return [];
   }
 }
-

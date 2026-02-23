@@ -19,7 +19,10 @@ export { approvalRequest, approvalResolve } from "./approval";
 export { taskTriage } from "./task-triage";
 export { checkSessions } from "./check-sessions";
 export { checkTriggers } from "./check-triggers";
-export { checkSystemHealth } from "./check-system-health";
+export {
+  checkSystemHealth,
+  checkSystemHealthSignalsSchedule,
+} from "./check-system-health";
 export { networkStatusUpdate } from "./network-status-update";
 export { checkMemoryReview } from "./check-memory-review";
 export { checkVaultSync } from "./check-vault-sync";
@@ -83,6 +86,8 @@ export {
 } from "./typesense-sync";
 export { nasSoakSample, nasSoakReview } from "./nas-soak";
 export { manifestArchive } from "./manifest-archive";
+export { docsIngest } from "./docs-ingest";
+export { docsEnrich, docsReindex } from "./docs-maintenance";
 export { hostFunctionDefinitions, hostFunctionIds } from "./index.host";
 export { clusterFunctionDefinitions, clusterFunctionIds } from "./index.cluster";
 

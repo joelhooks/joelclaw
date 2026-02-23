@@ -7,7 +7,8 @@
 import { Hono } from "hono";
 import { inngest } from "../inngest/client";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../observability/emit";
-import type { WebhookProvider } from "./types";
+import { isTodoistTaskAgentClosed } from "../lib/todoist-agent-closed";
+import type { WebhookProvider, NormalizedEvent } from "./types";
 import { todoistProvider } from "./providers/todoist";
 import { frontProvider } from "./providers/front";
 import { vercelProvider } from "./providers/vercel";
@@ -49,6 +50,33 @@ function recordAuthFailure(ip: string): void {
 
 // ── Max body size ────────────────────────────────────────
 const MAX_BODY_SIZE = 256 * 1024; // 256KB
+
+async function filterTodoistTaskCompletedEchoes(events: NormalizedEvent[]): Promise<NormalizedEvent[]> {
+  const filtered: NormalizedEvent[] = [];
+
+  for (const event of events) {
+    if (event.name !== "task.completed") {
+      filtered.push(event);
+      continue;
+    }
+
+    const taskId = String(event.data.taskId ?? "").trim();
+    if (!taskId) {
+      filtered.push(event);
+      continue;
+    }
+
+    const agentClosed = await isTodoistTaskAgentClosed(taskId);
+    if (agentClosed) {
+      console.debug("[webhooks] skipped todoist task.completed echo for agent-closed task", { taskId });
+      continue;
+    }
+
+    filtered.push(event);
+  }
+
+  return filtered;
+}
 
 // ── Hono app ─────────────────────────────────────────────
 export const webhookApp = new Hono();
@@ -139,7 +167,10 @@ webhookApp.post("/:provider", async (c) => {
         return c.json({ ok: false, error: "Invalid JSON" }, 400);
       }
 
-      const events = provider.normalizePayload(body, headers);
+      let events = provider.normalizePayload(body, headers);
+      if (providerId === "todoist" && events.length > 0) {
+        events = await filterTodoistTaskCompletedEchoes(events);
+      }
       const eventType =
         typeof body.type === "string"
           ? body.type

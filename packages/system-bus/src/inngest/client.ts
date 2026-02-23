@@ -111,6 +111,8 @@ export type Events = {
       dryRun?: boolean;
       maxEntries?: number;
       manifestPath?: string;
+      queueDocsIngest?: boolean;
+      queueSkipped?: boolean;
     };
   };
   "manifest/archive.completed": {
@@ -136,10 +138,72 @@ export type Events = {
       };
       maxEntries: number | null;
       manifestPath: string;
+      docsQueue: {
+        enabled: boolean;
+        includeSkipped: boolean;
+        considered: number;
+        queueable: number;
+        queued: number;
+        batches: number;
+        skippedUnsupported: number;
+      };
       errorDetails: Array<{
         id: string;
         error?: string;
       }>;
+    };
+  };
+
+  // --- Docs pipeline ---
+  "docs/ingest.requested": {
+    data: {
+      nasPath: string;
+      title?: string;
+      tags?: string[];
+      storageCategory?: string;
+      sourceHost?: string;
+      idempotencyKey?: string;
+    };
+  };
+  "docs/ingest.completed": {
+    data: {
+      docId: string;
+      title: string;
+      nasPath: string;
+      storageCategory: string;
+      primaryConceptId: string;
+      conceptIds: string[];
+      taxonomyVersion: string;
+      chunksIndexed: number;
+      sectionChunks: number;
+      snippetChunks: number;
+    };
+  };
+  "docs/enrich.requested": {
+    data: {
+      docId: string;
+    };
+  };
+  "docs/reindex.requested": {
+    data: {
+      docId?: string;
+    };
+  };
+  "docs/backlog.requested": {
+    data: {
+      manifestPath?: string;
+      maxEntries?: number;
+      booksOnly?: boolean;
+      onlyMissing?: boolean;
+      includePodcasts?: boolean;
+      idempotencyPrefix?: string;
+    };
+  };
+  "docs/search.requested": {
+    data: {
+      query: string;
+      filters?: string;
+      limit?: number;
     };
   };
 
@@ -557,6 +621,8 @@ export type Events = {
   "system/health.check": {
     data: {
       component?: string;
+      mode?: "core" | "signals" | "full";
+      source?: string;
     };
   };
   "system/network.update": {
@@ -927,6 +993,8 @@ export type Events = {
   "system/health.requested": {
     data: {
       component?: string;
+      mode?: "core" | "signals" | "full";
+      source?: string;
     };
   };
   "memory/friction.requested": {

@@ -38,10 +38,21 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return Boolean(v) && typeof v === "object";
 }
 
+function throwIfGranolaRateLimited(rawText: string, context: string): void {
+  if (!rawText.toLowerCase().includes("rate limit")) return;
+  throw new Error(
+    `Granola rate limited (~1 hour window) during ${context}; retrying: ${rawText.slice(0, 500)}`
+  );
+}
+
+/**
+ * Granola MCP transcript/list endpoints are aggressively rate-limited (~1 hour window).
+ * Keep this function account-scoped at concurrency 1 and throw on "rate limit" so Inngest retries.
+ */
 export const checkGranola = inngest.createFunction(
   {
     id: "check/granola-meetings",
-    concurrency: [{ scope: "account", key: '"granola-mcp"', limit: 1 }],
+    concurrency: { scope: "account", key: "granola-mcp", limit: 1 },
     retries: 2,
   },
   { event: "granola/check.requested" },
@@ -55,17 +66,23 @@ export const checkGranola = inngest.createFunction(
         stderr: "pipe",
       });
 
-      const [stdout, , exitCode] = await Promise.all([
+      const [stdout, stderr, exitCode] = await Promise.all([
         readStream(proc.stdout),
         readStream(proc.stderr),
         proc.exited,
       ]);
 
+      throwIfGranolaRateLimited(`${stdout}\n${stderr}`, "list-recent-meetings");
+
       if (exitCode !== 0 || !stdout.trim()) return [];
 
       try {
         const parsed = JSON.parse(stdout.trim());
-        if (!isRecord(parsed) || !parsed.ok) return [];
+        if (!isRecord(parsed)) return [];
+        if (parsed.ok !== true) {
+          throwIfGranolaRateLimited(JSON.stringify(parsed), "list-recent-meetings");
+          return [];
+        }
         const result = parsed.result;
         const items = isRecord(result) && Array.isArray(result.meetings)
           ? result.meetings

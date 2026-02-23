@@ -13,7 +13,45 @@ import Redis from "ioredis";
 import * as typesense from "../../lib/typesense";
 import { emitOtelEvent } from "../../observability/emit";
 
-type ServiceStatus = { name: string; ok: boolean; detail?: string };
+type ServiceStatus = { name: string; ok: boolean; detail?: string; durationMs?: number };
+type HealthCheckMode = "core" | "signals" | "full";
+type HealthSlicePolicy = {
+  cadenceMinutes: number;
+  importance: "critical" | "high" | "medium";
+  alertSensitivity: "high" | "medium" | "low";
+  selfHealing: "manual" | "automatic";
+  rank: number;
+};
+
+const VALID_HEALTH_CHECK_MODES = new Set<HealthCheckMode>([
+  "core",
+  "signals",
+  "full",
+]);
+
+const HEALTH_SLICE_POLICIES: Record<HealthCheckMode, HealthSlicePolicy> = {
+  core: {
+    cadenceMinutes: 15,
+    importance: "critical",
+    alertSensitivity: "high",
+    selfHealing: "automatic",
+    rank: 1,
+  },
+  signals: {
+    cadenceMinutes: 60,
+    importance: "high",
+    alertSensitivity: "medium",
+    selfHealing: "manual",
+    rank: 2,
+  },
+  full: {
+    cadenceMinutes: 0,
+    importance: "critical",
+    alertSensitivity: "high",
+    selfHealing: "manual",
+    rank: 0,
+  },
+};
 
 const CRITICAL_COMPONENTS = new Set([
   "redis",
@@ -23,6 +61,51 @@ const CRITICAL_COMPONENTS = new Set([
   "typesense",
   "agent secrets",
 ]);
+
+function normalizeTimestampToMs(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.round(value));
+}
+
+async function withTiming<T>(
+  timings: Record<string, number>,
+  key: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    return await fn();
+  } finally {
+    timings[key] = normalizeTimestampToMs(Date.now() - startedAt);
+  }
+}
+
+async function timedServiceCheck(
+  checkName: string,
+  fn: () => Promise<ServiceStatus>,
+): Promise<ServiceStatus> {
+  const startedAt = Date.now();
+  const result = await fn();
+  return {
+    ...result,
+    durationMs: normalizeTimestampToMs(Date.now() - startedAt),
+    name: checkName,
+  };
+}
+
+export function resolveHealthCheckMode(
+  eventName: "system/health.requested" | "system/health.check",
+  rawMode: unknown,
+): HealthCheckMode {
+  if (typeof rawMode === "string") {
+    const normalized = rawMode.trim().toLowerCase();
+    if (VALID_HEALTH_CHECK_MODES.has(normalized as HealthCheckMode)) {
+      return normalized as HealthCheckMode;
+    }
+  }
+
+  return eventName === "system/health.check" ? "full" : "core";
+}
 
 function getNumericEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -371,231 +454,304 @@ async function checkWriteGateDrift(): Promise<WriteGateDriftSummary> {
 export const checkSystemHealth = inngest.createFunction(
   { id: "check/system-health", concurrency: { limit: 1 }, retries: 1 },
   [{ event: "system/health.requested" }, { event: "system/health.check" }],
-  async ({ step }) => {
-    const services = await step.run("ping-services", async () => {
-      const results = await Promise.all([
-        checkRedis(),
-        checkInngest(),
-        checkWorker(),
-        checkGateway(),
-        checkWebhooks(),
-        checkTypesense(),
-        checkAgentSecrets(),
-      ]);
-      return results;
-    });
+  async ({ step, event }) => {
+    const eventName = event.name as "system/health.requested" | "system/health.check";
+    const mode = resolveHealthCheckMode(
+      eventName,
+      (event.data as { mode?: unknown } | undefined)?.mode,
+    );
+    const slicePolicy = HEALTH_SLICE_POLICIES[mode];
+    const runCoreChecks = mode !== "signals";
+    const runSignalChecks = mode !== "core";
+    const runStartedAt = Date.now();
+    const stepDurationsMs: Record<string, number> = {};
 
-    await step.run("slog-agent-secrets-health", async () => {
-      const service = services.find((item) => item.name === "Agent Secrets");
-      if (!service) return { skipped: true, reason: "service-missing" };
+    const services = runCoreChecks
+      ? await withTiming(stepDurationsMs, "core.ping-services", async () =>
+        step.run("ping-services", async () => {
+          const results = await Promise.all([
+            timedServiceCheck("Redis", checkRedis),
+            timedServiceCheck("Inngest", checkInngest),
+            timedServiceCheck("Worker", checkWorker),
+            timedServiceCheck("Gateway", checkGateway),
+            timedServiceCheck("Webhooks", checkWebhooks),
+            timedServiceCheck("Typesense", checkTypesense),
+            timedServiceCheck("Agent Secrets", checkAgentSecrets),
+          ]);
+          return results;
+        })
+      )
+      : [];
 
-      const redis = new Redis({
-        host: "localhost",
-        port: 6379,
-        lazyConnect: true,
-        connectTimeout: 3000,
-      });
-      redis.on("error", () => {});
+    if (runCoreChecks) {
+      await withTiming(stepDurationsMs, "core.slog-agent-secrets-health", async () =>
+        step.run("slog-agent-secrets-health", async () => {
+          const service = services.find((item) => item.name === "Agent Secrets");
+          if (!service) return { skipped: true, reason: "service-missing" };
 
-      try {
-        if (!service.ok) {
-          const shouldLog = await redis.set(
-            "health:agent-secrets:down:logged",
-            String(Date.now()),
-            "EX",
-            3600,
-            "NX"
-          );
-          if (!shouldLog) return { logged: false, reason: "cooldown" };
-
-          await step.sendEvent("slog-agent-secrets-down", {
-            name: "system/log.written",
-            data: {
-              action: "degraded",
-              tool: "agent-secrets",
-              detail: `Agent Secrets daemon unavailable: ${service.detail ?? "unknown"}`,
-              reason: "check/system-health",
-            },
+          const redis = new Redis({
+            host: "localhost",
+            port: 6379,
+            lazyConnect: true,
+            connectTimeout: 3000,
           });
+          redis.on("error", () => {});
 
-          return { logged: true, state: "down" };
-        }
+          try {
+            if (!service.ok) {
+              const shouldLog = await redis.set(
+                "health:agent-secrets:down:logged",
+                String(Date.now()),
+                "EX",
+                3600,
+                "NX"
+              );
+              if (!shouldLog) return { logged: false, reason: "cooldown" };
 
-        const shouldLogRecovery = await redis.set(
-          "health:agent-secrets:up:logged",
-          String(Date.now()),
-          "EX",
-          3600,
-          "NX"
-        );
-        await redis.del("health:agent-secrets:down:logged");
-        if (!shouldLogRecovery) return { logged: false, state: "up", reason: "cooldown" };
+              await step.sendEvent("slog-agent-secrets-down", {
+                name: "system/log.written",
+                data: {
+                  action: "degraded",
+                  tool: "agent-secrets",
+                  detail: `Agent Secrets daemon unavailable: ${service.detail ?? "unknown"}`,
+                  reason: "check/system-health",
+                },
+              });
 
-        await step.sendEvent("slog-agent-secrets-up", {
-          name: "system/log.written",
-          data: {
-            action: "recovered",
-            tool: "agent-secrets",
-            detail: "Agent Secrets daemon healthy",
-            reason: "check/system-health",
+              return { logged: true, state: "down" };
+            }
+
+            const shouldLogRecovery = await redis.set(
+              "health:agent-secrets:up:logged",
+              String(Date.now()),
+              "EX",
+              3600,
+              "NX"
+            );
+            await redis.del("health:agent-secrets:down:logged");
+            if (!shouldLogRecovery) return { logged: false, state: "up", reason: "cooldown" };
+
+            await step.sendEvent("slog-agent-secrets-up", {
+              name: "system/log.written",
+              data: {
+                action: "recovered",
+                tool: "agent-secrets",
+                detail: "Agent Secrets daemon healthy",
+                reason: "check/system-health",
+              },
+            });
+            return { logged: true, state: "up" };
+          } catch (error) {
+            return { logged: false, error: String(error) };
+          } finally {
+            redis.disconnect();
+          }
+        })
+      );
+    }
+
+    let otelErrorRate: OtelErrorRateSummary | null = null;
+    let writeGateDrift: WriteGateDriftSummary | null = null;
+
+    if (runSignalChecks) {
+      otelErrorRate = await withTiming(stepDurationsMs, "signals.check-otel-error-rate", async () =>
+        step.run("check-otel-error-rate", async () => checkOtelErrorRate())
+      );
+
+      writeGateDrift = await withTiming(
+        stepDurationsMs,
+        "signals.check-memory-write-gate-drift",
+        async () => step.run("check-memory-write-gate-drift", async () => checkWriteGateDrift()),
+      );
+    }
+
+    await withTiming(stepDurationsMs, "summary.emit-otel-health", async () =>
+      step.run("emit-otel-health-summary", async () => {
+        const degradedCount = services.filter((service) => !service.ok).length;
+        await emitOtelEvent({
+          level: degradedCount === 0 ? "info" : "warn",
+          source: "worker",
+          component: "check-system-health",
+          action: "system.health.checked",
+          success: degradedCount === 0,
+          metadata: {
+            mode,
+            slicePolicy,
+            runCoreChecks,
+            runSignalChecks,
+            runtimeMs: normalizeTimestampToMs(Date.now() - runStartedAt),
+            stepDurationsMs,
+            degradedCount,
+            services: services.map((service) => ({
+              name: service.name,
+              ok: service.ok,
+              durationMs: service.durationMs ?? 0,
+            })),
+            otelErrorRate,
+            writeGateDrift,
           },
         });
-        return { logged: true, state: "up" };
-      } catch (error) {
-        return { logged: false, error: String(error) };
-      } finally {
-        redis.disconnect();
-      }
-    });
-
-    const otelErrorRate = await step.run("check-otel-error-rate", async () =>
-      checkOtelErrorRate()
+      })
     );
 
-    const writeGateDrift = await step.run("check-memory-write-gate-drift", async () =>
-      checkWriteGateDrift()
-    );
-
-    await step.run("emit-otel-health-summary", async () => {
-      const degradedCount = services.filter((service) => !service.ok).length;
-      await emitOtelEvent({
-        level: degradedCount === 0 ? "info" : "warn",
-        source: "worker",
-        component: "check-system-health",
-        action: "system.health.checked",
-        success: degradedCount === 0,
-        metadata: {
-          degradedCount,
-          services: services.map((service) => ({
-            name: service.name,
-            ok: service.ok,
-          })),
-          otelErrorRate,
-          writeGateDrift,
-        },
-      });
-    });
+    if (!runCoreChecks) {
+      return {
+        status: "signals",
+        mode,
+        slicePolicy,
+        services,
+        otelErrorRate,
+        writeGateDrift,
+        stepDurationsMs,
+      };
+    }
 
     // Push all service statuses to Convex dashboard — ADR-0075
-    await step.run("push-to-convex", async () => {
-      await Promise.allSettled(
-        services.map((s) =>
-          pushSystemStatus(
-            s.name.toLowerCase(),
-            s.ok ? "healthy" : "down",
-            s.detail
+    await withTiming(stepDurationsMs, "core.push-to-convex", async () =>
+      step.run("push-to-convex", async () => {
+        await Promise.allSettled(
+          services.map((s) =>
+            pushSystemStatus(
+              s.name.toLowerCase(),
+              s.ok ? "healthy" : "down",
+              s.detail
+            )
           )
-        )
-      );
-    });
+        );
+      })
+    );
 
     const degraded = services.filter((s) => !s.ok);
 
-    if (otelErrorRate.shouldEscalate) {
-      await step.run("notify-otel-error-rate", async () => {
-        const prompt = [
-          "## 🚨 Elevated Error Rate",
-          "",
-          `Window: last ${otelErrorRate.windowMinutes} minutes`,
-          `Errors: ${otelErrorRate.errors} / ${otelErrorRate.total} (${Math.round(otelErrorRate.rate * 100)}%)`,
-          `Threshold: ${Math.round(otelErrorRate.threshold * 100)}% with >= ${otelErrorRate.minEvents} events`,
-          "",
-          "Investigate recent otel_events grouped by component and prioritize fatal/error sources.",
-        ].join("\n");
+    if (otelErrorRate && otelErrorRate.shouldEscalate) {
+      await withTiming(stepDurationsMs, "signals.notify-otel-error-rate", async () =>
+        step.run("notify-otel-error-rate", async () => {
+          const prompt = [
+            "## 🚨 Elevated Error Rate",
+            "",
+            `Window: last ${otelErrorRate.windowMinutes} minutes`,
+            `Errors: ${otelErrorRate.errors} / ${otelErrorRate.total} (${Math.round(otelErrorRate.rate * 100)}%)`,
+            `Threshold: ${Math.round(otelErrorRate.threshold * 100)}% with >= ${otelErrorRate.minEvents} events`,
+            "",
+            "Investigate recent otel_events grouped by component and prioritize fatal/error sources.",
+          ].join("\n");
 
-        await pushGatewayEvent({
-          type: "system.health.error-rate",
-          source: "inngest/check-system-health",
-          payload: {
-            prompt,
-            level: "error",
-            immediateTelegram: true,
-            otelErrorRate,
-          },
-        });
-      });
+          await pushGatewayEvent({
+            type: "system.health.error-rate",
+            source: "inngest/check-system-health",
+            payload: {
+              prompt,
+              level: "error",
+              immediateTelegram: true,
+              otelErrorRate,
+            },
+          });
+        })
+      );
 
-      await step.run("notify-convex-otel-error-rate", async () => {
-        await pushNotification(
-          "error",
-          `Elevated error rate: ${Math.round(otelErrorRate.rate * 100)}%`,
-          `Errors ${otelErrorRate.errors}/${otelErrorRate.total} in ${otelErrorRate.windowMinutes}m`
-        );
-      });
+      await withTiming(stepDurationsMs, "signals.notify-convex-otel-error-rate", async () =>
+        step.run("notify-convex-otel-error-rate", async () => {
+          await pushNotification(
+            "error",
+            `Elevated error rate: ${Math.round(otelErrorRate.rate * 100)}%`,
+            `Errors ${otelErrorRate.errors}/${otelErrorRate.total} in ${otelErrorRate.windowMinutes}m`
+          );
+        })
+      );
     }
 
-    if (writeGateDrift.shouldEscalate) {
-      await step.run("notify-memory-write-gate-drift", async () => {
-        const prompt = [
-          "## ⚠️ Memory Write-Gate Drift",
-          "",
-          `Window: last ${writeGateDrift.windowMinutes} minutes`,
-          `Observe events with gate counts: ${writeGateDrift.eventsWithGateCounts}/${writeGateDrift.totalEvents}`,
-          `allow|hold|discard: ${writeGateDrift.allowCount}|${writeGateDrift.holdCount}|${writeGateDrift.discardCount}`,
-          `hold ratio: ${Math.round(writeGateDrift.holdRatio * 100)}% (threshold ${Math.round(writeGateDrift.holdRatioThreshold * 100)}%)`,
-          `discard ratio: ${Math.round(writeGateDrift.discardRatio * 100)}% (threshold ${Math.round(writeGateDrift.discardRatioThreshold * 100)}%)`,
-          `fallback rate: ${Math.round(writeGateDrift.fallbackRate * 100)}% (threshold ${Math.round(writeGateDrift.fallbackRateThreshold * 100)}%)`,
-          "",
-          "Investigate observe prompt/parser drift and recent ingest quality.",
-        ].join("\n");
+    if (writeGateDrift && writeGateDrift.shouldEscalate) {
+      await withTiming(stepDurationsMs, "signals.notify-memory-write-gate-drift", async () =>
+        step.run("notify-memory-write-gate-drift", async () => {
+          const prompt = [
+            "## ⚠️ Memory Write-Gate Drift",
+            "",
+            `Window: last ${writeGateDrift.windowMinutes} minutes`,
+            `Observe events with gate counts: ${writeGateDrift.eventsWithGateCounts}/${writeGateDrift.totalEvents}`,
+            `allow|hold|discard: ${writeGateDrift.allowCount}|${writeGateDrift.holdCount}|${writeGateDrift.discardCount}`,
+            `hold ratio: ${Math.round(writeGateDrift.holdRatio * 100)}% (threshold ${Math.round(writeGateDrift.holdRatioThreshold * 100)}%)`,
+            `discard ratio: ${Math.round(writeGateDrift.discardRatio * 100)}% (threshold ${Math.round(writeGateDrift.discardRatioThreshold * 100)}%)`,
+            `fallback rate: ${Math.round(writeGateDrift.fallbackRate * 100)}% (threshold ${Math.round(writeGateDrift.fallbackRateThreshold * 100)}%)`,
+            "",
+            "Investigate observe prompt/parser drift and recent ingest quality.",
+          ].join("\n");
 
-        await pushGatewayEvent({
-          type: "system.health.memory-write-gate-drift",
-          source: "inngest/check-system-health",
-          payload: {
-            prompt,
+          await pushGatewayEvent({
+            type: "system.health.memory-write-gate-drift",
+            source: "inngest/check-system-health",
+            payload: {
+              prompt,
+              level: "warn",
+              immediateTelegram: true,
+              writeGateDrift,
+            },
+          });
+        })
+      );
+
+      await withTiming(stepDurationsMs, "signals.notify-convex-memory-write-gate-drift", async () =>
+        step.run("notify-convex-memory-write-gate-drift", async () => {
+          await pushNotification(
+            "error",
+            "Memory write-gate drift detected",
+            `hold=${Math.round(writeGateDrift.holdRatio * 100)}% discard=${Math.round(writeGateDrift.discardRatio * 100)}% fallback=${Math.round(writeGateDrift.fallbackRate * 100)}%`
+          );
+        })
+      );
+
+      await withTiming(stepDurationsMs, "signals.emit-memory-write-gate-drift", async () =>
+        step.run("emit-memory-write-gate-drift", async () => {
+          await emitOtelEvent({
             level: "warn",
-            immediateTelegram: true,
-            writeGateDrift,
-          },
-        });
-      });
-
-      await step.run("notify-convex-memory-write-gate-drift", async () => {
-        await pushNotification(
-          "error",
-          "Memory write-gate drift detected",
-          `hold=${Math.round(writeGateDrift.holdRatio * 100)}% discard=${Math.round(writeGateDrift.discardRatio * 100)}% fallback=${Math.round(writeGateDrift.fallbackRate * 100)}%`
-        );
-      });
-
-      await step.run("emit-memory-write-gate-drift", async () => {
-        await emitOtelEvent({
-          level: "warn",
-          source: "worker",
-          component: "check-system-health",
-          action: "memory.write_gate_drift.detected",
-          success: false,
-          metadata: {
-            writeGateDrift,
-          },
-        });
-      });
+            source: "worker",
+            component: "check-system-health",
+            action: "memory.write_gate_drift.detected",
+            success: false,
+            metadata: {
+              mode,
+              writeGateDrift,
+            },
+          });
+        })
+      );
     }
 
     // NOOP: all healthy → no notification
     if (degraded.length === 0) {
       // ADR-0085: trigger live network status collection after health checks.
-      await step.sendEvent("emit-network-update", {
-        name: "system/network.update",
-        data: { source: "check-system-health", checkedAt: Date.now() },
-      });
-      return { status: "noop", services };
+      await withTiming(stepDurationsMs, "core.emit-network-update", async () =>
+        step.sendEvent("emit-network-update", {
+          name: "system/network.update",
+          data: { source: "check-system-health", checkedAt: Date.now() },
+        })
+      );
+      return { status: "noop", mode, slicePolicy, services, stepDurationsMs };
     }
 
     // Filter: don't re-alert about things that already have tasks
-    const newDegraded = await step.run("filter-against-tasks", async () => {
-      const tasks = await getCurrentTasks();
-      return degraded.filter((s) => !hasTaskMatching(tasks, s.name));
-    });
+    const newDegraded = await withTiming(stepDurationsMs, "core.filter-against-tasks", async () =>
+      step.run("filter-against-tasks", async () => {
+        const tasks = await getCurrentTasks();
+        return degraded.filter((s) => !hasTaskMatching(tasks, s.name));
+      })
+    );
 
     if (newDegraded.length === 0) {
       // ADR-0085: trigger live network status collection after health checks.
-      await step.sendEvent("emit-network-update", {
-        name: "system/network.update",
-        data: { source: "check-system-health", checkedAt: Date.now() },
-      });
-      return { status: "noop", reason: "degraded but already tracked in tasks", services };
+      await withTiming(stepDurationsMs, "core.emit-network-update", async () =>
+        step.sendEvent("emit-network-update", {
+          name: "system/network.update",
+          data: { source: "check-system-health", checkedAt: Date.now() },
+        })
+      );
+      return {
+        status: "noop",
+        mode,
+        slicePolicy,
+        reason: "degraded but already tracked in tasks",
+        services,
+        stepDurationsMs,
+      };
     }
 
     // Something's down and NOT already tracked → alert gateway
@@ -606,84 +762,129 @@ export const checkSystemHealth = inngest.createFunction(
       CRITICAL_COMPONENTS.has(service.name.toLowerCase())
     );
 
-    await step.run("notify-degradation", async () => {
-      const lines = [
-        "## 🚨 System Health Degradation",
-        "",
-        ...services.map((s) => {
-          const icon = s.ok ? "✅" : "❌";
-          const detail = s.detail ? ` — ${s.detail.slice(0, 100)}` : "";
-          return `- ${icon} **${s.name}**${detail}`;
-        }),
-      ];
+    await withTiming(stepDurationsMs, "core.notify-degradation", async () =>
+      step.run("notify-degradation", async () => {
+        const lines = [
+          "## 🚨 System Health Degradation",
+          "",
+          ...services.map((s) => {
+            const icon = s.ok ? "✅" : "❌";
+            const detail = s.detail ? ` — ${s.detail.slice(0, 100)}` : "";
+            return `- ${icon} **${s.name}**${detail}`;
+          }),
+        ];
 
-      await pushGatewayEvent({
-        type: "system.health.degraded",
-        source: "inngest/check-system-health",
-        payload: {
-          prompt: lines.join("\n"),
-          degraded: degraded.map((s) => s.name),
+        await pushGatewayEvent({
+          type: "system.health.degraded",
+          source: "inngest/check-system-health",
+          payload: {
+            prompt: lines.join("\n"),
+            degraded: degraded.map((s) => s.name),
+          },
+        });
+      })
+    );
+
+    if (criticalDown.length > 0) {
+      await withTiming(stepDurationsMs, "core.notify-fatal-immediate", async () =>
+        step.run("notify-fatal-immediate", async () => {
+          const prompt = [
+            "## ☠️ Critical Service Failure",
+            "",
+            ...criticalDown.map((service) => `- ${service.name}: ${service.detail ?? "down"}`),
+            "",
+            "Immediate attention required. This alert bypassed normal digest batching.",
+          ].join("\n");
+
+          await pushGatewayEvent({
+            type: "system.fatal",
+            source: "inngest/check-system-health",
+            payload: {
+              prompt,
+              level: "fatal",
+              immediateTelegram: true,
+              critical: criticalDown.map((service) => service.name),
+            },
+          });
+        })
+      );
+
+      await withTiming(stepDurationsMs, "core.emit-fatal-service-alert", async () =>
+        step.run("emit-fatal-service-alert", async () => {
+          await emitOtelEvent({
+            level: "fatal",
+            source: "worker",
+            component: "check-system-health",
+            action: "system.health.critical_failure",
+            success: false,
+            error: criticalDown.map((service) => service.name).join(", "),
+            metadata: {
+              mode,
+              criticalDown,
+            },
+          });
+        })
+      );
+    }
+
+    // Push degradation notification to Convex dashboard — ADR-0075
+    await withTiming(stepDurationsMs, "core.notify-convex-degradation", async () =>
+      step.run("notify-convex-degradation", async () => {
+        await pushNotification(
+          "error",
+          `Health degradation: ${degradedNames.join(", ")}`,
+          degradedDetails.join("\n")
+        );
+      })
+    );
+
+    // ADR-0085: trigger live network status collection after health checks.
+    await withTiming(stepDurationsMs, "core.emit-network-update", async () =>
+      step.sendEvent("emit-network-update", {
+        name: "system/network.update",
+        data: { source: "check-system-health", checkedAt: Date.now() },
+      })
+    );
+
+    return {
+      status: "degraded",
+      mode,
+      slicePolicy,
+      degraded: degraded.map((s) => s.name),
+      services,
+      otelErrorRate,
+      stepDurationsMs,
+    };
+  }
+);
+
+export const checkSystemHealthSignalsSchedule = inngest.createFunction(
+  { id: "check/system-health-signals-schedule" },
+  [{ cron: "7 * * * *" }],
+  async ({ step }) => {
+    await step.sendEvent("request-health-signals-slice", {
+      name: "system/health.requested",
+      data: {
+        mode: "signals",
+        source: "system-health-signals-hourly",
+      },
+    });
+
+    await step.run("emit-otel-health-signals-scheduled", async () => {
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "check-system-health",
+        action: "system.health.signals.scheduled",
+        success: true,
+        metadata: {
+          mode: "signals",
+          slicePolicy: HEALTH_SLICE_POLICIES.signals,
+          cron: "7 * * * *",
         },
       });
     });
 
-    if (criticalDown.length > 0) {
-      await step.run("notify-fatal-immediate", async () => {
-        const prompt = [
-          "## ☠️ Critical Service Failure",
-          "",
-          ...criticalDown.map((service) => `- ${service.name}: ${service.detail ?? "down"}`),
-          "",
-          "Immediate attention required. This alert bypassed normal digest batching.",
-        ].join("\n");
-
-        await pushGatewayEvent({
-          type: "system.fatal",
-          source: "inngest/check-system-health",
-          payload: {
-            prompt,
-            level: "fatal",
-            immediateTelegram: true,
-            critical: criticalDown.map((service) => service.name),
-          },
-        });
-      });
-
-      await step.run("emit-fatal-service-alert", async () => {
-        await emitOtelEvent({
-          level: "fatal",
-          source: "worker",
-          component: "check-system-health",
-          action: "system.health.critical_failure",
-          success: false,
-          error: criticalDown.map((service) => service.name).join(", "),
-          metadata: {
-            criticalDown,
-          },
-        });
-      });
-    }
-
-    // Push degradation notification to Convex dashboard — ADR-0075
-    await step.run("notify-convex-degradation", async () => {
-      await pushNotification(
-        "error",
-        `Health degradation: ${degradedNames.join(", ")}`,
-        degradedDetails.join("\n")
-      );
-    });
-
-    // ADR-0085: trigger live network status collection after health checks.
-    await step.sendEvent("emit-network-update", {
-      name: "system/network.update",
-      data: { source: "check-system-health", checkedAt: Date.now() },
-    });
-
-    return {
-      status: "degraded",
-      degraded: degraded.map((s) => s.name),
-      services,
-      otelErrorRate,
-    };
+    return { status: "scheduled", mode: "signals" };
   }
 );
