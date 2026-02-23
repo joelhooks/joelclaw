@@ -4,7 +4,7 @@ import { headers } from "next/headers";
 import { ConvexHttpClient } from "convex/browser";
 import { MetricCard } from "@repo/ui/metric-card";
 import { DataGrid } from "@repo/ui/data-grid";
-import { StatusBadge, normalizeStatusKind } from "@repo/ui/status-badge";
+import { StatusLed, normalizeStatusKind } from "@repo/ui/status-badge";
 import { api } from "@/convex/_generated/api";
 import { SITE_NAME } from "@/lib/constants";
 
@@ -170,38 +170,38 @@ async function NetworkSections() {
       <section className="space-y-3">
         <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">Nodes</h2>
         <div className="space-y-3">
-          {nodes.map((node) => (
-            <article key={node.publicName} className="border border-neutral-800/40 rounded-lg p-5 space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-base font-semibold text-neutral-100">{node.publicName}</h3>
-                  {node.privateName && <p className="font-mono text-xs text-neutral-600">{node.privateName}</p>}
+          {nodes.map((node) => {
+            const nodeStatus = normalizeStatusKind(node.status);
+
+            return (
+              <article key={node.publicName} className="border border-neutral-800/40 rounded-lg p-5 space-y-3">
+                <div className="flex items-start gap-3">
+                  <StatusLed status={nodeStatus} size="lg" pulse={nodeStatus === "healthy"} className="mt-1" />
+                  <div className="min-w-0">
+                    <h3 className="text-base font-semibold text-neutral-100">{node.publicName}</h3>
+                    {node.privateName && <p className="font-mono text-xs text-neutral-600">{node.privateName}</p>}
+                  </div>
                 </div>
-                <StatusBadge
-                  status={normalizeStatusKind(node.status)}
-                  label={node.status}
-                  pulse={node.status.toLowerCase() === "online" || node.status.toLowerCase() === "running"}
-                />
-              </div>
 
-              <p className="text-sm text-neutral-400 leading-relaxed">{node.role}</p>
+                <p className="text-sm text-neutral-400 leading-relaxed">{node.role}</p>
 
-              <p className="font-mono text-xs text-neutral-500">{node.specs.join(" · ")}</p>
+                <p className="font-mono text-xs text-neutral-500">{node.specs.join(" · ")}</p>
 
-              {node.services && node.services.length > 0 && (
-                <div className="pt-1">
-                  <ul className="space-y-1">
-                    {node.services.map((service) => (
-                      <li key={service} className="text-sm text-neutral-400 flex items-start gap-2">
-                        <span className="text-neutral-700 mt-1.5 text-[8px]">●</span>
-                        {service}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </article>
-          ))}
+                {node.services && node.services.length > 0 && (
+                  <div className="pt-1">
+                    <ul className="space-y-1">
+                      {node.services.map((service) => (
+                        <li key={service} className="text-sm text-neutral-400 flex items-start gap-2">
+                          <span className="text-neutral-700 mt-1.5 text-[8px]">●</span>
+                          {service}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       </section>
 
@@ -218,17 +218,21 @@ async function NetworkSections() {
               </tr>
             </thead>
             <tbody>
-              {k8sPods.map((pod) => (
-                <tr key={pod.name} className="border-b border-neutral-800/50 last:border-0">
-                  <td className="px-4 py-2.5 font-mono text-xs text-neutral-200">
-                    <div className="flex items-center gap-2">
-                      <StatusBadge status={normalizeStatusKind(pod.status)} label={pod.status} />
-                      <span>{pod.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-2.5 text-neutral-400">{pod.description}</td>
-                </tr>
-              ))}
+              {k8sPods.map((pod) => {
+                const podStatus = normalizeStatusKind(pod.status);
+
+                return (
+                  <tr key={pod.name} className="border-b border-neutral-800/50 last:border-0">
+                    <td className="px-4 py-2.5 font-mono text-xs text-neutral-200">
+                      <div className="flex items-center gap-2">
+                        <StatusLed status={podStatus} pulse={podStatus === "healthy"} />
+                        <span>{pod.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 text-neutral-400">{pod.description}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -247,17 +251,21 @@ async function NetworkSections() {
               </tr>
             </thead>
             <tbody>
-              {launchdServices.map((svc) => (
-                <tr key={svc.name} className="border-b border-neutral-800/50 last:border-0">
-                  <td className="px-4 py-2.5 font-mono text-xs text-neutral-200 whitespace-nowrap">
-                    <div className="flex items-center gap-2">
-                      <StatusBadge status={normalizeStatusKind(svc.status)} label={svc.status} />
-                      <span>{svc.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-2.5 text-neutral-400">{svc.description}</td>
-                </tr>
-              ))}
+              {launchdServices.map((svc) => {
+                const serviceStatus = normalizeStatusKind(svc.status);
+
+                return (
+                  <tr key={svc.name} className="border-b border-neutral-800/50 last:border-0">
+                    <td className="px-4 py-2.5 font-mono text-xs text-neutral-200 whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <StatusLed status={serviceStatus} pulse={serviceStatus === "healthy"} />
+                        <span>{svc.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 text-neutral-400">{svc.description}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
