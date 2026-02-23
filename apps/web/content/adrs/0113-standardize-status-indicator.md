@@ -26,6 +26,7 @@ prompts where a compact indicator is needed.
   to the dot in those contexts.
 - Add pulse phase variation in `StatusLed` and `StatusPulseDot` via deterministic seeding (`pulseSeed`/`pulseOffsetMs`) so
   multiple indicators do not stay in lockstep. For loops (`/network` node/pod/service rows), pass the item label as the seed.
+- Extend pulsing `StatusBadge` with matching `pulseSeed`/`pulseOffsetMs` props and apply them in `/dashboard` status cards.
 
 For richer status chips that include status text, keep `StatusBadge` where explicitly needed.
 
