@@ -107,3 +107,12 @@ transcripts:
 - **Full-text only (no embedding)**: Loses semantic search — can't find concepts by meaning
 - **Embed entire transcripts**: Too long for meaningful vector similarity. Chunking is required.
 - **Separate collections per type**: Unnecessary complexity. Type facet handles filtering.
+
+## Implementation Update (2026-02-23)
+
+- Added explicit event contract `meeting/transcript.fetched` in the Inngest client schema.
+- Added durable function `meeting-transcript-index` (idempotent on `meetingId`) to index Granola transcripts into `transcripts`.
+- Updated `meeting-analyze` to emit `meeting/transcript.fetched` after transcript retrieval and to persist transcript cache in warm tier for index fanout reliability.
+- Added dedicated scheduler `granola-check-cron` (hourly) and removed Granola polling from the generic heartbeat fan-out list.
+- Wired `voice/call.completed` to write to `voice_transcripts` in Typesense, so LiveKit voice transcripts are searchable.
+- Extended CLI and web search surfaces to include `transcripts`, while keeping `voice_transcripts` as a distinct collection.
