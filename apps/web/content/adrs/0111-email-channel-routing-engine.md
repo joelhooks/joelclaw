@@ -11,41 +11,57 @@ tags:
   - automation
 ---
 
-# ADR-0111: Email Channel Routing Engine
+# ADR-0111: Channel Routing Engine
 
 ## Context
 
-The system currently has two hardcoded email processing paths:
+The joelclaw event bus handles 101 event types across 33 source namespaces — Front email, GitHub webhooks, Todoist, Vercel deploys, calendar, voice transcripts, agent loops, memory pipeline, and more. Every event flows through Inngest.
 
-1. **VIP pipeline** (`vip-email-received.ts`) — matches sender names from a hardcoded list + env var, runs Opus analysis, creates todos, searches Granola/memory/GitHub, notifies gateway. Single pipeline, no configurability.
+Currently, enhanced processing for specific events is hardcoded:
 
-2. **Email triage** (`check-email.ts`) — batch polling (2h cooldown), LLM-classifies all unread into archive/label/escalate. No project awareness, no doc extraction, no vault integration.
+1. **VIP email pipeline** (`vip-email-received.ts`) — matches sender names from a hardcoded list, runs Opus analysis, creates todos, searches Granola/memory/GitHub. 600+ lines of bespoke code for one use case.
 
-Joel needs a third behavior: emails tagged `[aih]` or addressed to `bricks@aihero.dev` should get priority processing — extracting Google Doc/Sheet links, downloading them, correlating with the `~/Vault/Resources/ai-hero/` folder, creating todos, tracking deadlines, and sending nudges. This is a **pattern** that will repeat for every active project (AI Hero today, future Badass Courses partnerships, egghead operations).
+2. **Email triage** (`check-email.ts`) — batch polling, LLM-classifies all unread. No project awareness, no doc extraction, no vault integration.
 
-Hardcoding another special case is the wrong move. The VIP pipeline is already 600+ lines of bespoke code. A third copy would be unmaintainable.
+3. Various other Inngest functions that react to specific events with hardcoded logic.
+
+Joel needs enhanced monitoring for `[aih]` tagged emails — extracting Google Doc/Sheet links, downloading them, correlating with vault, creating todos, tracking deadlines, sending nudges. But this is not email-specific. The same pattern applies to:
+
+- **GitHub**: PRs from a specific repo → run tests, create review todos, notify
+- **Todoist**: task completed in a project → update vault status, trigger next action
+- **Vercel**: deploy failed for a specific app → diagnose, create fix task, alert
+- **Calendar**: meeting with specific attendees → pull prep docs, create agenda todos
+- **Agent loops**: story completed → update project tracker, correlate with PRD
+
+Hardcoding another special case per source is the wrong architecture. The system already routes events — it just lacks configurable enhanced processing on top.
 
 ## Decision
 
-Build a **channel routing engine** that replaces both the VIP pipeline and adds project-aware email processing. Channels are the single mechanism for email → action routing.
+Build a **channel routing engine** that operates on the existing event bus. Channels define matchers against any event type and trigger configurable action pipelines. This is the single mechanism for "when X happens, do Y" — replacing hardcoded pipelines with composable, runtime-configurable channels.
 
 ### Channel Model (Convex)
 
 ```typescript
 // convex/schema.ts addition
-emailChannels: defineTable({
-  name: v.string(),           // "ai-hero", "vip-people", "egghead-ops"
+channels: defineTable({
+  name: v.string(),           // "ai-hero", "vip-people", "deploys-web"
   displayName: v.string(),    // "AI Hero Launch"
   enabled: v.boolean(),
   priority: v.number(),       // 1=highest, lower numbers evaluated first
 
-  // Matchers (OR logic — any match triggers the channel)
-  matchers: v.object({
-    tags: v.optional(v.array(v.string())),            // Front tags
-    subjectPatterns: v.optional(v.array(v.string())), // regex patterns
-    senderPatterns: v.optional(v.array(v.string())),  // name or email substring matches
-    toAddresses: v.optional(v.array(v.string())),     // recipient address matches
-  }),
+  // Event source matching
+  eventPatterns: v.array(v.string()),  // glob/prefix: "front/*", "github/pr.*", "vercel/deploy.failed"
+
+  // Data matchers (evaluated against event.data, OR logic)
+  matchers: v.optional(v.object({
+    // String field matchers — key is the event.data field path, value is pattern
+    // e.g. { "subject": "\\[aih\\]", "from": "alex" }
+    fieldPatterns: v.optional(v.record(v.string(), v.string())),
+    // Exact value matchers
+    fieldEquals: v.optional(v.record(v.string(), v.string())),
+    // Array-contains matchers (e.g. tags contains "aih")
+    fieldContains: v.optional(v.record(v.string(), v.string())),
+  })),
 
   // Actions (ordered pipeline)
   actions: v.array(v.object({
@@ -68,50 +84,65 @@ emailChannels: defineTable({
   .index("by_name", ["name"]),
 ```
 
+The key generalization: `eventPatterns` matches against the Inngest event name (e.g. `front/message.received`, `github/pr.opened`, `vercel/deploy.failed`), and `matchers` operates on `event.data` fields regardless of source. Same channel can match multiple event types.
+
 ### Action Types (v1)
 
-| Action | What it does | Config |
-|--------|-------------|--------|
-| `extract-google-links` | Scan message body for Google Doc/Sheet/Drive links | — |
-| `download-gdocs` | Export linked docs via `gog` CLI, store in vault folder | `{ format: "txt" }` |
-| `vault-sync` | Write extracted content as Vault notes, update index | `{ folder: "Resources/ai-hero" }` |
-| `correlate-vault` | Semantic search existing vault notes for related content | `{ folder, limit }` |
-| `llm-triage` | Sonnet classifies urgency, extracts decisions/blockers/asks | `{ model }` |
-| `create-todos` | Generate and create Todoist tasks from LLM analysis | `{ project, labels }` |
-| `notify-gateway` | Push summary to gateway for Telegram delivery | — |
-| `search-granola` | Find related meeting notes by sender/subject | `{ ranges }` |
-| `search-memory` | Recall related observations from semantic memory | `{ limit }` |
-| `nudge-schedule` | Track deadlines mentioned in thread, schedule reminder events | `{ defaultLeadDays }` |
-| `deadline-track` | Extract dates/deadlines, store in channel state | — |
-| `draft-reply` | Generate reply draft, store for Joel's review | `{ model, tone }` |
+Actions are source-agnostic. They operate on the event data + channel config.
+
+| Action | What it does | Config | Works with |
+|--------|-------------|--------|-----------|
+| `extract-google-links` | Scan event data for Google Doc/Sheet/Drive URLs | — | any event with body/text fields |
+| `download-gdocs` | Export linked docs via `gog` CLI, store in vault folder | `{ format }` | follows extract-google-links |
+| `vault-sync` | Write/update Vault notes from extracted content | `{ folder }` | any event with content |
+| `correlate-vault` | Semantic search existing vault notes for related content | `{ folder, limit }` | any event |
+| `llm-triage` | LLM classifies urgency, extracts decisions/blockers/asks | `{ model }` | any event |
+| `create-todos` | Generate Todoist tasks from LLM analysis | `{ project, labels }` | follows llm-triage |
+| `notify-gateway` | Push summary to gateway for Telegram delivery | `{ template }` | any event |
+| `search-granola` | Find related meeting notes by entity/topic extraction | `{ ranges }` | any event |
+| `search-memory` | Recall related observations from semantic memory | `{ limit }` | any event |
+| `nudge-schedule` | Track deadlines, schedule Inngest reminder events | `{ leadDays }` | any event with dates |
+| `deadline-track` | Extract dates/deadlines, store in channel state | — | any event |
+| `draft-reply` | Generate reply draft, store for review | `{ model, tone }` | email events |
+| `run-command` | Execute a CLI command with event data interpolation | `{ command, args }` | any event |
+| `emit-event` | Emit a new Inngest event (fan-out/chaining) | `{ eventName }` | any event |
 
 ### Routing Flow
 
 ```
-Front webhook
-  → front/message.received (existing)
-  → channel-router function (NEW)
+Any Inngest event (front/*, github/*, todoist/*, vercel/*, etc.)
+  → channel-router function (NEW, triggered by wildcard or explicit list)
     → query Convex for enabled channels, ordered by priority
-    → for each channel, evaluate matchers against message
-    → first match wins (or: all matches fire, configurable)
-    → emit channel-specific event: email/channel.matched
-      { channelName, channelId, messageData, matchedBy }
+    → for each channel:
+      1. does event name match any eventPattern? (glob match)
+      2. does event.data satisfy matchers? (field patterns/equals/contains)
+    → all matching channels fire (not first-match-wins — events can be relevant to multiple projects)
+    → emit per-match: channel/event.matched
+      { channelName, channelId, originalEvent, matchedBy }
   → channel-processor function (NEW)
-    → triggered by email/channel.matched
+    → triggered by channel/event.matched
+    → load channel config from Convex
     → execute action pipeline in order
-    → each action is a step (durable, retryable)
-    → emit email/channel.processed when done
+    → each action is an Inngest step (durable, retryable, individually timed)
+    → emit channel/event.processed when done
 ```
+
+The router is a single function that evaluates all channels against every event. Convex query is cached per invocation (channels change rarely). The processor is generic — it doesn't know or care whether the source was email, GitHub, or a cron job.
 
 ### Migration Path
 
-1. Existing VIP pipeline becomes a channel with sender-name matchers and the current Opus escalation flow preserved as action config.
+1. **VIP email** → channel matching `front/message.received` with sender-pattern matchers. Actions: search-granola, search-memory, llm-triage (with Opus escalation config), create-todos, notify-gateway. Replaces `vip-email-received.ts`.
 
-2. AI Hero becomes a channel with tag, subject-pattern, and to-address matchers. Full action pipeline: extract links → download docs → vault sync → correlate → triage → todos → nudges → deadlines → notify.
+2. **AI Hero** → channel matching `front/message.received` with tag + subject + to-address matchers. Actions: extract-google-links, download-gdocs, vault-sync, correlate-vault, llm-triage, create-todos, nudge-schedule, deadline-track, notify-gateway.
 
-3. Old `vip-email-received.ts` gets deprecated after channel equivalence is verified.
+3. **Future channels** (examples, not commitments):
+   - GitHub PRs on course-builder → channel matching `github/pr.opened` + repo matcher → create-todos, notify-gateway
+   - Vercel deploy failures → channel matching `vercel/deploy.failed` → llm-triage, create-todos, notify-gateway
+   - Calendar meetings with specific attendees → channel matching `calendar/*` → search-granola, vault-sync, create-todos
 
-(Specific matcher values — email addresses, names, tag strings — live in Convex only, not in this document or the public repo.)
+4. Old hardcoded functions (`vip-email-received.ts`) deprecated after channel equivalence is verified.
+
+(All specific matcher values — email addresses, names, tag strings, repo names — live in Convex only, not in source code or this document.)
 
 ### CLI Surface
 
