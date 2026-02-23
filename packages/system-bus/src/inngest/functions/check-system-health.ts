@@ -163,6 +163,7 @@ type WriteGateDriftSummary = {
   fallbackRate: number;
   windowMinutes: number;
   minEvents: number;
+  minVerdicts: number;
   holdRatioThreshold: number;
   discardRatioThreshold: number;
   fallbackRateThreshold: number;
@@ -350,9 +351,13 @@ async function checkOtelErrorRate(): Promise<OtelErrorRateSummary> {
 async function checkWriteGateDrift(): Promise<WriteGateDriftSummary> {
   const windowMinutes = getNumericEnv("MEMORY_WRITE_GATE_DRIFT_WINDOW_MINUTES", 60);
   const minEvents = getNumericEnv("MEMORY_WRITE_GATE_DRIFT_MIN_EVENTS", 30);
-  const fallbackRateThreshold = getNumericEnv("MEMORY_WRITE_GATE_FALLBACK_RATE_THRESHOLD", 0.35);
-  const holdRatioThreshold = getNumericEnv("MEMORY_WRITE_GATE_HOLD_RATIO_THRESHOLD", 0.75);
-  const discardRatioThreshold = getNumericEnv("MEMORY_WRITE_GATE_DISCARD_RATIO_THRESHOLD", 0.6);
+  const minVerdicts = getNumericEnv(
+    "MEMORY_WRITE_GATE_DRIFT_MIN_VERDICTS",
+    Math.max(minEvents, 45)
+  );
+  const fallbackRateThreshold = getNumericEnv("MEMORY_WRITE_GATE_FALLBACK_RATE_THRESHOLD", 0.45);
+  const holdRatioThreshold = getNumericEnv("MEMORY_WRITE_GATE_HOLD_RATIO_THRESHOLD", 0.85);
+  const discardRatioThreshold = getNumericEnv("MEMORY_WRITE_GATE_DISCARD_RATIO_THRESHOLD", 0.7);
   const cutoff = Date.now() - windowMinutes * 60 * 1000;
 
   const filterBy = `timestamp:>=${Math.floor(cutoff)} && component:=observe && action:=observe.store.completed && success:=true`;
@@ -405,6 +410,7 @@ async function checkWriteGateDrift(): Promise<WriteGateDriftSummary> {
     const holdRatio = totalWithVerdict > 0 ? holdCount / totalWithVerdict : 0;
     const discardRatio = totalWithVerdict > 0 ? discardCount / totalWithVerdict : 0;
     const fallbackRate = totalWithVerdict > 0 ? fallbackCount / totalWithVerdict : 0;
+    const hasObservationData = totalEvents > 0 && eventsWithGateCounts > 0 && totalWithVerdict > 0;
 
     return {
       totalEvents,
@@ -420,11 +426,14 @@ async function checkWriteGateDrift(): Promise<WriteGateDriftSummary> {
       fallbackRate,
       windowMinutes,
       minEvents,
+      minVerdicts,
       holdRatioThreshold,
       discardRatioThreshold,
       fallbackRateThreshold,
       shouldEscalate:
-        eventsWithGateCounts >= minEvents
+        hasObservationData
+        && totalWithVerdict >= minVerdicts
+        && eventsWithGateCounts >= minEvents
         && (fallbackRate >= fallbackRateThreshold
           || holdRatio >= holdRatioThreshold
           || discardRatio >= discardRatioThreshold),
@@ -444,6 +453,7 @@ async function checkWriteGateDrift(): Promise<WriteGateDriftSummary> {
       fallbackRate: 0,
       windowMinutes,
       minEvents,
+      minVerdicts,
       holdRatioThreshold,
       discardRatioThreshold,
       fallbackRateThreshold,

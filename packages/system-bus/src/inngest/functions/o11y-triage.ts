@@ -11,7 +11,7 @@ import {
   triageFailures,
   type ClassifiedEvent,
 } from "../../observability/triage";
-import { AUTO_FIX_HANDLERS } from "../../observability/auto-fixes";
+import { AUTO_FIX_HANDLERS, resolveAutoFixHandlerName } from "../../observability/auto-fixes";
 import {
   buildRunbookRecoverCommand,
   resolveRunbookPlanForEvent,
@@ -560,20 +560,22 @@ export const o11yTriage = inngest.createFunction(
 
       for (const event of finalBuckets.tier1) {
         const classified = classifyEvent(event);
-        const handlerName = classified.pattern?.handler;
+        const rawHandlerName = classified.pattern?.handler;
+        const handlerName = resolveAutoFixHandlerName(rawHandlerName);
         const handlerDef = handlerName ? AUTO_FIX_HANDLERS[handlerName] : undefined;
         const runbookPlan = handlerDef
           ? resolveRunbookForEvent(event, handlerDef.runbookPhase, handlerDef.runbookCode)
           : null;
 
-        if (!handlerName) {
+        if (!rawHandlerName) {
           promoted.push(event);
           continue;
         }
 
         if (!handlerDef) {
-          if (!missingHandlerWarnings.has(handlerName)) {
-            missingHandlerWarnings.add(handlerName);
+          const missingHandlerName = String(rawHandlerName);
+          if (!missingHandlerWarnings.has(missingHandlerName)) {
+            missingHandlerWarnings.add(missingHandlerName);
             await emitOtelEvent({
               level: "warn",
               source: "worker",
@@ -581,7 +583,7 @@ export const o11yTriage = inngest.createFunction(
               action: "triage.auto_fix_handler_missing",
               success: true,
               metadata: {
-                handler: handlerName,
+                handler: missingHandlerName,
                 event_action: event.action,
                 event_component: event.component,
               },
@@ -644,7 +646,7 @@ export const o11yTriage = inngest.createFunction(
           observations: tier2Events.map((event) => {
             const llm = reclassifiedByDedupKey.get(dedupKey(event));
             const tier2Classification = classifyEvent(event);
-            const tier2HandlerName = tier2Classification.pattern?.handler;
+            const tier2HandlerName = resolveAutoFixHandlerName(tier2Classification.pattern?.handler);
             const tier2HandlerDef = tier2HandlerName ? AUTO_FIX_HANDLERS[tier2HandlerName] : undefined;
             const runbookPlan = resolveRunbookForEvent(
               event,
@@ -684,7 +686,7 @@ export const o11yTriage = inngest.createFunction(
         const eventDedupKey = dedupKey(event);
         const llmReasoning = reclassifiedByDedupKey.get(eventDedupKey)?.reasoning;
         const tier3Classification = classifyEvent(event);
-        const tier3HandlerName = tier3Classification.pattern?.handler;
+        const tier3HandlerName = resolveAutoFixHandlerName(tier3Classification.pattern?.handler);
         const tier3HandlerDef = tier3HandlerName ? AUTO_FIX_HANDLERS[tier3HandlerName] : undefined;
         const runbookPlan = resolveRunbookForEvent(
           event,

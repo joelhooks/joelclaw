@@ -2,6 +2,7 @@ import { inngest } from "../client";
 import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
 import { syncFiles, type SyncResult } from "./vault-sync";
 import { emitOtelEvent } from "../../observability/emit";
+import Redis from "ioredis";
 
 /**
  * Content directories to sync from Vault → website.
@@ -21,6 +22,10 @@ const CONTENT_DIRS = [
     skipFiles: [],
   },
 ] as const;
+
+const CHANGES_NOT_COMMITTED_LAST_NOTIFIED_KEY =
+  "content-sync:changes_not_committed:last_notified";
+const CHANGES_NOT_COMMITTED_NOTIFY_COOLDOWN_SECONDS = 6 * 60 * 60;
 
 type ContentSyncResult = {
   name: string;
@@ -154,18 +159,47 @@ export const contentSync = inngest.createFunction(
     }
     await step.run("otel-content-sync-finish", async () => {
       const commitSkipped = allSynced.length > 0 && !committed;
-      const level = commitSkipped ? "warn" : "info";
+      let commitSkippedNotificationSuppressed = false;
+      if (commitSkipped) {
+        const redis = new Redis({
+          host: process.env.REDIS_HOST ?? "localhost",
+          port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+          lazyConnect: true,
+          connectTimeout: 3000,
+        });
+        redis.on("error", () => {});
+
+        try {
+          const lastNotified = await redis.get(CHANGES_NOT_COMMITTED_LAST_NOTIFIED_KEY);
+          commitSkippedNotificationSuppressed = Boolean(lastNotified);
+
+          if (!commitSkippedNotificationSuppressed) {
+            await redis.set(
+              CHANGES_NOT_COMMITTED_LAST_NOTIFIED_KEY,
+              new Date().toISOString(),
+              "EX",
+              CHANGES_NOT_COMMITTED_NOTIFY_COOLDOWN_SECONDS,
+            );
+          }
+        } finally {
+          redis.disconnect();
+        }
+      }
+
+      const level = commitSkipped && !commitSkippedNotificationSuppressed ? "warn" : "info";
       await emitOtelEvent({
         level,
         source: "worker",
         component: "content-sync",
         action: "content_sync.completed",
         success: true,
+        error: commitSkipped && !commitSkippedNotificationSuppressed ? "changes_not_committed" : undefined,
         metadata: {
           trigger: event.name,
           totalSynced: allSynced.length,
           committed,
           commitSkipped,
+          commitSkippedNotificationSuppressed,
           content: results.map((result) => ({
             name: result.name,
             syncedCount: result.synced.length,

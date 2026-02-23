@@ -121,6 +121,18 @@ export interface TypesenseSearchResult {
 }
 
 export const TRANSCRIPTS_COLLECTION = "transcripts";
+export const DEFAULT_VECTOR_FIELD = "embedding";
+
+type TypesenseCollectionField = {
+  name?: unknown;
+  type?: unknown;
+};
+
+type TypesenseCollectionSchema = {
+  fields?: unknown;
+};
+
+const vectorFieldCache = new Map<string, string>();
 
 const MINI_LM_MODEL_CONFIG = {
   model_name: "ts/all-MiniLM-L12-v2",
@@ -158,6 +170,52 @@ export const TRANSCRIPTS_COLLECTION_SCHEMA = {
   ],
   default_sorting_field: "source_date",
 } satisfies Record<string, unknown>;
+
+function asTrimmedString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Resolve the float[] vector field from a collection schema.
+ * Falls back to `preferredField` when schema lookup is unavailable.
+ */
+export async function resolveVectorField(
+  collection: string,
+  preferredField = DEFAULT_VECTOR_FIELD
+): Promise<string> {
+  const cacheKey = `${collection}:${preferredField}`;
+  const cached = vectorFieldCache.get(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const response = await typesenseRequest(`/collections/${collection}`, { method: "GET" });
+    if (!response.ok) {
+      return preferredField;
+    }
+
+    const schema = (await response.json()) as TypesenseCollectionSchema;
+    const fields = Array.isArray(schema.fields) ? (schema.fields as TypesenseCollectionField[]) : [];
+
+    const preferredVectorField = fields.find((field) => {
+      const name = asTrimmedString(field.name);
+      const type = asTrimmedString(field.type);
+      return name === preferredField && type === "float[]";
+    });
+    if (preferredVectorField) {
+      vectorFieldCache.set(cacheKey, preferredField);
+      return preferredField;
+    }
+
+    const firstVectorField = fields.find((field) => asTrimmedString(field.type) === "float[]");
+    const resolved = asTrimmedString(firstVectorField?.name) ?? preferredField;
+    vectorFieldCache.set(cacheKey, resolved);
+    return resolved;
+  } catch {
+    return preferredField;
+  }
+}
 
 /** Upsert a single document */
 export async function upsert(collection: string, doc: Record<string, unknown>): Promise<void> {

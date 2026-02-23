@@ -90,6 +90,19 @@ const OBSERVER_LLM_TIMEOUT_MS = Number.parseInt(
 const OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS = 3;
 const OBSERVER_LLM_LOCKFILE_RETRY_BASE_MS = 500;
 const OBSERVER_LLM_LOCKFILE_RETRY_JITTER_MS = 500;
+const MEMORY_OBSERVATIONS_COLLECTION = "memory_observations";
+
+function isVectorSearchConfigError(message: string): boolean {
+  if (/embedded fields|vector query|vector field|no field found for vector query/iu.test(message)) {
+    return true;
+  }
+
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("vector") &&
+    (normalized.includes("unknown field") || normalized.includes("not found") || normalized.includes("missing"))
+  );
+}
 
 function getRedisClient(): Redis {
   if (!redisClient) {
@@ -755,6 +768,12 @@ Session context:
         const timestampUnix = Math.floor(new Date(timestampIso).getTime() / 1000);
         const docs: TypesenseObservationDoc[] = [];
         let mergedCount = 0;
+        const vectorField = await typesense.resolveVectorField(
+          MEMORY_OBSERVATIONS_COLLECTION,
+          typesense.DEFAULT_VECTOR_FIELD
+        );
+        const vectorQueryBy = `${vectorField},observation`;
+        const vectorQuery = `${vectorField}:([], k:1, distance_threshold: 0.5)`;
 
         for (const item of observationItems) {
           const includeFields =
@@ -762,22 +781,22 @@ Session context:
           let similar;
           try {
             similar = await typesense.search({
-              collection: "memory_observations",
+              collection: MEMORY_OBSERVATIONS_COLLECTION,
               q: item.observation,
-              query_by: "embedding,observation",
-              vector_query: "embedding:([], k:1, distance_threshold: 0.5)",
+              query_by: vectorQueryBy,
+              vector_query: vectorQuery,
               per_page: 1,
               include_fields: includeFields,
             });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            if (!/embedded fields|vector query/iu.test(message)) {
+            if (!isVectorSearchConfigError(message)) {
               throw error;
             }
 
             // Fallback: text-only dedupe if vector field/search config is unavailable.
             similar = await typesense.search({
-              collection: "memory_observations",
+              collection: MEMORY_OBSERVATIONS_COLLECTION,
               q: item.observation,
               query_by: "observation",
               per_page: 1,
@@ -841,7 +860,7 @@ Session context:
           }
         }
 
-        const result = await typesense.bulkImport("memory_observations", docs);
+        const result = await typesense.bulkImport(MEMORY_OBSERVATIONS_COLLECTION, docs);
         const allowCount = docs.filter((doc) => doc.write_verdict === "allow").length;
         const holdCount = docs.filter((doc) => doc.write_verdict === "hold").length;
         const discardCount = docs.filter((doc) => doc.write_verdict === "discard").length;

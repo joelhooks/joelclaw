@@ -87,12 +87,6 @@ export const agentDispatch = inngest.createFunction(
         `Unknown tool: ${tool}. Must be codex, claude, or pi.`
       );
     }
-    if (tool === "pi" && taskRequiresFileAccess(task)) {
-      throw new NonRetriableError(
-        "tool:'pi' runs with --no-tools and cannot read files. Use tool:'codex' or tool:'claude'."
-      );
-    }
-
     const startedAt = new Date().toISOString();
 
     // Execute the agent
@@ -113,9 +107,15 @@ export const agentDispatch = inngest.createFunction(
       }
 
       const dispatchStartedAt = Date.now();
+      const piNeedsTools = tool === "pi" && taskRequiresFileAccess(task);
 
       try {
-        const cmd = buildCommand(tool, task, { model, sandbox, timeout });
+        const cmd = buildCommand(tool, task, {
+          model,
+          sandbox,
+          timeout,
+          allowPiTools: piNeedsTools,
+        });
         const outputRaw = execSync(cmd, {
           cwd: workDir,
           encoding: "utf-8",
@@ -279,6 +279,7 @@ function buildCommand(
     model?: string;
     sandbox?: string;
     timeout?: number;
+    allowPiTools?: boolean;
   }
 ): string {
   // Escape task for shell — single-quote with escaped single-quotes
@@ -310,7 +311,7 @@ function buildCommand(
     case "pi":
       return [
         "pi",
-        "--no-tools",
+        ...(opts.allowPiTools ? [] : ["--no-tools"]),
         "--no-session",
         "--print",
         "--mode json",
