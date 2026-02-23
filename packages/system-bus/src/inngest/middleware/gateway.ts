@@ -33,11 +33,9 @@ export interface GatewayContext {
   /**
    * Push a notification (non-progress event) to origin + gateway.
    * Use for task completions, downloads finished, etc.
-   * Options:
-   *   silent: true — emit OTEL telemetry but do NOT push to gateway/Joel.
-   *     Use for outcomes that should be logged but not interrupt the agent.
+   * If you don't want to notify, don't call notify.
    */
-  notify: (type: string, payload?: Record<string, unknown>, options?: { silent?: boolean }) => Promise<GatewayPushResult>;
+  notify: (type: string, payload?: Record<string, unknown>) => Promise<GatewayPushResult>;
 
   /**
    * Push an alert to the central gateway only (no origin routing).
@@ -77,12 +75,7 @@ export const gatewayMiddleware = new InngestMiddleware({
             }
           },
 
-          async notify(type: string, payload?: Record<string, unknown>, options?: { silent?: boolean }) {
-            if (options?.silent) {
-              // Log for observability but don't push to gateway/Joel
-              console.log(`[gateway-middleware] silent notify: ${type}`, payload);
-              return { pushed: false, type, originSession };
-            }
+          async notify(type: string, payload?: Record<string, unknown>) {
             try {
               const event = await pushGatewayEvent({
                 type,

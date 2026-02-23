@@ -236,20 +236,10 @@ export const frictionFix = inngest.createFunction(
 
     await step.run("notify-gateway", async () => {
       try {
-        // All friction-fix per-pattern notifications are silent.
-        // Only the parent friction.ts summary ("10 patterns → N tasks") reaches Joel.
-        // Individual fix results are logged via OTEL for observability.
-        await gateway.notify("friction-fix", {
-          message: status === "fixed" && commitSha
-            ? `Friction fixed: ${title}. Commit: ${commitSha}`
-            : `Friction fix ${status}: ${title}. ${message}`,
-          patternId,
-          status,
-          ...(commitSha ? { commitSha } : {}),
-          ...(filesChanged.length > 0 ? { filesChanged } : {}),
-          ...(escalationTaskId ? { escalationTaskId } : {}),
-        }, { silent: true });
-        return { notified: false, reason: "silent-per-pattern" };
+        // Per-pattern results don't notify Joel — only the parent friction.ts
+        // summary ("10 patterns → N tasks") reaches the gateway.
+        // Outcome is already in the step return value for OTEL/run trace.
+        return { notified: false, status, patternId };
       } catch (error) {
         return {
           notified: false,
