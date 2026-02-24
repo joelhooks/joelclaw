@@ -148,6 +148,78 @@ const thread = await forumChannel.threads.create({
 })
 ```
 
+## Emoji Reaction Support
+
+Full emoji reaction support — both receiving and sending.
+
+### Receiving Reactions (User → Bot)
+
+The bot monitors `MessageReactionAdd` on all visible messages. Two tiers:
+
+**Tier 1 — Deterministic reactions** (no LLM needed, instant response):
+
+| Emoji | Action |
+|-------|--------|
+| 👀 | Bot acks with 👀 back — "I see you" |
+| 🔄 | Regenerate/retry the bot's response |
+| 🗑️ | Delete the bot's message |
+| 📌 | Save message content to vault as discovery |
+| 🧠 | Capture to memory (observation) |
+| ✅ | Approve/confirm (existing exec approval) |
+| ❌ | Cancel/reject current operation |
+| 👍/👎 | Feedback signal — logged to telemetry |
+
+**Tier 2 — Intent-parsed reactions** (LLM interprets):
+
+Any emoji not in Tier 1 gets sent to the agent session as context:
+```
+Joel reacted with 🤔 to message: "[message content preview]"
+```
+
+The agent interprets the reaction in conversation context and responds appropriately. No separate Haiku call needed — the session model already has full context. Use Haiku-4.5 only if reaction parsing needs to happen outside a session (e.g., trunk is busy).
+
+### Sending Reactions (Bot → User)
+
+The bot can react to user messages as lightweight acknowledgment:
+- 👀 — "processing your message"
+- ✅ — "done"
+- 🔥 — positive signal / appreciation
+- ⏳ — "working on it, will take a moment"
+
+Bot reactions replace text responses when a full reply isn't warranted.
+
+### Implementation
+
+```typescript
+// Expand existing handleReaction in discord.ts
+async function handleReaction(reaction: MessageReaction, user: User) {
+  if (user.bot) return  // ignore bot reactions
+
+  const emoji = reaction.emoji.name
+  const message = reaction.message
+
+  // Tier 1: deterministic
+  switch (emoji) {
+    case '🔄': return regenerateResponse(message)
+    case '🗑️': return message.delete()
+    case '📌': return captureDiscovery(message)
+    case '🧠': return captureObservation(message)
+    case '❌': return cancelOperation(message)
+    case '👍': case '👎': return logFeedback(emoji, message)
+    case '👀': return message.react('👀')
+  }
+
+  // Tier 2: send to agent session as context
+  await routeToSession({
+    type: 'reaction',
+    emoji,
+    messageContent: message.content?.slice(0, 200),
+    messageId: message.id,
+    threadId: message.channel.isThread() ? message.channel.id : undefined,
+  })
+}
+```
+
 ## Ack-Before-Work for Thread Creation
 
 When the bot creates or enters a new thread (including forum posts), it MUST send an immediate acknowledgment before doing any heavy work:
