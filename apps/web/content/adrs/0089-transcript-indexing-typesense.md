@@ -116,3 +116,4 @@ transcripts:
 - Added dedicated scheduler `granola-check-cron` (hourly) and removed Granola polling from the generic heartbeat fan-out list.
 - Wired `voice/call.completed` to write to `voice_transcripts` in Typesense, so LiveKit voice transcripts are searchable.
 - Extended CLI and web search surfaces to include `transcripts`, while keeping `voice_transcripts` as a distinct collection.
+- Added operator runbook: `Vault/system/SOP - AI Hero Transcript Pipeline Operations.md`.
