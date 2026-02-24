@@ -31,14 +31,21 @@ This block is injected by the gateway before the message reaches the pi session,
 
 Maintain a per-platform formatting reference that gets injected with the channel context:
 
-#### Discord Cheat Sheet
-- Use **embeds** for structured data (fields with `inline: true` for columns)
-- Use **buttons** for actionable choices (ButtonBuilder + ActionRow)
+#### Discord Cheat Sheet (Components V2 — March 2025+)
+- Use **Components V2 containers** for structured responses (accent color, sections, separators)
+- Use **Sections** for text + accessory (button or thumbnail), up to 3 text items per section
+- Use **TextDisplay** for markdown-formatted text blocks within containers
+- Use **MediaGallery** for image collections
+- Use **Separators** for visual dividers between content blocks
+- Use **buttons** for actionable choices (ButtonBuilder in ActionRow, inside containers)
 - Use **code blocks** with language hints for technical output
-- Max message length: 2000 chars (use embeds/attachments for longer)
+- Max message length: 2000 chars (use containers/attachments for longer)
+- 40 component limit per message (up from 25)
+- Flag: `MessageFlags.IsComponentsV2` required
 - Reactions for lightweight acknowledgment
 - Thread replies to keep context grouped
-- No markdown tables — use embed fields or code blocks instead
+- **No markdown tables** — use container sections or code blocks instead
+- Legacy embeds still work but Components V2 is strictly better for layout control
 
 #### Telegram Cheat Sheet
 - Use **inline keyboards** for choices/actions

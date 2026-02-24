@@ -62,6 +62,62 @@ interface ThreadSession {
 - Trunk session stays clean and focused on cross-channel orchestration
 - Thread summaries can flow back to trunk/memory on archive (optional, not required v1)
 
+## Prior Art
+
+### Kimaki (remorses/kimaki) — 485★
+Discord bot orchestrating OpenCode coding agents. Thread = session model:
+- `/session` starts new, `/resume` continues, `/fork` branches from any message
+- `/queue` chains follow-up prompts while agent is working
+- `/undo` / `/redo` reverts file changes from assistant messages
+- Programmatic session creation from CI/cron (`npx kimaki send`)
+- Voice transcription with project-aware context
+- Each Discord channel = project directory, threads = sessions within
+- **Key insight**: `/fork` from any message is a killer feature — branch the conversation at any point
+
+### CordAI (cordai.gg)
+Commercial Discord agent platform:
+- Thread-per-session with 15min idle timeout
+- Button bars for quick-start agent flows
+- Director agents that route to specialist sub-agents
+- `/my-sessions list` / `/my-sessions end` for lifecycle management
+- Thread triggers: auto-create threads when users message specific channels
+
+### OpenClaw v2026.2.15 (openclaw/openclaw) — 219k★
+Just shipped Discord Components V2 support (Feb 16, 2026):
+- Native rich interactive prompts: buttons, selects, modals, attachment-backed file blocks
+- CV2 containers with accent colors, separators, sections
+- Exec approval UX via Discord buttons (approve/deny tool execution)
+- Nested sub-agents (`maxSpawnDepth`, `maxChildrenPerAgent`)
+- Per-channel ack reaction overrides for platform-specific emoji
+- `replyToMode` settings for routing interaction results back to agent
+
+### Discord Components V2 (March 2025)
+Discord's native layout system — replaces embeds for rich content:
+- **Containers**: top-level layout with accent color bars, spoiler support
+- **Sections**: text + accessory (button or thumbnail), up to 3 text items
+- **TextDisplay**: markdown-formatted text blocks
+- **MediaGallery**: image collections
+- **Separators**: visual dividers with spacing control
+- **40 component limit** (up from 25)
+- Flag: `MessageFlags.IsComponentsV2` (`1 << 15`)
+- discord.js: `ContainerBuilder`, `TextDisplayBuilder`, `SeparatorBuilder`, `SectionBuilder`
+
+## Slash Commands (matching Telegram)
+
+Adopt from Kimaki's proven set + our Telegram commands:
+
+| Command | Description | Source |
+|---------|-------------|--------|
+| `/status` | System health | Telegram parity |
+| `/recall <query>` | Search memory | Telegram parity |
+| `/runs` | Recent Inngest runs | Telegram parity |
+| `/session` | Current session info | Telegram parity |
+| `/restart` | Restart gateway session | Telegram parity |
+| `/fork` | Branch from a message | Kimaki |
+| `/queue <prompt>` | Queue follow-up while busy | Kimaki |
+| `/resume` | Resume previous session | Kimaki |
+| `/abort` | Stop current operation | Kimaki |
+
 ## Implementation
 
 1. Add `ThreadSessionManager` to gateway Discord channel handler
@@ -69,3 +125,5 @@ interface ThreadSession {
 3. Route thread messages to branch session instead of trunk
 4. Add idle reaper (cron or lazy check on next message)
 5. Store session metadata in Redis with TTL
+6. Adopt Discord Components V2 for rich responses (containers, sections, buttons)
+7. Register slash commands via Discord Application Commands API
