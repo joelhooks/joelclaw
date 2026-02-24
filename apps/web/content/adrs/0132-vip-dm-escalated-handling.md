@@ -34,10 +34,25 @@ VIP DMs receive escalated classification:
   - `related_contacts`: other VIPs involved in the thread
   - `project_refs`: linked projects/ADRs
 
-### 3. Routing
-- `immediate` + `action_required` → Push to active channel (Telegram/Discord) with full context brief
-- `today` → Include in next digest with priority placement
-- `this_week` / `fyi` → Index and surface in daily briefing
+### 3. Routing & Escalation
+
+**Multi-channel notification** — VIP messages fan out, not single-channel:
+
+| Urgency | Channels | Behavior |
+|---------|----------|----------|
+| `immediate` + `action_required` | Telegram + Discord + iMessage | All three fire simultaneously. iMessage via `imsg-rpc` ensures Joel sees it even if not at desk. Context brief in each. |
+| `immediate` (no action) | Telegram + Discord | Inform both active channels, skip iMessage |
+| `today` | Telegram | Priority placement in next digest + standalone push |
+| `this_week` / `fyi` | Discord | Threaded summary in monitoring channel, indexed |
+
+**Escalation path** if no ack within threshold:
+1. **T+0**: Initial notification to classified channels
+2. **T+15min**: If `immediate` + `action_required` and no Joel activity detected → re-ping Telegram with "⚠️ VIP waiting" reminder
+3. **T+1hr**: If still no ack → iMessage escalation (even for `today` tier) with full context
+4. **T+2hr**: If still no ack → **voice call** via Telnyx (ADR-0079) with TTS summary: "You have an urgent message from [VIP name] about [topic]. Check your messages."
+5. **T+4hr**: Log as missed in contact's activity, surface in daily briefing as unresolved
+
+"Joel activity detected" = any message sent from any gateway channel within the window (not necessarily a reply to the VIP).
 
 ### 4. Cost Model
 - Sonnet 4.6 via OpenRouter: ~$0.01-0.03 per VIP message (vs $0.001 Haiku)
