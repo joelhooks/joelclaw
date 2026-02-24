@@ -26,6 +26,7 @@ type McqQuestion = {
   id: string;
   question: string;
   options: string[];
+  mode?: "quiz" | "decision";
   context?: string;
   recommended?: number;
   recommendedReason?: string;
@@ -36,6 +37,8 @@ type McqQuestion = {
 export type DiscordMcqParams = {
   title?: string;
   questions: McqQuestion[];
+  mode?: "quiz" | "decision";
+  correctAnswers?: Record<string, number>;
   timeout?: number;
 };
 
@@ -52,6 +55,7 @@ const COLORS = {
   answered: 0x2ecc71,   // Green
   title: 0x9b59b6,      // Purple
   critical: 0xe74c3c,   // Red
+  skipped: 0xf39c12,    // Orange
 };
 
 let activeAdapter: DiscordMcqAdapterRuntime | undefined;
@@ -60,8 +64,15 @@ export function getActiveDiscordMcqAdapter(): DiscordMcqAdapterRuntime | undefin
   return activeAdapter;
 }
 
-function buildQuestionEmbed(q: McqQuestion): EmbedBuilder {
+type McqMode = "quiz" | "decision";
+
+function normalizeMode(mode: DiscordMcqParams["mode"]): McqMode {
+  return mode === "quiz" ? "quiz" : "decision";
+}
+
+function buildQuestionEmbed(q: McqQuestion, mode: McqMode): EmbedBuilder {
   const lines: string[] = [`**${q.question}**`];
+  const showRecommendation = mode === "decision";
 
   if (q.context?.trim()) {
     lines.push(`*${q.context.trim()}*`);
@@ -69,12 +80,12 @@ function buildQuestionEmbed(q: McqQuestion): EmbedBuilder {
   lines.push("");
 
   for (let i = 0; i < q.options.length; i++) {
-    const badge = q.recommended === i + 1 ? " ★" : "";
+    const badge = showRecommendation && q.recommended === i + 1 ? " ★" : "";
     lines.push(`**${i + 1}.** ${q.options[i]}${badge}`);
   }
   lines.push(`**${q.options.length + 1}.** Other`);
 
-  if (q.recommendedReason?.trim()) {
+  if (showRecommendation && q.recommendedReason?.trim()) {
     const prefix =
       q.recommended && q.recommended > 0
         ? `Recommended (${q.recommended} ★)`
@@ -97,11 +108,53 @@ function buildAnsweredEmbed(question: string, answer: string, autoSelected = fal
     .setColor(COLORS.answered);
 }
 
-function buildButtons(questionId: string, options: string[], recommended?: number): ActionRowBuilder<ButtonBuilder> {
+function buildSkippedEmbed(question: string): EmbedBuilder {
+  return new EmbedBuilder()
+    .setDescription(`**${question}**\n\n⏱ Time's up — skipped`)
+    .setColor(COLORS.skipped);
+}
+
+function buildQuizSummaryEmbed(
+  questions: McqQuestion[],
+  answers: Record<string, string>,
+  correctAnswers: Record<string, number> | undefined,
+): EmbedBuilder {
+  let correctCount = 0;
+
+  const lines = questions.map((question, index) => {
+    const expectedIndex = correctAnswers?.[question.id];
+    if (!Number.isInteger(expectedIndex) || !expectedIndex || expectedIndex < 1 || expectedIndex > question.options.length) {
+      return `🟥 Q${index + 1}: no correct answer configured`;
+    }
+
+    const expected = question.options[expectedIndex - 1];
+    const selected = answers[question.id];
+    const isCorrect = selected === expected;
+    if (isCorrect) {
+      correctCount += 1;
+    }
+
+    const marker = isCorrect ? "🟩" : "🟥";
+    const selectedLabel = selected ?? "⏱ skipped";
+    return `${marker} Q${index + 1}: your \`${selectedLabel}\` · correct \`${expected}\``;
+  });
+
+  return new EmbedBuilder()
+    .setDescription(`**You got ${correctCount}/${questions.length} correct!**\n\n${lines.join("\n")}`)
+    .setColor(correctCount === questions.length ? COLORS.answered : COLORS.critical);
+}
+
+function buildButtons(
+  questionId: string,
+  options: string[],
+  recommended: number | undefined,
+  mode: McqMode,
+): ActionRowBuilder<ButtonBuilder> {
   const row = new ActionRowBuilder<ButtonBuilder>();
+  const showRecommendation = mode === "decision";
 
   for (let i = 0; i < options.length; i++) {
-    const isRec = recommended === i + 1;
+    const isRec = showRecommendation && recommended === i + 1;
     row.addComponents(
       new ButtonBuilder()
         .setCustomId(`mcq:${questionId}:${i}`)
@@ -125,10 +178,11 @@ async function askQuestion(
   client: Client,
   question: McqQuestion,
   autoSelectTimeoutMs: number,
-): Promise<string> {
-  const embed = buildQuestionEmbed(question);
+  mode: McqMode,
+): Promise<string | undefined> {
+  const embed = buildQuestionEmbed(question, mode);
   const questionId = `${question.id}-${Date.now().toString(36)}`;
-  const buttons = buildButtons(questionId, question.options, question.recommended);
+  const buttons = buildButtons(questionId, question.options, question.recommended, mode);
 
   // Send the question with buttons
   const msg = await (channel as any).send({
@@ -137,12 +191,12 @@ async function askQuestion(
   });
 
   // Wait for button click or timeout
-  return new Promise<string>((resolve) => {
+  return new Promise<string | undefined>((resolve) => {
     let settled = false;
     let autoSelectTimer: ReturnType<typeof setTimeout> | undefined;
     let collector: any;
 
-    const settle = async (answer: string, isAuto = false) => {
+    const settle = async (answer: string | undefined, state: "selected" | "auto" | "skipped" = "selected") => {
       if (settled) return;
       settled = true;
 
@@ -151,8 +205,11 @@ async function askQuestion(
 
       // Update message to show selected answer
       try {
+        const nextEmbed = state === "skipped"
+          ? buildSkippedEmbed(question.question)
+          : buildAnsweredEmbed(question.question, answer ?? "(timeout)", state === "auto");
         await msg.edit({
-          embeds: [buildAnsweredEmbed(question.question, answer, isAuto)],
+          embeds: [nextEmbed],
           components: [], // remove buttons
         });
       } catch (error) {
@@ -165,7 +222,9 @@ async function askQuestion(
     // Button click collector
     collector = msg.createMessageComponentCollector({
       componentType: ComponentType.Button,
-      time: autoSelectTimeoutMs > 0 ? autoSelectTimeoutMs + 5000 : 120_000,
+      time: autoSelectTimeoutMs > 0
+        ? (mode === "decision" ? autoSelectTimeoutMs + 5000 : autoSelectTimeoutMs)
+        : 120_000,
     });
 
     collector.on("collect", async (interaction: MessageComponentInteraction) => {
@@ -196,20 +255,29 @@ async function askQuestion(
 
     collector.on("end", () => {
       if (!settled) {
-        // Timeout without selection
+        if (mode === "quiz") {
+          void settle(undefined, "skipped");
+          return;
+        }
+        // Timeout without selection (decision mode)
         const rec = question.recommended
           ? question.options[question.recommended - 1]
           : undefined;
-        void settle(rec ?? "(timeout)", !!rec);
+        void settle(rec ?? "(timeout)", rec ? "auto" : "selected");
       }
     });
 
-    // Auto-select recommended after timeout
-    if (autoSelectTimeoutMs > 0 && question.recommended && question.recommended >= 1) {
+    // Auto-select recommended after timeout (decision mode only)
+    if (
+      mode === "decision"
+      && autoSelectTimeoutMs > 0
+      && question.recommended
+      && question.recommended >= 1
+    ) {
       const rec = question.options[question.recommended - 1];
       if (rec) {
         autoSelectTimer = setTimeout(() => {
-          void settle(rec, true);
+          void settle(rec, "auto");
         }, autoSelectTimeoutMs);
       }
     }
@@ -227,6 +295,7 @@ export function registerDiscordMcqAdapter(
     params: DiscordMcqParams,
     channelId: string,
   ): Promise<Record<string, string>> => {
+    const mode = normalizeMode(params.mode);
     const channel = await fetchChannel(channelId);
     const client = getClient();
     if (!channel || !client) {
@@ -256,13 +325,26 @@ export function registerDiscordMcqAdapter(
     const answers: Record<string, string> = {};
     for (const question of params.questions) {
       try {
-        answers[question.id] = await askQuestion(channel, client, question, autoSelectTimeoutMs);
+        const answer = await askQuestion(channel, client, question, autoSelectTimeoutMs, mode);
+        if (typeof answer === "string") {
+          answers[question.id] = answer;
+        }
       } catch (error) {
         console.error("[gateway:discord-mcq] question failed", {
           questionId: question.id,
           error: String(error),
         });
         answers[question.id] = "(error)";
+      }
+    }
+
+    if (mode === "quiz") {
+      try {
+        await (channel as any).send({
+          embeds: [buildQuizSummaryEmbed(params.questions, answers, params.correctAnswers)],
+        });
+      } catch (error) {
+        console.error("[gateway:discord-mcq] failed to send quiz summary", { error: String(error) });
       }
     }
 
@@ -274,6 +356,7 @@ export function registerDiscordMcqAdapter(
       duration_ms: Date.now() - startedAt,
       metadata: {
         channelId,
+        mode,
         questionCount: params.questions.length,
         answeredCount: Object.keys(answers).length,
       },

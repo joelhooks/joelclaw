@@ -8,19 +8,30 @@
  * Status message edited on completion/error
  */
 
+import type Redis from "ioredis";
 import {
   Client,
   Events,
   GatewayIntentBits,
   Partials,
   ThreadAutoArchiveDuration,
+  type ChatInputCommandInteraction,
   type Message,
+  type MessageCreateOptions,
   type TextChannel,
   type ThreadChannel,
 } from "discord.js";
 import type { EnqueueFn } from "./redis";
 import { emitGatewayOtel } from "../observability";
 import { enrichPromptWithVaultContext } from "../vault-read";
+import { injectChannelContext } from "../formatting";
+import {
+  handleDiscordSlashCommand,
+  registerDiscordSlashCommands,
+  renderHeartbeatDigest,
+  renderStatusContainer,
+  type DiscordSlashHandlerDeps,
+} from "../discord-ui";
 
 const CHUNK_MAX = 2000;
 
@@ -28,11 +39,17 @@ let client: Client | undefined;
 let allowedUserId: string | undefined;
 let enqueuePrompt: EnqueueFn | undefined;
 let started = false;
+let slashDeps: DiscordSlashHandlerDeps | undefined;
 
 // ── Thread state tracking ──────────────────────────────────────────
 // Maps thread ID → status message ID in the parent channel.
 // In-memory only — lost on restart, which is fine (status updates are nice-to-have).
 const threadStatusMessages = new Map<string, { parentChannelId: string; statusMessageId: string }>();
+
+export type DiscordStartOptions = {
+  redis?: Redis;
+  abortCurrentTurn?: () => Promise<void>;
+};
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -72,6 +89,47 @@ function threadName(text: string): string {
   const clean = text.replace(/\n/g, " ").trim();
   if (clean.length <= 50) return clean || "New conversation";
   return clean.slice(0, 47) + "...";
+}
+
+function maybeRenderRichOutbound(text: string): MessageCreateOptions | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+
+  const heartbeatLike = /all systems nominal|\bheartbeat\b|\bw:\d+\b|\bi:✓\b/i.test(trimmed);
+  if (heartbeatLike) {
+    const firstLine = trimmed.split("\n")[0] ?? "Heartbeat";
+    return renderHeartbeatDigest({
+      timestampLabel: new Date().toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "America/Los_Angeles",
+        timeZoneName: "short",
+      }),
+      summary: firstLine,
+      metricsLine: trimmed.split("\n")[1] ?? trimmed,
+    });
+  }
+
+  const statusLike = /(gateway|redis|inngest|typesense|queue|uptime|health)/i.test(trimmed);
+  if (statusLike && trimmed.length <= 1400) {
+    const lines = trimmed.split("\n").map((line) => line.trim()).filter(Boolean);
+    const metrics = lines.slice(0, 8).map((line, index) => {
+      const match = line.match(/^([^:]{2,40}):\s*(.+)$/);
+      if (match?.[1] && match[2]) {
+        return { key: match[1], value: match[2] };
+      }
+      return { key: `Line ${index + 1}`, value: line };
+    });
+
+    return renderStatusContainer({
+      title: "Gateway Update",
+      level: "info",
+      metrics,
+      notes: lines.slice(8, 10),
+    });
+  }
+
+  return undefined;
 }
 
 // ── Message handling ───────────────────────────────────────────────
@@ -131,7 +189,8 @@ async function handleDM(message: Message, text: string): Promise<void> {
     }
   } catch { /* non-critical */ }
 
-  const prompt = await enrichPromptWithVaultContext(text);
+  const withChannelContext = injectChannelContext(text, { source });
+  const prompt = await enrichPromptWithVaultContext(withChannelContext);
 
   enqueuePrompt!(source, prompt, {
     discordChannelId: channelId,
@@ -196,7 +255,11 @@ async function handleNewThread(message: Message, text: string): Promise<void> {
 
   // Source is the THREAD ID — responses route back here
   const source = `discord:${thread.id}`;
-  const prompt = await enrichPromptWithVaultContext(text);
+  const withChannelContext = injectChannelContext(text, {
+    source,
+    threadName: thread.name,
+  });
+  const prompt = await enrichPromptWithVaultContext(withChannelContext);
 
   enqueuePrompt!(source, prompt, {
     discordChannelId: thread.id,
@@ -205,11 +268,13 @@ async function handleNewThread(message: Message, text: string): Promise<void> {
     discordAuthorId: message.author.id,
     discordParentChannelId: parentChannel.id,
     discordStatusMessageId: statusMessage.id,
+    discordThreadName: thread.name,
   });
 }
 
 async function handleThreadMessage(message: Message, text: string): Promise<void> {
   const threadId = message.channelId;
+  const thread = message.channel as ThreadChannel;
 
   console.log("[gateway:discord] thread message", {
     threadId,
@@ -224,17 +289,90 @@ async function handleThreadMessage(message: Message, text: string): Promise<void
     metadata: { threadId, length: text.length },
   });
 
-  try { await (message.channel as ThreadChannel).sendTyping(); } catch { /* */ }
+  try { await thread.sendTyping(); } catch { /* */ }
 
   const source = `discord:${threadId}`;
-  const prompt = await enrichPromptWithVaultContext(text);
+  const withChannelContext = injectChannelContext(text, {
+    source,
+    threadName: thread.name,
+  });
+  const prompt = await enrichPromptWithVaultContext(withChannelContext);
 
   enqueuePrompt!(source, prompt, {
     discordChannelId: threadId,
     discordMessageId: message.id,
     discordGuildId: message.guildId ?? null,
     discordAuthorId: message.author.id,
+    discordThreadName: thread.name,
   });
+}
+
+async function handleSlashInteraction(interaction: ChatInputCommandInteraction): Promise<void> {
+  if (!slashDeps || !enqueuePrompt) return;
+
+  if (interaction.user.id !== allowedUserId) {
+    try {
+      await interaction.reply({ content: "Unauthorized", ephemeral: true });
+    } catch {
+      // best effort
+    }
+    return;
+  }
+
+  const startedAt = Date.now();
+
+  try {
+    await interaction.deferReply();
+    const response = await handleDiscordSlashCommand(interaction, slashDeps);
+    await interaction.editReply(response as any);
+
+    void emitGatewayOtel({
+      level: "info",
+      component: "discord-channel",
+      action: "discord.slash.completed",
+      success: true,
+      duration_ms: Date.now() - startedAt,
+      metadata: {
+        command: interaction.commandName,
+        channelId: interaction.channelId,
+        guildId: interaction.guildId ?? "dm",
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[gateway:discord] slash command failed", {
+      command: interaction.commandName,
+      error: message,
+    });
+
+    void emitGatewayOtel({
+      level: "error",
+      component: "discord-channel",
+      action: "discord.slash.failed",
+      success: false,
+      error: message,
+      metadata: {
+        command: interaction.commandName,
+        channelId: interaction.channelId,
+      },
+    });
+
+    const fallback = renderStatusContainer({
+      title: `/${interaction.commandName} failed`,
+      level: "error",
+      metrics: [{ key: "Error", value: message }],
+    });
+
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply(fallback as any);
+      } else {
+        await interaction.reply(fallback as any);
+      }
+    } catch {
+      // best effort
+    }
+  }
 }
 
 // ── Reaction handler: ✅ on last message marks thread done ────────
@@ -277,11 +415,21 @@ async function handleReaction(reaction: any, user: any): Promise<void> {
 
 // ── Lifecycle ──────────────────────────────────────────────────────
 
-export async function start(token: string, userId: string, enqueue: EnqueueFn): Promise<void> {
+export async function start(
+  token: string,
+  userId: string,
+  enqueue: EnqueueFn,
+  options?: DiscordStartOptions,
+): Promise<void> {
   if (started) return;
 
   enqueuePrompt = enqueue;
   allowedUserId = userId;
+  slashDeps = {
+    enqueue,
+    redis: options?.redis,
+    abortCurrentTurn: options?.abortCurrentTurn,
+  };
 
   client = new Client({
     intents: [
@@ -310,10 +458,32 @@ export async function start(token: string, userId: string, enqueue: EnqueueFn): 
         botUsername: readyClient.user.tag,
       },
     });
+
+    void (async () => {
+      const registration = await registerDiscordSlashCommands(readyClient);
+      console.log("[gateway:discord] slash commands registration", registration);
+      void emitGatewayOtel({
+        level: registration.failures.length > 0 ? "warn" : "info",
+        component: "discord-channel",
+        action: "discord.slash.registered",
+        success: registration.failures.length === 0,
+        metadata: {
+          attemptedGuilds: registration.attemptedGuilds,
+          registeredGuilds: registration.registeredGuilds,
+          commandCount: registration.commandCount,
+          failures: registration.failures,
+        },
+      });
+    })();
   });
 
   client.on(Events.MessageCreate, (message) => {
     void handleMessage(message);
+  });
+
+  client.on(Events.InteractionCreate, (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    void handleSlashInteraction(interaction);
   });
 
   client.on(Events.MessageReactionAdd, (reaction, user) => {
@@ -395,28 +565,50 @@ export async function send(channelId: string, text: string): Promise<void> {
     return;
   }
 
-  const sendableChannel = channel as { sendTyping?: () => Promise<void>; send: (text: string) => Promise<unknown> };
+  const sendableChannel = channel as {
+    sendTyping?: () => Promise<void>;
+    send: (content: string | MessageCreateOptions) => Promise<unknown>;
+  };
 
   try { await sendableChannel.sendTyping?.(); } catch { /* */ }
 
-  const chunks = chunkMessage(text);
   const sendStartedAt = Date.now();
+  const rich = maybeRenderRichOutbound(text);
 
-  for (const chunk of chunks) {
-    if (!chunk.trim()) continue;
+  if (rich) {
     try {
-      await sendableChannel.send(chunk);
+      await sendableChannel.send(rich);
     } catch (error) {
-      console.error("[gateway:discord] send failed", { channelId, error: String(error) });
+      console.error("[gateway:discord] rich send failed", { channelId, error: String(error) });
       void emitGatewayOtel({
         level: "error",
         component: "discord-channel",
         action: "discord.send.failed",
         success: false,
         error: String(error),
-        metadata: { channelId },
+        metadata: { channelId, mode: "components-v2" },
       });
       return;
+    }
+  } else {
+    const chunks = chunkMessage(text);
+
+    for (const chunk of chunks) {
+      if (!chunk.trim()) continue;
+      try {
+        await sendableChannel.send(chunk);
+      } catch (error) {
+        console.error("[gateway:discord] send failed", { channelId, error: String(error) });
+        void emitGatewayOtel({
+          level: "error",
+          component: "discord-channel",
+          action: "discord.send.failed",
+          success: false,
+          error: String(error),
+          metadata: { channelId, mode: "text" },
+        });
+        return;
+      }
     }
   }
 
@@ -428,8 +620,8 @@ export async function send(channelId: string, text: string): Promise<void> {
     duration_ms: Date.now() - sendStartedAt,
     metadata: {
       channelId,
-      chunks: chunks.length,
       length: text.length,
+      mode: rich ? "components-v2" : "text",
     },
   });
 
@@ -473,7 +665,7 @@ export function parseChannelId(source: string): string | undefined {
 }
 
 /**
- * Get the Discord.js client instance (for discord-ui init).
+ * Get the Discord.js client instance (for adapters and diagnostics).
  */
 export function getClient(): Client | undefined {
   return client;
@@ -499,6 +691,7 @@ export async function shutdown(): Promise<void> {
   }
   started = false;
   threadStatusMessages.clear();
+  slashDeps = undefined;
   console.log("[gateway:discord] stopped");
   void emitGatewayOtel({
     level: "info",

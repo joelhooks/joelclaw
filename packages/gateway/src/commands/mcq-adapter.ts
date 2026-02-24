@@ -4,6 +4,7 @@ type McqQuestion = {
   id: string;
   question: string;
   options: string[];
+  mode?: "quiz" | "decision";
   context?: string;
   recommended?: number;
   recommendedReason?: string;
@@ -12,6 +13,8 @@ type McqQuestion = {
 export type McqParams = {
   title?: string;
   questions: McqQuestion[];
+  mode?: "quiz" | "decision";
+  correctAnswers?: Record<string, number>;
   timeout?: number;
 };
 

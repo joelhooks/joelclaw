@@ -30,6 +30,7 @@ import { ModelFallbackController } from "./model-fallback";
 import { emitGatewayOtel } from "./observability";
 import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
 import { registerChannel, routeResponse } from "./outbound/router";
+import { injectChannelContext } from "./formatting";
 
 const HOME = homedir();
 const AGENT_DIR = join(HOME, ".pi/agent");
@@ -213,7 +214,10 @@ function withChannelMcqOverride(base: LoadExtensionsResult): LoadExtensionsResul
         }
 
         try {
-          const answers = await discordAdapter.handleMcqToolCall(params, channelId);
+          const answers = await discordAdapter.handleMcqToolCall(
+            { ...params, mode: params.mode ?? "decision" },
+            channelId,
+          );
           void emitGatewayOtel({
             level: "info",
             component: "daemon.mcq",
@@ -608,7 +612,8 @@ const wsServer = Bun.serve({
           sendWsMessage(ws, { type: "error", message: "Prompt text is required" });
           return;
         }
-        await enqueue("tui", text, { via: "ws" });
+        const withChannelContext = injectChannelContext(text, { source: "tui" });
+        await enqueue("tui", withChannelContext, { via: "ws" });
         void drain();
         return;
       }
@@ -699,7 +704,11 @@ session.subscribe((event: any) => {
 });
 
 const enqueueToGateway = async (source: string, prompt: string, metadata?: Record<string, unknown>) => {
-  await enqueue(source, prompt, metadata);
+  const withChannelContext = injectChannelContext(prompt, {
+    source,
+    threadName: typeof metadata?.discordThreadName === "string" ? metadata.discordThreadName : undefined,
+  });
+  await enqueue(source, withChannelContext, metadata);
   void drain();
 };
 
@@ -735,28 +744,31 @@ if (DISCORD_TOKEN && DISCORD_ALLOWED_USER_ID) {
   });
 
   try {
-    await startDiscord(DISCORD_TOKEN, DISCORD_ALLOWED_USER_ID, enqueueToGateway);
+    await startDiscord(DISCORD_TOKEN, DISCORD_ALLOWED_USER_ID, enqueueToGateway, {
+      redis: redisClient,
+      abortCurrentTurn: async () => {
+        await session.abort();
+      },
+    });
 
-    // ── Discord UI + MCQ adapter (ADR-0122) ──────────────────
+    // ── Discord MCQ adapter (ADR-0122) ────────────────────────
     const discordClient = getDiscordClient();
     if (discordClient) {
       try {
-        const { initDiscordUI } = await import("@joelclaw/discord-ui");
-        initDiscordUI(discordClient);
         registerDiscordMcqAdapter(fetchDiscordChannel, getDiscordClient as () => any);
-        console.log("[gateway] discord-ui initialized, MCQ adapter registered");
+        console.log("[gateway] discord MCQ adapter registered");
         void emitGatewayOtel({
           level: "info",
           component: "daemon",
-          action: "daemon.discord-ui.initialized",
+          action: "daemon.discord.mcq_adapter_registered",
           success: true,
         });
       } catch (error) {
-        console.error("[gateway] discord-ui init failed; interactive components disabled", { error: String(error) });
+        console.error("[gateway] discord MCQ adapter registration failed", { error: String(error) });
         void emitGatewayOtel({
           level: "error",
           component: "daemon",
-          action: "daemon.discord-ui.init_failed",
+          action: "daemon.discord.mcq_adapter_failed",
           success: false,
           error: String(error),
         });
