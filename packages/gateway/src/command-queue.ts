@@ -10,6 +10,13 @@ export type QueueEntry = {
   priority?: Priority;
 };
 
+export interface ActiveRequest {
+  id: string;
+  source: string;
+  enqueuedAt: number;
+  prompt: string;
+}
+
 type PromptSession = {
   prompt: (text: string) => unknown | Promise<unknown>;
   reload: () => Promise<void>;
@@ -28,8 +35,7 @@ let onPromptSent: PromptCallback | undefined;
 let onPromptError: ErrorCallback | undefined;
 let idleWaiter: IdleWaiter | undefined;
 let consecutiveFailures = 0;
-
-export let currentSource: string | undefined;
+let activeRequest: ActiveRequest | undefined;
 
 export function setSession(session: PromptSession): void {
   sessionRef = session;
@@ -159,8 +165,13 @@ export async function enqueue(
   }
 }
 
+export function getActiveSource(): string | undefined {
+  return activeRequest?.source;
+}
+
+/** @deprecated Use getActiveSource() instead. */
 export function getCurrentSource(): string | undefined {
-  return currentSource;
+  return getActiveSource();
 }
 
 export function getQueueDepth(): number {
@@ -175,6 +186,25 @@ export function resetFailureCount(): void {
   consecutiveFailures = 0;
 }
 
+async function dequeue(failedStreamIds: Set<string>): Promise<QueueEntry | null> {
+  if (activeRequest) return null;
+
+  const localEntry = queue.shift();
+  if (localEntry) return localEntry;
+
+  const next = await drainByPriority({ limit: 1, excludeIds: failedStreamIds });
+  const message = next[0];
+  if (!message) return null;
+
+  return {
+    source: message.source,
+    prompt: message.prompt,
+    metadata: message.metadata,
+    streamId: message.id,
+    priority: message.priority,
+  };
+}
+
 export async function drain(): Promise<void> {
   if (drainPromise) return drainPromise;
 
@@ -182,22 +212,15 @@ export async function drain(): Promise<void> {
     const failedStreamIds = new Set<string>();
 
     while (true) {
-      const localEntry = queue.shift();
-      const entry = localEntry ?? (await (async (): Promise<QueueEntry | undefined> => {
-        const next = await drainByPriority({ limit: 1, excludeIds: failedStreamIds });
-        const message = next[0];
-        if (!message) return undefined;
-        return {
-          source: message.source,
-          prompt: message.prompt,
-          metadata: message.metadata,
-          streamId: message.id,
-          priority: message.priority,
-        };
-      })());
+      const entry = await dequeue(failedStreamIds);
       if (!entry) break;
 
-      currentSource = entry.source;
+      activeRequest = {
+        id: crypto.randomUUID(),
+        source: entry.source,
+        enqueuedAt: Date.now(),
+        prompt: entry.prompt,
+      };
       const startedAt = Date.now();
 
       try {
@@ -296,7 +319,7 @@ export async function drain(): Promise<void> {
           },
         });
       } finally {
-        currentSource = undefined;
+        activeRequest = undefined;
       }
     }
   })().finally(() => {

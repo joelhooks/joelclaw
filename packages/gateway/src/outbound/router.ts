@@ -4,7 +4,7 @@ import { createEnvelope, type OutboundEnvelope } from "./envelope";
 
 // Lazy reference to avoid static import binding pollution across test files.
 // Updated at wireSession() call time via re-import so mock.module() takes effect.
-let _commandQueueModule: { getCurrentSource?: () => string | undefined } = {};
+let _commandQueueModule: { getActiveSource?: () => string | undefined } = {};
 
 const HEARTBEAT_SOURCE = "heartbeat";
 const HEARTBEAT_OK = "HEARTBEAT_OK";
@@ -89,7 +89,7 @@ export function registerChannel(id: string, handler: OutboundChannelHandler): vo
 }
 
 function getTargetSource(fallback: string): string {
-  const liveSource = _commandQueueModule.getCurrentSource?.();
+  const liveSource = _commandQueueModule.getActiveSource?.();
   return typeof liveSource === "string" && liveSource.length > 0 ? liveSource : fallback;
 }
 
@@ -204,8 +204,8 @@ export async function wireSession(session: SessionLike): Promise<unknown> {
 
   for (const specifier of moduleCandidates) {
     try {
-      const mod = await import(specifier) as { getCurrentSource?: () => string | undefined };
-      if (typeof mod.getCurrentSource === "function") {
+      const mod = await import(specifier) as { getActiveSource?: () => string | undefined };
+      if (typeof mod.getActiveSource === "function") {
         _commandQueueModule = mod;
         break;
       }

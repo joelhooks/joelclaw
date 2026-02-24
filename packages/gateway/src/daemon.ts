@@ -8,7 +8,7 @@ import {
   drain,
   enqueue,
   getQueueDepth,
-  getCurrentSource,
+  getActiveSource,
   setSession,
   setIdleWaiter,
   onPrompt,
@@ -193,7 +193,7 @@ function withChannelMcqOverride(base: LoadExtensionsResult): LoadExtensionsResul
       onUpdate: unknown,
       ctx: unknown,
     ) => {
-      const source = getCurrentSource();
+      const source = getActiveSource();
       if (!isMcqParams(params)) {
         return originalExecute(toolCallId, params, signal, onUpdate, ctx);
       }
@@ -658,7 +658,7 @@ session.subscribe((event: any) => {
 
     if (!fullText.trim()) return;
 
-    const source = getCurrentSource() ?? "console";
+    const source = getActiveSource() ?? "console";
     console.log("[gateway] response ready", { source, length: fullText.length });
     routeResponse(source, fullText);
   }
