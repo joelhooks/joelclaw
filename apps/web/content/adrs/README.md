@@ -127,3 +127,8 @@ tags:
 | [0116](0116-koko-redis-bridge-protocol.md) | Koko Redis Bridge Protocol | proposed | 2026-02-23 |
 | [0117](0117-koko-first-workloads.md) | Koko First Workloads | proposed | 2026-02-23 |
 | [0118](0118-koko-shadow-executor.md) | Koko Shadow Executor Mode | proposed | 2026-02-23 |
+| [0119](0119-x-twitter-cli-integration.md) | X/Twitter CLI Integration | proposed | 2026-02-23 |
+| [0120](0120-discord-thread-conversations.md) | Discord Thread-Based Conversations | proposed | 2026-02-23 |
+| [0121](0121-imsg-rpc-socket-daemon.md) | iMessage RPC Socket Daemon | proposed | 2026-02-23 |
+| [0122](0122-discord-rich-interactive-messaging.md) | Discord Rich Interactive Messaging | proposed | 2026-02-23 |
+| [0123](0123-request-scoped-channel-routing.md) | Request-Scoped Channel Routing | proposed | 2026-02-23 |
