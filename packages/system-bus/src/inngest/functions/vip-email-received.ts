@@ -440,11 +440,12 @@ function runModelAnalysis(
 ): { analysis: VipAnalysis; error?: string; provider?: string; model?: string; usage?: LlmUsage } {
   const proc = spawnSync(
     "pi",
-    ["-p", "--no-session", "--no-extensions", "--mode", "json", "--model", model, "--system-prompt", systemPrompt, prompt],
+    ["-p", "--no-session", "--no-extensions", "--mode", "json", "--model", model, "--system-prompt", systemPrompt],
     {
       encoding: "utf-8",
       timeout: timeoutMs,
-      stdio: ["ignore", "pipe", "pipe"],
+      input: prompt,
+      stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, TERM: "dumb" },
     }
   );
@@ -833,12 +834,12 @@ export const vipEmailReceived = inngest.createFunction(
           TRIAGE_MODEL,
           "--system-prompt",
           VIP_TRIAGE_PROMPT,
-          analysisPrompt,
         ],
         {
           encoding: "utf-8",
           timeout: TRIAGE_TIMEOUT_MS,
-          stdio: ["ignore", "pipe", "pipe"],
+          input: analysisPrompt,
+          stdio: ["pipe", "pipe", "pipe"],
           env: { ...process.env, TERM: "dumb" },
         }
       );

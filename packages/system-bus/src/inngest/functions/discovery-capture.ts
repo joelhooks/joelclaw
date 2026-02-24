@@ -98,16 +98,23 @@ export const discoveryCapture = inngest.createFunction(
               vaultDir: VAULT_DISCOVERIES,
             });
 
-            const output = await $`pi -p --no-session --no-extensions ${prompt}`
-              .env({ ...process.env, TERM: "dumb" })
-              .text();
+            const tmpPrompt = `/tmp/discovery-prompt-${Date.now()}.txt`;
+            await Bun.write(tmpPrompt, prompt);
 
-            // Extract filename from pi's output
-            const match = output.match(/DISCOVERY_WRITTEN:(.+)/);
-            const noteName = match?.[1]?.trim() ?? `Discovery ${today}`;
-            const vaultPath = `${VAULT_DISCOVERIES}/${noteName}.md`;
+            try {
+              const output = await $`cat ${tmpPrompt} | pi -p --no-session --no-extensions`
+                .env({ ...process.env, TERM: "dumb" })
+                .text();
 
-            return { noteName, vaultPath, piOutput: output.slice(-200) };
+              // Extract filename from pi's output
+              const match = output.match(/DISCOVERY_WRITTEN:(.+)/);
+              const noteName = match?.[1]?.trim() ?? `Discovery ${today}`;
+              const vaultPath = `${VAULT_DISCOVERIES}/${noteName}.md`;
+
+              return { noteName, vaultPath, piOutput: output.slice(-200) };
+            } finally {
+              await $`rm -f ${tmpPrompt}`.quiet();
+            }
           });
 
           // Step 3: Verify + slog

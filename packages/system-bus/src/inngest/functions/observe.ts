@@ -479,80 +479,110 @@ Session context:
 
       const observerModel = "anthropic/claude-haiku";
       const observerStartedAt = Date.now();
+      const tmpPrompt = `/tmp/observe-prompt-${Date.now()}.txt`;
+      await Bun.write(tmpPrompt, promptWithSessionContext);
 
       try {
-        let result: any;
-        for (let attempt = 1; attempt <= OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS; attempt += 1) {
-          try {
-            const runPromise = Bun.$`pi --no-tools --no-session --no-extensions --print --mode json --model ${observerModel} --system-prompt ${OBSERVER_SYSTEM_PROMPT} ${promptWithSessionContext}`
-              .quiet()
-              .nothrow();
+        try {
+          let result: any;
+          for (let attempt = 1; attempt <= OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS; attempt += 1) {
+            try {
+              const runPromise = Bun.$`cat ${tmpPrompt} | pi --no-tools --no-session --no-extensions --print --mode json --model ${observerModel} --system-prompt ${OBSERVER_SYSTEM_PROMPT}`
+                .quiet()
+                .nothrow();
 
-            const attemptResult = await new Promise<any>((resolve, reject) => {
-              const timer = setTimeout(() => {
-                reject(new Error(`Observer LLM timed out after ${OBSERVER_LLM_TIMEOUT_MS}ms`));
-              }, OBSERVER_LLM_TIMEOUT_MS);
+              const attemptResult = await new Promise<any>((resolve, reject) => {
+                const timer = setTimeout(() => {
+                  reject(new Error(`Observer LLM timed out after ${OBSERVER_LLM_TIMEOUT_MS}ms`));
+                }, OBSERVER_LLM_TIMEOUT_MS);
 
-              runPromise.then(
-                (value) => {
-                  clearTimeout(timer);
-                  resolve(value);
-                },
-                (error) => {
-                  clearTimeout(timer);
-                  reject(error);
-                }
-              );
-            });
+                runPromise.then(
+                  (value) => {
+                    clearTimeout(timer);
+                    resolve(value);
+                  },
+                  (error) => {
+                    clearTimeout(timer);
+                    reject(error);
+                  }
+                );
+              });
 
-            const attemptStderr = readShellText(attemptResult.stderr).trim();
-            const shouldRetry =
-              attemptResult.exitCode !== 0 &&
-              attempt < OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS &&
-              isLockfileContentionError(attemptStderr);
+              const attemptStderr = readShellText(attemptResult.stderr).trim();
+              const shouldRetry =
+                attemptResult.exitCode !== 0 &&
+                attempt < OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS &&
+                isLockfileContentionError(attemptStderr);
 
-            if (shouldRetry) {
+              if (shouldRetry) {
+                const delayMs = getLockfileRetryDelayMs();
+                console.warn(
+                  `[observe] observer LLM lockfile contention; retrying attempt ${attempt + 1}/${OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS} in ${delayMs}ms`
+                );
+                await sleepForMs(delayMs);
+                continue;
+              }
+
+              result = attemptResult;
+              break;
+            } catch (attemptError) {
+              const attemptMessage =
+                attemptError instanceof Error ? attemptError.message : String(attemptError);
+              const shouldRetry =
+                attempt < OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS &&
+                isLockfileContentionError(attemptMessage);
+              if (!shouldRetry) {
+                throw attemptError;
+              }
+
               const delayMs = getLockfileRetryDelayMs();
               console.warn(
                 `[observe] observer LLM lockfile contention; retrying attempt ${attempt + 1}/${OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS} in ${delayMs}ms`
               );
               await sleepForMs(delayMs);
-              continue;
             }
-
-            result = attemptResult;
-            break;
-          } catch (attemptError) {
-            const attemptMessage =
-              attemptError instanceof Error ? attemptError.message : String(attemptError);
-            const shouldRetry =
-              attempt < OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS &&
-              isLockfileContentionError(attemptMessage);
-            if (!shouldRetry) {
-              throw attemptError;
-            }
-
-            const delayMs = getLockfileRetryDelayMs();
-            console.warn(
-              `[observe] observer LLM lockfile contention; retrying attempt ${attempt + 1}/${OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS} in ${delayMs}ms`
-            );
-            await sleepForMs(delayMs);
           }
-        }
 
-        if (!result) {
-          throw new Error("Observer LLM subprocess failed before producing a result");
-        }
+          if (!result) {
+            throw new Error("Observer LLM subprocess failed before producing a result");
+          }
 
-        const stdoutRaw = readShellText(result.stdout);
-        const parsedPi = parsePiJsonAssistant(stdoutRaw);
-        const stdout = (parsedPi?.text ?? stdoutRaw).trim();
-        const stderr = readShellText(result.stderr).trim();
+          const stdoutRaw = readShellText(result.stdout);
+          const parsedPi = parsePiJsonAssistant(stdoutRaw);
+          const stdout = (parsedPi?.text ?? stdoutRaw).trim();
+          const stderr = readShellText(result.stderr).trim();
 
-        if (result.exitCode !== 0) {
-          const error = `Observer LLM subprocess failed with exit code ${result.exitCode}${
-            stderr ? `: ${stderr}` : ""
-          }`;
+          if (result.exitCode !== 0) {
+            const error = `Observer LLM subprocess failed with exit code ${result.exitCode}${
+              stderr ? `: ${stderr}` : ""
+            }`;
+
+            await traceLlmGeneration({
+              traceName: "joelclaw.observe",
+              generationName: "memory.observe",
+              component: "observe",
+              action: "observe.llm.extract",
+              input: {
+                sessionId: validatedInput.sessionId,
+                trigger: validatedInput.trigger,
+                prompt: promptWithSessionContext.slice(0, 6000),
+              },
+              output: {
+                stderr: stderr.slice(0, 500),
+              },
+              provider: parsedPi?.provider,
+              model: parsedPi?.model ?? observerModel,
+              usage: parsedPi?.usage,
+              durationMs: Date.now() - observerStartedAt,
+              error,
+              metadata: {
+                sessionId: validatedInput.sessionId,
+                trigger: validatedInput.trigger,
+              },
+            });
+
+            throw new Error(error);
+          }
 
           await traceLlmGeneration({
             traceName: "joelclaw.observe",
@@ -565,73 +595,49 @@ Session context:
               prompt: promptWithSessionContext.slice(0, 6000),
             },
             output: {
-              stderr: stderr.slice(0, 500),
+              observationXml: stdout.slice(0, 6000),
             },
             provider: parsedPi?.provider,
             model: parsedPi?.model ?? observerModel,
             usage: parsedPi?.usage,
             durationMs: Date.now() - observerStartedAt,
-            error,
             metadata: {
               sessionId: validatedInput.sessionId,
               trigger: validatedInput.trigger,
             },
           });
 
-          throw new Error(error);
+          return stdout;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`[observe] observer LLM fallback: ${message}`);
+
+          await traceLlmGeneration({
+            traceName: "joelclaw.observe",
+            generationName: "memory.observe",
+            component: "observe",
+            action: "observe.llm.extract",
+            input: {
+              sessionId: validatedInput.sessionId,
+              trigger: validatedInput.trigger,
+            },
+            output: {
+              fallback: true,
+            },
+            model: observerModel,
+            durationMs: Date.now() - observerStartedAt,
+            error: message,
+            metadata: {
+              sessionId: validatedInput.sessionId,
+              trigger: validatedInput.trigger,
+              fallback: true,
+            },
+          });
+
+          return buildObserverFallback(validatedInput, sanitizedMessages, message);
         }
-
-        await traceLlmGeneration({
-          traceName: "joelclaw.observe",
-          generationName: "memory.observe",
-          component: "observe",
-          action: "observe.llm.extract",
-          input: {
-            sessionId: validatedInput.sessionId,
-            trigger: validatedInput.trigger,
-            prompt: promptWithSessionContext.slice(0, 6000),
-          },
-          output: {
-            observationXml: stdout.slice(0, 6000),
-          },
-          provider: parsedPi?.provider,
-          model: parsedPi?.model ?? observerModel,
-          usage: parsedPi?.usage,
-          durationMs: Date.now() - observerStartedAt,
-          metadata: {
-            sessionId: validatedInput.sessionId,
-            trigger: validatedInput.trigger,
-          },
-        });
-
-        return stdout;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        console.warn(`[observe] observer LLM fallback: ${message}`);
-
-        await traceLlmGeneration({
-          traceName: "joelclaw.observe",
-          generationName: "memory.observe",
-          component: "observe",
-          action: "observe.llm.extract",
-          input: {
-            sessionId: validatedInput.sessionId,
-            trigger: validatedInput.trigger,
-          },
-          output: {
-            fallback: true,
-          },
-          model: observerModel,
-          durationMs: Date.now() - observerStartedAt,
-          error: message,
-          metadata: {
-            sessionId: validatedInput.sessionId,
-            trigger: validatedInput.trigger,
-            fallback: true,
-          },
-        });
-
-        return buildObserverFallback(validatedInput, sanitizedMessages, message);
+      } finally {
+        await Bun.$`rm -f ${tmpPrompt}`.quiet();
       }
 
     });

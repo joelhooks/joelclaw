@@ -288,7 +288,7 @@ export const batchReview = inngest.createFunction(
         await writeFile(tmpFile, userPrompt, "utf-8");
 
         try {
-          const result = await Bun.$`pi --no-tools --no-session --no-extensions --print --mode json --model ${REVIEW_MODEL} --system-prompt ${SYSTEM_PROMPT} ${await Bun.file(tmpFile).text()}`
+          const result = await Bun.$`cat ${tmpFile} | pi --no-tools --no-session --no-extensions --print --mode json --model ${REVIEW_MODEL} --system-prompt ${SYSTEM_PROMPT}`
             .quiet()
             .nothrow();
 

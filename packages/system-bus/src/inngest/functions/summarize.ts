@@ -64,11 +64,17 @@ export const summarize = inngest.createFunction(
 
     // Run pi in print mode — it reads the file, researches, and edits in place
     await step.run("pi-enrich", async () => {
-      // pi -p with @file reads the file content into context
-      // pi with tools will use edit/write to modify the file directly
-      await $`pi -p --no-session --no-extensions "Read the file at ${vaultPath} and enrich it. ${promptWithMemory}"`
-        .env({ ...process.env, TERM: "dumb" })
-        .quiet();
+      const prompt = `Read the file at ${vaultPath} and enrich it. ${promptWithMemory}`;
+      const tmpPrompt = `/tmp/summarize-prompt-${Date.now()}.txt`;
+      await Bun.write(tmpPrompt, prompt);
+
+      try {
+        await $`cat ${tmpPrompt} | pi -p --no-session --no-extensions`
+          .env({ ...process.env, TERM: "dumb" })
+          .quiet();
+      } finally {
+        await $`rm -f ${tmpPrompt}`.quiet();
+      }
     });
 
     // Log + emit

@@ -194,12 +194,17 @@ async function formatProposalForMemoryIfNeeded(
   const formatModel = "anthropic/claude-haiku";
   const startedAt = Date.now();
 
-  const proc = Bun.spawn(["pi", "-p", "--no-session", "--no-extensions", "--mode", "json", "--model", formatModel, "--system-prompt", PROMOTE_SYSTEM_PROMPT, userPrompt], {
+  const proc = Bun.spawn(["pi", "-p", "--no-session", "--no-extensions", "--mode", "json", "--model", formatModel, "--system-prompt", PROMOTE_SYSTEM_PROMPT], {
     env: { ...process.env, TERM: "dumb" },
-    stdin: "ignore",
+    stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
   });
+
+  if (proc.stdin) {
+    proc.stdin.write(userPrompt);
+    proc.stdin.end();
+  }
 
   const [stdoutRaw, stderr, exitCode] = await Promise.all([
     readProcessStream(proc.stdout),
