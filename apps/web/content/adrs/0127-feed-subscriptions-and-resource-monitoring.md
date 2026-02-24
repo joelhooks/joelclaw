@@ -43,8 +43,8 @@ interface Subscription {
   lastContentHash: string         // For page-type change detection
   lastEntryId: string             // For feed-type dedup
   filters?: string[]              // Tag/topic filters (e.g., ["ai", "agents", "llm"])
-  publishToCool: boolean          // Auto-publish to /cool
-  notify: boolean                 // Send gateway notification
+  publishToCool: false             // Default OFF — /cool is curated, not a firehose
+  notify: boolean                 // Send gateway notification with approve/dismiss
   summarize: boolean              // LLM summarize changes
   active: boolean
 }
@@ -88,11 +88,25 @@ joelclaw subscribe summary             # What's new across all subscriptions
 - GitHub API for repos (rate-limited but reliable)
 - Page hash diff as fallback for non-feed content
 - LLM summarization costs per update (~$0.01-0.05 per summary)
-- `/cool` page gets automatic fresh content from subscriptions
-- Joel gets brief notification summaries, not full content dumps
+- `/cool` stays curated — nothing auto-publishes. Joel approves via gateway notification button.
+- Joel gets brief notification summaries with [Publish to /cool] [Dismiss] buttons
+- Only items Joel explicitly approves reach `/cool` — quality over quantity
+
+## Publishing Flow
+
+```
+Feed update detected
+  → LLM summarizes (brief, relevant-to-joelclaw filter)
+  → Gateway notification with summary + [Publish to /cool] [Dismiss]
+  → Joel taps Publish → fires discovery/noted → appears on /cool
+  → Joel taps Dismiss → logged, not published
+```
+
+The LLM summary step should also assess **relevance to joelclaw** (agents, personal infra, BEAM/Elixir, developer tools, agentic patterns). Low-relevance items get a shorter notification without the publish button — just "FYI: Simon posted about Django migrations" vs a full card for "Simon published new agentic engineering patterns."
 
 ## Non-Goals (v1)
 
+- No auto-publishing to /cool — ever. Joel curates.
 - No full-text indexing of subscribed content (just summaries)
 - No social media monitoring beyond Bluesky (Twitter API too expensive)
 - No comment/reply tracking
