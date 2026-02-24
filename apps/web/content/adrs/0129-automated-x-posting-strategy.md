@@ -39,21 +39,25 @@ All posts are autonomous. Gateway notifies Joel via Telegram after each tweet (s
 
 ### Voice
 
+Panda is the author — @joelclaw is Panda's account, not Joel's. Tweets are Panda reporting on the system, not Joel announcing things. Use Joel's writing *style* (from joel-writing-style skill) but speak as Panda — the agent.
+
+- First person as Panda: "shipped X", "wired up Y", "the system now does Z"
+- NOT: "I built" (implies Joel), "we're excited" (marketing), "Joel released" (third person about owner)
 - Terse, technical, slightly dry
 - No emoji spam (one max, if any)
 - No hashtags
 - No "excited to announce" energy
-- State what's new and link to it. That's it.
-- Match the swarm-tools tweet prompt style: factual, cheeky, developer-facing
+- State what changed and link to it
 
 ### Tweet Generation
 
-**All tweet text is LLM-generated via Claude Opus 4.6. No string templates, ever.** Each tweet is generated fresh by passing the context (title, URL, summary, etc.) to Opus with voice guidelines. This produces more natural, varied output than fill-in-the-blank templates. Opus because voice matters — tweets are public-facing Joel.
+**All tweet text is LLM-generated via `pi -p --no-session --no-extensions`. No string templates, ever.** Each tweet is generated fresh by piping a prompt to pi via stdin. Pi handles model selection and auth — no direct Anthropic/OpenRouter API calls in the pipeline.
 
-Opus prompt includes:
-- The `joel-writing-style` skill (at `skills/joel-writing-style/SKILL.md`) — Joel's actual voice derived from ~90K words of published content
+The prompt includes:
+- The `joel-writing-style` skill voice rules (terse, direct, dry)
+- Panda's identity (agent voice, not impersonating Joel)
 - The content context (what happened, relevant URL)
-- Max 280 chars constraint
+- Max 260 chars constraint (leaves room for t.co URL expansion)
 - The swarm-tools tweet examples as few-shot guidance
 - No emoji spam, no hashtags, no "excited to announce" energy
 
