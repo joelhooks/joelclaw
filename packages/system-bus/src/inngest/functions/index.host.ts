@@ -8,6 +8,9 @@ import { reflect } from "./reflect";
 import { contentSync } from "./content-sync";
 import { contentReviewSubmitted } from "./content-review";
 import { discoveryCapture } from "./discovery-capture";
+import { xPost } from "./x-post";
+import { xContentHook } from "./x-content-hook";
+import { xDiscoveryHook } from "./x-discovery-hook";
 import { promote } from "./promote";
 import { embedText } from "./embed";
 import { backfillObserve } from "./backfill-observe";
@@ -105,6 +108,9 @@ export const hostFunctionDefinitions = [
   contentSync,
   contentReviewSubmitted,
   discoveryCapture,
+  xPost,
+  xContentHook,
+  xDiscoveryHook,
   promote,
   embedText,
   backfillObserve,

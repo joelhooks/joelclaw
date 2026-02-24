@@ -643,6 +643,9 @@ export type Events = {
       vaultPath: string;
       topic: string;
       slug: string;
+      url?: string;
+      title?: string;
+      tags?: string[];
     };
   };
 
@@ -695,6 +698,32 @@ export type Events = {
       source?: string; // "fswatch" | "agent" | "manual"
       path?: string;
       paths?: string[];
+    };
+  };
+  "content/published": {
+    data: {
+      type: "post" | "adr";
+      title: string;
+      slug: string;
+      url?: string;
+      adrNumber?: string | number;
+      status?: string;
+    };
+  };
+  "x/post.requested": {
+    data: {
+      text: string;
+      url?: string;
+      category?: "post" | "adr" | "discovery" | "digest";
+    };
+  };
+  "x/post.completed": {
+    data: {
+      tweetId: string;
+      tweetUrl?: string;
+      text: string;
+      url?: string;
+      category?: "post" | "adr" | "discovery" | "digest";
     };
   };
   "typesense/vault-sync.requested": {

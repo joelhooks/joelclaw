@@ -28,6 +28,7 @@
     "hono": "^4.11.9",
     "inngest": "^3.52.0",
     "ioredis": "^5.9.3",
+    "oauth-1.0a": "^2.2.6",
     "rehype-autolink-headings": "^7.1.0",
     "rehype-external-links": "^3.0.0",
     "rehype-pretty-code": "^0.14.1",
