@@ -110,8 +110,10 @@ function maybeRenderRichOutbound(text: string): MessageCreateOptions | undefined
     });
   }
 
-  const statusLike = /(gateway|redis|inngest|typesense|queue|uptime|health)/i.test(trimmed);
-  if (statusLike && trimmed.length <= 1400) {
+  // Only render as "Gateway Update" box if this is explicitly a system status report
+  // (starts with a status header or has metric-like structure throughout, NOT just a reply mentioning system names)
+  const isExplicitStatus = /^(##?\s*)?(gateway status|system status|health check|status report)/im.test(trimmed);
+  if (isExplicitStatus && trimmed.length <= 1400) {
     const lines = trimmed.split("\n").map((line) => line.trim()).filter(Boolean);
     const metrics = lines.slice(0, 8).map((line, index) => {
       const match = line.match(/^([^:]{2,40}):\s*(.+)$/);
