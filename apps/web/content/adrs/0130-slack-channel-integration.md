@@ -1,6 +1,6 @@
 # ADR-0130: Slack Channel Integration
 
-- **Status**: proposed
+- **Status**: accepted
 - **Date**: 2026-02-24
 - **Related**: ADR-0123 (channel routing), ADR-0124 (Discord thread sessions), ADR-0125 (channel-aware prompts)
 
