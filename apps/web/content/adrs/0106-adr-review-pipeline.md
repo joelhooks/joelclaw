@@ -10,7 +10,7 @@ tags: [adrs, review, comments, convex, inngest, ui]
 
 ## Status
 
-proposed
+accepted
 
 ## Context
 
