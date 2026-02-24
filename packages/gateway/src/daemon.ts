@@ -18,7 +18,7 @@ import {
 } from "./command-queue";
 import { start as startRedisChannel, shutdown as shutdownRedisChannel, isHealthy as isRedisHealthy, getRedisClient } from "./channels/redis";
 import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, sendMedia as sendTelegramMedia, parseChatId } from "./channels/telegram";
-import { start as startDiscord, shutdown as shutdownDiscord, send as sendDiscord, parseChannelId as parseDiscordChannelId } from "./channels/discord";
+import { start as startDiscord, shutdown as shutdownDiscord, send as sendDiscord, markError as markDiscordError, parseChannelId as parseDiscordChannelId } from "./channels/discord";
 import { start as startIMessage, shutdown as shutdownIMessage, send as sendIMessage } from "./channels/imessage";
 import { defaultGatewayConfig, loadGatewayConfig, providerForModel } from "./commands/config";
 import { getActiveMcqAdapter, type McqParams } from "./commands/mcq-adapter";
