@@ -323,9 +323,9 @@ async function ensureAnnasArchiveSecret(secretPath: string): Promise<{
 }
 
 async function listOutputEntries(outputDir: string): Promise<OutputEntry[]> {
-  let entries: Dirent<string>[];
+  let entries: Dirent[];
   try {
-    entries = (await readdir(outputDir, { withFileTypes: true })) as Dirent<string>[];
+    entries = (await readdir(outputDir, { withFileTypes: true })) as Dirent[];
   } catch {
     return [];
   }
