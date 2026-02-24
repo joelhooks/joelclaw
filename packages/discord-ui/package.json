@@ -1,0 +1,19 @@
+{
+  "name": "@joelclaw/discord-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/api.ts",
+    "./jsx": "./src/index.tsx",
+    "./components": "./src/components/index.tsx"
+  },
+  "dependencies": {
+    "@answeroverflow/discordjs-react": "^0.0.36",
+    "discord.js": "^14.25.1",
+    "react": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.8"
+  }
+}

@@ -472,6 +472,26 @@ export function parseChannelId(source: string): string | undefined {
   return match?.[1];
 }
 
+/**
+ * Get the Discord.js client instance (for discord-ui init).
+ */
+export function getClient(): Client | undefined {
+  return client;
+}
+
+/**
+ * Fetch a text-based channel by ID (for rendering components into).
+ */
+export async function fetchChannel(channelId: string) {
+  if (!client) return undefined;
+  try {
+    const ch = await client.channels.fetch(channelId);
+    return ch?.isTextBased() ? ch : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function shutdown(): Promise<void> {
   if (client) {
     client.destroy();

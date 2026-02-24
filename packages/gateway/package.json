@@ -12,7 +12,8 @@
     "@mariozechner/pi-coding-agent": "0.52.12",
     "discord.js": "^14.25.1",
     "grammy": "^1.40.0",
-    "ioredis": "^5.9.3"
+    "ioredis": "^5.9.3",
+    "@joelclaw/discord-ui": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "latest",

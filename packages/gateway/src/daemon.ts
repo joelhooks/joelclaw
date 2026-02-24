@@ -18,10 +18,11 @@ import {
 } from "./command-queue";
 import { start as startRedisChannel, shutdown as shutdownRedisChannel, isHealthy as isRedisHealthy, getRedisClient } from "./channels/redis";
 import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, sendMedia as sendTelegramMedia, parseChatId } from "./channels/telegram";
-import { start as startDiscord, shutdown as shutdownDiscord, send as sendDiscord, markError as markDiscordError, parseChannelId as parseDiscordChannelId } from "./channels/discord";
+import { start as startDiscord, shutdown as shutdownDiscord, send as sendDiscord, markError as markDiscordError, parseChannelId as parseDiscordChannelId, getClient as getDiscordClient, fetchChannel as fetchDiscordChannel } from "./channels/discord";
 import { start as startIMessage, shutdown as shutdownIMessage, send as sendIMessage } from "./channels/imessage";
 import { defaultGatewayConfig, loadGatewayConfig, providerForModel } from "./commands/config";
 import { getActiveMcqAdapter, type McqParams } from "./commands/mcq-adapter";
+import { getActiveDiscordMcqAdapter, registerDiscordMcqAdapter } from "./commands/discord-mcq-adapter";
 import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands/telegram-handler";
 import { TRIPWIRE_PATH, startHeartbeatRunner } from "./heartbeat";
 import { init as initMessageStore, trimOld } from "./message-store";
@@ -169,7 +170,7 @@ function buildMcqToolResult(params: McqParams, answers: Record<string, string>):
   };
 }
 
-function withTelegramMcqOverride(base: LoadExtensionsResult): LoadExtensionsResult {
+function withChannelMcqOverride(base: LoadExtensionsResult): LoadExtensionsResult {
   let overridesApplied = 0;
 
   for (const extension of base.extensions) {
@@ -192,9 +193,56 @@ function withTelegramMcqOverride(base: LoadExtensionsResult): LoadExtensionsResu
       ctx: unknown,
     ) => {
       const source = getCurrentSource();
-      const isTelegramSource = typeof source === "string" && source.startsWith("telegram:");
+      if (!isMcqParams(params)) {
+        return originalExecute(toolCallId, params, signal, onUpdate, ctx);
+      }
 
-      if (!isTelegramSource || !isMcqParams(params)) {
+      // ── Discord MCQ (ADR-0122) ────────────────────────────────
+      const isDiscordSource = typeof source === "string" && source.startsWith("discord:");
+      if (isDiscordSource) {
+        const discordAdapter = getActiveDiscordMcqAdapter();
+        if (!discordAdapter) {
+          console.warn("[gateway:mcq] discord mcq call but adapter not ready; falling back to default", { source });
+          return originalExecute(toolCallId, params, signal, onUpdate, ctx);
+        }
+
+        const channelId = parseDiscordChannelId(source);
+        if (!channelId) {
+          console.warn("[gateway:mcq] discord source has no channel ID", { source });
+          return originalExecute(toolCallId, params, signal, onUpdate, ctx);
+        }
+
+        try {
+          const answers = await discordAdapter.handleMcqToolCall(params, channelId);
+          void emitGatewayOtel({
+            level: "info",
+            component: "daemon.mcq",
+            action: "mcq.discord.completed",
+            success: true,
+            metadata: { source, channelId, questionCount: params.questions.length },
+          });
+          return buildMcqToolResult(params, answers);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error("[gateway:mcq] discord adapter failed", { source, error: message });
+          void emitGatewayOtel({
+            level: "error",
+            component: "daemon.mcq",
+            action: "mcq.discord.failed",
+            success: false,
+            error: message,
+            metadata: { source, channelId },
+          });
+          return {
+            content: [{ type: "text", text: `MCQ adapter failed: ${message}` }],
+            details: { title: params.title ?? "Questions", answers: [], cancelled: true },
+          };
+        }
+      }
+
+      // ── Telegram MCQ ──────────────────────────────────────────
+      const isTelegramSource = typeof source === "string" && source.startsWith("telegram:");
+      if (!isTelegramSource) {
         return originalExecute(toolCallId, params, signal, onUpdate, ctx);
       }
 
@@ -264,7 +312,7 @@ function withTelegramMcqOverride(base: LoadExtensionsResult): LoadExtensionsResu
   }
 
   if (overridesApplied === 0) {
-    console.warn("[gateway:mcq] no mcq tool found in loaded extensions; telegram adapter override inactive");
+    console.warn("[gateway:mcq] no mcq tool found in loaded extensions; channel adapter overrides inactive");
     void emitGatewayOtel({
       level: "warn",
       component: "daemon.mcq",
@@ -272,7 +320,7 @@ function withTelegramMcqOverride(base: LoadExtensionsResult): LoadExtensionsResu
       success: false,
     });
   } else {
-    console.log("[gateway:mcq] installed telegram mcq tool override", { overridesApplied });
+    console.log("[gateway:mcq] installed channel mcq tool overrides (telegram + discord)", { overridesApplied });
     void emitGatewayOtel({
       level: "info",
       component: "daemon.mcq",
@@ -304,7 +352,7 @@ console.log("[gateway] session", {
 const resourceLoader = new DefaultResourceLoader({
   cwd: GATEWAY_CWD,
   agentDir: AGENT_DIR,
-  extensionsOverride: withTelegramMcqOverride,
+  extensionsOverride: withChannelMcqOverride,
 });
 await resourceLoader.reload();
 
@@ -688,6 +736,32 @@ if (DISCORD_TOKEN && DISCORD_ALLOWED_USER_ID) {
 
   try {
     await startDiscord(DISCORD_TOKEN, DISCORD_ALLOWED_USER_ID, enqueueToGateway);
+
+    // ── Discord UI + MCQ adapter (ADR-0122) ──────────────────
+    const discordClient = getDiscordClient();
+    if (discordClient) {
+      try {
+        const { initDiscordUI } = await import("@joelclaw/discord-ui");
+        initDiscordUI(discordClient);
+        registerDiscordMcqAdapter(fetchDiscordChannel);
+        console.log("[gateway] discord-ui initialized, MCQ adapter registered");
+        void emitGatewayOtel({
+          level: "info",
+          component: "daemon",
+          action: "daemon.discord-ui.initialized",
+          success: true,
+        });
+      } catch (error) {
+        console.error("[gateway] discord-ui init failed; interactive components disabled", { error: String(error) });
+        void emitGatewayOtel({
+          level: "error",
+          component: "daemon",
+          action: "daemon.discord-ui.init_failed",
+          success: false,
+          error: String(error),
+        });
+      }
+    }
   } catch (error) {
     console.error("[gateway] discord failed to start; discord channel disabled", { error: String(error) });
     void emitGatewayOtel({
