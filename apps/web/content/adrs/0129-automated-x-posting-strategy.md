@@ -51,10 +51,11 @@ All posts are autonomous. Gateway notifies Joel via Telegram after each tweet (s
 **All tweet text is LLM-generated via Claude Opus 4.6. No string templates, ever.** Each tweet is generated fresh by passing the context (title, URL, summary, etc.) to Opus with voice guidelines. This produces more natural, varied output than fill-in-the-blank templates. Opus because voice matters — tweets are public-facing Joel.
 
 Opus prompt includes:
-- The voice rules (terse, technical, dry, no emoji spam, no hashtags)
+- The `joel-writing-style` skill (at `skills/joel-writing-style/SKILL.md`) — Joel's actual voice derived from ~90K words of published content
 - The content context (what happened, relevant URL)
 - Max 280 chars constraint
 - The swarm-tools tweet examples as few-shot guidance
+- No emoji spam, no hashtags, no "excited to announce" energy
 
 ### Implementation
 
