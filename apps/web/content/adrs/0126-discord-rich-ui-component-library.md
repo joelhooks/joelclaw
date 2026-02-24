@@ -1,6 +1,6 @@
 # ADR-0126: Discord Rich UI Component Library
 
-- **Status**: proposed
+- **Status**: shipped
 - **Date**: 2026-02-24
 - **Related**: ADR-0122 (Discord rich messaging), ADR-0124 (thread-forked sessions), ADR-0125 (channel-aware prompt injection)
 

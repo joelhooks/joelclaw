@@ -1,6 +1,6 @@
 # ADR-0127: Feed Subscriptions & Resource Monitoring
 
-- **Status**: proposed
+- **Status**: shipped
 - **Date**: 2026-02-24
 - **Related**: ADR-0087 (observability pipeline), ADR-0112 (caching layer)
 
