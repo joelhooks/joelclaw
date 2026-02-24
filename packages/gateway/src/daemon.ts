@@ -723,13 +723,13 @@ if (DISCORD_TOKEN && DISCORD_ALLOWED_USER_ID) {
         ? parseDiscordChannelId(context.source) ?? undefined
         : undefined;
       if (!channelId) {
-        console.error("[gateway] discord send: no channel ID in context", { source: context?.source });
+        console.error("[gateway:discord] send: no channel ID in context", { source: context?.source });
         return;
       }
       try {
         await sendDiscord(channelId, envelope.text);
       } catch (error) {
-        console.error("[gateway] discord send failed", { error: String(error) });
+        console.error("[gateway:discord] send failed", { channelId, error: String(error) });
       }
     },
   });

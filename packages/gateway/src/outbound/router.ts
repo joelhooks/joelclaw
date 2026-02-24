@@ -133,7 +133,7 @@ function normalizeMessage(
   context?: OutboundChannelContext,
 ): OutboundEnvelope {
   const base = typeof message === "string" ? createEnvelope(message) : message;
-  const formatted = applyFormatRules(base.text);
+  const formatted = applyFormatRules(base.text.trim());
   const mergedButtons = mergeButtons(base.buttons ?? context?.buttons, formatted.buttons);
 
   if (!mergedButtons) {
