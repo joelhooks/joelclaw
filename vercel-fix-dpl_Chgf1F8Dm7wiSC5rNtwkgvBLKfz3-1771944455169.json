@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-02-24T14:50:00Z",
+  "deployment": "joelclaw-m0clr33jc-joelhooks-projects.vercel.app",
+  "failingCommit": "22ba7bb9ddb455bd2a73d39e96b0aa809e7bb3e5",
+  "failingCommitMessage": "feat(x-hooks): replace templates with pi-generated Panda-voice tweets",
+  "result": "not_reproduced_in_current_main",
+  "why": [
+    "Remote inspect could not be fetched in this sandbox (DNS ENOTFOUND for vercel.com).",
+    "Local web build command succeeded: npx turbo run build --filter=web.",
+    "Current main already includes follow-up commit 1339e1c ('fix: update lockfile for oauth-1.0a dependency')."
+  ],
+  "evidence": {
+    "currentHead": "1339e1c",
+    "originMain": "1339e1c",
+    "buildCommand": "cd ~/Code/joelhooks/joelclaw && npx turbo run build --filter=web 2>&1 | tail -60",
+    "buildOutcome": "success",
+    "lockfileCheck": "pnpm install --frozen-lockfile --offline --ignore-scripts",
+    "lockfileOutcome": "Lockfile is up to date (offline install later fails due missing tarball in cache, not lock mismatch)",
+    "diffSignal": "Commit 029aeca adds oauth-1.0a to packages/system-bus/package.json; lockfile entries for oauth-1.0a appear only in commit 1339e1c"
+  },
+  "conclusion": "Most likely original deploy failure cause was pnpm frozen-lockfile mismatch and it has already been repaired by commit 1339e1c. No new code change was needed in this run."
+}
