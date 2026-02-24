@@ -30,6 +30,7 @@ export { checkGranola, granolaCheckCron } from "./check-granola";
 export { checkEmail } from "./check-email";
 export { checkCalendar } from "./check-calendar";
 export { checkLoops } from "./check-loops";
+export { subscriptionCheckFeeds, subscriptionCheckSingle } from "./subscriptions";
 export { o11yTriage } from "./o11y-triage";
 export { vipEmailReceived } from "./vip-email-received";
 export { dailyDigest } from "./daily-digest";

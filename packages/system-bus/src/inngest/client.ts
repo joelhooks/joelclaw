@@ -1183,6 +1183,19 @@ export type Events = {
   "loops/stale.check": {
     data: Record<string, never>;
   };
+  "subscription/check-feeds.requested": {
+    data: {
+      forceAll?: boolean;
+      source?: string;
+    };
+  };
+  "subscription/check.requested": {
+    data: {
+      subscriptionId: string;
+      forced?: boolean;
+      source?: string;
+    };
+  };
   "check/o11y-triage.requested": {
     data: {
       reason?: string;
