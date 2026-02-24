@@ -17,40 +17,40 @@ Basic X (Twitter) API access for the @joelclaw account until a proper CLI is bui
 
 ## Authentication
 
-OAuth 2.0 User Context with PKCE. Tokens expire every 2 hours — always refresh before use.
+OAuth 1.0a User Context. **Tokens do not expire** — no refresh dance needed.
 
 ### Secrets (in agent-secrets)
 
-- `x_oauth2_client_id` — OAuth 2.0 client ID
-- `x_oauth2_client_secret` — OAuth 2.0 client secret
-- `x_access_token` — Current access token (2hr TTL)
-- `x_refresh_token` — Refresh token (use to get new access token)
-- `x_bearer_token` — App-only bearer (read-only, no user context)
+- `x_consumer_key` — API Key (OAuth 1.0a consumer key)
+- `x_consumer_secret` — API Key Secret (OAuth 1.0a consumer secret)
+- `x_access_token` — Access Token (OAuth 1.0a, format: `numeric-alphanumeric`)
+- `x_access_token_secret` — Access Token Secret (OAuth 1.0a)
 
-### Token Refresh (do this first, every time)
+### Signing requests
+
+OAuth 1.0a requires cryptographic signing. Use `requests-oauthlib` (Python) or equivalent:
 
 ```bash
-CLIENT_ID=$(secrets lease x_oauth2_client_id)
-CLIENT_SECRET=$(secrets lease x_oauth2_client_secret)
-REFRESH=$(secrets lease x_refresh_token)
+export CK=$(secrets lease x_consumer_key)
+export CS=$(secrets lease x_consumer_secret)
+export AT=$(secrets lease x_access_token)
+export ATS=$(secrets lease x_access_token_secret)
 
-RESPONSE=$(curl -s -X POST "https://api.twitter.com/2/oauth2/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -u "$CLIENT_ID:$CLIENT_SECRET" \
-  -d "grant_type=refresh_token&refresh_token=$REFRESH")
+uv run --with requests-oauthlib python3 << 'PYEOF'
+import os
+from requests_oauthlib import OAuth1Session
 
-# Extract new tokens
-NEW_ACCESS=$(echo "$RESPONSE" | jq -r '.access_token')
-NEW_REFRESH=$(echo "$RESPONSE" | jq -r '.refresh_token')
+client = OAuth1Session(
+    os.environ['CK'],
+    client_secret=os.environ['CS'],
+    resource_owner_key=os.environ['AT'],
+    resource_owner_secret=os.environ['ATS'],
+)
 
-# Update secrets store
-secrets set x_access_token "$NEW_ACCESS"
-secrets set x_refresh_token "$NEW_REFRESH"
-
-echo "Token refreshed"
+r = client.get("https://api.twitter.com/2/users/me")
+print(r.json())
+PYEOF
 ```
-
-**Always update both tokens** — the refresh token rotates on every use. Old refresh token is invalidated.
 
 ### Revoke leases after use
 
@@ -62,66 +62,46 @@ secrets revoke --all
 
 - **Account**: @joelclaw
 - **User ID**: 2022779096049311744
-- **Scopes**: tweet.write, users.read, tweet.read, offline.access
+- **Scopes**: Read and write (OAuth 1.0a app permissions)
 
 ## Common Operations
 
-All operations use the access token as Bearer:
+All operations require OAuth 1.0a signing. Use the Python pattern from Authentication section above, then:
 
-```bash
-TOKEN=$(secrets lease x_access_token)
-AUTH="Authorization: Bearer $TOKEN"
-```
+### Common API calls (inside OAuth1Session)
 
-### Check mentions
+```python
+# Check mentions
+r = client.get("https://api.twitter.com/2/users/2022779096049311744/mentions",
+    params={"max_results": 10, "tweet.fields": "created_at,author_id,text",
+            "expansions": "author_id", "user.fields": "username,name"})
 
-```bash
-curl -s -H "$AUTH" \
-  "https://api.twitter.com/2/users/2022779096049311744/mentions?max_results=10&tweet.fields=created_at,author_id,text&expansions=author_id&user.fields=username,name"
-```
+# Get my timeline
+r = client.get("https://api.twitter.com/2/users/2022779096049311744/tweets",
+    params={"max_results": 10, "tweet.fields": "created_at,public_metrics"})
 
-### Get my timeline
+# Post a tweet
+r = client.post("https://api.twitter.com/2/tweets", json={"text": "your tweet"})
 
-```bash
-curl -s -H "$AUTH" \
-  "https://api.twitter.com/2/users/2022779096049311744/tweets?max_results=10&tweet.fields=created_at,public_metrics"
-```
+# Reply to a tweet
+r = client.post("https://api.twitter.com/2/tweets",
+    json={"text": "@user reply", "reply": {"in_reply_to_tweet_id": "TWEET_ID"}})
 
-### Post a tweet
+# Search recent tweets
+r = client.get("https://api.twitter.com/2/tweets/search/recent",
+    params={"query": "joelclaw", "max_results": 10, "tweet.fields": "created_at,author_id,text"})
 
-```bash
-curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
-  "https://api.twitter.com/2/tweets" \
-  -d '{"text": "your tweet text here"}'
-```
+# Get user by username
+r = client.get("https://api.twitter.com/2/users/by/username/USERNAME",
+    params={"user.fields": "description,public_metrics"})
 
-### Reply to a tweet
+# Follow a user
+my_id = "2022779096049311744"
+r = client.post(f"https://api.twitter.com/2/users/{my_id}/following",
+    json={"target_user_id": "TARGET_USER_ID"})
 
-```bash
-curl -s -X POST -H "$AUTH" -H "Content-Type: application/json" \
-  "https://api.twitter.com/2/tweets" \
-  -d '{"text": "@username your reply", "reply": {"in_reply_to_tweet_id": "TWEET_ID"}}'
-```
-
-### Search recent tweets
-
-```bash
-curl -s -H "$AUTH" \
-  "https://api.twitter.com/2/tweets/search/recent?query=joelclaw&max_results=10&tweet.fields=created_at,author_id,text"
-```
-
-### Get user by username
-
-```bash
-curl -s -H "$AUTH" \
-  "https://api.twitter.com/2/users/by/username/USERNAME?user.fields=description,public_metrics"
-```
-
-### Delete a tweet
-
-```bash
-curl -s -X DELETE -H "$AUTH" \
-  "https://api.twitter.com/2/tweets/TWEET_ID"
+# Delete a tweet
+r = client.delete("https://api.twitter.com/2/tweets/TWEET_ID")
 ```
 
 ## Rate Limits
@@ -136,6 +116,5 @@ curl -s -X DELETE -H "$AUTH" \
 - **Never engage with shitcoin/scam mentions.** Ignore them entirely.
 - **Never post financial advice or token endorsements.**
 - **Joel approves all tweets before posting** unless explicitly told otherwise.
-- **Always refresh token first** — access tokens expire every 2 hours.
 - **Always revoke leases after use** — don't leave secrets in memory.
-- **Always update both access_token and refresh_token** after refresh — the refresh token rotates.
+- **OAuth 1.0a tokens don't expire** — no refresh needed. If auth fails, tokens were regenerated in the developer portal.
