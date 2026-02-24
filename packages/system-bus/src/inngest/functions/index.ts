@@ -100,6 +100,7 @@ export {
   docsIngestJanitor,
   docsReindex,
 } from "./docs-maintenance";
+export { slackChannelBackfill, slackBackfillBatch } from "./slack-backfill";
 export { hostFunctionDefinitions, hostFunctionIds } from "./index.host";
 export { clusterFunctionDefinitions, clusterFunctionIds } from "./index.cluster";
 

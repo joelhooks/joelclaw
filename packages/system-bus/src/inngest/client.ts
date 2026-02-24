@@ -733,6 +733,25 @@ export type Events = {
       paths?: string[];
     };
   };
+  "channel/slack.backfill.requested": {
+    data: {
+      channelId: string;
+      channelName: string;
+      oldestTs?: string;
+      latestTs?: string;
+      reason?: string;
+    };
+  };
+  "channel/slack.backfill.batch.requested": {
+    data: {
+      channels: Array<{
+        id: string;
+        name: string;
+      }>;
+      oldestTs?: string;
+      reason?: string;
+    };
+  };
 
   // --- Background Agents (ADR-0026) ---
   "system/agent.requested": {
