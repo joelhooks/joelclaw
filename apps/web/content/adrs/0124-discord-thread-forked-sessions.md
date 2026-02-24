@@ -118,6 +118,46 @@ Adopt from Kimaki's proven set + our Telegram commands:
 | `/resume` | Resume previous session | Kimaki |
 | `/abort` | Stop current operation | Kimaki |
 
+## Thread Naming
+
+Threads auto-created by the bot get named from the first message, which is often vague. The bot MUST rename threads as the conversation focus clarifies:
+
+- After 2-3 exchanges, call `thread.setName()` with a descriptive 3-8 word title
+- Update the name if the conversation topic shifts significantly
+- Same principle as `name_session` in pi — reflect what's actually being discussed
+- Bot has admin permissions, so `setName()` always succeeds
+
+## Forum Channel Support
+
+The bot can post to Discord forum channels (`ForumChannel.threads.create()`):
+
+- **Forum channel**: `1475891646540288010` (configured, bot has admin access)
+- **Default channel**: `901878582421364798` (main text channel for general messages)
+- Forum posts are structured threads with a name + initial message body
+- Use for: persistent reference content (ADR reviews, system status, loop results, session summaries)
+- Forum posts follow the same branch session model — each forum thread gets its own session
+
+### Forum Posting API
+
+```typescript
+// Gateway creates forum post
+const thread = await forumChannel.threads.create({
+  name: 'Gremlin ADR Review — Architecture Gaps',
+  message: { content: '## Review Summary\n...' },
+  appliedTags: [],  // optional forum tags
+})
+```
+
+## Ack-Before-Work for Thread Creation
+
+When the bot creates or enters a new thread (including forum posts), it MUST send an immediate acknowledgment before doing any heavy work:
+
+```
+Starting thread — loading context for [topic]...
+```
+
+This prevents the "hung" perception Joel reported when thread startup is slow due to context loading.
+
 ## Implementation
 
 1. Add `ThreadSessionManager` to gateway Discord channel handler
@@ -127,3 +167,6 @@ Adopt from Kimaki's proven set + our Telegram commands:
 5. Store session metadata in Redis with TTL
 6. Adopt Discord Components V2 for rich responses (containers, sections, buttons)
 7. Register slash commands via Discord Application Commands API
+8. Add `thread.setName()` call after 2-3 exchanges with descriptive title
+9. Add forum channel posting support (`ForumChannel.threads.create()`)
+10. Add immediate ack on thread entry/creation to prevent perceived hangs
