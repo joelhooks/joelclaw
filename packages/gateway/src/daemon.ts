@@ -20,6 +20,7 @@ import { start as startRedisChannel, shutdown as shutdownRedisChannel, isHealthy
 import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, sendMedia as sendTelegramMedia, parseChatId } from "./channels/telegram";
 import { start as startDiscord, shutdown as shutdownDiscord, send as sendDiscord, markError as markDiscordError, parseChannelId as parseDiscordChannelId, getClient as getDiscordClient, fetchChannel as fetchDiscordChannel } from "./channels/discord";
 import { start as startIMessage, shutdown as shutdownIMessage, send as sendIMessage } from "./channels/imessage";
+import { start as startSlack, shutdown as shutdownSlack, send as sendSlack, isStarted as isSlackStarted } from "./channels/slack";
 import { defaultGatewayConfig, loadGatewayConfig, providerForModel } from "./commands/config";
 import { getActiveMcqAdapter, type McqParams } from "./commands/mcq-adapter";
 import { getActiveDiscordMcqAdapter, registerDiscordMcqAdapter } from "./commands/discord-mcq-adapter";
@@ -440,12 +441,15 @@ const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID
 const DISCORD_TOKEN = process.env.DISCORD_BOT_TOKEN;
 const DISCORD_ALLOWED_USER_ID = process.env.DISCORD_ALLOWED_USER_ID;
 const IMESSAGE_ALLOWED_SENDER = process.env.IMESSAGE_ALLOWED_SENDER;
+const SLACK_ALLOWED_USER_ID = process.env.SLACK_ALLOWED_USER_ID;
+const SLACK_DEFAULT_CHANNEL_ID = process.env.SLACK_DEFAULT_CHANNEL_ID;
 const channelInfo = {
   redis: true,
   console: true,
   telegram: Boolean(TELEGRAM_TOKEN && TELEGRAM_USER_ID),
   discord: Boolean(DISCORD_TOKEN && DISCORD_ALLOWED_USER_ID),
   imessage: Boolean(IMESSAGE_ALLOWED_SENDER),
+  slack: false,
 };
 
 registerChannel("console", {
@@ -847,6 +851,46 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
   });
 }
 
+// ── Slack channel ──────────────────────────────────────
+registerChannel("slack", {
+  send: async (message, context) => {
+    const envelope = normalizeOutboundMessage(message);
+    const sourceTarget = context?.source?.startsWith("slack:")
+      ? context.source
+      : undefined;
+    const target = envelope.target ?? sourceTarget ?? SLACK_DEFAULT_CHANNEL_ID;
+    if (!target) {
+      console.error("[gateway:slack] send: no slack target in context/source/default", {
+        source: context?.source,
+      });
+      return;
+    }
+
+    try {
+      await sendSlack(target, envelope.text);
+    } catch (error) {
+      console.error("[gateway:slack] send failed", { target, error: String(error) });
+    }
+  },
+});
+
+try {
+  await startSlack(enqueueToGateway, {
+    allowedUserId: SLACK_ALLOWED_USER_ID,
+  });
+  channelInfo.slack = isSlackStarted();
+} catch (error) {
+  channelInfo.slack = false;
+  console.error("[gateway] slack failed to start; slack channel disabled", { error: String(error) });
+  void emitGatewayOtel({
+    level: "error",
+    component: "daemon",
+    action: "daemon.slack.start_failed",
+    success: false,
+    error: String(error),
+  });
+}
+
 // ── Init fallback controller (ADR-0091) ──────────────────
 // Must happen after Telegram starts so notify can send alerts.
 fallbackController.init(
@@ -1030,7 +1074,14 @@ console.log("[gateway] daemon started", {
   model: describeModel(session.model),
   cwd: HOME,
   agentDir: AGENT_DIR,
-  channels: ["redis", "console", ...(TELEGRAM_TOKEN ? ["telegram"] : [])],
+  channels: [
+    "redis",
+    "console",
+    ...(channelInfo.telegram ? ["telegram"] : []),
+    ...(channelInfo.discord ? ["discord"] : []),
+    ...(channelInfo.imessage ? ["imessage"] : []),
+    ...(channelInfo.slack ? ["slack"] : []),
+  ],
   pidFile: PID_FILE,
   wsPort: wsServer.port,
   wsPortFile: WS_PORT_FILE,
@@ -1044,6 +1095,9 @@ void emitGatewayOtel({
     pid: process.pid,
     wsPort: wsServer.port,
     telegramEnabled: Boolean(TELEGRAM_TOKEN && TELEGRAM_USER_ID),
+    discordEnabled: Boolean(DISCORD_TOKEN && DISCORD_ALLOWED_USER_ID),
+    imessageEnabled: Boolean(IMESSAGE_ALLOWED_SENDER),
+    slackEnabled: channelInfo.slack,
   },
 });
 
@@ -1087,6 +1141,12 @@ async function gracefulShutdown(signal: string): Promise<void> {
     await shutdownIMessage();
   } catch (error) {
     console.error("[gateway] imessage shutdown failed", { error });
+  }
+
+  try {
+    await shutdownSlack();
+  } catch (error) {
+    console.error("[gateway] slack shutdown failed", { error });
   }
 
   try {

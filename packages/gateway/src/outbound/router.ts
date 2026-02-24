@@ -1,6 +1,6 @@
 import type { InlineButton } from "../channels/telegram";
 import { applyFormatRules } from "./format";
-import { createEnvelope, type OutboundEnvelope } from "./envelope";
+import { createEnvelope, type OutboundChannelId, type OutboundEnvelope } from "./envelope";
 
 // Lazy reference to avoid static import binding pollution across test files.
 // Updated at wireSession() call time via re-import so mock.module() takes effect.
@@ -54,6 +54,7 @@ type SessionLike = {
 export type OutboundChannelContext = {
   source?: string;
   buttons?: InlineButton[][];
+  channel?: OutboundChannelId;
 };
 
 export type OutboundChannelHandler = {
@@ -151,7 +152,12 @@ function normalizeMessage(
 }
 
 function isStringCompatible(envelope: OutboundEnvelope): boolean {
-  return !envelope.buttons && envelope.silent === undefined && envelope.replyTo === undefined && envelope.format === undefined;
+  return !envelope.buttons
+    && envelope.silent === undefined
+    && envelope.replyTo === undefined
+    && envelope.format === undefined
+    && envelope.channel === undefined
+    && envelope.target === undefined;
 }
 
 export function routeResponse(
@@ -165,8 +171,15 @@ export function routeResponse(
 
   ensureDefaultChannels();
 
+  let target: OutboundChannelHandler | undefined;
+  if (normalized.channel) {
+    target = channels.get(normalized.channel);
+  }
+
   // Match exact source first, then prefix (e.g. "telegram:12345" → "telegram")
-  let target = channels.get(source);
+  if (!target) {
+    target = channels.get(source);
+  }
   if (!target) {
     const prefix = source.split(":")[0];
     if (prefix) target = channels.get(prefix);
@@ -182,6 +195,7 @@ export function routeResponse(
     const maybePromise = target.send(payload, {
       source,
       buttons: normalized.buttons,
+      ...(normalized.channel ? { channel: normalized.channel } : {}),
     });
     if (maybePromise && typeof (maybePromise as PromiseLike<unknown>).then === "function") {
       void (maybePromise as PromiseLike<unknown>).then(undefined, (error: unknown) => {
