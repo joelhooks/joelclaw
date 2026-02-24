@@ -743,7 +743,7 @@ if (DISCORD_TOKEN && DISCORD_ALLOWED_USER_ID) {
       try {
         const { initDiscordUI } = await import("@joelclaw/discord-ui");
         initDiscordUI(discordClient);
-        registerDiscordMcqAdapter(fetchDiscordChannel);
+        registerDiscordMcqAdapter(fetchDiscordChannel, getDiscordClient as () => any);
         console.log("[gateway] discord-ui initialized, MCQ adapter registered");
         void emitGatewayOtel({
           level: "info",
