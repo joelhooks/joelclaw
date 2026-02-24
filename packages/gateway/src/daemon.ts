@@ -18,6 +18,8 @@ import {
 } from "./command-queue";
 import { start as startRedisChannel, shutdown as shutdownRedisChannel, isHealthy as isRedisHealthy, getRedisClient } from "./channels/redis";
 import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, sendMedia as sendTelegramMedia, parseChatId } from "./channels/telegram";
+import { start as startDiscord, shutdown as shutdownDiscord, send as sendDiscord, parseChannelId as parseDiscordChannelId } from "./channels/discord";
+import { start as startIMessage, shutdown as shutdownIMessage, send as sendIMessage } from "./channels/imessage";
 import { defaultGatewayConfig, loadGatewayConfig, providerForModel } from "./commands/config";
 import { getActiveMcqAdapter, type McqParams } from "./commands/mcq-adapter";
 import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands/telegram-handler";
@@ -383,10 +385,15 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID
   ? parseInt(process.env.TELEGRAM_USER_ID, 10)
   : undefined;
+const DISCORD_TOKEN = process.env.DISCORD_BOT_TOKEN;
+const DISCORD_ALLOWED_USER_ID = process.env.DISCORD_ALLOWED_USER_ID;
+const IMESSAGE_ALLOWED_SENDER = process.env.IMESSAGE_ALLOWED_SENDER;
 const channelInfo = {
   redis: true,
   console: true,
   telegram: Boolean(TELEGRAM_TOKEN && TELEGRAM_USER_ID),
+  discord: Boolean(DISCORD_TOKEN && DISCORD_ALLOWED_USER_ID),
+  imessage: Boolean(IMESSAGE_ALLOWED_SENDER),
 };
 
 registerChannel("console", {
@@ -659,6 +666,72 @@ if (redisClient) {
   console.warn("[gateway:store] redis command client unavailable; durable replay skipped");
 }
 
+// ── Discord channel ────────────────────────────────────
+if (DISCORD_TOKEN && DISCORD_ALLOWED_USER_ID) {
+  registerChannel("discord", {
+    send: async (message, context) => {
+      const envelope = normalizeOutboundMessage(message);
+      const channelId = context?.source
+        ? parseDiscordChannelId(context.source) ?? undefined
+        : undefined;
+      if (!channelId) {
+        console.error("[gateway] discord send: no channel ID in context", { source: context?.source });
+        return;
+      }
+      try {
+        await sendDiscord(channelId, envelope.text);
+      } catch (error) {
+        console.error("[gateway] discord send failed", { error: String(error) });
+      }
+    },
+  });
+
+  try {
+    await startDiscord(DISCORD_TOKEN, DISCORD_ALLOWED_USER_ID, enqueueToGateway);
+  } catch (error) {
+    console.error("[gateway] discord failed to start; discord channel disabled", { error: String(error) });
+    void emitGatewayOtel({
+      level: "error",
+      component: "daemon",
+      action: "daemon.discord.start_failed",
+      success: false,
+      error: String(error),
+    });
+  }
+} else {
+  console.warn("[gateway] discord disabled — set DISCORD_BOT_TOKEN and DISCORD_ALLOWED_USER_ID env vars");
+  void emitGatewayOtel({
+    level: "warn",
+    component: "daemon",
+    action: "daemon.discord.disabled",
+    success: false,
+  });
+}
+
+// ── iMessage channel ───────────────────────────────────
+if (IMESSAGE_ALLOWED_SENDER) {
+  registerChannel("imessage", {
+    send: async (message) => {
+      const envelope = normalizeOutboundMessage(message);
+      try {
+        await sendIMessage(IMESSAGE_ALLOWED_SENDER, envelope.text);
+      } catch (error) {
+        console.error("[gateway] imessage send failed", { error: String(error) });
+      }
+    },
+  });
+
+  await startIMessage(IMESSAGE_ALLOWED_SENDER, enqueueToGateway);
+} else {
+  console.warn("[gateway] imessage disabled — set IMESSAGE_ALLOWED_SENDER env var");
+  void emitGatewayOtel({
+    level: "warn",
+    component: "daemon",
+    action: "daemon.imessage.disabled",
+    success: false,
+  });
+}
+
 // ── Telegram channel ───────────────────────────────────
 if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
   await startTelegram(TELEGRAM_TOKEN, TELEGRAM_USER_ID, enqueueToGateway, {
@@ -916,6 +989,18 @@ async function gracefulShutdown(signal: string): Promise<void> {
     await heartbeatRunner.shutdown();
   } catch (error) {
     console.error("[gateway] heartbeat shutdown failed", { error });
+  }
+
+  try {
+    await shutdownDiscord();
+  } catch (error) {
+    console.error("[gateway] discord shutdown failed", { error });
+  }
+
+  try {
+    await shutdownIMessage();
+  } catch (error) {
+    console.error("[gateway] imessage shutdown failed", { error });
   }
 
   try {
