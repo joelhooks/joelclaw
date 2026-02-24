@@ -1,14 +1,45 @@
+/**
+ * iMessage channel via imsg JSON-RPC socket daemon (ADR-0121).
+ *
+ * Architecture:
+ *   - `imsg rpc --socket /tmp/imsg.sock` runs as a separate launchd service with FDA
+ *   - Gateway connects to that socket, sends JSON-RPC requests, receives notifications
+ *   - No FDA required for the gateway daemon itself
+ */
+import net from "node:net";
 import { emitGatewayOtel } from "../observability";
 import type { EnqueueFn } from "./redis";
 
-const RESTART_DELAY_MS = 5_000;
+const SOCKET_PATH = process.env.IMSG_SOCKET_PATH ?? "/tmp/imsg.sock";
+const RECONNECT_DELAY_MS = 5_000;
+const SEND_TIMEOUT_MS = 10_000;
 
 let allowedSender: string | undefined;
 let enqueuePrompt: EnqueueFn | undefined;
 let running = false;
 let stopRequested = false;
+let _socket: net.Socket | undefined;
+let _nextId = 1;
+const _pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
 
-interface IMessageWatchEvent {
+function nextId(): number {
+  return _nextId++;
+}
+
+interface JsonRpcNotification {
+  jsonrpc: "2.0";
+  method: string;
+  params: unknown;
+}
+
+interface JsonRpcResponse {
+  jsonrpc: "2.0";
+  id: number;
+  result?: unknown;
+  error?: { code: number; message: string; data?: string };
+}
+
+interface IMessagePayload {
   id?: number;
   chat_id?: number;
   text?: string;
@@ -16,132 +47,172 @@ interface IMessageWatchEvent {
   is_from_me?: boolean;
   created_at?: string;
   guid?: string;
-  attachments?: unknown[];
-  reactions?: unknown[];
-  destination_caller_id?: string;
 }
 
-async function watchLoop(): Promise<void> {
-  while (!stopRequested) {
-    let proc: ReturnType<typeof Bun.spawn> | undefined;
+function handleNotification(notif: JsonRpcNotification): void {
+  if (notif.method !== "message") return;
 
-    try {
-      proc = Bun.spawn(["imsg", "watch", "--json"], {
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+  const params = notif.params as { subscription?: number; message?: IMessagePayload };
+  const msg = params?.message;
+  if (!msg) return;
+  if (msg.is_from_me) return;
+  if (!msg.text?.trim()) return;
+  if (!msg.sender) return;
 
-      console.log("[gateway:imessage] watch process started", { pid: proc.pid });
-      void emitGatewayOtel({
-        level: "info",
-        component: "imessage-channel",
-        action: "imessage.watch.started",
-        success: true,
-        metadata: { pid: proc.pid },
-      });
-
-      const stdout = proc.stdout;
-      if (!stdout || typeof stdout === "number") {
-        throw new Error("imsg watch stdout not available");
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      for await (const chunk of stdout as unknown as AsyncIterable<Uint8Array>) {
-        if (stopRequested) break;
-
-        buffer += decoder.decode(chunk, { stream: true });
-
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-
-          try {
-            const event = JSON.parse(trimmed) as IMessageWatchEvent;
-            handleEvent(event);
-          } catch {
-            // not JSON — debug log only
-            console.debug("[gateway:imessage] non-JSON line", { line: trimmed });
-          }
-        }
-      }
-    } catch (error) {
-      if (!stopRequested) {
-        console.error("[gateway:imessage] watch process error", { error: String(error) });
-        void emitGatewayOtel({
-          level: "error",
-          component: "imessage-channel",
-          action: "imessage.watch.error",
-          success: false,
-          error: String(error),
-        });
-      }
-    } finally {
-      proc?.kill();
-    }
-
-    if (!stopRequested) {
-      console.log("[gateway:imessage] restarting watch in", RESTART_DELAY_MS, "ms");
-      void emitGatewayOtel({
-        level: "warn",
-        component: "imessage-channel",
-        action: "imessage.watch.restarting",
-        success: false,
-      });
-      await new Promise((r) => setTimeout(r, RESTART_DELAY_MS));
-    }
-  }
-}
-
-function handleEvent(event: IMessageWatchEvent): void {
-  // Only handle inbound messages (not sent by us)
-  if (event.is_from_me) return;
-  if (!event.text?.trim()) return;
-  if (!event.sender) return;
-
-  // Filter to allowed sender only
-  if (
-    allowedSender &&
-    event.sender.toLowerCase() !== allowedSender.toLowerCase()
-  ) {
-    console.debug("[gateway:imessage] message from non-allowed sender", {
-      sender: event.sender,
-    });
+  if (allowedSender && msg.sender.toLowerCase() !== allowedSender.toLowerCase()) {
+    console.debug("[gateway:imessage] message from non-allowed sender", { sender: msg.sender });
     return;
   }
 
-  const chatId = event.chat_id ?? 0;
+  const chatId = msg.chat_id ?? 0;
   const source = `imessage:${chatId}`;
-  const text = event.text.trim();
+  const text = msg.text.trim();
 
-  console.log("[gateway:imessage] message received", {
-    chatId,
-    sender: event.sender,
-    length: text.length,
-  });
-
+  console.log("[gateway:imessage] message received", { chatId, sender: msg.sender, length: text.length });
   void emitGatewayOtel({
     level: "info",
     component: "imessage-channel",
     action: "imessage.message.received",
     success: true,
-    metadata: {
-      chatId,
-      sender: event.sender,
-      length: text.length,
-    },
+    metadata: { chatId, sender: msg.sender, length: text.length },
   });
 
   enqueuePrompt!(source, text, {
     imessageChatId: chatId,
-    imessageMessageId: event.id,
-    imessageSender: event.sender,
-    imessageGuid: event.guid,
+    imessageMessageId: msg.id,
+    imessageSender: msg.sender,
+    imessageGuid: msg.guid,
   });
+}
+
+function sendRequest(socket: net.Socket, method: string, params: Record<string, unknown>): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const id = nextId();
+    const timer = setTimeout(() => {
+      _pending.delete(id);
+      reject(new Error(`RPC timeout: ${method}`));
+    }, SEND_TIMEOUT_MS);
+
+    _pending.set(id, { resolve, reject, timer });
+    const msg = JSON.stringify({ jsonrpc: "2.0", method, params, id }) + "\n";
+    socket.write(msg);
+  });
+}
+
+async function connectAndRun(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const socket = net.createConnection(SOCKET_PATH);
+    _socket = socket;
+    let buffer = "";
+    let subscribed = false;
+
+    socket.on("connect", async () => {
+      console.log("[gateway:imessage] connected to imsg-rpc socket");
+      void emitGatewayOtel({
+        level: "info",
+        component: "imessage-channel",
+        action: "imessage.socket.connected",
+        success: true,
+      });
+
+      try {
+        // Subscribe to all incoming messages
+        const params: Record<string, unknown> = { attachments: false };
+        if (allowedSender) params.participants = [allowedSender];
+
+        await sendRequest(socket, "watch.subscribe", params);
+        subscribed = true;
+        console.log("[gateway:imessage] watch.subscribe OK");
+      } catch (err) {
+        console.error("[gateway:imessage] watch.subscribe failed", { error: String(err) });
+        socket.destroy();
+      }
+    });
+
+    socket.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        let parsed: JsonRpcResponse | JsonRpcNotification;
+        try {
+          parsed = JSON.parse(trimmed) as JsonRpcResponse | JsonRpcNotification;
+        } catch {
+          console.warn("[gateway:imessage] non-JSON from socket", { line: trimmed });
+          continue;
+        }
+
+        // Response to a pending request
+        if ("id" in parsed && parsed.id != null) {
+          const entry = _pending.get(parsed.id as number);
+          if (entry) {
+            clearTimeout(entry.timer);
+            _pending.delete(parsed.id as number);
+            const resp = parsed as JsonRpcResponse;
+            if (resp.error) {
+              entry.reject(new Error(`RPC error ${resp.error.code}: ${resp.error.message}`));
+            } else {
+              entry.resolve(resp.result);
+            }
+          }
+        } else if ("method" in parsed) {
+          // Notification
+          handleNotification(parsed as JsonRpcNotification);
+        }
+      }
+    });
+
+    socket.on("error", (err) => {
+      if (!stopRequested) {
+        console.error("[gateway:imessage] socket error", { error: err.message });
+        void emitGatewayOtel({
+          level: "error",
+          component: "imessage-channel",
+          action: "imessage.socket.error",
+          success: false,
+          error: err.message,
+        });
+      }
+    });
+
+    socket.on("close", () => {
+      _socket = undefined;
+      // Reject all pending
+      for (const [id, entry] of _pending) {
+        clearTimeout(entry.timer);
+        entry.reject(new Error("socket closed"));
+        _pending.delete(id);
+      }
+      resolve(); // signal reconnect loop
+    });
+  });
+}
+
+async function reconnectLoop(): Promise<void> {
+  while (!stopRequested) {
+    try {
+      await connectAndRun();
+    } catch (err) {
+      if (!stopRequested) {
+        console.error("[gateway:imessage] connection error", { error: String(err) });
+      }
+    }
+
+    if (!stopRequested) {
+      console.log(`[gateway:imessage] reconnecting in ${RECONNECT_DELAY_MS}ms`);
+      void emitGatewayOtel({
+        level: "warn",
+        component: "imessage-channel",
+        action: "imessage.socket.reconnecting",
+        success: false,
+      });
+      await new Promise((r) => setTimeout(r, RECONNECT_DELAY_MS));
+    }
+  }
 }
 
 export async function start(sender: string, enqueue: EnqueueFn): Promise<void> {
@@ -151,52 +222,42 @@ export async function start(sender: string, enqueue: EnqueueFn): Promise<void> {
   allowedSender = sender;
   enqueuePrompt = enqueue;
 
-  // Verify imsg is available
-  try {
-    const probe = Bun.spawnSync(["imsg", "--version"]);
-    if (probe.exitCode !== 0) throw new Error("imsg not found");
-  } catch {
-    console.error("[gateway:imessage] imsg CLI not found — iMessage channel disabled");
-    void emitGatewayOtel({
-      level: "error",
-      component: "imessage-channel",
-      action: "imessage.channel.start_failed",
-      success: false,
-      error: "imsg_not_found",
-    });
-    running = false;
-    return;
-  }
-
-  // Start watch loop in background — self-heals on crash
-  void watchLoop().catch((error) => {
-    console.error("[gateway:imessage] watch loop fatal", { error: String(error) });
+  void reconnectLoop().catch((err) => {
+    console.error("[gateway:imessage] reconnect loop fatal", { error: String(err) });
   });
 
-  console.log("[gateway:imessage] channel started", { allowedSender });
+  console.log("[gateway:imessage] channel started", { socketPath: SOCKET_PATH, allowedSender });
   void emitGatewayOtel({
     level: "info",
     component: "imessage-channel",
     action: "imessage.channel.started",
     success: true,
-    metadata: { allowedSender },
+    metadata: { socketPath: SOCKET_PATH, allowedSender },
   });
 }
 
 /**
- * Send an iMessage reply via imsg CLI.
+ * Send an iMessage via JSON-RPC send method.
  */
 export async function send(to: string, text: string): Promise<void> {
+  if (!_socket || _socket.destroyed) {
+    console.error("[gateway:imessage] not connected, can't send");
+    void emitGatewayOtel({
+      level: "error",
+      component: "imessage-channel",
+      action: "imessage.send.not_connected",
+      success: false,
+      metadata: { to },
+    });
+    return;
+  }
+
   // Chunk at 1000 chars — iMessage has no hard limit but long messages are jarring
   const CHUNK_MAX = 1000;
   const chunks: string[] = [];
   let remaining = text;
-
   while (remaining.length > 0) {
-    if (remaining.length <= CHUNK_MAX) {
-      chunks.push(remaining);
-      break;
-    }
+    if (remaining.length <= CHUNK_MAX) { chunks.push(remaining); break; }
     let splitAt = remaining.lastIndexOf("\n", CHUNK_MAX);
     if (splitAt < CHUNK_MAX * 0.5) splitAt = remaining.lastIndexOf(" ", CHUNK_MAX);
     if (splitAt < CHUNK_MAX * 0.3) splitAt = CHUNK_MAX;
@@ -207,28 +268,15 @@ export async function send(to: string, text: string): Promise<void> {
   for (const chunk of chunks) {
     if (!chunk.trim()) continue;
     try {
-      const proc = Bun.spawnSync(["imsg", "send", "--to", to, "--text", chunk]);
-      if (proc.exitCode !== 0) {
-        const stderr = new TextDecoder().decode(proc.stderr);
-        console.error("[gateway:imessage] send failed", { to, stderr });
-        void emitGatewayOtel({
-          level: "error",
-          component: "imessage-channel",
-          action: "imessage.send.failed",
-          success: false,
-          error: stderr,
-          metadata: { to },
-        });
-        return;
-      }
-    } catch (error) {
-      console.error("[gateway:imessage] send error", { to, error: String(error) });
+      await sendRequest(_socket, "send", { to, text: chunk });
+    } catch (err) {
+      console.error("[gateway:imessage] send failed", { to, error: String(err) });
       void emitGatewayOtel({
         level: "error",
         component: "imessage-channel",
-        action: "imessage.send.error",
+        action: "imessage.send.failed",
         success: false,
-        error: String(error),
+        error: String(err),
         metadata: { to },
       });
       return;
@@ -244,10 +292,6 @@ export async function send(to: string, text: string): Promise<void> {
   });
 }
 
-/**
- * Parse sender handle from imessage source string like "imessage:2"
- * Returns the chat_id. Outbound needs the original sender handle — pass it from metadata.
- */
 export function parseChatId(source: string): number | undefined {
   const match = source.match(/^imessage:(\d+)$/);
   return match?.[1] ? parseInt(match[1], 10) : undefined;
@@ -256,6 +300,10 @@ export function parseChatId(source: string): number | undefined {
 export async function shutdown(): Promise<void> {
   stopRequested = true;
   running = false;
+  if (_socket && !_socket.destroyed) {
+    _socket.destroy();
+    _socket = undefined;
+  }
   console.log("[gateway:imessage] stopped");
   void emitGatewayOtel({
     level: "info",
