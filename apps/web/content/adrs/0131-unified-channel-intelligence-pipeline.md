@@ -72,12 +72,23 @@ Replaces the broken thread forking (ADR-0124):
 
 Extends ADR-0130:
 
-1. Bot joins all accessible channels (or uses user-scoped delegation)
+1. Bot uses user-scoped delegation to read all accessible channels
 2. All messages ingested to Typesense — no filtering at ingest
 3. Classification runs on every message (Haiku is cheap enough)
-4. Only `signal` messages interrupt the gateway session
-5. `context` messages batched into daily/hourly channel digests
+4. Only `signal` messages surface to Joel via gateway (DM or Telegram)
+5. `context` messages batched into periodic channel digests for Joel
 6. Channel catalog auto-populates from message patterns
+
+### Privacy Boundary
+
+**This pipeline is Joel-only intelligence. JoelClaw does NOT participate in Slack channels.**
+
+- JoelClaw never responds to other users in Slack channels
+- JoelClaw never responds to @mentions from anyone other than Joel
+- All channel data is private context for Joel — never surfaced publicly
+- The only public-facing content JoelClaw produces is on joelclaw.com
+- Slack insights are delivered to Joel via DM (Slack/Telegram/Discord) — never posted back to monitored channels
+- DMs between Joel and JoelClaw are private conversation, same as Telegram
 
 ### Inngest Functions
 
