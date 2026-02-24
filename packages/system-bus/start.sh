@@ -5,7 +5,7 @@
 # ADR-0089: single-source deployment.
 # Startup is immutable: no runtime git pull / bun install mutation.
 
-export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"
+export PATH="$HOME/.bun/bin:$HOME/.local/bin:$HOME/.local/share/fnm/aliases/default/bin:$PATH"
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LEGACY_WORKER_ROOT="$HOME/Code/system-bus-worker"
