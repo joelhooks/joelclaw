@@ -1,5 +1,6 @@
 import { constants as fsConstants } from "node:fs";
 import { access, chmod, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { NonRetriableError } from "inngest";
 import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
@@ -322,9 +323,9 @@ async function ensureAnnasArchiveSecret(secretPath: string): Promise<{
 }
 
 async function listOutputEntries(outputDir: string): Promise<OutputEntry[]> {
-  let entries: Awaited<ReturnType<typeof readdir>>;
+  let entries: Dirent<string>[];
   try {
-    entries = await readdir(outputDir, { withFileTypes: true });
+    entries = (await readdir(outputDir, { withFileTypes: true })) as Dirent<string>[];
   } catch {
     return [];
   }
