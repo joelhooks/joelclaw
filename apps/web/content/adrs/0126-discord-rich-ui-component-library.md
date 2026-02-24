@@ -159,24 +159,28 @@ Design language: **utilitarian-dense** — high information density, monospace d
 - Ultra-compact for routine heartbeats
 - Expands to full StatusContainer on click
 
-### Slash Commands (Discord Application Commands)
+### Slash Commands — Work-Mapped
 
-| Command | Args | Component | Source |
-|---------|------|-----------|--------|
-| `/status` | — | StatusContainer | Telegram parity |
-| `/health` | — | StatusContainer (detailed) | Telegram parity |
-| `/runs` | `[count]` | RunCard | Telegram parity |
-| `/search` | `<query>` | SearchResultCard | Telegram parity |
-| `/recall` | `<query>` | SearchResultCard | New |
-| `/model` | `<model>` | Select menu | Telegram parity |
-| `/thinking` | `<level>` | Select menu | Telegram parity |
-| `/compact` | — | Confirmation | Telegram parity |
-| `/new` | — | Confirmation + SessionCard | Telegram parity |
-| `/reload` | — | Confirmation | Telegram parity |
-| `/fork` | `[message_id]` | SessionCard | Kimaki |
-| `/queue` | `<prompt>` | Confirmation | Kimaki |
-| `/resume` | `[session]` | SessionCard + autocomplete | Kimaki |
-| `/abort` | — | Confirmation | Kimaki |
+Commands match actual workloads, not generic bot patterns.
+
+| Command | Args | Component | Workload (72h vol) |
+|---------|------|-----------|-------------------|
+| `/health` | — | StatusContainer | Heartbeat (403) |
+| `/recall` | `<query>` | SearchResultCard | Memory search (321) |
+| `/runs` | `[count]` | RunCard | Run monitoring |
+| `/discover` | `<url>` | DiscoveryCard | Discovery (34) |
+| `/friction` | — | ApprovalCard list | Friction triage (8) |
+| `/sync` | — | StatusContainer | Content sync (990) |
+| `/docs` | — | RunCard (filtered) | Docs ingest (5048) |
+| `/loop` | `[action]` | RunCard + buttons | Agent loops |
+| `/email` | — | SearchResultCard | Email triage (15) |
+| `/deploy` | — | StatusContainer | Vercel deploys |
+| `/schedule` | `<prompt>` | Confirmation | Deferred tasks (ADR-0102) |
+| `/fork` | `[message_id]` | SessionCard | Session mgmt (Kimaki) |
+| `/compact` | — | Confirmation | Session mgmt |
+| `/config` | — | Select menus | Settings (model, thinking) |
+
+**Removed**: Generic `/status` (merged into `/health`), `/help` (Discord's built-in command list), `/new` (use `/fork`), `/reload` (ops-only, not user work), `/search` (merged into `/recall`), `/model`+`/thinking` (merged into `/config`).
 
 ## Implementation
 
