@@ -84,11 +84,11 @@ type TypesenseObservationDoc = {
 
 let redisClient: Redis | null = null;
 const OBSERVER_LLM_TIMEOUT_MS = Number.parseInt(
-  process.env.OBSERVER_LLM_TIMEOUT_MS ?? "30000",
+  process.env.OBSERVER_LLM_TIMEOUT_MS ?? "60000",
   10
 );
-const OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS = 3;
-const OBSERVER_LLM_LOCKFILE_RETRY_BASE_MS = 500;
+const OBSERVER_LLM_LOCKFILE_MAX_ATTEMPTS = 5;
+const OBSERVER_LLM_LOCKFILE_RETRY_BASE_MS = 5000;
 const OBSERVER_LLM_LOCKFILE_RETRY_JITTER_MS = 500;
 const MEMORY_OBSERVATIONS_COLLECTION = "memory_observations";
 

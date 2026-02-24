@@ -11,6 +11,8 @@ import * as typesense from "../../lib/typesense";
 import { chunkBySegments, chunkBySpeakerTurns } from "../../lib/transcript-chunk";
 
 const VAULT = process.env.VAULT_PATH ?? `${process.env.HOME}/Vault`;
+const INVALID_ANTHROPIC_KEY_ERROR =
+  "secrets lease returned invalid value for anthropic_api_key";
 
 // --- Screenshot naming: extract descriptive slugs from transcript context ---
 const STOP_WORDS = new Set([
@@ -66,6 +68,34 @@ function resolveSourceDateSeconds(publishedDate: string | undefined): number {
   const parsed = Date.parse(publishedDate);
   if (!Number.isNaN(parsed)) return Math.floor(parsed / 1000);
   return Math.floor(Date.now() / 1000);
+}
+
+function assertValidAnthropicKey(value: string | undefined): string {
+  const key = (value ?? "").trim();
+  if (!key || key.startsWith("{")) {
+    throw new Error(INVALID_ANTHROPIC_KEY_ERROR);
+  }
+  return key;
+}
+
+function leaseAnthropicApiKey(): string {
+  const envKey = process.env.ANTHROPIC_API_KEY?.trim();
+  if (envKey) {
+    return assertValidAnthropicKey(envKey);
+  }
+
+  try {
+    const leased = execSync(
+      "secrets lease anthropic_api_key --ttl 1h 2>/dev/null",
+      { encoding: "utf-8", timeout: 5000 },
+    ).trim();
+    return assertValidAnthropicKey(leased);
+  } catch (error) {
+    if (error instanceof Error && error.message === INVALID_ANTHROPIC_KEY_ERROR) {
+      throw error;
+    }
+    throw new Error(INVALID_ANTHROPIC_KEY_ERROR);
+  }
 }
 
 /**
@@ -225,24 +255,7 @@ export const transcriptProcess = inngest.createFunction(
         type Reviewed = { name: string; altText: string; timestamp: string };
         if (screenshots.length === 0) return [] as Reviewed[];
 
-        // Get API key — env first, then agent-secrets
-        let apiKey = process.env.ANTHROPIC_API_KEY;
-        if (!apiKey) {
-          try {
-            apiKey = execSync(
-              "secrets lease anthropic_api_key --ttl 1h 2>/dev/null",
-              { encoding: "utf-8", timeout: 5000 },
-            ).trim();
-          } catch {}
-        }
-        if (!apiKey) {
-          // Fallback: keep originals with transcript-derived names
-          return screenshots.map((s) => ({
-            name: s.name,
-            altText: s.name.replace(".jpg", "").replace(/-/g, " "),
-            timestamp: s.timestamp,
-          }));
-        }
+        const apiKey = leaseAnthropicApiKey();
 
         // Read transcript for cross-reference
         const transcript: {

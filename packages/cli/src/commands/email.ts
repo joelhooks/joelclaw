@@ -1,4 +1,4 @@
-import { Command, Options } from "@effect/cli"
+import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
 import * as os from "node:os"
@@ -562,19 +562,49 @@ const inboxCmd = Command.make(
 const archiveCmd = Command.make(
   "archive",
   {
-    conversationId: Options.text("id").pipe(Options.withAlias("i")),
+    conversationIdArg: Args.text({ name: "conversation-id" }).pipe(Args.optional),
+    conversationId: Options.text("id").pipe(Options.withAlias("i"), Options.optional),
   },
-  ({ conversationId }) =>
+  ({ conversationId, conversationIdArg }) =>
     Effect.gen(function* () {
+      const resolvedConversationId =
+        conversationId._tag === "Some"
+          ? conversationId.value
+          : conversationIdArg._tag === "Some"
+            ? conversationIdArg.value
+            : null
+
+      if (!resolvedConversationId) {
+        yield* Console.log(
+          respondError(
+            "email archive",
+            "Missing conversation ID",
+            "MISSING_CONVERSATION_ID",
+            "Pass conversation ID as positional argument or with --id",
+            [
+              {
+                command: "joelclaw email archive <conversation-id>",
+                description: "Archive a conversation by positional ID",
+              },
+              {
+                command: "joelclaw email archive --id <conversation-id>",
+                description: "Archive a conversation by --id option",
+              },
+            ],
+          ),
+        )
+        return
+      }
+
       const token = frontToken()
       yield* Effect.tryPromise(() =>
-        frontPatch(`/conversations/${conversationId}`, { status: "archived" }, token),
+        frontPatch(`/conversations/${resolvedConversationId}`, { status: "archived" }, token),
       )
 
       yield* Console.log(
         respond(
           "email archive",
-          { archived: conversationId },
+          { archived: resolvedConversationId },
           [
             {
               command: "joelclaw email inbox",

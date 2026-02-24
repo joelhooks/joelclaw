@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
 
-import { Command } from "@effect/cli"
+import { Command, Options } from "@effect/cli"
 import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Console, Effect } from "effect"
 import { Inngest } from "./inngest"
 import { respond } from "./response"
+import { ALLOWED_MODELS } from "../../gateway/src/commands/config.ts"
 
 import { sendCmd } from "./commands/send"
 import { runsCmd, runCmd } from "./commands/runs"
@@ -36,6 +37,50 @@ import { otelCmd } from "./commands/otel"
 import { langfuseCmd } from "./commands/langfuse"
 
 // ── Root ─────────────────────────────────────────────────────────────
+
+const modelsList = Options.boolean("list").pipe(
+  Options.withDefault(false),
+  Options.withDescription("List allowed gateway model IDs"),
+)
+
+const modelsPlain = Options.boolean("plain").pipe(
+  Options.withDefault(false),
+  Options.withDescription("Emit newline-delimited model IDs for shell scripts"),
+)
+
+const modelsCmd = Command.make("models", { list: modelsList, plain: modelsPlain }, ({ list, plain }) =>
+  Effect.gen(function* () {
+    const shouldList = list || plain
+    const models = [...ALLOWED_MODELS]
+
+    if (!shouldList) {
+      yield* Console.log(respond(
+        "models",
+        { description: "Use --list to show allowed gateway model IDs" },
+        [
+          { command: "joelclaw models --list", description: "List allowed gateway model IDs" },
+          { command: "joelclaw models --list --plain", description: "Emit newline-delimited model IDs for scripts" },
+        ],
+        true
+      ))
+      return
+    }
+
+    if (plain) {
+      yield* Console.log(models.join("\n"))
+      return
+    }
+
+    yield* Console.log(respond(
+      "models --list",
+      { count: models.length, models },
+      [{ command: "joelclaw models --list --plain", description: "Emit newline-delimited model IDs for scripts" }],
+      true
+    ))
+  })
+).pipe(
+  Command.withDescription("List allowed gateway model IDs from gateway config"),
+)
 
 const root = Command.make("joelclaw", {}, () =>
   Effect.gen(function* () {
@@ -85,6 +130,7 @@ const root = Command.make("joelclaw", {}, () =>
           docs: "joelclaw docs {add|search|context|list|show|status|enrich|reindex}",
           vault: "joelclaw vault {read|search|ls|tree}",
           email: "joelclaw email {inboxes|inbox|read|archive|archive-bulk}",
+          models: "joelclaw models --list [--plain]",
           nas: "joelclaw nas {status|runs|review}",
           otel: "joelclaw otel {list|search|stats}",
           langfuse: "joelclaw langfuse {aggregate}",
@@ -106,7 +152,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, docsCmd, emailCmd, callCmd, search, nasCmd, otelCmd, langfuseCmd, inngestCmd])
+  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, docsCmd, emailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd])
 )
 
 const cli = Command.run(root, {

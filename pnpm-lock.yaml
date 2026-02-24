@@ -218,9 +218,6 @@ importers:
       '@toon-format/toon':
         specifier: ^2.1.0
         version: 2.1.0
-      '@xdevplatform/xdk':
-        specifier: github:xdevplatform/xdk-typescript
-        version: https://codeload.github.com/xdevplatform/xdk-typescript/tar.gz/81aacb165e0802e188f608bdf462b60fc4e713a2(node-fetch@3.3.2)
       effect:
         specifier: ^3.19.17
         version: 3.19.17
@@ -244,12 +241,12 @@ importers:
         specifier: ^14.25.1
         version: 14.25.1
       react:
-        specifier: 18.3.1
-        version: 18.3.1
+        specifier: ^19.0.0
+        version: 19.2.0
     devDependencies:
       '@types/react':
-        specifier: 18.3.18
-        version: 18.3.18
+        specifier: 19.2.2
+        version: 19.2.2
 
   packages/email:
     dependencies:
@@ -400,6 +397,9 @@ importers:
       convex:
         specifier: ^1.32.0
         version: 1.32.0(react@19.2.4)
+      fast-xml-parser:
+        specifier: ^5.3.7
+        version: 5.3.4
       hono:
         specifier: ^4.11.9
         version: 4.11.9

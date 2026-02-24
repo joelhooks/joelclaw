@@ -18,13 +18,10 @@ export type TriagePattern = {
 export const TRIAGE_PATTERNS: TriagePattern[] = [
   // Tier 1: auto-fix or ignore
   {
-    // Content sync can intentionally skip commits when safety gate blocks push.
-    // Keep as Tier 2 noise initially, then auto-fix via retry after repeated hits.
-    match: { action: "content_sync.completed", error: /changes_not_committed/iu },
-    tier: 2,
+    match: { component: "content-sync", action: "content_sync.completed" },
+    tier: 1,
     handler: "autoCommitAndRetry",
-    dedup_hours: 6,
-    escalate_after: 5,
+    dedup_hours: 2,
   },
   {
     match: { action: "telegram.send.skipped", error: /bot_not_started/iu },
@@ -48,7 +45,7 @@ export const TRIAGE_PATTERNS: TriagePattern[] = [
     match: { component: "o11y-triage", action: "auto_fix.applied" },
     tier: 1,
     handler: "ignore",
-    dedup_hours: 1,
+    dedup_hours: 24,
   },
   {
     match: {
@@ -74,7 +71,8 @@ export const TRIAGE_PATTERNS: TriagePattern[] = [
       action: "memory.write_gate_drift.detected",
     },
     tier: 2,
-    dedup_hours: 6,
+    handler: "restartWorker",
+    dedup_hours: 2,
     escalate_after: 5,
   },
 
@@ -126,10 +124,16 @@ export function classifyEvent(event: OtelEvent): { tier: 1 | 2 | 3; pattern?: Tr
 }
 
 export function dedupKey(event: OtelEvent): string {
-  const normalized = JSON.stringify({
-    component: event.component,
-    action: event.action,
-    error: event.error ?? "",
-  });
+  const classified = classifyEvent(event);
+  const normalized = classified.pattern?.handler === "ignore"
+    ? JSON.stringify({
+      component: event.component,
+      action: event.action,
+    })
+    : JSON.stringify({
+      component: event.component,
+      action: event.action,
+      error: event.error ?? "",
+    });
   return createHash("sha256").update(normalized).digest("hex");
 }

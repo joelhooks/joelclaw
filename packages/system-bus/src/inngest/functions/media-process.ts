@@ -22,6 +22,8 @@ const NAS_HOST = "joel@three-body";
 const NAS_MEDIA_BASE = "/volume1/home/joel/media";
 const MEDIA_PROCESSED_KEY_PREFIX = "media:processed";
 const MEDIA_PROCESSED_TTL_SECONDS = 24 * 60 * 60;
+const INVALID_ANTHROPIC_KEY_ERROR =
+  "secrets lease returned invalid value for anthropic_api_key";
 
 // Supported image MIME types for vision
 const IMAGE_MIMES = new Set([
@@ -55,6 +57,34 @@ function getRedis(): Redis {
   });
   redisClient.on("error", () => {});
   return redisClient;
+}
+
+function assertValidAnthropicKey(value: string | undefined): string {
+  const key = (value ?? "").trim();
+  if (!key || key.startsWith("{")) {
+    throw new Error(INVALID_ANTHROPIC_KEY_ERROR);
+  }
+  return key;
+}
+
+function leaseAnthropicApiKey(): string {
+  const envKey = process.env.ANTHROPIC_API_KEY?.trim();
+  if (envKey) {
+    return assertValidAnthropicKey(envKey);
+  }
+
+  try {
+    const leased = execSync("secrets lease anthropic_api_key --ttl 1h 2>/dev/null", {
+      encoding: "utf-8",
+      timeout: 5000,
+    }).trim();
+    return assertValidAnthropicKey(leased);
+  } catch (error) {
+    if (error instanceof Error && error.message === INVALID_ANTHROPIC_KEY_ERROR) {
+      throw error;
+    }
+    throw new Error(INVALID_ANTHROPIC_KEY_ERROR);
+  }
 }
 
 export const mediaProcess = inngest.createFunction(
@@ -224,6 +254,7 @@ async function describeImage(
   const startedAt = Date.now();
 
   try {
+    const anthropicApiKey = leaseAnthropicApiKey();
     const proc = spawnSync(
       "pi",
       [
@@ -242,7 +273,7 @@ async function describeImage(
         encoding: "utf-8",
         timeout: 60_000,
         maxBuffer: 1024 * 1024,
-        env: { ...process.env, TERM: "dumb" },
+        env: { ...process.env, TERM: "dumb", ANTHROPIC_API_KEY: anthropicApiKey },
       },
     );
 
@@ -296,6 +327,7 @@ async function describeImage(
 
     return result || "Image received but vision description produced no output.";
   } catch (err: any) {
+    const errorMessage = err?.message ? String(err.message) : String(err);
     await traceLlmGeneration({
       traceName: "joelclaw.media-process",
       generationName: "media.image.describe",
@@ -311,11 +343,15 @@ async function describeImage(
       },
       model: visionModel,
       durationMs: Date.now() - startedAt,
-      error: err?.message ? String(err.message).slice(0, 200) : String(err).slice(0, 200),
+      error: errorMessage.slice(0, 200),
       metadata: {
         failed: true,
       },
     });
+
+    if (errorMessage === INVALID_ANTHROPIC_KEY_ERROR) {
+      throw new Error(INVALID_ANTHROPIC_KEY_ERROR);
+    }
 
     const info = await stat(imagePath).catch(() => null);
     const size = info?.size ?? 0;

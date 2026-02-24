@@ -16,8 +16,11 @@ const DECAY_CONSTANT = 0.01
 const STALENESS_DAYS = 90
 const MIN_OBSERVATION_CHARS = 12
 const REWRITE_TIMEOUT_MS = 2_000
+const OPENAI_REWRITE_TIMEOUT_MS = 3_000
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+const OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
 const ANTHROPIC_REWRITE_MODEL = process.env.JOELCLAW_RECALL_REWRITE_MODEL?.trim() || "claude-3-5-haiku-latest"
+const OPENAI_REWRITE_MODEL = "gpt-5.3-codex-spark"
 const RECALL_OTEL_ENABLED = (process.env.JOELCLAW_RECALL_OTEL ?? "1") !== "0"
 const RECALL_REWRITE_ENABLED = (process.env.JOELCLAW_RECALL_REWRITE ?? "1") !== "0"
 
@@ -261,6 +264,20 @@ type AnthropicRewriteResponse = {
   content?: Array<{ type?: string; text?: string }>
 }
 
+type OpenAIRewriteResponse = {
+  model?: string
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+  }
+  choices?: Array<{
+    message?: {
+      content?: string | Array<{ type?: string; text?: string }>
+    }
+  }>
+}
+
 function parsePiRewriteJsonOutput(stdout: string): {
   rewrittenQuery: string
   provider?: string
@@ -345,6 +362,40 @@ function parseAnthropicRewriteOutput(payload: AnthropicRewriteResponse): {
         totalTokens: inputTokens + outputTokens,
         cacheReadTokens: asFiniteNumber(usageRaw.cache_read_input_tokens, 0),
         cacheWriteTokens: asFiniteNumber(usageRaw.cache_creation_input_tokens, 0),
+      }
+    : undefined
+
+  return {
+    rewrittenQuery: rewrittenText,
+    model: payload.model,
+    usage,
+  }
+}
+
+function parseOpenAIRewriteOutput(payload: OpenAIRewriteResponse): {
+  rewrittenQuery: string
+  model?: string
+  usage?: RewriteUsage
+} | null {
+  const content = payload.choices?.[0]?.message?.content
+  const rewrittenText = sanitizeRewriteResult(
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content.map((part) => part?.text ?? "").join("")
+        : ""
+  )
+
+  if (!rewrittenText) return null
+
+  const usageRaw = payload.usage
+  const inputTokens = asFiniteNumber(usageRaw?.prompt_tokens, 0)
+  const outputTokens = asFiniteNumber(usageRaw?.completion_tokens, 0)
+  const usage: RewriteUsage | undefined = usageRaw
+    ? {
+        inputTokens,
+        outputTokens,
+        totalTokens: asFiniteNumber(usageRaw?.total_tokens, inputTokens + outputTokens),
       }
     : undefined
 
@@ -509,12 +560,23 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
     context ? `Recent context: ${context}` : "",
   ].filter(Boolean).join("\n")
 
-  const timeoutMs = options.timeoutMs ?? REWRITE_TIMEOUT_MS
+  const haikuTimeoutMs = options.timeoutMs ?? REWRITE_TIMEOUT_MS
+  const openaiTimeoutMs = OPENAI_REWRITE_TIMEOUT_MS
   const startedAt = Date.now()
+  const attemptErrors: string[] = []
 
-  try {
+  function formatRewriteError(error: unknown, timeoutMs: number): string {
+    const isAbortError = error instanceof Error && error.name === "AbortError"
+    const rawMessage = error instanceof Error ? error.message : String(error)
+    const message = isAbortError
+      ? `rewrite_timeout_${timeoutMs}`
+      : rawMessage
+    return message.slice(0, 220)
+  }
+
+  async function runHaikuRewrite(): Promise<RewrittenQuery> {
     if (options.spawn) {
-      const proc = options.spawn([], rewritePrompt, timeoutMs)
+      const proc = options.spawn([], rewritePrompt, haikuTimeoutMs)
       const stdoutText = readShellText(proc.stdout)
       const parsedJson = parsePiRewriteJsonOutput(stdoutText)
       const rewrittenQuery = parsedJson?.rewrittenQuery ?? sanitizeRewriteResult(stdoutText)
@@ -544,7 +606,7 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
     }
 
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), timeoutMs)
+    const timeout = setTimeout(() => controller.abort(), haikuTimeoutMs)
     let response: Response
     try {
       response = await fetch(ANTHROPIC_MESSAGES_URL, {
@@ -588,22 +650,82 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
       usage: parsed.usage,
       durationMs: Date.now() - startedAt,
     }
-  } catch (error) {
-    const isAbortError = error instanceof Error && error.name === "AbortError"
-    const rawMessage = error instanceof Error ? error.message : String(error)
-    const message = isAbortError
-      ? `rewrite_timeout_${timeoutMs}`
-      : rawMessage
+  }
+
+  async function runOpenAIRewrite(): Promise<RewrittenQuery> {
+    const apiKey = process.env.OPENAI_API_KEY?.trim()
+    if (!apiKey) {
+      throw new Error("openai_api_key_missing")
+    }
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), openaiTimeoutMs)
+    let response: Response
+    try {
+      response = await fetch(OPENAI_CHAT_COMPLETIONS_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: OPENAI_REWRITE_MODEL,
+          max_tokens: 96,
+          temperature: 0,
+          messages: [{ role: "user", content: rewritePrompt }],
+        }),
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timeout)
+    }
+
+    if (!response.ok) {
+      const text = await response.text()
+      throw new Error(`openai_http_${response.status}:${text.slice(0, 160)}`)
+    }
+
+    const payload = await response.json() as OpenAIRewriteResponse
+    const parsed = parseOpenAIRewriteOutput(payload)
+    if (!parsed) {
+      throw new Error("openai_empty_response")
+    }
 
     return {
       inputQuery: normalized,
       rewritePrompt,
-      rewrittenQuery: normalized,
-      rewritten: false,
-      strategy: "fallback",
+      rewrittenQuery: parsed.rewrittenQuery,
+      rewritten: parsed.rewrittenQuery.toLowerCase() !== normalized.toLowerCase(),
+      strategy: "openai",
+      provider: "openai",
+      model: parsed.model ?? OPENAI_REWRITE_MODEL,
+      usage: parsed.usage,
       durationMs: Date.now() - startedAt,
-      error: message.slice(0, 220),
     }
+  }
+
+  try {
+    return await runHaikuRewrite()
+  } catch (error) {
+    attemptErrors.push(formatRewriteError(error, haikuTimeoutMs))
+  }
+
+  if (!options.spawn) {
+    try {
+      return await runOpenAIRewrite()
+    } catch (error) {
+      attemptErrors.push(formatRewriteError(error, openaiTimeoutMs))
+    }
+  }
+
+  return {
+    inputQuery: normalized,
+    rewritePrompt,
+    rewrittenQuery: normalized,
+    rewritten: false,
+    strategy: "fallback",
+    durationMs: Date.now() - startedAt,
+    error: attemptErrors.join(" | ").slice(0, 220),
   }
 }
 
