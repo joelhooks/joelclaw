@@ -13,7 +13,7 @@ const ROAM_ARCHIVE_PATH =
 const TYPESENSE_HOST = "http://localhost:8108";
 const QDRANT_HOST = "http://localhost:6333";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const OPENROUTER_MODEL = "anthropic/claude-sonnet-4-20250514";
+const OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6";
 const FALLBACK_TYPESENSE_API_KEY =
   "391a65d92ff0b1d63af0e0d6cca04fdff292b765d833a65a25fb928b8a0fb065";
 
