@@ -246,7 +246,33 @@ export const Route = createFileRoute('/_authed')({
 
 TanStack Start deploys to any Node/Bun target, Vercel, Cloudflare Workers, Netlify.
 
-**Vercel**: Works out of the box. Set framework to "Other" or auto-detect. Build command: `pnpm build`, output follows Nitro conventions.
+### Vercel (Critical)
+
+**You MUST add the `nitro()` Vite plugin** — without it, Vercel builds succeed but serve 404s.
+
+```ts
+// vite.config.ts
+import { nitro } from 'nitro/vite'
+
+export default defineConfig({
+  plugins: [
+    tanstackStart(),
+    nitro(),        // ← REQUIRED for Vercel
+    viteReact(),
+  ],
+})
+```
+
+Install: `pnpm add nitro`
+
+**Monorepo (pnpm + Turborepo) quirks:**
+- Set `rootDirectory` in Vercel project settings to the app dir (e.g., `apps/gremlin-cms`)
+- Framework preset should be **TanStack Start** or auto-detect — never Next.js
+- Do NOT manually set `outputDirectory` — Nitro generates `.vercel/output` automatically
+- Build command from repo root: `turbo run build --filter=<app-name>` or let Vercel auto-detect
+- If you get 404 after successful build, check: (1) nitro plugin present, (2) framework preset correct, (3) no stale `.vercel` config
+
+**No CLI deploys** — push to git, let Vercel auto-deploy. Only use `vercel --prod` for emergency hotfixes.
 
 ## Rules
 
