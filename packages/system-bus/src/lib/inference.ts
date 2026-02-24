@@ -1,123 +1,106 @@
 /**
- * LLM inference via pi's Anthropic OAuth token.
+ * LLM inference via pi sessions.
  *
+ * Pi handles auth, token refresh, provider routing — everything.
  * Uses Joel's Claude Pro/Max subscription — zero API cost.
- * Reads ~/.pi/agent/auth.json for the access token.
- * Token refresh is handled by pi and pi-rotate.
  *
  * Usage:
  *   import { infer } from "../../lib/inference";
- *   const result = await infer({
- *     model: "claude-sonnet-4-20250514",
- *     system: "You are a helpful assistant.",
- *     messages: [{ role: "user", content: "Hello" }],
- *   });
- *   console.log(result.text);
+ *   const result = await infer("Summarize this text: ...");
+ *   const json = await infer("Extract entities", { model: "anthropic/claude-haiku-4-5", json: true });
  */
 
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { $ } from "bun";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-const PI_AUTH_PATH = join(homedir(), ".pi", "agent", "auth.json");
-
-export type InferMessage = {
-  role: "user" | "assistant";
-  content: string;
-};
-
 export type InferOptions = {
-  /** Anthropic model ID. Default: claude-sonnet-4-20250514 */
+  /** Model ID (pi format). Default: uses pi's default (Sonnet) */
   model?: string;
   /** System prompt */
   system?: string;
-  /** Conversation messages */
-  messages: InferMessage[];
-  /** Temperature (0-1). Default: 0.2 */
-  temperature?: number;
-  /** Max output tokens. Default: 4096 */
-  max_tokens?: number;
-  /** Abort timeout in ms. Default: 60000 */
+  /** Parse output as JSON */
+  json?: boolean;
+  /** Timeout in ms. Default: 120000 */
   timeout?: number;
 };
 
 export type InferResult = {
-  /** Concatenated text output */
+  /** Raw text output */
   text: string;
-  /** Raw content blocks */
-  content: Array<{ type: string; text?: string }>;
-  /** Token usage */
-  usage?: { input_tokens?: number; output_tokens?: number };
-  /** Model used */
-  model: string;
+  /** Parsed JSON (if json: true) */
+  data?: unknown;
 };
 
-async function getPiAnthropicKey(): Promise<string> {
-  try {
-    const data = JSON.parse(await readFile(PI_AUTH_PATH, "utf-8"));
-    const key = data?.anthropic?.access;
-    if (!key) throw new Error("No anthropic.access in auth.json");
-    return key;
-  } catch (e) {
-    throw new Error(`Failed to read pi Anthropic token: ${(e as Error).message}`);
-  }
-}
-
 /**
- * Run LLM inference using pi's Anthropic OAuth token.
- * Zero cost — uses Joel's Claude Pro/Max subscription.
+ * Run LLM inference via a headless pi session.
+ * Pi handles auth, token refresh, provider selection — zero config.
  */
-export async function infer(opts: InferOptions): Promise<InferResult> {
-  const apiKey = await getPiAnthropicKey();
-  const model = opts.model ?? "claude-sonnet-4-20250514";
-  const timeout = opts.timeout ?? 60_000;
+export async function infer(prompt: string, opts: InferOptions = {}): Promise<InferResult> {
+  const timeout = opts.timeout ?? 120_000;
 
-  const body: Record<string, unknown> = {
-    model,
-    messages: opts.messages,
-    temperature: opts.temperature ?? 0.2,
-    max_tokens: opts.max_tokens ?? 4096,
-  };
-  if (opts.system) {
-    body.system = opts.system;
+  // Write prompt to temp file to avoid shell escaping issues
+  const tmpDir = await mkdtemp(join(tmpdir(), "infer-"));
+  const promptPath = join(tmpDir, "prompt.txt");
+  await writeFile(promptPath, prompt, "utf-8");
+
+  try {
+    const args: string[] = [
+      "pi",
+      "-p", "--no-session", "--no-extensions",
+    ];
+
+    if (opts.model) {
+      args.push("--model", opts.model);
+    }
+    if (opts.json) {
+      args.push("--mode", "json");
+    }
+    if (opts.system) {
+      args.push("--system-prompt", opts.system);
+    }
+
+    // Pipe prompt via stdin
+    const proc = Bun.spawn(args, {
+      stdin: Bun.file(promptPath),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        PATH: `${process.env.HOME}/.local/bin:${process.env.HOME}/.bun/bin:${process.env.HOME}/.local/share/fnm/aliases/default/bin:${process.env.PATH}`,
+      },
+    });
+
+    const timeoutId = setTimeout(() => proc.kill(), timeout);
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    clearTimeout(timeoutId);
+
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      throw new Error(`pi inference failed (exit ${exitCode}): ${stderr.slice(0, 500)}`);
+    }
+
+    const text = stdout.trim();
+    const result: InferResult = { text };
+
+    if (opts.json) {
+      try {
+        result.data = JSON.parse(text);
+      } catch {
+        // Try to extract JSON from text
+        const match = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+        if (match) {
+          result.data = JSON.parse(match[0]);
+        }
+      }
+    }
+
+    return result;
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
-
-  const response = await fetch(ANTHROPIC_URL, {
-    method: "POST",
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeout),
-  });
-
-  const rawBody = await response.text();
-  if (!response.ok) {
-    throw new Error(`Anthropic API failed (${response.status}): ${rawBody.slice(0, 800)}`);
-  }
-
-  const parsed = JSON.parse(rawBody) as {
-    content: Array<{ type: string; text?: string }>;
-    usage?: { input_tokens?: number; output_tokens?: number };
-    model: string;
-  };
-
-  const text = parsed.content
-    ?.filter((b) => b.type === "text" && b.text)
-    .map((b) => b.text)
-    .join("\n");
-
-  if (!text) {
-    throw new Error("Anthropic returned empty response");
-  }
-
-  return {
-    text: text.trim(),
-    content: parsed.content,
-    usage: parsed.usage,
-    model: parsed.model,
-  };
 }

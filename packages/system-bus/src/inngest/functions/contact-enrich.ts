@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { NonRetriableError } from "inngest";
 import { emitOtelEvent } from "../../observability/emit";
+import { infer } from "../../lib/inference";
 import { inngest } from "../client";
 
 const HOME_DIR = process.env.HOME?.trim() || "/Users/joel";
@@ -13,9 +13,6 @@ const ROAM_ARCHIVE_PATH =
   `${HOME_DIR}/Code/joelhooks/egghead-roam-research/egghead-2026-01-19-13-09-38.edn`;
 const TYPESENSE_HOST = "http://localhost:8108";
 const QDRANT_HOST = "http://localhost:6333";
-const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-const ANTHROPIC_MODEL = "claude-sonnet-4-20250514";
-const PI_AUTH_PATH = join(homedir(), ".pi", "agent", "auth.json");
 const FALLBACK_TYPESENSE_API_KEY =
   "391a65d92ff0b1d63af0e0d6cca04fdff292b765d833a65a25fb928b8a0fb065";
 
@@ -1303,16 +1300,6 @@ export const contactEnrich = inngest.createFunction(
     const synthesized = await step.run(
       "synthesize",
       async (): Promise<{ markdown: string; usage?: Record<string, unknown> }> => {
-        // Read pi's OAuth token for Anthropic inference
-        let anthropicKey: string;
-        try {
-          const authData = JSON.parse(await readFile(PI_AUTH_PATH, "utf-8"));
-          anthropicKey = authData?.anthropic?.access;
-          if (!anthropicKey) throw new Error("No anthropic access token in auth.json");
-        } catch (e) {
-          throw new Error(`Failed to read pi auth: ${(e as Error).message}`);
-        }
-
         const userPrompt = [
           `Contact name: ${name}`,
           `Depth: ${depth}`,
@@ -1341,48 +1328,14 @@ export const contactEnrich = inngest.createFunction(
           compactForPrompt(typesense, 10_000),
         ].join("\n");
 
-        const response = await fetch(ANTHROPIC_URL, {
-          method: "POST",
-          headers: {
-            "x-api-key": anthropicKey,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: ANTHROPIC_MODEL,
-            temperature: 0.2,
-            max_tokens: 4096,
-            system: SYNTHESIZE_SYSTEM_PROMPT,
-            messages: [
-              {
-                role: "user",
-                content: userPrompt,
-              },
-            ],
-          }),
-          signal: AbortSignal.timeout(60_000),
+        const result = await infer(userPrompt, {
+          system: SYNTHESIZE_SYSTEM_PROMPT,
+          timeout: 120_000,
         });
 
-        const rawBody = await response.text();
-        if (!response.ok) {
-          throw new Error(`Anthropic API failed (${response.status}): ${rawBody.slice(0, 800)}`);
-        }
-
-        const parsed = JSON.parse(rawBody) as {
-          content: Array<{ type: string; text?: string }>;
-          usage?: Record<string, unknown>;
-        };
-        const markdown = parsed.content
-          ?.filter((b) => b.type === "text" && b.text)
-          .map((b) => b.text)
-          .join("\n");
-        if (!markdown) {
-          throw new Error("Anthropic returned empty synthesis output");
-        }
-
         return {
-          markdown: markdown.trim(),
-          usage: parsed.usage,
+          markdown: result.text.trim(),
+          usage: {},
         };
       }
     );
