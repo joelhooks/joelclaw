@@ -92,10 +92,21 @@ Extends ADR-0130:
 
 ### Inngest Functions
 
-- `channel/message.received` → index to Typesense + classify
+- `channel/message.received` → normalize + index to Typesense + emit classification event
 - `channel/message.classified` → route based on classification
 - `channel/catalog.update` → cron (hourly) updates channel/thread catalog in Convex
 - `channel/digest.generate` → cron (configurable) generates channel digests from `context` messages
+- `channel/ingest.backfill.started`/`channel/ingest.backfill.completed` → orchestrated backfill lifecycle over active channel sets
+
+### Inngest Skill Requirements (explicit)
+
+This ADR implementation must be driven by the existing Inngest skill set:
+
+- `inngest-events` for canonical event contracts and payload fields
+- `inngest-steps` in handlers (`step.run`, `step.sendEvent`, `step.invoke`) for classify/route/route-score sub-steps
+- `inngest-flow-control` for `concurrency` + `throttle` on bulk backfill and taxonomy/classification workers
+- `inngest-durable-functions` for idempotent backfill events with resumable state + cancellation semantics
+- `inngest-monitor` for manual runs and health checks (`channel.ingest.backfill.requested`, `channel/message.received`) during migration
 
 ### OTEL
 
@@ -121,7 +132,32 @@ Every step emits structured telemetry:
 - Classification accuracy needs tuning (false signal = interruptions, false noise = missed items)
 - Convex catalog schema needs to handle cross-platform channel concepts
 
+### Friction research: pdf-brain ingest (reusable pattern notes)
+
+Current `docs-ingest` behavior (joelclaw memory pipeline) exposes concrete failure modes worth reusing as guardrails for channel backfill:
+
+1. **Filesystem instability is real (EINTR / mount flake / transient path access failures)**
+   - `validate-file` in `docs-ingest` can fail/retry on unstable NAS paths (`EINTR: interrupted system call, open '/Volumes/three-body/...'`).
+   - **Channel analog:** historical message backfill must be concurrency-safe with retry cadence and mount-aware checkpoints; don’t firehose large historical windows.
+
+2. **LLM classification is a subprocess and can timeout/fail silently**
+   - `inferTaxonomyWithLlm` shells out to `pi ... --mode json` with `DOCS_TAXONOMY_TIMEOUT_MS`; taxonomy step explicitly emits `docs.taxonomy.classify.timeout` on overrun.
+   - **Channel analog:** every inference run should emit timeout/safety telemetry, with fallback to lightweight heuristics when allowed.
+
+3. **Input-path and path-alias quality is a first-class migration surface**
+   - `docs-ingest` maintains `nas_path` + `nas_paths` to de-duplicate re-ingests and avoid catalog churn.
+   - **Channel analog:** use stable channel/thread identity (team-wide IDs) and alias maps for renamed channels.
+
+4. **Extraction and classification are non-deterministic quality-wise**
+   - Empty-text PDF extraction and malformed LLM output both exist; pipeline emits explicit OTEL signals and can skip/update only after classification rules are met.
+   - **Channel analog:** avoid assuming “every message worth classifying”; classify with confidence, and route low-confidence to digest-only unless strong signal.
+
+5. **Throttling and backlog controls exist for a reason**
+   - `docs-ingest` sets both `concurrency` and `throttle` and has dedicated backlog/janitor paths.
+   - **Channel analog:** backfill should use Inngest flow-control + periodic janitor-style pass for dead-letter and repair.
+
 ## Implementation Order
+
 
 1. Typesense `channel_messages` collection schema + index
 2. Ingest function: normalize messages from all channels → Typesense
