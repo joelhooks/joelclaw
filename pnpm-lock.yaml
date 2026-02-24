@@ -403,9 +403,6 @@ importers:
       fast-xml-parser:
         specifier: ^5.3.7
         version: 5.3.7
-      gray-matter:
-        specifier: ^4.0.3
-        version: 4.0.3
       hono:
         specifier: ^4.11.9
         version: 4.11.9
