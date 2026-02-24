@@ -70,8 +70,9 @@ launchd (com.joel.gateway)
     ├── Channels:
     │   ├── Redis — Inngest event bridge (existing)
     │   ├── Telegram — grammY bot (first external channel)
+    │   ├── iMessage — imsg-rpc Unix socket sidecar (FDA-scoped helper)
     │   ├── WebSocket — TUI attach + future native app
-    │   └── (future: Discord, Slack, iMessage, web)
+    │   └── (future: Slack, web)
     ├── OutboundRouter — route replies to source channel
     └── Watchdog — heartbeat staleness detection (ADR-0037)
 ```
@@ -167,6 +168,15 @@ Protocol: JSON frames over WebSocket (simplified from OpenClaw's protocol):
 - [ ] Stream deltas to connected clients
 - [ ] Auth: Tailscale identity or simple token
 
+### Phase 2b: iMessage Sidecar (`imsg-rpc`) ✅
+
+- [x] Added iMessage channel client in gateway (`packages/gateway/src/channels/imessage.ts`) using JSON-RPC over `/tmp/imsg.sock`
+- [x] Added dedicated LaunchAgent `com.joel.imsg-rpc` running `/Applications/imsg-rpc.app/Contents/MacOS/imsg rpc --socket /tmp/imsg.sock`
+- [x] Split FDA boundary: gateway stays non-FDA; `imsg-rpc` helper owns Messages DB reads
+- [x] Verified TCC attribution for launchd-spawned helper resolves to `com.steipete.imsg` and returns `authValue=2` for `kTCCServiceSystemPolicyAllFiles`
+- [x] Added deterministic helper packaging flow: `~/Code/steipete/imsg/build-local.sh` now refreshes `/Applications/imsg-rpc.app` via `scripts/install-rpc-app.sh` to avoid binary drift
+- [x] Verified inbound iMessage event path with OTEL events (`imessage.message.received`)
+
 ### Phase 4: Native App Foundation
 
 - [ ] WebSocket protocol stabilized
@@ -248,3 +258,19 @@ Best of both worlds: OpenClaw's proven architecture pattern (embedded pi, comman
 - [ ] launchd restart on crash (KeepAlive)
 - [ ] Session file persists across daemon restarts
 - [ ] Satellite pi sessions still get targeted notifications
+
+## Implementation Update (2026-02-24)
+
+This ADR's channel architecture is now extended with a shipped iMessage sidecar path.
+
+### Operational contract
+
+- `imsg-rpc` is a separate user LaunchAgent with its own FDA grant surface.
+- FDA is granted to the app bundle identity (`/Applications/imsg-rpc.app`, bundle id `com.steipete.imsg`), not to the gateway daemon.
+- Gateway communicates only through JSON-RPC socket methods (`watch.subscribe`, `send`) on `/tmp/imsg.sock`.
+
+### Why this matters
+
+- Keeps the gateway process least-privileged.
+- Avoids coupling iMessage permissions to Bun/Node runtime identity.
+- Makes TCC behavior inspectable and reproducible with `tccd` logs and OTEL event traces.
