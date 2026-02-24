@@ -752,6 +752,20 @@ export type Events = {
       reason?: string;
     };
   };
+  "contact/enrich.requested": {
+    data: {
+      name: string;
+      vault_path?: string;
+      hints?: {
+        slack_user_id?: string;
+        github?: string;
+        twitter?: string;
+        email?: string;
+        website?: string;
+      };
+      depth?: "quick" | "full";
+    };
+  };
 
   // --- Background Agents (ADR-0026) ---
   "system/agent.requested": {

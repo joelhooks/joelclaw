@@ -90,6 +90,7 @@ import {
   docsReindex,
 } from "./docs-maintenance";
 import { bookDownload } from "./book-download";
+import { contactEnrich } from "./contact-enrich";
 
 function getFunctionId(fn: { opts?: { id?: string } }): string {
   return fn.opts?.id ?? "unknown";
@@ -182,6 +183,7 @@ export const hostFunctionDefinitions = [
   docsEnrich,
   docsIngestJanitor,
   docsReindex,
+  contactEnrich,
 ];
 
 export const hostFunctionIds = hostFunctionDefinitions.map(getFunctionId);
