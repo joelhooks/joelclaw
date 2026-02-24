@@ -18,12 +18,15 @@ export type RenderMcqOptions = {
     id: string;
     question: string;
     options: string[];
+    mode?: "quiz" | "decision";
     context?: string;
     recommended?: number;
     recommendedReason?: string;
     weight?: "critical" | "normal" | "minor";
     conviction?: "strong" | "slight";
   }>;
+  mode?: "quiz" | "decision";
+  correctAnswers?: Record<string, number>;
   autoSelectTimeoutMs?: number;
   onComplete: (answers: Record<string, string>) => void;
 };

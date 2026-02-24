@@ -23,6 +23,7 @@ export type McqQuestionData = {
   id: string;
   question: string;
   options: string[];
+  mode?: "quiz" | "decision";
   context?: string;
   recommended?: number;
   recommendedReason?: string;
@@ -33,6 +34,8 @@ export type McqQuestionData = {
 export type McqFlowProps = {
   title?: string;
   questions: McqQuestionData[];
+  mode?: "quiz" | "decision";
+  correctAnswers?: Record<string, number>;
   autoSelectTimeoutMs?: number;
   onComplete: (answers: Record<string, string>) => void;
 };
@@ -44,19 +47,28 @@ const COLORS = {
   answered: 0x2ecc71,   // Green
   title: 0x9b59b6,      // Purple
   critical: 0xe74c3c,   // Red for critical weight
+  skipped: 0xf39c12,    // Orange
 } as const;
+
+type McqMode = "quiz" | "decision";
+
+function normalizeMode(mode: McqFlowProps["mode"]): McqMode {
+  return mode === "quiz" ? "quiz" : "decision";
+}
 
 // ── Single Question ────────────────────────────────────────────────
 
 type QuestionProps = {
   question: McqQuestionData;
-  onAnswer: (questionId: string, answer: string) => void;
+  mode: McqMode;
+  onAnswer: (questionId: string, answer?: string) => void;
   autoSelectTimeoutMs?: number;
 };
 
-function Question({ question, onAnswer, autoSelectTimeoutMs }: QuestionProps) {
+function Question({ question, mode, onAnswer, autoSelectTimeoutMs }: QuestionProps) {
   const [selected, setSelected] = useState<string | null>(null);
   const [autoSelected, setAutoSelected] = useState(false);
+  const [skipped, setSkipped] = useState(false);
   const settledRef = useRef(false);
 
   const handleSelect = useCallback(
@@ -70,8 +82,16 @@ function Question({ question, onAnswer, autoSelectTimeoutMs }: QuestionProps) {
     [question.id, onAnswer],
   );
 
-  // Auto-select recommended option after timeout
+  const handleSkip = useCallback(() => {
+    if (settledRef.current) return;
+    settledRef.current = true;
+    setSkipped(true);
+    onAnswer(question.id);
+  }, [question.id, onAnswer]);
+
+  // Auto-select recommended option after timeout (decision mode)
   useEffect(() => {
+    if (mode !== "decision") return;
     if (!autoSelectTimeoutMs || autoSelectTimeoutMs <= 0) return;
     if (!question.recommended || question.recommended < 1) return;
 
@@ -83,9 +103,29 @@ function Question({ question, onAnswer, autoSelectTimeoutMs }: QuestionProps) {
     }, autoSelectTimeoutMs);
 
     return () => clearTimeout(timer);
-  }, [autoSelectTimeoutMs, question.recommended, question.options, handleSelect]);
+  }, [mode, autoSelectTimeoutMs, question.recommended, question.options, handleSelect]);
+
+  // Quiz timeout skips the question without recording an answer
+  useEffect(() => {
+    if (mode !== "quiz") return;
+    if (!autoSelectTimeoutMs || autoSelectTimeoutMs <= 0) return;
+
+    const timer = setTimeout(() => {
+      handleSkip();
+    }, autoSelectTimeoutMs);
+
+    return () => clearTimeout(timer);
+  }, [mode, autoSelectTimeoutMs, handleSkip]);
 
   // ── Answered state ──────────────────────────────────────────
+  if (skipped) {
+    return (
+      <Embed color={COLORS.skipped}>
+        {`**${question.question}**\n\n⏱ Time's up — skipped`}
+      </Embed>
+    );
+  }
+
   if (selected) {
     const prefix = autoSelected ? "⏱ Auto-selected" : "✅";
     return (
@@ -97,7 +137,8 @@ function Question({ question, onAnswer, autoSelectTimeoutMs }: QuestionProps) {
 
   // ── Active question with buttons ────────────────────────────
   const color = question.weight === "critical" ? COLORS.critical : COLORS.active;
-  const description = formatQuestion(question);
+  const description = formatQuestion(question, mode);
+  const showRecommendation = mode === "decision";
 
   return (
     <>
@@ -106,7 +147,7 @@ function Question({ question, onAnswer, autoSelectTimeoutMs }: QuestionProps) {
       </Embed>
       <ActionRow>
         {question.options.map((opt, i) => {
-          const isRec = question.recommended === i + 1;
+          const isRec = showRecommendation && question.recommended === i + 1;
           return (
             <Button
               key={i}
@@ -136,8 +177,9 @@ function Question({ question, onAnswer, autoSelectTimeoutMs }: QuestionProps) {
   );
 }
 
-function formatQuestion(q: McqQuestionData): string {
+function formatQuestion(q: McqQuestionData, mode: McqMode): string {
   const lines: string[] = [`**${q.question}**`];
+  const showRecommendation = mode === "decision";
 
   if (q.context?.trim()) {
     lines.push(`*${q.context.trim()}*`);
@@ -146,12 +188,12 @@ function formatQuestion(q: McqQuestionData): string {
   lines.push("");
 
   for (let i = 0; i < q.options.length; i++) {
-    const badge = q.recommended === i + 1 ? " ★" : "";
+    const badge = showRecommendation && q.recommended === i + 1 ? " ★" : "";
     lines.push(`**${i + 1}.** ${q.options[i]}${badge}`);
   }
   lines.push(`**${q.options.length + 1}.** Other`);
 
-  if (q.recommendedReason?.trim()) {
+  if (showRecommendation && q.recommendedReason?.trim()) {
     const prefix =
       q.recommended && q.recommended > 0
         ? `Recommended (${q.recommended} ★)`
@@ -163,6 +205,43 @@ function formatQuestion(q: McqQuestionData): string {
   return lines.join("\n");
 }
 
+function extractAnswers(responses: Record<string, string | null>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(responses).filter(([, value]) => typeof value === "string"),
+  ) as Record<string, string>;
+}
+
+function formatQuizSummary(
+  questions: McqQuestionData[],
+  answers: Record<string, string>,
+  correctAnswers: Record<string, number> | undefined,
+): { text: string; color: number } {
+  let correctCount = 0;
+
+  const lines = questions.map((question, index) => {
+    const expectedIndex = correctAnswers?.[question.id];
+    if (!Number.isInteger(expectedIndex) || !expectedIndex || expectedIndex < 1 || expectedIndex > question.options.length) {
+      return `🟥 Q${index + 1}: no correct answer configured`;
+    }
+
+    const expected = question.options[expectedIndex - 1];
+    const selected = answers[question.id];
+    const isCorrect = selected === expected;
+    if (isCorrect) {
+      correctCount += 1;
+    }
+
+    const marker = isCorrect ? "🟩" : "🟥";
+    const selectedLabel = selected ?? "⏱ skipped";
+    return `${marker} Q${index + 1}: your \`${selectedLabel}\` · correct \`${expected}\``;
+  });
+
+  return {
+    text: `**You got ${correctCount}/${questions.length} correct!**\n\n${lines.join("\n")}`,
+    color: correctCount === questions.length ? COLORS.answered : COLORS.critical,
+  };
+}
+
 // ── MCQ Flow ───────────────────────────────────────────────────────
 
 /**
@@ -170,24 +249,34 @@ function formatQuestion(q: McqQuestionData): string {
  * Answered questions collapse to a green summary embed.
  * Calls onComplete when all questions are answered.
  */
-export function McqFlow({ title, questions, autoSelectTimeoutMs, onComplete }: McqFlowProps) {
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+export function McqFlow({ title, questions, mode, correctAnswers, autoSelectTimeoutMs, onComplete }: McqFlowProps) {
+  const resolvedMode = normalizeMode(mode);
+  const [responses, setResponses] = useState<Record<string, string | null>>({});
   const completedRef = useRef(false);
-  const answeredCount = Object.keys(answers).length;
+  const completedCount = Object.keys(responses).length;
+  const answers = extractAnswers(responses);
 
   const handleAnswer = useCallback(
-    (questionId: string, answer: string) => {
-      setAnswers((prev) => {
-        const next = { ...prev, [questionId]: answer };
+    (questionId: string, answer?: string) => {
+      setResponses((prev) => {
+        if (questionId in prev) {
+          return prev;
+        }
+
+        const next = { ...prev, [questionId]: typeof answer === "string" ? answer : null };
         if (Object.keys(next).length === questions.length && !completedRef.current) {
           completedRef.current = true;
-          setTimeout(() => onComplete(next), 0);
+          setTimeout(() => onComplete(extractAnswers(next)), 0);
         }
         return next;
       });
     },
     [questions.length, onComplete],
   );
+
+  const quizSummary = resolvedMode === "quiz" && completedCount === questions.length
+    ? formatQuizSummary(questions, answers, correctAnswers)
+    : null;
 
   return (
     <>
@@ -197,14 +286,18 @@ export function McqFlow({ title, questions, autoSelectTimeoutMs, onComplete }: M
         </Embed>
       )}
       {questions.map((q, i) => {
-        const isAnswered = q.id in answers;
-        const isActive = i === answeredCount;
+        const isCompleted = q.id in responses;
+        const isActive = i === completedCount;
+        const questionMode = q.mode === "quiz" || q.mode === "decision"
+          ? q.mode
+          : resolvedMode;
 
-        if (isAnswered || isActive) {
+        if (isCompleted || isActive) {
           return (
             <Question
               key={q.id}
               question={q}
+              mode={questionMode}
               onAnswer={handleAnswer}
               autoSelectTimeoutMs={isActive ? autoSelectTimeoutMs : undefined}
             />
@@ -214,6 +307,11 @@ export function McqFlow({ title, questions, autoSelectTimeoutMs, onComplete }: M
         // Future questions not shown yet
         return null;
       })}
+      {quizSummary && (
+        <Embed color={quizSummary.color}>
+          {quizSummary.text}
+        </Embed>
+      )}
     </>
   );
 }

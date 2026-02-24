@@ -1,8 +1,8 @@
 import { getModel, completeSimple } from "@mariozechner/pi-ai";
 import type { Bot, Context } from "grammy";
 import type Redis from "ioredis";
-import { telegramChannelContext } from "../outbound/format";
 import { enrichPromptWithVaultContext } from "../vault-read";
+import { injectChannelContext } from "../formatting";
 import { BUILTIN_COMMANDS } from "./builtins";
 import {
   ALLOWED_MODELS,
@@ -440,9 +440,9 @@ async function executeCommand(
   }
 
   const commandText = `/${command.nativeName}${rawArgs.trim() ? ` ${rawArgs.trim()}` : ""}`;
-  const promptWithChannelContext = `${telegramChannelContext()}\n${commandText}`;
-  const prompt = await enrichPromptWithVaultContext(promptWithChannelContext);
   const source = `telegram:${chatId}`;
+  const withChannelContext = injectChannelContext(commandText, { source });
+  const prompt = await enrichPromptWithVaultContext(withChannelContext);
 
   await init.enqueue(source, prompt, {
     source,

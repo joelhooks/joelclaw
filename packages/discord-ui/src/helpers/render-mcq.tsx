@@ -13,6 +13,8 @@ import type { McqQuestionData } from "../components/mcq.tsx";
 export type RenderMcqOptions = {
   title?: string;
   questions: McqQuestionData[];
+  mode?: "quiz" | "decision";
+  correctAnswers?: Record<string, number>;
   autoSelectTimeoutMs?: number;
   onComplete: (answers: Record<string, string>) => void;
 };
@@ -26,6 +28,8 @@ export function renderMcqToChannel(channel: TextBasedChannel, options: RenderMcq
     <McqFlow
       title={options.title}
       questions={options.questions}
+      mode={options.mode}
+      correctAnswers={options.correctAnswers}
       autoSelectTimeoutMs={options.autoSelectTimeoutMs}
       onComplete={options.onComplete}
     />,
