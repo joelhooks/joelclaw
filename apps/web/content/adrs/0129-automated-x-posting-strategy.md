@@ -46,33 +46,15 @@ All posts are autonomous. Gateway notifies Joel via Telegram after each tweet (s
 - State what's new and link to it. That's it.
 - Match the swarm-tools tweet prompt style: factual, cheeky, developer-facing
 
-### Tweet Templates
+### Tweet Generation
 
-**New post:**
-```
-New: {title}
-{url}
-```
+**All tweet text is LLM-generated via Claude Opus 4.6. No string templates, ever.** Each tweet is generated fresh by passing the context (title, URL, summary, etc.) to Opus with voice guidelines. This produces more natural, varied output than fill-in-the-blank templates. Opus because voice matters — tweets are public-facing Joel.
 
-**ADR shipped:**
-```
-ADR-{number} shipped: {one-line summary}
-{url}
-```
-
-**Discovery:**
-```
-Interesting: {title} — {one-line-why}
-{source_url}
-```
-
-**Daily digest (if ≥2 items):**
-```
-Today in joelclaw:
-• {item1}
-• {item2}
-{joelclaw.com link}
-```
+Opus prompt includes:
+- The voice rules (terse, technical, dry, no emoji spam, no hashtags)
+- The content context (what happened, relevant URL)
+- Max 280 chars constraint
+- The swarm-tools tweet examples as few-shot guidance
 
 ### Implementation
 
