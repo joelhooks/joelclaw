@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-02-25
 decision-makers: Joel
 consulted: ADR-0069, ADR-0070, ADR-0086, ADR-0104, ADR-0131, vercel/chat (Chat SDK) format converter pattern

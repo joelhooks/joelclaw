@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-02-25
 decision-makers: [joel]
 ---
@@ -23,7 +23,7 @@ Adopt hexagonal architecture for the gateway. The gateway defines **port interfa
 | **Formatting** | `FormatConverter` | ✅ Done → `@joelclaw/markdown-formatter` | ✅ Shipped |
 | **Inference** | `InferenceRouter` | ✅ Done → `@joelclaw/inference-router` | ✅ Shipped |
 | **Message Store** | `MessageStore` | `gateway/message-store.ts` (795 lines) | `@joelclaw/message-store` |
-| **Model Fallback** | `FallbackStrategy` | `gateway/model-fallback.ts` (382 lines) | `@joelclaw/model-fallback` |
+| **Model Fallback** | `FallbackStrategy` | ✅ Done → `@joelclaw/model-fallback` | ✅ Shipped |
 | **Vault Access** | `VaultReader` | `gateway/vault-read.ts` (209 lines) | `@joelclaw/vault-reader` |
 | **Observability** | `TelemetryEmitter` | `gateway/observability.ts` (120 lines) | `@joelclaw/telemetry` |
 | **Channel** | `Channel` | `gateway/channels/*.ts` (~3K lines) | Stay in gateway but implement `Channel` interface |
@@ -58,8 +58,8 @@ Each channel file implements this interface. The gateway composition root wires 
 
 ### Extraction Priority
 
-1. **Model Fallback → inference-router** (small, natural fit)
-2. **Message Store** (largest single file, most reusable)
+1. ~~**Model Fallback**~~ → `@joelclaw/model-fallback` ✅ Shipped (2026-02-25, 6 tests)
+2. **Message Store** → `@joelclaw/message-store` 🔄 In progress
 3. **Vault Reader** (clean boundary, used by multiple consumers)
 4. **Telemetry** (shared across all packages)
 5. **Channel interface refactor** (last — biggest surface area, least urgency)
