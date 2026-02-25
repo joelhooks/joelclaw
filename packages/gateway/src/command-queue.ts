@@ -1,4 +1,4 @@
-import { ack, drainByPriority, getUnacked, indexMessagesByPriority, persist, type Priority } from "./message-store";
+import { ack, drainByPriority, getUnacked, indexMessagesByPriority, persist, type Priority } from "@joelclaw/message-store";
 import { emitGatewayOtel } from "./observability";
 
 export type QueueEntry = {

@@ -27,7 +27,7 @@ import { getActiveMcqAdapter, type McqParams } from "./commands/mcq-adapter";
 import { getActiveDiscordMcqAdapter, registerDiscordMcqAdapter } from "./commands/discord-mcq-adapter";
 import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands/telegram-handler";
 import { TRIPWIRE_PATH, startHeartbeatRunner } from "./heartbeat";
-import { init as initMessageStore, trimOld } from "./message-store";
+import { init as initMessageStore, trimOld } from "@joelclaw/message-store";
 import { ModelFallbackController, type TelemetryEmitter } from "@joelclaw/model-fallback";
 import { emitGatewayOtel } from "./observability";
 import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
@@ -938,7 +938,24 @@ await startRedisChannel(enqueueToGateway);
 
 const redisClient = getRedisClient();
 if (redisClient) {
-  await initMessageStore(redisClient);
+  await initMessageStore(
+    redisClient,
+    {
+      emit: (action: string, detail: string, extra?: Record<string, unknown>) => {
+        void emitGatewayOtel({
+          level: detail === "error" ? "error" : detail === "warn" ? "warn" : detail === "info" ? "info" : "debug",
+          component: "message-store",
+          action,
+          success: true,
+          metadata: {
+            ...extra,
+            source: "gateway",
+            message_store_detail: detail,
+          },
+        });
+      },
+    },
+  );
   await trimOld();
 } else {
   console.warn("[gateway:store] redis command client unavailable; durable replay skipped");

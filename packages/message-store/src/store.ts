@@ -1,47 +1,14 @@
 import { createHash } from "node:crypto";
 import type Redis from "ioredis";
-import { emitGatewayOtel } from "./observability";
-
-export interface StoredMessage {
-  id: string;
-  source: string;
-  prompt: string;
-  metadata?: Record<string, unknown>;
-  timestamp: number;
-  priority: Priority;
-  acked: boolean;
-}
-
-export type PersistResult = {
-  streamId: string;
-  priority: Priority;
-};
-
-type InboundMessage = {
-  source: string;
-  prompt: string;
-  metadata?: Record<string, unknown>;
-  event?: string | string[];
-};
-
-type DrainByPriorityOptions = {
-  limit?: number;
-  excludeIds?: Iterable<string>;
-};
-
-type CandidateMessage = {
-  message: StoredMessage;
-  waitTimeMs: number;
-  effectivePriority: Priority;
-  promotedFrom?: Priority;
-};
-
-export enum Priority {
-  P0 = 0,
-  P1 = 1,
-  P2 = 2,
-  P3 = 3,
-}
+import {
+  type CandidateMessage,
+  type DrainByPriorityOptions,
+  type InboundMessage,
+  type PersistResult,
+  type StoredMessage,
+  type TelemetryEmitter,
+  Priority,
+} from "./types";
 
 const STREAM_KEY = "joelclaw:gateway:messages";
 const PRIORITY_KEY = "joelclaw:gateway:priority";
@@ -59,6 +26,15 @@ const DRAIN_SCAN_LIMIT = 256;
 
 let redisClient: Redis | undefined;
 let p0DrainStreak = 0;
+let telemetryEmitter: TelemetryEmitter = {
+  emit: () => {},
+};
+
+function emitMessageStoreTelemetry(action: string, detail: string, extra?: Record<string, unknown>): void {
+  telemetryEmitter.emit(action, detail, {
+    ...(extra ?? {}),
+  });
+}
 
 function getClient(): Redis {
   if (!redisClient) {
@@ -164,20 +140,27 @@ function streamIdToTimestamp(streamId: string): number {
 }
 
 export function classifyPriority(msg: InboundMessage): Priority {
-  if (msg.source.startsWith("telegram:")) return Priority.P0;
-  if (msg.source === "callback_query") return Priority.P0;
-
+  const prompt = msg.prompt.trim();
+  const lowerSource = msg.source.toLowerCase();
   const eventHints = Array.isArray(msg.event)
     ? msg.event
     : (typeof msg.event === "string" ? [msg.event] : []);
+  const lowerHints = eventHints.map((event) => event.toLowerCase());
 
-  if (eventHints.some((event) => /deploy\.failed|friction-fix/u.test(event))) {
+  if (prompt.startsWith("/")) return Priority.P0;
+  if (msg.source === "callback_query") return Priority.P0;
+
+  if (lowerSource === "telegram" || lowerSource.startsWith("telegram:") || lowerSource.startsWith("telegram.") || lowerHints.some((event) => event.includes("telegram.human"))) {
     return Priority.P1;
   }
-  if (eventHints.some((event) => /test\.|media\.processed/u.test(event))) {
-    return Priority.P3;
+  if (lowerHints.some((event) => /deploy\.failed|friction-fix/u.test(event))) {
+    return Priority.P1;
   }
-  return Priority.P2;
+  if (lowerSource === "heartbeat" || lowerHints.some((event) => /heartbeat|cron\.heartbeat/u.test(event))) {
+    return Priority.P2;
+  }
+
+  return Priority.P3;
 }
 
 function entryToStoredMessage(entry: [string, unknown], acked: boolean): StoredMessage {
@@ -207,7 +190,8 @@ function entryToStoredMessage(entry: [string, unknown], acked: boolean): StoredM
   };
 }
 
-export async function init(redis: Redis): Promise<void> {
+export async function init(redis: Redis, telemetry?: TelemetryEmitter): Promise<void> {
+  telemetryEmitter = telemetry ?? { emit: () => {} };
   redisClient = redis;
 
   try {
@@ -280,18 +264,12 @@ export async function persist(msg: {
     return null;
   }
 
-  void emitGatewayOtel({
-    level: "debug",
-    component: "message-store",
-    action: "message.queued",
-    success: true,
-    metadata: {
+  emitMessageStoreTelemetry("message.queued", "debug", {
       source: msg.source,
       streamId,
       priority,
       priority_label: priorityName(priority),
       wait_time_ms: 0,
-    },
   });
 
   console.log("[gateway:store] persisted inbound message", {
@@ -368,18 +346,12 @@ async function autoAckExpiredP3(now: number): Promise<number> {
 
     await ack(streamId);
     autoAcked += 1;
-    void emitGatewayOtel({
-      level: "info",
-      component: "message-store",
-      action: "message.auto_acked",
-      success: true,
-      metadata: {
-        streamId,
-        source: msg.source,
-        priority: msg.priority,
-        priority_label: priorityName(msg.priority),
-        wait_time_ms: waitTimeMs,
-      },
+    emitMessageStoreTelemetry("message.auto_acked", "info", {
+      streamId,
+      source: msg.source,
+      priority: msg.priority,
+      priority_label: priorityName(msg.priority),
+      wait_time_ms: waitTimeMs,
     });
   }
 
@@ -443,18 +415,12 @@ async function loadPriorityCandidates(
     const waitTimeMs = Math.max(0, now - msg.timestamp);
     if (msg.priority === Priority.P3 && waitTimeMs > P3_AUTO_ACK_MS) {
       await ack(streamId);
-      void emitGatewayOtel({
-        level: "info",
-        component: "message-store",
-        action: "message.auto_acked",
-        success: true,
-        metadata: {
-          streamId,
-          source: msg.source,
-          priority: msg.priority,
-          priority_label: priorityName(msg.priority),
-          wait_time_ms: waitTimeMs,
-        },
+      emitMessageStoreTelemetry("message.auto_acked", "info", {
+        streamId,
+        source: msg.source,
+        priority: msg.priority,
+        priority_label: priorityName(msg.priority),
+        wait_time_ms: waitTimeMs,
       });
       continue;
     }
@@ -511,18 +477,12 @@ async function coalesceP3Message(
     },
   };
 
-  void emitGatewayOtel({
-    level: "info",
-    component: "message-store",
-    action: "message.coalesced",
-    success: true,
-    metadata: {
+  emitMessageStoreTelemetry("message.coalesced", "info", {
       streamId: keeper.message.id,
       priority: keeper.message.priority,
       priority_label: priorityName(keeper.message.priority),
       wait_time_ms: Math.max(0, now - keeper.message.timestamp),
       coalescedCount,
-    },
   });
 
   return summary;
@@ -545,20 +505,14 @@ export async function drainByPriority(options?: DrainByPriorityOptions): Promise
     const finalCandidate = candidates.find((candidate) => candidate.message.id === message.id) ?? selected;
 
     if (finalCandidate.promotedFrom !== undefined) {
-      void emitGatewayOtel({
-        level: "info",
-        component: "message-store",
-        action: "message.promoted",
-        success: true,
-        metadata: {
-          streamId: finalCandidate.message.id,
-          source: finalCandidate.message.source,
-          priority: finalCandidate.effectivePriority,
-          priority_label: priorityName(finalCandidate.effectivePriority),
-          previous_priority: finalCandidate.promotedFrom,
-          previous_priority_label: priorityName(finalCandidate.promotedFrom),
-          wait_time_ms: finalCandidate.waitTimeMs,
-        },
+      emitMessageStoreTelemetry("message.promoted", "info", {
+        streamId: finalCandidate.message.id,
+        source: finalCandidate.message.source,
+        priority: finalCandidate.effectivePriority,
+        priority_label: priorityName(finalCandidate.effectivePriority),
+        previous_priority: finalCandidate.promotedFrom,
+        previous_priority_label: priorityName(finalCandidate.promotedFrom),
+        wait_time_ms: finalCandidate.waitTimeMs,
       });
     }
 
