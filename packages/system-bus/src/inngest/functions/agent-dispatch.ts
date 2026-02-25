@@ -33,6 +33,8 @@ const FILE_CONTEXT_PATTERN =
   /\b(file|files|path|paths|repo|repository|directory|folder|codebase|source|src)\b/;
 const FILE_READ_OPERATION_PATTERN =
   /\b(read|open|inspect|review|scan|grep|search|find|cat|ls|sed|rg)\b/;
+const PI_FILE_ANALYSIS_PATH_PATTERN = /\/[A-Za-z0-9_.~-]+\.[a-z]{1,5}(?=$|[\s"'`])/;
+const PI_FILE_ANALYSIS_PREFIX_PATTERN = /^\s*(read|analyze|review)\b/i;
 
 function taskRequiresFileAccess(task: string): boolean {
   const normalizedTask = task.toLowerCase();
@@ -42,6 +44,13 @@ function taskRequiresFileAccess(task: string): boolean {
     FILE_PATH_PATTERN.test(task) ||
     (FILE_CONTEXT_PATTERN.test(normalizedTask) &&
       FILE_READ_OPERATION_PATTERN.test(normalizedTask))
+  );
+}
+
+function taskIsIncompatibleWithPiNoTools(task: string): boolean {
+  return (
+    PI_FILE_ANALYSIS_PATH_PATTERN.test(task) ||
+    PI_FILE_ANALYSIS_PREFIX_PATTERN.test(task)
   );
 }
 
@@ -87,6 +96,13 @@ export const agentDispatch = inngest.createFunction(
         `Unknown tool: ${tool}. Must be codex, claude, or pi.`
       );
     }
+
+    if (tool === "pi" && taskIsIncompatibleWithPiNoTools(task)) {
+      throw new NonRetriableError(
+        "tool:pi cannot read files — use tool:codex or tool:claude"
+      );
+    }
+
     const startedAt = new Date().toISOString();
 
     // Execute the agent

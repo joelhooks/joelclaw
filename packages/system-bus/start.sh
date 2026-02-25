@@ -85,7 +85,7 @@ VERCEL_SECRET=$(secrets lease vercel_webhook_secret --ttl 24h 2>/dev/null)
 if [ -n "$VERCEL_SECRET" ]; then
   export VERCEL_WEBHOOK_SECRET="$VERCEL_SECRET"
 else
-  echo "WARNING: Failed to lease vercel_webhook_secret" >&2
+  echo "ERROR: Failed to lease vercel_webhook_secret (Vercel webhook verification disabled)" >&2
 fi
 
 # Start worker, then force Inngest function sync after startup

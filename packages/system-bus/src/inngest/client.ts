@@ -761,6 +761,44 @@ export type Events = {
       reason?: string;
     };
   };
+  "channel/message.received": {
+    data: {
+      channelType: "slack" | "discord" | "telegram";
+      channelId: string;
+      channelName: string;
+      threadId?: string;
+      userId: string;
+      userName: string;
+      text: string;
+      timestamp: number;
+      sourceUrl?: string;
+      metadata?: Record<string, unknown>;
+    };
+  };
+  "channel/message.classify.requested": {
+    data: {
+      messageId: string;
+    };
+  };
+  "channel/message.signal": {
+    data: {
+      messageId: string;
+      channelType: "slack" | "discord" | "telegram";
+      channelId: string;
+      channelName: string;
+      threadId?: string;
+      userId: string;
+      userName: string;
+      text: string;
+      timestamp: number;
+      sourceUrl?: string;
+      classification: "signal";
+      topics: string[];
+      urgency: "high" | "normal" | "low";
+      actionable: boolean;
+      summary?: string;
+    };
+  };
   "contact/enrich.requested": {
     data: {
       name: string;

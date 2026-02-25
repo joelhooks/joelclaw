@@ -122,6 +122,7 @@ export interface TypesenseSearchResult {
 
 export const TRANSCRIPTS_COLLECTION = "transcripts";
 export const VOICE_TRANSCRIPTS_COLLECTION = "voice_transcripts";
+export const CHANNEL_MESSAGES_COLLECTION = "channel_messages";
 export const DEFAULT_VECTOR_FIELD = "embedding";
 
 type TypesenseCollectionField = {
@@ -188,6 +189,28 @@ export const VOICE_TRANSCRIPTS_COLLECTION_SCHEMA = {
       },
     },
   ],
+} satisfies Record<string, unknown>;
+
+export const CHANNEL_MESSAGES_COLLECTION_SCHEMA = {
+  name: CHANNEL_MESSAGES_COLLECTION,
+  fields: [
+    { name: "id", type: "string" },
+    { name: "channel_type", type: "string", facet: true },
+    { name: "channel_id", type: "string", facet: true },
+    { name: "channel_name", type: "string" },
+    { name: "thread_id", type: "string", optional: true },
+    { name: "user_id", type: "string" },
+    { name: "user_name", type: "string" },
+    { name: "text", type: "string" },
+    { name: "timestamp", type: "int64" },
+    { name: "classification", type: "string", facet: true },
+    { name: "topics", type: "string[]", facet: true },
+    { name: "urgency", type: "string", facet: true },
+    { name: "actionable", type: "bool" },
+    { name: "summary", type: "string", optional: true },
+    { name: "source_url", type: "string", optional: true },
+  ],
+  default_sorting_field: "timestamp",
 } satisfies Record<string, unknown>;
 
 function asTrimmedString(value: unknown): string | null {
@@ -314,6 +337,22 @@ export async function search(params: TypesenseSearchParams): Promise<TypesenseSe
   return resp.json() as Promise<TypesenseSearchResult>;
 }
 
+/** Read a document by ID */
+export async function getDoc(
+  collection: string,
+  id: string
+): Promise<Record<string, unknown>> {
+  const resp = await fetch(
+    `${TYPESENSE_URL}/collections/${collection}/documents/${encodeURIComponent(id)}`,
+    { headers: headers() }
+  );
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Typesense get failed (${resp.status}): ${text}`);
+  }
+  return resp.json() as Promise<Record<string, unknown>>;
+}
+
 /** Delete a document by ID */
 export async function deleteDoc(collection: string, id: string): Promise<void> {
   const resp = await fetch(
@@ -358,4 +397,8 @@ export async function ensureTranscriptsCollection(): Promise<void> {
 
 export async function ensureVoiceTranscriptsCollection(): Promise<void> {
   await ensureCollection(VOICE_TRANSCRIPTS_COLLECTION, VOICE_TRANSCRIPTS_COLLECTION_SCHEMA);
+}
+
+export async function ensureChannelMessagesCollection(): Promise<void> {
+  await ensureCollection(CHANNEL_MESSAGES_COLLECTION, CHANNEL_MESSAGES_COLLECTION_SCHEMA);
 }

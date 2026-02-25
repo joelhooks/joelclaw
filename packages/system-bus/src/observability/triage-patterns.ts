@@ -48,6 +48,12 @@ export const TRIAGE_PATTERNS: TriagePattern[] = [
     dedup_hours: 24,
   },
   {
+    match: { component: "o11y-triage", action: "triage.auto_fix_handler_missing" },
+    tier: 1,
+    handler: "ignore",
+    dedup_hours: 24,
+  },
+  {
     match: {
       component: "check-system-health",
       action: "system.health.critical_failure",

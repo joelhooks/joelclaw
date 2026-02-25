@@ -92,6 +92,8 @@ import {
 } from "./docs-maintenance";
 import { bookDownload } from "./book-download";
 import { contactEnrich } from "./contact-enrich";
+import { channelMessageIngest } from "./channel-message-ingest";
+import { channelMessageClassify } from "./channel-message-classify";
 
 function getFunctionId(fn: { opts?: { id?: string } }): string {
   return fn.opts?.id ?? "unknown";
@@ -184,6 +186,8 @@ export const hostFunctionDefinitions = [
   docsBacklogDriver,
   docsIngest,
   docsEnrich,
+  channelMessageIngest,
+  channelMessageClassify,
   docsIngestJanitor,
   docsReindex,
   contactEnrich,

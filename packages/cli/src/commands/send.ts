@@ -109,6 +109,15 @@ export const sendCmd = Command.make(
       const cmd = `joelclaw send ${event} --follow`
       emitStart(cmd)
       emitLog("info", `Event sent: ${event} → ${runIds.length} run(s)`)
+      const runPollDelayMs = 1500
+      const runPollAttempts = 3
+      const runPollIntervalMs = 5000
+      const sleepMs = (ms: number) =>
+        Effect.tryPromise({
+          try: () => new Promise((resolve) => setTimeout(resolve, ms)),
+          catch: () => new Error("sleep"),
+        })
+      let initialRunPollPending = true
 
       const Redis = (yield* Effect.tryPromise({
         try: () => import("ioredis"),
@@ -201,10 +210,11 @@ export const sendCmd = Command.make(
 
       // Poll for run completion (gateway events are best-effort)
       while (!ended) {
-        yield* Effect.tryPromise({
-          try: () => new Promise((resolve) => setTimeout(resolve, 5000)),
-          catch: () => new Error("sleep"),
-        })
+        const pollDelay =
+          runIds[0] && initialRunPollPending
+            ? runPollDelayMs
+            : runPollIntervalMs
+        yield* sleepMs(pollDelay)
 
         if (ended) break
 
@@ -217,7 +227,30 @@ export const sendCmd = Command.make(
         // Check if run is done
         if (runIds[0]) {
           try {
-            const runResult = yield* inngestClient.run(runIds[0])
+            let runResult: any
+            if (initialRunPollPending) {
+              let pollFailed = true
+              for (let attempt = 1; attempt <= runPollAttempts; attempt += 1) {
+                try {
+                  runResult = yield* inngestClient.run(runIds[0])
+                  pollFailed = false
+                  break
+                } catch {
+                  if (attempt < runPollAttempts) {
+                    yield* sleepMs(runPollDelayMs)
+                  }
+                }
+              }
+
+              initialRunPollPending = false
+              if (pollFailed) {
+                emitLog("warn", `Initial run poll failed after ${runPollAttempts} attempts`)
+                continue
+              }
+            } else {
+              runResult = yield* inngestClient.run(runIds[0])
+            }
+
             const status = runResult?.run?.status
             if (status === "COMPLETED") {
               emitLog("info", "Run completed")

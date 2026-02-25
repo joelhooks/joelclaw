@@ -96,9 +96,10 @@ function extractMemoryLines(memoryMarkdown: string): string[] {
     .filter((line) => line.startsWith("- "));
 }
 
-function startsWithInstructionText(change: string): boolean {
+export function isInstructionText(change: string): boolean {
   const trimmed = change.trim().toLowerCase();
-  return INSTRUCTION_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+  const withoutBulletDate = trimmed.replace(RAW_BULLET_DATE_RE, "").trim();
+  return INSTRUCTION_PREFIXES.some((prefix) => withoutBulletDate.startsWith(prefix));
 }
 
 function findMostSimilarEntry(text: string, candidates: string[]): { candidate: string; score: number } | null {
@@ -141,7 +142,7 @@ export function triageProposal(
     return { action: "auto-reject", reason: "empty proposal change" };
   }
 
-  if (startsWithInstructionText(change)) {
+  if (isInstructionText(change)) {
     return { action: "auto-reject", reason: "instruction text artifact" };
   }
 

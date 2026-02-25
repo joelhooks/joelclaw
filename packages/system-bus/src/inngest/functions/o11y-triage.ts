@@ -574,7 +574,8 @@ export const o11yTriage = inngest.createFunction(
 
         if (!handlerDef) {
           const missingHandlerName = String(rawHandlerName);
-          if (!missingHandlerWarnings.has(missingHandlerName)) {
+          const isInternalTriageEvent = event.component === "o11y-triage";
+          if (!missingHandlerWarnings.has(missingHandlerName) && !isInternalTriageEvent) {
             missingHandlerWarnings.add(missingHandlerName);
             await emitOtelEvent({
               level: "warn",

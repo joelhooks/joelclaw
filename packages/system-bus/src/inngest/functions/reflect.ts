@@ -13,6 +13,7 @@ import {
 } from "./reflect-prompt";
 import { sanitizeObservationText } from "./observation-sanitize";
 import { parsePiJsonAssistant, traceLlmGeneration, type LlmUsage } from "../../lib/langfuse";
+import { isInstructionText } from "../../memory/triage";
 import { emitOtelEvent } from "../../observability/emit";
 
 type ObservationRecord = {
@@ -253,7 +254,11 @@ async function readMemoryContent(): Promise<string> {
   if (!(await memoryFile.exists())) {
     return "";
   }
-  return memoryFile.text();
+  const rawMemory = await memoryFile.text();
+  return rawMemory
+    .split(/\r?\n/u)
+    .filter((line) => !isInstructionText(line.trim()))
+    .join("\n");
 }
 
 async function withPromptFile<T>(

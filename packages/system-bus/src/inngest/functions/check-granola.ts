@@ -1,12 +1,13 @@
 /**
  * Granola new meeting check — detect meetings since last check.
  * ADR-0055. Uses granola-cli via mcporter MCP.
- * Emits meeting/noted for each new meeting found.
+ * Invokes meeting analysis sequentially for each new meeting found.
  * Only notifies gateway if new meetings detected.
  */
 
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
+import { meetingAnalyze } from "./meeting-analyze";
 import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import Redis from "ioredis";
 
@@ -131,11 +132,12 @@ export const checkGranola = inngest.createFunction(
       return { status: "noop", reason: "already tracked in tasks", totalChecked: meetings.length };
     }
 
-    // Step 3: Emit meeting/noted events for each new meeting
-    await step.sendEvent(
-      "emit-new-meetings",
-      untrackedMeetings.map((m) => ({
-        name: "meeting/noted" as const,
+    // Step 3: Analyze meetings sequentially to avoid Granola transcript rate-limit bursts
+    for (let i = 0; i < untrackedMeetings.length; i++) {
+      const m = untrackedMeetings[i]!;
+
+      await step.invoke(`analyze-meeting-${i}`, {
+        function: meetingAnalyze,
         data: {
           meetingId: m.id,
           title: m.title,
@@ -143,8 +145,12 @@ export const checkGranola = inngest.createFunction(
           participants: m.participants,
           source: "heartbeat" as const,
         },
-      }))
-    );
+      });
+
+      if (i < untrackedMeetings.length - 1) {
+        await step.sleep(`cooldown-${i}`, "3m");
+      }
+    }
 
     // Step 4: Notify gateway about new meetings (actionable)
     await step.run("notify-new-meetings", async () => {

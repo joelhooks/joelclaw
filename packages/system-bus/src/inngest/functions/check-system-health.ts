@@ -719,9 +719,10 @@ export const checkSystemHealth = inngest.createFunction(
             lazyConnect: true,
             connectTimeout: 3000,
           });
-          redis.on("error", () => {});
+          redis.on("error", (e) => console.error("[write-gate-drift] redis error:", e));
 
           try {
+            await redis.connect();
             const lastNotified = await redis.get(WRITE_GATE_DRIFT_LAST_NOTIFIED_KEY);
             if (lastNotified) {
               return { emitted: false, reason: "cooldown" };
