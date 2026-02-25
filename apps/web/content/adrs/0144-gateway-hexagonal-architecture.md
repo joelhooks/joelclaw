@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: shipped
 date: 2026-02-25
 decision-makers: [joel]
 ---
@@ -63,7 +63,7 @@ Each channel file implements this interface. The gateway composition root wires 
 2. **Message Store** → `@joelclaw/message-store` 🔄 In progress
 3. ~~**Vault Reader**~~ → `@joelclaw/vault-reader` ✅ Shipped (2026-02-25, 4 tests)
 4. **Telemetry** — deferred (120 lines, 1 export, ~120 call sites — extracting doesn't reduce gateway size, just makes emitter reusable. Low ROI vs channel refactor.)
-5. **Channel interface** 🔄 In progress — defining `Channel` port interface
+5. ~~**Channel interface**~~ ✅ Shipped (2026-02-25) — all 4 consumer channels implement `Channel`; Redis scoped as `EventBridge` port
 
 ## Consequences
 
