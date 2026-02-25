@@ -25,7 +25,7 @@ Options considered:
 - Installed via Homebrew: `brew install steipete/tap/gogcli`
 - Auth stored in encrypted file backend (not macOS Keychain — headless-friendly)
 - `GOG_KEYRING_PASSWORD` stored in `agent-secrets` as `gog_keyring_password`
-- `GOG_ACCOUNT` set per-session to `joelhooks@gmail.com`
+- `GOG_ACCOUNT` set per-session to `<redacted-email>`
 - All agent commands use `--json` for structured output
 - Skill at `~/.pi/agent/skills/gogcli/` provides agent-facing reference
 
@@ -67,7 +67,7 @@ Options considered:
 
 ### Verification
 
-- [x] `gog auth list --check` returns valid token for joelhooks@gmail.com
+- [x] `gog auth list --check` returns valid token for <redacted-email>
 - [x] `gog calendar events primary --today --json` returns events
 - [x] `gog gmail search 'is:unread' --max 5 --json` returns messages
 - [x] Health check includes gogcli component (10/10 when authed)

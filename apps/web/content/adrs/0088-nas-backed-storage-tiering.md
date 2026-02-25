@@ -91,7 +91,7 @@ macOS Tahoe has read-only root (`/mnt` not writable). Use `/Volumes/` for mount 
 
 Mount points:
 - `/Volumes/nas-nvme` → `three-body:/volume2/data` (NVMe RAID1)
-- `/Volumes/three-body` → `192.168.1.163:/volume1/joelclaw` (HDD RAID5)
+- `/Volumes/three-body` → `<private-ip>:/volume1/joelclaw` (HDD RAID5)
 
 Mount options: `resvport,rw,soft,intr,nfsvers=3,tcp,rsize=1048576,wsize=1048576,readahead=128,noatime`
 
@@ -126,7 +126,7 @@ All backup jobs run as Inngest cron functions for observability, retry, and gate
 ### Phase 1: NAS Setup ✅
 - [x] NVMe RAID1 created (md2, 2x 2TB, 1.78TB usable)
 - [x] Btrfs filesystem on NVMe volume
-- [x] NFS exports configured (192.168.1.0/24 subnet)
+- [x] NFS exports configured (`<private-subnet>` CIDR)
 - [x] NFS mount on Mac Mini with LaunchDaemon
 - [x] Jumbo frames (MTU 9000) on both ends
 - [x] NFS tuning: rsize/wsize 1MB, readahead 128, noatime

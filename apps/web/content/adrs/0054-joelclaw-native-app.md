@@ -139,7 +139,7 @@ import LiveKit
 
 let room = Room()
 let token = try await gateway.createVoiceRoom()
-try await room.connect(url: "wss://panda.tail7af24.ts.net:7443", token: token)
+try await room.connect(url: "wss://<internal-tailnet-host>:7443", token: token)
 // Agent auto-joins, greets user, conversation begins
 ```
 
@@ -321,9 +321,9 @@ Implementation:
 
 | Protocol | Purpose | Endpoint |
 |----------|---------|----------|
-| WebSocket | Gateway chat, streaming, tool calls | `wss://panda.tail7af24.ts.net:3443/ws` (ADR-0049) |
-| WebRTC | Voice conversations (LiveKit) | `wss://panda.tail7af24.ts.net:7443` (ADR-0043) |
-| XRPC | PDS data reads/writes | `https://panda.tail7af24.ts.net:9627` (ADR-0004/0044) |
+| WebSocket | Gateway chat, streaming, tool calls | `wss://<internal-tailnet-host>:3443/ws` (ADR-0049) |
+| WebRTC | Voice conversations (LiveKit) | `wss://<internal-tailnet-host>:7443` (ADR-0043) |
+| XRPC | PDS data reads/writes | `https://<internal-tailnet-host>:9627` (ADR-0004/0044) |
 | APNs | Push notifications | Apple → device (server-side via Inngest) |
 | HealthKit | Health data sync | On-device → PDS (background task) |
 | CoreLocation | Location events | On-device → gateway (significant changes) |

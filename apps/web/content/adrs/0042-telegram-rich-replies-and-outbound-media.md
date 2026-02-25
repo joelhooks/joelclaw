@@ -601,7 +601,7 @@ And this is the full written response with more detail...
 # Agent identity config
 identity:
   name: "joelclaw"
-  did: "did:plc:joel"
+  did: "<did-placeholder>"
   personality: "dry, direct, observant"
   
 voice:

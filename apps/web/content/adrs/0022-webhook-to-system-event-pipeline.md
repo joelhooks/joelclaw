@@ -34,7 +34,7 @@ Our system differs: external services push to us via HTTP webhooks rather than u
 | Component | Status | Role in this ADR |
 |---|---|---|
 | System-bus Hono worker | ✅ Running on `:3111` | Receives webhook POSTs |
-| Caddy HTTPS proxy | ✅ `panda.tail7af24.ts.net:3443` → `:3111` | TLS termination for webhooks |
+| Caddy HTTPS proxy | ✅ `<internal-tailnet-host>:3443` → `:3111` | TLS termination for webhooks |
 | Redis event bridge | ✅ Defined in ADR-0018 | Target for normalized events |
 | `pushGatewayEvent()` | 🔜 Defined in ADR-0018, not yet implemented | Shared helper for LPUSH + PUBLISH |
 | Inngest event bus | ✅ Running | Durable workflow trigger for repair functions |
@@ -120,7 +120,7 @@ POST /webhook/github    — GitHub webhooks (future)
 POST /webhook/custom    — Generic webhook with type in body (future)
 ```
 
-All routes live on the existing Hono worker (`serve.ts`), proxied via Caddy at `https://panda.tail7af24.ts.net:3443/webhook/vercel`.
+All routes live on the existing Hono worker (`serve.ts`), proxied via Caddy at `https://<internal-tailnet-host>:3443/webhook/vercel`.
 
 ### Vercel Webhook Payload
 
@@ -292,7 +292,7 @@ Steps:
 Steps:
 1. Go to `https://vercel.com/joelhooks-projects/joelclaw/settings/webhooks`
 2. Add webhook:
-   - URL: `https://panda.tail7af24.ts.net:3443/webhook/vercel`
+   - URL: `https://<internal-tailnet-host>:3443/webhook/vercel`
    - Events: `deployment.error`, `deployment.succeeded`
    - Secret: generate and store in `agent-secrets`
 3. Test with a deliberate type error commit
@@ -348,7 +348,7 @@ joelclaw gateway test --webhook
 
 ```bash
 # Webhook route exists
-curl -s -o /dev/null -w "%{http_code}" -X GET https://panda.tail7af24.ts.net:3443/webhook/vercel
+curl -s -o /dev/null -w "%{http_code}" -X GET https://<internal-tailnet-host>:3443/webhook/vercel
 # Expected: 405
 
 # Event types registered

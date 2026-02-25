@@ -22,7 +22,7 @@ joelclaw runs on a Mac Mini behind a residential network with no static IP and n
 
 2. **No public IP** — residential NAT, no port forwarding. Traditional approaches (static IP, cloud VM, DMZ) don't apply.
 
-3. **Existing Caddy on :443** — Caddy already serves the Inngest dashboard, worker health, Qdrant, and Inngest Connect over Tailscale HTTPS on `panda.tail7af24.ts.net`.
+3. **Existing Caddy on :443** — Caddy already serves the Inngest dashboard, worker health, Qdrant, and Inngest Connect over Tailscale HTTPS on `<internal-tailnet-host>`.
 
 ### Options considered
 
@@ -58,7 +58,7 @@ Todoist POST ──→ Tailscale Edge   │                                 │
 
 Tailnet (private)
                                   ┌─────────────────────────────────┐
-Browser ──→ panda.tail7af24.ts.net│  Caddy HTTPS :443               │
+Browser ──→ <internal-tailnet-host>│  Caddy HTTPS :443               │
             (Tailscale direct)    │  → localhost:8288 (Inngest)     │
                                   │                                 │
             :3443                 │  → localhost:3111 (worker)      │
@@ -99,7 +99,7 @@ tailscale funnel --bg 443 on
 ### Public webhook URL
 
 ```
-https://panda.tail7af24.ts.net/webhooks/todoist
+https://<internal-tailnet-host>/webhooks/todoist
 ```
 
 Standard HTTPS, port 443, no custom ports. Compatible with Todoist, GitHub, Stripe, and any webhook provider.

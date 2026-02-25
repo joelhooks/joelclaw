@@ -8,7 +8,7 @@ decision-makers: joel
 
 ## Context
 
-Today's MEGA prep exposed the problem: creating a useful contact dossier requires searching 5+ data sources (Slack channels, Slack DMs, Roam archive, web/GitHub, Granola meetings, memory/Qdrant) and synthesizing results into a Vault contact file. Done manually, this is slow, inconsistent, and incomplete — as evidenced by the uneven coverage across the 6 MEGA contacts built today.
+Recent contact-prep work exposed the problem: creating a useful contact dossier requires searching 5+ data sources (Slack channels, Slack DMs, Roam archive, web/GitHub, Granola meetings, memory/Qdrant) and synthesizing results into a Vault contact file. Done manually, this is slow, inconsistent, and incomplete.
 
 Contact enrichment should be a durable Inngest pipeline that fans out across all available sources, synthesizes results, and writes/updates the Vault contact file.
 
@@ -20,8 +20,8 @@ Contact enrichment should be a durable Inngest pipeline that fans out across all
 {
   name: "contact/enrich.requested",
   data: {
-    name: string,              // "Kent C. Dodds"
-    vault_path?: string,       // "Contacts/Kent C. Dodds.md" (if exists)
+    name: string,              // "Sample Contact"
+    vault_path?: string,       // "Contacts/Sample Contact.md" (if exists)
     hints?: {                  // Optional known identifiers to seed search
       slack_user_id?: string,
       github?: string,
@@ -70,7 +70,7 @@ Fan-out steps, each independent and failure-isolated:
 
 ### Triggers
 
-- Manual: `joelclaw enrich "Kent C. Dodds"` (CLI command)
+- Manual: `joelclaw enrich "<contact-name>"` (CLI command)
 - Automatic: When a new VIP DM is detected from an unknown user (ADR-0132)
 - Automatic: When `contact/enrich.requested` is fired from any pipeline
 - Scheduled: Weekly refresh of all VIP contacts (cron)

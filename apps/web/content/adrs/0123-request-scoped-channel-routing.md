@@ -12,7 +12,7 @@ tags:
 
 ## Context
 
-The gateway daemon runs a single shared pi session that receives messages from 6+ channels: Telegram, Discord, iMessage, Redis events, CLI, and webhooks. Each message has a `source` string (e.g., `telegram:12345`, `discord:1475703175473266861`, `imessage:+1234567890`).
+The gateway daemon runs a single shared pi session that receives messages from 6+ channels: Telegram, Discord, iMessage, Redis events, CLI, and webhooks. Each message has a `source` string (e.g., `telegram:<chat-id>`, `discord:<channel-id>`, `imessage:<phone-or-handle>`).
 
 Currently, `currentSource` is a **module-global variable** in `command-queue.ts` that gets set when a message is dequeued and cleared after the response completes. This worked when there was one channel (Telegram + Redis). With 6+ channels, it breaks:
 

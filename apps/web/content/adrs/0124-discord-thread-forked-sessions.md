@@ -131,8 +131,8 @@ Threads auto-created by the bot get named from the first message, which is often
 
 The bot can post to Discord forum channels (`ForumChannel.threads.create()`):
 
-- **Forum channel**: `1475891646540288010` (configured, bot has admin access)
-- **Default channel**: `901878582421364798` (main text channel for general messages)
+- **Forum channel**: `<internal-discord-forum-channel-id>` (configured, bot has admin access)
+- **Default channel**: `<internal-discord-default-channel-id>` (main text channel for general messages)
 - Forum posts are structured threads with a name + initial message body
 - Use for: persistent reference content (ADR reviews, system status, loop results, session summaries)
 - Forum posts follow the same branch session model — each forum thread gets its own session

@@ -267,7 +267,7 @@ Use GitHub issues as the conversation layer. Already has threads, labels, assign
 - 3 Inngest functions: `todoist-comment-notify`, `todoist-task-completed-notify`, `todoist-task-created-notify`
 - API enrichment step fetches task title + project name from Todoist API v1
 - Gateway notifications via `gateway.notify()` → Redis → pi session
-- Webhook URL: `https://panda.tail7af24.ts.net/webhooks/todoist`
+- Webhook URL: `https://<internal-tailnet-host>/webhooks/todoist`
 - Key files: `src/webhooks/providers/todoist.ts`, `src/inngest/functions/todoist-notify.ts`
 - Gotchas learned: Caddy drops Funnel POST bodies (point Funnel directly at worker); HMAC uses `client_secret` not "Verification token"; `joelclaw refresh` required after function deploy
 

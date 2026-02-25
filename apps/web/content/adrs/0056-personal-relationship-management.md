@@ -105,7 +105,7 @@ interface Interaction {
 ### Identity Resolution
 
 The hard problem. People appear as different identities across channels:
-- `joel@egghead.io` in email, `Joel Hooks` in Granola, `@joelhooks` in Telegram
+- `<redacted-email>` in email, `Joel Hooks` in Granola, `@joelhooks` in Telegram
 
 Resolution strategy (ordered):
 1. **Email exact match** — primary key, most reliable
@@ -127,7 +127,7 @@ Unresolved identities go to a review queue, not auto-merged. False merges are wo
 type: person
 name: Deborah Chen
 emails:
-  - deborah@example.com
+  - <redacted-email>
 company: Chen Accounting
 role: Accountant
 tags: [accountant, business]

@@ -64,7 +64,7 @@ The clincher: LiveKit's `@function_tool` lets the voice agent call joelclaw syst
                        │ WebRTC (UDP/TCP)
                        ▼
 ┌─────── Mac Mini (panda) ─────────────────────────┐
-│  Caddy WSS proxy (panda.tail7af24.ts.net:7443)   │
+│  Caddy WSS proxy (<internal-tailnet-host>:7443)   │
 │      ↓                                            │
 │  LiveKit Server v1.9.0 (k8s, port 7880/7881)     │
 │      ↓ dispatches job                             │
@@ -90,7 +90,7 @@ Every component verified working end-to-end:
 | LLM | Claude Sonnet 4.6 via OpenRouter | ✅ Working | "Hi there! Hope you're having a wonderful day!" |
 | TTS | ElevenLabs | ✅ Working | 6 audio chunks, played out to room |
 | VAD | Silero | ✅ Working | Turn detection with live mic (file-based audio has timing issues, expected) |
-| WSS proxy | Caddy over Tailscale | ✅ Working | `wss://panda.tail7af24.ts.net:7443` |
+| WSS proxy | Caddy over Tailscale | ✅ Working | `wss://<internal-tailnet-host>:7443` |
 | Playground | agents-playground.livekit.io | ✅ Working | Token auth, real-time conversation from phone |
 
 ### Voice Agent Code

@@ -232,7 +232,7 @@ This system routes real business email — names, addresses, financial discussio
 
 6. **Gateway notifications are private.** Telegram delivery is Joel-only. Gateway summaries can include sender names and subjects since the delivery channel is private. But gateway payloads should still avoid dumping full message bodies — summarize, don't forward.
 
-7. **Google Doc downloads use Joel's auth.** `gog` CLI runs as `joelhooks@gmail.com`. Downloaded docs are stored in Vault, not cached in Redis or Convex. Doc IDs for dedup can be stored in Redis (opaque hashes, not titles).
+7. **Google Doc downloads use Joel's auth.** `gog` CLI runs as `<redacted-email>`. Downloaded docs are stored in Vault, not cached in Redis or Convex. Doc IDs for dedup can be stored in Redis (opaque hashes, not titles).
 
 ### Action-Level Privacy
 

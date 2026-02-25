@@ -85,7 +85,7 @@ dev.joelclaw.family.automation — trigger, action, enabled
 ### Federation Model
 
 Each person gets a DID via PLC directory:
-- `did:plc:joel` → custom domain handle
+- `<did-placeholder>` → custom domain handle
 - Family members get their own DIDs, own PDS, own agents
 
 Permissions are role-based:

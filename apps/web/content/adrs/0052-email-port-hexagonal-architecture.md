@@ -14,7 +14,7 @@ tags:
 
 ## Context
 
-joelclaw needs email capabilities: inbox triage, draft replies, archive/tag, and eventually agent-initiated email. Joel uses **Front** (collaborative inbox) for all email at egghead.io. Gmail (joelhooks@gmail.com) is a secondary account for personal/sending.
+joelclaw needs email capabilities: inbox triage, draft replies, archive/tag, and eventually agent-initiated email. Joel uses **Front** (collaborative inbox) for all email at egghead.io. Gmail (<redacted-email>) is a secondary account for personal/sending.
 
 The system also needs a **calendar port** with a similar shape — Google Calendar via `gog` CLI. And future integrations (Slack, Discord, SMS) will follow the same pattern. Rather than couple directly to any provider's API, we need a port/adapter architecture that keeps the application logic provider-agnostic.
 
@@ -52,7 +52,7 @@ interface EmailPort {
 
 **Front adapter** (`src/adapters/front.ts`): Wraps `@skillrecordings/front-sdk`. Used for inbox triage, conversation management, tagging, drafts. Front has native draft API support and collaborative features.
 
-**Gmail adapter** (`src/adapters/gmail.ts`): Wraps `gog` CLI with `-j` (JSON output). Used for search across Gmail, sending from joelhooks@gmail.com, calendar-adjacent email operations. `gog` requires `GOG_KEYRING_PASSWORD` env var and `--account` flag.
+**Gmail adapter** (`src/adapters/gmail.ts`): Wraps `gog` CLI with `-j` (JSON output). Used for search across Gmail, sending from <redacted-email>, calendar-adjacent email operations. `gog` requires `GOG_KEYRING_PASSWORD` env var and `--account` flag.
 
 ### Factory
 
@@ -60,7 +60,7 @@ interface EmailPort {
 function createEmailAdapter(provider: "front" | "gmail"): EmailPort {
   switch (provider) {
     case "front": return new FrontAdapter(process.env.FRONT_API_TOKEN!);
-    case "gmail": return new GmailAdapter("joelhooks@gmail.com");
+    case "gmail": return new GmailAdapter("<redacted-email>");
   }
 }
 ```
@@ -139,7 +139,7 @@ One adapter class with if/else for Front vs Gmail.
 - Integration test with real Front account
 
 ### ⬜ Gmail adapter complete
-- Auth: `gog auth add joel@joelhooks.com --services gmail`
+- Auth: `gog auth add <redacted-email> --services gmail`
 - Wrap `gog gmail` subcommands (search, get, thread, send)
 
 ### ⬜ CLI commands

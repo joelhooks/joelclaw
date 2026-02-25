@@ -99,7 +99,7 @@ Phase kickoff was logged via slog:
 
 - Commit: `559e018` (`feat(memory): implement full memory integration audit findings (ADR-0077)`).
 - Inngest deployment validation: `curl -X PUT http://127.0.0.1:3111/api/inngest` returned `{"message":"Successfully registered","modified":true}`.
-- Audit archival path: `/Users/joel/Vault/docs/notes/2026-02-22-memory-integration-audit.md`.
+- Audit archival path: `~/Vault/docs/notes/2026-02-22-memory-integration-audit.md`.
 - Operational log entry: `slog write --action deploy --tool memory ...` written at `2026-02-22T00:30:09.735Z`.
 - ADR status impact: no ADR status regressions detected; no existing ADR was superseded by this implementation.
 

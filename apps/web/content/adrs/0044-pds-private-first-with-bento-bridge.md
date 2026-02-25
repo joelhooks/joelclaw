@@ -73,7 +73,7 @@ joelclaw namespace:
 
 - [x] Generate secrets (JWT, admin password, PLC rotation key) → stored in agent-secrets
 - [x] Helm install `nerkho/bluesky-pds` v0.4.2 into `joelclaw` namespace
-- [x] Create Joel's account — DID `did:plc:7vyfh3gnwfjniddpp5sws4mq`, handle `joel.pds.panda.tail7af24.ts.net`
+- [x] Create account — DID `<internal-did>`, handle `<internal-pds-handle>`
 - [x] Write test records: `dev.joelclaw.system.log`, `dev.joelclaw.media.processed`
 - [x] Verify XRPC read/write via port-forward on 2583
 - [x] Values file at `infra/pds/values.yaml` (secrets reference `existingSecret`, not plaintext)
@@ -112,7 +112,7 @@ joelclaw namespace:
 
 ### Phase 5: Persistent access
 
-- [ ] Add PDS to Caddy config for Tailscale HTTPS (`pds.panda.tail7af24.ts.net` → `svc/bluesky-pds:3000`)
+- [ ] Add PDS to Caddy config for Tailscale HTTPS (`<internal-tailnet-host>` → `svc/bluesky-pds:3000`)
 - [ ] Or: launchd plist for persistent `kubectl port-forward`
 - [ ] Add PDS health to `joelclaw-system-check` skill
 

@@ -380,7 +380,7 @@ Your job: extract structured observations from agent session transcripts.
 1. TEMPORAL ANCHORING: Every observation includes when it happened: "(09:15) ..."
 2. ASSERTIONS > QUESTIONS: When Joel STATES something, it's 🔴 authoritative. When Joel ASKS, it's 🟡. A question does NOT invalidate a prior assertion.
 3. STATE CHANGES: Note what replaced what: "Worker now runs from monorepo (replacing standalone ~/Code/system-bus/)"
-4. PRESERVE SPECIFICS: Keep exact paths, versions, error messages, config values. Never generalize "/some/path" — keep "/Users/joel/Code/joelhooks/joelclaw".
+4. PRESERVE SPECIFICS: Keep exact paths, versions, error messages, config values. Never generalize "/some/path" — keep "~/Code/joelhooks/joelclaw".
 5. QUOTE UNUSUAL PHRASING: If Joel says something distinctive, quote it: Joel stated "slog is for infra changes only, not code edits"
 6. NO HALLUCINATION: Only observe what's in the transcript. If uncertain, mark with 🟢 and note uncertainty.
 

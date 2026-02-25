@@ -697,7 +697,7 @@ Inngest Realtime (`@inngest/realtime` v0.4.6) provides WebSocket-based pub/sub w
 
 ### Research Source
 
-This ADR is based on deep analysis of OpenClaw's actual codebase (commit from 2026-02-13, cloned to `/Users/joel/Code/openclaw/openclaw/`). Key files studied:
+This ADR is based on deep analysis of OpenClaw's actual codebase (commit from 2026-02-13, cloned to `~/Code/openclaw/openclaw/`). Key files studied:
 
 - `src/infra/heartbeat-runner.ts` — The heartbeat scheduling and execution engine
 - `src/infra/system-events.ts` — In-memory session-scoped event queue

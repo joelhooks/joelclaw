@@ -22,8 +22,8 @@ An agent that can't manage tasks is an agent that can't manage life.
 ### Why Todoist (Not Things Cloud)
 
 Things 3 is a beautiful native app with a reverse-engineered, event-sourced sync protocol. On 2026-02-18, two Things Cloud accounts were corrupted in a single day:
-1. **joel@egghead.io**: Area purge (`action=2` on `Area3` items) poisoned history — `own-history-keys` API endpoint is dead, no way to delete history events. Things 3 iOS crashes on sync.
-2. **joelhooks@gmail.com**: Batch edits with em-dashes, unicode characters, and long notes in task descriptions crash the Things 3 iOS sync parser.
+1. **<redacted-email>**: Area purge (`action=2` on `Area3` items) poisoned history — `own-history-keys` API endpoint is dead, no way to delete history events. Things 3 iOS crashes on sync.
+2. **<redacted-email>**: Batch edits with em-dashes, unicode characters, and long notes in task descriptions crash the Things 3 iOS sync parser.
 
 Things Cloud history is **immutable event-sourced** — there is no delete API. Once corrupted, it stays corrupted. The `things-cloud-sdk` approach (Go CLI, reverse-engineered protocol) is fundamentally fragile.
 

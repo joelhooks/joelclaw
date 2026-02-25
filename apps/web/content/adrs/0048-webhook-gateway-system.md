@@ -361,7 +361,7 @@ Implemented first — skipped Phase 1 polling since webhooks proved simpler.
 - 3 Inngest notify functions: inbound email, outbound sent, assignee changed
 - API enrichment step fetches conversation details (tags, assignee, status) from Front API
 - Structured agent prompts with triage instructions (matches Todoist enrich → build-prompt → notify pattern)
-- Webhook URL: `https://panda.tail7af24.ts.net/webhooks/front`
+- Webhook URL: `https://<internal-tailnet-host>/webhooks/front`
 - Secrets: `front_rules_webhook_secret` (HMAC), `front_api_token` (enrichment) in agent-secrets
 - Key files: `src/webhooks/providers/front.ts`, `src/inngest/functions/front-notify.ts`
 - **Verified E2E**: real Front webhook → HMAC ✅ → Inngest → gateway notification. Confirmed with The Information newsletter + Vercel notifications flowing through.

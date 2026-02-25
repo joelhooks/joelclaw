@@ -91,7 +91,7 @@ spec:
   type: ClusterIP  # NOT NodePort — no port mapping needed
 ```
 
-Result: `typesense.tail7af24.ts.net:8108` — accessible from any tailnet device.
+Result: `<internal-tailnet-host>:8108` — accessible from any tailnet device.
 
 ### What Changes
 
@@ -136,7 +136,7 @@ Deploy alongside the Typesense rollout (ADR-0082) during the cluster recreation:
 2. **Recreate cluster** with Typesense port (8108) — last time we need to add Docker ports
 3. **Install Tailscale operator** via Helm
 4. **Annotate existing services** with `tailscale.com/expose: "true"`
-5. **Verify MagicDNS** — `redis.tail7af24.ts.net`, `inngest.tail7af24.ts.net`, etc.
+5. **Verify MagicDNS** — `<internal-tailnet-host>`, `<internal-tailnet-host>`, etc.
 6. **Update Caddy** — strip internal service proxies, keep only Funnel (public webhooks)
 7. **Update NEIGHBORHOOD.md** — new service URLs
 8. **Future services** — just annotate, no cluster recreation ever again
@@ -151,7 +151,7 @@ After migration, Caddy only handles:
 
 ### Positive
 - **Never recreate cluster for ports again** — the biggest operational win
-- **MagicDNS** — `typesense.tail7af24.ts.net` instead of `panda:8108`
+- **MagicDNS** — `<internal-tailnet-host>` instead of `panda:8108`
 - **Per-service ACLs** — Redis only reachable from panda, Inngest from panda + clanker
 - **Simpler Caddy** — only public webhook funnel
 - **Auto-TLS** — Tailscale handles certs, no manual cert renewal
