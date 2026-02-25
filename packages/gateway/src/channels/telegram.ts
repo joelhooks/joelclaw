@@ -357,10 +357,26 @@ function mdToTelegramHtml(md: string): string {
     return `\x00LINK${idx}\x00`;
   });
 
+  // Protect existing Telegram-valid HTML tags before escaping.
+  // LLM responses may already contain <b>, <i>, <code>, <pre>, <a> etc.
+  const htmlTags: string[] = [];
+  const allowedTagPattern = new RegExp(
+    `<(/?)(?:${[...TELEGRAM_ALLOWED_TAGS].join("|")})(?:\\s[^>]*)?>`,
+    "gi",
+  );
+  html = html.replace(allowedTagPattern, (tag) => {
+    const idx = htmlTags.length;
+    htmlTags.push(tag);
+    return `\x00HTMLTAG${idx}\x00`;
+  });
+
   // CRITICAL: Escape <, >, & in body text BEFORE markdown transforms.
   // Telegram's HTML parser is strict — unescaped entities cause 400 errors
   // which trigger our fallback to plain text (raw markdown shown).
   html = escapeHtml(html);
+
+  // Restore protected HTML tags
+  html = html.replace(/\x00HTMLTAG(\d+)\x00/g, (_m, idx) => htmlTags[Number(idx)] ?? "");
 
   // Headings → bold (Telegram has no heading tags)
   // ### heading → \n<b>heading</b>\n
