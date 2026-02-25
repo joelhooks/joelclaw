@@ -5,7 +5,7 @@ import { Bot, InputFile } from "grammy";
 import type { EnqueueFn } from "./redis";
 import type { OutboundEnvelope } from "../outbound/envelope";
 import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
-import { emitGatewayOtel } from "../observability";
+import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { TelegramConverter } from "@joelclaw/markdown-formatter";
 import type {
   Channel,

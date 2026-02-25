@@ -1,3 +1,5 @@
+export type { TelemetryEmitter } from "@joelclaw/telemetry";
+
 export interface StoredMessage {
   id: string;
   source: string;
@@ -37,8 +39,4 @@ export enum Priority {
   P1 = 1,
   P2 = 2,
   P3 = 3,
-}
-
-export interface TelemetryEmitter {
-  emit(action: string, detail: string, extra?: Record<string, unknown>): void;
 }

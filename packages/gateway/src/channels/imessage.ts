@@ -7,7 +7,7 @@
  *   - No FDA required for the gateway daemon itself
  */
 import net from "node:net";
-import { emitGatewayOtel } from "../observability";
+import { emitGatewayOtel } from "@joelclaw/telemetry";
 import type { EnqueueFn } from "./redis";
 import type { Channel, ChannelPlatform, InboundMessage, MessageHandler, SendOptions } from "./types";
 

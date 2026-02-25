@@ -18,6 +18,16 @@ import {
   type TelemetryEmitter,
 } from "./types";
 
+type ModelFallbackTelemetryEvent = {
+  level: string;
+  component: string;
+  action: string;
+  success: boolean;
+  duration_ms?: number;
+  error?: string;
+  metadata?: Record<string, unknown>;
+};
+
 type ModelRef = { provider: string; id: string };
 
 function resolveCatalogModel(provider: string | undefined, model: string): ModelRef | undefined {
@@ -395,8 +405,19 @@ export class ModelFallbackController {
     }
   }
 
-  private _emit(event: Parameters<TelemetryEmitter["emit"]>[0]): void {
-    this.telemetry?.emit(event);
+  private _emit(event: ModelFallbackTelemetryEvent): void {
+    this.telemetry?.emit(
+      event.action,
+      `${event.component}.${event.action}`,
+      {
+        level: event.level,
+        component: event.component,
+        success: event.success,
+        duration_ms: event.duration_ms,
+        error: event.error,
+        ...event.metadata,
+      },
+    );
   }
 
   dispose(): void {

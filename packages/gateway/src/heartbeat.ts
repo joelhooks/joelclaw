@@ -15,7 +15,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { getConsecutiveFailures, getQueueDepth } from "./command-queue";
 import { flushBatchDigest, getGatewayMode, isHealthy as isRedisHealthy } from "./channels/redis";
-import { emitGatewayOtel } from "./observability";
+import { emitGatewayOtel } from "@joelclaw/telemetry";
 
 const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 const FIVE_MINUTES_MS = 5 * 60 * 1000;

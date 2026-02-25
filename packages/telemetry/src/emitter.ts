@@ -1,17 +1,5 @@
 import { randomUUID } from "node:crypto";
-
-type GatewayOtelLevel = "debug" | "info" | "warn" | "error" | "fatal";
-
-type GatewayOtelInput = {
-  level: GatewayOtelLevel;
-  source?: string;
-  component: string;
-  action: string;
-  success: boolean;
-  duration_ms?: number;
-  error?: string;
-  metadata?: Record<string, unknown>;
-};
+import type { GatewayOtelInput, TelemetryEmitter } from "./types";
 
 const OTEL_EMIT_URL = process.env.OTEL_EMIT_URL ?? "http://localhost:3111/observability/emit";
 const OTEL_EMIT_TOKEN = process.env.OTEL_EMIT_TOKEN;
@@ -118,3 +106,19 @@ export async function emitGatewayOtel(input: GatewayOtelInput): Promise<void> {
   }
 }
 
+export function createGatewayEmitter(component: string): TelemetryEmitter {
+  return {
+    emit(action, detail, extra) {
+      void emitGatewayOtel({
+        level: "info",
+        component,
+        action,
+        success: true,
+        metadata: {
+          detail,
+          ...(extra ?? {}),
+        },
+      });
+    },
+  };
+}

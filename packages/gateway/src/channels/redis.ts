@@ -5,7 +5,7 @@ import Redis from "ioredis";
 import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import { send as sendTelegram, type InlineButton } from "./telegram";
 import type { OutboundEnvelope } from "../outbound/envelope";
-import { emitGatewayOtel } from "../observability";
+import { emitGatewayOtel } from "@joelclaw/telemetry";
 
 export type EnqueueFn = (
   source: string,

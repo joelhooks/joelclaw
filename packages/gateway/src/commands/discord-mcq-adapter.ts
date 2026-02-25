@@ -20,7 +20,7 @@ import {
   type MessageComponentInteraction,
   type Client,
 } from "discord.js";
-import { emitGatewayOtel } from "../observability";
+import { emitGatewayOtel } from "@joelclaw/telemetry";
 
 type McqQuestion = {
   id: string;

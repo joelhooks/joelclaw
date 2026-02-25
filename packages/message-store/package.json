@@ -8,6 +8,9 @@
   "peerDependencies": {
     "ioredis": "^5.9.3"
   },
+  "dependencies": {
+    "@joelclaw/telemetry": "workspace:*"
+  },
   "devDependencies": {
     "vitest": "^4.0.0"
   }

@@ -1,3 +1,5 @@
+export type { TelemetryEmitter } from "@joelclaw/telemetry";
+
 export type FallbackConfig = {
   fallbackProvider: string;
   fallbackModel: string;
@@ -31,15 +33,3 @@ export type FallbackSession = {
 };
 
 export type FallbackNotifier = (text: string) => void;
-
-export interface TelemetryEmitter {
-  emit(event: {
-    level: string;
-    component: string;
-    action: string;
-    success: boolean;
-    duration_ms?: number;
-    error?: string;
-    metadata?: Record<string, unknown>;
-  }): void;
-}

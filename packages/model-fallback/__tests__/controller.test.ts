@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { ModelFallbackController } from "../src/controller";
 import type { FallbackSession, TelemetryEmitter } from "../src";
 
-type TelemetryEvent = Parameters<TelemetryEmitter["emit"]>[0];
+type TelemetryEvent = Parameters<TelemetryEmitter["emit"]>;
 
 const BASE_CONFIG = {
   fallbackProvider: "anthropic",
@@ -161,7 +161,11 @@ describe("ModelFallbackController", () => {
 
   test("emits telemetry events", async () => {
     const events: TelemetryEvent[] = [];
-    const telemetry: TelemetryEmitter = { emit: (event) => events.push(event) };
+    const telemetry: TelemetryEmitter = {
+      emit: (action, detail, extra) => {
+        events.push([action, detail, extra]);
+      },
+    };
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
@@ -183,7 +187,7 @@ describe("ModelFallbackController", () => {
 
     await Promise.resolve();
 
-    const actions = events.map((event) => event.action);
+    const actions = events.map((event) => event[0]);
     expect(actions).toContain("model_fallback.swapped");
     expect(actions).toContain("prompt.latency");
   });

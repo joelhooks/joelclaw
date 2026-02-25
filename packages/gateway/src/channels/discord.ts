@@ -29,7 +29,7 @@ import type {
   MessageHandler,
   SendOptions,
 } from "./types";
-import { emitGatewayOtel } from "../observability";
+import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import { injectChannelContext } from "../formatting";
 import {

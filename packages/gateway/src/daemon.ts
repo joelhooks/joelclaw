@@ -30,7 +30,7 @@ import { TRIPWIRE_PATH, startHeartbeatRunner } from "./heartbeat";
 import { getCatalogModel as resolveModelFromCatalog } from "@joelclaw/inference-router";
 import { init as initMessageStore, trimOld } from "@joelclaw/message-store";
 import { ModelFallbackController, type TelemetryEmitter } from "@joelclaw/model-fallback";
-import { emitGatewayOtel } from "./observability";
+import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
 import { registerChannel, routeResponse } from "./outbound/router";
 import { injectChannelContext } from "./formatting";
@@ -528,8 +528,20 @@ onContextOverflowRecovery(async () => {
 // ── Model fallback controller (ADR-0091) ───────────────
 const primaryProvider = providerForModel(startupGatewayConfig.model);
 const fallbackTelemetryAdapter: TelemetryEmitter = {
-  emit(event) {
-    void emitGatewayOtel(event as Parameters<typeof emitGatewayOtel>[0]);
+  emit(action: string, detail: string, extra?: Record<string, unknown>) {
+    const metadata = extra ?? {};
+    void emitGatewayOtel({
+      level: typeof metadata.level === "string" ? (metadata.level as Parameters<typeof emitGatewayOtel>[0]["level"]) : "info",
+      component: typeof metadata.component === "string" ? metadata.component : "daemon.fallback",
+      action,
+      success: typeof metadata.success === "boolean" ? metadata.success : true,
+      duration_ms: typeof metadata.duration_ms === "number" ? metadata.duration_ms : undefined,
+      error: typeof metadata.error === "string" ? metadata.error : detail,
+      metadata: {
+        ...metadata,
+        detail,
+      },
+    });
   },
 };
 

@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import type { EnqueueFn } from "./redis";
-import { emitGatewayOtel } from "../observability";
+import { emitGatewayOtel } from "@joelclaw/telemetry";
 import type {
   Channel,
   ChannelPlatform,

@@ -13,6 +13,7 @@
     "@joelclaw/markdown-formatter": "workspace:*",
     "@joelclaw/model-fallback": "workspace:*",
     "@joelclaw/message-store": "workspace:*",
+    "@joelclaw/telemetry": "workspace:*",
     "@joelclaw/vault-reader": "workspace:*",
     "@mariozechner/pi-ai": "0.52.12",
     "@mariozechner/pi-coding-agent": "0.52.12",
