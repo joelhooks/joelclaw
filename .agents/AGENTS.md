@@ -16,7 +16,8 @@
 
 Operational architecture (current):
 - Event/workflow core: Inngest + system-bus worker
-- Gateway: Redis-backed session/event bridge + Telegram integration
+- **Inference routing: `@joelclaw/inference-router` (ADR-0140)** — canonical model selection for ALL LLM calls. Catalog-based provider resolution, Langfuse tracing, fallback chains. Gateway uses it for model resolution. Never hardcode model→provider mappings — use the catalog.
+- Gateway: Redis-backed event bridge + consumer channels (Telegram, Slack, Discord, iMessage). Hexagonal architecture (ADR-0144) with extracted packages: `@joelclaw/model-fallback`, `@joelclaw/message-store`, `@joelclaw/vault-reader`, `@joelclaw/markdown-formatter`.
 - Observability: OTEL-style events -> Typesense (`otel_events`) + Convex/UI surfaces
 - Web: joelclaw.com in `apps/web`, including `/system` and `/system/events`
 

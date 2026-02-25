@@ -22,6 +22,13 @@ import {
   type ThreadChannel,
 } from "discord.js";
 import type { EnqueueFn } from "./redis";
+import type {
+  Channel,
+  ChannelPlatform,
+  InboundMessage,
+  MessageHandler,
+  SendOptions,
+} from "./types";
 import { emitGatewayOtel } from "../observability";
 import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import { injectChannelContext } from "../formatting";
@@ -40,6 +47,7 @@ let allowedUserId: string | undefined;
 let enqueuePrompt: EnqueueFn | undefined;
 let started = false;
 let slashDeps: DiscordSlashHandlerDeps | undefined;
+let defaultInstance: DiscordChannel | undefined;
 
 // ── Thread state tracking ──────────────────────────────────────────
 // Maps thread ID → status message ID in the parent channel.
@@ -89,6 +97,47 @@ function threadName(text: string): string {
   const clean = text.replace(/\n/g, " ").trim();
   if (clean.length <= 50) return clean || "New conversation";
   return clean.slice(0, 47) + "...";
+}
+
+export class DiscordChannel implements Channel {
+  readonly platform: ChannelPlatform = "discord";
+
+  async start(..._args: unknown[]): Promise<void> {
+    const [token, userId, enqueue, options] = _args;
+    await startDiscordChannel(
+      token as string,
+      userId as string,
+      enqueue as EnqueueFn,
+      options as DiscordStartOptions | undefined,
+    );
+  }
+
+  async stop(): Promise<void> {
+    await shutdownDiscordChannel();
+  }
+
+  async send(target: string, text: string, _options?: SendOptions): Promise<void> {
+    await this.sendWithLegacy(target, text);
+  }
+
+  onMessage(_handler: MessageHandler): void {
+    void _handler;
+  }
+
+  async sendWithLegacy(channelId: string, text: string): Promise<void> {
+    await sendDiscordChannel(channelId, text);
+  }
+
+  async markError(channelId: string): Promise<void> {
+    await markDiscordError(channelId);
+  }
+}
+
+function getDefaultDiscordChannel(): DiscordChannel {
+  if (!defaultInstance) {
+    defaultInstance = new DiscordChannel();
+  }
+  return defaultInstance;
 }
 
 function maybeRenderRichOutbound(text: string): MessageCreateOptions | undefined {
@@ -417,7 +466,7 @@ async function handleReaction(reaction: any, user: any): Promise<void> {
 
 // ── Lifecycle ──────────────────────────────────────────────────────
 
-export async function start(
+async function startDiscordChannel(
   token: string,
   userId: string,
   enqueue: EnqueueFn,
@@ -522,13 +571,23 @@ export async function start(
   }
 }
 
+export async function start(
+  token: string,
+  userId: string,
+  enqueue: EnqueueFn,
+  options?: DiscordStartOptions,
+): Promise<void> {
+  const instance = getDefaultDiscordChannel();
+  await instance.start(token, userId, enqueue, options);
+}
+
 // ── Outbound: send to channel/thread ──────────────────────────────
 
 /**
  * Send a text message to a Discord channel or thread.
  * Also updates the parent-channel status message to "✅ Done" if tracked.
  */
-export async function send(channelId: string, text: string): Promise<void> {
+async function sendDiscordChannel(channelId: string, text: string): Promise<void> {
   if (!client) {
     console.error("[gateway:discord] client not started, can't send");
     void emitGatewayOtel({
@@ -631,11 +690,20 @@ export async function send(channelId: string, text: string): Promise<void> {
   await updateStatusMessage(channelId, "✅ Done");
 }
 
+export async function send(channelId: string, text: string): Promise<void> {
+  const instance = getDefaultDiscordChannel();
+  await instance.send(channelId, text);
+}
+
 /**
  * Mark a thread's status message as error.
  */
-export async function markError(channelId: string): Promise<void> {
+async function markDiscordError(channelId: string): Promise<void> {
   await updateStatusMessage(channelId, "❌ Error");
+}
+
+export async function markError(channelId: string): Promise<void> {
+  await markDiscordError(channelId);
 }
 
 async function updateStatusMessage(threadId: string, status: string): Promise<void> {
@@ -686,7 +754,7 @@ export async function fetchChannel(channelId: string) {
   }
 }
 
-export async function shutdown(): Promise<void> {
+async function shutdownDiscordChannel(): Promise<void> {
   if (client) {
     client.destroy();
     client = undefined;
@@ -701,4 +769,9 @@ export async function shutdown(): Promise<void> {
     action: "discord.channel.stopped",
     success: true,
   });
+}
+
+export async function shutdown(): Promise<void> {
+  const instance = getDefaultDiscordChannel();
+  await instance.stop();
 }
