@@ -2,19 +2,13 @@ import type Redis from "ioredis";
 import type { FallbackConfig } from "@joelclaw/model-fallback";
 import {
   GATEWAY_ALLOWED_MODELS,
-  GATEWAY_MODEL_TO_PROVIDER,
+  getCatalogModel as resolveModelFromCatalog,
   normalizeModel as normalizeCatalogModel,
-  type InferenceProvider,
 } from "@joelclaw/inference-router";
 
 export const GATEWAY_CONFIG_KEY = "joelclaw:gateway:config";
 
 export const ALLOWED_MODELS = GATEWAY_ALLOWED_MODELS;
-
-/** Map model IDs to their provider. Models not listed default to "anthropic". */
-export const MODEL_PROVIDERS: Record<string, InferenceProvider | "anthropic" | "openai" | "openai-codex"> = {
-  ...GATEWAY_MODEL_TO_PROVIDER,
-};
 
 export const ALLOWED_THINKING_LEVELS = ["none", "low", "medium", "high"] as const;
 
@@ -40,7 +34,8 @@ const DEFAULT_FALLBACK: FallbackConfig = {
 };
 
 export function providerForModel(modelId: string): string {
-  return MODEL_PROVIDERS[modelId] ?? "anthropic";
+  const catalogModel = resolveModelFromCatalog(modelId);
+  return catalogModel?.provider ?? "anthropic";
 }
 
 function normalizeModel(raw: unknown): GatewayModel {

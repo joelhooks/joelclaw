@@ -27,6 +27,7 @@ import { getActiveMcqAdapter, type McqParams } from "./commands/mcq-adapter";
 import { getActiveDiscordMcqAdapter, registerDiscordMcqAdapter } from "./commands/discord-mcq-adapter";
 import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands/telegram-handler";
 import { TRIPWIRE_PATH, startHeartbeatRunner } from "./heartbeat";
+import { getCatalogModel as resolveModelFromCatalog } from "@joelclaw/inference-router";
 import { init as initMessageStore, trimOld } from "@joelclaw/message-store";
 import { ModelFallbackController, type TelemetryEmitter } from "@joelclaw/model-fallback";
 import { emitGatewayOtel } from "./observability";
@@ -77,8 +78,20 @@ function resolveModel(modelIdOverride: string | undefined) {
   const modelId = modelIdOverride ?? process.env.PI_MODEL ?? process.env.PI_MODEL_ID;
   if (!modelId) return undefined;
 
+  const catalogModel = resolveModelFromCatalog(modelId);
+  if (catalogModel) {
+    const catalogModelId = catalogModel.id.includes("/") ? catalogModel.id.split("/")[1] : catalogModel.id;
+    console.log("[gateway] resolved model via catalog", {
+      input: modelId,
+      catalogModel: catalogModel.id,
+      provider: catalogModel.provider,
+    });
+    const model = getModel(catalogModel.provider as any, catalogModelId as any);
+    if (model) return model;
+  }
+
   // Use the model's actual provider (supports cross-provider fallback)
-  const resolvedProvider = providerForModel(modelId) || process.env.PI_MODEL_PROVIDER;
+  const resolvedProvider = process.env.PI_MODEL_PROVIDER || providerForModel(modelId);
   if (!resolvedProvider) return undefined;
 
   const model = getModel(resolvedProvider as any, modelId as any);
