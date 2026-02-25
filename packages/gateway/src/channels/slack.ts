@@ -1,6 +1,12 @@
 import { execSync } from "node:child_process";
 import type { EnqueueFn } from "./redis";
 import { emitGatewayOtel } from "../observability";
+import type {
+  Channel,
+  ChannelPlatform,
+  MessageHandler,
+  SendOptions,
+} from "./types";
 
 const CHUNK_MAX = 4000;
 const DEDUPE_MAX = 500;
@@ -126,11 +132,21 @@ let started = false;
 let botUserId: string | undefined;
 let allowedUserId: string | undefined;
 let reactionAckEmoji = "eyes";
+let defaultInstance: SlackChannel | undefined;
 
 const channelNameCache = new Map<string, string>();
 const userNameCache = new Map<string, string>();
 const seenEvents = new Set<string>();
 const seenOrder: string[] = [];
+
+function mapSendOptionsFromChannelSendOptions(options?: SendOptions): SlackSendOptions | undefined {
+  if (!options) return undefined;
+  const slackOptions = options as unknown as SlackSendOptions;
+  return {
+    ...slackOptions,
+    threadTs: slackOptions.threadTs ?? options.threadId,
+  };
+}
 
 function leaseSecret(name: string): string {
   return execSync(`secrets lease ${name} --ttl 4h`, { encoding: "utf8" }).trim();
@@ -534,136 +550,196 @@ function parseFilenameFromUrl(url: string): string {
   return `attachment-${Date.now()}`;
 }
 
-export async function start(enqueue: EnqueueFn, options?: SlackStartOptions): Promise<void> {
-  if (started) return;
+export class SlackChannel implements Channel {
+  readonly platform: ChannelPlatform = "slack";
 
-  enqueuePrompt = enqueue;
-  allowedUserId = options?.allowedUserId ?? process.env.SLACK_ALLOWED_USER_ID;
-  reactionAckEmoji = options?.reactionAckEmoji ?? process.env.SLACK_REACTION_ACK_EMOJI ?? "eyes";
-
-  const botToken = options?.botToken ?? leaseSecretSafe("slack_bot_token");
-  const appToken = options?.appToken ?? leaseSecretSafe("slack_app_token");
-
-  if (!botToken || !appToken) {
-    console.warn("[gateway:slack] slack disabled — missing token(s)");
-    void emitGatewayOtel({
-      level: "warn",
-      component: "slack-channel",
-      action: "slack.channel.disabled",
-      success: false,
-      metadata: {
-        hasBotToken: Boolean(botToken),
-        hasAppToken: Boolean(appToken),
-      },
-    });
-    return;
+  async start(..._args: unknown[]): Promise<void> {
+    const [enqueue, options] = _args;
+    await startSlackChannel(enqueue as EnqueueFn, options as SlackStartOptions | undefined);
   }
 
-  const bolt = await loadSlackBolt();
-  if (!bolt) return;
-
-  app = new bolt.App({
-    token: botToken,
-    appToken,
-    socketMode: true,
-  });
-
-  if (typeof app.error === "function") {
-    app.error((error: Error) => {
-      console.error("[gateway:slack] app error", { error: error.message });
-      void emitGatewayOtel({
-        level: "error",
-        component: "slack-channel",
-        action: "slack.channel.error",
-        success: false,
-        error: error.message,
-      });
-    });
+  async stop(): Promise<void> {
+    await shutdownSlackChannel();
   }
 
-  app.message(async ({ message }: Record<string, unknown>) => {
-    try {
-      await handleIncomingMessage(message, "message");
-    } catch (error) {
-      console.error("[gateway:slack] message handler failed", { error: String(error) });
-      void emitGatewayOtel({
-        level: "error",
-        component: "slack-channel",
-        action: "slack.message.handler_failed",
-        success: false,
-        error: String(error),
-      });
-    }
-  });
+  async send(target: string, text: string, options?: SendOptions): Promise<void> {
+    await this.sendWithLegacy(target, text, mapSendOptionsFromChannelSendOptions(options));
+  }
 
-  app.event("app_mention", async ({ event }: Record<string, unknown>) => {
-    try {
-      await handleIncomingMessage(event, "mention");
-    } catch (error) {
-      console.error("[gateway:slack] app_mention handler failed", { error: String(error) });
-      void emitGatewayOtel({
-        level: "error",
-        component: "slack-channel",
-        action: "slack.mention.handler_failed",
-        success: false,
-        error: String(error),
-      });
-    }
-  });
+  onMessage(_handler: MessageHandler): void {
+    // The Slack channel wires directly to gateway queueing via start() instead of MessageHandler
+    void _handler;
+  }
 
-  app.event("reaction_added", async ({ event }: Record<string, unknown>) => {
-    try {
-      await handleReactionAdded(event);
-    } catch (error) {
-      console.error("[gateway:slack] reaction_added handler failed", { error: String(error) });
-      void emitGatewayOtel({
-        level: "error",
-        component: "slack-channel",
-        action: "slack.reaction.handler_failed",
-        success: false,
-        error: String(error),
-      });
-    }
-  });
+  async sendWithLegacy(
+    channelOrThread: string,
+    text: string,
+    options?: SlackSendOptions,
+  ): Promise<void> {
+    await sendSlackChannel(channelOrThread, text, options);
+  }
 
-  try {
-    await app.start();
-    started = true;
-    const auth = await app.client.auth.test();
-    botUserId = typeof auth.user_id === "string" ? auth.user_id : undefined;
-
-    console.log("[gateway:slack] started", {
-      botUserId,
-      allowedUserId,
-    });
-    void emitGatewayOtel({
-      level: "info",
-      component: "slack-channel",
-      action: "slack.channel.started",
-      success: true,
-      metadata: {
-        botUserId,
-        allowedUserId,
-      },
-    });
-  } catch (error) {
-    console.error("[gateway:slack] failed to start; slack channel disabled", {
-      error: String(error),
-    });
-    void emitGatewayOtel({
-      level: "error",
-      component: "slack-channel",
-      action: "slack.channel.start_failed",
-      success: false,
-      error: String(error),
-    });
-    app = undefined;
-    started = false;
-    botUserId = undefined;
+  async sendMedia(
+    channelOrThread: string,
+    text: string,
+    mediaUrl: string,
+    options?: SlackSendMediaOptions,
+  ): Promise<void> {
+    await sendSlackMedia(channelOrThread, text, mediaUrl, options);
   }
 }
 
-export async function send(channelOrThread: string, text: string, options?: SlackSendOptions): Promise<void> {
+function getDefaultSlackChannel(): SlackChannel {
+  if (!defaultInstance) {
+    defaultInstance = new SlackChannel();
+  }
+  return defaultInstance;
+}
+
+function startSlackChannel(
+  enqueue: EnqueueFn,
+  options?: SlackStartOptions,
+): Promise<void> {
+  return (async () => {
+    if (started) return;
+
+    enqueuePrompt = enqueue;
+    allowedUserId = options?.allowedUserId ?? process.env.SLACK_ALLOWED_USER_ID;
+    reactionAckEmoji = options?.reactionAckEmoji ?? process.env.SLACK_REACTION_ACK_EMOJI ?? "eyes";
+
+    const botToken = options?.botToken ?? leaseSecretSafe("slack_bot_token");
+    const appToken = options?.appToken ?? leaseSecretSafe("slack_app_token");
+
+    if (!botToken || !appToken) {
+      console.warn("[gateway:slack] slack disabled — missing token(s)");
+      void emitGatewayOtel({
+        level: "warn",
+        component: "slack-channel",
+        action: "slack.channel.disabled",
+        success: false,
+        metadata: {
+          hasBotToken: Boolean(botToken),
+          hasAppToken: Boolean(appToken),
+        },
+      });
+      return;
+    }
+
+    const bolt = await loadSlackBolt();
+    if (!bolt) return;
+
+    app = new bolt.App({
+      token: botToken,
+      appToken,
+      socketMode: true,
+    });
+
+    if (typeof app.error === "function") {
+      app.error((error: Error) => {
+        console.error("[gateway:slack] app error", { error: error.message });
+        void emitGatewayOtel({
+          level: "error",
+          component: "slack-channel",
+          action: "slack.channel.error",
+          success: false,
+          error: error.message,
+        });
+      });
+    }
+
+    app.message(async ({ message }: Record<string, unknown>) => {
+      try {
+        await handleIncomingMessage(message, "message");
+      } catch (error) {
+        console.error("[gateway:slack] message handler failed", { error: String(error) });
+        void emitGatewayOtel({
+          level: "error",
+          component: "slack-channel",
+          action: "slack.message.handler_failed",
+          success: false,
+          error: String(error),
+        });
+      }
+    });
+
+    app.event("app_mention", async ({ event }: Record<string, unknown>) => {
+      try {
+        await handleIncomingMessage(event, "mention");
+      } catch (error) {
+        console.error("[gateway:slack] app_mention handler failed", { error: String(error) });
+        void emitGatewayOtel({
+          level: "error",
+          component: "slack-channel",
+          action: "slack.mention.handler_failed",
+          success: false,
+          error: String(error),
+        });
+      }
+    });
+
+    app.event("reaction_added", async ({ event }: Record<string, unknown>) => {
+      try {
+        await handleReactionAdded(event);
+      } catch (error) {
+        console.error("[gateway:slack] reaction_added handler failed", { error: String(error) });
+        void emitGatewayOtel({
+          level: "error",
+          component: "slack-channel",
+          action: "slack.reaction.handler_failed",
+          success: false,
+          error: String(error),
+        });
+      }
+    });
+
+    try {
+      await app.start();
+      started = true;
+      const auth = await app.client.auth.test();
+      botUserId = typeof auth.user_id === "string" ? auth.user_id : undefined;
+
+      console.log("[gateway:slack] started", {
+        botUserId,
+        allowedUserId,
+      });
+      void emitGatewayOtel({
+        level: "info",
+        component: "slack-channel",
+        action: "slack.channel.started",
+        success: true,
+        metadata: {
+          botUserId,
+          allowedUserId,
+        },
+      });
+    } catch (error) {
+      console.error("[gateway:slack] failed to start; slack channel disabled", {
+        error: String(error),
+      });
+      void emitGatewayOtel({
+        level: "error",
+        component: "slack-channel",
+        action: "slack.channel.start_failed",
+        success: false,
+        error: String(error),
+      });
+      app = undefined;
+      started = false;
+      botUserId = undefined;
+    }
+  })();
+}
+
+export async function start(enqueue: EnqueueFn, options?: SlackStartOptions): Promise<void> {
+  const instance = getDefaultSlackChannel();
+  await instance.start(enqueue, options);
+}
+
+async function sendSlackChannel(
+  channelOrThread: string,
+  text: string,
+  options?: SlackSendOptions,
+): Promise<void> {
   if (!app || !started) {
     console.warn("[gateway:slack] app not started, skipping send");
     void emitGatewayOtel({
@@ -767,7 +843,12 @@ export async function send(channelOrThread: string, text: string, options?: Slac
   });
 }
 
-export async function sendMedia(
+export async function send(channelOrThread: string, text: string, options?: SlackSendOptions): Promise<void> {
+  const instance = getDefaultSlackChannel();
+  await instance.sendWithLegacy(channelOrThread, text, options);
+}
+
+async function sendSlackMedia(
   channelOrThread: string,
   text: string,
   mediaUrl: string,
@@ -858,7 +939,17 @@ export async function sendMedia(
   }
 }
 
-export async function shutdown(): Promise<void> {
+export async function sendMedia(
+  channelOrThread: string,
+  text: string,
+  mediaUrl: string,
+  options?: SlackSendMediaOptions,
+): Promise<void> {
+  const instance = getDefaultSlackChannel();
+  await instance.sendMedia(channelOrThread, text, mediaUrl, options);
+}
+
+async function shutdownSlackChannel(): Promise<void> {
   if (app) {
     try {
       await app.stop();
@@ -890,6 +981,11 @@ export async function shutdown(): Promise<void> {
     action: "slack.channel.stopped",
     success: true,
   });
+}
+
+export async function shutdown(): Promise<void> {
+  const instance = getDefaultSlackChannel();
+  await instance.stop();
 }
 
 export function isStarted(): boolean {
