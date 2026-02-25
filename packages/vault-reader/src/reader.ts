@@ -1,6 +1,7 @@
 import { stat, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join, normalize } from "node:path";
+import type { VaultIntent } from "./types";
 
 const VAULT_ROOT = normalize(process.env.VAULT_PATH ?? join(homedir(), "Vault"));
 const MAX_MATCHES = 3;
@@ -10,12 +11,7 @@ const LIST_CACHE_TTL_MS = 20_000;
 
 let fileListCache: { at: number; files: string[] } | null = null;
 
-type VaultIntent =
-  | { kind: "path"; value: string }
-  | { kind: "adr"; value: string }
-  | { kind: "fuzzy"; value: string };
-
-function extractVaultIntent(input: string): VaultIntent | null {
+export function extractVaultIntent(input: string): VaultIntent | null {
   const text = input.trim();
   if (!text) return null;
 

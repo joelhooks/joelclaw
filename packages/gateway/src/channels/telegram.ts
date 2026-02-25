@@ -4,8 +4,9 @@ import { extname } from "node:path";
 import { Bot, InputFile } from "grammy";
 import type { EnqueueFn } from "./redis";
 import type { OutboundEnvelope } from "../outbound/envelope";
-import { enrichPromptWithVaultContext } from "../vault-read";
+import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import { emitGatewayOtel } from "../observability";
+import { TelegramConverter } from "@joelclaw/markdown-formatter";
 
 // ── Telegram HTML formatting ───────────────────────────
 // Telegram's HTML mode supports: <b>, <i>, <code>, <pre>, <a href="">
@@ -66,6 +67,18 @@ function resolveSendInput(
 function formatByEnvelope(text: string, format: OutboundEnvelope["format"] | undefined): string {
   if (format === "html") return text;
   if (format === "plain") return escapeHtml(text);
+
+  if (process.env.USE_AST_FORMATTER === "true") {
+    const converter = new TelegramConverter();
+    const result = converter.convert(text);
+    const validation = converter.validate(result);
+    if (!validation.valid) {
+      console.warn("[telegram] AST formatter validation failed, falling back to regex:", validation.errors);
+      return mdToTelegramHtml(text);
+    }
+    return result;
+  }
+
   return mdToTelegramHtml(text);
 }
 

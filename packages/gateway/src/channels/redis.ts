@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { spawnSync } from "node:child_process";
 import Redis from "ioredis";
-import { enrichPromptWithVaultContext } from "../vault-read";
+import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import { send as sendTelegram, type InlineButton } from "./telegram";
 import type { OutboundEnvelope } from "../outbound/envelope";
 import { emitGatewayOtel } from "../observability";

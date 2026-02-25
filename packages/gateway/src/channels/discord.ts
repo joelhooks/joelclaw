@@ -23,7 +23,7 @@ import {
 } from "discord.js";
 import type { EnqueueFn } from "./redis";
 import { emitGatewayOtel } from "../observability";
-import { enrichPromptWithVaultContext } from "../vault-read";
+import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import { injectChannelContext } from "../formatting";
 import {
   handleDiscordSlashCommand,

@@ -45,7 +45,7 @@ function sanitizeHtmlNode(raw: string): string {
         return escapeText(segment);
       }
 
-      const [, slash, tagNameRaw, attrsRaw] = match;
+      const [, slash, tagNameRaw = "", attrsRaw = ""] = match;
       const tagName = tagNameRaw.toLowerCase();
       const isClose = slash === "/";
       if (!ALLOWED_INLINE_TAGS.has(tagName)) {
@@ -157,7 +157,7 @@ function renderNode(node: MdastNode): string {
       return "───────────────";
     case "html":
       return sanitizeHtmlNode((node as { value?: string }).value ?? "");
-    case "lineBreak":
+    case "break":
       return "\n";
     default:
       return hasChildren(node) ? renderNodeChildren(node) : "";

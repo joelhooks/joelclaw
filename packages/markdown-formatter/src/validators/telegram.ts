@@ -1,4 +1,4 @@
-import { ValidationResult } from "../types";
+import type { ValidationResult } from "../types";
 
 type ValidationIssue = {
   rule: string;
@@ -36,7 +36,7 @@ function parseTag(raw: string) {
   return {
     isClosing,
     isSelfClosing,
-    tagName: match[1].toLowerCase(),
+    tagName: match[1]!.toLowerCase(),
     attributes: match[2] ?? "",
   };
 }

@@ -278,12 +278,18 @@ importers:
       '@joelclaw/inference-router':
         specifier: workspace:*
         version: link:../inference-router
+      '@joelclaw/markdown-formatter':
+        specifier: workspace:*
+        version: link:../markdown-formatter
       '@joelclaw/message-store':
         specifier: workspace:*
         version: link:../message-store
       '@joelclaw/model-fallback':
         specifier: workspace:*
         version: link:../model-fallback
+      '@joelclaw/vault-reader':
+        specifier: workspace:*
+        version: link:../vault-reader
       '@mariozechner/pi-ai':
         specifier: 0.52.12
         version: 0.52.12(@modelcontextprotocol/sdk@1.26.0(zod@3.25.76))(ws@8.19.0)(zod@3.25.76)
@@ -572,6 +578,12 @@ importers:
       typescript:
         specifier: 5.9.2
         version: 5.9.2
+
+  packages/vault-reader:
+    devDependencies:
+      vitest:
+        specifier: ^4.0.0
+        version: 4.0.18(@opentelemetry/api@1.9.0)(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.30.2)(msw@2.12.10(@types/node@25.3.0)(typescript@5.9.2))(yaml@2.8.2)
 
 packages:
 

@@ -1,7 +1,7 @@
 import { getModel, completeSimple } from "@mariozechner/pi-ai";
 import type { Bot, Context } from "grammy";
 import type Redis from "ioredis";
-import { enrichPromptWithVaultContext } from "../vault-read";
+import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import { injectChannelContext } from "../formatting";
 import { BUILTIN_COMMANDS } from "./builtins";
 import {
