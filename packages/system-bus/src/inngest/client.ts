@@ -671,6 +671,113 @@ export type Events = {
       checkedAt?: number;
     };
   };
+  "system/self.healing.requested": {
+    data: {
+      sourceFunction?: string;
+      targetComponent?: string;
+      routeToFunction?: "system/backup.typesense" | "system/backup.redis" | string;
+      targetEventName?: string;
+      problemSummary?: string;
+      attempt?: number;
+      retryPolicy?: {
+        maxRetries?: number;
+        sleepMinMs?: number;
+        sleepMaxMs?: number;
+        sleepStepMs?: number;
+      };
+      evidence?: Array<{
+        type: string;
+        detail: string;
+      }> | string[];
+      context?: Record<string, unknown>;
+      playbook?: {
+        actions?: Array<string>;
+        restart?: Array<string>;
+        notify?: Array<string>;
+        links?: Array<string>;
+      };
+      owner?: string;
+      deadlineAt?: string;
+      fallbackAction?: "escalate" | "manual";
+      domain?: "sdk-reachability" | "backup" | "all" | string;
+      reason?: string;
+      requestedBy?: string;
+      lookbackMinutes?: number;
+      maxRuns?: number;
+      dryRun?: boolean;
+    };
+  };
+  "system/self.healing.retry.requested": {
+    data: {
+      sourceFunction: string;
+      targetComponent: string;
+      problemSummary: string;
+      attempt: number;
+      nextAttempt: number;
+      targetEventName: string;
+      decision: {
+        action: "retry" | "pause" | "escalate";
+        delayMs: number;
+        reason: string;
+        confidence: number;
+        model: string;
+        routeToEventName?: string;
+        routeToFunction?: string;
+      };
+      retryWindowMinutes?: number;
+    };
+  };
+  "system/self.healing.completed": {
+    data: {
+      domain: string;
+      status: "noop" | "detected" | "remediated";
+      detected: number;
+      inspected: number;
+      dryRun?: boolean;
+      remediationDetail?: string;
+      sampleRunIds?: string[];
+    };
+  };
+  "system/backup.failure.detected": {
+    data: {
+      sourceFunction?: string;
+      targetFunctionId?: "system/backup.typesense" | "system/backup.redis";
+      target: "typesense" | "redis";
+      error: string;
+      backupFailureDetectedAt: string;
+      attempt: number;
+      transportMode?: "local" | "remote";
+      transportAttempts?: number;
+      transportDestination?: string;
+      retryWindowHours?: number;
+      selfHealingPayload?: {
+        sourceComponent?: string;
+        problemSummary?: string;
+      };
+    };
+  };
+  "system/backup.retry.requested": {
+    data: {
+      targetFunctionId: "system/backup.typesense" | "system/backup.redis";
+      target: "typesense" | "redis";
+      error?: string;
+      backupFailureDetectedAt?: string;
+      attempt: number;
+      nextAttempt?: number;
+      transportMode?: "local" | "remote";
+      transportAttempts?: number;
+      transportDestination?: string;
+      retryWindowHours?: number;
+      decision?: {
+        action: "retry" | "pause" | "escalate";
+        delayMs: number;
+        reason: string;
+        confidence: number;
+        model: string;
+        routeTo: "system/backup.typesense" | "system/backup.redis";
+      };
+    };
+  };
   "system/adr.sync.requested": {
     data: {
       reason?: string;

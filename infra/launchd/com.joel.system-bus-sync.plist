@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.joel.system-bus-sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>PATH=/Users/joel/.bun/bin:/usr/bin:/bin:/usr/sbin:/sbin /Users/joel/.bun/bin/joelclaw inngest restart-worker --register 2&gt;&amp;1</string>
+    </array>
+
+    <key>WatchPaths</key>
+    <array>
+        <string>/Users/joel/Code/joelhooks/joelclaw/.git/refs/heads/main</string>
+    </array>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/system-bus-sync.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/system-bus-sync.log</string>
+</dict>
+</plist>

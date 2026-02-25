@@ -64,6 +64,7 @@ import { checkCalendar } from "./check-calendar";
 import { checkLoops } from "./check-loops";
 import { subscriptionCheckFeeds, subscriptionCheckSingle } from "./subscriptions";
 import { o11yTriage } from "./o11y-triage";
+import { selfHealingInvestigator } from "./self-healing-investigator";
 import { dailyDigest } from "./daily-digest";
 import { sleepModeRequested, wakeModeRequested } from "./sleep-mode";
 import { meetingTranscriptIndex } from "./meeting-transcript-index";
@@ -77,6 +78,7 @@ import { nasSoakSample, nasSoakReview } from "./nas-soak";
 import {
   backupTypesense,
   backupRedis,
+  backupFailureRouter,
   rotateSessions,
   rotateOtel,
   rotateLogs,
@@ -166,6 +168,7 @@ export const hostFunctionDefinitions = [
   subscriptionCheckFeeds,
   subscriptionCheckSingle,
   o11yTriage,
+  selfHealingInvestigator,
   dailyDigest,
   sleepModeRequested,
   wakeModeRequested,
@@ -177,6 +180,7 @@ export const hostFunctionDefinitions = [
   nasSoakReview,
   backupTypesense,
   backupRedis,
+  backupFailureRouter,
   rotateSessions,
   rotateOtel,
   rotateLogs,

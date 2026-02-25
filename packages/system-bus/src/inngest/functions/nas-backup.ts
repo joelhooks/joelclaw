@@ -5,12 +5,16 @@ import { createWriteStream } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { NonRetriableError } from "inngest";
 import { inngest } from "../client";
-import { emitMeasuredOtelEvent } from "../../observability/emit";
+import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
+import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
+import { assertAllowedModel } from "../../lib/models";
+import { loadBackupFailureRouterConfig } from "../../lib/backup-failure-router-config";
 
 const HOME_DIR = process.env.HOME ?? "/Users/joel";
 
-const NAS_NVME_ROOT = "/Volumes/nas-nvme"; // fast shared storage (1.78TB NVMe)
-const NAS_HDD_ROOT = "/Volumes/three-body"; // bulk archive (57TB HDD RAID5)
+const BACKUP_ROUTER_CONFIG = loadBackupFailureRouterConfig();
+const NAS_NVME_ROOT = BACKUP_ROUTER_CONFIG.transport.nasNvmeRoot; // fast shared storage (1.78TB NVMe)
+const NAS_HDD_ROOT = BACKUP_ROUTER_CONFIG.transport.nasHddRoot; // bulk archive (57TB HDD RAID5)
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
 const TYPESENSE_POD = "typesense-0";
@@ -18,10 +22,29 @@ const TYPESENSE_NAMESPACE = "joelclaw";
 const TYPESENSE_SNAPSHOT_ROOT = "/data/snapshots";
 const TYPESENSE_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/typesense`;
 const TYPESENSE_STAGE_ROOT = "/tmp/joelclaw/typesense-snapshots";
+const TYPESENSE_BACKUP_REMOTE_ROOT = "/volume1/joelclaw/backups/typesense";
 
 const REDIS_POD = "redis-0";
 const REDIS_NAMESPACE = "joelclaw";
 const REDIS_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/redis`;
+const REDIS_BACKUP_REMOTE_ROOT = "/volume1/joelclaw/backups/redis";
+const REDIS_BACKUP_STAGING_ROOT = `${TYPESENSE_STAGE_ROOT}/redis`;
+
+const BACKUP_RECOVERY_WINDOW_HOURS = BACKUP_ROUTER_CONFIG.transport.recoveryWindowHours;
+const BACKUP_MAX_ATTEMPTS = BACKUP_ROUTER_CONFIG.transport.maxAttempts;
+const BACKUP_RETRY_BASE_MS = BACKUP_ROUTER_CONFIG.transport.retryBaseMs;
+const BACKUP_RETRY_MAX_MS = BACKUP_ROUTER_CONFIG.transport.retryMaxMs;
+const BACKUP_FAILURE_ROUTER_MODEL = BACKUP_ROUTER_CONFIG.failureRouter.model;
+const BACKUP_FAILURE_ROUTER_FALLBACK_MODEL = BACKUP_ROUTER_CONFIG.failureRouter.fallbackModel;
+const BACKUP_ROUTER_MAX_RETRIES = BACKUP_ROUTER_CONFIG.failureRouter.maxRetries;
+const BACKUP_ROUTER_SLEEP_MIN_MS = BACKUP_ROUTER_CONFIG.failureRouter.sleepMinMs;
+const BACKUP_ROUTER_SLEEP_MAX_MS = BACKUP_ROUTER_CONFIG.failureRouter.sleepMaxMs;
+const BACKUP_ROUTER_SLEEP_STEP_MS = BACKUP_ROUTER_CONFIG.failureRouter.sleepStepMs;
+const NAS_SSH_HOST = BACKUP_ROUTER_CONFIG.transport.nasSshHost;
+const NAS_SSH_FLAGS = BACKUP_ROUTER_CONFIG.transport.nasSshFlags;
+const BACKUP_FAILURE_EVENT = "system/backup.failure.detected";
+const SELF_HEALING_REQUEST_EVENT = "system/self.healing.requested";
+const BACKUP_RETRY_REQUEST_EVENT = "system/backup.retry.requested";
 
 const SESSIONS_BACKUP_ROOT = `${NAS_HDD_ROOT}/sessions`;
 const CLAUDE_PROJECTS_ROOT = `${HOME_DIR}/.claude/projects`;
@@ -36,11 +59,56 @@ const MEMORY_LOG_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/logs`;
 const SLOG_PATH = `${HOME_DIR}/Vault/system/system-log.jsonl`;
 const SLOG_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/slog`;
 
+type BackupTarget = "typesense" | "redis";
+type BackupFailureAction = "retry" | "pause" | "escalate";
+type BackupFunctionId = "system/backup.typesense" | "system/backup.redis";
+type BackupFailureDecision = {
+  action: BackupFailureAction;
+  delayMs: number;
+  reason: string;
+  confidence: number;
+  model: string;
+  routeTo: BackupFunctionId;
+};
+
+type BackupFailureEventData = {
+  targetFunctionId: BackupFunctionId;
+  target: BackupTarget;
+  error: string;
+  backupFailureDetectedAt: string;
+  attempt: number;
+  transportMode?: BackupMode;
+  transportAttempts?: number;
+  transportDestination?: string;
+  retryWindowHours?: number;
+};
+
+type SelfHealingPlaybook = {
+  actions?: string[];
+  restart?: string[];
+  notify?: string[];
+  links?: string[];
+};
+
+type SelfHealingEvidence = {
+  type: string;
+  detail: string;
+};
+
 type ShellResult = {
   exitCode: number;
   stdout: Buffer | Uint8Array | string;
   stderr: Buffer | Uint8Array | string;
 };
+
+type BackupMode = "local" | "remote";
+
+type RetryResult = {
+  mode: BackupMode;
+  attempts: number;
+};
+
+type RetryError = Error | unknown;
 
 type TypesenseHit = {
   document?: Record<string, unknown>;
@@ -49,6 +117,610 @@ type TypesenseHit = {
 type TypesenseSearchResult = {
   hits?: TypesenseHit[];
 };
+
+function parseAttempt(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.floor(value));
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+  return fallback;
+}
+
+function stringifyFailureError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function clampDelayMs(value: number): number {
+  if (!Number.isFinite(value)) return BACKUP_ROUTER_SLEEP_MIN_MS;
+  if (value <= 0) return BACKUP_ROUTER_SLEEP_MIN_MS;
+  if (value > BACKUP_ROUTER_SLEEP_MAX_MS) return BACKUP_ROUTER_SLEEP_MAX_MS;
+  return Math.floor(value);
+}
+
+function estimateRouterDelayMs(attempt: number): number {
+  const boundedAttempt = Math.max(0, Math.floor(attempt));
+  const exponential = Math.min(BACKUP_ROUTER_SLEEP_MIN_MS * 2 ** boundedAttempt, BACKUP_ROUTER_SLEEP_MAX_MS);
+  const jitter = Math.max(0, Math.floor(Math.random() * BACKUP_ROUTER_SLEEP_STEP_MS));
+  return clampDelayMs(exponential + jitter);
+}
+
+function formatInngestSleepDelay(delayMs: number): string {
+  const totalSeconds = Math.max(1, Math.ceil(clampDelayMs(delayMs) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+
+  if (hours > 0) return `${hours}h`;
+  if (remMinutes > 0) return `${remMinutes}m`;
+  return `${seconds}s`;
+}
+
+function parseJsonFromText(raw: string): unknown | null {
+  if (!raw) return null;
+
+  const trimmed = raw.trim();
+  const parse = (candidate: string): unknown | null => {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      return null;
+    }
+  };
+
+  const direct = parse(trimmed);
+  if (direct !== null) return direct;
+
+  const fenced = trimmed.match(/```json\s*([\s\S]*?)\s*```/i);
+  if (fenced?.[1]) {
+    const fencedValue = parse(fenced[1].trim());
+    if (fencedValue !== null) return fencedValue;
+  }
+
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start !== -1 && end > start) {
+    const extracted = trimmed.slice(start, end + 1);
+    const extractedValue = parse(extracted);
+    if (extractedValue !== null) return extractedValue;
+  }
+
+  return null;
+}
+
+function normalizeFailureDecision(
+  raw: unknown,
+  fallbackTarget: BackupFunctionId,
+  fallbackAttempt: number
+): BackupFailureDecision {
+  const record = raw as Record<string, unknown>;
+  const actionText = String(record?.action ?? record?.decision ?? record?.route ?? "").toLowerCase();
+  const delayMsCandidate = parseAttempt(record?.delayMs, Number.NaN);
+  const delaySecondsCandidate = parseAttempt(record?.delaySeconds, Number.NaN);
+  const waitMinutesCandidate = parseAttempt(record?.waitMinutes, Number.NaN);
+  const waitHoursCandidate = parseAttempt(record?.waitHours, Number.NaN);
+  const routeCandidate = String(record?.routeTo ?? fallbackTarget) as BackupFunctionId | string;
+
+  const action: BackupFailureAction =
+    actionText.includes("retry") || actionText.includes("try") ? "retry" :
+      actionText.includes("pause") || actionText.includes("wait") ? "pause" :
+        "escalate";
+
+  const confidenceCandidate = Number(record?.confidence);
+  const reason =
+    typeof record?.reason === "string" && record.reason.length > 0
+      ? record.reason
+      : "No reason supplied.";
+  const parsedTarget =
+    routeCandidate === "system/backup.redis" || routeCandidate === "system/backup.typesense"
+      ? routeCandidate
+      : fallbackTarget;
+  const rawDelay =
+    delayMsCandidate > 0
+      ? delayMsCandidate
+      : delaySecondsCandidate > 0
+        ? delaySecondsCandidate * 1000
+        : waitMinutesCandidate > 0
+          ? waitMinutesCandidate * 60_000
+          : waitHoursCandidate > 0
+            ? waitHoursCandidate * 60 * 60_000
+            : Number.NaN;
+
+  const delayMs = clampDelayMs(Number.isFinite(rawDelay) ? rawDelay : estimateRouterDelayMs(fallbackAttempt));
+
+  return {
+    action,
+    delayMs,
+    reason,
+    confidence: Number.isFinite(confidenceCandidate) ? confidenceCandidate : 0.5,
+    model: typeof record?.model === "string" ? record.model : BACKUP_FAILURE_ROUTER_MODEL,
+    routeTo: parsedTarget,
+  };
+}
+
+async function analyzeBackupFailureWithPi(
+  payload: BackupFailureEventData,
+  attempt: number,
+  isRetry: boolean
+): Promise<BackupFailureDecision> {
+  const systemPrompt = [
+    "You are a senior SRE coding agent operating in the joelclaw system.",
+    "Use Codex-style structured prompting: return only the requested JSON object, no prose, no markdown, no hidden reasoning.",
+    "System shape:",
+    "- Event bus is Inngest; this function is a failure router invoked from backup failure events.",
+    "- Backup functions: `system/backup.typesense`, `system/backup.redis`.",
+    "- Failure event: `system/backup.failure.detected`; retry event: `system/backup.retry.requested`.",
+    "- If this decision requests another run, this function emits `system/backup.retry.requested`.",
+    "Operational skills to honor where relevant:",
+    "- inngest-* for durable orchestration and event-driven retries.",
+    "- o11y-logging for telemetry/observability in all branches.",
+    "- observability- and gateway-related flows stay structured and auditable.",
+    "Return one strict JSON object and nothing else.",
+    "Schema:",
+    `{\n  "action": "retry|pause|escalate",\n  "delayMs": number,\n  "reason": string,\n  "routeTo": "system/backup.typesense|system/backup.redis",\n  "confidence": number (0-1)\n}`,
+    "Use action=retry for recoverable transport failures or transient infra issues.",
+    "Use action=pause when transient conditions likely require a bounded wait before a single reattempt.",
+    "Use action=escalate when retries are unlikely to help.",
+    "Delay should usually be in milliseconds and between 30_000 and 14_400_000.",
+    "Prefer concrete reasoning in reason with concrete trigger signals from the event payload.",
+  ].join("\n");
+
+  const userPrompt = [
+    "Failure event:",
+    JSON.stringify(payload, null, 2),
+    `Retry attempt: ${attempt}`,
+    `Is this a repeated retry event: ${isRetry ? "true" : "false"}`,
+  ].join("\n\n");
+
+  const startedAt = Date.now();
+  assertAllowedModel(BACKUP_FAILURE_ROUTER_MODEL);
+  assertAllowedModel(BACKUP_FAILURE_ROUTER_FALLBACK_MODEL);
+
+  const analyzeWithModel = async (model: string) => {
+    const result = await $`pi --no-tools --no-session --no-extensions --print --mode json --model ${model} --system-prompt ${systemPrompt} ${userPrompt}`.quiet().nothrow();
+    const raw = await result.text();
+    const parsedPi = parsePiJsonAssistant(raw);
+    const assistantText = parsedPi?.text ?? raw;
+    const parsed = parseJsonFromText(assistantText);
+
+    if (result.exitCode !== 0 && (!assistantText || assistantText.length < 10)) {
+      throw new Error(`pi exit ${result.exitCode}`);
+    }
+
+    const decision = parsed === null ? normalizeFailureDecision({}, payload.targetFunctionId, attempt) : normalizeFailureDecision(parsed, payload.targetFunctionId, attempt);
+
+    await traceLlmGeneration({
+      traceName: "joelclaw.backup-failure-router",
+      generationName: "backup.failure.analysis",
+      component: "nas-backup",
+      action: "system.backup.failure.analyze",
+      input: {
+        target: payload.target,
+        targetFunctionId: payload.targetFunctionId,
+        attempt,
+        error: payload.error,
+      },
+      output: decision,
+      provider: parsedPi?.provider,
+      model: parsedPi?.model ?? model,
+      usage: parsedPi?.usage,
+      durationMs: Date.now() - startedAt,
+      metadata: {
+        requestedModel: model,
+        retryEvent: isRetry,
+      },
+    });
+
+    return {
+      ...decision,
+      model,
+    };
+  };
+
+  try {
+    return await analyzeWithModel(BACKUP_FAILURE_ROUTER_MODEL);
+  } catch {
+    try {
+      const fallbackDecision = await analyzeWithModel(BACKUP_FAILURE_ROUTER_FALLBACK_MODEL);
+      if (fallbackDecision) {
+        return fallbackDecision;
+      }
+    } catch {
+      // fall through to local fallback
+    }
+    return {
+      action: "retry",
+      delayMs: estimateRouterDelayMs(attempt),
+      reason: "Model analysis unavailable; using fallback backoff.",
+      confidence: 0.35,
+      model: BACKUP_FAILURE_ROUTER_FALLBACK_MODEL,
+      routeTo: payload.targetFunctionId,
+    };
+  }
+}
+
+type SelfHealingRequestData = {
+  sourceFunction: BackupFunctionId;
+  targetComponent: string;
+  routeToFunction?: BackupFunctionId;
+  problemSummary: string;
+  attempt?: number;
+  targetEventName?: string;
+  retryPolicy?: {
+    maxRetries?: number;
+    sleepMinMs?: number;
+    sleepMaxMs?: number;
+    sleepStepMs?: number;
+  };
+  evidence?: Array<SelfHealingEvidence>;
+  playbook?: SelfHealingPlaybook;
+  context?: Record<string, unknown>;
+};
+
+type BackupFailureOnFailureContext = {
+  error: unknown;
+  event: {
+    id?: string;
+    name: string;
+    data?: Record<string, unknown>;
+  };
+  step: {
+    sendEvent: (
+      id: string,
+      payload:
+        | {
+            name: typeof BACKUP_FAILURE_EVENT;
+            data: BackupFailureEventData;
+          }
+        | {
+            name: typeof SELF_HEALING_REQUEST_EVENT;
+            data: SelfHealingRequestData;
+          }
+    ) => Promise<unknown>;
+  };
+};
+
+type BackupRetryEventData = BackupFailureEventData & {
+  decision?: BackupFailureDecision;
+  attempt: number;
+  nextAttempt?: number;
+};
+
+type BackupRouterContext = {
+  event: {
+    id?: string;
+    name: string;
+    data?: Record<string, unknown>;
+  };
+  step: {
+    sleep: (name: string, duration: string) => Promise<void>;
+    sendEvent: (
+      id: string,
+      payload:
+        | {
+            name: string;
+            data: BackupRetryEventData;
+          }
+        | Array<{
+            name: string;
+            data: BackupRetryEventData;
+          }>
+    ) => Promise<{ ids: string[] }>;
+  };
+};
+
+function createBackupOnFailureHandler(
+  targetFunctionId: BackupFunctionId,
+  target: BackupTarget
+): (context: BackupFailureOnFailureContext) => Promise<void> {
+  return async ({ error, event, step }) => {
+    const eventData = event.data ?? {};
+    const payload: BackupFailureEventData = {
+      targetFunctionId,
+      target,
+      error: stringifyFailureError(error),
+      backupFailureDetectedAt: new Date().toISOString(),
+      attempt: parseAttempt(eventData?.attempt, 0),
+      transportMode: typeof eventData?.transportMode === "string" ? (eventData.transportMode as BackupMode) : undefined,
+      transportAttempts: parseAttempt(eventData?.transportAttempts, 0),
+      transportDestination:
+        typeof eventData?.transportDestination === "string" ? eventData.transportDestination : undefined,
+      retryWindowHours: parseAttempt(eventData?.retryWindowHours, BACKUP_RECOVERY_WINDOW_HOURS),
+    };
+    const homeDir = process.env.HOME ?? "/Users/joel";
+    const selfHealingPayload = {
+      sourceFunction: targetFunctionId,
+      targetComponent: `backup:${target}`,
+      routeToFunction: targetFunctionId,
+      problemSummary: `${targetFunctionId}: ${payload.error}`,
+      attempt: payload.attempt,
+      targetEventName: BACKUP_RETRY_REQUEST_EVENT,
+      retryPolicy: {
+        maxRetries: BACKUP_ROUTER_MAX_RETRIES,
+        sleepMinMs: BACKUP_ROUTER_SLEEP_MIN_MS,
+        sleepMaxMs: BACKUP_ROUTER_SLEEP_MAX_MS,
+        sleepStepMs: BACKUP_ROUTER_SLEEP_STEP_MS,
+      },
+      evidence: [
+        {
+          type: "backup-failure",
+          detail: `targetFunctionId=${targetFunctionId}; target=${target}; attempt=${payload.attempt}`,
+        },
+        {
+          type: "attempt",
+          detail: `transportMode=${payload.transportMode ?? "unknown"} transportAttempts=${payload.transportAttempts ?? 0}`,
+        },
+      ] as SelfHealingEvidence[],
+      playbook: {
+        actions: ["route to backup retry event after structured decision"],
+        restart: [
+          "Verify NAS mount via `stat /Volumes/three-body`",
+          "Validate SSH access to configured NAS host",
+        ],
+        notify: ["joelclaw system logs and OTEL"],
+        links: [
+          `${homeDir}/Vault/system/system-log.jsonl`,
+          `${homeDir}/.joelclaw/system-bus.config.json`,
+        ],
+      } as SelfHealingPlaybook,
+      context: {
+        transportDestination: payload.transportDestination,
+        retryWindowHours: payload.retryWindowHours,
+        backupFailureDetectedAt: payload.backupFailureDetectedAt,
+      },
+    };
+
+    try {
+      await step.sendEvent("emit-backup-failure", {
+        name: BACKUP_FAILURE_EVENT,
+        data: payload,
+      });
+      await step.sendEvent("emit-self-healing-request", {
+        name: SELF_HEALING_REQUEST_EVENT,
+        data: selfHealingPayload,
+      });
+    } catch {
+      console.warn(`Failed to emit backup failure event for ${targetFunctionId}: ${event.id ?? "unknown event"}`);
+    }
+  };
+}
+
+function isRetryEventForFunction(eventData: Record<string, unknown> | undefined, targetFunctionId: BackupFunctionId): boolean {
+  if (!eventData) return true;
+
+  const requestedTarget = String(eventData.targetFunctionId ?? "");
+  if (!requestedTarget) return true;
+
+  return requestedTarget === targetFunctionId;
+}
+
+function resolveEventAttempt(eventData: Record<string, unknown> | undefined): number {
+  if (!eventData) return 0;
+  return parseAttempt(eventData.attempt, 0);
+}
+
+function normalizeFailureTarget(value: unknown): BackupTarget {
+  return value === "redis" ? "redis" : "typesense";
+}
+
+function normalizeFailureTargetFunction(value: unknown): BackupFunctionId {
+  return value === "system/backup.redis" ? "system/backup.redis" : "system/backup.typesense";
+}
+
+function normalizeTargetFromFunction(value: BackupFunctionId): BackupTarget {
+  return value === "system/backup.redis" ? "redis" : "typesense";
+}
+
+function normalizeRetryData(raw: Record<string, unknown>): BackupFailureEventData {
+  const targetFunctionId = normalizeFailureTargetFunction(raw.targetFunctionId);
+  return {
+    targetFunctionId,
+    target: normalizeFailureTarget(raw.target),
+    error: stringifyFailureError(raw.error ?? "Unknown backup failure"),
+    backupFailureDetectedAt:
+      typeof raw.backupFailureDetectedAt === "string" ? raw.backupFailureDetectedAt : new Date().toISOString(),
+    attempt: parseAttempt(raw.attempt, 0),
+    transportMode:
+      typeof raw.transportMode === "string"
+        ? raw.transportMode === "remote"
+          ? "remote"
+          : "local"
+        : undefined,
+    transportAttempts: parseAttempt(raw.transportAttempts, 0),
+    transportDestination:
+      typeof raw.transportDestination === "string" ? raw.transportDestination : undefined,
+    retryWindowHours: parseAttempt(raw.retryWindowHours, BACKUP_RECOVERY_WINDOW_HOURS),
+  };
+}
+
+function computeRetryDelayMs(attempt: number): number {
+  const scaled = Math.min(BACKUP_RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1), BACKUP_RETRY_MAX_MS);
+  const jitter = Math.max(0, Math.min(1000, Math.floor(scaled * 0.2)));
+  return scaled + Math.floor(Math.random() * (jitter + 1));
+}
+
+function isRetryableBackupError(error: RetryError): boolean {
+  const message = toText((error as Error)?.message ?? `${error ?? ""}`).toLowerCase();
+  return /operation timed out|timed out|timeout|connection/i.test(message)
+    || /connect.*timed out|no route to host|network is unreachable|econn|ssh:|resource temporarily unavailable/i.test(message)
+    || /input\/output|i\/o error|stale file handle|temporary failure|server is unavailable/i.test(message);
+}
+
+async function checkLocalBackupTarget(path: string): Promise<boolean> {
+  const probe = `${path}/.joelclaw-backup-probe-${Date.now()}`;
+  try {
+    await runShell(
+      `mkdir -p ${path}`,
+      $`mkdir -p ${path}`.quiet().nothrow()
+    );
+    await runShell(
+      `touch ${probe} && rm -f ${probe}`,
+      $`touch ${probe} && rm -f ${probe}`.quiet().nothrow()
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function checkRemoteBackupTarget(path: string): Promise<boolean> {
+  const mkdirResult = await $`ssh ${NAS_SSH_FLAGS} ${NAS_SSH_HOST} "mkdir -p ${path}"`.quiet().nothrow();
+  if (mkdirResult.exitCode !== 0) return false;
+
+  const probe = `${path}/.joelclaw-backup-probe-${Date.now()}`;
+  const probeResult = await $`ssh ${NAS_SSH_FLAGS} ${NAS_SSH_HOST} "touch ${probe} && rm -f ${probe}"`.quiet().nothrow();
+  return probeResult.exitCode === 0;
+}
+
+async function ensureRemoteDirectory(path: string): Promise<void> {
+  await runShell(
+    `mkdir -p ${path} via remote`,
+    $`ssh ${NAS_SSH_FLAGS} ${NAS_SSH_HOST} "mkdir -p ${path}"`.quiet().nothrow()
+  );
+}
+
+async function runWithBackupTransport<T>(
+  label: string,
+  localPath: string,
+  remotePath: string,
+  runLocal: () => Promise<T>,
+  runRemote: () => Promise<T>,
+): Promise<RetryResult & { result: T }> {
+  const start = Date.now();
+  const timeoutMs = BACKUP_RECOVERY_WINDOW_HOURS * 60 * 60 * 1000;
+  const deadline = start + timeoutMs;
+  let mode: BackupMode = "local";
+  let lastError: RetryError;
+  let attempts = 0;
+
+  for (let attempt = 1; attempt <= BACKUP_MAX_ATTEMPTS; attempt++) {
+    attempts = attempt;
+    if (Date.now() > deadline) break;
+
+    if (mode === "local") {
+      const localOk = await checkLocalBackupTarget(localPath);
+      if (localOk) {
+        try {
+          const result = await runLocal();
+          return { mode, attempts, result };
+        } catch (error) {
+          lastError = error;
+          if (!isRetryableBackupError(error)) {
+            throw error;
+          }
+          const remoteOk = await checkRemoteBackupTarget(remotePath);
+          if (remoteOk) mode = "remote";
+        }
+      } else {
+        const remoteOk = await checkRemoteBackupTarget(remotePath);
+        if (remoteOk) {
+          mode = "remote";
+        }
+      }
+    } else {
+      const remoteOk = await checkRemoteBackupTarget(remotePath);
+      if (remoteOk) {
+        try {
+          const result = await runRemote();
+          return { mode, attempts, result };
+        } catch (error) {
+          lastError = error;
+          if (!isRetryableBackupError(error)) {
+            throw error;
+          }
+          const localOk = await checkLocalBackupTarget(localPath);
+          if (localOk) mode = "local";
+        }
+      } else {
+        const localOk = await checkLocalBackupTarget(localPath);
+        if (localOk) {
+          mode = "local";
+        }
+      }
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0 || attempt >= BACKUP_MAX_ATTEMPTS) break;
+    await Bun.sleep(Math.min(computeRetryDelayMs(attempt), remainingMs));
+  }
+
+  throw (lastError as Error) ?? new Error(`${label} failed after ${attempts} attempts in ${BACKUP_RECOVERY_WINDOW_HOURS}h`);
+}
+
+async function copyDirectoryWithFallback(
+  source: string,
+  localDestination: string,
+  remoteDestination: string,
+): Promise<RetryResult> {
+  const { mode, attempts } = await runWithBackupTransport(
+    `copy ${source} to backup target`,
+    localDestination,
+    remoteDestination,
+    async () => {
+      await runShell(
+        `mkdir -p ${localDestination}`,
+        $`mkdir -p ${localDestination}`.quiet().nothrow()
+      );
+      await runShell(
+        `rsync -az ${source}/ ${localDestination}/`,
+        $`rsync -az ${source}/ ${localDestination}/`.quiet().nothrow()
+      );
+      return;
+    },
+    async () => {
+      await ensureRemoteDirectory(remoteDestination);
+      await runShell(
+        `scp -r ${source}/. ${NAS_SSH_HOST}:${remoteDestination}/`,
+        $`scp -o ${NAS_SSH_FLAGS} -r ${source}/. ${NAS_SSH_HOST}:${remoteDestination}/`.quiet().nothrow()
+      );
+      return;
+    }
+  );
+
+  return { mode, attempts };
+}
+
+async function copyFileWithFallback(
+  source: string,
+  localDestination: string,
+  remoteDestination: string,
+): Promise<RetryResult> {
+  const localDir = dirname(localDestination);
+  const remoteDir = dirname(remoteDestination);
+  const { mode, attempts } = await runWithBackupTransport(
+    `copy file ${source} to backup target`,
+    localDir,
+    remoteDir,
+    async () => {
+      await runShell(
+        `mkdir -p ${localDir}`,
+        $`mkdir -p ${localDir}`.quiet().nothrow()
+      );
+      await runShell(
+        `cp ${source} ${localDestination}`,
+        $`cp ${source} ${localDestination}`.quiet().nothrow()
+      );
+      return;
+    },
+    async () => {
+      await ensureRemoteDirectory(remoteDir);
+      await runShell(
+        `scp ${source} to remote backup`,
+        $`scp -o ${NAS_SSH_FLAGS} ${source} ${NAS_SSH_HOST}:${remoteDestination}`.quiet().nothrow()
+      );
+      return;
+    }
+  );
+
+  return { mode, attempts };
+}
 
 function toText(value: Buffer | Uint8Array | string): string {
   if (typeof value === "string") return value.trim();
@@ -308,13 +980,27 @@ export const backupTypesense = inngest.createFunction(
     name: "Backup Typesense Snapshot to NAS",
     concurrency: { limit: 1 },
     retries: 2,
+    onFailure: createBackupOnFailureHandler("system/backup.typesense", "typesense"),
   },
-  [{ cron: "TZ=America/Los_Angeles 0 3 * * *" }],
-  async ({ step }) => {
+  [{ cron: "TZ=America/Los_Angeles 0 3 * * *" }, { event: BACKUP_RETRY_REQUEST_EVENT }],
+  async ({ step, event }) => {
     const metadata: Record<string, unknown> = {
       schedule: "daily_3am_pt",
       mount: NAS_HDD_ROOT,
     };
+
+    const eventData = event.data as Record<string, unknown> | undefined;
+    if (!isRetryEventForFunction(eventData, "system/backup.typesense")) {
+      return { skipped: true, reason: "event-target-mismatch" };
+    }
+
+    const attempt = resolveEventAttempt(eventData);
+    let transportMode: BackupMode = "local";
+    let transportAttempts = 0;
+
+    if (attempt > 0) {
+      metadata.retryAttempt = attempt;
+    }
 
     return emitMeasuredOtelEvent(
       {
@@ -325,21 +1011,18 @@ export const backupTypesense = inngest.createFunction(
         metadata,
       },
       async () => {
-        await step.run("check-nas-mount", ensureNasMounted);
-
         const dateStamp = await step.run("resolve-date-stamp", async () => getDateStamp());
         const snapshotPath = `${TYPESENSE_SNAPSHOT_ROOT}/${dateStamp}`;
         const stagedSnapshotPath = `${TYPESENSE_STAGE_ROOT}/${dateStamp}`;
         const destinationPath = `${TYPESENSE_BACKUP_ROOT}/${dateStamp}`;
+        const remoteDestinationPath = `${TYPESENSE_BACKUP_REMOTE_ROOT}/${dateStamp}`;
 
         await step.run("prepare-directories", async () => {
-          await ensureDir(TYPESENSE_BACKUP_ROOT);
           await ensureDir(TYPESENSE_STAGE_ROOT);
           await runShell(
-            `rm -rf ${stagedSnapshotPath} ${destinationPath}`,
-            $`rm -rf ${stagedSnapshotPath} ${destinationPath}`.quiet().nothrow()
+            `rm -rf ${stagedSnapshotPath}`,
+            $`rm -rf ${stagedSnapshotPath}`.quiet().nothrow()
           );
-          await ensureDir(destinationPath);
         });
 
         const snapshotResult = await step.run("trigger-snapshot", async () =>
@@ -365,10 +1048,13 @@ export const backupTypesense = inngest.createFunction(
         });
 
         await step.run("sync-snapshot-to-nas", async () => {
-          await runShell(
-            `rsync -az ${stagedSnapshotPath}/ ${destinationPath}/`,
-            $`rsync -az ${stagedSnapshotPath}/ ${destinationPath}/`.quiet().nothrow()
+          const result = await copyDirectoryWithFallback(
+            stagedSnapshotPath,
+            destinationPath,
+            remoteDestinationPath
           );
+          transportMode = result.mode;
+          transportAttempts = result.attempts;
         });
 
         await step.run("cleanup-stage", async () => {
@@ -381,10 +1067,16 @@ export const backupTypesense = inngest.createFunction(
         metadata.date = dateStamp;
         metadata.snapshotPath = snapshotPath;
         metadata.destinationPath = destinationPath;
+        metadata.remoteDestinationPath = remoteDestinationPath;
+        metadata.retryAttempt = attempt;
+        metadata.transportMode = transportMode;
+        metadata.transportAttempts = transportAttempts;
         metadata.snapshotResult = snapshotResult;
 
         return {
           date: dateStamp,
+          transportMode,
+          transportAttempts,
           snapshotPath,
           destinationPath,
         };
@@ -399,13 +1091,27 @@ export const backupRedis = inngest.createFunction(
     name: "Backup Redis RDB to NAS",
     concurrency: { limit: 1 },
     retries: 2,
+    onFailure: createBackupOnFailureHandler("system/backup.redis", "redis"),
   },
-  [{ cron: "TZ=America/Los_Angeles 30 3 * * *" }],
-  async ({ step }) => {
+  [{ cron: "TZ=America/Los_Angeles 30 3 * * *" }, { event: BACKUP_RETRY_REQUEST_EVENT }],
+  async ({ step, event }) => {
     const metadata: Record<string, unknown> = {
       schedule: "daily_330am_pt",
       mount: NAS_HDD_ROOT,
     };
+
+    const eventData = event.data as Record<string, unknown> | undefined;
+    if (!isRetryEventForFunction(eventData, "system/backup.redis")) {
+      return { skipped: true, reason: "event-target-mismatch" };
+    }
+
+    const attempt = resolveEventAttempt(eventData);
+    let transportMode: BackupMode = "local";
+    let transportAttempts = 0;
+
+    if (attempt > 0) {
+      metadata.retryAttempt = attempt;
+    }
 
     return emitMeasuredOtelEvent(
       {
@@ -416,13 +1122,15 @@ export const backupRedis = inngest.createFunction(
         metadata,
       },
       async () => {
-        await step.run("check-nas-mount", ensureNasMounted);
-
         const dateStamp = await step.run("resolve-date-stamp", async () => getDateStamp());
         const destinationPath = `${REDIS_BACKUP_ROOT}/dump-${dateStamp}.rdb`;
+        const stagingPath = `${REDIS_BACKUP_STAGING_ROOT}/${dateStamp}/dump.rdb`;
+        const remoteDestinationPath = `${REDIS_BACKUP_REMOTE_ROOT}/dump-${dateStamp}.rdb`;
 
         await step.run("prepare-redis-backup-dir", async () => {
-          await ensureDir(REDIS_BACKUP_ROOT);
+          await ensureDir(REDIS_BACKUP_STAGING_ROOT);
+          await ensureDir(dirname(stagingPath));
+          await runShell(`rm -f ${stagingPath}`, $`rm -f ${stagingPath}`.quiet().nothrow());
         });
 
         await step.run("trigger-redis-bgsave", async () => {
@@ -438,20 +1146,149 @@ export const backupRedis = inngest.createFunction(
 
         await step.run("copy-redis-rdb", async () => {
           await runShell(
-            `kubectl cp -n ${REDIS_NAMESPACE} ${REDIS_POD}:/data/dump.rdb ${destinationPath}`,
-            $`kubectl cp -n ${REDIS_NAMESPACE} ${REDIS_POD}:/data/dump.rdb ${destinationPath}`.quiet().nothrow()
+            `kubectl cp -n ${REDIS_NAMESPACE} ${REDIS_POD}:/data/dump.rdb ${stagingPath}`,
+            $`kubectl cp -n ${REDIS_NAMESPACE} ${REDIS_POD}:/data/dump.rdb ${stagingPath}`.quiet().nothrow()
           );
+        });
+
+        await step.run("copy-redis-rdb-to-nas", async () => {
+          const result = await copyFileWithFallback(stagingPath, destinationPath, remoteDestinationPath);
+          transportMode = result.mode;
+          transportAttempts = result.attempts;
+        });
+
+        await step.run("cleanup-redis-stage", async () => {
+          await runShell(`rm -f ${stagingPath}`, $`rm -f ${stagingPath}`.quiet().nothrow());
         });
 
         metadata.date = dateStamp;
         metadata.destinationPath = destinationPath;
+        metadata.remoteDestinationPath = remoteDestinationPath;
+        metadata.retryAttempt = attempt;
+        metadata.transportMode = transportMode;
+        metadata.transportAttempts = transportAttempts;
 
         return {
           date: dateStamp,
+          transportMode,
+          transportAttempts,
           destinationPath,
         };
       }
     );
+  }
+);
+
+export const backupFailureRouter = inngest.createFunction(
+  {
+    id: "system/backup.failure.router",
+    name: "Route Backup Failures",
+    concurrency: { limit: 1 },
+    retries: 2,
+  },
+  [{ event: BACKUP_FAILURE_EVENT }],
+  async ({ event, step }: BackupRouterContext): Promise<{
+    status: "escalated" | "scheduled";
+    targetFunctionId: BackupFunctionId;
+    reason?: string;
+    attempt: number;
+    delayMs?: number;
+  }> => {
+    const eventDataRaw = (event.data ?? {}) as Record<string, unknown>;
+    const payload = normalizeRetryData(eventDataRaw);
+    const attempt = parseAttempt(eventDataRaw.attempt, 0);
+    const isRetry = attempt > 0;
+    const decision = await analyzeBackupFailureWithPi(payload, attempt, isRetry);
+
+    await emitOtelEvent({
+      level: "info",
+      source: "worker",
+      component: "nas-backup",
+      action: "system.backup.failure.router",
+      success: true,
+      metadata: {
+        eventId: event.id,
+        targetFunctionId: payload.targetFunctionId,
+        target: payload.target,
+        attempt,
+        isRetry,
+        decision,
+      },
+    });
+
+    if (decision.action === "retry" || decision.action === "pause") {
+      const retryAttempt = Math.max(attempt, 0) + 1;
+      if (retryAttempt > BACKUP_ROUTER_MAX_RETRIES) {
+        await emitOtelEvent({
+          level: "warn",
+          source: "worker",
+          component: "nas-backup",
+          action: "system.backup.failure.router",
+          success: false,
+          error: `Retry budget exceeded for ${payload.targetFunctionId} at attempt ${retryAttempt}`,
+          metadata: {
+            eventId: event.id,
+            targetFunctionId: payload.targetFunctionId,
+            target: payload.target,
+            attempt,
+            maxRetries: BACKUP_ROUTER_MAX_RETRIES,
+            decision,
+          },
+        });
+        return {
+          status: "escalated",
+          reason: `Retry budget exceeded (${retryAttempt} attempts)`,
+          targetFunctionId: payload.targetFunctionId,
+          attempt,
+        };
+      }
+
+      const delayMs = decision.delayMs > 0 ? decision.delayMs : estimateRouterDelayMs(attempt);
+      await step.sleep("backup-retry-wait", formatInngestSleepDelay(delayMs));
+
+      await step.sendEvent("request-backup-retry", {
+        name: BACKUP_RETRY_REQUEST_EVENT,
+        data: {
+          ...payload,
+          targetFunctionId: decision.routeTo,
+          target: normalizeTargetFromFunction(decision.routeTo),
+          attempt: retryAttempt,
+          nextAttempt: retryAttempt,
+          decision,
+        },
+      });
+
+      return {
+        status: "scheduled",
+        targetFunctionId: decision.routeTo,
+        attempt: retryAttempt,
+        delayMs,
+        reason: decision.reason,
+      };
+    }
+
+    await emitOtelEvent({
+      level: "error",
+      source: "worker",
+      component: "nas-backup",
+      action: "system.backup.failure.router",
+      success: false,
+      error: `Escalating backup failure for ${payload.targetFunctionId}: ${decision.reason}`,
+      metadata: {
+        eventId: event.id,
+        targetFunctionId: payload.targetFunctionId,
+        target: payload.target,
+        attempt,
+        decision,
+      },
+    });
+
+    return {
+      status: "escalated",
+      reason: decision.reason,
+      targetFunctionId: payload.targetFunctionId,
+      attempt,
+    };
   }
 );
 

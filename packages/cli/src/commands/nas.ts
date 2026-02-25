@@ -1,5 +1,7 @@
 import { Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { dirname } from "node:path"
 import { loadConfig } from "../config"
 import { Inngest } from "../inngest"
 import { respond, respondError } from "../response"
@@ -48,6 +50,333 @@ const cfg = loadConfig()
 const WORKER_URL = cfg.workerUrl
 const WORKER_REGISTER_URL = `${WORKER_URL}/api/inngest`
 const WORKER_LABEL = "com.joel.system-bus-worker"
+const HOME_DIR = process.env.HOME ?? "/Users/joel"
+const SYSTEM_BUS_CONFIG_PATH = `${HOME_DIR}/.joelclaw/system-bus.config.json`
+const DEFAULT_SELF_HEALING_CONFIG = {
+  selfHealing: {
+    router: {
+      model: "gpt-5.2-codex-spark",
+      fallbackModel: "gpt-5.3-codex",
+      maxRetries: 5,
+      sleepMinMs: 5 * 60_000,
+      sleepMaxMs: 4 * 60 * 60_000,
+      sleepStepMs: 30_000,
+    },
+    transport: {
+      nasRecoveryWindowHours: 4,
+      nasMaxAttempts: 12,
+      nasRetryBaseMs: 10_000,
+      nasRetryMaxMs: 120_000,
+      nasSshHost: "joel@three-body",
+      nasSshFlags: "-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2",
+      nasHddRoot: "/Volumes/three-body",
+      nasNvmeRoot: "/Volumes/nas-nvme",
+    },
+  },
+  backupFailureRouter: {
+    model: "gpt-5.2-codex-spark",
+    fallbackModel: "gpt-5.3-codex",
+    maxRetries: 5,
+    sleepMinMs: 5 * 60_000,
+    sleepMaxMs: 4 * 60 * 60_000,
+    sleepStepMs: 30_000,
+  },
+  backupTransport: {
+    nasRecoveryWindowHours: 4,
+    nasMaxAttempts: 12,
+    nasRetryBaseMs: 10_000,
+    nasRetryMaxMs: 120_000,
+    nasSshHost: "joel@three-body",
+    nasSshFlags: "-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2",
+    nasHddRoot: "/Volumes/three-body",
+    nasNvmeRoot: "/Volumes/nas-nvme",
+  },
+}
+const DEFAULT_BACKUP_CONFIG = {
+  backupFailureRouter: {
+    model: "gpt-5.2-codex-spark",
+    fallbackModel: "gpt-5.3-codex",
+    maxRetries: 5,
+    sleepMinMs: 5 * 60_000,
+    sleepMaxMs: 4 * 60 * 60_000,
+    sleepStepMs: 30_000,
+  },
+  backupTransport: {
+    nasRecoveryWindowHours: 4,
+    nasMaxAttempts: 12,
+    nasRetryBaseMs: 10_000,
+    nasRetryMaxMs: 120_000,
+    nasSshHost: "joel@three-body",
+    nasSshFlags: "-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2",
+    nasHddRoot: "/Volumes/three-body",
+    nasNvmeRoot: "/Volumes/nas-nvme",
+  },
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+
+const parsePositiveInt = (value: unknown, fallback: number): number => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const normalized = Math.floor(value)
+    return normalized > 0 ? normalized : fallback
+  }
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+  }
+  return fallback
+}
+
+const readSystemBusConfigFile = (): Record<string, unknown> => {
+  if (!existsSync(SYSTEM_BUS_CONFIG_PATH)) return {}
+  try {
+    const raw = readFileSync(SYSTEM_BUS_CONFIG_PATH, "utf-8")
+    if (!raw.trim()) return {}
+    const parsed = JSON.parse(raw)
+    return isRecord(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+const resolveSystemBusConfig = () => {
+  const fileConfig = readSystemBusConfigFile()
+
+  const fileSelfHealing = isRecord(fileConfig.selfHealing)
+    ? (fileConfig.selfHealing as Record<string, unknown>)
+    : {}
+  const fileRouter = isRecord(fileConfig.backupFailureRouter)
+    ? (fileConfig.backupFailureRouter as Record<string, unknown>)
+    : {}
+  const fileSelfHealingRouter = isRecord(fileSelfHealing.router)
+    ? (fileSelfHealing.router as Record<string, unknown>)
+    : {}
+  const fileSelfHealingTransport = isRecord(fileSelfHealing.transport)
+    ? (fileSelfHealing.transport as Record<string, unknown>)
+    : {}
+  const fileTransport = isRecord(fileConfig.backupTransport)
+    ? (fileConfig.backupTransport as Record<string, unknown>)
+    : {}
+
+  const resolveString = (envName: string, fromFile: unknown, fallback: string): string => {
+    const envValue = process.env[envName]
+    if (envValue?.trim().length) return envValue.trim()
+    return typeof fromFile === "string" && fromFile.trim().length ? fromFile.trim() : fallback
+  }
+
+  const resolveInt = (envName: string, fromFile: unknown, fallback: number): number =>
+    parsePositiveInt(process.env[envName], parsePositiveInt(fromFile, fallback))
+
+  return {
+    selfHealing: {
+      router: {
+        model: resolveString(
+          "SELF_HEALING_ROUTER_MODEL",
+          fileSelfHealingRouter.model,
+          resolveString(
+            "BACKUP_FAILURE_ROUTER_MODEL",
+            fileRouter.model,
+            DEFAULT_SELF_HEALING_CONFIG.selfHealing.router.model,
+          ),
+        ),
+        fallbackModel: resolveString(
+          "SELF_HEALING_ROUTER_FALLBACK_MODEL",
+          fileSelfHealingRouter.fallbackModel,
+          resolveString(
+            "BACKUP_FAILURE_ROUTER_FALLBACK_MODEL",
+            fileRouter.fallbackModel,
+            DEFAULT_SELF_HEALING_CONFIG.selfHealing.router.fallbackModel,
+          ),
+        ),
+        maxRetries: resolveInt(
+          "SELF_HEALING_ROUTER_MAX_RETRIES",
+          fileSelfHealingRouter.maxRetries,
+          resolveInt(
+            "BACKUP_ROUTER_MAX_RETRIES",
+            fileRouter.maxRetries,
+            DEFAULT_SELF_HEALING_CONFIG.selfHealing.router.maxRetries,
+          ),
+        ),
+        sleepMinMs: resolveInt(
+          "SELF_HEALING_ROUTER_SLEEP_MIN_MS",
+          fileSelfHealingRouter.sleepMinMs,
+          resolveInt(
+            "BACKUP_ROUTER_SLEEP_MIN_MS",
+            fileRouter.sleepMinMs,
+            DEFAULT_SELF_HEALING_CONFIG.selfHealing.router.sleepMinMs,
+          ),
+        ),
+        sleepMaxMs: resolveInt(
+          "SELF_HEALING_ROUTER_SLEEP_MAX_MS",
+          fileSelfHealingRouter.sleepMaxMs,
+          resolveInt(
+            "BACKUP_ROUTER_SLEEP_MAX_MS",
+            fileRouter.sleepMaxMs,
+            DEFAULT_SELF_HEALING_CONFIG.selfHealing.router.sleepMaxMs,
+          ),
+        ),
+        sleepStepMs: resolveInt(
+          "SELF_HEALING_ROUTER_SLEEP_STEP_MS",
+          fileSelfHealingRouter.sleepStepMs,
+          resolveInt(
+            "BACKUP_ROUTER_SLEEP_STEP_MS",
+            fileRouter.sleepStepMs,
+            DEFAULT_SELF_HEALING_CONFIG.selfHealing.router.sleepStepMs,
+          ),
+        ),
+      },
+      transport: {
+        nasRecoveryWindowHours: resolveInt(
+          "SELF_HEALING_RECOVERY_WINDOW_HOURS",
+          fileSelfHealingTransport.nasRecoveryWindowHours,
+          resolveInt(
+            "NAS_BACKUP_RECOVERY_WINDOW_HOURS",
+            fileTransport.nasRecoveryWindowHours,
+            DEFAULT_SELF_HEALING_CONFIG.selfHealing.transport.nasRecoveryWindowHours,
+          ),
+        ),
+        nasMaxAttempts: resolveInt(
+          "SELF_HEALING_MAX_ATTEMPTS",
+          fileSelfHealingTransport.nasMaxAttempts,
+          resolveInt(
+            "NAS_BACKUP_MAX_ATTEMPTS",
+            fileTransport.nasMaxAttempts,
+            DEFAULT_SELF_HEALING_CONFIG.selfHealing.transport.nasMaxAttempts,
+          ),
+        ),
+        nasRetryBaseMs: resolveInt(
+          "SELF_HEALING_RETRY_BASE_MS",
+          fileSelfHealingTransport.nasRetryBaseMs,
+          resolveInt(
+            "NAS_BACKUP_RETRY_BASE_MS",
+            fileTransport.nasRetryBaseMs,
+            DEFAULT_SELF_HEALING_CONFIG.selfHealing.transport.nasRetryBaseMs,
+          ),
+        ),
+        nasRetryMaxMs: resolveInt(
+          "SELF_HEALING_RETRY_MAX_MS",
+          fileSelfHealingTransport.nasRetryMaxMs,
+          resolveInt(
+            "NAS_BACKUP_RETRY_MAX_MS",
+            fileTransport.nasRetryMaxMs,
+            DEFAULT_SELF_HEALING_CONFIG.selfHealing.transport.nasRetryMaxMs,
+          ),
+        ),
+        nasSshHost: resolveString(
+          "SELF_HEALING_NAS_HOST",
+          fileSelfHealingTransport.nasSshHost,
+          resolveString(
+            "NAS_SSH_HOST",
+            fileTransport.nasSshHost,
+            DEFAULT_SELF_HEALING_CONFIG.selfHealing.transport.nasSshHost,
+          ),
+        ),
+        nasSshFlags: resolveString(
+          "SELF_HEALING_NAS_FLAGS",
+          fileSelfHealingTransport.nasSshFlags,
+          resolveString(
+            "NAS_SSH_FLAGS",
+            fileTransport.nasSshFlags,
+            DEFAULT_SELF_HEALING_CONFIG.selfHealing.transport.nasSshFlags,
+          ),
+        ),
+        nasHddRoot: resolveString(
+          "SELF_HEALING_NAS_HDD_ROOT",
+          fileSelfHealingTransport.nasHddRoot,
+          resolveString(
+            "NAS_HDD_ROOT",
+            fileTransport.nasHddRoot,
+            DEFAULT_SELF_HEALING_CONFIG.selfHealing.transport.nasHddRoot,
+          ),
+        ),
+        nasNvmeRoot: resolveString(
+          "SELF_HEALING_NAS_NVME_ROOT",
+          fileSelfHealingTransport.nasNvmeRoot,
+          resolveString(
+            "NAS_NVME_ROOT",
+            fileTransport.nasNvmeRoot,
+            DEFAULT_SELF_HEALING_CONFIG.selfHealing.transport.nasNvmeRoot,
+          ),
+        ),
+      },
+    },
+    backupFailureRouter: {
+      model: resolveString(
+        "BACKUP_FAILURE_ROUTER_MODEL",
+        fileRouter.model,
+        DEFAULT_BACKUP_CONFIG.backupFailureRouter.model
+      ),
+      fallbackModel: resolveString(
+        "BACKUP_FAILURE_ROUTER_FALLBACK_MODEL",
+        fileRouter.fallbackModel,
+        DEFAULT_BACKUP_CONFIG.backupFailureRouter.fallbackModel
+      ),
+      maxRetries: resolveInt(
+        "BACKUP_ROUTER_MAX_RETRIES",
+        fileRouter.maxRetries,
+        DEFAULT_BACKUP_CONFIG.backupFailureRouter.maxRetries
+      ),
+      sleepMinMs: resolveInt(
+        "BACKUP_ROUTER_SLEEP_MIN_MS",
+        fileRouter.sleepMinMs,
+        DEFAULT_BACKUP_CONFIG.backupFailureRouter.sleepMinMs
+      ),
+      sleepMaxMs: resolveInt(
+        "BACKUP_ROUTER_SLEEP_MAX_MS",
+        fileRouter.sleepMaxMs,
+        DEFAULT_BACKUP_CONFIG.backupFailureRouter.sleepMaxMs
+      ),
+      sleepStepMs: resolveInt(
+        "BACKUP_ROUTER_SLEEP_STEP_MS",
+        fileRouter.sleepStepMs,
+        DEFAULT_BACKUP_CONFIG.backupFailureRouter.sleepStepMs
+      ),
+    },
+    backupTransport: {
+      nasRecoveryWindowHours: resolveInt(
+        "NAS_BACKUP_RECOVERY_WINDOW_HOURS",
+        fileTransport.nasRecoveryWindowHours,
+        DEFAULT_BACKUP_CONFIG.backupTransport.nasRecoveryWindowHours
+      ),
+      nasMaxAttempts: resolveInt(
+        "NAS_BACKUP_MAX_ATTEMPTS",
+        fileTransport.nasMaxAttempts,
+        DEFAULT_BACKUP_CONFIG.backupTransport.nasMaxAttempts
+      ),
+      nasRetryBaseMs: resolveInt(
+        "NAS_BACKUP_RETRY_BASE_MS",
+        fileTransport.nasRetryBaseMs,
+        DEFAULT_BACKUP_CONFIG.backupTransport.nasRetryBaseMs
+      ),
+      nasRetryMaxMs: resolveInt(
+        "NAS_BACKUP_RETRY_MAX_MS",
+        fileTransport.nasRetryMaxMs,
+        DEFAULT_BACKUP_CONFIG.backupTransport.nasRetryMaxMs
+      ),
+      nasSshHost: resolveString(
+        "NAS_SSH_HOST",
+        fileTransport.nasSshHost,
+        DEFAULT_BACKUP_CONFIG.backupTransport.nasSshHost
+      ),
+      nasSshFlags: resolveString(
+        "NAS_SSH_FLAGS",
+        fileTransport.nasSshFlags,
+        DEFAULT_BACKUP_CONFIG.backupTransport.nasSshFlags
+      ),
+      nasHddRoot: resolveString(
+        "NAS_HDD_ROOT",
+        fileTransport.nasHddRoot,
+        DEFAULT_BACKUP_CONFIG.backupTransport.nasHddRoot
+      ),
+      nasNvmeRoot: resolveString(
+        "NAS_NVME_ROOT",
+        fileTransport.nasNvmeRoot,
+        DEFAULT_BACKUP_CONFIG.backupTransport.nasNvmeRoot
+      ),
+    },
+  }
+}
 
 const hasText = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0
 
@@ -532,6 +861,135 @@ const nasHealCmd = Command.make(
     })
 )
 
+const resolveNasConfigDisplay = (useEffectiveValues: boolean) => {
+  const raw = readSystemBusConfigFile()
+  const fileRouter = isRecord(raw.backupFailureRouter)
+    ? (raw.backupFailureRouter as Record<string, unknown>)
+    : {}
+  const fileSelfHealing = isRecord(raw.selfHealing)
+    ? (raw.selfHealing as Record<string, unknown>)
+    : {}
+  const fileSelfHealingRouter = isRecord(fileSelfHealing.router)
+    ? (fileSelfHealing.router as Record<string, unknown>)
+    : {}
+  const fileSelfHealingTransport = isRecord(fileSelfHealing.transport)
+    ? (fileSelfHealing.transport as Record<string, unknown>)
+    : {}
+  const fileTransport = isRecord(raw.backupTransport)
+    ? (raw.backupTransport as Record<string, unknown>)
+    : {}
+
+  const fileValues = {
+    selfHealing: {
+      router: {
+        ...DEFAULT_SELF_HEALING_CONFIG.selfHealing.router,
+        ...fileSelfHealingRouter,
+      },
+      transport: {
+        ...DEFAULT_SELF_HEALING_CONFIG.selfHealing.transport,
+        ...fileSelfHealingTransport,
+      },
+    },
+    backupFailureRouter: {
+      ...DEFAULT_BACKUP_CONFIG.backupFailureRouter,
+      ...fileRouter,
+    },
+    backupTransport: {
+      ...DEFAULT_BACKUP_CONFIG.backupTransport,
+      ...fileTransport,
+    },
+  }
+
+  return {
+    path: SYSTEM_BUS_CONFIG_PATH,
+    fileExists: existsSync(SYSTEM_BUS_CONFIG_PATH),
+    config: useEffectiveValues ? resolveSystemBusConfig() : fileValues,
+    fileValues,
+  }
+}
+
+const nasConfigShowCmd = Command.make(
+  "show",
+  {
+    effective: Options.boolean("effective").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Apply environment variable overrides when showing resolved values")
+    ),
+  },
+  ({ effective }) =>
+    Effect.gen(function* () {
+      const resolvedConfig = resolveNasConfigDisplay(effective)
+
+      yield* Console.log(respond("nas config show", {
+        path: resolvedConfig.path,
+        fileExists: resolvedConfig.fileExists,
+        configFromFile: resolvedConfig.fileValues,
+        effectiveValues: {
+          applyEnv: effective,
+          values: resolvedConfig.config,
+        },
+      }, [
+        { command: "joelclaw nas config init [--force]", description: "Create default system-bus config file" },
+        { command: "joelclaw nas config show --effective", description: "Show environment-resolved config" },
+      ]))
+    })
+)
+
+const nasConfigInitCmd = Command.make(
+  "init",
+  {
+    force: Options.boolean("force").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Overwrite an existing config file")
+    ),
+  },
+  ({ force }) =>
+    Effect.gen(function* () {
+      const exists = existsSync(SYSTEM_BUS_CONFIG_PATH)
+      if (exists && !force) {
+        yield* Console.log(respondError(
+          "nas config init",
+          `Config file already exists at ${SYSTEM_BUS_CONFIG_PATH}`,
+          "NASC_INIT_EXISTS",
+          "Pass --force to overwrite it, or run joelclaw nas config show to inspect current values.",
+          [
+            { command: "joelclaw nas config show --effective", description: "Inspect currently effective config" },
+            { command: "joelclaw nas config init --force", description: "Overwrite config with defaults" },
+          ],
+        ))
+        return
+      }
+
+      mkdirSync(dirname(SYSTEM_BUS_CONFIG_PATH), { recursive: true })
+      writeFileSync(SYSTEM_BUS_CONFIG_PATH, `${JSON.stringify(DEFAULT_BACKUP_CONFIG, null, 2)}\n`, "utf-8")
+
+      yield* Console.log(respond("nas config init", {
+        path: SYSTEM_BUS_CONFIG_PATH,
+        action: "written",
+      }, [
+        { command: "joelclaw nas config show", description: "Inspect written config and defaults" },
+        { command: "joelclaw nas config show --effective", description: "Verify environment-resolved values" },
+      ]))
+    })
+)
+
+const nasConfigCmd = Command.make("config", {}, () =>
+  Console.log(respond("nas config", {
+    description: "View and initialize ~/.joelclaw/system-bus.config.json",
+    path: SYSTEM_BUS_CONFIG_PATH,
+    defaults: DEFAULT_BACKUP_CONFIG,
+    subcommands: {
+      show: "joelclaw nas config show [--effective]",
+      init: "joelclaw nas config init [--force]",
+    },
+  }, [
+    { command: "joelclaw nas config show", description: "Inspect current/merged config values" },
+    { command: "joelclaw nas config init", description: "Create or replace config file with defaults" },
+  ]))
+).pipe(
+  Command.withSubcommands([nasConfigShowCmd, nasConfigInitCmd])
+)
+
 export const nasCmd = Command.make("nas", {}, () =>
   Console.log(respond("nas", {
     description: "NAS soak shortcuts (ADR-0088)",
@@ -540,6 +998,7 @@ export const nasCmd = Command.make("nas", {}, () =>
       runs: "joelclaw nas runs [-n 20] [-c] [--hours 168]",
       review: "joelclaw nas review [--reason manual-cli]",
       heal: "joelclaw nas heal [--reason nas-heal-cli] [--wait-ms 2500]",
+      config: "joelclaw nas config [show|init]",
     },
     failure_codes: {
       H00: "heal completed and NAS gates healthy",
@@ -567,5 +1026,5 @@ export const nasCmd = Command.make("nas", {}, () =>
     { command: "joelclaw nas runs", description: "Recent NAS soak runs" },
   ]))
 ).pipe(
-  Command.withSubcommands([nasStatusCmd, nasRunsCmd, nasReviewCmd, nasHealCmd])
+  Command.withSubcommands([nasStatusCmd, nasRunsCmd, nasReviewCmd, nasHealCmd, nasConfigCmd])
 )
