@@ -5,6 +5,7 @@ import {
   getCatalogModel as resolveModelFromCatalog,
   normalizeModel as normalizeCatalogModel,
 } from "@joelclaw/inference-router";
+import { emitGatewayOtel } from "@joelclaw/telemetry";
 
 export const GATEWAY_CONFIG_KEY = "joelclaw:gateway:config";
 
@@ -35,7 +36,33 @@ const DEFAULT_FALLBACK: FallbackConfig = {
 
 export function providerForModel(modelId: string): string {
   const catalogModel = resolveModelFromCatalog(modelId);
-  return catalogModel?.provider ?? "anthropic";
+  const provider = catalogModel?.provider;
+  if (provider) {
+    void emitGatewayOtel({
+      level: "info",
+      component: "gateway.commands.config",
+      action: "model.provider.resolved",
+      success: true,
+      metadata: {
+        modelId,
+        catalogModel: catalogModel.id,
+        provider,
+      },
+    });
+    return provider;
+  }
+
+  void emitGatewayOtel({
+    level: "info",
+    component: "gateway.commands.config",
+    action: "model.provider.fallback",
+    success: true,
+    metadata: {
+      modelId,
+      provider: "anthropic",
+    },
+  });
+  return "anthropic";
 }
 
 function normalizeModel(raw: unknown): GatewayModel {

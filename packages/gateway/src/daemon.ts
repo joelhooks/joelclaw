@@ -81,10 +81,16 @@ function resolveModel(modelIdOverride: string | undefined) {
   const catalogModel = resolveModelFromCatalog(modelId);
   if (catalogModel) {
     const catalogModelId = catalogModel.id.includes("/") ? catalogModel.id.split("/")[1] : catalogModel.id;
-    console.log("[gateway] resolved model via catalog", {
-      input: modelId,
-      catalogModel: catalogModel.id,
-      provider: catalogModel.provider,
+    void emitGatewayOtel({
+      level: "info",
+      component: "daemon.inference",
+      action: "catalog.resolved",
+      success: true,
+      metadata: {
+        modelId,
+        catalogModel: catalogModel.id,
+        provider: catalogModel.provider,
+      },
     });
     const model = getModel(catalogModel.provider as any, catalogModelId as any);
     if (model) return model;
