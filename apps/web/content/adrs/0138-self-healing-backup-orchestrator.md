@@ -59,6 +59,10 @@ Proposed reusable contract:
   - `pause` (bounded hold and recheck)
   - `escalate` (route to manual intervention queue)
 
+## Update (2026-02-25)
+
+- Generalized follow-on adopted in [ADR-0139](0139-self-healing-sdk-investigator.md): SDK reachability investigator + guarded worker restart path for non-backup domains.
+
 ## Decision Outcome
 
 1. Add shared config loader in `packages/system-bus/src/lib/backup-failure-router-config.ts`.
