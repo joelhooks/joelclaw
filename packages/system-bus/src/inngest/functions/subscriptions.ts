@@ -470,6 +470,10 @@ export const subscriptionCheckSingle = inngest.createFunction(
           source: subscription.feedUrl,
           newEntries: checkResult.newEntries.length,
           summary: summaryResult.summary,
+          links: checkResult.newEntries.slice(0, 5).map((e) => ({
+            title: e.title,
+            url: e.url,
+          })).filter((l) => l.url),
         });
 
         return true;
