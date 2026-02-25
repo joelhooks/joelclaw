@@ -12,6 +12,8 @@ related: ["0088-nas-backed-storage-tiering", "0089-single-source-inngest-worker-
 
 shipped
 
+This record is the canonical self-healing architecture for non-domain-specific remediation in the system. ADR-0139 is historical and intentionally superseded by this record.
+
 ## Context
 
 Backup jobs for Typesense and Redis run as Inngest functions and currently must:
@@ -105,22 +107,34 @@ Non-goals for this ADR
 ## Execution TODO (Actionable Backlog)
 
 P0 (Do now)
-- [ ] Enforce guarded worker restart path for all ingress sync and sync recovery codepaths.
+- [x] Enforce guarded worker restart path for all ingress sync and sync recovery codepaths.
   - Validate: no raw `launchctl kickstart` invocations in sync/control loops.
   - Artifact: `infra/launchd/com.joel.system-bus-sync.plist`, `packages/system-bus` restart handler.
-- [ ] Ensure `system/self-healing.investigator` is a first-class route target for `system/self.healing.requested` and emits `system/self.healing.completed`.
+- [x] Ensure `system/self-healing.investigator` is a first-class route target for `system/self.healing.requested` and emits `system/self.healing.completed`.
   - Validate: event schema includes `sourceFunction`, `targetComponent`, `attempt`, `retryPolicy`, `playbook`, `evidence`.
-- [ ] Add deterministic backoff and jitter policy validation for backup router and investigator loops.
+- [x] Add deterministic backoff and jitter policy validation for backup router and investigator loops.
   - Validate: bounded `maxRetries` and `sleepMs` ranges enforced from config and env.
-- [ ] Implement canonical `pause` path for transient infra outages before `retry`.
+- [x] Implement canonical `pause` path for transient infra outages before `retry`.
   - Validate: pause emits completion event with reason and wait duration.
-- [ ] Add P0 runbook fields to payload contract (`links`, `restart`, `kill`, `defer`, `notify`).
+- [x] Add P0 runbook fields to payload contract (`links`, `restart`, `kill`, `defer`, `notify`).
   - Validate: all P0 routes pass non-empty `playbook` context.
 
+Priority hardening status (canonical rollout):
+- High-priority systems currently mapped to this flow:
+  - `gateway` and long-running worker control loops (safe restart + guarded register path).
+  - `system/backup` (Typesense + Redis copy pipeline).
+  - `system/gateway.bridge.health` for queue/reconnect/stale-entry reconciliation.
+  - `check-system-health` as router input for self-healing requests from system-wide degraded checks.
+  - `system/self-healing.investigator` for SDK reachability and run-level incident scans.
+  - `agent-loop` orchestration via trigger/audit signaling and operator handoff paths.
+- Blocked work not yet canonicalized:
+  - gateway provider adapters (Telegram/iMessage/webhooks) session/session-bridge recovery.
+  - Redis/bridge stale-lock recovery for broker reconnection after process restarts.
+
 P1 (execute next)
-- [ ] Add Redis/bridge health checks and stale-run reconciliation for session bridge queues.
+- [x] Add Redis/bridge health checks and stale-run reconciliation for session bridge queues.
   - Validate: queue health signal appears in periodic OTEL and triggers `pause` when unstable.
-- [ ] Add OTEL health circuit for missing telemetry writes during recovery loops.
+- [x] Add OTEL health circuit for missing telemetry writes during recovery loops.
   - Validate: emits an explicit telemetry gap event when traces fail to persist.
 - [ ] Add provider session rebind/retry paths for Telegram/iMessage/email/webhook adapters.
   - Validate: retries use bounded cooldown and escalate via `system/self.healing.completed` status `escalated`.
