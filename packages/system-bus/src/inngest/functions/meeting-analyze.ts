@@ -20,6 +20,7 @@ import { spawnSync } from "node:child_process";
 import Redis from "ioredis";
 import { prefetchMemoryContext } from "../../memory/context-prefetch";
 import { cacheWrap } from "../../lib/cache";
+import { infer } from "../../lib/inference";
 
 const REDIS_KEY_PROCESSED = "granola:processed";
 const REDIS_TTL_DAYS = 90;
@@ -36,10 +37,6 @@ type MeetingAnalysis = {
   decisions: Array<{ decision: string; rationale: string }>;
   follow_ups: Array<{ item: string; frequency?: string }>;
   people: Array<{ name: string; email?: string; role?: string; relationship?: string }>;
-};
-
-type AnthropicMessageResponse = {
-  content?: Array<{ type?: string; text?: string }>;
 };
 
 function emptyMeetingAnalysis(): MeetingAnalysis {
@@ -113,86 +110,147 @@ Respond with ONLY valid JSON, no markdown fencing:
   "people": [{"name": "...", "email": "...", "role": "...", "relationship": "..."}]
 }`;
 
-  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
-  if (!apiKey) {
-    console.error("[meeting-analyze] ANTHROPIC_API_KEY is not configured");
-    return emptyMeetingAnalysis();
-  }
-
-  let response: Awaited<ReturnType<typeof fetch>>;
   try {
-    response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-5",
-        max_tokens: 2048,
-        system: "You extract structured meeting intelligence. Respond with ONLY valid JSON.",
-        messages: [{ role: "user", content: prompt }],
-      }),
+    const inference = await infer(prompt, {
+      task: "json",
+      model: "anthropic/claude-sonnet-4-6",
+      print: true,
+      system: "You extract structured meeting intelligence. Respond with ONLY valid JSON.",
+      component: "meeting-analyze",
+      action: "meeting.analyze",
+      timeout: 120_000,
+      json: true,
     });
+
+    const parsed = normalizeMeetingAnalysis(inference.data);
+    if (parsed) return parsed;
+
+    const parsedText = parseMeetingTextResponse(inference.text);
+    if (parsedText) return parsedText;
   } catch (error) {
     console.error(
-      "[meeting-analyze] Anthropic request failed:",
-      error instanceof Error ? error.message : String(error)
+      "[meeting-analyze] Meeting analysis inference failed:",
+      error instanceof Error ? error.message : String(error),
     );
-    return emptyMeetingAnalysis();
   }
 
-  const rawBody = await response.text();
-  if (!response.ok) {
-    console.error(
-      `[meeting-analyze] Anthropic API failed (${response.status}):`,
-      rawBody.slice(0, 500)
+  return emptyMeetingAnalysis();
+}
+
+function parseMeetingTextResponse(rawText: string): MeetingAnalysis | null {
+  const lines = rawText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) =>
+      line.length > 0
+      && !line.startsWith("[gateway]")
+      && !line.startsWith("Failed to load")
+      && !line.startsWith("Extension error")
+      && !line.startsWith("```")
     );
-    return emptyMeetingAnalysis();
-  }
-
-  let parsed: AnthropicMessageResponse;
-  try {
-    parsed = JSON.parse(rawBody) as AnthropicMessageResponse;
-  } catch (error) {
-    console.error(
-      "[meeting-analyze] Anthropic JSON parse failed:",
-      error instanceof Error ? error.message : String(error)
-    );
-    return emptyMeetingAnalysis();
-  }
-
-  const stdout = (parsed.content ?? [])
-    .filter((part) => part?.type === "text")
-    .map((part) => part.text ?? "")
-    .join("")
-    .trim();
-
-  const lines = stdout.split("\n").filter((l: string) => {
-    const t = l.trim();
-    return t.length > 0
-      && !t.startsWith("[gateway]")
-      && !t.startsWith("Failed to load")
-      && !t.startsWith("Extension error")
-      && !t.startsWith("```");
-  });
   const cleaned = lines.join("\n").trim();
 
-  try {
-    return JSON.parse(cleaned);
-  } catch {}
+  if (!cleaned) return null;
 
+  const parseBraced = (value: string): unknown | null => {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  };
+
+  let parsed = parseBraced(cleaned);
   const braceStart = cleaned.indexOf("{");
   const braceEnd = cleaned.lastIndexOf("}");
-  if (braceStart !== -1 && braceEnd > braceStart) {
-    try {
-      return JSON.parse(cleaned.slice(braceStart, braceEnd + 1));
-    } catch {}
+  if (!parsed && braceStart !== -1 && braceEnd > braceStart) {
+    parsed = parseBraced(cleaned.slice(braceStart, braceEnd + 1));
   }
 
-  console.error("[meeting-analyze] Failed to parse LLM response:", stdout.slice(0, 500));
-  return emptyMeetingAnalysis();
+  return normalizeMeetingAnalysis(parsed);
+}
+
+function normalizeMeetingAnalysis(payload: unknown): MeetingAnalysis | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+
+  const raw = payload as {
+    action_items?: unknown;
+    decisions?: unknown;
+    follow_ups?: unknown;
+    people?: unknown;
+  };
+
+  const actionItems = Array.isArray(raw.action_items)
+    ? raw.action_items
+      .map((item: unknown) => {
+        if (!item || typeof item !== "object") return null;
+        const value = item as Record<string, unknown>;
+        const task = typeof value.task === "string" ? value.task : "";
+        const owner = typeof value.owner === "string" ? value.owner : "";
+        if (!task || !owner) return null;
+        return {
+          task,
+          owner,
+          deadline: typeof value.deadline === "string" ? value.deadline : "",
+          context: typeof value.context === "string" ? value.context : "",
+        };
+      })
+      .filter((entry): entry is MeetingActionItem => Boolean(entry))
+    : [];
+
+  const decisions = Array.isArray(raw.decisions)
+    ? raw.decisions
+      .map((item: unknown) => {
+        if (!item || typeof item !== "object") return null;
+        const value = item as Record<string, unknown>;
+        const decision = typeof value.decision === "string" ? value.decision : "";
+        if (!decision) return null;
+        return {
+          decision,
+          rationale: typeof value.rationale === "string" ? value.rationale : "",
+        };
+      })
+      .filter((entry): entry is { decision: string; rationale: string } => Boolean(entry))
+    : [];
+
+  const followUps = Array.isArray(raw.follow_ups)
+    ? raw.follow_ups
+      .map((item: unknown) => {
+        if (!item || typeof item !== "object") return null;
+        const value = item as Record<string, unknown>;
+        const followUp = typeof value.item === "string" ? value.item : "";
+        if (!followUp) return null;
+        return {
+          item: followUp,
+          frequency: typeof value.frequency === "string" ? value.frequency : "",
+        };
+      })
+      .filter((entry): entry is { item: string; frequency?: string } => Boolean(entry))
+    : [];
+
+  const people = Array.isArray(raw.people)
+    ? raw.people
+      .map((item: unknown) => {
+        if (!item || typeof item !== "object") return null;
+        const value = item as Record<string, unknown>;
+        const name = typeof value.name === "string" ? value.name : "";
+        if (!name) return null;
+        return {
+          name,
+          email: typeof value.email === "string" ? value.email : "",
+          role: typeof value.role === "string" ? value.role : "",
+          relationship: typeof value.relationship === "string" ? value.relationship : "",
+        };
+      })
+      .filter((entry): entry is { name: string; email?: string; role?: string; relationship?: string } => Boolean(entry))
+    : [];
+
+  return {
+    action_items: actionItems,
+    decisions,
+    follow_ups: followUps,
+    people,
+  };
 }
 
 function normalizeWhitespace(value: string): string {

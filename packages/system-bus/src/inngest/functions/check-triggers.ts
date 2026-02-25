@@ -40,7 +40,9 @@ export const checkTriggers = inngest.createFunction(
               `**Drifted:** ${audit.drifted?.join(", ") || "none"}`,
               `**Missing:** ${audit.missing?.join(", ") || "none"}`,
               "",
-              "Worker may need restart: `launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker`",
+              "Worker may need restart: function callbacks can be dropped during unsafe restarts.",
+              "",
+              "Use `joelclaw inngest restart-worker --register` from an operator host.",
             ].join("\n"),
           },
         });

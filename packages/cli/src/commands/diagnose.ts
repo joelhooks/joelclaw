@@ -245,9 +245,15 @@ async function collectDiagnosis(loopId: string): Promise<DiagnosisResult> {
 async function applyFix(result: DiagnosisResult, eventKey: string): Promise<string> {
   switch (result.fixAction) {
     case "restart-worker": {
-      const uid = Bun.spawnSync(["id", "-u"], { stdout: "pipe" }).stdout.toString().trim()
-      Bun.spawnSync(["launchctl", "kickstart", "-k", `gui/${uid}/com.joel.system-bus-worker`])
-      return "Worker restarted via launchctl"
+      const proc = Bun.spawnSync(["joelclaw", "inngest", "restart-worker", "--register"])
+      const output = proc.stdout?.toString?.() ?? ""
+      const err = proc.stderr?.toString?.() ?? ""
+      if (proc.exitCode !== 0) {
+        return `Worker restart via CLI failed: ${err || `exit ${proc.exitCode}`}`
+      }
+      return output.trim().length > 0
+        ? `Worker restarted via CLI: ${output.trim()}`
+        : "Worker restarted via CLI"
     }
 
     case "cancel-stuck-runs": {

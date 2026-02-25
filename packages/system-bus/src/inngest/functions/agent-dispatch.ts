@@ -3,7 +3,7 @@ import { NonRetriableError } from "inngest";
 import { execSync } from "node:child_process";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
+import { infer } from "../../lib/inference";
 
 const INBOX_DIR = join(
   process.env.HOME || "/Users/joel",
@@ -126,6 +126,31 @@ export const agentDispatch = inngest.createFunction(
       const piNeedsTools = tool === "pi" && taskRequiresFileAccess(task);
 
       try {
+        if (tool === "pi") {
+          const result = await infer(task, {
+            task: "agent-dispatch.pi",
+            model,
+            system: "Analyze and respond.",
+            component: "agent-dispatch",
+            action: "agent-dispatch.pi",
+            print: true,
+            noTools: !piNeedsTools,
+            timeout: timeout * 1000,
+            json: false,
+            env: {
+              ...process.env,
+              CI: "true",
+              TERM: "dumb",
+            },
+          });
+
+          const textOutput = result.text.trim();
+          return {
+            status: "completed" as const,
+            output: textOutput.slice(-50_000),
+          };
+        }
+
         const cmd = buildCommand(tool, task, {
           model,
           sandbox,
@@ -145,40 +170,6 @@ export const agentDispatch = inngest.createFunction(
           },
         }).trim();
 
-        if (tool === "pi") {
-          const parsedPi = parsePiJsonAssistant(outputRaw);
-          const textOutput = (parsedPi?.text ?? outputRaw).trim();
-
-          await traceLlmGeneration({
-            traceName: "joelclaw.agent-dispatch",
-            generationName: "agent-dispatch.pi",
-            component: "agent-dispatch",
-            action: "agent-dispatch.pi",
-            input: {
-              requestId,
-              sessionId: sessionId ?? null,
-              prompt: task.slice(0, 6000),
-              cwd: workDir,
-            },
-            output: {
-              response: textOutput.slice(0, 6000),
-            },
-            provider: parsedPi?.provider,
-            model: parsedPi?.model ?? model,
-            usage: parsedPi?.usage,
-            durationMs: Date.now() - dispatchStartedAt,
-            metadata: {
-              requestId,
-              sessionId: sessionId ?? null,
-            },
-          });
-
-          return {
-            status: "completed" as const,
-            output: textOutput.slice(-50_000),
-          };
-        }
-
         return {
           status: "completed" as const,
           output: outputRaw.slice(-50_000), // last 50k chars
@@ -190,41 +181,13 @@ export const agentDispatch = inngest.createFunction(
         const code = error.status ?? error.code ?? "unknown";
 
         if (tool === "pi") {
-          const parsedPi = parsePiJsonAssistant(stdoutRaw);
-          const textOutput = (parsedPi?.text ?? stdoutRaw).trim();
-          const traceError = `Exit ${code}: ${stderr.slice(-5_000) || message.slice(-5_000)}`;
-
-          await traceLlmGeneration({
-            traceName: "joelclaw.agent-dispatch",
-            generationName: "agent-dispatch.pi",
-            component: "agent-dispatch",
-            action: "agent-dispatch.pi",
-            input: {
-              requestId,
-              sessionId: sessionId ?? null,
-              prompt: task.slice(0, 6000),
-              cwd: workDir,
-            },
-            output: {
-              response: textOutput.slice(0, 4000),
-              stderr: stderr.slice(-2000),
-            },
-            provider: parsedPi?.provider,
-            model: parsedPi?.model ?? model,
-            usage: parsedPi?.usage,
-            durationMs: Date.now() - dispatchStartedAt,
-            error: traceError.slice(0, 500),
-            metadata: {
-              requestId,
-              sessionId: sessionId ?? null,
-              failed: true,
-            },
-          });
+          const inferError = `Exit ${code}: ${stderr.slice(-5_000) || message.slice(-5_000)}`;
+          const textOutput = stdoutRaw.trim() || error.message;
 
           return {
             status: "failed" as const,
             output: textOutput.slice(-10_000),
-            error: traceError,
+            error: inferError,
           };
         }
 

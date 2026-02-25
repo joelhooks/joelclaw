@@ -3,8 +3,8 @@ import { access, chmod, mkdir, readdir, readFile, stat, writeFile } from "node:f
 import type { Dirent } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { NonRetriableError } from "inngest";
-import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
 import { MODEL, assertAllowedModel } from "../../lib/models";
+import { infer } from "../../lib/inference";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
@@ -444,80 +444,38 @@ async function chooseBookCandidate(input: {
   ].join("\n");
 
   const startedAt = Date.now();
-  const proc = await runProcess(
-    [
-      "pi",
-      "-p",
-      "--no-session",
-      "--no-extensions",
-      "--mode",
-      "json",
-      "--model",
+  let result: Awaited<ReturnType<typeof infer>>;
+  try {
+    result = await infer(userPrompt, {
+      task: "book-download.select-candidate",
       model,
-      "--system-prompt",
-      BOOK_SELECTION_SYSTEM_PROMPT,
-      userPrompt,
-    ],
-    BOOK_SELECTION_TIMEOUT_MS
-  );
-  const stdoutRaw = proc.stdout;
-  const parsedPi = parsePiJsonAssistant(stdoutRaw);
-  const assistantText = parsedPi?.text ?? stdoutRaw;
-  const selection = parseInferenceSelection(assistantText);
-
-  await traceLlmGeneration({
-    traceName: "joelclaw.book-download",
-    generationName: "book.select-md5",
-    component: "book-download",
-    action: "book.select-md5",
-    input: {
-      query: input.query,
-      requestedFormat: input.requestedFormat,
-      candidateCount: input.candidates.length,
-      candidates: input.candidates.slice(0, 20).map((candidate) => ({
-        md5: candidate.md5,
-        title: candidate.title,
-        format: candidate.format,
-        size: candidate.size,
-      })),
-    },
-    output: {
-      response: assistantText.slice(0, 3_000),
-      stderr: proc.stderr.trim().slice(0, 800),
-      parsedMd5: selection.md5,
-      reason: selection.reason,
-      timedOut: proc.timedOut,
-    },
-    provider: parsedPi?.provider,
-    model: parsedPi?.model ?? model,
-    usage: parsedPi?.usage,
-    durationMs: Date.now() - startedAt,
-    error:
-      proc.exitCode !== 0 && !assistantText.trim()
-        ? `pi selection failed (${proc.exitCode}): ${proc.stderr.trim()}`
-        : undefined,
-    metadata: {
-      query: input.query,
-      candidateCount: input.candidates.length,
-      timedOut: proc.timedOut,
-    },
-  });
-
-  if (proc.timedOut) {
+      system: BOOK_SELECTION_SYSTEM_PROMPT,
+      component: "book-download",
+      action: "book.select-md5",
+      print: true,
+      noTools: true,
+      json: true,
+      timeout: BOOK_SELECTION_TIMEOUT_MS,
+      env: { ...process.env, TERM: "dumb" },
+    });
+  } catch (error) {
     return {
       md5: null,
-      reason: "Inference timed out; fallback candidate used.",
+      reason: `Inference failed (${error instanceof Error ? error.message : String(error)}). Fallback candidate used.`,
       model,
-      provider: parsedPi?.provider,
+      provider: model,
     };
   }
 
-  if (proc.exitCode !== 0 && !assistantText.trim()) {
+  const assistantText = result.text;
+  const selection = parseInferenceSelection(assistantText);
+
+  if (!assistantText.trim() && selection.md5 == null) {
     return {
       md5: null,
-      reason: `Inference failed with exit ${proc.exitCode}; fallback candidate used.`,
+      reason: `Inference failed: empty response after ${Date.now() - startedAt}ms`,
       model,
-      provider: parsedPi?.provider,
+      provider: result.provider ?? model,
     };
   }
 
@@ -525,8 +483,8 @@ async function chooseBookCandidate(input: {
     md5: selection.md5,
     reason: selection.reason,
     confidence: selection.confidence,
-    model: parsedPi?.model ?? model,
-    provider: parsedPi?.provider,
+    model: result.model ?? model,
+    provider: result.provider,
   };
 }
 

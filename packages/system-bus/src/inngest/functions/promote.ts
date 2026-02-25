@@ -3,9 +3,10 @@ import { mkdir, rename } from "node:fs/promises";
 import Redis from "ioredis";
 import { inngest } from "../client";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
-import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
 import { PROMOTE_SYSTEM_PROMPT, PROMOTE_USER_PROMPT } from "./promote-prompt";
 import { emitOtelEvent } from "../../observability/emit";
+import { MODEL } from "../../lib/models";
+import { infer } from "../../lib/inference";
 
 type RedisLike = {
   lrange(key: string, start: number, stop: number): Promise<string[]>;
@@ -170,11 +171,6 @@ function getSectionContent(markdown: string, section: "Hard Rules" | "System Arc
     .trim();
 }
 
-async function readProcessStream(stream: ReadableStream<Uint8Array> | null | undefined): Promise<string> {
-  if (!stream) return "";
-  return new Response(stream).text();
-}
-
 async function formatProposalForMemoryIfNeeded(
   section: "Hard Rules" | "System Architecture" | "Patterns",
   proposedText: string,
@@ -191,87 +187,40 @@ async function formatProposalForMemoryIfNeeded(
     currentSectionContent,
   });
 
-  const formatModel = "anthropic/claude-haiku";
-  const startedAt = Date.now();
+  const formatModel = MODEL.HAIKU;
 
-  const proc = Bun.spawn(["pi", "-p", "--no-session", "--no-extensions", "--mode", "json", "--model", formatModel, "--system-prompt", PROMOTE_SYSTEM_PROMPT], {
-    env: { ...process.env, TERM: "dumb" },
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  if (proc.stdin) {
-    proc.stdin.write(userPrompt);
-    proc.stdin.end();
-  }
-
-  const [stdoutRaw, stderr, exitCode] = await Promise.all([
-    readProcessStream(proc.stdout),
-    readProcessStream(proc.stderr),
-    proc.exited,
-  ]);
-
-  const parsedPi = parsePiJsonAssistant(stdoutRaw);
-  const stdout = parsedPi?.text ?? stdoutRaw;
-
-  if (exitCode !== 0) {
-    const error = `promoteToMemory formatting failed (${exitCode}): ${stderr || "unknown error"}`;
-    console.error(error);
-
-    await traceLlmGeneration({
-      traceName: "joelclaw.promote",
-      generationName: "memory.promote.format",
+  try {
+    const result = await infer(userPrompt, {
+      task: "promote.memory.format",
+      model: formatModel,
+      system: PROMOTE_SYSTEM_PROMPT,
       component: "promote",
       action: "memory.promote.format",
-      input: {
-        section,
-        proposedText,
-      },
-      output: {
-        stderr: stderr.slice(0, 500),
-      },
-      provider: parsedPi?.provider,
-      model: parsedPi?.model ?? formatModel,
-      usage: parsedPi?.usage,
-      durationMs: Date.now() - startedAt,
-      error,
-      metadata: {
-        section,
-      },
+      json: true,
+      print: true,
+      noTools: true,
+      timeout: 20_000,
+      env: { ...process.env, TERM: "dumb" },
     });
 
+    const formatted = result.text
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .find((line) => line.length > 0);
+
+    if (!formatted) {
+      console.error("promoteToMemory formatting returned no output; using original proposal.");
+      return proposedText;
+    }
+
+    return formatted;
+  } catch (error) {
+    console.error(
+      `promoteToMemory formatting failed: ${error instanceof Error ? error.message : String(error)}`
+    );
     return proposedText;
   }
-
-  const formatted = stdout
-    .trim()
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-
-  await traceLlmGeneration({
-    traceName: "joelclaw.promote",
-    generationName: "memory.promote.format",
-    component: "promote",
-    action: "memory.promote.format",
-    input: {
-      section,
-      proposedText,
-    },
-    output: {
-      formatted: formatted ?? proposedText,
-    },
-    provider: parsedPi?.provider,
-    model: parsedPi?.model ?? formatModel,
-    usage: parsedPi?.usage,
-    durationMs: Date.now() - startedAt,
-    metadata: {
-      section,
-    },
-  });
-
-  return formatted ?? proposedText;
 }
 
 // stabilizeFunctionOpts removed — was a Proxy wrapper that turned out to be

@@ -65,6 +65,8 @@ import { checkLoops } from "./check-loops";
 import { subscriptionCheckFeeds, subscriptionCheckSingle } from "./subscriptions";
 import { o11yTriage } from "./o11y-triage";
 import { selfHealingInvestigator } from "./self-healing-investigator";
+import { selfHealingRouter } from "./self-healing-router";
+import { selfHealingGatewayBridge } from "./self-healing-gateway-bridge";
 import { dailyDigest } from "./daily-digest";
 import { sleepModeRequested, wakeModeRequested } from "./sleep-mode";
 import { meetingTranscriptIndex } from "./meeting-transcript-index";
@@ -169,6 +171,8 @@ export const hostFunctionDefinitions = [
   subscriptionCheckSingle,
   o11yTriage,
   selfHealingInvestigator,
+  selfHealingRouter,
+  selfHealingGatewayBridge,
   dailyDigest,
   sleepModeRequested,
   wakeModeRequested,

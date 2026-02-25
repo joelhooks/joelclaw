@@ -1,24 +1,18 @@
 import type Redis from "ioredis";
+import {
+  GATEWAY_ALLOWED_MODELS,
+  GATEWAY_MODEL_TO_PROVIDER,
+  normalizeModel as normalizeCatalogModel,
+  type InferenceProvider,
+} from "@joelclaw/inference-router";
 
 export const GATEWAY_CONFIG_KEY = "joelclaw:gateway:config";
 
-export const ALLOWED_MODELS = [
-  "claude-opus-4-6",
-  "claude-sonnet-4-6",
-  "claude-sonnet-4-5",
-  "claude-haiku-4-5",
-  "gpt-5.3-codex-spark",
-  "gpt-5.2",
-] as const;
+export const ALLOWED_MODELS = GATEWAY_ALLOWED_MODELS;
 
 /** Map model IDs to their provider. Models not listed default to "anthropic". */
-export const MODEL_PROVIDERS: Record<string, string> = {
-  "claude-opus-4-6": "anthropic",
-  "claude-sonnet-4-6": "anthropic",
-  "claude-sonnet-4-5": "anthropic",
-  "claude-haiku-4-5": "anthropic",
-  "gpt-5.3-codex-spark": "openai-codex",
-  "gpt-5.2": "openai",
+export const MODEL_PROVIDERS: Record<string, InferenceProvider | "anthropic" | "openai" | "openai-codex"> = {
+  ...GATEWAY_MODEL_TO_PROVIDER,
 };
 
 export const ALLOWED_THINKING_LEVELS = ["none", "low", "medium", "high"] as const;
@@ -58,10 +52,12 @@ export function providerForModel(modelId: string): string {
 
 function normalizeModel(raw: unknown): GatewayModel {
   if (typeof raw !== "string") return DEFAULT_MODEL;
-  // Strip any provider prefix (anthropic/, openai-codex/)
-  const value = raw.replace(/^[a-z-]+\//, "").trim();
-  return ALLOWED_MODELS.includes(value as GatewayModel)
-    ? (value as GatewayModel)
+  const normalized = normalizeCatalogModel(raw, true);
+  if (!normalized) return DEFAULT_MODEL;
+
+  const normalizedAlias = normalized.split("/")[1];
+  return ALLOWED_MODELS.includes(normalizedAlias as GatewayModel)
+    ? (normalizedAlias as GatewayModel)
     : DEFAULT_MODEL;
 }
 

@@ -1,6 +1,7 @@
 import { inngest } from "../client";
 import { $ } from "bun";
 import { DISCOVERY_PROMPT } from "../prompts/discovery";
+import { infer } from "../../lib/inference";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 
 const VAULT_DISCOVERIES = `${process.env.HOME}/Vault/Resources/discoveries`;
@@ -97,24 +98,23 @@ export const discoveryCapture = inngest.createFunction(
               today: today as string,
               vaultDir: VAULT_DISCOVERIES,
             });
+            const output = await infer(prompt, {
+              task: "summary",
+              component: "discovery-capture",
+              action: "discovery.capture.generate",
+              system: "You are a discovery analysis assistant that writes discovery notes using Vault conventions.",
+              metadata: {
+                sourceType: material.sourceType ?? "unknown",
+                hasContext: Boolean(context),
+                hasUrl: Boolean(url),
+              },
+            });
+            const textOutput = output.text;
+            const match = textOutput.match(/DISCOVERY_WRITTEN:(.+)/);
+            const noteName = match?.[1]?.trim() ?? `Discovery ${today}`;
+            const vaultPath = `${VAULT_DISCOVERIES}/${noteName}.md`;
 
-            const tmpPrompt = `/tmp/discovery-prompt-${Date.now()}.txt`;
-            await Bun.write(tmpPrompt, prompt);
-
-            try {
-              const output = await $`cat ${tmpPrompt} | pi -p --no-session --no-extensions`
-                .env({ ...process.env, TERM: "dumb" })
-                .text();
-
-              // Extract filename from pi's output
-              const match = output.match(/DISCOVERY_WRITTEN:(.+)/);
-              const noteName = match?.[1]?.trim() ?? `Discovery ${today}`;
-              const vaultPath = `${VAULT_DISCOVERIES}/${noteName}.md`;
-
-              return { noteName, vaultPath, piOutput: output.slice(-200) };
-            } finally {
-              await $`rm -f ${tmpPrompt}`.quiet();
-            }
+            return { noteName, vaultPath, piOutput: textOutput.slice(-200) };
           });
 
           // Step 3: Verify + slog

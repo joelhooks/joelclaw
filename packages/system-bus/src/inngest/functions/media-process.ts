@@ -12,9 +12,10 @@
 import { inngest } from "../client";
 import { readFile, stat, mkdir } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
-import { execSync, spawnSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import { $ } from "bun";
-import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
+import { infer } from "../../lib/inference";
+import { MODEL } from "../../lib/models";
 import Redis from "ioredis";
 
 const MEDIA_TMP = "/tmp/joelclaw-media";
@@ -250,105 +251,29 @@ async function describeImage(
   const systemPrompt = "You describe images sent to an AI assistant via messaging. Be thorough but concise. Transcribe any visible text accurately.";
   const userPrompt = `Read the file ${imagePath} and describe the image in detail.${captionCtx} Include what you see and any text visible in the image.`;
 
-  const visionModel = "anthropic/claude-haiku";
-  const startedAt = Date.now();
+  const visionModel = MODEL.HAIKU;
 
   try {
     const anthropicApiKey = leaseAnthropicApiKey();
-    const proc = spawnSync(
-      "pi",
-      [
-        "--no-session",
-        "--no-extensions",
-        "--print",
-        "--mode",
-        "json",
-        "--model",
-        visionModel,
-        "--system-prompt",
-        systemPrompt,
-        userPrompt,
-      ],
-      {
-        encoding: "utf-8",
-        timeout: 60_000,
-        maxBuffer: 1024 * 1024,
-        env: { ...process.env, TERM: "dumb", ANTHROPIC_API_KEY: anthropicApiKey },
-      },
-    );
+    const inference = await infer(userPrompt, {
+      task: "media-process.image.describe",
+      model: visionModel,
+      system: systemPrompt,
+      component: "media-process",
+      action: "media.image.describe",
+      print: true,
+      timeout: 60_000,
+      env: { ...process.env, TERM: "dumb", ANTHROPIC_API_KEY: anthropicApiKey },
+    });
 
-    const stdoutRaw = (proc.stdout ?? "").trim();
-    const parsedPi = parsePiJsonAssistant(stdoutRaw);
-    const result = (parsedPi?.text ?? stdoutRaw).trim();
-    const stderr = (proc.stderr ?? "").trim();
-
-    if ((proc.status ?? 0) !== 0 && !result) {
-      const error = `vision_failed_${proc.status ?? "unknown"}: ${stderr.slice(0, 120)}`;
-      await traceLlmGeneration({
-        traceName: "joelclaw.media-process",
-        generationName: "media.image.describe",
-        component: "media-process",
-        action: "media.image.describe",
-        input: {
-          file: basename(imagePath),
-          mimeType,
-          caption: caption ?? null,
-        },
-        output: {
-          stderr: stderr.slice(0, 300),
-        },
-        provider: parsedPi?.provider,
-        model: parsedPi?.model ?? visionModel,
-        usage: parsedPi?.usage,
-        durationMs: Date.now() - startedAt,
-        error,
-      });
-      throw new Error(error);
+    const result = inference.text.trim();
+    if (!result) {
+      return "Image received but vision description produced no output.";
     }
 
-    await traceLlmGeneration({
-      traceName: "joelclaw.media-process",
-      generationName: "media.image.describe",
-      component: "media-process",
-      action: "media.image.describe",
-      input: {
-        file: basename(imagePath),
-        mimeType,
-        caption: caption ?? null,
-      },
-      output: {
-        description: result.slice(0, 3000),
-      },
-      provider: parsedPi?.provider,
-      model: parsedPi?.model ?? visionModel,
-      usage: parsedPi?.usage,
-      durationMs: Date.now() - startedAt,
-    });
-
-    return result || "Image received but vision description produced no output.";
+    return result;
   } catch (err: any) {
     const errorMessage = err?.message ? String(err.message) : String(err);
-    await traceLlmGeneration({
-      traceName: "joelclaw.media-process",
-      generationName: "media.image.describe",
-      component: "media-process",
-      action: "media.image.describe",
-      input: {
-        file: basename(imagePath),
-        mimeType,
-        caption: caption ?? null,
-      },
-      output: {
-        failed: true,
-      },
-      model: visionModel,
-      durationMs: Date.now() - startedAt,
-      error: errorMessage.slice(0, 200),
-      metadata: {
-        failed: true,
-      },
-    });
-
     if (errorMessage === INVALID_ANTHROPIC_KEY_ERROR) {
       throw new Error(INVALID_ANTHROPIC_KEY_ERROR);
     }

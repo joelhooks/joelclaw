@@ -14,11 +14,11 @@
  * ADR-0068: Memory Proposal Auto-Triage Pipeline
  */
 
-import { rename, writeFile, unlink } from "node:fs/promises";
+import { rename } from "node:fs/promises";
 import { join } from "node:path";
 import Redis from "ioredis";
 import { inngest } from "../../client";
-import { parsePiJsonAssistant, traceLlmGeneration } from "../../../lib/langfuse";
+import { infer } from "../../../lib/inference";
 import { emitOtelEvent } from "../../../observability/emit";
 
 const LLM_PENDING_KEY = "memory:review:llm-pending";
@@ -43,12 +43,6 @@ function getRedis(): Redis {
 function getMemoryPath(): string {
   const home = process.env.HOME || process.env.USERPROFILE || "/Users/joel";
   return join(home, ".joelclaw", "workspace", "MEMORY.md");
-}
-
-function readShellText(output: Buffer | Uint8Array | string | undefined): string {
-  if (!output) return "";
-  if (typeof output === "string") return output;
-  return Buffer.from(output).toString("utf-8");
 }
 
 interface PendingProposal {
@@ -281,72 +275,27 @@ export const batchReview = inngest.createFunction(
       // Call pi CLI for LLM review
       const llmOutput = await step.run("llm-review-proposals", async () => {
         const userPrompt = buildUserPrompt(proposals, currentMemory);
-        const reviewStartedAt = Date.now();
-
-        // Write prompt to temp file to avoid shell escaping issues with large prompts
-        const tmpFile = `/tmp/batch-review-prompt-${Date.now()}.txt`;
-        await writeFile(tmpFile, userPrompt, "utf-8");
 
         try {
-          const result = await Bun.$`cat ${tmpFile} | pi --no-tools --no-session --no-extensions --print --mode json --model ${REVIEW_MODEL} --system-prompt ${SYSTEM_PROMPT}`
-            .quiet()
-            .nothrow();
-
-          const stdoutRaw = readShellText(result.stdout);
-          const parsedPi = parsePiJsonAssistant(stdoutRaw);
-          const stdout = (parsedPi?.text ?? stdoutRaw).trim();
-          const stderr = readShellText(result.stderr);
-
-          if (result.exitCode !== 0 && !stdout) {
-            const error = `pi CLI failed (exit ${result.exitCode}): ${stderr.slice(0, 500)}`;
-            await traceLlmGeneration({
-              traceName: "joelclaw.memory.batch-review",
-              generationName: "memory.batch-review",
-              component: "batch-review",
-              action: "memory.batch_review.llm",
-              input: {
-                proposalCount: proposals.length,
-                prompt: userPrompt.slice(0, 6000),
-              },
-              output: {
-                stderr: stderr.slice(0, 500),
-              },
-              provider: parsedPi?.provider,
-              model: parsedPi?.model ?? REVIEW_MODEL,
-              usage: parsedPi?.usage,
-              durationMs: Date.now() - reviewStartedAt,
-              error,
-              metadata: {
-                proposalCount: proposals.length,
-              },
-            });
-            throw new Error(error);
-          }
-
-          await traceLlmGeneration({
-            traceName: "joelclaw.memory.batch-review",
-            generationName: "memory.batch-review",
-            component: "batch-review",
+          const result = await infer(userPrompt, {
+            task: "json",
+            model: REVIEW_MODEL,
+            system: SYSTEM_PROMPT,
+            component: "memory.batch-review",
             action: "memory.batch_review.llm",
-            input: {
-              proposalCount: proposals.length,
-              prompt: userPrompt.slice(0, 6000),
-            },
-            output: {
-              llmOutput: stdout.slice(0, 6000),
-            },
-            provider: parsedPi?.provider,
-            model: parsedPi?.model ?? REVIEW_MODEL,
-            usage: parsedPi?.usage,
-            durationMs: Date.now() - reviewStartedAt,
             metadata: {
               proposalCount: proposals.length,
             },
           });
 
+          const stdout = (result.text ?? "").trim();
+          if (!stdout) {
+            throw new Error("batch-review LLM returned empty output");
+          }
+
           return stdout;
-        } finally {
-          try { await unlink(tmpFile); } catch {}
+        } catch (error) {
+          throw error instanceof Error ? error : new Error(String(error));
         }
       });
 

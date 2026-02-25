@@ -1,8 +1,6 @@
 import { inngest } from "../client";
 import Redis from "ioredis";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 // TodoistTaskAdapter removed — task creation moved to proposal-triage.ts (ADR-0068)
 import {
@@ -12,7 +10,8 @@ import {
   validateCompression,
 } from "./reflect-prompt";
 import { sanitizeObservationText } from "./observation-sanitize";
-import { parsePiJsonAssistant, traceLlmGeneration, type LlmUsage } from "../../lib/langfuse";
+import { type LlmUsage } from "../../lib/langfuse";
+import { infer } from "../../lib/inference";
 import { isInstructionText } from "../../memory/triage";
 import { emitOtelEvent } from "../../observability/emit";
 
@@ -82,13 +81,6 @@ function getRedisClient(): Redis {
     if (typeof redisClient.on === "function") redisClient.on("error", () => {});
   }
   return redisClient;
-}
-
-function readShellText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
-  if (value == null) return "";
-  return String(value);
 }
 
 function shouldSkipExternalEventSends(): boolean {
@@ -261,21 +253,6 @@ async function readMemoryContent(): Promise<string> {
     .join("\n");
 }
 
-async function withPromptFile<T>(
-  content: string,
-  run: (promptFileArg: string) => Promise<T>
-): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "reflect-prompt-"));
-  const promptPath = join(dir, "prompt.md");
-  await writeFile(promptPath, content, "utf8");
-
-  try {
-    return await run(`@${promptPath}`);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
 async function runReflectorLLM(
   observations: string,
   memoryContent: string,
@@ -288,85 +265,28 @@ async function runReflectorLLM(
   const userPrompt = REFLECTOR_USER_PROMPT(observations, memoryContent);
   const reflectorModel = "anthropic/claude-haiku";
   const startedAt = Date.now();
-
-  const result = await withPromptFile(userPrompt, (promptFileArg) =>
-    Bun.$`pi --no-tools --no-session --no-extensions --print --mode json --model ${reflectorModel} --system-prompt ${systemPrompt} ${promptFileArg}`
-      .env({
-        ...process.env,
-        PATH: `${process.env.HOME}/.local/bin:${process.env.HOME}/.bun/bin:${process.env.HOME}/.local/share/fnm/aliases/default/bin:${process.env.PATH}`,
-      })
-      .quiet()
-      .nothrow()
-  );
-
-  const stdoutRaw = readShellText(result.stdout);
-  const parsedPi = parsePiJsonAssistant(stdoutRaw);
-  const stdout = parsedPi?.text ?? stdoutRaw;
-  const stderr = readShellText(result.stderr);
-
-  if (result.exitCode !== 0) {
-    const error = `Reflector subprocess failed with exit code ${result.exitCode}${
-      stderr ? `: ${stderr}` : ""
-    }`;
-
-    await traceLlmGeneration({
-      traceName: "joelclaw.reflect",
-      generationName: "memory.reflect",
-      component: "reflect",
-      action: "reflect.llm.summarize",
-      input: {
-        retryLevel,
-        prompt: userPrompt.slice(0, 6000),
-      },
-      output: {
-        stderr: stderr.slice(0, 500),
-      },
-      provider: parsedPi?.provider,
-      model: parsedPi?.model ?? reflectorModel,
-      usage: parsedPi?.usage,
-      durationMs: Date.now() - startedAt,
-      error,
-      metadata: {
-        retryLevel,
-      },
-    });
-
-    throw new Error(error);
-  }
-
-  const inputTokens = estimateTokens(`${systemPrompt}\n\n${userPrompt}`);
-  const outputTokens = estimateTokens(stdout);
-
-  await traceLlmGeneration({
-    traceName: "joelclaw.reflect",
-    generationName: "memory.reflect",
+  const result = await infer(userPrompt, {
+    task: "summary",
+    model: reflectorModel,
+    system: systemPrompt,
     component: "reflect",
     action: "reflect.llm.summarize",
-    input: {
-      retryLevel,
-      prompt: userPrompt.slice(0, 6000),
-    },
-    output: {
-      reflectorXml: stdout.slice(0, 6000),
-      inputTokens,
-      outputTokens,
-    },
-    provider: parsedPi?.provider,
-    model: parsedPi?.model ?? reflectorModel,
-    usage: parsedPi?.usage,
-    durationMs: Date.now() - startedAt,
     metadata: {
       retryLevel,
     },
   });
+  const stdout = result.text;
+
+  const inputTokens = estimateTokens(`${systemPrompt}\n\n${userPrompt}`);
+  const outputTokens = estimateTokens(stdout);
 
   return {
     raw: stdout,
     inputTokens,
     outputTokens,
-    provider: parsedPi?.provider,
-    model: parsedPi?.model ?? reflectorModel,
-    usage: parsedPi?.usage,
+    provider: result.provider,
+    model: result.model ?? reflectorModel,
+    usage: result.usage,
     durationMs: Date.now() - startedAt,
   };
 }

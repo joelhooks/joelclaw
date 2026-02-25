@@ -14,7 +14,7 @@
 
 import { inngest } from "../client";
 import { parseClaudeOutput, pushGatewayEvent } from "./agent-loop/utils";
-import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
+import { infer } from "../../lib/inference";
 import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import { prefetchMemoryContext } from "../../memory/context-prefetch";
 import Redis from "ioredis";
@@ -97,11 +97,6 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 function normalizeAction(v: unknown): TriageAction | null {
   if (v === "archive" || v === "unsubscribe" || v === "label" || v === "reply-needed" || v === "decision-needed") return v;
   return null;
-}
-
-async function readStream(stream: ReadableStream<Uint8Array> | null): Promise<string> {
-  if (!stream) return "";
-  return new Response(stream).text();
 }
 
 function parseTriageResult(raw: string): TriageItem[] {
@@ -229,84 +224,20 @@ export const checkEmail = inngest.createFunction(
         ? `${TRIAGE_SYSTEM_PROMPT}\n\nUse this memory context when judging sender patterns and urgency:\n${memoryContext}`
         : TRIAGE_SYSTEM_PROMPT;
 
-      const triageStartedAt = Date.now();
-
-      const proc = Bun.spawn(
-        [
-          "pi",
-          "-p",
-          "--no-session",
-          "--no-extensions",
-          "--mode",
-          "json",
-          "--model",
-          TRIAGE_MODEL,
-          "--system-prompt",
-          systemPrompt,
-          prompt,
-        ],
-        { env: { ...process.env, TERM: "dumb" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" },
-      );
-
-      const [stdoutRaw, stderr, exitCode] = await Promise.all([
-        readStream(proc.stdout),
-        readStream(proc.stderr),
-        proc.exited,
-      ]);
-
-      const parsedPi = parsePiJsonAssistant(stdoutRaw);
-      const assistantText = parsedPi?.text ?? stdoutRaw;
-
-      if (exitCode !== 0 && !assistantText.trim()) {
-        const error = `pi triage failed (${exitCode}): ${stderr.trim()}`;
-        await traceLlmGeneration({
-          traceName: "joelclaw.check-email",
-          generationName: "email.triage",
-          component: "check-email",
-          action: "email.triage.classify",
-          input: {
-            emailCount: allConvos.length,
-            prompt: prompt.slice(0, 6000),
-          },
-          output: {
-            stderr: stderr.trim().slice(0, 500),
-          },
-          provider: parsedPi?.provider,
-          model: parsedPi?.model ?? TRIAGE_MODEL,
-          usage: parsedPi?.usage,
-          durationMs: Date.now() - triageStartedAt,
-          error,
-          metadata: {
-            emailCount: allConvos.length,
-            source: "check-email",
-          },
-        });
-        throw new Error(error);
-      }
-
-      const triage = parseTriageResult(assistantText);
-
-      await traceLlmGeneration({
-        traceName: "joelclaw.check-email",
-        generationName: "email.triage",
+      const result = await infer(prompt, {
+        task: "email-triage",
+        model: TRIAGE_MODEL,
+        system: systemPrompt,
         component: "check-email",
         action: "email.triage.classify",
-        input: {
-          emailCount: allConvos.length,
-          prompt: prompt.slice(0, 6000),
-        },
-        output: {
-          triageCount: triage.length,
-        },
-        provider: parsedPi?.provider,
-        model: parsedPi?.model ?? TRIAGE_MODEL,
-        usage: parsedPi?.usage,
-        durationMs: Date.now() - triageStartedAt,
-        metadata: {
-          emailCount: allConvos.length,
-          source: "check-email",
-        },
+        json: true,
+        timeout: 120_000,
       });
+
+      const assistantText = typeof result.data === "string"
+        ? result.data
+        : result.text;
+      const triage = parseTriageResult(assistantText);
 
       return triage;
     });

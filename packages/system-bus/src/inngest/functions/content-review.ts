@@ -1,15 +1,13 @@
 import { ConvexHttpClient } from "convex/browser";
 import { anyApi, type FunctionReference } from "convex/server";
 import { NonRetriableError } from "inngest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { unified } from "unified";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import { rehypeParagraphIds } from "@joelclaw/mdx-pipeline";
-import { parsePiJsonAssistant } from "../../lib/langfuse";
+import { infer } from "../../lib/inference";
 import { inngest } from "../client";
 
 const HOME_DIR = process.env.HOME ?? "/Users/joel";
@@ -359,35 +357,20 @@ function buildReviewPrompt(args: {
 }
 
 async function runContentRewrite(systemPrompt: string, prompt: string): Promise<string> {
-  const tempDir = await mkdtemp(join(tmpdir(), "content-review-"));
-  const promptPath = join(tempDir, "prompt.md");
-  await writeFile(promptPath, prompt, "utf8");
+  const result = await infer(prompt, {
+    task: "rewrite",
+    model: "anthropic/claude-sonnet-4-6",
+    system: systemPrompt,
+    component: "content-review",
+    action: "content.review.llm.rewrite",
+  });
+  const assistantText = stripMarkdownFence(result.text).trim();
 
-  try {
-    const promptFile = `@${promptPath}`;
-    const result = await Bun.$`pi --no-session --no-extensions --print --mode json --model claude-sonnet-4-6 --system-prompt ${systemPrompt} ${promptFile}`
-      .quiet()
-      .nothrow();
-
-    const stdoutRaw = readShellText(result.stdout);
-    const stderr = readShellText(result.stderr).trim();
-    const parsedPi = parsePiJsonAssistant(stdoutRaw);
-    const assistantText = stripMarkdownFence(parsedPi?.text ?? stdoutRaw).trim();
-
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `pi rewrite failed with exit code ${result.exitCode}${stderr ? `: ${stderr}` : ""}`,
-      );
-    }
-
-    if (!assistantText) {
-      throw new Error("pi rewrite returned empty output");
-    }
-
-    return ensureTrailingNewline(assistantText);
-  } finally {
-    await rm(tempDir, { recursive: true, force: true });
+  if (!assistantText) {
+    throw new Error("content review rewrite returned empty output");
   }
+
+  return ensureTrailingNewline(assistantText);
 }
 
 function parseAdrNumber(contentSlug: string): string {

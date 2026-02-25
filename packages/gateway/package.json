@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@joelclaw/discord-ui": "workspace:*",
+    "@joelclaw/inference-router": "workspace:*",
     "@mariozechner/pi-ai": "0.52.12",
     "@mariozechner/pi-coding-agent": "0.52.12",
     "@slack/bolt": "^4.6.0",

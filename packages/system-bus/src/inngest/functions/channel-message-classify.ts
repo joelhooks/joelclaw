@@ -252,8 +252,11 @@ export const channelMessageClassify = inngest.createFunction(
       try {
         const result = await infer(buildUserPrompt(message), {
           model: CHANNEL_CLASSIFIER_MODEL,
+          task: "classification",
           system: CHANNEL_CLASSIFICATION_SYSTEM_PROMPT,
           json: true,
+          component: "channel-message-classify",
+          action: "channel.message.classified",
           timeout: 45_000,
         });
         const classification = parseClassification(result.data, result.text);

@@ -2,7 +2,9 @@ import { join, dirname } from "node:path";
 import { existsSync } from "node:fs";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import { inngest } from "../client";
+import { MODEL } from "../../lib/models";
 import * as typesense from "../../lib/typesense";
+import { infer } from "../../lib/inference";
 import {
   FRICTION_SYSTEM_PROMPT,
   FRICTION_USER_PROMPT,
@@ -184,39 +186,22 @@ function groupObservationsByDate(records: ObservationRecord[]): FrictionObservat
 }
 
 async function runFrictionLLM(prompt: string): Promise<string> {
-  const proc = Bun.spawn(
-    [
-      "pi",
-      "-p",
-      "--no-session",
-      "--no-extensions",
-      "--model",
-      "anthropic/claude-sonnet-4-6",
-      "--system-prompt",
-      FRICTION_SYSTEM_PROMPT,
-      prompt,
-    ],
-    {
-      env: { ...process.env, TERM: "dumb" },
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    }
-  );
+  const result = await infer(prompt, {
+    task: "friction.patterns.generate",
+    model: MODEL.SONNET,
+    system: FRICTION_SYSTEM_PROMPT,
+    component: "friction",
+    action: "friction.patterns.generate",
+    json: false,
+    print: true,
+    noTools: true,
+    env: {
+      ...process.env,
+      TERM: "dumb",
+    },
+  });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-
-  if (exitCode !== 0) {
-    throw new Error(
-      `Friction subprocess failed with exit code ${exitCode}${stderr ? `: ${stderr}` : ""}`
-    );
-  }
-
-  return stdout.trim();
+  return result.text.trim();
 }
 
 export function parseFrictionPatterns(raw: string): FrictionPattern[] {

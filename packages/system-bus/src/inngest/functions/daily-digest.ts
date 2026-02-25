@@ -6,11 +6,9 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { traceLlmGeneration, type LlmUsage } from "../../lib/langfuse";
+import { infer } from "../../lib/inference";
 import { inngest } from "../client";
 import { DIGEST_SYSTEM_PROMPT, DIGEST_USER_PROMPT } from "./daily-digest-prompt";
-
-const DIGEST_MODEL = "claude-3-5-sonnet-latest";
 
 function getHomeDirectory(): string {
   return process.env.HOME || process.env.USERPROFILE || "/Users/joel";
@@ -24,96 +22,6 @@ function losAngelesIsoDate(now = new Date()): string {
     day: "2-digit",
   });
   return formatter.format(now);
-}
-
-function toFiniteNumber(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number.parseFloat(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return undefined;
-}
-
-function inferProviderFromModel(model: string | undefined): string | undefined {
-  if (!model) return undefined;
-  const normalized = model.toLowerCase();
-  if (normalized.includes("claude") || normalized.includes("anthropic")) return "anthropic";
-  if (normalized.includes("gpt") || normalized.includes("openai")) return "openai";
-  if (normalized.includes("gemini") || normalized.includes("google")) return "google";
-  return undefined;
-}
-
-function extractUsageFromAiResponse(response: unknown): LlmUsage | undefined {
-  const value = response as
-    | {
-        usage?: {
-          input_tokens?: number | string;
-          output_tokens?: number | string;
-          total_tokens?: number | string;
-          cache_read_input_tokens?: number | string;
-          cache_creation_input_tokens?: number | string;
-          prompt_tokens?: number | string;
-          completion_tokens?: number | string;
-          totalTokens?: number | string;
-          cacheRead?: number | string;
-          cacheWrite?: number | string;
-        };
-      }
-    | undefined;
-
-  const usage = value?.usage;
-  if (!usage) return undefined;
-
-  const inputTokens = toFiniteNumber(usage.input_tokens) ?? toFiniteNumber(usage.prompt_tokens);
-  const outputTokens = toFiniteNumber(usage.output_tokens) ?? toFiniteNumber(usage.completion_tokens);
-  const totalTokens = toFiniteNumber(usage.total_tokens) ?? toFiniteNumber(usage.totalTokens);
-  const cacheReadTokens = toFiniteNumber(usage.cache_read_input_tokens) ?? toFiniteNumber(usage.cacheRead);
-  const cacheWriteTokens = toFiniteNumber(usage.cache_creation_input_tokens) ?? toFiniteNumber(usage.cacheWrite);
-
-  if (
-    inputTokens == null
-    && outputTokens == null
-    && totalTokens == null
-    && cacheReadTokens == null
-    && cacheWriteTokens == null
-  ) {
-    return undefined;
-  }
-
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens,
-    cacheReadTokens,
-    cacheWriteTokens,
-  };
-}
-
-function extractModelFromAiResponse(response: unknown): string | undefined {
-  const value = response as { model?: string; model_name?: string } | undefined;
-  const model = (value?.model ?? value?.model_name)?.trim();
-  return model && model.length > 0 ? model : undefined;
-}
-
-function extractTextFromAiResponse(response: unknown): string {
-  const value = response as
-    | {
-        content?: Array<{ type?: string; text?: string }>;
-        output_text?: string;
-      }
-    | undefined;
-
-  const outputText = value?.output_text?.trim();
-  if (outputText) return outputText;
-
-  const contentText = value?.content
-    ?.map((item) => (item?.type === "text" ? (item.text ?? "").trim() : ""))
-    .filter((part) => part.length > 0)
-    .join("\n")
-    .trim();
-
-  return contentText ?? "";
 }
 
 function stripMarkdownFences(text: string): string {
@@ -167,77 +75,25 @@ export const dailyDigest = inngest.createFunction(
     }
 
     const digestPrompt = DIGEST_USER_PROMPT(date, rawLog);
-    const digestStartedAt = Date.now();
 
-    let digestBody: unknown;
-
-    try {
-      digestBody = await step.ai.infer("generate-digest-with-claude", {
-        model: step.ai.models.anthropic({
-          model: DIGEST_MODEL,
-          defaultParameters: { max_tokens: 2200 },
-        }),
-        body: {
-          max_tokens: 2200,
-          system: DIGEST_SYSTEM_PROMPT,
-          messages: [{ role: "user", content: digestPrompt }],
-        },
-      });
-    } catch (error) {
-      await traceLlmGeneration({
-        traceName: "joelclaw.daily-digest",
-        generationName: "memory.daily-digest",
+    const digestText = await step.run("generate-digest", async () => {
+      const result = await infer(digestPrompt, {
+        task: "digest",
         component: "daily-digest",
         action: "memory.digest.generate",
-        input: {
-          date,
-          prompt: digestPrompt.slice(0, 6000),
-        },
-        output: {
-          failed: true,
-        },
-        provider: "anthropic",
-        model: DIGEST_MODEL,
-        durationMs: Date.now() - digestStartedAt,
-        error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+        system: DIGEST_SYSTEM_PROMPT,
         metadata: {
           date,
-          failed: true,
         },
+        timeout: 120_000,
       });
-      throw error;
-    }
 
-    const digestText = await step.run("normalize-digest-text", async () => {
-      const text = stripMarkdownFences(extractTextFromAiResponse(digestBody));
-      if (!text) throw new Error("Digest generation returned empty output");
+      const text = stripMarkdownFences(result.text.trim());
+      if (!text) {
+        throw new Error("Digest generation returned empty output");
+      }
+
       return text;
-    });
-
-    const responseModel = extractModelFromAiResponse(digestBody) ?? DIGEST_MODEL;
-    const responseUsage = extractUsageFromAiResponse(digestBody);
-
-    await step.run("trace-digest-llm", async () => {
-      await traceLlmGeneration({
-        traceName: "joelclaw.daily-digest",
-        generationName: "memory.daily-digest",
-        component: "daily-digest",
-        action: "memory.digest.generate",
-        input: {
-          date,
-          prompt: digestPrompt.slice(0, 6000),
-        },
-        output: {
-          digest: digestText.slice(0, 6000),
-        },
-        provider: inferProviderFromModel(responseModel),
-        model: responseModel,
-        usage: responseUsage,
-        durationMs: Date.now() - digestStartedAt,
-        metadata: {
-          date,
-        },
-      });
     });
 
     await step.run("write-digest-file", async () => {

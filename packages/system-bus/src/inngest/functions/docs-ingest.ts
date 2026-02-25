@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname } from "node:path";
 import { NonRetriableError } from "inngest";
 import { chunkBookText, renderChunkForEmbedding, type BookChunkingResult } from "../../lib/book-chunk";
-import { parsePiJsonAssistant, traceLlmGeneration, type LlmUsage } from "../../lib/langfuse";
+import { type LlmUsage } from "../../lib/langfuse";
+import { infer } from "../../lib/inference";
 import * as typesense from "../../lib/typesense";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import {
@@ -598,188 +599,96 @@ Rules:
   ].join("\n");
 
   const startedAt = Date.now();
-  const promptPath = buildTaxonomyPromptPath(input.file.docId);
-  await mkdir(DOCS_TMP_DIR, { recursive: true });
-  await writeFile(promptPath, taxonomyUserPrompt, "utf8");
-
-  let proc: {
-    exitCode: number;
-    stdout: string;
-    stderr: string;
-    timedOut: boolean;
-  };
   try {
-    // Use async subprocess execution so taxonomy inference cannot block the worker event loop.
-    proc = await runProcess(
-      [
-        "pi",
-        "--no-tools",
-        "--no-session",
-        "--no-extensions",
-        "--print",
-        "--mode",
-        "json",
-        "--model",
-        DOCS_TAXONOMY_MODEL,
-        "--system-prompt",
-        taxonomySystemPrompt,
-        `@${promptPath}`,
-      ],
-      undefined,
-      DOCS_TAXONOMY_TIMEOUT_MS
-    );
-  } catch (error) {
-    await traceLlmGeneration({
-      traceName: "joelclaw.docs.taxonomy",
-      generationName: "docs.taxonomy.classify",
-      component: "docs-ingest",
-      action: "docs.taxonomy.classify",
-      input: {
-        title: input.file.title,
-        nasPath: input.file.nasPath,
-        tags: input.tags,
-      },
-      output: {
-        spawnError: String(error),
-      },
+    const inferResult = await infer(taxonomyUserPrompt, {
+      task: "docs.taxonomy.classify",
       model: DOCS_TAXONOMY_MODEL,
-      durationMs: Date.now() - startedAt,
-      error: "pi taxonomy classification spawn failed",
-      metadata: {
-        runId: input.runId,
-        eventId: input.eventId,
-      },
-      runId: input.runId,
-    });
-    await rm(promptPath, { force: true }).catch(() => {});
-    return null;
-  }
-
-  await rm(promptPath, { force: true }).catch(() => {});
-
-  const parsedPi = parsePiJsonAssistant(proc.stdout);
-  const assistantText = (parsedPi?.text ?? proc.stdout).trim();
-  const payload = parseJsonObject(assistantText);
-  const provider = parsedPi?.provider;
-  const model = parsedPi?.model ?? DOCS_TAXONOMY_MODEL;
-  const usage = parsedPi?.usage;
-
-  if (proc.timedOut) {
-    await emitOtelEvent({
-      level: "warn",
-      source: "worker",
-      component: "docs-ingest",
-      action: "docs.taxonomy.classify.timeout",
-      success: false,
-      error: `timeout_after_${DOCS_TAXONOMY_TIMEOUT_MS}ms`,
-      metadata: {
-        docId: input.file.docId,
-        nasPath: input.file.nasPath,
-        timeoutMs: DOCS_TAXONOMY_TIMEOUT_MS,
-        exitCode: proc.exitCode,
-        stderr: proc.stderr.slice(0, 500),
-        provider,
-        model,
-        runId: input.runId,
-        eventId: input.eventId,
-      },
-    });
-  }
-
-  if ((proc.exitCode !== 0 || proc.timedOut) && !assistantText) {
-    await traceLlmGeneration({
-      traceName: "joelclaw.docs.taxonomy",
-      generationName: "docs.taxonomy.classify",
+      system: taxonomySystemPrompt,
       component: "docs-ingest",
       action: "docs.taxonomy.classify",
-      input: {
-        title: input.file.title,
-        nasPath: input.file.nasPath,
-        tags: input.tags,
+      print: true,
+      noTools: true,
+      json: true,
+      timeout: DOCS_TAXONOMY_TIMEOUT_MS,
+      env: { ...process.env, TERM: "dumb" },
+      metadata: {
+        runId: input.runId,
+        eventId: input.eventId,
       },
-      output: {
-        stderr: proc.stderr.slice(0, 500),
-      },
+    });
+
+    const assistantText = inferResult.text.trim();
+    const payload = inferResult.data ?? parseJsonObject(assistantText);
+    const provider = inferResult.provider;
+    const model = inferResult.model ?? DOCS_TAXONOMY_MODEL;
+    const usage = inferResult.usage;
+
+    const primaryConceptId = asConceptId(payload?.primaryConceptId);
+    const conceptIds = Array.isArray(payload?.conceptIds)
+      ? payload!.conceptIds
+          .map((value: unknown) => asConceptId(value))
+          .filter((value): value is ConceptId => value != null)
+      : [];
+
+    const uniqueConceptIds = [...new Set(conceptIds)];
+    if (primaryConceptId && !uniqueConceptIds.includes(primaryConceptId)) {
+      uniqueConceptIds.unshift(primaryConceptId);
+    }
+
+    const storageCategory =
+      typeof payload?.storageCategory === "string" && isStorageCategory(payload.storageCategory.trim())
+        ? (payload.storageCategory.trim() as StorageCategory)
+        : undefined;
+    const reason =
+      typeof payload?.reason === "string" ? payload.reason.trim().slice(0, 160) : undefined;
+
+    const success = Boolean(primaryConceptId && uniqueConceptIds.length > 0);
+    if (!success) {
+      await emitOtelEvent({
+        level: "warn",
+        source: "worker",
+        component: "docs-ingest",
+        action: "docs.taxonomy.classify",
+        success: false,
+        error: "invalid taxonomy classifier output",
+        metadata: {
+          runId: input.runId,
+          eventId: input.eventId,
+          raw: assistantText.slice(0, 1200),
+          provider,
+          model,
+        },
+      });
+      return null;
+    }
+
+    return {
+      primaryConceptId,
+      conceptIds: uniqueConceptIds,
+      storageCategory,
+      reason,
       provider,
       model,
       usage,
-      durationMs: Date.now() - startedAt,
-      error: proc.timedOut
-        ? `pi taxonomy classification timed out after ${DOCS_TAXONOMY_TIMEOUT_MS}ms`
-        : `pi exited with code ${proc.exitCode}`,
+    };
+  } catch (error) {
+    const isTimeout = String(error).toLowerCase().includes("timed out");
+    await emitOtelEvent({
+      level: isTimeout ? "warn" : "error",
+      source: "worker",
+      component: "docs-ingest",
+      action: "docs.taxonomy.classify",
+      success: false,
+      error: isTimeout
+        ? `taxonomy classification timed out after ${DOCS_TAXONOMY_TIMEOUT_MS}ms`
+        : String(error).slice(0, 500),
       metadata: {
         runId: input.runId,
         eventId: input.eventId,
       },
-      runId: input.runId,
     });
     return null;
   }
-
-  const primaryConceptId = asConceptId(payload?.primaryConceptId);
-  const conceptIds = Array.isArray(payload?.conceptIds)
-    ? payload!.conceptIds
-        .map((value: unknown) => asConceptId(value))
-        .filter((value): value is ConceptId => value != null)
-    : [];
-
-  const uniqueConceptIds = [...new Set(conceptIds)];
-  if (primaryConceptId && !uniqueConceptIds.includes(primaryConceptId)) {
-    uniqueConceptIds.unshift(primaryConceptId);
-  }
-
-  const storageCategory =
-    typeof payload?.storageCategory === "string" && isStorageCategory(payload.storageCategory.trim())
-      ? (payload.storageCategory.trim() as StorageCategory)
-      : undefined;
-  const reason =
-    typeof payload?.reason === "string" ? payload.reason.trim().slice(0, 160) : undefined;
-
-  const success = Boolean(primaryConceptId && uniqueConceptIds.length > 0);
-  await traceLlmGeneration({
-    traceName: "joelclaw.docs.taxonomy",
-    generationName: "docs.taxonomy.classify",
-    component: "docs-ingest",
-    action: "docs.taxonomy.classify",
-    input: {
-      title: input.file.title,
-      nasPath: input.file.nasPath,
-      tags: input.tags,
-    },
-    output: success
-      ? {
-          primaryConceptId,
-          conceptIds: uniqueConceptIds,
-          storageCategory,
-          reason,
-        }
-      : {
-          parseError: "invalid taxonomy classifier output",
-          raw: assistantText.slice(0, 1200),
-        },
-    provider,
-    model,
-    usage,
-    durationMs: Date.now() - startedAt,
-    error: success ? undefined : "invalid taxonomy classifier output",
-    metadata: {
-      runId: input.runId,
-      eventId: input.eventId,
-    },
-    runId: input.runId,
-  });
-
-  if (!primaryConceptId || uniqueConceptIds.length === 0) return null;
-
-  return {
-    primaryConceptId,
-    conceptIds: uniqueConceptIds,
-    storageCategory,
-    reason,
-    provider,
-    model,
-    usage,
-  };
 }
 
 async function extractPdfText(path: string): Promise<{ text: string; pageCount: number | null }> {
@@ -908,11 +817,6 @@ async function extractTextToFile(file: ValidatedFile): Promise<ExtractedTextArti
 export function buildExtractedTextPath(docId: string): string {
   const entropy = randomUUID().replace(/-/g, "").slice(0, 12);
   return `${DOCS_TMP_DIR}/${docId}-${Date.now()}-${entropy}.txt`;
-}
-
-function buildTaxonomyPromptPath(docId: string): string {
-  const entropy = randomUUID().replace(/-/g, "").slice(0, 12);
-  return `${DOCS_TMP_DIR}/${docId}-${Date.now()}-${entropy}.taxonomy.prompt.txt`;
 }
 
 function inferDocumentType(file: ValidatedFile, storageCategory: StorageCategory): string {

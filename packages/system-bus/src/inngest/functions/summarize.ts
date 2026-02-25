@@ -1,5 +1,5 @@
 import { inngest } from "../client";
-import { $ } from "bun";
+import { infer } from "../../lib/inference";
 import { pushGatewayEvent } from "./agent-loop/utils";
 import { prefetchMemoryContext } from "../../memory/context-prefetch";
 
@@ -62,19 +62,30 @@ export const summarize = inngest.createFunction(
       ? `${summaryPrompt}\n\nPrevious related memory:\n${memoryContext}`
       : summaryPrompt;
 
-    // Run pi in print mode — it reads the file, researches, and edits in place
+    // Run inference and rewrite the note locally from returned markdown.
     await step.run("pi-enrich", async () => {
-      const prompt = `Read the file at ${vaultPath} and enrich it. ${promptWithMemory}`;
-      const tmpPrompt = `/tmp/summarize-prompt-${Date.now()}.txt`;
-      await Bun.write(tmpPrompt, prompt);
+      const sourceContent = await Bun.file(vaultPath).text();
+      const summaryInstruction = `Read this vault note and enrich it in place.
+${promptWithMemory}
 
-      try {
-        await $`cat ${tmpPrompt} | pi -p --no-session --no-extensions`
-          .env({ ...process.env, TERM: "dumb" })
-          .quiet();
-      } finally {
-        await $`rm -f ${tmpPrompt}`.quiet();
+Original note:
+${sourceContent}
+
+Return ONLY the full updated markdown and do not include extra explanations.`;
+
+      const result = await infer(summaryInstruction, {
+        task: "summary",
+        component: "summarize",
+        action: "content.summarize.enrich",
+        timeout: 120_000,
+      });
+
+      const updated = result.text.trim();
+      if (!updated) {
+        throw new Error("summarize returned empty output");
       }
+
+      await Bun.write(vaultPath, `${updated}\n`);
     });
 
     // Log + emit

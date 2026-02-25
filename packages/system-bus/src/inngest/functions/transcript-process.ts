@@ -1,12 +1,12 @@
 import { inngest } from "../client";
 import { NonRetriableError } from "inngest";
 import { $ } from "bun";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pushGatewayEvent } from "./agent-loop/utils";
 import { execSync } from "node:child_process";
+import { infer } from "../../lib/inference";
 import { pushContentResource } from "../../lib/convex";
-import { traceLlmGeneration } from "../../lib/langfuse";
 import * as typesense from "../../lib/typesense";
 import { chunkBySegments, chunkBySpeakerTurns } from "../../lib/transcript-chunk";
 
@@ -263,20 +263,34 @@ export const transcriptProcess = inngest.createFunction(
           segments: Array<{ start: number; end: number; text: string }>;
         } = await Bun.file(transcriptPath).json();
 
-        // Build vision request: each screenshot + transcript context
-        const imageContents: Array<Record<string, unknown>> = [];
         const vaultDir = join(
           process.env.HOME ?? "/Users/joel",
           "Vault/Resources/videos",
           slug,
         );
+        const fallback = screenshots.map((s) => ({
+          name: s.name,
+          altText: s.name.replace(".jpg", "").replace(/-/g, " "),
+          timestamp: s.timestamp,
+        }));
+
+        const sceneLines = [
+          `Review these ${screenshots.length} screenshots from "${title}". Return only JSON.`,
+          "Return a JSON array with this exact schema:",
+          '[{"index":0,"keep":true,"filename":"descriptive-name.jpg","altText":"what is visible in frame"}]',
+          "Rules:",
+          "- index maps to the screenshot number in this list.",
+          "- KEEP: diagrams, code, demos, slides with text, terminal output, dashboards, meaningful visuals.",
+          "- DISCARD (keep:false): speaker-only faces, blurry frames, transition slides, duplicates.",
+          "- filename: lowercase-kebab-case, max 50 chars; describe what is visible.",
+          "- altText: concise text visible in image and context.",
+          "No markdown fences or explanation.",
+          "",
+          "Screenshots:",
+        ];
 
         for (let idx = 0; idx < screenshots.length; idx++) {
           const shot = screenshots[idx]!;
-          const buffer = await readFile(join(vaultDir, shot.name));
-          const base64 = buffer.toString("base64");
-
-          // Transcript text ±20s around screenshot timestamp
           const [mins, secs] = shot.timestamp.split(":").map(Number);
           const ts = (mins ?? 0) * 60 + (secs ?? 0);
           const windowText = transcript.segments
@@ -285,141 +299,91 @@ export const transcriptProcess = inngest.createFunction(
             .join(" ")
             .trim();
 
-          imageContents.push({
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: "image/jpeg",
-              data: base64,
-            },
-          });
-          imageContents.push({
-            type: "text",
-            text: `Screenshot ${idx + 1}/${screenshots.length} at ${shot.timestamp}. Speaker is saying: "${windowText.slice(0, 300)}"`,
-          });
+          sceneLines.push(
+            `- index ${idx}: ${join(vaultDir, shot.name)} (speaker says: "${windowText.slice(0, 300)}")`,
+          );
         }
 
-        imageContents.push({
-          type: "text",
-          text: `Review these ${screenshots.length} screenshots from "${title}". Return a JSON array:
-[{"index":0,"keep":true,"filename":"descriptive-name.jpg","altText":"What's visible in the frame"}]
+        const prompt = sceneLines.join("\n");
 
-Rules:
-- filename: lowercase-kebab-case, max 50 chars, describe WHAT'S VISIBLE — diagrams, code, slides, terminal output, architecture drawings. Cross-reference with what the speaker is saying to give precise names.
-- DISCARD (keep:false): speaker's face with no informative visual content, transition slides, blurry or near-duplicate frames
-- KEEP: diagrams, code, demos, slides with text, architecture drawings, terminal output, dashboards, meaningful visuals
-- altText: describe what someone would see — labels, text on slides, code snippets, diagram elements, UI state
-- Return ONLY the JSON array, no markdown fences or explanation`,
-        });
-
-        const reviewModel = "claude-sonnet-4-20250514";
-        const reviewStartedAt = Date.now();
-
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": apiKey,
-            "anthropic-version": "2023-06-01",
-          },
-          body: JSON.stringify({
+        const reviewModel = "anthropic/claude-sonnet-4-6";
+        let result: Awaited<ReturnType<typeof infer>>;
+        try {
+          result = await infer(prompt, {
+            task: "vision",
             model: reviewModel,
-            max_tokens: 2048,
-            messages: [{ role: "user", content: imageContents }],
-          }),
-        });
-
-        if (!response.ok) {
-          const errorBody = (await response.text()).slice(0, 500);
-          await traceLlmGeneration({
-            traceName: "joelclaw.transcript-process",
-            generationName: "transcript.screenshot-review",
+            print: true,
+            system: "You are a careful screenshot reviewer for technical videos.",
             component: "transcript-process",
             action: "transcript.screenshot.review",
-            input: {
+            timeout: 120_000,
+            json: true,
+            env: { ...process.env, TERM: "dumb", ANTHROPIC_API_KEY: apiKey },
+            metadata: {
               slug,
               title,
               screenshotCount: screenshots.length,
             },
-            output: {
-              status: response.status,
-              body: errorBody,
-            },
-            model: reviewModel,
-            durationMs: Date.now() - reviewStartedAt,
-            error: `anthropic_http_${response.status}`,
-            metadata: {
-              screenshotCount: screenshots.length,
-            },
           });
-
-          // Non-fatal: return originals
-          return screenshots.map((s) => ({
-            name: s.name,
-            altText: s.name.replace(".jpg", "").replace(/-/g, " "),
-            timestamp: s.timestamp,
-          }));
+        } catch (error) {
+          console.error(
+            "[transcript-process] screenshot review inference failed, using passthrough:",
+            error instanceof Error ? error.message : String(error),
+          );
+          return fallback;
         }
 
-        const data = (await response.json()) as {
-          content?: Array<{ text?: string }>;
-          usage?: {
-            input_tokens?: number;
-            output_tokens?: number;
-          };
-          model?: string;
-        };
-        const rawText = data.content?.[0]?.text ?? "[]";
+        const rawReviews = result.data;
+        if (!Array.isArray(rawReviews) || rawReviews.length === 0) {
+          // Keep behavior conservative on model parse issues
+          return fallback;
+        }
 
         let reviews: Array<{
           index: number;
           keep: boolean;
           filename: string;
           altText: string;
-        }>;
-        try {
-          reviews = JSON.parse(
-            rawText
-              .replace(/```json?\n?/g, "")
-              .replace(/```/g, "")
-              .trim(),
+        }> = rawReviews
+          .map((raw) => {
+            if (!raw || typeof raw !== "object") return null;
+            const entry = raw as {
+              index?: unknown;
+              keep?: unknown;
+              filename?: unknown;
+              altText?: unknown;
+            };
+            if (typeof entry.index !== "number" || typeof entry.keep !== "boolean") return null;
+            if (typeof entry.filename !== "string" || typeof entry.altText !== "string") return null;
+            return {
+              index: entry.index,
+              keep: entry.keep,
+              filename: entry.filename,
+              altText: entry.altText,
+            };
+          })
+          .filter(
+            (
+              value: {
+                index: number;
+                keep: boolean;
+                filename: string;
+                altText: string;
+              } | null,
+            ): value is {
+              index: number;
+              keep: boolean;
+              filename: string;
+              altText: string;
+            } => value !== null && value.index >= 0 && value.index < screenshots.length
           );
-        } catch (error) {
-          await traceLlmGeneration({
-            traceName: "joelclaw.transcript-process",
-            generationName: "transcript.screenshot-review",
-            component: "transcript-process",
-            action: "transcript.screenshot.review",
-            input: {
-              slug,
-              title,
-              screenshotCount: screenshots.length,
-            },
-            output: {
-              rawText: rawText.slice(0, 3000),
-            },
-            model: data.model ?? reviewModel,
-            usage: {
-              inputTokens: data.usage?.input_tokens,
-              outputTokens: data.usage?.output_tokens,
-            },
-            durationMs: Date.now() - reviewStartedAt,
-            error: error instanceof Error ? error.message : String(error),
-            metadata: {
-              screenshotCount: screenshots.length,
-              parseFailed: true,
-            },
-          });
 
-          return screenshots.map((s) => ({
-            name: s.name,
-            altText: s.name.replace(".jpg", "").replace(/-/g, " "),
-            timestamp: s.timestamp,
-          }));
+        if (reviews.length === 0) {
+          return fallback;
         }
 
         // Rename kept files, discard the rest
-        const result: Reviewed[] = [];
+        const approved: Reviewed[] = [];
         const usedNames = new Set<string>();
 
         for (const review of reviews) {
@@ -453,16 +417,20 @@ Rules:
             } catch {}
           }
 
-          result.push({
+          approved.push({
             name: finalName,
             altText: review.altText,
             timestamp: shot.timestamp,
           });
         }
 
+        if (approved.length === 0) {
+          return fallback;
+        }
+
         // Clean up discarded screenshots from vault + NAS
         for (const shot of screenshots) {
-          if (!result.some((r) => r.timestamp === shot.timestamp)) {
+          if (!approved.some((r) => r.timestamp === shot.timestamp)) {
             try {
               await $`rm -f ${join(vaultDir, shot.name)}`.quiet();
             } catch {}
@@ -474,33 +442,7 @@ Rules:
           }
         }
 
-        await traceLlmGeneration({
-          traceName: "joelclaw.transcript-process",
-          generationName: "transcript.screenshot-review",
-          component: "transcript-process",
-          action: "transcript.screenshot.review",
-          input: {
-            slug,
-            title,
-            screenshotCount: screenshots.length,
-          },
-          output: {
-            keptCount: result.length,
-            discardedCount: Math.max(0, screenshots.length - result.length),
-          },
-          provider: "anthropic",
-          model: data.model ?? reviewModel,
-          usage: {
-            inputTokens: data.usage?.input_tokens,
-            outputTokens: data.usage?.output_tokens,
-          },
-          durationMs: Date.now() - reviewStartedAt,
-          metadata: {
-            screenshotCount: screenshots.length,
-          },
-        });
-
-        return result;
+        return approved;
       },
     );
 

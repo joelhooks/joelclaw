@@ -1329,13 +1329,16 @@ export const contactEnrich = inngest.createFunction(
         ].join("\n");
 
         const result = await infer(userPrompt, {
+          task: "summary",
           system: SYNTHESIZE_SYSTEM_PROMPT,
+          component: "contact-enrich",
+          action: "contact.enrich.synthesize",
           timeout: 120_000,
         });
 
         return {
           markdown: result.text.trim(),
-          usage: {},
+          usage: result.usage,
         };
       }
     );

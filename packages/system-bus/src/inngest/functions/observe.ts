@@ -13,7 +13,7 @@ import { DEDUP_THRESHOLD } from "../../memory/retrieval";
 import { TAXONOMY_VERSION, classifyObservationCategory, normalizeCategoryId, type CategorySource, type MemoryCategoryId } from "../../memory/taxonomy-v1";
 import { allowsReflect, resolveWriteGate, type WriteVerdict } from "../../memory/write-gate";
 import * as typesense from "../../lib/typesense";
-import { traceLlmGeneration } from "../../lib/langfuse";
+// Observability is centralized in packages/system-bus/src/lib/inference.ts (inference router).
 import { infer } from "../../lib/inference";
 import { emitOtelEvent } from "../../observability/emit";
 
@@ -448,63 +448,21 @@ Session context:
 - dedupeKey: ${validatedInput.dedupeKey}`;
 
       const observerModel = "anthropic/claude-haiku";
-      const observerStartedAt = Date.now();
 
       try {
         const result = await infer(promptWithSessionContext, {
           model: observerModel,
+          task: "summary",
           system: OBSERVER_SYSTEM_PROMPT,
+          component: "observe",
+          action: "observe.llm.extract",
           timeout: 90_000,
         });
         const stdout = result.text.trim();
-
-        await traceLlmGeneration({
-          traceName: "joelclaw.observe",
-          generationName: "memory.observe",
-          component: "observe",
-          action: "observe.llm.extract",
-          input: {
-            sessionId: validatedInput.sessionId,
-            trigger: validatedInput.trigger,
-            prompt: promptWithSessionContext.slice(0, 6000),
-          },
-          output: {
-            observationXml: stdout.slice(0, 6000),
-          },
-          model: observerModel,
-          durationMs: Date.now() - observerStartedAt,
-          metadata: {
-            sessionId: validatedInput.sessionId,
-            trigger: validatedInput.trigger,
-          },
-        });
-
         return stdout;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.warn(`[observe] observer LLM fallback: ${message}`);
-
-        await traceLlmGeneration({
-          traceName: "joelclaw.observe",
-          generationName: "memory.observe",
-          component: "observe",
-          action: "observe.llm.extract",
-          input: {
-            sessionId: validatedInput.sessionId,
-            trigger: validatedInput.trigger,
-          },
-          output: {
-            fallback: true,
-          },
-          model: observerModel,
-          durationMs: Date.now() - observerStartedAt,
-          error: message,
-          metadata: {
-            sessionId: validatedInput.sessionId,
-            trigger: validatedInput.trigger,
-            fallback: true,
-          },
-        });
 
         return buildObserverFallback(validatedInput, sanitizedMessages, message);
       }

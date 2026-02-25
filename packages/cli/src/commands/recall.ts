@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto"
 import { respond, respondError } from "../response"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
 import { traceRecallRewrite } from "../langfuse"
+import { infer } from "@joelclaw/system-bus/src/lib/inference"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 const OTEL_INGEST_URL = process.env.JOELCLAW_OTEL_INGEST_URL || "http://localhost:3111/observability/emit"
@@ -16,11 +17,7 @@ const DECAY_CONSTANT = 0.01
 const STALENESS_DAYS = 90
 const MIN_OBSERVATION_CHARS = 12
 const REWRITE_TIMEOUT_MS = 2_000
-const OPENAI_REWRITE_TIMEOUT_MS = 3_000
-const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
-const OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
-const ANTHROPIC_REWRITE_MODEL = process.env.JOELCLAW_RECALL_REWRITE_MODEL?.trim() || "claude-3-5-haiku-latest"
-const OPENAI_REWRITE_MODEL = "gpt-5.3-codex-spark"
+const RECALL_REWRITE_MODEL = process.env.JOELCLAW_RECALL_REWRITE_MODEL?.trim() || "anthropic/claude-haiku-4-5"
 const RECALL_OTEL_ENABLED = (process.env.JOELCLAW_RECALL_OTEL ?? "1") !== "0"
 const RECALL_REWRITE_ENABLED = (process.env.JOELCLAW_RECALL_REWRITE ?? "1") !== "0"
 
@@ -253,31 +250,6 @@ type PiAssistantMessage = {
   content?: Array<{ type?: string; text?: string }>
 }
 
-type AnthropicRewriteResponse = {
-  model?: string
-  usage?: {
-    input_tokens?: number
-    output_tokens?: number
-    cache_read_input_tokens?: number
-    cache_creation_input_tokens?: number
-  }
-  content?: Array<{ type?: string; text?: string }>
-}
-
-type OpenAIRewriteResponse = {
-  model?: string
-  usage?: {
-    prompt_tokens?: number
-    completion_tokens?: number
-    total_tokens?: number
-  }
-  choices?: Array<{
-    message?: {
-      content?: string | Array<{ type?: string; text?: string }>
-    }
-  }>
-}
-
 function parsePiRewriteJsonOutput(stdout: string): {
   rewrittenQuery: string
   provider?: string
@@ -338,72 +310,33 @@ function parsePiRewriteJsonOutput(stdout: string): {
   }
 }
 
-function parseAnthropicRewriteOutput(payload: AnthropicRewriteResponse): {
-  rewrittenQuery: string
-  model?: string
-  usage?: RewriteUsage
-} | null {
-  const rewrittenText = sanitizeRewriteResult(
-    (payload.content ?? [])
-      .filter((part) => part?.type === "text")
-      .map((part) => part?.text ?? "")
-      .join("")
-  )
-
-  if (!rewrittenText) return null
-
-  const usageRaw = payload.usage
-  const inputTokens = asFiniteNumber(usageRaw?.input_tokens, 0)
-  const outputTokens = asFiniteNumber(usageRaw?.output_tokens, 0)
-  const usage: RewriteUsage | undefined = usageRaw
-    ? {
-        inputTokens,
-        outputTokens,
-        totalTokens: inputTokens + outputTokens,
-        cacheReadTokens: asFiniteNumber(usageRaw.cache_read_input_tokens, 0),
-        cacheWriteTokens: asFiniteNumber(usageRaw.cache_creation_input_tokens, 0),
-      }
-    : undefined
-
-  return {
-    rewrittenQuery: rewrittenText,
-    model: payload.model,
-    usage,
-  }
+function normalizeFromUnknownString(value: unknown): string | null {
+  if (typeof value !== "string") return null
+  const sanitized = sanitizeRewriteResult(value)
+  return sanitized.length > 0 ? sanitized : null
 }
 
-function parseOpenAIRewriteOutput(payload: OpenAIRewriteResponse): {
-  rewrittenQuery: string
-  model?: string
-  usage?: RewriteUsage
-} | null {
-  const content = payload.choices?.[0]?.message?.content
-  const rewrittenText = sanitizeRewriteResult(
-    typeof content === "string"
-      ? content
-      : Array.isArray(content)
-        ? content.map((part) => part?.text ?? "").join("")
-        : ""
-  )
+function parseInferenceRewriteOutput(data: unknown, fallbackText: string): string | null {
+  const directText = normalizeFromUnknownString(data)
+  if (directText) return directText
 
-  if (!rewrittenText) return null
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const parsed = data as Record<string, unknown>
+    const candidateValues = [
+      parsed.rewrittenQuery,
+      parsed.rewritten_query,
+      parsed.query,
+      parsed.text,
+      parsed.output,
+    ]
 
-  const usageRaw = payload.usage
-  const inputTokens = asFiniteNumber(usageRaw?.prompt_tokens, 0)
-  const outputTokens = asFiniteNumber(usageRaw?.completion_tokens, 0)
-  const usage: RewriteUsage | undefined = usageRaw
-    ? {
-        inputTokens,
-        outputTokens,
-        totalTokens: asFiniteNumber(usageRaw?.total_tokens, inputTokens + outputTokens),
-      }
-    : undefined
-
-  return {
-    rewrittenQuery: rewrittenText,
-    model: payload.model,
-    usage,
+    for (const candidate of candidateValues) {
+      const candidateText = normalizeFromUnknownString(candidate)
+      if (candidateText) return candidateText
+    }
   }
+
+  return normalizeFromUnknownString(fallbackText) ?? null
 }
 
 function usageBoostFromDoc(doc: TypesenseHit["document"]): number {
@@ -560,8 +493,7 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
     context ? `Recent context: ${context}` : "",
   ].filter(Boolean).join("\n")
 
-  const haikuTimeoutMs = options.timeoutMs ?? REWRITE_TIMEOUT_MS
-  const openaiTimeoutMs = OPENAI_REWRITE_TIMEOUT_MS
+  const rewriteTimeoutMs = options.timeoutMs ?? REWRITE_TIMEOUT_MS
   const startedAt = Date.now()
   const attemptErrors: string[] = []
 
@@ -574,9 +506,9 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
     return message.slice(0, 220)
   }
 
-  async function runHaikuRewrite(): Promise<RewrittenQuery> {
+  async function runSpawnRewrite(): Promise<RewrittenQuery> {
     if (options.spawn) {
-      const proc = options.spawn([], rewritePrompt, haikuTimeoutMs)
+      const proc = options.spawn([], rewritePrompt, rewriteTimeoutMs)
       const stdoutText = readShellText(proc.stdout)
       const parsedJson = parsePiRewriteJsonOutput(stdoutText)
       const rewrittenQuery = parsedJson?.rewrittenQuery ?? sanitizeRewriteResult(stdoutText)
@@ -591,7 +523,7 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
           rewritten: rewrittenQuery.toLowerCase() !== normalized.toLowerCase(),
           strategy: "haiku",
           provider: parsedJson?.provider,
-          model: parsedJson?.model ?? ANTHROPIC_REWRITE_MODEL,
+          model: parsedJson?.model ?? RECALL_REWRITE_MODEL,
           usage: parsedJson?.usage,
           durationMs: Date.now() - startedAt,
         }
@@ -600,122 +532,49 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
       throw new Error(stderr || `rewrite_exit_${exitCode}`)
     }
 
-    const apiKey = process.env.ANTHROPIC_API_KEY?.trim()
-    if (!apiKey) {
-      throw new Error("anthropic_api_key_missing")
-    }
-
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), haikuTimeoutMs)
-    let response: Response
-    try {
-      response = await fetch(ANTHROPIC_MESSAGES_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "anthropic-version": "2023-06-01",
-          "x-api-key": apiKey,
-        },
-        body: JSON.stringify({
-          model: ANTHROPIC_REWRITE_MODEL,
-          max_tokens: 96,
-          temperature: 0,
-          messages: [{ role: "user", content: rewritePrompt }],
-        }),
-        signal: controller.signal,
-      })
-    } finally {
-      clearTimeout(timeout)
-    }
-
-    if (!response.ok) {
-      const text = await response.text()
-      throw new Error(`anthropic_http_${response.status}:${text.slice(0, 160)}`)
-    }
-
-    const payload = await response.json() as AnthropicRewriteResponse
-    const parsed = parseAnthropicRewriteOutput(payload)
-    if (!parsed) {
-      throw new Error("anthropic_empty_response")
-    }
-
-    return {
-      inputQuery: normalized,
-      rewritePrompt,
-      rewrittenQuery: parsed.rewrittenQuery,
-      rewritten: parsed.rewrittenQuery.toLowerCase() !== normalized.toLowerCase(),
-      strategy: "haiku",
-      provider: "anthropic",
-      model: parsed.model ?? ANTHROPIC_REWRITE_MODEL,
-      usage: parsed.usage,
-      durationMs: Date.now() - startedAt,
-    }
+    throw new Error("spawn_rewrite_not_enabled")
   }
 
-  async function runOpenAIRewrite(): Promise<RewrittenQuery> {
-    const apiKey = process.env.OPENAI_API_KEY?.trim()
-    if (!apiKey) {
-      throw new Error("openai_api_key_missing")
+  async function runRouterRewrite(): Promise<RewrittenQuery> {
+    const result = await infer(rewritePrompt, {
+      task: "rewrite",
+      model: RECALL_REWRITE_MODEL,
+      print: true,
+      system: "Rewrite the memory recall query for semantic retrieval. Return only the rewritten query text.",
+      component: "recall-cli",
+      action: "recall.rewrite",
+      timeout: rewriteTimeoutMs,
+      json: true,
+    })
+
+    const rewrittenQuery = parseInferenceRewriteOutput(result.data, result.text)
+    if (!rewrittenQuery) {
+      throw new Error("inference_rewrite_empty")
     }
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), openaiTimeoutMs)
-    let response: Response
-    try {
-      response = await fetch(OPENAI_CHAT_COMPLETIONS_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: OPENAI_REWRITE_MODEL,
-          max_tokens: 96,
-          temperature: 0,
-          messages: [{ role: "user", content: rewritePrompt }],
-        }),
-        signal: controller.signal,
-      })
-    } finally {
-      clearTimeout(timeout)
-    }
-
-    if (!response.ok) {
-      const text = await response.text()
-      throw new Error(`openai_http_${response.status}:${text.slice(0, 160)}`)
-    }
-
-    const payload = await response.json() as OpenAIRewriteResponse
-    const parsed = parseOpenAIRewriteOutput(payload)
-    if (!parsed) {
-      throw new Error("openai_empty_response")
-    }
+    const strategy = result.provider?.toLowerCase().includes("openai") ? "openai" : "haiku"
 
     return {
       inputQuery: normalized,
       rewritePrompt,
-      rewrittenQuery: parsed.rewrittenQuery,
-      rewritten: parsed.rewrittenQuery.toLowerCase() !== normalized.toLowerCase(),
-      strategy: "openai",
-      provider: "openai",
-      model: parsed.model ?? OPENAI_REWRITE_MODEL,
-      usage: parsed.usage,
+      rewrittenQuery,
+      rewritten: rewrittenQuery.toLowerCase() !== normalized.toLowerCase(),
+      strategy,
+      provider: result.provider,
+      model: result.model ?? RECALL_REWRITE_MODEL,
+      usage: result.usage,
       durationMs: Date.now() - startedAt,
     }
   }
 
   try {
-    return await runHaikuRewrite()
-  } catch (error) {
-    attemptErrors.push(formatRewriteError(error, haikuTimeoutMs))
-  }
-
-  if (!options.spawn) {
-    try {
-      return await runOpenAIRewrite()
-    } catch (error) {
-      attemptErrors.push(formatRewriteError(error, openaiTimeoutMs))
+    if (options.spawn) {
+      return await runSpawnRewrite()
     }
+
+    return await runRouterRewrite()
+  } catch (error) {
+    attemptErrors.push(formatRewriteError(error, rewriteTimeoutMs))
   }
 
   return {

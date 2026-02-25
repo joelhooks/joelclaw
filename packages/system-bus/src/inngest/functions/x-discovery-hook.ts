@@ -1,5 +1,5 @@
-import { $ } from "bun";
 import { inngest } from "../client";
+import { infer } from "../../lib/inference";
 
 function hasPublicTag(tags: string[] | undefined): boolean {
   if (!tags || tags.length === 0) return false;
@@ -28,19 +28,17 @@ async function generateTweetTextWithPi({
 }): Promise<string> {
   const fallback = `shipped: ${fallbackTitle} ${url}`;
   const prompt = createTweetPrompt(url, contextDescription);
-  const tmpPrompt = `/tmp/x-tweet-prompt-${Date.now()}.txt`;
-  await Bun.write(tmpPrompt, prompt);
-
   try {
-    const text = await $`cat ${tmpPrompt} | pi -p --no-session --no-extensions`
-      .env({ ...process.env, TERM: "dumb" })
-      .text();
-    const cleaned = text.trim().replace(/^["']|["']$/g, "");
+    const text = await infer(prompt, {
+      task: "summary",
+      component: "x-discovery-hook",
+      action: "x.discovery.hook.tweet",
+      model: "claude-haiku",
+    });
+    const cleaned = text.text.trim().replace(/^["']|["']$/g, "");
     return cleaned || fallback;
   } catch {
     return fallback;
-  } finally {
-    await $`rm -f ${tmpPrompt}`.quiet();
   }
 }
 

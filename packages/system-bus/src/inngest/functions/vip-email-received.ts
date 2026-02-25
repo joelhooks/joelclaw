@@ -7,7 +7,8 @@
 import { spawnSync } from "node:child_process";
 import { inngest } from "../client";
 import { parseClaudeOutput, pushGatewayEvent } from "./agent-loop/utils";
-import { parsePiJsonAssistant, traceLlmGeneration, type LlmUsage } from "../../lib/langfuse";
+import { type LlmUsage } from "../../lib/langfuse";
+import { infer } from "../../lib/inference";
 import { TodoistTaskAdapter } from "../../tasks";
 import { isVipSender } from "./vip-utils";
 
@@ -437,41 +438,39 @@ function runModelAnalysis(
   systemPrompt: string,
   prompt: string,
   timeoutMs: number
-): { analysis: VipAnalysis; error?: string; provider?: string; model?: string; usage?: LlmUsage } {
-  const proc = spawnSync(
-    "pi",
-    ["-p", "--no-session", "--no-extensions", "--mode", "json", "--model", model, "--system-prompt", systemPrompt],
-    {
-      encoding: "utf-8",
+): Promise<{ analysis: VipAnalysis; error?: string; provider?: string; model?: string; usage?: LlmUsage }> {
+  try {
+    const result = await infer(prompt, {
+      task: "vip-email.analysis",
+      model,
+      system: systemPrompt,
+      component: "vip-email-received",
+      action: "vip-email.analysis",
+      json: true,
+      print: true,
+      noTools: true,
       timeout: timeoutMs,
-      input: prompt,
-      stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, TERM: "dumb" },
-    }
-  );
+    });
 
-  const stdoutRaw = (proc.stdout ?? "").trim();
-  const parsedPi = parsePiJsonAssistant(stdoutRaw);
-  const stdout = (parsedPi?.text ?? stdoutRaw).trim();
-  const stderr = (proc.stderr ?? "").trim();
-
-  if (proc.status !== 0 && !stdout) {
+    const payload = result.data != null
+      ? (typeof result.data === "string" ? result.data : JSON.stringify(result.data))
+      : "";
+    return {
+      analysis: parseVipAnalysis(payload || result.text),
+      provider: result.provider,
+      model: result.model ?? model,
+      usage: result.usage,
+      error: payload.length === 0 && result.text.length === 0 ? "empty model output" : undefined,
+    };
+  } catch (error) {
     return {
       analysis: parseVipAnalysis(""),
-      error: `model failure (${proc.status ?? "unknown"}): ${stderr.slice(0, 250)}`,
-      provider: parsedPi?.provider,
-      model: parsedPi?.model ?? model,
-      usage: parsedPi?.usage,
+      error: error instanceof Error ? error.message : String(error),
+      provider: model,
+      model,
     };
   }
-
-  return {
-    analysis: parseVipAnalysis(stdout),
-    error: proc.status !== 0 ? stderr.slice(0, 250) : undefined,
-    provider: parsedPi?.provider,
-    model: parsedPi?.model ?? model,
-    usage: parsedPi?.usage,
-  };
 }
 
 function parseTriageDecision(raw: string): TriageDecision {
@@ -822,104 +821,44 @@ export const vipEmailReceived = inngest.createFunction(
 
     const triageResult = await step.run("sonnet-initial-triage", async () => {
       const t0 = Date.now();
-      const proc = spawnSync(
-        "pi",
-        [
-          "-p",
-          "--no-session",
-          "--no-extensions",
-          "--mode",
-          "json",
-          "--model",
-          TRIAGE_MODEL,
-          "--system-prompt",
-          VIP_TRIAGE_PROMPT,
-        ],
-        {
-          encoding: "utf-8",
-          timeout: TRIAGE_TIMEOUT_MS,
-          input: analysisPrompt,
-          stdio: ["pipe", "pipe", "pipe"],
-          env: { ...process.env, TERM: "dumb" },
-        }
-      );
-
-      const stdoutRaw = (proc.stdout ?? "").trim();
-      const parsedPi = parsePiJsonAssistant(stdoutRaw);
-      const stdout = (parsedPi?.text ?? stdoutRaw).trim();
-      const stderr = (proc.stderr ?? "").trim();
-      const durationMs = Date.now() - t0;
-
-      if (proc.status !== 0 && !stdout) {
-        const error = stderr.slice(0, 250);
-        await traceLlmGeneration({
-          traceName: "joelclaw.vip-email",
-          generationName: "vip-email.initial-triage",
+      try {
+        const inference = await infer(analysisPrompt, {
+          task: "vip-email.triage",
+          model: TRIAGE_MODEL,
+          system: VIP_TRIAGE_PROMPT,
           component: "vip-email-received",
           action: "vip-email.triage",
-          input: {
-            senderDisplay,
-            subject,
-            conversationId,
-            prompt: analysisPrompt.slice(0, 6000),
-          },
-          output: {
-            stderr: error,
-          },
-          provider: parsedPi?.provider,
-          model: parsedPi?.model ?? TRIAGE_MODEL,
-          usage: parsedPi?.usage,
-          durationMs,
-          error,
-          metadata: {
-            senderDisplay,
-          },
+          json: true,
+          print: true,
+          noTools: true,
+          timeout: TRIAGE_TIMEOUT_MS,
+          env: { ...process.env, TERM: "dumb" },
         });
 
+        const payload = inference.data != null
+          ? (typeof inference.data === "string" ? inference.data : JSON.stringify(inference.data))
+          : "";
+        const decision = parseTriageDecision(payload || inference.text);
+        const durationMs = Date.now() - t0;
+        return {
+          decision,
+          durationMs,
+          error: inference.text.length === 0 ? "triage returned no text" : undefined,
+        };
+      } catch (error) {
+        const durationMs = Date.now() - t0;
+        const reason = error instanceof Error ? error.message : String(error);
         return {
           decision: {
             needs_opus: false,
             complexity: "medium",
-            reason: `triage failed: ${stderr.slice(0, 200)}`,
+            reason: `triage failed: ${reason.slice(0, 200)}`,
             analysis: parseVipAnalysis(""),
           },
           durationMs,
-          error,
+          error: reason.slice(0, 250),
         };
       }
-
-      const decision = parseTriageDecision(stdout);
-
-      await traceLlmGeneration({
-        traceName: "joelclaw.vip-email",
-        generationName: "vip-email.initial-triage",
-        component: "vip-email-received",
-        action: "vip-email.triage",
-        input: {
-          senderDisplay,
-          subject,
-          conversationId,
-          prompt: analysisPrompt.slice(0, 6000),
-        },
-        output: {
-          needsOpus: decision.needs_opus,
-          complexity: decision.complexity,
-          reason: decision.reason,
-        },
-        provider: parsedPi?.provider,
-        model: parsedPi?.model ?? TRIAGE_MODEL,
-        usage: parsedPi?.usage,
-        durationMs,
-        metadata: {
-          senderDisplay,
-        },
-      });
-
-      return {
-        decision,
-        durationMs,
-        error: proc.status !== 0 ? stderr.slice(0, 250) : undefined,
-      };
     });
 
     timings["sonnet-initial-triage"] = triageResult.durationMs;
@@ -942,35 +881,8 @@ export const vipEmailReceived = inngest.createFunction(
       ? await step.run("opus-vip-analysis", async () => {
           const t0 = Date.now();
           const timeoutMs = Math.min(OPUS_TIMEOUT_MS, Math.max(2_000, remainingBudgetMs - 1_000));
-          const result = runModelAnalysis(VIP_MODEL, VIP_SYSTEM_PROMPT, analysisPrompt, timeoutMs);
+          const result = await runModelAnalysis(VIP_MODEL, VIP_SYSTEM_PROMPT, analysisPrompt, timeoutMs);
           const durationMs = Date.now() - t0;
-
-          await traceLlmGeneration({
-            traceName: "joelclaw.vip-email",
-            generationName: "vip-email.deep-analysis",
-            component: "vip-email-received",
-            action: "vip-email.deep-analysis",
-            input: {
-              senderDisplay,
-              subject,
-              conversationId,
-              prompt: analysisPrompt.slice(0, 6000),
-            },
-            output: {
-              todos: result.analysis.todos.length,
-              questions: result.analysis.questions_for_human.length,
-              missingInfo: result.analysis.missing_information.length,
-            },
-            provider: result.provider,
-            model: result.model ?? VIP_MODEL,
-            usage: result.usage,
-            durationMs,
-            error: result.error,
-            metadata: {
-              senderDisplay,
-              timeoutMs,
-            },
-          });
 
           return {
             ...result,

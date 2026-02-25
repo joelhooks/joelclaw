@@ -693,13 +693,15 @@ export type Events = {
       playbook?: {
         actions?: Array<string>;
         restart?: Array<string>;
+        kill?: Array<string>;
+        defer?: Array<string>;
         notify?: Array<string>;
         links?: Array<string>;
       };
       owner?: string;
       deadlineAt?: string;
       fallbackAction?: "escalate" | "manual";
-      domain?: "sdk-reachability" | "backup" | "all" | string;
+      domain?: "sdk-reachability" | "backup" | "gateway-bridge" | "gateway-provider" | "otel-pipeline" | "all" | string;
       reason?: string;
       requestedBy?: string;
       lookbackMinutes?: number;
@@ -715,6 +717,31 @@ export type Events = {
       attempt: number;
       nextAttempt: number;
       targetEventName: string;
+      domain?: "sdk-reachability" | "backup" | "gateway-bridge" | "gateway-provider" | "otel-pipeline" | "all" | string;
+      routeToFunction?: "system/backup.typesense" | "system/backup.redis" | string;
+      targetFunctionId?: "system/backup.typesense" | "system/backup.redis";
+      target?: "typesense" | "redis" | string;
+      retryPolicy?: {
+        maxRetries?: number;
+        sleepMinMs?: number;
+        sleepMaxMs?: number;
+        sleepStepMs?: number;
+      };
+      evidence?: Array<{
+        type: string;
+        detail: string;
+      }> | string[];
+      context?: Record<string, unknown>;
+      playbook?: {
+        actions?: Array<string>;
+        restart?: Array<string>;
+        kill?: Array<string>;
+        defer?: Array<string>;
+        notify?: Array<string>;
+        links?: Array<string>;
+      };
+      owner?: string;
+      deadlineAt?: string;
       decision: {
         action: "retry" | "pause" | "escalate";
         delayMs: number;
@@ -730,12 +757,83 @@ export type Events = {
   "system/self.healing.completed": {
     data: {
       domain: string;
-      status: "noop" | "detected" | "remediated";
+      status:
+        | "noop"
+        | "detected"
+        | "remediated"
+        | "invalid"
+        | "scheduled"
+        | "exhausted"
+        | "escalated"
+        | "blocked";
+      sourceFunction?: string;
+      targetComponent?: string;
+      attempt?: number;
+      nextAttempt?: number;
+      action?: "retry" | "pause" | "escalate";
+      domain?: string;
+      reason?: string;
+      delayMs?: number;
+      routeToEventName?: string;
+      routeToFunction?: "system/backup.typesense" | "system/backup.redis" | string;
+      confidence?: number;
+      model?: string;
+      evidence?: Array<{
+        type: string;
+        detail: string;
+      }> | string[];
+      playbook?: {
+        actions?: Array<string>;
+        restart?: Array<string>;
+        kill?: Array<string>;
+        defer?: Array<string>;
+        notify?: Array<string>;
+        links?: Array<string>;
+      };
+      owner?: string;
+      context?: Record<string, unknown>;
+      eventId?: string;
       detected: number;
       inspected: number;
       dryRun?: boolean;
       remediationDetail?: string;
       sampleRunIds?: string[];
+    };
+  };
+  "system/gateway.bridge.health.requested": {
+    data: {
+      sourceFunction?: string;
+      targetComponent?: string;
+      targetEventName?: string;
+      routeToFunction?: string;
+      attempt?: number;
+      nextAttempt?: number;
+      domain?: "gateway-bridge" | string;
+      problemSummary?: string;
+      retryPolicy?: {
+        maxRetries?: number;
+        sleepMinMs?: number;
+        sleepMaxMs?: number;
+        sleepStepMs?: number;
+      };
+      evidence?: Array<{
+        type: string;
+        detail: string;
+      }> | string[];
+      context?: Record<string, unknown>;
+      playbook?: {
+        actions?: Array<string>;
+        restart?: Array<string>;
+        kill?: Array<string>;
+        defer?: Array<string>;
+        notify?: Array<string>;
+        links?: Array<string>;
+      };
+      owner?: string;
+      deadlineAt?: string;
+      requestedBy?: string;
+      fallbackAction?: "escalate" | "manual";
+      dryRun?: boolean;
     };
   };
   "system/backup.failure.detected": {
@@ -750,6 +848,7 @@ export type Events = {
       transportAttempts?: number;
       transportDestination?: string;
       retryWindowHours?: number;
+      context?: Record<string, unknown>;
       selfHealingPayload?: {
         sourceComponent?: string;
         problemSummary?: string;

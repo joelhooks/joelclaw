@@ -11,6 +11,9 @@
 import { inngest } from "../client";
 import type { GatewayContext } from "../middleware/gateway";
 import { execSync } from "child_process";
+import { infer } from "../../lib/inference";
+import { MODEL } from "../../lib/models";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 const FRONT_API = "https://api2.frontapp.com";
 const BATCH_SIZE = 50; // conversations per classification call
@@ -49,7 +52,7 @@ async function frontGet(path: string, token: string): Promise<any> {
  * for fast, cheap classification. No Anthropic API key needed —
  * pi handles auth via its own provider config.
  */
-function classifyBatch(
+async function classifyBatch(
   conversations: ConversationSummary[],
 ): { archive: string[]; keep: string[] } {
   const listing = conversations
@@ -88,38 +91,30 @@ Respond with ONLY valid JSON, no markdown fencing:
 {"archive": ["cnv_xxx", "cnv_yyy"], "keep": ["cnv_zzz"]}`;
 
   try {
-    // Write prompt to temp file to avoid shell escaping issues
-    const fs = require("fs");
     const tmpFile = `/tmp/email-cleanup-prompt-${Date.now()}.txt`;
-    fs.writeFileSync(tmpFile, prompt);
+    writeFileSync(tmpFile, prompt);
 
-    // Use pi --print with --system-prompt override (skip AGENTS.md loading)
-    const { spawnSync } = require("child_process");
-    const proc = spawnSync(
-      "pi",
-      [
-        "--print", "--no-session",
-        "--provider", "anthropic", "--model", "haiku",
-        "--system-prompt", "You classify emails as archive or keep. Respond with ONLY valid JSON, no markdown.",
-        fs.readFileSync(tmpFile, "utf-8"),
-      ],
-      {
-        encoding: "utf-8",
-        timeout: 120_000,
-        stdio: ["pipe", "pipe", "pipe"],
+    const rawPrompt = readFileSync(tmpFile, "utf-8");
+
+    const result = await infer(rawPrompt, {
+      task: "email.cleanup.classify",
+      model: MODEL.HAIKU,
+      system: "You classify emails as archive or keep. Respond with ONLY valid JSON, no markdown.",
+      component: "email-cleanup",
+      action: "email.cleanup.classify",
+      json: true,
+      noTools: true,
+      print: true,
+      timeout: 120_000,
+      env: {
+        ...process.env,
+        TERM: "dumb",
       },
-    );
+    });
+    const stdout = result.text.trim();
 
     // Clean up temp file
-    try { fs.unlinkSync(tmpFile); } catch {}
-
-    // Only use stdout — stderr has gateway noise
-    const stdout = (proc.stdout ?? "").trim();
-
-    if (proc.status !== 0 && !stdout) {
-      console.error("[email-cleanup] pi exited with status", proc.status, proc.stderr?.slice(0, 200));
-      return { archive: [], keep: conversations.map((c) => c.id) };
-    }
+    try { unlinkSync(tmpFile); } catch {}
 
     // Filter out non-JSON lines (gateway registration, extension warnings, markdown fences)
     const lines = stdout.split("\n").filter(
@@ -144,14 +139,17 @@ Respond with ONLY valid JSON, no markdown fencing:
     const braceEnd = cleaned.lastIndexOf("}");
     if (braceStart !== -1 && braceEnd > braceStart) {
       try {
-        return JSON.parse(cleaned.slice(braceStart, braceEnd + 1));
+        return JSON.parse(cleaned.slice(braceStart, braceEnd + 1)) as {
+          archive: string[];
+          keep: string[];
+        };
       } catch {}
     }
 
     console.error("[email-cleanup] No valid JSON in pi response, keeping all. Raw stdout:", stdout.slice(0, 500));
     return { archive: [], keep: conversations.map((c) => c.id) };
   } catch (err) {
-    console.error("[email-cleanup] pi inference failed, keeping all:", err);
+    console.error("[email-cleanup] inference failed, keeping all:", err);
     return { archive: [], keep: conversations.map((c) => c.id) };
   }
 }

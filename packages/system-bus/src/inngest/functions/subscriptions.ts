@@ -15,7 +15,7 @@ import {
 } from "../../lib/subscriptions";
 import { emitOtelEvent } from "../../observability/emit";
 import { MODEL } from "../../lib/models";
-import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
+import { infer } from "../../lib/inference";
 
 type SubscriptionCheckEvent = {
   subscriptionId: string;
@@ -150,59 +150,19 @@ async function summarizeUpdates(
     }),
   ].join("\n\n");
 
-  const llmStartedAt = Date.now();
-  const proc = Bun.spawn(
-    [
-      "pi",
-      "-p",
-      "--no-session",
-      "--no-extensions",
-      "--mode",
-      "json",
-      "--model",
-      MODEL.HAIKU,
-      prompt,
-    ],
-    {
-      env: { ...process.env, TERM: "dumb" },
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    }
-  );
-
-  const [stdoutRaw, stderrRaw, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-
-  const parsedPi = parsePiJsonAssistant(stdoutRaw);
-  const assistantText = parsedPi?.text ?? stdoutRaw;
-
-  if (exitCode !== 0 && !assistantText.trim()) {
-    throw new Error(`summary model failed (${exitCode}): ${stderrRaw.slice(0, 500)}`);
-  }
-
-  await traceLlmGeneration({
-    traceName: "subscription_summary",
-    generationName: "subscription_summary_haiku",
+  const result = await infer(prompt, {
+    task: "subscription.summary",
+    model: MODEL.HAIKU,
     component: "subscription-check",
     action: "subscription.summary.generated",
-    input: {
-      subscriptionId: subscription.id,
-      entryCount: entries.length,
-    },
-    output: assistantText.slice(0, 1200),
-    provider: parsedPi?.provider,
-    model: parsedPi?.model ?? MODEL.HAIKU,
-    usage: parsedPi?.usage,
-    durationMs: Date.now() - llmStartedAt,
-    metadata: {
-      subscriptionId: subscription.id,
-      entryCount: entries.length,
-    },
+    json: true,
+    print: true,
+    noTools: true,
+    timeout: 20_000,
+    env: { ...process.env, TERM: "dumb" },
   });
+
+  const assistantText = result.text.trim();
 
   const structured = parseSummaryJson(assistantText);
   const summary = structured?.summary ?? summarizeEntriesFallback(entries);

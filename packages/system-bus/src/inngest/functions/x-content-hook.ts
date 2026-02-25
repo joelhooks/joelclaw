@@ -1,5 +1,5 @@
-import { $ } from "bun";
 import { inngest } from "../client";
+import { infer } from "../../lib/inference";
 
 const DEFAULT_SITE_URL = "https://joelclaw.com";
 
@@ -48,19 +48,19 @@ async function generateTweetTextWithPi({
 }): Promise<string> {
   const fallback = `shipped: ${fallbackTitle} ${url}`;
   const prompt = createTweetPrompt(url, contextDescription);
-  const tmpPrompt = `/tmp/x-tweet-prompt-${Date.now()}.txt`;
-  await Bun.write(tmpPrompt, prompt);
-
   try {
-    const text = await $`cat ${tmpPrompt} | pi -p --no-session --no-extensions`
-      .env({ ...process.env, TERM: "dumb" })
-      .text();
-    const cleaned = text.trim().replace(/^["']|["']$/g, "");
+    const text = await infer(prompt, {
+      task: "summary",
+      component: "x-content-hook",
+      action: "x.content.hook.tweet",
+      model: "claude-haiku",
+    });
+    const raw = text.text.trim();
+    const cleaned = raw.replace(/^["']|["']$/g, "");
     return cleaned || fallback;
   } catch {
     return fallback;
-  } finally {
-    await $`rm -f ${tmpPrompt}`.quiet();
+  }
   }
 }
 

@@ -1,6 +1,6 @@
 import { inngest } from "../client";
-import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
 import { syncFiles, type SyncResult } from "./vault-sync";
+import { infer } from "../../lib/inference";
 import { emitOtelEvent } from "../../observability/emit";
 import Redis from "ioredis";
 
@@ -312,84 +312,27 @@ async function reviewDiffBeforePush(): Promise<boolean> {
     if (!diffStat.trim()) return true; // nothing staged
 
     const safetyModel = "anthropic/claude-haiku";
-    const safetyStartedAt = Date.now();
 
-    // Ask haiku
-    const proc = Bun.spawn(
-      [
-        "pi",
-        "--no-tools",
-        "--no-session",
-        "--no-extensions",
-        "--print",
-        "--mode", "json",
-        "--model", safetyModel,
-        "--system-prompt", SAFETY_SYSTEM_PROMPT,
-        `Review this staged git diff for content-only safety:\n\n${diffStat.trim()}`,
-      ],
+    const { text: stdout } = await infer(
+      `Review this staged git diff for content-only safety:\n\n${diffStat.trim()}`,
       {
-        stdout: "pipe",
-        stderr: "pipe",
-        env: { ...process.env, TERM: "dumb" },
-      }
-    );
-
-    const [stdoutRaw, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-
-    const parsedPi = parsePiJsonAssistant(stdoutRaw);
-    const stdout = parsedPi?.text ?? stdoutRaw;
-
-    if (exitCode !== 0) {
-      await traceLlmGeneration({
-        traceName: "joelclaw.content-sync",
-        generationName: "content-sync.safety-review",
+        task: "content-sync.safety-review",
+        model: safetyModel,
+        system: SAFETY_SYSTEM_PROMPT,
         component: "content-sync",
         action: "content-sync.safety.review",
-        input: {
-          diffStat: diffStat.trim().slice(0, 4000),
-        },
-        output: {
-          stderr: stderr.trim().slice(0, 500),
-        },
-        provider: parsedPi?.provider,
-        model: parsedPi?.model ?? safetyModel,
-        usage: parsedPi?.usage,
-        durationMs: Date.now() - safetyStartedAt,
-        error: `safety_review_exit_${exitCode}`,
-      });
-      console.log("[content-sync] safety review failed to run, blocking push as precaution");
+        noTools: true,
+        print: true,
+      }
+    );
+    if (!stdout.trim()) {
+      console.log("[content-sync] safety review returned empty output, blocking push");
       return false;
     }
+    const sanitizedStdout = stdout.trim();
+    const safe = sanitizedStdout.toUpperCase().startsWith("YES");
 
-    const answer = stdout.trim().toUpperCase();
-    const safe = answer.startsWith("YES");
-
-    await traceLlmGeneration({
-      traceName: "joelclaw.content-sync",
-      generationName: "content-sync.safety-review",
-      component: "content-sync",
-      action: "content-sync.safety.review",
-      input: {
-        diffStat: diffStat.trim().slice(0, 4000),
-      },
-      output: {
-        reviewerAnswer: stdout.trim().slice(0, 500),
-        safe,
-      },
-      provider: parsedPi?.provider,
-      model: parsedPi?.model ?? safetyModel,
-      usage: parsedPi?.usage,
-      durationMs: Date.now() - safetyStartedAt,
-      metadata: {
-        safe,
-      },
-    });
-
-    console.log(`[content-sync] safety review: ${stdout.trim()}`);
+    console.log(`[content-sync] safety review: ${sanitizedStdout}`);
     return safe;
   } catch (err) {
     console.log(`[content-sync] safety review error: ${err}, blocking push`);

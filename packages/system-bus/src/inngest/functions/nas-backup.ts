@@ -5,7 +5,7 @@ import { createWriteStream } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { NonRetriableError } from "inngest";
 import { inngest } from "../client";
-import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
+import { infer } from "../../lib/inference";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import { assertAllowedModel } from "../../lib/models";
 import { loadBackupFailureRouterConfig } from "../../lib/backup-failure-router-config";
@@ -81,6 +81,7 @@ type BackupFailureEventData = {
   transportAttempts?: number;
   transportDestination?: string;
   retryWindowHours?: number;
+  context?: Record<string, unknown>;
 };
 
 type SelfHealingPlaybook = {
@@ -125,6 +126,51 @@ function parseAttempt(value: unknown, fallback: number): number {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
   return fallback;
+}
+
+type BackupFailureFlowContext = {
+  flowContextKey: string;
+  flowTrace: string[];
+  sourceEventName: string;
+  sourceEventId?: string;
+  attempt: number;
+};
+
+function buildBackupFailureFlowContext(input: {
+  eventName: string;
+  eventId?: string;
+  payload: BackupFailureEventData;
+}): BackupFailureFlowContext {
+  const attempt = Math.max(0, Math.floor(parseAttempt(input.payload.attempt, 0)));
+  const sourceEventName = typeof input.eventName === "string" && input.eventName.trim().length > 0
+    ? input.eventName.trim()
+    : BACKUP_FAILURE_EVENT;
+  return {
+    flowContextKey: `${sourceEventName}::${input.payload.targetFunctionId}::${input.payload.target}::attempt-${attempt}`,
+    flowTrace: [
+      sourceEventName,
+      "system/backup.failure.router",
+      input.payload.targetFunctionId,
+      input.payload.target,
+      `attempt:${attempt}`,
+    ],
+    sourceEventName,
+    sourceEventId: input.eventId,
+    attempt,
+  };
+}
+
+function extractSelfHealingEvidence(value: unknown): SelfHealingEvidence[] {
+  if (!Array.isArray(value)) return [];
+  const output: SelfHealingEvidence[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const candidate = item as { type?: unknown; detail?: unknown };
+    if (typeof candidate.type === "string" && typeof candidate.detail === "string") {
+      output.push({ type: candidate.type, detail: candidate.detail });
+    }
+  }
+  return output;
 }
 
 function stringifyFailureError(error: unknown): string {
@@ -279,48 +325,34 @@ async function analyzeBackupFailureWithPi(
     `Is this a repeated retry event: ${isRetry ? "true" : "false"}`,
   ].join("\n\n");
 
-  const startedAt = Date.now();
   assertAllowedModel(BACKUP_FAILURE_ROUTER_MODEL);
   assertAllowedModel(BACKUP_FAILURE_ROUTER_FALLBACK_MODEL);
 
   const analyzeWithModel = async (model: string) => {
-    const result = await $`pi --no-tools --no-session --no-extensions --print --mode json --model ${model} --system-prompt ${systemPrompt} ${userPrompt}`.quiet().nothrow();
-    const raw = await result.text();
-    const parsedPi = parsePiJsonAssistant(raw);
-    const assistantText = parsedPi?.text ?? raw;
+    const inferResult = await infer(userPrompt, {
+      task: "json",
+      model,
+      system: systemPrompt,
+      component: "nas-backup",
+      action: "system.backup.failure.analyze",
+      metadata: {
+        requestedModel: model,
+        retryEvent: isRetry,
+        attempt,
+      },
+    });
+    const assistantText = inferResult.text;
     const parsed = parseJsonFromText(assistantText);
 
-    if (result.exitCode !== 0 && (!assistantText || assistantText.length < 10)) {
-      throw new Error(`pi exit ${result.exitCode}`);
+    if (!assistantText && !parsed) {
+      throw new Error(`backup router fallback analysis failed for model ${model}`);
     }
 
     const decision = parsed === null ? normalizeFailureDecision({}, payload.targetFunctionId, attempt) : normalizeFailureDecision(parsed, payload.targetFunctionId, attempt);
 
-    await traceLlmGeneration({
-      traceName: "joelclaw.backup-failure-router",
-      generationName: "backup.failure.analysis",
-      component: "nas-backup",
-      action: "system.backup.failure.analyze",
-      input: {
-        target: payload.target,
-        targetFunctionId: payload.targetFunctionId,
-        attempt,
-        error: payload.error,
-      },
-      output: decision,
-      provider: parsedPi?.provider,
-      model: parsedPi?.model ?? model,
-      usage: parsedPi?.usage,
-      durationMs: Date.now() - startedAt,
-      metadata: {
-        requestedModel: model,
-        retryEvent: isRetry,
-      },
-    });
-
     return {
       ...decision,
-      model,
+      model: inferResult.model ?? model,
     };
   };
 
@@ -350,6 +382,7 @@ type SelfHealingRequestData = {
   sourceFunction: BackupFunctionId;
   targetComponent: string;
   routeToFunction?: BackupFunctionId;
+  domain?: "backup" | "sdk-reachability" | "gateway-bridge" | "gateway-provider" | "otel-pipeline" | "all" | string;
   problemSummary: string;
   attempt?: number;
   targetEventName?: string;
@@ -363,6 +396,22 @@ type SelfHealingRequestData = {
   playbook?: SelfHealingPlaybook;
   context?: Record<string, unknown>;
 };
+
+function summarizeBackupEvidence(
+  evidence: Array<SelfHealingEvidence> | undefined,
+): {
+  count: number;
+  samples: Array<SelfHealingEvidence>;
+  types: string[];
+} {
+  const safeEvidence = Array.isArray(evidence) ? evidence : [];
+  const sampleCount = Math.min(6, safeEvidence.length);
+  return {
+    count: safeEvidence.length,
+    samples: safeEvidence.slice(0, sampleCount),
+    types: [...new Set(safeEvidence.map((item) => item?.type?.trim() || "unknown"))],
+  };
+}
 
 type BackupFailureOnFailureContext = {
   error: unknown;
@@ -434,11 +483,39 @@ function createBackupOnFailureHandler(
         typeof eventData?.transportDestination === "string" ? eventData.transportDestination : undefined,
       retryWindowHours: parseAttempt(eventData?.retryWindowHours, BACKUP_RECOVERY_WINDOW_HOURS),
     };
+    const evidence = [
+      {
+        type: "backup-failure",
+        detail: `targetFunctionId=${targetFunctionId}; target=${target}; attempt=${payload.attempt}`,
+      },
+      {
+        type: "attempt",
+        detail: `transportMode=${payload.transportMode ?? "unknown"} transportAttempts=${payload.transportAttempts ?? 0}`,
+      },
+    ] as SelfHealingEvidence[];
+    const flowContext = buildBackupFailureFlowContext({
+      eventName: event.name,
+      eventId: event.id,
+      payload,
+    });
+    payload.context = {
+      sourceEventName: event.name,
+      sourceEventId: event.id,
+      runContext: flowContext,
+      transportDestination: typeof eventData?.transportDestination === "string" ? eventData.transportDestination : undefined,
+      retryWindowHours: parseAttempt(eventData?.retryWindowHours, BACKUP_RECOVERY_WINDOW_HOURS),
+      backupFailureDetectedAt: payload.backupFailureDetectedAt,
+      attempt: payload.attempt,
+      sourceFunction: targetFunctionId,
+      target,
+      evidence,
+    };
     const homeDir = process.env.HOME ?? "/Users/joel";
     const selfHealingPayload = {
       sourceFunction: targetFunctionId,
       targetComponent: `backup:${target}`,
       routeToFunction: targetFunctionId,
+      domain: "backup",
       problemSummary: `${targetFunctionId}: ${payload.error}`,
       attempt: payload.attempt,
       targetEventName: BACKUP_RETRY_REQUEST_EVENT,
@@ -448,16 +525,7 @@ function createBackupOnFailureHandler(
         sleepMaxMs: BACKUP_ROUTER_SLEEP_MAX_MS,
         sleepStepMs: BACKUP_ROUTER_SLEEP_STEP_MS,
       },
-      evidence: [
-        {
-          type: "backup-failure",
-          detail: `targetFunctionId=${targetFunctionId}; target=${target}; attempt=${payload.attempt}`,
-        },
-        {
-          type: "attempt",
-          detail: `transportMode=${payload.transportMode ?? "unknown"} transportAttempts=${payload.transportAttempts ?? 0}`,
-        },
-      ] as SelfHealingEvidence[],
+      evidence,
       playbook: {
         actions: ["route to backup retry event after structured decision"],
         restart: [
@@ -471,13 +539,36 @@ function createBackupOnFailureHandler(
         ],
       } as SelfHealingPlaybook,
       context: {
+        runContext: flowContext,
         transportDestination: payload.transportDestination,
         retryWindowHours: payload.retryWindowHours,
         backupFailureDetectedAt: payload.backupFailureDetectedAt,
+        sourceEventName: flowContext.sourceEventName,
+        sourceEventId: flowContext.sourceEventId,
       },
     };
 
     try {
+      await emitOtelEvent({
+        level: "error",
+        source: "worker",
+        component: "nas-backup",
+        action: "system.backup.failure.detected",
+        success: false,
+        error: payload.error,
+        metadata: {
+          runContext: flowContext,
+          evidenceSummary: summarizeBackupEvidence(evidence),
+          targetFunctionId,
+          target,
+          eventId: event.id,
+          attempt: payload.attempt,
+          transportMode: payload.transportMode,
+          transportAttempts: payload.transportAttempts,
+          transportDestination: payload.transportDestination,
+        },
+      });
+
       await step.sendEvent("emit-backup-failure", {
         name: BACKUP_FAILURE_EVENT,
         data: payload,
@@ -486,8 +577,24 @@ function createBackupOnFailureHandler(
         name: SELF_HEALING_REQUEST_EVENT,
         data: selfHealingPayload,
       });
-    } catch {
-      console.warn(`Failed to emit backup failure event for ${targetFunctionId}: ${event.id ?? "unknown event"}`);
+    } catch (error) {
+      const details = stringifyFailureError(error);
+      console.warn(`Failed to emit backup failure event for ${targetFunctionId}: ${event.id ?? "unknown event"}: ${details}`);
+      await emitOtelEvent({
+        level: "error",
+        source: "worker",
+        component: "nas-backup",
+        action: "system.backup.failure.dispatch",
+        success: false,
+        error: `failed to emit backup failure events: ${details}`,
+        metadata: {
+          runContext: flowContext,
+          eventId: event.id,
+          targetFunctionId,
+          target,
+          selfHealingContext: selfHealingPayload.context,
+        },
+      });
     }
   };
 }
@@ -532,11 +639,12 @@ function normalizeRetryData(raw: Record<string, unknown>): BackupFailureEventDat
         ? raw.transportMode === "remote"
           ? "remote"
           : "local"
-        : undefined,
+      : undefined,
     transportAttempts: parseAttempt(raw.transportAttempts, 0),
     transportDestination:
       typeof raw.transportDestination === "string" ? raw.transportDestination : undefined,
     retryWindowHours: parseAttempt(raw.retryWindowHours, BACKUP_RECOVERY_WINDOW_HOURS),
+    context: raw.context && typeof raw.context === "object" ? raw.context as Record<string, unknown> : undefined,
   };
 }
 
@@ -1198,6 +1306,19 @@ export const backupFailureRouter = inngest.createFunction(
     const payload = normalizeRetryData(eventDataRaw);
     const attempt = parseAttempt(eventDataRaw.attempt, 0);
     const isRetry = attempt > 0;
+    const flowContext = buildBackupFailureFlowContext({
+      eventName: event.name,
+      eventId: event.id,
+      payload,
+    });
+    const eventContext = eventDataRaw.context;
+    const evidenceSummary = summarizeBackupEvidence(
+      extractSelfHealingEvidence(
+        typeof eventContext === "object" && eventContext !== null && "evidence" in eventContext
+          ? (eventContext as Record<string, unknown>).evidence
+          : undefined,
+      ),
+    );
     const decision = await analyzeBackupFailureWithPi(payload, attempt, isRetry);
 
     await emitOtelEvent({
@@ -1207,11 +1328,13 @@ export const backupFailureRouter = inngest.createFunction(
       action: "system.backup.failure.router",
       success: true,
       metadata: {
+        runContext: flowContext,
         eventId: event.id,
         targetFunctionId: payload.targetFunctionId,
         target: payload.target,
         attempt,
         isRetry,
+        evidenceSummary,
         decision,
       },
     });
@@ -1227,11 +1350,14 @@ export const backupFailureRouter = inngest.createFunction(
           success: false,
           error: `Retry budget exceeded for ${payload.targetFunctionId} at attempt ${retryAttempt}`,
           metadata: {
+            runContext: flowContext,
             eventId: event.id,
             targetFunctionId: payload.targetFunctionId,
             target: payload.target,
             attempt,
             maxRetries: BACKUP_ROUTER_MAX_RETRIES,
+            nextAttempt: retryAttempt,
+            evidenceSummary,
             decision,
           },
         });
@@ -1275,10 +1401,12 @@ export const backupFailureRouter = inngest.createFunction(
       success: false,
       error: `Escalating backup failure for ${payload.targetFunctionId}: ${decision.reason}`,
       metadata: {
+        runContext: flowContext,
         eventId: event.id,
         targetFunctionId: payload.targetFunctionId,
         target: payload.target,
         attempt,
+        evidenceSummary,
         decision,
       },
     });

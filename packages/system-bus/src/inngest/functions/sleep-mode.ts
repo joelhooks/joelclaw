@@ -284,7 +284,10 @@ export const wakeModeRequested = inngest.createFunction(
 
       try {
         const result = await infer(prompt, {
+          task: "summary",
           system: WAKE_DIGEST_SYSTEM_PROMPT,
+          component: "sleep-mode",
+          action: "system.sleep.digest",
           timeout: 120_000,
         });
         const text = result.text.trim();
