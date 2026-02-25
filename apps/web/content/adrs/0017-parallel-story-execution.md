@@ -1,5 +1,5 @@
 ---
-status: deferred
+status: proposed
 date: 2026-02-14
 decision-makers: Joel Hooks
 ---

@@ -1,6 +1,6 @@
 ---
 title: Taxonomy-enhanced session search with SKOS concept layer
-status: deferred
+status: proposed
 date: 2026-02-16
 deciders: Joel Hooks
 consulted: Claude (pi session 2026-02-16)

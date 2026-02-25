@@ -1,6 +1,6 @@
 ---
 title: "Adopt Cilium Gateway API instead of Ingress"
-status: deferred
+status: proposed
 date: 2026-02-17
 deciders: Joel Hooks
 consulted: X community advice

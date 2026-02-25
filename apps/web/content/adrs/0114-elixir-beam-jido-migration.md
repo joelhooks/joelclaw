@@ -1,5 +1,5 @@
 ---
-status: researching
+status: proposed
 date: 2026-02-23
 ---
 

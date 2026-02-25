@@ -1,5 +1,6 @@
 ---
-status: superseded by 0114
+status: superseded
+superseded-by: "0114"
 date: 2026-02-19
 deciders: joel
 tags:

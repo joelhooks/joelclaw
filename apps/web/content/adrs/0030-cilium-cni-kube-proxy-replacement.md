@@ -1,6 +1,6 @@
 ---
 title: "Replace Flannel + kube-proxy with Cilium"
-status: deferred
+status: proposed
 date: 2026-02-17
 deciders: Joel Hooks
 consulted: X community advice

@@ -1,5 +1,5 @@
 ---
-status: "in_progress"
+status: shipped
 date: 2026-02-25
 decision-makers: "Joel, Codex agent"
 consulted: "ADR-0091, ADR-0092, ADR-0101, ADR-0135, ADR-0108, ADR-0109, claw-llm-router patterns, o11y-logging skill, inngest-events skill, inngest-flow-control skill"
@@ -238,9 +238,12 @@ Chosen option: **Option C**, because it preserves task-specific optimization and
 - [x] At least two options are compared with rejection reasons.
 - [x] ADR status/metadata and filename convention match ADR conventions.
 
-## Open questions (to be resolved as implementation progresses)
+## Resolved questions (2026-02-25)
 
-- Should `inference-router` be part of `system-bus` or an independent `packages/inference-router` publishable package?
-- Should fallback telemetry prefer OTEL-only on failure and defer Langfuse only on success, or always emit both?
-- Should policy enforcement default be permissive (`allow_legacy=true`) in phase 1 and flipped to strict in phase 3?
+- **Package boundary**: Keep `inference-router` as separate `packages/inference-router/`. CLI and gateway already import independently — separate package enforces the contract boundary.
+- **Fallback telemetry**: OTEL always emits. Langfuse always emits (cloud-hosted, cost nominal vs inference spend). Complete coverage — every call is traceable for cost attribution, latency analysis, and prompt version tracking.
+- **Enforcement mode**: Strict in CI/deploy (unknown model ID = error), permissive in dev (warn + pass through). Environment-split avoids blocking experimentation while catching config drift in production.
+
+## Open questions
+
 - What migration SLA is acceptable for bringing `gateway/src/commands/config.ts` and non-router gateway command surfaces fully onto the same policy metadata discipline as system bus CLI inference callsites?

@@ -1,6 +1,6 @@
 ---
 type: adr
-status: deferred
+status: proposed
 date: 2026-02-22
 tags: [adr, memory, knowledge-graph, skos, deferred]
 deciders: [joel]
