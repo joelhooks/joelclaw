@@ -52,6 +52,9 @@ export class ModelFallbackController {
   private _promptDispatchedAt = 0;
   private _firstTokenAt = 0;
   private _timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+  private _timeoutPaused = false;
+  private _timeoutPausedAt = 0;
+  private _timeoutRemainingMs = 0;
 
   // Recovery probe timer
   private _recoveryTimer: ReturnType<typeof setInterval> | undefined;
@@ -212,6 +215,44 @@ export class ModelFallbackController {
       clearTimeout(this._timeoutTimer);
       this._timeoutTimer = undefined;
     }
+    this._timeoutPaused = false;
+    this._timeoutRemainingMs = 0;
+  }
+
+  /**
+   * Pause the timeout watch (e.g. during compaction).
+   * The remaining timeout is saved and can be resumed.
+   */
+  pauseTimeoutWatch(): void {
+    if (!this._timeoutTimer || this._timeoutPaused) return;
+    const elapsed = Date.now() - this._promptDispatchedAt;
+    this._timeoutRemainingMs = Math.max(0, this.config.fallbackTimeoutMs - elapsed);
+    clearTimeout(this._timeoutTimer);
+    this._timeoutTimer = undefined;
+    this._timeoutPaused = true;
+    this._timeoutPausedAt = Date.now();
+    console.log("[gateway:fallback] timeout watch paused (compaction)", {
+      remainingMs: this._timeoutRemainingMs,
+    });
+  }
+
+  /**
+   * Resume the timeout watch after a pause. Resets the timer with the
+   * remaining duration plus a grace period for post-compaction inference.
+   */
+  resumeTimeoutWatch(): void {
+    if (!this._timeoutPaused) return;
+    this._timeoutPaused = false;
+    // Give a full timeout window after compaction — the next prompt
+    // effectively starts fresh from the model's perspective
+    const gracePeriodMs = this.config.fallbackTimeoutMs;
+    this._promptDispatchedAt = Date.now();
+    this._firstTokenAt = 0;
+    console.log("[gateway:fallback] timeout watch resumed (post-compaction)", {
+      newTimeoutMs: gracePeriodMs,
+      pausedForMs: Date.now() - this._timeoutPausedAt,
+    });
+    this._startTimeoutWatch();
   }
 
   private async _activateFallback(reason: string, consecutiveFailures?: number): Promise<boolean> {

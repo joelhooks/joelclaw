@@ -103,13 +103,15 @@ function sendRequest(socket: net.Socket, method: string, params: Record<string, 
 }
 
 async function connectAndRun(): Promise<void> {
-  return new Promise<void>((resolve) => {
+  return new Promise<void>((resolve, reject) => {
     const socket = net.createConnection(SOCKET_PATH);
     _socket = socket;
     let buffer = "";
     let subscribed = false;
+    let connected = false;
 
     socket.on("connect", async () => {
+      connected = true;
       console.log("[gateway:imessage] connected to imsg-rpc socket");
       void emitGatewayOtel({
         level: "info",
@@ -190,7 +192,11 @@ async function connectAndRun(): Promise<void> {
         entry.reject(new Error("socket closed"));
         _pending.delete(id);
       }
-      resolve(); // signal reconnect loop
+      if (connected) {
+        resolve(); // was connected, clean disconnect → resolve (resets backoff)
+      } else {
+        reject(new Error("socket closed before connecting")); // never connected → reject (keeps backoff)
+      }
     });
   });
 }

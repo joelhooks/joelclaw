@@ -863,17 +863,20 @@ session.subscribe((event: any) => {
     }
 
     // ── Proactive context health check (ADR-0141) ───────────
-    // After each turn, estimate context usage and take action before we hit the cliff.
-    try {
-      const lastUsage = getLastAssistantUsage(sessionManager.getEntries());
-      if (lastUsage) {
+    // After each turn, estimate context usage. If critical, compact BEFORE
+    // releasing the drain loop — compaction must complete before the next prompt.
+    const doHealthCheck = async () => {
+      try {
+        const lastUsage = getLastAssistantUsage(sessionManager.getEntries());
+        if (!lastUsage) return;
+
         const contextTokens = calculateContextTokens(lastUsage);
         // Claude Opus context window is 200k (API rejects at ~180-190k)
         const MODEL_CONTEXT_WINDOW = 200_000;
         const usageRatio = contextTokens / MODEL_CONTEXT_WINDOW;
 
-        if (usageRatio > 0.85) {
-          console.warn("[gateway:health] context usage CRITICAL", {
+        if (usageRatio > 0.85 && !session.isCompacting) {
+          console.warn("[gateway:health] context usage CRITICAL — compacting before next prompt", {
             contextTokens,
             maxTokens: MODEL_CONTEXT_WINDOW,
             usagePercent: Math.round(usageRatio * 100),
@@ -886,11 +889,18 @@ session.subscribe((event: any) => {
             success: true,
             metadata: { contextTokens, usageRatio: Math.round(usageRatio * 100), entries: sessionManager.getEntries().length },
           });
-          // Force compaction NOW before the next prompt blows up
-          console.log("[gateway:health] triggering proactive compaction");
-          session.compact("Context is at " + Math.round(usageRatio * 100) + "% capacity. Aggressively summarize to prevent overflow. Keep only essential recent context.").catch((err) => {
+          // Compact synchronously — hold the drain loop until done
+          // This prevents the next prompt from racing with compaction
+          try {
+            console.log("[gateway:health] triggering proactive compaction (blocking drain)");
+            fallbackController.pauseTimeoutWatch();
+            await session.compact("Context is at " + Math.round(usageRatio * 100) + "% capacity. Aggressively summarize to prevent overflow. Keep only essential recent context.");
+            fallbackController.resumeTimeoutWatch();
+            console.log("[gateway:health] proactive compaction complete");
+          } catch (err) {
+            fallbackController.resumeTimeoutWatch();
             console.error("[gateway:health] proactive compaction failed", { err });
-          });
+          }
         } else if (usageRatio > 0.7) {
           console.log("[gateway:health] context usage elevated", {
             contextTokens,
@@ -904,13 +914,13 @@ session.subscribe((event: any) => {
             metadata: { contextTokens, usageRatio: Math.round(usageRatio * 100) },
           });
         }
+      } catch (healthErr) {
+        // Non-fatal — don't let monitoring break the drain loop
+        console.error("[gateway:health] context check failed", { healthErr });
       }
-    } catch (healthErr) {
-      // Non-fatal — don't let monitoring break the drain loop
-      console.error("[gateway:health] context check failed", { healthErr });
-    }
+    };
 
-    void drain();
+    void doHealthCheck().then(() => drain());
   }
 });
 
