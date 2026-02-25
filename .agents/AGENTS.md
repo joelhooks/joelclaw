@@ -55,6 +55,17 @@ slog write --action configure --tool gateway --detail "rotated webhook secret le
 - Do not use destructive commands (`git reset --hard`, force-checkout) unless explicitly requested.
 - Never discard user changes without consent.
 
+8. Always include links
+- When referencing files, repos, PRs, runs, docs, URLs, or any addressable resource, include the link.
+- Links provide context and save the reader a lookup. No bare references when a URL exists.
+
+9. Use pi sessions for LLM inference
+- System-bus functions that need LLM calls MUST shell to `pi -p --no-session --no-extensions`.
+- Pi handles auth, token refresh, provider routing — zero config, zero API cost.
+- Do NOT use OpenRouter, do NOT read auth.json directly, do NOT use paid API keys.
+- Use the shared utility: `import { infer } from "../../lib/inference"` (`packages/system-bus/src/lib/inference.ts`).
+- Existing patterns: `reflect.ts`, `vip-email-received.ts`, `email-cleanup.ts`, `batch-review.ts`.
+
 ## Standard Operational Commands
 
 Health and status:
