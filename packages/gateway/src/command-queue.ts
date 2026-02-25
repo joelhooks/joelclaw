@@ -21,21 +21,38 @@ type PromptSession = {
   prompt: (text: string) => unknown | Promise<unknown>;
   reload: () => Promise<void>;
   compact: (customInstructions?: string) => Promise<unknown>;
-  newSession: () => Promise<void>;
+  /** Force a new session, optionally injecting a compression summary as the first message. */
+  newSession: (compressionSummary?: string) => Promise<void>;
 };
 
 type PromptCallback = () => void;
 type IdleWaiter = () => Promise<void>;
 type ErrorCallback = (consecutiveFailures: number) => void | Promise<void> | Promise<boolean>;
+/** Called before new session creation. Returns a compression summary to seed the fresh session. */
+type ContextOverflowCallback = () => Promise<string>;
 
 const queue: QueueEntry[] = [];
 let sessionRef: PromptSession | undefined;
 let drainPromise: Promise<void> | undefined;
 let onPromptSent: PromptCallback | undefined;
 let onPromptError: ErrorCallback | undefined;
+let onContextOverflow: ContextOverflowCallback | undefined;
 let idleWaiter: IdleWaiter | undefined;
 let consecutiveFailures = 0;
+let contextOverflowCount = 0;
 let activeRequest: ActiveRequest | undefined;
+
+/**
+ * Detect "prompt is too long" errors from the API.
+ * These are unrecoverable without compaction or new session —
+ * model fallback won't help.
+ */
+function isContextOverflowError(error: unknown): boolean {
+  const msg = typeof error === "object" && error !== null && "message" in error
+    ? String((error as any).message)
+    : String(error);
+  return msg.includes("prompt is too long") || msg.includes("maximum context length");
+}
 
 export function setSession(session: PromptSession): void {
   sessionRef = session;
@@ -64,6 +81,15 @@ export function onPrompt(cb: PromptCallback): void {
 /** Register a callback fired when a prompt fails. Receives the consecutive failure count. */
 export function onError(cb: ErrorCallback): void {
   onPromptError = cb;
+}
+
+/** Register a callback fired on context overflow (prompt too long). Called AFTER auto-recovery attempts. */
+export function onContextOverflowRecovery(cb: ContextOverflowCallback): void {
+  onContextOverflow = cb;
+}
+
+export function getConsecutiveOverflows(): number {
+  return contextOverflowCount;
 }
 
 /**
@@ -295,8 +321,89 @@ export async function drain(): Promise<void> {
           },
         });
       } catch (error) {
+        // ── Context overflow recovery ─────────────────────────────
+        // "prompt is too long" is unrecoverable via model fallback.
+        // Strategy: compact → retry → if still overflowing → new session → replay.
+        if (isContextOverflowError(error) && sessionRef) {
+          contextOverflowCount += 1;
+          console.warn("command-queue: context overflow detected", {
+            source: entry.source,
+            overflowCount: contextOverflowCount,
+          });
+          void emitGatewayOtel({
+            level: "error",
+            component: "command-queue",
+            action: "queue.context_overflow.detected",
+            success: false,
+            error: String(error),
+            metadata: { source: entry.source, overflowCount: contextOverflowCount },
+          });
+
+          try {
+            if (contextOverflowCount === 1) {
+              // First overflow: try aggressive compaction
+              console.log("command-queue: attempting compaction to recover from context overflow");
+              await sessionRef.compact("CRITICAL: Context exceeded model limit. Aggressively summarize all history. Keep only essential context.");
+              // Re-enqueue the failed message at front so it retries immediately
+              queue.unshift(entry);
+              if (entry.streamId) failedStreamIds.delete(entry.streamId);
+              void emitGatewayOtel({
+                level: "info",
+                component: "command-queue",
+                action: "queue.context_overflow.compacted",
+                success: true,
+                metadata: { source: entry.source },
+              });
+            } else {
+              // Compaction wasn't enough (or repeated overflow). Nuclear option: new session.
+              console.warn("command-queue: compaction insufficient — forcing new session", {
+                overflowCount: contextOverflowCount,
+              });
+              // Build compression summary from the dying session before we nuke it
+              let compressionSummary: string | undefined;
+              try {
+                compressionSummary = await onContextOverflow?.();
+              } catch (summaryErr) {
+                console.error("command-queue: compression summary generation failed", { summaryErr });
+              }
+              await sessionRef.newSession(compressionSummary);
+              contextOverflowCount = 0;
+              // Re-enqueue the failed message at front
+              queue.unshift(entry);
+              if (entry.streamId) failedStreamIds.delete(entry.streamId);
+              void emitGatewayOtel({
+                level: "warn",
+                component: "command-queue",
+                action: "queue.context_overflow.new_session",
+                success: true,
+                metadata: {
+                  source: entry.source,
+                  hasSummary: !!compressionSummary,
+                  summaryLength: compressionSummary?.length ?? 0,
+                },
+              });
+            }
+          } catch (recoveryError) {
+            console.error("command-queue: context overflow recovery failed", {
+              recoveryError,
+              source: entry.source,
+            });
+            if (entry.streamId) failedStreamIds.add(entry.streamId);
+            void emitGatewayOtel({
+              level: "fatal",
+              component: "command-queue",
+              action: "queue.context_overflow.recovery_failed",
+              success: false,
+              error: String(recoveryError),
+              metadata: { source: entry.source },
+            });
+          }
+          // Skip the normal error path — overflow is handled above
+        } else {
+        // ── Normal error path ─────────────────────────────────────
         if (entry.streamId) failedStreamIds.add(entry.streamId);
         consecutiveFailures += 1;
+        contextOverflowCount = 0; // reset overflow counter on non-overflow errors
         console.error("command-queue: prompt failed", {
           source: entry.source,
           consecutiveFailures,
@@ -318,6 +425,7 @@ export async function drain(): Promise<void> {
             ...(entry.priority !== undefined ? { priority: entry.priority } : {}),
           },
         });
+        } // end normal error path
       } finally {
         activeRequest = undefined;
       }

@@ -13,6 +13,7 @@ import {
   setIdleWaiter,
   onPrompt,
   onError as onQueueError,
+  onContextOverflowRecovery,
   replayUnacked,
   getConsecutiveFailures,
 } from "./command-queue";
@@ -384,7 +385,126 @@ setSession({
   prompt: (text: string) => session.prompt(text),
   reload: () => session.reload(),
   compact: (instructions?: string) => session.compact(instructions),
-  newSession: () => session.newSession().then(() => {}),
+  newSession: async (compressionSummary?: string) => {
+    await session.newSession();
+    if (compressionSummary) {
+      // Inject the summary as the first user message so the agent has context
+      console.log("[gateway] injecting compression summary into fresh session", {
+        summaryLength: compressionSummary.length,
+      });
+      await session.prompt(compressionSummary);
+    }
+  },
+});
+
+// ── Context overflow recovery: build compression summary from dying session ──
+function buildCompressionSummary(): string {
+  const entries = sessionManager.getEntries();
+  const recentUserMessages: string[] = [];
+  const recentAssistantSnippets: string[] = [];
+  let lastSource = "";
+
+  // Walk backwards through entries to grab recent context
+  for (let i = entries.length - 1; i >= 0 && recentUserMessages.length < 10; i--) {
+    const entry = entries[i];
+    if (entry?.type !== "message") continue;
+    const msg = (entry as any).message;
+    if (!msg?.role || !msg.content) continue;
+
+    if (msg.role === "user") {
+      const text = Array.isArray(msg.content)
+        ? msg.content.filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n")
+        : String(msg.content);
+      if (text.length > 0 && text.length < 2000) {
+        recentUserMessages.unshift(text.slice(0, 500));
+      }
+      // Capture source channel from channel header
+      const sourceMatch = text.match(/Channel:\s*(\w+)/);
+      if (sourceMatch && !lastSource) lastSource = sourceMatch[1];
+    }
+
+    if (msg.role === "assistant" && recentAssistantSnippets.length < 3) {
+      const text = Array.isArray(msg.content)
+        ? msg.content.filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n")
+        : String(msg.content);
+      if (text.length > 0) {
+        recentAssistantSnippets.unshift(text.slice(0, 800));
+      }
+    }
+  }
+
+  const parts = [
+    "# Context Recovery — Previous Session Overflow",
+    "",
+    "The previous gateway session exceeded the model's context window and was automatically replaced.",
+    "Below is a compression summary of recent activity to maintain continuity.",
+    "",
+  ];
+
+  if (lastSource) {
+    parts.push(`**Last active channel**: ${lastSource}`, "");
+  }
+
+  if (recentUserMessages.length > 0) {
+    parts.push("## Recent inbound messages (newest last)", "");
+    for (const msg of recentUserMessages.slice(-5)) {
+      parts.push(`- ${msg.replace(/\n/g, " ").slice(0, 300)}`, "");
+    }
+  }
+
+  if (recentAssistantSnippets.length > 0) {
+    parts.push("## Last assistant responses (summaries)", "");
+    for (const snippet of recentAssistantSnippets) {
+      parts.push(`> ${snippet.replace(/\n/g, "\n> ").slice(0, 500)}`, "");
+    }
+  }
+
+  parts.push(
+    "",
+    "Resume normal operation. You are the joelclaw gateway agent. Respond to new inbound messages as they arrive.",
+    "If the user's last message was unanswered due to the overflow, it will be replayed next.",
+  );
+
+  return parts.join("\n");
+}
+
+onContextOverflowRecovery(async () => {
+  const summary = buildCompressionSummary();
+  const telegramUserId = process.env.TELEGRAM_USER_ID ?? "";
+
+  console.log("[gateway] context overflow recovery triggered", {
+    summaryLength: summary.length,
+    recentEntries: sessionManager.getEntries().length,
+  });
+
+  // Alert Joel via Telegram
+  if (telegramUserId) {
+    const alertText = [
+      "⚠️ <b>Gateway context overflow — auto-recovery</b>",
+      "",
+      "Session exceeded model context window. Compaction failed to reduce.",
+      "Created fresh session with compression summary of recent activity.",
+      "",
+      `Previous session: ${sessionManager.getEntries().length} entries.`,
+      "The failed message will be replayed into the new session.",
+    ].join("\n");
+    sendTelegram(telegramUserId, alertText, { silent: false }).catch((err) => {
+      console.error("[gateway] failed to send overflow alert via Telegram", { err });
+    });
+  }
+
+  void emitGatewayOtel({
+    level: "warn",
+    component: "daemon",
+    action: "daemon.context_overflow.recovery",
+    success: true,
+    metadata: {
+      summaryLength: summary.length,
+      previousEntries: sessionManager.getEntries().length,
+    },
+  });
+
+  return summary;
 });
 
 // ── Model fallback controller (ADR-0091) ───────────────
