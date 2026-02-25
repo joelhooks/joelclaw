@@ -220,13 +220,11 @@ Chosen option: **Option C**, because it preserves task-specific optimization and
   - `packages/system-bus/src/inngest/functions/self-healing-router.ts`
   - `packages/system-bus/src/inngest/functions/nas-backup.ts`
   - `packages/system-bus/src/inngest/functions/discovery-capture.ts`
-- Remaining in-scope direct `pi`-style call paths still pending:
-  - `packages/system-bus/src/inngest/functions/task-triage.ts`
-  - `packages/system-bus/src/inngest/functions/vip-email-received.ts`
-  - `packages/system-bus/src/inngest/functions/content-sync.ts`
-  - `packages/system-bus/src/inngest/functions/media-process.ts`
-  - `packages/cli/src/commands/recall.ts`
+  - `packages/system-bus/src/inngest/functions/meeting-analyze.ts`
   - `packages/system-bus/src/inngest/functions/transcript-process.ts`
+  - `packages/cli/src/commands/recall.ts`
+- Remaining in-scope direct `pi`-style / provider call paths still pending:
+  - `packages/gateway/src/commands/config.ts` (legacy model allowlist alignment)
 
 ## ADR Review (Phase 3 checklist summary)
 
@@ -245,4 +243,4 @@ Chosen option: **Option C**, because it preserves task-specific optimization and
 - Should `inference-router` be part of `system-bus` or an independent `packages/inference-router` publishable package?
 - Should fallback telemetry prefer OTEL-only on failure and defer Langfuse only on success, or always emit both?
 - Should policy enforcement default be permissive (`allow_legacy=true`) in phase 1 and flipped to strict in phase 3?
-- What migration SLA is acceptable for replacing remaining direct Anthropic/Claude calls in `transcript-process.ts` and recall flows?
+- What migration SLA is acceptable for bringing `gateway/src/commands/config.ts` and non-router gateway command surfaces fully onto the same policy metadata discipline as system bus CLI inference callsites?
