@@ -110,5 +110,6 @@ tags:
 | [0134](0134-system-sleep-mode.md) | System Sleep Mode | proposed | 2026-02-24 |
 | [0135](0135-pi-langfuse-instrumentation.md) | Pi Session Langfuse Instrumentation | proposed | 2026-02-25 |
 | [0136](0136-twitter-archive-typesense-corpus.md) | Integrate 20-Year Twitter Archive as a Typesense-Backed Corpus | proposed | 2026-02-25 |
-| [0137](0137-codex-prompting-skill-router.md) | Codex Prompting Skill Router for Intent-to-Tool Delegation | accepted | 2026-02-25 |
+| [0140](0140-unified-joelclaw-inference-router.md) | Adopt a unified inference router control plane with OTEL + Langfuse as a single observability sink | proposed | 2026-02-25 |
 | [0138](0138-self-healing-backup-orchestrator.md) | Self-Healing NAS Backup Orchestrator | proposed | 2026-02-25 |
+| [0137](0137-codex-prompting-skill-router.md) | Codex Prompting Skill Router for Intent-to-Tool Delegation | accepted | 2026-02-25 |
