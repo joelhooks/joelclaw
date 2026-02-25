@@ -7,6 +7,13 @@ import type { OutboundEnvelope } from "../outbound/envelope";
 import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import { emitGatewayOtel } from "../observability";
 import { TelegramConverter } from "@joelclaw/markdown-formatter";
+import type {
+  Channel,
+  ChannelPlatform,
+  SendOptions,
+  InboundMessage,
+  MessageHandler,
+} from "./types";
 
 // ── Telegram HTML formatting ───────────────────────────
 // Telegram's HTML mode supports: <b>, <i>, <code>, <pre>, <a href="">
@@ -489,8 +496,122 @@ let bot: Bot | undefined;
 let allowedUserId: number | undefined;
 let enqueuePrompt: EnqueueFn | undefined;
 let started = false;
+let defaultInstance: TelegramChannel | undefined;
+let inboundMessageHandler: MessageHandler | undefined;
 
-export async function start(
+function getDefaultTelegramChannel(): TelegramChannel {
+  if (!defaultInstance) {
+    defaultInstance = new TelegramChannel();
+  }
+  return defaultInstance;
+}
+
+function emitInboundMessage(message: InboundMessage): void {
+  if (!inboundMessageHandler) return;
+  void Promise.resolve(inboundMessageHandler(message))
+    .catch((error) => {
+      console.error("[gateway:telegram] inbound message handler failed", { error: String(error) });
+    });
+}
+
+function resolveTargetChatId(target: string): number | undefined {
+  const trimmed = target.trim();
+  const fromSource = parseChatId(target);
+  if (fromSource !== undefined) return fromSource;
+  if (/^-?\d+$/.test(trimmed)) {
+    return Number.parseInt(trimmed, 10);
+  }
+  return undefined;
+}
+
+function convertButtonsFromSendOptions(buttons?: SendOptions["buttons"]): InlineButton[][] | undefined {
+  if (!buttons) return undefined;
+  return buttons.map((button) => [{
+    text: button.text,
+    ...(button.url ? { url: button.url } : { action: button.callbackData }),
+  }]);
+}
+
+function mapOutboundFromSendOptions(target: string, text: string, options?: SendOptions): {
+  targetId?: number;
+  message: string | OutboundEnvelope;
+  options?: RichSendOptions;
+} {
+  const resolvedTarget = resolveTargetChatId(target);
+  if (resolvedTarget === undefined) {
+    return { message: text };
+  }
+
+  const replyTo = options?.replyTo;
+  const hasValidReplyTo = typeof replyTo === "string" && /^-?\d+$/.test(replyTo.trim());
+  const mappedButtons = convertButtonsFromSendOptions(options?.buttons);
+
+  const richOptions: RichSendOptions = {
+    ...(hasValidReplyTo ? { replyTo: Number.parseInt(replyTo, 10) } : {}),
+    ...(mappedButtons ? { buttons: mappedButtons } : {}),
+    ...(options?.silent !== undefined ? { silent: options.silent } : {}),
+    ...(options?.noPreview !== undefined ? { noPreview: options.noPreview } : {}),
+  };
+
+  const payload = options?.format ? { text, format: options.format } : text;
+  return { targetId: resolvedTarget, message: payload, options: richOptions };
+}
+
+export class TelegramChannel implements Channel {
+  readonly platform: ChannelPlatform = "telegram";
+
+  async start(..._args: unknown[]): Promise<void> {
+    const [token, userId, enqueue, options] = _args;
+    await startTelegramChannel(
+      token as string,
+      userId as number,
+      enqueue as EnqueueFn,
+      options as TelegramStartOptions | undefined,
+    );
+  }
+
+  async stop(): Promise<void> {
+    await shutdownTelegramChannel();
+  }
+
+  async send(target: string, text: string, options?: SendOptions): Promise<void> {
+    const resolved = mapOutboundFromSendOptions(target, text, options);
+    if (resolved.targetId === undefined) {
+      console.error("[gateway:telegram] cannot send telegram message: invalid target", { target });
+      return;
+    }
+    await sendTelegramMessage(resolved.targetId, resolved.message, resolved.options);
+  }
+
+  onMessage(handler: MessageHandler): void {
+    inboundMessageHandler = handler;
+  }
+
+  async sendWithLegacy(
+    target: string,
+    message: string | OutboundEnvelope,
+    options?: RichSendOptions,
+  ): Promise<void> {
+    const chatId = resolveTargetChatId(target);
+    if (chatId === undefined) {
+      console.error("[gateway:telegram] cannot send telegram message: invalid target", { target });
+      return;
+    }
+    const resolved = resolveSendInput(message, options);
+    const payload = resolved.format ? { text: resolved.text, format: resolved.format } : resolved.text;
+    await sendTelegramMessage(chatId, payload, resolved.options);
+  }
+
+  async sendMedia(
+    chatId: number,
+    filePath: string,
+    options?: { caption?: string; replyTo?: number; asVoice?: boolean },
+  ): Promise<void> {
+    await sendTelegramMedia(chatId, filePath, options);
+  }
+}
+
+async function startTelegramChannel(
   token: string,
   userId: number,
   enqueue: EnqueueFn,
@@ -536,6 +657,15 @@ export async function start(
     });
 
     const prompt = await enrichPromptWithVaultContext(text);
+    emitInboundMessage({
+      source: "telegram",
+      prompt,
+      metadata: {
+        telegramChatId: chatId,
+        telegramMessageId: ctx.message.message_id,
+      },
+      replyTo: ctx.message.reply_to_message ? String(ctx.message.reply_to_message.message_id) : undefined,
+    });
     void emitGatewayOtel({
       level: "debug",
       component: "telegram-channel",
@@ -855,7 +985,7 @@ export async function start(
  * Send a text message back to a Telegram chat.
  * Handles markdown→HTML conversion, chunking, and optional reply threading.
  */
-export async function send(
+async function sendTelegramMessage(
   chatId: number,
   message: string | OutboundEnvelope,
   options?: RichSendOptions,
@@ -989,7 +1119,7 @@ export async function send(
  * Send a media file to a Telegram chat.
  * Detects kind from extension and dispatches to appropriate Bot API method.
  */
-export async function sendMedia(
+async function sendTelegramMedia(
   chatId: number,
   filePath: string,
   options?: { caption?: string; replyTo?: number; asVoice?: boolean },
@@ -1088,7 +1218,40 @@ export function parseChatId(source: string): number | undefined {
   return match?.[1] ? parseInt(match[1], 10) : undefined;
 }
 
+export async function start(
+  token: string,
+  userId: number,
+  enqueue: EnqueueFn,
+  options?: TelegramStartOptions,
+): Promise<void> {
+  const instance = getDefaultTelegramChannel();
+  await instance.start(token, userId, enqueue, options);
+}
+
+export async function send(
+  chatId: number,
+  message: string | OutboundEnvelope,
+  options?: RichSendOptions,
+): Promise<void> {
+  const instance = getDefaultTelegramChannel();
+  await instance.sendWithLegacy(String(chatId), message, options);
+}
+
+export async function sendMedia(
+  chatId: number,
+  filePath: string,
+  options?: { caption?: string; replyTo?: number; asVoice?: boolean },
+): Promise<void> {
+  const instance = getDefaultTelegramChannel();
+  await instance.sendMedia(chatId, filePath, options);
+}
+
 export async function shutdown(): Promise<void> {
+  const instance = getDefaultTelegramChannel();
+  await instance.stop();
+}
+
+async function shutdownTelegramChannel(): Promise<void> {
   if (bot) {
     bot.stop();
     bot = undefined;
