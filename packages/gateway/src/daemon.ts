@@ -27,13 +27,18 @@ import { getActiveMcqAdapter, type McqParams } from "./commands/mcq-adapter";
 import { getActiveDiscordMcqAdapter, registerDiscordMcqAdapter } from "./commands/discord-mcq-adapter";
 import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands/telegram-handler";
 import { TRIPWIRE_PATH, startHeartbeatRunner } from "./heartbeat";
-import { getCatalogModel as resolveModelFromCatalog } from "@joelclaw/inference-router";
+import { getCatalogModel as resolveModelFromCatalog, initTracing } from "@joelclaw/inference-router";
 import { init as initMessageStore, trimOld } from "@joelclaw/message-store";
 import { ModelFallbackController, type TelemetryEmitter } from "@joelclaw/model-fallback";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
 import { registerChannel, routeResponse } from "./outbound/router";
 import { injectChannelContext } from "./formatting";
+
+// Initialize Langfuse tracing for inference routing (reads from env vars):
+// LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and LANGFUSE_HOST or LANGFUSE_BASE_URL.
+// Optional: JOELCLAW_LLM_OBS_ENABLED, JOELCLAW_ENV, JOELCLAW_RELEASE, GIT_SHA.
+initTracing({});
 
 const HOME = homedir();
 const AGENT_DIR = join(HOME, ".pi/agent");
