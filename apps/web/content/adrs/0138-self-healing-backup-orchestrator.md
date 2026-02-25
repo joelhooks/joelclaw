@@ -81,6 +81,62 @@ Proposed reusable contract:
 6. Implement the SDK reachability investigator + guarded launchd-restart path as the canonical non-backup flow under this ADR.
 7. Keep existing event names and transport safety checks while moving behavior from informal notes to explicit architecture.
 
+## Priority Rollout (Canonical)
+
+P0
+- `system-bus` and `joelclaw gateway` worker control plane: guard rails around restarts, safe re-registration, and run-level dedupe.
+- Event-router and Inngest execution path resilience: prevent lost callbacks and duplicate remediation loops on run failures.
+- NAS backup domains (`system/backup.typesense`, `system/backup.redis`): bounded transport/retry remediation with mount and remote-copy fallbacks.
+
+P1
+- `gateway` provider adapters (Telegram/iMessage/Discord/email/webhooks): reconnect, session rebind, and queue drain recovery.
+- Redis-backed event bridge and transient state stores: broker liveness checks, stale-lock cleanup, and reconnect backoff.
+- Observability pipeline (`otel_events` + tracing ingest): fail-closed telemetry sinks and health gates for missing event writes.
+
+P2
+- Search/index and content-serving surfaces (`Typesense`, Convex projections): query fallback strategies and index rebuild playbooks.
+- External dependencies (LLM providers, third-party APIs): model/provider fallback and route-specific error budgets.
+- K8s edge services (colima/talos/ingress paths): soft restart/reconcile flow with controlled escalation.
+
+Non-goals for this ADR
+- Full autonomous model-level diagnosis is not the first-class control path.
+- Human review remains the final escalation channel for unresolved policy loops.
+
+## Execution TODO (Actionable Backlog)
+
+P0 (Do now)
+- [ ] Enforce guarded worker restart path for all ingress sync and sync recovery codepaths.
+  - Validate: no raw `launchctl kickstart` invocations in sync/control loops.
+  - Artifact: `infra/launchd/com.joel.system-bus-sync.plist`, `packages/system-bus` restart handler.
+- [ ] Ensure `system/self-healing.investigator` is a first-class route target for `system/self.healing.requested` and emits `system/self.healing.completed`.
+  - Validate: event schema includes `sourceFunction`, `targetComponent`, `attempt`, `retryPolicy`, `playbook`, `evidence`.
+- [ ] Add deterministic backoff and jitter policy validation for backup router and investigator loops.
+  - Validate: bounded `maxRetries` and `sleepMs` ranges enforced from config and env.
+- [ ] Implement canonical `pause` path for transient infra outages before `retry`.
+  - Validate: pause emits completion event with reason and wait duration.
+- [ ] Add P0 runbook fields to payload contract (`links`, `restart`, `kill`, `defer`, `notify`).
+  - Validate: all P0 routes pass non-empty `playbook` context.
+
+P1 (execute next)
+- [ ] Add Redis/bridge health checks and stale-run reconciliation for session bridge queues.
+  - Validate: queue health signal appears in periodic OTEL and triggers `pause` when unstable.
+- [ ] Add OTEL health circuit for missing telemetry writes during recovery loops.
+  - Validate: emits an explicit telemetry gap event when traces fail to persist.
+- [ ] Add provider session rebind/retry paths for Telegram/iMessage/email/webhook adapters.
+  - Validate: retries use bounded cooldown and escalate via `system/self.healing.completed` status `escalated`.
+
+P2 (planned)
+- [ ] Add index/search fallback and rebuild plan for Typesense/Convex incidents.
+  - Validate: recoverable route triggers a deferred rerun with explicit backoff.
+- [ ] Add `0138` execution tasks into operator task list (`task-management`) for each P1/P2 domain.
+- [ ] Add ADR status telemetry dashboard for shipped self-healing actions and escalation rate.
+  - Validate: dashboard shows completion/escalation counts by domain.
+
+Done Criteria
+- [ ] All TODO items above are linked to code or operational verification events.
+- [ ] Every executed item has corresponding `system/self.healing.completed` telemetry with action and outcome.
+- [ ] At least one real remediation run demonstrates `retry -> pause -> escalate` behavior for a synthetic transient fault.
+
 ## Consequences
 
 ### Positive
