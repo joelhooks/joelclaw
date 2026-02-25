@@ -6,6 +6,7 @@
     "dev": "turbo run dev",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
+    "lint:biome": "biome check .",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "check-types": "turbo run check-types",
@@ -14,6 +15,7 @@
     "validate:no-legacy-worker-clone": "bun scripts/validate-no-legacy-worker-clone.ts"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.4",
     "oxfmt": "^0.32.0",
     "oxlint": "^1.47.0",
     "turbo": "^2.8.8",

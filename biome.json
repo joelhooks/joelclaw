@@ -1,0 +1,43 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.4/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "formatter": {
+    "enabled": false
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": false,
+      "style": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {},
+            "patterns": [
+              {
+                "group": ["./observability", "../observability", "../../observability", "../../../observability"],
+                "message": "Import from @joelclaw/telemetry instead. See ADR-0144."
+              },
+              {
+                "group": ["./model-fallback", "../model-fallback", "../../model-fallback"],
+                "message": "Import from @joelclaw/model-fallback instead. See ADR-0144."
+              },
+              {
+                "group": ["./message-store", "../message-store", "../../message-store"],
+                "message": "Import from @joelclaw/message-store instead. See ADR-0144."
+              },
+              {
+                "group": ["./vault-read", "../vault-read", "../../vault-read"],
+                "message": "Import from @joelclaw/vault-reader instead. See ADR-0144."
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

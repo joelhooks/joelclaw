@@ -102,6 +102,15 @@ Rules:
 - Gateway extension filters: only delivers `actionable` and `joel-mention`
 - FYI messages accumulate in Redis, delivered as batch digest on heartbeat
 
+### Mention Nudge
+
+When a `joel-mention` message is detected, start a response timer in Redis:
+- `SETEX slack:mention:{ts} 1800 {message_json}` (30min TTL)
+- Heartbeat check function scans for stale mention keys
+- If Joel hasn't responded (no message from Joel in that thread within window), nudge via Telegram: "You were mentioned by {author} in #{channel} 30min ago — {snippet}"
+- Joel's Slack app handles real-time notifications; this is the safety net for when he misses one
+- Configurable window in `~/.joelclaw/triage.yaml` under `nudge.mention_timeout_m: 30`
+
 ## Consequences
 
 - **Gateway context savings**: 80-90% reduction in noise messages

@@ -21,6 +21,59 @@ Operational architecture (current):
 - Observability: OTEL-style events -> Typesense (`otel_events`) + Convex/UI surfaces
 - Web: joelclaw.com in `apps/web`, including `/system` and `/system/events`
 
+## Hexagonal Architecture (ADR-0144) — MANDATORY
+
+The monorepo uses **ports and adapters**. Heavy logic lives in standalone `@joelclaw/*` packages behind interfaces. The gateway (and other consumers) are thin composition roots that wire adapters together. **Never embed heavy logic directly in a consumer.**
+
+### Package Map
+| Package | Port Interface | What It Does |
+|---------|---------------|--------------|
+| `@joelclaw/inference-router` | `routeInference()`, catalog | Model selection for ALL LLM calls |
+| `@joelclaw/model-fallback` | `FallbackController` | Provider fallback chains |
+| `@joelclaw/message-store` | `persist()`, `drainByPriority()` | Redis-backed message queue + priority |
+| `@joelclaw/vault-reader` | `enrichPromptWithVaultContext()` | Vault file search + context injection |
+| `@joelclaw/markdown-formatter` | `FormatConverter` | AST-based per-platform formatting |
+| `@joelclaw/telemetry` | `TelemetryEmitter` | Single OTEL emission interface |
+
+### Few-Shot: How to Use These
+
+**✅ Correct — import from package:**
+```typescript
+import { emitGatewayOtel } from "@joelclaw/telemetry";
+import { persist, drainByPriority } from "@joelclaw/message-store";
+import { TelegramConverter } from "@joelclaw/markdown-formatter";
+```
+
+**❌ Wrong — reach into another package's internals:**
+```typescript
+import { emitGatewayOtel } from "../observability";        // DELETED
+import { persist } from "../../message-store/src/store";    // NEVER
+import { mdToTelegramHtml } from "../channels/telegram";    // internal
+```
+
+**✅ Correct — DI via interface:**
+```typescript
+import type { TelemetryEmitter } from "@joelclaw/telemetry";
+function init(redis: Redis, telemetry?: TelemetryEmitter) { ... }
+```
+
+**❌ Wrong — hardcode dependency:**
+```typescript
+import { emitGatewayOtel } from "@joelclaw/telemetry";
+// Don't call emitGatewayOtel directly in a library package.
+// Accept TelemetryEmitter interface, let the consumer inject.
+```
+
+### Channel Interface
+Consumer channels (Telegram, Slack, Discord, iMessage) implement `Channel` from `packages/gateway/src/channels/types.ts`. Redis is an `EventBridge` port — separate concern, not a Channel.
+
+### Rules
+- **New heavy logic → new package.** If it's >100 lines and reusable, extract it.
+- **Import via `@joelclaw/*`**, never via relative paths across package boundaries.
+- **DI via interfaces** in library packages. Only composition roots (gateway, CLI) do concrete wiring.
+- **One telemetry interface.** All packages use `TelemetryEmitter` from `@joelclaw/telemetry`.
+- **One model resolver.** All model selection goes through `@joelclaw/inference-router` catalog.
+
 ## Core Rules
 
 1. Use CLI surfaces first (not plumbing)
