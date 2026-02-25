@@ -1,12 +1,12 @@
 ---
-status: shipped
+status: accepted
 date: 2026-02-25
 decision-makers: "Joel, Codex agent"
 consulted: "ADR-0091, ADR-0092, ADR-0101, ADR-0135, ADR-0108, ADR-0109, claw-llm-router patterns, o11y-logging skill, inngest-events skill, inngest-flow-control skill"
 informed: "joelclaw system owners"
 ---
 
-# Adopt a unified inference router control plane with OTEL + Langfuse as a single observability sink
+# One place to pick and trace LLM models
 
 ## Context and Problem Statement
 
