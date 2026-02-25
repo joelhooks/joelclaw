@@ -286,6 +286,10 @@ async function runReflectorLLM(
 
   const result = await withPromptFile(userPrompt, (promptFileArg) =>
     Bun.$`pi --no-tools --no-session --no-extensions --print --mode json --model ${reflectorModel} --system-prompt ${systemPrompt} ${promptFileArg}`
+      .env({
+        ...process.env,
+        PATH: `${process.env.HOME}/.local/bin:${process.env.HOME}/.bun/bin:${process.env.HOME}/.local/share/fnm/aliases/default/bin:${process.env.PATH}`,
+      })
       .quiet()
       .nothrow()
   );
