@@ -843,6 +843,34 @@ session.subscribe((event: any) => {
     const fullText = responseChunks.join("");
     responseChunks = [];
 
+    // Detect API errors (429, 529, overload) surfaced via errorMessage —
+    // pi resolves (doesn't throw), so these bypass the throw-based fallback path.
+    const errorMsg: string = event.message?.errorMessage ?? "";
+    if (errorMsg) {
+      const is429 = errorMsg.includes("rate_limit") || errorMsg.includes("429");
+      const isOverload = errorMsg.includes("overloaded") || errorMsg.includes("529");
+      if (is429 || isOverload) {
+        const reason = is429 ? "Anthropic rate limit (429)" : "Anthropic overloaded (529)";
+        console.warn("[gateway:fallback] API error detected via message_end", {
+          reason,
+          errorMsg: errorMsg.slice(0, 120),
+        });
+        void emitGatewayOtel({
+          level: "error",
+          component: "daemon",
+          action: "daemon.api_error.detected",
+          success: false,
+          error: reason,
+        });
+        // Treat as a prompt failure — let fallback controller decide whether to swap
+        void fallbackController.onPromptError(getConsecutiveFailures() + 1);
+        return;
+      }
+      // Other errors — log but don't route
+      console.error("[gateway] message_end with error", { errorMsg: errorMsg.slice(0, 200) });
+      return;
+    }
+
     if (!fullText.trim()) return;
 
     const source = getActiveSource() ?? "console";
