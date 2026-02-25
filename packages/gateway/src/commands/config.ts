@@ -1,4 +1,5 @@
 import type Redis from "ioredis";
+import type { FallbackConfig } from "@joelclaw/model-fallback";
 import {
   GATEWAY_ALLOWED_MODELS,
   GATEWAY_MODEL_TO_PROVIDER,
@@ -19,14 +20,6 @@ export const ALLOWED_THINKING_LEVELS = ["none", "low", "medium", "high"] as cons
 
 export type GatewayModel = (typeof ALLOWED_MODELS)[number];
 export type GatewayThinkingLevel = (typeof ALLOWED_THINKING_LEVELS)[number];
-
-export type FallbackConfig = {
-  fallbackProvider: string;
-  fallbackModel: string;
-  fallbackTimeoutMs: number;
-  fallbackAfterFailures: number;
-  recoveryProbeIntervalMs: number;
-};
 
 export type GatewayConfig = {
   model: GatewayModel;

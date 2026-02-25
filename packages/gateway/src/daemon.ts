@@ -28,7 +28,7 @@ import { getActiveDiscordMcqAdapter, registerDiscordMcqAdapter } from "./command
 import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands/telegram-handler";
 import { TRIPWIRE_PATH, startHeartbeatRunner } from "./heartbeat";
 import { init as initMessageStore, trimOld } from "./message-store";
-import { ModelFallbackController } from "./model-fallback";
+import { ModelFallbackController, type TelemetryEmitter } from "@joelclaw/model-fallback";
 import { emitGatewayOtel } from "./observability";
 import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
 import { registerChannel, routeResponse } from "./outbound/router";
@@ -514,10 +514,17 @@ onContextOverflowRecovery(async () => {
 
 // ── Model fallback controller (ADR-0091) ───────────────
 const primaryProvider = providerForModel(startupGatewayConfig.model);
+const fallbackTelemetryAdapter: TelemetryEmitter = {
+  emit(event) {
+    void emitGatewayOtel(event as Parameters<typeof emitGatewayOtel>[0]);
+  },
+};
+
 const fallbackController = new ModelFallbackController(
   startupGatewayConfig,
   primaryProvider,
   startupGatewayConfig.model,
+  fallbackTelemetryAdapter,
 );
 
 // Track prompt dispatch timing for stuck-session detection

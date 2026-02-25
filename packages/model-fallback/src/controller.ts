@@ -10,17 +10,15 @@ import {
   MODEL_CATALOG,
   normalizeModel as normalizeCatalogModel,
 } from "@joelclaw/inference-router";
-import type { FallbackConfig } from "./commands/config";
-import { emitGatewayOtel } from "./observability";
+import {
+  type FallbackConfig,
+  type FallbackNotifier,
+  type FallbackSession,
+  type FallbackState,
+  type TelemetryEmitter,
+} from "./types";
 
 type ModelRef = { provider: string; id: string };
-
-type FallbackSession = {
-  setModel: (model: unknown) => Promise<void>;
-  readonly model: { provider: string; id: string } | undefined;
-};
-
-type FallbackNotifier = (text: string) => void;
 
 function resolveCatalogModel(provider: string | undefined, model: string): ModelRef | undefined {
   if (!provider) return undefined;
@@ -37,28 +35,10 @@ function resolveCatalogModel(provider: string | undefined, model: string): Model
   return { provider: catalogModel.provider, id: modelId };
 }
 
-export type FallbackState = {
-  /** Are we currently on the fallback model? */
-  active: boolean;
-  /** When we switched to fallback (0 if not active) */
-  activeSince: number;
-  /** Number of times fallback has activated this session */
-  activationCount: number;
-  /** Primary model ID */
-  primaryModel: string;
-  /** Primary provider */
-  primaryProvider: string;
-  /** Fallback model ID */
-  fallbackModel: string;
-  /** Fallback provider */
-  fallbackProvider: string;
-  /** Last recovery probe timestamp */
-  lastRecoveryProbe: number;
-};
-
 export class ModelFallbackController {
   private session: FallbackSession | undefined;
   private notify: FallbackNotifier = () => {};
+  private telemetry?: TelemetryEmitter;
   private config: FallbackConfig;
   private primaryModel: ModelRef;
 
@@ -80,9 +60,11 @@ export class ModelFallbackController {
     config: FallbackConfig,
     primaryProvider: string,
     primaryModelId: string,
+    telemetry?: TelemetryEmitter,
   ) {
     this.config = config;
     this.primaryModel = { provider: primaryProvider, id: primaryModelId };
+    this.telemetry = telemetry;
   }
 
   /** Wire up the pi session and notification callback. Call after session creation. */
@@ -156,7 +138,7 @@ export class ModelFallbackController {
         ? `${currentModel.provider}/${currentModel.id}`
         : `${this.primaryModel.provider}/${this.primaryModel.id}`;
 
-      void emitGatewayOtel({
+      this._emit({
         level: totalDuration > 60_000 ? "info" : "debug",
         component: "daemon.fallback",
         action: "prompt.latency",
@@ -172,7 +154,7 @@ export class ModelFallbackController {
       });
 
       if (nearMiss) {
-        void emitGatewayOtel({
+        this._emit({
           level: "warn",
           component: "daemon.fallback",
           action: "prompt.near_miss",
@@ -250,7 +232,7 @@ export class ModelFallbackController {
         provider: this.config.fallbackProvider,
         model: this.config.fallbackModel,
       });
-      void emitGatewayOtel({
+      this._emit({
         level: "error",
         component: "daemon.fallback",
         action: "fallback.model_not_found",
@@ -282,7 +264,7 @@ export class ModelFallbackController {
       });
       this.notify(msg);
 
-      void emitGatewayOtel({
+      this._emit({
         level: "warn",
         component: "daemon.fallback",
         action: "model_fallback.swapped",
@@ -302,7 +284,7 @@ export class ModelFallbackController {
       return true;
     } catch (error) {
       console.error("[gateway:fallback] setModel failed", { error: String(error) });
-      void emitGatewayOtel({
+      this._emit({
         level: "error",
         component: "daemon.fallback",
         action: "fallback.setModel.failed",
@@ -340,7 +322,7 @@ export class ModelFallbackController {
       });
       this.notify(msg);
 
-      void emitGatewayOtel({
+      this._emit({
         level: "info",
         component: "daemon.fallback",
         action: "model_fallback.primary_restored",
@@ -356,7 +338,7 @@ export class ModelFallbackController {
       console.warn("[gateway:fallback] recovery probe failed — staying on fallback", {
         error: String(error),
       });
-      void emitGatewayOtel({
+      this._emit({
         level: "info",
         component: "daemon.fallback",
         action: "model_fallback.probe_failed",
@@ -370,6 +352,10 @@ export class ModelFallbackController {
         },
       });
     }
+  }
+
+  private _emit(event: Parameters<TelemetryEmitter["emit"]>[0]): void {
+    this.telemetry?.emit(event);
   }
 
   dispose(): void {
