@@ -35,6 +35,30 @@ Adopt a durable, first-class "backup failure healing" flow with these rules:
 - Keep backup functions (`system/backup.typesense`, `system/backup.redis`) subscribed to both cron triggers and retry requests.
 - Instrument each routing/transfer decision in OTEL and include model metadata, transport mode, and retry attempts.
 
+This is explicitly intended to become a reusable pattern for global system self-healing.
+Future failure domains (log ingestion, Redis/queue, webhook delivery, gateway sessions, etc.) should dispatch into the same durable diagnostic flow.
+
+Proposed reusable contract:
+
+- Event: `system/self.healing.requested`
+- Required fields:
+  - `sourceFunction` (string)
+  - `targetComponent` (string)
+  - `problemSummary` (string)
+  - `attempt` (number)
+  - `retryPolicy` (`maxRetries`, `sleepMinMs`, `sleepMaxMs`, `sleepStepMs`)
+  - `evidence` (e.g. log files, Redis keys, event IDs, query snippets)
+  - `playbook` (skills, restart/kill/defer/notify actions, links, runbook references)
+- Optional fields:
+  - `context` (rich domain context object)
+  - `owner` (team/user routing key)
+  - `deadlineAt` (ISO timestamp)
+  - `fallbackAction` (`escalate`, `manual`)
+- Router output: one of
+  - `retry` (schedule via step sleep + `sendEvent`)
+  - `pause` (bounded hold and recheck)
+  - `escalate` (route to manual intervention queue)
+
 ## Decision Outcome
 
 1. Add shared config loader in `packages/system-bus/src/lib/backup-failure-router-config.ts`.
@@ -42,6 +66,7 @@ Adopt a durable, first-class "backup failure healing" flow with these rules:
 3. Extend CLI with `joelclaw nas config [show|init]` for operator visibility and initialization.
 4. Add a documented template at `packages/system-bus/system-bus.config.example.md` with all supported keys.
 5. Keep existing event names and transport safety checks while formalizing behavior as an ADR and moving from informal notes to explicit architecture.
+6. Introduce a shared self-healing event model and route-specific adapters (starting with backup) under a future `system/self.healing.requested` flow.
 
 ## Consequences
 
@@ -57,4 +82,3 @@ Adopt a durable, first-class "backup failure healing" flow with these rules:
 ### Risks
 - If the configured model IDs are disallowed by the allowlist, router startup or invocation fails.
 - Hard transport failures (bad NAS networking) can still escalate correctly, but with potential delayed recovery.
-
