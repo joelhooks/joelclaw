@@ -1,4 +1,5 @@
-export type ChannelPlatform = "telegram" | "slack" | "discord" | "redis" | "imessage";
+/** Consumer channels — bidirectional messaging platforms */
+export type ChannelPlatform = "telegram" | "slack" | "discord" | "imessage";
 
 export interface SendOptions {
   format?: "html" | "markdown" | "plain";
