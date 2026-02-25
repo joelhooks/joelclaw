@@ -1,6 +1,5 @@
----
 type: adr
-status: proposed
+status: shipped
 date: 2026-02-25
 tags: [adr, backups, inngest, pi, o11y]
 deciders: [joel]
@@ -11,7 +10,7 @@ related: ["0088-nas-backed-storage-tiering", "0089-single-source-inngest-worker-
 
 ## Status
 
-proposed
+shipped
 
 ## Context
 
@@ -22,21 +21,34 @@ Backup jobs for Typesense and Redis run as Inngest functions and currently must:
 - switch between local mount paths and SSH remote copy fallback,
 - and expose a central, inspectable config surface for operator tuning.
 
-The existing ad-hoc logic was sufficient but under-documented as an architectural decision.
+Additional system-wide SDK reachability failures also required durable remediation and guarded worker restart behavior.
+
+A previous ad-hoc approach handled domain-specific symptoms, but this led to duplicated logic and inconsistent operator controls.
 
 ## Decision
 
-Adopt a durable, first-class "backup failure healing" flow with these rules:
+Adopt a durable, first-class self-healing architecture with these canonical rules:
 
-- Keep transport constants configurable from `~/.joelclaw/system-bus.config.json` with environment variable overrides.
-- Route failures through an Inngest function `system/backup.failure.router` that emits `system/backup.retry.requested`.
-- Keep router behavior governed by an LLM decision contract (`retry`, `pause`, `escalate`) plus bounded retries.
-- Allow the router to choose delay and target via model output, with local fallback defaults if model output is unavailable.
+- Keep transport and retry knobs configurable from `~/.joelclaw/system-bus.config.json` with environment variable overrides.
+- Centralize all cross-domain self-healing on a shared event contract and router flow:
+  - canonical event: `system/self.healing.requested`
+  - canonical completion: `system/self.healing.completed`
+  - router action policy: `retry`, `pause`, `escalate`
+  - bounded budgets from config + policy and deterministic scheduling with `sendEvent`/`step.sleep`.
+- Route backup failures through `system/backup.failure.router`:
+  - emit `system/backup.retry.requested` with explicit target + context
+  - retry via bounded exponential backoff
+  - escalate after budget exhaustion
 - Keep backup functions (`system/backup.typesense`, `system/backup.redis`) subscribed to both cron triggers and retry requests.
-- Instrument each routing/transfer decision in OTEL and include model metadata, transport mode, and retry attempts.
+- Apply the same architecture to SDK reachability and worker lifecycle incidents:
+  - `system/self-healing.investigator` scans failed runs + detects `Unable to reach SDK URL`
+  - guarded worker restart path replaces unsafe launchd kickstart behavior
+  - remediation emits self-healing telemetry for traceability and repeatable recovery
+- Instrument each routing/transfer decision in OTEL and include model metadata, transport mode, retry attempts, and incident context.
+- Use this as the canonical self-healing decision plane for any future domain that needs durable remediation.
 
-This is explicitly intended to become a reusable pattern for global system self-healing.
-Future failure domains (log ingestion, Redis/queue, webhook delivery, gateway sessions, etc.) should dispatch into the same durable diagnostic flow.
+This ADR is the canonical self-healing architecture for system-wide remediation.
+Future domains (log ingestion, Redis/queue, webhook delivery, gateway sessions, etc.) dispatch into this flow using domain payloads for route-specific context.
 
 Proposed reusable contract:
 
@@ -59,18 +71,15 @@ Proposed reusable contract:
   - `pause` (bounded hold and recheck)
   - `escalate` (route to manual intervention queue)
 
-## Update (2026-02-25)
-
-- Generalized follow-on adopted in [ADR-0139](0139-self-healing-sdk-investigator.md): SDK reachability investigator + guarded worker restart path for non-backup domains.
-
 ## Decision Outcome
 
 1. Add shared config loader in `packages/system-bus/src/lib/backup-failure-router-config.ts`.
-2. Drive router/transport knobs from `~/.joelclaw/system-bus.config.json`.
+2. Drive router/transport knobs from `~/.joelclaw/system-bus.config.json` and env overrides.
 3. Extend CLI with `joelclaw nas config [show|init]` for operator visibility and initialization.
 4. Add a documented template at `packages/system-bus/system-bus.config.example.md` with all supported keys.
-5. Keep existing event names and transport safety checks while formalizing behavior as an ADR and moving from informal notes to explicit architecture.
-6. Introduce a shared self-healing event model and route-specific adapters (starting with backup) under a future `system/self.healing.requested` flow.
+5. Introduce shared self-healing model contracts and route-specific adapters under `system/self.healing.requested`.
+6. Implement the SDK reachability investigator + guarded launchd-restart path as the canonical non-backup flow under this ADR.
+7. Keep existing event names and transport safety checks while moving behavior from informal notes to explicit architecture.
 
 ## Consequences
 

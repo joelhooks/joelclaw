@@ -1,17 +1,21 @@
 ---
 type: adr
-status: accepted
+status: superseded
 date: 2026-02-25
 tags: [adr, self-healing, o11y, inngest, launchd]
 deciders: [joel]
+superseded_by: [0138-self-healing-backup-orchestrator]
 related: ["0090-o11y-triage-loop", "0138-self-healing-backup-orchestrator", "0089-single-source-inngest-worker-deployment"]
 ---
 
-# ADR-0139: Generalize Self-Healing with an SDK Reachability Investigator
+# ADR-0139: SDK Reachability Investigator (Historical, Superseded)
 
 ## Status
 
-accepted
+superseded
+
+This ADR is superseded by `0138-self-healing-backup-orchestrator.md`, which is now the canonical self-healing architecture.
+See this record for historical implementation context and prior reasoning around the initial SDK reachability root-cause.
 
 ## Context
 
