@@ -173,6 +173,25 @@ async function handleSend(parsed: ParsedArgs): Promise<string> {
   return formatCliResult(`joelclaw send ${eventName}`, result);
 }
 
+async function handleSleep(args: ParsedArgs): Promise<string> {
+  const duration = args.positional?.[0];
+  const cmdArgs = ["sleep"];
+  if (duration) cmdArgs.push("--for", String(duration));
+  const result = await runJoelclawCommand(cmdArgs);
+  if (result.exitCode === 0) {
+    return duration ? `🌙 Sleep mode activated for ${duration}` : "🌙 Sleep mode activated";
+  }
+  return formatCliResult("joelclaw sleep", result);
+}
+
+async function handleWake(): Promise<string> {
+  const result = await runJoelclawCommand(["wake"]);
+  if (result.exitCode === 0) {
+    return "☀️ Wake event sent — digest incoming";
+  }
+  return formatCliResult("joelclaw wake", result);
+}
+
 export const BUILTIN_COMMANDS: CommandDefinition[] = [
   defineChatCommand({
     key: "status",
@@ -272,5 +291,29 @@ export const BUILTIN_COMMANDS: CommandDefinition[] = [
     ],
     argsMenu: { arg: "event", title: "Choose an event to send:" },
     directHandler: handleSend,
+  }),
+  defineChatCommand({
+    key: "sleep",
+    nativeName: "sleep",
+    description: "Sleep mode — queue non-critical events",
+    category: "ops",
+    execution: "direct",
+    args: [
+      {
+        name: "duration",
+        description: "Optional duration (e.g. 2h, 30m)",
+        type: "string",
+        required: false,
+      },
+    ],
+    directHandler: handleSleep,
+  }),
+  defineChatCommand({
+    key: "wake",
+    nativeName: "wake",
+    description: "Wake up — deliver queued event digest",
+    category: "ops",
+    execution: "direct",
+    directHandler: handleWake,
   }),
 ];
