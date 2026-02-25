@@ -391,6 +391,28 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
   const startedAt = Date.now();
   const threadTs = extractThreadTs(message);
   const context = await resolveSlackContext(message.channel, message.channel_type, threadTs);
+  const isDm = message.channel_type === "im" || message.channel.startsWith("D");
+  const isAllowedUser = allowedUserId ? message.user === allowedUserId : false;
+
+  // ADR-0131: Slack is passive intelligence only.
+  // Only DMs from Joel get routed to the gateway session for a reply.
+  // Channel messages are ingested for intelligence but never replied to.
+  if (!isDm || !isAllowedUser) {
+    void emitGatewayOtel({
+      level: "debug",
+      component: "slack-channel",
+      action: "slack.message.passive_ingest",
+      success: true,
+      metadata: {
+        channelId: message.channel,
+        threadTs,
+        userId: message.user,
+        reason: !isDm ? "channel_message" : "non_joel_dm",
+      },
+    });
+    return;
+  }
+
   const userLabel = await resolveUserLabel(message.user);
   const prompt = `${context.prefix} ${userLabel}: ${text}`;
 
