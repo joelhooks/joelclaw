@@ -596,6 +596,12 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
     send: async (message, context) => {
       const envelope = normalizeOutboundMessage(message);
       const chatId = context?.source ? parseChatId(context.source) ?? TELEGRAM_USER_ID : TELEGRAM_USER_ID;
+      console.log("[gateway:telegram] outbound send", {
+        chatId,
+        textLength: envelope.text.length,
+        source: context?.source,
+        hasButtons: !!envelope.buttons,
+      });
       if (!chatId) return;
 
       try {
@@ -604,10 +610,16 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
           silent: envelope.silent,
           replyTo: envelope.replyTo,
         });
+        console.log("[gateway:telegram] message sent successfully", { chatId });
       } catch (error) {
         console.error("[gateway] telegram send failed", { error: String(error) });
       }
     },
+  });
+} else {
+  console.warn("[gateway] telegram channel NOT registered", {
+    hasToken: !!TELEGRAM_TOKEN,
+    hasUserId: !!TELEGRAM_USER_ID,
   });
 }
 
