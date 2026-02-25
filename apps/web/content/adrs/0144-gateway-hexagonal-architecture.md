@@ -26,7 +26,8 @@ Adopt hexagonal architecture for the gateway. The gateway defines **port interfa
 | **Model Fallback** | `FallbackStrategy` | ✅ Done → `@joelclaw/model-fallback` | ✅ Shipped |
 | **Vault Access** | `VaultReader` | ✅ Done → `@joelclaw/vault-reader` | ✅ Shipped |
 | **Observability** | `TelemetryEmitter` | `gateway/observability.ts` (120 lines) | `@joelclaw/telemetry` |
-| **Channel** | `Channel` | `gateway/channels/*.ts` (~3K lines) | Stay in gateway but implement `Channel` interface |
+| **Channel** | `Channel` | `gateway/channels/{telegram,slack,discord,imessage}.ts` | Stay in gateway, implement `Channel` interface |
+| **Event Bridge** | `EventBridge` | `gateway/channels/redis.ts` (825 lines) | Separate port — not a consumer channel |
 
 ### What Stays in Gateway
 
