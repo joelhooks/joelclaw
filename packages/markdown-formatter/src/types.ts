@@ -7,6 +7,27 @@ export interface FormatConverter {
   chunk(md: string): string[];
   /** Max message length for this platform */
   readonly maxLength: number;
+  /** Validate converted output against platform-specific rules */
+  validate(output: string): ValidationResult;
+}
+
+/** Validation result from platform-specific output linting */
+export interface ValidationResult {
+  valid: boolean;
+  errors: ValidationError[];
+  warnings: ValidationWarning[];
+}
+
+export interface ValidationError {
+  rule: string;
+  message: string;
+  position?: number; // char offset
+}
+
+export interface ValidationWarning {
+  rule: string;
+  message: string;
+  position?: number;
 }
 
 export type MdastNode = import("mdast").Content;

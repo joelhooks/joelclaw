@@ -1,0 +1,1 @@
+export { validateTelegramHtml } from "./telegram";

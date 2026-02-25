@@ -2,6 +2,7 @@ import { parseMd } from "../parser";
 import { chunkByNodes } from "../chunker";
 import { escapeText, sanitizeAttribute } from "../escape";
 import type { FormatConverter, MdastNode, MdastRoot } from "../types";
+import { validateTelegramHtml } from "../validators";
 
 const CHUNK_MAX = 4000;
 
@@ -199,5 +200,9 @@ export class TelegramConverter implements FormatConverter {
     const root = parseMd(md) as MdastRoot;
     const html = this.convert(md);
     return chunkTelegramHtml(html, root.children ?? []);
+  }
+
+  validate(output: string) {
+    return validateTelegramHtml(output);
   }
 }
