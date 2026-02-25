@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="ADR skill logo">
+  <rect width="128" height="128" rx="24" fill="#1f2937"/>
+  <rect x="16" y="16" width="96" height="96" rx="16" fill="#f59e0b"/>
+  <path d="M32 84V44h10l12 26 12-26h10v40h-9V60l-10 22h-6L41 60v24h-9z" fill="#111827"/>
+  <circle cx="94" cy="38" r="8" fill="#111827"/>
+</svg>
