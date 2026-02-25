@@ -86,6 +86,19 @@ When Codex output needs deeper execution, remind Codex to use these local/system
 If context is web work, add:
 - `joelclaw-web`, `frontend-design`, and any relevant `next-*` skill.
 
+## Do NOT poll codex_tasks
+
+After dispatching a codex task, **do not poll `codex_tasks` in a loop**. The widget shows live status automatically. Polling every 2-3 seconds wastes tokens, clutters the conversation, and adds no value.
+
+Instead:
+- Dispatch the task
+- Do other useful work (read files, update ADRs, prepare next steps)
+- Check `codex_tasks` **once** after ~60 seconds, or when the widget shows completion
+- If the task is still running after 60s, check once more at ~120s
+- Never poll more than 3 times total for a single task
+
+The task result is reported back automatically when it finishes. Trust the widget.
+
 ## What to include in prompts
 
 For any Codex-requested operational run:

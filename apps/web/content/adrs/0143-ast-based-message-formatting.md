@@ -157,6 +157,26 @@ This eliminates the entire class of "protect X before escaping, restore after" b
 - Converter implementations need to handle every mdast node type
 - AST walking is slightly more code than regex (but much more correct)
 - Testing needs mdast fixtures per platform
+## Inline Platform Validation (added 2026-02-25)
+
+Each `FormatConverter` includes a `validate(output: string): ValidationResult` method that lints converted output against platform-specific rules before send. This catches malformed output at the conversion layer instead of discovering it via API 400 errors.
+
+### Telegram Validation Rules
+
+| Rule | Severity | Description |
+|------|----------|-------------|
+| `no-unsupported-tags` | error | Only Telegram-allowed HTML tags |
+| `balanced-tags` | error | Every open tag has matching close |
+| `no-nested-pre` | error | `<pre>` cannot nest in `<blockquote>` or `<pre>` |
+| `no-nested-links` | error | `<a>` cannot nest inside `<a>` |
+| `max-length` | error | Chunk ≤ 4096 chars |
+| `entity-count` | warn/error | Warn >80, error >100 entities |
+| `valid-href` | warning | `<a>` must have non-empty href |
+| `no-empty-tags` | warning | `<b></b>` with no content |
+| `ampersand-escape` | warning | Bare `&` not entity-escaped |
+
+Implementation: single-pass string scan with stack-based tag checker. No DOM parsing — fast enough for every message.
+
 ## Codex Review (2026-02-25)
 
 ### Strengths
