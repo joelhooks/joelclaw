@@ -20,19 +20,19 @@
             "patterns": [
               {
                 "group": ["./observability", "../observability", "../../observability", "../../../observability"],
-                "message": "Import from @joelclaw/telemetry instead. See ADR-0144."
+                "message": "DO NOT BYPASS. Import from @joelclaw/telemetry instead — it is the single canonical telemetry interface (ADR-0144). Fix the import, do not suppress."
               },
               {
                 "group": ["./model-fallback", "../model-fallback", "../../model-fallback"],
-                "message": "Import from @joelclaw/model-fallback instead. See ADR-0144."
+                "message": "DO NOT BYPASS. Import from @joelclaw/model-fallback instead — heavy logic lives in standalone packages behind interfaces (ADR-0144). Fix the import, do not suppress."
               },
               {
                 "group": ["./message-store", "../message-store", "../../message-store"],
-                "message": "Import from @joelclaw/message-store instead. See ADR-0144."
+                "message": "DO NOT BYPASS. Import from @joelclaw/message-store instead — heavy logic lives in standalone packages behind interfaces (ADR-0144). Fix the import, do not suppress."
               },
               {
                 "group": ["./vault-read", "../vault-read", "../../vault-read"],
-                "message": "Import from @joelclaw/vault-reader instead. See ADR-0144."
+                "message": "DO NOT BYPASS. Import from @joelclaw/vault-reader instead — heavy logic lives in standalone packages behind interfaces (ADR-0144). Fix the import, do not suppress."
               }
             ]
           }
