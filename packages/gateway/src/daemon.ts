@@ -854,6 +854,9 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
 // ── Slack channel ──────────────────────────────────────
 registerChannel("slack", {
   send: async (message, context) => {
+    // ADR-0131: suppress replies to passive intel messages
+    if (context?.source?.startsWith("slack-intel:")) return;
+
     const envelope = normalizeOutboundMessage(message);
     const sourceTarget = context?.source?.startsWith("slack:")
       ? context.source

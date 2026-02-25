@@ -394,10 +394,24 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
   const isDm = message.channel_type === "im" || message.channel.startsWith("D");
   const isAllowedUser = allowedUserId ? message.user === allowedUserId : false;
 
+  const userLabel = await resolveUserLabel(message.user);
+
   // ADR-0131: Slack is passive intelligence only.
-  // Only DMs from Joel get routed to the gateway session for a reply.
-  // Channel messages are ingested for intelligence but never replied to.
+  // Channel messages and non-Joel DMs are delivered as read-only context
+  // to the gateway session (so Joel can monitor) but replies are suppressed.
+  // Only Joel DMs get full bidirectional routing.
   if (!isDm || !isAllowedUser) {
+    const intelPrompt = `${context.prefix} ${userLabel}: ${text}`;
+
+    await enqueuePrompt(`slack-intel:${message.channel}`, intelPrompt, {
+      slackChannelId: message.channel,
+      slackThreadTs: threadTs,
+      slackUserId: message.user,
+      slackTs: message.ts,
+      slackEventKind: kind,
+      passiveIntel: true,
+    });
+
     void emitGatewayOtel({
       level: "debug",
       component: "slack-channel",
@@ -407,13 +421,11 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
         channelId: message.channel,
         threadTs,
         userId: message.user,
-        reason: !isDm ? "channel_message" : "non_joel_dm",
       },
     });
     return;
   }
 
-  const userLabel = await resolveUserLabel(message.user);
   const prompt = `${context.prefix} ${userLabel}: ${text}`;
 
   await enqueuePrompt(context.source, prompt, {
