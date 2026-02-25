@@ -14,6 +14,8 @@ import {
   type BuildRouteInput,
   type InferencePolicy,
   INFERENCE_EVENT_NAMES,
+  inferProviderFromModel,
+  normalizeModel,
 } from "@joelclaw/inference-router";
 import { parsePiJsonAssistant, type LlmUsage, traceLlmGeneration } from "./langfuse";
 import { emitOtelEvent } from "../observability/emit";
@@ -176,20 +178,28 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
   const action = normalizeText(opts.action) || "inference.generate";
   const requestId = normalizeText(opts.requestId) || randomUUID();
   const timeoutMs = normalizeTimeout(opts.timeout ?? DEFAULT_TIMEOUT_MS);
+  const requestedModel = normalizeText(opts.model);
+  const isProduction = process.env.NODE_ENV === "production";
   const policy = buildPolicy({
     ...opts.policy,
     version: opts.policyVersion ?? opts.policy?.version,
-    strict: opts.strict ?? opts.policy?.strict,
+    strict: opts.strict ?? opts.policy?.strict ?? isProduction,
     allowLegacy: opts.allowLegacy ?? opts.policy?.allowLegacy,
     maxFallbackAttempts: opts.maxAttempts ?? opts.policy?.maxFallbackAttempts ?? 3,
     defaults: opts.policy?.defaults ?? undefined,
   });
+
+  const normalizedRequestedModel = requestedModel ? normalizeModel(requestedModel, policy.allowLegacy) : undefined;
+  if (requestedModel && !normalizedRequestedModel && !policy.strict) {
+    process.stderr.write(`inference: unknown model "${requestedModel}" in permissive mode, using passthrough.\n`);
+  }
+
   const startedAt = Date.now();
 
   const route = buildInferenceRoute(
     {
       task: opts.task,
-      model: opts.model,
+      model: requestedModel,
       provider: opts.provider,
       maxAttempts: opts.maxAttempts,
       allowLegacy: opts.allowLegacy,
@@ -209,11 +219,26 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
       requestId,
       policyVersion: route.policyVersion,
       task: route.normalizedTask,
-      requestedModel: route.requestedModel,
+      requestedModel: route.requestedModel ?? requestedModel,
       attemptsPlanned: route.attempts.length,
       ...(opts.metadata ?? {}),
     },
   });
+
+  const attempts = normalizedRequestedModel || !requestedModel || policy.strict
+    ? route.attempts
+    : [
+        {
+          model: requestedModel,
+          provider: inferProviderFromModel(requestedModel),
+          reason: "requested" as const,
+          attempt: 0,
+        },
+        ...route.attempts.slice(0, Math.max(0, route.attempts.length - 1)).map((attempt) => ({
+          ...attempt,
+          attempt: attempt.attempt + 1,
+        })),
+      ];
 
   await emitOtelEvent({
     level: "info",
@@ -225,7 +250,7 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
       requestId,
       policyVersion: route.policyVersion,
       task: route.normalizedTask,
-      attempts: route.attempts.map((attempt, index) => ({
+      attempts: attempts.map((attempt, index) => ({
         attemptIndex: index,
         model: attempt.model,
         provider: attempt.provider,
@@ -241,10 +266,11 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
     await writeFile(promptPath, inputPrompt, "utf-8");
 
     let lastError: Error | null = null;
-    let attemptsLeft = route.attempts.length;
+    let attemptsLeft = attempts.length;
 
-    for (const attempt of route.attempts) {
+    for (const attempt of attempts) {
       attemptsLeft -= 1;
+      const attemptStartedAt = Date.now();
       try {
         const piResult = await runPiAttempt(promptPath, attempt.model, timeoutMs, { system: opts.system });
 
@@ -327,6 +353,34 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         const hasFallback = attemptsLeft > 0;
+        const failureDurationMs = Date.now() - attemptStartedAt;
+
+        await traceLlmGeneration({
+          traceName: "joelclaw.inference",
+          generationName: "system-bus.infer",
+          component,
+          action,
+          input: {
+            prompt: trimForMetadata(inputPrompt),
+            task: route.normalizedTask,
+            requestId,
+            policyVersion: route.policyVersion,
+            attemptIndex: attempt.attempt,
+          },
+          output: { failed: true },
+          provider: attempt.provider,
+          model: attempt.model,
+          durationMs: failureDurationMs,
+          error: lastError.message,
+          metadata: {
+            task: route.normalizedTask,
+            requestId,
+            policyVersion: route.policyVersion,
+            attemptIndex: attempt.attempt,
+            fallbackRemaining: attemptsLeft,
+            ...(opts.metadata ?? {}),
+          },
+        });
 
         await emitOtelEvent({
           level: hasFallback ? "warn" : "error",

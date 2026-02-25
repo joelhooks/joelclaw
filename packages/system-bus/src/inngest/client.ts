@@ -771,7 +771,6 @@ export type Events = {
       attempt?: number;
       nextAttempt?: number;
       action?: "retry" | "pause" | "escalate";
-      domain?: string;
       reason?: string;
       delayMs?: number;
       routeToEventName?: string;

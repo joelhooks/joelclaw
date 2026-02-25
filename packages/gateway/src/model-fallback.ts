@@ -6,9 +6,11 @@
  * to a fallback model via session.setModel(). Periodically probes
  * the primary model to recover automatically.
  */
-import { getModel } from "@mariozechner/pi-ai";
+import {
+  MODEL_CATALOG,
+  normalizeModel as normalizeCatalogModel,
+} from "@joelclaw/inference-router";
 import type { FallbackConfig } from "./commands/config";
-import { providerForModel } from "./commands/config";
 import { emitGatewayOtel } from "./observability";
 
 type ModelRef = { provider: string; id: string };
@@ -19,6 +21,21 @@ type FallbackSession = {
 };
 
 type FallbackNotifier = (text: string) => void;
+
+function resolveCatalogModel(provider: string | undefined, model: string): ModelRef | undefined {
+  if (!provider) return undefined;
+  const normalizedModel = normalizeCatalogModel(model, true)
+    ?? normalizeCatalogModel(`${provider}/${model}`, true);
+  if (!normalizedModel) return undefined;
+
+  const catalogModel = MODEL_CATALOG[normalizedModel];
+  if (!catalogModel) return undefined;
+  if (catalogModel.provider !== provider) return undefined;
+
+  const [_, modelId] = normalizedModel.split("/");
+  if (!modelId) return undefined;
+  return { provider: catalogModel.provider, id: modelId };
+}
 
 export type FallbackState = {
   /** Are we currently on the fallback model? */
@@ -224,9 +241,9 @@ export class ModelFallbackController {
       : `${this.primaryModel.provider}/${this.primaryModel.id}`;
     const toModel = `${this.config.fallbackProvider}/${this.config.fallbackModel}`;
 
-    const fallbackModelObj = getModel(
-      this.config.fallbackProvider as any,
-      this.config.fallbackModel as any,
+    const fallbackModelObj = resolveCatalogModel(
+      this.config.fallbackProvider,
+      this.config.fallbackModel,
     );
     if (!fallbackModelObj) {
       console.error("[gateway:fallback] fallback model not found", {
@@ -305,9 +322,9 @@ export class ModelFallbackController {
     const primary = `${this.primaryModel.provider}/${this.primaryModel.id}`;
     const downtimeMs = this._activeSince > 0 ? Date.now() - this._activeSince : 0;
 
-    const primaryModelObj = getModel(
-      this.primaryModel.provider as any,
-      this.primaryModel.id as any,
+    const primaryModelObj = resolveCatalogModel(
+      this.primaryModel.provider,
+      this.primaryModel.id,
     );
     if (!primaryModelObj) return;
 

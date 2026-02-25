@@ -121,6 +121,16 @@ export const DEFAULT_TASK_TO_MODELS: Record<InferenceTask, InferenceModelId[]> =
     "anthropic/claude-haiku-4-5",
     "openai-codex/gpt-5.3-codex",
   ],
+  complex: [
+    "openai/o3",
+    "openai/o4-mini",
+    "anthropic/claude-opus-4-6",
+  ],
+  rewrite: [
+    "anthropic/claude-haiku-4-5",
+    "anthropic/claude-sonnet-4-6",
+    "anthropic/claude-opus-4-6",
+  ],
 };
 
 export const GATEWAY_ALLOWED_MODELS = [
@@ -174,18 +184,18 @@ function toAliasMap() {
 
 export const MODEL_ALIAS_TO_CANONICAL: Record<string, InferenceModelId> = toAliasMap();
 
-export function normalizeModel(input: string, allowLegacy = true): InferenceModelId | null {
+export function normalizeModel(input: string, allowLegacy = true): InferenceModelId | undefined {
   const trimmed = input.trim().toLowerCase();
-  if (!trimmed) return null;
+  if (!trimmed) return undefined;
   const canonical = MODEL_ALIAS_TO_CANONICAL[trimmed];
   if (canonical) return canonical;
   if (allowLegacy && trimmed in GATEWAY_MODEL_TO_PROVIDER) {
     const provider = GATEWAY_MODEL_TO_PROVIDER[trimmed as (typeof GATEWAY_ALLOWED_MODELS)[number]];
     const fallback = `${provider}/${trimmed}`;
     const canonicalFallback = MODEL_ALIAS_TO_CANONICAL[fallback.toLowerCase()];
-    return canonicalFallback ?? null;
+    return canonicalFallback;
   }
-  return null;
+  return undefined;
 }
 
 export function inferProviderFromModel(model: string): InferenceProvider {
@@ -201,7 +211,7 @@ export function inferProviderFromModel(model: string): InferenceProvider {
 }
 
 export function isKnownModel(model: string): model is InferenceModelId {
-  return normalizeModel(model) !== null;
+  return normalizeModel(model) !== undefined;
 }
 
 export function listCanonicalModels(): InferenceModelId[] {

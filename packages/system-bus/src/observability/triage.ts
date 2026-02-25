@@ -412,7 +412,7 @@ export async function classifyWithLLM(
     const classifierStartedAt = Date.now();
 
     const classifyResult = await infer(userPrompt, {
-      task: "triage.llm.classify",
+      task: "classification",
       model: MODEL.HAIKU,
       system: CLASSIFIER_SYSTEM_PROMPT,
       component: TRIAGE_COMPONENT,

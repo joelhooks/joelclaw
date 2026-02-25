@@ -256,7 +256,7 @@ async function describeImage(
   try {
     const anthropicApiKey = leaseAnthropicApiKey();
     const inference = await infer(userPrompt, {
-      task: "media-process.image.describe",
+      task: "vision",
       model: visionModel,
       system: systemPrompt,
       component: "media-process",

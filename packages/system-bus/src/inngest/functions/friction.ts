@@ -187,7 +187,7 @@ function groupObservationsByDate(records: ObservationRecord[]): FrictionObservat
 
 async function runFrictionLLM(prompt: string): Promise<string> {
   const result = await infer(prompt, {
-    task: "friction.patterns.generate",
+    task: "json",
     model: MODEL.SONNET,
     system: FRICTION_SYSTEM_PROMPT,
     component: "friction",

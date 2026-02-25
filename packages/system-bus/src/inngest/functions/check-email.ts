@@ -225,7 +225,7 @@ export const checkEmail = inngest.createFunction(
         : TRIAGE_SYSTEM_PROMPT;
 
       const result = await infer(prompt, {
-        task: "email-triage",
+        task: "classification",
         model: TRIAGE_MODEL,
         system: systemPrompt,
         component: "check-email",

@@ -61,7 +61,6 @@ async function generateTweetTextWithPi({
   } catch {
     return fallback;
   }
-  }
 }
 
 export const xContentHook = inngest.createFunction(

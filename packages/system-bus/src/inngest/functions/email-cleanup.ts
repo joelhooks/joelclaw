@@ -54,7 +54,7 @@ async function frontGet(path: string, token: string): Promise<any> {
  */
 async function classifyBatch(
   conversations: ConversationSummary[],
-): { archive: string[]; keep: string[] } {
+): Promise<{ archive: string[]; keep: string[] }> {
   const listing = conversations
     .map(
       (c, i) =>
@@ -97,7 +97,7 @@ Respond with ONLY valid JSON, no markdown fencing:
     const rawPrompt = readFileSync(tmpFile, "utf-8");
 
     const result = await infer(rawPrompt, {
-      task: "email.cleanup.classify",
+      task: "classification",
       model: MODEL.HAIKU,
       system: "You classify emails as archive or keep. Respond with ONLY valid JSON, no markdown.",
       component: "email-cleanup",

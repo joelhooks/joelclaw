@@ -601,7 +601,7 @@ Rules:
   const startedAt = Date.now();
   try {
     const inferResult = await infer(taxonomyUserPrompt, {
-      task: "docs.taxonomy.classify",
+      task: "classification",
       model: DOCS_TAXONOMY_MODEL,
       system: taxonomySystemPrompt,
       component: "docs-ingest",
@@ -618,7 +618,10 @@ Rules:
     });
 
     const assistantText = inferResult.text.trim();
-    const payload = inferResult.data ?? parseJsonObject(assistantText);
+    const rawPayload = inferResult.data ?? parseJsonObject(assistantText);
+    const payload = (typeof rawPayload === "object" && rawPayload !== null && !Array.isArray(rawPayload))
+      ? (rawPayload as Record<string, unknown>)
+      : {};
     const provider = inferResult.provider;
     const model = inferResult.model ?? DOCS_TAXONOMY_MODEL;
     const usage = inferResult.usage;
@@ -642,7 +645,7 @@ Rules:
     const reason =
       typeof payload?.reason === "string" ? payload.reason.trim().slice(0, 160) : undefined;
 
-    const success = Boolean(primaryConceptId && uniqueConceptIds.length > 0);
+    const success = primaryConceptId !== null && uniqueConceptIds.length > 0;
     if (!success) {
       await emitOtelEvent({
         level: "warn",
@@ -662,9 +665,12 @@ Rules:
       return null;
     }
 
+    const resolvedPrimaryConceptId = primaryConceptId;
+    const resolvedConceptIds = uniqueConceptIds;
+
     return {
-      primaryConceptId,
-      conceptIds: uniqueConceptIds,
+      primaryConceptId: resolvedPrimaryConceptId,
+      conceptIds: resolvedConceptIds,
       storageCategory,
       reason,
       provider,

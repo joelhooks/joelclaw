@@ -151,7 +151,7 @@ async function summarizeUpdates(
   ].join("\n\n");
 
   const result = await infer(prompt, {
-    task: "subscription.summary",
+    task: "summary",
     model: MODEL.HAIKU,
     component: "subscription-check",
     action: "subscription.summary.generated",

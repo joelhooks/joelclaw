@@ -106,6 +106,10 @@ function trimForMetadata(value: string, max = 220): string {
   return `${compact.slice(0, Math.max(max - 3, 1))}...`;
 }
 
+function toSafeText(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
 async function listRecentFailedRuns(fromIso: string, maxRuns: number): Promise<RunSummary[]> {
   const query = `
     query {
@@ -413,7 +417,6 @@ export const selfHealingInvestigator = inngest.createFunction(
           inspectErrors: inspectErrors.slice(0, 5),
           matchCount: matches.length,
           sampleRunIds: matches.map((item) => item.id).slice(0, 5),
-          },
         },
       });
 

@@ -316,7 +316,7 @@ async function reviewDiffBeforePush(): Promise<boolean> {
     const { text: stdout } = await infer(
       `Review this staged git diff for content-only safety:\n\n${diffStat.trim()}`,
       {
-        task: "content-sync.safety-review",
+        task: "classification",
         model: safetyModel,
         system: SAFETY_SYSTEM_PROMPT,
         component: "content-sync",

@@ -93,20 +93,25 @@ export function buildInferenceRoute(input: InferencePlanInput, policy = DEFAULT_
   let attempt = 0;
 
   if (normalizedModel) {
-    chain.push({
-      model: normalizedModel,
-      provider: MODEL_CATALOG[normalizedModel]!.provider,
-      reason: "requested",
-      attempt,
-    });
+    const entry = MODEL_CATALOG[normalizedModel];
+    if (entry) {
+      chain.push({
+        model: normalizedModel,
+        provider: entry.provider,
+        reason: "requested",
+        attempt,
+      });
+      attempt += 1;
+    }
   } else {
     const configuredModels = resolvedPolicy.defaults[normalizedTask] ?? resolvedPolicy.defaults.default;
     if (input.provider) {
-      const providerModels = configuredModels.filter((candidate) => MODEL_CATALOG[candidate].provider === input.provider);
-      for (const model of providerModels) {
+      for (const model of configuredModels) {
+        const entry = MODEL_CATALOG[model];
+        if (!entry || entry.provider !== input.provider) continue;
         chain.push({
           model,
-          provider: MODEL_CATALOG[model].provider,
+          provider: entry.provider,
           reason: "policy",
           attempt,
         });
@@ -114,9 +119,11 @@ export function buildInferenceRoute(input: InferencePlanInput, policy = DEFAULT_
       }
     } else {
       for (const model of configuredModels) {
+        const entry = MODEL_CATALOG[model];
+        if (!entry) continue;
         chain.push({
           model,
-          provider: MODEL_CATALOG[model].provider,
+          provider: entry.provider,
           reason: "policy",
           attempt,
         });
@@ -132,9 +139,12 @@ export function buildInferenceRoute(input: InferencePlanInput, policy = DEFAULT_
   ];
 
   for (const model of fallbackCandidate) {
+    const catalogEntry = MODEL_CATALOG[model];
+    if (!catalogEntry) continue;
+
     const base = chain.find((entry) => entry.model === model);
     if (!base) {
-      chain.push({ model, provider: MODEL_CATALOG[model].provider, reason: "fallback", attempt });
+      chain.push({ model, provider: catalogEntry.provider, reason: "fallback", attempt });
       attempt += 1;
     }
   }

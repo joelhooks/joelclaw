@@ -148,6 +148,10 @@ function parseMetadataJson(input: unknown): Record<string, unknown> {
   }
 }
 
+function toSafeText(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
 type OtelErrorRateSummary = {
   total: number;
   errors: number;

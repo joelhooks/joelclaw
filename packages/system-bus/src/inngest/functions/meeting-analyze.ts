@@ -195,7 +195,7 @@ function normalizeMeetingAnalysis(payload: unknown): MeetingAnalysis | null {
           context: typeof value.context === "string" ? value.context : "",
         };
       })
-      .filter((entry): entry is MeetingActionItem => Boolean(entry))
+      .filter((entry): entry is { task: string; owner: string; deadline: string; context: string } => Boolean(entry))
     : [];
 
   const decisions = Array.isArray(raw.decisions)
@@ -225,7 +225,7 @@ function normalizeMeetingAnalysis(payload: unknown): MeetingAnalysis | null {
           frequency: typeof value.frequency === "string" ? value.frequency : "",
         };
       })
-      .filter((entry): entry is { item: string; frequency?: string } => Boolean(entry))
+      .filter((entry): entry is { item: string; frequency: string } => Boolean(entry))
     : [];
 
   const people = Array.isArray(raw.people)
@@ -242,7 +242,9 @@ function normalizeMeetingAnalysis(payload: unknown): MeetingAnalysis | null {
           relationship: typeof value.relationship === "string" ? value.relationship : "",
         };
       })
-      .filter((entry): entry is { name: string; email?: string; role?: string; relationship?: string } => Boolean(entry))
+      .filter(
+        (entry): entry is { name: string; email: string; role: string; relationship: string } => Boolean(entry)
+      )
     : [];
 
   return {

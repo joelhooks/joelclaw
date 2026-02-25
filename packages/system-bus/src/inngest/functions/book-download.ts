@@ -447,7 +447,7 @@ async function chooseBookCandidate(input: {
   let result: Awaited<ReturnType<typeof infer>>;
   try {
     result = await infer(userPrompt, {
-      task: "book-download.select-candidate",
+      task: "classification",
       model,
       system: BOOK_SELECTION_SYSTEM_PROMPT,
       component: "book-download",

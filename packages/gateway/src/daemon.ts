@@ -479,6 +479,11 @@ onContextOverflowRecovery(async () => {
 
   // Alert Joel via Telegram
   if (telegramUserId) {
+    const parsedTelegramUserId = parseChatId(`telegram:${telegramUserId}`);
+    if (!parsedTelegramUserId) {
+      console.error("[gateway] invalid TELEGRAM_USER_ID in overflow recovery handler", { telegramUserId });
+      return summary;
+    }
     const alertText = [
       "⚠️ <b>Gateway context overflow — auto-recovery</b>",
       "",
@@ -488,7 +493,7 @@ onContextOverflowRecovery(async () => {
       `Previous session: ${sessionManager.getEntries().length} entries.`,
       "The failed message will be replayed into the new session.",
     ].join("\n");
-    sendTelegram(telegramUserId, alertText, { silent: false }).catch((err) => {
+    sendTelegram(parsedTelegramUserId, alertText, { silent: false }).catch((err) => {
       console.error("[gateway] failed to send overflow alert via Telegram", { err });
     });
   }
@@ -1056,7 +1061,7 @@ registerChannel("slack", {
     const sourceTarget = context?.source?.startsWith("slack:")
       ? context.source
       : undefined;
-    const target = envelope.target ?? sourceTarget ?? SLACK_DEFAULT_CHANNEL_ID;
+    const target = sourceTarget ?? SLACK_DEFAULT_CHANNEL_ID;
     if (!target) {
       console.error("[gateway:slack] send: no slack target in context/source/default", {
         source: context?.source,

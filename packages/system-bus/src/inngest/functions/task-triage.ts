@@ -188,7 +188,7 @@ export const taskTriage = inngest.createFunction(
       ].join("\n");
 
       const { text } = await infer(userPrompt, {
-        task: "task-triage.classify",
+        task: "classification",
         model: TRIAGE_MODEL,
         system: TRIAGE_SYSTEM_PROMPT,
         component: "task-triage",

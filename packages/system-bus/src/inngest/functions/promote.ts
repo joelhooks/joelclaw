@@ -191,7 +191,7 @@ async function formatProposalForMemoryIfNeeded(
 
   try {
     const result = await infer(userPrompt, {
-      task: "promote.memory.format",
+      task: "rewrite",
       model: formatModel,
       system: PROMOTE_SYSTEM_PROMPT,
       component: "promote",

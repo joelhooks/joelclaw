@@ -2,6 +2,7 @@ import { inngest } from "../client";
 import { infer } from "../../lib/inference";
 import { pushGatewayEvent } from "./agent-loop/utils";
 import { prefetchMemoryContext } from "../../memory/context-prefetch";
+import { execSync } from "node:child_process";
 
 const DEFAULT_PROMPT = `Read the joel-writing-style skill at ~/.pi/agent/skills/joel-writing-style/SKILL.md first. All writing in this note MUST match Joel's voice — conversational first person, short punchy paragraphs, strategic profanity where it earns its place, bold for emphasis, direct and honest tone. No corporate voice. No "In this video..." openings.
 
@@ -90,7 +91,10 @@ Return ONLY the full updated markdown and do not include extra explanations.`;
 
     // Log + emit
     await step.run("log-and-emit", async () => {
-      await $`slog write --action summarize --tool content-summarize --detail "enriched: ${title}" --reason "content/summarize event via inngest"`.quiet();
+      execSync(
+        `slog write --action summarize --tool content-summarize --detail "${title.replace(/"/g, "\\\"")}" --reason "content/summarize event via inngest"`,
+        { stdio: "ignore" },
+      );
     });
 
     await step.sendEvent("log-and-emit", {

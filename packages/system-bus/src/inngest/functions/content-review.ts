@@ -2,6 +2,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { anyApi, type FunctionReference } from "convex/server";
 import { NonRetriableError } from "inngest";
 import { join } from "node:path";
+import { writeFile } from "node:fs/promises";
 import { unified } from "unified";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";

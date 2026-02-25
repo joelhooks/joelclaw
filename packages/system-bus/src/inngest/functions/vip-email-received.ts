@@ -433,7 +433,7 @@ type TriageDecision = {
   analysis: VipAnalysis;
 };
 
-function runModelAnalysis(
+async function runModelAnalysis(
   model: string,
   systemPrompt: string,
   prompt: string,
@@ -441,7 +441,7 @@ function runModelAnalysis(
 ): Promise<{ analysis: VipAnalysis; error?: string; provider?: string; model?: string; usage?: LlmUsage }> {
   try {
     const result = await infer(prompt, {
-      task: "vip-email.analysis",
+      task: "json",
       model,
       system: systemPrompt,
       component: "vip-email-received",
@@ -823,7 +823,7 @@ export const vipEmailReceived = inngest.createFunction(
       const t0 = Date.now();
       try {
         const inference = await infer(analysisPrompt, {
-          task: "vip-email.triage",
+          task: "classification",
           model: TRIAGE_MODEL,
           system: VIP_TRIAGE_PROMPT,
           component: "vip-email-received",

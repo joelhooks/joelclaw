@@ -128,7 +128,7 @@ export const agentDispatch = inngest.createFunction(
       try {
         if (tool === "pi") {
           const result = await infer(task, {
-            task: "agent-dispatch.pi",
+            task: "complex",
             model,
             system: "Analyze and respond.",
             component: "agent-dispatch",

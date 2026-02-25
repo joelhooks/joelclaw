@@ -36,6 +36,7 @@ type SelfHealingContext = {
   attempt?: number;
   domain?: "backup" | "sdk-reachability" | "all" | string;
   routeToFunction?: string;
+  routeToEventName?: string;
   targetEventName?: string;
   retryPolicy?: RetryPolicy;
   evidence?: EvidenceItem[] | string[];
