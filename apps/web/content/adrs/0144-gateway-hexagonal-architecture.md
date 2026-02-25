@@ -22,9 +22,9 @@ Adopt hexagonal architecture for the gateway. The gateway defines **port interfa
 |------|-----------|-----------------|------------|
 | **Formatting** | `FormatConverter` | ✅ Done → `@joelclaw/markdown-formatter` | ✅ Shipped |
 | **Inference** | `InferenceRouter` | ✅ Done → `@joelclaw/inference-router` | ✅ Shipped |
-| **Message Store** | `MessageStore` | `gateway/message-store.ts` (795 lines) | `@joelclaw/message-store` |
+| **Message Store** | `MessageStore` | ✅ Done → `@joelclaw/message-store` | ✅ Shipped |
 | **Model Fallback** | `FallbackStrategy` | ✅ Done → `@joelclaw/model-fallback` | ✅ Shipped |
-| **Vault Access** | `VaultReader` | `gateway/vault-read.ts` (209 lines) | `@joelclaw/vault-reader` |
+| **Vault Access** | `VaultReader` | ✅ Done → `@joelclaw/vault-reader` | ✅ Shipped |
 | **Observability** | `TelemetryEmitter` | `gateway/observability.ts` (120 lines) | `@joelclaw/telemetry` |
 | **Channel** | `Channel` | `gateway/channels/*.ts` (~3K lines) | Stay in gateway but implement `Channel` interface |
 
@@ -60,9 +60,9 @@ Each channel file implements this interface. The gateway composition root wires 
 
 1. ~~**Model Fallback**~~ → `@joelclaw/model-fallback` ✅ Shipped (2026-02-25, 6 tests)
 2. **Message Store** → `@joelclaw/message-store` 🔄 In progress
-3. **Vault Reader** (clean boundary, used by multiple consumers)
-4. **Telemetry** (shared across all packages)
-5. **Channel interface refactor** (last — biggest surface area, least urgency)
+3. ~~**Vault Reader**~~ → `@joelclaw/vault-reader` ✅ Shipped (2026-02-25, 4 tests)
+4. **Telemetry** — deferred (120 lines, 1 export, ~120 call sites — extracting doesn't reduce gateway size, just makes emitter reusable. Low ROI vs channel refactor.)
+5. **Channel interface** 🔄 In progress — defining `Channel` port interface
 
 ## Consequences
 
