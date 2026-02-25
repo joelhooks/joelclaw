@@ -49,6 +49,38 @@ type InvestigatorInput = {
   dryRun?: boolean;
 };
 
+type SelfHealingInvestigatorFlowContext = {
+  flowContextKey: string;
+  sourceEventId?: string;
+  sourceEventName?: string;
+  attempt: number;
+  evidenceCount: number;
+};
+
+function buildInvestigatorFlowContext(input: {
+  sourceFunction?: string;
+  domain: string;
+  targetComponent: string;
+  eventId?: string;
+  eventName?: string;
+  attempt?: number;
+  evidenceCount?: number;
+}): SelfHealingInvestigatorFlowContext {
+  const sourceFunction = toSafeText(input.sourceFunction, "system/self-healing.router");
+  const domain = toSafeText(input.domain, "unknown");
+  const target = toSafeText(input.targetComponent, "system/self-healing.investigator");
+  const eventName = toSafeText(input.eventName, "system/self.healing.requested");
+  const safeAttempt = Math.max(0, Math.floor(input.attempt ?? 0));
+  const safeEvidenceCount = Math.max(0, Math.floor(input.evidenceCount ?? 0));
+  return {
+    flowContextKey: `${eventName}::${sourceFunction}::${domain}::${target}::a${safeAttempt}::e${safeEvidenceCount}`,
+    sourceEventId: input.eventId,
+    sourceEventName: eventName,
+    attempt: safeAttempt,
+    evidenceCount: safeEvidenceCount,
+  };
+}
+
 function toSafeInt(value: unknown, fallback: number, min = 1, max = 500): number {
   const raw = typeof value === "number"
     ? value
@@ -189,13 +221,60 @@ export const selfHealingInvestigator = inngest.createFunction(
   async ({ event, step }) => {
     const data = (event.data ?? {}) as InvestigatorInput;
     const requestedDomain = typeof data.domain === "string" ? data.domain.trim().toLowerCase() : "";
+    const sourceFunction = toSafeText((data as { sourceFunction?: string })?.sourceFunction, "system/self-healing.router");
+    let flowContext = buildInvestigatorFlowContext({
+      sourceFunction,
+      domain: requestedDomain || "sdk-reachability",
+      targetComponent: "system/self-healing.investigator",
+      eventId: event.id,
+      eventName: event.name,
+      attempt: 0,
+      evidenceCount: 0,
+    });
 
     if (requestedDomain && requestedDomain !== "sdk-reachability" && requestedDomain !== "all") {
+      await emitOtelEvent({
+        level: "warn",
+        source: "worker",
+        component: "self-healing",
+        action: "system.self-healing.sdk-reachability",
+        success: false,
+        error: `unsupported domain ${requestedDomain}`,
+        metadata: {
+          flowContext,
+          request: {
+            eventId: event.id,
+            eventName: event.name,
+            requestedDomain,
+            requestedBy: toSafeText(data.requestedBy, "unknown"),
+          },
+          reason: "domain-mismatch",
+        },
+      });
       return {
         status: "skipped",
         reason: `unsupported domain ${requestedDomain}`,
       };
     }
+
+    await emitOtelEvent({
+      level: "info",
+      source: "worker",
+      component: "self-healing",
+      action: "system.self-healing.sdk-reachability.scan.started",
+      success: true,
+      metadata: {
+        flowContext,
+        request: {
+          eventId: event.id,
+          eventName: event.name,
+          requestedBy: toSafeText(data.requestedBy, "unknown"),
+          lookbackMinutes: data.lookbackMinutes,
+          maxRuns: data.maxRuns,
+          dryRun: data.dryRun,
+        },
+      },
+    });
 
     const lookbackMinutes = toSafeInt(
       data.lookbackMinutes,
@@ -267,6 +346,11 @@ export const selfHealingInvestigator = inngest.createFunction(
       const detectionCount = matches.length;
       let remediation: { fixed: boolean; detail: string } | null = null;
 
+      flowContext = {
+        ...flowContext,
+        evidenceCount: matches.length,
+      };
+
       if (detectionCount > 0 && !dryRun) {
         remediation = await restartWorker({
           id: "self-healing-sdk-reachability",
@@ -298,6 +382,18 @@ export const selfHealingInvestigator = inngest.createFunction(
           ? remediation.detail
           : undefined,
         metadata: {
+          flowContext,
+          diagnostics: {
+            eventId: event.id,
+            eventName: event.name,
+            requestDomain: requestedDomain || "sdk-reachability",
+            request: {
+              requestedBy: toSafeText(data.requestedBy, "unknown"),
+              lookbackMinutes,
+              maxRuns,
+              dryRun,
+            },
+          },
           detector: "system/self-healing.investigator",
           trigger: event.name,
           reason: data.reason ?? null,
@@ -309,9 +405,15 @@ export const selfHealingInvestigator = inngest.createFunction(
           uncheckedRunCount: uncheckedRuns.length,
           sdkUnreachableCount: detectionCount,
           dryRun,
+          matches: matches.slice(0, 5).map((match) => ({
+            id: match.id,
+            functionName: match.functionName,
+          })),
           remediation,
           inspectErrors: inspectErrors.slice(0, 5),
-          matches: matches.slice(0, 5),
+          matchCount: matches.length,
+          sampleRunIds: matches.map((item) => item.id).slice(0, 5),
+          },
         },
       });
 
@@ -332,6 +434,19 @@ export const selfHealingInvestigator = inngest.createFunction(
             dryRun,
             remediationDetail: remediation?.detail,
             sampleRunIds: matches.map((item) => item.id).slice(0, 5),
+            context: {
+              runContext: flowContext,
+              eventName: event.name,
+              eventId: event.id,
+              detected: detectionCount,
+              inspected: toInspect.length,
+              remediation: remediation
+                ? {
+                    fixed: remediation.fixed,
+                    detail: remediation.detail,
+                  }
+                : null,
+            },
           },
         });
       }

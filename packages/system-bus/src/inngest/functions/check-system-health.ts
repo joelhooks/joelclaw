@@ -63,6 +63,16 @@ const CRITICAL_COMPONENTS = new Set([
 ]);
 const WRITE_GATE_DRIFT_LAST_NOTIFIED_KEY = "memory:health:write_gate_drift:last_notified";
 const WRITE_GATE_DRIFT_NOTIFY_COOLDOWN_SECONDS = 6 * 60 * 60;
+const SELF_HEALING_GATEWAY_REQUEST_EVENT = "system/self.healing.requested";
+const GATEWAY_BRIDGE_HEALTH_REQUEST_EVENT = "system/gateway.bridge.health.requested";
+const HEALTH_OTEL_GAP_LAST_NOTIFIED_KEY = "memory:health:otel_gap:last_notified";
+const HEALTH_OTEL_GAP_NOTIFY_COOLDOWN_SECONDS = 10 * 60;
+const GATEWAY_HEALING_RETRY_POLICY = {
+  maxRetries: 10,
+  sleepMinMs: 90_000,
+  sleepMaxMs: 900_000,
+  sleepStepMs: 45_000,
+};
 
 function normalizeTimestampToMs(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -170,6 +180,146 @@ type WriteGateDriftSummary = {
   shouldEscalate: boolean;
   unavailable?: string;
 };
+
+type HealthSelfHealingRequest = {
+  sourceEventId?: string;
+  sourceEventName?: string;
+  runContextKey?: string;
+  flowTrace?: string[];
+  sourceFunction: string;
+  targetComponent: string;
+  targetEventName: string;
+  problemSummary: string;
+  domain: "gateway-bridge" | "otel-pipeline";
+  attempt: number;
+  reason: string;
+  evidence: Array<{ type: string; detail: string }>;
+  playbook: {
+    actions: string[];
+    restart: string[];
+    kill: string[];
+    defer: string[];
+    notify: string[];
+  links: string[];
+  };
+};
+
+type SelfHealingFlowContext = {
+  runContextKey: string;
+  flowTrace: string[];
+  sourceFunction: string;
+  sourceEventId?: string;
+  sourceEventName?: string;
+  attempt: number;
+};
+
+function buildSelfHealingFlowContext(input: {
+  sourceFunction: string;
+  targetComponent: string;
+  targetEventName: string;
+  domain: string;
+  eventName: string;
+  eventId: string | undefined;
+  attempt: number;
+  evidenceCount?: number;
+}): SelfHealingFlowContext {
+  const sourceFunction = toSafeText(input.sourceFunction, "system/check-system-health");
+  const targetComponent = toSafeText(input.targetComponent, "unknown");
+  const targetEventName = toSafeText(input.targetEventName, "system.health.checked");
+  const domain = toSafeText(input.domain, "unknown");
+  const eventName = toSafeText(input.eventName, "system/health.check");
+  const evidenceSeed = Number.isFinite(input.evidenceCount ?? 0) ? Math.max(0, Math.floor(input.evidenceCount ?? 0)) : 0;
+
+  return {
+    runContextKey: `${eventName}::${sourceFunction}::${targetComponent}::${domain}::${targetEventName}::a${Math.max(0, Math.floor(input.attempt))}::e${evidenceSeed}`,
+    flowTrace: [
+      eventName,
+      "system/self-healing.router",
+      `${sourceFunction}→${targetComponent}`,
+      domain,
+      targetEventName,
+      `attempt:${Math.max(0, Math.floor(input.attempt))}`,
+    ],
+    sourceFunction,
+    sourceEventId: input.eventId,
+    sourceEventName: eventName,
+    attempt: Math.max(0, Math.floor(input.attempt)),
+  };
+}
+
+function summarizeEvidenceForOtel(
+  evidence: Array<{ type: string; detail: string }> | undefined,
+): { count: number; samples: Array<{ type: string; detail: string }>; types: string[] } {
+  const safeEvidence = Array.isArray(evidence) ? evidence : [];
+  const sampleCount = Math.min(6, safeEvidence.length);
+  const samples = safeEvidence.slice(0, sampleCount);
+  const types = [...new Set(safeEvidence.map((entry) => toSafeText(entry.type, "unknown")))];
+  return {
+    count: safeEvidence.length,
+    samples,
+    types,
+  };
+}
+
+async function warnOtelGapViaEvents(
+  redisHost: string,
+  redisPort: number,
+  payload: HealthSelfHealingRequest & { attempt: number },
+): Promise<void> {
+  const redis = new Redis({
+    host: redisHost,
+    port: redisPort,
+    lazyConnect: true,
+    connectTimeout: 3_000,
+  });
+  redis.on("error", () => {});
+
+  try {
+    await redis.connect();
+    const alreadyNotified = await redis.get(HEALTH_OTEL_GAP_LAST_NOTIFIED_KEY);
+      if (alreadyNotified) return;
+
+    await redis.set(
+      HEALTH_OTEL_GAP_LAST_NOTIFIED_KEY,
+      new Date().toISOString(),
+      "EX",
+      HEALTH_OTEL_GAP_NOTIFY_COOLDOWN_SECONDS,
+    );
+
+    await Promise.allSettled([
+      emitOtelEvent({
+        level: "warn",
+        source: "worker",
+        component: "check-system-health",
+        action: "system.health.otel.write.gap",
+        success: false,
+        error: payload.reason,
+        metadata: {
+          reason: payload.reason,
+          domain: payload.domain,
+          runContext: {
+            runContextKey: payload.runContextKey ?? "missing-run-context",
+            flowTrace: payload.flowTrace ?? [],
+            sourceEventId: payload.sourceEventId,
+            sourceEventName: payload.sourceEventName,
+            attempt: payload.attempt,
+          },
+          evidenceSummary: summarizeEvidenceForOtel(payload.evidence),
+          sourceFunction: payload.sourceFunction,
+          targetComponent: payload.targetComponent,
+          targetEventName: payload.targetEventName,
+        },
+      }),
+      pushNotification(
+        "warn",
+        "OTEL telemetry write gap detected",
+        `${payload.reason}`,
+      ),
+    ]);
+  } finally {
+    redis.disconnect();
+  }
+}
 
 async function checkRedis(): Promise<ServiceStatus> {
   const redis = new Redis({ host: "localhost", port: 6379, lazyConnect: true, connectTimeout: 3000 });
@@ -473,6 +623,16 @@ export const checkSystemHealth = inngest.createFunction(
       (event.data as { mode?: unknown } | undefined)?.mode,
     );
     const slicePolicy = HEALTH_SLICE_POLICIES[mode];
+    const flowContext = buildSelfHealingFlowContext({
+      sourceFunction: "system/check-system-health",
+      targetComponent: "otel-pipeline",
+      targetEventName: "system.health.checked",
+      domain: "otel-pipeline",
+      eventName,
+      eventId: event.id,
+      attempt: 0,
+      evidenceCount: 0,
+    });
     const runCoreChecks = mode !== "signals";
     const runSignalChecks = mode !== "core";
     const runStartedAt = Date.now();
@@ -577,16 +737,17 @@ export const checkSystemHealth = inngest.createFunction(
       );
     }
 
-    await withTiming(stepDurationsMs, "summary.emit-otel-health", async () =>
+    const otelHealthResult = await withTiming(stepDurationsMs, "summary.emit-otel-health", async () =>
       step.run("emit-otel-health-summary", async () => {
         const degradedCount = services.filter((service) => !service.ok).length;
-        await emitOtelEvent({
+        return emitOtelEvent({
           level: degradedCount === 0 ? "info" : "warn",
           source: "worker",
           component: "check-system-health",
           action: "system.health.checked",
           success: degradedCount === 0,
           metadata: {
+            runContext: flowContext,
             mode,
             slicePolicy,
             runCoreChecks,
@@ -605,6 +766,36 @@ export const checkSystemHealth = inngest.createFunction(
         });
       })
     );
+
+    if (!otelHealthResult.stored) {
+      const otelRedisPort = Number.parseInt(process.env.REDIS_PORT ?? "6379", 10);
+      await warnOtelGapViaEvents(
+        process.env.REDIS_HOST ?? "localhost",
+        Number.isFinite(otelRedisPort) ? otelRedisPort : 6379,
+        {
+          sourceFunction: "system/check-system-health",
+          targetComponent: "otel_events",
+              targetEventName: "system.health.checked",
+              problemSummary: "otel_events write gap in check-system-health",
+              domain: "otel-pipeline",
+              attempt: 0,
+              reason: "Unable to persist health summary telemetry from check-system-health",
+              sourceEventId: event.id,
+              sourceEventName: eventName,
+              runContextKey: flowContext.runContextKey,
+              flowTrace: flowContext.flowTrace,
+              evidence: [{ type: "health-summary", detail: `stored=${otelHealthResult.stored}` }],
+              playbook: {
+            actions: ["Collect recent otel_events sink status", "Check typesense/convex availability"],
+            restart: [],
+            kill: [],
+            defer: [],
+            notify: ["joelclaw gateway events", "joelclaw otel list --hours 1"],
+            links: ["/Users/joel/Vault/system/system-log.jsonl"],
+          },
+        },
+      );
+    }
 
     if (!runCoreChecks) {
       return {
@@ -634,6 +825,103 @@ export const checkSystemHealth = inngest.createFunction(
     );
 
     const degraded = services.filter((s) => !s.ok);
+
+    const gatewayCriticalDegrade = degraded.filter((service) =>
+      service.name === "Gateway" || service.name === "Redis"
+    );
+
+    if (gatewayCriticalDegrade.length > 0) {
+      await withTiming(stepDurationsMs, "core.dispatch-gateway-bridge-self-heal", async () =>
+        step.run("dispatch-gateway-bridge-self-heal", async () => {
+          const evidence = gatewayCriticalDegrade.map((service) => ({
+            type: "service-health",
+            detail: `${service.name}: ${service.detail ?? "down"}`,
+          }));
+          const summaryLine = gatewayCriticalDegrade
+            .map((service) => `${service.name}=${service.ok ? "ok" : "down"}`)
+            .join(", ");
+          const dispatchFlowContext = buildSelfHealingFlowContext({
+            sourceFunction: "system/check-system-health",
+            targetComponent: "gateway-bridge",
+            targetEventName: GATEWAY_BRIDGE_HEALTH_REQUEST_EVENT,
+            domain: "gateway-bridge",
+            eventName,
+            eventId: event.id,
+            attempt: 0,
+            evidenceCount: evidence.length,
+          });
+
+          await step.sendEvent("emit-gateway-bridge-self-healing-request", {
+            name: SELF_HEALING_GATEWAY_REQUEST_EVENT,
+            data: {
+              sourceFunction: "system/check-system-health",
+              targetComponent: "gateway-bridge",
+              targetEventName: GATEWAY_BRIDGE_HEALTH_REQUEST_EVENT,
+              problemSummary: `Gateway bridge degradation detected: ${summaryLine}`,
+              domain: "gateway-bridge",
+              attempt: 0,
+              retryPolicy: GATEWAY_HEALING_RETRY_POLICY,
+              evidence,
+              context: {
+                checkMode: mode,
+                services: gatewayCriticalDegrade.map((service) => ({
+                  name: service.name,
+                  detail: service.detail ?? "",
+                })),
+                runContextKey: dispatchFlowContext.runContextKey,
+                flowTrace: dispatchFlowContext.flowTrace,
+                summaryLine,
+                sourceEventName: dispatchFlowContext.sourceEventName,
+                sourceEventId: dispatchFlowContext.sourceEventId,
+                evidenceSummary: summarizeEvidenceForOtel(evidence),
+                flowContext: dispatchFlowContext,
+                serviceDetails: gatewayCriticalDegrade.map((service) => ({
+                  name: service.name,
+                  detail: service.detail ?? "",
+                })),
+              },
+              playbook: {
+                actions: [
+                  "Reconcile pending stream entries",
+                  "Prune orphaned priority queue indexes",
+                  "Purge malformed gateway event queue entries",
+                ],
+                restart: [
+                  "joelclaw gateway restart",
+                  "joelclaw inngest restart-worker --register",
+                ],
+                kill: ["pkill -f joelclaw-gateway"],
+                defer: ["joelclaw status", "joelclaw gateway status", "joelclaw runs --count 10 --hours 1"],
+                notify: ["joelclaw gateway events"],
+                links: [
+                  "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/self-healing-gateway-bridge.ts",
+                  "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/check-system-health.ts",
+                ],
+              },
+              owner: "system",
+              fallbackAction: "manual",
+              requestedBy: "system/check-system-health",
+              dryRun: false,
+            },
+          });
+          await emitOtelEvent({
+            level: "info",
+            source: "worker",
+            component: "check-system-health",
+            action: "system.health.self-healing.dispatch",
+            success: true,
+            metadata: {
+              flowContext: dispatchFlowContext,
+              mode,
+              severity: "gateway-bridge",
+              targetEventName: GATEWAY_BRIDGE_HEALTH_REQUEST_EVENT,
+              targetServices: gatewayCriticalDegrade.map((service) => service.name),
+              evidenceSummary: summarizeEvidenceForOtel(evidence),
+            },
+          });
+        })
+      );
+    }
 
     if (otelErrorRate && otelErrorRate.shouldEscalate) {
       await withTiming(stepDurationsMs, "signals.notify-otel-error-rate", async () =>
@@ -735,6 +1023,13 @@ export const checkSystemHealth = inngest.createFunction(
               action: "memory.write_gate_drift.detected",
               success: false,
               metadata: {
+                runContext: {
+                  runContextKey: flowContext.runContextKey,
+                  flowTrace: flowContext.flowTrace,
+                  sourceEventName: flowContext.sourceEventName,
+                  sourceEventId: flowContext.sourceEventId,
+                  attempt: flowContext.attempt,
+                },
                 mode,
                 writeGateDrift,
               },
@@ -858,6 +1153,13 @@ export const checkSystemHealth = inngest.createFunction(
             success: false,
             error: criticalDown.map((service) => service.name).join(", "),
             metadata: {
+              runContext: {
+                runContextKey: flowContext.runContextKey,
+                flowTrace: flowContext.flowTrace,
+                sourceEventName: flowContext.sourceEventName,
+                sourceEventId: flowContext.sourceEventId,
+                attempt: flowContext.attempt,
+              },
               mode,
               criticalDown,
             },

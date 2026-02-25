@@ -1,7 +1,6 @@
-import { $ } from "bun";
 import { inngest } from "../client";
 import { emitOtelEvent } from "../../observability/emit";
-import { parsePiJsonAssistant, traceLlmGeneration } from "../../lib/langfuse";
+import { infer } from "../../lib/inference";
 import { assertAllowedModel } from "../../lib/models";
 import { loadBackupFailureRouterConfig } from "../../lib/backup-failure-router-config";
 
@@ -17,6 +16,8 @@ type EvidenceItem = {
 type Playbook = {
   actions?: string[];
   restart?: string[];
+  kill?: string[];
+  defer?: string[];
   notify?: string[];
   links?: string[];
 };
@@ -29,9 +30,9 @@ type RetryPolicy = {
 };
 
 type SelfHealingContext = {
-  sourceFunction?: string;
-  targetComponent?: string;
-  problemSummary?: string;
+  sourceFunction: string;
+  targetComponent: string;
+  problemSummary: string;
   attempt?: number;
   domain?: "backup" | "sdk-reachability" | "all" | string;
   routeToFunction?: string;
@@ -58,6 +59,7 @@ type Decision = {
 type RetryPayload = {
   sourceFunction?: string;
   targetComponent?: string;
+  domain?: "backup" | "sdk-reachability" | "gateway-bridge" | "gateway-provider" | "otel-pipeline" | "all" | string;
   problemSummary?: string;
   attempt: number;
   nextAttempt: number;
@@ -90,6 +92,37 @@ type RetryPayload = {
   };
 };
 
+type SelfHealingFlowContext = {
+  runContextKey: string;
+  flowTrace: string[];
+  sourceEventName: string;
+  sourceEventId?: string;
+  attempt: number;
+};
+
+function buildSelfHealingFlowContext(
+  eventName: string,
+  eventId: string | undefined,
+  context: SelfHealingContext,
+  nextAttempt: number,
+): SelfHealingFlowContext {
+  const sourceFunction = toSafeText(context.sourceFunction, "system/self-healing.router");
+  const targetComponent = toSafeText(context.targetComponent, "unknown");
+  const targetEventName = toSafeText(context.targetEventName, "system.self.healing.retry.requested");
+  const domain = toSafeText(context.domain, "all");
+  const attempt = toSafeInt(context.attempt, 0);
+  const safeEventName = toSafeText(eventName, "system/self.healing.requested");
+  const safeNextAttempt = Math.max(0, Math.floor(nextAttempt));
+
+  return {
+    runContextKey: `${safeEventName}::${sourceFunction}::${targetComponent}::${domain}::${targetEventName}::next-${safeNextAttempt}`,
+    flowTrace: [safeEventName, sourceFunction, targetComponent, domain, targetEventName],
+    sourceEventName: safeEventName,
+    sourceEventId: eventId,
+    attempt,
+  };
+}
+
 function toSafeInt(value: unknown, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value)) {
     const normalized = Math.floor(value);
@@ -106,22 +139,24 @@ function toSafeText(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
 
-function clampDelayMs(value: number): number {
-  const fallback = SELF_HEALING_CONFIG.failureRouter.sleepMinMs;
-  if (!Number.isFinite(value) || value <= 0) return fallback;
-  return Math.min(fallback > 0 ? fallback * 12_000 : Number.MAX_SAFE_INTEGER, Math.min(value, SELF_HEALING_CONFIG.failureRouter.sleepMaxMs));
+function clampDelayMs(value: number, retryPolicy: RetryPolicy): number {
+  const min = toSafeInt(retryPolicy.sleepMinMs, SELF_HEALING_CONFIG.failureRouter.sleepMinMs);
+  const max = toSafeInt(retryPolicy.sleepMaxMs, SELF_HEALING_CONFIG.failureRouter.sleepMaxMs);
+  if (!Number.isFinite(value) || value <= 0) return min;
+  return Math.min(max, Math.max(min, Math.floor(value)));
 }
 
-function estimateRetryDelayMs(attempt: number): number {
+function estimateRetryDelayMs(attempt: number, retryPolicy: RetryPolicy): number {
   const boundedAttempt = Math.max(0, Math.floor(attempt));
-  const baseDelay = SELF_HEALING_CONFIG.failureRouter.sleepMinMs;
-  const capped = Math.min(baseDelay * 2 ** boundedAttempt, SELF_HEALING_CONFIG.failureRouter.sleepMaxMs);
-  const jitter = Math.max(0, Math.floor(Math.random() * SELF_HEALING_CONFIG.failureRouter.sleepStepMs));
-  return clampDelayMs(capped + jitter);
+  const baseDelay = toSafeInt(retryPolicy.sleepMinMs, SELF_HEALING_CONFIG.failureRouter.sleepMinMs);
+  const maxDelay = toSafeInt(retryPolicy.sleepMaxMs, SELF_HEALING_CONFIG.failureRouter.sleepMaxMs);
+  const jitter = Math.max(0, Math.floor(Math.random() * toSafeInt(retryPolicy.sleepStepMs, SELF_HEALING_CONFIG.failureRouter.sleepStepMs)));
+  const capped = Math.min(baseDelay * 2 ** boundedAttempt, maxDelay);
+  return clampDelayMs(capped + jitter, retryPolicy);
 }
 
-function formatInngestSleepDelay(delayMs: number): string {
-  const totalSeconds = Math.max(1, Math.ceil(clampDelayMs(delayMs) / 1000));
+function formatInngestSleepDelay(delayMs: number, retryPolicy: RetryPolicy): string {
+  const totalSeconds = Math.max(1, Math.ceil(clampDelayMs(delayMs, retryPolicy) / 1000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   const hours = Math.floor(minutes / 60);
@@ -162,7 +197,7 @@ function parseJsonFromText(raw: string): unknown | null {
   return null;
 }
 
-function parseDecision(raw: unknown, fallbackAttempt: number): Decision {
+function parseDecision(raw: unknown, fallbackAttempt: number, retryPolicy: RetryPolicy): Decision {
   const record = raw as Record<string, unknown>;
   const actionText = String(record?.action ?? record?.decision ?? record?.route ?? "").toLowerCase();
   const rawAction = typeof record?.action === "string" ? record.action : "";
@@ -195,7 +230,9 @@ function parseDecision(raw: unknown, fallbackAttempt: number): Decision {
 
   return {
     action,
-    delayMs: Number.isFinite(rawDelay) ? rawDelay : estimateRetryDelayMs(fallbackAttempt),
+    delayMs: Number.isFinite(rawDelay)
+      ? clampDelayMs(rawDelay, retryPolicy)
+        : estimateRetryDelayMs(fallbackAttempt, retryPolicy),
     reason,
     confidence: Number.isFinite(confidence) ? confidence : 0.35,
     model: typeof record?.model === "string" ? record.model : BACKUP_RETRY_DECISION_MODEL,
@@ -204,13 +241,170 @@ function parseDecision(raw: unknown, fallbackAttempt: number): Decision {
   };
 }
 
-function pickRetryPolicy(input: RetryPolicy): RetryPolicy {
+function summarizeEvidenceForRouterPayload(
+  evidence: EvidenceItem[] | string[] | undefined,
+): { count: number; samples: Array<EvidenceItem | string>; types: string[] } {
+  const safeEvidence = Array.isArray(evidence) ? evidence : [];
+  const sampleCount = Math.min(6, safeEvidence.length);
   return {
-    maxRetries: toSafeInt(input?.maxRetries, SELF_HEALING_CONFIG.failureRouter.maxRetries),
-    sleepMinMs: toSafeInt(input?.sleepMinMs, SELF_HEALING_CONFIG.failureRouter.sleepMinMs),
-    sleepMaxMs: toSafeInt(input?.sleepMaxMs, SELF_HEALING_CONFIG.failureRouter.sleepMaxMs),
-    sleepStepMs: toSafeInt(input?.sleepStepMs, SELF_HEALING_CONFIG.failureRouter.sleepStepMs),
+    count: safeEvidence.length,
+    samples: safeEvidence.slice(0, sampleCount).map((entry) =>
+      typeof entry === "string" ? `raw:${entry}` : entry
+    ),
+    types: [...new Set(
+      safeEvidence.map((entry) =>
+        typeof entry === "string" ? "string" : toSafeText(entry.type, "unknown")
+      ),
+    )],
   };
+}
+
+type SelfHealingCompletionStatus = "scheduled" | "exhausted" | "escalated" | "invalid" | "blocked";
+
+function normalizeSelfHealingContext(raw: Record<string, unknown>): {
+  context: SelfHealingContext;
+  missing: string[];
+  policy: RetryPolicy;
+} {
+  const candidate = raw as SelfHealingContext;
+  const missing: string[] = [];
+
+  const sourceFunction = toSafeText(candidate.sourceFunction, "unknown");
+  const targetComponent = toSafeText(candidate.targetComponent, "");
+  const problemSummary = toSafeText(candidate.problemSummary, "");
+  const policy = pickRetryPolicy(candidate.retryPolicy ?? {});
+
+  if (sourceFunction === "unknown") missing.push("sourceFunction");
+  if (!targetComponent) missing.push("targetComponent");
+  if (!problemSummary) missing.push("problemSummary");
+
+  const playbook = candidate.playbook ?? {};
+  const normalizedPlaybook: Playbook = {
+    actions: Array.isArray(playbook.actions) ? playbook.actions : [],
+    restart: Array.isArray(playbook.restart) ? playbook.restart : [],
+    kill: Array.isArray(playbook.kill) ? playbook.kill : [],
+    defer: Array.isArray(playbook.defer) ? playbook.defer : [],
+    notify: Array.isArray(playbook.notify) ? playbook.notify : ["joelclaw otel search --hours 1"],
+    links: Array.isArray(playbook.links) ? playbook.links : ["/Users/joel/Vault/system/system-log.jsonl"],
+  };
+
+  return {
+    context: {
+      ...candidate,
+      sourceFunction,
+      targetComponent,
+      problemSummary,
+      attempt: toSafeInt(candidate.attempt, 0),
+      retryPolicy: policy,
+      evidence: Array.isArray(candidate.evidence) ? candidate.evidence : [],
+      playbook: normalizedPlaybook,
+      owner: toSafeText(candidate.owner, "system"),
+      domain: toSafeText(candidate.domain, "all"),
+      context: candidate.context ?? {},
+      deadlineAt: toSafeText(candidate.deadlineAt, ""),
+      fallbackAction: candidate.fallbackAction ?? "manual",
+      routeToFunction: toSafeText(candidate.routeToFunction, ""),
+      targetEventName: toSafeText(candidate.targetEventName, ""),
+    },
+    missing,
+    policy,
+  };
+}
+
+async function emitSelfHealingCompleted(
+  step: { sendEvent: (id: string, payload: { name: string; data: Record<string, unknown> }) => Promise<unknown> },
+  eventId: string | undefined,
+  request: {
+    domain: string;
+    sourceFunction: string;
+    targetComponent: string;
+    status: SelfHealingCompletionStatus;
+    action: "retry" | "pause" | "escalate";
+    attempt: number;
+    nextAttempt?: number;
+    reason: string;
+    delayMs?: number;
+    routeToEventName?: string;
+    routeToFunction?: string;
+    confidence?: number;
+    model?: string;
+    evidence?: EvidenceItem[] | string[];
+    playbook?: Playbook;
+    owner?: string;
+    flowContext?: SelfHealingFlowContext;
+  }
+) {
+  return step.sendEvent("emit-self-healing-completed", {
+    name: "system/self.healing.completed",
+    data: {
+      domain: request.domain,
+      status: request.status,
+      sourceFunction: request.sourceFunction,
+      targetComponent: request.targetComponent,
+      attempt: request.attempt,
+      nextAttempt: request.nextAttempt,
+      action: request.action,
+      reason: request.reason,
+      detected: 1,
+      inspected: 1,
+      delayMs: request.delayMs,
+      routeToEventName: request.routeToEventName,
+      routeToFunction: request.routeToFunction,
+      confidence: request.confidence,
+      model: request.model,
+      evidence: request.evidence ?? [],
+      playbook: request.playbook,
+      owner: request.owner,
+      ...(request.flowContext ? { context: { runContext: request.flowContext } } : {}),
+      eventId,
+    },
+  });
+}
+
+function pickRetryPolicy(input: RetryPolicy): RetryPolicy {
+  const candidateMin = toSafeInt(input?.sleepMinMs, SELF_HEALING_CONFIG.failureRouter.sleepMinMs);
+  const minMs = clampPolicyFloor(candidateMin, 5_000, 3_600_000);
+  const maxMs = clampPolicyCeil(
+    toSafeInt(input?.sleepMaxMs, SELF_HEALING_CONFIG.failureRouter.sleepMaxMs),
+    minMs,
+    14_400_000
+  );
+  const stepMs = clampPolicyFloor(
+    toSafeInt(input?.sleepStepMs, SELF_HEALING_CONFIG.failureRouter.sleepStepMs),
+    5_000,
+    maxMs
+  );
+
+  return {
+    maxRetries: clampPolicyFloor(toSafeInt(input?.maxRetries, SELF_HEALING_CONFIG.failureRouter.maxRetries), 1, 64),
+    sleepMinMs: minMs,
+    sleepMaxMs: maxMs,
+    sleepStepMs: stepMs,
+  };
+}
+
+function clampPolicyFloor(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.floor(value)));
+}
+
+function clampPolicyCeil(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, Math.floor(value)));
+}
+
+function domainFromContext(context: SelfHealingContext): string {
+  if (
+    context.domain === "backup"
+    || context.domain === "sdk-reachability"
+    || context.domain === "gateway-bridge"
+    || context.domain === "gateway-provider"
+    || context.domain === "otel-pipeline"
+    || context.domain === "all"
+  ) {
+    return context.domain;
+  }
+  return toSafeText(context.domain, "all");
 }
 
 function normalizeBackupFunction(value: unknown): "system/backup.typesense" | "system/backup.redis" | null {
@@ -228,7 +422,12 @@ function targetFromFunction(value: string | undefined): "typesense" | "redis" | 
 
 const SELF_HEALING_CONFIG = loadBackupFailureRouterConfig();
 
-async function analyzeSelfHealingWithPi(payload: SelfHealingContext, attempt: number, isRetry: boolean): Promise<Decision> {
+async function analyzeSelfHealingWithPi(
+  payload: SelfHealingContext,
+  attempt: number,
+  isRetry: boolean,
+  flowContext: SelfHealingFlowContext,
+): Promise<Decision> {
   const policy = pickRetryPolicy(payload.retryPolicy ?? {});
   const normalizedAttempt = toSafeInt(attempt, 0);
 
@@ -259,55 +458,53 @@ async function analyzeSelfHealingWithPi(payload: SelfHealingContext, attempt: nu
     `Policy: ${JSON.stringify(policy)}`,
   ].join("\n\n");
 
-  const startedAt = Date.now();
   assertAllowedModel(BACKUP_RETRY_DECISION_MODEL);
   assertAllowedModel(BACKUP_RETRY_FALLBACK_MODEL);
 
-  const analyzeWithModel = async (model: string) => {
-    const result = await $`pi --no-tools --no-session --no-extensions --print --mode json --model ${model} --system-prompt ${systemPrompt} ${userPrompt}`.quiet().nothrow();
-    const raw = await result.text();
-    const parsedPi = parsePiJsonAssistant(raw);
-    const assistantText = parsedPi?.text ?? raw;
-    const parsed = parseJsonFromText(assistantText);
-
-    const decision = parsed === null
-      ? parseDecision({}, normalizedAttempt)
-      : parseDecision(parsed, normalizedAttempt);
-
-    await traceLlmGeneration({
-      traceName: "joelclaw.self-healing-router",
-      generationName: "self.healing.decision",
+  const analyzeWithModel = async (
+    model: string,
+    flowContext: SelfHealingFlowContext,
+  ) => {
+    const inferResult = await infer(userPrompt, {
+      task: "json",
+      model,
+      system: systemPrompt,
       component: "system-bus",
       action: "system.self.healing.decision",
-      input: { payload, attempt: normalizedAttempt },
-      output: decision,
-      provider: parsedPi?.provider,
-      model: parsedPi?.model ?? model,
-      usage: parsedPi?.usage,
-      durationMs: Date.now() - startedAt,
       metadata: {
         requestedModel: model,
         isRetry,
-        reason: decision.reason,
+        retryLevel: normalizedAttempt,
+        payloadSourceFunction: flowContext.runContextKey,
+        flowTrace: flowContext.flowTrace,
       },
     });
+    const assistantText = inferResult.text;
+    const parsed = parseJsonFromText(assistantText);
 
-    if (result.exitCode !== 0 && decision.action === "escalate" && !decision.reason) {
-      throw new Error(`pi exited ${result.exitCode}`);
+    const decision = parsed === null
+      ? parseDecision({}, normalizedAttempt, policy)
+      : parseDecision(parsed, normalizedAttempt, policy);
+
+    if (!assistantText && decision.action === "escalate" && !decision.reason) {
+      throw new Error("self-healing decision unavailable");
     }
 
     return decision;
   };
 
   try {
-    return await analyzeWithModel(BACKUP_RETRY_DECISION_MODEL);
+    return await analyzeWithModel(BACKUP_RETRY_DECISION_MODEL, flowContext);
   } catch {
     try {
-      return await analyzeWithModel(BACKUP_RETRY_FALLBACK_MODEL);
+      return await analyzeWithModel(BACKUP_RETRY_FALLBACK_MODEL, {
+        ...flowContext,
+        flowTrace: [...flowContext.flowTrace, "pi-fallback"],
+      });
     } catch {
       return {
         action: "retry",
-        delayMs: estimateRetryDelayMs(normalizedAttempt),
+        delayMs: estimateRetryDelayMs(normalizedAttempt, policy),
         reason: "Model analysis unavailable; using fallback backoff.",
         confidence: 0.35,
         model: BACKUP_RETRY_FALLBACK_MODEL,
@@ -324,7 +521,8 @@ function buildRetryPayload(
   source: SelfHealingContext,
   decision: Decision,
   nextAttempt: number,
-  retryPolicy: RetryPolicy
+  retryPolicy: RetryPolicy,
+  flowContext: SelfHealingFlowContext
 ): RetryPayload {
   const routeToFunction = toSafeText(decision.routeToFunction || source.routeToFunction, source.sourceFunction ?? "");
   const normalizedRouteToFunction = normalizeBackupFunction(routeToFunction) ?? undefined;
@@ -332,10 +530,27 @@ function buildRetryPayload(
     decision.routeToEventName || source.targetEventName || source.routeToEventName,
     BACKUP_RETRY_EVENT_NAME,
   );
+  const baseContext = {
+    ...(source.context ?? {}),
+    runContext: {
+      runContextKey: flowContext.runContextKey,
+      flowTrace: flowContext.flowTrace,
+      sourceEventName: flowContext.sourceEventName,
+      sourceEventId: flowContext.sourceEventId,
+      attempt: flowContext.attempt,
+      routeAttempt: nextAttempt,
+      hasModelDecision: true,
+      decision: {
+        action: decision.action,
+        model: decision.model,
+      },
+    },
+  };
   const base: RetryPayload = {
     sourceFunction: toSafeText(source.sourceFunction, "unknown"),
     targetComponent: toSafeText(source.targetComponent, source.domain ?? "unknown"),
     problemSummary: toSafeText(source.problemSummary, "Backup/self-healing decision required."),
+    domain: source.domain,
     attempt: nextAttempt,
     nextAttempt,
     retryPolicy,
@@ -344,7 +559,7 @@ function buildRetryPayload(
     routeToFunction: normalizedRouteToFunction,
     evidence: source.evidence,
     playbook: source.playbook,
-    context: source.context,
+    context: baseContext,
     owner: source.owner,
     deadlineAt: source.deadlineAt,
     decision: {
@@ -392,11 +607,67 @@ export const selfHealingRouter = inngest.createFunction(
   },
   [{ event: "system/self.healing.requested" }],
   async ({ event, step }) => {
-    const data = (event.data ?? {}) as SelfHealingContext;
+    const { context: data, missing, policy: retryPolicy } = normalizeSelfHealingContext(event.data ?? {});
     const attempt = toSafeInt(data.attempt, 0);
     const nextAttempt = attempt + 1;
-    const retryPolicy = pickRetryPolicy(data.retryPolicy ?? {});
-    const decision = await analyzeSelfHealingWithPi(data, attempt, attempt > 0);
+    const domain = domainFromContext(data);
+    const flowContext = buildSelfHealingFlowContext(
+      event.name,
+      event.id,
+      data,
+      nextAttempt,
+    );
+    const decision = await analyzeSelfHealingWithPi(
+      data,
+      attempt,
+      attempt > 0,
+      flowContext,
+    );
+
+    if (missing.length > 0) {
+      const reason = `invalid request payload: missing ${missing.join(", ")}`;
+      await emitOtelEvent({
+        level: "warn",
+        source: "worker",
+        component: "self-healing",
+        action: "system.self-healing.router",
+        success: false,
+        error: reason,
+        metadata: {
+          eventId: event.id,
+          runContext: {
+            runContextKey: flowContext.runContextKey,
+            flowTrace: flowContext.flowTrace,
+            sourceEventName: flowContext.sourceEventName,
+            sourceEventId: flowContext.sourceEventId,
+            attempt: flowContext.attempt,
+            nextAttempt,
+          },
+          evidenceSummary: summarizeEvidenceForRouterPayload(data.evidence),
+          sourceFunction: data.sourceFunction,
+          targetComponent: data.targetComponent,
+          attempt,
+          requiredFields: missing,
+          decisionPolicy: retryPolicy,
+        },
+      });
+      await emitSelfHealingCompleted(step, event.id, {
+        domain,
+        sourceFunction: data.sourceFunction,
+        targetComponent: data.targetComponent,
+        status: "invalid",
+        action: "escalate",
+        attempt,
+        reason,
+        flowContext,
+        owner: data.owner,
+      });
+      return {
+        status: "invalid",
+        action: "escalate",
+        reason,
+      };
+    }
 
     const isRetryLike = decision.action === "retry" || decision.action === "pause";
     const routeToEventName = decision.routeToEventName || toSafeText(data.targetEventName, "");
@@ -415,16 +686,46 @@ export const selfHealingRouter = inngest.createFunction(
             : "No route target supplied by decision model",
           metadata: {
             eventId: event.id,
-            sourceFunction: data.sourceFunction,
-            targetComponent: data.targetComponent,
-            attempt,
-            nextAttempt,
-            maxRetries: maxAttempts,
-            decision,
+            runContext: {
+              runContextKey: flowContext.runContextKey,
+              flowTrace: flowContext.flowTrace,
+              sourceEventName: flowContext.sourceEventName,
+              sourceEventId: flowContext.sourceEventId,
+              attempt: flowContext.attempt,
+              nextAttempt,
+              maxRetries: maxAttempts,
+              routeToEventName,
+          },
+          evidenceSummary: summarizeEvidenceForRouterPayload(data.evidence),
+          sourceFunction: data.sourceFunction,
+          targetComponent: data.targetComponent,
+          attempt,
+          nextAttempt,
+          maxRetries: maxAttempts,
+          decision,
           },
         });
+        await emitSelfHealingCompleted(step, event.id, {
+          domain,
+          sourceFunction: data.sourceFunction,
+          targetComponent: data.targetComponent,
+          status: routeToEventName ? "exhausted" : "blocked",
+          action: "escalate",
+          attempt,
+          reason: routeToEventName
+            ? `Retry budget exceeded (${nextAttempt}/${maxAttempts})`
+            : "Route target missing",
+          routeToEventName,
+          routeToFunction: decision.routeToFunction,
+          confidence: decision.confidence,
+          model: decision.model,
+          evidence: data.evidence,
+          playbook: data.playbook,
+          flowContext,
+          owner: data.owner,
+        });
         return {
-          status: "escalated",
+          status: routeToEventName ? "exhausted" : "blocked",
           reason: routeToEventName
             ? `Retry budget exceeded (${nextAttempt}/${maxAttempts})`
             : "Route target missing",
@@ -434,11 +735,11 @@ export const selfHealingRouter = inngest.createFunction(
 
       const delayMs = decision.delayMs > 0
         ? decision.delayMs
-        : estimateRetryDelayMs(attempt);
-      await step.sleep("self-healing-router-wait", formatInngestSleepDelay(delayMs));
+        : estimateRetryDelayMs(attempt, retryPolicy);
+      await step.sleep("self-healing-router-wait", formatInngestSleepDelay(delayMs, retryPolicy));
       await step.sendEvent("emit-self-healing-retry", {
         name: routeToEventName,
-        data: buildRetryPayload(data, decision, nextAttempt, retryPolicy),
+        data: buildRetryPayload(data, decision, nextAttempt, retryPolicy, flowContext),
       });
 
       await emitOtelEvent({
@@ -449,6 +750,17 @@ export const selfHealingRouter = inngest.createFunction(
         success: true,
         metadata: {
           eventId: event.id,
+          runContext: {
+            runContextKey: flowContext.runContextKey,
+            flowTrace: flowContext.flowTrace,
+            sourceEventName: flowContext.sourceEventName,
+            sourceEventId: flowContext.sourceEventId,
+            attempt: flowContext.attempt,
+            nextAttempt,
+            delayMs,
+            reason: decision.reason,
+          },
+          evidenceSummary: summarizeEvidenceForRouterPayload(data.evidence),
           sourceFunction: data.sourceFunction,
           targetComponent: data.targetComponent,
           attempt,
@@ -457,6 +769,24 @@ export const selfHealingRouter = inngest.createFunction(
           delayMs,
           decision,
         },
+      });
+      await emitSelfHealingCompleted(step, event.id, {
+        domain,
+        sourceFunction: data.sourceFunction,
+        targetComponent: data.targetComponent,
+        status: "scheduled",
+        action: decision.action,
+        attempt: flowContext.attempt,
+        reason: decision.reason,
+        delayMs,
+        routeToEventName,
+        routeToFunction: decision.routeToFunction,
+        confidence: decision.confidence,
+        model: decision.model,
+        evidence: data.evidence,
+        playbook: data.playbook,
+        flowContext,
+        owner: data.owner,
       });
 
       return {
@@ -467,26 +797,50 @@ export const selfHealingRouter = inngest.createFunction(
       };
     }
 
-    await emitOtelEvent({
-      level: "warn",
-      source: "worker",
-      component: "self-healing",
-      action: "system.self-healing.router",
-      success: false,
-      error: `Escalating self-healing request for ${data.sourceFunction}`,
-      metadata: {
-        eventId: event.id,
+      await emitOtelEvent({
+        level: "warn",
+        source: "worker",
+        component: "self-healing",
+        action: "system.self-healing.router",
+        success: false,
+        error: `Escalating self-healing request for ${data.sourceFunction}`,
+        metadata: {
+          eventId: event.id,
+          runContext: {
+            runContextKey: flowContext.runContextKey,
+            flowTrace: flowContext.flowTrace,
+            sourceEventName: flowContext.sourceEventName,
+            sourceEventId: flowContext.sourceEventId,
+            attempt: flowContext.attempt,
+            decision: decision.action,
+            reason: decision.reason,
+          },
+          evidenceSummary: summarizeEvidenceForRouterPayload(data.evidence),
+          sourceFunction: data.sourceFunction,
+          targetComponent: data.targetComponent,
+          attempt,
+          decision,
+        },
+      });
+      await emitSelfHealingCompleted(step, event.id, {
+        domain,
         sourceFunction: data.sourceFunction,
         targetComponent: data.targetComponent,
+        status: "escalated",
+        action: decision.action,
         attempt,
-        decision,
-      },
-    });
-    return {
-      status: "escalated",
-      action: decision.action,
-      reason: decision.reason,
-    };
+        reason: decision.reason,
+        evidence: data.evidence,
+        playbook: data.playbook,
+        flowContext,
+        owner: data.owner,
+        confidence: decision.confidence,
+        model: decision.model,
+      });
+      return {
+        status: "escalated",
+        action: decision.action,
+        reason: decision.reason,
+      };
   }
 );
-

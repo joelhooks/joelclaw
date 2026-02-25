@@ -147,6 +147,46 @@ async function loadRecentActiveRuns(): Promise<RecentRunNode[]> {
   return active;
 }
 
+async function restartWorkerWithCli(): Promise<{ fixed: boolean; detail: string }> {
+  const result = await Bun.$`joelclaw inngest restart-worker --register --wait-ms 1500`.quiet().nothrow();
+  if (result.exitCode !== 0) {
+    const stderr = trimOutput(result.stderr);
+    return {
+      fixed: false,
+      detail: stderr.length > 0
+        ? `CLI restart failed: ${stderr}`
+        : `CLI restart failed (exit ${result.exitCode})`,
+    };
+  }
+
+  await Bun.sleep(5000);
+
+  const health = await Bun.$`curl -fsS -m 5 http://127.0.0.1:3111/`.quiet().nothrow();
+  if (health.exitCode !== 0) {
+    const stderr = trimOutput(health.stderr);
+    return {
+      fixed: false,
+      detail:
+        stderr.length > 0
+          ? `CLI restart succeeded but health probe failed: ${stderr}`
+          : `CLI restart succeeded but health probe failed (exit ${health.exitCode})`,
+    };
+  }
+
+  const body = trimOutput(health.stdout);
+  if (body.length === 0) {
+    return {
+      fixed: false,
+      detail: "CLI restart succeeded but health probe returned empty response",
+    };
+  }
+
+  return {
+    fixed: true,
+    detail: "worker restarted via joelclaw CLI and health endpoint responded",
+  };
+}
+
 export const restartWorker: AutoFixHandler = async () => {
   try {
     const activeRuns = await loadRecentActiveRuns();
@@ -176,46 +216,21 @@ export const restartWorker: AutoFixHandler = async () => {
       }
     }
 
-    const restart = await Bun.$`launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker`
-      .quiet()
-      .nothrow();
-    if (restart.exitCode !== 0) {
-      const stderr = trimOutput(restart.stderr);
+    const restart = await restartWorkerWithCli();
+    if (!restart.fixed) {
       return {
         fixed: false,
-        detail: stderr.length > 0 ? `restart failed: ${stderr}` : `restart failed (exit ${restart.exitCode})`,
+        detail: restart.detail,
       };
     }
 
-    // Stamp immediately after a successful kickstart command.
+    // Stamp immediately after a successful restart command.
     // Even if subsequent health probing fails, this prevents rapid restart thrash.
     writeLastRestartMs(Date.now());
 
-    await Bun.sleep(5000);
-
-    const health = await Bun.$`curl -fsS -m 5 http://127.0.0.1:3111/`.quiet().nothrow();
-    if (health.exitCode !== 0) {
-      const stderr = trimOutput(health.stderr);
-      return {
-        fixed: false,
-        detail:
-          stderr.length > 0
-            ? `restart issued but health probe failed: ${stderr}`
-            : `restart issued but health probe failed (exit ${health.exitCode})`,
-      };
-    }
-
-    const body = trimOutput(health.stdout);
-    if (body.length === 0) {
-      return {
-        fixed: false,
-        detail: "restart issued but health probe returned empty response",
-      };
-    }
-
     return {
       fixed: true,
-      detail: "worker restarted and health endpoint responded",
+      detail: restart.detail,
     };
   } catch (error) {
     return {
