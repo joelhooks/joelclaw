@@ -5,7 +5,7 @@ import { BunContext, BunRuntime } from "@effect/platform-bun"
 import { Console, Effect } from "effect"
 import { Inngest } from "./inngest"
 import { respond } from "./response"
-import { ALLOWED_MODELS } from "../../gateway/src/commands/config.ts"
+import { GATEWAY_ALLOWED_MODELS as ALLOWED_MODELS } from "@joelclaw/inference-router"
 
 import { sendCmd } from "./commands/send"
 import { runsCmd, runCmd } from "./commands/runs"
