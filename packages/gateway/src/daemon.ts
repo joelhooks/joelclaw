@@ -3,7 +3,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@mariozechner/pi-ai";
-import { createAgentSession, DefaultResourceLoader, SessionManager, type LoadExtensionsResult } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader, SessionManager, type LoadExtensionsResult, calculateContextTokens, getLastAssistantUsage } from "@mariozechner/pi-coding-agent";
 import {
   drain,
   enqueue,
@@ -641,12 +641,26 @@ const wsClients = new Set<Bun.ServerWebSocket<unknown>>();
 
 function getStatusPayload(): Record<string, unknown> {
   const fb = fallbackController.state;
+  // Session context health
+  const entries = sessionManager.getEntries();
+  const lastUsage = getLastAssistantUsage(entries);
+  const contextTokens = lastUsage ? calculateContextTokens(lastUsage) : 0;
+  const MODEL_CONTEXT_WINDOW = 200_000;
+  const contextUsagePercent = contextTokens > 0 ? Math.round((contextTokens / MODEL_CONTEXT_WINDOW) * 100) : 0;
+
   return {
     sessionId: session.sessionId,
     isStreaming: responseChunks.length > 0,
     model: describeModel(session.model),
     uptimeMs: Date.now() - startedAt,
     pid: process.pid,
+    context: {
+      entries: entries.length,
+      estimatedTokens: contextTokens,
+      usagePercent: contextUsagePercent,
+      maxTokens: MODEL_CONTEXT_WINDOW,
+      health: contextUsagePercent > 85 ? "critical" : contextUsagePercent > 70 ? "elevated" : "ok",
+    },
     channelInfo: {
       ...channelInfo,
       redis: isRedisHealthy() ? "ok" : "degraded",
@@ -835,6 +849,55 @@ session.subscribe((event: any) => {
       _idleResolve = undefined;
       resolve();
     }
+
+    // ── Proactive context health check (ADR-0141) ───────────
+    // After each turn, estimate context usage and take action before we hit the cliff.
+    try {
+      const lastUsage = getLastAssistantUsage(sessionManager.getEntries());
+      if (lastUsage) {
+        const contextTokens = calculateContextTokens(lastUsage);
+        // Claude Opus context window is 200k (API rejects at ~180-190k)
+        const MODEL_CONTEXT_WINDOW = 200_000;
+        const usageRatio = contextTokens / MODEL_CONTEXT_WINDOW;
+
+        if (usageRatio > 0.85) {
+          console.warn("[gateway:health] context usage CRITICAL", {
+            contextTokens,
+            maxTokens: MODEL_CONTEXT_WINDOW,
+            usagePercent: Math.round(usageRatio * 100),
+            entries: sessionManager.getEntries().length,
+          });
+          void emitGatewayOtel({
+            level: "warn",
+            component: "daemon",
+            action: "daemon.context.critical",
+            success: true,
+            metadata: { contextTokens, usageRatio: Math.round(usageRatio * 100), entries: sessionManager.getEntries().length },
+          });
+          // Force compaction NOW before the next prompt blows up
+          console.log("[gateway:health] triggering proactive compaction");
+          session.compact("Context is at " + Math.round(usageRatio * 100) + "% capacity. Aggressively summarize to prevent overflow. Keep only essential recent context.").catch((err) => {
+            console.error("[gateway:health] proactive compaction failed", { err });
+          });
+        } else if (usageRatio > 0.7) {
+          console.log("[gateway:health] context usage elevated", {
+            contextTokens,
+            usagePercent: Math.round(usageRatio * 100),
+          });
+          void emitGatewayOtel({
+            level: "info",
+            component: "daemon",
+            action: "daemon.context.elevated",
+            success: true,
+            metadata: { contextTokens, usageRatio: Math.round(usageRatio * 100) },
+          });
+        }
+      }
+    } catch (healthErr) {
+      // Non-fatal — don't let monitoring break the drain loop
+      console.error("[gateway:health] context check failed", { healthErr });
+    }
+
     void drain();
   }
 });

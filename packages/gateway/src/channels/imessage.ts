@@ -11,8 +11,11 @@ import { emitGatewayOtel } from "../observability";
 import type { EnqueueFn } from "./redis";
 
 const SOCKET_PATH = process.env.IMSG_SOCKET_PATH ?? "/tmp/imsg.sock";
-const RECONNECT_DELAY_MS = 5_000;
+const RECONNECT_BASE_MS = 5_000;
+const RECONNECT_MAX_MS = 5 * 60_000; // 5 minutes max backoff
 const SEND_TIMEOUT_MS = 10_000;
+let reconnectDelay = RECONNECT_BASE_MS;
+let reconnectAttempts = 0;
 
 let allowedSender: string | undefined;
 let enqueuePrompt: EnqueueFn | undefined;
@@ -196,21 +199,37 @@ async function reconnectLoop(): Promise<void> {
   while (!stopRequested) {
     try {
       await connectAndRun();
+      // If we successfully connected, reset backoff
+      reconnectDelay = RECONNECT_BASE_MS;
+      reconnectAttempts = 0;
     } catch (err) {
       if (!stopRequested) {
-        console.error("[gateway:imessage] connection error", { error: String(err) });
+        reconnectAttempts += 1;
+        // Only log first failure and then every 10th attempt to avoid log spam
+        if (reconnectAttempts === 1 || reconnectAttempts % 10 === 0) {
+          console.error("[gateway:imessage] connection error", {
+            error: String(err),
+            attempt: reconnectAttempts,
+            nextDelayMs: reconnectDelay,
+          });
+        }
       }
     }
 
     if (!stopRequested) {
-      console.log(`[gateway:imessage] reconnecting in ${RECONNECT_DELAY_MS}ms`);
-      void emitGatewayOtel({
-        level: "warn",
-        component: "imessage-channel",
-        action: "imessage.socket.reconnecting",
-        success: false,
-      });
-      await new Promise((r) => setTimeout(r, RECONNECT_DELAY_MS));
+      if (reconnectAttempts <= 1 || reconnectAttempts % 10 === 0) {
+        console.log(`[gateway:imessage] reconnecting in ${Math.round(reconnectDelay / 1000)}s (attempt ${reconnectAttempts})`);
+        void emitGatewayOtel({
+          level: reconnectAttempts <= 3 ? "warn" : "info",
+          component: "imessage-channel",
+          action: "imessage.socket.reconnecting",
+          success: false,
+          metadata: { attempt: reconnectAttempts, delayMs: reconnectDelay },
+        });
+      }
+      await new Promise((r) => setTimeout(r, reconnectDelay));
+      // Exponential backoff: 5s → 10s → 20s → 40s → ... → 5min max
+      reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
     }
   }
 }

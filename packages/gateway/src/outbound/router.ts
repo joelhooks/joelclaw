@@ -185,7 +185,14 @@ export function routeResponse(
     if (prefix) target = channels.get(prefix);
   }
   if (!target) target = channels.get("console");
-  if (!target) return;
+  if (!target) {
+    console.error("[outbound-router] no channel handler found", {
+      source,
+      registeredChannels: [...channels.keys()],
+      textLength: normalized.text.length,
+    });
+    return;
+  }
 
   const payload: OutboundEnvelope | string = isStringCompatible(normalized)
     ? normalized.text
