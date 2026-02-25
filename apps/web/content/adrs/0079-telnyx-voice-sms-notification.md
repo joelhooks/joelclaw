@@ -24,7 +24,7 @@ Use **Telnyx** as the outbound voice and SMS provider via their REST API v2.
 
 ### Why Telnyx (not Twilio)
 
-- Already configured: SIP connection (`joelclaw-livekit-sip`), OVP, phone number (`+13606051697`) provisioned for LiveKit SIP bridge (ADR-0043)
+- Already configured: SIP connection (`joelclaw-livekit-sip`), OVP, phone number (`<redacted-phone>`) provisioned for LiveKit SIP bridge (ADR-0043)
 - TeXML support for TTS calls without webhook infrastructure
 - SMS on the same number (if enabled)
 - Cheaper than Twilio for low-volume

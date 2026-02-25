@@ -481,9 +481,9 @@ The initial taxonomy is mined from structured data already in the system:
 - Does not require changes to the session-lifecycle extension. Sessions are indexed after the fact by the ingestion pipeline.
 - Taxonomy is intentionally SKOS-inspired, not SKOS-compliant. We use the conceptual framework (concepts, labels, hierarchies, mappings) without RDF, OWL, or SPARQL. If interoperability with external SKOS systems becomes needed, the JSON schema maps cleanly to RDF.
 
-## Related Literature (pdf-brain @ clanker-001:3847)
+## Related Literature (pdf-brain @ internal host)
 
-The following books and papers in the pdf-brain library directly inform this ADR. Agents can query `http://100.95.167.75:3847/search` with `{"query": "...", "limit": N}` for deep-dive content.
+The following books and papers in the pdf-brain library directly inform this ADR. Agents can query `<internal-pdf-brain-search-endpoint>` with `{"query": "...", "limit": N}` for deep-dive content.
 
 | Document | Pages | Key Relevance |
 |---|---|---|

@@ -63,8 +63,8 @@ VIP DMs receive escalated classification:
 ## VIP Contact Registry
 
 Initial VIPs (from Vault contacts with `vip: true`):
-- Kent C. Dodds (`U030CU0CN`) — MEGA instructor, EpicWeb
-- Grzegorz Róg (`U03G1P81FBJ`) — MEGA producer, Brave Courses
+- VIP Contact A (`<slack-user-id>`) — priority collaborator
+- VIP Contact B (`<slack-user-id>`) — priority collaborator
 
 Registry grows as contacts are tagged VIP. No hard limit.
 

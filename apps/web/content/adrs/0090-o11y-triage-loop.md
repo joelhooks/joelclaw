@@ -16,6 +16,7 @@ deciders: joel
 - Root cause found for recurring `No function ID found in request`: Inngest archived app rows did **not** archive their functions in SQLite (`functions.archived_at` stayed null), so orphan cron functions (`system-bus-*` IDs) kept triggering.
 - Operational remediation applied: offline SQLite maintenance on `data-inngest-0` archived orphan functions tied to archived apps; after restart, no new orphan UUID runs appeared on the next `*/15` tick.
 - Follow-up hardening: restart guards now ignore legacy non-host slugs (`system-bus-*` vs `system-bus-host-*`) and UUID-only function names so stale archived metadata cannot block safe worker restarts.
+- 2026-02-25 regression: recurring `Unable to reach SDK URL` in `system/content-sync` traced to local worker boot failure caused by a malformed regex in `packages/system-bus/src/inngest/functions/nas-backup.ts` (`/input/output/.../` parsed as invalid flags). Fixing it to `/input\/output/.../` restored `http://127.0.0.1:3111` reachability.
 
 ## Context
 
