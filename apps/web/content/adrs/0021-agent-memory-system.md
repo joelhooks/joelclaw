@@ -1,6 +1,6 @@
 ---
 title: Adopt comprehensive agent memory system
-status: accepted
+status: shipped
 accepted: 2026-02-17
 date: 2026-02-15
 updated: 2026-02-21

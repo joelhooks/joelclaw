@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: shipped
 date: 2026-02-18
 decision-makers: Joel Hooks
 consulted: Claude (pi session 2026-02-18)

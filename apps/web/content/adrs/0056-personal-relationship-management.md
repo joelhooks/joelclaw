@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: superseded
 date: 2026-02-19
 deciders: Joel
 tags:

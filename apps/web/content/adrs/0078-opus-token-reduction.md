@@ -1,6 +1,6 @@
 ---
 type: adr
-status: accepted
+status: shipped
 date: 2026-02-20
 tags: [adr, cost, gateway, tokens, architecture, models]
 deciders: [joel]
