@@ -37,6 +37,7 @@ export { subscriptionCheckFeeds, subscriptionCheckSingle } from "./subscriptions
 export { o11yTriage } from "./o11y-triage";
 export { vipEmailReceived } from "./vip-email-received";
 export { dailyDigest } from "./daily-digest";
+export { sleepModeRequested, wakeModeRequested } from "./sleep-mode";
 export { mediaProcess } from "./media-process";
 export { telegramCallbackReceived } from "./telegram-callback";
 export { voiceCallCompleted } from "./voice-call-completed";

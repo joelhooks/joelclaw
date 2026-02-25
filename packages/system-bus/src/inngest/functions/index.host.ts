@@ -65,6 +65,7 @@ import { checkLoops } from "./check-loops";
 import { subscriptionCheckFeeds, subscriptionCheckSingle } from "./subscriptions";
 import { o11yTriage } from "./o11y-triage";
 import { dailyDigest } from "./daily-digest";
+import { sleepModeRequested, wakeModeRequested } from "./sleep-mode";
 import { meetingTranscriptIndex } from "./meeting-transcript-index";
 import {
   typesenseVaultSyncQueue,
@@ -164,6 +165,8 @@ export const hostFunctionDefinitions = [
   subscriptionCheckSingle,
   o11yTriage,
   dailyDigest,
+  sleepModeRequested,
+  wakeModeRequested,
   typesenseVaultSyncQueue,
   typesenseVaultSync,
   typesenseBlogSync,

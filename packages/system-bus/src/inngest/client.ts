@@ -677,6 +677,15 @@ export type Events = {
       requestedBy?: string;
     };
   };
+  "system/sleep.requested": {
+    data: {
+      duration?: string;
+      reason?: string;
+    };
+  };
+  "system/wake.requested": {
+    data: Record<string, never>;
+  };
   "adr/review.submitted": {
     data: {
       adrSlug: string;

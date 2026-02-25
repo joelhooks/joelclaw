@@ -35,6 +35,7 @@ import { nasCmd } from "./commands/nas"
 import { inngestCmd } from "./commands/inngest"
 import { otelCmd } from "./commands/otel"
 import { langfuseCmd } from "./commands/langfuse"
+import { sleepCmd, wakeCmd } from "./commands/sleep"
 
 // ── Root ─────────────────────────────────────────────────────────────
 
@@ -121,6 +122,8 @@ const root = Command.make("joelclaw", {}, () =>
           discover: "joelclaw discover <url> [-c context]",
           note: "joelclaw note <text> [--source source] [--tags a,b,c]",
           gateway: "joelclaw gateway {status|events|push|drain|test}",
+          sleep: "joelclaw sleep [--for <duration>] [--reason <reason>] | joelclaw sleep status",
+          wake: "joelclaw wake",
           tui: "joelclaw tui [--url ws://127.0.0.1:3018] [--observe]",
           review: "joelclaw review {list|approve|reject|approve-all|expire}",
           approvals: "joelclaw approvals {list|approve|deny|categories|history|reset}",
@@ -152,7 +155,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, docsCmd, emailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd])
+  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, docsCmd, emailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd])
 )
 
 const cli = Command.run(root, {
