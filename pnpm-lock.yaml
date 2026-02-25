@@ -335,6 +335,10 @@ importers:
         version: 5.9.2
 
   packages/inference-router:
+    dependencies:
+      typescript:
+        specifier: ^5
+        version: 5.9.2
     devDependencies:
       '@langfuse/otel':
         specifier: ^4.6.1
