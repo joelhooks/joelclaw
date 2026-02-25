@@ -1,13 +1,11 @@
-import { unified } from "unified";
-import remarkGfm from "remark-gfm";
-import remarkParse from "remark-parse";
 import { describe, expect, test } from "vitest";
-import { mdToTelegramHtmlAst, chunkTelegramHtml, type MdastNode } from "../ast-telegram";
+import { chunkTelegramHtml, mdToTelegramHtmlAst, parseMd } from "../src";
+import type { MdastNode } from "../src";
 
 const CHUNK_MAX = 4000;
 
 function parseNodes(md: string): MdastNode[] {
-  const root = unified().use(remarkParse).use(remarkGfm).parse(md) as { children: MdastNode[] };
+  const root = parseMd(md);
   return root.children ?? [];
 }
 
@@ -119,4 +117,3 @@ describe("mdToTelegramHtmlAst", () => {
     expect(chunks).toEqual([codeHtml]);
   });
 });
-

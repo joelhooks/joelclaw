@@ -1,7 +1,7 @@
-import { unified } from "unified";
-import remarkParse from "remark-parse";
-import remarkGfm from "remark-gfm";
-import type { Content, Root } from "mdast";
+import { parseMd } from "../parser";
+import { chunkByNodes } from "../chunker";
+import { escapeText, sanitizeAttribute } from "../escape";
+import type { FormatConverter, MdastNode, MdastRoot } from "../types";
 
 const CHUNK_MAX = 4000;
 
@@ -17,14 +17,6 @@ const ALLOWED_INLINE_TAGS = new Set([
   "a",
 ]);
 
-export type MdastNode = Content;
-
-type MdastRoot = Root & { children: MdastNode[] };
-
-function escapeText(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
 function hasChildren(node: unknown): node is { children: unknown[] } {
   return (
     typeof node === "object" &&
@@ -37,10 +29,6 @@ function hasChildren(node: unknown): node is { children: unknown[] } {
 function getChildren(node: MdastNode): MdastNode[] {
   if (!hasChildren(node)) return [];
   return (node.children as MdastNode[]).filter((child): child is MdastNode => child !== undefined);
-}
-
-function sanitizeAttribute(value: string): string {
-  return value.replace(/"/g, "&quot;");
 }
 
 function sanitizeHtmlNode(raw: string): string {
@@ -183,8 +171,7 @@ export function mdToTelegramHtmlAst(md: string): string {
   const normalized = md.trim();
   if (!normalized) return "";
 
-  const ast = unified().use(remarkParse).use(remarkGfm).parse(md) as MdastRoot;
-  const root = unified().use(remarkParse).use(remarkGfm).runSync(ast);
+  const root = parseMd(md) as MdastRoot;
   const children = (root as MdastRoot).children ?? [];
   const rendered = children.map(renderNode).filter((chunk) => chunk.trim().length > 0);
   if (!rendered.length) return "";
@@ -192,59 +179,25 @@ export function mdToTelegramHtmlAst(md: string): string {
   return collapseConsecutiveNewlines(rendered.join("\n")).trim();
 }
 
-function splitCodeBlockChunk(html: string): string[] {
-  const match = html.match(/^<pre><code([^>]*)>([\s\S]*)<\/code><\/pre>$/);
-  if (!match) return [html];
-  const open = `<pre><code${match[1]}>`;
-  const close = "</code></pre>";
-  const body = match[2] ?? "";
-  const maxBody = CHUNK_MAX - open.length - close.length;
-  if (maxBody <= 1 || body.length <= maxBody) return [html];
-
-  const chunks: string[] = [];
-  for (let index = 0; index < body.length; index += maxBody) {
-    chunks.push(`${open}${body.slice(index, index + maxBody)}${close}`);
-  }
-  return chunks;
-}
-
 export function chunkTelegramHtml(html: string, nodes: MdastNode[]): string[] {
   if (!html && nodes.length === 0) return [];
 
-  const renderedNodes = nodes
-    .map(renderNode)
-    .filter((chunk) => chunk.length > 0)
-    .map((chunk) => collapseConsecutiveNewlines(chunk));
+  const chunks = chunkByNodes(nodes, (node) => collapseConsecutiveNewlines(renderNode(node)), CHUNK_MAX);
+  if (!chunks.length) return [html];
+  return chunks;
+}
 
-  if (!renderedNodes.length) return [html];
+export class TelegramConverter implements FormatConverter {
+  readonly platform = "telegram";
+  readonly maxLength = CHUNK_MAX;
 
-  const chunks: string[] = [];
-  let current = "";
-  for (const nodeHtml of renderedNodes) {
-    if (/^<pre><code/.test(nodeHtml) && nodeHtml.includes("</code></pre>") && nodeHtml.length > CHUNK_MAX) {
-      if (current) {
-        chunks.push(current);
-        current = "";
-      }
-      chunks.push(...splitCodeBlockChunk(nodeHtml));
-      continue;
-    }
-
-    if (!current) {
-      current = nodeHtml;
-      continue;
-    }
-
-    const candidate = `${current}\n${nodeHtml}`;
-    if (candidate.length <= CHUNK_MAX) {
-      current = candidate;
-      continue;
-    }
-
-    chunks.push(current);
-    current = nodeHtml;
+  convert(md: string): string {
+    return mdToTelegramHtmlAst(md);
   }
 
-  if (current) chunks.push(current);
-  return chunks;
+  chunk(md: string): string[] {
+    const root = parseMd(md) as MdastRoot;
+    const html = this.convert(md);
+    return chunkTelegramHtml(html, root.children ?? []);
+  }
 }

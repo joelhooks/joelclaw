@@ -1,0 +1,17 @@
+{
+  "name": "@joelclaw/markdown-formatter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "unified": "^11.0.0",
+    "remark-parse": "^11.0.0",
+    "remark-gfm": "^4.0.0",
+    "@types/mdast": "^4.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.0"
+  }
+}
