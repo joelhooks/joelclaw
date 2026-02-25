@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in_progress"
 date: 2026-02-25
 decision-makers: "Joel, Codex agent"
 consulted: "ADR-0091, ADR-0092, ADR-0101, ADR-0135, ADR-0108, ADR-0109, claw-llm-router patterns, o11y-logging skill, inngest-events skill, inngest-flow-control skill"
@@ -209,6 +209,24 @@ Chosen option: **Option C**, because it preserves task-specific optimization and
 - [ ] Langfuse receives parity traces for the same sample set with model/tier/cost metadata.
 - [ ] Policy conflict can be simulated in staging: force one provider to fail and validate fallback progression (no silent recursion, no unbounded retry loop).
 - [ ] A migration report shows number of direct `pi -p --no-session --no-extensions` calls reduced by phase and identifies remaining exceptions.
+
+## Implementation progress update (2026-02-25)
+
+- `packages/system-bus/src/lib/inference.ts` is the shared inference entrypoint in use for migrated callsites.
+- Added `infer()` adoption to:
+  - `packages/system-bus/src/inngest/functions/content-review.ts`
+  - `packages/system-bus/src/inngest/functions/reflect.ts`
+  - `packages/system-bus/src/inngest/functions/memory/batch-review.ts`
+  - `packages/system-bus/src/inngest/functions/self-healing-router.ts`
+  - `packages/system-bus/src/inngest/functions/nas-backup.ts`
+  - `packages/system-bus/src/inngest/functions/discovery-capture.ts`
+- Remaining in-scope direct `pi`-style call paths still pending:
+  - `packages/system-bus/src/inngest/functions/task-triage.ts`
+  - `packages/system-bus/src/inngest/functions/vip-email-received.ts`
+  - `packages/system-bus/src/inngest/functions/content-sync.ts`
+  - `packages/system-bus/src/inngest/functions/media-process.ts`
+  - `packages/cli/src/commands/recall.ts`
+  - `packages/system-bus/src/inngest/functions/transcript-process.ts`
 
 ## ADR Review (Phase 3 checklist summary)
 
