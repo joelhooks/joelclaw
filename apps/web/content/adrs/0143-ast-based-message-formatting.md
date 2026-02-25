@@ -12,23 +12,23 @@ informed: joelclaw system owners
 
 The Telegram formatting pipeline has evolved through several iterations, each adding complexity to a fundamentally regex-based approach:
 
-1. [`5af27e4`](https://github.com/joelhooks/joelclaw/commit/5af27e4) — Initial Telegram channel: grammY bot with basic md→HTML, chunking, outbound routing
-2. [`fda48b6`](https://github.com/joelhooks/joelclaw/commit/fda48b6) (ADR-0069) — Improved Telegram formatting + smart notification filtering
-3. [`4fb1959`](https://github.com/joelhooks/joelclaw/commit/4fb1959) (ADR-0070) — Inline keyboards + callback handler. `send()` gains `buttons`, `silent`, `noPreview` options
-4. [`97df5c1`](https://github.com/joelhooks/joelclaw/commit/97df5c1) — Fix: escape HTML entities *before* markdown transforms (first escaping bug)
-5. [`35aa12a`](https://github.com/joelhooks/joelclaw/commit/35aa12a) (ADR-0104) — Priority message queue, dedup, Telegram HTML validation. Added `isWellFormedTelegramHtml()` validator + `stripHtmlTags()` fallback
-6. [`1150def`](https://github.com/joelhooks/joelclaw/commit/1150def) — Fix: protect existing HTML tags from double-escaping (second escaping bug, today). Added placeholder protection for valid Telegram tags before `escapeHtml()`
+1. [`5af27e4`](https://github.com/joelhooks/joelclaw/commit/5af27e4) - Initial Telegram channel: grammY bot with basic md→HTML, chunking, outbound routing
+2. [`fda48b6`](https://github.com/joelhooks/joelclaw/commit/fda48b6) (ADR-0069) - Improved Telegram formatting + smart notification filtering
+3. [`4fb1959`](https://github.com/joelhooks/joelclaw/commit/4fb1959) (ADR-0070) - Inline keyboards + callback handler. `send()` gains `buttons`, `silent`, `noPreview` options
+4. [`97df5c1`](https://github.com/joelhooks/joelclaw/commit/97df5c1) - Fix: escape HTML entities *before* markdown transforms (first escaping bug)
+5. [`35aa12a`](https://github.com/joelhooks/joelclaw/commit/35aa12a) (ADR-0104) - Priority message queue, dedup, Telegram HTML validation. Added `isWellFormedTelegramHtml()` validator + `stripHtmlTags()` fallback
+6. [`1150def`](https://github.com/joelhooks/joelclaw/commit/1150def) - Fix: protect existing HTML tags from double-escaping (second escaping bug, today). Added placeholder protection for valid Telegram tags before `escapeHtml()`
 
 Each fix adds another layer of regex protection. The `mdToTelegramHtml()` function is now ~80 lines of interleaved placeholder extraction, escaping, regex transforms, and placeholder restoration. ADR-0131 (Unified Channel Intelligence Pipeline) will add Slack and Discord channels, each needing their own format rules.
 
 **Related ADRs:**
-- [ADR-0069](0069-*) — Telegram formatting + notification filtering
-- [ADR-0070](0070-*) — Telegram Bot API upgrade (inline keyboards, rich send)
-- [ADR-0086](0086-*) — Gateway phases 5-9 (outbound routing)
-- [ADR-0104](0104-*) — Priority queue, dedup, HTML validation
-- [ADR-0131](0131-unified-channel-intelligence-pipeline.md) — Unified channel pipeline (adds Slack, Discord)
+- [ADR-0069](0069-*) - Telegram formatting + notification filtering
+- [ADR-0070](0070-*) - Telegram Bot API upgrade (inline keyboards, rich send)
+- [ADR-0086](0086-*) - Gateway phases 5-9 (outbound routing)
+- [ADR-0104](0104-*) - Priority queue, dedup, HTML validation
+- [ADR-0131](0131-unified-channel-intelligence-pipeline.md) - Unified channel pipeline (adds Slack, Discord)
 
-**Reference implementation:** [vercel/chat](https://github.com/vercel/chat) (Chat SDK) — `packages/chat/src/markdown.ts` + per-adapter `FormatConverter` classes. Uses unified/remark for markdown→mdast parsing, each adapter walks the AST to emit platform-native format. Pattern borrowed, not the dependency.
+**Reference implementation:** [vercel/chat](https://github.com/vercel/chat) (Chat SDK) - `packages/chat/src/markdown.ts` + per-adapter `FormatConverter` classes. Uses unified/remark for markdown→mdast parsing, each adapter walks the AST to emit platform-native format. Pattern borrowed, not the dependency.
 
 ## Context
 
@@ -39,7 +39,7 @@ The gateway currently uses fragile regex-based conversion in `mdToTelegramHtml()
 3. Applies regex-based markdown→HTML transforms
 4. Restores placeholders
 
-This just broke — valid HTML tags from LLM responses got double-escaped (commit 1150def fix). The regex approach is inherently fragile: every new edge case requires another placeholder/regex rule.
+This just broke - valid HTML tags from LLM responses got double-escaped (commit 1150def fix). The regex approach is inherently fragile: every new edge case requires another placeholder/regex rule.
 
 As joelclaw expands to more channels (ADR-0131: Slack, Discord, iMessage), each will need its own formatting rules. Regex converters per platform don't scale.
 
@@ -70,7 +70,7 @@ interface FormatConverter {
   extractPlainText(platformText: string): string;
 }
 
-// Message type — converters consume this
+// Message type - converters consume this
 type PostableMessage =
   | string                    // raw, no conversion
   | { markdown: string }      // parse → AST → platform format
@@ -80,13 +80,13 @@ type PostableMessage =
 
 ### Dependencies (lightweight)
 
-- `unified` — processor pipeline
-- `remark-parse` — markdown → mdast
-- `remark-gfm` — GFM support (tables, strikethrough)
-- `remark-stringify` — mdast → markdown (for round-tripping)
-- `mdast-util-to-string` — plain text extraction
+- `unified` - processor pipeline
+- `remark-parse` - markdown → mdast
+- `remark-gfm` - GFM support (tables, strikethrough)
+- `remark-stringify` - mdast → markdown (for round-tripping)
+- `mdast-util-to-string` - plain text extraction
 
-These are small, well-maintained, already in the JS ecosystem. No framework dependency — just the parser and AST types.
+These are small, well-maintained, already in the JS ecosystem. No framework dependency - just the parser and AST types.
 
 ### Platform Converters
 
@@ -121,19 +121,19 @@ Each converter walks the mdast tree and emits platform-native formatting:
 
 ### Key Design Principle
 
-**Parse once, never double-escape.** The AST separates structure from text content. `escapeHtml()` runs only on `text` node values during Telegram rendering — formatting tags are emitted by the converter, never present in the input text.
+**Parse once, never double-escape.** The AST separates structure from text content. `escapeHtml()` runs only on `text` node values during Telegram rendering - formatting tags are emitted by the converter, never present in the input text.
 
 This eliminates the entire class of "protect X before escaping, restore after" bugs.
 
 ### Package Location
 
-`packages/gateway/src/formatting/` — not a separate package yet. Contains:
-- `ast.ts` — parseMarkdown, stringifyMarkdown, type guards, node constructors
-- `telegram.ts` — TelegramFormatConverter
-- `slack.ts` — SlackFormatConverter (when ADR-0131 lands)
-- `discord.ts` — DiscordFormatConverter (when needed)
-- `plain.ts` — PlainFormatConverter
-- `types.ts` — FormatConverter interface, PostableMessage type
+`packages/gateway/src/formatting/` - not a separate package yet. Contains:
+- `ast.ts` - parseMarkdown, stringifyMarkdown, type guards, node constructors
+- `telegram.ts` - TelegramFormatConverter
+- `slack.ts` - SlackFormatConverter (when ADR-0131 lands)
+- `discord.ts` - DiscordFormatConverter (when needed)
+- `plain.ts` - PlainFormatConverter
+- `types.ts` - FormatConverter interface, PostableMessage type
 
 ### Migration
 
@@ -146,11 +146,11 @@ This eliminates the entire class of "protect X before escaping, restore after" b
 ## Consequences
 
 ### Easier
-- No more double-escaping bugs — structural impossibility
+- No more double-escaping bugs - structural impossibility
 - Each platform converter is testable in isolation with mdast fixtures
 - Adding new platforms = one new converter class
 - Round-trip capability: platform → AST → any other platform
-- LLM responses can use standard markdown — no platform-specific prompting needed
+- LLM responses can use standard markdown - no platform-specific prompting needed
 
 ### Harder
 - unified/remark adds ~5 small dependencies
@@ -175,19 +175,19 @@ Each `FormatConverter` includes a `validate(output: string): ValidationResult` m
 | `no-empty-tags` | warning | `<b></b>` with no content |
 | `ampersand-escape` | warning | Bare `&` not entity-escaped |
 
-Implementation: single-pass string scan with stack-based tag checker. No DOM parsing — fast enough for every message.
+Implementation: single-pass string scan with stack-based tag checker. No DOM parsing - fast enough for every message.
 
 ## Codex Review (2026-02-25)
 
 ### Strengths
-- `packages/gateway/src/channels/telegram.ts` already shows strong operational guardrails (`isWellFormedTelegramHtml`, `stripHtmlTags`, and fallback send paths), which aligns with ADR-0143’s goal of avoiding silent formatting failures.
+- `packages/gateway/src/channels/telegram.ts` already shows strong operational guardrails (`isWellFormedTelegramHtml`, `stripHtmlTags`, and fallback send paths), which aligns with ADR-0143's goal of avoiding silent formatting failures.
 - The ADR correctly identifies the core fragility in the current converter: escape/regex sequencing causes structural breakage; an AST path is the right long-term fix.
-- The planned per-platform converter interfaces in `packages/gateway/src/formatting/` match ADR-0131’s trajectory and should reduce regex duplication for Slack/Discord/iMessage.
+- The planned per-platform converter interfaces in `packages/gateway/src/formatting/` match ADR-0131's trajectory and should reduce regex duplication for Slack/Discord/iMessage.
 - The design principle of emitting tags from structure and escaping only text nodes directly addresses historical double-escape issues from `mdToTelegramHtml()`.
 
 ### Gaps
 - Telegram limit handling is not fully robust: `CHUNK_MAX = 4000` leaves headroom but chunking is not aware of HTML structure, so tags or entities can be split and become invalid even when pre-chunk validation passes.
-- `chunkMessage()` is purely length-based and doesn’t account for entity overhead, multiline UTF-8 boundaries, or tag boundaries, creating false negatives/positives near the 4096-char limit.
+- `chunkMessage()` is purely length-based and doesn't account for entity overhead, multiline UTF-8 boundaries, or tag boundaries, creating false negatives/positives near the 4096-char limit.
 - `isWellFormedTelegramHtml()` checks the whole message before chunking; it does not ensure each chunk stays valid after splitting.
 - `mdToTelegramHtml()` still depends on nested-regex transforms, so nested markdown or overlapping syntactic forms can mis-convert in ways an AST walk would avoid.
 - In fallback logic, HTML failures switch to plaintext but still send a single truncated chunk (`slice(0, CHUNK_MAX)`) and stop, which can drop content in long messages.
@@ -205,4 +205,11 @@ Implementation: single-pass string scan with stack-based tag checker. No DOM par
 - Add a migration safety harness: dual-run conversion in staging (old regex and AST converter), with fixture coverage for nested emphasis/links/code/blockquote, HTML-in-markdown, emoji/UTF-8, and 4KB+ messages.
 - Gate conversion mode via feature flag and emit telemetry (`converter_mode`, `invalid_html_rate`, `fallback_rate`, `truncated_chunks`) so rollback can be automatic and observable.
 - Keep unified/remark dependency scope local to `packages/gateway` and document any parser contract (`allowed_nodes`) as part of the ADR so converter expectations are explicit before production rollout.
-- Consider Telegram’s entity-based send API as a strategic alternative in a future phase if HTML parse_mode continues to be a recurring constraint under long-form/complex formatting.
+- Consider Telegram's entity-based send API as a strategic alternative in a future phase if HTML parse_mode continues to be a recurring constraint under long-form/complex formatting.
+
+## Implementation Log (2026-02-25)
+
+- **Package**: `@joelclaw/markdown-formatter` — 21 tests, `TelegramConverter` with `convert()`, `chunk()`, `validate()`
+- **Gateway wiring**: `formatByEnvelope()` runs converter behind `USE_AST_FORMATTER` env flag. Auto-validates result, falls back to regex on failure.
+- **Feature flag**: `USE_AST_FORMATTER=1` to enable. Default off — regex path is production default until validation period completes.
+- **Biome**: Package boundary enforced via `noRestrictedImports` (ADR-0144)

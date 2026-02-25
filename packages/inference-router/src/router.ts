@@ -1,4 +1,14 @@
 import {
+  ALLOWED_MODELS,
+  CANONICAL_MODELS,
+  DEFAULT_TASK_TO_MODELS,
+  GATEWAY_ALLOWED_MODELS,
+  INFERENCE_POLICY_VERSION,
+  MODEL_CATALOG,
+  normalizeModel,
+} from "./catalog";
+import {
+  INFERENCE_EVENT_NAMES,
   type InferenceCatalogEntry,
   type InferenceModelId,
   type InferencePlan,
@@ -6,17 +16,8 @@ import {
   type InferencePolicy,
   type InferenceRouteAttempt,
   type InferenceTask,
-  INFERENCE_EVENT_NAMES,
 } from "./schema";
-import {
-  ALLOWED_MODELS,
-  CANONICAL_MODELS,
-  DEFAULT_TASK_TO_MODELS,
-  GATEWAY_ALLOWED_MODELS,
-  MODEL_CATALOG,
-  INFERENCE_POLICY_VERSION,
-  normalizeModel,
-} from "./catalog";
+import { traceRouteDecision } from "./tracing";
 
 const DEFAULT_POLICY: InferencePolicy = {
   version: INFERENCE_POLICY_VERSION,
@@ -25,6 +26,8 @@ const DEFAULT_POLICY: InferencePolicy = {
   maxFallbackAttempts: 3,
   defaults: DEFAULT_TASK_TO_MODELS,
 };
+
+type RouteDecisionSource = "catalog" | "fallback" | "env";
 
 function normalizeTask(task: string | undefined, strict = false): InferenceTask {
   const normalized = (task ?? "default").trim().toLowerCase();
@@ -58,6 +61,15 @@ function uniqueAttempts(attempts: InferenceRouteAttempt[]): InferenceRouteAttemp
   return normalized;
 }
 
+function resolveRouteDecisionSource(
+  attempt: InferenceRouteAttempt,
+  requestedModelProvided: boolean,
+): RouteDecisionSource {
+  if (attempt.reason === "fallback") return "fallback";
+  if (requestedModelProvided && attempt.reason === "requested") return "env";
+  return "catalog";
+}
+
 export function buildPolicy(overrides?: Partial<InferencePolicy>): InferencePolicy {
   const merged: InferencePolicy = {
     ...DEFAULT_POLICY,
@@ -72,7 +84,7 @@ export function buildPolicy(overrides?: Partial<InferencePolicy>): InferencePoli
   return merged;
 }
 
-export function buildInferenceRoute(input: InferencePlanInput, policy = DEFAULT_POLICY): InferencePlan {
+export function routeInference(input: InferencePlanInput, policy = DEFAULT_POLICY): InferencePlan {
   const resolvedPolicy = buildPolicy({
     ...policy,
     strict: input.strict ?? policy.strict,
@@ -163,12 +175,25 @@ export function buildInferenceRoute(input: InferencePlanInput, policy = DEFAULT_
     throw new Error("inference-router: no model candidates available");
   }
 
+  for (const attempt of deduped) {
+    traceRouteDecision({
+      modelId: input.model ?? attempt.model,
+      resolvedModel: attempt.model,
+      provider: attempt.provider,
+      source: resolveRouteDecisionSource(attempt, input.model !== undefined),
+    });
+  }
+
   return {
     policyVersion: resolvedPolicy.version,
     requestedModel: normalizedModel,
     normalizedTask,
     attempts: deduped,
   };
+}
+
+export function buildInferenceRoute(input: InferencePlanInput, policy = DEFAULT_POLICY): InferencePlan {
+  return routeInference(input, policy);
 }
 
 export function isAllowedCatalogModel(value: string): value is InferenceModelId {

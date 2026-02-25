@@ -74,6 +74,20 @@ Consumer channels (Telegram, Slack, Discord, iMessage) implement `Channel` from 
 - **One telemetry interface.** All packages use `TelemetryEmitter` from `@joelclaw/telemetry`.
 - **One model resolver.** All model selection goes through `@joelclaw/inference-router` catalog.
 
+### Biome Enforcement — DO NOT BYPASS
+`biome.json` at repo root enforces package boundaries via `noRestrictedImports`. Relative imports to extracted modules (observability, model-fallback, message-store, vault-read) are **errors** — you must use `@joelclaw/*` packages instead.
+
+**Why this exists:** Agents write 90% of the code. Without automated enforcement, cross-package boundary violations creep back in within days. Biome catches violations at the exact moment they happen, with the file path, line number, and a message pointing to the correct package + ADR. This is the architectural immune system.
+
+**After any code change, run:**
+```bash
+pnpm biome check packages/ apps/
+```
+
+If Biome reports `noRestrictedImports` errors, **fix the imports** — do not suppress, do not add `biome-ignore`, do not remove the rule. The error message tells you exactly which `@joelclaw/*` package to import from instead.
+
+**Codex/loop prompts must include**: `Validation: pnpm biome check packages/ apps/` alongside the usual `bunx tsc --noEmit`.
+
 ## Core Rules
 
 1. Use CLI surfaces first (not plumbing)

@@ -246,4 +246,12 @@ Chosen option: **Option C**, because it preserves task-specific optimization and
 
 ## Open questions
 
-- What migration SLA is acceptable for bringing `gateway/src/commands/config.ts` and non-router gateway command surfaces fully onto the same policy metadata discipline as system bus CLI inference callsites?
+~~What migration SLA is acceptable for bringing `gateway/src/commands/config.ts` and non-router gateway command surfaces fully onto the same policy metadata discipline as system bus CLI inference callsites?~~ **Resolved 2026-02-25**: Gateway `resolveModel()` and `providerForModel()` now use catalog lookup from `@joelclaw/inference-router`. Hardcoded `MODEL_PROVIDERS` map removed. Commit `865e10d`.
+
+## Ship log (2026-02-25)
+
+- **Package**: 16/16 tests green, `resolveModelFromCatalog`, `normalizeCatalogModel`, `routeInference` exported
+- **Gateway wiring**: `daemon.ts:resolveModel()` uses catalog with console.log for observability. `config.ts:providerForModel()` delegates to catalog, falls back to "anthropic"
+- **Fallback chain**: env vars PI_MODEL/PI_MODEL_ID/PI_MODEL_PROVIDER still honored — catalog is advisory layer
+- **Biome enforcement** (ADR-0144): `noRestrictedImports` prevents regression to hardcoded maps
+- **Validation scheduled**: 2026-02-26 — verify Langfuse traces, catalog resolution logs, fallback behavior in production

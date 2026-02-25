@@ -334,7 +334,17 @@ importers:
         specifier: 5.9.2
         version: 5.9.2
 
-  packages/inference-router: {}
+  packages/inference-router:
+    devDependencies:
+      '@langfuse/otel':
+        specifier: ^4.6.1
+        version: 4.6.1(@opentelemetry/api@1.9.0)(@opentelemetry/core@2.5.1(@opentelemetry/api@1.9.0))(@opentelemetry/exporter-trace-otlp-http@0.212.0(@opentelemetry/api@1.9.0))(@opentelemetry/sdk-trace-base@2.5.1(@opentelemetry/api@1.9.0))
+      '@langfuse/tracing':
+        specifier: ^4.6.1
+        version: 4.6.1(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-trace-base':
+        specifier: ^2.5.1
+        version: 2.5.1(@opentelemetry/api@1.9.0)
 
   packages/lexicons: {}
 

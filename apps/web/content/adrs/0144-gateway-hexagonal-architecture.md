@@ -60,10 +60,13 @@ Each channel file implements this interface. The gateway composition root wires 
 ### Extraction Priority
 
 1. ~~**Model Fallback**~~ → `@joelclaw/model-fallback` ✅ Shipped (2026-02-25, 6 tests)
-2. **Message Store** → `@joelclaw/message-store` 🔄 In progress
+2. ~~**Message Store**~~ → `@joelclaw/message-store` ✅ Shipped (2026-02-25, 6 tests)
 3. ~~**Vault Reader**~~ → `@joelclaw/vault-reader` ✅ Shipped (2026-02-25, 4 tests)
-4. **Telemetry** — deferred (120 lines, 1 export, ~120 call sites — extracting doesn't reduce gateway size, just makes emitter reusable. Low ROI vs channel refactor.)
+4. ~~**Telemetry**~~ → `@joelclaw/telemetry` ✅ Shipped (2026-02-25, 3 tests) — canonical `TelemetryEmitter` interface + `createGatewayEmitter` factory. ~120 call sites migrated. model-fallback and message-store import from here.
 5. ~~**Channel interface**~~ ✅ Shipped (2026-02-25) — all 4 consumer channels implement `Channel`; Redis scoped as `EventBridge` port
+
+### Enforcement
+Biome v2.4.4 `noRestrictedImports` at repo root prevents regression. Relative imports to extracted modules are **errors** with "DO NOT BYPASS" messages pointing to the correct `@joelclaw/*` package. See `biome.json`.
 
 ## Consequences
 
