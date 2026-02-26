@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: shipped
 supersedes: 0088-joelclaw-design-system-responsive-layout.md
 date: 2026-02-23
 ---

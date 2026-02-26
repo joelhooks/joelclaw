@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: deferred
 date: 2026-02-23
 deciders: joel, panda
 tags: [gateway, discord, ux]

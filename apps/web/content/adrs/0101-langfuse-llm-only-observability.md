@@ -1,6 +1,6 @@
 ---
 type: adr
-status: accepted
+status: superseded
 date: 2026-02-22
 tags: [adr, observability, llm, langfuse, self-hosting]
 deciders: [joel]

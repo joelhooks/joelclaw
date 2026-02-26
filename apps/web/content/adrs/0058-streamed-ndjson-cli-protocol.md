@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: deferred
 date: 2026-02-19
 decision-makers: "Joel Hooks"
 consulted: "Claude (pi session 2026-02-19)"

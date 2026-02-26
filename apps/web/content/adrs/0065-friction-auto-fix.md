@@ -1,6 +1,6 @@
 ---
 title: Friction auto-fix — bias towards action
-status: accepted
+status: shipped
 accepted: 2026-02-19
 date: 2026-02-19
 deciders: Joel Hooks

@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: shipped
 date: 2026-02-24
 deciders: joel, panda
 tags: [gateway, imessage, macos, tcc, launchd, fda]

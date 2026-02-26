@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: shipped
 date: 2026-02-19
 deciders: joel, agent
 tags: [memory, approvals, imessage, knowledge-graph, skills]

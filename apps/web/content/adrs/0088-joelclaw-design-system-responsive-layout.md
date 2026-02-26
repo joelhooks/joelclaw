@@ -1,6 +1,6 @@
 ---
 type: adr
-status: accepted
+status: shipped
 date: 2026-02-21
 tags:
   - adr

@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: shipped
 date: 2026-02-19
 decision-makers: joel
 tags:
