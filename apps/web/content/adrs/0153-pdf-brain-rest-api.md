@@ -180,6 +180,8 @@ Implemented artifacts:
 Operational status at acceptance:
 - Internal bridge is live via Caddy route `https://panda.tail7af24.ts.net:5443` → `localhost:3838` → `Service/docs-api`
 - Direct local NodePort endpoint is live at `http://localhost:3838`
-- Public joelclaw.com exposure is configured at manifest level but depends on cluster ingress-controller activation/DNS wiring
+- Public internet path is live via Tailscale Funnel on 443: `https://panda.tail7af24.ts.net/api/docs/*`
+- `apps/web/next.config.js` includes rewrite rules for `https://joelclaw.com/api/docs/*` → `https://panda.tail7af24.ts.net/api/docs/*` (effective after web deploy)
+- Kubernetes ingress manifest remains in place for future in-cluster ingress-controller based exposure
 
 The previous `pdf-brain`-based implementation is rejected and has been rolled back from the standalone `pdf-brain` CLI path.
