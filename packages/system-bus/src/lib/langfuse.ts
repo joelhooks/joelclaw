@@ -1,6 +1,8 @@
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { setLangfuseTracerProvider, startObservation } from "@langfuse/tracing";
+import { resourceFromAttributes } from "@opentelemetry/resources";
 import { BasicTracerProvider } from "@opentelemetry/sdk-trace-base";
+import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 
 const LANGFUSE_ENABLED = (process.env.JOELCLAW_LLM_OBS_ENABLED ?? "1") !== "0";
 const SECRET_TTL = process.env.JOELCLAW_LANGFUSE_SECRET_TTL ?? "4h";
@@ -116,6 +118,7 @@ function ensureLangfuseTracing(): boolean {
     });
 
     const provider = new BasicTracerProvider({
+      resource: resourceFromAttributes({ [ATTR_SERVICE_NAME]: "joelclaw-system-bus" }),
       spanProcessors: [spanProcessor],
     });
 
@@ -325,6 +328,7 @@ export async function traceLlmGeneration(input: TraceLlmGenerationInput): Promis
 
     trace.updateTrace({
       name: input.traceName,
+      userId: "joel",
       sessionId: input.sessionId,
       tags: traceTags,
       metadata: traceMetadata,
