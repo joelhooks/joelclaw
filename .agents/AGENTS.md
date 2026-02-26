@@ -123,6 +123,13 @@ slog write --action configure --tool gateway --detail "rotated webhook secret le
 - Do not use destructive commands (`git reset --hard`, force-checkout) unless explicitly requested.
 - Never discard user changes without consent.
 
+7. CLI CANNOT BE BROKEN
+- The `joelclaw` CLI is the primary operator interface. If it crashes, the whole system is degraded.
+- **Every import in the CLI entry point must be crash-safe.** Heavy/optional deps (OTEL, Langfuse, etc.) MUST be lazy-loaded inside the functions that need them, never at the top level.
+- If a dependency breaks (version mismatch, missing export, runtime incompatibility), the CLI must degrade gracefully — skip the broken feature, not crash entirely.
+- **Test the CLI after every dep change**: `joelclaw status`, `joelclaw send --help`, `joelclaw runs --count 1`.
+- If the CLI is broken, fixing it is the highest priority — above feature work, above cleanup, above everything except active incidents.
+
 8. Always include links
 - When referencing files, repos, PRs, runs, docs, URLs, or any addressable resource, include the link.
 - Links provide context and save the reader a lookup. No bare references when a URL exists.

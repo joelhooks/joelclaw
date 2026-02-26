@@ -1,10 +1,27 @@
-import { LangfuseSpanProcessor } from "@langfuse/otel";
-import { setLangfuseTracerProvider, startObservation } from "@langfuse/tracing";
-import { BasicTracerProvider } from "@opentelemetry/sdk-trace-base";
-
 const LANGFUSE_ENABLED = (process.env.JOELCLAW_LLM_OBS_ENABLED ?? "1") !== "0";
 const SECRET_TTL = process.env.JOELCLAW_LANGFUSE_SECRET_TTL ?? "4h";
 const SECRET_TIMEOUT_MS = Number.parseInt(process.env.JOELCLAW_LANGFUSE_SECRET_TIMEOUT_MS ?? "2000", 10);
+
+type SpanProcessor = {
+  forceFlush: () => Promise<void>;
+};
+
+type ObservationHandle = {
+  update: (value: Record<string, unknown>) => void;
+  end: () => void;
+  updateTrace: (value: Record<string, unknown>) => void;
+  startObservation: (
+    name: string,
+    input?: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ) => ObservationHandle;
+};
+
+type StartObservation = (
+  name: string,
+  input?: Record<string, unknown>,
+  options?: Record<string, unknown>,
+) => ObservationHandle;
 
 export type RecallRewriteUsage = {
   inputTokens?: number;
@@ -35,7 +52,8 @@ export type RecallRewriteTraceInput = {
 
 let initialized = false;
 let disabledReason: string | null = null;
-let spanProcessor: LangfuseSpanProcessor | null = null;
+let spanProcessor: SpanProcessor | null = null;
+let startObservation: StartObservation | null = null;
 
 function readShellText(value: unknown): string {
   if (typeof value === "string") return value;
@@ -89,7 +107,7 @@ function resolveLangfuseConfig(): { publicKey: string; secretKey: string; baseUr
   };
 }
 
-function ensureLangfuseTracing(): boolean {
+async function ensureLangfuseTracing(): Promise<boolean> {
   if (!LANGFUSE_ENABLED) {
     disabledReason = "langfuse_disabled";
     return false;
@@ -101,6 +119,12 @@ function ensureLangfuseTracing(): boolean {
   if (!config) return false;
 
   try {
+    const { LangfuseSpanProcessor } = await import("@langfuse/otel");
+    const { BasicTracerProvider } = await import("@opentelemetry/sdk-trace-base");
+    const { setLangfuseTracerProvider, startObservation: importedStartObservation } = await import(
+      "@langfuse/tracing"
+    );
+
     spanProcessor = new LangfuseSpanProcessor({
       publicKey: config.publicKey,
       secretKey: config.secretKey,
@@ -115,9 +139,11 @@ function ensureLangfuseTracing(): boolean {
     });
 
     setLangfuseTracerProvider(provider);
+    startObservation = importedStartObservation;
     initialized = true;
     return true;
   } catch (error) {
+    console.warn("Warning: Langfuse tracing is unavailable, continuing without tracing.", maskError(error));
     disabledReason = `langfuse_init_failed:${maskError(error)}`;
     return false;
   }
@@ -164,10 +190,14 @@ function costDetailsFrom(usage?: RecallRewriteUsage): Record<string, number> | u
 }
 
 export async function traceRecallRewrite(input: RecallRewriteTraceInput): Promise<void> {
-  if (!ensureLangfuseTracing()) return;
+  if (!await ensureLangfuseTracing()) return;
+  if (!startObservation) {
+    return;
+  }
+  const startedTrace = startObservation;
 
   try {
-    const trace = startObservation("joelclaw.recall", {
+    const trace = startedTrace("joelclaw.recall", {
       input: {
         query: truncate(input.query, 800),
       },

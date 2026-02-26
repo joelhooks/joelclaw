@@ -7,7 +7,6 @@ import { randomUUID } from "node:crypto"
 import { respond, respondError } from "../response"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
 import { traceRecallRewrite } from "../langfuse"
-import { infer } from "@joelclaw/system-bus/src/lib/inference"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 const OTEL_INGEST_URL = process.env.JOELCLAW_OTEL_INGEST_URL || "http://localhost:3111/observability/emit"
@@ -20,6 +19,20 @@ const REWRITE_TIMEOUT_MS = 2_000
 const RECALL_REWRITE_MODEL = process.env.JOELCLAW_RECALL_REWRITE_MODEL?.trim() || "anthropic/claude-haiku-4-5"
 const RECALL_OTEL_ENABLED = (process.env.JOELCLAW_RECALL_OTEL ?? "1") !== "0"
 const RECALL_REWRITE_ENABLED = (process.env.JOELCLAW_RECALL_REWRITE ?? "1") !== "0"
+
+type InferenceResult = {
+  text: string
+  data?: unknown
+  provider?: string
+  model?: string
+  usage?: unknown
+}
+
+async function runInference(prompt: string, options: Record<string, unknown>): Promise<InferenceResult> {
+  const inference = await import("@joelclaw/system-bus/src/lib/inference")
+  const result = await inference.infer(prompt, options)
+  return result as InferenceResult
+}
 
 type RewriteStrategy = "haiku" | "openai" | "fallback" | "disabled"
 type BudgetProfile = "lean" | "balanced" | "deep" | "auto"
@@ -536,7 +549,7 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
   }
 
   async function runRouterRewrite(): Promise<RewrittenQuery> {
-    const result = await infer(rewritePrompt, {
+    const result = await runInference(rewritePrompt, {
       task: "rewrite",
       model: RECALL_REWRITE_MODEL,
       print: true,
