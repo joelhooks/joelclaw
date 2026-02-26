@@ -55,6 +55,10 @@ duration: "00:42:02"                # optional, for video-notes
 
 **Slugs**: Derived from filename. `my-cool-post.mdx` → `/my-cool-post`.
 
+## Media Embeds
+
+**Always embed YouTube videos** in `/cool` discoveries and articles when they add context. Use the `<YouTube id="VIDEO_ID" />` MDX component (available in both `.mdx` articles and `.md` discoveries). Extract the video ID from the URL (`youtube.com/watch?v=VIDEO_ID`). Place embeds near the top of the relevant section, before the prose discussion.
+
 ## Writing Voice
 
 Use the `joel-writing-style` skill for prose. Key traits: direct, first-person, strategic profanity, short paragraphs, bold emphasis, conversational but technical. Never corporate-speak.

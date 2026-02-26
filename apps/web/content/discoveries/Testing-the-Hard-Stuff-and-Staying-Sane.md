@@ -8,6 +8,8 @@ relevance: "John Hughes on property-based testing with QuickCheck — state mach
 
 # Testing the Hard Stuff and Staying Sane
 
+<YouTube id="zi0rHwfiX1Q" />
+
 John Hughes (co-inventor of QuickCheck) at Clojure/West 2014. The core argument: you can't test enough by hand because bugs hide in feature interactions (quadratic), three-way interactions (cubic), and race conditions (unbounded). The answer: don't write tests, generate them.
 
 The talk walks through property-based testing of stateful systems using state machine models — define a model, generate random sequences of API calls, check postconditions against the model, then shrink to a minimal failing example. Hughes demonstrates finding bugs in C circular buffers, Erlang process registries, and AUTOSAR automotive software where Volvo's existing test suite missed critical race conditions.

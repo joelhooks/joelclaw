@@ -8,6 +8,8 @@ relevance: "Joe Armstrong's Lambda Jam 2013 talk — the six rules for systems t
 
 # Systems That Run Forever, Self-Heal and Scale
 
+<YouTube id="cNICGEwmXLU" />
+
 Joe Armstrong at Lambda Jam 2013. The definitive talk on Erlang's architectural philosophy, distilled to six rules for building systems that never go down:
 
 1. **Isolation** — processes share nothing, communicate only through messages
