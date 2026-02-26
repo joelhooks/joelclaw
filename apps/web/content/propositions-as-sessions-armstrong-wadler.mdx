@@ -1,0 +1,101 @@
+---
+title: "Propositions as Sessions: What Armstrong Built and Wadler Proved"
+type: "article"
+date: "2026-02-26T11:00:00"
+description: "Joe Armstrong built fault-tolerant systems from intuition about processes and links. Phil Wadler proved that linear logic makes those same communication patterns deadlock-free by construction. Two paths to the same truth."
+tags: ["erlang", "beam", "linear-logic", "session-types", "concurrency", "research"]
+---
+
+Joe Armstrong started with a practical problem: telephone exchanges that handle 100,000 simultaneous calls cannot go down. Phil Wadler started with a theoretical question: what happens when you take the Curry-Howard correspondence — propositions are types, proofs are programs — and extend it to concurrent processes?
+
+They arrived at the same place from opposite directions. That convergence is one of the most interesting things in computing.
+
+## Armstrong's path: fault tolerance first
+
+Armstrong joined Ericsson's computer science lab around 1985. The problem wasn't concurrency — it was **fault tolerance**. But the problem domain was inherently concurrent. 100,000 people on a telephone exchange means 50,000 pairs talking simultaneously. The natural model is one process per call.
+
+He tried Smalltalk first. Objects and messages felt right, but Smalltalk had no real failure model and wasn't truly concurrent. Then Prolog — powerful logic, but when a computation fails you just get "No." Not exactly useful for keeping a phone network alive.
+
+Over four years (1985–1989), Armstrong, Robert Virding, and Mike Williams evolved Prolog into something new. The language they built had three things that had to be fast at the VM level: message passing, context switching, and error handling. Everything else — supervision trees, leadership election, distributed consensus — could be libraries. But those three primitives had to be in the bone.
+
+The breakthrough primitive was Mike Williams' idea: **links**. You link two processes together. If one dies, the other gets a message saying so. That's it. One mechanism. From that single primitive, they built everything — supervision trees, application structures, the entire fault tolerance story that makes Erlang what it is.
+
+There's a moment Armstrong describes from a 1990 conference in Bournemouth on distributed systems. After every talk, the Ericsson team would ask the same embarrassing question: "What happens if one of the nodes fails?" Every presenter said they assumed nodes don't fail. The Ericsson team sat there thinking they were either crazy or the rest of the world was wrong.
+
+They weren't crazy.
+
+## Wadler's path: propositions as types, extended
+
+Phil Wadler's work sits in a tradition that goes back to the 1930s. Church's lambda calculus, Gentzen's natural deduction, and the discovery that propositions in logic correspond to types in programming — the Curry-Howard correspondence. If you have a proof of a proposition, you have a program of that type. This isn't a metaphor. It's an isomorphism.
+
+The question Wadler pursued: can you extend this correspondence to **concurrent** programs?
+
+The answer came through [linear logic](https://en.wikipedia.org/wiki/Linear_logic), introduced by Jean-Yves Girard in 1987. Classical logic lets you use a proposition as many times as you want. Linear logic treats propositions as **resources** — use it once and it's consumed. This maps naturally to communication channels: you send a message on a channel, and the channel's state changes. You can't pretend you didn't send it.
+
+In his 2012 paper ["Propositions as Sessions"](https://homepages.inf.ed.ac.uk/wadler/papers/propositions-as-sessions/propositions-as-sessions.pdf), Wadler presented two calculi:
+
+**CP** (Classical Processes): a process calculus where types are propositions of classical linear logic. Every communication protocol is a logical proposition. Every process that follows the protocol is a proof.
+
+**GV**: a linear functional language with session types — closer to what a programmer would actually write. Wadler gave a translation from GV into CP, formalizing the connection between practical session-typed programming and the underlying logic.
+
+The result that matters: **deadlock freedom follows from the correspondence to linear logic.** If your program type-checks in this system, it cannot deadlock. Not "probably won't under normal conditions." Cannot. The logic forbids it.
+
+## Where the paths cross
+
+Armstrong's processes with links and Wadler's propositions as sessions solve the same fundamental problem: **how do you make concurrent communication safe?**
+
+Armstrong solved it pragmatically. Processes are isolated. They communicate only through messages. If something goes wrong, links propagate failure signals. Supervisors restart what died. The philosophy is "let it crash" — don't try to prevent every failure, build a system that recovers from any failure. This works extraordinarily well in practice. Ericsson's AXD 301 ATM switch achieved nine nines of availability (31 milliseconds of downtime per year).
+
+Wadler solved it logically. Communication channels have types that describe the protocol — what gets sent, in what order, with what responses expected. Linear types ensure channels are used exactly once (no double-sends, no forgotten receives). The logic guarantees deadlock freedom and protocol compliance at compile time.
+
+These aren't competing approaches. They're complementary layers:
+
+Armstrong gives you **runtime resilience**. When things go wrong (and they will), the system recovers. Links, supervisors, hot code reload, preemptive scheduling — all runtime mechanisms.
+
+Wadler gives you **compile-time correctness**. Before things go wrong, prove they can't go wrong in certain specific ways. Session types guarantee protocol compliance and deadlock freedom statically.
+
+The ideal system would have both. Wadler himself collaborated directly with the Erlang world — he and Simon Marlow wrote ["A practical subtyping system for Erlang"](https://dl.acm.org/doi/10.1145/258948.258962) at ICFP 1997. There's a wonderful anecdote from an interview where Wadler saw Erlang's hot code reload — two versions of the same module running simultaneously with all the same function names — and didn't believe it was possible until they demonstrated it live.
+
+## The lineage
+
+Session types didn't appear from nowhere. The intellectual thread:
+
+**1993** — Kohei Honda introduces session types as a way to statically check that concurrent programs follow communication protocols.
+
+**1994** — Samson Abramsky explores computational interpretations of linear logic. Bellin and Scott connect π-calculus to linear logic.
+
+**1998** — Honda, Kubo, and Vasconcelos extend session types to more complex protocols.
+
+**2010** — Luís Caires and Frank Pfenning discover a Curry-Howard correspondence between dual intuitionistic linear logic and session-typed π-calculus. This is the breakthrough that makes propositions-as-sessions real.
+
+**2012** — Wadler's ["Propositions as Sessions"](https://homepages.inf.ed.ac.uk/wadler/papers/propositions-as-sessions/propositions-as-sessions.pdf) reformulates this using classical linear logic, connects it to functional languages via GV, and proves deadlock freedom.
+
+**2016** — Carbone, Lindley, Montesi, Schürmann, and Wadler extend from two-party sessions to **multiparty** session types. Duality (two types related) generalizes to **coherence** (N types related). This matters because real systems have more than two participants.
+
+**2019** — Gradual session types bridge static and dynamic typing for session-typed communication. You can have some channels fully typed and others dynamically typed in the same system — crucial for polyglot microservice architectures.
+
+**2025** — [Par](https://github.com/trueagi-io/par), an experimental language, implements CP directly as a practical concurrent programming language. Wadler intended CP as theory and put his practical hopes on GV. Someone built the theory into a real language anyway.
+
+## Why this matters for agent systems
+
+[TODO: Joel's take on how this connects to JoelClaw and Koko specifically — the agent-to-agent communication patterns, whether session types could formalize the Redis bridge protocol, whether Koko's shadow executor is implicitly doing something like the CP/GV split]
+
+The parallel I find compelling: Armstrong's insight was that **the world is concurrent** — modeling it with sequential programs and then bolting on concurrency is backwards. Start with isolated processes and message passing because that's how reality works.
+
+Wadler's insight is that **communication has structure** — and that structure can be captured in types that the compiler checks. You don't just send bytes through a channel and hope the other side knows what to do with them. You describe the protocol as a type, and the compiler verifies both sides follow it.
+
+Agent systems are concurrent communicating processes. They send structured messages. They follow protocols (tool calls, function results, handoffs). They can deadlock (agent A waits for agent B which waits for agent A). They crash and need supervision.
+
+Armstrong built the runtime for this. Wadler built the type theory for it. We're still figuring out how to put them together.
+
+## Further reading
+
+- Joe Armstrong, ["A History of Erlang"](https://dl.acm.org/doi/10.1145/1238844.1238850) (HOPL III, 2007) — the definitive origin story, from Prolog experiments to AXD 301
+- Joe Armstrong, ["Let's Talk Concurrency"](https://www.erlang-solutions.com/blog/lets-talkconcurrency-with-joe-armstrong/) — transcript of Armstrong explaining the fault-tolerance-first design philosophy
+- Philip Wadler, ["Propositions as Sessions"](https://homepages.inf.ed.ac.uk/wadler/papers/propositions-as-sessions/propositions-as-sessions.pdf) (ICFP 2012, JFP 2014) — the landmark paper
+- Philip Wadler, ["Propositions as Types"](https://homepages.inf.ed.ac.uk/wadler/papers/propositions-as-types/propositions-as-types.pdf) — the broader Curry-Howard story, good background
+- Sam Lindley and J. Garrett Morris, ["A Semantics for Propositions as Sessions"](https://link.springer.com/chapter/10.1007/978-3-662-46669-8_23) (ESOP 2015) — operational semantics for GV, proves deadlock-freedom, determinism, and termination
+- Wadler and Marlow, ["A practical subtyping system for Erlang"](https://dl.acm.org/doi/10.1145/258948.258962) (ICFP 1997) — where the Wadler/Erlang worlds directly intersected
+- [Par language](https://github.com/trueagi-io/par) — CP as a real programming language
+- [ADR-0114: Elixir/BEAM/Jido Migration](/adrs/0114-elixir-beam-jido-migration) — JoelClaw's evaluation of the BEAM runtime
+- [The Soul of Erlang Made Me Question Everything](/soul-of-erlang-beam-evaluation) — companion piece on Saša Jurić's demo
