@@ -35,7 +35,9 @@ For port mappings, recovery procedures, and cluster recreation steps, read [refe
 
 ```bash
 kubectl get pods -n joelclaw                          # all pods
+curl -s localhost:3111/api/inngest                     # system-bus-worker → 200
 curl -s localhost:7880/                                # LiveKit → "OK"
+curl -s localhost:8108/health                          # Typesense → {"ok":true}
 curl -s localhost:8288/health                          # Inngest → {"status":200}
 curl -s localhost:9627/xrpc/_health                    # PDS → {"version":"..."}
 kubectl exec -n joelclaw redis-0 -- redis-cli ping     # → PONG
@@ -48,6 +50,7 @@ kubectl exec -n joelclaw redis-0 -- redis-cli ping     # → PONG
 | Redis | StatefulSet | redis-0 | 6379→6379 | No |
 | Typesense | StatefulSet | typesense-0 | 8108→8108 | No |
 | Inngest | StatefulSet | inngest-0 | 8288→8288, 8289→8289 | No |
+| system-bus-worker | Deployment | system-bus-worker-* | 3111→3111 | No |
 | LiveKit | Deployment | livekit-server-* | 7880→7880, 7881→7881 | Yes (livekit/livekit-server 1.9.0) |
 | PDS | Deployment | bluesky-pds-* | 9627→**3000** | Yes (nerkho/bluesky-pds 0.4.2) |
 
@@ -106,10 +109,23 @@ secrets lease ghcr_pat | docker login ghcr.io -u joelhooks --password-stdin
 ```
 Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh auth` is stale, use the Docker login above before running the script, or patch it to use `secrets lease ghcr_pat` directly.
 
+## Resilience Rules (ADR-0148)
+
+1. **NEVER use `kubectl port-forward` for persistent services.** All services MUST use NodePort + Docker port mappings. Port-forwards silently die on idle/restart/pod changes.
+2. **All workloads MUST have liveness + readiness + startup probes.** Missing probes = silent hangs that never recover.
+3. **After any Docker/Colima/node restart**: remove control-plane taint, verify flannel, check all pods reach Running.
+4. **PVC reclaimPolicy is Delete** — deleting a PVC = permanent data loss. Never delete PVCs without backup.
+5. **Colima VM disk is limited (19GB).** Monitor with `colima ssh -- df -h /`. Alert at >80%.
+
+### Current Probe Gaps (fix when touching these services)
+- Typesense: missing liveness probe (hangs won't be detected)
+- Bluesky PDS: missing readiness and startup probes
+- system-bus-worker: missing startup probe
+
 ## Danger Zones
 
-1. **Never kill processes on forwarded ports** — Lima SSH mux master handles ALL tunnels. Killing anything on 6379/8288/etc may kill mux → all ports die.
-2. **Adding ports = cluster recreation** — Docker port maps are immutable. See [references/operations.md](references/operations.md) for the full recreation procedure.
+1. **Never kill Lima SSH mux** — it handles ALL tunnels. Killing anything on the SSH socket kills all port access.
+2. **Adding Docker port mappings** — can be hot-added without cluster recreation via `hostconfig.json` edit. See [references/operations.md](references/operations.md) for the procedure.
 3. **Inngest `host.k3d.internal`** — Stale k3d hostname in manifest. Works anyway (worker uses connect mode, not polling). Fix is pending.
 
 ## Key Files

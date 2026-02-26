@@ -11,6 +11,8 @@ Traffic path: `Mac:port → Lima SSH tunnel → Docker port map → Talos NodePo
 | 7881 | 7881 | 7881 | LiveKit WebRTC TCP | |
 | 8288 | 8288 | 8288 | Inngest HTTP | Dashboard + Event API |
 | 8289 | 8289 | 8289 | Inngest WS | Connect gateway (gRPC) |
+| 3111 | 3111 | 3111 | system-bus-worker | Inngest SDK serve endpoint |
+| 8108 | 8108 | 8108 | Typesense | Search + OTEL event storage |
 | 9627 | **3000** | **3000** | Bluesky PDS | ⚠️ Asymmetric mapping |
 | 64784* | 6443 | — | k8s API | Auto-assigned by talosctl |
 | 64785* | 50000 | — | talosctl API | Auto-assigned by talosctl |
@@ -28,6 +30,55 @@ ssh -F ~/.colima/_lima/colima/ssh.config lima-colima \
   "docker inspect joelclaw-controlplane-1 --format '{{json .HostConfig.PortBindings}}'" \
   | python3 -m json.tool
 ```
+
+### Adding Ports Without Cluster Recreation
+
+To hot-add Docker port mappings to the Talos container (preserves all PVCs/data):
+
+```bash
+# 1. Stop the container
+docker stop joelclaw-controlplane-1
+
+# 2. Stop Docker in Colima VM
+colima ssh -- sudo systemctl stop docker.socket
+colima ssh -- sudo systemctl stop docker
+
+# 3. Edit hostconfig.json (add to PortBindings)
+CONTAINER_ID=$(docker inspect joelclaw-controlplane-1 --format '{{.Id}}')
+CONFIG=/var/lib/docker/containers/$CONTAINER_ID/hostconfig.json
+colima ssh -- sudo python3 -c "
+import json
+with open('$CONFIG') as f: config = json.load(f)
+config['PortBindings']['NEW_PORT/tcp'] = [{'HostIp': '0.0.0.0', 'HostPort': 'NEW_PORT'}]
+with open('$CONFIG', 'w') as f: json.dump(config, f)
+"
+
+# 4. Also update config.v2.json ExposedPorts
+CONFIG_V2=/var/lib/docker/containers/$CONTAINER_ID/config.v2.json
+colima ssh -- sudo python3 -c "
+import json
+with open('$CONFIG_V2') as f: config = json.load(f)
+config['Config']['ExposedPorts']['NEW_PORT/tcp'] = {}
+with open('$CONFIG_V2', 'w') as f: json.dump(config, f)
+"
+
+# 5. Restart Docker + container
+colima ssh -- sudo systemctl start docker.socket
+colima ssh -- sudo systemctl start docker
+docker start joelclaw-controlplane-1
+
+# 6. Remove control-plane taint (returns after Docker restart)
+kubectl taint nodes joelclaw-controlplane-1 \
+  node-role.kubernetes.io/control-plane:NoSchedule- || true
+
+# 7. Convert the k8s service to NodePort
+kubectl patch svc SERVICE_NAME -n joelclaw --type='json' -p='[
+  {"op": "replace", "path": "/spec/type", "value": "NodePort"},
+  {"op": "replace", "path": "/spec/ports/0/nodePort", "value": NEW_PORT}
+]'
+```
+
+**NEVER use `kubectl port-forward` for persistent services.** All services must be NodePort with Docker port mappings.
 
 ## Recovery Procedures
 
@@ -160,7 +211,7 @@ talosctl cluster create docker \
   --name joelclaw \
   --cpus-controlplanes "2.0" \
   --memory-controlplanes "4GiB" \
-  --exposed-ports "6379:6379/tcp,7880:7880/tcp,7881:7881/tcp,8288:8288/tcp,8289:8289/tcp,9627:3000/tcp" \
+  --exposed-ports "3111:3111/tcp,6379:6379/tcp,7880:7880/tcp,7881:7881/tcp,8108:8108/tcp,8288:8288/tcp,8289:8289/tcp,9627:3000/tcp" \
   --workers 0 \
   --config-patch @/tmp/talos-patch.yaml \
   --subnet "10.5.0.0/24"
