@@ -12,7 +12,6 @@ import { inngest } from "../client";
 import type { GatewayContext } from "../middleware/gateway";
 import { execSync } from "child_process";
 import { infer } from "../../lib/inference";
-import { MODEL } from "../../lib/models";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 const FRONT_API = "https://api2.frontapp.com";
@@ -97,13 +96,10 @@ Respond with ONLY valid JSON, no markdown fencing:
     const rawPrompt = readFileSync(tmpFile, "utf-8");
 
     const result = await infer(rawPrompt, {
-      task: "classification",
-      model: MODEL.HAIKU,
+      agent: "classifier",
       system: "You classify emails as archive or keep. Respond with ONLY valid JSON, no markdown.",
       component: "email-cleanup",
       action: "email.cleanup.classify",
-      json: true,
-      noTools: true,
       print: true,
       timeout: 120_000,
       env: {

@@ -16,6 +16,7 @@ import {
   INFERENCE_EVENT_NAMES,
   inferProviderFromModel,
   normalizeModel,
+  resolveProfile,
 } from "@joelclaw/inference-router";
 import { parsePiJsonAssistant, type LlmUsage, traceLlmGeneration } from "./langfuse";
 import { emitOtelEvent } from "../observability/emit";
@@ -30,6 +31,7 @@ export type InferOptions = BuildRouteInput & {
   timeout?: number;
   json?: boolean;
   system?: string;
+  agent?: string;
   component?: string;
   action?: string;
   print?: boolean;
@@ -169,24 +171,34 @@ function wrapError(error: unknown, attemptIndex: number, metadata?: string): PiA
 }
 
 export async function infer(prompt: string, opts: InferOptions = {}): Promise<InferResult> {
+  const profile = opts.agent ? resolveProfile(opts.agent) : undefined;
+  if (opts.agent && !profile) {
+    throw new Error(`infer: unknown agent profile "${opts.agent}"`);
+  }
+
+  const resolvedOpts: InferOptions = {
+    ...profile?.defaults,
+    ...opts,
+  };
+
   const inputPrompt = normalizeText(prompt);
   if (!inputPrompt) {
     throw new Error("inference: empty prompt");
   }
 
-  const component = normalizeText(opts.component) || "system-bus.inference";
-  const action = normalizeText(opts.action) || "inference.generate";
-  const requestId = normalizeText(opts.requestId) || randomUUID();
-  const timeoutMs = normalizeTimeout(opts.timeout ?? DEFAULT_TIMEOUT_MS);
-  const requestedModel = normalizeText(opts.model);
+  const component = normalizeText(resolvedOpts.component) || "system-bus.inference";
+  const action = normalizeText(resolvedOpts.action) || "inference.generate";
+  const requestId = normalizeText(resolvedOpts.requestId) || randomUUID();
+  const timeoutMs = normalizeTimeout(resolvedOpts.timeout ?? DEFAULT_TIMEOUT_MS);
+  const requestedModel = normalizeText(resolvedOpts.model);
   const isProduction = process.env.NODE_ENV === "production";
   const policy = buildPolicy({
-    ...opts.policy,
-    version: opts.policyVersion ?? opts.policy?.version,
-    strict: opts.strict ?? opts.policy?.strict ?? isProduction,
-    allowLegacy: opts.allowLegacy ?? opts.policy?.allowLegacy,
-    maxFallbackAttempts: opts.maxAttempts ?? opts.policy?.maxFallbackAttempts ?? 3,
-    defaults: opts.policy?.defaults ?? undefined,
+    ...resolvedOpts.policy,
+    version: resolvedOpts.policyVersion ?? resolvedOpts.policy?.version,
+    strict: resolvedOpts.strict ?? resolvedOpts.policy?.strict ?? isProduction,
+    allowLegacy: resolvedOpts.allowLegacy ?? resolvedOpts.policy?.allowLegacy,
+    maxFallbackAttempts: resolvedOpts.maxAttempts ?? resolvedOpts.policy?.maxFallbackAttempts ?? 3,
+    defaults: resolvedOpts.policy?.defaults ?? undefined,
   });
 
   const normalizedRequestedModel = requestedModel ? normalizeModel(requestedModel, policy.allowLegacy) : undefined;
@@ -198,13 +210,13 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
 
   const route = buildInferenceRoute(
     {
-      task: opts.task,
+      task: resolvedOpts.task,
       model: requestedModel,
-      provider: opts.provider,
-      maxAttempts: opts.maxAttempts,
-      allowLegacy: opts.allowLegacy,
-      strict: opts.strict,
-      policyVersion: opts.policyVersion,
+      provider: resolvedOpts.provider,
+      maxAttempts: resolvedOpts.maxAttempts,
+      allowLegacy: resolvedOpts.allowLegacy,
+      strict: resolvedOpts.strict,
+      policyVersion: resolvedOpts.policyVersion,
     },
     policy,
   );
@@ -221,7 +233,14 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
       task: route.normalizedTask,
       requestedModel: route.requestedModel ?? requestedModel,
       attemptsPlanned: route.attempts.length,
-      ...(opts.metadata ?? {}),
+      ...(resolvedOpts.metadata ?? {}),
+      ...(profile
+        ? {
+            agentProfile: profile.name,
+            agentTags: profile.tags,
+            agentToolset: profile.builtinTools,
+          }
+        : {}),
     },
   });
 
@@ -256,7 +275,14 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
         provider: attempt.provider,
         reason: attempt.reason,
       })),
-      ...(opts.metadata ?? {}),
+      ...(resolvedOpts.metadata ?? {}),
+      ...(profile
+        ? {
+            agentProfile: profile.name,
+            agentTags: profile.tags,
+            agentToolset: profile.builtinTools,
+          }
+        : {}),
     },
   });
 
@@ -272,11 +298,16 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
       attemptsLeft -= 1;
       const attemptStartedAt = Date.now();
       try {
-        const piResult = await runPiAttempt(promptPath, attempt.model, timeoutMs, { system: opts.system });
+        const piResult = await runPiAttempt(promptPath, attempt.model, timeoutMs, {
+          system: resolvedOpts.system,
+          print: resolvedOpts.print,
+          noTools: resolvedOpts.noTools,
+          env: resolvedOpts.env,
+        });
 
         if (piResult.exitCode !== 0) {
           const stderr = normalizeText(piResult.stderr);
-          if (!piResult.rawText && !opts.json) {
+          if (!piResult.rawText && !resolvedOpts.json) {
             throw wrapError(
               new Error(`pi exited ${piResult.exitCode}: ${stderr || "empty output"}`),
               attempt.attempt,
@@ -286,7 +317,7 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
         }
 
         const outputText = piResult.rawText.trim();
-        const parsedData = opts.json ? parseJsonFromText(outputText) : undefined;
+        const parsedData = resolvedOpts.json ? parseJsonFromText(outputText) : undefined;
 
         const metadata = {
           requestId,
@@ -297,7 +328,14 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
           provider: piResult.provider || attempt.provider,
           fallbackUsed: attempt.attempt > 0,
           durationMs: piResult.durationMs,
-          ...(opts.metadata ?? {}),
+          ...(resolvedOpts.metadata ?? {}),
+          ...(profile
+            ? {
+                agentProfile: profile.name,
+                agentTags: profile.tags,
+                agentToolset: profile.builtinTools,
+              }
+            : {}),
         };
 
         const provider = (piResult.provider || attempt.provider) ?? undefined;
@@ -316,6 +354,7 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
         await traceLlmGeneration({
           traceName: "joelclaw.inference",
           generationName: "system-bus.infer",
+          tags: profile?.tags ?? [],
           component,
           action,
           input: {
@@ -338,7 +377,14 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
             requestId,
             policyVersion: route.policyVersion,
             attemptIndex: attempt.attempt,
-            ...(opts.metadata ?? {}),
+            ...(resolvedOpts.metadata ?? {}),
+            ...(profile
+              ? {
+                  agentProfile: profile.name,
+                  agentTags: profile.tags,
+                  agentToolset: profile.builtinTools,
+                }
+              : {}),
           },
         });
 
@@ -358,6 +404,7 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
         await traceLlmGeneration({
           traceName: "joelclaw.inference",
           generationName: "system-bus.infer",
+          tags: profile?.tags ?? [],
           component,
           action,
           input: {
@@ -378,7 +425,14 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
             policyVersion: route.policyVersion,
             attemptIndex: attempt.attempt,
             fallbackRemaining: attemptsLeft,
-            ...(opts.metadata ?? {}),
+            ...(resolvedOpts.metadata ?? {}),
+            ...(profile
+              ? {
+                  agentProfile: profile.name,
+                  agentTags: profile.tags,
+                  agentToolset: profile.builtinTools,
+                }
+              : {}),
           },
         });
 
@@ -397,7 +451,7 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
             model: attempt.model,
             provider: attempt.provider,
             fallbackRemaining: attemptsLeft,
-            ...(opts.metadata ?? {}),
+            ...(resolvedOpts.metadata ?? {}),
           },
         });
 
@@ -408,6 +462,7 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
     await traceLlmGeneration({
       traceName: "joelclaw.inference",
       generationName: "system-bus.infer",
+      tags: profile?.tags ?? [],
       component,
       action,
       input: {
@@ -423,6 +478,14 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
         task: route.normalizedTask,
         requestId,
         policyVersion: route.policyVersion,
+        ...(resolvedOpts.metadata ?? {}),
+        ...(profile
+          ? {
+              agentProfile: profile.name,
+              agentTags: profile.tags,
+              agentToolset: profile.builtinTools,
+            }
+          : {}),
       },
     });
 

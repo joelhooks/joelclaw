@@ -22,6 +22,7 @@ export type TraceLlmGenerationInput = {
   generationName: string;
   component: string;
   action: string;
+  tags?: string[];
   input: unknown;
   output?: unknown;
   provider?: string;
@@ -32,6 +33,9 @@ export type TraceLlmGenerationInput = {
   metadata?: Record<string, unknown>;
   sessionId?: string;
   runId?: string;
+  agentProfile?: string;
+  agentTags?: string[];
+  agentToolset?: string[];
 };
 
 type PiAssistantMessage = {
@@ -131,6 +135,11 @@ function stripOtelMetadata(metadata: Record<string, unknown> | undefined): Recor
   return cleaned;
 }
 
+function mergeTraceTags(inputTags: string[] = []): string[] {
+  const tags = ["joelclaw", "system-bus", ...inputTags.filter((tag) => typeof tag === "string" && tag.trim().length > 0)];
+  return [...new Set(tags)];
+}
+
 function usageDetailsFrom(usage?: LlmUsage): Record<string, number> | undefined {
   if (!usage) return undefined;
 
@@ -228,6 +237,7 @@ export async function traceLlmGeneration(input: TraceLlmGenerationInput): Promis
   try {
     const additionalMetadata = stripOtelMetadata(input.metadata);
     const baseMetadata = additionalMetadata ?? {};
+    const traceTags = mergeTraceTags(input.tags);
     const joelclawMetadata = {
       source: "system-bus",
       component: input.component,
@@ -245,8 +255,11 @@ export async function traceLlmGeneration(input: TraceLlmGenerationInput): Promis
     trace.updateTrace({
       name: input.traceName,
       sessionId: input.sessionId,
-      tags: ["joelclaw", "system-bus"],
+      tags: traceTags,
       metadata: {
+        agentProfile: input.agentProfile,
+        agentTags: input.agentTags,
+        agentToolset: input.agentToolset,
         runId: input.runId,
         joelclaw: joelclawMetadata,
         ...baseMetadata,

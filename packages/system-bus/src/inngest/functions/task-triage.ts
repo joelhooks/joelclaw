@@ -19,9 +19,6 @@ const TRIAGE_NOTIFIED_KEY = "tasks:triage:last-notified";
 const TRIAGE_HASH_KEY = "tasks:triage:last-hash";
 const TRIAGE_TTL_SECONDS = 2 * 60 * 60; // 2 hours
 
-// Sonnet 4.6 — task triage has real consequences (what the agent works on next).
-const TRIAGE_MODEL = "anthropic/claude-sonnet-4-6";
-
 const TRIAGE_SYSTEM_PROMPT = `You review Todoist tasks for Joel Hooks' personal AI system (joelclaw).
 
 The agent runs on a Mac Mini with access to: file system, git, CLI tools (todoist-cli, granola, slog, gog, etc), Inngest event bus, Redis, Typesense, Vault (Obsidian notes), web search, code execution (TypeScript/Python/Bash), GitHub API, email (Front + Gmail via EmailPort), SSH to NAS, Kubernetes cluster.
@@ -188,8 +185,7 @@ export const taskTriage = inngest.createFunction(
       ].join("\n");
 
       const { text } = await infer(userPrompt, {
-        task: "classification",
-        model: TRIAGE_MODEL,
+        agent: "triage",
         system: TRIAGE_SYSTEM_PROMPT,
         component: "task-triage",
         action: "tasks.triage.classify",

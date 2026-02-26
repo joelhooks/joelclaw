@@ -263,11 +263,9 @@ async function runReflectorLLM(
     ? `${REFLECTOR_SYSTEM_PROMPT}\n\n${guidance}`
     : REFLECTOR_SYSTEM_PROMPT;
   const userPrompt = REFLECTOR_USER_PROMPT(observations, memoryContent);
-  const reflectorModel = "anthropic/claude-haiku";
   const startedAt = Date.now();
   const result = await infer(userPrompt, {
-    task: "summary",
-    model: reflectorModel,
+    agent: "reflector",
     system: systemPrompt,
     component: "reflect",
     action: "reflect.llm.summarize",
@@ -285,7 +283,7 @@ async function runReflectorLLM(
     inputTokens,
     outputTokens,
     provider: result.provider,
-    model: result.model ?? reflectorModel,
+    model: result.model,
     usage: result.usage,
     durationMs: Date.now() - startedAt,
   };
