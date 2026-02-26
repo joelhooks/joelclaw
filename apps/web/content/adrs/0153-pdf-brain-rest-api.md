@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-02-26
 parent: ADR-0115
 ---
@@ -169,6 +169,17 @@ Observability checks:
 
 ## Status
 
-Proposed.
+Accepted and implemented (internal path live).
+
+Implemented artifacts:
+- `apps/docs-api/` service (Bun) with `/health`, `/search`, `/docs`, `/docs/:id`, `/chunks/:id`
+- `k8s/docs-api.yaml` (`Deployment/docs-api` + `Service/docs-api` NodePort 3838)
+- `k8s/docs-api-ingress.yaml` (host + path ingress rules)
+- `k8s/publish-docs-api.sh` (GHCR build/push/deploy helper, supports `GHCR_TOKEN`)
+
+Operational status at acceptance:
+- Internal bridge is live via Caddy route `https://panda.tail7af24.ts.net:5443` → `localhost:3838` → `Service/docs-api`
+- Direct local NodePort endpoint is live at `http://localhost:3838`
+- Public joelclaw.com exposure is configured at manifest level but depends on cluster ingress-controller activation/DNS wiring
 
 The previous `pdf-brain`-based implementation is rejected and has been rolled back from the standalone `pdf-brain` CLI path.
