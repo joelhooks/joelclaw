@@ -158,6 +158,12 @@ Every VIP gets the full treatment. This is what we did for Kent C. Dodds (Feb 26
 | 8. Content catalog | Website crawl (defuddle) | Courses, blog posts, open source projects |
 | 9. Audience reach | Podcast counts, social followers | Conference circuit, community presence |
 
+**Index to Typesense** after enrichment:
+- Batch-import appearances/content to `discoveries` collection (NDJSON, `action=upsert`)
+- Tag all docs with person's name slug (e.g. `kent-c-dodds`) for filtering
+- Fields: `id`, `title`, `url`, `summary`, `tags[]`, `timestamp`
+- Write a `Vault/Resources/{name}-media-appearances.md` reference doc linking back to contact
+
 **Output sections** in the vault note:
 - Background & Story (origin, career timeline)
 - Teaching/Work Philosophy (or equivalent for non-educators)
