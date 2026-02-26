@@ -38,15 +38,16 @@ if (SHOULD_LEASE_WEBHOOK_SECRETS) {
 } else {
   console.log("[secrets] skipping local webhook secret leasing in cluster worker role");
 }
+
 import { emitInngestRegistryLoaded } from "./inngest/functions";
-import {
-  hostFunctionDefinitions,
-  hostFunctionIds,
-} from "./inngest/functions/index.host";
 import {
   clusterFunctionDefinitions,
   clusterFunctionIds,
 } from "./inngest/functions/index.cluster";
+import {
+  hostFunctionDefinitions,
+  hostFunctionIds,
+} from "./inngest/functions/index.host";
 import { emitOtelEvent, emitValidatedOtelEvent } from "./observability/emit";
 
 const app = new Hono();

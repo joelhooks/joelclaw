@@ -1,6 +1,5 @@
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { setLangfuseTracerProvider, startObservation } from "@langfuse/tracing";
-import { Resource } from "@opentelemetry/resources";
 import { BasicTracerProvider } from "@opentelemetry/sdk-trace-base";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 
@@ -100,7 +99,7 @@ function resolveLangfuseConfig(): { publicKey: string; secretKey: string; baseUr
   return { publicKey, secretKey, baseUrl };
 }
 
-function ensureLangfuseTracing(): boolean {
+async function ensureLangfuseTracing(): Promise<boolean> {
   if (!LANGFUSE_ENABLED) return false;
   if (initialized) return true;
 
@@ -108,6 +107,19 @@ function ensureLangfuseTracing(): boolean {
   if (!config) return false;
 
   try {
+    let resource: unknown;
+
+    try {
+      const resources = (await import("@opentelemetry/resources")) as {
+        Resource?: new (attrs: Record<string, string>) => unknown;
+      };
+      resource = resources.Resource
+        ? new resources.Resource({ [ATTR_SERVICE_NAME]: "joelclaw-system-bus" })
+        : undefined;
+    } catch {
+      resource = undefined;
+    }
+
     spanProcessor = new LangfuseSpanProcessor({
       publicKey: config.publicKey,
       secretKey: config.secretKey,
@@ -117,10 +129,14 @@ function ensureLangfuseTracing(): boolean {
       exportMode: "immediate",
     });
 
-    const provider = new BasicTracerProvider({
-      resource: new Resource({ [ATTR_SERVICE_NAME]: "joelclaw-system-bus" }),
-      spanProcessors: [spanProcessor],
-    });
+    const provider = resource
+      ? new BasicTracerProvider({
+          resource: resource as any,
+          spanProcessors: [spanProcessor],
+        } as any)
+      : new BasicTracerProvider({
+          spanProcessors: [spanProcessor],
+        });
 
     setLangfuseTracerProvider(provider);
     initialized = true;
@@ -282,7 +298,7 @@ export function parsePiJsonAssistant(raw: string): {
 }
 
 export async function traceLlmGeneration(input: TraceLlmGenerationInput): Promise<void> {
-  if (!ensureLangfuseTracing()) return;
+  if (!(await ensureLangfuseTracing())) return;
 
   try {
     const cleanedInput = extractCleanInput(input.input);
