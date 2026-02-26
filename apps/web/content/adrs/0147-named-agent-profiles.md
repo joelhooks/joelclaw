@@ -1,7 +1,7 @@
 ---
 id: "0147"
 title: Named Agent Profiles for Specialized Inference
-status: proposed
+status: accepted
 date: 2026-02-25
 drivers:
   - Joel Hooks

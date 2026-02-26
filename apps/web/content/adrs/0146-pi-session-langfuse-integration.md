@@ -1,7 +1,7 @@
 ---
 id: "0146"
 title: "Inference Cost Monitoring and Control"
-status: proposed
+status: accepted
 date: 2026-02-25
 tags: [observability, langfuse, gateway, pi]
 ---
