@@ -1,6 +1,6 @@
 ---
 type: adr
-status: accepted
+status: shipped
 date: 2026-02-25
 tags: [adr, skills, codex, prompting, automation, pi]
 deciders: [joel]
