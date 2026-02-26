@@ -6,6 +6,18 @@ const nextConfig = {
     // that Next.js type checker can't resolve. Convex handles its own typing.
     ignoreBuildErrors: true,
   },
+  async rewrites() {
+    return [
+      {
+        source: "/api/docs",
+        destination: "https://panda.tail7af24.ts.net/api/docs",
+      },
+      {
+        source: "/api/docs/:path*",
+        destination: "https://panda.tail7af24.ts.net/api/docs/:path*",
+      },
+    ];
+  },
   async redirects() {
     return [
       {

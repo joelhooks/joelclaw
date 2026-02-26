@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: docs-api
+  namespace: joelclaw
+spec:
+  rules:
+    - host: docs-api.joelclaw.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: docs-api
+                port:
+                  number: 3838
+    - host: joelclaw.com
+      http:
+        paths:
+          - path: /api/docs
+            pathType: Prefix
+            backend:
+              service:
+                name: docs-api
+                port:
+                  number: 3838

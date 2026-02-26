@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docs-api
+  namespace: joelclaw
+  labels:
+    app: docs-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: docs-api
+  template:
+    metadata:
+      labels:
+        app: docs-api
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: docs-api
+          image: ghcr.io/joelhooks/docs-api:20260226-153658
+          imagePullPolicy: Always
+          env:
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: "3838"
+            - name: TYPESENSE_URL
+              value: "http://typesense:8108"
+            - name: TYPESENSE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: typesense-secret
+                  key: api-key
+            - name: PDF_BRAIN_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: docs-api-env
+                  key: PDF_BRAIN_API_TOKEN
+          ports:
+            - containerPort: 3838
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+# NodePort 3838 is intentional to preserve Caddy mapping :5443 -> localhost:3838.
+# Ensure Talos/Colima host port mappings include 3838 -> 3838.
+apiVersion: v1
+kind: Service
+metadata:
+  name: docs-api
+  namespace: joelclaw
+  labels:
+    app: docs-api
+spec:
+  type: NodePort
+  selector:
+    app: docs-api
+  ports:
+    - name: http
+      port: 3838
+      targetPort: 3838
+      nodePort: 3838
