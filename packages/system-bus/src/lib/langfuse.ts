@@ -105,7 +105,7 @@ function ensureLangfuseTracing(): boolean {
       publicKey: config.publicKey,
       secretKey: config.secretKey,
       baseUrl: config.baseUrl,
-      environment: process.env.JOELCLAW_ENV ?? process.env.NODE_ENV ?? "development",
+      environment: "production",
       release: process.env.JOELCLAW_RELEASE ?? process.env.GIT_SHA,
       exportMode: "immediate",
     });
@@ -120,6 +120,15 @@ function ensureLangfuseTracing(): boolean {
   } catch {
     return false;
   }
+}
+
+function stripOtelMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!metadata) return undefined;
+
+  const cleaned = { ...metadata };
+  delete cleaned.resourceAttributes;
+  delete cleaned.scope;
+  return cleaned;
 }
 
 function usageDetailsFrom(usage?: LlmUsage): Record<string, number> | undefined {
@@ -217,32 +226,30 @@ export async function traceLlmGeneration(input: TraceLlmGenerationInput): Promis
   if (!ensureLangfuseTracing()) return;
 
   try {
+    const additionalMetadata = stripOtelMetadata(input.metadata);
+    const baseMetadata = additionalMetadata ?? {};
+    const joelclawMetadata = {
+      source: "system-bus",
+      component: input.component,
+      action: input.action,
+    };
+
     const trace = startObservation(input.traceName, {
       input: input.input,
       metadata: {
-        component: input.component,
-        action: input.action,
-        joelclaw: {
-          scope: "llm",
-          source: "system-bus",
-        },
-        ...(input.metadata ?? {}),
+        joelclaw: joelclawMetadata,
+        ...baseMetadata,
       },
     });
 
     trace.updateTrace({
       name: input.traceName,
       sessionId: input.sessionId,
-      tags: ["joelclaw", "llm-only"],
+      tags: ["joelclaw", "system-bus"],
       metadata: {
-        component: input.component,
-        action: input.action,
         runId: input.runId,
-        joelclaw: {
-          scope: "llm",
-          source: "system-bus",
-        },
-        ...(input.metadata ?? {}),
+        joelclaw: joelclawMetadata,
+        ...baseMetadata,
       },
     });
 
@@ -258,7 +265,7 @@ export async function traceLlmGeneration(input: TraceLlmGenerationInput): Promis
           provider: input.provider,
           durationMs: input.durationMs,
           error: input.error,
-          ...(input.metadata ?? {}),
+          ...baseMetadata,
         },
       },
       { asType: "generation" }
@@ -273,7 +280,7 @@ export async function traceLlmGeneration(input: TraceLlmGenerationInput): Promis
         model: input.model,
         durationMs: input.durationMs,
         error: input.error,
-        ...(input.metadata ?? {}),
+        ...baseMetadata,
       },
     });
 
