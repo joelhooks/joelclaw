@@ -1,25 +1,33 @@
-import crypto from "node:crypto";
 import { execSync } from "node:child_process";
+import crypto from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { extname } from "node:path";
-import { Bot, InputFile } from "grammy";
-import type { EnqueueFn } from "./redis";
-import type { OutboundEnvelope } from "../outbound/envelope";
-import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
+import type { FormatConverter } from "@joelclaw/markdown-formatter";
+import { escapeText, TelegramConverter } from "@joelclaw/markdown-formatter";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
-import { TelegramConverter } from "@joelclaw/markdown-formatter";
+import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
+import { Bot, InputFile } from "grammy";
+import type { OutboundEnvelope } from "../outbound/envelope";
+import type { EnqueueFn } from "./redis";
 import type {
   Channel,
   ChannelPlatform,
-  SendOptions,
   InboundMessage,
   MessageHandler,
+  SendOptions,
 } from "./types";
 
 // ── Telegram HTML formatting ───────────────────────────
 // Telegram's HTML mode supports: <b>, <i>, <code>, <pre>, <a href="">
-// Max message length: 4096 chars. We chunk at 4000 to leave room.
-const CHUNK_MAX = 4000;
+// Max message length is enforced by the converter.
+const telegramConverter: FormatConverter = new TelegramConverter();
+const CHUNK_MAX = telegramConverter.maxLength;
+
+type TelegramFormattedOutput = {
+  text: string;
+  parseAsHtml: boolean;
+  chunkMode: "markdown" | "raw";
+};
 
 // ── Media download (ADR-0042) ──────────────────────────
 const MEDIA_DIR = "/tmp/joelclaw-media";
@@ -72,62 +80,51 @@ function resolveSendInput(
   };
 }
 
-function formatByEnvelope(text: string, format: OutboundEnvelope["format"] | undefined): string {
-  if (format === "html") return text;
-  if (format === "plain") return escapeHtml(text);
+function formatByEnvelope(
+  text: string,
+  format: OutboundEnvelope["format"] | undefined,
+): TelegramFormattedOutput {
+  if (format === "plain") {
+    return {
+      text: escapeText(text),
+      parseAsHtml: false,
+      chunkMode: "raw",
+    };
+  }
 
-  if (process.env.USE_AST_FORMATTER === "true") {
-    const converter = new TelegramConverter();
-    const result = converter.convert(text);
-    const validation = converter.validate(result);
+  if (format === "html") {
+    const validation = telegramConverter.validate(text);
     if (!validation.valid) {
-      console.warn("[telegram] AST formatter validation failed, falling back to regex:", validation.errors);
-      return mdToTelegramHtml(text);
+      console.warn("[telegram] HTML formatter validation failed, falling back to plain:", validation.errors);
+      return {
+        text: stripHtmlTags(text),
+        parseAsHtml: false,
+        chunkMode: "raw",
+      };
     }
-    return result;
+    return {
+      text,
+      parseAsHtml: true,
+      chunkMode: "raw",
+    };
   }
 
-  return mdToTelegramHtml(text);
-}
-
-const TELEGRAM_ALLOWED_TAGS = new Set([
-  "a",
-  "b",
-  "blockquote",
-  "code",
-  "em",
-  "i",
-  "pre",
-  "s",
-  "strong",
-  "tg-spoiler",
-  "u",
-]);
-
-function isWellFormedTelegramHtml(html: string): boolean {
-  const stack: string[] = [];
-  const tagPattern = /<\/?([a-zA-Z0-9-]+)(?:\s+[^<>]*?)?>/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = tagPattern.exec(html)) !== null) {
-    const fullTag = match[0] ?? "";
-    const tagName = (match[1] ?? "").toLowerCase();
-    if (!tagName) continue;
-    if (!TELEGRAM_ALLOWED_TAGS.has(tagName)) return false;
-
-    const isClosing = fullTag.startsWith("</");
-    const isSelfClosing = fullTag.endsWith("/>");
-    if (isClosing) {
-      const lastOpen = stack.pop();
-      if (lastOpen !== tagName) return false;
-      continue;
-    }
-    if (!isSelfClosing) {
-      stack.push(tagName);
-    }
+  const result = telegramConverter.convert(text);
+  const validation = telegramConverter.validate(result);
+  if (!validation.valid) {
+    console.warn("[telegram] AST formatter validation failed, falling back to plain:", validation.errors);
+    return {
+      text: escapeText(text),
+      parseAsHtml: false,
+      chunkMode: "raw",
+    };
   }
 
-  return stack.length === 0;
+  return {
+    text: result,
+    parseAsHtml: true,
+    chunkMode: "markdown",
+  };
 }
 
 function stripHtmlTags(input: string): string {
@@ -343,122 +340,6 @@ async function emitMediaReceived(data: {
     });
     return false;
   }
-}
-
-/**
- * Convert markdown to Telegram HTML.
- * Telegram supports: <b>, <i>, <u>, <s>, <code>, <pre>, <a href>, <blockquote>, <tg-spoiler>
- * No <br> (use \n), no lists (use manual bullets), no headings (use bold).
- */
-function mdToTelegramHtml(md: string): string {
-  let html = md;
-
-  // Protect code blocks first — extract and replace with placeholders
-  const codeBlocks: string[] = [];
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
-    const idx = codeBlocks.length;
-    const langAttr = lang ? ` class="language-${escapeHtml(lang)}"` : "";
-    codeBlocks.push(`<pre><code${langAttr}>${escapeHtml(code.trim())}</code></pre>`);
-    return `\x00CODEBLOCK${idx}\x00`;
-  });
-
-  // Protect inline code
-  const inlineCodes: string[] = [];
-  html = html.replace(/`([^`]+)`/g, (_match, code) => {
-    const idx = inlineCodes.length;
-    inlineCodes.push(`<code>${escapeHtml(code)}</code>`);
-    return `\x00INLINE${idx}\x00`;
-  });
-
-  // Protect links before escaping (extract URL hrefs)
-  const links: string[] = [];
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, text, url) => {
-    const idx = links.length;
-    links.push(`<a href="${escapeHtml(url)}">${escapeHtml(text)}</a>`);
-    return `\x00LINK${idx}\x00`;
-  });
-
-  // Protect existing Telegram-valid HTML tags before escaping.
-  // LLM responses may already contain <b>, <i>, <code>, <pre>, <a> etc.
-  const htmlTags: string[] = [];
-  const allowedTagPattern = new RegExp(
-    `<(/?)(?:${[...TELEGRAM_ALLOWED_TAGS].join("|")})(?:\\s[^>]*)?>`,
-    "gi",
-  );
-  html = html.replace(allowedTagPattern, (tag) => {
-    const idx = htmlTags.length;
-    htmlTags.push(tag);
-    return `\x00HTMLTAG${idx}\x00`;
-  });
-
-  // CRITICAL: Escape <, >, & in body text BEFORE markdown transforms.
-  // Telegram's HTML parser is strict — unescaped entities cause 400 errors
-  // which trigger our fallback to plain text (raw markdown shown).
-  html = escapeHtml(html);
-
-  // Restore protected HTML tags
-  html = html.replace(/\x00HTMLTAG(\d+)\x00/g, (_m, idx) => htmlTags[Number(idx)] ?? "");
-
-  // Headings → bold (Telegram has no heading tags)
-  // ### heading → \n<b>heading</b>\n
-  html = html.replace(/^#{1,6}\s+(.+)$/gm, "\n<b>$1</b>");
-
-  // Horizontal rules → thin line
-  html = html.replace(/^[-*_]{3,}\s*$/gm, "───────────────");
-
-  // Blockquotes (> text) → <blockquote>
-  // Collect consecutive > lines into one blockquote
-  html = html.replace(/(?:^> ?.+\n?)+/gm, (match) => {
-    const content = match.replace(/^> ?/gm, "").trim();
-    return `<blockquote>${content}</blockquote>\n`;
-  });
-
-  // Bold + italic (***text*** or ___text___)
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, "<b><i>$1</i></b>");
-
-  // Bold (**text** or __text__)
-  html = html.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
-  html = html.replace(/__(.+?)__/g, "<u>$1</u>"); // __ = underline in Telegram convention
-
-  // Strikethrough (~~text~~)
-  html = html.replace(/~~(.+?)~~/g, "<s>$1</s>");
-
-  // Italic (*text* or _text_) — but not inside other tags or mid-word underscores
-  html = html.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<i>$1</i>");
-  html = html.replace(/(?<![_\w])_([^_]+)_(?![_\w])/g, "<i>$1</i>");
-
-  // Links already extracted and protected above (before HTML escaping)
-
-  // Bullet lists: - item or * item → • item (Telegram has no list tags)
-  html = html.replace(/^[\t ]*[-*]\s+/gm, "• ");
-
-  // Numbered lists: 1. item → keep as-is (already readable)
-
-  // Tables: | col | col | → simplified
-  // Convert markdown table rows to aligned text
-  html = html.replace(/^\|(.+)\|$/gm, (_match, row) => {
-    const cells = row.split("|").map((c: string) => c.trim()).filter(Boolean);
-    return cells.join("  ·  ");
-  });
-  // Remove separator rows (|---|---|)
-  html = html.replace(/^[-| :]+$/gm, "");
-
-  // Restore protected elements
-  html = html.replace(/\x00CODEBLOCK(\d+)\x00/g, (_match, idx) => codeBlocks[parseInt(idx)] ?? "");
-  html = html.replace(/\x00INLINE(\d+)\x00/g, (_match, idx) => inlineCodes[parseInt(idx)] ?? "");
-  html = html.replace(/\x00LINK(\d+)\x00/g, (_match, idx) => links[parseInt(idx)] ?? "");
-
-  // Clean up excessive blank lines (max 2)
-  html = html.replace(/\n{3,}/g, "\n\n");
-
-  return html.trim();
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
 }
 
 function chunkMessage(text: string): string[] {
@@ -1049,11 +930,9 @@ async function sendTelegramMessage(
       }
     : undefined;
 
-  const html = formatByEnvelope(text, sendInput.format);
-  const htmlIsValid = isWellFormedTelegramHtml(html);
-  const parseAsHtml = htmlIsValid;
-  const outboundText = htmlIsValid ? html : stripHtmlTags(html);
-  if (!htmlIsValid) {
+  const formattedOutput = formatByEnvelope(text, sendInput.format);
+  const { text: formattedText, parseAsHtml, chunkMode } = formattedOutput;
+  if (!parseAsHtml) {
     void emitGatewayOtel({
       level: "warn",
       component: "telegram-channel",
@@ -1064,7 +943,9 @@ async function sendTelegramMessage(
       },
     });
   }
-  const chunks = chunkMessage(outboundText);
+  const chunks = chunkMode === "markdown"
+    ? telegramConverter.chunk(text)
+    : chunkMessage(formattedText);
   const sendStartedAt = Date.now();
 
   for (let i = 0; i < chunks.length; i++) {
@@ -1106,7 +987,7 @@ async function sendTelegramMessage(
         metadata: { chatId },
       });
       try {
-        await bot.api.sendMessage(chatId, stripHtmlTags(text).slice(0, CHUNK_MAX), {
+        await bot.api.sendMessage(chatId, stripHtmlTags(formattedText).slice(0, CHUNK_MAX), {
           ...(mergedOptions?.replyTo ? { reply_parameters: { message_id: mergedOptions.replyTo } } : {}),
           ...(mergedOptions?.silent ? { disable_notification: true } : {}),
           ...(isLast && replyMarkup ? { reply_markup: replyMarkup } : {}),
