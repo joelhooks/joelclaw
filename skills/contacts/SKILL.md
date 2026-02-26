@@ -192,6 +192,57 @@ Every VIP gets the full treatment. This is what we did for Kent C. Dodds (Feb 26
 - Have priority in channel intelligence pipeline (ADR-0131, ADR-0132)
 - Get ongoing monitoring when ADR-0151 Phase 2+ is implemented
 
+## Roam Research Enrichment
+
+Joel's Roam archive (`~/Code/joelhooks/egghead-roam-research/`) contains the full egghead-era graph (2019-2024). Many contacts have extensive history there.
+
+### Quick Search (Python regex)
+```bash
+cd ~/Code/joelhooks/egghead-roam-research
+python3 -c "
+import re
+with open('egghead-2026-01-19-13-09-38.edn', 'r') as f:
+    content = f.read()
+pattern = r':block/string\s+\"([^\"]*?)\"'
+matches = []
+for m in re.findall(pattern, content):
+    if '[[SEARCH_TAG]]' in m.lower():
+        matches.append(m)
+print(f'Found {len(matches)} blocks')
+for m in matches[:30]:
+    print(f'  - {m[:200]}')
+"
+```
+
+### People Taxonomy
+People are tagged with relationship prefixes in Roam:
+- `[[collaborator/Name]]` — Strategic partners (Ian Jones, Alex Hillman)
+- `[[client/Name]]` — egghead instructors (Matt Pocock, Jacob Paris)
+- `[[staff/Name]]` — egghead team (Will Johnson, Daniel Miller, Maggie Appleton)
+- `[[name]]` (no prefix) — Informal references (Zac is `[[zac]]`)
+
+### Page Title Search
+```bash
+python3 -c "
+import re
+with open('egghead-2026-01-19-13-09-38.edn', 'r') as f:
+    content = f.read()
+pattern = r':node/title\s+\"([^\"]*?SEARCH_TERM[^\"]*?)\"'
+for m in re.findall(pattern, content):
+    print(f'  page: {m}')
+"
+```
+
+### Adding to Contacts
+When extracting person data from Roam, add `roam_tag` to frontmatter:
+```yaml
+roam_tag: "[[collaborator/Ian Jones]]"
+```
+This enables future re-queries and cross-referencing.
+
+### Datalog Queries (advanced)
+The EDN file is Datomic-style. Clojure scripts exist at `scripts/` for structured analysis. See the `roam-research` skill for full Datalog patterns.
+
 ## Resolving Unknown People
 
 When you encounter a Slack user ID (`<@U0XXXXXXX>`):
