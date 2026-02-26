@@ -56,35 +56,25 @@ When the source URL is an X/Twitter post (`x.com/*/status/*` or `twitter.com/*/s
 - Include tweet text, author handle, and engagement metrics in the discovery note
 - See `x-api` skill for OAuth 1.0a signing details
 
-## Deep Dig — Contextual Escalation
+## Deep Dig — Inngest Enrichment Pipeline (ADR-0150)
 
-Not all discoveries are equal. When a flagged URL/topic **maps to a project or repo we actively track**, escalate from "fire and forget" to a deep dig before sending the discovery event.
+Enrichment is **not manual agent work**. The `discovery/noted` event triggers a durable Inngest function (`discovery/enrich`) that handles all enrichment automatically:
 
-### When to deep dig
-- The URL references a repo we have cloned locally (opencode, opentui, course-builder, etc.)
-- The topic relates to active work (TUI frameworks, agent tooling, course platforms)
-- The poster appears to be a core contributor to something we use
+1. **Classify URL** — tweet, repo, article, video
+2. **Fetch content** — X API for tweets, defuddle for articles, repo clone for repos
+3. **Match tracked projects** — opencode, opentui, course-builder, pi-tools
+4. **Deep dig if matched** — recent commits, PRs, issues from upstream
+5. **Profile the poster** — git authors, web search, contact lookup (fires `contact/enrich` if new)
+6. **Write enriched vault note** — full context, not a bare URL
 
-### What a deep dig looks like
-1. **Fetch the content** — use X API for tweets, defuddle for articles, repo_clone for repos
-2. **Pull the repo** — `git fetch upstream`, check recent commits/PRs related to the topic
-3. **Profile the poster** — check git authors, search web for who they are, their role in the project
-4. **Check our fork** — is our local clone up to date? Does the change affect us?
-5. **Enrich the discovery event** — include all context in the `note` field so the pipeline writes a rich vault note
+The agent's job is just to fire `discovery/noted` with whatever context Joel provided. The pipeline does the rest.
 
-### Tracked repos/projects (update as needed)
-- `anomalyco/opencode` (fork of `sst/opencode`) — local at `~/Code/anomalyco/opencode`
-- `anomalyco/opentui` (fork of `sst/opentui`) — TUI framework
-- `badass-courses/course-builder` — course platform
-- `joelhooks/pi-tools` — pi extensions
-- `joelhooks/joelclaw` — this system
-
-### Example: X post about opencode feature
-1. Fetch tweet via X API → get text, author, metrics
-2. `cd ~/Code/anomalyco/opencode && git fetch upstream` → check related commits
-3. Search opentui repo for the feature → identify PRs and authors
-4. Web search author → build profile (commits, role, background)
-5. Fire enriched `discovery/noted` with full context
+### Tracked projects (canonical list in `packages/system-bus/src/config/tracked-projects.ts`)
+- `anomalyco/opencode` (fork of `sst/opencode`)
+- `anomalyco/opentui` (fork of `sst/opentui`)
+- `badass-courses/course-builder`
+- `joelhooks/pi-tools`
+- `joelhooks/joelclaw`
 
 ## Video/Media Handling
 
