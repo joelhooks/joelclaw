@@ -24,15 +24,20 @@ const adrDir = path.join(process.cwd(), "content", "adrs");
 const VALID_STATUSES = [
   "proposed",
   "accepted",
+  "shipped",
   "implemented",
+  "deferred",
+  "in_progress",
+  "researching",
   "superseded",
   "deprecated",
   "rejected",
+  "withdrawn",
 ] as const;
 
 function normalizeStatus(raw: unknown): string {
   if (typeof raw !== "string") return "proposed";
-  const lower = raw.toLowerCase().trim();
+  const lower = raw.toLowerCase().trim().replace(/-/g, "_");
   // Match against known statuses — take the first word that matches
   for (const valid of VALID_STATUSES) {
     if (lower === valid || lower.startsWith(valid)) return valid;

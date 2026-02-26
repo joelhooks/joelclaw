@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: deferred
 date: 2026-02-25
 decision-makers: Joel
 consulted: ADR-0140 (unified inference router)

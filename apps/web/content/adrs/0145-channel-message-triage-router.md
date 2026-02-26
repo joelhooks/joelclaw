@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: deferred
 date: 2026-02-25
 deciders: joel
 ---
