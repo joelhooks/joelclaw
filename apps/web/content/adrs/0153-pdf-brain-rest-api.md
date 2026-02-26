@@ -52,6 +52,11 @@ Runtime can be Bun + Hono or plain `Bun.serve`.
 
 Response shape for all routes: `AgentEnvelope` (`ok`, `command`, `protocolVersion`, `result|error`, `nextActions`, `meta`).
 
+Query semantics (implemented):
+- `/search`: supports `page`, `perPage`/`per_page`/`limit`, `semantic` (`true|false|1|0|yes|no|on|off`, case-insensitive)
+- `/docs`: supports `page`, `perPage`/`per_page`/`limit`
+- `/chunks/:id`: supports `lite` and `includeEmbedding`/`embedding` booleans
+
 ## Backend Query Plan
 
 - `GET /search?q=`

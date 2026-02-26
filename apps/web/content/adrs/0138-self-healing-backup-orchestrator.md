@@ -1,3 +1,4 @@
+---
 type: adr
 status: shipped
 date: 2026-02-25
