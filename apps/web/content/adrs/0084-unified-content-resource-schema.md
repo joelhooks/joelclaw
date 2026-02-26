@@ -1,5 +1,5 @@
 ---
-status: deferred
+status: shipped
 date: 2026-02-21
 decision-makers: Joel
 ---
