@@ -37,10 +37,15 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 const STATUS_COLORS: Record<string, string> = {
   accepted: "text-green-400 border-green-800",
   proposed: "text-yellow-400 border-yellow-800",
-  shipped: "text-blue-400 border-blue-800",
+  shipped: "text-claw border-pink-800",
+  implemented: "text-claw border-pink-800",
+  deferred: "text-blue-400 border-blue-800",
+  in_progress: "text-amber-400 border-amber-800",
+  researching: "text-purple-400 border-purple-800",
   superseded: "text-neutral-500 border-neutral-700",
-  implemented: "text-blue-400 border-blue-800",
   deprecated: "text-red-400 border-red-800",
+  rejected: "text-red-400 border-red-800",
+  withdrawn: "text-neutral-500 border-neutral-700",
 };
 
 /** Entry: request-aware, prepares static header + dynamic MDX/review holes. */
