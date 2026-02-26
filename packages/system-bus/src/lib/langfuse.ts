@@ -1,6 +1,6 @@
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { setLangfuseTracerProvider, startObservation } from "@langfuse/tracing";
-import { resourceFromAttributes } from "@opentelemetry/resources";
+import { Resource } from "@opentelemetry/resources";
 import { BasicTracerProvider } from "@opentelemetry/sdk-trace-base";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 
@@ -118,7 +118,7 @@ function ensureLangfuseTracing(): boolean {
     });
 
     const provider = new BasicTracerProvider({
-      resource: resourceFromAttributes({ [ATTR_SERVICE_NAME]: "joelclaw-system-bus" }),
+      resource: new Resource({ [ATTR_SERVICE_NAME]: "joelclaw-system-bus" }),
       spanProcessors: [spanProcessor],
     });
 
