@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { execSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { extname } from "node:path";
 import { Bot, InputFile } from "grammy";
@@ -644,6 +645,29 @@ async function startTelegramChannel(
   if (options?.configureBot) {
     await options.configureBot(bot);
   }
+
+  // /kill — hard stop: disable launchd + kill process
+  bot.command("kill", async (ctx) => {
+    const chatId = ctx.chat.id;
+    console.warn("[gateway:telegram] /kill command received — hard stopping");
+    void emitGatewayOtel({
+      level: "warn",
+      component: "telegram-channel",
+      action: "telegram.command.kill",
+      success: true,
+      metadata: { chatId },
+    });
+    try {
+      await ctx.reply("🛑 Gateway hard stopping. launchd disabled — won't restart.");
+    } catch { /* best-effort */ }
+    try {
+      const uid = process.getuid?.() ?? 501;
+      execSync(`launchctl disable gui/${uid}/com.joel.gateway`, { timeout: 3000 });
+    } catch (err) {
+      console.error("[gateway:telegram] launchctl disable failed", { err });
+    }
+    process.kill(process.pid, "SIGKILL");
+  });
 
   // Text messages → command queue
   bot.on("message:text", async (ctx) => {
