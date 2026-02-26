@@ -113,3 +113,4 @@ tags:
 | [0140](0140-unified-joelclaw-inference-router.md) | Adopt a unified inference router control plane with OTEL + Langfuse as a single observability sink | proposed | 2026-02-25 |
 | [0138](0138-self-healing-backup-orchestrator.md) | Self-Healing NAS Backup Orchestrator | proposed | 2026-02-25 |
 | [0137](0137-codex-prompting-skill-router.md) | Codex Prompting Skill Router for Intent-to-Tool Delegation | accepted | 2026-02-25 |
+| [0154](0154-livekit-voice-worker-durability.md) | LiveKit Voice Worker Durability Contract | accepted | 2026-02-26 |
