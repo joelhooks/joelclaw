@@ -13,6 +13,7 @@ import { todoistProvider } from "./providers/todoist";
 import { frontProvider } from "./providers/front";
 import { vercelProvider } from "./providers/vercel";
 import { githubProvider } from "./providers/github";
+import { muxProvider } from "./providers/mux";
 
 // ── Provider registry ────────────────────────────────────
 const providers = new Map<string, WebhookProvider>();
@@ -20,6 +21,7 @@ providers.set(todoistProvider.id, todoistProvider);
 providers.set(frontProvider.id, frontProvider);
 providers.set(vercelProvider.id, vercelProvider);
 providers.set(githubProvider.id, githubProvider);
+providers.set(muxProvider.id, muxProvider);
 
 // ── Rate limiting (auth failures per IP) ─────────────────
 const RATE_LIMIT_WINDOW_MS = 60_000;

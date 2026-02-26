@@ -15,6 +15,7 @@ const WEBHOOK_SECRETS = [
   { env: "FRONT_WEBHOOK_SECRET", secret: "front_webhook_secret" },
   { env: "TODOIST_CLIENT_SECRET", secret: "todoist_client_secret" },
   { env: "GITHUB_WEBHOOK_SECRET", secret: "github_webhook_secret" },
+  { env: "MUX_WEBHOOK_SECRET", secret: "mux_signing_secret" },
 ] as const;
 
 if (SHOULD_LEASE_WEBHOOK_SECRETS) {
