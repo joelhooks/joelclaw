@@ -1,6 +1,6 @@
 # ADR-0131: Unified Channel Intelligence Pipeline
 
-- **Status**: proposed
+- **Status**: accepted
 - **Date**: 2026-02-24
 - **Related**: ADR-0123 (request-scoped routing), ADR-0124 (Discord thread sessions), ADR-0130 (Slack channel)
 
@@ -90,6 +90,71 @@ Extends ADR-0130:
 - Slack insights are delivered to Joel via DM (Slack/Telegram/Discord) — never posted back to monitored channels
 - DMs between Joel and JoelClaw are private conversation, same as Telegram
 
+### Privilege Metadata & Publishing Gate
+
+**All Slack-sourced content is privileged by default.** (See also: egghead-slack skill)
+
+Ingest metadata must include:
+```typescript
+type IngestMetadata = {
+  source: 'slack' | 'discord' | 'telegram' | 'imessage' | 'redis'
+  privileged: boolean          // true for all Slack content
+  channelId: string
+  channelName?: string
+  threadId?: string
+  userId?: string
+  userLabel?: string
+  passiveIntel: boolean        // true for non-Joel messages
+}
+```
+
+**Publishing rules:**
+- Discovery pipeline MAY ingest privileged content (index, classify, store in Vault)
+- Discovery pipeline MUST NOT auto-publish privileged content to joelclaw.com or any public surface
+- Publishing privileged content requires **explicit Joel approval** — no exceptions
+- The `privileged` flag propagates through the entire pipeline: ingest → classify → discovery → publish
+- Loom links, screenshots, files, and URLs shared in Slack are privileged regardless of content
+
+This prevents the failure mode where passive Slack intel triggers discovery → auto-publish of private/sensitive content.
+
+### Haiku Pre-Filter (Gateway Intel Conditioning)
+
+**Problem:** Raw Slack messages hitting the gateway session burn context tokens and create noise. A 6-message excited thread ("NO WAY" / "This is huge!" / "Yep!" / "No more video PRs" / "at least not the manual ones" / "Yep. So nice") should be one digest line, not six separate context injections.
+
+**Solution:** Interpose a Haiku (or equivalent cheap/fast model) pre-filter between Slack ingest and gateway delivery:
+
+```
+Slack message stream
+  → Batch by channel+thread (5-min window or N messages, whichever first)
+  → Haiku summarize + classify batch
+    → signal: condensed summary → gateway session (one message, not N)
+    → context: batched into periodic digest
+    → noise: indexed only, never surfaces
+```
+
+**Haiku pre-filter contract:**
+- Input: batch of messages from same channel/thread within time window
+- Output: `{ level, summary, topics[], urgency, actionable, participants[], privileged }`
+- Cost target: <$0.002 per batch (Haiku is ~$0.25/M input tokens)
+- Latency target: <2s per batch
+- **Slack is the main channel for making money and feeding family** — high-signal messages (money, launches, action items, decisions, creator needs) MUST be promoted to `signal` with high urgency. The pre-filter must be tuned for business sensitivity, not just conversational signal.
+
+**What gets promoted to signal (always):**
+- Revenue/payment/billing mentions
+- Launch dates, deadlines, shipping announcements
+- Creator requests or blockers (Antonio, Kent, Artem, etc.)
+- Action items directed at Joel or his team
+- Hiring, contracts, partnership discussions
+- Anything mentioning DNS, deploy, production, outage
+
+**Gateway delivery format:**
+```
+[slack:#creators] Kent announced automated video pipeline for course-builder.
+Artem and Kent celebrating — no more manual video PRs. (6 messages condensed)
+```
+
+Instead of 6 raw messages polluting the context window.
+
 ### Inngest Functions
 
 - `channel/message.received` → normalize + index to Typesense + emit classification event
@@ -158,14 +223,30 @@ Current `docs-ingest` behavior (joelclaw memory pipeline) exposes concrete failu
 
 ## Implementation Order
 
+**Phase 0 — Done (live today):**
+- ✅ Slack passive monitoring via Socket Mode (gateway `slack.ts`)
+- ✅ Raw messages delivered to gateway session as `slack-intel:` passive context
+- ✅ Joel DMs get bidirectional routing, all other channels read-only
+- ✅ OTEL telemetry on ingest (`slack.message.passive_ingest`)
 
-1. Typesense `channel_messages` collection schema + index
-2. Ingest function: normalize messages from all channels → Typesense
-3. Classification function: Haiku classify each message
-4. Routing function: signal → session, context → batch, noise → drop
-5. Convex `channelCatalog` + `threadCatalog` tables
-6. Catalog update cron
-7. Digest generation cron
-8. Discord thread routing fix (replace broken fork with classified routing)
-9. Slack passive monitoring (join channels, ingest all)
-10. OTEL instrumentation throughout
+**Phase 1 — Privilege Metadata + Publishing Gate:**
+1. Add `privileged` + `source` metadata to `enqueuePrompt()` context for Slack messages
+2. Propagate privilege flag through discovery pipeline
+3. Add publishing gate: block auto-publish when `privileged: true`
+4. Update discovery skill to respect privilege flag
+
+**Phase 2 — Haiku Pre-Filter:**
+5. Batch collector: accumulate Slack messages by channel+thread (5-min window)
+6. Haiku classification function: summarize + classify batches
+7. Replace raw `slack-intel:` gateway injection with condensed summaries
+8. Tune signal detection for business-critical patterns (revenue, launches, blockers)
+
+**Phase 3 — Full Pipeline:**
+9. Typesense `channel_messages` collection schema + index
+10. Ingest function: normalize messages from all channels → Typesense
+11. Routing function: signal → session, context → batch, noise → drop
+12. Convex `channelCatalog` + `threadCatalog` tables
+13. Catalog update cron
+14. Digest generation cron
+15. Discord thread routing fix (replace broken fork with classified routing)
+16. OTEL instrumentation throughout
