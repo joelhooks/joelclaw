@@ -138,12 +138,53 @@ Re-run enrichment with the existing vault path:
 
 The synthesizer merges new data with existing content — it won't discard existing facts unless contradicted.
 
-## VIP Contacts
+## VIP Contacts (ADR-0151)
 
-Mark `vip: true` in frontmatter. VIPs:
+Mark `vip: true` in frontmatter. VIPs get **deep enrichment + ongoing monitoring**.
+
+### Deep Enrichment Playbook (one-time)
+
+Every VIP gets the full treatment. This is what we did for Kent C. Dodds (Feb 26, 2026):
+
+| Step | Source | What to Capture |
+|---|---|---|
+| 1. Web presence | Web search `{name} + {org}` | Bio, role, location, personal details |
+| 2. Podcast/interviews | Web search `{name} podcast interview` | Appearance list, own podcasts, audiences |
+| 3. Joel collaborations | Their website, appearances pages | Joint podcasts, co-organized events, shared projects |
+| 4. Career timeline | Defuddle 2-3 key interview transcripts | Origin story, career arc, key decisions, values |
+| 5. GitHub profile | GitHub API or web | Repos, followers, orgs, contribution patterns |
+| 6. X/Twitter profile | X API v2 (use x-api skill) | Bio, followers, recent tweets, engagement |
+| 7. Key relationships | Cross-reference transcripts + contacts | Who they work with, who they mention, who we know in common |
+| 8. Content catalog | Website crawl (defuddle) | Courses, blog posts, open source projects |
+| 9. Audience reach | Podcast counts, social followers | Conference circuit, community presence |
+
+**Output sections** in the vault note:
+- Background & Story (origin, career timeline)
+- Teaching/Work Philosophy (or equivalent for non-educators)
+- Key Relationships (cross-linked `[[wikilinks]]` to other contacts)
+- Audience & Reach
+- Content/Products
+- Podcast/Collaboration History with Joel
+- Recent Activity (timestamped)
+
+### Ongoing Monitoring (Phase 2-4 of ADR-0151)
+
+| Channel | Tool | Signal |
+|---|---|---|
+| Google Alerts | joelclawbot Google account | Name mentions in news, blogs, press |
+| X/Twitter list | joelclaw X account | Tweets, engagement |
+| GitHub activity | GitHub API (polling) | New repos, releases |
+| Podcast RSS | Feed monitoring | New episodes |
+| Website changes | Periodic defuddle + diff | Blog posts, launches, bio changes |
+
+**High-signal** (immediate): course launches, role changes, mentions of Joel/egghead/Skill, fundraising.
+**Low-signal** (daily/weekly digest): regular tweets, blog posts, OSS activity.
+
+### Current VIPs
 - Get notified to Joel via gateway after enrichment
 - Are refreshed weekly via scheduled cron
 - Have priority in channel intelligence pipeline (ADR-0131, ADR-0132)
+- Get ongoing monitoring when ADR-0151 Phase 2+ is implemented
 
 ## Resolving Unknown People
 
