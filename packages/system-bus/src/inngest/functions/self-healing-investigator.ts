@@ -2,6 +2,7 @@ import Redis from "ioredis";
 import { inngest } from "../client";
 import { emitOtelEvent } from "../../observability/emit";
 import { restartWorker } from "../../observability/auto-fixes/restart-worker";
+import { getRedisPort } from "../../lib/redis";
 
 const INNGEST_BASE_URL = process.env.INNGEST_BASE_URL ?? "http://localhost:8288";
 const SELF_HEALING_REDIS_KEY_PREFIX = "self-healing:sdk-url:run:";
@@ -302,7 +303,7 @@ export const selfHealingInvestigator = inngest.createFunction(
 
     const redis = new Redis({
       host: process.env.REDIS_HOST ?? "localhost",
-      port: Number.parseInt(process.env.REDIS_PORT ?? "6379", 10),
+      port: getRedisPort(),
       lazyConnect: true,
       connectTimeout: 3000,
       commandTimeout: 4000,

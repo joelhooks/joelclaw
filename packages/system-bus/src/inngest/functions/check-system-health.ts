@@ -1,3 +1,4 @@
+import { getRedisPort } from "../../lib/redis";
 /**
  * System health check — ping core services.
  * ADR-0062. Only notifies gateway on degradation.
@@ -772,10 +773,10 @@ export const checkSystemHealth = inngest.createFunction(
     );
 
     if (!otelHealthResult.stored) {
-      const otelRedisPort = Number.parseInt(process.env.REDIS_PORT ?? "6379", 10);
+      const otelRedisPort = getRedisPort();
       await warnOtelGapViaEvents(
         process.env.REDIS_HOST ?? "localhost",
-        Number.isFinite(otelRedisPort) ? otelRedisPort : 6379,
+        otelRedisPort,
         {
           sourceFunction: "system/check-system-health",
           targetComponent: "otel_events",

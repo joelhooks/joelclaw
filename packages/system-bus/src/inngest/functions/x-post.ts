@@ -3,6 +3,7 @@ import { $ } from "bun";
 import Redis from "ioredis";
 import { createHmac } from "node:crypto";
 import type { GatewayContext } from "../middleware/gateway";
+import { getRedisPort } from "../../lib/redis";
 
 const X_CREATE_POST_URL = "https://api.twitter.com/2/tweets";
 const DAILY_CAP = 5;
@@ -12,7 +13,7 @@ const DAILY_KEY_PREFIX = "joelclaw:x:daily";
 const COOLDOWN_KEY = "joelclaw:x:cooldown";
 const URLS_KEY = "joelclaw:x:urls";
 const REDIS_HOST = process.env.REDIS_HOST ?? "localhost";
-const REDIS_PORT = parseInt(process.env.REDIS_PORT ?? "6379", 10);
+const REDIS_PORT = getRedisPort();
 
 type PostCategory = "post" | "adr" | "discovery" | "digest";
 

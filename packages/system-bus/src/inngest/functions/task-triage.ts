@@ -1,3 +1,4 @@
+import { getRedisPort } from "../../lib/redis";
 /**
  * Task triage — Sonnet reviews ALL open tasks via TaskPort.
  * ADR-0045: TaskPort hexagonal interface.
@@ -105,7 +106,7 @@ function getRedis(): Redis {
   const isTest = process.env.NODE_ENV === "test" || process.env.BUN_TEST === "1";
   redisClient = new Redis({
     host: process.env.REDIS_HOST ?? "localhost",
-    port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+    port: getRedisPort(),
     lazyConnect: true,
     retryStrategy: isTest ? () => null : undefined,
   });

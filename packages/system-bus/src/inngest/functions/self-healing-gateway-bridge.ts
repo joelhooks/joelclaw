@@ -1,9 +1,10 @@
 import Redis from "ioredis";
 import { inngest } from "../client";
 import { emitOtelEvent } from "../../observability/emit";
+import { getRedisPort } from "../../lib/redis";
 
 const SELF_HEALING_REDIS_HOST = process.env.REDIS_HOST ?? "localhost";
-const SELF_HEALING_REDIS_PORT = Number.parseInt(process.env.REDIS_PORT ?? "6379", 10);
+const SELF_HEALING_REDIS_PORT = getRedisPort();
 
 const GATEWAY_SESSION_SET = "joelclaw:gateway:sessions";
 const GATEWAY_EVENT_LIST = "joelclaw:events:gateway";
@@ -168,7 +169,7 @@ function pickRetryPolicy(policy: HealthContextInput["retryPolicy"] | undefined) 
 async function openRedis(): Promise<Redis> {
   const redis = new Redis({
     host: SELF_HEALING_REDIS_HOST,
-    port: Number.isFinite(SELF_HEALING_REDIS_PORT) ? SELF_HEALING_REDIS_PORT : 6379,
+    port: SELF_HEALING_REDIS_PORT,
     lazyConnect: true,
     connectTimeout: 3_000,
     commandTimeout: 4_000,

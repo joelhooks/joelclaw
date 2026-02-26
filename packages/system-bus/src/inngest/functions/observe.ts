@@ -1,3 +1,4 @@
+import { getRedisPort } from "../../lib/redis";
 // ADR-0067: Supersede pattern adapted from knowledge-graph by safatinaztepe (openclaw/skills, MIT).
 // ADR-0082: Typesense is the canonical memory store.
 import { inngest } from "../client.ts";
@@ -103,7 +104,7 @@ function getRedisClient(): Redis {
     const isTestEnv = process.env.NODE_ENV === "test" || process.env.BUN_TEST === "1";
     redisClient = new Redis({
       host: process.env.REDIS_HOST ?? "localhost",
-      port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+      port: getRedisPort(),
       lazyConnect: true,
       retryStrategy: isTestEnv ? () => null : undefined,
     });

@@ -5,6 +5,7 @@ import { inngest } from "../../client";
 import { triageProposal, type Proposal } from "../../../memory/triage";
 import { TodoistTaskAdapter } from "../../../tasks/adapters/todoist";
 import { emitOtelEvent } from "../../../observability/emit";
+import { getRedisPort } from "../../../lib/redis";
 
 const REVIEW_PENDING_KEY = "memory:review:pending";
 
@@ -23,7 +24,7 @@ function getRedis(): Redis {
   const isTest = process.env.NODE_ENV === "test" || process.env.BUN_TEST === "1";
   redisClient = new Redis({
     host: process.env.REDIS_HOST ?? "localhost",
-    port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+    port: getRedisPort(),
     lazyConnect: true,
     retryStrategy: isTest ? () => null : undefined,
   });

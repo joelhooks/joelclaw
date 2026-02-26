@@ -3,6 +3,7 @@ import { syncFiles, type SyncResult } from "./vault-sync";
 import { infer } from "../../lib/inference";
 import { emitOtelEvent } from "../../observability/emit";
 import Redis from "ioredis";
+import { getRedisPort } from "../../lib/redis";
 
 /**
  * Content directories to sync from Vault → website.
@@ -163,7 +164,7 @@ export const contentSync = inngest.createFunction(
       if (commitSkipped) {
         const redis = new Redis({
           host: process.env.REDIS_HOST ?? "localhost",
-          port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+          port: getRedisPort(),
           lazyConnect: true,
           connectTimeout: 3000,
         });

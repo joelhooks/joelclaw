@@ -1,3 +1,4 @@
+import { getRedisPort } from "../../lib/redis";
 /**
  * Calendar check — surface today's events for context.
  * Uses gog CLI for Google Calendar.
@@ -19,7 +20,7 @@ function getRedis(): Redis {
   const isTest = process.env.NODE_ENV === "test" || process.env.BUN_TEST === "1";
   redisClient = new Redis({
     host: process.env.REDIS_HOST ?? "localhost",
-    port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+    port: getRedisPort(),
     lazyConnect: true,
     retryStrategy: isTest ? () => null : undefined,
   });

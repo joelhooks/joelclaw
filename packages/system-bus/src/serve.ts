@@ -206,14 +206,110 @@ if (serveHost) {
   inngestApiOptions.serveHost = serveHost;
 }
 const inngestApiHandler = inngestServe(inngestApiOptions);
+
+const INNGEST_DEBUG_KEYS = ["fnId", "stepId", "runId", "probe", "sync", "batch"] as const;
+
+function parseQueryMap(req: Request): Record<string, string> {
+  const url = new URL(req.url);
+  const params = Object.fromEntries(url.searchParams.entries());
+  const filtered: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(params)) {
+    if ((INNGEST_DEBUG_KEYS as readonly string[]).includes(key)) {
+      filtered[key] = value;
+      continue;
+    }
+
+    if (key.length < 40) {
+      filtered[key] = value;
+    }
+  }
+
+  return filtered;
+}
+
+function summarizeInngestBody(rawBody: string | null): Record<string, unknown> | null {
+  if (!rawBody) return null;
+
+  const trimmed = rawBody.trim();
+  if (!trimmed) {
+    return { kind: "empty", size: rawBody.length };
+  }
+
+  if (trimmed.length > 3_000) {
+    return {
+      kind: "body_truncated",
+      size: rawBody.length,
+      preview: trimmed.slice(0, 200),
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object") {
+      const objectParsed = parsed as Record<string, unknown>;
+      return {
+        kind: "json",
+        keys: Object.keys(objectParsed),
+        size: rawBody.length,
+      };
+    }
+
+    return {
+      kind: typeof parsed,
+      value: String(parsed).slice(0, 200),
+      size: rawBody.length,
+    };
+  } catch {
+    return {
+      kind: "text",
+      size: rawBody.length,
+      preview: trimmed.slice(0, 200),
+    };
+  }
+}
+
 app.on(
   ["GET", "POST", "PUT"],
   "/api/inngest",
   async (c) => {
+    const start = Date.now();
     if (c.req.method === "PUT") {
       lastRegistrationAt = new Date().toISOString();
     }
-    return inngestApiHandler(c);
+
+    const query = parseQueryMap(c.req.raw);
+    const rawBody = await c.req.raw.clone().text().catch(() => null);
+    const bodySummary = summarizeInngestBody(rawBody);
+    const fnId = query.fnId;
+
+    const response = await inngestApiHandler(c);
+    const status = response.status;
+
+    if (c.req.method === "POST" || c.req.method === "PUT") {
+      if (status >= 400 || !fnId) {
+        const elapsedMs = Date.now() - start;
+        const remote = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
+        console.warn("[inngest:req]", {
+          method: c.req.method,
+          path: c.req.path,
+          status,
+          remote,
+          fnId: fnId ?? "missing",
+          runId: query.runId ?? "missing",
+          stepId: query.stepId ?? "missing",
+          probe: query.probe ?? "missing",
+          query,
+          bodySummary,
+          elapsedMs,
+          contentType: c.req.header("content-type") ?? "unknown",
+          userAgent: c.req.header("user-agent") ?? "unknown",
+          requestId: c.req.header("x-request-id") ?? c.req.header("x-inngest-request-id") ?? null,
+        });
+      }
+    }
+
+    return response;
   }
 );
 

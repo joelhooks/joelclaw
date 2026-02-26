@@ -1,3 +1,4 @@
+import { getRedisPort } from "../../lib/redis";
 /**
  * Stale loop detection — check for stuck or long-running agent loops.
  * Only notifies gateway if a loop appears stuck (>2h, no progress).
@@ -18,7 +19,7 @@ function getRedis(): Redis {
   const isTest = process.env.NODE_ENV === "test" || process.env.BUN_TEST === "1";
   redisClient = new Redis({
     host: process.env.REDIS_HOST ?? "localhost",
-    port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+    port: getRedisPort(),
     lazyConnect: true,
     retryStrategy: isTest ? () => null : undefined,
   });

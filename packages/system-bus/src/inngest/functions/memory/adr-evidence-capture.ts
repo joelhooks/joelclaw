@@ -2,6 +2,7 @@ import Redis from "ioredis";
 import { inngest } from "../../client";
 import * as typesense from "../../../lib/typesense";
 import { emitOtelEvent } from "../../../observability/emit";
+import { getRedisPort } from "../../../lib/redis";
 
 const OTEL_QUERY_BY = "action,error,component,source,metadata_json,search_text";
 const OTEL_PER_PAGE = 100;
@@ -45,7 +46,7 @@ function getRedisClient(): Redis {
     const isTestEnv = process.env.NODE_ENV === "test" || process.env.BUN_TEST === "1";
     redisClient = new Redis({
       host: process.env.REDIS_HOST ?? "localhost",
-      port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+      port: getRedisPort(),
       lazyConnect: true,
       retryStrategy: isTestEnv ? () => null : undefined,
     });
