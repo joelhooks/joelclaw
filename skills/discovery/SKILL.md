@@ -47,6 +47,15 @@ Don't wait. Joel flagged something and moved on — match that energy.
 5. **Sync** — fires `discovery/captured` event which syncs to joelclaw.com/cool/
 6. **Log** — `slog write --action noted --tool discovery`
 
+## X/Twitter URL Enrichment
+
+When the source URL is an X/Twitter post (`x.com/*/status/*` or `twitter.com/*/status/*`):
+- X blocks web scraping — **do NOT use url_to_markdown or web_search** for tweet content
+- Instead, use the **x-api skill** to fetch tweet text, author, and metrics via the Twitter API v2
+- Extract the tweet ID from the URL and call `GET /2/tweets/:id?tweet.fields=text,author_id,created_at,public_metrics&expansions=author_id&user.fields=name,username`
+- Include tweet text, author handle, and engagement metrics in the discovery note
+- See `x-api` skill for OAuth 1.0a signing details
+
 ## Video/Media Handling
 
 When the source URL is a YouTube video (youtube.com or youtu.be):
