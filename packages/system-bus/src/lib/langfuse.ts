@@ -27,6 +27,7 @@ export type TraceLlmGenerationInput = {
   output?: unknown;
   provider?: string;
   model?: string;
+  task?: string;
   usage?: LlmUsage;
   durationMs?: number;
   error?: string;
@@ -135,8 +136,54 @@ function stripOtelMetadata(metadata: Record<string, unknown> | undefined): Recor
   return cleaned;
 }
 
-function mergeTraceTags(inputTags: string[] = []): string[] {
-  const tags = ["joelclaw", "system-bus", ...inputTags.filter((tag) => typeof tag === "string" && tag.trim().length > 0)];
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function extractCleanInput(input: unknown): unknown {
+  if (isRecord(input) && "prompt" in input) return input.prompt;
+  return input;
+}
+
+function extractCleanOutput(output: unknown, error?: string): unknown {
+  if (isRecord(output) && output.failed === true) return error ?? "failed";
+  if (isRecord(output) && "text" in output) return output.text;
+  return output;
+}
+
+function compactMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined));
+}
+
+function mergeTraceTags(
+  inputTags: string[] = [],
+  dynamic?: {
+    provider?: string;
+    model?: string;
+    task?: string;
+  },
+): string[] {
+  const dynamicTags: string[] = [];
+
+  if (typeof dynamic?.provider === "string" && dynamic.provider.trim().length > 0) {
+    dynamicTags.push(`provider:${dynamic.provider}`);
+  }
+
+  if (typeof dynamic?.model === "string" && dynamic.model.trim().length > 0) {
+    dynamicTags.push(`model:${dynamic.model}`);
+  }
+
+  if (typeof dynamic?.task === "string" && dynamic.task.trim().length > 0) {
+    dynamicTags.push(`task:${dynamic.task}`);
+  }
+
+  const tags = [
+    "joelclaw",
+    "system-bus",
+    ...inputTags.filter((tag) => typeof tag === "string" && tag.trim().length > 0),
+    ...dynamicTags,
+  ];
+
   return [...new Set(tags)];
 }
 
@@ -235,51 +282,63 @@ export async function traceLlmGeneration(input: TraceLlmGenerationInput): Promis
   if (!ensureLangfuseTracing()) return;
 
   try {
+    const cleanedInput = extractCleanInput(input.input);
+    const cleanedOutput = extractCleanOutput(input.output, input.error);
     const additionalMetadata = stripOtelMetadata(input.metadata);
     const baseMetadata = additionalMetadata ?? {};
-    const traceTags = mergeTraceTags(input.tags);
-    const joelclawMetadata = {
+    const task = typeof baseMetadata.task === "string" ? baseMetadata.task : input.task;
+
+    const traceTags = mergeTraceTags(input.tags, {
+      provider: input.provider,
+      model: input.model,
+      task,
+    });
+
+    const traceMetadata = compactMetadata({
       source: "system-bus",
       component: input.component,
       action: input.action,
-    };
+      provider: input.provider,
+      model: input.model,
+      durationMs: input.durationMs,
+      task,
+      agentProfile: input.agentProfile,
+      agentTags: input.agentTags,
+      error: input.error,
+    });
+
+    const generationMetadata = compactMetadata({
+      requestId: baseMetadata.requestId,
+      policyVersion: baseMetadata.policyVersion,
+      attemptIndex: baseMetadata.attemptIndex,
+      fallbackRemaining: baseMetadata.fallbackRemaining,
+      retryLevel: baseMetadata.retryLevel,
+      provider: input.provider,
+      durationMs: input.durationMs,
+      error: input.error,
+    });
 
     const trace = startObservation(input.traceName, {
-      input: input.input,
-      metadata: {
-        joelclaw: joelclawMetadata,
-        ...baseMetadata,
-      },
+      input: cleanedInput,
+      metadata: traceMetadata,
     });
 
     trace.updateTrace({
       name: input.traceName,
       sessionId: input.sessionId,
       tags: traceTags,
-      metadata: {
-        agentProfile: input.agentProfile,
-        agentTags: input.agentTags,
-        agentToolset: input.agentToolset,
-        runId: input.runId,
-        joelclaw: joelclawMetadata,
-        ...baseMetadata,
-      },
+      metadata: traceMetadata,
     });
 
     const generation = trace.startObservation(
       input.generationName,
       {
         model: input.model,
-        input: input.input,
-        output: input.output,
+        input: cleanedInput,
+        output: cleanedOutput,
         usageDetails: usageDetailsFrom(input.usage),
         costDetails: costDetailsFrom(input.usage),
-        metadata: {
-          provider: input.provider,
-          durationMs: input.durationMs,
-          error: input.error,
-          ...baseMetadata,
-        },
+        metadata: generationMetadata,
       },
       { asType: "generation" }
     );
@@ -287,14 +346,8 @@ export async function traceLlmGeneration(input: TraceLlmGenerationInput): Promis
     generation.end();
 
     trace.update({
-      output: input.output,
-      metadata: {
-        provider: input.provider,
-        model: input.model,
-        durationMs: input.durationMs,
-        error: input.error,
-        ...baseMetadata,
-      },
+      output: cleanedOutput,
+      metadata: generationMetadata,
     });
 
     trace.end();
