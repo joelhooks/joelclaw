@@ -133,14 +133,15 @@ All backup jobs run as Inngest cron functions for observability, retry, and gate
 - [x] Soak test: all 3 gates passed
 - [x] Performance verified: 660 MiB/s write, 1 GB/s read
 
-### Phase 2: Backup Jobs (next)
-- [ ] `system/backup.typesense` Inngest function
-- [ ] `system/backup.redis` Inngest function
+### Phase 2: Backup Jobs ✅
+- [x] `system/backup.typesense` Inngest function
+- [x] `system/backup.redis` Inngest function
 - [ ] `system/backup.convex` Inngest function
-- [ ] `system/rotate.sessions` Inngest function
-- [ ] `system/rotate.logs` Inngest function
-- [ ] `system/rotate.otel` Inngest function
-- [ ] Wire all into heartbeat monitoring
+- [x] `system/rotate.sessions` Inngest function
+- [x] `system/rotate.logs` Inngest function
+- [x] `system/rotate.otel` Inngest function
+- [x] NFS mount health check in core health slice
+- [x] Backup failure router with AI-powered retry decisions
 
 ### Phase 3: Tier 2 Migration
 - [ ] Move model weights to NAS NVMe, local cache symlinks
@@ -181,6 +182,30 @@ All backup jobs run as Inngest cron functions for observability, retry, and gate
   - `2026-02-21T21:50:17.009Z` (`tool: nas-nfs`) MTU/NFS tuning deployed with measured throughput gains.
   - `2026-02-21T22:05:38.918Z` (`action: deploy`, `tool: nas-backup`) Phase 2 backup/rotation crons deployed to NAS NVMe.
 - Phase 3/4 migration and validation tasks remain open in this ADR, so status is not upgraded to `implemented`.
+
+## Addendum (2026-02-27): Connectivity Incident & Hardening
+
+### Incident: Tailscale Subnet Route Hijacked LAN Traffic
+
+NAS went unreachable from Panda over LAN. Root cause: Tailscale on the NAS was advertising `192.168.1.0/24` as a subnet route, which injected a routing table rule (table 52, priority 5270) that sent LAN response packets through `tailscale0` instead of `eth2`. Since all LAN devices run Tailscale directly, the subnet route was redundant. Removed from `--advertise-routes` in the Docker-based Tailscale container.
+
+### NAS Boot Persistence: S99local-tuning
+
+ASUSTOR ADM lacks systemd. Created `/usr/local/etc/init.d/S99local-tuning` (installed via `setup-tuning.sh` on NAS) to persist across reboots:
+- `ip link set eth2 mtu 9000` (jumbo frames)
+- `hdparm -B 255 /dev/sda /dev/sdb /dev/sdh` (IronWolf APM — drives report "not supported" but command is harmless)
+
+### Missing LaunchDaemon: three-body HDD Volume
+
+Only `com.joel.mount-nas-nvme.plist` existed. Added `com.joel.mount-three-body.plist` to auto-mount `/Volumes/three-body` → `three-body:/volume1/joelclaw` with full tuned NFS options on Panda reboot.
+
+### NFS Mount Health Check
+
+Added NFS mount probes to `check-system-health.ts` core health slice. Probes `stat` both `/Volumes/nas-nvme` and `/Volumes/three-body` with a 5s timeout. Stale or missing mounts now surface as degraded in gateway alerts before backup jobs fail silently.
+
+### Updated Phase 2 Status
+
+Backup functions (`system/backup.typesense`, `system/backup.redis`, `system/rotate.sessions`, `system/rotate.logs`, `system/rotate.otel`) are all implemented and running in production with dual-transport failover (local NFS + remote SSH) and AI-powered failure routing.
 
 ## References
 
