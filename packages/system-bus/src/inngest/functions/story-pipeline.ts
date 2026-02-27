@@ -365,7 +365,18 @@ ${result.output.slice(-12_000)}`;
 }
 
 function getHeadSha(cwd: string): string {
-  return execSync("git rev-parse HEAD", { cwd, encoding: "utf-8" }).trim();
+  // Verify cwd is actually a git repo before running
+  const resolvedCwd = cwd || "/Users/joel/Code/joelhooks/joelclaw";
+  try {
+    return execSync("git rev-parse HEAD", { cwd: resolvedCwd, encoding: "utf-8" }).trim();
+  } catch (e) {
+    // If cwd isn't a git repo, try the monorepo root as fallback
+    const fallback = "/Users/joel/Code/joelhooks/joelclaw";
+    if (resolvedCwd !== fallback) {
+      return execSync("git rev-parse HEAD", { cwd: fallback, encoding: "utf-8" }).trim();
+    }
+    throw e;
+  }
 }
 
 function getDiffSince(sha: string, cwd: string): string {
@@ -420,6 +431,7 @@ export const storyPipeline = inngest.createFunction(
     }
 
     const cwd = rawCwd || `${process.env.HOME}/Code/joelhooks/joelclaw`;
+    logger.info(`story-pipeline cwd resolved to: "${cwd}" (rawCwd: "${rawCwd}", HOME: "${process.env.HOME}")`);
 
     // NOTE for future agents:
     // - Use gateway.* for human-readable, authored updates back to the initiating session/channels.
