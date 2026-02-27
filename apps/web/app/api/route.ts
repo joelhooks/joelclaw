@@ -10,7 +10,7 @@ const PROTOCOL_VERSION = 1 as const;
 
 async function getDiscoveryPayload() {
   "use cache";
-  cacheLife("days");
+  cacheLife("max");
 
   const origin = "https://joelclaw.com";
 
