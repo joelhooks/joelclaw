@@ -437,10 +437,9 @@ export const friction = inngest.createFunction(
           observations: observations.count,
         });
       } else {
-        const titles = parsed.patterns.map((p) => p.title).join(", ");
         await gateway.notify("friction-analysis", {
           message: `Friction analysis: ${parsed.count} patterns → ${tasks.created} Todoist tasks`,
-          patterns: titles,
+          patterns: parsed.patterns,
           tasksCreated: tasks.created,
         });
       }

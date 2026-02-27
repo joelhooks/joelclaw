@@ -31,6 +31,7 @@ const BATCH_LIST = "joelclaw:events:batch";
 const MODE_KEY = "joelclaw:mode";
 // HEARTBEAT_PATH removed — gateway no longer processes HEARTBEAT.md (ADR-0103)
 const DEDUP_MAX = 500;
+const ONE_HOUR_MS = 60 * 60 * 1000;
 const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID
   ? parseInt(process.env.TELEGRAM_USER_ID, 10)
   : undefined;
@@ -47,6 +48,7 @@ let cmd: Redis | undefined;
 let enqueuePrompt: EnqueueFn | undefined;
 let started = false;
 let draining = false;
+let lastUserVisibleHeartbeatAt = 0;
 const seenIds = new Set<string>();
 
 type GatewayMode = "active" | "sleep";
@@ -304,6 +306,44 @@ function isTelegramOnlyImmediateEvent(event: SystemEvent): boolean {
   return payload.telegramOnly === true;
 }
 
+function isHeartbeatOkEvent(event: SystemEvent): boolean {
+  if (event.type === "cron.heartbeat") return true;
+  const payload = event.payload as Record<string, unknown>;
+  const status = typeof payload.status === "string" ? payload.status.trim() : "";
+  const prompt = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
+  return status === "HEARTBEAT_OK" || prompt === "HEARTBEAT_OK";
+}
+
+function isInteractiveEvent(event: SystemEvent): boolean {
+  return event.type === "telegram.message.received"
+    || event.type === "imessage.message.received"
+    || event.type === "slack.message.received"
+    || event.type === "discord.message.received"
+    || event.type === "approval.requested"
+    || event.type === "approval.resolved"
+    || event.type === "gateway/sleep"
+    || event.type === "gateway/wake";
+}
+
+function isDegradationOrErrorEvent(event: SystemEvent): boolean {
+  const payload = event.payload as Record<string, unknown>;
+  const level = typeof payload.level === "string" ? payload.level.toLowerCase() : "";
+  if (level === "error" || level === "fatal") return true;
+  if (payload.immediateTelegram === true) return true;
+
+  const type = event.type.toLowerCase();
+  return type.includes("degraded")
+    || type.includes("fatal")
+    || type.includes("error")
+    || type.includes("failed")
+    || type.includes("drift")
+    || type === "alert";
+}
+
+function isAutomationEvent(event: SystemEvent): boolean {
+  return event.source.startsWith("inngest/");
+}
+
 function isInlineButton(value: unknown): value is InlineButton {
   if (!value || typeof value !== "object") return false;
   const button = value as Record<string, unknown>;
@@ -410,6 +450,7 @@ async function drainEvents(): Promise<void> {
     ]);
 
     const BATCHED_TYPES = new Set([
+      "cron.heartbeat",           // quiet-mode heartbeat status (digest only)
       "todoist.task.created",      // agent-created task echo
       "todoist.task.deleted",      // no action needed
       "front.message.received",    // inbound email — triage runs on schedule
@@ -429,11 +470,35 @@ async function drainEvents(): Promise<void> {
     for (const e of events) {
       if (SUPPRESSED_TYPES.has(e.type)) {
         suppressed.push(e);
-      } else if (BATCHED_TYPES.has(e.type)) {
-        batched.push(e);
-      } else {
-        immediate.push(e);
+        continue;
       }
+
+      if (isHeartbeatOkEvent(e)) {
+        if (Date.now() - lastUserVisibleHeartbeatAt < ONE_HOUR_MS) {
+          suppressed.push(e);
+        } else {
+          lastUserVisibleHeartbeatAt = Date.now();
+          batched.push(e);
+        }
+        continue;
+      }
+
+      if (BATCHED_TYPES.has(e.type)) {
+        batched.push(e);
+        continue;
+      }
+
+      if (isInteractiveEvent(e) || isDegradationOrErrorEvent(e) || isImmediateTelegramEvent(e)) {
+        immediate.push(e);
+        continue;
+      }
+
+      if (isAutomationEvent(e)) {
+        batched.push(e);
+        continue;
+      }
+
+      immediate.push(e);
     }
 
     // Stash batched events in Redis for hourly digest

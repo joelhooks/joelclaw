@@ -6,12 +6,10 @@ import { getRedisPort } from "../../lib/redis";
  * Every 15 minutes, emits events for independent check functions.
  * Each check function owns its own cooldown, retries, and gateway notification.
  * The heartbeat itself does NO work — it just says "time to check everything."
- *
- * The final step pushes cron.heartbeat to the gateway, which triggers
- * the HEARTBEAT.md checklist in the gateway session.
  */
 
 import { inngest } from "../client";
+import { pushGatewayEvent } from "./agent-loop/utils";
 import Redis from "ioredis";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -34,8 +32,10 @@ const HEARTBEAT_EVENTS = [
 
 const DAILY_DIGEST_FANOUT_KEY_PREFIX = "heartbeat:digest:fanout";
 const DAILY_DIGEST_TTL_SECONDS = 24 * 60 * 60;
+const USER_VISIBLE_HEARTBEAT_INTERVAL_MS = 60 * 60 * 1000;
 
 let redisClient: Redis | null = null;
+let lastUserVisibleHeartbeatAt = 0;
 
 function getRedis(): Redis {
   if (redisClient) return redisClient;
@@ -124,6 +124,30 @@ function pruneOldSessionFiles(now = Date.now()): { prunedCount: number } {
   return { prunedCount };
 }
 
+function shouldEmitUserVisibleHeartbeat(now = Date.now()): boolean {
+  if (now - lastUserVisibleHeartbeatAt < USER_VISIBLE_HEARTBEAT_INTERVAL_MS) {
+    return false;
+  }
+  lastUserVisibleHeartbeatAt = now;
+  return true;
+}
+
+async function maybeEmitUserVisibleHeartbeat(source: "cron" | "wake"): Promise<boolean> {
+  if (!shouldEmitUserVisibleHeartbeat()) return false;
+
+  await pushGatewayEvent({
+    type: "cron.heartbeat",
+    source: `inngest/heartbeat.${source}`,
+    payload: {
+      status: "HEARTBEAT_OK",
+      quiet: true,
+      userVisibleIntervalMs: USER_VISIBLE_HEARTBEAT_INTERVAL_MS,
+    },
+  });
+
+  return true;
+}
+
 export const heartbeatCron = inngest.createFunction(
   { id: "system-heartbeat" },
   [{ cron: "*/15 * * * *" }],
@@ -167,8 +191,11 @@ export const heartbeatCron = inngest.createFunction(
       });
     });
 
-    // Check functions handle gateway notifications independently.
-    // No cron.heartbeat push — gateway pi session stays free for messages.
+    // Quiet mode: only emit a green heartbeat marker once per hour.
+    // Degradation notifications are emitted by check/* functions directly.
+    await step.run("maybe-emit-user-visible-heartbeat", async () =>
+      maybeEmitUserVisibleHeartbeat("cron")
+    );
   }
 );
 
@@ -213,5 +240,9 @@ export const heartbeatWake = inngest.createFunction(
         },
       });
     });
+
+    await step.run("maybe-emit-user-visible-heartbeat", async () =>
+      maybeEmitUserVisibleHeartbeat("wake")
+    );
   }
 );

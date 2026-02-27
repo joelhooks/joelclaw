@@ -7,6 +7,25 @@
 
 export PATH="$HOME/.bun/bin:$HOME/.local/bin:$HOME/.local/share/fnm/aliases/default/bin:$PATH"
 
+NODE_LINK="$HOME/.local/bin/node"
+FNM_DEFAULT_NODE="$HOME/.local/share/fnm/aliases/default/bin/node"
+
+if [ ! -x "$NODE_LINK" ]; then
+  NODE_SOURCE=""
+  if [ -x "$FNM_DEFAULT_NODE" ]; then
+    NODE_SOURCE="$FNM_DEFAULT_NODE"
+  else
+    NODE_SOURCE=$(ls -1 "$HOME"/.local/share/fnm/node-versions/*/installation/bin/node 2>/dev/null | sort -V | tail -n 1)
+  fi
+
+  if [ -n "$NODE_SOURCE" ] && [ -x "$NODE_SOURCE" ]; then
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$NODE_SOURCE" "$NODE_LINK"
+  else
+    echo "WARNING: No fnm-managed node binary found; pi subprocesses may fail" >&2
+  fi
+fi
+
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 LEGACY_WORKER_ROOT="$HOME/Code/system-bus-worker"
 
@@ -94,8 +113,8 @@ WORKER_PID=$!
 
 # Wait for worker to bind, then PUT sync to prevent stale registry
 sleep 5
-curl -sf -X PUT http://127.0.0.1:3111/api/inngest >/dev/null 2>&1 \
-  && echo "[start.sh] Inngest function sync OK" \
+curl -s -X PUT http://127.0.0.1:3111/api/inngest >/dev/null 2>&1 \
+  && echo "Function registry synced" \
   || echo "WARNING: Inngest function sync failed" >&2
 
 wait $WORKER_PID

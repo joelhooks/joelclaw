@@ -117,14 +117,27 @@ cd ~/.pi/agent/extensions/gateway && npm install
 
 ```typescript
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import Redis from "ioredis";
 
 const SESSION_ID = "main";
 const EVENT_LIST = `agent:events:${SESSION_ID}`;
 const NOTIFY_CHANNEL = `agent:notify:${SESSION_ID}`;
 
-let sub: Redis | null = null;
-let cmd: Redis | null = null;
+type RedisLike = {
+  on(event: string, listener: (...args: unknown[]) => void): void;
+  connect(): Promise<void>;
+  subscribe(channel: string): Promise<unknown>;
+  lrange(key: string, start: number, stop: number): Promise<string[]>;
+  del(key: string): Promise<number>;
+  llen(key: string): Promise<number>;
+  unsubscribe(): void;
+  disconnect(): void;
+};
+
+type RedisCtor = new (options: { host: string; port: number; lazyConnect: boolean }) => RedisLike;
+
+let Redis: RedisCtor | null = null;
+let sub: RedisLike | null = null;
+let cmd: RedisLike | null = null;
 let ctx: ExtensionContext | null = null;
 let piRef: ExtensionAPI | null = null;
 
@@ -173,6 +186,16 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, _ctx) => {
     ctx = _ctx;
+    if (!Redis) {
+      try {
+        Redis = (await import("ioredis")).default as RedisCtor;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        _ctx.ui.notify(`Gateway extension running without Redis: ${message}`, "warning");
+        return;
+      }
+    }
+
     sub = new Redis({ host: "localhost", port: 6379, lazyConnect: true });
     cmd = new Redis({ host: "localhost", port: 6379, lazyConnect: true });
     await sub.connect();

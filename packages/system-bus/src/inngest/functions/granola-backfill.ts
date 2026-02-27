@@ -32,8 +32,16 @@ interface MeetingSummary {
   participants: string[];
 }
 
+function isGranolaRateLimited(rawText: string): boolean {
+  const text = rawText.toLowerCase();
+  return text.includes("rate limit")
+    || text.includes("please slow down requests")
+    || text.includes("too many requests")
+    || text.includes("429");
+}
+
 function throwIfGranolaRateLimited(rawText: string, context: string): void {
-  if (!rawText.toLowerCase().includes("rate limit")) return;
+  if (!isGranolaRateLimited(rawText)) return;
   throw new Error(
     `Granola rate limited (~1 hour window) during ${context}; retrying: ${rawText.slice(0, 500)}`
   );

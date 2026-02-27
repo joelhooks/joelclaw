@@ -15,6 +15,9 @@ const WIDGET_KEY = "inngest-monitor";
 type RunStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "timeout";
 const TERMINAL: Set<RunStatus> = new Set(["completed", "failed", "cancelled", "timeout"]);
 
+type JsonPrimitive = string | number | boolean | null;
+type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+
 interface TrackedRun {
   runId: string;
   eventName: string;
@@ -40,6 +43,11 @@ interface RunSnapshot {
   error: string | null;
   output: string | null;
 }
+
+type ToolResult = {
+  content: { type: "text"; text: string }[];
+  details: JsonValue | undefined;
+};
 
 // ── CLI helpers ────────────────────────────────────────
 
@@ -308,7 +316,7 @@ export default function inngestMonitor(pi: ExtensionAPI) {
       timeout: Type.Optional(Type.Number({ description: "Follow timeout in seconds. Defaults to 300" })),
     }),
 
-    async execute(_toolCallId, params): Promise<{ content: { type: "text"; text: string }[]; details: any }> {
+    async execute(_toolCallId, params): Promise<ToolResult> {
       const follow = params.follow ?? true;
       const timeoutS = params.timeout ?? DEFAULT_TIMEOUT_S;
 
@@ -414,7 +422,7 @@ export default function inngestMonitor(pi: ExtensionAPI) {
       run_id: Type.Optional(Type.String({ description: "Specific run ID for detailed view" })),
     }),
 
-    async execute(_toolCallId, params): Promise<{ content: { type: "text"; text: string }[]; details: any }> {
+    async execute(_toolCallId, params): Promise<ToolResult> {
       if (params.run_id) {
         const run = runs.get(params.run_id);
         if (!run) {

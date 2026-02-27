@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 const EMBED_SCRIPT = join(__dirname, "..", "..", "..", "scripts", "embed.py");
 const EMBED_TIMEOUT_MS = 120_000;
+const EMBED_CONCURRENCY_KEY = "embedding-generate";
 
 function readShellText(value: unknown): string {
   if (typeof value === "string") return value;
@@ -29,7 +30,11 @@ async function runEmbedScript(input: string): Promise<string> {
     }
   );
 
-  const timeout = setTimeout(() => proc.kill("SIGKILL"), EMBED_TIMEOUT_MS);
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    proc.kill("SIGKILL");
+  }, EMBED_TIMEOUT_MS);
 
   try {
     if (proc.stdin) {
@@ -44,8 +49,9 @@ async function runEmbedScript(input: string): Promise<string> {
     ]);
 
     if (exitCode !== 0) {
+      const timeoutDetail = timedOut ? ` after ${EMBED_TIMEOUT_MS}ms timeout` : "";
       throw new Error(
-        `embed subprocess failed (exit ${exitCode})${stderr ? `: ${stderr.slice(0, 500)}` : ""}`
+        `embed subprocess failed${timeoutDetail} (exit ${exitCode})${stderr ? `: ${stderr.slice(0, 500)}` : ""}`
       );
     }
 
@@ -74,7 +80,7 @@ export const embedText = inngest.createFunction(
   {
     id: "embedding-generate",
     name: "Generate Embeddings",
-    concurrency: { limit: 1 },
+    concurrency: { limit: 1, key: EMBED_CONCURRENCY_KEY },
     retries: 0,
   },
   { event: "embedding/text.requested" },

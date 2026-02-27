@@ -17,6 +17,7 @@ export type PostMeta = {
   channel?: string;
   duration?: string;
   draft?: boolean;
+  image?: string;
 };
 
 const contentDir = path.join(process.cwd(), "content");

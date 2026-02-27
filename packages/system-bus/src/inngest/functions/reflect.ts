@@ -1,7 +1,12 @@
-import { inngest } from "../client";
-import Redis from "ioredis";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import Redis from "ioredis";
+import { infer } from "../../lib/inference";
+import { type LlmUsage } from "../../lib/langfuse";
+import { isInstructionText } from "../../memory/triage";
+import { emitOtelEvent } from "../../observability/emit";
+import { inngest } from "../client";
+import { sanitizeObservationText } from "./observation-sanitize";
 // TodoistTaskAdapter removed — task creation moved to proposal-triage.ts (ADR-0068)
 import {
   COMPRESSION_GUIDANCE,
@@ -9,11 +14,6 @@ import {
   REFLECTOR_USER_PROMPT,
   validateCompression,
 } from "./reflect-prompt";
-import { sanitizeObservationText } from "./observation-sanitize";
-import { type LlmUsage } from "../../lib/langfuse";
-import { infer } from "../../lib/inference";
-import { isInstructionText } from "../../memory/triage";
-import { emitOtelEvent } from "../../observability/emit";
 
 type ObservationRecord = {
   summary?: unknown;
@@ -410,6 +410,16 @@ export const reflect = inngest.createFunction(
         });
 
         for (const proposal of stagedProposals) {
+          await redis.set(
+            `memory:proposal:${proposal.id}`,
+            JSON.stringify({
+              id: proposal.id,
+              section: proposal.section,
+              change: proposal.change,
+              source: "reflect",
+              timestamp: capturedAt,
+            })
+          );
           await redis.hset(
             `memory:review:proposal:${proposal.id}`,
             "id",
@@ -420,6 +430,10 @@ export const reflect = inngest.createFunction(
             proposal.section,
             "change",
             proposal.change,
+            "source",
+            "reflect",
+            "timestamp",
+            capturedAt,
             "status",
             "pending",
             "capturedAt",

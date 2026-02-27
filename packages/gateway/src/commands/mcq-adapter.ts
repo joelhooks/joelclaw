@@ -43,7 +43,8 @@ type PendingFreeText = {
 
 const MCQ_PREFIX = "mcq:";
 const DEFAULT_AUTO_SELECT_TIMEOUT_SECS = 30;
-const MAX_BUTTON_LABEL_CHARS = 8;
+const MAX_BUTTON_SUMMARY_CHARS = 22;
+const MAX_MESSAGE_OPTION_CHARS = 90;
 const OTHER_OPTION_LABEL = "Other";
 
 let activeMcqAdapter: McqAdapterRuntime | undefined;
@@ -73,14 +74,14 @@ function compactText(text: string, maxLength: number): string {
   return `${chars.slice(0, maxLength - 1).join("").trimEnd()}…`;
 }
 
-function optionButtonLabel(index: number, recommended?: boolean): string {
-  const suffix = recommended ? " ★" : "";
-  const label = `${index + 1}${suffix}`;
-  const chars = Array.from(label);
-  if (chars.length <= MAX_BUTTON_LABEL_CHARS) {
-    return label;
-  }
-  return compactText(label, MAX_BUTTON_LABEL_CHARS);
+function optionSummary(
+  option: string,
+  index: number,
+  options?: { maxChars?: number; recommended?: boolean },
+): string {
+  const summary = compactText(option, options?.maxChars ?? MAX_BUTTON_SUMMARY_CHARS);
+  const recommendedSuffix = options?.recommended ? " ⭐" : "";
+  return `${index + 1}) ${summary}${recommendedSuffix}`;
 }
 
 function formatQuestionHtml(question: McqQuestion): string {
@@ -92,13 +93,18 @@ function formatQuestionHtml(question: McqQuestion): string {
 
   if (question.options.length > 0) {
     const optionLines = question.options.map((option, index) =>
-      `${index + 1}. ${escapeHtml(normalizeText(option) || "(empty)")}${question.recommended === index + 1 ? " ★" : ""}`,
+      escapeHtml(
+        optionSummary(option, index, {
+          maxChars: MAX_MESSAGE_OPTION_CHARS,
+          recommended: question.recommended === index + 1,
+        }),
+      ),
     );
     const otherIndex = question.options.length + 1;
-    optionLines.push(`${otherIndex}. ${escapeHtml(OTHER_OPTION_LABEL)}`);
+    optionLines.push(escapeHtml(optionSummary(OTHER_OPTION_LABEL, otherIndex - 1)));
     lines.push(optionLines.join("\n"));
   } else {
-    lines.push(`1. ${escapeHtml(OTHER_OPTION_LABEL)}`);
+    lines.push(escapeHtml(optionSummary(OTHER_OPTION_LABEL, 0)));
   }
 
   if (question.recommendedReason?.trim()) {
@@ -166,7 +172,10 @@ function buildKeyboard(
 
   for (let i = 0; i < question.options.length; i += 1) {
     const isRecommended = question.recommended === i + 1;
-    const text = optionButtonLabel(i, isRecommended);
+    const text = optionSummary(question.options[i] ?? "(empty)", i, {
+      maxChars: MAX_BUTTON_SUMMARY_CHARS,
+      recommended: isRecommended,
+    });
     const callbackData = `${MCQ_PREFIX}${callbackQuestionId}:${i}`;
 
     if (callbackData.length > 64) {
@@ -186,7 +195,14 @@ function buildKeyboard(
       callbackDataLength: otherData.length,
     });
   }
-  rows.push([{ text: optionButtonLabel(question.options.length), callback_data: otherData }]);
+  rows.push([
+    {
+      text: optionSummary(OTHER_OPTION_LABEL, question.options.length, {
+        maxChars: MAX_BUTTON_SUMMARY_CHARS,
+      }),
+      callback_data: otherData,
+    },
+  ]);
 
   return rows;
 }

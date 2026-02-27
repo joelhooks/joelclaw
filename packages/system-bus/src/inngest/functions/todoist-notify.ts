@@ -9,6 +9,7 @@
  * ADR-0048: Webhook Gateway for External Service Integration
  */
 
+import { NonRetriableError } from "inngest";
 import { inngest } from "../client";
 import type { GatewayContext } from "../middleware/gateway";
 
@@ -20,22 +21,74 @@ function getApiToken(): string | undefined {
   return process.env.TODOIST_API_TOKEN;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function extractResults(payload: unknown): Array<Record<string, unknown>> {
+  if (isRecord(payload)) {
+    const results = payload.results;
+    if (Array.isArray(results)) {
+      return results.filter(isRecord);
+    }
+    return [payload];
+  }
+  return [];
+}
+
+async function throwIfHtmlResponse(response: Response, endpoint: string): Promise<void> {
+  const contentType = (response.headers.get("content-type") || "").toLowerCase();
+  if (!contentType.includes("text/html")) {
+    return;
+  }
+
+  const body = await response.text();
+  console.error("[todoist-notify] Todoist API returned HTML instead of JSON", {
+    endpoint,
+    status: response.status,
+    contentType,
+    bodyPreview: body.slice(0, 500),
+  });
+  throw new NonRetriableError(`Todoist API returned HTML for ${endpoint} (${response.status})`);
+}
+
+async function parseJsonResponse(response: Response, endpoint: string): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch (error) {
+    console.error("[todoist-notify] Failed to parse Todoist JSON response", {
+      endpoint,
+      status: response.status,
+      contentType: response.headers.get("content-type") || "unknown",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new NonRetriableError(`Todoist API JSON parsing failed for ${endpoint}`);
+  }
+}
+
 async function fetchTask(taskId: string): Promise<{ content: string; projectId: string; labels: string[] } | null> {
   const token = getApiToken();
   if (!token || !taskId) return null;
 
+  const endpoint = `/tasks?filter=${encodeURIComponent(`id:${taskId}`)}&limit=1`;
   try {
-    const res = await fetch(`${TODOIST_API}/tasks/${taskId}`, {
+    const res = await fetch(`${TODOIST_API}${endpoint}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
+    await throwIfHtmlResponse(res, endpoint);
     if (!res.ok) return null;
-    const task = (await res.json()) as Record<string, unknown>;
+    const payload = await parseJsonResponse(res, endpoint);
+    const task = extractResults(payload)[0];
+    if (!task) return null;
     return {
       content: String(task.content ?? ""),
       projectId: String(task.project_id ?? ""),
-      labels: Array.isArray(task.labels) ? task.labels : [],
+      labels: Array.isArray(task.labels)
+        ? task.labels.filter((label): label is string => typeof label === "string")
+        : [],
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof NonRetriableError) throw error;
     return null;
   }
 }
@@ -44,14 +97,19 @@ async function fetchProject(projectId: string): Promise<string | null> {
   const token = getApiToken();
   if (!token || !projectId) return null;
 
+  const endpoint = `/projects/${projectId}`;
   try {
-    const res = await fetch(`${TODOIST_API}/projects/${projectId}`, {
+    const res = await fetch(`${TODOIST_API}${endpoint}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
+    await throwIfHtmlResponse(res, endpoint);
     if (!res.ok) return null;
-    const project = (await res.json()) as Record<string, unknown>;
+    const payload = await parseJsonResponse(res, endpoint);
+    const project = extractResults(payload)[0];
+    if (!project) return null;
     return String(project.name ?? "");
-  } catch {
+  } catch (error) {
+    if (error instanceof NonRetriableError) throw error;
     return null;
   }
 }

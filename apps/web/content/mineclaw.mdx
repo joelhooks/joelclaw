@@ -1,0 +1,52 @@
+---
+title: "MineClaw"
+type: "essay"
+date: "2026-02-27T07:25:00"
+description: "Building system agents is like Minecraft. Blocks, logic, and an open world. The substrate is clay."
+image: "/images/mineclaw.png"
+tags: ["agents", "building", "craft", "minecraft"]
+---
+
+![MineClaw — Steve building an AI agent network on a floating island](/images/mineclaw.png)
+
+{/* agent context: Essay about the parallels between building personal AI infrastructure and Minecraft — both involve raw materials, tedium, exploration, and the satisfaction of making something that works. Connects Joel's 13-year arc from learning vim (2013) to self-hosting k8s (2023) to building agent networks (2026). The thesis: in a world panicking about what developers "are" now, the builders who kept playing will be fine. */}
+
+I've been building [JoelClaw](https://github.com/joelhooks/joelclaw) for months now — a personal AI operating system that runs on a Mac Mini in my office, talks to me on Telegram, processes my email, watches webhooks, writes to a personal data server, and occasionally drafts articles while I sleep.
+
+It feels like Minecraft.
+
+You've got a selection of blocks. Redis, Kubernetes, Inngest, a language model, some webhooks, a NAS full of books. Logic gates: event triggers, durable functions, retry policies, cron schedules. And an open world to explore that's limited only by what you're willing to wire together.
+
+It's a little bit tedious, sure. You're going to spend forty minutes debugging why your Tailscale subnet route is hijacking NFS responses. You're going to realize your webhook signing secret rotated and nothing told you. You're going to watch a Kubernetes pod crash-loop at 2am because Bun doesn't handle a particular edge case the way Node does.
+
+But if you keep building, you might end up with something remarkable. And the process itself is **Fun**. Capital F intentional.
+
+## The substrate is clay
+
+The best tools feel like raw material. Not a finished product you consume, but a medium you shape.
+
+[Vim was like this in 2013](/blog/2013/04/09/getting-to-know-vim/). I stripped out all the dotfiles I'd accumulated — someone else's config, someone else's opinions about what plugins I needed — and started building up my own setup line by line. That tipping point where you finally understand your editor, how it works, what options are available. That's not productivity. That's *craft*.
+
+[Self-hosting is like this now](/self-hosting/). Kubernetes on a Mac Mini, 80TB of network storage, 10G ethernet because editing video directly from the NAS is cool af. The Jared Palmers of the world look at this and ask "y tho?" The answer is the same answer it's always been: because building things feels good, and understanding your infrastructure means you own it instead of renting it from someone who might ruin it next quarter.
+
+[Pi](https://github.com/nicobailon/pi) is an extremely poignant example. It's raw. Hyper extensible. No guard rails, no wizard, no "get started in 5 minutes" tutorial. You open it up and there's a text interface and a universe of possibility. You can extend it, theme it, wire it into anything. The people who thrive with tools like this aren't the ones looking for a product — they're the ones looking for clay.
+
+## The homelab is a world
+
+JoelClaw, the homelab, the [AT Protocol agent network](https://github.com/joelhooks/atproto-agent-network) — same idea. Exploring, playing, building, and occasionally stepping back to admire the work.
+
+You get cut. Sometimes you have to scrap a build and start over. I've rewritten the gateway three times. I've thrown away entire approaches to message routing. I killed a beautiful Elixir experiment because it didn't compose well with the rest of the system. That's not failure. That's the medium.
+
+The journey is fuckin' amazing and satisfying in itself.
+
+## The existential crisis is aimed at the wrong thing
+
+There's a brewing panic about what it means to be a software developer in 2026. The rise of the agent. Infinite intelligence that's on 24/7. Models that write code, review code, deploy code, and occasionally hallucinate bugs that are better than the ones you'd write yourself.
+
+"What's left for us?" is the wrong question. It assumes development was ever a fixed thing. It wasn't. It was always building and exploring — the job title just made people forget that.
+
+The people who'll be fine are the ones who kept playing. Who self-host things they don't need to. Who wire up webhooks at midnight. Who build agent networks on decentralized protocols because *what if*. Who treat their system like a world to explore, not a career to optimize.
+
+Blocks, logic, and an open world. The tools got weirder — the agents talk back now — but the posture hasn't changed.
+
+Keep building.

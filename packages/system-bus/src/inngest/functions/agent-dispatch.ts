@@ -35,6 +35,11 @@ const FILE_READ_OPERATION_PATTERN =
   /\b(read|open|inspect|review|scan|grep|search|find|cat|ls|sed|rg)\b/;
 const PI_FILE_ANALYSIS_PATH_PATTERN = /\/[A-Za-z0-9_.~-]+\.[a-z]{1,5}(?=$|[\s"'`])/;
 const PI_FILE_ANALYSIS_PREFIX_PATTERN = /^\s*(read|analyze|review)\b/i;
+const CODEX_DEFAULT_MODEL = "gpt-5.3-codex";
+const CODEX_ALLOWED_MODELS = new Set([
+  "gpt-5.3-codex",
+  "gpt-5.3-codex-spark",
+]);
 
 function taskRequiresFileAccess(task: string): boolean {
   const normalizedTask = task.toLowerCase();
@@ -52,6 +57,23 @@ function taskIsIncompatibleWithPiNoTools(task: string): boolean {
     PI_FILE_ANALYSIS_PATH_PATTERN.test(task) ||
     PI_FILE_ANALYSIS_PREFIX_PATTERN.test(task)
   );
+}
+
+function resolveCodexModel(model?: string): string {
+  const requestedModel = model?.trim();
+  if (!requestedModel) {
+    return CODEX_DEFAULT_MODEL;
+  }
+
+  if (CODEX_ALLOWED_MODELS.has(requestedModel)) {
+    return requestedModel;
+  }
+
+  console.warn(
+    `[agent-dispatch] Unsupported codex model "${requestedModel}" requested; ` +
+      `overriding to "${CODEX_DEFAULT_MODEL}" for ChatGPT account compatibility.`
+  );
+  return CODEX_DEFAULT_MODEL;
 }
 
 /**
@@ -265,16 +287,18 @@ function buildCommand(
   const escaped = task.replace(/'/g, "'\\''");
 
   switch (tool) {
-    case "codex":
+    case "codex": {
+      const codexModel = resolveCodexModel(opts.model);
       return [
         "codex exec",
         "--full-auto",
-        opts.model ? `-m ${opts.model}` : "",
+        `-m ${codexModel}`,
         opts.sandbox ? `-s ${opts.sandbox}` : "",
         `'${escaped}'`,
       ]
         .filter(Boolean)
         .join(" ");
+    }
 
     case "claude":
       return [

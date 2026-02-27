@@ -161,15 +161,35 @@ esac
 
 cat > "$PI_EXT_DIR/index.ts" << EXTENSION
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import Redis from "ioredis";
 
 ${ROLE_CONFIG}
 const SESSIONS_SET = "agent:gateway:sessions";
 const EVENT_LIST = \`agent:events:\${SESSION_ID}\`;
 const NOTIFY_CHANNEL = \`agent:notify:\${SESSION_ID}\`;
 
-let sub: Redis | null = null;
-let cmd: Redis | null = null;
+type RedisLike = {
+  on(event: string, listener: (...args: unknown[]) => void): void;
+  connect(): Promise<void>;
+  subscribe(channel: string): Promise<unknown>;
+  lrange(key: string, start: number, stop: number): Promise<string[]>;
+  del(key: string): Promise<number>;
+  sadd(key: string, member: string): Promise<number>;
+  srem(key: string, member: string): Promise<number>;
+  llen(key: string): Promise<number>;
+  unsubscribe(): void;
+  disconnect(): void;
+};
+
+type RedisCtor = new (options: {
+  host: string;
+  port: number;
+  lazyConnect: boolean;
+  retryStrategy: (attempt: number) => number;
+}) => RedisLike;
+
+let Redis: RedisCtor | null = null;
+let sub: RedisLike | null = null;
+let cmd: RedisLike | null = null;
 let ctx: ExtensionContext | null = null;
 let piRef: ExtensionAPI | null = null;
 const seenIds = new Set<string>();
@@ -234,6 +254,16 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, _ctx) => {
     ctx = _ctx;
+    if (!Redis) {
+      try {
+        Redis = (await import("ioredis")).default as RedisCtor;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        _ctx.ui.notify(\`Gateway extension running without Redis: \${message}\`, "warning");
+        return;
+      }
+    }
+
     sub = new Redis({ host: "localhost", port: 6379, lazyConnect: true, retryStrategy: (t: number) => Math.min(t * 500, 30000) });
     cmd = new Redis({ host: "localhost", port: 6379, lazyConnect: true, retryStrategy: (t: number) => Math.min(t * 500, 30000) });
     sub.on("error", () => {});

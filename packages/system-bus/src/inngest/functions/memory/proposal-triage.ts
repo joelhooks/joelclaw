@@ -1,21 +1,12 @@
-import { rename } from "node:fs/promises";
 import { join } from "node:path";
 import Redis from "ioredis";
-import { inngest } from "../../client";
-import { triageProposal, type Proposal } from "../../../memory/triage";
-import { TodoistTaskAdapter } from "../../../tasks/adapters/todoist";
-import { emitOtelEvent } from "../../../observability/emit";
 import { getRedisPort } from "../../../lib/redis";
+import { type Proposal, triageProposal } from "../../../memory/triage";
+import { emitOtelEvent } from "../../../observability/emit";
+import { TodoistTaskAdapter } from "../../../tasks/adapters/todoist";
+import { inngest } from "../../client";
 
 const REVIEW_PENDING_KEY = "memory:review:pending";
-
-type MemorySection =
-  | "Joel"
-  | "Miller Hooks"
-  | "Conventions"
-  | "Hard Rules"
-  | "System Architecture"
-  | "Patterns";
 
 let redisClient: Redis | null = null;
 
@@ -43,67 +34,6 @@ function jsonKey(id: string): string {
 
 function hashKey(id: string): string {
   return `memory:review:proposal:${id}`;
-}
-
-function normalizeSection(input: string | undefined): MemorySection {
-  const value = input?.trim();
-  if (value === "Joel") return value;
-  if (value === "Miller Hooks") return value;
-  if (value === "Conventions") return value;
-  if (value === "Hard Rules") return value;
-  if (value === "System Architecture") return value;
-  if (value === "Patterns") return value;
-  return "Hard Rules";
-}
-
-function extractDate(value: string | undefined): string | null {
-  if (!value) return null;
-  const iso = /^(\d{4}-\d{2}-\d{2})/u.exec(value);
-  if (iso?.[1]) return iso[1];
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString().slice(0, 10);
-}
-
-function extractDateFromProposal(proposal: Proposal): string {
-  const fromTimestamp = extractDate(proposal.timestamp);
-  if (fromTimestamp) return fromTimestamp;
-
-  const idMatch = /^p-(\d{4})(\d{2})(\d{2})-\d+$/u.exec(proposal.id);
-  if (idMatch?.[1] && idMatch[2] && idMatch[3]) {
-    return `${idMatch[1]}-${idMatch[2]}-${idMatch[3]}`;
-  }
-
-  return new Date().toISOString().slice(0, 10);
-}
-
-function appendBulletToSection(markdown: string, section: MemorySection, bullet: string): string {
-  const lines = markdown.split(/\r?\n/u);
-  const header = `## ${section}`;
-  const headerIndex = lines.findIndex((line) => line.trim() === header);
-  const fallbackHeaderIndex = lines.findIndex((line) => line.trim() === "## Hard Rules");
-  const targetHeaderIndex = headerIndex >= 0 ? headerIndex : fallbackHeaderIndex;
-
-  if (targetHeaderIndex < 0) {
-    throw new Error(`Target section not found in MEMORY.md: ${section}`);
-  }
-
-  let sectionEnd = lines.length;
-  for (let i = targetHeaderIndex + 1; i < lines.length; i += 1) {
-    if (/^##\s+/u.test(lines[i] ?? "")) {
-      sectionEnd = i;
-      break;
-    }
-  }
-
-  let insertIndex = sectionEnd;
-  while (insertIndex > targetHeaderIndex + 1 && (lines[insertIndex - 1]?.trim() ?? "") === "") {
-    insertIndex -= 1;
-  }
-
-  lines.splice(insertIndex, 0, bullet);
-  return lines.join("\n");
 }
 
 function mergeChanges(primary: string, secondary: string): string {
@@ -187,21 +117,6 @@ async function loadPendingProposals(redis: Redis, excludeId?: string): Promise<P
   }
 
   return proposals;
-}
-
-async function appendProposalToMemory(proposal: Proposal): Promise<void> {
-  const memoryPath = getMemoryPath();
-  const memoryFile = Bun.file(memoryPath);
-  const memoryMarkdown = await memoryFile.text();
-
-  const section = normalizeSection(proposal.section);
-  const date = extractDateFromProposal(proposal);
-  const bullet = `- (${date}) ${proposal.change.trim()}`;
-  const nextMemory = appendBulletToSection(memoryMarkdown, section, bullet);
-
-  const tmpPath = `${memoryPath}.tmp`;
-  await Bun.write(tmpPath, nextMemory);
-  await rename(tmpPath, memoryPath);
 }
 
 export const proposalTriage = inngest.createFunction(

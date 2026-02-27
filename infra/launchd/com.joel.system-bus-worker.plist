@@ -18,7 +18,7 @@
         <key>HOME</key>
         <string>/Users/joel</string>
         <key>PATH</key>
-        <string>/Users/joel/.bun/bin:/Users/joel/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/Users/joel/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
         <key>INNGEST_DEV</key>
         <string>0</string>
         <key>WORKER_ROLE</key>
