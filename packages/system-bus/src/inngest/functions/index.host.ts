@@ -26,7 +26,7 @@ import {
 import { checkTriggers } from "./check-triggers";
 import { checkVaultSync } from "./check-vault-sync";
 import { contactEnrich } from "./contact-enrich";
-import { contentReviewSubmitted } from "./content-review";
+import { contentReviewApply } from "./content-review";
 import { contentSync } from "./content-sync";
 import { dailyDigest } from "./daily-digest";
 import { discoveryCapture } from "./discovery-capture";
@@ -116,7 +116,7 @@ export const hostFunctionDefinitions = [
   observeSessionFunction,
   reflect,
   contentSync,
-  contentReviewSubmitted,
+  contentReviewApply,
   discoveryCapture,
   xPost,
   xContentHook,

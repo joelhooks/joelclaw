@@ -913,6 +913,7 @@ export type Events = {
       contentSlug: string;
       contentType: "adr" | "post" | "discovery" | "video-note";
       source: string;
+      resourceId?: string;
     };
   };
   "system/heartbeat.wake": {

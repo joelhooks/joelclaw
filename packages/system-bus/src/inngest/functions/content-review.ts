@@ -1,34 +1,22 @@
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { rehypeParagraphIds } from "@joelclaw/mdx-pipeline";
 import { ConvexHttpClient } from "convex/browser";
 import { anyApi, type FunctionReference } from "convex/server";
 import { NonRetriableError } from "inngest";
-import remarkGfm from "remark-gfm";
-import remarkParse from "remark-parse";
-import remarkRehype from "remark-rehype";
-import { unified } from "unified";
 import { infer } from "../../lib/inference";
 import { inngest } from "../client";
+import type { GatewayContext } from "../middleware/gateway";
 import { buildGatewaySignalMeta } from "../middleware/gateway-signal";
-
-const HOME_DIR = process.env.HOME ?? "/Users/joel";
-const VAULT_ROOT = join(HOME_DIR, "Vault");
-const REPO_ROOT = join(HOME_DIR, "Code", "joelhooks", "joelclaw");
-const COMMENTABLE_TAGS = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote"]);
 
 type ContentType = "adr" | "post" | "discovery" | "video-note";
 type SupportedContentType = Exclude<ContentType, "video-note">;
+type ReviewCommentStatus = "submitted" | "processing" | "resolved";
 
-type ContentTarget = {
-  contentSlug: string;
-  contentType: SupportedContentType;
-  parentResourceId: string;
-  absolutePath: string;
-  gitRoot: string;
-  gitPath: string;
-  url: string;
-  systemPrompt: string;
+type ContentResourceDoc = {
+  resourceId: string;
+  type: string;
+  fields: unknown;
+  searchText?: string;
+  createdAt?: number;
+  updatedAt?: number;
 };
 
 type LinkedReviewComment = {
@@ -38,7 +26,6 @@ type LinkedReviewComment = {
   searchText?: string;
   createdAt?: number;
   updatedAt?: number;
-  linkPosition?: number;
 };
 
 type ReviewComment = {
@@ -50,92 +37,31 @@ type ReviewComment = {
   searchText?: string;
   createdAt?: number;
   updatedAt?: number;
-  linkPosition?: number;
 };
 
-type HastNode = {
-  type?: string;
-  tagName?: string;
-  value?: string;
-  children?: HastNode[];
-  properties?: Record<string, unknown>;
+type FailureEventData = {
+  contentSlug: string;
+  contentType: ContentType;
+  source?: string;
+  resourceId?: string;
 };
 
-function readShellText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
-  if (value == null) return "";
-  return String(value);
-}
+const REVIEW_MODEL = "anthropic/claude-sonnet-4-6";
 
-function normalizeWhitespace(value: string): string {
-  return value.replace(/\s+/gu, " ").trim();
-}
-
-function extractText(node: HastNode | undefined): string {
-  if (!node) return "";
-  if (node.type === "text" || node.type === "raw") {
-    return typeof node.value === "string" ? node.value : "";
-  }
-  if (!Array.isArray(node.children)) return "";
-  return node.children.map((child) => extractText(child)).join("");
-}
-
-function collectParagraphContexts(node: HastNode | undefined, byId: Map<string, string>): void {
-  if (!node) return;
-
-  if (node.type === "element" && typeof node.tagName === "string" && COMMENTABLE_TAGS.has(node.tagName)) {
-    const id = node.properties?.id;
-    if (typeof id === "string" && id.trim().length > 0) {
-      const text = normalizeWhitespace(extractText(node));
-      if (text.length > 0 && !byId.has(id)) {
-        byId.set(id, text);
-      }
-    }
+function parseContentType(value: string): ContentType {
+  if (value === "adr" || value === "post" || value === "discovery" || value === "video-note") {
+    return value;
   }
 
-  if (!Array.isArray(node.children)) return;
-  for (const child of node.children) {
-    collectParagraphContexts(child, byId);
-  }
-}
-
-async function buildParagraphContextMap(markdown: string): Promise<Record<string, string>> {
-  try {
-    const processor = unified()
-      .use(remarkParse)
-      .use(remarkGfm)
-      .use(remarkRehype)
-      .use(rehypeParagraphIds);
-
-    const parsed = processor.parse(markdown);
-    const tree = (await processor.run(parsed as never)) as HastNode;
-    const byId = new Map<string, string>();
-    collectParagraphContexts(tree, byId);
-    return Object.fromEntries(byId);
-  } catch {
-    return {};
-  }
-}
-
-function ensureTrailingNewline(text: string): string {
-  return text.endsWith("\n") ? text : `${text}\n`;
-}
-
-function stripMarkdownFence(text: string): string {
-  const trimmed = text.trim();
-  const fenced = trimmed.match(/^```(?:markdown|md|mdx)?\s*([\s\S]*?)\s*```$/iu);
-  return fenced?.[1] ?? trimmed;
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  throw new NonRetriableError(
+    `Unsupported contentType "${value}". Expected "adr", "post", "discovery", or "video-note".`,
+  );
 }
 
 function validateSlug(contentSlug: string): void {
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(contentSlug)) {
+  if (!/^[a-z0-9]+(?:[-/][a-z0-9]+)*$/u.test(contentSlug)) {
     throw new NonRetriableError(
-      `Invalid contentSlug "${contentSlug}". Expected lowercase letters, numbers, and hyphens.`,
+      `Invalid contentSlug "${contentSlug}". Expected lowercase letters, numbers, slashes, and hyphens.`,
     );
   }
 }
@@ -145,401 +71,645 @@ function ensureRecord(value: unknown): Record<string, unknown> {
   return { ...(value as Record<string, unknown>) };
 }
 
-function parseContentType(value: string): ContentType {
-  if (value === "adr" || value === "post" || value === "discovery" || value === "video-note") {
-    return value;
-  }
-  throw new NonRetriableError(
-    `Unsupported contentType "${value}". Expected "adr", "post", "discovery", or "video-note".`,
-  );
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-function resolveContentTarget(contentType: ContentType, contentSlug: string): ContentTarget {
-  switch (contentType) {
-    case "adr":
-      return {
-        contentSlug,
-        contentType,
-        parentResourceId: `adr:${contentSlug}`,
-        absolutePath: join(VAULT_ROOT, "docs", "decisions", `${contentSlug}.md`),
-        gitRoot: VAULT_ROOT,
-        gitPath: join("docs", "decisions", `${contentSlug}.md`),
-        url: `https://joelclaw.com/adrs/${contentSlug}`,
-        systemPrompt: [
-          "You update ADR markdown files based on submitted review comments.",
-          "Preserve frontmatter and technical consistency.",
-          "Keep decision logic coherent; only change what comments request.",
-          "Return only the complete updated markdown file.",
-        ].join(" "),
-      };
-    case "post":
-      return {
-        contentSlug,
-        contentType,
-        parentResourceId: `post:${contentSlug}`,
-        absolutePath: join(REPO_ROOT, "apps", "web", "content", `${contentSlug}.mdx`),
-        gitRoot: REPO_ROOT,
-        gitPath: join("apps", "web", "content", `${contentSlug}.mdx`),
-        url: `https://joelclaw.com/${contentSlug}`,
-        systemPrompt: [
-          "You update joelclaw.com blog post MDX based on submitted review comments.",
-          "Keep Joel's direct first-person voice and preserve frontmatter.",
-          "Maintain existing section structure unless comments explicitly request changes.",
-          "Return only the complete updated MDX file.",
-        ].join(" "),
-      };
-    case "discovery":
-      return {
-        contentSlug,
-        contentType,
-        parentResourceId: `discovery:${contentSlug}`,
-        absolutePath: join(REPO_ROOT, "apps", "web", "content", "discoveries", `${contentSlug}.mdx`),
-        gitRoot: REPO_ROOT,
-        gitPath: join("apps", "web", "content", "discoveries", `${contentSlug}.mdx`),
-        url: `https://joelclaw.com/cool/${contentSlug}`,
-        systemPrompt: [
-          "You update joelclaw.com discovery MDX notes based on submitted review comments.",
-          "Keep concise, clear discovery-note tone and preserve frontmatter/links.",
-          "Apply comments directly while retaining factual accuracy.",
-          "Return only the complete updated MDX file.",
-        ].join(" "),
-      };
-    case "video-note":
-      throw new NonRetriableError(
-        `contentType "${contentType}" is not yet mapped to a file path for contentSlug "${contentSlug}".`,
-      );
-  }
+function stripMarkdownFence(text: string): string {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/^```(?:markdown|md|mdx)?\s*([\s\S]*?)\s*```$/iu);
+  return fenced?.[1] ?? trimmed;
+}
+
+function ensureTrailingNewline(text: string): string {
+  return text.endsWith("\n") ? text : `${text}\n`;
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function getConvexClient(): ConvexHttpClient {
-  const url = process.env.NEXT_PUBLIC_CONVEX_URL?.trim();
-  if (!url) {
+  const convexUrl =
+    process.env.CONVEX_URL?.trim() ??
+    process.env.NEXT_PUBLIC_CONVEX_URL?.trim() ??
+    "";
+
+  if (!convexUrl) {
     throw new NonRetriableError(
-      "NEXT_PUBLIC_CONVEX_URL env var is required for content/review.submitted",
+      "CONVEX_URL or NEXT_PUBLIC_CONVEX_URL env var is required for content/review.submitted",
     );
   }
-  return new ConvexHttpClient(url);
+
+  return new ConvexHttpClient(convexUrl);
 }
 
-async function querySubmittedReviewComments(parentResourceId: string): Promise<ReviewComment[]> {
+function normalizeContentType(contentType: ContentType): SupportedContentType {
+  if (contentType === "video-note") {
+    throw new NonRetriableError(
+      `contentType "${contentType}" is not yet supported by content-review-apply`,
+    );
+  }
+  return contentType;
+}
+
+function toParentResourceId(contentType: SupportedContentType, contentSlug: string): string {
+  return `${contentType}:${contentSlug}`;
+}
+
+function toContentResourceCandidates(contentType: SupportedContentType, contentSlug: string): string[] {
+  if (contentType === "post") {
+    return [`article:${contentSlug}`, `post:${contentSlug}`];
+  }
+  return [`${contentType}:${contentSlug}`];
+}
+
+function toCacheTag(contentType: SupportedContentType, contentSlug: string): string {
+  if (contentType === "post") {
+    return `article:${contentSlug}`;
+  }
+  return `${contentType}:${contentSlug}`;
+}
+
+function getSiteUrl(): string {
+  const configured = process.env.SITE_URL?.trim() ?? "https://joelclaw.com";
+  return configured.endsWith("/") ? configured.slice(0, -1) : configured;
+}
+
+async function queryContentResource(resourceId: string): Promise<ContentResourceDoc | null> {
+  const client = getConvexClient();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ref = (anyApi as any).contentResources.getByResourceId as FunctionReference<"query">;
+  const result = await client.query(ref, { resourceId });
+
+  if (!result || typeof result !== "object") return null;
+  const normalized = result as Partial<ContentResourceDoc>;
+  if (!normalized.resourceId || !normalized.type) return null;
+
+  return {
+    resourceId: normalized.resourceId,
+    type: normalized.type,
+    fields: normalized.fields,
+    searchText: normalized.searchText,
+    createdAt: normalized.createdAt,
+    updatedAt: normalized.updatedAt,
+  };
+}
+
+async function fetchCurrentContent(
+  contentType: SupportedContentType,
+  contentSlug: string,
+): Promise<{
+  resourceId: string;
+  type: string;
+  fields: Record<string, unknown>;
+  content: string;
+}> {
+  const candidates = toContentResourceCandidates(contentType, contentSlug);
+
+  for (const resourceId of candidates) {
+    const doc = await queryContentResource(resourceId);
+    if (!doc) continue;
+
+    const fields = ensureRecord(doc.fields);
+    const content = asString(fields.content);
+    if (!content) continue;
+
+    return {
+      resourceId: doc.resourceId,
+      type: doc.type,
+      fields,
+      content,
+    };
+  }
+
+  throw new NonRetriableError(
+    `No content resource found in Convex for ${contentType}/${contentSlug}. Tried ${candidates.join(", ")}.`,
+  );
+}
+
+function toReviewComment(raw: LinkedReviewComment): ReviewComment | null {
+  if (!raw || raw.type !== "review_comment") return null;
+
+  const fields = ensureRecord(raw.fields);
+  const content = asString(fields.content);
+  if (!content) return null;
+
+  const paragraphId = asString(fields.paragraphId) ?? "unknown";
+  const threadId = asString(fields.threadId) ?? `thread:${raw.resourceId}`;
+
+  return {
+    resourceId: raw.resourceId,
+    paragraphId,
+    threadId,
+    content,
+    fields,
+    searchText: asString(raw.searchText),
+    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : undefined,
+    updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : undefined,
+  };
+}
+
+async function listLinkedReviewComments(
+  parentResourceId: string,
+  status: ReviewCommentStatus,
+): Promise<ReviewComment[]> {
   const client = getConvexClient();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ref = (anyApi as any).contentResources.listLinkedReviewComments as FunctionReference<"query">;
   const result = await client.query(ref, {
     parentResourceId,
-    status: "submitted",
+    status,
   });
 
   if (!Array.isArray(result)) return [];
 
-  const normalized: ReviewComment[] = [];
-  for (const raw of result as LinkedReviewComment[]) {
-    if (!raw || typeof raw.resourceId !== "string") continue;
-    if (raw.type !== "review_comment") continue;
-
-    const fields = ensureRecord(raw.fields);
-    const status = typeof fields.status === "string" ? fields.status : undefined;
-    if (status !== "submitted") continue;
-
-    const content = typeof fields.content === "string" ? fields.content.trim() : "";
-    if (!content) continue;
-
-    const paragraphId = typeof fields.paragraphId === "string" ? fields.paragraphId : "unknown";
-    const threadId = typeof fields.threadId === "string" ? fields.threadId : `thread:${raw.resourceId}`;
-
-    normalized.push({
-      resourceId: raw.resourceId,
-      paragraphId,
-      threadId,
-      content,
-      fields,
-      searchText: typeof raw.searchText === "string" ? raw.searchText : undefined,
-      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : undefined,
-      updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : undefined,
-      linkPosition: typeof raw.linkPosition === "number" ? raw.linkPosition : undefined,
-    });
-  }
-
-  return normalized.sort((a, b) => {
-    const aPos = typeof a.linkPosition === "number" ? a.linkPosition : Number.MAX_SAFE_INTEGER;
-    const bPos = typeof b.linkPosition === "number" ? b.linkPosition : Number.MAX_SAFE_INTEGER;
-    if (aPos !== bPos) return aPos - bPos;
-    return (a.createdAt ?? 0) - (b.createdAt ?? 0);
-  });
+  return result
+    .map((entry) => toReviewComment(entry as LinkedReviewComment))
+    .filter((entry): entry is ReviewComment => Boolean(entry));
 }
 
-function buildCommentSearchText(comment: ReviewComment, fields: Record<string, unknown>): string {
-  const parts: string[] = [];
-  if (comment.searchText && comment.searchText.trim().length > 0) parts.push(comment.searchText.trim());
-  if (typeof fields.paragraphId === "string") parts.push(fields.paragraphId);
-  if (typeof fields.threadId === "string") parts.push(fields.threadId);
-  if (typeof fields.content === "string") parts.push(fields.content);
-  if (typeof fields.status === "string") parts.push(fields.status);
+function buildCommentSearchText(fields: Record<string, unknown>): string {
+  const parts = [
+    asString(fields.paragraphId),
+    asString(fields.threadId),
+    asString(fields.content),
+    asString(fields.status),
+  ].filter((value): value is string => Boolean(value));
+
   return parts.join(" ").trim();
 }
 
-async function markCommentsResolved(comments: ReviewComment[]): Promise<number> {
-  if (comments.length === 0) return 0;
+async function updateReviewCommentStatuses(args: {
+  comments: ReviewComment[];
+  status: ReviewCommentStatus;
+  runId?: string;
+  includeResolvedAt?: boolean;
+  removeFields?: string[];
+}): Promise<number> {
+  if (args.comments.length === 0) return 0;
 
   const client = getConvexClient();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ref = (anyApi as any).contentResources.upsert as FunctionReference<"mutation">;
-  let resolved = 0;
 
-  for (const comment of comments) {
-    const updatedFields = { ...comment.fields, status: "resolved" } as Record<string, unknown>;
+  let updated = 0;
+  for (const comment of args.comments) {
+    const nextFields: Record<string, unknown> = {
+      ...comment.fields,
+      status: args.status,
+      reviewRunId: args.runId,
+    };
+
+    if (args.status === "resolved" && args.includeResolvedAt !== false) {
+      nextFields.resolvedAt = Date.now();
+    }
+
+    for (const fieldName of args.removeFields ?? []) {
+      delete nextFields[fieldName];
+    }
+
     await client.mutation(ref, {
       resourceId: comment.resourceId,
       type: "review_comment",
-      fields: updatedFields,
-      searchText: buildCommentSearchText(comment, updatedFields),
+      fields: nextFields,
+      searchText: buildCommentSearchText(nextFields),
     });
-    resolved += 1;
+
+    updated += 1;
   }
 
-  return resolved;
+  return updated;
 }
 
 function buildReviewPrompt(args: {
-  target: ContentTarget;
-  currentContent: string;
+  contentType: SupportedContentType;
+  contentSlug: string;
+  content: string;
   comments: ReviewComment[];
-  contexts: Record<string, string>;
 }): string {
-  const toneHint =
-    args.target.contentType === "adr"
-      ? "Tone: technical ADR language, concise and precise."
-      : args.target.contentType === "post"
-        ? "Tone: Joel blog voice (clear, direct, conversational first-person)."
-        : "Tone: concise discovery-note style with practical clarity.";
-
-  const commentsBlock = args.comments
+  const commentsText = args.comments
     .map((comment, index) => {
-      const context =
-        args.contexts[comment.paragraphId] ?? "(Paragraph context not found in current content)";
-      const createdAt =
-        typeof comment.createdAt === "number" ? new Date(comment.createdAt).toISOString() : "unknown";
+      const timestamp =
+        typeof comment.createdAt === "number"
+          ? new Date(comment.createdAt).toISOString()
+          : "unknown";
+
       return [
-        `### Comment ${index + 1}`,
-        `- resourceId: ${comment.resourceId}`,
+        `Comment ${index + 1}:`,
         `- paragraphId: ${comment.paragraphId}`,
         `- threadId: ${comment.threadId}`,
-        `- createdAt: ${createdAt}`,
-        "",
-        "Paragraph context:",
-        context,
-        "",
-        "Requested change:",
-        comment.content,
+        `- createdAt: ${timestamp}`,
+        `- feedback: ${comment.content}`,
       ].join("\n");
     })
     .join("\n\n");
 
   return [
-    `Content slug: ${args.target.contentSlug}`,
-    `Content type: ${args.target.contentType}`,
-    `Parent resourceId: ${args.target.parentResourceId}`,
-    toneHint,
-    "",
-    "Update this content file by applying all submitted review comments.",
-    "Requirements:",
-    "1. Keep valid frontmatter and markdown/MDX syntax.",
-    "2. Preserve intent and factual integrity.",
-    "3. Incorporate each comment directly or reconcile overlapping comments.",
-    "4. Return the full updated file only.",
+    `Resource: ${args.contentType}:${args.contentSlug}`,
+    "Apply all submitted review comments to the content below.",
+    "Return only the full updated markdown/MDX document.",
     "",
     "## Current Content",
     "```md",
-    args.currentContent.trimEnd(),
+    args.content.trimEnd(),
     "```",
     "",
-    "## Submitted Comments",
-    commentsBlock,
+    "## Review Feedback",
+    commentsText,
   ].join("\n");
 }
 
-async function runContentRewrite(systemPrompt: string, prompt: string): Promise<string> {
+function systemPromptForContentType(contentType: SupportedContentType): string {
+  if (contentType === "adr") {
+    return [
+      "You edit Architecture Decision Records using submitted review feedback.",
+      "Preserve technical intent, structure, and frontmatter.",
+      "Only make changes implied by the feedback.",
+      "Return the complete updated markdown file only.",
+    ].join(" ");
+  }
+
+  if (contentType === "post") {
+    return [
+      "You edit joelclaw articles using submitted review feedback.",
+      "Preserve the author's voice and remove filler.",
+      "Apply suggested fixes, clarity improvements, and corrections.",
+      "Return the complete updated MDX file only.",
+    ].join(" ");
+  }
+
+  return [
+    "You edit discovery notes using submitted review feedback.",
+    "Keep the note concise, factual, and actionable.",
+    "Return the complete updated markdown file only.",
+  ].join(" ");
+}
+
+async function rewriteContent(args: {
+  contentType: SupportedContentType;
+  contentSlug: string;
+  currentContent: string;
+  comments: ReviewComment[];
+}): Promise<string> {
+  const prompt = buildReviewPrompt({
+    contentType: args.contentType,
+    contentSlug: args.contentSlug,
+    content: args.currentContent,
+    comments: args.comments,
+  });
+
   const result = await infer(prompt, {
     task: "rewrite",
-    model: "anthropic/claude-sonnet-4-6",
-    system: systemPrompt,
+    model: REVIEW_MODEL,
+    system: systemPromptForContentType(args.contentType),
     component: "content-review",
-    action: "content.review.llm.rewrite",
+    action: "content.review.apply",
   });
-  const assistantText = stripMarkdownFence(result.text).trim();
 
-  if (!assistantText) {
-    throw new Error("content review rewrite returned empty output");
+  const rewritten = stripMarkdownFence(result.text).trim();
+  if (!rewritten) {
+    throw new Error("content review apply returned empty output");
   }
 
-  return ensureTrailingNewline(assistantText);
+  return ensureTrailingNewline(rewritten);
 }
 
-function parseAdrNumber(contentSlug: string): string {
-  const match = contentSlug.match(/^(\d+)/u);
-  if (!match) return contentSlug;
-  const prefix = match[1] ?? "";
-  const parsed = Number.parseInt(prefix, 10);
-  if (Number.isFinite(parsed)) return String(parsed);
-  const dePadded = prefix.replace(/^0+/u, "");
-  return dePadded.length > 0 ? dePadded : prefix;
-}
+function validateRewriteLength(currentContent: string, rewrittenContent: string): void {
+  const currentLength = currentContent.trim().length;
+  const rewrittenLength = rewrittenContent.trim().length;
 
-function buildCommitMessage(target: ContentTarget, commentCount: number): string {
-  if (target.contentType === "adr") {
-    return `adr(${parseAdrNumber(target.contentSlug)}): review pass — ${commentCount} comments applied`;
-  }
-  return `${target.contentType}(${target.contentSlug}): review pass — ${commentCount} comments applied`;
-}
-
-async function commitContentUpdate(target: ContentTarget, commentCount: number): Promise<{
-  committed: boolean;
-  sha?: string;
-}> {
-  await Bun.$`cd ${target.gitRoot} && git add ${target.gitPath}`.quiet();
-
-  const staged = await Bun.$`cd ${target.gitRoot} && git diff --cached --quiet -- ${target.gitPath}`
-    .quiet()
-    .nothrow();
-
-  if (staged.exitCode === 0) {
-    return { committed: false };
+  if (rewrittenLength === 0) {
+    throw new Error("rewritten article content was empty");
   }
 
-  if (staged.exitCode !== 1) {
-    const stagedError = readShellText(staged.stderr || staged.stdout).trim();
+  if (currentLength === 0) {
+    throw new NonRetriableError("current article content is empty; cannot validate rewrite length");
+  }
+
+  const minLength = Math.floor(currentLength * 0.5);
+  const maxLength = Math.ceil(currentLength * 1.5);
+
+  if (rewrittenLength < minLength || rewrittenLength > maxLength) {
     throw new Error(
-      `Failed to verify staged content changes (exit ${staged.exitCode})${stagedError ? `: ${stagedError}` : ""}`,
+      `rewritten article length ${rewrittenLength} is outside allowed range ${minLength}-${maxLength}`,
     );
   }
-
-  const message = buildCommitMessage(target, commentCount);
-  const commitResult = await Bun.$`cd ${target.gitRoot} && git commit -m ${message}`.quiet().nothrow();
-  if (commitResult.exitCode !== 0) {
-    const commitError = readShellText(commitResult.stderr || commitResult.stdout).trim();
-    throw new Error(
-      `git commit failed (exit ${commitResult.exitCode})${commitError ? `: ${commitError}` : ""}`,
-    );
-  }
-
-  const sha = (await Bun.$`cd ${target.gitRoot} && git rev-parse HEAD`.text()).trim();
-  return { committed: true, sha };
 }
 
-export const contentReviewSubmitted = inngest.createFunction(
-  {
-    id: "content/review-submitted",
-    name: "Content Review Submitted",
-    retries: 2,
-    concurrency: { limit: 1, key: 'event.data.contentType + ":" + event.data.contentSlug' },
-  },
-  { event: "content/review.submitted" },
-  async ({ event, step, gateway }) => {
-    const contentSlug = event.data.contentSlug.trim();
-    const contentType = parseContentType(event.data.contentType.trim());
-    validateSlug(contentSlug);
+function buildGenericSearchText(fields: Record<string, unknown>): string {
+  const values = [
+    asString(fields.slug),
+    asString(fields.title),
+    asString(fields.description),
+    asString(fields.status),
+    asString(fields.content)?.slice(0, 1000),
+  ].filter((entry): entry is string => Boolean(entry));
 
-    const target = await step.run("resolve-content-target", async () => {
-      return resolveContentTarget(contentType, contentSlug);
-    });
+  if (values.length > 0) return values.join(" ");
 
+  try {
+    return JSON.stringify(fields);
+  } catch {
+    return "";
+  }
+}
+
+async function writeContentRevision(args: {
+  articleResourceId: string;
+  contentType: SupportedContentType;
+  contentSlug: string;
+  previousContent: string;
+  updatedContent: string;
+  comments: ReviewComment[];
+  runId: string;
+}): Promise<string> {
+  const client = getConvexClient();
+  const revisionResourceId = `contentRevision:${args.articleResourceId}:${Date.now()}`;
+
+  const fields: Record<string, unknown> = {
+    resourceId: args.articleResourceId,
+    contentType: args.contentType,
+    contentSlug: args.contentSlug,
+    previousContent: args.previousContent,
+    updatedContent: args.updatedContent,
+    commentIds: args.comments.map((comment) => comment.resourceId),
+    commentCount: args.comments.length,
+    runId: args.runId,
+    model: REVIEW_MODEL,
+    createdAt: Date.now(),
+  };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ref = (anyApi as any).contentResources.upsert as FunctionReference<"mutation">;
+  await client.mutation(ref, {
+    resourceId: revisionResourceId,
+    type: "content_revision",
+    fields,
+    searchText: buildGenericSearchText(fields),
+  });
+
+  return revisionResourceId;
+}
+
+async function updateArticleContent(args: {
+  resourceId: string;
+  type: string;
+  existingFields: Record<string, unknown>;
+  updatedContent: string;
+}): Promise<void> {
+  const client = getConvexClient();
+  const nextFields: Record<string, unknown> = {
+    ...args.existingFields,
+    content: args.updatedContent,
+  };
+
+  if (typeof nextFields.updated === "string") {
+    nextFields.updated = new Date().toISOString();
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ref = (anyApi as any).contentResources.upsert as FunctionReference<"mutation">;
+  await client.mutation(ref, {
+    resourceId: args.resourceId,
+    type: args.type,
+    fields: nextFields,
+    searchText: buildGenericSearchText(nextFields),
+  });
+}
+
+async function revalidateContentTag(cacheTag: string): Promise<void> {
+  const revalidationSecret = process.env.REVALIDATION_SECRET?.trim();
+  if (!revalidationSecret) {
+    throw new NonRetriableError("REVALIDATION_SECRET is required for content revalidation");
+  }
+
+  const response = await fetch(`${getSiteUrl()}/api/revalidate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-revalidation-secret": revalidationSecret,
+    },
+    body: JSON.stringify({ tag: cacheTag }),
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(
+      `revalidate failed (${response.status})${body ? `: ${body.slice(0, 300)}` : ""}`,
+    );
+  }
+}
+
+function parseFailureInput(data: unknown): FailureEventData | null {
+  const record = ensureRecord(data);
+
+  const directSlug = asString(record.contentSlug);
+  const directType = asString(record.contentType);
+  if (directSlug && directType) {
     try {
-      const submittedComments = await step.run("load-submitted-comments", async () => {
-        return querySubmittedReviewComments(target.parentResourceId);
-      });
+      return {
+        contentSlug: directSlug,
+        contentType: parseContentType(directType),
+        source: asString(record.source),
+        resourceId: asString(record.resourceId),
+      };
+    } catch {
+      return null;
+    }
+  }
 
-      if (submittedComments.length === 0) {
-        return {
-          status: "noop",
-          reason: "no-submitted-comments",
-          contentSlug,
-          contentType,
-        };
-      }
+  const nestedEvent = ensureRecord(record.event);
+  if (Object.keys(nestedEvent).length > 0) {
+    return parseFailureInput(nestedEvent.data);
+  }
 
-      const currentContent = await step.run("read-content-file", async () => {
-        const file = Bun.file(target.absolutePath);
-        if (!(await file.exists())) {
-          throw new NonRetriableError(`Content file not found at ${target.absolutePath}`);
-        }
-        return file.text();
-      });
+  return null;
+}
 
-      const paragraphContexts = await step.run("map-paragraph-contexts", async () => {
-        return buildParagraphContextMap(currentContent);
-      });
+async function rollbackCommentStatusesOnFailure(args: {
+  parentResourceId: string;
+  runId?: string;
+}): Promise<number> {
+  const processing = await listLinkedReviewComments(args.parentResourceId, "processing");
+  const resolved = args.runId
+    ? await listLinkedReviewComments(args.parentResourceId, "resolved")
+    : [];
 
-      const reviewPrompt = await step.run("build-review-prompt", async () => {
-        return buildReviewPrompt({
-          target,
-          currentContent,
-          comments: submittedComments,
-          contexts: paragraphContexts,
+  const resetCandidates = [...processing, ...resolved].filter((comment) => {
+    if (!args.runId) return true;
+    const reviewRunId = asString(comment.fields.reviewRunId);
+    return !reviewRunId || reviewRunId === args.runId;
+  });
+
+  if (resetCandidates.length === 0) return 0;
+
+  return updateReviewCommentStatuses({
+    comments: resetCandidates,
+    status: "submitted",
+    removeFields: ["resolvedAt", "reviewRunId"],
+  });
+}
+
+export const contentReviewApply = inngest.createFunction(
+  {
+    id: "content-review-apply",
+    name: "Content Review Apply",
+    retries: 2,
+    concurrency: {
+      limit: 1,
+      key:
+        'event.data.resourceId ? event.data.resourceId : (event.data.contentType == "post" ? "article:" + event.data.contentSlug : event.data.contentType + ":" + event.data.contentSlug)',
+    },
+    onFailure: async ({ error, event, step, runId, ...rest }) => {
+      const failureInput = parseFailureInput(event.data);
+      if (!failureInput) return;
+
+      const contentType = normalizeContentType(failureInput.contentType);
+      const parentResourceId = toParentResourceId(contentType, failureInput.contentSlug);
+
+      const revertedCount = await step.run("rollback-comments-to-submitted", async () => {
+        return rollbackCommentStatusesOnFailure({
+          parentResourceId,
+          runId,
         });
       });
 
-      const rewrittenContent = await step.run("rewrite-content", async () => {
-        return runContentRewrite(target.systemPrompt, reviewPrompt);
-      });
+      const gateway = (rest as { gateway?: GatewayContext }).gateway;
+      const message = formatError(error);
 
-      const writeResult = await step.run("write-updated-content", async () => {
-        if (rewrittenContent === currentContent) {
-          return { updated: false };
-        }
-        await writeFile(target.absolutePath, rewrittenContent, "utf8");
-        return { updated: true };
-      });
-
-      const commit = await step.run("commit-content-file", async () => {
-        if (!writeResult.updated) {
-          return { committed: false };
-        }
-        return commitContentUpdate(target, submittedComments.length);
-      });
-
-      const resolved = await step.run("resolve-comments", async () => {
-        return markCommentsResolved(submittedComments);
-      });
-
-      await step.run("notify-gateway", async () => {
+      await step.run("notify-gateway-failure", async () => {
         if (!gateway) return { notified: false, reason: "gateway-unavailable" };
-        await gateway.notify(
-          `Content updated: ${contentSlug}. ${submittedComments.length} comments applied. ${target.url}`,
-          { ...buildGatewaySignalMeta("content.review", "info") },
+
+        await gateway.alert(
+          `Content review apply failed for ${contentType}/${failureInput.contentSlug}: ${message}`,
+          {
+            ...buildGatewaySignalMeta("content.review", "error"),
+            contentType,
+            contentSlug: failureInput.contentSlug,
+            parentResourceId,
+            revertedCount,
+            source: failureInput.source,
+          },
         );
+
         return { notified: true };
       });
+    },
+  },
+  { event: "content/review.submitted" },
+  async ({ event, step, runId, gateway }) => {
+    const contentSlug = event.data.contentSlug.trim();
+    const contentType = normalizeContentType(parseContentType(event.data.contentType.trim()));
 
+    validateSlug(contentSlug);
+
+    const parentResourceId = toParentResourceId(contentType, contentSlug);
+    const cacheTag = toCacheTag(contentType, contentSlug);
+
+    const article = await step.run("fetch-article", async () => {
+      return fetchCurrentContent(contentType, contentSlug);
+    });
+
+    const submittedComments = await step.run("fetch-submitted-comments", async () => {
+      return listLinkedReviewComments(parentResourceId, "submitted");
+    });
+
+    if (submittedComments.length === 0) {
       return {
-        status: "completed",
-        contentSlug,
+        status: "noop",
+        reason: "no-submitted-comments",
         contentType,
-        submitted: submittedComments.length,
-        resolved,
-        fileUpdated: writeResult.updated,
-        commitSha: commit.sha,
-        committed: commit.committed,
+        contentSlug,
+        resourceId: article.resourceId,
       };
-    } catch (error) {
-      const message = formatError(error);
-      await step.run("alert-failure", async () => {
-        if (!gateway) return { alerted: false, reason: "gateway-unavailable", error: message };
-        try {
-          await gateway.alert(`Content review failed for ${contentType}/${contentSlug}: ${message}`, {
-            ...buildGatewaySignalMeta("content.review", "error"),
-            contentSlug,
-            contentType,
-            source: event.data.source,
-          });
-          return { alerted: true };
-        } catch (alertError) {
-          return {
-            alerted: false,
-            error: formatError(alertError),
-          };
-        }
-      });
-      throw error;
     }
+
+    await step.run("mark-comments-processing", async () => {
+      return updateReviewCommentStatuses({
+        comments: submittedComments,
+        status: "processing",
+        runId,
+      });
+    });
+
+    const rewrittenContent = await step.run("agent-edit", async () => {
+      return rewriteContent({
+        contentType,
+        contentSlug,
+        currentContent: article.content,
+        comments: submittedComments,
+      });
+    });
+
+    await step.run("validate-edited-content", async () => {
+      validateRewriteLength(article.content, rewrittenContent);
+      return {
+        currentLength: article.content.trim().length,
+        rewrittenLength: rewrittenContent.trim().length,
+      };
+    });
+
+    const revisionResourceId = await step.run("write-content-revision", async () => {
+      return writeContentRevision({
+        articleResourceId: article.resourceId,
+        contentType,
+        contentSlug,
+        previousContent: article.content,
+        updatedContent: rewrittenContent,
+        comments: submittedComments,
+        runId,
+      });
+    });
+
+    await step.run("update-article-content", async () => {
+      await updateArticleContent({
+        resourceId: article.resourceId,
+        type: article.type,
+        existingFields: article.fields,
+        updatedContent: rewrittenContent,
+      });
+    });
+
+    const resolvedCount = await step.run("mark-comments-resolved", async () => {
+      return updateReviewCommentStatuses({
+        comments: submittedComments,
+        status: "resolved",
+        runId,
+      });
+    });
+
+    await step.run("revalidate-cache-tag", async () => {
+      await revalidateContentTag(cacheTag);
+    });
+
+    await step.run("notify-gateway-success", async () => {
+      if (!gateway) return { notified: false, reason: "gateway-unavailable" };
+
+      await gateway.notify("content.review.applied", {
+        ...buildGatewaySignalMeta("content.review", "info"),
+        resourceId: article.resourceId,
+        parentResourceId,
+        revisionResourceId,
+        cacheTag,
+        contentType,
+        contentSlug,
+        commentsResolved: resolvedCount,
+      });
+
+      return { notified: true };
+    });
+
+    return {
+      status: "completed",
+      contentType,
+      contentSlug,
+      resourceId: article.resourceId,
+      parentResourceId,
+      revisionResourceId,
+      resolvedCount,
+      cacheTag,
+    };
   },
 );
