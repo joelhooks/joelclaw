@@ -68,7 +68,7 @@
       "id": "CFP-4",
       "title": "Cache invalidation endpoint",
       "priority": 4,
-      "status": "pending",
+      "status": "done",
       "description": "Create POST /api/revalidate route handler that accepts { tag: string } body, validates a shared secret via x-revalidation-secret header, and calls revalidateTag(tag). Secret comes from REVALIDATION_SECRET env var.",
       "acceptance": [
         "POST /api/revalidate with valid secret and { tag: 'article:mineclaw' } returns { revalidated: true }",
