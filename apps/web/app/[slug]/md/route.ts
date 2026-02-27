@@ -1,13 +1,14 @@
-import { getPost, getAllPosts, getPostSlugs, type PostMeta } from "@/lib/posts";
-import { SITE_URL, SITE_NAME } from "@/lib/constants";
 import { remark } from "remark";
 import remarkGfm from "remark-gfm";
 import remarkMdx from "remark-mdx";
+import { SITE_NAME, SITE_URL } from "@/lib/constants";
+import { getAllPosts, getPost, getPostSlugs, type PostMeta } from "@/lib/posts";
 import { remarkMdLinks } from "@/lib/remark-md-links";
 import { remarkStripMdxComments } from "@/lib/remark-strip-mdx-comments";
 
 export async function generateStaticParams() {
-  return getPostSlugs().map((slug) => ({ slug }));
+  const slugs = await getPostSlugs();
+  return slugs.map((slug) => ({ slug }));
 }
 
 /** Process MDX content through remark pipeline for agent markdown output */
@@ -76,13 +77,13 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
-  const post = getPost(slug);
+  const post = await getPost(slug);
   if (!post) {
     return new Response("Not found", { status: 404 });
   }
 
   const { meta, content } = post;
-  const allPosts = getAllPosts();
+  const allPosts = await getAllPosts();
   const cleaned = await toAgentMarkdown(content);
   const preamble = agentPreamble(meta, allPosts);
 

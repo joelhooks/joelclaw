@@ -1,8 +1,8 @@
 import { ImageResponse } from "next/og";
-import { getPost, getPostSlugs } from "@/lib/posts";
-import type { ContentType } from "@/lib/posts";
-import { clawSvg, CLAW_COLOR } from "@/lib/claw";
+import { CLAW_COLOR, clawSvg } from "@/lib/claw";
 import { formatDateStatic } from "@/lib/date";
+import type { ContentType } from "@/lib/posts";
+import { getPost, getPostSlugs } from "@/lib/posts";
 
 export const alt = "JoelClaw";
 export const size = { width: 1200, height: 630 };
@@ -23,7 +23,8 @@ const TYPE_LABELS: Record<ContentType, string> = {
 };
 
 export async function generateStaticParams() {
-  return getPostSlugs().map((slug) => ({ slug }));
+  const slugs = await getPostSlugs();
+  return slugs.map((slug) => ({ slug }));
 }
 
 export default async function Image({
@@ -32,7 +33,7 @@ export default async function Image({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const post = getPost(slug);
+  const post = await getPost(slug);
   const title = post?.meta.title ?? slug;
   const type = post?.meta.type ?? "article";
   const tags = post?.meta.tags ?? [];

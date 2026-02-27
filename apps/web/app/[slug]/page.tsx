@@ -1,23 +1,25 @@
-import { notFound } from "next/navigation";
 import type { Metadata } from "next";
+import { cacheLife, cacheTag } from "next/cache";
+import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
-import { getPost, getPostSlugs } from "@/lib/posts";
-import { mdxComponents } from "@/lib/mdx";
-import { remarkPlugins, rehypePlugins } from "@/lib/mdx-plugins";
-import { blogPostingJsonLd, breadcrumbJsonLd } from "@/lib/jsonld";
-import { SITE_URL, SITE_NAME } from "@/lib/constants";
-import { RelativeTime } from "@/lib/relative-time";
 import { LazyReviewGate } from "@/components/review/lazy-review-gate";
+import { SITE_NAME, SITE_URL } from "@/lib/constants";
+import { blogPostingJsonLd, breadcrumbJsonLd } from "@/lib/jsonld";
+import { mdxComponents } from "@/lib/mdx";
+import { rehypePlugins, remarkPlugins } from "@/lib/mdx-plugins";
+import { getPost, getPostSlugs } from "@/lib/posts";
+import { RelativeTime } from "@/lib/relative-time";
 
 type Props = { params: Promise<{ slug: string }> };
 
 export async function generateStaticParams() {
-  return getPostSlugs().map((slug) => ({ slug }));
+  const slugs = await getPostSlugs();
+  return slugs.map((slug) => ({ slug }));
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const post = getPost(slug);
+  const post = await getCachedPost(slug);
   if (!post) return {};
 
   const { meta } = post;
@@ -53,7 +55,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function PostPage({ params }: Props) {
   const { slug } = await params;
-  const post = getPost(slug);
+  const post = await getCachedPost(slug);
   if (!post) notFound();
 
   const { meta, content } = post;
@@ -110,6 +112,14 @@ export default async function PostPage({ params }: Props) {
       </LazyReviewGate>
     </article>
   );
+}
+
+async function getCachedPost(slug: string) {
+  "use cache";
+  cacheLife("max");
+  cacheTag(`article:${slug}`);
+
+  return getPost(slug);
 }
 
 /** MDX rendering for static post content. */

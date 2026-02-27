@@ -574,8 +574,13 @@ OUTPUT CONTRACT:
 You must return ONLY valid JSON that matches the provided output schema.
 Capture your implementation result, validation status, and commit metadata.
 
-After implementing, commit your changes with message: "feat(${storyId}): ${story.title}"
-Do NOT commit if validation fails — fix issues first.`;
+CRITICAL — YOU MUST COMMIT:
+1. Run ALL validation commands and fix any errors
+2. git add -A
+3. git commit -m "feat(${storyId}): ${story.title}"
+
+If you do not commit, the entire pipeline run is wasted. A successful implementation WITHOUT a commit is a FAILURE.
+Do NOT commit if validation fails — fix issues first, then commit.`;
 
       return codexExecWithHealing<ImplementStageOutput>({
         prompt,

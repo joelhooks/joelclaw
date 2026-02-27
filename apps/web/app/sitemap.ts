@@ -1,8 +1,8 @@
 import type { MetadataRoute } from "next";
-import { getAllPosts } from "@/lib/posts";
 import { getAllAdrs } from "@/lib/adrs";
 import { SITE_URL } from "@/lib/constants";
 import { toDateString } from "@/lib/date";
+import { getAllPosts } from "@/lib/posts";
 
 function getLastModified(...candidates: unknown[]): string {
   for (const candidate of candidates) {
@@ -12,8 +12,8 @@ function getLastModified(...candidates: unknown[]): string {
   return "2026-01-01T00:00:00.000Z";
 }
 
-export default function sitemap(): MetadataRoute.Sitemap {
-  const posts = getAllPosts();
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const posts = await getAllPosts();
   const adrs = getAllAdrs();
 
   const postEntries = posts.map((post) => ({

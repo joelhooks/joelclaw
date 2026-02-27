@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { getAllPosts } from "@/lib/posts";
 import { blogJsonLd } from "@/lib/jsonld";
+import { getAllPosts } from "@/lib/posts";
 import { RelativeTime } from "@/lib/relative-time";
 
-export default function Home() {
-  const posts = getAllPosts();
+export default async function Home() {
+  const posts = await getAllPosts();
 
   return (
     <div className="mx-auto max-w-2xl">

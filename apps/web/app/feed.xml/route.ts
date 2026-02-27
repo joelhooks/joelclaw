@@ -1,11 +1,11 @@
-import { getAllPosts } from "@/lib/posts";
 import { getAllAdrs } from "@/lib/adrs";
-import { getAllDiscoveries } from "@/lib/discoveries";
-import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, AUTHOR } from "@/lib/constants";
+import { AUTHOR, SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "@/lib/constants";
 import { formatRssPubDate } from "@/lib/date";
+import { getAllDiscoveries } from "@/lib/discoveries";
+import { getAllPosts } from "@/lib/posts";
 
-export function GET() {
-  const posts = getAllPosts();
+export async function GET() {
+  const posts = await getAllPosts();
   const adrs = getAllAdrs();
   const discoveries = getAllDiscoveries();
 
