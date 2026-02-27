@@ -56,14 +56,14 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function PostPage({ params }: Props) {
   const { slug } = await params;
-  return <PostPageShell slug={slug} />;
+  return <PostPageLayout slug={slug} />;
 }
 
-function PostPageShell({ slug }: { slug: string }) {
+function PostPageLayout({ slug }: { slug: string }) {
   return (
     <>
       <Suspense fallback={<ArticleFallback />}>
-        <CachedArticle slug={slug} />
+        <CachedArticleContent slug={slug} />
       </Suspense>
 
       {/* Reserved dynamic slot for future FeedbackStatus streaming UI. */}
@@ -74,7 +74,7 @@ function PostPageShell({ slug }: { slug: string }) {
   );
 }
 
-async function CachedArticle({ slug }: { slug: string }) {
+async function CachedArticleContent({ slug }: { slug: string }) {
   "use cache";
   cacheLife("max");
   cacheTag(`article:${slug}`);

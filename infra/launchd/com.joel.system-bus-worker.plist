@@ -7,11 +7,11 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/joel/Code/joelhooks/joelclaw/packages/system-bus/start.sh</string>
+        <string>/Users/joel/.local/bin/worker-supervisor</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/joel/Code/joelhooks/joelclaw/packages/system-bus</string>
+    <string>/Users/joel/Code/joelhooks/joelclaw/infra/worker-supervisor</string>
 
     <key>EnvironmentVariables</key>
     <dict>
