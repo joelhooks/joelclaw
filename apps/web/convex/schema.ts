@@ -148,6 +148,36 @@ export default defineSchema({
     .index("by_parentId", ["parentId"])
     .index("by_childId", ["childId"]),
 
+  // ── Feedback + Revision tables (ADR-0106) ────────────────────────
+
+  feedbackItems: defineTable({
+    resourceId: v.string(),
+    content: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("processing"),
+      v.literal("applied"),
+      v.literal("failed"),
+    ),
+    authorId: v.optional(v.string()),
+    createdAt: v.number(),
+    resolvedAt: v.optional(v.number()),
+  })
+    .index("by_resource", ["resourceId"])
+    .index("by_resource_status", ["resourceId", "status"]),
+
+  contentRevisions: defineTable({
+    resourceId: v.string(),
+    revisionNumber: v.number(),
+    content: v.string(),
+    diff: v.optional(v.string()),
+    feedbackIds: v.array(v.string()),
+    agentModel: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_resource", ["resourceId"])
+    .index("by_resource_revision", ["resourceId", "revisionNumber"]),
+
   // ── Dashboard tables ──────────────────────────────────────────────
 
   systemStatus: defineTable({
