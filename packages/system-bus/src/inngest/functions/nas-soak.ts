@@ -8,8 +8,8 @@ import { getRedisPort } from "../../lib/redis";
  */
 
 import Redis from "ioredis";
-import { inngest } from "../client";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
+import { inngest } from "../client";
 
 const SAMPLES_KEY = "nas:soak:samples:v1";
 const SAMPLE_RETENTION_SECONDS = 14 * 24 * 60 * 60;

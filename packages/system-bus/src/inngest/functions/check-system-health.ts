@@ -1,18 +1,19 @@
 import { getRedisPort } from "../../lib/redis";
+
 /**
  * System health check — ping core services.
  * ADR-0062. Only notifies gateway on degradation.
  */
 
-import { inngest } from "../client";
-import { pushGatewayEvent } from "./agent-loop/utils";
-import { getCurrentTasks, hasTaskMatching } from "../../tasks";
-import { pushSystemStatus, pushNotification } from "../../lib/convex";
-import { readFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import Redis from "ioredis";
+import { pushNotification, pushSystemStatus } from "../../lib/convex";
 import * as typesense from "../../lib/typesense";
 import { emitOtelEvent } from "../../observability/emit";
+import { getCurrentTasks, hasTaskMatching } from "../../tasks";
+import { inngest } from "../client";
+import { pushGatewayEvent } from "./agent-loop/utils";
 
 type ServiceStatus = { name: string; ok: boolean; detail?: string; durationMs?: number };
 type HealthCheckMode = "core" | "signals" | "full";

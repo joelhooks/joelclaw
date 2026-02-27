@@ -1,6 +1,6 @@
-import { $ } from "bun";
 import { existsSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { $ } from "bun";
 import Redis from "ioredis";
 import { MODEL } from "../../../lib/models";
 import { getRedisPort } from "../../../lib/redis";

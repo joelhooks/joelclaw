@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
+import { CodeBlock } from "@/components/copy-button";
 import { getAllAdrs } from "@/lib/adrs";
 import { SITE_NAME } from "@/lib/constants";
 import { AdrListWithFilters } from "./adr-list";
-import { CodeBlock } from "@/components/copy-button";
 
 export const metadata: Metadata = {
   title: `ADRs — ${SITE_NAME}`,

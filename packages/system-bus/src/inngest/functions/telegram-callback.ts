@@ -1,7 +1,7 @@
-import { inngest } from "../client";
-import { emitOtelEvent } from "../../observability/emit";
 import Redis from "ioredis";
 import { getRedisPort } from "../../lib/redis";
+import { emitOtelEvent } from "../../observability/emit";
+import { inngest } from "../client";
 
 const SNOOZE_ACTION = "s4h";
 const SNOOZE_HOURS = 4;

@@ -1,4 +1,5 @@
 import { getRedisPort } from "../../lib/redis";
+
 /**
  * Granola new meeting check — detect meetings since last check.
  * ADR-0055. Uses granola-cli via mcporter MCP.
@@ -6,11 +7,11 @@ import { getRedisPort } from "../../lib/redis";
  * Only notifies gateway if new meetings detected.
  */
 
+import Redis from "ioredis";
+import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
 import { meetingAnalyze } from "./meeting-analyze";
-import { getCurrentTasks, hasTaskMatching } from "../../tasks";
-import Redis from "ioredis";
 
 const PROCESSED_SET = "granola:processed";
 

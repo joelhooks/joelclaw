@@ -7,10 +7,10 @@ import {
   expect,
   test,
 } from "bun:test";
-import { InngestTestEngine } from "@inngest/test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { InngestTestEngine } from "@inngest/test";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import type { CreateTaskInput, Task } from "../../tasks/port";
 import { friction, parseFrictionPatterns } from "./friction";

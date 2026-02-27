@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { authClient } from "@/lib/auth-client";
 import { CLAW_PATH } from "@/lib/claw";
 import { SITE_NAME } from "@/lib/constants";
-import { SearchDialog } from "./search-dialog";
 import { MobileNav } from "./mobile-nav";
-import { authClient } from "@/lib/auth-client";
+import { SearchDialog } from "./search-dialog";
 
 const PUBLIC_NAV = [
   { href: "/", label: "Writing" },

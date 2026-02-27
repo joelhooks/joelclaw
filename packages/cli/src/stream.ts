@@ -10,8 +10,8 @@
  * extension already writes to via pushGatewayEvent().
  */
 
-import { withRecoverNextActions, type NextAction } from "./response"
 import Redis from "ioredis"
+import { type NextAction, withRecoverNextActions } from "./response"
 
 // ── Stream Event Types ──────────────────────────────────────────────
 

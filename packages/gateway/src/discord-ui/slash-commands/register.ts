@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, type Client } from "discord.js";
+import { type Client, SlashCommandBuilder } from "discord.js";
 import { ALLOWED_MODELS, ALLOWED_THINKING_LEVELS } from "../../commands/config";
 
 export const DISCORD_SLASH_COMMANDS = [

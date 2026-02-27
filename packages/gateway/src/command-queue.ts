@@ -1,4 +1,4 @@
-import { ack, drainByPriority, getUnacked, indexMessagesByPriority, persist, type Priority } from "@joelclaw/message-store";
+import { ack, drainByPriority, getUnacked, indexMessagesByPriority, type Priority, persist } from "@joelclaw/message-store";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 
 export type QueueEntry = {

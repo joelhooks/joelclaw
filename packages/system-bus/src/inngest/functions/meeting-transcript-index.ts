@@ -1,9 +1,9 @@
-import { inngest } from "../client";
-import { chunkBySpeakerTurns } from "../../lib/transcript-chunk";
 import { cacheGet } from "../../lib/cache";
-import * as typesense from "../../lib/typesense";
 import { pushContentResource } from "../../lib/convex";
+import { chunkBySpeakerTurns } from "../../lib/transcript-chunk";
+import * as typesense from "../../lib/typesense";
 import { emitOtelEvent } from "../../observability/emit";
+import { inngest } from "../client";
 
 const MEETING_TRANSCRIPT_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60;
 

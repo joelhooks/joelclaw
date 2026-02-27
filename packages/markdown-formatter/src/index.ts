@@ -1,3 +1,7 @@
+export { chunkByNodes } from "./chunker";
+export { chunkTelegramHtml, mdToTelegramHtmlAst, TelegramConverter } from "./converters/telegram";
+export { escapeText, sanitizeAttribute } from "./escape";
+export { parseMd } from "./parser";
 export type {
   FormatConverter,
   MdastNode,
@@ -6,8 +10,4 @@ export type {
   ValidationResult,
   ValidationWarning,
 } from "./types";
-export { parseMd } from "./parser";
-export { chunkByNodes } from "./chunker";
-export { TelegramConverter, mdToTelegramHtmlAst, chunkTelegramHtml } from "./converters/telegram";
 export { validateTelegramHtml } from "./validators";
-export { escapeText, sanitizeAttribute } from "./escape";

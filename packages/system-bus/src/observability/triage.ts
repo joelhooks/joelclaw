@@ -1,8 +1,8 @@
+import { infer } from "../lib/inference";
+import { MODEL } from "../lib/models";
 import * as typesense from "../lib/typesense";
 import { emitOtelEvent } from "./emit";
 import { createOtelEvent, type OtelEvent } from "./otel-event";
-import { MODEL } from "../lib/models";
-import { infer } from "../lib/inference";
 import { classifyEvent, dedupKey, type TriagePattern } from "./triage-patterns";
 
 const OTEL_COLLECTION = "otel_events";

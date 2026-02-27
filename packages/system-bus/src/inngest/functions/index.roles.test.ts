@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { hostFunctionIds } from "./index.host";
 import { clusterFunctionIds } from "./index.cluster";
+import { hostFunctionIds } from "./index.host";
 
 function duplicates(values: string[]): string[] {
   const seen = new Set<string>();

@@ -1,14 +1,14 @@
+import { expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expect, test } from "bun:test";
 import { chunkBookText } from "../../lib/book-chunk";
 import { resolveConcepts } from "../../taxonomy/resolve";
 import {
   buildBackfillClassification,
-  buildExtractedTextPath,
   buildChunkRecords,
+  buildExtractedTextPath,
   mergeDocumentPathAliases,
   resetManifestInferenceCache,
   resolveBackfillConcepts,

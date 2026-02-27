@@ -5,9 +5,9 @@ import {
   type DrainByPriorityOptions,
   type InboundMessage,
   type PersistResult,
+  Priority,
   type StoredMessage,
   type TelemetryEmitter,
-  Priority,
 } from "./types";
 
 const STREAM_KEY = "joelclaw:gateway:messages";

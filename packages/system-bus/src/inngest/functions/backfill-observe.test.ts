@@ -1,9 +1,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { InngestTestEngine } from "@inngest/test";
-import Redis from "ioredis";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { InngestTestEngine } from "@inngest/test";
+import Redis from "ioredis";
 
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;

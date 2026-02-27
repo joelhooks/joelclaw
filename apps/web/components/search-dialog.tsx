@@ -1,18 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
-  Search,
-  X,
-  FileText,
-  GitBranch,
-  Sparkles,
   BookOpen,
   Brain,
-  Terminal,
+  FileText,
+  GitBranch,
   Mic,
+  Search,
+  Sparkles,
+  Terminal,
+  X,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type SearchResult = {
   url: string;

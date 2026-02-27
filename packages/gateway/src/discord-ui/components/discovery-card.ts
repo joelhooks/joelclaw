@@ -1,6 +1,6 @@
 import type { MessageCreateOptions } from "discord.js";
 import { ACCENT } from "../helpers/accent-color";
-import { addButtonsRow, buildButton, type ButtonSpec } from "../helpers/button";
+import { addButtonsRow, type ButtonSpec, buildButton } from "../helpers/button";
 import { truncate } from "../helpers/truncate";
 import {
   ContainerBuilder,

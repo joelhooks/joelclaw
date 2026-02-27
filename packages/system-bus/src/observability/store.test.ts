@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { storeOtelEvent } from "./store";
 import { createOtelEvent } from "./otel-event";
+import { storeOtelEvent } from "./store";
 
 const originalEnabled = process.env.OTEL_EVENTS_ENABLED;
 const originalWindow = process.env.OTEL_EVENTS_CONVEX_WINDOW_HOURS;

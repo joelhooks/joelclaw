@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
+  classifyPriority,
   Priority,
   type StoredMessage,
-  classifyPriority,
 } from "../src";
 
 describe("classifyPriority", () => {

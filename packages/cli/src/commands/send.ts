@@ -11,13 +11,13 @@ import { Console, Effect } from "effect"
 import { Inngest } from "../inngest"
 import { respond, respondError } from "../response"
 import {
+  emit,
+  emitError,
+  emitEvent,
+  emitLog,
+  emitResult,
   emitStart,
   emitStep,
-  emitLog,
-  emitEvent,
-  emitResult,
-  emitError,
-  emit,
 } from "../stream"
 
 export const sendCmd = Command.make(

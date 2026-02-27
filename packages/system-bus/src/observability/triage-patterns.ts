@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import type { OtelEvent } from "./otel-event";
 import type { AutoFixHandlerName } from "./auto-fixes";
+import type { OtelEvent } from "./otel-event";
 
 export type TriagePattern = {
   match: {

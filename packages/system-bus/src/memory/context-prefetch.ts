@@ -1,7 +1,7 @@
-import { DECAY_CONSTANT, searchTypesenseWithCache } from "./retrieval";
-import { allowsDefaultRetrieval } from "./write-gate";
 import * as typesense from "../lib/typesense";
 import { emitOtelEvent } from "../observability/emit";
+import { DECAY_CONSTANT, searchTypesenseWithCache } from "./retrieval";
+import { allowsDefaultRetrieval } from "./write-gate";
 
 const OBSERVATIONS_COLLECTION = "memory_observations";
 const DEFAULT_LIMIT = 5;

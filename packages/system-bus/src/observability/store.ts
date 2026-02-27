@@ -1,7 +1,7 @@
 import { anyApi, type FunctionReference } from "convex/server";
-import { isHighSeverity, type OtelEvent } from "./otel-event";
-import * as typesense from "../lib/typesense";
 import { getConvexClient, pushContentResource } from "../lib/convex";
+import * as typesense from "../lib/typesense";
+import { isHighSeverity, type OtelEvent } from "./otel-event";
 
 const OTEL_COLLECTION = "otel_events";
 const OTEL_EVENTS_ENABLED_DEFAULT = true;

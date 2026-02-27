@@ -1,5 +1,5 @@
-import { inngest } from "../client";
 import { infer } from "../../lib/inference";
+import { inngest } from "../client";
 
 const DEFAULT_SITE_URL = "https://joelclaw.com";
 

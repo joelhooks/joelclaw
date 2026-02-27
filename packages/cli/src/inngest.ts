@@ -1,8 +1,8 @@
 import { Effect, Schema } from "effect"
 import { loadConfig } from "./config"
-import {
-  InngestFunction, EventsV2Response, RunsResponse, RunTrigger,
-  SpanOutput, LoopEventData,
+import {EventsV2Response, 
+  InngestFunction, LoopEventData,RunsResponse, RunTrigger,
+  SpanOutput, 
 } from "./schema"
 
 const cfg = loadConfig()

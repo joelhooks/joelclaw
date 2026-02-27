@@ -10,7 +10,7 @@
  *   import { McqFlow } from "@joelclaw/discord-ui/components";
  */
 
-export { initDiscordUI, getDiscordUI, renderToChannel, shutdownDiscordUI } from "./runtime.ts";
-export type { DiscordUIInstance } from "./runtime.ts";
-export { renderMcqToChannel } from "./helpers/render-mcq.tsx";
 export type { RenderMcqOptions } from "./helpers/render-mcq.tsx";
+export { renderMcqToChannel } from "./helpers/render-mcq.tsx";
+export type { DiscordUIInstance } from "./runtime.ts";
+export { getDiscordUI, initDiscordUI, renderToChannel, shutdownDiscordUI } from "./runtime.ts";

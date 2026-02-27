@@ -1,9 +1,9 @@
-import { inngest } from "../client";
-import { NonRetriableError } from "inngest";
 import { execSync } from "node:child_process";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { NonRetriableError } from "inngest";
 import { infer } from "../../lib/inference";
+import { inngest } from "../client";
 
 const INBOX_DIR = join(
   process.env.HOME || "/Users/joel",

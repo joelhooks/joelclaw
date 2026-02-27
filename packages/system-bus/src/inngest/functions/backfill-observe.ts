@@ -1,8 +1,8 @@
-import { inngest } from "../client";
-import { readdirSync, readFileSync } from "node:fs";
-import { join, basename } from "node:path";
 import { createHash } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import Redis from "ioredis";
+import { inngest } from "../client";
 
 const PI_SESSIONS_DIR =
   process.env.HOME + "/.pi/agent/sessions/--Users-joel--";

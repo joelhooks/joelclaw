@@ -8,19 +8,29 @@
  * Status message edited on completion/error
  */
 
-import type Redis from "ioredis";
+import { emitGatewayOtel } from "@joelclaw/telemetry";
+import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import {
+  type ChatInputCommandInteraction,
   Client,
   Events,
   GatewayIntentBits,
-  Partials,
-  ThreadAutoArchiveDuration,
-  type ChatInputCommandInteraction,
   type Message,
   type MessageCreateOptions,
+  Partials,
   type TextChannel,
+  ThreadAutoArchiveDuration,
   type ThreadChannel,
 } from "discord.js";
+import type Redis from "ioredis";
+import {
+  type DiscordSlashHandlerDeps,
+  handleDiscordSlashCommand,
+  registerDiscordSlashCommands,
+  renderHeartbeatDigest,
+  renderStatusContainer,
+} from "../discord-ui";
+import { injectChannelContext } from "../formatting";
 import type { EnqueueFn } from "./redis";
 import type {
   Channel,
@@ -29,16 +39,6 @@ import type {
   MessageHandler,
   SendOptions,
 } from "./types";
-import { emitGatewayOtel } from "@joelclaw/telemetry";
-import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
-import { injectChannelContext } from "../formatting";
-import {
-  handleDiscordSlashCommand,
-  registerDiscordSlashCommands,
-  renderHeartbeatDigest,
-  renderStatusContainer,
-  type DiscordSlashHandlerDeps,
-} from "../discord-ui";
 
 const CHUNK_MAX = 2000;
 

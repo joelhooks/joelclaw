@@ -5,8 +5,8 @@ import { getRedisPort } from "../../lib/redis";
  */
 
 import Redis from "ioredis";
-import { inngest } from "../client";
 import { approveRequest, denyRequest, submitRequest } from "../../approvals/core";
+import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
 
 let redisClient: Redis | null = null;

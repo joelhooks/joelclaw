@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
-import { usePathname } from "next/navigation";
-import Link from "next/link";
 import { Menu, X } from "lucide-react";
-import { CLAW_PATH } from "@/lib/claw";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { authClient } from "@/lib/auth-client";
+import { CLAW_PATH } from "@/lib/claw";
 
 const PUBLIC_NAV = [
   { href: "/", label: "Writing" },

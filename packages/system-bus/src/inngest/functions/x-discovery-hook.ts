@@ -1,5 +1,5 @@
-import { inngest } from "../client";
 import { infer } from "../../lib/inference";
+import { inngest } from "../client";
 
 function hasPublicTag(tags: string[] | undefined): boolean {
   if (!tags || tags.length === 0) return false;

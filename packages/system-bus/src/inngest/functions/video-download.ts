@@ -1,8 +1,8 @@
-import { inngest } from "../client";
-import { NonRetriableError } from "inngest";
-import { $ } from "bun";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { $ } from "bun";
+import { NonRetriableError } from "inngest";
+import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
 
 const NAS_HOST = "joel@three-body";

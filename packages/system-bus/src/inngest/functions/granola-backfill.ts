@@ -8,11 +8,11 @@
  * ones, and fans out meeting/noted events for the analyze pipeline.
  */
 
+import { spawnSync } from "node:child_process";
+import Redis from "ioredis";
 import { inngest } from "../client";
 import type { GatewayContext } from "../middleware/gateway";
 import { meetingAnalyze } from "./meeting-analyze";
-import { spawnSync } from "node:child_process";
-import Redis from "ioredis";
 
 const REDIS_KEY_PROCESSED = "granola:processed";
 

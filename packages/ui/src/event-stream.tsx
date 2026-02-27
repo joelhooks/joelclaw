@@ -1,6 +1,6 @@
 "use client";
-import { useState } from "react";
 import type { JSX } from "react";
+import { useState } from "react";
 
 /**
  * Dense, terminal-style event stream. Evolution of EventTimeline for

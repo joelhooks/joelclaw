@@ -1,12 +1,12 @@
-import { join } from "node:path";
 import { mkdir, rename } from "node:fs/promises";
+import { join } from "node:path";
 import Redis from "ioredis";
-import { inngest } from "../client";
-import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
-import { PROMOTE_SYSTEM_PROMPT, PROMOTE_USER_PROMPT } from "./promote-prompt";
-import { emitOtelEvent } from "../../observability/emit";
-import { MODEL } from "../../lib/models";
 import { infer } from "../../lib/inference";
+import { MODEL } from "../../lib/models";
+import { emitOtelEvent } from "../../observability/emit";
+import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
+import { inngest } from "../client";
+import { PROMOTE_SYSTEM_PROMPT, PROMOTE_USER_PROMPT } from "./promote-prompt";
 
 type RedisLike = {
   lrange(key: string, start: number, stop: number): Promise<string[]>;

@@ -1,6 +1,6 @@
-import { parseMd } from "../parser";
 import { chunkByNodes } from "../chunker";
 import { escapeText, sanitizeAttribute } from "../escape";
+import { parseMd } from "../parser";
 import type { FormatConverter, MdastNode, MdastRoot } from "../types";
 import { validateTelegramHtml } from "../validators";
 

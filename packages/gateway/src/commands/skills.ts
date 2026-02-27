@@ -2,8 +2,8 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  defineChatCommand,
   type CommandDefinition,
+  defineChatCommand,
   type InlineKeyboardButton,
   type InlineKeyboardMarkup,
   type ParsedArgs,

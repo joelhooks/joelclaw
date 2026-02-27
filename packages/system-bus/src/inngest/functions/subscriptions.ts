@@ -1,12 +1,13 @@
-import { inngest } from "../client";
 import {
   checkAtomFeed,
   checkGitHubRepo,
   checkPageHash,
-  parseGitHubRepo,
   type FeedCheckResult,
   type FeedEntry,
+  parseGitHubRepo,
 } from "../../lib/feed-checker";
+import { infer } from "../../lib/inference";
+import { MODEL } from "../../lib/models";
 import {
   getSubscription,
   listSubscriptions,
@@ -14,8 +15,7 @@ import {
   updateSubscription,
 } from "../../lib/subscriptions";
 import { emitOtelEvent } from "../../observability/emit";
-import { MODEL } from "../../lib/models";
-import { infer } from "../../lib/inference";
+import { inngest } from "../client";
 
 type SubscriptionCheckEvent = {
   subscriptionId: string;

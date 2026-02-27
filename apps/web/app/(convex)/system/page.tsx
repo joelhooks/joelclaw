@@ -1,14 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { DataGrid } from "@repo/ui/data-grid";
 import { EventStream, type StreamEvent } from "@repo/ui/event-stream";
 import { FilterBar } from "@repo/ui/filter-bar";
-import { DataGrid } from "@repo/ui/data-grid";
 import { MetricCard } from "@repo/ui/metric-card";
-import { StatusPulseDot } from "@repo/ui/status-badge";
 import { PageHeader } from "@repo/ui/page-header";
 import { RefreshButton } from "@repo/ui/refresh-button";
+import { StatusPulseDot } from "@repo/ui/status-badge";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { authClient } from "@/lib/auth-client";
 
 type OtelStats = {

@@ -1,11 +1,11 @@
-import type Redis from "ioredis";
-import type { FallbackConfig } from "@joelclaw/model-fallback";
 import {
   GATEWAY_ALLOWED_MODELS,
-  getCatalogModel as resolveModelFromCatalog,
   normalizeModel as normalizeCatalogModel,
+  getCatalogModel as resolveModelFromCatalog,
 } from "@joelclaw/inference-router";
+import type { FallbackConfig } from "@joelclaw/model-fallback";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
+import type Redis from "ioredis";
 
 export const GATEWAY_CONFIG_KEY = "joelclaw:gateway:config";
 

@@ -1,6 +1,6 @@
-import { unified } from "unified";
-import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import type { MdastRoot } from "./types";
 
 export function parseMd(md: string): MdastRoot {

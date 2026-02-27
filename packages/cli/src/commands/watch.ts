@@ -15,13 +15,13 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import {
-  emitStart,
-  emitStep,
+  emit,
+  emitError,
   emitLog,
   emitProgress,
   emitResult,
-  emitError,
-  emit,
+  emitStart,
+  emitStep,
   type StreamEvent,
 } from "../stream"
 

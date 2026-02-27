@@ -10,13 +10,13 @@
 
 import { execSync } from "node:child_process";
 import type {
-  EmailPort,
+  ConversationFilter,
   EmailAddress,
   EmailConversation,
   EmailDraft,
   EmailInbox,
   EmailMessage,
-  ConversationFilter,
+  EmailPort,
 } from "../port/types";
 
 // ── Helpers ─────────────────────────────────────────────────────────

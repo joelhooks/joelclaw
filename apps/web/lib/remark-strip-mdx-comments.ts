@@ -1,5 +1,5 @@
-import { visit, SKIP } from "unist-util-visit";
 import type { Root } from "mdast";
+import { SKIP, visit } from "unist-util-visit";
 
 /**
  * Remark plugin that strips MDX expression comments: {/* ... *​/}

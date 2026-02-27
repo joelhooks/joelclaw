@@ -1,7 +1,7 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { Inngest } from "../inngest"
-import { respond, respondError, type NextAction } from "../response"
+import { type NextAction, respond, respondError } from "../response"
 
 const SUBSCRIPTIONS_KEY = "joelclaw:subscriptions"
 

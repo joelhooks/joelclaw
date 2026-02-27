@@ -1,14 +1,14 @@
-import { inngest } from "../client";
-import { NonRetriableError } from "inngest";
-import { $ } from "bun";
+import { execSync } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { pushGatewayEvent } from "./agent-loop/utils";
-import { execSync } from "node:child_process";
-import { infer } from "../../lib/inference";
+import { $ } from "bun";
+import { NonRetriableError } from "inngest";
 import { pushContentResource } from "../../lib/convex";
-import * as typesense from "../../lib/typesense";
+import { infer } from "../../lib/inference";
 import { chunkBySegments, chunkBySpeakerTurns } from "../../lib/transcript-chunk";
+import * as typesense from "../../lib/typesense";
+import { inngest } from "../client";
+import { pushGatewayEvent } from "./agent-loop/utils";
 
 const VAULT = process.env.VAULT_PATH ?? `${process.env.HOME}/Vault`;
 const INVALID_ANTHROPIC_KEY_ERROR =

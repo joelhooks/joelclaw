@@ -1,12 +1,13 @@
 // ADR-0067: Supersede pattern adapted from knowledge-graph by safatinaztepe (openclaw/skills, MIT).
 // ADR-0082: Migrated from Qdrant+embed.py (Qdrant fully retired 2026-02-22) to Typesense with built-in auto-embedding.
 // ADR-0077 Workstream 1/2: query rewrite + trust pass + usage-signal-aware ranking.
+
+import { randomUUID } from "node:crypto"
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
-import { randomUUID } from "node:crypto"
+import { traceRecallRewrite } from "../langfuse"
 import { respond, respondError } from "../response"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
-import { traceRecallRewrite } from "../langfuse"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 const OTEL_INGEST_URL = process.env.JOELCLAW_OTEL_INGEST_URL || "http://localhost:3111/observability/emit"

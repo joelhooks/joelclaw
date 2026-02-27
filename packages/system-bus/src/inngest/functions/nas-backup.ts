@@ -1,14 +1,14 @@
-import { $ } from "bun";
 import { execSync } from "node:child_process";
 import { once } from "node:events";
 import { createWriteStream } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
+import { $ } from "bun";
 import { NonRetriableError } from "inngest";
-import { inngest } from "../client";
-import { infer } from "../../lib/inference";
-import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
-import { assertAllowedModel } from "../../lib/models";
 import { loadBackupFailureRouterConfig } from "../../lib/backup-failure-router-config";
+import { infer } from "../../lib/inference";
+import { assertAllowedModel } from "../../lib/models";
+import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
+import { inngest } from "../client";
 
 const HOME_DIR = process.env.HOME ?? "/Users/joel";
 

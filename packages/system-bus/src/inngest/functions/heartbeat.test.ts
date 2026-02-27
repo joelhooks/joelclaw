@@ -1,6 +1,4 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { InngestTestEngine } from "@inngest/test";
-import Redis from "ioredis";
 import {
   existsSync,
   mkdirSync,
@@ -11,6 +9,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { InngestTestEngine } from "@inngest/test";
+import Redis from "ioredis";
 import { heartbeatCron } from "./heartbeat";
 
 const originalHome = process.env.HOME;

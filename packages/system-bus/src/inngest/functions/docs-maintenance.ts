@@ -1,7 +1,7 @@
-import { NonRetriableError } from "inngest";
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { extname } from "node:path";
+import { NonRetriableError } from "inngest";
 import * as typesense from "../../lib/typesense";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";

@@ -2,38 +2,38 @@ import { mkdirSync, readdirSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@mariozechner/pi-ai";
-import { createAgentSession, DefaultResourceLoader, SessionManager, type LoadExtensionsResult, calculateContextTokens, getLastAssistantUsage } from "@mariozechner/pi-coding-agent";
-import {
-  drain,
-  enqueue,
-  getQueueDepth,
-  getActiveSource,
-  setSession,
-  setIdleWaiter,
-  onPrompt,
-  onError as onQueueError,
-  onContextOverflowRecovery,
-  replayUnacked,
-  getConsecutiveFailures,
-} from "./command-queue";
-import { start as startRedisChannel, shutdown as shutdownRedisChannel, isHealthy as isRedisHealthy, getRedisClient } from "./channels/redis";
-import { start as startTelegram, shutdown as shutdownTelegram, send as sendTelegram, sendMedia as sendTelegramMedia, parseChatId } from "./channels/telegram";
-import { start as startDiscord, shutdown as shutdownDiscord, send as sendDiscord, markError as markDiscordError, parseChannelId as parseDiscordChannelId, getClient as getDiscordClient, fetchChannel as fetchDiscordChannel } from "./channels/discord";
-import { start as startIMessage, shutdown as shutdownIMessage, send as sendIMessage } from "./channels/imessage";
-import { start as startSlack, shutdown as shutdownSlack, send as sendSlack, isStarted as isSlackStarted } from "./channels/slack";
-import { defaultGatewayConfig, loadGatewayConfig, providerForModel } from "./commands/config";
-import { getActiveMcqAdapter, type McqParams } from "./commands/mcq-adapter";
-import { getActiveDiscordMcqAdapter, registerDiscordMcqAdapter } from "./commands/discord-mcq-adapter";
-import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands/telegram-handler";
-import { TRIPWIRE_PATH, startHeartbeatRunner } from "./heartbeat";
-import { getCatalogModel as resolveModelFromCatalog, initTracing } from "@joelclaw/inference-router";
+import { initTracing, getCatalogModel as resolveModelFromCatalog } from "@joelclaw/inference-router";
 import { init as initMessageStore, trimOld } from "@joelclaw/message-store";
 import { ModelFallbackController, type TelemetryEmitter } from "@joelclaw/model-fallback";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
+import { getModel } from "@mariozechner/pi-ai";
+import { calculateContextTokens, createAgentSession, DefaultResourceLoader, getLastAssistantUsage, type LoadExtensionsResult, SessionManager } from "@mariozechner/pi-coding-agent";
+import { fetchChannel as fetchDiscordChannel, getClient as getDiscordClient, markError as markDiscordError, parseChannelId as parseDiscordChannelId, send as sendDiscord, shutdown as shutdownDiscord, start as startDiscord } from "./channels/discord";
+import { send as sendIMessage, shutdown as shutdownIMessage, start as startIMessage } from "./channels/imessage";
+import { getRedisClient, isHealthy as isRedisHealthy, shutdown as shutdownRedisChannel, start as startRedisChannel } from "./channels/redis";
+import { isStarted as isSlackStarted, send as sendSlack, shutdown as shutdownSlack, start as startSlack } from "./channels/slack";
+import { parseChatId, send as sendTelegram, sendMedia as sendTelegramMedia, shutdown as shutdownTelegram, start as startTelegram } from "./channels/telegram";
+import {
+  drain,
+  enqueue,
+  getActiveSource,
+  getConsecutiveFailures,
+  getQueueDepth,
+  onContextOverflowRecovery,
+  onPrompt,
+  onError as onQueueError,
+  replayUnacked,
+  setIdleWaiter,
+  setSession,
+} from "./command-queue";
+import { defaultGatewayConfig, loadGatewayConfig, providerForModel } from "./commands/config";
+import { getActiveDiscordMcqAdapter, registerDiscordMcqAdapter } from "./commands/discord-mcq-adapter";
+import { getActiveMcqAdapter, type McqParams } from "./commands/mcq-adapter";
+import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands/telegram-handler";
+import { injectChannelContext } from "./formatting";
+import { startHeartbeatRunner, TRIPWIRE_PATH } from "./heartbeat";
 import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
 import { registerChannel, routeResponse } from "./outbound/router";
-import { injectChannelContext } from "./formatting";
 
 // Initialize Langfuse tracing for inference routing (reads from env vars):
 // LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and LANGFUSE_HOST or LANGFUSE_BASE_URL.

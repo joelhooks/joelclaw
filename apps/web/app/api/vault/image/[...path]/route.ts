@@ -2,10 +2,11 @@
  * Serve vault images for authenticated users.
  * GET /api/vault/image/{path} → reads from ~/Vault/{path}
  */
+
+import { existsSync, readFileSync } from "node:fs";
+import { extname, join } from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth-server";
-import { readFileSync, existsSync } from "node:fs";
-import { join, extname } from "node:path";
 
 const VAULT_PATH = process.env.VAULT_PATH || join(process.env.HOME || "/Users/joel", "Vault");
 

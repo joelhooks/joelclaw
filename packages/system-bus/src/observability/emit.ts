@@ -1,5 +1,5 @@
 import { assertOtelEvent, createOtelEvent, type OtelEvent, type OtelEventInput } from "./otel-event";
-import { storeOtelEvent, type OtelStoreResult } from "./store";
+import { type OtelStoreResult, storeOtelEvent } from "./store";
 
 export type EmitOtelResult = OtelStoreResult & {
   event?: OtelEvent;

@@ -1,22 +1,22 @@
-import { getRedisPort } from "../../lib/redis";
-// ADR-0067: Supersede pattern adapted from knowledge-graph by safatinaztepe (openclaw/skills, MIT).
-// ADR-0082: Typesense is the canonical memory store.
-import { inngest } from "../client.ts";
-import { NonRetriableError } from "inngest";
-import Redis from "ioredis";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseObserverOutput } from "./observe-parser";
-import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
-import { sanitizeObservationText, sanitizeObservationTranscript } from "./observation-sanitize";
-import { DEDUP_THRESHOLD } from "../../memory/retrieval";
-import { TAXONOMY_VERSION, classifyObservationCategory, normalizeCategoryId, type CategorySource, type MemoryCategoryId } from "../../memory/taxonomy-v1";
-import { allowsReflect, resolveWriteGate, type WriteVerdict } from "../../memory/write-gate";
-import * as typesense from "../../lib/typesense";
+import { NonRetriableError } from "inngest";
+import Redis from "ioredis";
 // Observability is centralized in packages/system-bus/src/lib/inference.ts (inference router).
 import { infer } from "../../lib/inference";
+import { getRedisPort } from "../../lib/redis";
+import * as typesense from "../../lib/typesense";
+import { DEDUP_THRESHOLD } from "../../memory/retrieval";
+import { type CategorySource, classifyObservationCategory, type MemoryCategoryId, normalizeCategoryId, TAXONOMY_VERSION } from "../../memory/taxonomy-v1";
+import { allowsReflect, resolveWriteGate, type WriteVerdict } from "../../memory/write-gate";
 import { emitOtelEvent } from "../../observability/emit";
+// ADR-0067: Supersede pattern adapted from knowledge-graph by safatinaztepe (openclaw/skills, MIT).
+// ADR-0082: Typesense is the canonical memory store.
+import { inngest } from "../client.ts";
+import { sanitizeObservationText, sanitizeObservationTranscript } from "./observation-sanitize";
+import { parseObserverOutput } from "./observe-parser";
+import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
 
 type ObserveCompactionInput = {
   sessionId: string;

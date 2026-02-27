@@ -15,7 +15,7 @@
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { WebhookProvider, NormalizedEvent } from "../types";
+import type { NormalizedEvent, WebhookProvider } from "../types";
 
 /** Front Event type → normalized Inngest event name.
  *  Rules webhooks use short Event types, not app-level "inbound_received" style. */

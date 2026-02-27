@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 const REVIEW_PATH = new URL("./review.ts", import.meta.url).pathname;
 

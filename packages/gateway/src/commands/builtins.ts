@@ -1,12 +1,11 @@
+import { compactSession, newSession, reloadSession } from "../command-queue";
 import {
-  defineChatCommand,
   type CommandArgChoice,
   type CommandCategory,
   type CommandDefinition,
-  type ParsedArgs,
+  defineChatCommand,getCommands, 
+  type ParsedArgs
 } from "./registry";
-import { getCommands } from "./registry";
-import { compactSession, newSession, reloadSession } from "../command-queue";
 
 const MAX_PRE_CHARS = 3400;
 

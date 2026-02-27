@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { anyApi, type FunctionReference } from "convex/server";
-import { inngest } from "../client";
 import { getConvexClient, pushContentResource, removeContentResources } from "../../lib/convex";
+import { inngest } from "../client";
 
 type ResourceDoc = {
   resourceId: string;

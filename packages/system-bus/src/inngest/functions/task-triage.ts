@@ -1,4 +1,5 @@
 import { getRedisPort } from "../../lib/redis";
+
 /**
  * Task triage — Sonnet reviews ALL open tasks via TaskPort.
  * ADR-0045: TaskPort hexagonal interface.
@@ -9,12 +10,12 @@ import { getRedisPort } from "../../lib/redis";
  * Only notifies gateway when actionable items found. 2h cooldown.
  */
 
-import { inngest } from "../client";
-import { parseClaudeOutput, pushGatewayEvent } from "./agent-loop/utils";
+import Redis from "ioredis";
 import { infer } from "../../lib/inference";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import type { Task } from "../../tasks/port";
-import Redis from "ioredis";
+import { inngest } from "../client";
+import { parseClaudeOutput, pushGatewayEvent } from "./agent-loop/utils";
 
 const TRIAGE_NOTIFIED_KEY = "tasks:triage:last-notified";
 const TRIAGE_HASH_KEY = "tasks:triage:last-hash";

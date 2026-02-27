@@ -1,1 +1,1 @@
-export { TelegramConverter, mdToTelegramHtmlAst, chunkTelegramHtml } from "./telegram";
+export { chunkTelegramHtml, mdToTelegramHtmlAst, TelegramConverter } from "./telegram";

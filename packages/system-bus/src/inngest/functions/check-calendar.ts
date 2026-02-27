@@ -1,14 +1,15 @@
 import { getRedisPort } from "../../lib/redis";
+
 /**
  * Calendar check — surface today's events for context.
  * Uses gog CLI for Google Calendar.
  * Only notifies gateway once per 4 hours with today's schedule.
  */
 
+import Redis from "ioredis";
+import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
-import { getCurrentTasks, hasTaskMatching } from "../../tasks";
-import Redis from "ioredis";
 
 const COOLDOWN_KEY = "calendar:check:last-run";
 const COOLDOWN_TTL = 4 * 60 * 60; // 4 hours

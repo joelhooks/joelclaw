@@ -5,8 +5,8 @@
  * Components call renderToChannel() to send interactive messages.
  */
 
-import type { Client, TextBasedChannel } from "discord.js";
 import { DiscordJSReact } from "@answeroverflow/discordjs-react";
+import type { Client, TextBasedChannel } from "discord.js";
 import type { ReactNode } from "react";
 
 export type DiscordUIInstance = DiscordJSReact;

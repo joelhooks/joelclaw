@@ -1,6 +1,6 @@
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@/convex/_generated/api";
-import { getAdr, getAdrSlugs, type AdrMeta } from "@/lib/adrs";
+import { type AdrMeta, getAdr, getAdrSlugs } from "@/lib/adrs";
 import { getPost, getPostSlugs, type PostMeta } from "@/lib/posts";
 
 type ContentResourceDoc = {

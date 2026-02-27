@@ -1,7 +1,7 @@
-import { inngest } from "../../client";
-import { DEDUP_THRESHOLD, STALENESS_DAYS } from "../../../memory/retrieval";
 import * as typesense from "../../../lib/typesense";
+import { DEDUP_THRESHOLD, STALENESS_DAYS } from "../../../memory/retrieval";
 import { emitOtelEvent } from "../../../observability/emit";
+import { inngest } from "../../client";
 
 const OBSERVATIONS_COLLECTION = "memory_observations";
 const PAGE_SIZE = 250;

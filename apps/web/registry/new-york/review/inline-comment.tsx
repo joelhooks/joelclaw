@@ -1,5 +1,7 @@
 "use client";
 
+import { useMutation, useQuery } from "convex/react";
+import { Pencil, Send, Trash2, X } from "lucide-react";
 /**
  * InlineComment — comment editor that renders directly below a paragraph.
  *
@@ -7,14 +9,12 @@
  * Works on any content type. Supports multi-paragraph selection — the comment
  * is stored against the anchor paragraph but shows which paragraphs are selected.
  */
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { useAutoResize } from "@/components/review/use-auto-resize";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Trash2, Send, Pencil, X } from "lucide-react";
-import { useAutoResize } from "@/components/review/use-auto-resize";
+import { api } from "@/convex/_generated/api";
 
 interface InlineCommentProps {
   contentId: string;

@@ -1,5 +1,6 @@
 "use client";
 
+import { useQuery } from "convex/react";
 /**
  * ReviewWrapper — wraps any content to enable paragraph-level commenting.
  *
@@ -11,11 +12,10 @@
  *   shift        — range select from last clicked to current
  *   esc          — clear all
  */
-import { useState, useCallback, useEffect, useRef } from "react";
-import { useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { InlineComment } from "@/components/review/inline-comment";
 import { ReviewFab } from "@/components/review/review-fab";
+import { api } from "@/convex/_generated/api";
 
 interface ReviewWrapperProps {
   contentId: string;

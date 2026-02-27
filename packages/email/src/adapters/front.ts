@@ -6,25 +6,25 @@
  */
 
 import {
-  createFrontClient,
-  paginate,
-  type FrontClient,
   type Conversation,
-  type Message,
+  createFrontClient,
   type Draft,
+  type FrontClient,
   type Inbox,
+  type Message,
+  paginate,
   type Recipient,
 } from "@skillrecordings/front-sdk";
 
 import type {
-  EmailPort,
+  ConversationFilter,
   EmailAddress,
   EmailAttachment,
   EmailConversation,
   EmailDraft,
   EmailInbox,
   EmailMessage,
-  ConversationFilter,
+  EmailPort,
 } from "../port/types";
 
 // ── Mappers ─────────────────────────────────────────────────────────

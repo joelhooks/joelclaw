@@ -3,8 +3,9 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { ConvexHttpClient } from "../apps/web/node_modules/convex/browser";
-import { anyApi, type FunctionReference } from "../apps/web/node_modules/convex/server";
+import type { FunctionReference } from "../apps/web/node_modules/convex/server";
 import matter from "../apps/web/node_modules/gray-matter";
+import { api } from "../apps/web/convex/_generated/api";
 
 type ArticleFields = {
   slug: string;
@@ -17,6 +18,16 @@ type ArticleFields = {
   date: string;
   updated?: string;
   draft: boolean;
+};
+
+type UpsertResult = {
+  action?: "inserted" | "updated";
+  resourceId?: string;
+};
+
+type ContentResourceDocument = {
+  type?: unknown;
+  fields?: unknown;
 };
 
 function asString(value: unknown): string | undefined {
@@ -57,7 +68,6 @@ function listArticleFiles(contentDir: string): string[] {
       const entryPath = join(currentDir, entry.name);
 
       if (entry.isDirectory()) {
-        // Only articles should be seeded; discoveries are handled separately.
         if (entry.name === "discoveries") continue;
         directories.push(entryPath);
         continue;
@@ -119,6 +129,25 @@ function resolveConvexUrl(repoRoot: string): string {
   return "";
 }
 
+function assertSeededDocument(slug: string, document: ContentResourceDocument | null): void {
+  if (!document) {
+    throw new Error(`Upsert verification failed for ${slug}: record not found after mutation.`);
+  }
+
+  if (document.type !== "article") {
+    throw new Error(`Upsert verification failed for ${slug}: expected type article.`);
+  }
+
+  if (
+    !document.fields ||
+    typeof document.fields !== "object" ||
+    Array.isArray(document.fields) ||
+    (document.fields as Record<string, unknown>).slug !== slug
+  ) {
+    throw new Error(`Upsert verification failed for ${slug}: fields.slug did not match.`);
+  }
+}
+
 async function main() {
   const repoRoot = resolve(import.meta.dir, "..");
   const convexUrl = resolveConvexUrl(repoRoot);
@@ -130,11 +159,15 @@ async function main() {
   const articleFiles = listArticleFiles(contentDir);
 
   const convex = new ConvexHttpClient(convexUrl);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const upsertRef = (anyApi as any).contentResources.upsert as FunctionReference<"mutation">;
+  const upsertRef = api.contentResources.upsert as FunctionReference<"mutation">;
+  const getByResourceIdRef = api.contentResources.getByResourceId as FunctionReference<"query">;
+
+  let inserted = 0;
+  let updated = 0;
 
   for (const filePath of articleFiles) {
     const slug = slugFromFilePath(contentDir, filePath);
+    const resourceId = `article:${slug}`;
     const raw = readFileSync(filePath, "utf-8");
     const { data, content } = matter(raw);
     const meta = data as Record<string, unknown>;
@@ -152,17 +185,27 @@ async function main() {
       draft: meta.draft === true,
     };
 
-    await convex.mutation(upsertRef, {
-      resourceId: `article:${slug}`,
+    const result = (await convex.mutation(upsertRef, {
+      resourceId,
       type: "article",
       fields,
       searchText: buildSearchText(fields),
-    });
+    })) as UpsertResult;
 
-    console.log(`[seed-articles] seeded ${slug}`);
+    if (result.action === "inserted") inserted += 1;
+    if (result.action === "updated") updated += 1;
+
+    const seeded = (await convex.query(getByResourceIdRef, {
+      resourceId,
+    })) as ContentResourceDocument | null;
+    assertSeededDocument(slug, seeded);
+
+    console.log(`[seed-articles] seeded ${slug} (${result.action ?? "ok"})`);
   }
 
-  console.log(`[seed-articles] complete (${articleFiles.length} articles)`);
+  console.log(
+    `[seed-articles] complete (${articleFiles.length} articles, inserted=${inserted}, updated=${updated})`,
+  );
 }
 
 main().catch((error) => {

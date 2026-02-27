@@ -2,9 +2,10 @@
  * Dashboard layout — static shell, auth checked client-side.
  * Full route cache: this layout is pre-rendered at build time.
  */
+
+import { StatusPulseDot } from "@repo/ui/status-badge";
 import Link from "next/link";
 import { SITE_COPYRIGHT_YEAR } from "@/lib/constants";
-import { StatusPulseDot } from "@repo/ui/status-badge";
 
 export default function DashboardLayout({
   children,

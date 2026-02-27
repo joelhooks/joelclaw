@@ -1,8 +1,8 @@
 import { execSync } from "node:child_process";
 import { join } from "node:path";
+import { MODEL } from "../../lib/models";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import type { TaskPort } from "../../tasks/port";
-import { MODEL } from "../../lib/models";
 import { inngest } from "../client";
 
 const HOME_DIR = process.env.HOME || "/Users/joel";

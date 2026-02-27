@@ -1,8 +1,8 @@
-import { inngest } from "../client";
 import { $ } from "bun";
-import { DISCOVERY_PROMPT } from "../prompts/discovery";
 import { infer } from "../../lib/inference";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
+import { inngest } from "../client";
+import { DISCOVERY_PROMPT } from "../prompts/discovery";
 
 const VAULT_DISCOVERIES = `${process.env.HOME}/Vault/Resources/discoveries`;
 

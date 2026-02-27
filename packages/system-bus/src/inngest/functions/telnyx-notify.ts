@@ -1,4 +1,3 @@
-import { inngest } from "../client";
 import {
   checkSMSEnabled,
   getCall,
@@ -6,6 +5,7 @@ import {
   placeCall,
   sendSMS,
 } from "../../lib/telnyx";
+import { inngest } from "../client";
 
 type NotificationRequest = {
   message: string;

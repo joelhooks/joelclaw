@@ -9,7 +9,7 @@
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { WebhookProvider, NormalizedEvent } from "../types";
+import type { NormalizedEvent, WebhookProvider } from "../types";
 
 /** Vercel webhook type → normalized event name */
 const EVENT_MAP: Record<string, string> = {

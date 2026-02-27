@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { EventStream, type StreamEvent } from "@repo/ui/event-stream";
 import { FilterBar } from "@repo/ui/filter-bar";
 import { PageHeader } from "@repo/ui/page-header";
 import { SearchBar } from "@repo/ui/search-bar";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { authClient } from "@/lib/auth-client";
 
 type OtelHit = {

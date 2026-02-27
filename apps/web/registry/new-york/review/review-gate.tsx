@@ -10,8 +10,8 @@
  * The wrapper only adds click handlers + FAB — no layout change.
  */
 import { useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
 import { ReviewWrapper } from "@/components/review/review-wrapper";
+import { api } from "@/convex/_generated/api";
 
 interface ReviewGateProps {
   contentId: string;

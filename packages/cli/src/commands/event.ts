@@ -8,8 +8,8 @@
 import { Args, Command } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { Inngest } from "../inngest"
-import { respond } from "../response"
 import type { NextAction } from "../response"
+import { respond } from "../response"
 
 export const eventCmd = Command.make(
   "event",

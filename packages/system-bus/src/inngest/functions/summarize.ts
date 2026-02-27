@@ -1,8 +1,8 @@
-import { inngest } from "../client";
-import { infer } from "../../lib/inference";
-import { pushGatewayEvent } from "./agent-loop/utils";
-import { prefetchMemoryContext } from "../../memory/context-prefetch";
 import { execSync } from "node:child_process";
+import { infer } from "../../lib/inference";
+import { prefetchMemoryContext } from "../../memory/context-prefetch";
+import { inngest } from "../client";
+import { pushGatewayEvent } from "./agent-loop/utils";
 
 const DEFAULT_PROMPT = `Read the joel-writing-style skill at ~/.pi/agent/skills/joel-writing-style/SKILL.md first. All writing in this note MUST match Joel's voice — conversational first person, short punchy paragraphs, strategic profanity where it earns its place, bold for emphasis, direct and honest tone. No corporate voice. No "In this video..." openings.
 

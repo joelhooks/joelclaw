@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { inngest } from "../client";
-import * as typesense from "../../lib/typesense";
 import { pushContentResource } from "../../lib/convex";
-import { TAXONOMY_VERSION, classifyObservationCategory, normalizeCategoryId } from "../../memory/taxonomy-v1";
+import * as typesense from "../../lib/typesense";
+import { classifyObservationCategory, normalizeCategoryId, TAXONOMY_VERSION } from "../../memory/taxonomy-v1";
 import { WRITE_GATE_VERSION } from "../../memory/write-gate";
 import { emitMeasuredOtelEvent } from "../../observability/emit";
+import { inngest } from "../client";
 
 type NotedObservationInput = {
   category?: unknown;

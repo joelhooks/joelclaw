@@ -4,23 +4,23 @@ import { access, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname } from "node:path";
 import { NonRetriableError } from "inngest";
-import { chunkBookText, renderChunkForEmbedding, type BookChunkingResult } from "../../lib/book-chunk";
-import { type LlmUsage } from "../../lib/langfuse";
+import { type BookChunkingResult, chunkBookText, renderChunkForEmbedding } from "../../lib/book-chunk";
 import { infer } from "../../lib/inference";
+import { type LlmUsage } from "../../lib/langfuse";
 import * as typesense from "../../lib/typesense";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import {
+  type ConceptId,
   getConceptById,
   isStorageCategory,
-  TAXONOMY_CORE_V1,
-  type ConceptId,
   type StorageCategory,
+  TAXONOMY_CORE_V1,
 } from "../../taxonomy/core-v1";
 import {
-  resolveConcepts,
-  resolveStorageCategory,
   type ConceptSource,
   type ResolveConceptsResult,
+  resolveConcepts,
+  resolveStorageCategory,
 } from "../../taxonomy/resolve";
 import { inngest } from "../client";
 

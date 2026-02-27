@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import type { AdrMeta } from "@/lib/adrs";
-import { STATUS_CONFIG } from "./status-config";
-import { AdrFilterBar, useStatusFilter } from "./adr-filters";
 import { formatDateStatic } from "@/lib/date";
+import { AdrFilterBar, useStatusFilter } from "./adr-filters";
+import { STATUS_CONFIG } from "./status-config";
 
 function StatusBadge({ status }: { status: string }) {
   const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.proposed!;

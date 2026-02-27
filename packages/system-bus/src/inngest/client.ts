@@ -1,4 +1,4 @@
-import { Inngest, EventSchemas } from "inngest";
+import { EventSchemas, Inngest } from "inngest";
 import { gatewayMiddleware } from "./middleware/gateway";
 
 /**

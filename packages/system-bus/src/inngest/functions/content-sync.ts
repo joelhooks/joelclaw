@@ -1,9 +1,9 @@
-import { inngest } from "../client";
-import { syncFiles, type SyncResult } from "./vault-sync";
-import { infer } from "../../lib/inference";
-import { emitOtelEvent } from "../../observability/emit";
 import Redis from "ioredis";
+import { infer } from "../../lib/inference";
 import { getRedisPort } from "../../lib/redis";
+import { emitOtelEvent } from "../../observability/emit";
+import { inngest } from "../client";
+import { type SyncResult, syncFiles } from "./vault-sync";
 
 /**
  * Content directories to sync from Vault → website.

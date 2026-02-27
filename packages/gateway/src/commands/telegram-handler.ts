@@ -1,7 +1,7 @@
-import { getModel, completeSimple } from "@mariozechner/pi-ai";
+import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
+import { completeSimple, getModel } from "@mariozechner/pi-ai";
 import type { Bot, Context } from "grammy";
 import type Redis from "ioredis";
-import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import { injectChannelContext } from "../formatting";
 import { BUILTIN_COMMANDS } from "./builtins";
 import {
@@ -10,19 +10,19 @@ import {
   loadGatewayConfig,
   saveGatewayConfig,
 } from "./config";
+import { registerMcqAdapter } from "./mcq-adapter";
 import {
+  type CommandArgChoice,
+  type CommandArgDefinition,
+  type CommandDefinition,
   defineChatCommand,
   getAllCommands,
   getCommand,
   getCommands,
-  registerCommands,
-  type CommandArgChoice,
-  type CommandArgDefinition,
-  type CommandDefinition,
   type ParsedArgs,
+  registerCommands,
 } from "./registry";
 import { createSkillsMenuCommand, loadSkillCommands } from "./skills";
-import { registerMcqAdapter } from "./mcq-adapter";
 import { BUILD_COMMAND, registerWorktreeCallbackHandler } from "./worktree";
 
 type EnqueueFn = (

@@ -1,5 +1,7 @@
 "use client";
 
+import { useQuery } from "convex/react";
+import { MessageSquarePlus } from "lucide-react";
 /**
  * ReviewFAB — floating action button showing draft comment count.
  *
@@ -7,10 +9,8 @@
  * Tapping opens the ReviewSheet.
  */
 import { useState } from "react";
-import { useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
 import { ReviewSheet } from "@/components/review/review-sheet";
-import { MessageSquarePlus } from "lucide-react";
+import { api } from "@/convex/_generated/api";
 
 interface ReviewFabProps {
   contentId: string;

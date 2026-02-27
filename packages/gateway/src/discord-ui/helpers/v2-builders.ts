@@ -1,5 +1,5 @@
-import * as Discord from "discord.js";
 import type { MessageCreateOptions } from "discord.js";
+import * as Discord from "discord.js";
 
 // discord.js exports these at runtime, but the type surface can lag behind.
 const Runtime = Discord as unknown as {

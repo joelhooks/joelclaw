@@ -1,4 +1,5 @@
 import { getRedisPort } from "../../lib/redis";
+
 /**
  * System heartbeat — pure fan-out dispatcher.
  * ADR-0062: Heartbeat-Driven Task Triage
@@ -8,12 +9,12 @@ import { getRedisPort } from "../../lib/redis";
  * The heartbeat itself does NO work — it just says "time to check everything."
  */
 
-import { inngest } from "../client";
-import { pushGatewayEvent } from "./agent-loop/utils";
-import Redis from "ioredis";
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
+import Redis from "ioredis";
 import { emitOtelEvent } from "../../observability/emit";
+import { inngest } from "../client";
+import { pushGatewayEvent } from "./agent-loop/utils";
 
 const HEARTBEAT_EVENTS = [
   { name: "tasks/triage.requested" as const, data: {} },

@@ -1,8 +1,8 @@
 import Redis from "ioredis";
-import { inngest } from "../../client";
+import { getRedisPort } from "../../../lib/redis";
 import * as typesense from "../../../lib/typesense";
 import { emitOtelEvent } from "../../../observability/emit";
-import { getRedisPort } from "../../../lib/redis";
+import { inngest } from "../../client";
 
 const OTEL_QUERY_BY = "action,error,component,source,metadata_json,search_text";
 const OTEL_PER_PAGE = 100;

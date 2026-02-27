@@ -1,3 +1,4 @@
+import { markTodoistTaskAgentClosed, unmarkTodoistTaskAgentClosed } from "../../lib/todoist-agent-closed";
 import type {
   Change,
   CreateTaskInput,
@@ -8,7 +9,6 @@ import type {
   TaskPort,
   UpdateTaskInput,
 } from "../port";
-import { markTodoistTaskAgentClosed, unmarkTodoistTaskAgentClosed } from "../../lib/todoist-agent-closed";
 
 type TodoistEnvelope = {
   ok?: boolean;

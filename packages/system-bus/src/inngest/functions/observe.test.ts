@@ -1,9 +1,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { InngestTestEngine } from "@inngest/test";
-import Redis from "ioredis";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { InngestTestEngine } from "@inngest/test";
+import Redis from "ioredis";
 import { observeSessionFunction } from "./observe";
 
 type MockShellResult = {

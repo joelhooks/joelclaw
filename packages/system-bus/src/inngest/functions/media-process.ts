@@ -1,4 +1,5 @@
 import { getRedisPort } from "../../lib/redis";
+
 /**
  * Media Processing Pipeline — ADR-0041
  *
@@ -10,14 +11,14 @@ import { getRedisPort } from "../../lib/redis";
  * Uses claim-check pattern: localPath passed between steps, not base64 in events.
  */
 
-import { inngest } from "../client";
-import { readFile, stat, mkdir } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
 import { execSync } from "node:child_process";
+import { mkdir, readFile, stat } from "node:fs/promises";
+import { basename, extname, join } from "node:path";
 import { $ } from "bun";
+import Redis from "ioredis";
 import { infer } from "../../lib/inference";
 import { MODEL } from "../../lib/models";
-import Redis from "ioredis";
+import { inngest } from "../client";
 
 const MEDIA_TMP = "/tmp/joelclaw-media";
 const NAS_HOST = "joel@three-body";

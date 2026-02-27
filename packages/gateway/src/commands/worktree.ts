@@ -2,11 +2,11 @@ import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Bot } from "grammy";
-import {
-  defineChatCommand,
-  type CommandDefinition,
-} from "./registry";
 import type { InlineButton } from "../channels/telegram";
+import {
+  type CommandDefinition,
+  defineChatCommand,
+} from "./registry";
 
 const MONOREPO_ROOT = path.resolve(os.homedir(), "Code/joelhooks/joelclaw");
 const WORKTREE_ROOT = "/tmp/joelclaw-worktrees";

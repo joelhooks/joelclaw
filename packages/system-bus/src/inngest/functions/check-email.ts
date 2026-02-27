@@ -1,4 +1,5 @@
 import { getRedisPort } from "../../lib/redis";
+
 /**
  * Email inbox triage — autonomous agent that processes email silently.
  * ADR-0052: Uses EmailPort (Front + Gmail adapters).
@@ -13,12 +14,12 @@ import { getRedisPort } from "../../lib/redis";
  * 2h cooldown between runs. Daytime only.
  */
 
+import Redis from "ioredis";
+import { infer } from "../../lib/inference";
+import { prefetchMemoryContext } from "../../memory/context-prefetch";
+import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import { inngest } from "../client";
 import { parseClaudeOutput, pushGatewayEvent } from "./agent-loop/utils";
-import { infer } from "../../lib/inference";
-import { getCurrentTasks, hasTaskMatching } from "../../tasks";
-import { prefetchMemoryContext } from "../../memory/context-prefetch";
-import Redis from "ioredis";
 
 type EmailModule = typeof import("@joelclaw/email");
 

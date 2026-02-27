@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { ModelFallbackController } from "../src/controller";
 import type { FallbackSession, TelemetryEmitter } from "../src";
+import { ModelFallbackController } from "../src/controller";
 
 type TelemetryEvent = Parameters<TelemetryEmitter["emit"]>;
 

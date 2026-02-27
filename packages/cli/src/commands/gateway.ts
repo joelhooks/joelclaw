@@ -480,12 +480,12 @@ const gatewayRestart = Command.make("restart", {}, () =>
 // ── gateway stream (ADR-0058) ───────────────────────────────────────
 
 import {
-  emitStart,
-  emitLog,
-  emitEvent,
-  emitResult,
-  emitError,
   emit,
+  emitError,
+  emitEvent,
+  emitLog,
+  emitResult,
+  emitStart,
 } from "../stream"
 
 const gatewayStream = Command.make(

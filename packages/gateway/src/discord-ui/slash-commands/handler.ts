@@ -1,10 +1,10 @@
+import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import type { ChatInputCommandInteraction, MessageCreateOptions } from "discord.js";
 import type Redis from "ioredis";
+import type { EnqueueFn } from "../../channels/redis";
 import { compactSession, newSession, reloadSession } from "../../command-queue";
 import { ALLOWED_MODELS, ALLOWED_THINKING_LEVELS, loadGatewayConfig, saveGatewayConfig } from "../../commands/config";
-import type { EnqueueFn } from "../../channels/redis";
 import { injectChannelContext } from "../../formatting";
-import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import { renderApprovalCard } from "../components/approval-card";
 import { renderRunCard } from "../components/run-card";
 import { renderSearchResultCard, type SearchResultItem } from "../components/search-result-card";

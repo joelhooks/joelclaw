@@ -1,7 +1,7 @@
-import { visit } from "unist-util-visit";
-import type { Root, Link, Text } from "mdast";
 import fs from "fs";
+import type { Link, Root, Text } from "mdast";
 import path from "path";
+import { visit } from "unist-util-visit";
 
 const ADR_REF = /ADR-(\d{4})/g;
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
+import { ConvexReactClient } from "convex/react";
 /**
  * ConvexReviewGate — self-contained review gate with its own Convex provider.
  *
@@ -8,10 +10,8 @@
  * during static prerender.
  */
 import { useRef } from "react";
-import { ConvexReactClient } from "convex/react";
-import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
-import { authClient } from "@/lib/auth-client";
 import { ReviewGate } from "@/components/review/review-gate";
+import { authClient } from "@/lib/auth-client";
 
 function useConvexClient() {
   const ref = useRef<ConvexReactClient | null>(null);

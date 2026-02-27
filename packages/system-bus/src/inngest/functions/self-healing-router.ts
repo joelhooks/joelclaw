@@ -1,8 +1,8 @@
-import { inngest } from "../client";
-import { emitOtelEvent } from "../../observability/emit";
+import { loadBackupFailureRouterConfig } from "../../lib/backup-failure-router-config";
 import { infer } from "../../lib/inference";
 import { assertAllowedModel } from "../../lib/models";
-import { loadBackupFailureRouterConfig } from "../../lib/backup-failure-router-config";
+import { emitOtelEvent } from "../../observability/emit";
+import { inngest } from "../client";
 
 const BACKUP_RETRY_EVENT_NAME = "system/backup.retry.requested";
 const BACKUP_RETRY_DECISION_MODEL = loadBackupFailureRouterConfig().failureRouter.model;

@@ -8,10 +8,11 @@
  * IDs are content-deterministic — same text always produces same ID.
  * This means comment anchors survive whitespace-only edits.
  */
-import { visit } from "unist-util-visit";
+
 import { createHash } from "node:crypto";
-import type { Root, Element } from "hast";
+import type { Element, Root } from "hast";
 import { toString } from "hast-util-to-string";
+import { visit } from "unist-util-visit";
 
 const COMMENTABLE_TAGS = new Set([
   "p",

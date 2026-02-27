@@ -9,8 +9,9 @@
  *   post:my-blog-post
  *   discovery:cool-thing
  */
-import { mutation, query } from "./_generated/server";
+
 import { v } from "convex/values";
+import { mutation, query } from "./_generated/server";
 
 // ── Queries ──────────────────────────────────────────────────────────
 

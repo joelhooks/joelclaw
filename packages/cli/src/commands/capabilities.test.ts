@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { buildSuccessEnvelope, validateJoelclawEnvelope } from "../response"
-import { CAPABILITY_FLOWS, buildCapabilitiesCatalog } from "./capabilities"
+import { buildCapabilitiesCatalog, CAPABILITY_FLOWS } from "./capabilities"
 
 describe("capabilities catalog", () => {
   test("contains required navigation flows with unique IDs", () => {

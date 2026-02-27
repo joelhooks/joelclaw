@@ -1,5 +1,5 @@
+import { AUTHOR, SITE_NAME, SITE_URL } from "./constants";
 import type { PostMeta } from "./posts";
-import { SITE_URL, SITE_NAME, AUTHOR } from "./constants";
 
 export function blogPostingJsonLd(meta: PostMeta) {
   return {

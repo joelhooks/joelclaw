@@ -11,18 +11,18 @@
  *   const convos = await email.listConversations("inb_xxx", { unread: true })
  */
 
+
+// Adapters
+export { createFrontAdapter } from "./adapters/front";
+export { createGmailAdapter } from "./adapters/gmail";
 // Port
 export type {
-  EmailPort,
+  ConversationFilter,
   EmailAddress,
   EmailAttachment,
   EmailConversation,
   EmailDraft,
   EmailInbox,
   EmailMessage,
-  ConversationFilter,
+  EmailPort,
 } from "./port/types";
-
-// Adapters
-export { createFrontAdapter } from "./adapters/front";
-export { createGmailAdapter } from "./adapters/gmail";

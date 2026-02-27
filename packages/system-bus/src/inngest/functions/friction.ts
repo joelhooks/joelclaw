@@ -1,10 +1,10 @@
-import { join, dirname } from "node:path";
 import { existsSync } from "node:fs";
-import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
-import { inngest } from "../client";
+import { dirname, join } from "node:path";
+import { infer } from "../../lib/inference";
 import { MODEL } from "../../lib/models";
 import * as typesense from "../../lib/typesense";
-import { infer } from "../../lib/inference";
+import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
+import { inngest } from "../client";
 import {
   FRICTION_SYSTEM_PROMPT,
   FRICTION_USER_PROMPT,

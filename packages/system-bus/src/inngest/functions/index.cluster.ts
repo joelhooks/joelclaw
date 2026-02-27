@@ -1,19 +1,19 @@
 import { approvalRequest, approvalResolve } from "./approval";
 import {
+  frontAssigneeChanged,
+  frontMessageReceived,
+  frontMessageSent,
+} from "./front-notify";
+import {
+  githubPackagePublished,
+  githubWorkflowRunCompleted,
+} from "./github-notify";
+import { todoistMemoryReviewBridge } from "./todoist-memory-review-bridge";
+import {
   todoistCommentAdded,
   todoistTaskCompleted,
   todoistTaskCreated,
 } from "./todoist-notify";
-import {
-  frontMessageReceived,
-  frontMessageSent,
-  frontAssigneeChanged,
-} from "./front-notify";
-import { todoistMemoryReviewBridge } from "./todoist-memory-review-bridge";
-import {
-  githubWorkflowRunCompleted,
-  githubPackagePublished,
-} from "./github-notify";
 
 function getFunctionId(fn: { opts?: { id?: string } }): string {
   return fn.opts?.id ?? "unknown";

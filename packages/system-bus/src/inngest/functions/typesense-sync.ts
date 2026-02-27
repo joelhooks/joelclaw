@@ -11,12 +11,12 @@
  * Uses auto-embedding (ts/all-MiniLM-L12-v2) — no external API calls.
  */
 
-import { inngest } from "../client";
-import * as typesense from "../../lib/typesense";
-import { pushContentResource } from "../../lib/convex";
-import { renderVaultMarkdown } from "../../lib/vault-render";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative } from "node:path";
+import { pushContentResource } from "../../lib/convex";
+import * as typesense from "../../lib/typesense";
+import { renderVaultMarkdown } from "../../lib/vault-render";
+import { inngest } from "../client";
 
 const VAULT_PATH = process.env.VAULT_PATH || join(process.env.HOME || "/Users/joel", "Vault");
 const BLOG_PATH = join(process.env.HOME || "/Users/joel", "Code/joelhooks/joelclaw/apps/web/content");

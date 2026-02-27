@@ -1,13 +1,14 @@
 import { getRedisPort } from "../../lib/redis";
+
 /**
  * Stale loop detection — check for stuck or long-running agent loops.
  * Only notifies gateway if a loop appears stuck (>2h, no progress).
  */
 
+import Redis from "ioredis";
+import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
-import { getCurrentTasks, hasTaskMatching } from "../../tasks";
-import Redis from "ioredis";
 
 const COOLDOWN_KEY = "loops:stale:last-check";
 const COOLDOWN_TTL = 60 * 60; // 1 hour

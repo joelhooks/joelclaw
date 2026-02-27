@@ -8,11 +8,11 @@
  * ADR-0052: Email Port — Hexagonal Architecture
  */
 
-import { inngest } from "../client";
-import type { GatewayContext } from "../middleware/gateway";
+import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { execSync } from "child_process";
 import { infer } from "../../lib/inference";
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { inngest } from "../client";
+import type { GatewayContext } from "../middleware/gateway";
 
 const FRONT_API = "https://api2.frontapp.com";
 const BATCH_SIZE = 50; // conversations per classification call

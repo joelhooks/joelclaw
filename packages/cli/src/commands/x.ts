@@ -9,8 +9,8 @@
  */
 
 import { Args, Command, Options } from "@effect/cli"
-import { Console, Effect } from "effect"
 import { execSync } from "child_process"
+import { Console, Effect } from "effect"
 
 function leaseSecret(name: string): string {
   return execSync(`secrets lease ${name} --ttl 5m`, { encoding: "utf-8" }).trim()

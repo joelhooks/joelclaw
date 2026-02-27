@@ -1,10 +1,10 @@
+import type { Dirent } from "node:fs";
 import { constants as fsConstants } from "node:fs";
 import { access, chmod, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import type { Dirent } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 import { NonRetriableError } from "inngest";
-import { MODEL, assertAllowedModel } from "../../lib/models";
 import { infer } from "../../lib/inference";
+import { assertAllowedModel, MODEL } from "../../lib/models";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";

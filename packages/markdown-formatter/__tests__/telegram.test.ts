@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { chunkTelegramHtml, mdToTelegramHtmlAst, parseMd } from "../src";
 import type { MdastNode } from "../src";
+import { chunkTelegramHtml, mdToTelegramHtmlAst, parseMd } from "../src";
 
 const CHUNK_MAX = 4000;
 

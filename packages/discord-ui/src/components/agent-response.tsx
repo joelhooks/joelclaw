@@ -5,14 +5,14 @@
  * code block handling, and optional action buttons.
  */
 
-import React from "react";
 import {
-  Embed,
-  Button,
   ActionRow,
+  Button,
+  Embed,
   Link,
 } from "@answeroverflow/discordjs-react";
 import type { ButtonInteraction } from "discord.js";
+import React from "react";
 
 export type AgentResponseAction = {
   label: string;

@@ -5,13 +5,13 @@
  * Use for destructive actions, deploy confirmations, etc.
  */
 
-import React, { useState, useRef } from "react";
 import {
-  Embed,
-  Button,
   ActionRow,
+  Button,
+  Embed,
 } from "@answeroverflow/discordjs-react";
 import type { ButtonInteraction } from "discord.js";
+import React, { useRef, useState } from "react";
 
 export type ApprovalProps = {
   prompt: string;

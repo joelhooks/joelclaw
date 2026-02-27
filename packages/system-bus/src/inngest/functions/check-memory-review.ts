@@ -1,14 +1,15 @@
 import { getRedisPort } from "../../lib/redis";
+
 /**
  * Memory review check — nudge gateway when proposals need Joel's attention.
  * ADR-0021 Todoist-as-review-surface refinement.
  * Only notifies once per 24h if proposals are pending.
  */
 
+import Redis from "ioredis";
+import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
-import { getCurrentTasks, hasTaskMatching } from "../../tasks";
-import Redis from "ioredis";
 
 const REVIEW_PENDING_KEY = "memory:review:pending";
 const NUDGE_COOLDOWN_KEY = "memory:review:nudge-sent";

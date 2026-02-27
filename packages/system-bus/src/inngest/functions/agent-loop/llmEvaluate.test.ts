@@ -1,5 +1,5 @@
-import { test, expect, describe, mock, beforeEach } from "bun:test";
-import { spawn, type Subprocess } from "bun";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { type Subprocess, spawn } from "bun";
 
 // ── AC-1: llmEvaluate is exported from utils.ts ────────────────────────
 describe("AC-1: llmEvaluate is exported from utils.ts", () => {

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { inngest } from "../client";
-import { emitMeasuredOtelEvent } from "../../observability/emit";
 import * as typesense from "../../lib/typesense";
+import { emitMeasuredOtelEvent } from "../../observability/emit";
+import { inngest } from "../client";
 
 type VoiceCallCompletedData = {
   transcript?: unknown;

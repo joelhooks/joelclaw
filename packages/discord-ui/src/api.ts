@@ -3,8 +3,8 @@
  * Re-exports runtime + convenience helpers via dynamic imports.
  */
 
-export { initDiscordUI, getDiscordUI, renderToChannel, shutdownDiscordUI } from "./runtime.ts";
 export type { DiscordUIInstance } from "./runtime.ts";
+export { getDiscordUI, initDiscordUI, renderToChannel, shutdownDiscordUI } from "./runtime.ts";
 
 // renderMcqToChannel is in a .tsx file, so we provide an async wrapper
 // that dynamically imports it. This avoids the --jsx requirement at the

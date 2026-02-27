@@ -10,16 +10,15 @@
  */
 
 // Config
-export { SHIKI_THEME, SHIKI_LANGS, prettyCodeOptions, LANGUAGE_ALIASES } from "./config";
+export { LANGUAGE_ALIASES, prettyCodeOptions, SHIKI_LANGS, SHIKI_THEME } from "./config";
 
 // Plugins
 export { getRemarkPlugins, rehypePlugins } from "./plugins";
-
-// Individual plugins (for custom pipelines)
-export { remarkObsidian, type RemarkObsidianOptions } from "./remark-obsidian";
-export { remarkStripAgentOnly } from "./remark-strip-agent-only";
 export { rehypeNormalizeCodeLangs } from "./rehype-normalize-code-langs";
 export { rehypeParagraphIds } from "./rehype-paragraph-ids";
+// Individual plugins (for custom pipelines)
+export { type RemarkObsidianOptions, remarkObsidian } from "./remark-obsidian";
+export { remarkStripAgentOnly } from "./remark-strip-agent-only";
 
 // Standalone renderer
 export { renderMarkdown } from "./render";

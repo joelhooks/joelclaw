@@ -14,13 +14,13 @@
  *   6. Notify gateway
  */
 
-import { inngest } from "../client";
-import type { GatewayContext } from "../middleware/gateway";
 import { spawnSync } from "node:child_process";
 import Redis from "ioredis";
-import { prefetchMemoryContext } from "../../memory/context-prefetch";
 import { cacheWrap } from "../../lib/cache";
 import { infer } from "../../lib/inference";
+import { prefetchMemoryContext } from "../../memory/context-prefetch";
+import { inngest } from "../client";
+import type { GatewayContext } from "../middleware/gateway";
 
 const REDIS_KEY_PROCESSED = "granola:processed";
 const REDIS_TTL_DAYS = 90;

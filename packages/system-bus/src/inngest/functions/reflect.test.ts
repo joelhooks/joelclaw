@@ -7,14 +7,14 @@ import {
   expect,
   test,
 } from "bun:test";
-import { InngestTestEngine } from "@inngest/test";
-import Redis from "ioredis";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { COMPRESSION_GUIDANCE, validateCompression } from "./reflect-prompt";
+import { InngestTestEngine } from "@inngest/test";
+import Redis from "ioredis";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import type { CreateTaskInput, Task } from "../../tasks/port";
+import { COMPRESSION_GUIDANCE, validateCompression } from "./reflect-prompt";
 
 type MockShellResult = {
   exitCode: number;

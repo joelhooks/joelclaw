@@ -6,14 +6,14 @@
 
 import { Hono } from "hono";
 import { inngest } from "../inngest/client";
-import { emitMeasuredOtelEvent, emitOtelEvent } from "../observability/emit";
 import { isTodoistTaskAgentClosed } from "../lib/todoist-agent-closed";
-import type { WebhookProvider, NormalizedEvent } from "./types";
-import { todoistProvider } from "./providers/todoist";
+import { emitMeasuredOtelEvent, emitOtelEvent } from "../observability/emit";
 import { frontProvider } from "./providers/front";
-import { vercelProvider } from "./providers/vercel";
 import { githubProvider } from "./providers/github";
 import { muxProvider } from "./providers/mux";
+import { todoistProvider } from "./providers/todoist";
+import { vercelProvider } from "./providers/vercel";
+import type { NormalizedEvent, WebhookProvider } from "./types";
 
 // ── Provider registry ────────────────────────────────────
 const providers = new Map<string, WebhookProvider>();

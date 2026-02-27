@@ -1,6 +1,6 @@
-import { inngest } from "../client";
-import { NonRetriableError } from "inngest";
 import { join } from "node:path";
+import { NonRetriableError } from "inngest";
+import { inngest } from "../client";
 
 const EMBED_SCRIPT = join(__dirname, "..", "..", "..", "scripts", "embed.py");
 const EMBED_TIMEOUT_MS = 120_000;

@@ -5,13 +5,13 @@
  * Use for processing states, loop progress, health checks.
  */
 
-import React, { useState, useCallback, useEffect, useRef } from "react";
 import {
-  Embed,
-  Button,
   ActionRow,
+  Button,
+  Embed,
 } from "@answeroverflow/discordjs-react";
 import type { ButtonInteraction } from "discord.js";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 export type StatusState = "processing" | "done" | "error" | "waiting" | "cancelled";
 

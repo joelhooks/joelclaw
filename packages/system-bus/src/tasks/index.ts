@@ -1,12 +1,12 @@
+export { TodoistTaskAdapter } from "./adapters/todoist";
 export type {
-  TaskPort,
+  Change,
+  CreateTaskInput,
+  Label,
+  Project,
   Task,
   TaskFilter,
-  CreateTaskInput,
+  TaskPort,
   UpdateTaskInput,
-  Project,
-  Label,
-  Change,
 } from "./port";
-export { TodoistTaskAdapter } from "./adapters/todoist";
-export { getCurrentTasks, hasTaskMatching, tasksWithLabel, tasksInProject } from "./utils";
+export { getCurrentTasks, hasTaskMatching, tasksInProject, tasksWithLabel } from "./utils";

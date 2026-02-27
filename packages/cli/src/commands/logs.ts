@@ -6,16 +6,16 @@
  * {"type":"log",...} NDJSON. Ctrl-c to stop.
  */
 
+import { existsSync } from "node:fs"
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
-import { respond, respondError } from "../response"
 import type { NextAction } from "../response"
-import { existsSync } from "node:fs"
+import { respond, respondError } from "../response"
 import {
-  emitStart,
+  emitError,
   emitLog,
   emitResult,
-  emitError,
+  emitStart,
 } from "../stream"
 
 const WORKER_LOG = `${process.env.HOME}/.local/log/system-bus-worker.log`

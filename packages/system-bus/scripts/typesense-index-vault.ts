@@ -8,7 +8,7 @@
  */
 
 import { readdirSync, readFileSync, statSync } from "fs";
-import { join, relative, basename } from "path";
+import { basename, join, relative } from "path";
 
 const VAULT_PATH = process.env.HOME + "/Vault";
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108";

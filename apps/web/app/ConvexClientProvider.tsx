@@ -1,9 +1,9 @@
 "use client";
 
-import { ReactNode, useRef } from "react";
-import { ConvexReactClient } from "convex/react";
-import { authClient } from "@/lib/auth-client";
 import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
+import { ConvexReactClient } from "convex/react";
+import { ReactNode, useRef } from "react";
+import { authClient } from "@/lib/auth-client";
 
 function useConvexClient() {
   const ref = useRef<ConvexReactClient | null>(null);

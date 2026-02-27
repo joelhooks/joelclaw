@@ -1,9 +1,9 @@
-import { Args, Command, Options } from "@effect/cli"
-import { Console, Effect } from "effect"
-import { access, readFile, stat } from "node:fs/promises"
 import { constants as fsConstants } from "node:fs"
+import { access, readFile, stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { basename, isAbsolute, join, normalize } from "node:path"
+import { Args, Command, Options } from "@effect/cli"
+import { Console, Effect } from "effect"
 import { respond, respondError } from "../response"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
 

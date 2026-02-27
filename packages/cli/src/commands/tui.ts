@@ -1,7 +1,7 @@
-import { Command, Options } from "@effect/cli"
-import { Console, Effect } from "effect"
 import { readFile } from "node:fs/promises"
 import { createInterface } from "node:readline"
+import { Command, Options } from "@effect/cli"
+import { Console, Effect } from "effect"
 import { respond } from "../response"
 
 const WS_PORT_FILE = "/tmp/joelclaw/gateway.ws.port"

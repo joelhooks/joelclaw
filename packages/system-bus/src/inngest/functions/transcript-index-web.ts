@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
-import { inngest } from "../client";
+import { pushContentResource } from "../../lib/convex";
 import { chunkBySegments, chunkBySpeakerTurns } from "../../lib/transcript-chunk";
 import * as typesense from "../../lib/typesense";
-import { pushContentResource } from "../../lib/convex";
+import { inngest } from "../client";
 
 type SpeakerTurn = {
   speaker?: string;

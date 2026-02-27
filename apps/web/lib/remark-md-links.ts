@@ -1,7 +1,7 @@
-import { visit } from "unist-util-visit";
-import type { Root, Link } from "mdast";
 import fs from "fs";
+import type { Link, Root } from "mdast";
 import path from "path";
+import { visit } from "unist-util-visit";
 import { SITE_URL } from "./constants";
 
 const contentDir = path.join(process.cwd(), "content");

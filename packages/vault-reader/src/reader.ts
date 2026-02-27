@@ -1,4 +1,4 @@
-import { stat, readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join, normalize } from "node:path";
 import type { VaultIntent } from "./types";

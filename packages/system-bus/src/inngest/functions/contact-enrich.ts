@@ -2,8 +2,8 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { NonRetriableError } from "inngest";
-import { emitOtelEvent } from "../../observability/emit";
 import { infer } from "../../lib/inference";
+import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
 const HOME_DIR = process.env.HOME?.trim() || "/Users/joel";

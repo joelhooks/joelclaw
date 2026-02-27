@@ -4,7 +4,7 @@
  */
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { WebhookProvider, NormalizedEvent } from "../types";
+import type { NormalizedEvent, WebhookProvider } from "../types";
 
 function getWebhookSecret(): string | null {
   const secret = process.env.GITHUB_WEBHOOK_SECRET;

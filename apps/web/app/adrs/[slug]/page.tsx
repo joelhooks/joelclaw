@@ -1,13 +1,13 @@
-import { notFound } from "next/navigation";
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
-import { getAdr, getAdrSlugs } from "@/lib/adrs";
-import { mdxComponents } from "@/lib/mdx";
-import { remarkPlugins, rehypePlugins } from "@/lib/mdx-plugins";
-import { remarkAdrLinks } from "@/lib/remark-adr-links";
-import { SITE_URL, SITE_NAME } from "@/lib/constants";
-import { toDateString } from "@/lib/date";
 import { LazyReviewGate } from "@/components/review/lazy-review-gate";
+import { getAdr, getAdrSlugs } from "@/lib/adrs";
+import { SITE_NAME, SITE_URL } from "@/lib/constants";
+import { toDateString } from "@/lib/date";
+import { mdxComponents } from "@/lib/mdx";
+import { rehypePlugins, remarkPlugins } from "@/lib/mdx-plugins";
+import { remarkAdrLinks } from "@/lib/remark-adr-links";
 
 type Props = { params: Promise<{ slug: string }> };
 

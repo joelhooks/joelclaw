@@ -1,12 +1,12 @@
-import { $ } from "bun";
-import Redis from "ioredis";
-import { NonRetriableError } from "inngest";
 import { access, readFile } from "node:fs/promises";
 import { basename, extname, join, parse } from "node:path";
-import { inngest } from "../client";
-import { emitMeasuredOtelEvent } from "../../observability/emit";
-import { pushGatewayEvent } from "./agent-loop/utils";
+import { $ } from "bun";
+import { NonRetriableError } from "inngest";
+import Redis from "ioredis";
 import { getRedisPort } from "../../lib/redis";
+import { emitMeasuredOtelEvent } from "../../observability/emit";
+import { inngest } from "../client";
+import { pushGatewayEvent } from "./agent-loop/utils";
 
 const DARK_WIZARD = "joel@100.86.171.79";
 const CLANKER = "joel@100.95.167.75";

@@ -4,11 +4,11 @@
  * (like gateway) don't need jsx config.
  */
 
-import React from "react";
 import type { TextBasedChannel } from "discord.js";
-import { renderToChannel } from "../runtime.ts";
-import { McqFlow } from "../components/mcq.tsx";
+import React from "react";
 import type { McqQuestionData } from "../components/mcq.tsx";
+import { McqFlow } from "../components/mcq.tsx";
+import { renderToChannel } from "../runtime.ts";
 
 export type RenderMcqOptions = {
   title?: string;

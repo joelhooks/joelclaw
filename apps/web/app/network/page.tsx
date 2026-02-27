@@ -1,15 +1,15 @@
-import { Suspense } from "react";
+import { DataGrid } from "@repo/ui/data-grid";
+import { MetricCard } from "@repo/ui/metric-card";
+import {
+  normalizeStatusKind,
+  type StatusKind,
+  StatusLed,
+  StatusPulseDot,
+} from "@repo/ui/status-badge";
+import { ConvexHttpClient } from "convex/browser";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
-import { ConvexHttpClient } from "convex/browser";
-import { MetricCard } from "@repo/ui/metric-card";
-import { DataGrid } from "@repo/ui/data-grid";
-import {
-  StatusLed,
-  normalizeStatusKind,
-  StatusPulseDot,
-  type StatusKind,
-} from "@repo/ui/status-badge";
+import { Suspense } from "react";
 import { api } from "@/convex/_generated/api";
 import { SITE_NAME } from "@/lib/constants";
 

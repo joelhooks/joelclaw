@@ -10,17 +10,17 @@
  * EmbedBuilder + ActionRowBuilder give us everything we need for MCQs.
  */
 
+import { emitGatewayOtel } from "@joelclaw/telemetry";
 import {
-  EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ComponentType,
-  type TextBasedChannel,
-  type MessageComponentInteraction,
   type Client,
+  ComponentType,
+  EmbedBuilder,
+  type MessageComponentInteraction,
+  type TextBasedChannel,
 } from "discord.js";
-import { emitGatewayOtel } from "@joelclaw/telemetry";
 
 type McqQuestion = {
   id: string;

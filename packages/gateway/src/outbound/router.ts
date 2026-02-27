@@ -1,6 +1,6 @@
 import type { InlineButton } from "../channels/telegram";
-import { applyFormatRules } from "./format";
 import { createEnvelope, type OutboundChannelId, type OutboundEnvelope } from "./envelope";
+import { applyFormatRules } from "./format";
 
 // Lazy reference to avoid static import binding pollution across test files.
 // Updated at wireSession() call time via re-import so mock.module() takes effect.

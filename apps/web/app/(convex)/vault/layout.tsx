@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
 import { useQuery } from "convex/react";
-import { api } from "@/convex/_generated/api";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
+import { api } from "@/convex/_generated/api";
 
 // Section colors
 const SECTION_STYLES: Record<string, { color: string; bg: string }> = {

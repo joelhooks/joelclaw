@@ -1,11 +1,11 @@
-import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
+import { SITE_NAME, SITE_URL } from "@/lib/constants";
 import { getDiscovery, getDiscoverySlugs } from "@/lib/discoveries";
 import { mdxComponents } from "@/lib/mdx";
-import { remarkPlugins, rehypePlugins } from "@/lib/mdx-plugins";
-import { SITE_URL, SITE_NAME } from "@/lib/constants";
+import { rehypePlugins, remarkPlugins } from "@/lib/mdx-plugins";
 
 type Props = { params: Promise<{ slug: string }> };
 

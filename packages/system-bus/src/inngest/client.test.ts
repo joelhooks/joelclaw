@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { inngest, type Events } from "./client";
+import { type Events, inngest } from "./client";
 
 type SendEventArg = Parameters<typeof inngest.send>[0];
 

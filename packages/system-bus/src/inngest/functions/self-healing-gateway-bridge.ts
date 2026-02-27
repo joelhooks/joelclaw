@@ -1,7 +1,7 @@
 import Redis from "ioredis";
-import { inngest } from "../client";
-import { emitOtelEvent } from "../../observability/emit";
 import { getRedisPort } from "../../lib/redis";
+import { emitOtelEvent } from "../../observability/emit";
+import { inngest } from "../client";
 
 const SELF_HEALING_REDIS_HOST = process.env.REDIS_HOST ?? "localhost";
 const SELF_HEALING_REDIS_PORT = getRedisPort();

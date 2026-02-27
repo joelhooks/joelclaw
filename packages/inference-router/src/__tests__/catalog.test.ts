@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { GATEWAY_MODEL_TO_PROVIDER, MODEL_CATALOG, inferProviderFromModel, isKnownModel, normalizeModel } from "../catalog";
+import { GATEWAY_MODEL_TO_PROVIDER, inferProviderFromModel, isKnownModel, MODEL_CATALOG, normalizeModel } from "../catalog";
 
 describe("catalog helpers", () => {
   test("normalizeModel resolves known models and aliases", () => {

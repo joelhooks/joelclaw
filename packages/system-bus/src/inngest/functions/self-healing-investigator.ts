@@ -1,8 +1,8 @@
 import Redis from "ioredis";
-import { inngest } from "../client";
-import { emitOtelEvent } from "../../observability/emit";
-import { restartWorker } from "../../observability/auto-fixes/restart-worker";
 import { getRedisPort } from "../../lib/redis";
+import { restartWorker } from "../../observability/auto-fixes/restart-worker";
+import { emitOtelEvent } from "../../observability/emit";
+import { inngest } from "../client";
 
 const INNGEST_BASE_URL = process.env.INNGEST_BASE_URL ?? "http://localhost:8288";
 const SELF_HEALING_REDIS_KEY_PREFIX = "self-healing:sdk-url:run:";

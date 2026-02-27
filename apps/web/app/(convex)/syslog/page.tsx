@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-import { useQuery } from "convex/react";
 import { EventStream, type StreamEvent } from "@repo/ui/event-stream";
 import { FilterBar } from "@repo/ui/filter-bar";
 import { PageHeader } from "@repo/ui/page-header";
 import { SearchBar } from "@repo/ui/search-bar";
+import { useQuery } from "convex/react";
+import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
 import { api } from "@/convex/_generated/api";
 import { authClient } from "@/lib/auth-client";
 

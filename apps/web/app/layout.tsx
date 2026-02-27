@@ -1,18 +1,18 @@
+import { GeistPixelSquare } from "geist/font/pixel";
+import { Github, Rss } from "lucide-react";
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
-import { GeistPixelSquare } from "geist/font/pixel";
-import { Suspense } from "react";
 import { NuqsAdapter } from "nuqs/adapters/next";
+import { Suspense } from "react";
+import { SiteHeader } from "@/components/site-header";
 import {
-  SITE_URL,
-  SITE_NAME,
-  SITE_DESCRIPTION,
   AUTHOR,
   SITE_COPYRIGHT_YEAR,
+  SITE_DESCRIPTION,
+  SITE_NAME,
+  SITE_URL,
 } from "@/lib/constants";
 import { personJsonLd } from "@/lib/jsonld";
-import { Github, Rss } from "lucide-react";
-import { SiteHeader } from "@/components/site-header";
 import "./globals.css";
 
 const geistSans = localFont({

@@ -1,7 +1,7 @@
 "use client";
 import type { JSX } from "react";
-import { FilterChips } from "./filter-chips";
 import type { FilterChipOption } from "./filter-chips";
+import { FilterChips } from "./filter-chips";
 
 /**
  * Labeled filter chips wrapper for consistent data page filtering.

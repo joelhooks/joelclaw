@@ -18,9 +18,9 @@ import { getRedisPort } from "../../../lib/redis";
 import { rename } from "node:fs/promises";
 import { join } from "node:path";
 import Redis from "ioredis";
-import { inngest } from "../../client";
 import { infer } from "../../../lib/inference";
 import { emitOtelEvent } from "../../../observability/emit";
+import { inngest } from "../../client";
 
 const LLM_PENDING_KEY = "memory:review:llm-pending";
 // ADR-0078: Use explicit versioned model IDs. Bare "claude-haiku" may resolve to deprecated Haiku 3.

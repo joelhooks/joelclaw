@@ -5,11 +5,11 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { infer } from "../../lib/inference";
+import { type LlmUsage } from "../../lib/langfuse";
+import { TodoistTaskAdapter } from "../../tasks";
 import { inngest } from "../client";
 import { parseClaudeOutput, pushGatewayEvent } from "./agent-loop/utils";
-import { type LlmUsage } from "../../lib/langfuse";
-import { infer } from "../../lib/inference";
-import { TodoistTaskAdapter } from "../../tasks";
 import { isVipSender } from "./vip-utils";
 
 const FRONT_API = "https://api2.frontapp.com";

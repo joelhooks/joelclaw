@@ -3,14 +3,11 @@ export {
   classifyPriority,
   drainByPriority,
   getUnacked,
-  init,
   indexMessagesByPriority,
+  init,
   persist,
   trimOld,
 } from "./store";
-export {
-  Priority,
-} from "./types";
 export type {
   CandidateMessage,
   DrainByPriorityOptions,
@@ -18,4 +15,7 @@ export type {
   PersistResult,
   StoredMessage,
   TelemetryEmitter,
+} from "./types";
+export {
+  Priority,
 } from "./types";

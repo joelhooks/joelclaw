@@ -5,21 +5,21 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type BuildRouteInput,
   buildInferenceRoute,
   buildPolicy,
-  type BuildRouteInput,
-  type InferencePolicy,
   INFERENCE_EVENT_NAMES,
+  type InferencePolicy,
   inferProviderFromModel,
   normalizeModel,
   resolveProfile,
 } from "@joelclaw/inference-router";
-import { parsePiJsonAssistant, type LlmUsage, traceLlmGeneration } from "./langfuse";
 import { emitOtelEvent } from "../observability/emit";
+import { type LlmUsage, parsePiJsonAssistant, traceLlmGeneration } from "./langfuse";
 
 type InferenceMetadata = Record<string, unknown>;
 

@@ -5,13 +5,13 @@
  * Supports single and multiple selection, descriptions, and emojis.
  */
 
-import React, { useState, useRef } from "react";
 import {
   Embed,
-  Select,
   Option,
+  Select,
 } from "@answeroverflow/discordjs-react";
 import type { StringSelectMenuInteraction } from "discord.js";
+import React, { useRef, useState } from "react";
 
 export type SelectOption = {
   label: string;

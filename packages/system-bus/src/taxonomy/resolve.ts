@@ -1,11 +1,11 @@
 import { TAXONOMY_ALIASES_V1 } from "./aliases-v1";
 import {
+  type ConceptId,
   getStorageCategoryForConcept,
   isStorageCategory,
+  type StorageCategory,
   TAXONOMY_CORE_V1,
   TAXONOMY_VERSION,
-  type ConceptId,
-  type StorageCategory,
 } from "./core-v1";
 
 export type ConceptSource = "rules" | "llm" | "backfill" | "manual" | "fallback";

@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { type Subprocess } from "bun";
 
 // ── Helpers ─────────────────────────────────────────────────────────────

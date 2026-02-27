@@ -1,8 +1,8 @@
 import { normalizeErrorCode } from "../../../cli/src/error-codes";
 import {
   getRunbook,
-  resolveRunbookPhase,
   type RunbookPhase,
+  resolveRunbookPhase,
 } from "../../../cli/src/runbooks";
 
 export type ResolvedRunbookPlan = {

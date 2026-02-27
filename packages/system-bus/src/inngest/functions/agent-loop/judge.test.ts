@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 const JUDGE_PATH = new URL("./judge.ts", import.meta.url).pathname;
 
