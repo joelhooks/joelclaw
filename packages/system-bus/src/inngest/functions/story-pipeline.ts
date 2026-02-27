@@ -1,8 +1,8 @@
 /**
  * ADR-0155: Three-Stage Story Pipeline
  *
- * Implement → Prove → Judge per story.
- * Three independent codex exec calls, no shared state except git.
+ * Implement → Check & Commit → Prove → Judge per story.
+ * Three codex exec calls plus one local validation/commit stage, no shared state except git.
  *
  * Event: agent/story.start
  * Data: { prdPath, storyId, cwd, attempt?, judgment? }
@@ -116,6 +116,14 @@ interface JudgeStageOutput {
     pass: boolean;
     rationale: string;
   }>;
+}
+
+interface CheckAndCommitStageOutput {
+  ok: boolean;
+  error?: string;
+  output?: string;
+  noChanges?: boolean;
+  commitSha?: string;
 }
 
 type GatewayMessageIntent =
@@ -379,6 +387,34 @@ ${result.output.slice(-12_000)}`;
   };
 }
 
+async function runCommand(command: string, cwd: string): Promise<{ stdout: string; stderr: string }> {
+  return await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    exec(
+      command,
+      {
+        cwd,
+        encoding: "utf-8",
+        maxBuffer: 10 * 1024 * 1024,
+        env: { ...process.env, CI: "true", TERM: "dumb" },
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          const execError = error as Error & { stdout?: string | Buffer; stderr?: string | Buffer };
+          execError.stdout = stdout;
+          execError.stderr = stderr;
+          reject(execError);
+          return;
+        }
+
+        resolve({
+          stdout: stdout.trim(),
+          stderr: stderr.trim(),
+        });
+      },
+    );
+  });
+}
+
 function getHeadSha(cwd: string): string {
   // Verify cwd is actually a git repo before running
   const resolvedCwd = cwd || "/Users/joel/Code/joelhooks/joelclaw";
@@ -421,7 +457,7 @@ function resolveCodexTimeoutMs(prd: Prd): number | undefined {
 export const storyPipeline = inngest.createFunction(
   {
     id: "agent/story-pipeline",
-    name: "Story Pipeline: Implement → Prove → Judge",
+    name: "Story Pipeline: Implement → Check & Commit → Prove → Judge",
     retries: 2, // survive transient SDK failures during worker restart (ADR-0156)
     concurrency: [{ scope: "fn", limit: 1 }], // one story at a time
     timeouts: {
@@ -599,7 +635,7 @@ ${story.description}
 ACCEPTANCE CRITERIA:
 ${criteria}
 
-VALIDATION (run these before committing):
+VALIDATION (run these before finishing):
 ${validation}
 ${judgmentContext}
 
@@ -607,13 +643,7 @@ OUTPUT CONTRACT:
 You must return ONLY valid JSON that matches the provided output schema.
 Capture your implementation result, validation status, and commit metadata.
 
-CRITICAL — YOU MUST COMMIT:
-1. Run ALL validation commands and fix any errors
-2. git add -A
-3. git commit -m "feat(${storyId}): ${story.title}"
-
-If you do not commit, the entire pipeline run is wasted. A successful implementation WITHOUT a commit is a FAILURE.
-Do NOT commit if validation fails — fix issues first, then commit.`;
+Write the code. Do NOT commit — the pipeline handles commits.`;
 
       return codexExecWithHealing<ImplementStageOutput>({
         prompt,
@@ -640,6 +670,113 @@ Do NOT commit if validation fails — fix issues first, then commit.`;
       {
         stage: "implement",
         status: implementResult.parsed.status,
+      }
+    );
+
+    await emitProgress(
+      `check-and-commit-start-${attempt}`,
+      `Story ${storyId}: running check-and-commit stage.`,
+      "pipeline.stage",
+      "info",
+      { stage: "check-and-commit" }
+    );
+
+    const checkAndCommitResult = await step.run("check-and-commit", async (): Promise<CheckAndCommitStageOutput> => {
+      try {
+        await runCommand("bunx tsc --noEmit", cwd);
+      } catch (error: any) {
+        return {
+          ok: false,
+          error: "typecheck failed",
+          output: (error.stderr?.toString().trim() || error.stdout?.toString().trim() || "").slice(-10_000),
+        };
+      }
+
+      try {
+        await runCommand("pnpm biome check apps/ packages/ --no-errors-on-unmatched", cwd);
+      } catch (error: any) {
+        return {
+          ok: false,
+          error: "lint failed",
+          output: (error.stderr?.toString().trim() || error.stdout?.toString().trim() || "").slice(-10_000),
+        };
+      }
+
+      const status = await runCommand("git status --porcelain", cwd);
+      if (!status.stdout.trim()) {
+        return { ok: true, noChanges: true };
+      }
+
+      const commitMessage = `feat(${storyId}): ${story.title}`;
+      try {
+        await runCommand(`git add -A && git commit -m '${escapeShellArg(commitMessage)}'`, cwd);
+      } catch (error: any) {
+        return {
+          ok: false,
+          error: "commit failed",
+          output: (error.stderr?.toString().trim() || error.stdout?.toString().trim() || "").slice(-10_000),
+        };
+      }
+
+      try {
+        await runCommand("git push origin main", cwd);
+      } catch (error: any) {
+        return {
+          ok: false,
+          error: "push failed",
+          output: (error.stderr?.toString().trim() || error.stdout?.toString().trim() || "").slice(-10_000),
+        };
+      }
+
+      try {
+        const sha = await runCommand("git rev-parse HEAD", cwd);
+        return { ok: true, commitSha: sha.stdout };
+      } catch (error: any) {
+        return {
+          ok: false,
+          error: "rev-parse failed",
+          output: (error.stderr?.toString().trim() || error.stdout?.toString().trim() || "").slice(-10_000),
+        };
+      }
+    });
+
+    if (!checkAndCommitResult.ok) {
+      const judgmentText = `Check-and-commit stage failed: ${checkAndCommitResult.error}\n${(checkAndCommitResult.output || "").slice(-5_000)}`;
+      logger.warn(`Story ${storyId} FAILED check-and-commit on attempt ${attempt}: ${judgmentText.slice(0, 200)}`);
+
+      await emitNotify(
+        `story-failed-check-and-commit-${storyId}`,
+        `## Story Failed\n${storyId} failed during check-and-commit on attempt ${attempt}. Scheduling retry.\n\n${judgmentText.slice(0, 1500)}`,
+        "pipeline.outcome",
+        "warn",
+        { status: "failed", stage: "check-and-commit" }
+      );
+
+      await step.sendEvent("retry-story-check-and-commit", {
+        name: "agent/story.start",
+        data: {
+          prdPath,
+          storyId,
+          cwd,
+          attempt: attempt + 1,
+          judgment: judgmentText,
+        },
+      });
+
+      return { storyId, status: "failed", attempt, failedStage: "check-and-commit", judgment: judgmentText.slice(0, 500) };
+    }
+
+    await emitProgress(
+      `check-and-commit-done-${attempt}`,
+      checkAndCommitResult.noChanges
+        ? `Story ${storyId}: check-and-commit complete (no local changes to commit).`
+        : `Story ${storyId}: check-and-commit complete (commit ${checkAndCommitResult.commitSha}).`,
+      "pipeline.stage",
+      "info",
+      {
+        stage: "check-and-commit",
+        noChanges: checkAndCommitResult.noChanges ?? false,
+        commitSha: checkAndCommitResult.commitSha,
       }
     );
 
