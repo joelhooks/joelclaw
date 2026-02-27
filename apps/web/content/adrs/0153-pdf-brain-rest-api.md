@@ -185,8 +185,10 @@ Implemented artifacts:
 Operational status at acceptance:
 - Internal bridge is live via Caddy route `https://panda.tail7af24.ts.net:5443` → `localhost:3838` → `Service/docs-api`
 - Direct local NodePort endpoint is live at `http://localhost:3838`
-- Public internet path is live via Tailscale Funnel on 443: `https://panda.tail7af24.ts.net/api/docs/*`
-- `apps/web/next.config.js` includes rewrite rules for `https://joelclaw.com/api/docs/*` → `https://panda.tail7af24.ts.net/api/docs/*` (effective after web deploy)
+- Public upstream path is live via Tailscale Funnel on 443: `https://panda.tail7af24.ts.net/api/docs/*`
+- Canonical public surface is now Next API routes at `https://joelclaw.com/api/docs/*` (`apps/web/app/api/docs/[[...path]]/route.ts`), not `next.config.js` rewrites
+- Public surface now serves HATEOAS discovery (`GET /api/docs`), OpenAPI (`GET /api/docs/openapi.json`), and Swagger UI (`GET /api/docs/ui`)
+- Unauthenticated rate limiting is enforced in Next API routes via Upstash (`@upstash/redis`, `@upstash/ratelimit`); authenticated bearer requests bypass rate limiting
 - Kubernetes ingress manifest remains in place for future in-cluster ingress-controller based exposure
 
 The previous `pdf-brain`-based implementation is rejected and has been rolled back from the standalone `pdf-brain` CLI path.
