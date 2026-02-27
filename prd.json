@@ -85,7 +85,7 @@
       "title": "Inngest function: content/review.submitted handler",
       "priority": 5,
       "status": "pending",
-      "description": "Create an Inngest function in packages/system-bus that handles 'content/review.submitted' events. Steps: (1) read current article content from Convex, (2) read submitted review comments from Convex, (3) call infer() with content + feedback to produce updated article, (4) validate output is non-empty and similar length to input (\u00b150%), (5) write new contentRevision to Convex, (6) update article contentResource with new content, (7) mark review comments as resolved, (8) POST to /api/revalidate to bust cache tag, (9) notify via gateway. Use concurrency key on resourceId with limit 1.",
+      "description": "Create an Inngest function in packages/system-bus that handles 'content/review.submitted' events. Steps: (1) read current article content from Convex, (2) read submitted review comments from Convex, (3) call infer() with content + feedback to produce updated article, (4) validate output is non-empty and similar length to input (±50%), (5) write new contentRevision to Convex, (6) update article contentResource with new content, (7) mark review comments as resolved, (8) POST to /api/revalidate to bust cache tag, (9) notify via gateway. Use concurrency key on resourceId with limit 1.",
       "acceptance": [
         "Function registered as 'content-review-apply' in system-bus worker",
         "Handles content/review.submitted events",
@@ -127,12 +127,12 @@
       "title": "Wire feedback form to Convex + show processing status",
       "priority": 7,
       "status": "pending",
-      "description": "The existing review UI components (components/review/) submit via the existing /api/review/submit route which fires Inngest events. Add a FeedbackStatus client island component that subscribes to Convex feedbackItems for the current article and shows a 'revision in progress' indicator when any feedback has status 'processing'. Use provider island pattern \u2014 wrap only FeedbackStatus in ConvexProvider, not the whole page.",
+      "description": "The existing review UI components (components/review/) submit via the existing /api/review/submit route which fires Inngest events. Add a FeedbackStatus client island component that subscribes to Convex feedbackItems for the current article and shows a 'revision in progress' indicator when any feedback has status 'processing'. Use provider island pattern — wrap only FeedbackStatus in ConvexProvider, not the whole page.",
       "acceptance": [
         "FeedbackStatus component shows amber indicator when feedback is processing",
         "Indicator disappears when all feedback is resolved",
         "ConvexProvider is scoped to FeedbackStatus island only, not the layout",
-        "Submitting a review via existing UI triggers the full pipeline: Convex \u2192 Inngest \u2192 agent \u2192 revision \u2192 cache bust",
+        "Submitting a review via existing UI triggers the full pipeline: Convex → Inngest → agent → revision → cache bust",
         "No regressions on article rendering"
       ],
       "files": [
@@ -140,5 +140,6 @@
         "apps/web/app/[slug]/page.tsx"
       ]
     }
-  ]
+  ],
+  "context": {}
 }
