@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation } from "./_generated/server";
 
 export const createRevision = mutation({
   args: {
@@ -37,7 +37,7 @@ export const createRevision = mutation({
   },
 });
 
-export const getRevisions = query({
+export const getRevisions = mutation({
   args: {
     resourceId: v.string(),
     limit: v.optional(v.number()),
