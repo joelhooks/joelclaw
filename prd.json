@@ -126,7 +126,7 @@
       "id": "CFP-7",
       "title": "Wire feedback form to Convex + show processing status",
       "priority": 7,
-      "status": "pending",
+      "status": "done",
       "description": "The existing review UI components (components/review/) submit via the existing /api/review/submit route which fires Inngest events. Add a FeedbackStatus client island component that subscribes to Convex feedbackItems for the current article and shows a 'revision in progress' indicator when any feedback has status 'processing'. Use provider island pattern — wrap only FeedbackStatus in ConvexProvider, not the whole page.",
       "acceptance": [
         "FeedbackStatus component shows amber indicator when feedback is processing",
