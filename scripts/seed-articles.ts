@@ -2,10 +2,10 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
+import { api } from "../apps/web/convex/_generated/api";
 import { ConvexHttpClient } from "../apps/web/node_modules/convex/browser";
 import type { FunctionReference } from "../apps/web/node_modules/convex/server";
 import matter from "../apps/web/node_modules/gray-matter";
-import { api } from "../apps/web/convex/_generated/api";
 
 type ArticleFields = {
   slug: string;
