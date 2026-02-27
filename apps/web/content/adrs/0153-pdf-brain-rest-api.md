@@ -76,7 +76,8 @@ Query semantics (implemented):
 
 ## Auth and Network
 
-- Keep bearer token auth using `pdf_brain_api_token` from `agent-secrets` (reuse existing secret)
+- Keep bearer token auth for the **upstream** docs service (`apps/docs-api`) using `pdf_brain_api_token`.
+- Public endpoint (`https://joelclaw.com/api/docs/*`) is intentionally **open-read** and protected by generous Upstash rate limiting at the Next API route layer.
 - Keep Caddy mapping:
   - `:5443 -> localhost:3838`
 - `localhost:3838` must resolve to the **k8s-hosted** docs API, not a launchd process.
@@ -86,7 +87,7 @@ Public-domain requirement (account for joelclaw.com):
   1. Dedicated subdomain (preferred): `docs-api.joelclaw.com` (or similar)
   2. Path-based endpoint under main domain: `https://joelclaw.com/api/docs/*`
 - Route contract remains the same at service root. Service should also accept equivalent prefixed routes when mounted under `/api/docs`.
-- External endpoint remains token-protected; no anonymous public access.
+- Public policy: reasonable anonymous access, with rate limits tuned to block obvious abuse.
 
 ## Concrete k8s Topology (normative)
 
@@ -114,7 +115,7 @@ Internal bridge requirement:
 2. Wire Typesense client config from existing joelclaw env conventions.
 3. Implement the four routes listed above against `docs` + `docs_chunks`.
 4. Add a shared envelope helper so every route returns AgentEnvelope JSON.
-5. Add auth middleware for bearer token validation (`pdf_brain_api_token`).
+5. Enforce bearer token at upstream (`apps/docs-api`) and use Next API route proxy for public-read access + rate limiting.
 6. Add k8s manifests:
    - `k8s/docs-api.yaml` with Deployment + Service (`namespace: joelclaw`)
    - readiness/liveness probes at `/health`
@@ -137,16 +138,16 @@ In-cluster behavior:
 - `kubectl -n joelclaw get endpoints docs-api`
 - `kubectl -n joelclaw logs deploy/docs-api --tail=100`
 
-Route contract checks (authenticated):
+Route contract checks (public read):
 - `GET /search?q=typescript`
 - `GET /docs`
 - `GET /docs/:id`
 - `GET /chunks/:id`
 
 Security checks:
-- No token → `401`
-- Bad token → `401`
+- Rate limit reached → `429`
 - Missing IDs → `404`
+- Upstream token missing/misconfigured (server-side) → `503`
 
 Exposure checks:
 - Internal bridge works: `https://<tailscale-host>:5443/...`
@@ -188,7 +189,7 @@ Operational status at acceptance:
 - Public upstream path is live via Tailscale Funnel on 443: `https://panda.tail7af24.ts.net/api/docs/*`
 - Canonical public surface is now Next API routes at `https://joelclaw.com/api/docs/*` (`apps/web/app/api/docs/[[...path]]/route.ts`), not `next.config.js` rewrites
 - Public surface now serves HATEOAS discovery (`GET /api/docs`), OpenAPI (`GET /api/docs/openapi.json`), and Swagger UI (`GET /api/docs/ui`)
-- Unauthenticated rate limiting is enforced in Next API routes via Upstash (`@upstash/redis`, `@upstash/ratelimit`); authenticated bearer requests bypass rate limiting
+- Generous rate limiting is enforced for all public `/api/docs` requests in Next API routes via Upstash (`@upstash/redis`, `@upstash/ratelimit`) to allow reasonable access while blocking abuse spikes
 - Kubernetes ingress manifest remains in place for future in-cluster ingress-controller based exposure
 
 The previous `pdf-brain`-based implementation is rejected and has been rolled back from the standalone `pdf-brain` CLI path.

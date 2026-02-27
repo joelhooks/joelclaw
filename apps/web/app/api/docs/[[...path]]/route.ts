@@ -30,12 +30,14 @@ const UPSTREAM_BASE =
 const API_TOKEN =
   process.env.PDF_BRAIN_API_TOKEN || process.env.pdf_brain_api_token || "";
 
-const UNAUTH_LIMIT = Number.parseInt(
-  process.env.DOCS_API_UNAUTH_RL_LIMIT || "600",
+const RATE_LIMIT = Number.parseInt(
+  process.env.DOCS_API_RL_LIMIT || process.env.DOCS_API_UNAUTH_RL_LIMIT || "1200",
   10,
 );
-const UNAUTH_WINDOW =
-  (process.env.DOCS_API_UNAUTH_RL_WINDOW as Duration | undefined) || "1 m";
+const RATE_WINDOW =
+  (process.env.DOCS_API_RL_WINDOW as Duration | undefined) ||
+  (process.env.DOCS_API_UNAUTH_RL_WINDOW as Duration | undefined) ||
+  "1 m";
 
 let ratelimit: Ratelimit | null | undefined;
 
@@ -84,15 +86,6 @@ function normalizedPath(path: string[] | undefined): string {
   return `/${path.join("/")}`;
 }
 
-function pathRequiresAuth(pathname: string): boolean {
-  return (
-    pathname === "/search" ||
-    pathname === "/docs" ||
-    pathname.startsWith("/docs/") ||
-    pathname.startsWith("/chunks/")
-  );
-}
-
 function buildOpenApi(origin: string) {
   return {
     openapi: "3.1.0",
@@ -100,18 +93,9 @@ function buildOpenApi(origin: string) {
       title: "Joelclaw Docs API",
       version: VERSION,
       description:
-        "Proxy surface for docs-api with Upstash rate limiting at /api/docs. Authenticated requests bypass rate limits.",
+        "Public proxy surface for docs-api with generous Upstash rate limiting at /api/docs.",
     },
     servers: [{ url: `${origin}/api/docs` }],
-    components: {
-      securitySchemes: {
-        bearerAuth: {
-          type: "http",
-          scheme: "bearer",
-          bearerFormat: "token",
-        },
-      },
-    },
     paths: {
       "/": { get: { summary: "HATEOAS discovery" } },
       "/openapi.json": { get: { summary: "OpenAPI schema" } },
@@ -120,7 +104,6 @@ function buildOpenApi(origin: string) {
       "/search": {
         get: {
           summary: "Search chunks",
-          security: [{ bearerAuth: [] }],
           parameters: [
             { name: "q", in: "query", required: true, schema: { type: "string" } },
             { name: "page", in: "query", schema: { type: "integer", minimum: 1 } },
@@ -136,7 +119,6 @@ function buildOpenApi(origin: string) {
       "/docs": {
         get: {
           summary: "List docs",
-          security: [{ bearerAuth: [] }],
           parameters: [
             { name: "page", in: "query", schema: { type: "integer", minimum: 1 } },
             { name: "perPage", in: "query", schema: { type: "integer", minimum: 1 } },
@@ -146,14 +128,12 @@ function buildOpenApi(origin: string) {
       "/docs/{id}": {
         get: {
           summary: "Get doc by id",
-          security: [{ bearerAuth: [] }],
           parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         },
       },
       "/chunks/{id}": {
         get: {
           summary: "Get chunk by id",
-          security: [{ bearerAuth: [] }],
           parameters: [
             { name: "id", in: "path", required: true, schema: { type: "string" } },
             { name: "lite", in: "query", schema: { type: "string" } },
@@ -210,7 +190,7 @@ function getRatelimit(): Ratelimit | null {
   const redis = new Redis({ url, token });
   ratelimit = new Ratelimit({
     redis,
-    limiter: Ratelimit.slidingWindow(UNAUTH_LIMIT, UNAUTH_WINDOW),
+    limiter: Ratelimit.slidingWindow(RATE_LIMIT, RATE_WINDOW),
     analytics: true,
     prefix: "rl:docs-api-public",
   });
@@ -243,11 +223,6 @@ function authHeader(request: NextRequest): string {
   return request.headers.get("authorization") || "";
 }
 
-function isAuthenticated(request: NextRequest): boolean {
-  if (!API_TOKEN) return false;
-  return authHeader(request) === `Bearer ${API_TOKEN}`;
-}
-
 function discoveryResponse(request: NextRequest) {
   const origin = request.nextUrl.origin;
   const command = "GET /";
@@ -257,16 +232,14 @@ function discoveryResponse(request: NextRequest) {
       service: "docs-api",
       surface: "joelclaw.com/api/docs",
       auth: {
-        mode: "Bearer",
-        header: "Authorization: Bearer <token>",
-        protectedRoutes: ["/search", "/docs", "/docs/:id", "/chunks/:id"],
-        authenticatedBypassesRateLimit: true,
+        mode: "public-read",
+        note: "No bearer required on /api/docs routes",
       },
       rateLimit: {
         provider: "upstash",
-        appliesTo: "unauthenticated requests",
-        limit: UNAUTH_LIMIT,
-        window: UNAUTH_WINDOW,
+        appliesTo: "all requests",
+        limit: RATE_LIMIT,
+        window: RATE_WINDOW,
       },
       _links: {
         self: { href: "/api/docs", method: "GET", auth: false },
@@ -276,12 +249,12 @@ function discoveryResponse(request: NextRequest) {
         listDocs: {
           href: "/api/docs/docs?page=1&perPage=5",
           method: "GET",
-          auth: true,
+          auth: false,
         },
         search: {
           href: "/api/docs/search?q=typesense&perPage=3&semantic=true",
           method: "GET",
-          auth: true,
+          auth: false,
         },
       },
       fewShot: [
@@ -290,20 +263,20 @@ function discoveryResponse(request: NextRequest) {
           curl: `curl -sS ${origin}/api/docs/health`,
         },
         {
-          name: "discovery (authed)",
-          curl: `curl -sS -H \"Authorization: Bearer $TOKEN\" ${origin}/api/docs`,
+          name: "discovery",
+          curl: `curl -sS ${origin}/api/docs`,
         },
         {
           name: "search",
-          curl: `curl -sS -H \"Authorization: Bearer $TOKEN\" \"${origin}/api/docs/search?q=typesense&perPage=2&page=1&semantic=false\"`,
+          curl: `curl -sS \"${origin}/api/docs/search?q=typesense&perPage=2&page=1&semantic=false\"`,
         },
         {
           name: "list docs",
-          curl: `curl -sS -H \"Authorization: Bearer $TOKEN\" \"${origin}/api/docs/docs?page=1&perPage=3\"`,
+          curl: `curl -sS \"${origin}/api/docs/docs?page=1&perPage=3\"`,
         },
         {
           name: "chunk lite",
-          curl: `curl -sS -H \"Authorization: Bearer $TOKEN\" \"${origin}/api/docs/chunks/<chunkId>?lite=true&includeEmbedding=false\"`,
+          curl: `curl -sS \"${origin}/api/docs/chunks/<chunkId>?lite=true&includeEmbedding=false\"`,
         },
       ],
     }),
@@ -313,11 +286,11 @@ function discoveryResponse(request: NextRequest) {
 
 function limitExceededResponse(pathname: string, limit: number, remaining: number, reset: number) {
   return NextResponse.json(
-    fail(`GET ${pathname}`, "RATE_LIMITED", "Too many unauthenticated requests", {
+    fail(`GET ${pathname}`, "RATE_LIMITED", "Too many requests", {
       limit,
       remaining,
       reset,
-      tip: "Use Authorization: Bearer <token> to bypass limits",
+      tip: "Retry after the reset window",
     }),
     {
       status: 429,
@@ -331,37 +304,20 @@ function limitExceededResponse(pathname: string, limit: number, remaining: numbe
   );
 }
 
-function unauthorizedResponse(pathname: string) {
-  return NextResponse.json(
-    fail(`GET ${pathname}`, "UNAUTHORIZED", "Bearer token required", {
-      fix: "Set Authorization: Bearer <token>",
-    }),
-    { status: 401 },
-  );
-}
-
-function misconfiguredResponse(pathname: string) {
-  return NextResponse.json(
-    fail(
-      `GET ${pathname}`,
-      "TOKEN_NOT_CONFIGURED",
-      "PDF_BRAIN_API_TOKEN is not configured",
-    ),
-    { status: 503 },
-  );
-}
-
 async function proxyToUpstream(request: NextRequest, path: string[]) {
   const upstream = UPSTREAM_BASE.replace(/\/$/, "");
   const suffix = path.length ? `/${path.map((segment) => encodeURIComponent(segment)).join("/")}` : "";
   const targetUrl = `${upstream}${suffix}${request.nextUrl.search}`;
 
+  const inboundAuth = authHeader(request);
+  const upstreamAuth = inboundAuth || (API_TOKEN ? `Bearer ${API_TOKEN}` : "");
+
   const upstreamResponse = await fetch(targetUrl, {
     method: "GET",
     headers: {
-      ...(authHeader(request)
+      ...(upstreamAuth
         ? {
-            authorization: authHeader(request),
+            authorization: upstreamAuth,
           }
         : {}),
     },
@@ -398,15 +354,11 @@ export async function GET(
   const { path } = await params;
   const pathname = normalizedPath(path);
 
-  const tokenValidated = isAuthenticated(request);
-
-  if (!tokenValidated) {
-    const rl = getRatelimit();
-    if (rl) {
-      const rate = await rl.limit(deriveIdentifier(request));
-      if (!rate.success) {
-        return limitExceededResponse(pathname, rate.limit, rate.remaining, rate.reset);
-      }
+  const rl = getRatelimit();
+  if (rl) {
+    const rate = await rl.limit(deriveIdentifier(request));
+    if (!rate.success) {
+      return limitExceededResponse(pathname, rate.limit, rate.remaining, rate.reset);
     }
   }
 
@@ -425,14 +377,6 @@ export async function GET(
         "content-type": "text/html; charset=utf-8",
       },
     });
-  }
-
-  if (!API_TOKEN && pathRequiresAuth(pathname)) {
-    return misconfiguredResponse(pathname);
-  }
-
-  if (pathRequiresAuth(pathname) && !tokenValidated) {
-    return unauthorizedResponse(pathname);
   }
 
   return proxyToUpstream(request, path || []);
