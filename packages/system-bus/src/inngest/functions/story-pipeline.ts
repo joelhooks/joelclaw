@@ -26,9 +26,9 @@ interface Story {
 }
 
 interface Prd {
-  title: string;
-  context: {
-    repo: string;
+  title?: string;
+  context?: {
+    repo?: string;
     test_command?: string;
     typecheck_command?: string;
     lint_command?: string;
@@ -363,7 +363,7 @@ function getDiffSince(sha: string, cwd: string): string {
 function resolveCodexTimeoutMs(prd: Prd): number | undefined {
   // Future-agent note: if stories become uneven in runtime, consider stage-specific
   // timeout knobs (implement/prove/judge) in PRD context instead of a single global value.
-  const raw = prd.context.codex_timeout_seconds;
+  const raw = prd.context?.codex_timeout_seconds;
 
   if (typeof raw !== "number" || !Number.isFinite(raw)) {
     return undefined;
@@ -525,9 +525,9 @@ export const storyPipeline = inngest.createFunction(
     const implementResult = await step.run("implement", () => {
       const criteria = story.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join("\n");
       const validation = [
-        prd.context.typecheck_command && `Typecheck: ${prd.context.typecheck_command}`,
-        prd.context.lint_command && `Lint: ${prd.context.lint_command}`,
-        prd.context.test_command && `Test: ${prd.context.test_command}`,
+        prd.context?.typecheck_command && `Typecheck: ${prd.context?.typecheck_command}`,
+        prd.context?.lint_command && `Lint: ${prd.context?.lint_command}`,
+        prd.context?.test_command && `Test: ${prd.context?.test_command}`,
       ].filter(Boolean).join("\n");
 
       const judgmentContext = judgment
@@ -593,9 +593,9 @@ Do NOT commit if validation fails — fix issues first.`;
     const proofResult = await step.run("prove", () => {
       const criteria = story.acceptance_criteria.map((c, i) => `${i + 1}. ${c}`).join("\n");
       const validation = [
-        prd.context.typecheck_command && `Typecheck: ${prd.context.typecheck_command}`,
-        prd.context.lint_command && `Lint: ${prd.context.lint_command}`,
-        prd.context.test_command && `Test: ${prd.context.test_command}`,
+        prd.context?.typecheck_command && `Typecheck: ${prd.context?.typecheck_command}`,
+        prd.context?.lint_command && `Lint: ${prd.context?.lint_command}`,
+        prd.context?.test_command && `Test: ${prd.context?.test_command}`,
       ].filter(Boolean).join("\n") || "(No validation commands provided in PRD context)";
       const implementStageOutput = implementResult.parsed
         ? JSON.stringify(implementResult.parsed, null, 2)
