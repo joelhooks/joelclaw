@@ -127,7 +127,7 @@ type GatewayMessageIntent =
 const implementOutputSchema: Record<string, unknown> = {
   type: "object",
   additionalProperties: false,
-  required: ["status", "summary", "validation", "commit"],
+  required: ["status", "summary", "validation", "commit", "next_actions"],
   properties: {
     status: { type: "string", enum: ["implemented", "blocked"] },
     summary: { type: "string" },
@@ -144,10 +144,10 @@ const implementOutputSchema: Record<string, unknown> = {
     commit: {
       type: "object",
       additionalProperties: false,
-      required: ["created", "message"],
+      required: ["created", "sha", "message"],
       properties: {
         created: { type: "boolean" },
-        sha: { type: "string" },
+        sha: { type: ["string", "null"] },
         message: { type: "string" },
       },
     },
@@ -165,6 +165,7 @@ const proofOutputSchema: Record<string, unknown> = {
     "validation",
     "criteria_results",
     "fixes_committed",
+    "fix_commit_sha",
   ],
   properties: {
     overall_pass: { type: "boolean" },
@@ -195,7 +196,7 @@ const proofOutputSchema: Record<string, unknown> = {
       },
     },
     fixes_committed: { type: "boolean" },
-    fix_commit_sha: { type: "string" },
+    fix_commit_sha: { type: ["string", "null"] },
   },
 };
 
