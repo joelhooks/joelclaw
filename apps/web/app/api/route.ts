@@ -25,11 +25,11 @@ async function getDiscoveryPayload() {
         "Personal site and agent infrastructure hub. Articles on AI agents, distributed systems, programming language theory, and developer education.",
       apis: {
         search: {
-          url: `${origin}/api/agent/search`,
+          url: `${origin}/api/search`,
           description:
             "Agent-first search across all site content. Returns HATEOAS JSON with markdown snippets.",
-          discovery: `GET ${origin}/api/agent/search`,
-          example: `GET ${origin}/api/agent/search?q=voice+agent&limit=5`,
+          discovery: `GET ${origin}/api/search`,
+          example: `GET ${origin}/api/search?q=voice+agent&limit=5`,
           auth: "Optional Bearer token unlocks private collections",
           rateLimit: "60 req/min (Upstash)",
         },
@@ -72,7 +72,7 @@ async function getDiscoveryPayload() {
         },
       },
       agentTips: [
-        "Prefer /api/agent/search over scraping HTML — it returns clean markdown snippets",
+        "Prefer /api/search over scraping HTML — it returns clean markdown snippets",
         "The RSS feed at /feed.xml contains full article text, not just summaries",
         "Every article is also available as raw MDX at github.com/joelhooks/joelclaw/tree/main/apps/web/content/{slug}.mdx",
         "ADRs document why things were built a certain way — search them when you need architectural context",
@@ -81,7 +81,7 @@ async function getDiscoveryPayload() {
     },
     nextActions: [
       {
-        command: `curl -sS "${origin}/api/agent/search"`,
+        command: `curl -sS "${origin}/api/search"`,
         description: "Search API discovery (sample queries, auth details)",
       },
       {
@@ -89,7 +89,7 @@ async function getDiscoveryPayload() {
         description: "Docs API discovery (books, PDFs)",
       },
       {
-        command: `curl -sS "${origin}/api/agent/search?q=kubernetes"`,
+        command: `curl -sS "${origin}/api/search?q=kubernetes"`,
         description: "Try a search",
       },
       {

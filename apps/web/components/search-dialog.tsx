@@ -191,7 +191,8 @@ export function SearchDialog() {
       if (!resp.ok) throw new Error("Search failed");
       const data = await resp.json();
 
-      const mapped: SearchResult[] = (data.hits || [])
+      const r = data.result || data; // HATEOAS envelope or legacy
+      const mapped: SearchResult[] = (r.hits || [])
         .map((h: any) => ({
           url: h.url || collectionToUrl(h),
           title: h.title,
@@ -201,7 +202,7 @@ export function SearchDialog() {
         }));
 
       setResults(mapped);
-      setTotalFound(data.totalFound || 0);
+      setTotalFound(r.totalFound || 0);
     } catch (e: any) {
       if (e.name !== "AbortError") {
         setResults([]);

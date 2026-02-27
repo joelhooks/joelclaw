@@ -1,283 +1,340 @@
 /**
- * Typesense search API — proxies search requests with scoped access.
- * ADR-0082 + ADR-0075
+ * Agent-first search API — HATEOAS envelope, markdown snippets, Upstash rate limiting.
  *
- * Authenticated users search all collections.
- * Public users search articles + cool finds from Typesense, plus ADRs from local content.
+ * Public: searches blog_posts, discoveries, ADRs
+ * Authenticated (Bearer token): adds vault_notes, memory, system_log, transcripts
+ *
+ * Follows cli-design HATEOAS contract (ADR-0082, cli-design skill).
+ * Rate limited via Upstash Redis (same pattern as /api/docs).
  */
+import { type Duration, Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
 import { NextRequest, NextResponse } from "next/server";
 import { getAllAdrs } from "@/lib/adrs";
-import { isAuthenticated } from "@/lib/auth-server";
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108";
 const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY || "";
 
-type CollectionConfig = {
-  name: string;
-  queryBy: string;
+const PROTOCOL_VERSION = 1 as const;
+const SERVICE = "agent-search";
+const VERSION = "0.1.0";
+
+const RATE_LIMIT = Number.parseInt(
+  process.env.AGENT_SEARCH_RL_LIMIT || "60",
+  10,
+);
+const RATE_WINDOW: Duration =
+  (process.env.AGENT_SEARCH_RL_WINDOW as Duration | undefined) || "1 m";
+
+// --- Types ---
+
+type NextAction = {
+  command: string;
+  description: string;
+  params?: Record<string, { type: string; required?: boolean; description?: string }>;
 };
 
-type OutputHit = {
+type AgentEnvelope<T = unknown> = {
+  ok: boolean;
+  command: string;
+  protocolVersion: typeof PROTOCOL_VERSION;
+  result?: T;
+  error?: { code: string; message: string; details?: unknown };
+  nextActions?: NextAction[];
+  meta?: Record<string, unknown>;
+};
+
+type SearchHit = {
   collection: string;
   title: string;
   snippet: string;
-  path?: string;
-  type: string;
   url: string;
-  rank: number;
+  type: string;
+  score: number;
 };
+
+type SearchResult = {
+  query: string;
+  hits: SearchHit[];
+  totalFound: number;
+  collections: string[];
+  authenticated: boolean;
+};
+
+// --- Envelope helpers ---
+
+function envelope<T>(command: string, result: T, nextActions?: NextAction[]): AgentEnvelope<T> {
+  return {
+    ok: true,
+    command,
+    protocolVersion: PROTOCOL_VERSION,
+    result,
+    nextActions,
+    meta: { service: SERVICE, version: VERSION },
+  };
+}
+
+function errorEnvelope(
+  command: string,
+  code: string,
+  message: string,
+  details?: unknown,
+  nextActions?: NextAction[],
+): AgentEnvelope {
+  return {
+    ok: false,
+    command,
+    protocolVersion: PROTOCOL_VERSION,
+    error: { code, message, ...(details !== undefined ? { details } : {}) },
+    nextActions,
+    meta: { service: SERVICE, version: VERSION },
+  };
+}
+
+// --- Rate limiting ---
+
+let ratelimit: Ratelimit | null | undefined;
+
+function getRatelimit(): Ratelimit | null {
+  if (ratelimit !== undefined) return ratelimit;
+  const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+  if (!url || !token) { ratelimit = null; return null; }
+  ratelimit = new Ratelimit({
+    redis: new Redis({ url, token }),
+    limiter: Ratelimit.slidingWindow(RATE_LIMIT, RATE_WINDOW),
+    analytics: true,
+    prefix: "rl:agent-search",
+  });
+  return ratelimit;
+}
+
+function deriveIdentifier(request: NextRequest): string {
+  const xff = request.headers.get("x-forwarded-for") || "";
+  const ip = xff.split(",").map(s => s.trim()).find(Boolean)
+    || request.headers.get("cf-connecting-ip")
+    || request.headers.get("x-real-ip")
+    || "unknown";
+  const ua = (request.headers.get("user-agent") || "unknown").slice(0, 80);
+  return `${ip}:${ua}`;
+}
+
+// --- Auth ---
+
+function isAuthed(request: NextRequest): boolean {
+  const authToken = process.env.AGENT_SEARCH_TOKEN || process.env.SITE_API_TOKEN || "";
+  if (!authToken) return false;
+  const header = request.headers.get("authorization") || "";
+  return header === `Bearer ${authToken}`;
+}
+
+// --- Collection config ---
+
+type CollectionConfig = { name: string; queryBy: string };
 
 const PUBLIC_COLLECTIONS: CollectionConfig[] = [
   { name: "blog_posts", queryBy: "title,content" },
   { name: "discoveries", queryBy: "title,summary" },
 ];
 
-const ALL_COLLECTIONS: CollectionConfig[] = [
+const PRIVATE_COLLECTIONS: CollectionConfig[] = [
   { name: "vault_notes", queryBy: "title,content" },
   { name: "memory_observations", queryBy: "observation" },
-  { name: "blog_posts", queryBy: "title,content" },
   { name: "system_log", queryBy: "detail,tool,action" },
-  { name: "otel_events", queryBy: "action,error,component,source,metadata_json,search_text" },
-  { name: "discoveries", queryBy: "title,summary" },
   { name: "transcripts", queryBy: "title,text,speaker,channel" },
-  { name: "voice_transcripts", queryBy: "content" },
 ];
 
-function asString(value: unknown): string | undefined {
-  if (typeof value === "string") return value;
-  if (typeof value === "number") return String(value);
-  return undefined;
+// --- URL resolution ---
+
+function str(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
 }
 
-function decodeHtmlEntities(input: string): string {
-  return input
-    .replace(/&quot;/g, "\"")
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/gi, "'")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&nbsp;/g, " ");
-}
-
-function escapeHtml(input: string): string {
-  return input
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function cleanText(input: string): string {
-  return decodeHtmlEntities(input).replace(/\s+/g, " ").trim();
-}
-
-function sanitizeSnippet(input: string): string {
-  const marked = input
-    .replace(/<mark>/gi, "__MARK_OPEN__")
-    .replace(/<\/mark>/gi, "__MARK_CLOSE__");
-
-  const escaped = escapeHtml(decodeHtmlEntities(marked));
-  return escaped
-    .replace(/__MARK_OPEN__/g, "<mark>")
-    .replace(/__MARK_CLOSE__/g, "</mark>");
-}
-
-function escapeRegExp(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function highlightText(input: string, query: string): string {
-  const text = cleanText(input);
-  if (!text) return "";
-  const escaped = escapeHtml(text);
-  const q = query.trim();
-  if (!q) return escaped;
-  const pattern = new RegExp(`(${escapeRegExp(q)})`, "ig");
-  return escaped.replace(pattern, "<mark>$1</mark>");
-}
-
-function slugify(input: string): string {
-  return input
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function slugFromValue(value: unknown): string | undefined {
-  const raw = asString(value);
-  if (!raw) return undefined;
-
-  const normalized = raw
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/[?#].*$/, "")
-    .replace(/\/+$/, "");
-
-  if (!normalized) return undefined;
-
-  const segment = normalized.split("/").filter(Boolean).pop() ?? normalized;
-  const slug = segment.replace(/\.(md|mdx)$/i, "");
-  return slug || undefined;
-}
-
-function normalizeCollectionLabel(collection: string, url: string): string {
-  if (url.startsWith("/adrs/")) return "adrs";
-  if (url.startsWith("/cool/")) return "discoveries";
-  return collection;
+function slugify(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 function resolveUrl(collection: string, doc: Record<string, unknown>): string | undefined {
-  const path = asString(doc.path);
-  const type = asString(doc.type)?.toLowerCase();
+  const path = str(doc.path);
+  const slug = str(doc.slug) || (path ? path.split("/").pop()?.replace(/\.(md|mdx)$/, "") : undefined);
 
   switch (collection) {
-    case "blog_posts": {
-      const slug =
-        slugFromValue(doc.slug) ??
-        slugFromValue(path) ??
-        slugFromValue(doc.id) ??
-        (asString(doc.title) ? slugify(asString(doc.title) as string) : undefined);
-      return slug ? `/${slug}` : undefined;
-    }
-    case "discoveries": {
-      const slug =
-        slugFromValue(doc.slug) ??
-        slugFromValue(path) ??
-        slugFromValue(doc.id) ??
-        (asString(doc.title) ? slugify(asString(doc.title) as string) : undefined);
-      return slug ? `/cool/${slug}` : "/cool";
-    }
+    case "blog_posts":
+      return `/${slug || slugify(str(doc.title) || "")}`;
+    case "discoveries":
+      return `/cool/${slug || slugify(str(doc.title) || "")}`;
     case "vault_notes": {
-      const adrLike =
-        type === "adr" ||
-        (typeof path === "string" &&
-          (path.includes("/adrs/") || path.includes("docs/decisions/")));
-      if (adrLike) {
-        const slug =
-          slugFromValue(path) ??
-          slugFromValue(doc.slug) ??
-          slugFromValue(doc.id) ??
-          (asString(doc.title) ? slugify(asString(doc.title) as string) : undefined);
-        return slug ? `/adrs/${slug}` : "/adrs";
-      }
-      return path ? `/vault/${encodeURI(path)}` : "/vault";
+      const isAdr = str(doc.type) === "adr" || (path && (path.includes("/adrs/") || path.includes("docs/decisions/")));
+      if (isAdr) return `/adrs/${slug || ""}`;
+      return path ? `/vault/${encodeURI(path)}` : undefined;
     }
-    case "memory_observations":
-      return "/memory";
-    case "system_log":
-      return "/syslog";
-    case "otel_events":
-      return "/system/events";
-    case "transcripts": {
-      const sourceUrl = asString(doc.source_url);
-      if (sourceUrl) return sourceUrl;
-      return "/voice";
-    }
-    case "voice_transcripts":
-      return "/voice";
-    default:
-      return undefined;
+    case "memory_observations": return "/memory";
+    case "system_log": return "/syslog";
+    case "transcripts": return str(doc.source_url) || "/voice";
+    default: return undefined;
   }
 }
 
-function resolveTitle(collection: string, doc: Record<string, unknown>): string {
-  const fallback =
-    asString(doc.title) ??
-    asString(doc.action) ??
-    asString(doc.observation) ??
-    asString(doc.detail) ??
-    "";
+// --- Snippet extraction (markdown, not HTML) ---
 
-  if (collection === "vault_notes") {
-    const path = asString(doc.path);
-    if (!fallback && path) return cleanText(slugFromValue(path) ?? path);
-  }
-
-  return cleanText(fallback);
-}
-
-function resolveSnippet(
-  hit: { highlights?: Array<{ snippet?: string }> },
+function extractSnippet(
+  hit: { highlights?: Array<{ snippet?: string; field?: string }> },
   doc: Record<string, unknown>,
-  query: string
+  maxLen = 400,
 ): string {
+  // Try highlighted snippet first, strip HTML marks to **bold**
   for (const hl of hit.highlights || []) {
-    if (typeof hl?.snippet === "string" && hl.snippet.length > 0) {
-      return sanitizeSnippet(hl.snippet.slice(0, 320));
+    if (hl?.snippet) {
+      return hl.snippet
+        .replace(/<mark>/gi, "**")
+        .replace(/<\/mark>/gi, "**")
+        .replace(/<[^>]+>/g, "")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .slice(0, maxLen);
     }
   }
 
-  const fallback =
-    asString(doc.summary) ??
-    asString(doc.description) ??
-    asString(doc.text) ??
-    asString(doc.content) ??
-    asString(doc.detail) ??
-    asString(doc.observation) ??
-    "";
-
-  if (!fallback) return "";
-  return highlightText(fallback.slice(0, 240), query);
+  const fallback = str(doc.summary) || str(doc.description) || str(doc.content)
+    || str(doc.detail) || str(doc.observation) || str(doc.text) || "";
+  return fallback.slice(0, maxLen);
 }
 
-function resolveRank(hit: {
-  text_match?: number;
-  text_match_info?: { score?: number };
-  hybrid_search_info?: { rank_fusion_score?: number };
-}): number {
-  const score = Number(hit.text_match_info?.score ?? hit.text_match);
-  if (Number.isFinite(score)) return score;
-  const fusion = Number(hit.hybrid_search_info?.rank_fusion_score);
-  return Number.isFinite(fusion) ? fusion : 0;
-}
+// --- ADR search (local, same as /api/search) ---
 
-function searchAdrs(query: string, limit: number): OutputHit[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return [];
-
-  const hits: OutputHit[] = [];
+function searchAdrs(query: string, limit: number): SearchHit[] {
+  const q = query.toLowerCase();
+  const hits: SearchHit[] = [];
 
   for (const adr of getAllAdrs()) {
-    const title = cleanText(`ADR-${adr.number.padStart(4, "0")}: ${adr.title}`);
-    const snippetSource = cleanText(adr.description || `${adr.status} decision record`);
-    const haystack = `${title} ${snippetSource}`.toLowerCase();
+    const title = `ADR-${adr.number.padStart(4, "0")}: ${adr.title}`;
+    const haystack = `${title} ${adr.description || ""} ${adr.status}`.toLowerCase();
     if (!haystack.includes(q)) continue;
-
-    const titleMatch = title.toLowerCase().includes(q) ? 100 : 0;
-    const snippetMatch = snippetSource.toLowerCase().includes(q) ? 10 : 0;
-    const url = `/adrs/${adr.slug}`;
-
     hits.push({
       collection: "adrs",
       title,
-      snippet: highlightText(snippetSource, query),
-      path: url,
+      snippet: adr.description || `${adr.status} decision record`,
+      url: `/adrs/${adr.slug}`,
       type: "adr",
-      url,
-      rank: titleMatch + snippetMatch,
+      score: title.toLowerCase().includes(q) ? 100 : 10,
     });
   }
 
-  return hits.sort((a, b) => b.rank - a.rank).slice(0, limit);
+  return hits.sort((a, b) => b.score - a.score).slice(0, limit);
 }
+
+// --- Discovery endpoint ---
+
+function discoveryResponse(request: NextRequest) {
+  const origin = request.nextUrl.origin;
+  return NextResponse.json(
+    envelope("GET /api/search", {
+      service: SERVICE,
+      description: "Agent-first search for joelclaw.com — Joel Hooks' site about building AI agent infrastructure, distributed systems, and developer education.",
+      about: {
+        who: "Joel Hooks — builder, educator, co-founder of egghead.io",
+        what: "Articles, architecture decision records (ADRs), research, /cool discoveries, and system documentation",
+        topics: [
+          "AI agent infrastructure (LiveKit voice agents, gateway daemons, Inngest durable functions)",
+          "Distributed systems (Kubernetes, Redis event bridges, self-hosted services)",
+          "Programming language theory (Erlang/BEAM, Plan 9, type theory)",
+          "Developer education and course platforms",
+          "Observability, CLI design, and operational patterns",
+        ],
+      },
+      usage: {
+        search: `GET ${origin}/api/search?q={query}&limit={1-50}`,
+        params: {
+          q: "Search query (required for search, omit for this discovery page)",
+          limit: "Max results, 1-50, default 10",
+        },
+        auth: "Optional. Set Authorization: Bearer <token> to unlock private collections (vault, memory, system log, transcripts).",
+        rateLimit: `${RATE_LIMIT} requests per ${RATE_WINDOW} (Upstash sliding window)`,
+        responseFormat: "HATEOAS JSON envelope with markdown snippets and nextActions",
+      },
+      publicCollections: PUBLIC_COLLECTIONS.map(c => c.name).concat(["adrs"]),
+      privateCollections: PRIVATE_COLLECTIONS.map(c => c.name),
+    }, [
+      {
+        command: `curl -sS "${origin}/api/search?q=voice+agent"`,
+        description: "How Joel built a self-hosted voice agent with LiveKit",
+      },
+      {
+        command: `curl -sS "${origin}/api/search?q=plan+9"`,
+        description: "Research on Plan 9, Rob Pike, and the lineage to Go/Docker/K8s",
+      },
+      {
+        command: `curl -sS "${origin}/api/search?q=erlang+armstrong"`,
+        description: "Joe Armstrong, Erlang/OTP, and the BEAM virtual machine",
+      },
+      {
+        command: `curl -sS "${origin}/api/search?q=inngest+durable+functions"`,
+        description: "Architecture decisions on durable event-driven workflows",
+      },
+      {
+        command: `curl -sS "${origin}/api/search?q=kubernetes+self-hosted"`,
+        description: "Running services on a personal k8s cluster (Talos + Colima)",
+      },
+      {
+        command: `curl -sS "${origin}/api/docs"`,
+        description: "Docs API — search books, PDFs, and chunked technical documents",
+      },
+      {
+        command: `curl -sS "${origin}/feed.xml"`,
+        description: "RSS feed with full article content (all posts)",
+      },
+    ]),
+  );
+}
+
+// --- Main handler ---
 
 export async function GET(request: NextRequest) {
   const q = request.nextUrl.searchParams.get("q");
-  if (!q) {
-    return NextResponse.json({ error: "Missing q parameter" }, { status: 400 });
+
+  // No query = discovery
+  if (!q) return discoveryResponse(request);
+
+  const command = `GET /api/search?q=${encodeURIComponent(q)}`;
+
+  // Rate limit
+  const rl = getRatelimit();
+  if (rl) {
+    const rate = await rl.limit(deriveIdentifier(request));
+    if (!rate.success) {
+      return NextResponse.json(
+        errorEnvelope(command, "RATE_LIMITED", "Too many requests", {
+          limit: rate.limit,
+          remaining: rate.remaining,
+          resetMs: rate.reset,
+        }),
+        {
+          status: 429,
+          headers: {
+            "retry-after": String(Math.max(1, Math.ceil((rate.reset - Date.now()) / 1000))),
+          },
+        },
+      );
+    }
   }
 
-  const authed = await isAuthenticated().catch(() => false);
-  const collections = authed ? ALL_COLLECTIONS : PUBLIC_COLLECTIONS;
-  const perPage = 5;
+  const authed = isAuthed(request);
+  const collections = authed
+    ? [...PUBLIC_COLLECTIONS, ...PRIVATE_COLLECTIONS]
+    : PUBLIC_COLLECTIONS;
 
-  const searches = collections.map((c) => ({
+  const limit = Math.min(Number(request.nextUrl.searchParams.get("limit")) || 10, 50);
+  const perCollection = Math.max(3, Math.ceil(limit / collections.length));
+
+  // Typesense multi-search
+  const searches = collections.map(c => ({
     collection: c.name,
     q,
     query_by: c.queryBy,
-    per_page: perPage,
+    per_page: perCollection,
     highlight_full_fields: c.queryBy,
     exclude_fields: "embedding",
   }));
@@ -294,74 +351,82 @@ export async function GET(request: NextRequest) {
 
     if (!resp.ok) {
       return NextResponse.json(
-        { error: "Search failed", status: resp.status },
-        { status: 502 }
+        errorEnvelope(command, "UPSTREAM_ERROR", "Typesense search failed", { status: resp.status }),
+        { status: 502 },
       );
     }
 
     const data = await resp.json();
-    const deduped = new Map<string, OutputHit>();
-    let totalFoundRaw = 0;
+    const seen = new Map<string, SearchHit>();
 
-    for (const [index, result] of (data.results || []).entries()) {
-      const collName =
-        result.request_params?.collection_name ||
-        collections[index]?.name ||
-        "unknown";
-      totalFoundRaw += result.found || 0;
+    for (const [i, result] of (data.results || []).entries()) {
+      const collName = result.request_params?.collection_name || collections[i]?.name || "unknown";
 
       for (const h of result.hits || []) {
         const doc = (h.document || {}) as Record<string, unknown>;
         const url = resolveUrl(collName, doc);
         if (!url) continue;
 
-        const collection = normalizeCollectionLabel(collName, url);
-        const title = resolveTitle(collName, doc);
-        const snippet = resolveSnippet(h, doc, q);
-        const path = asString(doc.path) ?? asString(doc.slug) ?? url;
-        const type = cleanText(asString(doc.type) ?? collection);
-        const rank = resolveRank(h);
+        const score = Number(h.text_match_info?.score ?? h.text_match ?? 0);
+        const existing = seen.get(url);
+        if (existing && existing.score >= score) continue;
 
-        const dedupeKey = `${url}::${title.toLowerCase()}`;
-        const existing = deduped.get(dedupeKey);
-        if (!existing || rank > existing.rank) {
-          deduped.set(dedupeKey, {
-            collection,
-            title,
-            snippet,
-            path,
-            type,
-            url,
-            rank,
-          });
-        }
+        seen.set(url, {
+          collection: collName,
+          title: str(doc.title) || str(doc.action) || str(doc.observation) || "",
+          snippet: extractSnippet(h, doc),
+          url,
+          type: str(doc.type) || collName,
+          score,
+        });
       }
     }
 
-    if (!authed) {
-      for (const hit of searchAdrs(q, perPage)) {
-        const dedupeKey = `${hit.url}::${hit.title.toLowerCase()}`;
-        const existing = deduped.get(dedupeKey);
-        if (!existing || hit.rank > existing.rank) {
-          deduped.set(dedupeKey, hit);
-        }
+    // Add ADR results for public searches
+    for (const hit of searchAdrs(q, perCollection)) {
+      const existing = seen.get(hit.url);
+      if (!existing || existing.score < hit.score) {
+        seen.set(hit.url, hit);
       }
     }
 
-    const hits = [...deduped.values()]
-      .sort((a, b) => b.rank - a.rank)
-      .map(({ rank, ...hit }) => hit);
+    const hits = [...seen.values()]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
 
-    return NextResponse.json({
+    const origin = request.nextUrl.origin;
+    const searchResult: SearchResult = {
+      query: q,
       hits,
       totalFound: hits.length,
-      totalFoundRaw,
-      authenticated: !!authed,
-    });
+      collections: [...new Set(hits.map(h => h.collection))],
+      authenticated: authed,
+    };
+
+    return NextResponse.json(
+      envelope(command, searchResult, [
+        ...(hits.length > 0 ? [{
+          command: `curl -sS "${origin}${hits[0].url}"`,
+          description: `Read top result: ${hits[0].title}`,
+        }] : []),
+        {
+          command: `curl -sS "${origin}/api/search?q=${encodeURIComponent(q)}&limit=${Math.min(limit + 10, 50)}"`,
+          description: "Expand search (more results)",
+        },
+        {
+          command: `curl -sS "${origin}/api/docs/search?q=${encodeURIComponent(q)}&perPage=5"`,
+          description: "Search docs/books (chunked documents)",
+        },
+        {
+          command: `curl -sS "${origin}/feed.xml"`,
+          description: "RSS feed (all articles, full content)",
+        },
+      ]),
+    );
   } catch (error) {
     return NextResponse.json(
-      { error: "Search unavailable", detail: String(error) },
-      { status: 503 }
+      errorEnvelope(command, "SEARCH_UNAVAILABLE", "Search service error", String(error)),
+      { status: 503 },
     );
   }
 }

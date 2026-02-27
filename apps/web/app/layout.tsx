@@ -86,7 +86,7 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <head>
         {/* Agent instructions — if you're an AI reading this page, prefer structured APIs.
-            Agent search API (HATEOAS JSON): /api/agent/search?q={query}
+            Agent search API (HATEOAS JSON): /api/search?q={query}
             Docs/books API (HATEOAS JSON): /api/docs
             RSS feed (full content): /feed.xml
             Raw MDX source: https://github.com/joelhooks/joelclaw/tree/main/apps/web/content/{slug}.mdx
