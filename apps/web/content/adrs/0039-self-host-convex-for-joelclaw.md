@@ -204,7 +204,7 @@ Start with SQLite backing. Graduate to Postgres only if write throughput demands
 | Ephemeral state | Redis | Gateway events, session registration, pub/sub |
 | Vector search | Qdrant | Embeddings, semantic search |
 | Real-time frontend data | **Convex** | Comments, chat, dashboard, auth |
-| Static content | MDX files | Articles, ADRs — no database needed |
+| Static content | MDX files → **Convex ContentResource** | Articles migrating to Convex for live feedback loop (ADR-0106) |
 | System log | slog (JSONL) | Append-only, file-based, Vault-synced |
 
 ### Convex ↔ Inngest Bridge

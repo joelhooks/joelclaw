@@ -49,6 +49,8 @@ contentResourceResource: defineTable({
 ### Type-specific field shapes
 
 - **vault_note**: `{ path, title, content, html, tags, section }`
+- **article**: `{ slug, title, content, description, image, tags, type, date, updated, draft }` *(2026-02-27)*
+- **discovery**: `{ slug, title, content, description, tags, source, channel }` *(2026-02-27)*
 - **memory_observation**: `{ observation, category, source, sessionId, superseded }`
 - **system_log**: `{ action, tool, detail, reason }`
 - **notification**: `{ title, body, notificationType, metadata, read }`
@@ -57,6 +59,8 @@ contentResourceResource: defineTable({
 ### ID scheme
 
 - `vault:{path}` — vault notes
+- `article:{slug}` — blog articles *(2026-02-27)*
+- `discovery:{slug}` — /cool discoveries *(2026-02-27)*
 - `obs:{uuid}` — memory observations
 - `slog:{index}` — system log entries
 - `notif:{uuid}` — notifications
