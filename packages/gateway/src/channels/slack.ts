@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
-import type { EnqueueFn } from "./redis";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
+import type { EnqueueFn } from "./redis";
 import type {
   Channel,
   ChannelPlatform,
@@ -138,6 +138,7 @@ const channelNameCache = new Map<string, string>();
 const userNameCache = new Map<string, string>();
 const seenEvents = new Set<string>();
 const seenOrder: string[] = [];
+const mentionThreads = new Set<string>();
 
 function mapSendOptionsFromChannelSendOptions(options?: SendOptions): SlackSendOptions | undefined {
   if (!options) return undefined;
@@ -409,14 +410,52 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
   const context = await resolveSlackContext(message.channel, message.channel_type, threadTs);
   const isDm = message.channel_type === "im" || message.channel.startsWith("D");
   const isAllowedUser = allowedUserId ? message.user === allowedUserId : false;
+  const isInvoke = (isDm && isAllowedUser)
+    || kind === "mention"
+    || (threadTs && mentionThreads.has(threadTs));
+
+  if (kind === "mention" && message.channel && message.ts) {
+    const threadKey = threadTs ?? message.ts;
+    mentionThreads.add(threadKey);
+    if (mentionThreads.size > 200) {
+      const first = mentionThreads.values().next().value;
+      if (first) mentionThreads.delete(first);
+    }
+  }
 
   const userLabel = await resolveUserLabel(message.user);
 
-  // ADR-0131: Slack is passive intelligence only.
-  // Channel messages and non-Joel DMs are delivered as read-only context
-  // to the gateway session (so Joel can monitor) but replies are suppressed.
-  // Only Joel DMs get full bidirectional routing.
-  if (!isDm || !isAllowedUser) {
+  // ADR-0131: Slack routing.
+  // Invoke: Joel DM, @mentions, and tracked mention threads.
+  // Joel non-mention channel messages: passive intel marked as signal.
+  // Everyone else: passive intel.
+  if (isInvoke) {
+    const prompt = `${context.prefix} ${userLabel}: ${text}`;
+
+    await enqueuePrompt(context.source, prompt, {
+      slackChannelId: message.channel,
+      slackThreadTs: threadTs,
+      slackUserId: message.user,
+      slackTs: message.ts,
+      slackEventKind: kind,
+    });
+
+    void emitGatewayOtel({
+      level: "info",
+      component: "slack-channel",
+      action: "slack.message.received",
+      success: true,
+      duration_ms: Date.now() - startedAt,
+      metadata: {
+        kind,
+        channelId: message.channel,
+        threadTs,
+        userId: message.user,
+        length: text.length,
+      },
+    });
+    return;
+  } else if (isAllowedUser) {
     const intelPrompt = `${context.prefix} ${userLabel}: ${text}`;
 
     await enqueuePrompt(`slack-intel:${message.channel}`, intelPrompt, {
@@ -426,6 +465,7 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
       slackTs: message.ts,
       slackEventKind: kind,
       passiveIntel: true,
+      joelSignal: true,
     });
 
     void emitGatewayOtel({
@@ -441,31 +481,6 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
     });
     return;
   }
-
-  const prompt = `${context.prefix} ${userLabel}: ${text}`;
-
-  await enqueuePrompt(context.source, prompt, {
-    slackChannelId: message.channel,
-    slackThreadTs: threadTs,
-    slackUserId: message.user,
-    slackTs: message.ts,
-    slackEventKind: kind,
-  });
-
-  void emitGatewayOtel({
-    level: "info",
-    component: "slack-channel",
-    action: "slack.message.received",
-    success: true,
-    duration_ms: Date.now() - startedAt,
-    metadata: {
-      kind,
-      channelId: message.channel,
-      threadTs,
-      userId: message.user,
-      length: text.length,
-    },
-  });
 }
 
 async function maybeAcknowledgeReaction(channelId: string, timestamp: string): Promise<void> {
@@ -973,6 +988,7 @@ async function shutdownSlackChannel(): Promise<void> {
   userNameCache.clear();
   seenEvents.clear();
   seenOrder.length = 0;
+  mentionThreads.clear();
 
   console.log("[gateway:slack] stopped");
   void emitGatewayOtel({

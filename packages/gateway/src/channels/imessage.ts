@@ -6,15 +6,31 @@
  *   - Gateway connects to that socket, sends JSON-RPC requests, receives notifications
  *   - No FDA required for the gateway daemon itself
  */
+import { execFile } from "node:child_process";
+import { access } from "node:fs/promises";
 import net from "node:net";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import type { EnqueueFn } from "./redis";
 import type { Channel, ChannelPlatform, InboundMessage, MessageHandler, SendOptions } from "./types";
 
 const SOCKET_PATH = process.env.IMSG_SOCKET_PATH ?? "/tmp/imsg.sock";
+const IMESSAGE_USER_ID = typeof process.getuid === "function" ? process.getuid() : 0;
+const IMSG_LAUNCHD_LABEL = process.env.IMSG_LAUNCHD_LABEL ?? `gui/${IMESSAGE_USER_ID}/com.joel.imsg-rpc`;
 const RECONNECT_BASE_MS = 5_000;
 const RECONNECT_MAX_MS = 5 * 60_000; // 5 minutes max backoff
 const SEND_TIMEOUT_MS = 10_000;
+const HEAL_COOLDOWN_MS = 60_000;
+
+const execFileAsync = (command: string, args: string[]): Promise<void> =>
+  new Promise((resolve, reject) => {
+    execFile(command, args, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
@@ -56,6 +72,8 @@ export class IMessageChannel implements Channel {
   private nextIdValue = 1;
   private pending = new Map<number, PendingRequest>();
   private messageHandler: MessageHandler | undefined;
+  private lastHealAt = 0;
+  private healing = false;
 
   constructor(private sender: string) {}
 
@@ -241,6 +259,10 @@ export class IMessageChannel implements Channel {
             success: false,
             error: err.message,
           });
+
+          if (err.message.includes("ENOENT")) {
+            void this.maybeHealSocket("socket-enoent");
+          }
         }
       });
 
@@ -264,6 +286,7 @@ export class IMessageChannel implements Channel {
   private async reconnectLoop(): Promise<void> {
     while (!this.stopRequested) {
       try {
+        await this.maybeHealSocket("reconnect-loop");
         await this.connectAndRun();
         // If we successfully connected, reset backoff
         this.reconnectDelay = RECONNECT_BASE_MS;
@@ -299,6 +322,77 @@ export class IMessageChannel implements Channel {
         // Exponential backoff: 5s → 10s → 20s → 40s → ... → 5min max
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, RECONNECT_MAX_MS);
       }
+    }
+  }
+
+  private async maybeHealSocket(reason: string): Promise<void> {
+    if (this.stopRequested) return;
+
+    const now = Date.now();
+    if (this.healing || now - this.lastHealAt < HEAL_COOLDOWN_MS) {
+      return;
+    }
+
+    try {
+      await access(SOCKET_PATH);
+      return;
+    } catch {
+      // missing socket path — continue with heal attempt
+    }
+
+    this.healing = true;
+    this.lastHealAt = now;
+
+    console.warn("[gateway:imessage] socket missing, attempting launchd heal", {
+      reason,
+      socketPath: SOCKET_PATH,
+      launchdLabel: IMSG_LAUNCHD_LABEL,
+    });
+    void emitGatewayOtel({
+      level: "warn",
+      component: "imessage-channel",
+      action: "imessage.socket.heal.attempt",
+      success: false,
+      metadata: {
+        reason,
+        socketPath: SOCKET_PATH,
+        launchdLabel: IMSG_LAUNCHD_LABEL,
+      },
+    });
+
+    try {
+      await execFileAsync("launchctl", ["kickstart", "-k", IMSG_LAUNCHD_LABEL]);
+      void emitGatewayOtel({
+        level: "info",
+        component: "imessage-channel",
+        action: "imessage.socket.heal.success",
+        success: true,
+        metadata: {
+          reason,
+          socketPath: SOCKET_PATH,
+          launchdLabel: IMSG_LAUNCHD_LABEL,
+        },
+      });
+    } catch (error) {
+      console.error("[gateway:imessage] launchd heal failed", {
+        reason,
+        error: String(error),
+        launchdLabel: IMSG_LAUNCHD_LABEL,
+      });
+      void emitGatewayOtel({
+        level: "error",
+        component: "imessage-channel",
+        action: "imessage.socket.heal.failed",
+        success: false,
+        error: String(error),
+        metadata: {
+          reason,
+          socketPath: SOCKET_PATH,
+          launchdLabel: IMSG_LAUNCHD_LABEL,
+        },
+      });
+    } finally {
+      this.healing = false;
     }
   }
 

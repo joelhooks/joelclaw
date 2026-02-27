@@ -32,18 +32,77 @@ type PhoneNumbersResponse = {
   [key: string]: unknown;
 };
 
-const leaseSecret = (name: string, envKey: string): string => {
+type SecretsLeaseEnvelope = {
+  ok?: boolean;
+  success?: boolean;
+  value?: unknown;
+  secret?: unknown;
+  error?: {
+    message?: unknown;
+  };
+};
+
+const parseLeasedSecret = (raw: string, name: string): string => {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+
   try {
-    const value = execSync(`secrets lease ${name}`, { encoding: "utf8" }).trim();
+    const parsed = JSON.parse(trimmed) as SecretsLeaseEnvelope;
+    if (parsed && typeof parsed === "object") {
+      const failed = parsed.ok === false || parsed.success === false || Boolean(parsed.error);
+      if (failed) {
+        const detail =
+          parsed.error && typeof parsed.error.message === "string"
+            ? parsed.error.message
+            : `secrets lease returned an error payload for ${name}`;
+        throw new Error(detail);
+      }
+
+      if (typeof parsed.value === "string" && parsed.value.trim()) {
+        return parsed.value.trim();
+      }
+
+      if (typeof parsed.secret === "string" && parsed.secret.trim()) {
+        return parsed.secret.trim();
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) {
+      throw error;
+    }
+  }
+
+  return trimmed;
+};
+
+const leaseSecret = (name: string, envKey: string): string => {
+  let leaseError: Error | null = null;
+
+  try {
+    const output = execSync(`secrets lease ${name}`, { encoding: "utf8" });
+    const value = parseLeasedSecret(output, name);
     if (value) return value;
-  } catch {
-    // Fallback to env var below
+  } catch (error) {
+    leaseError = error instanceof Error ? error : new Error(String(error));
   }
 
   const fallback = process.env[envKey]?.trim();
   if (fallback) return fallback;
 
+  if (leaseError) {
+    throw new Error(`Missing secret: ${name} (or env ${envKey}) — ${leaseError.message}`);
+  }
+
   throw new Error(`Missing secret: ${name} (or env ${envKey})`);
+};
+
+const tryLeaseSecret = (name: string, envKey: string): string | null => {
+  try {
+    const value = leaseSecret(name, envKey);
+    return value.trim().length > 0 ? value.trim() : null;
+  } catch {
+    return null;
+  }
 };
 
 const getApiKey = (): string => leaseSecret("telnyx_api_key", "TELNYX_API_KEY");
@@ -81,6 +140,12 @@ export const getTelnyxConfig = () => {
   const fromNumber = leaseSecret("telnyx_phone_number", "TELNYX_PHONE_NUMBER");
   const ovpId = leaseSecret("telnyx_ovp_id", "TELNYX_OVP_ID");
 
+  const callControlConnectionId =
+    tryLeaseSecret("telnyx_call_control_connection_id", "TELNYX_CALL_CONTROL_CONNECTION_ID") ??
+    tryLeaseSecret("telnyx_call_control_app_id", "TELNYX_CALL_CONTROL_APP_ID") ??
+    tryLeaseSecret("telnyx_call_control_application_id", "TELNYX_CALL_CONTROL_APPLICATION_ID") ??
+    tryLeaseSecret("telnyx_voice_api_connection_id", "TELNYX_VOICE_API_CONNECTION_ID");
+
   let joelPhoneNumber = "";
   try {
     joelPhoneNumber = leaseSecret("joel_phone_number", "JOEL_PHONE_NUMBER");
@@ -94,6 +159,7 @@ export const getTelnyxConfig = () => {
 
   return {
     connectionId,
+    callControlConnectionId,
     fromNumber,
     ovpId,
     joelPhoneNumber,
@@ -120,17 +186,22 @@ export const placeCall = async (
     });
   }
 
-  const { ovpId } = getTelnyxConfig();
+  const { ovpId, callControlConnectionId } = getTelnyxConfig();
+
+  if (!callControlConnectionId) {
+    throw new Error(
+      "Missing Telnyx Call Control App ID: set telnyx_call_control_connection_id (or TELNYX_CALL_CONTROL_CONNECTION_ID) for /calls flow"
+    );
+  }
 
   return await telnyxRequest<CallResponse>("/calls", {
     method: "POST",
     body: JSON.stringify({
-      connection_id: connectionId,
+      connection_id: callControlConnectionId,
       to,
       from,
       outbound_voice_profile_id: ovpId,
       answering_machine_detection: "detect",
-      webhook_url: "",
     }),
   });
 };

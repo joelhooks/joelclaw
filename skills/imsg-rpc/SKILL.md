@@ -2,7 +2,7 @@
 name: imsg-rpc
 displayName: imsg-rpc Socket Daemon
 description: Set up, maintain, and debug the imsg-rpc Unix socket daemon that gives the gateway iMessage access via JSON-RPC. Covers FDA setup, code signing, launchd service, and the imsg source repo.
-version: 1.0.0
+version: 1.1.0
 author: joelclaw
 tags: [imessage, gateway, imsg, launchd, fda, rpc]
 ---
@@ -11,7 +11,7 @@ tags: [imessage, gateway, imsg, launchd, fda, rpc]
 
 Manages the `com.joel.imsg-rpc` launchd service that bridges the gateway daemon to iMessage via a Unix socket.
 
-## Architecture (ADR-0123)
+## Architecture (ADR-0121)
 
 ```
 gateway daemon (bun, no FDA)
@@ -148,6 +148,17 @@ If `tccd` shows `AUTHREQ_RESULT ... authValue=2` for `/Applications/imsg-rpc.app
 
 imsg-rpc crashed after accepting. Check `/tmp/joelclaw/imsg-rpc.err`. Restart service.
 
+### `connect ENOENT /tmp/imsg.sock` but launchd says running
+
+The daemon process can stay alive while the Unix socket path is unlinked. Gateway cannot connect until the socket path is recreated.
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.joel.imsg-rpc
+ls -l /tmp/imsg.sock
+```
+
+Gateway now attempts this heal automatically on repeated ENOENT, but manual kickstart is the fastest recovery during incidents.
+
 ### FDA toggle didn't help after rebuild
 
 You likely rebuilt without refreshing the app bundle. Re-run:
@@ -192,4 +203,4 @@ The gateway uses these methods over `/tmp/imsg.sock`:
 | `~/Code/steipete/imsg/scripts/install-rpc-app.sh` | creates/signs `/Applications/imsg-rpc.app` |
 | `~/Library/LaunchAgents/com.joel.imsg-rpc.plist` | launchd service (not in git) |
 | `packages/gateway/src/channels/imessage.ts` | gateway socket client |
-| `apps/web/content/adrs/0123-imsg-rpc-socket-daemon.md` | ADR |
+| `apps/web/content/adrs/0121-imsg-rpc-socket-daemon.md` | ADR |
