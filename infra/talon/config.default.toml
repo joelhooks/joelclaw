@@ -1,0 +1,36 @@
+check_interval_secs = 60
+heal_script = "/Users/joel/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh"
+heal_timeout_secs = 90
+
+[worker]
+dir = "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus"
+command = ["bun", "run", "src/serve.ts"]
+port = 3111
+health_endpoint = "/api/inngest"
+sync_endpoint = "/api/inngest"
+log_stdout = "~/.local/log/system-bus-worker.log"
+log_stderr = "~/.local/log/system-bus-worker.err"
+env_file = "~/.config/system-bus.env"
+drain_timeout_secs = 5
+health_interval_secs = 30
+health_failures_before_restart = 3
+restart_backoff_max_secs = 30
+startup_sync_delay_secs = 5
+http_timeout_secs = 5
+
+[escalation]
+agent_cooldown_secs = 600
+sos_cooldown_secs = 1800
+sos_recipient = "joelhooks@gmail.com"
+critical_threshold_secs = 900
+
+[agent]
+cloud_command = "pi -p --no-session --no-extensions --model anthropic/claude-sonnet-4"
+local_command = "pi -p --no-session --no-extensions --model ollama/qwen3:8b"
+timeout_secs = 120
+
+[probes]
+colima_timeout_secs = 5
+k8s_timeout_secs = 10
+service_timeout_secs = 5
+consecutive_failures_before_escalate = 3

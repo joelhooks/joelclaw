@@ -1,0 +1,468 @@
+use std::env;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+use crate::DynError;
+
+pub const DEFAULT_CONFIG_PATH: &str = "~/.config/talon/config.toml";
+pub const DEFAULT_PATH: &str = "/opt/homebrew/bin:/Users/joel/.bun/bin:/Users/joel/.local/bin:/Users/joel/.local/share/fnm/aliases/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+pub const STATE_DIR: &str = "~/.local/state/talon";
+
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub check_interval_secs: u64,
+    pub heal_script: String,
+    pub heal_timeout_secs: u64,
+    pub worker: WorkerConfig,
+    pub escalation: EscalationConfig,
+    pub agent: AgentConfig,
+    pub probes: ProbesConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkerConfig {
+    pub dir: String,
+    pub command: Vec<String>,
+    pub port: u16,
+    pub health_endpoint: String,
+    pub sync_endpoint: String,
+    pub log_stdout: String,
+    pub log_stderr: String,
+    pub env_file: String,
+    pub drain_timeout_secs: u64,
+    pub health_interval_secs: u64,
+    pub health_failures_before_restart: u32,
+    pub restart_backoff_max_secs: u64,
+    pub startup_sync_delay_secs: u64,
+    pub http_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct EscalationConfig {
+    pub agent_cooldown_secs: u64,
+    pub sos_cooldown_secs: u64,
+    pub sos_recipient: String,
+    pub critical_threshold_secs: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentConfig {
+    pub cloud_command: String,
+    pub local_command: String,
+    pub timeout_secs: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProbesConfig {
+    pub colima_timeout_secs: u64,
+    pub k8s_timeout_secs: u64,
+    pub service_timeout_secs: u64,
+    pub consecutive_failures_before_escalate: u32,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            check_interval_secs: 60,
+            heal_script: "/Users/joel/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh".to_string(),
+            heal_timeout_secs: 90,
+            worker: WorkerConfig::default(),
+            escalation: EscalationConfig::default(),
+            agent: AgentConfig::default(),
+            probes: ProbesConfig::default(),
+        }
+    }
+}
+
+impl Default for WorkerConfig {
+    fn default() -> Self {
+        Self {
+            dir: "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus".to_string(),
+            command: vec!["bun".to_string(), "run".to_string(), "src/serve.ts".to_string()],
+            port: 3111,
+            health_endpoint: "/api/inngest".to_string(),
+            sync_endpoint: "/api/inngest".to_string(),
+            log_stdout: "~/.local/log/system-bus-worker.log".to_string(),
+            log_stderr: "~/.local/log/system-bus-worker.err".to_string(),
+            env_file: "~/.config/system-bus.env".to_string(),
+            drain_timeout_secs: 5,
+            health_interval_secs: 30,
+            health_failures_before_restart: 3,
+            restart_backoff_max_secs: 30,
+            startup_sync_delay_secs: 5,
+            http_timeout_secs: 5,
+        }
+    }
+}
+
+impl Default for EscalationConfig {
+    fn default() -> Self {
+        Self {
+            agent_cooldown_secs: 600,
+            sos_cooldown_secs: 1800,
+            sos_recipient: "joelhooks@gmail.com".to_string(),
+            critical_threshold_secs: 900,
+        }
+    }
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            cloud_command: "pi -p --no-session --no-extensions --model anthropic/claude-sonnet-4"
+                .to_string(),
+            local_command: "pi -p --no-session --no-extensions --model ollama/qwen3:8b"
+                .to_string(),
+            timeout_secs: 120,
+        }
+    }
+}
+
+impl Default for ProbesConfig {
+    fn default() -> Self {
+        Self {
+            colima_timeout_secs: 5,
+            k8s_timeout_secs: 10,
+            service_timeout_secs: 5,
+            consecutive_failures_before_escalate: 3,
+        }
+    }
+}
+
+pub fn ensure_default_config(path: &Path) -> Result<(), DynError> {
+    if path.exists() {
+        return Ok(());
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    fs::write(path, default_config_toml())?;
+    Ok(())
+}
+
+pub fn load_config(path: &Path) -> Result<Config, DynError> {
+    let mut config = Config::default();
+
+    if !path.exists() {
+        return Ok(config);
+    }
+
+    let raw = fs::read_to_string(path)?;
+    apply_toml_overrides(&mut config, &raw)?;
+
+    if config.worker.command.is_empty() {
+        return Err(
+            io::Error::new(io::ErrorKind::InvalidInput, "worker.command must not be empty").into(),
+        );
+    }
+
+    Ok(config)
+}
+
+pub fn default_config_toml() -> String {
+    let content = r#"check_interval_secs = 60
+heal_script = "/Users/joel/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh"
+heal_timeout_secs = 90
+
+[worker]
+dir = "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus"
+command = ["bun", "run", "src/serve.ts"]
+port = 3111
+health_endpoint = "/api/inngest"
+sync_endpoint = "/api/inngest"
+log_stdout = "~/.local/log/system-bus-worker.log"
+log_stderr = "~/.local/log/system-bus-worker.err"
+env_file = "~/.config/system-bus.env"
+drain_timeout_secs = 5
+health_interval_secs = 30
+health_failures_before_restart = 3
+restart_backoff_max_secs = 30
+startup_sync_delay_secs = 5
+http_timeout_secs = 5
+
+[escalation]
+agent_cooldown_secs = 600
+sos_cooldown_secs = 1800
+sos_recipient = "joelhooks@gmail.com"
+critical_threshold_secs = 900
+
+[agent]
+cloud_command = "pi -p --no-session --no-extensions --model anthropic/claude-sonnet-4"
+local_command = "pi -p --no-session --no-extensions --model ollama/qwen3:8b"
+timeout_secs = 120
+
+[probes]
+colima_timeout_secs = 5
+k8s_timeout_secs = 10
+service_timeout_secs = 5
+consecutive_failures_before_escalate = 3
+"#;
+    content.to_string()
+}
+
+fn apply_toml_overrides(config: &mut Config, raw: &str) -> Result<(), DynError> {
+    let mut section = String::new();
+
+    for (line_number, original_line) in raw.lines().enumerate() {
+        let line = strip_comment(original_line).trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line[1..line.len() - 1].trim().to_string();
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+
+        let key = key.trim();
+        let value = value.trim();
+
+        match (section.as_str(), key) {
+            ("", "check_interval_secs") => {
+                config.check_interval_secs = parse_toml_int(value, line_number + 1)?
+            }
+            ("", "heal_script") => config.heal_script = parse_toml_string(value)?,
+            ("", "heal_timeout_secs") => {
+                config.heal_timeout_secs = parse_toml_int(value, line_number + 1)?
+            }
+
+            ("worker", "dir") => config.worker.dir = parse_toml_string(value)?,
+            ("worker", "command") => config.worker.command = parse_toml_string_array(value)?,
+            ("worker", "port") => config.worker.port = parse_toml_int(value, line_number + 1)? as u16,
+            ("worker", "health_endpoint") => config.worker.health_endpoint = parse_toml_string(value)?,
+            ("worker", "sync_endpoint") => config.worker.sync_endpoint = parse_toml_string(value)?,
+            ("worker", "log_stdout") => config.worker.log_stdout = parse_toml_string(value)?,
+            ("worker", "log_stderr") => config.worker.log_stderr = parse_toml_string(value)?,
+            ("worker", "env_file") => config.worker.env_file = parse_toml_string(value)?,
+            ("worker", "drain_timeout_secs") => {
+                config.worker.drain_timeout_secs = parse_toml_int(value, line_number + 1)?
+            }
+            ("worker", "health_interval_secs") => {
+                config.worker.health_interval_secs = parse_toml_int(value, line_number + 1)?
+            }
+            ("worker", "health_failures_before_restart") => {
+                config.worker.health_failures_before_restart =
+                    parse_toml_int(value, line_number + 1)? as u32
+            }
+            ("worker", "restart_backoff_max_secs") => {
+                config.worker.restart_backoff_max_secs = parse_toml_int(value, line_number + 1)?
+            }
+            ("worker", "startup_sync_delay_secs") => {
+                config.worker.startup_sync_delay_secs = parse_toml_int(value, line_number + 1)?
+            }
+            ("worker", "http_timeout_secs") => {
+                config.worker.http_timeout_secs = parse_toml_int(value, line_number + 1)?
+            }
+
+            ("escalation", "agent_cooldown_secs") => {
+                config.escalation.agent_cooldown_secs = parse_toml_int(value, line_number + 1)?
+            }
+            ("escalation", "sos_cooldown_secs") => {
+                config.escalation.sos_cooldown_secs = parse_toml_int(value, line_number + 1)?
+            }
+            ("escalation", "sos_recipient") => {
+                config.escalation.sos_recipient = parse_toml_string(value)?
+            }
+            ("escalation", "critical_threshold_secs") => {
+                config.escalation.critical_threshold_secs =
+                    parse_toml_int(value, line_number + 1)?
+            }
+
+            ("agent", "cloud_command") => config.agent.cloud_command = parse_toml_string(value)?,
+            ("agent", "local_command") => config.agent.local_command = parse_toml_string(value)?,
+            ("agent", "timeout_secs") => {
+                config.agent.timeout_secs = parse_toml_int(value, line_number + 1)?
+            }
+
+            ("probes", "colima_timeout_secs") => {
+                config.probes.colima_timeout_secs = parse_toml_int(value, line_number + 1)?
+            }
+            ("probes", "k8s_timeout_secs") => {
+                config.probes.k8s_timeout_secs = parse_toml_int(value, line_number + 1)?
+            }
+            ("probes", "service_timeout_secs") => {
+                config.probes.service_timeout_secs = parse_toml_int(value, line_number + 1)?
+            }
+            ("probes", "consecutive_failures_before_escalate") => {
+                config.probes.consecutive_failures_before_escalate =
+                    parse_toml_int(value, line_number + 1)? as u32
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn strip_comment(line: &str) -> &str {
+    let mut in_quote = false;
+    let mut quote_char = '\0';
+
+    for (idx, ch) in line.char_indices() {
+        if in_quote {
+            if ch == quote_char {
+                in_quote = false;
+            }
+            continue;
+        }
+
+        if ch == '\'' || ch == '"' {
+            in_quote = true;
+            quote_char = ch;
+            continue;
+        }
+
+        if ch == '#' {
+            return &line[..idx];
+        }
+    }
+
+    line
+}
+
+fn parse_toml_string(value: &str) -> Result<String, DynError> {
+    let value = value.trim();
+    if value.len() >= 2 {
+        if (value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\''))
+        {
+            return Ok(unescape_string(&value[1..value.len() - 1]));
+        }
+    }
+
+    if value.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty TOML string").into());
+    }
+
+    Ok(value.to_string())
+}
+
+fn parse_toml_string_array(value: &str) -> Result<Vec<String>, DynError> {
+    let value = value.trim();
+    if !(value.starts_with('[') && value.ends_with(']')) {
+        return Err(
+            io::Error::new(io::ErrorKind::InvalidInput, "array must use [..] syntax").into(),
+        );
+    }
+
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut in_quote = false;
+    let mut quote_char = '\0';
+    let mut escaped = false;
+
+    for ch in value[1..value.len() - 1].chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+
+        if ch == '\\' && in_quote {
+            escaped = true;
+            current.push(ch);
+            continue;
+        }
+
+        if in_quote {
+            current.push(ch);
+            if ch == quote_char {
+                in_quote = false;
+            }
+            continue;
+        }
+
+        if ch == '\'' || ch == '"' {
+            in_quote = true;
+            quote_char = ch;
+            current.push(ch);
+            continue;
+        }
+
+        if ch == ',' {
+            let item = current.trim();
+            if !item.is_empty() {
+                out.push(parse_toml_string(item)?);
+            }
+            current.clear();
+            continue;
+        }
+
+        current.push(ch);
+    }
+
+    let trailing = current.trim();
+    if !trailing.is_empty() {
+        out.push(parse_toml_string(trailing)?);
+    }
+
+    Ok(out)
+}
+
+fn parse_toml_int(value: &str, line: usize) -> Result<u64, DynError> {
+    value.trim().parse::<u64>().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid integer at line {line}: {value}"),
+        )
+        .into()
+    })
+}
+
+fn unescape_string(value: &str) -> String {
+    let mut out = String::new();
+    let mut chars = value.chars();
+
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('"') => out.push('"'),
+            Some('\\') => out.push('\\'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+
+    out
+}
+
+pub fn expand_home(path: &str) -> PathBuf {
+    PathBuf::from(expand_tilde(path))
+}
+
+pub fn expand_tilde(path: &str) -> String {
+    if path == "~" {
+        return env::var("HOME").unwrap_or_else(|_| "~".to_string());
+    }
+
+    if let Some(rest) = path.strip_prefix("~/") {
+        let home = env::var("HOME").unwrap_or_else(|_| "~".to_string());
+        return format!("{home}/{rest}");
+    }
+
+    path.to_string()
+}
+
+pub fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
