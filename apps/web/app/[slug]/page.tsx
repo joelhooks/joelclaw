@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { cacheLife, cacheTag } from "next/cache";
 import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
+import { Suspense } from "react";
 import { LazyReviewGate } from "@/components/review/lazy-review-gate";
 import { SITE_NAME, SITE_URL } from "@/lib/constants";
 import { blogPostingJsonLd, breadcrumbJsonLd } from "@/lib/jsonld";
@@ -19,7 +20,7 @@ export async function generateStaticParams() {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const post = await getCachedPost(slug);
+  const post = await getPost(slug);
   if (!post) return {};
 
   const { meta } = post;
@@ -55,7 +56,27 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function PostPage({ params }: Props) {
   const { slug } = await params;
-  const post = await getCachedPost(slug);
+
+  return (
+    <>
+      <Suspense fallback={<ArticleFallback />}>
+        <CachedArticle slug={slug} />
+      </Suspense>
+
+      {/* Reserved dynamic slot for future FeedbackStatus streaming UI. */}
+      <Suspense fallback={null}>
+        <FeedbackStatusSlot slug={slug} />
+      </Suspense>
+    </>
+  );
+}
+
+async function CachedArticle({ slug }: { slug: string }) {
+  "use cache";
+  cacheLife("max");
+  cacheTag(`article:${slug}`);
+
+  const post = await getPost(slug);
   if (!post) notFound();
 
   const { meta, content } = post;
@@ -114,18 +135,8 @@ export default async function PostPage({ params }: Props) {
   );
 }
 
-async function getCachedPost(slug: string) {
-  "use cache";
-  cacheLife("max");
-  cacheTag(`article:${slug}`);
-
-  return getPost(slug);
-}
-
 /** MDX rendering for static post content. */
-async function PostContent({ content }: { content: string }) {
-  "use cache";
-
+function PostContent({ content }: { content: string }) {
   return (
     <div className="prose-joelclaw">
       <MDXRemote
@@ -135,4 +146,12 @@ async function PostContent({ content }: { content: string }) {
       />
     </div>
   );
+}
+
+function ArticleFallback() {
+  return <article className="mx-auto max-w-2xl" data-pagefind-body />;
+}
+
+async function FeedbackStatusSlot(_props: { slug: string }) {
+  return null;
 }

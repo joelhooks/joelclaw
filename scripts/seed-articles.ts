@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { readdirSync, readFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { ConvexHttpClient } from "../apps/web/node_modules/convex/browser";
 import { anyApi, type FunctionReference } from "../apps/web/node_modules/convex/server";
 import matter from "../apps/web/node_modules/gray-matter";
@@ -46,10 +46,36 @@ function buildSearchText(fields: ArticleFields): string {
 }
 
 function listArticleFiles(contentDir: string): string[] {
-  return readdirSync(contentDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".mdx"))
-    .map((entry) => join(contentDir, entry.name))
-    .sort((a, b) => a.localeCompare(b));
+  const files: string[] = [];
+  const directories = [contentDir];
+
+  while (directories.length > 0) {
+    const currentDir = directories.pop();
+    if (!currentDir) continue;
+
+    for (const entry of readdirSync(currentDir, { withFileTypes: true })) {
+      const entryPath = join(currentDir, entry.name);
+
+      if (entry.isDirectory()) {
+        // Only articles should be seeded; discoveries are handled separately.
+        if (entry.name === "discoveries") continue;
+        directories.push(entryPath);
+        continue;
+      }
+
+      if (entry.isFile() && entry.name.endsWith(".mdx")) {
+        files.push(entryPath);
+      }
+    }
+  }
+
+  return files.sort((a, b) => a.localeCompare(b));
+}
+
+function slugFromFilePath(contentDir: string, filePath: string): string {
+  const relativePath = relative(contentDir, filePath);
+  const withoutExtension = relativePath.replace(/\.mdx$/, "");
+  return withoutExtension.split(sep).join("/");
 }
 
 function readEnvValueFromFile(filePath: string, key: string): string | undefined {
@@ -108,7 +134,7 @@ async function main() {
   const upsertRef = (anyApi as any).contentResources.upsert as FunctionReference<"mutation">;
 
   for (const filePath of articleFiles) {
-    const slug = basename(filePath, ".mdx");
+    const slug = slugFromFilePath(contentDir, filePath);
     const raw = readFileSync(filePath, "utf-8");
     const { data, content } = matter(raw);
     const meta = data as Record<string, unknown>;

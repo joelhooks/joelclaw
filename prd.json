@@ -141,5 +141,7 @@
       ]
     }
   ],
-  "context": {}
+  "context": {
+    "codex_timeout_seconds": 900
+  }
 }

@@ -409,6 +409,9 @@ export const storyPipeline = inngest.createFunction(
     name: "Story Pipeline: Implement → Prove → Judge",
     retries: 2, // survive transient SDK failures during worker restart (ADR-0156)
     concurrency: [{ scope: "fn", limit: 1 }], // one story at a time
+    timeouts: {
+      start: "30m", // codex implement can take 10-15 min, prove/judge 5 min each
+    },
   },
   { event: "agent/story.start" },
   async ({ event, step, logger, gateway }) => {
