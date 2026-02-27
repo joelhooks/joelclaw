@@ -431,3 +431,7 @@ Streaming commands hold a Redis connection. They **must**:
 - [ ] No ANSI colors or formatting
 - [ ] Works when piped (no TTY detection)
 - [ ] Builds and installs to ~/.bun/bin/
+
+## TODO
+
+- [ ] **OAuth device flow pattern for CLI auth**: Document the GitHub device flow → broker → session token → env materialization pattern proven in the `skillrecordings/support` repo. Covers: device code polling loop, org/team membership gating, short-lived AES-GCM session tokens, age-encrypted secret delivery to CLI ephemeral keypairs, in-memory-only env injection. Reference implementation: `apps/front/lib/broker/` + `apps/front/app/api/auth/device/` in `skillrecordings/support`. This eliminates 1Password CLI as a developer dependency while keeping server-side secret management intact.
