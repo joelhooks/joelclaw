@@ -107,7 +107,35 @@ else
   echo "ERROR: Failed to lease vercel_webhook_secret (Vercel webhook verification disabled)" >&2
 fi
 
-# Start worker, then force Inngest function sync after startup
+# ── Pre-start cleanup: kill any orphaned bun on port 3111 ──
+# This prevents EADDRINUSE when launchd restarts after a crash.
+STALE_PID=$(/usr/sbin/lsof -ti :3111 2>/dev/null | head -1)
+if [ -n "$STALE_PID" ]; then
+  echo "Killing stale process $STALE_PID on port 3111" >&2
+  kill -9 "$STALE_PID" 2>/dev/null
+  sleep 1
+fi
+
+# ── Signal forwarding: propagate SIGTERM to bun child ──
+# launchctl sends SIGTERM to this shell. Without forwarding, bun becomes
+# an orphan holding port 3111 forever. This was the root cause of every
+# "Unable to reach SDK URL" / EADDRINUSE failure.
+cleanup() {
+  if [ -n "$WORKER_PID" ]; then
+    echo "Forwarding SIGTERM to worker PID $WORKER_PID" >&2
+    kill -TERM "$WORKER_PID" 2>/dev/null
+    # Give bun 5s to drain, then force-kill
+    for i in 1 2 3 4 5; do
+      kill -0 "$WORKER_PID" 2>/dev/null || break
+      sleep 1
+    done
+    kill -9 "$WORKER_PID" 2>/dev/null
+  fi
+  exit 0
+}
+trap cleanup SIGTERM SIGINT SIGHUP
+
+# Start worker in background so we can trap signals
 bun run src/serve.ts &
 WORKER_PID=$!
 
@@ -117,4 +145,5 @@ curl -s -X PUT http://127.0.0.1:3111/api/inngest >/dev/null 2>&1 \
   && echo "Function registry synced" \
   || echo "WARNING: Inngest function sync failed" >&2
 
+# Wait indefinitely — signals handled by trap
 wait $WORKER_PID
