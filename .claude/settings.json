@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bun *)",
+      "Bash(bunx tsc *)",
+      "Bash(pnpm *)",
+      "Bash(joelclaw *)",
+      "Bash(slog *)",
+      "Bash(kubectl *)",
+      "Bash(git *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(find *)",
+      "Bash(rg *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(diff *)",
+      "Bash(readlink *)"
+    ],
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(git reset --hard *)",
+      "Bash(git push --force *)"
+    ]
+  }
+}

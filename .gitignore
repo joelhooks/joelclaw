@@ -34,14 +34,17 @@ yarn-debug.log*
 yarn-error.log*
 
 # ── Agent tool directories ──────────────────────────────────────────
-# These get created by `npx skills add --all`, various agent tools,
-# or by agents themselves. Canonical skills live in skills/ (tracked).
-# Home dirs (~/.agents, ~/.pi, ~/.claude) symlink INTO skills/.
-# Nothing in .* dirs should be tracked — ever.
-.agents/
-.claude/
+# Skills and bulk content in dot dirs are NEVER tracked.
+# Canonical skills live in skills/ (tracked). Home dirs symlink in.
+# Only the thin config/instruction files are tracked (see !exceptions).
+.agents/*
+!.agents/AGENTS.md
+.claude/*
+!.claude/CLAUDE.md
+!.claude/settings.json
 .cortex/
-.pi/
+.pi/*
+!.pi/AGENTS.md
 .bun-tmp/
 .bun-home/
 .bun/

@@ -1,230 +1,227 @@
-# Agent Instructions
+# joelclaw — Agent Instructions
+
+Personal AI infrastructure monorepo. Event-driven pipelines, always-on gateway, CLI tooling, and the joelclaw.com website. Built by Joel Hooks, operated by agents.
+
+## Architecture
+
+```
+┌─ Mac Mini "Panda" (M4 Pro, 64GB, always-on) ──────────────────────┐
+│                                                                     │
+│  Colima VM (VZ framework, aarch64)                                  │
+│    └─ Talos v1.12.4 container → k8s v1.35.0 (single node)         │
+│        └─ namespace: joelclaw                                       │
+│            ├─ inngest-0          (StatefulSet, ports 8288/8289)     │
+│            ├─ redis-0            (StatefulSet, port 6379)          │
+│            ├─ typesense-0        (StatefulSet, port 8108)          │
+│            ├─ system-bus-worker  (Deployment, port 3111)           │
+│            ├─ docs-api           (Deployment, port 3838)           │
+│            ├─ livekit-server     (Deployment, ports 7880/7881)     │
+│            └─ bluesky-pds        (Deployment, port 3000)           │
+│                                                                     │
+│  Gateway daemon (pi session, always-on, Redis event bridge)         │
+│  NAS "three-body" (ASUSTOR, 10GbE NFS, 64TB RAID5 + 1.9TB NVMe)  │
+│  Tailscale mesh (all devices)                                       │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## Monorepo Layout
+
+```
+joelclaw/
+├── apps/
+│   ├── web/                    # joelclaw.com (Next.js 16, RSC, Vercel)
+│   ├── docs/                   # Documentation site
+│   └── docs-api/               # PDF/docs REST API (k8s)
+├── packages/
+│   ├── cli/                    # @joelclaw/cli — `joelclaw` command
+│   ├── system-bus/             # @joelclaw/system-bus — 110+ Inngest functions
+│   ├── gateway/                # @joelclaw/gateway — multi-channel message routing
+│   ├── inference-router/       # @joelclaw/inference-router — model selection catalog
+│   ├── model-fallback/         # @joelclaw/model-fallback — provider fallback chains
+│   ├── message-store/          # @joelclaw/message-store — Redis message queue
+│   ├── vault-reader/           # @joelclaw/vault-reader — Vault context injection
+│   ├── markdown-formatter/     # @joelclaw/markdown-formatter — per-platform formatting
+│   ├── telemetry/              # @joelclaw/telemetry — OTEL emission interface
+│   ├── pi-extensions/          # @joelclaw/pi-extensions — pi agent extensions
+│   ├── email/                  # @joelclaw/email — email processing
+│   ├── mdx-pipeline/           # @joelclaw/mdx-pipeline — MDX content processing
+│   ├── lexicons/               # @joelclaw/lexicons — AT Protocol lexicons
+│   ├── discord-ui/             # @joelclaw/discord-ui — Discord components
+│   ├── things-cloud/           # @joelclaw/things-cloud — Things integration
+│   └── ui/                     # @repo/ui — shared UI components
+├── k8s/                        # Kubernetes manifests + deploy scripts
+├── skills/                     # Agent skills (canonical, 51 skills)
+├── scripts/                    # Utility scripts
+├── infra/                      # Infrastructure config
+└── AGENTS.md                   # This file
+```
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Runtime | Bun |
+| Package manager | pnpm workspaces |
+| Language | TypeScript (strict) |
+| Web framework | Next.js 16 (App Router, RSC, PPR) |
+| Effect system | Effect, @effect/cli, @effect/schema, @effect/platform |
+| Workflows | Inngest (self-hosted, 110+ durable functions) |
+| State | Redis (k8s StatefulSet) |
+| Search | Typesense (full-text + vector) |
+| Video | Mux |
+| Observability | OTEL → Typesense + Langfuse |
+| Infrastructure | Talos Linux on Colima, k8s v1.35.0 |
+| Deployment | Vercel (web), GHCR + k8s (worker) |
+| Storage | NAS (NFS over 10GbE), Vault (Obsidian) |
+
+## Hexagonal Architecture (ADR-0144) — MANDATORY
+
+Heavy logic lives in standalone `@joelclaw/*` packages behind interfaces. Consumers (gateway, CLI) are thin composition roots that wire adapters together.
+
+### Package Boundary Rules
+
+- **Import via `@joelclaw/*`**, never via relative paths across package boundaries.
+- **DI via interfaces** in library packages. Only composition roots do concrete wiring.
+- **New heavy logic → new package** if it's >100 lines and reusable.
+- **One telemetry interface** — `TelemetryEmitter` from `@joelclaw/telemetry`.
+- **One model resolver** — `@joelclaw/inference-router` catalog for ALL model selection.
+
+```typescript
+// ✅ Correct
+import { persist, drainByPriority } from "@joelclaw/message-store";
+import type { TelemetryEmitter } from "@joelclaw/telemetry";
+
+// ❌ Wrong — cross-package relative import
+import { persist } from "../../message-store/src/store";
+```
+
+### Validation
+
+After any code change:
+```bash
+bunx tsc --noEmit
+pnpm biome check packages/ apps/
+```
+
+## CLI — `joelclaw`
+
+The CLI is the primary operator interface. Built with `@effect/cli`, compiled to binary at `~/.bun/bin/joelclaw`. Returns HATEOAS JSON envelopes.
+
+**If the CLI crashes, that's the highest priority fix.** Heavy deps must be lazy-loaded.
+
+### Key Commands
+
+```bash
+joelclaw status                        # Health check (server, worker, k8s)
+joelclaw runs [--count N] [--hours H]  # Recent Inngest runs
+joelclaw run <run-id>                  # Step trace for a run
+joelclaw send <event> [-d JSON]        # Send Inngest event
+joelclaw logs worker|errors|server     # Service logs
+joelclaw subscribe list|add|remove|check|summary  # Feed subscriptions
+joelclaw gateway status|events|test    # Gateway operations
+joelclaw otel list|search|stats        # Observability
+joelclaw loop start|status|cancel      # Agent coding loops
+joelclaw discover <url> [-c context]   # Capture discovery
+joelclaw recall <query>                # Semantic memory search
+joelclaw inngest status|restart-worker # Inngest management
+```
+
+### Building
+
+```bash
+cd ~/Code/joelhooks/joelclaw
+bun build packages/cli/src/cli.ts --compile --outfile ~/.bun/bin/joelclaw
+```
+
+Test after every change: `joelclaw status`, `joelclaw send --help`, `joelclaw runs --count 1`.
+
+## System Bus Worker
+
+110+ Inngest functions in `packages/system-bus/src/inngest/functions/`. Deployed to k8s as `system-bus-worker`.
+
+### Deploy
+
+```bash
+~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh
+```
+
+Builds ARM64 image, pushes to GHCR, updates k8s deployment, verifies rollout.
+
+### LLM Inference in Functions
+
+System-bus functions that need LLM calls MUST use:
+```typescript
+import { infer } from "../../lib/inference";
+```
+
+This shells to `pi -p --no-session --no-extensions` — zero config, zero API cost. Never use OpenRouter, never read auth.json directly, never use paid API keys.
+
+## Gateway
+
+Always-on pi session with Redis event bridge. Receives messages from Telegram, Slack, Discord, iMessage. Routes through priority queue. Respects sleep mode.
+
+- Gateway middleware (`packages/system-bus/src/inngest/middleware/gateway.ts`) auto-injects `gateway` context into Inngest functions.
+- Channel implementations: `packages/gateway/src/channels/types.ts`
+
+## Observability
+
+Silent failures are bugs. Every pipeline step emits structured telemetry.
+
+```bash
+joelclaw otel list --hours 1           # Recent events
+joelclaw otel search "error" --hours 24 # Search
+joelclaw otel stats --hours 24          # Aggregate stats
+```
+
+Storage: Typesense `otel_events` collection.
+
+## Skills
+
+51 skills in `skills/` — **canonical source, fully tracked in git**.
+
+Home directories symlink in:
+- `~/.agents/skills/<name>` → `~/Code/joelhooks/joelclaw/skills/<name>`
+- `~/.pi/agent/skills/<name>` → `~/Code/joelhooks/joelclaw/skills/<name>`
+
+**Never** put skill content in dot directories (`.agents/`, `.pi/`, `.claude/`). Those are symlink consumers, not sources. The `skills/` directory is sacred.
+
+When operational reality changes, update the relevant skill immediately.
+
+## Vault
+
+`~/Vault` (Obsidian, PARA method) is the knowledge base:
+- `docs/decisions/` — Architecture Decision Records (ADR-0001 through ADR-0157+)
+- `system/system-log.jsonl` — structured system log (`slog` CLI)
+- `Resources/` — contacts, discoveries, video notes
+- `Projects/` — active project notes
+
+## Key ADRs
+
+| ADR | Title | Status |
+|-----|-------|--------|
+| 0088 | NAS-backed storage tiering | Phase 1-2 ✅, Phase 3-4 open |
+| 0127 | Feed subscriptions & resource monitoring | Shipped |
+| 0140 | Inference router | Shipped |
+| 0144 | Gateway hexagonal architecture | Shipped |
+| 0155 | Three-stage story pipeline | Shipped |
+| 0156 | Graceful worker restart | Accepted |
+| 0157 | Agent lifecycle CLI | Proposed |
+
+## Logging System Changes
+
+Any install, config change, or ops mutation → `slog write`:
+```bash
+slog write --action configure --tool <tool> --detail "<what changed>" --reason "<why>"
+```
+
+## Git Workflow
+
+- Do not use destructive commands (`git reset --hard`) unless explicitly requested.
+- Never discard user changes without consent.
+- Commit to `main` directly for operational work. PRs for features when loops are involved.
 
 ## Model Policy
 
 - Codex tasks MUST use `gpt-5.3-codex`.
-- If model is unspecified, set `model: "gpt-5.3-codex"`.
-
-## Current System Snapshot
-
-- Primary repo: `~/Code/joelhooks/joelclaw`
-- Vault (source of truth): `~/Vault`
-- Decision records: `~/Vault/docs/decisions/`
-- System log JSONL: `~/Vault/system/system-log.jsonl`
-- Repo skills (authoritative): `~/Code/joelhooks/joelclaw/skills`
-- Skill links (consumers): `~/.agents/skills`, `~/.pi/agent/skills`, `~/.claude/skills`
-
-Operational architecture (current):
-- Event/workflow core: Inngest + system-bus worker
-- **Inference routing: `@joelclaw/inference-router` (ADR-0140)** — canonical model selection for ALL LLM calls. Catalog-based provider resolution, Langfuse tracing, fallback chains. Gateway uses it for model resolution. Never hardcode model→provider mappings — use the catalog.
-- Gateway: Redis-backed event bridge + consumer channels (Telegram, Slack, Discord, iMessage). Hexagonal architecture (ADR-0144) with extracted packages: `@joelclaw/model-fallback`, `@joelclaw/message-store`, `@joelclaw/vault-reader`, `@joelclaw/markdown-formatter`.
-- Observability: OTEL-style events -> Typesense (`otel_events`) + Convex/UI surfaces
-- Web: joelclaw.com in `apps/web`, including `/system` and `/system/events`
-
-## Hexagonal Architecture (ADR-0144) — MANDATORY
-
-The monorepo uses **ports and adapters**. Heavy logic lives in standalone `@joelclaw/*` packages behind interfaces. The gateway (and other consumers) are thin composition roots that wire adapters together. **Never embed heavy logic directly in a consumer.**
-
-### Package Map
-| Package | Port Interface | What It Does |
-|---------|---------------|--------------|
-| `@joelclaw/inference-router` | `routeInference()`, catalog | Model selection for ALL LLM calls |
-| `@joelclaw/model-fallback` | `FallbackController` | Provider fallback chains |
-| `@joelclaw/message-store` | `persist()`, `drainByPriority()` | Redis-backed message queue + priority |
-| `@joelclaw/vault-reader` | `enrichPromptWithVaultContext()` | Vault file search + context injection |
-| `@joelclaw/markdown-formatter` | `FormatConverter` | AST-based per-platform formatting |
-| `@joelclaw/telemetry` | `TelemetryEmitter` | Single OTEL emission interface |
-
-### Few-Shot: How to Use These
-
-**✅ Correct — import from package:**
-```typescript
-import { emitGatewayOtel } from "@joelclaw/telemetry";
-import { persist, drainByPriority } from "@joelclaw/message-store";
-import { TelegramConverter } from "@joelclaw/markdown-formatter";
-```
-
-**❌ Wrong — reach into another package's internals:**
-```typescript
-import { emitGatewayOtel } from "../observability";        // DELETED
-import { persist } from "../../message-store/src/store";    // NEVER
-import { mdToTelegramHtml } from "../channels/telegram";    // internal
-```
-
-**✅ Correct — DI via interface:**
-```typescript
-import type { TelemetryEmitter } from "@joelclaw/telemetry";
-function init(redis: Redis, telemetry?: TelemetryEmitter) { ... }
-```
-
-**❌ Wrong — hardcode dependency:**
-```typescript
-import { emitGatewayOtel } from "@joelclaw/telemetry";
-// Don't call emitGatewayOtel directly in a library package.
-// Accept TelemetryEmitter interface, let the consumer inject.
-```
-
-### Channel Interface
-Consumer channels (Telegram, Slack, Discord, iMessage) implement `Channel` from `packages/gateway/src/channels/types.ts`. Redis is an `EventBridge` port — separate concern, not a Channel.
-
-### Rules
-- **New heavy logic → new package.** If it's >100 lines and reusable, extract it.
-- **Import via `@joelclaw/*`**, never via relative paths across package boundaries.
-- **DI via interfaces** in library packages. Only composition roots (gateway, CLI) do concrete wiring.
-- **One telemetry interface.** All packages use `TelemetryEmitter` from `@joelclaw/telemetry`.
-- **One model resolver.** All model selection goes through `@joelclaw/inference-router` catalog.
-
-### Biome Enforcement — DO NOT BYPASS
-`biome.json` at repo root enforces package boundaries via `noRestrictedImports`. Relative imports to extracted modules (observability, model-fallback, message-store, vault-read) are **errors** — you must use `@joelclaw/*` packages instead.
-
-**Why this exists:** Agents write 90% of the code. Without automated enforcement, cross-package boundary violations creep back in within days. Biome catches violations at the exact moment they happen, with the file path, line number, and a message pointing to the correct package + ADR. This is the architectural immune system.
-
-**After any code change, run:**
-```bash
-pnpm biome check packages/ apps/
-```
-
-If Biome reports `noRestrictedImports` errors, **fix the imports** — do not suppress, do not add `biome-ignore`, do not remove the rule. The error message tells you exactly which `@joelclaw/*` package to import from instead.
-
-**Codex/loop prompts must include**: `Validation: pnpm biome check packages/ apps/` alongside the usual `bunx tsc --noEmit`.
-
-## Core Rules
-
-1. Use CLI surfaces first (not plumbing)
-- Prefer `joelclaw` and `slog` over raw `launchctl`, `curl`, direct Redis edits, or ad hoc log greps.
-- Only drop to plumbing when CLI lacks required capability.
-
-2. Observability is mandatory
-- Silent failures are bugs.
-- Emit or preserve structured telemetry for pipeline/function/service work.
-- Verify behavior with `joelclaw otel list|search|stats` and relevant status commands.
-
-3. Log system changes
-- For installs/config mutations/ops changes, append a `slog` entry.
-- Example:
-```bash
-slog write --action configure --tool gateway --detail "rotated webhook secret lease" --reason "signature failures"
-```
-
-4. Keep skills current with the system
-- When operational reality changes, update skills in `~/Code/joelhooks/joelclaw/skills`.
-- Maintain Codex desktop metadata on every repo skill:
-  - `agents/openai.yaml`
-  - `assets/small-logo.svg`
-  - `assets/large-logo.png`
-  - SKILL frontmatter: `name`, `displayName`, `description`, `version`, `author`, `tags`
-
-5. Treat repo skills as source, home dirs as links
-- Repo skill directories are canonical.
-- `~/.agents/skills`, `~/.pi/agent/skills`, `~/.claude/skills` should symlink out to repo skills.
-- External/third-party skill packs should remain external (system/global install), not copied into repo unless intentionally curated.
-
-6. Prefer safe git workflows
-- Do not use destructive commands (`git reset --hard`, force-checkout) unless explicitly requested.
-- Never discard user changes without consent.
-
-7. CLI CANNOT BE BROKEN
-- The `joelclaw` CLI is the primary operator interface. If it crashes, the whole system is degraded.
-- **Every import in the CLI entry point must be crash-safe.** Heavy/optional deps (OTEL, Langfuse, etc.) MUST be lazy-loaded inside the functions that need them, never at the top level.
-- If a dependency breaks (version mismatch, missing export, runtime incompatibility), the CLI must degrade gracefully — skip the broken feature, not crash entirely.
-- **Test the CLI after every dep change**: `joelclaw status`, `joelclaw send --help`, `joelclaw runs --count 1`.
-- If the CLI is broken, fixing it is the highest priority — above feature work, above cleanup, above everything except active incidents.
-
-8. Always include links
-- When referencing files, repos, PRs, runs, docs, URLs, or any addressable resource, include the link.
-- Links provide context and save the reader a lookup. No bare references when a URL exists.
-
-9. Use pi sessions for LLM inference
-- System-bus functions that need LLM calls MUST shell to `pi -p --no-session --no-extensions`.
-- Pi handles auth, token refresh, provider routing — zero config, zero API cost.
-- Do NOT use OpenRouter, do NOT read auth.json directly, do NOT use paid API keys.
-- Use the shared utility: `import { infer } from "../../lib/inference"` (`packages/system-bus/src/lib/inference.ts`).
-- Existing patterns: `reflect.ts`, `vip-email-received.ts`, `email-cleanup.ts`, `batch-review.ts`.
-
-## Standard Operational Commands
-
-Health and status:
-```bash
-joelclaw status
-joelclaw inngest status
-joelclaw gateway status
-```
-
-Worker/registration lifecycle:
-```bash
-joelclaw inngest sync-worker --restart
-joelclaw refresh
-```
-
-Gateway operations:
-```bash
-joelclaw gateway events
-joelclaw gateway test
-joelclaw gateway restart
-joelclaw gateway stream
-```
-
-Observability:
-```bash
-joelclaw otel list --hours 1
-joelclaw otel search "<query>" --hours 24
-joelclaw otel stats --hours 24
-```
-
-Runs and triage:
-```bash
-joelclaw runs --count 10 --hours 24
-joelclaw run <run-id>
-joelclaw logs worker --lines 80
-joelclaw logs errors --lines 120
-```
-
-## Efficient Prompting
-
-Use this format for high-signal requests:
-
-```md
-Goal: <single concrete outcome>
-Context: <repo/path/runtime facts>
-Constraints: <time/risk/tool limits>
-Do:
-- <task 1>
-- <task 2>
-Deliver:
-- <exact artifact paths>
-- <verification commands + expected signals>
-```
-
-Prompting heuristics:
-- State exact paths and systems (`apps/web`, `packages/system-bus`, `skills/<name>`).
-- Request executable verification, not just code changes.
-- Ask for diffs plus brief risk notes when touching infra or workflows.
-- For operational work, ask for rollback or recovery command.
-- Prefer “do it now + validate” over brainstorming when implementation is intended.
-
-Fast iteration pattern:
-1. Ask for a short plan.
-2. Ask to execute immediately.
-3. Require verification output summary.
-4. Decide next step from findings.
-
-## Output Contract (for agents)
-
-When returning results:
-- Lead with what changed.
-- List touched absolute paths.
-- Include validation commands run and key outcomes.
-- Note blockers explicitly.
-- Suggest the smallest meaningful next actions.
-
-## ADR and Vault Discipline
-
-When architecture/behavior changes:
-- Update or add ADRs in `~/Vault/docs/decisions/`.
-- Keep project status in Vault current.
-- Keep this AGENTS file aligned with reality.
-
-## Notes
-
-- `skills/` in the joelclaw repo is **sacred and fully tracked**. Every custom skill must be committed. Never gitignore this directory.
-- If command contracts change in `packages/cli`, update dependent skills the same session.
+- All model selection goes through `@joelclaw/inference-router` catalog.
+- Never hardcode model→provider mappings.
