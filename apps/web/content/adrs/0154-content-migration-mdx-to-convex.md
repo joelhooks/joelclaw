@@ -243,11 +243,19 @@ New articles are created in Convex directly (via dashboard, API, or agent). The 
 - Convex in k8s is on the same machine — sub-ms latency
 - All current MDX components are already in a shared components map — no dynamic imports in article content
 
-## Open Questions
+## Resolved Questions
 
-- Should discoveries (`/cool/*`) migrate to Convex too, or stay as filesystem markdown?
-- Should the seed script be idempotent (upsert) or one-shot?
-- Do we need a "sync back to filesystem" escape hatch for backup?
+- **Discoveries**: Yes, but in a later phase. Articles first to prove the pipeline.
+- **Seed script**: Idempotent upsert — re-runnable during development and if MDX files update before cutover.
+- **Feedback scope**: Joel-only (auth-gated, single user).
+- **Agent edits**: Auto-publish, no approval step. Revision history is the safety net.
+- **Content format**: Raw MDX in Convex — preserves component imports and JSX.
+
+## Technical Notes
+
+- **`fetchQuery` from `convex/nextjs` sets `cache: "no-store"`** internally. This is fine inside a `'use cache'` boundary — the outer cache directive handles caching. But `fetchQuery` outside a cache boundary hits Convex on every request.
+- **`compileMDX` from `next-mdx-remote/rsc`** uses `Function()` constructor to eval compiled MDX. Inside `'use cache'` this works because the output is a serializable React tree. The components map must be passed at compile time, not closed over.
+- **`ConvexHttpClient` from `convex/browser`** is correct for `generateStaticParams` and seed scripts — plain HTTP, no WebSocket, no provider. Already used in `apps/web/lib/convex-content.ts` and `packages/system-bus/src/lib/convex.ts`.
 
 ## Related
 
