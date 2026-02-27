@@ -249,13 +249,15 @@ async function runCodex<T = unknown>({
   outputSchema,
   schemaName,
   timeoutMs,
-}: CodexExecOptions): Promise<CodexExecResult<T>> {
+  sandbox,
+}: CodexExecOptions & { sandbox?: "read-only" | "workspace-write" | "danger-full-access" }): Promise<CodexExecResult<T>> {
   const escapedPrompt = escapeShellArg(prompt);
   const schemaPath = outputSchema
     ? writeOutputSchemaFile(outputSchema, schemaName || "response")
     : undefined;
   const schemaFlag = schemaPath ? ` --output-schema '${escapeShellArg(schemaPath)}'` : "";
-  const cmd = `codex exec --full-auto -m gpt-5.3-codex${schemaFlag} '${escapedPrompt}'`;
+  const sandboxFlag = sandbox ? ` --sandbox ${sandbox}` : "";
+  const cmd = `codex exec --full-auto -m gpt-5.3-codex${sandboxFlag}${schemaFlag} '${escapedPrompt}'`;
 
   try {
     const output = (await new Promise<string>((resolve, reject) => {
@@ -334,8 +336,9 @@ async function codexExecWithHealing<T = unknown>({
   schemaName,
   stageName,
   timeoutMs,
-}: CodexHealingOptions): Promise<CodexExecResult<T>> {
-  const result = await runCodex<T>({ prompt, cwd, outputSchema, schemaName, timeoutMs });
+  sandbox,
+}: CodexHealingOptions & { sandbox?: "read-only" | "workspace-write" | "danger-full-access" }): Promise<CodexExecResult<T>> {
+  const result = await runCodex<T>({ prompt, cwd, outputSchema, schemaName, timeoutMs, sandbox });
 
   if (!outputSchema) {
     return result;
@@ -371,6 +374,7 @@ ${result.output.slice(-12_000)}`;
     outputSchema,
     schemaName: `${schemaName || stageName}-repair`,
     timeoutMs,
+    sandbox,
   });
 
   if (repaired.ok && repaired.parsed) {
@@ -841,6 +845,7 @@ Be thorough. The next stage will judge based on your proof.`;
         schemaName: `prove-${storyId}`,
         stageName: "prove",
         timeoutMs: codexTimeoutMs,
+        sandbox: "danger-full-access",
       });
     });
 
@@ -910,6 +915,7 @@ Be strict. Partial implementations are failures.`;
         schemaName: `judge-${storyId}`,
         stageName: "judge",
         timeoutMs: codexTimeoutMs,
+        sandbox: "danger-full-access",
       });
     });
 
