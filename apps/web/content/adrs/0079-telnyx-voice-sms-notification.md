@@ -25,7 +25,8 @@ Use **Telnyx** as the outbound voice and SMS provider via their REST API v2.
 ### Why Telnyx (not Twilio)
 
 - Already configured: SIP connection (`joelclaw-livekit-sip`), OVP, phone number (`<redacted-phone>`) provisioned for LiveKit SIP bridge (ADR-0043)
-- TeXML support for TTS calls without webhook infrastructure
+- TeXML support for simple TTS calls (`/texml/calls`)
+- Call Control support for programmable calls (`/calls` with webhook-driven control)
 - SMS on the same number (if enabled)
 - Cheaper than Twilio for low-volume
 
@@ -35,10 +36,14 @@ Use **Telnyx** as the outbound voice and SMS provider via their REST API v2.
 joelclaw call "message"
   → notification/call.requested event
     → telnyx-notify Inngest function
-      → step: place TeXML TTS call
+      → step: place TeXML TTS call (/texml/calls, immediate spoken message)
       → step: wait 30s
       → step: check call status
       → step: if unanswered → send SMS fallback
+
+Manual programmable path (for richer call control):
+  → Telnyx /calls using Call Control App ID
+  → issue /actions/speak (or other actions) after call starts
 ```
 
 ### Components
