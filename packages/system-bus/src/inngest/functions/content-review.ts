@@ -9,6 +9,7 @@ import { buildGatewaySignalMeta } from "../middleware/gateway-signal";
 type ContentType = "adr" | "post" | "discovery" | "video-note";
 type SupportedContentType = Exclude<ContentType, "video-note">;
 type ReviewCommentStatus = "submitted" | "processing" | "resolved";
+type FeedbackStatus = "processing" | "applied" | "failed";
 
 type ContentResourceDoc = {
   resourceId: string;
@@ -280,6 +281,24 @@ async function updateReviewCommentStatuses(args: {
   }
 
   return updated;
+}
+
+function feedbackMutationName(status: FeedbackStatus): "markProcessing" | "markApplied" | "markFailed" {
+  if (status === "processing") return "markProcessing";
+  if (status === "applied") return "markApplied";
+  return "markFailed";
+}
+
+async function updateFeedbackStatuses(resourceId: string, status: FeedbackStatus): Promise<number> {
+  const client = getConvexClient();
+  const mutationName = feedbackMutationName(status);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ref = (anyApi as any).feedback[mutationName] as FunctionReference<"mutation">;
+  const result = await client.mutation(ref, { resourceId });
+
+  if (!result || typeof result !== "object") return 0;
+  const updated = (result as { updated?: unknown }).updated;
+  return typeof updated === "number" ? updated : 0;
 }
 
 function buildReviewPrompt(args: {
@@ -576,6 +595,10 @@ export const contentReviewApply = inngest.createFunction(
         });
       });
 
+      const failedFeedbackCount = await step.run("mark-feedback-failed", async () => {
+        return updateFeedbackStatuses(parentResourceId, "failed");
+      });
+
       const gateway = (rest as { gateway?: GatewayContext }).gateway;
       const message = formatError(error);
 
@@ -590,6 +613,7 @@ export const contentReviewApply = inngest.createFunction(
             contentSlug: failureInput.contentSlug,
             parentResourceId,
             revertedCount,
+            failedFeedbackCount,
             source: failureInput.source,
           },
         );
@@ -625,6 +649,10 @@ export const contentReviewApply = inngest.createFunction(
         resourceId: article.resourceId,
       };
     }
+
+    const feedbackProcessingCount = await step.run("mark-feedback-processing", async () => {
+      return updateFeedbackStatuses(parentResourceId, "processing");
+    });
 
     await step.run("mark-comments-processing", async () => {
       return updateReviewCommentStatuses({
@@ -680,6 +708,10 @@ export const contentReviewApply = inngest.createFunction(
       });
     });
 
+    const feedbackAppliedCount = await step.run("mark-feedback-applied", async () => {
+      return updateFeedbackStatuses(parentResourceId, "applied");
+    });
+
     await step.run("revalidate-cache-tag", async () => {
       await revalidateContentTag(cacheTag);
     });
@@ -696,6 +728,7 @@ export const contentReviewApply = inngest.createFunction(
         contentType,
         contentSlug,
         commentsResolved: resolvedCount,
+        feedbackResolved: feedbackAppliedCount,
       });
 
       return { notified: true };
@@ -709,6 +742,8 @@ export const contentReviewApply = inngest.createFunction(
       parentResourceId,
       revisionResourceId,
       resolvedCount,
+      feedbackProcessingCount,
+      feedbackAppliedCount,
       cacheTag,
     };
   },

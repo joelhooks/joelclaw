@@ -3,6 +3,7 @@ import { cacheLife, cacheTag } from "next/cache";
 import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import { Suspense } from "react";
+import { LazyFeedbackStatusIsland } from "@/components/review/lazy-feedback-status-island";
 import { LazyReviewGate } from "@/components/review/lazy-review-gate";
 import { SITE_NAME, SITE_URL } from "@/lib/constants";
 import { blogPostingJsonLd, breadcrumbJsonLd } from "@/lib/jsonld";
@@ -155,6 +156,6 @@ function ArticleFallback() {
   return <article className="mx-auto max-w-2xl" data-pagefind-body />;
 }
 
-async function FeedbackStatusSlot(_props: { slug: string }) {
-  return null;
+function FeedbackStatusSlot({ slug }: { slug: string }) {
+  return <LazyFeedbackStatusIsland resourceId={`post:${slug}`} />;
 }

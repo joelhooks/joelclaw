@@ -172,6 +172,7 @@ export const submitReview = mutation({
       .collect();
 
     let submitted = 0;
+    const submittedFeedback: Array<{ paragraphId: string; content: string }> = [];
     for (const link of links) {
       const child = await ctx.db
         .query("contentResources")
@@ -183,12 +184,40 @@ export const submitReview = mutation({
       const fields = (child.fields ?? {}) as Record<string, unknown>;
       if (fields.status !== "draft") continue;
 
+      const content = typeof fields.content === "string" ? fields.content.trim() : "";
+      if (content.length > 0) {
+        submittedFeedback.push({
+          paragraphId:
+            typeof fields.paragraphId === "string" ? fields.paragraphId : "unknown",
+          content,
+        });
+      }
+
       await ctx.db.patch(child._id, {
         fields: { ...fields, status: "submitted" },
         updatedAt: Date.now(),
       });
       submitted++;
     }
+
+    if (submitted > 0) {
+      const feedbackBody = submittedFeedback
+        .map(
+          (feedback, index) =>
+            `${index + 1}. [${feedback.paragraphId}] ${feedback.content}`,
+        )
+        .join("\n");
+
+      await ctx.db.insert("feedbackItems", {
+        resourceId: contentId,
+        content: feedbackBody || `Review submitted for ${contentId}`,
+        status: "pending",
+        authorId: undefined,
+        createdAt: Date.now(),
+        resolvedAt: undefined,
+      });
+    }
+
     return { submitted };
   },
 });

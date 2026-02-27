@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import type { MutationCtx } from "./_generated/server";
-import { mutation } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 
 async function patchByStatus(
   ctx: MutationCtx,
@@ -54,6 +54,27 @@ export const create = mutation({
       status: "pending" as const,
       createdAt,
     };
+  },
+});
+
+export const listByResource = query({
+  args: {
+    resourceId: v.string(),
+  },
+  handler: async (ctx, { resourceId }) => {
+    const docs = await ctx.db
+      .query("feedbackItems")
+      .withIndex("by_resource", (q) => q.eq("resourceId", resourceId))
+      .collect();
+
+    return docs
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((doc) => ({
+        feedbackId: doc._id,
+        status: doc.status,
+        createdAt: doc.createdAt,
+        resolvedAt: doc.resolvedAt,
+      }));
   },
 });
 
