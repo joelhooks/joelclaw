@@ -2,6 +2,7 @@
 
 - **Status**: shipped
 - **Date**: 2026-02-24
+- **Updated**: 2026-02-27
 - **Related**: ADR-0087 (observability pipeline), ADR-0112 (caching layer)
 
 ## Context
@@ -103,6 +104,25 @@ Feed update detected
 ```
 
 The LLM summary step should also assess **relevance to joelclaw** (agents, personal infra, BEAM/Elixir, developer tools, agentic patterns). Low-relevance items get a shorter notification without the publish button — just "FYI: Simon posted about Django migrations" vs a full card for "Simon published new agentic engineering patterns."
+
+## Implementation Status (2026-02-27)
+
+### ✅ Completed
+- **Redis storage**: `joelclaw:subscriptions` hash (`packages/system-bus/src/lib/subscriptions.ts`)
+- **Feed checker**: Atom/RSS parse, GitHub API, page hash diff (`packages/system-bus/src/lib/feed-checker.ts`)
+- **Inngest functions**: `subscription/check-feeds` (cron hourly) + `subscription/check-single` (`packages/system-bus/src/inngest/functions/subscriptions.ts`)
+- **CLI commands**: `joelclaw subscribe {list|add|remove|check|summary}` (`packages/cli/src/commands/subscribe.ts`)
+- **Skill**: `monitor` skill for agent-driven subscription management (`skills/monitor/SKILL.md`)
+- **Discovery integration**: Discovery skill updated with Step 2 "Assess for Monitoring" — agent recommends monitoring for relevant resources
+- **Live subscriptions**: Simon Willison (atom + page), Frontman AI (github), json-render (github)
+
+### Active Subscriptions (as of 2026-02-27)
+| ID | Name | Type | Interval |
+|----|------|------|----------|
+| simon-willison-all | Simon Willison (all) | atom | hourly |
+| simon-willison-agentic | Simon Willison (agentic guide) | page | daily |
+| frontman-ai | Frontman AI | github | daily |
+| json-render | json-render | github | daily |
 
 ## Non-Goals (v1)
 
