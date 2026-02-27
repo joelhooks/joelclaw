@@ -1,5 +1,6 @@
-import { inngest } from "../../client";
 import { $ } from "bun";
+import { inngest } from "../../client";
+import { buildGatewaySignalMeta } from "../../middleware/gateway-signal";
 import { createLoopOnFailure, mintGitHubToken, pushGatewayEvent, readPrd } from "./utils";
 
 /**
@@ -44,6 +45,7 @@ export const agentLoopComplete = inngest.createFunction(
     // Gateway progress: merge starting
     if (gateway) {
       await gateway.progress(`🔀 Merging ${branchName} — ${storiesCompleted} completed, ${storiesFailed} failed`, {
+        ...buildGatewaySignalMeta("loop.lifecycle", "info"),
         loopId, branchName, storiesCompleted, storiesFailed,
       });
     }

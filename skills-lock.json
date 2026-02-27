@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "skills": {
+    "inngest-durable-functions": {
+      "source": "inngest/inngest-skills",
+      "sourceType": "github",
+      "computedHash": "a540b098e99c48f8eba800a756d2c0170128e88147a66f80ebbf16eecdf1d51f"
+    },
+    "inngest-events": {
+      "source": "inngest/inngest-skills",
+      "sourceType": "github",
+      "computedHash": "fc7b26058d06099c171cbf102125d1a98fe71d723f37704fc208920895222956"
+    },
+    "inngest-flow-control": {
+      "source": "inngest/inngest-skills",
+      "sourceType": "github",
+      "computedHash": "6a51d0e26309202b4cb4ef853f63d4b3203b2374cb4569eef35f4e6638a6d3d8"
+    },
+    "inngest-middleware": {
+      "source": "inngest/inngest-skills",
+      "sourceType": "github",
+      "computedHash": "1e586e0167bfc7a52f4cd4099de53e0d87f0743d93d7c88c7055a16dc6e70772"
+    },
+    "inngest-setup": {
+      "source": "inngest/inngest-skills",
+      "sourceType": "github",
+      "computedHash": "2c40971e280ac95500e4bf0000dd134c8bf124df4ed01ab2591786cf8f3fb5e7"
+    },
+    "inngest-steps": {
+      "source": "inngest/inngest-skills",
+      "sourceType": "github",
+      "computedHash": "748640680d8432c578049e5c5fa69e729a9f0f24c6e1d4fb9917baffdb0d1dc3"
+    }
+  }
+}

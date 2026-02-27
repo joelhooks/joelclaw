@@ -1,8 +1,20 @@
-import { inngest } from "../../client";
-import { NonRetriableError } from "inngest";
-import { $ } from "bun";
 import { join } from "node:path";
-import { appendProgress, claimStory, createLoopOnFailure, isCancelled, readPrd, seedPrd, seedPrdFromData, markStoryRechecked, parseClaudeOutput, ensureClaudeAuth } from "./utils";
+import { $ } from "bun";
+import { NonRetriableError } from "inngest";
+import { inngest } from "../../client";
+import { buildGatewaySignalMeta } from "../../middleware/gateway-signal";
+import {
+  appendProgress,
+  claimStory,
+  createLoopOnFailure,
+  ensureClaudeAuth,
+  isCancelled,
+  markStoryRechecked,
+  parseClaudeOutput,
+  readPrd,
+  seedPrd,
+  seedPrdFromData,
+} from "./utils";
 
 const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
 
@@ -380,6 +392,7 @@ export const agentLoopPlan = inngest.createFunction(
     const skippedStories = prd.stories.filter((s) => (s as any).skipped).length;
     if (gateway && isStartEvent) {
       await gateway.progress(`🚀 Loop started: ${prd.title ?? loopId} — ${totalStories} stories`, {
+        ...buildGatewaySignalMeta("loop.lifecycle", "info"),
         loopId, totalStories,
       });
     }
@@ -394,6 +407,7 @@ export const agentLoopPlan = inngest.createFunction(
       const skipped = prd.stories.filter((s) => (s as any).skipped).length;
       if (gateway) {
         await gateway.progress(`⏱️ Max iterations (${maxIterations}) reached. ${completed} completed, ${skipped} skipped.`, {
+          ...buildGatewaySignalMeta("loop.outcome", "warn"),
           loopId, completed, skipped, maxIterations,
         });
       }
@@ -469,6 +483,7 @@ export const agentLoopPlan = inngest.createFunction(
 
       if (gateway) {
         await gateway.progress(`✅ All stories processed. ${completed} completed, ${failed} skipped. Recheck: ${recovered} recovered, ${stillFailing} still failing.`, {
+          ...buildGatewaySignalMeta("loop.outcome", "info"),
           loopId, completed, failed, recovered, stillFailing,
         });
       }
@@ -543,6 +558,7 @@ export const agentLoopPlan = inngest.createFunction(
 
     if (gateway) {
       await gateway.progress(`🔄 Story ${passedStories + 1}/${totalStories}: ${next.title} (${implTool})`, {
+        ...buildGatewaySignalMeta("loop.story", "info"),
         loopId, storyId: next.id, tool: implTool,
       });
     }

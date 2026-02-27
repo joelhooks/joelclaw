@@ -1,24 +1,25 @@
 import { execSync } from "node:child_process";
-import { inngest } from "../client";
-import type { GatewayContext } from "../middleware/gateway";
-import { pushGatewayEvent } from "./agent-loop/utils";
 import * as typesense from "../../lib/typesense";
+import { prefetchMemoryContext } from "../../memory/context-prefetch";
+import { AUTO_FIX_HANDLERS, resolveAutoFixHandlerName } from "../../observability/auto-fixes";
 import { emitOtelEvent } from "../../observability/emit";
 import type { OtelEvent } from "../../observability/otel-event";
 import {
+  buildRunbookRecoverCommand,
+  type ResolvedRunbookPlan,
+  resolveRunbookPlanForEvent,
+} from "../../observability/recovery-runbooks";
+import {
+  type ClassifiedEvent,
   classifyWithLLM,
   scanRecentFailures,
   triageFailures,
-  type ClassifiedEvent,
 } from "../../observability/triage";
-import { AUTO_FIX_HANDLERS, resolveAutoFixHandlerName } from "../../observability/auto-fixes";
-import {
-  buildRunbookRecoverCommand,
-  resolveRunbookPlanForEvent,
-  type ResolvedRunbookPlan,
-} from "../../observability/recovery-runbooks";
 import { classifyEvent, dedupKey } from "../../observability/triage-patterns";
-import { prefetchMemoryContext } from "../../memory/context-prefetch";
+import { inngest } from "../client";
+import type { GatewayContext } from "../middleware/gateway";
+import { buildGatewaySignalMeta } from "../middleware/gateway-signal";
+import { pushGatewayEvent } from "./agent-loop/utils";
 
 const AGENT_WORK_PROJECT_ID = "6g3VPph7cFfm8GjJ";
 const TRIAGE_CATEGORY = "o11y-triage";
@@ -787,7 +788,7 @@ export const o11yTriage = inngest.createFunction(
             immediateTelegram: true,
             telegramOnly: true,
             channel: "telegram",
-            level: "error",
+            ...buildGatewaySignalMeta("o11y.triage", "error"),
             taskId: taskId ?? null,
             taskUrl: taskUrl ?? null,
             dedupKey: eventDedupKey,

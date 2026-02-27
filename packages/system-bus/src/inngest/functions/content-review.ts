@@ -1,15 +1,16 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { rehypeParagraphIds } from "@joelclaw/mdx-pipeline";
 import { ConvexHttpClient } from "convex/browser";
 import { anyApi, type FunctionReference } from "convex/server";
 import { NonRetriableError } from "inngest";
-import { join } from "node:path";
-import { writeFile } from "node:fs/promises";
-import { unified } from "unified";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
-import { rehypeParagraphIds } from "@joelclaw/mdx-pipeline";
+import { unified } from "unified";
 import { infer } from "../../lib/inference";
 import { inngest } from "../client";
+import { buildGatewaySignalMeta } from "../middleware/gateway-signal";
 
 const HOME_DIR = process.env.HOME ?? "/Users/joel";
 const VAULT_ROOT = join(HOME_DIR, "Vault");
@@ -504,6 +505,7 @@ export const contentReviewSubmitted = inngest.createFunction(
         if (!gateway) return { notified: false, reason: "gateway-unavailable" };
         await gateway.notify(
           `Content updated: ${contentSlug}. ${submittedComments.length} comments applied. ${target.url}`,
+          { ...buildGatewaySignalMeta("content.review", "info") },
         );
         return { notified: true };
       });
@@ -524,6 +526,7 @@ export const contentReviewSubmitted = inngest.createFunction(
         if (!gateway) return { alerted: false, reason: "gateway-unavailable", error: message };
         try {
           await gateway.alert(`Content review failed for ${contentType}/${contentSlug}: ${message}`, {
+            ...buildGatewaySignalMeta("content.review", "error"),
             contentSlug,
             contentType,
             source: event.data.source,
