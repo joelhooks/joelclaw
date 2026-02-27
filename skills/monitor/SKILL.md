@@ -52,9 +52,7 @@ joelclaw subscribe check
 joelclaw subscribe summary
 ```
 
-**NOTE**: The `subscribe` CLI command may not be implemented yet. If it's missing, manage subscriptions by sending Inngest events directly:
-
-### Direct Inngest Fallback
+### Direct Inngest Fallback (alternative)
 
 ```bash
 # Add subscription via event
