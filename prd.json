@@ -30,7 +30,7 @@
       "id": "CFP-2",
       "title": "Read articles from Convex instead of filesystem",
       "priority": 2,
-      "status": "pending",
+      "status": "done",
       "description": "Update apps/web/lib/posts.ts so getPost() and getAllPosts() read from Convex via ConvexHttpClient (already at apps/web/lib/convex-content.ts). Keep the existing PostMeta type but add 'image' field. generateStaticParams in app/[slug]/page.tsx should use ConvexHttpClient to list article slugs. Filesystem fallback: if Convex is unreachable, fall back to filesystem reads so the site still builds.\n\nCRITICAL: This story MUST be implemented together with CFP-3 (cache components). Async Convex reads break Next.js 16 PPR prerender without use cache boundaries. The codex agent must add use cache + cacheLife + cacheTag to [slug]/page.tsx in the same changeset.",
       "acceptance": [
         "getPost(slug) queries Convex contentResources for resourceId 'article:{slug}'",
