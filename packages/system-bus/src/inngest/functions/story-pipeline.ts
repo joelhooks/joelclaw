@@ -579,6 +579,11 @@ export const storyPipeline = inngest.createFunction(
       );
     }
 
+    if (story.status === "done") {
+      logger.info(`Story ${storyId} already done — skipping.`);
+      return { storyId, status: "skipped", attempt: 0 };
+    }
+
     if (attempt > MAX_ATTEMPTS) {
       logger.warn(`Story ${storyId} blocked after ${MAX_ATTEMPTS} attempts`);
       await emitNotify(
