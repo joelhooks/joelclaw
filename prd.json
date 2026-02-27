@@ -84,7 +84,7 @@
       "id": "CFP-5",
       "title": "Inngest function: content/review.submitted handler",
       "priority": 5,
-      "status": "pending",
+      "status": "done",
       "description": "Create an Inngest function in packages/system-bus that handles 'content/review.submitted' events. Steps: (1) read current article content from Convex, (2) read submitted review comments from Convex, (3) call infer() with content + feedback to produce updated article, (4) validate output is non-empty and similar length to input (±50%), (5) write new contentRevision to Convex, (6) update article contentResource with new content, (7) mark review comments as resolved, (8) POST to /api/revalidate to bust cache tag, (9) notify via gateway. Use concurrency key on resourceId with limit 1.",
       "acceptance": [
         "Function registered as 'content-review-apply' in system-bus worker",
