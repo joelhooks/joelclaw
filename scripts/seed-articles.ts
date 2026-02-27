@@ -30,6 +30,11 @@ type ContentResourceDocument = {
   fields?: unknown;
 };
 
+type ConvexConfig = {
+  url: string;
+  adminAuth: string | null;
+};
+
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
@@ -50,10 +55,26 @@ function asStringArray(value: unknown): string[] {
     .filter((item) => item.length > 0);
 }
 
+function asBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return normalized === "true" || normalized === "1";
+  }
+  if (typeof value === "number") return value === 1;
+  return false;
+}
+
 function buildSearchText(fields: ArticleFields): string {
   return [fields.slug, fields.title, fields.description, fields.content.slice(0, 500)]
     .filter((part) => part.length > 0)
     .join(" ");
+}
+
+function isDiscoveriesPath(contentDir: string, entryPath: string): boolean {
+  const relativePath = relative(contentDir, entryPath);
+  if (!relativePath || relativePath.startsWith("..")) return false;
+  return relativePath.split(sep).includes("discoveries");
 }
 
 function listArticleFiles(contentDir: string): string[] {
@@ -68,7 +89,7 @@ function listArticleFiles(contentDir: string): string[] {
       const entryPath = join(currentDir, entry.name);
 
       if (entry.isDirectory()) {
-        if (entry.name === "discoveries") continue;
+        if (isDiscoveriesPath(contentDir, entryPath)) continue;
         directories.push(entryPath);
         continue;
       }
@@ -110,9 +131,14 @@ function readEnvValueFromFile(filePath: string, key: string): string | undefined
 }
 
 function resolveConvexUrl(repoRoot: string): string {
-  const fromEnv =
-    process.env.CONVEX_URL?.trim() ?? process.env.NEXT_PUBLIC_CONVEX_URL?.trim() ?? "";
-  if (fromEnv.length > 0) return fromEnv;
+  const fromEnvCandidates = [
+    process.env.CONVEX_URL?.trim(),
+    process.env.NEXT_PUBLIC_CONVEX_URL?.trim(),
+    process.env.CONVEX_SELF_HOSTED_URL?.trim(),
+  ];
+  for (const candidate of fromEnvCandidates) {
+    if (candidate && candidate.length > 0) return candidate;
+  }
 
   const envCandidates = [
     join(repoRoot, "apps", "web", ".env.local"),
@@ -120,13 +146,48 @@ function resolveConvexUrl(repoRoot: string): string {
   ];
 
   for (const filePath of envCandidates) {
-    const direct = readEnvValueFromFile(filePath, "CONVEX_URL");
-    if (direct) return direct;
-    const publicUrl = readEnvValueFromFile(filePath, "NEXT_PUBLIC_CONVEX_URL");
-    if (publicUrl) return publicUrl;
+    const fileCandidates = [
+      readEnvValueFromFile(filePath, "CONVEX_URL"),
+      readEnvValueFromFile(filePath, "NEXT_PUBLIC_CONVEX_URL"),
+      readEnvValueFromFile(filePath, "CONVEX_SELF_HOSTED_URL"),
+    ];
+    for (const candidate of fileCandidates) {
+      if (candidate) return candidate;
+    }
   }
 
   return "";
+}
+
+function resolveConvexAdminAuth(repoRoot: string): string | null {
+  const fromEnvCandidates = [
+    process.env.CONVEX_DEPLOY_KEY?.trim(),
+    process.env.CONVEX_SELF_HOSTED_ADMIN_KEY?.trim(),
+  ];
+  for (const candidate of fromEnvCandidates) {
+    if (candidate && candidate.length > 0) return candidate;
+  }
+
+  const envCandidates = [
+    join(repoRoot, "apps", "web", ".env.local"),
+    join(repoRoot, "apps", "web", ".env"),
+  ];
+
+  for (const filePath of envCandidates) {
+    const fileValue =
+      readEnvValueFromFile(filePath, "CONVEX_DEPLOY_KEY") ??
+      readEnvValueFromFile(filePath, "CONVEX_SELF_HOSTED_ADMIN_KEY");
+    if (fileValue) return fileValue;
+  }
+
+  return null;
+}
+
+function resolveConvexConfig(repoRoot: string): ConvexConfig {
+  return {
+    url: resolveConvexUrl(repoRoot),
+    adminAuth: resolveConvexAdminAuth(repoRoot),
+  };
 }
 
 function assertSeededDocument(slug: string, document: ContentResourceDocument | null): void {
@@ -150,15 +211,24 @@ function assertSeededDocument(slug: string, document: ContentResourceDocument | 
 
 async function main() {
   const repoRoot = resolve(import.meta.dir, "..");
-  const convexUrl = resolveConvexUrl(repoRoot);
+  const { url: convexUrl, adminAuth } = resolveConvexConfig(repoRoot);
   if (!convexUrl) {
-    throw new Error("CONVEX_URL or NEXT_PUBLIC_CONVEX_URL is required.");
+    throw new Error(
+      "CONVEX_URL, NEXT_PUBLIC_CONVEX_URL, or CONVEX_SELF_HOSTED_URL is required.",
+    );
   }
 
   const contentDir = join(repoRoot, "apps", "web", "content");
   const articleFiles = listArticleFiles(contentDir);
+  if (articleFiles.length === 0) {
+    console.log("[seed-articles] no article files found.");
+    return;
+  }
 
   const convex = new ConvexHttpClient(convexUrl);
+  if (adminAuth) {
+    convex.setAdminAuth(adminAuth);
+  }
   const upsertRef = api.contentResources.upsert as FunctionReference<"mutation">;
   const getByResourceIdRef = api.contentResources.getByResourceId as FunctionReference<"query">;
 
@@ -182,8 +252,12 @@ async function main() {
       type: "article",
       date: toDateString(meta.date),
       updated: toDateString(meta.updated) || undefined,
-      draft: meta.draft === true,
+      draft: asBoolean(meta.draft),
     };
+
+    const before = (await convex.query(getByResourceIdRef, {
+      resourceId,
+    })) as ContentResourceDocument | null;
 
     const result = (await convex.mutation(upsertRef, {
       resourceId,
@@ -192,15 +266,16 @@ async function main() {
       searchText: buildSearchText(fields),
     })) as UpsertResult;
 
-    if (result.action === "inserted") inserted += 1;
-    if (result.action === "updated") updated += 1;
+    const action: "inserted" | "updated" = result.action ?? (before ? "updated" : "inserted");
+    if (action === "inserted") inserted += 1;
+    if (action === "updated") updated += 1;
 
     const seeded = (await convex.query(getByResourceIdRef, {
       resourceId,
     })) as ContentResourceDocument | null;
     assertSeededDocument(slug, seeded);
 
-    console.log(`[seed-articles] seeded ${slug} (${result.action ?? "ok"})`);
+    console.log(`[seed-articles] seeded ${slug} (${action})`);
   }
 
   console.log(
