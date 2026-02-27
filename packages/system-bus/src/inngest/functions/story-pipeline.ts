@@ -396,7 +396,7 @@ export const storyPipeline = inngest.createFunction(
   {
     id: "agent/story-pipeline",
     name: "Story Pipeline: Implement → Prove → Judge",
-    retries: 0, // we handle retries via re-events, not Inngest retries
+    retries: 2, // survive transient SDK failures during worker restart (ADR-0156)
     concurrency: [{ scope: "fn", limit: 1 }], // one story at a time
   },
   { event: "agent/story.start" },

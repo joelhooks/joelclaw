@@ -1,7 +1,8 @@
 import { getPostSlugs } from "@/lib/posts";
 
 export async function generateStaticParams() {
-  return getPostSlugs().map((slug) => ({ slug }));
+  const slugs = await getPostSlugs();
+  return slugs.map((slug) => ({ slug }));
 }
 
 export async function GET(

@@ -164,7 +164,7 @@ export async function getAdrFromConvex(slug: string) {
 }
 
 export async function getPostFromConvex(slug: string) {
-  const fallback = getPost(slug);
+  const fallback = await getPost(slug);
   const doc = await queryPostDoc(slug);
   const fields = parsePostFields(doc?.fields);
   if (!fields) return fallback;
@@ -192,7 +192,7 @@ export async function getAdrSlugsFromConvex(): Promise<string[]> {
 }
 
 export async function getPostSlugsFromConvex(): Promise<string[]> {
-  const fallback = getPostSlugs();
+  const fallback = await getPostSlugs();
   const convex = getConvexClient();
   if (!convex) return fallback;
 

@@ -12,12 +12,13 @@ import { LazyReviewGate } from "@/components/review/lazy-review-gate";
 type Props = { params: Promise<{ slug: string }> };
 
 export async function generateStaticParams() {
-  return getPostSlugs().map((slug) => ({ slug }));
+  const slugs = await getPostSlugs();
+  return slugs.map((slug) => ({ slug }));
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const post = getPost(slug);
+  const post = await getPost(slug);
   if (!post) return {};
 
   const { meta } = post;
@@ -53,7 +54,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function PostPage({ params }: Props) {
   const { slug } = await params;
-  const post = getPost(slug);
+  const post = await getPost(slug);
   if (!post) notFound();
 
   const { meta, content } = post;
