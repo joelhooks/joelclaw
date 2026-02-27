@@ -522,6 +522,17 @@ export type Events = {
     };
   };
 
+  // --- Story Pipeline (ADR-0155) ---
+  "agent/story.start": {
+    data: {
+      prdPath: string;
+      storyId: string;
+      cwd?: string;
+      attempt?: number;
+      judgment?: string;
+    };
+  };
+
   // --- Memory ---
   "memory/session.compaction.pending": {
     data: {

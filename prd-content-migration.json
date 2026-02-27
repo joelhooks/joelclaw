@@ -1,0 +1,131 @@
+{
+  "title": "Content Migration: MDX to Convex + Feedback Pipeline",
+  "description": "Migrate joelclaw.com articles from filesystem MDX to Convex ContentResource, wire the feedback form to Convex + Inngest, and add agent-driven content editing. ADR-0154, ADR-0106, ADR-0084.",
+  "context": {
+    "repo": "~/Code/joelhooks/joelclaw",
+    "adrs": ["0154", "0106", "0084"],
+    "existing_infrastructure": [
+      "contentResources table with upsert mutation (apps/web/convex/contentResources.ts)",
+      "LazyReviewGate wrapping article content (apps/web/app/[slug]/page.tsx)",
+      "ReviewSheet + review submit route firing content/review.submitted Inngest events",
+      "PostContent already uses 'use cache' directive",
+      "19 .mdx articles in apps/web/content/",
+      "ConvexHttpClient already used in apps/web/lib/convex-content.ts and packages/system-bus/src/lib/convex.ts",
+      "Better Auth shipped (ADR-0075) — Joel can log in"
+    ],
+    "test_command": "cd apps/web && bunx tsc --noEmit",
+    "typecheck_command": "bunx tsc --noEmit",
+    "lint_command": "pnpm biome check packages/ apps/",
+    "inference_utility": "packages/system-bus/src/lib/inference.ts — shells to pi -p, handles auth/routing"
+  },
+  "loop_config": {
+    "stages_per_story": ["implement", "prove", "judge"],
+    "implement": "Codex builds the feature and commits",
+    "prove": "Fresh Codex verifies: runs tests, checks types, manually tests behavior, fixes obvious issues, commits proof-of-work",
+    "judge": "Fresh Codex reviews all changes. Pass → ready for deploy. Fail → writes judgment and story goes back to implement"
+  },
+  "stories": [
+    {
+      "id": "SEED-1",
+      "title": "Seed script: MDX articles → Convex ContentResource",
+      "description": "Create scripts/seed-articles.ts that reads all 19 .mdx files from apps/web/content/, parses frontmatter via gray-matter, and upserts each as a contentResource with type 'article' and resourceId 'article:{slug}'. Must be idempotent (re-runnable). Use ConvexHttpClient from convex/browser. Fields: slug, title, description, content (raw MDX body without frontmatter), image, tags, type, date, updated, draft, source, channel, duration. searchText should be title + description + first 500 chars of content.",
+      "acceptance_criteria": [
+        "scripts/seed-articles.ts exists and runs with: bun scripts/seed-articles.ts",
+        "All 19 .mdx files are upserted into Convex contentResources table",
+        "resourceId follows pattern article:{slug}",
+        "type field is 'article'",
+        "Running the script twice produces no duplicates (idempotent upsert)",
+        "Content field contains raw MDX body WITHOUT frontmatter",
+        "searchText concatenates title + description + first 500 chars of content",
+        "TypeScript compiles cleanly: cd apps/web && bunx tsc --noEmit"
+      ],
+      "priority": 1,
+      "depends_on": []
+    },
+    {
+      "id": "READ-1",
+      "title": "Switch getPost/getAllPosts/getPostSlugs to read from Convex",
+      "description": "Modify apps/web/lib/posts.ts to read articles from Convex instead of filesystem. Use ConvexHttpClient (already available in apps/web/lib/convex-content.ts — reuse that client). getPost(slug) queries contentResources by resourceId 'article:{slug}'. getAllPosts() queries by type 'article', filters draft===false in production, sorts by date descending. getPostSlugs() returns slugs of all non-draft articles. Functions must be async now. Keep the PostMeta type unchanged. FALLBACK: if Convex is unavailable or returns null, fall back to filesystem read — this preserves build-time behavior and local dev without Convex.",
+      "acceptance_criteria": [
+        "getPost(slug) reads from Convex contentResources via ConvexHttpClient",
+        "getAllPosts() reads from Convex, returns PostMeta[] sorted by date desc",
+        "getPostSlugs() reads from Convex, returns string[]",
+        "All three functions are async",
+        "Filesystem fallback works when Convex is unavailable",
+        "PostMeta type is unchanged",
+        "apps/web/app/[slug]/page.tsx updated to await getPost/getPostSlugs",
+        "apps/web/app/page.tsx (if it uses getAllPosts) updated to await",
+        "TypeScript compiles cleanly",
+        "pnpm biome check apps/ passes"
+      ],
+      "priority": 2,
+      "depends_on": ["SEED-1"]
+    },
+    {
+      "id": "CACHE-1",
+      "title": "Add cacheTag per article + revalidation endpoint",
+      "description": "In the PostContent component (apps/web/app/[slug]/page.tsx), add cacheTag(`article:${slug}`) inside the existing 'use cache' boundary. Create apps/web/app/api/revalidate/route.ts that accepts POST with { tag: string } body, validates x-revalidation-secret header against REVALIDATION_SECRET env var, and calls revalidateTag(tag). Import cacheTag from 'next/cache' and cacheLife from 'next/cache'. Use cacheLife('max') in PostContent.",
+      "acceptance_criteria": [
+        "PostContent has cacheTag('article:{slug}') inside 'use cache'",
+        "PostContent has cacheLife('max') inside 'use cache'",
+        "apps/web/app/api/revalidate/route.ts exists",
+        "POST /api/revalidate with valid secret calls revalidateTag and returns { revalidated: true, tag }",
+        "POST without valid secret returns 401",
+        "TypeScript compiles cleanly",
+        "pnpm biome check apps/ passes"
+      ],
+      "priority": 3,
+      "depends_on": ["READ-1"]
+    },
+    {
+      "id": "FEEDBACK-1",
+      "title": "Wire feedback form submission to Convex",
+      "description": "The review submit route (apps/web/app/api/review/submit/route.ts) already fires content/review.submitted Inngest events. Add auth check — only Joel (authenticated user) can submit. Use Better Auth session verification. The ReviewSheet component should write a feedbackItem to Convex before firing the Inngest event. Add a Convex mutation to contentResources.ts or a new feedback.ts: upsert a contentResource of type 'feedback' with resourceId 'feedback:{contentSlug}:{timestamp}', fields: { contentSlug, contentType, body (feedback text), status: 'submitted', submittedAt }. Link it to the parent article via contentResourceResource.",
+      "acceptance_criteria": [
+        "Submit route checks auth — returns 401 if not authenticated",
+        "Feedback is written to Convex as contentResource type 'feedback'",
+        "Feedback is linked to parent article via contentResourceResource table",
+        "Inngest event content/review.submitted still fires after Convex write",
+        "TypeScript compiles cleanly",
+        "pnpm biome check apps/ passes"
+      ],
+      "priority": 4,
+      "depends_on": ["SEED-1"]
+    },
+    {
+      "id": "INNGEST-1",
+      "title": "Inngest handler: content/review.submitted → agent edit",
+      "description": "Create packages/system-bus/src/inngest/functions/content-review.ts. Triggered by content/review.submitted. Steps: (1) step.run('fetch-article') — read the article from Convex by resourceId. (2) step.run('fetch-feedback') — read all submitted feedback for this article from Convex. (3) step.run('agent-edit') — use the inference utility (packages/system-bus/src/lib/inference.ts) to have an LLM review the feedback and produce an edited version of the article content. System prompt should instruct the agent to apply feedback suggestions, fix errors, improve clarity — but preserve the author's voice and not add filler. (4) step.run('write-revision') — upsert the edited content back to Convex as the article's new content. Also write a contentResource of type 'revision' linked to the article for audit trail. (5) step.run('invalidate-cache') — POST to SITE_URL/api/revalidate with the article's cacheTag. (6) step.run('mark-feedback-applied') — update feedback status to 'applied'. Use concurrency key event.data.contentSlug limit 1. Register in the functions array.",
+      "acceptance_criteria": [
+        "packages/system-bus/src/inngest/functions/content-review.ts exists",
+        "Function triggers on content/review.submitted event",
+        "Reads article from Convex in step 1",
+        "Reads feedback from Convex in step 2",
+        "Uses inference utility (pi -p) for LLM edit in step 3",
+        "Writes revision to Convex and links to article in step 4",
+        "POSTs to /api/revalidate to bust cache in step 5",
+        "Marks feedback as applied in step 6",
+        "Concurrency key on contentSlug, limit 1",
+        "Function registered in inngest client functions array",
+        "TypeScript compiles: cd packages/system-bus && bunx tsc --noEmit",
+        "Uses inference utility from ../../lib/inference, NOT raw API calls"
+      ],
+      "priority": 5,
+      "depends_on": ["CACHE-1", "FEEDBACK-1"]
+    },
+    {
+      "id": "REVISION-1",
+      "title": "Revision history query + UI indicator",
+      "description": "Add a Convex query to list revisions for an article: query contentResources by type 'revision' linked via contentResourceResource to the article. Return revision metadata (timestamp, diff summary if available). In the article page, add a small 'Last revised' indicator below the date if revisions exist. This is a read-only display — no editing UI needed.",
+      "acceptance_criteria": [
+        "Convex query to list revisions for an article exists",
+        "Article page shows 'Last revised: {date}' if revisions exist",
+        "No revisions = no indicator shown",
+        "TypeScript compiles cleanly",
+        "pnpm biome check apps/ passes"
+      ],
+      "priority": 6,
+      "depends_on": ["INNGEST-1"]
+    }
+  ]
+}

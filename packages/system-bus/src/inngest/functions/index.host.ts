@@ -16,6 +16,7 @@ import { embedText } from "./embed";
 import { backfillObserve } from "./backfill-observe";
 import { heartbeatCron, heartbeatWake } from "./heartbeat";
 import { agentDispatch } from "./agent-dispatch";
+import { storyPipeline } from "./story-pipeline";
 import { mediaProcess } from "./media-process";
 import { telegramCallbackReceived } from "./telegram-callback";
 import { voiceCallCompleted } from "./voice-call-completed";
@@ -125,6 +126,7 @@ export const hostFunctionDefinitions = [
   heartbeatCron,
   heartbeatWake,
   agentDispatch,
+  storyPipeline,
   agentLoopPlan,
   agentLoopTestWriter,
   agentLoopImplement,

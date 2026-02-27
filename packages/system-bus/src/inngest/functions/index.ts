@@ -105,6 +105,7 @@ export { slackChannelBackfill, slackBackfillBatch } from "./slack-backfill";
 export { channelMessageIngest } from "./channel-message-ingest";
 export { channelMessageClassify } from "./channel-message-classify";
 export { contactEnrich } from "./contact-enrich";
+export { storyPipeline } from "./story-pipeline";
 export { hostFunctionDefinitions, hostFunctionIds } from "./index.host";
 export { clusterFunctionDefinitions, clusterFunctionIds } from "./index.cluster";
 
