@@ -12,8 +12,8 @@ function getLastModified(...candidates: unknown[]): string {
   return "2026-01-01T00:00:00.000Z";
 }
 
-export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const posts = await getAllPosts();
+export default function sitemap(): MetadataRoute.Sitemap {
+  const posts = getAllPosts();
   const adrs = getAllAdrs();
 
   const postEntries = posts.map((post) => ({

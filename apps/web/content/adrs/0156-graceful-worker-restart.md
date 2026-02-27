@@ -5,100 +5,102 @@ tags: [infrastructure, inngest, worker, reliability]
 related: [0089-single-source-deployment, 0155-three-stage-story-pipeline, 0148-k8s-resilience-policy]
 ---
 
-# ADR-0156: Graceful Worker Restart — Drain Before Kill
+# ADR-0156: Graceful Worker Restart — Zero-Downtime Deploy
 
 ## Context
 
-The system-bus worker runs Inngest functions, some of which execute long-running codex steps (5-10 minutes per stage). The current deploy workflow is:
+The system-bus worker runs Inngest functions via HTTP. Inngest's execution model is **step-level stateless**: each step is a separate HTTP call, Inngest stores step output server-side, and the worker holds no inter-step state. This means Inngest natively supports worker replacement between steps.
 
-```
-git push → worker clone git reset --hard → launchctl kickstart -k → curl PUT /api/inngest
-```
+The problem: `launchctl kickstart -k` sends SIGTERM, killing the worker process. Any step **currently executing** (mid-HTTP-request) is destroyed. The codex implement step runs 5-10 minutes — a large kill window.
 
-`launchctl kickstart -k` sends SIGTERM immediately. Any in-flight Inngest runs that have steps dispatched but not yet executed become orphans. Inngest server retries reaching the SDK URL for 30-140s, then gives up with "Unable to reach SDK URL". The step shows as "Finalization FAILED".
+On 2026-02-27, two story pipeline runs died this way. Both showed:
+- Early steps (load-prd, gateway-progress, get-pre-sha) completed normally
+- The `implement` step was dispatched but the worker died before responding
+- Inngest showed "Unable to reach SDK URL" → "Finalization FAILED"
 
-On 2026-02-27, this killed 2 story pipeline runs (CFP-1 attempt 2, CFP-2 attempt 1) — both had dispatched their `implement` step (codex exec) but the worker died before execution began. All 3 CFP-1 attempts were wasted on infrastructure failures, not code bugs.
+### Root cause analysis
 
-### Why this is critical now
+Three factors combined to make this fatal:
 
-Before ADR-0155 (story pipeline), the longest worker functions ran <30 seconds. A hard restart had minimal blast radius — at worst, a cron check or webhook handler retried. Now codex stages run 5-10 minutes each, and a single story pipeline takes 15-30 minutes across 3 stages. Any restart during that window destroys the entire run and burns an attempt.
+1. **`retries: 0` on story pipeline** — We disabled Inngest retries because we handle retry logic via re-emitted events (self-healing). But Inngest's built-in retry is what saves runs from transient SDK failures. With retries: 0, a single missed HTTP call kills the run.
+
+2. **Hard kill during long step** — The codex exec step runs 5-10 minutes. SIGTERM kills it mid-execution. The new worker starts in ~1 second, but the step is already dead.
+
+3. **No separation between "sync new code" and "restart process"** — We restart to pick up code changes because functions are statically imported at boot. The restart is the actual dangerous operation.
+
+### How production Inngest handles this
+
+From Inngest docs: "Long running functions can start running on one machine and continue on another." In production:
+- Deploy new version alongside old (blue/green or rolling)
+- Sync Inngest to new URL → new steps route to new version
+- Old instance finishes in-flight step, then dies
+- Each step is idempotent — Inngest replays completed steps, only executes the next one
 
 ## Decision
 
-Replace hard kill with a **drain-then-restart** protocol.
+### Immediate fix: Allow Inngest-level retries for SDK failures
 
-### Phase 1: Pre-restart drain check (immediate)
-
-Before any restart, check for in-flight runs:
-
-```bash
-# worker-restart.sh (replaces raw kickstart -k)
-RUNNING=$(joelclaw runs --count 50 | jq '[.result.runs[] | select(.status == "RUNNING")] | length')
-if [ "$RUNNING" -gt 0 ]; then
-  echo "⚠️  $RUNNING runs in flight. Waiting for drain..."
-  # Poll every 30s, timeout after 20 minutes
-  for i in $(seq 1 40); do
-    sleep 30
-    RUNNING=$(joelclaw runs --count 50 | jq '[.result.runs[] | select(.status == "RUNNING")] | length')
-    [ "$RUNNING" -eq 0 ] && break
-    echo "  Still $RUNNING running (${i}/40)..."
-  done
-  if [ "$RUNNING" -gt 0 ]; then
-    echo "❌ Drain timeout. $RUNNING runs still active. Force kill with --force or wait."
-    exit 1
-  fi
-fi
-launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker
-sleep 5
-curl -s -X PUT http://127.0.0.1:3111/api/inngest
-echo "✅ Worker restarted clean"
-```
-
-Add `--force` flag to bypass drain for emergencies.
-
-### Phase 2: SIGTERM handler in worker (next)
-
-The worker process should trap SIGTERM and:
-1. Stop accepting new step executions from Inngest (respond 503 to new dispatches)
-2. Let current step executions complete (they're in-process, can't be interrupted safely)
-3. Exit cleanly after current steps finish or after a grace period (5 minutes)
+Set `retries: 2` on the story pipeline function. This costs nothing — if a step fails because the SDK was briefly unreachable (1s restart window), Inngest retries and hits the new worker. Our self-healing retry logic (re-emitted events) handles code-level failures separately.
 
 ```typescript
-// In serve.ts
-let draining = false;
-
-process.on("SIGTERM", () => {
-  console.log("[worker] SIGTERM received, draining...");
-  draining = true;
-  // Inngest SDK doesn't expose drain API yet — use timeout
-  setTimeout(() => {
-    console.log("[worker] Grace period expired, exiting");
-    process.exit(0);
-  }, 5 * 60 * 1000); // 5 min grace
-});
+{
+  id: "agent/story-pipeline",
+  retries: 2, // survive transient SDK failures during restart
+}
 ```
 
-### Phase 3: Hot reload without restart (future)
+This alone fixes the immediate problem. Worker restarts ~1s, Inngest retries after backoff, new worker handles the step.
 
-Explore Bun's `--hot` or module-level reload to swap function implementations without killing the process. This eliminates the restart problem entirely but requires investigation into Inngest SDK compatibility.
+### Phase 1: Blue/green port swap (recommended)
+
+Since the worker is stateless between steps:
+
+```bash
+# worker-deploy.sh
+NEW_PORT=3112
+OLD_PORT=3111
+
+# 1. Start new worker on alternate port
+PORT=$NEW_PORT bun run src/serve.ts &
+sleep 5
+
+# 2. Sync Inngest to new URL — new step dispatches go to new worker
+INNGEST_SERVE_HOST=http://192.168.5.2:$NEW_PORT \
+  curl -s -X PUT http://127.0.0.1:$NEW_PORT/api/inngest
+
+# 3. Old worker finishes its in-flight step (up to 10 min grace)
+sleep 600 # or poll for completion
+
+# 4. Kill old worker
+kill $(lsof -ti :$OLD_PORT)
+```
+
+### Phase 2: Dynamic function loading (future)
+
+Replace static imports with dynamic `import()` keyed to a generation counter. PUT `/api/reload` invalidates the module cache and re-imports functions. No process restart needed.
+
+### Not pursuing: drain-then-restart
+
+The original ADR draft proposed waiting for all runs to complete before restart. This is wrong — runs can take 30+ minutes across multiple steps. We don't need to wait for the whole run, only the current in-flight step (~seconds for most, ~minutes for codex). Blue/green handles this naturally.
 
 ## Consequences
 
 ### Positive
-- No more orphaned runs from restarts
-- Story pipeline attempts aren't wasted on infrastructure failures
-- Deploy workflow becomes safe-by-default
+- `retries: 2` makes restart completely safe for the 99% case (1s restart window)
+- Blue/green eliminates even the 1s window
+- No drain wait — deploys are instant
+- Aligns with how Inngest is designed to work
 
 ### Negative
-- Deploys take longer when runs are active (up to 20 min drain wait)
-- Phase 2 SIGTERM handler adds complexity to worker lifecycle
-- `--force` escape hatch means discipline is still required
+- `retries: 2` means a codex step killed mid-execution will retry from scratch (5-10 min wasted, but not fatal)
+- Blue/green adds port management complexity
+- Need to ensure only one worker handles step execution at a time during transition
 
-### Operational change
-- Replace all `launchctl kickstart -k` in scripts and muscle memory with `worker-restart.sh`
-- The `sync-system-bus` skill must be updated to use the new script
-- Gateway notifications should fire when drain starts/completes
+### Operational changes
+- Set `retries: 2` on story-pipeline immediately
+- Update `sync-system-bus` skill documentation
+- Add retry count to all long-running functions (not just story-pipeline)
 
 ## Status
 
-Proposed. Phase 1 is implementable today.
+Proposed. Immediate fix (retries: 2) is a one-line change.

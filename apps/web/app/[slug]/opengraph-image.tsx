@@ -23,8 +23,7 @@ const TYPE_LABELS: Record<ContentType, string> = {
 };
 
 export async function generateStaticParams() {
-  const slugs = await getPostSlugs();
-  return slugs.map((slug) => ({ slug }));
+  return getPostSlugs().map((slug) => ({ slug }));
 }
 
 export default async function Image({
@@ -33,7 +32,7 @@ export default async function Image({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const post = await getPost(slug);
+  const post = getPost(slug);
   const title = post?.meta.title ?? slug;
   const type = post?.meta.type ?? "article";
   const tags = post?.meta.tags ?? [];

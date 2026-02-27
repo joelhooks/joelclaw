@@ -3,8 +3,8 @@ import { getAllPosts } from "@/lib/posts";
 import { blogJsonLd } from "@/lib/jsonld";
 import { RelativeTime } from "@/lib/relative-time";
 
-export default async function Home() {
-  const posts = await getAllPosts();
+export default function Home() {
+  const posts = getAllPosts();
 
   return (
     <div className="mx-auto max-w-2xl">

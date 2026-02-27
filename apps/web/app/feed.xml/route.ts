@@ -4,8 +4,8 @@ import { getAllDiscoveries } from "@/lib/discoveries";
 import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, AUTHOR } from "@/lib/constants";
 import { formatRssPubDate } from "@/lib/date";
 
-export async function GET() {
-  const posts = await getAllPosts();
+export function GET() {
+  const posts = getAllPosts();
   const adrs = getAllAdrs();
   const discoveries = getAllDiscoveries();
 

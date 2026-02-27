@@ -2,8 +2,8 @@ import { getAllPosts } from "@/lib/posts";
 import { getAllAdrs } from "@/lib/adrs";
 import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, AUTHOR } from "@/lib/constants";
 
-export async function GET() {
-  const posts = await getAllPosts();
+export function GET() {
+  const posts = getAllPosts();
   const adrs = getAllAdrs();
 
   const lines: string[] = [

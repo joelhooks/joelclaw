@@ -7,8 +7,7 @@ import { remarkMdLinks } from "@/lib/remark-md-links";
 import { remarkStripMdxComments } from "@/lib/remark-strip-mdx-comments";
 
 export async function generateStaticParams() {
-  const slugs = await getPostSlugs();
-  return slugs.map((slug) => ({ slug }));
+  return getPostSlugs().map((slug) => ({ slug }));
 }
 
 /** Process MDX content through remark pipeline for agent markdown output */
@@ -77,13 +76,13 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
-  const post = await getPost(slug);
+  const post = getPost(slug);
   if (!post) {
     return new Response("Not found", { status: 404 });
   }
 
   const { meta, content } = post;
-  const allPosts = await getAllPosts();
+  const allPosts = getAllPosts();
   const cleaned = await toAgentMarkdown(content);
   const preamble = agentPreamble(meta, allPosts);
 
