@@ -35,8 +35,6 @@ type ConvexConfig = {
   adminAuth: string | null;
 };
 
-type SeedMode = "live" | "dry-run";
-
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
@@ -193,28 +191,6 @@ function resolveConvexConfig(repoRoot: string): ConvexConfig {
   };
 }
 
-function isConnectionRefusedError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-
-  const message = error.message.toLowerCase();
-  if (
-    message.includes("connectionrefused") ||
-    message.includes("connection refused") ||
-    message.includes("unable to connect") ||
-    message.includes("fetch failed")
-  ) {
-    return true;
-  }
-
-  const code = (
-    "code" in error && typeof (error as { code?: unknown }).code === "string"
-      ? (error as { code: string }).code
-      : ""
-  ).toLowerCase();
-
-  return code.includes("connectionrefused") || code.includes("econnrefused");
-}
-
 function assertSeededDocument(slug: string, document: ContentResourceDocument | null): void {
   if (!document) {
     throw new Error(`Upsert verification failed for ${slug}: record not found after mutation.`);
@@ -234,9 +210,39 @@ function assertSeededDocument(slug: string, document: ContentResourceDocument | 
   }
 }
 
+async function verifySeedCoverage(
+  getByResourceIdRef: FunctionReference<"query">,
+  convex: ConvexHttpClient,
+  expected: ReadonlyArray<{ slug: string; resourceId: string }>,
+): Promise<void> {
+  const failures: string[] = [];
+
+  for (const item of expected) {
+    const document = (await convex.query(getByResourceIdRef, {
+      resourceId: item.resourceId,
+    })) as ContentResourceDocument | null;
+
+    try {
+      assertSeededDocument(item.slug, document);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      failures.push(`${item.resourceId}: ${reason}`);
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`[seed-articles] verification failed:\n${failures.join("\n")}`);
+  }
+}
+
 async function main() {
   const repoRoot = resolve(import.meta.dir, "..");
   const { url: convexUrl, adminAuth } = resolveConvexConfig(repoRoot);
+  if (!convexUrl) {
+    throw new Error(
+      "CONVEX_URL, NEXT_PUBLIC_CONVEX_URL, or CONVEX_SELF_HOSTED_URL is required to seed articles.",
+    );
+  }
 
   const contentDir = join(repoRoot, "apps", "web", "content");
   const articleFiles = listArticleFiles(contentDir);
@@ -248,46 +254,35 @@ async function main() {
   const upsertRef = api.contentResources.upsert as FunctionReference<"mutation">;
   const getByResourceIdRef = api.contentResources.getByResourceId as FunctionReference<"query">;
 
-  let seedMode: SeedMode = "live";
-  const strictConnectivity = asBoolean(process.env.SEED_ARTICLES_STRICT);
-  const convex = convexUrl ? new ConvexHttpClient(convexUrl) : null;
-  if (convex && adminAuth) {
+  const convex = new ConvexHttpClient(convexUrl);
+  if (adminAuth) {
     convex.setAdminAuth(adminAuth);
   }
 
-  if (!convex || !convexUrl) {
-    if (strictConnectivity) {
-      throw new Error(
-        "CONVEX_URL, NEXT_PUBLIC_CONVEX_URL, or CONVEX_SELF_HOSTED_URL is required when SEED_ARTICLES_STRICT=1.",
-      );
-    }
-
-    seedMode = "dry-run";
-    console.warn(
-      "[seed-articles] no Convex URL configured; running in dry-run mode. Set SEED_ARTICLES_STRICT=1 to require Convex.",
+  try {
+    await convex.query(getByResourceIdRef, { resourceId: "__seed_probe__" });
+  } catch (error) {
+    throw new Error(
+      `[seed-articles] Convex query probe failed at ${convexUrl}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
     );
-  } else {
-    try {
-      await convex.query(getByResourceIdRef, { resourceId: "__seed_probe__" });
-    } catch (error) {
-      if (strictConnectivity || !isConnectionRefusedError(error)) {
-        throw error;
-      }
-
-      seedMode = "dry-run";
-      console.warn(
-        `[seed-articles] Convex unreachable at ${convexUrl}; running in dry-run mode. Set SEED_ARTICLES_STRICT=1 to fail on connectivity errors.`,
-      );
-    }
   }
 
   let inserted = 0;
   let updated = 0;
-  let dryRun = 0;
+  const expectedResources: Array<{ slug: string; resourceId: string }> = [];
+  const seenResourceIds = new Set<string>();
 
   for (const filePath of articleFiles) {
     const slug = slugFromFilePath(contentDir, filePath);
     const resourceId = `article:${slug}`;
+    if (seenResourceIds.has(resourceId)) {
+      throw new Error(`Duplicate article resourceId detected: ${resourceId}`);
+    }
+    seenResourceIds.add(resourceId);
+    expectedResources.push({ slug, resourceId });
+
     const raw = readFileSync(filePath, "utf-8");
     const { data, content } = matter(raw);
     const meta = data as Record<string, unknown>;
@@ -304,12 +299,6 @@ async function main() {
       updated: toDateString(meta.updated) || undefined,
       draft: asBoolean(meta.draft),
     };
-
-    if (seedMode === "dry-run" || !convex) {
-      dryRun += 1;
-      console.log(`[seed-articles] seeded ${slug} (dry-run)`);
-      continue;
-    }
 
     const before = (await convex.query(getByResourceIdRef, {
       resourceId,
@@ -334,8 +323,11 @@ async function main() {
     console.log(`[seed-articles] seeded ${slug} (${action})`);
   }
 
+  await verifySeedCoverage(getByResourceIdRef, convex, expectedResources);
+  console.log(`[seed-articles] verified ${expectedResources.length} article resources in Convex`);
+
   console.log(
-    `[seed-articles] complete (${articleFiles.length} articles, inserted=${inserted}, updated=${updated}, dryRun=${dryRun}, mode=${seedMode})`,
+    `[seed-articles] complete (${articleFiles.length} articles, inserted=${inserted}, updated=${updated})`,
   );
 }
 
