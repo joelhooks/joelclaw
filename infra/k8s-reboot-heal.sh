@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
+# Ensure homebrew + local bins in PATH (launchd has minimal PATH)
+export PATH="/opt/homebrew/bin:/Users/joel/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+
 LOG_DIR="$HOME/.local/log"
 LOG_FILE="$LOG_DIR/k8s-reboot-heal.log"
 mkdir -p "$LOG_DIR"
@@ -37,6 +40,7 @@ done
 
 if kubectl get nodes >/dev/null 2>&1; then
   kubectl taint nodes joelclaw-controlplane-1 node-role.kubernetes.io/control-plane:NoSchedule- >>"$LOG_FILE" 2>&1 || true
+  kubectl uncordon joelclaw-controlplane-1 >>"$LOG_FILE" 2>&1 || true
 
   FLANNEL_PODS=$(kubectl get pods -n kube-system --no-headers 2>/dev/null | awk '/kube-flannel/ {print $1":"$3}')
   if echo "$FLANNEL_PODS" | grep -Eq 'Error|CrashLoopBackOff|Unknown'; then

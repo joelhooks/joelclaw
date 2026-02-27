@@ -98,6 +98,8 @@ kubectl get pods -n joelclaw
 
 Colima starts via launchd (`com.joel.colima`). Wait ~60s for full stack: VM → Docker → Talos → k8s → pods. Worker auto-starts via `com.joel.system-bus-worker`.
 
+**⚠️ launchd PATH requirement**: The Colima plist MUST include `EnvironmentVariables` with `PATH` containing `/opt/homebrew/bin`. Colima internally shells to `limactl` which is a Homebrew formula. Without this, launchd recovery silently fails (Feb 2026 incident: 6 days of silent failures). Same applies to `k8s-reboot-heal.sh` — it exports PATH at the top as belt-and-suspenders.
+
 ```bash
 kubectl get pods -n joelclaw
 curl localhost:8288/health
@@ -112,12 +114,15 @@ ssh -F ~/.colima/_lima/colima/ssh.config lima-colima \
   "docker start joelclaw-controlplane-1"
 ```
 
-Then verify single-node scheduling is enabled (the control-plane taint may return after reboot):
+Then verify single-node scheduling is enabled (the control-plane taint AND SchedulingDisabled may return after reboot):
 
 ```bash
 kubectl taint nodes joelclaw-controlplane-1 \
   node-role.kubernetes.io/control-plane:NoSchedule- || true
+kubectl uncordon joelclaw-controlplane-1 || true
 ```
+
+**If node shows "shutting down" in conditions** after a Talos container restart, the container needs a full `docker restart` (not just start). The shutdown state is sticky from the previous unclean stop.
 
 Finally, if pods are `Unknown`, restart flannel and stale pods:
 
@@ -294,6 +299,20 @@ talosctl config info
 ```
 
 Note: The talosctl endpoint port (64785) is auto-assigned at cluster creation and changes on recreation. Check `talosctl config info` for current value.
+
+### Verifying launchd PATH
+
+After editing any infra launchd plist, verify it has PATH:
+
+```bash
+# Check all infra plists have PATH
+for f in com.joel.colima com.joel.k8s-reboot-heal com.joel.system-bus-worker com.joel.gateway com.joel.caddy; do
+  HAS_PATH=$(grep -c "/opt/homebrew/bin" ~/Library/LaunchAgents/$f.plist 2>/dev/null || echo "MISSING")
+  echo "$f: $HAS_PATH"
+done
+```
+
+Expected: all show `1` or higher. If any show `0` or `MISSING`, fix before deploying.
 
 ## Helm Repos
 

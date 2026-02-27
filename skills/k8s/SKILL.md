@@ -113,9 +113,11 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 
 1. **NEVER use `kubectl port-forward` for persistent services.** All services MUST use NodePort + Docker port mappings. Port-forwards silently die on idle/restart/pod changes.
 2. **All workloads MUST have liveness + readiness + startup probes.** Missing probes = silent hangs that never recover.
-3. **After any Docker/Colima/node restart**: remove control-plane taint, verify flannel, check all pods reach Running.
+3. **After any Docker/Colima/node restart**: remove control-plane taint, **uncordon node**, verify flannel, check all pods reach Running.
 4. **PVC reclaimPolicy is Delete** — deleting a PVC = permanent data loss. Never delete PVCs without backup.
 5. **Colima VM disk is limited (19GB).** Monitor with `colima ssh -- df -h /`. Alert at >80%.
+6. **All launchd plists MUST set PATH including `/opt/homebrew/bin`.** Colima shells to `limactl`, kubectl/talosctl live in homebrew. launchd's default PATH is `/usr/bin:/bin:/usr/sbin:/sbin` — no homebrew. The canonical PATH for infra plists is: `/opt/homebrew/bin:/Users/joel/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`. Discovered Feb 2026: missing PATH caused 6 days of silent recovery failures.
+7. **Shell scripts run by launchd MUST export PATH at the top.** Even if the plist sets EnvironmentVariables, belt-and-suspenders — add `export PATH="/opt/homebrew/bin:..."` to the script itself.
 
 ### Current Probe Gaps (fix when touching these services)
 - Typesense: missing liveness probe (hangs won't be detected)
