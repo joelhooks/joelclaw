@@ -56,7 +56,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function PostPage({ params }: Props) {
   const { slug } = await params;
+  return <PostPageShell slug={slug} />;
+}
 
+function PostPageShell({ slug }: { slug: string }) {
   return (
     <>
       <Suspense fallback={<ArticleFallback />}>

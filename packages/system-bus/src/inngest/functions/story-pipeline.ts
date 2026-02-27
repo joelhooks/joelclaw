@@ -410,7 +410,7 @@ export const storyPipeline = inngest.createFunction(
     retries: 2, // survive transient SDK failures during worker restart (ADR-0156)
     concurrency: [{ scope: "fn", limit: 1 }], // one story at a time
     timeouts: {
-      start: "30m", // codex implement can take 10-15 min, prove/judge 5 min each
+      finish: "30m", // codex implement can take 10-15 min, prove/judge 5 min each
     },
   },
   { event: "agent/story.start" },
