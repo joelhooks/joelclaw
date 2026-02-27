@@ -1,6 +1,5 @@
 ---
-status: superseded
-superseded-by: "0159-talon-k8s-watchdog-daemon"
+status: accepted
 date: 2026-02-27
 tags: [infrastructure, worker, reliability, rust]
 related: [0156-graceful-worker-restart]
