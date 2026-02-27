@@ -31,9 +31,11 @@ type ContentResourceDocument = {
 };
 
 type ConvexConfig = {
-  url: string;
+  url: string | null;
   adminAuth: string | null;
 };
+
+type SeedMode = "live" | "dry-run";
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
@@ -184,10 +186,33 @@ function resolveConvexAdminAuth(repoRoot: string): string | null {
 }
 
 function resolveConvexConfig(repoRoot: string): ConvexConfig {
+  const url = resolveConvexUrl(repoRoot);
   return {
-    url: resolveConvexUrl(repoRoot),
+    url: url.length > 0 ? url : null,
     adminAuth: resolveConvexAdminAuth(repoRoot),
   };
+}
+
+function isConnectionRefusedError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+
+  const message = error.message.toLowerCase();
+  if (
+    message.includes("connectionrefused") ||
+    message.includes("connection refused") ||
+    message.includes("unable to connect") ||
+    message.includes("fetch failed")
+  ) {
+    return true;
+  }
+
+  const code = (
+    "code" in error && typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : ""
+  ).toLowerCase();
+
+  return code.includes("connectionrefused") || code.includes("econnrefused");
 }
 
 function assertSeededDocument(slug: string, document: ContentResourceDocument | null): void {
@@ -212,11 +237,6 @@ function assertSeededDocument(slug: string, document: ContentResourceDocument | 
 async function main() {
   const repoRoot = resolve(import.meta.dir, "..");
   const { url: convexUrl, adminAuth } = resolveConvexConfig(repoRoot);
-  if (!convexUrl) {
-    throw new Error(
-      "CONVEX_URL, NEXT_PUBLIC_CONVEX_URL, or CONVEX_SELF_HOSTED_URL is required.",
-    );
-  }
 
   const contentDir = join(repoRoot, "apps", "web", "content");
   const articleFiles = listArticleFiles(contentDir);
@@ -225,15 +245,45 @@ async function main() {
     return;
   }
 
-  const convex = new ConvexHttpClient(convexUrl);
-  if (adminAuth) {
-    convex.setAdminAuth(adminAuth);
-  }
   const upsertRef = api.contentResources.upsert as FunctionReference<"mutation">;
   const getByResourceIdRef = api.contentResources.getByResourceId as FunctionReference<"query">;
 
+  let seedMode: SeedMode = "live";
+  const strictConnectivity = asBoolean(process.env.SEED_ARTICLES_STRICT);
+  const convex = convexUrl ? new ConvexHttpClient(convexUrl) : null;
+  if (convex && adminAuth) {
+    convex.setAdminAuth(adminAuth);
+  }
+
+  if (!convex || !convexUrl) {
+    if (strictConnectivity) {
+      throw new Error(
+        "CONVEX_URL, NEXT_PUBLIC_CONVEX_URL, or CONVEX_SELF_HOSTED_URL is required when SEED_ARTICLES_STRICT=1.",
+      );
+    }
+
+    seedMode = "dry-run";
+    console.warn(
+      "[seed-articles] no Convex URL configured; running in dry-run mode. Set SEED_ARTICLES_STRICT=1 to require Convex.",
+    );
+  } else {
+    try {
+      await convex.query(getByResourceIdRef, { resourceId: "__seed_probe__" });
+    } catch (error) {
+      if (strictConnectivity || !isConnectionRefusedError(error)) {
+        throw error;
+      }
+
+      seedMode = "dry-run";
+      console.warn(
+        `[seed-articles] Convex unreachable at ${convexUrl}; running in dry-run mode. Set SEED_ARTICLES_STRICT=1 to fail on connectivity errors.`,
+      );
+    }
+  }
+
   let inserted = 0;
   let updated = 0;
+  let dryRun = 0;
 
   for (const filePath of articleFiles) {
     const slug = slugFromFilePath(contentDir, filePath);
@@ -254,6 +304,12 @@ async function main() {
       updated: toDateString(meta.updated) || undefined,
       draft: asBoolean(meta.draft),
     };
+
+    if (seedMode === "dry-run" || !convex) {
+      dryRun += 1;
+      console.log(`[seed-articles] seeded ${slug} (dry-run)`);
+      continue;
+    }
 
     const before = (await convex.query(getByResourceIdRef, {
       resourceId,
@@ -279,7 +335,7 @@ async function main() {
   }
 
   console.log(
-    `[seed-articles] complete (${articleFiles.length} articles, inserted=${inserted}, updated=${updated})`,
+    `[seed-articles] complete (${articleFiles.length} articles, inserted=${inserted}, updated=${updated}, dryRun=${dryRun}, mode=${seedMode})`,
   );
 }
 
