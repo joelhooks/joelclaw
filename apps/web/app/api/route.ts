@@ -3,16 +3,18 @@
  * Returns helpful details about all available APIs on joelclaw.com.
  * Agents hitting /api get a map of the entire API surface.
  */
+import { cacheLife } from "next/cache";
 import { NextResponse } from "next/server";
 
 const PROTOCOL_VERSION = 1 as const;
 
-export async function GET() {
+async function getDiscoveryPayload() {
   "use cache";
+  cacheLife("days");
 
   const origin = "https://joelclaw.com";
 
-  return NextResponse.json({
+  return {
     ok: true,
     command: "GET /api",
     protocolVersion: PROTOCOL_VERSION,
@@ -100,5 +102,10 @@ export async function GET() {
       version: "0.1.0",
       cached: true,
     },
-  });
+  };
+}
+
+export async function GET() {
+  const payload = await getDiscoveryPayload();
+  return NextResponse.json(payload);
 }
