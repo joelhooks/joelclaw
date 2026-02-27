@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-02-27
 tags: [infrastructure, k8s, reliability, rust, watchdog, self-healing, worker]
 deciders: [joel]
@@ -16,7 +16,7 @@ supersedes:
 
 ## Status
 
-proposed
+accepted (deployed 2026-02-27, launchd active)
 
 ## Context
 

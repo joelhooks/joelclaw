@@ -1,5 +1,6 @@
 ---
-status: proposed
+status: superseded
+superseded-by: "0159-talon-k8s-watchdog-daemon"
 date: 2026-02-27
 tags: [infrastructure, inngest, worker, reliability]
 related: [0089-single-source-deployment, 0155-three-stage-story-pipeline, 0148-k8s-resilience-policy]
