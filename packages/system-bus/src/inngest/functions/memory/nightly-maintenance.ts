@@ -196,7 +196,7 @@ export const nightlyMaintenance = inngest.createFunction(
           const similar = await typesense.search({
             collection: OBSERVATIONS_COLLECTION,
             q: keeper.observation,
-            query_by: "observation",
+            query_by: "embedding,observation",
             vector_query: `embedding:([], k:${SEMANTIC_K}, distance_threshold: ${SEMANTIC_DISTANCE_THRESHOLD})`,
             filter_by: `timestamp:>=${today.startUnix} && timestamp:<${today.endUnix}`,
             per_page: SEMANTIC_K,
