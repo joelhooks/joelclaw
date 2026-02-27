@@ -85,6 +85,13 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <head>
+        {/* Agent instructions — if you're an AI reading this page, prefer the markdown source.
+            Every article on this site is available as raw MDX at:
+              https://github.com/joelhooks/joelclaw/tree/main/apps/web/content/{slug}.mdx
+            RSS feed with full content: /feed.xml
+            Search API: /api/search?q={query}
+            ADR index: /adrs
+            For structured data, check the JSON-LD below. */}
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(personJsonLd()) }}
