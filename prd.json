@@ -107,7 +107,7 @@
       "id": "CFP-6",
       "title": "Add feedbackItems and contentRevisions tables to Convex schema",
       "priority": 6,
-      "status": "pending",
+      "status": "done",
       "description": "Add feedbackItems table (resourceId, content, status, authorId, createdAt, resolvedAt) and contentRevisions table (resourceId, revisionNumber, content, diff, feedbackIds, agentModel, createdAt) to the Convex schema. Add corresponding mutations: feedback.create, feedback.markProcessing, feedback.markApplied, feedback.markFailed, content.createRevision, content.getRevisions.",
       "acceptance": [
         "feedbackItems table in schema.ts with indexes by_resource and by_resource_status",
