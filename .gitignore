@@ -82,3 +82,4 @@ yarn-error.log*
 .DS_Store
 *.pem
 /infra/worker-supervisor/target/
+skills/.DS_Store
