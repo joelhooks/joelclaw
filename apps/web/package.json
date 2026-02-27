@@ -16,6 +16,8 @@
     "@joelclaw/mdx-pipeline": "workspace:^",
     "@repo/ui": "workspace:*",
     "@types/mdast": "^4.0.4",
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.36.2",
     "better-auth": "^1.4.9",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
