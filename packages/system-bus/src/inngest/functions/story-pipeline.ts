@@ -419,7 +419,7 @@ export const storyPipeline = inngest.createFunction(
       throw new NonRetriableError("Missing prdPath or storyId");
     }
 
-    const cwd = rawCwd || process.env.HOME || "/Users/joel";
+    const cwd = rawCwd || `${process.env.HOME}/Code/joelhooks/joelclaw`;
 
     // NOTE for future agents:
     // - Use gateway.* for human-readable, authored updates back to the initiating session/channels.
