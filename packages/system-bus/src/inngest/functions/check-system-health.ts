@@ -434,6 +434,36 @@ async function checkAgentSecrets(): Promise<ServiceStatus> {
   }
 }
 
+async function checkNfsMounts(): Promise<ServiceStatus> {
+  const mounts = [
+    { name: "nas-nvme", path: "/Volumes/nas-nvme" },
+    { name: "three-body", path: "/Volumes/three-body" },
+  ];
+  const results: string[] = [];
+  let allOk = true;
+
+  for (const mount of mounts) {
+    try {
+      const probe = spawnSync("stat", [mount.path], { timeout: 5000 });
+      if (probe.status === 0) {
+        results.push(`${mount.name}: ok`);
+      } else {
+        allOk = false;
+        results.push(`${mount.name}: missing`);
+      }
+    } catch {
+      allOk = false;
+      results.push(`${mount.name}: timeout`);
+    }
+  }
+
+  return {
+    name: "NFS Mounts",
+    ok: allOk,
+    detail: results.join(", "),
+  };
+}
+
 async function checkWebhooks(): Promise<ServiceStatus> {
   try {
     // Probe webhook server locally (avoids TLS cert issues with Tailscale funnel)
@@ -654,6 +684,7 @@ export const checkSystemHealth = inngest.createFunction(
             timedServiceCheck("Webhooks", checkWebhooks),
             timedServiceCheck("Typesense", checkTypesense),
             timedServiceCheck("Agent Secrets", checkAgentSecrets),
+            timedServiceCheck("NFS Mounts", checkNfsMounts),
           ]);
           return results;
         })
