@@ -233,30 +233,58 @@ function discoveryResponse(request: NextRequest) {
   return NextResponse.json(
     envelope("GET /api/agent/search", {
       service: SERVICE,
-      description: "Agent-first search for joelclaw.com content. Returns HATEOAS JSON with markdown snippets.",
-      auth: {
-        mode: "public-read, bearer for private collections",
-        note: "Set Authorization: Bearer <token> to search vault, memory, system log, transcripts",
+      description: "Agent-first search for joelclaw.com — Joel Hooks' site about building AI agent infrastructure, distributed systems, and developer education.",
+      about: {
+        who: "Joel Hooks — builder, educator, co-founder of egghead.io",
+        what: "Articles, architecture decision records (ADRs), research, /cool discoveries, and system documentation",
+        topics: [
+          "AI agent infrastructure (LiveKit voice agents, gateway daemons, Inngest durable functions)",
+          "Distributed systems (Kubernetes, Redis event bridges, self-hosted services)",
+          "Programming language theory (Erlang/BEAM, Plan 9, type theory)",
+          "Developer education and course platforms",
+          "Observability, CLI design, and operational patterns",
+        ],
       },
-      rateLimit: { limit: RATE_LIMIT, window: RATE_WINDOW, provider: "upstash" },
+      usage: {
+        search: `GET ${origin}/api/agent/search?q={query}&limit={1-50}`,
+        params: {
+          q: "Search query (required for search, omit for this discovery page)",
+          limit: "Max results, 1-50, default 10",
+        },
+        auth: "Optional. Set Authorization: Bearer <token> to unlock private collections (vault, memory, system log, transcripts).",
+        rateLimit: `${RATE_LIMIT} requests per ${RATE_WINDOW} (Upstash sliding window)`,
+        responseFormat: "HATEOAS JSON envelope with markdown snippets and nextActions",
+      },
       publicCollections: PUBLIC_COLLECTIONS.map(c => c.name).concat(["adrs"]),
       privateCollections: PRIVATE_COLLECTIONS.map(c => c.name),
     }, [
       {
-        command: `curl -sS "${origin}/api/agent/search?q=livekit&limit=5"`,
-        description: "Search public content",
+        command: `curl -sS "${origin}/api/agent/search?q=voice+agent"`,
+        description: "How Joel built a self-hosted voice agent with LiveKit",
       },
       {
-        command: `curl -sS -H "Authorization: Bearer <token>" "${origin}/api/agent/search?q=livekit&limit=5"`,
-        description: "Search all collections (authenticated)",
+        command: `curl -sS "${origin}/api/agent/search?q=plan+9"`,
+        description: "Research on Plan 9, Rob Pike, and the lineage to Go/Docker/K8s",
+      },
+      {
+        command: `curl -sS "${origin}/api/agent/search?q=erlang+armstrong"`,
+        description: "Joe Armstrong, Erlang/OTP, and the BEAM virtual machine",
+      },
+      {
+        command: `curl -sS "${origin}/api/agent/search?q=inngest+durable+functions"`,
+        description: "Architecture decisions on durable event-driven workflows",
+      },
+      {
+        command: `curl -sS "${origin}/api/agent/search?q=kubernetes+self-hosted"`,
+        description: "Running services on a personal k8s cluster (Talos + Colima)",
       },
       {
         command: `curl -sS "${origin}/api/docs"`,
-        description: "Docs API (books, PDFs, chunked documents)",
+        description: "Docs API — search books, PDFs, and chunked technical documents",
       },
       {
         command: `curl -sS "${origin}/feed.xml"`,
-        description: "RSS feed with full article content",
+        description: "RSS feed with full article content (all posts)",
       },
     ]),
   );
