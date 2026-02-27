@@ -36,6 +36,7 @@ import { inngestCmd } from "./commands/inngest"
 import { otelCmd } from "./commands/otel"
 import { langfuseCmd } from "./commands/langfuse"
 import { sleepCmd, wakeCmd } from "./commands/sleep"
+import { subscribeCmd } from "./commands/subscribe"
 
 // ── Root ─────────────────────────────────────────────────────────────
 
@@ -137,6 +138,7 @@ const root = Command.make("joelclaw", {}, () =>
           nas: "joelclaw nas {status|runs|review}",
           otel: "joelclaw otel {list|search|stats}",
           langfuse: "joelclaw langfuse {aggregate}",
+          subscribe: "joelclaw subscribe {list|add|remove|check|summary}",
           inngest: "joelclaw inngest {status|workers|register|restart-worker|reconcile|memory-e2e|memory-weekly|memory-gate|memory-schema-reconcile|memory-health}",
           schema: "joelclaw schema",
           refresh: "joelclaw refresh",
@@ -155,7 +157,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, docsCmd, emailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd])
+  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, docsCmd, emailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd])
 )
 
 const cli = Command.run(root, {
