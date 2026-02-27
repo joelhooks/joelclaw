@@ -11,32 +11,47 @@
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { NonRetriableError } from "inngest";
+import { z } from "zod";
 import { inngest } from "../client";
 import { buildGatewaySignalMeta, type GatewaySignalLevel } from "../middleware/gateway-signal";
 
 const MAX_ATTEMPTS = 3;
 
-interface Story {
-  id: string;
-  title: string;
-  description: string;
-  acceptance_criteria: string[];
-  priority: number;
-  depends_on?: string[];
-}
+// ── PRD Schema (runtime validated) ─────────────────────────────────
 
-interface Prd {
-  title?: string;
-  context?: {
-    repo?: string;
-    test_command?: string;
-    typecheck_command?: string;
-    lint_command?: string;
-    codex_timeout_seconds?: number;
-    [key: string]: unknown;
-  };
-  stories: Story[];
-}
+const StorySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string(),
+  acceptance_criteria: z.array(z.string()).optional(),
+  acceptance: z.array(z.string()).optional(),
+  priority: z.number(),
+  depends_on: z.array(z.string()).optional(),
+  files: z.array(z.string()).optional(),
+  status: z.string().optional(),
+}).transform((s) => ({
+  ...s,
+  acceptance_criteria: s.acceptance_criteria ?? s.acceptance ?? [],
+}));
+
+type Story = z.output<typeof StorySchema>;
+
+const PrdSchema = z.object({
+  name: z.string().optional(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  adrs: z.array(z.string()).optional(),
+  context: z.object({
+    repo: z.string().optional(),
+    test_command: z.string().optional(),
+    typecheck_command: z.string().optional(),
+    lint_command: z.string().optional(),
+    codex_timeout_seconds: z.number().optional(),
+  }).passthrough().optional(),
+  stories: z.array(StorySchema).min(1, "PRD must have at least one story"),
+});
+
+type Prd = z.output<typeof PrdSchema>;
 
 interface CodexExecOptions {
   prompt: string;
@@ -478,15 +493,23 @@ export const storyPipeline = inngest.createFunction(
       };
     };
 
-    // Load PRD
-    const prd: Prd = await step.run("load-prd", () => {
+    // Load PRD — runtime validated via Zod
+    const prd = await step.run("load-prd", () => {
       const raw = readFileSync(prdPath, "utf-8");
-      return JSON.parse(raw) as Prd;
+      const parsed = PrdSchema.safeParse(JSON.parse(raw));
+      if (!parsed.success) {
+        throw new NonRetriableError(
+          `Invalid PRD at ${prdPath}: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+        );
+      }
+      return parsed.data;
     });
 
     const story = prd.stories.find((s) => s.id === storyId);
     if (!story) {
-      throw new NonRetriableError(`Story ${storyId} not found in PRD`);
+      throw new NonRetriableError(
+        `Story "${storyId}" not found in PRD. Available: ${prd.stories.map((s) => s.id).join(", ")}`,
+      );
     }
 
     if (attempt > MAX_ATTEMPTS) {
