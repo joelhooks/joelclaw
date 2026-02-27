@@ -50,7 +50,7 @@
       "id": "CFP-3",
       "title": "Cache components: static shell with cached article content",
       "priority": 3,
-      "status": "pending",
+      "status": "done",
       "description": "Refactor app/[slug]/page.tsx to use Next.js 16 cache components (PPR). The article content should be in a cached async component with 'use cache', cacheLife('max'), and cacheTag('article:{slug}'). The page shell (header, footer, nav) stays static. FeedbackStatus (future) will be a dynamic Suspense slot. Ensure cacheComponents is enabled in next.config.ts.",
       "acceptance": [
         "next.config.ts has cacheComponents: true",
