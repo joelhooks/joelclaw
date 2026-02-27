@@ -8,7 +8,7 @@
  * Data: { prdPath, storyId, cwd, attempt?, judgment? }
  */
 
-import { execSync } from "node:child_process";
+import { exec, execSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { NonRetriableError } from "inngest";
 import { z } from "zod";
@@ -235,13 +235,13 @@ function writeOutputSchemaFile(schema: Record<string, unknown>, schemaName: stri
   return schemaPath;
 }
 
-function codexExec<T = unknown>({
+async function runCodex<T = unknown>({
   prompt,
   cwd,
   outputSchema,
   schemaName,
   timeoutMs,
-}: CodexExecOptions): CodexExecResult<T> {
+}: CodexExecOptions): Promise<CodexExecResult<T>> {
   const escapedPrompt = escapeShellArg(prompt);
   const schemaPath = outputSchema
     ? writeOutputSchemaFile(outputSchema, schemaName || "response")
@@ -250,13 +250,28 @@ function codexExec<T = unknown>({
   const cmd = `codex exec --full-auto -m gpt-5.3-codex${schemaFlag} '${escapedPrompt}'`;
 
   try {
-    const output = execSync(cmd, {
-      cwd,
-      encoding: "utf-8",
-      ...(typeof timeoutMs === "number" ? { timeout: timeoutMs } : {}),
-      maxBuffer: 10 * 1024 * 1024,
-      env: { ...process.env, CI: "true", TERM: "dumb" },
-    }).trim();
+    const output = (await new Promise<string>((resolve, reject) => {
+      exec(
+        cmd,
+        {
+          cwd,
+          encoding: "utf-8",
+          ...(typeof timeoutMs === "number" ? { timeout: timeoutMs } : {}),
+          maxBuffer: 10 * 1024 * 1024,
+          env: { ...process.env, CI: "true", TERM: "dumb" },
+        },
+        (error, stdout, stderr) => {
+          if (error) {
+            const execError = error as Error & { stdout?: string | Buffer; stderr?: string | Buffer };
+            execError.stdout = stdout;
+            execError.stderr = stderr;
+            reject(execError);
+            return;
+          }
+          resolve(stdout);
+        },
+      );
+    })).trim();
 
     const trimmedOutput = output.slice(-30_000);
 
@@ -304,15 +319,15 @@ function extractJsonObject<T>(value: string): T | undefined {
   return tryParseJson<T>(candidate);
 }
 
-function codexExecWithHealing<T = unknown>({
+async function codexExecWithHealing<T = unknown>({
   prompt,
   cwd,
   outputSchema,
   schemaName,
   stageName,
   timeoutMs,
-}: CodexHealingOptions): CodexExecResult<T> {
-  const result = codexExec<T>({ prompt, cwd, outputSchema, schemaName, timeoutMs });
+}: CodexHealingOptions): Promise<CodexExecResult<T>> {
+  const result = await runCodex<T>({ prompt, cwd, outputSchema, schemaName, timeoutMs });
 
   if (!outputSchema) {
     return result;
@@ -342,7 +357,7 @@ Rules:
 RAW OUTPUT:
 ${result.output.slice(-12_000)}`;
 
-  const repaired = codexExec<T>({
+  const repaired = await runCodex<T>({
     prompt: repairPrompt,
     cwd,
     outputSchema,
