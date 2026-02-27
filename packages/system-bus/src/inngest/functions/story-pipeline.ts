@@ -572,6 +572,9 @@ export const storyPipeline = inngest.createFunction(
 
       const prompt = `Implement this story in the codebase.
 
+REPOSITORY: ${cwd}
+All file paths are relative to this directory. Run all commands from here.
+
 STORY: ${story.title}
 ${story.description}
 
@@ -644,6 +647,9 @@ Do NOT commit if validation fails — fix issues first, then commit.`;
 
       const prompt = `You are a code reviewer verifying a feature implementation.
 
+REPOSITORY: ${cwd}
+All file paths are relative to this directory. Run all commands from here.
+
 STORY: ${story.title}
 
 ACCEPTANCE CRITERIA:
@@ -713,6 +719,9 @@ Be thorough. The next stage will judge based on your proof.`;
         : proofResult.output.slice(-10_000);
 
       const prompt = `You are a strict judge evaluating whether a story implementation meets its acceptance criteria.
+
+REPOSITORY: ${cwd}
+All file paths are relative to this directory. Run all commands from here.
 
 STORY: ${story.title}
 
