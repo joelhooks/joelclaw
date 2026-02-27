@@ -1,13 +1,18 @@
 {
   "name": "Content Feedback Pipeline",
   "description": "Migrate articles from filesystem MDX to Convex ContentResource, wire the existing review UI to trigger agent edits, and close the feedback loop with cache invalidation.",
-  "adrs": ["0106", "0154", "0084", "0039"],
+  "adrs": [
+    "0106",
+    "0154",
+    "0084",
+    "0039"
+  ],
   "stories": [
     {
       "id": "CFP-1",
       "title": "Seed articles into Convex ContentResources",
       "priority": 1,
-      "status": "pending",
+      "status": "done",
       "description": "Write an idempotent seed script that reads all .mdx files from apps/web/content/, parses frontmatter with gray-matter, and upserts each as a ContentResource with type 'article' and resourceId 'article:{slug}'. Fields: slug, title, description, content (MDX body without frontmatter), image, tags, type, date, updated, draft.",
       "acceptance": [
         "Script at scripts/seed-articles.ts runs with `bun scripts/seed-articles.ts`",
@@ -16,7 +21,10 @@
         "Discoveries in apps/web/content/discoveries/ are NOT included (articles only)",
         "Script logs each article seeded with slug"
       ],
-      "files": ["scripts/seed-articles.ts", "apps/web/convex/contentResources.ts"]
+      "files": [
+        "scripts/seed-articles.ts",
+        "apps/web/convex/contentResources.ts"
+      ]
     },
     {
       "id": "CFP-2",
@@ -32,7 +40,10 @@
         "TypeScript compiles clean: bunx tsc --noEmit",
         "Site builds successfully: pnpm --filter web build"
       ],
-      "files": ["apps/web/lib/posts.ts", "apps/web/app/[slug]/page.tsx"]
+      "files": [
+        "apps/web/lib/posts.ts",
+        "apps/web/app/[slug]/page.tsx"
+      ]
     },
     {
       "id": "CFP-3",
@@ -47,7 +58,10 @@
         "Site builds with no errors",
         "Article pages still render correctly at /mineclaw, /build-a-voice-agent-that-answers-the-phone"
       ],
-      "files": ["apps/web/app/[slug]/page.tsx", "apps/web/next.config.ts"]
+      "files": [
+        "apps/web/app/[slug]/page.tsx",
+        "apps/web/next.config.ts"
+      ]
     },
     {
       "id": "CFP-4",
@@ -61,14 +75,16 @@
         "Missing tag returns 400",
         "TypeScript compiles clean"
       ],
-      "files": ["apps/web/app/api/revalidate/route.ts"]
+      "files": [
+        "apps/web/app/api/revalidate/route.ts"
+      ]
     },
     {
       "id": "CFP-5",
       "title": "Inngest function: content/review.submitted handler",
       "priority": 5,
       "status": "pending",
-      "description": "Create an Inngest function in packages/system-bus that handles 'content/review.submitted' events. Steps: (1) read current article content from Convex, (2) read submitted review comments from Convex, (3) call infer() with content + feedback to produce updated article, (4) validate output is non-empty and similar length to input (±50%), (5) write new contentRevision to Convex, (6) update article contentResource with new content, (7) mark review comments as resolved, (8) POST to /api/revalidate to bust cache tag, (9) notify via gateway. Use concurrency key on resourceId with limit 1.",
+      "description": "Create an Inngest function in packages/system-bus that handles 'content/review.submitted' events. Steps: (1) read current article content from Convex, (2) read submitted review comments from Convex, (3) call infer() with content + feedback to produce updated article, (4) validate output is non-empty and similar length to input (\u00b150%), (5) write new contentRevision to Convex, (6) update article contentResource with new content, (7) mark review comments as resolved, (8) POST to /api/revalidate to bust cache tag, (9) notify via gateway. Use concurrency key on resourceId with limit 1.",
       "acceptance": [
         "Function registered as 'content-review-apply' in system-bus worker",
         "Handles content/review.submitted events",
@@ -99,19 +115,23 @@
         "Mutations for revision lifecycle (createRevision, getRevisions)",
         "npx convex dev deploys without errors"
       ],
-      "files": ["apps/web/convex/schema.ts", "apps/web/convex/feedback.ts", "apps/web/convex/contentRevisions.ts"]
+      "files": [
+        "apps/web/convex/schema.ts",
+        "apps/web/convex/feedback.ts",
+        "apps/web/convex/contentRevisions.ts"
+      ]
     },
     {
       "id": "CFP-7",
       "title": "Wire feedback form to Convex + show processing status",
       "priority": 7,
       "status": "pending",
-      "description": "The existing review UI components (components/review/) submit via the existing /api/review/submit route which fires Inngest events. Add a FeedbackStatus client island component that subscribes to Convex feedbackItems for the current article and shows a 'revision in progress' indicator when any feedback has status 'processing'. Use provider island pattern — wrap only FeedbackStatus in ConvexProvider, not the whole page.",
+      "description": "The existing review UI components (components/review/) submit via the existing /api/review/submit route which fires Inngest events. Add a FeedbackStatus client island component that subscribes to Convex feedbackItems for the current article and shows a 'revision in progress' indicator when any feedback has status 'processing'. Use provider island pattern \u2014 wrap only FeedbackStatus in ConvexProvider, not the whole page.",
       "acceptance": [
         "FeedbackStatus component shows amber indicator when feedback is processing",
         "Indicator disappears when all feedback is resolved",
         "ConvexProvider is scoped to FeedbackStatus island only, not the layout",
-        "Submitting a review via existing UI triggers the full pipeline: Convex → Inngest → agent → revision → cache bust",
+        "Submitting a review via existing UI triggers the full pipeline: Convex \u2192 Inngest \u2192 agent \u2192 revision \u2192 cache bust",
         "No regressions on article rendering"
       ],
       "files": [
