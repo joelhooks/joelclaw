@@ -1534,6 +1534,12 @@ export type Events = {
     };
   };
 
+  "skill-garden/check": {
+    data: {
+      deep?: boolean;
+    };
+  };
+
   // --- Legacy ---
 };
 

@@ -99,6 +99,7 @@ import { bookDownload } from "./book-download";
 import { contactEnrich } from "./contact-enrich";
 import { channelMessageIngest } from "./channel-message-ingest";
 import { channelMessageClassify } from "./channel-message-classify";
+import { skillGarden } from "./skill-garden";
 
 function getFunctionId(fn: { opts?: { id?: string } }): string {
   return fn.opts?.id ?? "unknown";
@@ -201,6 +202,7 @@ export const hostFunctionDefinitions = [
   docsIngestJanitor,
   docsReindex,
   contactEnrich,
+  skillGarden,
 ];
 
 export const hostFunctionIds = hostFunctionDefinitions.map(getFunctionId);

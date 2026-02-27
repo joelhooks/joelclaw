@@ -1,47 +1,58 @@
 ---
 name: joelclaw
-description: "Operate the joelclaw event bus and agent loop infrastructure via the joelclaw CLI (igs is a legacy alias). Use for: sending events, checking runs, starting/monitoring/cancelling agent loops, debugging failed runs, checking health, restarting the worker, inspecting step traces. Triggers: 'joelclaw', 'send an event', 'check inngest', 'start a loop', 'loop status', 'why did this fail', 'debug run', 'check worker', 'restart worker', 'runs', 'what failed', 'igs', or any Inngest/event-bus/agent-loop task."
+displayName: joelclaw CLI
+description: "Operate the joelclaw event bus, gateway, observability, and agent loop infrastructure via the joelclaw CLI. Use for: sending events, checking runs, starting/monitoring/cancelling agent loops, debugging failed runs, checking health, restarting the worker, inspecting step traces, managing subscriptions, gateway operations, OTEL queries, semantic recall. Triggers: 'joelclaw', 'send an event', 'check inngest', 'start a loop', 'loop status', 'why did this fail', 'debug run', 'check worker', 'restart worker', 'runs', 'what failed', 'subscribe', 'gateway', 'otel', 'recall', or any Inngest/event-bus/agent-loop task."
+version: 2.0.0
+author: Joel Hooks
+tags: [joelclaw, cli, inngest, gateway, otel, agent-loop, infrastructure]
 ---
 
-# joelclaw — Event Bus & Agent Loop CLI
+# joelclaw — CLI & Event Bus
 
-The `joelclaw` CLI (formerly `igs`, kept as a legacy alias) is the agent-facing interface to the joelclaw event bus (Inngest) and agent loop infrastructure.
+The `joelclaw` CLI is the primary operator interface to the entire joelclaw system: event bus (Inngest), gateway, observability (OTEL), agent loops, subscriptions, and more. Built with `@effect/cli`, returns HATEOAS JSON envelopes.
+
+**If the CLI crashes, that's the highest priority fix.**
+
+Binary: `~/.bun/bin/joelclaw`
+Source: `~/Code/joelhooks/joelclaw/packages/cli/`
+Build: `bun build packages/cli/src/cli.ts --compile --outfile ~/.bun/bin/joelclaw`
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  k3d cluster "joelclaw" (k3s v1.33.6, namespace: joelclaw) │
-│                                                              │
-│  StatefulSet: inngest    → NodePort 8288 (API), 8289 (dash) │
-│  StatefulSet: redis      → NodePort 6379                     │
-│  StatefulSet: qdrant     → NodePort 6333, 6334               │
-│                                                              │
-│  ⚠️ Service named inngest-svc (not inngest)                  │
-│     k8s auto-injects INNGEST_PORT env collision otherwise    │
-└─────────────────────────────────────────────────────────────┘
+┌─ Colima VM (VZ framework, aarch64) ────────────────────────────────┐
+│  Talos v1.12.4 → k8s v1.35.0 (single node, namespace: joelclaw)  │
+│                                                                     │
+│  inngest-0             StatefulSet   ports 8288 (API), 8289 (dash) │
+│  redis-0               StatefulSet   port 6379                     │
+│  typesense-0           StatefulSet   port 8108                     │
+│  system-bus-worker     Deployment    port 3111 (110+ functions)    │
+│  docs-api              Deployment    port 3838                     │
+│  livekit-server        Deployment    ports 7880, 7881              │
+│  bluesky-pds           Deployment    port 3000                     │
+│                                                                     │
+│  ⚠️ Inngest service named inngest-svc (not inngest)                │
+│     k8s auto-injects INNGEST_PORT env collision otherwise          │
+└─────────────────────────────────────────────────────────────────────┘
         ↕ NodePort on localhost
-┌─────────────────────────────────────────────────────────────┐
-│  system-bus worker (Bun + Hono, launchd, port 3111)         │
-│  ~/Code/system-bus-worker/packages/system-bus/               │
-│  16 Inngest functions registered                             │
-└─────────────────────────────────────────────────────────────┘
+
+Gateway daemon (always-on pi session, Redis event bridge)
+NAS "three-body" (ASUSTOR, 10GbE NFS, 64TB RAID5 + NVMe cache)
+Vault ~/Vault (Obsidian, PARA method — ADRs, system log, contacts)
 ```
 
 **Inngest event key**: `37aa349b89692d657d276a40e0e47a15`
 **k8s manifests**: `~/Code/joelhooks/joelclaw/k8s/`
 
-## joelclaw CLI Reference
+## CLI Command Reference
 
-### Output Modes
-
-Most commands support `--compact/-c` for plain-text output. **Use compact mode for monitoring** — it's directly readable without JSON parsing. JSON (default) is for programmatic use.
+### Health & Status
 
 ```bash
-joelclaw loop status -c                    # plain text, one line per story
-joelclaw runs -c                           # plain text, one line per run
-joelclaw loop status                       # full HATEOAS JSON (default)
-joelclaw loop status -v                    # JSON + descriptions, acceptance criteria, output paths
+joelclaw status                            # Health: server + worker + k8s pods
+joelclaw inngest status                    # Inngest server details
+joelclaw functions                         # List all 110+ registered functions
+joelclaw refresh                           # Force re-register with Inngest server
 ```
 
 ### Send Events
@@ -49,58 +60,136 @@ joelclaw loop status -v                    # JSON + descriptions, acceptance cri
 ```bash
 joelclaw send "event/name" --data '{"key":"value"}'
 joelclaw send "pipeline/video.download" --data '{"url":"https://youtube.com/watch?v=XXX"}'
-joelclaw send "memory/session.compaction.pending" --data '{"sessionId":"test","messages":"..."}'
+joelclaw send "agent/story.start" --data '{"prdPath":"/abs/path/prd.json","storyId":"S-1"}'
 ```
 
 ### View Runs
 
 ```bash
-joelclaw runs                              # recent 10
-joelclaw runs -c                           # compact — one line per run
-joelclaw runs --status FAILED              # just failures
-joelclaw runs --status COMPLETED --hours 1 # last hour's completions
-joelclaw run <RUN_ID>                      # step trace + errors for one run
+joelclaw runs                              # Recent 10
+joelclaw runs --count 20 --hours 24        # More runs, wider window
+joelclaw runs --status FAILED              # Just failures
+joelclaw run <RUN_ID>                      # Step trace + errors for one run
 ```
 
 ### View Events
 
 ```bash
-joelclaw events                            # last 4 hours
-joelclaw events --prefix memory/ --hours 24  # memory pipeline events
-joelclaw events --prefix agent/ --hours 24   # agent loop events
-joelclaw events --count 50 --hours 48        # wider window
+joelclaw events                            # Last 4 hours
+joelclaw events --prefix memory/ --hours 24
+joelclaw events --prefix agent/ --hours 24
+joelclaw events --count 50 --hours 48
 ```
 
-### View Logs
+### Logs
 
 ```bash
-joelclaw logs                              # worker stdout (default 30 lines)
-joelclaw logs errors                       # worker stderr (stack traces)
-joelclaw logs server                       # inngest k8s pod logs
-joelclaw logs server -n 50 --grep error    # filtered server errors
-joelclaw logs worker --grep "observe"      # grep worker logs
+joelclaw logs                              # Worker stdout (default 30 lines)
+joelclaw logs errors                       # Worker stderr (stack traces)
+joelclaw logs server                       # Inngest k8s pod logs
+joelclaw logs server -n 50 --grep error    # Filtered server errors
+joelclaw logs worker --grep "observe"      # Grep worker logs
 ```
 
-### Story Pipeline (ADR-0155)
-
-The 3-stage story pipeline runs individual PRD stories through implement → prove → judge.
+### Gateway
 
 ```bash
-# Fire a single story from a PRD
+joelclaw gateway status                    # Gateway health + session info
+joelclaw gateway events                    # Recent gateway events
+joelclaw gateway test                      # Send test message through gateway
+joelclaw gateway restart                   # Restart gateway daemon
+joelclaw gateway stream                    # Live stream gateway events
+```
+
+### Observability (OTEL)
+
+```bash
+joelclaw otel list --hours 1               # Recent telemetry events
+joelclaw otel search "error" --hours 24    # Search OTEL events
+joelclaw otel stats --hours 24             # Aggregate stats
+```
+
+### Subscriptions (ADR-0127)
+
+```bash
+joelclaw subscribe list                    # All feed subscriptions
+joelclaw subscribe add <url> [--name N]    # Add a feed
+joelclaw subscribe remove <url>            # Remove a feed
+joelclaw subscribe check [--url URL]       # Check feeds for new items
+joelclaw subscribe summary                 # Summary of recent items
+```
+
+### Semantic Recall
+
+```bash
+joelclaw recall "query about past context"  # Search semantic memory
+```
+
+### Discovery
+
+```bash
+joelclaw discover "https://example.com" --context "why this is interesting"
+```
+
+### Agent Loops
+
+```bash
+# Start a loop
+joelclaw loop start --project ~/Code/joelhooks/joelclaw \
+  --goal "Implement feature X" \
+  --context ~/Vault/docs/decisions/0XXX.md \
+  --max-retries 2
+
+# Start with existing PRD
+joelclaw loop start --project PATH --prd prd.json --max-retries 2
+
+# Monitor
+joelclaw loop status <LOOP_ID>
+joelclaw loop status <LOOP_ID> -c          # Compact: one line per story
+joelclaw loop status <LOOP_ID> -v          # Verbose: criteria, output paths
+joelclaw watch <LOOP_ID>                   # Live: polls 15s, exits on completion
+joelclaw watch                             # Auto-detects active loop
+
+# Management
+joelclaw loop list                         # All loops in Redis
+joelclaw loop cancel <LOOP_ID>             # Stop + cleanup
+joelclaw loop nuke dead                    # Remove completed loops from Redis
+```
+
+### Other Commands
+
+```bash
+joelclaw sleep [on|off|status]             # Sleep mode for gateway
+joelclaw note <text>                       # Quick note to Vault
+joelclaw vault <query>                     # Search Vault
+joelclaw search <query>                    # Full-text search
+joelclaw email [scan|triage]               # Email operations
+joelclaw x [post|mentions]                 # X/Twitter operations
+joelclaw nas [status|health]               # NAS operations
+joelclaw diagnose <topic>                  # System diagnosis
+joelclaw langfuse [traces|costs]           # Langfuse analytics
+joelclaw inngest sync-worker [--restart]   # Worker lifecycle
+```
+
+### Output Modes
+
+Most commands support `--compact/-c` for plain text. Use compact for monitoring.
+JSON (default) returns HATEOAS envelopes with `next_actions`.
+
+## Story Pipeline (ADR-0155)
+
+3-stage pipeline: implement → prove → judge. Each story runs through the stages with Inngest durability.
+
+```bash
+# Fire a single story
 joelclaw send agent/story.start -d '{
   "prdPath": "/Users/joel/Code/joelhooks/joelclaw/prd.json",
   "storyId": "CFP-2"
 }'
-
-# ALWAYS use absolute path for prdPath — worker CWD is packages/system-bus/
-# Story IDs must match an id in the PRD's stories array
-
-# Monitor the run
-joelclaw event <EVENT_ID>                  # map event → run
-joelclaw run <RUN_ID>                      # step trace + errors
+# ⚠️ ALWAYS use absolute path for prdPath — worker CWD is packages/system-bus/
 ```
 
-**PRD format** (Zod-validated at runtime):
+**PRD format** (Zod-validated):
 ```json
 {
   "name": "Project Name",
@@ -118,51 +207,10 @@ joelclaw run <RUN_ID>                      # step trace + errors
 }
 ```
 
-**Critical rules:**
-- `context` must be `{}` or object with optional fields — NEVER null or string
-- Every story MUST have `priority` (number)
-- `acceptance` or `acceptance_criteria` (array of strings) — both accepted
-- **NEVER set `retries: 0`** on any Inngest function — breaks restart safety (ADR-0156)
-
-### Legacy Agent Loops
-
-```bash
-# Start with planner-generated PRD (preferred)
-joelclaw loop start --project ~/Code/system-bus-worker/packages/system-bus \
-  --goal "Implement feature X per ADR-0021" \
-  --context ~/Vault/docs/decisions/0021-agent-memory-system.md \
-  --max-retries 2
-
-# Start with existing PRD file
-joelclaw loop start --project PATH --prd prd.json --max-retries 2
-
-# Monitor (compact is best for polling)
-joelclaw loop status <LOOP_ID> -c
-
-# Live watch (polls every 15s, prints on change, exits on completion)
-joelclaw watch <LOOP_ID>
-joelclaw watch                             # auto-detects active loop
-joelclaw watch -i 30                       # poll every 30s
-
-# Management
-joelclaw loop list                         # all loops in Redis
-joelclaw loop cancel <LOOP_ID>             # stop + cleanup
-joelclaw loop nuke dead                    # remove completed loops from Redis
-```
-
-### System Health
-
-```bash
-joelclaw status                            # health: server + worker + k8s pods
-joelclaw functions                         # list all registered functions
-joelclaw refresh                           # force re-register with Inngest server
-```
-
-### Discover
-
-```bash
-joelclaw discover "https://example.com" --context "why this is interesting"
-```
+**Critical:**
+- `context` must be `{}` or object — NEVER null or string
+- Every story needs `priority` (number)
+- **NEVER set `retries: 0`** on Inngest functions — breaks restart safety (ADR-0156)
 
 ## Event Types
 
@@ -173,8 +221,9 @@ joelclaw discover "https://example.com" --context "why this is interesting"
 | `pipeline/transcript.process` | → transcript-process → content-summarize |
 | `content/summarize` | → content-summarize |
 | `content/updated` | → content-sync (git commit vault changes) |
+| `docs/ingest` | → docs-ingest (PDF/markdown → vector store) |
 
-### Memory (ADR-0021)
+### Memory
 | Event | Chain |
 |-------|-------|
 | `memory/session.compaction.pending` | → observe-session |
@@ -185,146 +234,104 @@ joelclaw discover "https://example.com" --context "why this is interesting"
 ### Agent Loops
 | Event | Flow |
 |-------|------|
-| `agent/loop.started` | → plan → test-writer → implement → review → judge |
+| `agent/story.start` | → story-pipeline (implement → prove → judge) |
+| `agent/loop.started` | → plan → story pipeline → complete |
 | `agent/loop.story.passed` | → plan (next story) |
 | `agent/loop.story.failed` | → plan (retry or next) |
 | `agent/loop.completed` | → complete (merge-back + cleanup) |
 
-### Google Workspace (ADR-0040)
+### Gateway & Channels
 | Event | Purpose |
 |-------|---------|
-| `google/calendar.checked` | Calendar events fetched |
-| `google/gmail.checked` | Email search/summary completed |
-| `google/gmail.archived` | Messages archived |
+| `gateway/message.received` | Incoming message from any channel |
+| `gateway/heartbeat` | Gateway health ping |
+| `channel/telegram.callback` | Telegram callback queries |
 
-### System
+### Subscriptions & Discovery
+| Event | Purpose |
+|-------|---------|
+| `discovery/noted` | URL/idea captured → enrichment pipeline |
+| `subscriptions/check` | Poll feeds for new items |
+
+### System & Scheduled
 | Event | Purpose |
 |-------|---------|
 | `system/log` | System log entry |
-| `discovery/noted` | URL/idea captured |
+| `system/health.check` | Scheduled health monitoring |
+| `cron/daily-digest` | Morning digest generation |
+| `cron/check-email` | Periodic email scan |
+| `cron/check-calendar` | Calendar check |
+| `cron/nightly-maintenance` | Typesense + system maintenance |
+
+### Notifications
+| Event | Source |
+|-------|--------|
+| `webhook/github` | GitHub webhook events |
+| `webhook/vercel` | Vercel deploy events |
+| `webhook/todoist` | Todoist webhook events |
+| `webhook/front` | Front webhook events |
 
 ## Debugging Failed Runs
 
 ```bash
-joelclaw runs --status FAILED -c           # 1. find the failure
-joelclaw run <RUN_ID>                      # 2. step trace + inline errors
-joelclaw logs errors                       # 3. worker stderr (stack traces)
-joelclaw logs server --grep error          # 4. inngest server errors
+joelclaw runs --status FAILED              # 1. Find the failure
+joelclaw run <RUN_ID>                      # 2. Step trace + inline errors
+joelclaw logs errors                       # 3. Worker stderr
+joelclaw logs server --grep error          # 4. Inngest server errors
+joelclaw otel search "error" --hours 1     # 5. OTEL telemetry
 ```
 
-All inspection goes through `joelclaw`. No raw curl/GraphQL needed.
-
-### Common failure patterns
+### Common Failure Patterns
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Events accepted but functions never run | Inngest can't reach worker | `igs refresh`, restart worker |
-| "Unable to reach SDK URL" in k8s logs | Worker not accessible from cluster | Restart worker, `igs refresh` |
-| Loop story SKIPPED | Tests/typecheck failed in worktree | Check attempt output — code often landed anyway |
-| Run stuck in RUNNING | Worker crashed mid-step | `igs logs errors`, restart worker |
-| `INNGEST_PORT` env collision | k8s service named `inngest` | Service is `inngest-svc` — keep this name |
+| Events accepted but functions never run | Inngest can't reach worker | `joelclaw refresh`, check worker pod |
+| "Unable to reach SDK URL" | Worker unreachable from cluster | Restart worker, `joelclaw refresh` |
+| Loop story SKIPPED | Tests/typecheck failed in worktree | Check attempt output |
+| Run stuck in RUNNING | Worker crashed mid-step | `joelclaw logs errors`, restart worker |
+| `INNGEST_PORT` env collision | k8s service named `inngest` | Service is `inngest-svc` — keep this |
+| Implement step killed on deploy | Worker restart killed in-flight step | ADR-0156: retries: 2 survives this |
 
-## Restarting Services
+## Deploying Worker Changes
 
+Use the publish script — it handles build, push, k8s apply, and rollout:
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker  # restart worker
-joelclaw refresh                                                       # re-register functions
-kubectl rollout restart statefulset/inngest -n joelclaw           # restart inngest pod
-joelclaw status                                                        # verify everything
+~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh
 ```
 
-## Agent Loop Infrastructure
-
-### Pipeline
-
-```
-joelclaw loop start → agent/loop.started
-  → PLANNER (claude) reads project + generates PRD
-    → TEST-WRITER → IMPLEMENTOR (codex) → REVIEWER (claude) → JUDGE (claude)
-      pass → next story | fail → retry with feedback | exhausted → skip
-  → COMPLETER merges worktree branch, cleans up
-```
-
-### Worktree mechanics
-
-- Created at `/tmp/agent-loop/{loopId}/`, branch `agent-loop/{loopId}`
-- `pnpm install` runs after creation and on re-entry
-- Complete stashes dirty state (prd.json, progress.txt), merges, pops
-
-### Monitoring a running loop
-
-```bash
-joelclaw watch                             # best — live updates, exits on completion
-joelclaw loop status -c                    # one-shot compact check
-tail -40 /tmp/agent-loop/<LOOP_ID>/<STORY_ID>-<ATTEMPT>.out  # what the agent actually did
-```
-
-### Loop gotchas
-
-- **Don't edit monorepo while loop runs** — `git add -A` scoops unrelated changes
-- **igs repo IS safe to edit during loops** — it's separate at `~/Code/joelhooks/igs/`
-- **Worktree branch not auto-deleted on cancel** — clean manually
-- **Loop restart not idempotent** — cancel leaves state in 3 places (cancel flag, Redis, git branch)
-- **Skipped stories often have code that landed** — later stories may include the work, or first attempt was correct but tests over-specified
-
-## Monitoring Agent Sessions
-
-Codex sessions write JSONL transcripts to `~/.codex/sessions/YYYY/MM/DD/*.jsonl`. When a story pipeline run is active, monitor it by tailing the most recent session.
-
-### Find the active session
-```bash
-# Most recently modified codex session
-ls -t ~/.codex/sessions/$(date +%Y/%m/%d)/*.jsonl | head -1
-```
-
-### Extract what codex is doing (reasoning summaries)
-```bash
-SESSION=$(ls -t ~/.codex/sessions/$(date +%Y/%m/%d)/*.jsonl | head -1)
-
-# Reasoning summaries — high-level intent
-grep '"response_item"' "$SESSION" | \
-  jq -r '.payload | select(.type == "reasoning") | .summary[]?.text // empty'
-
-# Tool calls — what files it's reading/editing
-grep '"response_item"' "$SESSION" | \
-  jq -r '.payload | select(.type == "function_call") | .name + ": " + (.arguments // "" | .[:200])' | \
-  tail -20
-
-# Live tail (poll every 10s)
-watch -n 10 'grep "response_item" "'"$SESSION"'" | jq -r ".payload | select(.type == \"reasoning\") | .summary[]?.text // empty" | tail -10'
-```
-
-### JSONL entry structure
-Each line: `{ type, timestamp, payload }`
-- `type: "response_item"` → codex output (reasoning, function_call, function_call_output, custom_tool_call)
-- `type: "event_msg"` → system/user messages
-- `type: "turn_context"` → turn metadata
-
-Payload subtypes for `response_item`:
-- `payload.type: "reasoning"` → `payload.summary[].text` has the readable summary
-- `payload.type: "function_call"` → `payload.name` (e.g. `exec_command`), `payload.arguments` (JSON with cmd, workdir)
-- `payload.type: "function_call_output"` → command results (can be large)
-
-### Future: `joelclaw agent watch`
-CLI command to stream codex session activity in real-time. Until built, use the patterns above.
+See the [sync-system-bus skill](../sync-system-bus/SKILL.md) for the full deploy workflow.
 
 ## Key Paths
 
 | What | Path |
 |------|------|
-| igs CLI source | `~/Code/joelhooks/igs/` |
-| Worker source (canonical) | `~/Code/joelhooks/joelclaw/packages/system-bus/` |
-| Worker clone (launchd runs from) | `~/Code/system-bus-worker/packages/system-bus/` |
-| Function implementations | `src/inngest/functions/` |
-| Event type definitions | `src/inngest/client.ts` |
-| Server entrypoint | `src/serve.ts` |
-| k8s manifests | `~/Code/joelhooks/joelclaw/k8s/` |
-| Worker logs (stdout) | `~/.local/log/system-bus-worker.log` |
-| Worker logs (stderr) | `~/.local/log/system-bus-worker.err` |
+| CLI source | `packages/cli/src/` |
+| CLI commands | `packages/cli/src/commands/` |
+| CLI binary | `~/.bun/bin/joelclaw` |
+| Worker source | `packages/system-bus/` |
+| Inngest functions | `packages/system-bus/src/inngest/functions/` |
+| Function index (host) | `packages/system-bus/src/inngest/functions/index.host.ts` |
+| Function index (cluster) | `packages/system-bus/src/inngest/functions/index.cluster.ts` |
+| Inference utility | `packages/system-bus/src/lib/inference.ts` |
+| Gateway source | `packages/gateway/` |
+| k8s manifests | `k8s/` |
+| Deploy script | `k8s/publish-system-bus-worker.sh` |
+| ADRs | `~/Vault/docs/decisions/` |
+| System log | `~/Vault/system/system-log.jsonl` |
 | Loop attempt output | `/tmp/agent-loop/{loopId}/{storyId}-{attempt}.out` |
 
-## Improving igs
+## Building the CLI
 
-igs is at `~/Code/joelhooks/igs/` — Effect-TS CLI, safe to edit while loops run against the monorepo. Commands in `src/commands/`, one file per command. Follow the [cli-design skill](../cli-design/SKILL.md).
+```bash
+cd ~/Code/joelhooks/joelclaw
+bun build packages/cli/src/cli.ts --compile --outfile ~/.bun/bin/joelclaw
+```
 
-When monitoring reveals a gap — missing data, extra manual step, bad next_actions — **fix igs immediately**. The nanny is the primary consumer; it discovers what's missing.
+**Test after every change:**
+```bash
+joelclaw status
+joelclaw send --help
+joelclaw runs --count 1
+```
+
+CLI commands are in `packages/cli/src/commands/`, one file per command. Follow the [cli-design skill](../cli-design/SKILL.md). Heavy deps must be lazy-loaded — top-level import crashes are unacceptable.
