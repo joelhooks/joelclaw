@@ -1,0 +1,5 @@
+name: monitor
+description: >
+  Manage feed subscriptions that track blogs, repos, and living pages for changes.
+  Covers the joelclaw subscribe CLI, adding/removing/checking subscriptions, and
+  the Inngest-powered feed checking pipeline (ADR-0127).
