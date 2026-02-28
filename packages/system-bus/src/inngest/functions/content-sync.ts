@@ -15,14 +15,9 @@ const CONTENT_SOURCES = [
     extension: ".md",
     skipFiles: ["readme.md"],
   },
-  // Posts live in apps/web/content/*.mdx for now — no Vault source yet.
-  // When posts move to Vault, add them here.
-  {
-    name: "posts",
-    vaultDir: "/Users/joel/Code/joelhooks/joelclaw/apps/web/content/",
-    extension: ".mdx",
-    skipFiles: [],
-  },
+  // Posts are authored via Convex directly (joelclaw-web skill, publish flow).
+  // No Vault source for posts — they live in Convex as canonical.
+  // Add a Vault source here if posts move to Vault authoring.
 ] as const;
 
 function listSourceFiles(dir: string, extension: string, skipFiles: readonly string[]): string[] {
@@ -241,13 +236,7 @@ export const contentVerify = inngest.createFunction(
         extraInConvex: [...adrSlugs].filter((s) => !adrFiles.includes(s)),
       });
 
-      // Check posts
-      const postFiles = listSourceFiles(
-        CONTENT_SOURCES[1].vaultDir,
-        CONTENT_SOURCES[1].extension,
-        CONTENT_SOURCES[1].skipFiles,
-      ).map((f) => basename(f, ".mdx"));
-
+      // Posts are Convex-canonical (no Vault source). Just report count.
       const postDocs = await client.query(listRef, { type: "article", limit: 5000 });
       const postSlugs = new Set(
         (Array.isArray(postDocs) ? postDocs : [])
@@ -255,13 +244,12 @@ export const contentVerify = inngest.createFunction(
           .filter(Boolean) as string[],
       );
 
-      // Posts stored as "article" type, resource IDs are "post:slug"
       report.push({
         name: "posts",
-        vaultCount: postFiles.length,
+        vaultCount: postSlugs.size, // posts are Convex-canonical, no vault source
         convexCount: postSlugs.size,
-        missingInConvex: postFiles.filter((s) => !postSlugs.has(s)),
-        extraInConvex: [...postSlugs].filter((s) => !postFiles.includes(s)),
+        missingInConvex: [],
+        extraInConvex: [],
       });
 
       return report;
