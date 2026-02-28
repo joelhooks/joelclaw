@@ -106,6 +106,11 @@ Critical probes trigger escalation immediately. Non-critical need 3 consecutive 
 Add probes in `~/.joelclaw/talon/services.toml` without rebuilding talon:
 
 ```toml
+[launchd.gateway]
+label = "com.joel.gateway"
+critical = true
+timeout_secs = 5
+
 [launchd.voice_agent]
 label = "com.joel.voice-agent"
 critical = true

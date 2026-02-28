@@ -83,6 +83,7 @@ When the central session receives a heartbeat, it runs the `joelclaw-system-chec
 
 - [x] Extension watchdog implemented (5-min check interval, 30-min threshold)
 - [x] Added Talon `/health` signal to heartbeat metadata and degrade detection (shipped 2026-02-27)
+- [x] Added Talon dynamic launchd probe for `com.joel.gateway` so service-heal can restart dead gateway sessions (shipped 2026-02-27)
 - [ ] Build launchd tripwire (`com.joel.gateway-tripwire`) — bash script + osascript notification
 - [ ] Extension writes `/tmp/joelclaw/last-heartbeat.ts` on each heartbeat for tripwire to read
 - [ ] Consider healthchecks.io or similar external ping for off-machine monitoring

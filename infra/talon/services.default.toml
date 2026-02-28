@@ -3,6 +3,11 @@
 # Add HTTP probes under [http.<name>] and launchd probes under [launchd.<name>].
 # Talon hot-reloads this file on mtime change (or immediately on SIGHUP).
 
+[launchd.gateway]
+label = "com.joel.gateway"
+critical = true
+timeout_secs = 5
+
 [launchd.voice_agent]
 label = "com.joel.voice-agent"
 critical = true

@@ -216,6 +216,11 @@ bind = "127.0.0.1:9999"
 Service-specific monitors live in `~/.joelclaw/talon/services.toml`:
 
 ```toml
+[launchd.gateway]
+label = "com.joel.gateway"
+critical = true
+timeout_secs = 5
+
 [launchd.voice_agent]
 label = "com.joel.voice-agent"
 critical = true
@@ -383,4 +388,4 @@ Implementation is std-only (no tokio/serde/toml crates). Probes and integrations
 - [x] Add Telegram notification as parallel to iMessage SOS (shipped 2026-02-27)
 - [x] Expose a tiny HTTP status endpoint (`localhost:9999/health`) for remote monitoring (shipped 2026-02-27)
 - [x] Wire Talon health into the gateway watchdog (ADR-0037) as an additional signal (shipped 2026-02-27)
-- [ ] Consider supervising the gateway pi session as well (currently launchd-only)
+- [x] Supervise the gateway pi session via dynamic launchd probe (`launchd.gateway`) with Talon service-heal restart path (shipped 2026-02-27)
