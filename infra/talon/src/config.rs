@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io;
@@ -6,6 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::DynError;
 
 pub const DEFAULT_CONFIG_PATH: &str = "~/.config/talon/config.toml";
+pub const DEFAULT_SERVICES_PATH: &str = "~/.joelclaw/talon/services.toml";
 pub const DEFAULT_PATH: &str = "/opt/homebrew/bin:/Users/joel/.bun/bin:/Users/joel/.local/bin:/Users/joel/.local/share/fnm/aliases/default/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 pub const STATE_DIR: &str = "~/.local/state/talon";
 
@@ -14,10 +16,13 @@ pub struct Config {
     pub check_interval_secs: u64,
     pub heal_script: String,
     pub heal_timeout_secs: u64,
+    pub services_file: String,
     pub worker: WorkerConfig,
     pub escalation: EscalationConfig,
     pub agent: AgentConfig,
     pub probes: ProbesConfig,
+    pub http_service_probes: Vec<HttpServiceProbe>,
+    pub launchd_service_probes: Vec<LaunchdServiceProbe>,
 }
 
 #[derive(Debug, Clone)]
@@ -61,16 +66,54 @@ pub struct ProbesConfig {
     pub consecutive_failures_before_escalate: u32,
 }
 
+#[derive(Debug, Clone)]
+pub struct HttpServiceProbe {
+    pub name: String,
+    pub url: String,
+    pub timeout_secs: u64,
+    pub critical: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct LaunchdServiceProbe {
+    pub name: String,
+    pub label: String,
+    pub timeout_secs: u64,
+    pub critical: bool,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             check_interval_secs: 60,
             heal_script: "/Users/joel/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh".to_string(),
             heal_timeout_secs: 90,
+            services_file: DEFAULT_SERVICES_PATH.to_string(),
             worker: WorkerConfig::default(),
             escalation: EscalationConfig::default(),
             agent: AgentConfig::default(),
             probes: ProbesConfig::default(),
+            http_service_probes: vec![
+                HttpServiceProbe {
+                    name: "inngest".to_string(),
+                    url: "http://localhost:8288/health".to_string(),
+                    timeout_secs: 5,
+                    critical: false,
+                },
+                HttpServiceProbe {
+                    name: "typesense".to_string(),
+                    url: "http://localhost:8108/health".to_string(),
+                    timeout_secs: 5,
+                    critical: false,
+                },
+                HttpServiceProbe {
+                    name: "worker".to_string(),
+                    url: "http://localhost:3111/api/inngest".to_string(),
+                    timeout_secs: 5,
+                    critical: false,
+                },
+            ],
+            launchd_service_probes: Vec::new(),
         }
     }
 }
@@ -79,7 +122,11 @@ impl Default for WorkerConfig {
     fn default() -> Self {
         Self {
             dir: "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus".to_string(),
-            command: vec!["bun".to_string(), "run".to_string(), "src/serve.ts".to_string()],
+            command: vec![
+                "bun".to_string(),
+                "run".to_string(),
+                "src/serve.ts".to_string(),
+            ],
             port: 3111,
             health_endpoint: "/api/inngest".to_string(),
             sync_endpoint: "/api/inngest".to_string(),
@@ -112,8 +159,7 @@ impl Default for AgentConfig {
         Self {
             cloud_command: "pi -p --no-session --no-extensions --model anthropic/claude-sonnet-4"
                 .to_string(),
-            local_command: "pi -p --no-session --no-extensions --model ollama/qwen3:8b"
-                .to_string(),
+            local_command: "pi -p --no-session --no-extensions --model ollama/qwen3:8b".to_string(),
             timeout_secs: 120,
         }
     }
@@ -127,6 +173,43 @@ impl Default for ProbesConfig {
             service_timeout_secs: 5,
             consecutive_failures_before_escalate: 3,
         }
+    }
+}
+
+impl Config {
+    pub fn is_critical_probe(&self, name: &str) -> bool {
+        if matches!(
+            name,
+            "colima"
+                | "docker"
+                | "talos_container"
+                | "k8s_api"
+                | "node_ready"
+                | "node_schedulable"
+                | "redis"
+        ) {
+            return true;
+        }
+
+        if let Some(service_name) = name.strip_prefix("http:") {
+            return self
+                .http_service_probes
+                .iter()
+                .find(|probe| probe.name == service_name)
+                .map(|probe| probe.critical)
+                .unwrap_or(false);
+        }
+
+        if let Some(service_name) = name.strip_prefix("launchd:") {
+            return self
+                .launchd_service_probes
+                .iter()
+                .find(|probe| probe.name == service_name)
+                .map(|probe| probe.critical)
+                .unwrap_or(false);
+        }
+
+        false
     }
 }
 
@@ -146,18 +229,20 @@ pub fn ensure_default_config(path: &Path) -> Result<(), DynError> {
 pub fn load_config(path: &Path) -> Result<Config, DynError> {
     let mut config = Config::default();
 
-    if !path.exists() {
-        return Ok(config);
+    if path.exists() {
+        let raw = fs::read_to_string(path)?;
+        apply_toml_overrides(&mut config, &raw)?;
     }
-
-    let raw = fs::read_to_string(path)?;
-    apply_toml_overrides(&mut config, &raw)?;
 
     if config.worker.command.is_empty() {
-        return Err(
-            io::Error::new(io::ErrorKind::InvalidInput, "worker.command must not be empty").into(),
-        );
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "worker.command must not be empty",
+        )
+        .into());
     }
+
+    load_service_probes(&mut config)?;
 
     Ok(config)
 }
@@ -166,6 +251,7 @@ pub fn default_config_toml() -> String {
     let content = r#"check_interval_secs = 60
 heal_script = "/Users/joel/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh"
 heal_timeout_secs = 90
+services_file = "~/.joelclaw/talon/services.toml"
 
 [worker]
 dir = "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus"
@@ -232,11 +318,16 @@ fn apply_toml_overrides(config: &mut Config, raw: &str) -> Result<(), DynError> 
             ("", "heal_timeout_secs") => {
                 config.heal_timeout_secs = parse_toml_int(value, line_number + 1)?
             }
+            ("", "services_file") => config.services_file = parse_toml_string(value)?,
 
             ("worker", "dir") => config.worker.dir = parse_toml_string(value)?,
             ("worker", "command") => config.worker.command = parse_toml_string_array(value)?,
-            ("worker", "port") => config.worker.port = parse_toml_int(value, line_number + 1)? as u16,
-            ("worker", "health_endpoint") => config.worker.health_endpoint = parse_toml_string(value)?,
+            ("worker", "port") => {
+                config.worker.port = parse_toml_int(value, line_number + 1)? as u16
+            }
+            ("worker", "health_endpoint") => {
+                config.worker.health_endpoint = parse_toml_string(value)?
+            }
             ("worker", "sync_endpoint") => config.worker.sync_endpoint = parse_toml_string(value)?,
             ("worker", "log_stdout") => config.worker.log_stdout = parse_toml_string(value)?,
             ("worker", "log_stderr") => config.worker.log_stderr = parse_toml_string(value)?,
@@ -271,8 +362,7 @@ fn apply_toml_overrides(config: &mut Config, raw: &str) -> Result<(), DynError> 
                 config.escalation.sos_recipient = parse_toml_string(value)?
             }
             ("escalation", "critical_threshold_secs") => {
-                config.escalation.critical_threshold_secs =
-                    parse_toml_int(value, line_number + 1)?
+                config.escalation.critical_threshold_secs = parse_toml_int(value, line_number + 1)?
             }
 
             ("agent", "cloud_command") => config.agent.cloud_command = parse_toml_string(value)?,
@@ -299,6 +389,147 @@ fn apply_toml_overrides(config: &mut Config, raw: &str) -> Result<(), DynError> 
     }
 
     Ok(())
+}
+
+fn load_service_probes(config: &mut Config) -> Result<(), DynError> {
+    let services_path = expand_home(&config.services_file);
+
+    if let Some(parent) = services_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    if !services_path.exists() {
+        fs::write(&services_path, default_services_toml())?;
+    }
+
+    let raw = fs::read_to_string(&services_path)?;
+    let (http_probes, launchd_probes) =
+        parse_services_toml(&raw, config.probes.service_timeout_secs)?;
+
+    config.http_service_probes.extend(http_probes);
+    config.launchd_service_probes.extend(launchd_probes);
+
+    Ok(())
+}
+
+fn default_services_toml() -> String {
+    r#"# Talon dynamic service monitors.
+#
+# Add HTTP probes under [http.<name>] and launchd probes under [launchd.<name>].
+# Talon will load this file at startup without any binary rebuild.
+
+[launchd.voice_agent]
+label = "com.joel.voice-agent"
+critical = true
+timeout_secs = 5
+
+[http.voice_agent]
+url = "http://127.0.0.1:8081/"
+critical = true
+timeout_secs = 5
+"#
+    .to_string()
+}
+
+fn parse_services_toml(
+    raw: &str,
+    default_timeout_secs: u64,
+) -> Result<(Vec<HttpServiceProbe>, Vec<LaunchdServiceProbe>), DynError> {
+    let mut section = String::new();
+    let mut http_sections: BTreeMap<String, HttpServiceProbe> = BTreeMap::new();
+    let mut launchd_sections: BTreeMap<String, LaunchdServiceProbe> = BTreeMap::new();
+
+    for (line_number, original_line) in raw.lines().enumerate() {
+        let line = strip_comment(original_line).trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line[1..line.len() - 1].trim().to_string();
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+
+        let key = key.trim();
+        let value = value.trim();
+
+        if let Some(name) = section.strip_prefix("http.") {
+            let section_name = name.trim();
+            if section_name.is_empty() {
+                continue;
+            }
+
+            let probe = http_sections
+                .entry(section_name.to_string())
+                .or_insert_with(|| HttpServiceProbe {
+                    name: section_name.to_string(),
+                    url: String::new(),
+                    timeout_secs: default_timeout_secs,
+                    critical: false,
+                });
+
+            match key {
+                "url" => probe.url = parse_toml_string(value)?,
+                "timeout_secs" => probe.timeout_secs = parse_toml_int(value, line_number + 1)?,
+                "critical" => probe.critical = parse_toml_bool(value, line_number + 1)?,
+                _ => {}
+            }
+            continue;
+        }
+
+        if let Some(name) = section.strip_prefix("launchd.") {
+            let section_name = name.trim();
+            if section_name.is_empty() {
+                continue;
+            }
+
+            let probe = launchd_sections
+                .entry(section_name.to_string())
+                .or_insert_with(|| LaunchdServiceProbe {
+                    name: section_name.to_string(),
+                    label: String::new(),
+                    timeout_secs: default_timeout_secs,
+                    critical: false,
+                });
+
+            match key {
+                "label" => probe.label = parse_toml_string(value)?,
+                "timeout_secs" => probe.timeout_secs = parse_toml_int(value, line_number + 1)?,
+                "critical" => probe.critical = parse_toml_bool(value, line_number + 1)?,
+                _ => {}
+            }
+        }
+    }
+
+    let mut http_probes = Vec::new();
+    for (_, probe) in http_sections.into_iter() {
+        if probe.url.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("http.{} is missing required key: url", probe.name),
+            )
+            .into());
+        }
+        http_probes.push(probe);
+    }
+
+    let mut launchd_probes = Vec::new();
+    for (_, probe) in launchd_sections.into_iter() {
+        if probe.label.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("launchd.{} is missing required key: label", probe.name),
+            )
+            .into());
+        }
+        launchd_probes.push(probe);
+    }
+
+    Ok((http_probes, launchd_probes))
 }
 
 fn strip_comment(line: &str) -> &str {
@@ -414,6 +645,18 @@ fn parse_toml_int(value: &str, line: usize) -> Result<u64, DynError> {
         )
         .into()
     })
+}
+
+fn parse_toml_bool(value: &str, line: usize) -> Result<bool, DynError> {
+    match value.trim() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid boolean at line {line}: {value}"),
+        )
+        .into()),
+    }
 }
 
 fn unescape_string(value: &str) -> String {

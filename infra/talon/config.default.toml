@@ -1,6 +1,7 @@
 check_interval_secs = 60
 heal_script = "/Users/joel/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh"
 heal_timeout_secs = 90
+services_file = "~/.joelclaw/talon/services.toml"
 
 [worker]
 dir = "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus"

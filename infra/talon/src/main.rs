@@ -118,7 +118,7 @@ fn run_watchdog_loop(config: &Config) -> Result<(), DynError> {
         current_state.worker_restarts = worker::worker_restart_count();
         state::write_last_probe(&results)?;
 
-        let mut critical_failures = collect_critical_failures(&results);
+        let mut critical_failures = collect_critical_failures(&results, config);
 
         if critical_failures.is_empty() {
             current_state.consecutive_failures = 0;
@@ -143,14 +143,15 @@ fn run_watchdog_loop(config: &Config) -> Result<(), DynError> {
         }
 
         if current_state.current_state == "Failed" {
-            let (heal_outcome, heal_output) = escalation::run_heal(config, &mut current_state, false)?;
+            let (heal_outcome, heal_output) =
+                escalation::run_heal(config, &mut current_state, false)?;
 
             if heal_outcome == TierOutcome::Fixed {
                 let post_heal = probes::run_all_probes(config);
                 current_state.last_probe_results = post_heal.clone();
                 current_state.worker_restarts = worker::worker_restart_count();
                 state::write_last_probe(&post_heal)?;
-                critical_failures = collect_critical_failures(&post_heal);
+                critical_failures = collect_critical_failures(&post_heal, config);
 
                 if critical_failures.is_empty() {
                     current_state.consecutive_failures = 0;
@@ -177,7 +178,7 @@ fn run_watchdog_loop(config: &Config) -> Result<(), DynError> {
                     current_state.last_probe_results = post_agent.clone();
                     current_state.worker_restarts = worker::worker_restart_count();
                     state::write_last_probe(&post_agent)?;
-                    let remaining_failures = collect_critical_failures(&post_agent);
+                    let remaining_failures = collect_critical_failures(&post_agent, config);
 
                     if remaining_failures.is_empty() {
                         current_state.consecutive_failures = 0;
@@ -194,14 +195,20 @@ fn run_watchdog_loop(config: &Config) -> Result<(), DynError> {
                 }
                 TierOutcome::Cooldown => {}
             }
-        } else if current_state.current_state == "Critical" || current_state.current_state == "SOS" {
+        } else if current_state.current_state == "Critical" || current_state.current_state == "SOS"
+        {
             if critical_since.is_none() {
                 critical_since = current_state.last_agent_time;
             }
 
             if let Some(since) = critical_since {
-                match escalation::run_sos(config, &mut current_state, &critical_failures, since, false)?
-                {
+                match escalation::run_sos(
+                    config,
+                    &mut current_state,
+                    &critical_failures,
+                    since,
+                    false,
+                )? {
                     TierOutcome::Fixed => state::transition(&mut current_state, "SOS"),
                     TierOutcome::Failed => log::error("SOS escalation failed"),
                     TierOutcome::Cooldown => {}
@@ -216,10 +223,10 @@ fn run_watchdog_loop(config: &Config) -> Result<(), DynError> {
     Ok(())
 }
 
-fn collect_critical_failures(results: &[ProbeResult]) -> Vec<ProbeResult> {
+fn collect_critical_failures(results: &[ProbeResult], config: &Config) -> Vec<ProbeResult> {
     results
         .iter()
-        .filter(|result| !result.passed && probes::is_critical_probe(&result.name))
+        .filter(|result| !result.passed && config.is_critical_probe(&result.name))
         .cloned()
         .collect()
 }
@@ -273,9 +280,7 @@ fn parse_args() -> Result<Cli, DynError> {
                 dry_run = true;
             }
             "--help" | "-h" => {
-                println!(
-                    "talon [--config PATH] [--check] [--status] [--worker-only] [--dry-run]"
-                );
+                println!("talon [--config PATH] [--check] [--status] [--worker-only] [--dry-run]");
                 std::process::exit(0);
             }
             unknown => {

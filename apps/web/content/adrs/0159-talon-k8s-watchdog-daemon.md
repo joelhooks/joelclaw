@@ -8,6 +8,7 @@ related:
   - "0037-gateway-watchdog-layered-failure-detection"
   - "0138-self-healing-backup-orchestrator"
   - "0148-k8s-resilience-policy"
+  - "0154-livekit-voice-worker-durability"
 supersedes:
   - "0158-worker-supervisor-binary"
 ---
@@ -16,7 +17,7 @@ supersedes:
 
 ## Status
 
-accepted (deployed 2026-02-27, launchd active)
+accepted (deployed 2026-02-27, launchd active; dynamic service catalog added 2026-02-27)
 
 ## Context
 
@@ -70,11 +71,9 @@ launchd (com.joel.talon)
       │   ├─ Talos container running?
       │   ├─ k8s API reachable?
       │   ├─ Node Ready + schedulable?
-      │   ├─ Flannel healthy?
       │   ├─ Redis PONG?
-      │   ├─ Inngest /health 200?
-      │   ├─ Typesense /health ok?
-      │   └─ Worker /api/inngest 200? (from probe loop, not supervisor)
+      │   ├─ Built-in HTTP probes (Inngest, Typesense, worker)?
+      │   └─ Dynamic launchd/HTTP probes from ~/.joelclaw/talon/services.toml?
       │
       ├─ State Machine
       │   healthy → degraded (1 critical probe failure)
@@ -131,16 +130,17 @@ Each probe is a subprocess with a timeout:
 | Probe | Command | Timeout | Critical? |
 |-------|---------|---------|-----------|
 | colima | `colima status` | 5s | Yes |
-| docker | `docker ps` (via DOCKER_HOST) | 5s | Yes |
-| talos-container | `docker inspect joelclaw-controlplane-1` (via SSH) | 10s | Yes |
-| k8s-api | `kubectl get nodes` | 10s | Yes |
-| node-ready | `kubectl get nodes -o jsonpath=...` | 5s | Yes |
-| node-schedulable | Check for taints + cordon state | 5s | Yes |
-| flannel | `kubectl get pods -n kube-system` + parse | 10s | No |
+| docker | `docker ps` (via DOCKER_HOST) | 10s | Yes |
+| talos_container | `docker inspect joelclaw-controlplane-1` | 10s | Yes |
+| k8s_api | `kubectl get nodes` | 10s | Yes |
+| node_ready | `kubectl get nodes -o jsonpath=...` | 10s | Yes |
+| node_schedulable | `kubectl get nodes -o jsonpath={.items[0].spec}` | 10s | Yes |
 | redis | `kubectl exec redis-0 -- redis-cli ping` | 5s | Yes |
-| inngest | `curl localhost:8288/health` | 5s | No |
-| typesense | `curl localhost:8108/health` | 5s | No |
-| worker | `curl localhost:3111/api/inngest` | 5s | No |
+| http:inngest | `curl -w %{http_code} localhost:8288/health` | 5s | No |
+| http:typesense | `curl -w %{http_code} localhost:8108/health` | 5s | No |
+| http:worker | `curl -w %{http_code} localhost:3111/api/inngest` | 5s | No |
+| launchd:* | `launchctl list <label>` | per service | configurable |
+| http:* | `curl -w %{http_code} <url>` | per service | configurable |
 
 "Critical" probes trigger Tier 1 immediately on failure. Non-critical probes only escalate after 3 consecutive failures.
 
@@ -171,6 +171,7 @@ TOML at `~/.config/talon/config.toml`:
 check_interval_secs = 60
 heal_script = "/Users/joel/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh"
 heal_timeout_secs = 90
+services_file = "~/.joelclaw/talon/services.toml"
 
 [worker]
 dir = "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus"
@@ -202,6 +203,22 @@ k8s_timeout_secs = 10
 service_timeout_secs = 5
 consecutive_failures_before_escalate = 3
 ```
+
+Dynamic service probes live in `~/.joelclaw/talon/services.toml`:
+
+```toml
+[launchd.voice_agent]
+label = "com.joel.voice-agent"
+critical = true
+timeout_secs = 5
+
+[http.voice_agent]
+url = "http://127.0.0.1:8081/"
+critical = true
+timeout_secs = 5
+```
+
+This lets operators add monitored services without rebuilding talon.
 
 ### Agent Prompt Template
 
@@ -251,15 +268,17 @@ CONSTRAINTS:
 ### Affected paths
 
 - `~/Code/joelhooks/joelclaw/infra/talon/` — new Rust crate
-- `~/Code/joelhooks/joelclaw/infra/talon/src/main.rs` — daemon entry + tokio runtime
+- `~/Code/joelhooks/joelclaw/infra/talon/src/main.rs` — daemon entry + watchdog loop
 - `~/Code/joelhooks/joelclaw/infra/talon/src/probes.rs` — health probe definitions
 - `~/Code/joelhooks/joelclaw/infra/talon/src/state.rs` — state machine
 - `~/Code/joelhooks/joelclaw/infra/talon/src/escalation.rs` — tier 1-4 handlers
 - `~/Code/joelhooks/joelclaw/infra/talon/src/worker.rs` — bun process supervisor (port cleanup, spawn, signal forwarding, crash recovery)
 - `~/Code/joelhooks/joelclaw/infra/talon/src/config.rs` — TOML config loading
+- `~/Code/joelhooks/joelclaw/infra/talon/services.default.toml` — dynamic service probe template
 - `~/Code/joelhooks/joelclaw/infra/launchd/com.joel.talon.plist` — launchd service (replaces com.joel.system-bus-worker AND com.joel.k8s-reboot-heal)
 - `~/Code/joelhooks/joelclaw/skills/k8s/SKILL.md` — reference talon
 - `~/.config/talon/config.toml` — runtime config
+- `~/.joelclaw/talon/services.toml` — runtime service probe catalog
 - `~/.local/state/talon/` — state + logs
 
 ### Removed paths (on deploy)
@@ -278,18 +297,7 @@ cp target/release/talon ~/.local/bin/talon
 
 ### Dependencies (Cargo.toml)
 
-```toml
-[dependencies]
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-toml = "0.8"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-chrono = { version = "0.4", features = ["serde"] }
-```
-
-No HTTP client needed — all probes are subprocess calls (curl, kubectl, etc.). Keeps the binary small and avoids TLS dependency complexity.
+Talon runs with **no external dependencies** (std-only). Config parsing, JSON output, state persistence, and logging are hand-rolled for a minimal binary and lower launchd/runtime risk.
 
 ### Verification
 
@@ -315,6 +323,7 @@ No HTTP client needed — all probes are subprocess calls (curl, kubectl, etc.).
 - [ ] Binary compiles for aarch64-apple-darwin, <5MB
 - [ ] State persists across daemon restart
 - [ ] `talon --check` runs single probe cycle and exits (for manual/CI use)
+- [ ] Add probe in `~/.joelclaw/talon/services.toml`, restart talon, and verify probe appears in `talon --check`
 - [ ] `talon --status` prints current state + worker state + last probe results
 - [ ] `talon --worker-only` mode for testing worker supervision without infra probes
 

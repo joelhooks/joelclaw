@@ -1,0 +1,14 @@
+# Talon dynamic service monitors.
+#
+# Add HTTP probes under [http.<name>] and launchd probes under [launchd.<name>].
+# Talon loads this file at startup without rebuilding the talon binary.
+
+[launchd.voice_agent]
+label = "com.joel.voice-agent"
+critical = true
+timeout_secs = 5
+
+[http.voice_agent]
+url = "http://127.0.0.1:8081/"
+critical = true
+timeout_secs = 5

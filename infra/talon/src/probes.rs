@@ -9,11 +9,11 @@ const COLIMA_DOCKER_HOST: &str = "unix:///Users/joel/.colima/default/docker.sock
 
 #[derive(Debug, Clone)]
 pub struct Probe {
-    pub name: &'static str,
-    pub args: Vec<&'static str>,
+    pub name: String,
+    pub args: Vec<String>,
     pub timeout: Duration,
     pub critical: bool,
-    pub env: Vec<(&'static str, &'static str)>,
+    pub env: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -25,129 +25,132 @@ pub struct ProbeResult {
 }
 
 pub fn run_all_probes(config: &Config) -> Vec<ProbeResult> {
-    let probes = vec![
+    let mut probes = vec![
         Probe {
-            name: "colima",
-            args: vec!["colima", "status"],
+            name: "colima".to_string(),
+            args: vec!["colima".to_string(), "status".to_string()],
             timeout: Duration::from_secs(config.probes.colima_timeout_secs),
             critical: true,
             env: vec![],
         },
         Probe {
-            name: "docker",
-            args: vec!["docker", "ps", "--format", "{{.Names}}"],
-            timeout: Duration::from_secs(config.probes.k8s_timeout_secs),
-            critical: true,
-            env: vec![("DOCKER_HOST", COLIMA_DOCKER_HOST)],
-        },
-        Probe {
-            name: "talos_container",
+            name: "docker".to_string(),
             args: vec![
-                "docker",
-                "inspect",
-                "--format",
-                "{{.State.Status}}",
-                "joelclaw-controlplane-1",
+                "docker".to_string(),
+                "ps".to_string(),
+                "--format".to_string(),
+                "{{.Names}}".to_string(),
             ],
             timeout: Duration::from_secs(config.probes.k8s_timeout_secs),
             critical: true,
-            env: vec![("DOCKER_HOST", COLIMA_DOCKER_HOST)],
+            env: vec![("DOCKER_HOST".to_string(), COLIMA_DOCKER_HOST.to_string())],
         },
         Probe {
-            name: "k8s_api",
-            args: vec!["kubectl", "get", "nodes", "--no-headers"],
+            name: "talos_container".to_string(),
+            args: vec![
+                "docker".to_string(),
+                "inspect".to_string(),
+                "--format".to_string(),
+                "{{.State.Status}}".to_string(),
+                "joelclaw-controlplane-1".to_string(),
+            ],
             timeout: Duration::from_secs(config.probes.k8s_timeout_secs),
             critical: true,
-            env: vec![],
+            env: vec![("DOCKER_HOST".to_string(), COLIMA_DOCKER_HOST.to_string())],
         },
         Probe {
-            name: "node_ready",
+            name: "k8s_api".to_string(),
             args: vec![
-                "kubectl",
-                "get",
-                "nodes",
-                "-o",
-                "jsonpath={.items[0].status.conditions[?(@.type==\"Ready\")].status}",
+                "kubectl".to_string(),
+                "get".to_string(),
+                "nodes".to_string(),
+                "--no-headers".to_string(),
             ],
             timeout: Duration::from_secs(config.probes.k8s_timeout_secs),
             critical: true,
             env: vec![],
         },
         Probe {
-            name: "node_schedulable",
-            args: vec!["kubectl", "get", "nodes", "-o", "jsonpath={.items[0].spec}"],
+            name: "node_ready".to_string(),
+            args: vec![
+                "kubectl".to_string(),
+                "get".to_string(),
+                "nodes".to_string(),
+                "-o".to_string(),
+                "jsonpath={.items[0].status.conditions[?(@.type==\"Ready\")].status}".to_string(),
+            ],
             timeout: Duration::from_secs(config.probes.k8s_timeout_secs),
             critical: true,
             env: vec![],
         },
         Probe {
-            name: "redis",
+            name: "node_schedulable".to_string(),
             args: vec![
-                "kubectl",
-                "exec",
-                "-n",
-                "joelclaw",
-                "redis-0",
-                "--",
-                "redis-cli",
-                "ping",
+                "kubectl".to_string(),
+                "get".to_string(),
+                "nodes".to_string(),
+                "-o".to_string(),
+                "jsonpath={.items[0].spec}".to_string(),
+            ],
+            timeout: Duration::from_secs(config.probes.k8s_timeout_secs),
+            critical: true,
+            env: vec![],
+        },
+        Probe {
+            name: "redis".to_string(),
+            args: vec![
+                "kubectl".to_string(),
+                "exec".to_string(),
+                "-n".to_string(),
+                "joelclaw".to_string(),
+                "redis-0".to_string(),
+                "--".to_string(),
+                "redis-cli".to_string(),
+                "ping".to_string(),
             ],
             timeout: Duration::from_secs(config.probes.service_timeout_secs),
             critical: true,
-            env: vec![],
-        },
-        Probe {
-            name: "inngest",
-            args: vec![
-                "curl",
-                "-s",
-                "-o",
-                "/dev/null",
-                "-w",
-                "%{http_code}",
-                "http://localhost:8288/health",
-            ],
-            timeout: Duration::from_secs(config.probes.service_timeout_secs),
-            critical: false,
-            env: vec![],
-        },
-        Probe {
-            name: "typesense",
-            args: vec![
-                "curl",
-                "-s",
-                "-o",
-                "/dev/null",
-                "-w",
-                "%{http_code}",
-                "http://localhost:8108/health",
-            ],
-            timeout: Duration::from_secs(config.probes.service_timeout_secs),
-            critical: false,
-            env: vec![],
-        },
-        Probe {
-            name: "worker",
-            args: vec![
-                "curl",
-                "-s",
-                "-o",
-                "/dev/null",
-                "-w",
-                "%{http_code}",
-                "http://localhost:3111/api/inngest",
-            ],
-            timeout: Duration::from_secs(config.probes.service_timeout_secs),
-            critical: false,
             env: vec![],
         },
     ];
 
+    for monitor in &config.launchd_service_probes {
+        probes.push(Probe {
+            name: format!("launchd:{}", monitor.name),
+            args: vec![
+                "launchctl".to_string(),
+                "list".to_string(),
+                monitor.label.clone(),
+            ],
+            timeout: Duration::from_secs(monitor.timeout_secs),
+            critical: monitor.critical,
+            env: vec![],
+        });
+    }
+
+    for monitor in &config.http_service_probes {
+        probes.push(Probe {
+            name: format!("http:{}", monitor.name),
+            args: vec![
+                "curl".to_string(),
+                "-s".to_string(),
+                "-o".to_string(),
+                "/dev/null".to_string(),
+                "-w".to_string(),
+                "%{http_code}".to_string(),
+                monitor.url.clone(),
+            ],
+            timeout: Duration::from_secs(monitor.timeout_secs),
+            critical: monitor.critical,
+            env: vec![],
+        });
+    }
+
     let mut results = Vec::with_capacity(probes.len());
 
     for probe in probes {
-        let mut result = run_probe(probe.name, &probe.args, probe.timeout, &probe.env);
-        result.passed = result.passed && validate_probe_output(probe.name, &result.output);
+        let mut result = run_probe(&probe.name, &probe.args, probe.timeout, &probe.env);
+        result.passed = result.passed && validate_probe_output(&probe.name, &result.output);
 
         if probe.critical && !result.passed {
             result.output = format!("{} [critical]", result.output.trim());
@@ -161,9 +164,9 @@ pub fn run_all_probes(config: &Config) -> Vec<ProbeResult> {
 
 pub fn run_probe(
     name: &str,
-    args: &[&str],
+    args: &[String],
     timeout: Duration,
-    env: &[(&str, &str)],
+    env: &[(String, String)],
 ) -> ProbeResult {
     let start = Instant::now();
 
@@ -176,7 +179,7 @@ pub fn run_probe(
         };
     }
 
-    let mut command = Command::new(args[0]);
+    let mut command = Command::new(&args[0]);
     command
         .args(&args[1..])
         .env("PATH", DEFAULT_PATH)
@@ -241,19 +244,6 @@ pub fn run_probe(
     }
 }
 
-pub fn is_critical_probe(name: &str) -> bool {
-    matches!(
-        name,
-        "colima"
-            | "docker"
-            | "talos_container"
-            | "k8s_api"
-            | "node_ready"
-            | "node_schedulable"
-            | "redis"
-    )
-}
-
 fn validate_probe_output(name: &str, raw_output: &str) -> bool {
     let output = raw_output.trim().trim_matches('\'').trim();
 
@@ -262,9 +252,19 @@ fn validate_probe_output(name: &str, raw_output: &str) -> bool {
         "node_ready" => output == "True",
         "node_schedulable" => is_node_schedulable(output),
         "redis" => output.contains("PONG"),
-        "inngest" | "typesense" | "worker" => output.contains("200"),
+        _ if name.starts_with("http:") => output.contains("200"),
+        _ if name.starts_with("launchd:") => launchd_list_running(output),
         _ => true,
     }
+}
+
+fn launchd_list_running(output: &str) -> bool {
+    let pid_marker = output.lines().find(|line| line.contains("\"PID\" ="));
+    let Some(line) = pid_marker else {
+        return false;
+    };
+
+    !line.contains("\"PID\" = 0")
 }
 
 fn is_node_schedulable(spec_output: &str) -> bool {
@@ -310,3 +310,4 @@ fn collect_child_output(child: &mut std::process::Child) -> String {
 
     format!("{stdout}\n{stderr}")
 }
+

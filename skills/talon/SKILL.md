@@ -19,7 +19,9 @@ talon                  # Full daemon mode (worker + probes + escalation)
 | Binary | `~/.local/bin/talon` |
 | Source | `~/Code/joelhooks/joelclaw/infra/talon/src/` |
 | Config | `~/.config/talon/config.toml` |
+| Service monitors | `~/.joelclaw/talon/services.toml` |
 | Default config | `~/Code/joelhooks/joelclaw/infra/talon/config.default.toml` |
+| Default services template | `~/Code/joelhooks/joelclaw/infra/talon/services.default.toml` |
 | State | `~/.local/state/talon/state.json` |
 | Probe results | `~/.local/state/talon/last-probe.json` |
 | Log | `~/.local/state/talon/talon.log` (JSON lines, 10MB rotation) |
@@ -95,6 +97,26 @@ any → healthy (all probes pass)
 | worker | `curl localhost:3111/api/inngest` | No |
 
 Critical probes trigger escalation immediately. Non-critical need 3 consecutive failures.
+
+### Dynamic service probes
+
+Add probes in `~/.joelclaw/talon/services.toml` without rebuilding talon:
+
+```toml
+[launchd.voice_agent]
+label = "com.joel.voice-agent"
+critical = true
+timeout_secs = 5
+
+[http.voice_agent]
+url = "http://127.0.0.1:8081/"
+critical = true
+timeout_secs = 5
+```
+
+- `launchd.<name>` passes when `launchctl list <label>` reports a non-zero PID
+- `http.<name>` passes on HTTP `200`
+- `critical = true` escalates immediately when the probe fails
 
 ## Launchd Management
 
