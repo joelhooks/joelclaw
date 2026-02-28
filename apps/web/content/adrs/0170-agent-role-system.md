@@ -1,6 +1,6 @@
 # ADR-0170: Agent Role System (ROLE.md)
 
-**Status:** proposed  
+**Status:** accepted  
 **Date:** 2026-02-28  
 **Deciders:** Joel Hooks  
 **Supersedes:** None  
