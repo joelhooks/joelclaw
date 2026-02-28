@@ -444,7 +444,9 @@ void emitGatewayOtel({
 });
 
 setSession({
-  prompt: (text: string) => session.prompt(text),
+  // Use follow-up queueing to absorb brief streaming races safely.
+  // Without this, pi throws "Agent is already processing" and watchdog can false-trigger.
+  prompt: (text: string) => session.prompt(text, { streamingBehavior: "followUp" }),
   reload: () => session.reload(),
   compact: (instructions?: string) => session.compact(instructions),
   newSession: async (compressionSummary?: string) => {

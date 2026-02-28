@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { ack, drainByPriority, getUnacked, indexMessagesByPriority, type Priority, persist } from "@joelclaw/message-store";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 
@@ -221,10 +222,27 @@ const DEDUP_WINDOW_MS = 120_000; // 2 minutes
 type DedupEntry = { hash: string; source: string; ts: number };
 const dedupRing: DedupEntry[] = [];
 
+function stripInjectedChannelContext(prompt: string): string {
+  const trimmed = prompt.trim();
+  if (!trimmed.startsWith("---\nChannel:")) {
+    return trimmed;
+  }
+
+  const contextEnd = trimmed.indexOf("\n---\n", 4);
+  if (contextEnd === -1) {
+    return trimmed;
+  }
+
+  const body = trimmed.slice(contextEnd + "\n---\n".length).trim();
+  return body || trimmed;
+}
+
 function contentHash(source: string, prompt: string): string {
-  // Normalize whitespace and trim to ignore trivial formatting differences
-  const normalized = prompt.replace(/\s+/g, " ").trim().slice(0, 200);
-  return `${source}::${normalized}`;
+  // Dedup should be based on semantic message body, not the injected channel preamble.
+  // The preamble contains mostly static formatting and minute-level timestamps.
+  const normalizedBody = stripInjectedChannelContext(prompt).replace(/\s+/g, " ").trim();
+  const digest = createHash("sha256").update(normalizedBody).digest("hex");
+  return `${source}::${digest}`;
 }
 
 function isDuplicateConsecutive(source: string, prompt: string): boolean {
@@ -544,3 +562,8 @@ export async function replayUnacked(): Promise<void> {
 
   await drain();
 }
+
+export const __commandQueueTestUtils = {
+  stripInjectedChannelContext,
+  contentHash,
+};

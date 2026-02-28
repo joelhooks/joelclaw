@@ -2,7 +2,7 @@
 name: gateway-diagnose
 displayName: Gateway Diagnose
 description: "Diagnose gateway failures by reading daemon logs, session transcripts, Redis state, and OTEL telemetry. Full Telegram path triage: daemon process → Redis channel → command queue → pi session → model API → Telegram delivery. Use when: 'gateway broken', 'telegram not working', 'why is gateway down', 'gateway not responding', 'check gateway logs', 'what happened to gateway', 'gateway diagnose', 'gateway errors', 'review gateway logs', 'fallback activated', 'gateway stuck', or any request to understand why the gateway failed. Distinct from the gateway skill (operations) — this skill is diagnostic."
-version: 1.0.0
+version: 1.0.1
 author: Joel Hooks
 tags: [joelclaw, gateway, diagnosis, logs, telegram, reliability]
 ---
@@ -83,7 +83,8 @@ tail -100 /tmp/joelclaw/gateway.err
 
 | Pattern | Meaning | Root Cause |
 |---------|---------|-----------|
-| `Agent is already processing` | Command queue tried to prompt while session streaming | Session busy — long turn, compaction, or initialization race |
+| `Agent is already processing` | Command queue tried to prompt while session streaming | Queue is not using follow-up behavior while streaming, or session is genuinely wedged |
+| `dropped consecutive duplicate` | Inbound prompt was suppressed before model dispatch | Dedup collision (often from hashing channel preamble instead of message body) |
 | `fallback activated` | Model timeout or consecutive failures triggered model swap | Primary model API down or slow |
 | `no streaming tokens after Ns` | Timeout — prompt dispatched but no response | Model API issue, auth failure, or session not ready |
 | `session still streaming, retrying` | Drain loop retry (3 attempts, 2s each) | Turn taking longer than expected |
@@ -175,11 +176,14 @@ kubectl exec -n joelclaw redis-0 -- redis-cli XRANGE gateway:messages - + COUNT 
 
 ## Known Failure Scenarios
 
-### 1. Session Initialization Race (ADR-0103 era)
+### 1. Streaming race / replay overlap
 
-**Symptoms:** "already processing" errors immediately after restart, unacked message replay fails.
-**Cause:** Drain loop processes replayed messages before the pi session finishes initializing.
-**Fix:** Restart clears it. If persistent, check if `replayUnacked()` runs before session is ready.
+**Symptoms:** `Agent is already processing`, repeated `queue.prompt.failed`, watchdog self-restarts (`watchdog:dead-session`).
+**Cause:** Prompt dispatched while pi session is still streaming (turn end + compaction + replay overlap), without follow-up queue behavior.
+**Fix:**
+- Ensure gateway command queue dispatch uses `session.prompt(..., { streamingBehavior: "followUp" })`.
+- If still failing, check for stalled turns (`watchdog.session_stuck`) and abort/restart once.
+- Confirm failures stop (no new `watchdog:dead-session` in `gateway.log`).
 
 ### 2. Model API Timeout
 
@@ -204,6 +208,12 @@ kubectl exec -n joelclaw redis-0 -- redis-cli XRANGE gateway:messages - + COUNT 
 **Symptoms:** "already processing" after a successful turn_end.
 **Cause:** Auto-compaction triggers after turn_end, session enters streaming state again before drain loop processes next message.
 **Fix:** The idle waiter should block until compaction finishes. If not, this is a pi SDK gap.
+
+### 6. False duplicate suppression (channel preamble collision)
+
+**Symptoms:** inbound messages are persisted, then immediately logged as `dropped consecutive duplicate`; user reports "it ignored my message".
+**Cause:** dedup hash built from the first slice of prompt text, which can be identical across messages because channel context preamble is stable.
+**Fix:** dedup on semantic message body (strip injected channel context, hash full normalized body).
 
 ## Fallback Controller State
 
