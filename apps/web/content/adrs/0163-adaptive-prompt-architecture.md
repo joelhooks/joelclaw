@@ -101,7 +101,7 @@ Each category can have subcategories (e.g., `joelclaw:platform/k8s`, `joelclaw:c
 
 ### 5. Prompt/Query Boundary
 
-**Frequency test**: if Panda needs knowledge `>50%` of turns within a workload, it belongs in the prompt (TOPSOIL or WEATHER). Otherwise, query on demand.
+**Frequency test**: if Panda needs knowledge >50% of turns within a workload, it belongs in the prompt (TOPSOIL or WEATHER). Otherwise, query on demand.
 
 **Stability + frequency together determine layer placement:**
 - High frequency + high stability → GRANITE/BEDROCK (always in prompt)

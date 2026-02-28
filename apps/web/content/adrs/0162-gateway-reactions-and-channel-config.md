@@ -18,8 +18,8 @@ Additionally, channel configuration is scattered across environment variables (`
 **Structured response convention.** The gateway agent includes reaction directives in its response text using a `<<react:EMOJI>>` prefix. The outbound router strips the directive and executes the reaction on the source channel before routing the text.
 
 ```
-`<<react:👍>>`Got it, deploying now.
-`<<react:🔥>>`
+<<react:👍>>Got it, deploying now.
+<<react:🔥>>
 ```
 
 Rules:
@@ -43,8 +43,8 @@ Per-channel API mapping:
 **Targeted replies.** The gateway agent can reply to a specific inbound message using a `<<reply:MESSAGE_ID>>` directive. The outbound router strips the directive and passes the message ID as `replyTo` context to the channel adapter.
 
 ```
-`<<reply:5872>>`That's the right approach.
-`<<react:👍>><<reply:5872>>`Confirmed.
+<<reply:5872>>That's the right approach.
+<<react:👍>><<reply:5872>>Confirmed.
 ```
 
 The reply infrastructure already exists in the Telegram adapter (`reply_parameters`), Discord (thread-based), and Slack (`thread_ts`). What's missing is the agent's ability to target a specific message.

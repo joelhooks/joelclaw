@@ -75,7 +75,7 @@ Config (TOML):
 - [ ] Kill bun manually → supervisor restarts it within backoff window
 - [ ] Port 3111 held by orphan → supervisor kills it and starts clean
 - [ ] 3 consecutive health check failures → automatic restart
-- [ ] Binary compiles for aarch64-apple-darwin, under 5MB
+- [ ] Binary compiles for aarch64-apple-darwin, <5MB
 
 ## Consequences
 
@@ -88,7 +88,7 @@ Config (TOML):
 
 ### Negative
 - Rust compilation step in the build process
-- Another binary to maintain (but it's under 500 lines and changes rarely)
+- Another binary to maintain (but it's <500 lines and changes rarely)
 - Secret loading needs to be reimplemented (or shell to `secrets` CLI)
 
 ### Non-goals

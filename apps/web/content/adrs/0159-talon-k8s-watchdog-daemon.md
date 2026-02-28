@@ -312,7 +312,7 @@ No HTTP client needed — all probes are subprocess calls (curl, kubectl, etc.).
 - [ ] SOS cooldown prevents spam (only 1 per 30min)
 
 **General:**
-- [ ] Binary compiles for aarch64-apple-darwin, under 5MB
+- [ ] Binary compiles for aarch64-apple-darwin, <5MB
 - [ ] State persists across daemon restart
 - [ ] `talon --check` runs single probe cycle and exits (for manual/CI use)
 - [ ] `talon --status` prints current state + worker state + last probe results
