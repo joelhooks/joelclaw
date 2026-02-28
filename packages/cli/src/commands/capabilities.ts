@@ -308,6 +308,10 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
           limit: { description: "Result count", value: 10, default: 10 },
         },
       },
+      {
+        command: "vault adr audit",
+        description: "Audit ADR inventory, collisions, and README index alignment",
+      },
     ],
     verification: [
       "Relevant context found in <= 2 command hops",

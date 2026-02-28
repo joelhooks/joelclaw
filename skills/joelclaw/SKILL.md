@@ -161,7 +161,9 @@ joelclaw loop nuke dead                    # Remove completed loops from Redis
 ```bash
 joelclaw sleep [on|off|status]             # Sleep mode for gateway
 joelclaw note <text>                       # Quick note to Vault
-joelclaw vault <query>                     # Search Vault
+joelclaw vault read <ref>                  # Resolve/read ADR/project/path refs
+joelclaw vault search <query>              # Search vault markdown
+joelclaw vault adr audit                   # ADR health + collision + index checks
 joelclaw search <query>                    # Full-text search
 joelclaw email [scan|triage]               # Email operations
 joelclaw x [post|mentions]                 # X/Twitter operations

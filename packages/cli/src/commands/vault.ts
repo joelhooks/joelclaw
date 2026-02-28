@@ -12,6 +12,10 @@ const READ_MAX_LINES = 500
 const READ_MAX_MATCHES = 3
 const DEFAULT_LIMIT = 10
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
+const DECISIONS_DIR = join(VAULT_ROOT, "docs", "decisions")
+const ADR_INDEX_PATH = join(DECISIONS_DIR, "README.md")
+const ADR_VALID_STATUSES = ["proposed", "accepted", "shipped", "superseded", "deprecated", "rejected"] as const
+const ADR_VALID_STATUS_SET = new Set<string>(ADR_VALID_STATUSES)
 
 type ProcessResult = {
   exitCode: number
@@ -23,6 +27,22 @@ type ResolvedMatch = {
   path: string
   score: number
   reason: "adr" | "project" | "path" | "fuzzy"
+}
+
+type AdrCatalogItem = {
+  number: string
+  slug: string
+  filename: string
+  path: string
+  title: string
+  status: string | null
+  date: string | null
+  supersededByRaw: string | null
+}
+
+type AdrNumberCollision = {
+  number: string
+  files: string[]
 }
 
 const shq = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
@@ -311,6 +331,182 @@ async function readStatus(path: string): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+function sanitizeSimpleValue(value: string): string {
+  return value.trim().replace(/^['"]|['"]$/g, "")
+}
+
+function parseFrontmatterMap(markdown: string): Record<string, string> {
+  if (!markdown.startsWith("---\n")) return {}
+  const end = markdown.indexOf("\n---", 4)
+  if (end === -1) return {}
+
+  const map: Record<string, string> = {}
+  const lines = markdown.slice(4, end).split("\n")
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith("#")) continue
+    const idx = trimmed.indexOf(":")
+    if (idx === -1) continue
+    const key = trimmed.slice(0, idx).trim().toLowerCase()
+    const raw = trimmed.slice(idx + 1).trim()
+    if (!key || !raw) continue
+    map[key] = sanitizeSimpleValue(raw)
+  }
+  return map
+}
+
+function parseAdrFilename(filename: string): { number: string; slug: string } | null {
+  const match = filename.match(/^(\d{4})-(.+)\.md$/)
+  if (!match?.[1] || !match?.[2]) return null
+  return { number: match[1], slug: match[2] }
+}
+
+function cleanAdrTitle(raw: string, fallbackSlug: string): string {
+  const compact = raw.trim().replace(/\s+/g, " ")
+  if (!compact) return fallbackSlug.replace(/-/g, " ")
+
+  return compact
+    .replace(/^ADR-\d{4}:\s*/i, "")
+    .replace(/^\d{4}\s+[—-]\s*/i, "")
+    .replace(/^\d{1,4}\.\s*/, "")
+    .trim()
+}
+
+function extractAdrTitle(markdown: string, fallbackSlug: string): string {
+  const fm = parseFrontmatterMap(markdown)
+  const fmTitle = fm.title?.trim()
+  if (fmTitle) return cleanAdrTitle(fmTitle, fallbackSlug)
+
+  const heading = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim()
+  if (heading) return cleanAdrTitle(heading, fallbackSlug)
+
+  return fallbackSlug.replace(/-/g, " ")
+}
+
+function normalizeStatusValue(value: string | null): string | null {
+  if (!value) return null
+  return sanitizeSimpleValue(value).toLowerCase()
+}
+
+function extractSupersededByTargets(raw: string | null): string[] {
+  if (!raw) return []
+
+  const normalized = sanitizeSimpleValue(raw)
+  if (!normalized || ["[]", "none", "null", "n/a", "na"].includes(normalized.toLowerCase())) {
+    return []
+  }
+
+  const candidates: string[] = []
+  for (const match of normalized.matchAll(/\(([^)]+)\)/g)) {
+    if (match[1]) candidates.push(match[1])
+  }
+
+  const collapsed = normalized
+    .replace(/\[[^\]]*\]\(([^)]+)\)/g, "$1")
+    .replace(/[\[\]"]+/g, "")
+
+  for (const part of collapsed.split(/[,;]+/g)) {
+    const candidate = part.trim()
+    if (!candidate) continue
+    candidates.push(candidate)
+  }
+
+  return Array.from(new Set(candidates.map((candidate) => basename(candidate.trim()))))
+}
+
+function supersededTargetExists(target: string, filenames: Set<string>, numbers: Set<string>): boolean {
+  const normalized = target.trim().toLowerCase()
+  if (!normalized || normalized === ".md") return true
+
+  if (/^adr-?\d{4}$/.test(normalized)) {
+    const match = normalized.match(/(\d{4})/)
+    return Boolean(match?.[1] && numbers.has(match[1]))
+  }
+
+  if (/^\d{4}$/.test(normalized)) return numbers.has(normalized)
+  if (/^\d{4}\.md$/.test(normalized)) return numbers.has(normalized.slice(0, 4))
+
+  if (/^\d{4}-.+\.md$/.test(normalized)) return filenames.has(normalized)
+  if (/^\d{4}-.+$/.test(normalized)) return filenames.has(`${normalized}.md`)
+
+  const embeddedNumber = normalized.match(/(\d{4})/)
+  if (embeddedNumber?.[1]) return numbers.has(embeddedNumber[1])
+
+  return false
+}
+
+function findAdrNumberCollisions(items: ReadonlyArray<{ number: string; filename: string }>): AdrNumberCollision[] {
+  const grouped = new Map<string, string[]>()
+
+  for (const item of items) {
+    const files = grouped.get(item.number) ?? []
+    files.push(item.filename)
+    grouped.set(item.number, files)
+  }
+
+  return Array.from(grouped.entries())
+    .filter(([, files]) => files.length > 1)
+    .map(([number, files]) => ({ number, files: files.slice().sort((a, b) => a.localeCompare(b)) }))
+    .sort((a, b) => a.number.localeCompare(b.number))
+}
+
+function parseAdrReadmeRows(markdown: string): string[] {
+  const rows: string[] = []
+  for (const line of markdown.split("\n")) {
+    const match = line.match(/^\| \[\d{4}\]\(([^)]+)\) \|/)
+    if (!match?.[1]) continue
+    rows.push(match[1])
+  }
+  return rows
+}
+
+async function listAdrPaths(): Promise<string[]> {
+  const out = await runShell(`find ${shq(DECISIONS_DIR)} -maxdepth 1 -type f -name "[0-9][0-9][0-9][0-9]-*.md" | sort`)
+  if (out.exitCode !== 0 && out.stdout.trim().length === 0) return []
+
+  return out.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => normalize(line))
+}
+
+async function loadAdrCatalogItem(path: string): Promise<AdrCatalogItem | null> {
+  const filename = basename(path)
+  const parsed = parseAdrFilename(filename)
+  if (!parsed) return null
+
+  const markdown = await readFile(path, "utf8")
+  const frontmatter = parseFrontmatterMap(markdown)
+  const status = normalizeStatusValue(frontmatter.status ?? extractFrontmatterStatus(markdown))
+
+  return {
+    number: parsed.number,
+    slug: parsed.slug,
+    filename,
+    path,
+    title: extractAdrTitle(markdown, parsed.slug),
+    status,
+    date: frontmatter.date ?? null,
+    supersededByRaw: frontmatter["superseded-by"] ?? null,
+  }
+}
+
+async function loadAdrCatalog(): Promise<AdrCatalogItem[]> {
+  const paths = await listAdrPaths()
+  const loaded = await Promise.all(paths.map(async (path) => {
+    try {
+      return await loadAdrCatalogItem(path)
+    } catch {
+      return null
+    }
+  }))
+
+  return loaded
+    .filter((item): item is AdrCatalogItem => item !== null)
+    .sort((a, b) => a.number.localeCompare(b.number) || a.filename.localeCompare(b.filename))
 }
 
 const readCmd = Command.make(
@@ -655,6 +851,7 @@ const lsCmd = Command.make(
               ref: { description: "ADR reference (e.g. ADR-0077)", value: "ADR-0001", required: true },
             },
           },
+          { command: "joelclaw vault adr list", description: "List ADR metadata with status/date/title" },
         ]))
         return
       }
@@ -725,6 +922,183 @@ const lsCmd = Command.make(
     })
 )
 
+const adrListCmd = Command.make(
+  "list",
+  {
+    status: Options.text("status").pipe(Options.withDefault("")),
+    limit: Options.integer("limit").pipe(Options.withDefault(200)),
+  },
+  ({ status, limit }) =>
+    Effect.gen(function* () {
+      const normalizedStatus = normalizeStatusValue(status)
+      if (normalizedStatus && !ADR_VALID_STATUS_SET.has(normalizedStatus)) {
+        yield* Console.log(respondError(
+          "vault adr list",
+          `Invalid ADR status filter: ${status}`,
+          "INVALID_ADR_STATUS",
+          `Use one of: ${ADR_VALID_STATUSES.join(", ")}`,
+          [
+            { command: "joelclaw vault adr list", description: "List ADRs without status filter" },
+            { command: "joelclaw vault adr audit", description: "Inspect ADR health and collisions" },
+          ]
+        ))
+        return
+      }
+
+      const safeLimit = Math.max(1, Math.min(limit, 500))
+      const catalog = yield* Effect.tryPromise(() => loadAdrCatalog())
+      const filtered = normalizedStatus
+        ? catalog.filter((item) => item.status === normalizedStatus)
+        : catalog
+
+      const collisions = findAdrNumberCollisions(catalog)
+
+      yield* Console.log(respond("vault adr list", {
+        total: catalog.length,
+        filtered: filtered.length,
+        status_filter: normalizedStatus,
+        limit: safeLimit,
+        collisions: collisions.length,
+        items: filtered.slice(0, safeLimit).map((item) => ({
+          number: item.number,
+          title: item.title,
+          status: item.status,
+          date: item.date,
+          filename: item.filename,
+        })),
+      }, [
+        {
+          command: "joelclaw vault read <ref>",
+          description: "Read an ADR body",
+          params: {
+            ref: { description: "ADR reference (e.g. ADR-0168)", required: true },
+          },
+        },
+        { command: "joelclaw vault adr collisions", description: "List duplicate ADR numbers" },
+        { command: "joelclaw vault adr audit", description: "Run full ADR metadata audit" },
+      ]))
+    })
+)
+
+const adrCollisionsCmd = Command.make("collisions", {}, () =>
+  Effect.gen(function* () {
+    const catalog = yield* Effect.tryPromise(() => loadAdrCatalog())
+    const collisions = findAdrNumberCollisions(catalog)
+
+    yield* Console.log(respond("vault adr collisions", {
+      total: catalog.length,
+      collision_count: collisions.length,
+      collisions,
+    }, [
+      { command: "joelclaw vault adr audit", description: "Run full ADR audit checks" },
+      {
+        command: "joelclaw vault adr list [--status <status>] [--limit <limit>]",
+        description: "List ADR metadata",
+        params: {
+          status: { description: "Optional status filter", enum: [...ADR_VALID_STATUSES] },
+          limit: { description: "Maximum rows", value: 200, default: 200 },
+        },
+      },
+    ]))
+  })
+)
+
+const adrAuditCmd = Command.make("audit", {}, () =>
+  Effect.gen(function* () {
+    const catalog = yield* Effect.tryPromise(() => loadAdrCatalog())
+
+    const missingStatus = catalog
+      .filter((item) => item.status === null)
+      .map((item) => item.filename)
+
+    const nonCanonical = catalog
+      .filter((item) => item.status !== null && !ADR_VALID_STATUS_SET.has(item.status))
+      .map((item) => ({ filename: item.filename, status: item.status }))
+
+    const statusCounts = catalog.reduce<Record<string, number>>((acc, item) => {
+      const key = item.status ?? "missing"
+      acc[key] = (acc[key] ?? 0) + 1
+      return acc
+    }, {})
+
+    const collisions = findAdrNumberCollisions(catalog)
+    const filenameSet = new Set(catalog.map((item) => item.filename))
+    const numberSet = new Set(catalog.map((item) => item.number))
+
+    const missingSupersededByTargets = catalog
+      .flatMap((item) =>
+        extractSupersededByTargets(item.supersededByRaw).map((target) => ({ from: item.filename, target }))
+      )
+      .filter((entry) => !supersededTargetExists(entry.target, filenameSet, numberSet))
+
+    const hasIndex = yield* Effect.tryPromise(() => isReadableFile(ADR_INDEX_PATH))
+    const indexRows = hasIndex
+      ? parseAdrReadmeRows(yield* Effect.tryPromise(() => readFile(ADR_INDEX_PATH, "utf8")))
+      : []
+
+    const indexRowSet = new Set(indexRows)
+    const missingFromIndex = catalog.map((item) => item.filename).filter((name) => !indexRowSet.has(name))
+    const extraInIndex = indexRows.filter((name) => !filenameSet.has(name))
+
+    const ok =
+      missingStatus.length === 0
+      && nonCanonical.length === 0
+      && collisions.length === 0
+      && missingSupersededByTargets.length === 0
+      && hasIndex
+      && missingFromIndex.length === 0
+      && extraInIndex.length === 0
+
+    yield* Console.log(respond("vault adr audit", {
+      ok,
+      decisions_dir: DECISIONS_DIR,
+      index_path: ADR_INDEX_PATH,
+      total: catalog.length,
+      canonical_statuses: ADR_VALID_STATUSES,
+      status_counts: statusCounts,
+      missing_status: missingStatus,
+      non_canonical_status: nonCanonical,
+      collisions,
+      superseded_by_missing_targets: missingSupersededByTargets,
+      index: {
+        exists: hasIndex,
+        rows: indexRows.length,
+        missing_from_index: missingFromIndex,
+        extra_in_index: extraInIndex,
+      },
+    }, [
+      { command: "joelclaw vault adr collisions", description: "Inspect duplicate ADR numbers" },
+      { command: "joelclaw vault adr list", description: "Inspect all ADR metadata rows" },
+      {
+        command: "joelclaw vault read <ref>",
+        description: "Open an ADR that failed audit checks",
+        params: {
+          ref: { description: "ADR reference or path", required: true },
+        },
+      },
+    ], ok))
+  })
+)
+
+const adrCmd = Command.make("adr", {}, () =>
+  Console.log(respond("vault adr", {
+    description: "ADR-focused command tree for inventory, collisions, and index integrity",
+    decisions_dir: DECISIONS_DIR,
+    index_path: ADR_INDEX_PATH,
+    subcommands: {
+      list: "joelclaw vault adr list [--status <status>] [--limit <limit>]",
+      collisions: "joelclaw vault adr collisions",
+      audit: "joelclaw vault adr audit",
+    },
+  }, [
+    { command: "joelclaw vault adr list", description: "List ADR metadata" },
+    { command: "joelclaw vault adr collisions", description: "Show duplicate ADR numbers" },
+    { command: "joelclaw vault adr audit", description: "Run full ADR health audit" },
+  ]))
+).pipe(
+  Command.withSubcommands([adrListCmd, adrCollisionsCmd, adrAuditCmd])
+)
+
 const treeCmd = Command.make("tree", {}, () =>
   Effect.gen(function* () {
     const out = yield* Effect.tryPromise(() =>
@@ -755,6 +1129,7 @@ const treeCmd = Command.make("tree", {}, () =>
           query: { description: "Text query", required: true },
         },
       },
+      { command: "joelclaw vault adr audit", description: "Run ADR inventory audit" },
     ]))
   })
 )
@@ -769,6 +1144,7 @@ export const vaultCmd = Command.make("vault", {}, () =>
         search: "joelclaw vault search <query> [--semantic] [--limit <limit>]",
         ls: "joelclaw vault ls [section]",
         tree: "joelclaw vault tree",
+        adr: "joelclaw vault adr {list|collisions|audit}",
       },
     }, [
       {
@@ -787,8 +1163,17 @@ export const vaultCmd = Command.make("vault", {}, () =>
       },
       { command: "joelclaw vault ls", description: "List vault sections" },
       { command: "joelclaw vault tree", description: "Show vault directory tree" },
+      { command: "joelclaw vault adr audit", description: "Run ADR metadata/index audit" },
     ]))
   })
 ).pipe(
-  Command.withSubcommands([readCmd, searchCmd, lsCmd, treeCmd])
+  Command.withSubcommands([readCmd, searchCmd, lsCmd, treeCmd, adrCmd])
 )
+
+export const __vaultTestUtils = {
+  ADR_VALID_STATUSES,
+  parseAdrFilename,
+  normalizeStatusValue,
+  findAdrNumberCollisions,
+  parseAdrReadmeRows,
+}

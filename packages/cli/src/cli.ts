@@ -132,7 +132,7 @@ const root = Command.make("joelclaw", {}, () =>
           recall: "joelclaw recall <query> [--limit N] [--min-score F] [--raw]",
           search: "joelclaw search <query> [-c collection] [-n limit] [-f filter] [--semantic]",
           docs: "joelclaw docs {add|search|context|list|show|status|enrich|reindex}",
-          vault: "joelclaw vault {read|search|ls|tree}",
+          vault: "joelclaw vault {read|search|ls|tree|adr}",
           email: "joelclaw email {inboxes|inbox|read|archive|archive-bulk}",
           models: "joelclaw models --list [--plain]",
           nas: "joelclaw nas {status|runs|review}",
