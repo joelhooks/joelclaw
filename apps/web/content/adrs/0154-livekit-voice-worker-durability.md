@@ -20,11 +20,13 @@ Observed failure pattern on 2026-02-26:
 - `NON_SIP_PARTICIPANTS=0` in LiveKit stats during failed windows.
 - Calls ended after SIP participant departure timeout.
 
-The answering worker code still exists at `/Users/joel/Projects/joelclaw-voice-agent`, but runtime ownership is ad hoc:
+At incident time, the answering worker code lived at `/Users/joel/Projects/joelclaw-voice-agent` and runtime ownership was ad hoc:
 - started manually via `run.sh`
 - no launchd service
 - no k8s deployment
 - no watchdog/auto-heal contract
+
+Follow-up implementation moved the runtime into monorepo-owned paths under `infra/voice-agent` and launchd now executes the monorepo start script.
 
 This is a durability failure, not a LiveKit server failure.
 
@@ -45,9 +47,14 @@ The voice worker runs as a launchd-managed host service on Panda:
 ### 2) Source-of-truth ops artifacts
 
 Service assets are versioned in the joelclaw repo (not hand-managed in `~/Library/LaunchAgents`):
-- `ops/voice-agent/com.joel.voice-agent.plist`
-- `ops/voice-agent/run-voice-agent.sh`
-- `ops/voice-agent/install.sh`
+- `infra/voice-agent/main.py`
+- `infra/voice-agent/run.sh`
+- `infra/voice-agent/start.sh`
+- `infra/launchd/com.joel.voice-agent.plist`
+- `infra/voice-agent/config.default.yaml` (repo-safe defaults, no caller PII)
+
+Runtime-local caller config lives outside git:
+- `~/.config/joelclaw/voice-agent.yaml`
 
 ### 3) Health + telemetry contract
 
@@ -85,9 +92,24 @@ Expose voice runtime controls as first-class CLI commands:
 
 For the LiveKit voice worker, OpenRouter remains explicitly allowed until superseded by a new ADR. This avoids policy drift against ADR-0043.
 
+### 7) Caller identity matching + PII placement
+
+Allowlist checks must compare normalized caller IDs, not raw room tokens.
+
+Normalization contract:
+- strip `tel:` / `sip:` prefixes,
+- remove non-digit characters,
+- for US numbers, collapse leading `1` on 11-digit numbers to canonical 10-digit form.
+
+Policy is fail-closed: if caller extraction/normalization yields an empty value, reject the call.
+
+Caller PII (allowlist numbers) must live in local runtime config (`~/.config/joelclaw/voice-agent.yaml`) or env, not in repository source files.
+
+Rejection logs must include both raw and normalized caller forms for incident forensics.
+
 ## Implementation Plan
 
-1. Add launchd assets to repo under `ops/voice-agent/`.
+1. Keep launchd + runtime assets in repo under `infra/launchd/` and `infra/voice-agent/`.
 2. Install and load `com.joel.voice-agent` from repo-owned assets.
 3. Update voice worker code to emit heartbeat and lifecycle telemetry.
 4. Add watchdog logic in system-bus for stale heartbeat / SIP-only detection.
@@ -100,6 +122,8 @@ For the LiveKit voice worker, OpenRouter remains explicitly allowed until supers
 - [ ] Service survives reboot and restarts automatically.
 - [ ] Killing the worker process results in automatic recovery (`KeepAlive`/kickstart).
 - [ ] Inbound test call shows non-SIP participant join in LiveKit for answered calls.
+- [ ] Caller allowlist accepts equivalent Joel number formats (`817...`, `+1817...`, punctuation variants) after normalization.
+- [ ] Missing/unparseable caller IDs are rejected (fail-closed) with raw+normalized logging.
 - [ ] `joelclaw otel search "voice.worker.heartbeat" --hours 1` returns fresh events.
 - [ ] `joelclaw otel search "voice.worker.heal" --hours 1` shows attempt/success/failure when forced.
 - [ ] `joelclaw voice status` reports launchd state + heartbeat age.

@@ -1,0 +1,12 @@
+[project]
+name = "joelclaw-voice-agent"
+version = "0.1.0"
+description = "joelclaw voice agent — bidirectional voice conversations with system tool access"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "livekit-agents[elevenlabs,silero,turn-detector]~=1.3",
+    "livekit-plugins-openai~=1.3",
+    "livekit-agents[deepgram]~=1.3",
+    "pyyaml>=6.0.3",
+]

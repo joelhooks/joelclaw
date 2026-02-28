@@ -11,7 +11,7 @@
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/joel/Projects/joelclaw-voice-agent</string>
+    <string>/Users/joel/Code/joelhooks/joelclaw/infra/voice-agent</string>
 
     <key>EnvironmentVariables</key>
     <dict>
@@ -19,6 +19,8 @@
         <string>/Users/joel</string>
         <key>PATH</key>
         <string>/Users/joel/.local/bin:/Users/joel/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>JOELCLAW_VOICE_CONFIG</key>
+        <string>/Users/joel/.config/joelclaw/voice-agent.yaml</string>
     </dict>
 
     <key>RunAtLoad</key>

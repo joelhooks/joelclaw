@@ -1,0 +1,32 @@
+# joelclaw Voice Agent Configuration (repo-safe defaults)
+# Runtime config is loaded from ~/.config/joelclaw/voice-agent.yaml by default.
+
+# --- TTS (ElevenLabs) ---
+tts:
+  # Voice ID — find yours at https://elevenlabs.io/app/voice-library
+  voice_id: "bIHbv24MWmeRgasZH58o"
+
+  # Model: eleven_turbo_v2_5 (fast, multilingual) or eleven_multilingual_v2
+  model: "eleven_turbo_v2_5"
+
+  # Voice tuning — all floats 0.0 to 1.0
+  stability: 0.5
+  similarity_boost: 0.75
+  style: 0.0
+  speed: 1.0
+
+# --- LLM ---
+llm:
+  provider: "openrouter"
+  model: "anthropic/claude-sonnet-4.6"
+
+# --- Agent personality ---
+agent:
+  name: "Panda"
+  greeting: "Hey, it's Panda. What's up?"
+
+# --- Security ---
+security:
+  # Caller allowlist is fail-closed. Keep real numbers in local config, not in git.
+  # Example: ["+18176756031"]
+  allowed_callers: []
