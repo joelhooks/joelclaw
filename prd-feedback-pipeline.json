@@ -68,7 +68,7 @@
       "id": "FBP-4",
       "title": "Cache invalidation after content-review edit",
       "description": "After the agent edits an article, the cached version on joelclaw.com must be invalidated. The StaticArticleShell uses cacheTag('post:slug'). After a successful edit, the content-review function should call revalidateTag via a Next.js API route or on-demand revalidation endpoint. Add a POST /api/revalidate route that accepts a tag and calls revalidateTag(). The content-review function calls this after writing the revision. File: apps/web/app/api/revalidate/route.ts (new), packages/system-bus/src/inngest/functions/content-review.ts (update)",
-      "status": "pending",
+      "status": "done",
       "priority": 4,
       "acceptance": [
         "POST /api/revalidate with {tag: 'post:slug', secret: REVALIDATION_SECRET} invalidates the cached page",
