@@ -91,6 +91,32 @@ joelclaw logs server -n 50 --grep error    # Filtered server errors
 joelclaw logs worker --grep "observe"      # Grep worker logs
 ```
 
+### Structured Log Writes
+
+```bash
+joelclaw log write --action configure --tool cli --detail "updated capability adapter config" --reason "ADR-0169 phase 1"
+```
+
+`log` writes canonical structured entries (slog backend). `logs` remains runtime log read/analyze.
+
+### Secrets
+
+```bash
+joelclaw secrets status
+joelclaw secrets lease <name> --ttl 15m
+joelclaw secrets revoke <lease-id>
+joelclaw secrets revoke --all
+joelclaw secrets audit --tail 50
+joelclaw secrets env --dry-run
+```
+
+### Notify
+
+```bash
+joelclaw notify send "Worker restarted and healthy" --priority normal
+joelclaw notify send "Immediate action required" --priority urgent --telegram-only
+```
+
 ### Gateway
 
 ```bash

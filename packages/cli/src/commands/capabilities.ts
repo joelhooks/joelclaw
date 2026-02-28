@@ -1,5 +1,7 @@
 import { Command } from "@effect/cli"
 import { Console, Effect } from "effect"
+import { resolveCapabilitiesConfig } from "../capabilities/config"
+import { capabilityRegistry } from "../capabilities/setup"
 import { respond } from "../response"
 
 type CapabilityParam = {
@@ -33,6 +35,7 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
     prerequisites: ["joelclaw CLI available in PATH"],
     commands: [
       { command: "status", description: "Health check all core components" },
+      { command: "secrets status", description: "Verify secrets backend availability for capability adapters" },
       { command: "functions", description: "List registered Inngest functions" },
       {
         command: "runs [--count <count>] [--hours <hours>]",
@@ -45,8 +48,51 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
     ],
     verification: [
       "status.ok=true",
+      "secrets backend reachable",
       "functions.count > 0",
       "recent failed runs are understood or recoverable",
+    ],
+  },
+  {
+    id: "operator-signals",
+    category: "operations",
+    goal: "Lease credentials, write structured logs, and notify gateway in one deterministic flow.",
+    prerequisites: ["Capability adapters configured (secrets, log, notify)"],
+    commands: [
+      { command: "secrets status", description: "Confirm secrets backend daemon is healthy" },
+      {
+        command: "secrets lease <name> --ttl <ttl>",
+        description: "Lease short-lived credential",
+        params: {
+          name: { description: "Secret name", required: true },
+          ttl: { description: "Lease duration", value: "15m", default: "15m" },
+        },
+      },
+      {
+        command: "log write --action <action> --tool <tool> --detail <detail> [--reason <reason>]",
+        description: "Record the operational mutation in canonical slog",
+        params: {
+          action: { description: "Mutation verb", required: true, value: "configure" },
+          tool: { description: "Component name", required: true, value: "cli" },
+          detail: { description: "What changed", required: true, value: "updated capability adapter config" },
+          reason: { description: "Why the change was made", value: "phase-1 capability rollout" },
+        },
+      },
+      {
+        command: "notify send <message> [--priority <priority>] [--channel <channel>] [--context <json>]",
+        description: "Send canonical gateway notification to operator session",
+        params: {
+          message: { description: "Notification text", required: true },
+          priority: { description: "Escalation level", value: "normal", enum: ["low", "normal", "high", "urgent"] },
+          channel: { description: "Gateway channel route", value: "gateway", enum: ["gateway", "main", "all"] },
+          json: { description: "JSON context payload", value: "{\"scope\":\"capability\"}" },
+        },
+      },
+    ],
+    verification: [
+      "Lease response includes credential value",
+      "Log write acknowledged by slog backend",
+      "Notify event appears in gateway queue/stream",
     ],
   },
   {
@@ -321,6 +367,20 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
 ]
 
 export function buildCapabilitiesCatalog() {
+  const config = resolveCapabilitiesConfig()
+  const registry = capabilityRegistry.list()
+  const configuredCapabilities = Object.entries(config.capabilities)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, capability]) => ({
+      capability: name,
+      enabled: capability.enabled,
+      adapter: capability.adapter,
+      sources: capability.source,
+      availableAdapters: registry
+        .filter((entry) => entry.capability === name)
+        .map((entry) => entry.adapter),
+    }))
+
   const categories = Array.from(
     CAPABILITY_FLOWS.reduce<Map<string, number>>((acc, flow) => {
       acc.set(flow.category, (acc.get(flow.category) ?? 0) + 1)
@@ -333,6 +393,13 @@ export function buildCapabilitiesCatalog() {
   return {
     description: "Agent navigation map: goals -> command templates -> verification",
     flowCount: CAPABILITY_FLOWS.length,
+    capabilityContract: {
+      configuredCount: configuredCapabilities.length,
+      registryEntries: registry.length,
+      configPaths: config.paths,
+      configuredCapabilities,
+      adapters: registry,
+    },
     categories,
     flows: CAPABILITY_FLOWS,
   }
@@ -366,6 +433,15 @@ export const capabilitiesCmd = Command.make(
               description: "Quick observability pulse",
               params: {
                 hours: { description: "Lookback window in hours", value: 24, default: 24 },
+              },
+            },
+            { command: "secrets status", description: "Check capability backend readiness for secrets/log/notify flows" },
+            {
+              command: "notify send <message> [--priority <priority>]",
+              description: "Send canonical gateway notification",
+              params: {
+                message: { description: "Notification text", required: true },
+                priority: { description: "Priority", value: "normal", enum: ["low", "normal", "high", "urgent"] },
               },
             },
           ]

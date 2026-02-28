@@ -9,6 +9,7 @@ describe("capabilities catalog", () => {
 
     expect(unique.size).toBe(ids.length)
     expect(ids).toContain("system-health")
+    expect(ids).toContain("operator-signals")
     expect(ids).toContain("run-failure-triage")
     expect(ids).toContain("gateway-operations")
     expect(ids).toContain("memory-health")
@@ -28,14 +29,17 @@ describe("capabilities catalog", () => {
   })
 
   test("catalog can be wrapped in valid HATEOAS envelope", () => {
+    const catalog = buildCapabilitiesCatalog()
     const envelope = buildSuccessEnvelope(
       "capabilities",
-      buildCapabilitiesCatalog(),
+      catalog,
       [{ command: "status", description: "Check health" }]
     )
 
     const validation = validateJoelclawEnvelope(envelope)
     expect(validation.valid).toBe(true)
     expect(validation.errors).toHaveLength(0)
+    expect(catalog.capabilityContract.configuredCount).toBeGreaterThan(0)
+    expect(catalog.capabilityContract.registryEntries).toBeGreaterThanOrEqual(3)
   })
 })

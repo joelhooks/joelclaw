@@ -8,6 +8,7 @@ Canonical operator interface for joelclaw.
 - Deterministic error codes via `respondError`
 - HATEOAS navigation in every command response
 - Heavy dependencies loaded lazily when possible
+- Capability adapter registry with typed command contracts (`packages/cli/src/capabilities/`)
 
 ## Command roots
 
@@ -17,9 +18,49 @@ Canonical operator interface for joelclaw.
 - `joelclaw loop`
 - `joelclaw docs`
 - `joelclaw vault`
+- `joelclaw mail`
+- `joelclaw secrets`
+- `joelclaw log`
+- `joelclaw notify`
 - `joelclaw otel`
 - `joelclaw inngest`
 - `joelclaw capabilities`
+
+## Capability adapter config precedence (ADR-0169 phase 0)
+
+Resolution order is deterministic:
+
+1. CLI flags (e.g. `--adapter`)
+2. Environment variables
+3. Project config (`.joelclaw/config.toml`)
+4. User config (`~/.joelclaw/config.toml`)
+5. Built-in defaults
+
+Current env keys:
+
+- `JOELCLAW_CAPABILITY_<CAPABILITY>_ADAPTER`
+- `JOELCLAW_CAPABILITY_<CAPABILITY>_ENABLED`
+
+## Phase-1 capability command roots
+
+```bash
+joelclaw secrets status
+joelclaw secrets lease <name> --ttl 15m
+joelclaw secrets revoke <lease-id>
+joelclaw secrets revoke --all
+joelclaw secrets audit --tail 50
+joelclaw secrets env --dry-run [--ttl 1h] [--force]
+
+joelclaw log write --action <action> --tool <tool> --detail <detail> [--reason <reason>]
+
+joelclaw notify send "<message>" [--priority low|normal|high|urgent] [--channel gateway|main|all] [--context '{"k":"v"}']
+```
+
+Semantics:
+
+- `log` writes structured system entries (slog backend).
+- `logs` reads/analyzes runtime logs.
+- `notify` is the canonical operator alert command; `gateway push` remains transport/debug.
 
 ## Vault command tree
 

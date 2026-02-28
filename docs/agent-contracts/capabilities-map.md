@@ -13,6 +13,7 @@ joelclaw capabilities
 | Flow ID | Category | Goal |
 |---|---|---|
 | `system-health` | operations | Determine whether joelclaw is healthy now |
+| `operator-signals` | operations | Lease credentials, write structured logs, and notify gateway |
 | `run-failure-triage` | diagnostics | Diagnose failed runs and identify next repair step |
 | `deterministic-recovery` | diagnostics | Apply dry-run-first deterministic runbooks for known error codes |
 | `event-delivery` | operations | Send an event and verify function-run delivery |
@@ -27,4 +28,6 @@ joelclaw capabilities
 - Output is JSON envelope (`ok`, `command`, `result`, `next_actions`).
 - `next_actions` commands use template syntax (`<required>`, `[--flag <value>]`).
 - `params` entries provide pre-filled values/defaults/enums.
+- Catalog includes `capabilityContract` metadata: configured capability adapters, config paths, and registry entries.
+- Capability config precedence: flags > env > project `.joelclaw/config.toml` > user `~/.joelclaw/config.toml` > defaults.
 - This map is documentation; runtime discoverability must come from `joelclaw capabilities`.
