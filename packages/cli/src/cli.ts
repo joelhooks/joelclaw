@@ -32,6 +32,7 @@ import { runCmd, runsCmd } from "./commands/runs"
 import { schemaCmd } from "./commands/schema"
 import { search } from "./commands/search"
 import { sendCmd } from "./commands/send"
+import { skillsCmd } from "./commands/skills"
 import { sleepCmd, wakeCmd } from "./commands/sleep"
 import { functionsCmd, statusCmd } from "./commands/status"
 import { secretsCmd } from "./commands/secrets"
@@ -140,7 +141,9 @@ const root = Command.make("joelclaw", {}, () =>
           search: "joelclaw search <query> [-c collection] [-n limit] [-f filter] [--semantic]",
           docs: "joelclaw docs {add|search|context|list|show|status|enrich|reindex}",
           vault: "joelclaw vault {read|search|ls|tree|adr}",
+          skills: "joelclaw skills audit [--deep]",
           email: "joelclaw email {inboxes|inbox|read|archive|archive-bulk}",
+          mail: "joelclaw mail {status|register|send|inbox|read|reserve|release|locks|search}",
           models: "joelclaw models --list [--plain]",
           nas: "joelclaw nas {status|runs|review}",
           otel: "joelclaw otel {list|search|stats}",
@@ -162,12 +165,13 @@ const root = Command.make("joelclaw", {}, () =>
         { command: "joelclaw notify send \"System check complete\" --priority normal", description: "Send canonical gateway notification" },
         { command: "joelclaw langfuse aggregate --hours 24", description: "Aggregate cloud LLM trace trends" },
         { command: "joelclaw schema", description: "Event types and payloads" },
+        { command: "joelclaw skills audit", description: "Run on-demand skill garden audit" },
       ],
       Object.values(checks).every((c) => c.ok)
     ))
   })
 ).pipe(
-  Command.withSubcommands([contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, logsCmd, logCmd, secretsCmd, notifyCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, docsCmd, emailCmd, mailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd])
+  Command.withSubcommands([contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, logsCmd, logCmd, secretsCmd, notifyCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, skillsCmd, docsCmd, emailCmd, mailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd])
 )
 
 const cli = Command.run(root, {

@@ -273,6 +273,20 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
         checks.k8s = { ok: false, detail: "kubectl not available or k3d cluster not running" }
       }
 
+      // agent-mail server
+      checks.agent_mail = yield* Effect.tryPromise({
+        try: async () => {
+          const mailUrl = process.env.AGENT_MAIL_URL?.trim() || "http://127.0.0.1:8765"
+          const resp = await fetch(`${mailUrl}/health/liveness`, { signal: AbortSignal.timeout(3000) })
+          if (resp.ok) {
+            const body = await resp.json() as { status?: string }
+            return { ok: body.status === "alive", detail: body.status ?? "unknown" }
+          }
+          return { ok: false, detail: `HTTP ${resp.status}` }
+        },
+        catch: () => ({ ok: false, detail: "unreachable — check launchd: launchctl list | grep agent-mail" }),
+      })
+
       return checks
     })
 
