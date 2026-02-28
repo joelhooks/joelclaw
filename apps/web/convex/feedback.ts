@@ -3,6 +3,23 @@ import { internal } from "./_generated/api";
 import type { MutationCtx } from "./_generated/server";
 import { internalAction, mutation, query } from "./_generated/server";
 
+const FEEDBACK_EVENT_SOURCE = "feedback-form";
+
+function toReviewEventData(resourceId: string): {
+  contentType: string;
+  contentSlug: string;
+} {
+  const [typePart, ...slugParts] = resourceId.split(":");
+  const rawType = typePart?.trim() || "post";
+  const contentType = rawType === "article" ? "post" : rawType;
+  const contentSlug = slugParts.join(":").trim() || resourceId;
+
+  return {
+    contentType,
+    contentSlug,
+  };
+}
+
 async function patchByStatus(
   ctx: MutationCtx,
   resourceId: string,
@@ -49,15 +66,22 @@ export const create = mutation({
       resolvedAt: undefined,
     });
 
-    // Fire-and-forget: bridge to Inngest content review pipeline
-    const parts = resourceId.split(":");
-    const contentType = parts[0] ?? "post";
-    const contentSlug = parts.slice(1).join(":") || resourceId;
-    await ctx.scheduler.runAfter(0, internal.feedback.notifyInngest, {
-      resourceId,
-      contentType,
-      contentSlug,
-    });
+    const { contentType, contentSlug } = toReviewEventData(resourceId);
+
+    // Fire-and-forget: never block feedback writes on event delivery.
+    try {
+      await ctx.scheduler.runAfter(0, internal.feedback.feedbackSubmitted, {
+        resourceId,
+        contentType,
+        contentSlug,
+        source: FEEDBACK_EVENT_SOURCE,
+      });
+    } catch (error) {
+      console.error("[feedback] Failed to schedule feedbackSubmitted action", {
+        resourceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
 
     return {
       feedbackId,
@@ -68,37 +92,43 @@ export const create = mutation({
   },
 });
 
-export const notifyInngest = internalAction({
+export const feedbackSubmitted = internalAction({
   args: {
     resourceId: v.string(),
     contentType: v.string(),
     contentSlug: v.string(),
+    source: v.literal(FEEDBACK_EVENT_SOURCE),
   },
-  handler: async (_ctx, { resourceId, contentType, contentSlug }) => {
-    const url = process.env.INNGEST_EVENT_URL;
-    if (!url) {
-      console.warn("[feedback] INNGEST_EVENT_URL not set, skipping event");
+  handler: async (_ctx, payload) => {
+    const eventUrl = process.env.CONVEX_INNGEST_EVENT_URL?.trim();
+    if (!eventUrl) {
+      console.warn("[feedback] CONVEX_INNGEST_EVENT_URL not set, skipping event", {
+        resourceId: payload.resourceId,
+      });
       return;
     }
+
     try {
-      const res = await fetch(url, {
+      const res = await fetch(eventUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: "content/review.submitted",
-          data: {
-            resourceId,
-            contentSlug,
-            contentType,
-            source: "feedback-form",
-          },
+          data: payload,
         }),
       });
+
       if (!res.ok) {
-        console.error("[feedback] Inngest event send failed:", await res.text());
+        console.error("[feedback] content/review.submitted send failed", {
+          resourceId: payload.resourceId,
+          detail: await res.text(),
+        });
       }
-    } catch (err) {
-      console.error("[feedback] Inngest unreachable:", err);
+    } catch (error) {
+      console.error("[feedback] Inngest endpoint unreachable", {
+        resourceId: payload.resourceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   },
 });
@@ -117,6 +147,30 @@ export const listByResource = query({
       .sort((a, b) => b.createdAt - a.createdAt)
       .map((doc) => ({
         feedbackId: doc._id,
+        status: doc.status,
+        createdAt: doc.createdAt,
+        resolvedAt: doc.resolvedAt,
+      }));
+  },
+});
+
+export const listPendingByResource = query({
+  args: {
+    resourceId: v.string(),
+  },
+  handler: async (ctx, { resourceId }) => {
+    const docs = await ctx.db
+      .query("feedbackItems")
+      .withIndex("by_resource_status", (q) =>
+        q.eq("resourceId", resourceId).eq("status", "pending"),
+      )
+      .collect();
+
+    return docs
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((doc) => ({
+        feedbackId: doc._id,
+        content: doc.content,
         status: doc.status,
         createdAt: doc.createdAt,
         resolvedAt: doc.resolvedAt,

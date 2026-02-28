@@ -40,6 +40,13 @@ type ReviewComment = {
   updatedAt?: number;
 };
 
+type FeedbackItem = {
+  feedbackId: string;
+  content: string;
+  createdAt?: number;
+  status?: string;
+};
+
 type FailureEventData = {
   contentSlug: string;
   contentType: ContentType;
@@ -301,32 +308,81 @@ async function updateFeedbackStatuses(resourceId: string, status: FeedbackStatus
   return typeof updated === "number" ? updated : 0;
 }
 
+function toFeedbackItem(raw: unknown): FeedbackItem | null {
+  const record = ensureRecord(raw);
+  const feedbackId = asString(record.feedbackId);
+  const content = asString(record.content);
+  if (!feedbackId || !content) return null;
+
+  return {
+    feedbackId,
+    content,
+    createdAt: typeof record.createdAt === "number" ? record.createdAt : undefined,
+    status: asString(record.status),
+  };
+}
+
+async function listPendingFeedbackItems(resourceId: string): Promise<FeedbackItem[]> {
+  const client = getConvexClient();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ref = (anyApi as any).feedback.listPendingByResource as FunctionReference<"query">;
+  const result = await client.query(ref, { resourceId });
+
+  if (!Array.isArray(result)) return [];
+
+  return result
+    .map((entry) => toFeedbackItem(entry))
+    .filter((entry): entry is FeedbackItem => Boolean(entry));
+}
+
 function buildReviewPrompt(args: {
   contentType: SupportedContentType;
   contentSlug: string;
   content: string;
   comments: ReviewComment[];
+  feedbackItems: FeedbackItem[];
 }): string {
-  const commentsText = args.comments
-    .map((comment, index) => {
-      const timestamp =
-        typeof comment.createdAt === "number"
-          ? new Date(comment.createdAt).toISOString()
-          : "unknown";
+  const commentsText =
+    args.comments.length === 0
+      ? "None."
+      : args.comments
+          .map((comment, index) => {
+            const timestamp =
+              typeof comment.createdAt === "number"
+                ? new Date(comment.createdAt).toISOString()
+                : "unknown";
 
-      return [
-        `Comment ${index + 1}:`,
-        `- paragraphId: ${comment.paragraphId}`,
-        `- threadId: ${comment.threadId}`,
-        `- createdAt: ${timestamp}`,
-        `- feedback: ${comment.content}`,
-      ].join("\n");
-    })
-    .join("\n\n");
+            return [
+              `Comment ${index + 1}:`,
+              `- paragraphId: ${comment.paragraphId}`,
+              `- threadId: ${comment.threadId}`,
+              `- createdAt: ${timestamp}`,
+              `- feedback: ${comment.content}`,
+            ].join("\n");
+          })
+          .join("\n\n");
+
+  const feedbackItemsText =
+    args.feedbackItems.length === 0
+      ? "None."
+      : args.feedbackItems
+          .map((item, index) => {
+            const timestamp =
+              typeof item.createdAt === "number"
+                ? new Date(item.createdAt).toISOString()
+                : "unknown";
+            return [
+              `Feedback ${index + 1}:`,
+              `- feedbackId: ${item.feedbackId}`,
+              `- createdAt: ${timestamp}`,
+              `- feedback: ${item.content}`,
+            ].join("\n");
+          })
+          .join("\n\n");
 
   return [
     `Resource: ${args.contentType}:${args.contentSlug}`,
-    "Apply all submitted review comments to the content below.",
+    "Apply all submitted review comments and pending feedback items to the content below.",
     "Return only the full updated markdown/MDX document.",
     "",
     "## Current Content",
@@ -334,8 +390,11 @@ function buildReviewPrompt(args: {
     args.content.trimEnd(),
     "```",
     "",
-    "## Review Feedback",
+    "## Inline Review Comments",
     commentsText,
+    "",
+    "## General Feedback Items",
+    feedbackItemsText,
   ].join("\n");
 }
 
@@ -370,12 +429,14 @@ async function rewriteContent(args: {
   contentSlug: string;
   currentContent: string;
   comments: ReviewComment[];
+  feedbackItems: FeedbackItem[];
 }): Promise<string> {
   const prompt = buildReviewPrompt({
     contentType: args.contentType,
     contentSlug: args.contentSlug,
     content: args.currentContent,
     comments: args.comments,
+    feedbackItems: args.feedbackItems,
   });
 
   const result = await infer(prompt, {
@@ -587,6 +648,7 @@ export const contentReviewApply = inngest.createFunction(
 
       const contentType = normalizeContentType(failureInput.contentType);
       const parentResourceId = toParentResourceId(contentType, failureInput.contentSlug);
+      const feedbackResourceId = failureInput.resourceId ?? parentResourceId;
 
       const revertedCount = await step.run("rollback-comments-to-submitted", async () => {
         return rollbackCommentStatusesOnFailure({
@@ -596,7 +658,7 @@ export const contentReviewApply = inngest.createFunction(
       });
 
       const failedFeedbackCount = await step.run("mark-feedback-failed", async () => {
-        return updateFeedbackStatuses(parentResourceId, "failed");
+        return updateFeedbackStatuses(feedbackResourceId, "failed");
       });
 
       const gateway = (rest as { gateway?: GatewayContext }).gateway;
@@ -612,6 +674,7 @@ export const contentReviewApply = inngest.createFunction(
             contentType,
             contentSlug: failureInput.contentSlug,
             parentResourceId,
+            feedbackResourceId,
             revertedCount,
             failedFeedbackCount,
             source: failureInput.source,
@@ -630,20 +693,32 @@ export const contentReviewApply = inngest.createFunction(
     validateSlug(contentSlug);
 
     const parentResourceId = toParentResourceId(contentType, contentSlug);
+    const feedbackResourceId = asString(event.data.resourceId) ?? parentResourceId;
     const cacheTag = toCacheTag(contentType, contentSlug);
 
     const article = await step.run("fetch-article", async () => {
       return fetchCurrentContent(contentType, contentSlug);
     });
 
-    const submittedComments = await step.run("fetch-submitted-comments", async () => {
-      return listLinkedReviewComments(parentResourceId, "submitted");
-    });
+    const { submittedComments, pendingFeedbackItems } = await step.run(
+      "fetch-submitted-comments",
+      async () => {
+        const [comments, feedbackItems] = await Promise.all([
+          listLinkedReviewComments(parentResourceId, "submitted"),
+          listPendingFeedbackItems(feedbackResourceId),
+        ]);
 
-    if (submittedComments.length === 0) {
+        return {
+          submittedComments: comments,
+          pendingFeedbackItems: feedbackItems,
+        };
+      },
+    );
+
+    if (submittedComments.length === 0 && pendingFeedbackItems.length === 0) {
       return {
         status: "noop",
-        reason: "no-submitted-comments",
+        reason: "no-submitted-review-feedback",
         contentType,
         contentSlug,
         resourceId: article.resourceId,
@@ -651,7 +726,7 @@ export const contentReviewApply = inngest.createFunction(
     }
 
     const feedbackProcessingCount = await step.run("mark-feedback-processing", async () => {
-      return updateFeedbackStatuses(parentResourceId, "processing");
+      return updateFeedbackStatuses(feedbackResourceId, "processing");
     });
 
     await step.run("mark-comments-processing", async () => {
@@ -668,6 +743,7 @@ export const contentReviewApply = inngest.createFunction(
         contentSlug,
         currentContent: article.content,
         comments: submittedComments,
+        feedbackItems: pendingFeedbackItems,
       });
     });
 
@@ -709,7 +785,7 @@ export const contentReviewApply = inngest.createFunction(
     });
 
     const feedbackAppliedCount = await step.run("mark-feedback-applied", async () => {
-      return updateFeedbackStatuses(parentResourceId, "applied");
+      return updateFeedbackStatuses(feedbackResourceId, "applied");
     });
 
     await step.run("revalidate-cache-tag", async () => {
@@ -723,6 +799,7 @@ export const contentReviewApply = inngest.createFunction(
         ...buildGatewaySignalMeta("content.review", "info"),
         resourceId: article.resourceId,
         parentResourceId,
+        feedbackResourceId,
         revisionResourceId,
         cacheTag,
         contentType,
@@ -740,6 +817,7 @@ export const contentReviewApply = inngest.createFunction(
       contentSlug,
       resourceId: article.resourceId,
       parentResourceId,
+      feedbackResourceId,
       revisionResourceId,
       resolvedCount,
       feedbackProcessingCount,

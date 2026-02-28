@@ -11,11 +11,11 @@
 import {
   actionGeneric,
   httpActionGeneric,
+  queryGeneric,
+  mutationGeneric,
   internalActionGeneric,
   internalMutationGeneric,
   internalQueryGeneric,
-  mutationGeneric,
-  queryGeneric,
 } from "convex/server";
 
 /**
