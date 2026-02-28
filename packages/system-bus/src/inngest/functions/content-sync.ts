@@ -1,51 +1,61 @@
-import { join } from "node:path";
-import Redis from "ioredis";
-import { upsertFiles } from "../../lib/convex-content-sync";
-import { infer } from "../../lib/inference";
-import { getRedisPort } from "../../lib/redis";
+import { readdirSync } from "node:fs";
+import { basename, extname, join } from "node:path";
+import { upsertAdr, upsertPost, type ConvexSyncResult } from "../../lib/convex-content-sync";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
-import { type SyncResult, syncFiles } from "./vault-sync";
 
 /**
- * Content directories to sync from Vault → website.
- * Add new entries here as content types grow.
+ * Vault source directories — canonical write-side for content.
+ * ADR-0168: Vault is write-side, Convex is read-side, repo holds zero content.
  */
-const CONTENT_DIRS = [
+const CONTENT_SOURCES = [
   {
     name: "adrs",
-    source: "/Users/joel/Vault/docs/decisions/",
-    dest: "/Users/joel/Code/joelhooks/joelclaw/apps/web/content/adrs/",
+    vaultDir: "/Users/joel/Vault/docs/decisions/",
+    extension: ".md",
     skipFiles: ["readme.md"],
   },
+  // Posts live in apps/web/content/*.mdx for now — no Vault source yet.
+  // When posts move to Vault, add them here.
   {
-    name: "discoveries",
-    source: "/Users/joel/Vault/Resources/discoveries/",
-    dest: "/Users/joel/Code/joelhooks/joelclaw/apps/web/content/discoveries/",
+    name: "posts",
+    vaultDir: "/Users/joel/Code/joelhooks/joelclaw/apps/web/content/",
+    extension: ".mdx",
     skipFiles: [],
   },
 ] as const;
 
-const CHANGES_NOT_COMMITTED_LAST_NOTIFIED_KEY =
-  "content-sync:changes_not_committed:last_notified";
-const CHANGES_NOT_COMMITTED_NOTIFY_COOLDOWN_SECONDS = 6 * 60 * 60;
+function listSourceFiles(dir: string, extension: string, skipFiles: readonly string[]): string[] {
+  try {
+    const skipLower = skipFiles.map((f) => f.toLowerCase());
+    return readdirSync(dir)
+      .filter((f) => extname(f) === extension && !skipLower.includes(f.toLowerCase()))
+      .sort()
+      .map((f) => join(dir, f));
+  } catch {
+    return [];
+  }
+}
 
-type ContentSyncResult = {
+type SyncDirResult = {
   name: string;
   sourceCount: number;
-  synced: SyncResult["synced"];
+  upserted: number;
+  errors: string[];
 };
 
 /**
- * Unified content sync — one function, one commit for all Vault → website content.
+ * Content sync — Vault → Convex direct.
+ *
+ * ADR-0168: No repo file copies, no git commits. Reads Vault source dirs,
+ * parses frontmatter, upserts to Convex. Production web reads Convex exclusively.
  *
  * Triggers:
  * - Hourly cron (safety net)
+ * - content/updated (after edits)
+ * - content/seed.requested (full reseed from CLI)
  * - discovery/captured (after discovery-capture writes a vault note)
  * - system/adr.sync.requested (after ADR edits)
- *
- * All content directories are synced in a single pass with one git commit.
- * Concurrency limit prevents races on the git repo.
  */
 export const contentSync = inngest.createFunction(
   {
@@ -57,191 +67,106 @@ export const contentSync = inngest.createFunction(
   [
     { cron: "0 * * * *" },
     { event: "content/updated" },
+    { event: "content/seed.requested" },
     { event: "discovery/captured" },
     { event: "system/adr.sync.requested" },
   ],
   async ({ event, step, ...rest }) => {
-    const gateway = (rest as any).gateway as import("../middleware/gateway").GatewayContext | undefined;
-    console.log(
-      `[content-sync] started via ${event.name} at ${new Date().toISOString()}`
-    );
-    await step.run("otel-content-sync-start", async () => {
+    const gateway = (rest as any).gateway as
+      | import("../middleware/gateway").GatewayContext
+      | undefined;
+
+    console.log(`[content-sync] started via ${event.name} at ${new Date().toISOString()}`);
+
+    await step.run("otel-start", async () => {
       await emitOtelEvent({
         level: "info",
         source: "worker",
         component: "content-sync",
         action: "content_sync.started",
         success: true,
-        metadata: {
-          trigger: event.name,
-          directoryCount: CONTENT_DIRS.length,
-        },
+        metadata: { trigger: event.name },
       });
     });
 
-    // Sync all content directories in one step
-    const results: ContentSyncResult[] = await step.run(
-      "sync-all-content",
-      async () => {
-        const out: ContentSyncResult[] = [];
+    // Upsert all content sources to Convex
+    const results: SyncDirResult[] = await step.run("upsert-to-convex", async () => {
+      const out: SyncDirResult[] = [];
 
-        for (const dir of CONTENT_DIRS) {
-          const result = await syncFiles(dir.source, dir.dest, {
-            skipFiles: dir.skipFiles as unknown as string[],
-          });
-          out.push({
-            name: dir.name,
-            sourceCount: result.sourceCount,
-            synced: result.synced,
-          });
-        }
+      for (const source of CONTENT_SOURCES) {
+        const files = listSourceFiles(source.vaultDir, source.extension, source.skipFiles);
+        const result: SyncDirResult = {
+          name: source.name,
+          sourceCount: files.length,
+          upserted: 0,
+          errors: [],
+        };
 
-        return out;
-      }
-    );
-
-    const allSynced = results.flatMap((r) => r.synced);
-    let committed = false;
-
-    if (allSynced.length > 0) {
-      committed = await step.run("git-commit-push", () => {
-        const lines = results
-          .filter((r) => r.synced.length > 0)
-          .map((r) => {
-            const files = r.synced
-              .map((s) => `  ${s.status}: ${s.file}`)
-              .join("\n");
-            return `${r.name} (${r.synced.length}):\n${files}`;
-          })
-          .join("\n");
-
-        // Stage all content directories
-        const gitPaths = CONTENT_DIRS.map(
-          (d) =>
-            d.dest.replace(
-              "/Users/joel/Code/joelhooks/joelclaw/",
-              ""
-            )
-        );
-
-        // commitAndPush stages the first path; stage all paths manually
-        return commitAndPushMultiple(
-          gitPaths,
-          `sync: vault content (${allSynced.length} files)\n\n${lines}`
-        );
-      });
-    }
-
-    // Log summary
-    for (const r of results) {
-      if (r.synced.length > 0) {
-        console.log(
-          `[content-sync] ${r.name}: ${r.synced.length} changed`
-        );
-      }
-    }
-    console.log(
-      `[content-sync] done — ${allSynced.length} total changes, committed=${committed}`
-    );
-
-    // ── Sync changed files to Convex ──────────────────────
-    // Production site reads from Convex, not filesystem. Without this step,
-    // new ADRs/posts are committed to git but invisible on the live site.
-    let convexResult: { adrUpserts: number; postUpserts: number; errors: string[] } | undefined;
-    if (allSynced.length > 0) {
-      convexResult = await step.run("sync-to-convex", async () => {
-        // Build full file paths for changed files
-        const changedPaths: string[] = [];
-        for (const r of results) {
-          const dir = CONTENT_DIRS.find((d) => d.name === r.name);
-          if (!dir) continue;
-          for (const s of r.synced) {
-            if (s.status === "deleted") continue; // can't upsert deleted files
-            changedPaths.push(join(dir.dest, s.file));
+        for (const filePath of files) {
+          try {
+            if (source.extension === ".md") {
+              await upsertAdr(filePath);
+            } else if (source.extension === ".mdx") {
+              const upserted = await upsertPost(filePath);
+              if (!upserted) continue; // draft, skip count
+            }
+            result.upserted++;
+          } catch (err) {
+            result.errors.push(`${basename(filePath)}: ${String(err)}`);
           }
         }
 
-        if (changedPaths.length === 0) {
-          return { adrUpserts: 0, postUpserts: 0, errors: [] };
-        }
+        out.push(result);
+      }
 
-        console.log(`[content-sync] upserting ${changedPaths.length} files to Convex`);
-        const result = await upsertFiles(changedPaths);
-        console.log(
-          `[content-sync] Convex sync: ${result.adrUpserts} ADRs, ${result.postUpserts} posts, ${result.errors.length} errors`
-        );
-        if (result.errors.length > 0) {
-          console.warn("[content-sync] Convex errors:", result.errors);
-        }
-        return result;
-      });
+      return out;
+    });
+
+    const totalUpserted = results.reduce((sum, r) => sum + r.upserted, 0);
+    const totalErrors = results.reduce((sum, r) => sum + r.errors.length, 0);
+
+    // Log summary
+    for (const r of results) {
+      console.log(`[content-sync] ${r.name}: ${r.upserted}/${r.sourceCount} upserted, ${r.errors.length} errors`);
     }
+    console.log(`[content-sync] done — ${totalUpserted} upserted, ${totalErrors} errors`);
 
-    // Notify gateway if anything changed
-    if (allSynced.length > 0 && gateway) {
+    // Notify gateway
+    if (totalUpserted > 0 && gateway) {
       await step.run("notify-gateway", async () => {
         try {
           const summary = results
-            .filter((r) => r.synced.length > 0)
-            .map((r) => `${r.name}: ${r.synced.length}`)
+            .filter((r) => r.upserted > 0)
+            .map((r) => `${r.name}: ${r.upserted}`)
             .join(", ");
           await gateway.notify("content.synced", {
-            files: allSynced.length,
-            committed,
+            upserted: totalUpserted,
+            errors: totalErrors,
             summary,
-            convex: convexResult
-              ? `${convexResult.adrUpserts} ADRs, ${convexResult.postUpserts} posts`
-              : "skipped",
           });
         } catch {}
       });
     }
-    await step.run("otel-content-sync-finish", async () => {
-      const commitSkipped = allSynced.length > 0 && !committed;
-      let commitSkippedNotificationSuppressed = false;
-      if (commitSkipped) {
-        const redis = new Redis({
-          host: process.env.REDIS_HOST ?? "localhost",
-          port: getRedisPort(),
-          lazyConnect: true,
-          connectTimeout: 3000,
-        });
-        redis.on("error", () => {});
 
-        try {
-          const lastNotified = await redis.get(CHANGES_NOT_COMMITTED_LAST_NOTIFIED_KEY);
-          commitSkippedNotificationSuppressed = Boolean(lastNotified);
-
-          if (!commitSkippedNotificationSuppressed) {
-            await redis.set(
-              CHANGES_NOT_COMMITTED_LAST_NOTIFIED_KEY,
-              new Date().toISOString(),
-              "EX",
-              CHANGES_NOT_COMMITTED_NOTIFY_COOLDOWN_SECONDS,
-            );
-          }
-        } finally {
-          redis.disconnect();
-        }
-      }
-
-      const level = commitSkipped && !commitSkippedNotificationSuppressed ? "warn" : "info";
+    // OTEL finish
+    await step.run("otel-finish", async () => {
       await emitOtelEvent({
-        level,
+        level: totalErrors > 0 ? "warn" : "info",
         source: "worker",
         component: "content-sync",
         action: "content_sync.completed",
-        success: true,
-        error: commitSkipped && !commitSkippedNotificationSuppressed ? "changes_not_committed" : undefined,
+        success: totalErrors === 0,
+        error: totalErrors > 0 ? `${totalErrors} upsert errors` : undefined,
         metadata: {
           trigger: event.name,
-          totalSynced: allSynced.length,
-          committed,
-          commitSkipped,
-          commitSkippedNotificationSuppressed,
-          content: results.map((result) => ({
-            name: result.name,
-            syncedCount: result.synced.length,
+          totalUpserted,
+          totalErrors,
+          content: results.map((r) => ({
+            name: r.name,
+            sourceCount: r.sourceCount,
+            upserted: r.upserted,
+            errorCount: r.errors.length,
+            errors: r.errors.slice(0, 5), // cap logged errors
           })),
         },
       });
@@ -249,133 +174,113 @@ export const contentSync = inngest.createFunction(
 
     return {
       status: "completed",
-      committed,
-      totalSynced: allSynced.length,
-      convex: convexResult ?? null,
+      totalUpserted,
+      totalErrors,
       content: results.map((r) => ({
         name: r.name,
         sourceCount: r.sourceCount,
-        syncedCount: r.synced.length,
-        new: r.synced.filter((s) => s.status === "new").map((s) => s.file),
-        updated: r.synced
-          .filter((s) => s.status === "updated")
-          .map((s) => s.file),
-        deleted: r.synced
-          .filter((s) => s.status === "deleted")
-          .map((s) => s.file),
+        upserted: r.upserted,
+        errors: r.errors,
       })),
     };
-  }
+  },
 );
 
 /**
- * Stage multiple paths, commit, and push. Skips if nothing staged.
+ * Content verify — diff Vault source files vs Convex records.
+ * Reports gaps in either direction.
  */
-async function commitAndPushMultiple(
-  paths: string[],
-  message: string
-): Promise<boolean> {
-  const { git } = await import("./vault-sync");
+export const contentVerify = inngest.createFunction(
+  {
+    id: "system/content-verify",
+    retries: 1,
+    concurrency: { limit: 1, key: "content-verify" },
+  },
+  { event: "content/verify.requested" },
+  async ({ step }) => {
+    const gaps = await step.run("verify-content", async () => {
+      const { ConvexHttpClient } = await import("convex/browser");
+      const { anyApi } = await import("convex/server");
 
-  for (const p of paths) {
-    await git("add", p);
-  }
+      const convexUrl =
+        process.env.CONVEX_URL?.trim() ||
+        process.env.NEXT_PUBLIC_CONVEX_URL?.trim() ||
+        "https://tough-panda-917.convex.cloud";
+      const client = new ConvexHttpClient(convexUrl);
 
-  // Check if anything is actually staged
-  const diffProc = Bun.spawn(["git", "diff", "--cached", "--quiet"], {
-    cwd: "/Users/joel/Code/joelhooks/joelclaw/",
-  });
-  const clean = (await diffProc.exited) === 0;
+      // biome-ignore lint/suspicious/noExplicitAny: convex anyApi typing
+      const listRef = (anyApi as any).contentResources.listByType;
 
-  if (clean) {
-    console.log("[content-sync] nothing staged, skipping commit");
-    return false;
-  }
+      const report: {
+        name: string;
+        vaultCount: number;
+        convexCount: number;
+        missingInConvex: string[];
+        extraInConvex: string[];
+      }[] = [];
 
-  // Safety gate: haiku agent reviews the diff before pushing.
-  // Ensures only content (markdown/MDX/frontmatter) reaches origin — never code.
-  const safe = await reviewDiffBeforePush();
-  if (!safe) {
-    // Unstage and reset — don't leave dirty staged state
-    const resetProc = Bun.spawn(["git", "reset", "HEAD"], {
-      cwd: REPO_ROOT,
+      // Check ADRs
+      const adrFiles = listSourceFiles(
+        CONTENT_SOURCES[0].vaultDir,
+        CONTENT_SOURCES[0].extension,
+        CONTENT_SOURCES[0].skipFiles,
+      ).map((f) => basename(f, ".md"));
+
+      const adrDocs = await client.query(listRef, { type: "adr", limit: 5000 });
+      const adrSlugs = new Set(
+        (Array.isArray(adrDocs) ? adrDocs : [])
+          .map((d: any) => d.fields?.slug)
+          .filter(Boolean) as string[],
+      );
+
+      report.push({
+        name: "adrs",
+        vaultCount: adrFiles.length,
+        convexCount: adrSlugs.size,
+        missingInConvex: adrFiles.filter((s) => !adrSlugs.has(s)),
+        extraInConvex: [...adrSlugs].filter((s) => !adrFiles.includes(s)),
+      });
+
+      // Check posts
+      const postFiles = listSourceFiles(
+        CONTENT_SOURCES[1].vaultDir,
+        CONTENT_SOURCES[1].extension,
+        CONTENT_SOURCES[1].skipFiles,
+      ).map((f) => basename(f, ".mdx"));
+
+      const postDocs = await client.query(listRef, { type: "article", limit: 5000 });
+      const postSlugs = new Set(
+        (Array.isArray(postDocs) ? postDocs : [])
+          .map((d: any) => d.fields?.slug)
+          .filter(Boolean) as string[],
+      );
+
+      // Posts stored as "article" type, resource IDs are "post:slug"
+      report.push({
+        name: "posts",
+        vaultCount: postFiles.length,
+        convexCount: postSlugs.size,
+        missingInConvex: postFiles.filter((s) => !postSlugs.has(s)),
+        extraInConvex: [...postSlugs].filter((s) => !postFiles.includes(s)),
+      });
+
+      return report;
     });
-    await resetProc.exited;
-    console.log("[content-sync] ⛔ push blocked by safety review — diff contained non-content changes");
-    return false;
-  }
 
-  await git("commit", "-m", message);
-  await git("push", "origin", "main");
-  return true;
-}
+    const healthy = gaps.every((g) => g.missingInConvex.length === 0);
 
-const REPO_ROOT = "/Users/joel/Code/joelhooks/joelclaw/";
-
-const SAFETY_SYSTEM_PROMPT = `You are a git push safety gate for a content sync pipeline.
-
-Your job: review a git diff and determine if it contains ONLY content changes.
-
-SAFE to push (reply YES):
-- Markdown (.md) file additions, deletions, modifications
-- MDX (.mdx) file additions, deletions, modifications
-- YAML frontmatter changes inside .md/.mdx files
-- New content files in apps/web/content/ or similar content directories
-- .base files (Obsidian database views)
-
-NOT safe to push (reply NO):
-- TypeScript (.ts, .tsx) changes
-- JavaScript (.js, .jsx) changes
-- JSON config files (package.json, tsconfig.json, etc.)
-- Lock files (bun.lockb, pnpm-lock.yaml)
-- Any file outside content directories that isn't markdown
-- Build/config changes of any kind
-
-Reply with exactly one line: YES or NO followed by a brief reason.
-Example: "YES — 3 markdown files in apps/web/content/adrs/, frontmatter only"
-Example: "NO — includes changes to packages/system-bus/src/inngest/functions/observe.ts"`;
-
-/**
- * Pipe staged diff to Claude Haiku for content-only verification.
- * Returns true if safe to push, false if blocked.
- */
-async function reviewDiffBeforePush(): Promise<boolean> {
-  try {
-    // Get the staged diff stat + file list (compact, cheap tokens)
-    const statProc = Bun.spawn(
-      ["git", "diff", "--cached", "--stat", "--name-only"],
-      { cwd: REPO_ROOT, stdout: "pipe", stderr: "pipe" }
-    );
-    const diffStat = await new Response(statProc.stdout).text();
-    await statProc.exited;
-
-    if (!diffStat.trim()) return true; // nothing staged
-
-    const safetyModel = "anthropic/claude-haiku";
-
-    const { text: stdout } = await infer(
-      `Review this staged git diff for content-only safety:\n\n${diffStat.trim()}`,
-      {
-        task: "classification",
-        model: safetyModel,
-        system: SAFETY_SYSTEM_PROMPT,
+    await step.run("otel-verify", async () => {
+      await emitOtelEvent({
+        level: healthy ? "info" : "warn",
+        source: "worker",
         component: "content-sync",
-        action: "content-sync.safety.review",
-        noTools: true,
-        print: true,
-      }
-    );
-    if (!stdout.trim()) {
-      console.log("[content-sync] safety review returned empty output, blocking push");
-      return false;
-    }
-    const sanitizedStdout = stdout.trim();
-    const safe = sanitizedStdout.toUpperCase().startsWith("YES");
+        action: "content_verify.completed",
+        success: healthy,
+        error: healthy ? undefined : "gaps_found",
+        metadata: { gaps },
+      });
+    });
 
-    console.log(`[content-sync] safety review: ${sanitizedStdout}`);
-    return safe;
-  } catch (err) {
-    console.log(`[content-sync] safety review error: ${err}, blocking push`);
-    return false;
-  }
-}
+    return { status: healthy ? "healthy" : "gaps_found", gaps };
+  },
+);

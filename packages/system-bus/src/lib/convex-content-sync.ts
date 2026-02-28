@@ -33,6 +33,13 @@ type PostFields = {
   content: string;
   description?: string;
   image?: string;
+  updated?: string;
+  type?: string;
+  tags?: string[];
+  source?: string;
+  channel?: string;
+  duration?: string;
+  draft?: boolean;
 };
 
 const VALID_STATUSES = [
@@ -94,8 +101,9 @@ function buildAdrSearchText(fields: AdrFields): string {
 
 function buildPostSearchText(fields: PostFields): string {
   return [
-    fields.slug, fields.title, fields.date,
+    fields.slug, fields.title, fields.date, fields.type,
     fields.description, fields.image, fields.content,
+    ...(fields.tags ?? []),
   ].filter((p): p is string => typeof p === "string" && p.length > 0).join(" ");
 }
 
@@ -160,6 +168,10 @@ export async function upsertPost(filePath: string): Promise<boolean> {
 
   if (meta.draft === true) return false;
 
+  const tags = Array.isArray(meta.tags)
+    ? meta.tags.filter((t: unknown): t is string => typeof t === "string")
+    : [];
+
   const fields: PostFields = {
     slug,
     title: asString(meta.title) ?? "Untitled",
@@ -167,6 +179,13 @@ export async function upsertPost(filePath: string): Promise<boolean> {
     content,
     description: asString(meta.description),
     image: asString(meta.image),
+    updated: toDateString(meta.updated) || undefined,
+    type: asString(meta.type) ?? "article",
+    tags: tags.length > 0 ? tags : undefined,
+    source: asString(meta.source),
+    channel: asString(meta.channel),
+    duration: asString(meta.duration),
+    draft: meta.draft === true ? true : undefined,
   };
 
   await getClient().mutation(upsertRef, {

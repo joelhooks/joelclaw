@@ -7,6 +7,7 @@ import { Console, Effect } from "effect"
 import { approvalsCmd } from "./commands/approvals"
 import { callCmd } from "./commands/call"
 import { capabilitiesCmd } from "./commands/capabilities"
+import { contentCmd } from "./commands/content"
 import { discoverCmd } from "./commands/discover"
 import { docsCmd } from "./commands/docs"
 import { emailCmd } from "./commands/email"
@@ -156,7 +157,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, docsCmd, emailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd])
+  Command.withSubcommands([contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, docsCmd, emailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd])
 )
 
 const cli = Command.run(root, {

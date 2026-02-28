@@ -926,6 +926,16 @@ export type Events = {
       paths?: string[];
     };
   };
+  "content/seed.requested": {
+    data: {
+      source?: string; // "cli" | "manual"
+    };
+  };
+  "content/verify.requested": {
+    data: {
+      source?: string; // "cli" | "manual"
+    };
+  };
   "content/published": {
     data: {
       type: "post" | "adr";

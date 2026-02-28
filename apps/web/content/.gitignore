@@ -1,0 +1,6 @@
+# ADR-0168: Content lives in Convex, not in the repo.
+# This directory is an empty skeleton.
+*.md
+!README.md
+*.mdx
+discoveries/

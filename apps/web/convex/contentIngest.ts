@@ -19,6 +19,13 @@ const postFieldsValidator = v.object({
   content: v.string(),
   description: v.optional(v.string()),
   image: v.optional(v.string()),
+  updated: v.optional(v.string()),
+  type: v.optional(v.string()),
+  tags: v.optional(v.array(v.string())),
+  source: v.optional(v.string()),
+  channel: v.optional(v.string()),
+  duration: v.optional(v.string()),
+  draft: v.optional(v.boolean()),
 });
 
 type ContentType = "adr" | "post";

@@ -25,6 +25,13 @@ type PostFields = {
   content: string;
   description?: string;
   image?: string;
+  updated?: string;
+  type?: string;
+  tags?: string[];
+  source?: string;
+  channel?: string;
+  duration?: string;
+  draft?: boolean;
 };
 
 const VALID_STATUSES = [
@@ -198,6 +205,10 @@ async function main() {
       continue;
     }
 
+    const tags = Array.isArray(meta.tags)
+      ? meta.tags.filter((t: unknown): t is string => typeof t === "string")
+      : [];
+
     const fields: PostFields = {
       slug,
       title: asString(meta.title) ?? "Untitled",
@@ -205,6 +216,12 @@ async function main() {
       content,
       description: asString(meta.description),
       image: asString(meta.image),
+      updated: toDateString(meta.updated) || undefined,
+      type: asString(meta.type) ?? "article",
+      tags: tags.length > 0 ? tags : undefined,
+      source: asString(meta.source),
+      channel: asString(meta.channel),
+      duration: asString(meta.duration),
     };
 
     await convex.mutation(upsertRef, {
