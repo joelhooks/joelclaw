@@ -9,7 +9,7 @@
       "id": "FBP-1",
       "title": "Fix review submit route for Vercel → self-hosted Inngest",
       "description": "The /api/review/submit route hardcodes INNGEST_EVENT_URL to localhost. On Vercel this fails silently. Replace with a Convex httpAction that receives the submit webhook and forwards to Inngest via the system-bus webhook server, OR use a Next.js server action that writes a 'reviewSubmitted' flag to Convex and let a Convex cron/scheduler trigger the Inngest event via the worker's event endpoint. The simplest approach: make the submit route POST directly to the system-bus webhook endpoint at https://panda.tail7af24.ts.net:3111/e/local (Tailscale). Add INNGEST_EVENT_URL to Vercel env vars pointing to the Tailscale Inngest event endpoint. File: apps/web/app/api/review/submit/route.ts",
-      "status": "pending",
+      "status": "done",
       "priority": 1,
       "acceptance": [
         "POST /api/review/submit from Vercel production sends content/review.submitted event to self-hosted Inngest",
