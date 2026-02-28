@@ -63,13 +63,12 @@ export default async function PostPage({ params }: Props) {
 function StaticArticleShell({ slug }: { slug: string }) {
   return (
     <>
-      <Suspense fallback={<ArticleFallback />}>
-        <CachedArticleContent slug={slug} />
-      </Suspense>
-
-      {/* Reserved dynamic slot for future FeedbackStatus streaming UI. */}
       <Suspense fallback={null}>
         <FeedbackStatusSlot slug={slug} />
+      </Suspense>
+
+      <Suspense fallback={<ArticleFallback />}>
+        <CachedArticleContent slug={slug} />
       </Suspense>
     </>
   );

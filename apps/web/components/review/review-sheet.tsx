@@ -28,6 +28,7 @@ interface ReviewSheetProps {
   contentId: string;
   contentType: string;
   contentSlug: string;
+  resourceId: string;
 }
 
 export function ReviewSheet({
@@ -36,6 +37,7 @@ export function ReviewSheet({
   contentId,
   contentType,
   contentSlug,
+  resourceId,
 }: ReviewSheetProps) {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -43,9 +45,12 @@ export function ReviewSheet({
   const [editContent, setEditContent] = useState("");
 
   const allComments = useQuery(api.reviewComments.getByContent, { contentId });
+  const feedbackItems = useQuery(api.feedback.listByResource, { resourceId });
   const submitReview = useMutation(api.reviewComments.submitReview);
   const updateComment = useMutation(api.reviewComments.updateComment);
   const deleteComment = useMutation(api.reviewComments.deleteComment);
+  const isProcessingFeedback =
+    feedbackItems?.some((item) => item.status === "processing") ?? false;
 
   const drafts = allComments?.filter((c) => c.status === "draft") ?? [];
 
@@ -61,7 +66,7 @@ export function ReviewSheet({
   );
 
   const handleSubmit = useCallback(async () => {
-    if (drafts.length === 0) return;
+    if (drafts.length === 0 || isProcessingFeedback) return;
     setSubmitting(true);
     try {
       await submitReview({ contentId });
@@ -86,7 +91,15 @@ export function ReviewSheet({
     } finally {
       setSubmitting(false);
     }
-  }, [drafts.length, contentId, contentSlug, contentType, submitReview, onOpenChange]);
+  }, [
+    drafts.length,
+    isProcessingFeedback,
+    contentId,
+    contentSlug,
+    contentType,
+    submitReview,
+    onOpenChange,
+  ]);
 
   const handleSaveEdit = useCallback(async () => {
     if (!editingId || !editContent.trim()) return;
@@ -163,6 +176,7 @@ export function ReviewSheet({
                           <Textarea
                             value={editContent}
                             onChange={(e) => setEditContent(e.target.value)}
+                            disabled={isProcessingFeedback}
                             className="min-h-[60px] resize-none border-neutral-700 bg-neutral-900 text-sm text-neutral-200 placeholder:text-neutral-600 focus-visible:ring-claw/30"
                             autoFocus
                             onKeyDown={(e) => {
@@ -183,6 +197,7 @@ export function ReviewSheet({
                             </Button>
                             <Button
                               size="sm"
+                              disabled={isProcessingFeedback}
                               className="h-6 px-2 text-[11px] bg-claw/10 text-claw hover:bg-claw/20 border border-claw/20"
                               onClick={handleSaveEdit}
                             >
@@ -227,7 +242,7 @@ export function ReviewSheet({
             <DrawerFooter className="flex-shrink-0 border-t border-neutral-800/50 pt-3">
               <Button
                 onClick={handleSubmit}
-                disabled={submitting}
+                disabled={submitting || isProcessingFeedback}
                 className="w-full bg-claw/10 text-claw hover:bg-claw/20 border border-claw/30 font-mono text-sm h-11 transition-[color,background-color,border-color,transform] duration-200 ease-out active:scale-[0.97] motion-reduce:transition-none motion-reduce:active:scale-100"
               >
                 {submitting ? (
@@ -235,6 +250,8 @@ export function ReviewSheet({
                     <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
                     Submitting…
                   </>
+                ) : isProcessingFeedback ? (
+                  <>Processing feedback…</>
                 ) : (
                   <>
                     <Send className="w-3.5 h-3.5 mr-2" />
@@ -243,6 +260,11 @@ export function ReviewSheet({
                   </>
                 )}
               </Button>
+              {isProcessingFeedback && (
+                <p className="mt-2 text-center text-[11px] font-mono text-amber-300/80">
+                  Comments paused while edits are being applied
+                </p>
+              )}
             </DrawerFooter>
           )}
         </div>
