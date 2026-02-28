@@ -115,3 +115,4 @@ tags:
 | [0138](0138-self-healing-backup-orchestrator.md) | Self-Healing NAS Backup Orchestrator | shipped | 2026-02-25 |
 | [0137](0137-codex-prompting-skill-router.md) | Codex Prompting Skill Router for Intent-to-Tool Delegation | shipped | 2026-02-25 |
 | [0154](0154-livekit-voice-worker-durability.md) | LiveKit Voice Worker Durability Contract | accepted | 2026-02-26 |
+| [0162](0162-convex-canonical-content-lifecycle.md) | Convex-Canonical Content Lifecycle (No Repo MDX Sources) | accepted | 2026-02-28 |
