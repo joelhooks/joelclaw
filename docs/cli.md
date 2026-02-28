@@ -108,6 +108,11 @@ Semantics:
 - `chain` emits `agent/chain.run` with comma-separated sequential steps and `+` parallel groups (e.g. `scout,planner+reviewer,coder`).
 - `watch` streams NDJSON progress for a task (`at-...`) or chain (`ac-...`) by subscribing to `joelclaw:notify:gateway`, replaying `joelclaw:events:gateway`, and falling back to Inngest polling.
 - `watch` default timeout is 300 seconds for tasks and 900 seconds for chains; terminal events always include `next_actions` on completion, timeout, or interrupt.
+- Runtime-proof recipe (ADR-0180):
+  1. `joelclaw agent list` (expect builtin `coder/designer/ops`)
+  2. `joelclaw agent run coder "reply with OK" --timeout 20`
+  3. `joelclaw event <event-id>` (expect `Agent Task Run` status `COMPLETED` with output payload)
+- If `Unknown agent roster entry: coder` appears, treat it as worker-runtime drift: deploy latest `system-bus-worker`, restart the host worker, then rerun the three-step proof.
 
 ## Vault command tree
 

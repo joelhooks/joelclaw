@@ -165,6 +165,28 @@ joelclaw subscribe check [--url URL]       # Check feeds for new items
 joelclaw subscribe summary                 # Summary of recent items
 ```
 
+### Agent Runtime Validation (ADR-0180)
+
+Use this exact smoke test when validating roster dispatch end-to-end:
+
+```bash
+joelclaw agent list
+joelclaw agent run coder "reply with OK" --timeout 20
+joelclaw event <event-id>
+```
+
+Expected signal:
+- `agent list` includes builtin `coder`, `designer`, `ops`
+- `event` shows one `Agent Task Run` with `status: COMPLETED`
+- run output contains `{"status":"completed", ...}`
+
+Failure handling:
+- `Unknown agent roster entry: coder` means runtime drift, not prompt failure.
+  - Deploy latest `system-bus-worker`
+  - Restart host worker process
+  - Re-run the same 3-step smoke
+- If Inngest API is unreachable (`localhost:8288`), recover local control-plane first (Colima/Talos), then retry validation.
+
 ### Semantic Recall
 
 ```bash
