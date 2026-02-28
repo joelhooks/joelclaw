@@ -12,8 +12,11 @@
  * Handles 4096-char Telegram limit by splitting into multiple messages.
  */
 
+import { TelegramConverter } from "@joelclaw/markdown-formatter";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import type { Bot } from "grammy";
+
+const converter = new TelegramConverter();
 
 const TELEGRAM_MAX_CHARS = 4096;
 const THROTTLE_MS = 800;
@@ -177,13 +180,15 @@ export async function finish(
     return false;
   }
 
-  // Final edit without cursor
+  // Final edit without cursor — convert to HTML
   try {
-    const displayText = truncateForTelegram(finalText);
+    const html = toHtml(finalText);
+    const displayText = truncateForTelegram(html);
     await state.bot.api.editMessageText(
       state.chatId,
       state.messageId,
       displayText,
+      { parse_mode: "HTML" as const },
     );
     console.log("[telegram-stream] finalized", {
       chatId: state.chatId,
@@ -198,9 +203,14 @@ export async function finish(
     }
   }
 
-  // If text exceeded one message, send remaining as new messages
-  if (finalText.length > TELEGRAM_MAX_CHARS) {
-    await sendOverflowChunks(state, finalText);
+  // If the HTML exceeded one message, send remaining chunks
+  const html = toHtml(finalText);
+  if (html.length > TELEGRAM_MAX_CHARS) {
+    const chunks = converter.chunk(finalText);
+    // First chunk was already sent via editMessageText above, send the rest
+    if (chunks.length > 1) {
+      await sendOverflowHtmlChunks(state, chunks.slice(1));
+    }
   }
 
   void emitGatewayOtel({
@@ -282,6 +292,15 @@ function truncateForTelegram(text: string): string {
   return text.slice(0, TELEGRAM_MAX_CHARS - 4) + " …";
 }
 
+function toHtml(markdown: string): string {
+  try {
+    return converter.convert(markdown);
+  } catch {
+    // If conversion fails, return escaped plain text
+    return markdown.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+}
+
 function buildDisplayText(state: StreamState): string {
   let text = state.fullText;
 
@@ -290,13 +309,20 @@ function buildDisplayText(state: StreamState): string {
     text = text + "\n\n" + state.toolStatus;
   }
 
-  // Truncate for Telegram limit (minus cursor length)
-  const maxLen = TELEGRAM_MAX_CHARS - CURSOR.length;
-  if (text.length > maxLen) {
-    text = text.slice(0, maxLen - 4) + " …";
+  // Add cursor before conversion
+  text = text + CURSOR;
+
+  // Convert markdown → HTML for Telegram
+  const html = toHtml(text);
+
+  // Truncate for Telegram limit
+  if (html.length > TELEGRAM_MAX_CHARS) {
+    // Re-convert a truncated source to avoid cutting mid-tag
+    const truncatedMd = state.fullText.slice(0, TELEGRAM_MAX_CHARS - 200) + " …" + CURSOR;
+    return toHtml(truncatedMd);
   }
 
-  return text + CURSOR;
+  return html;
 }
 
 function scheduleEdit(state: StreamState): void {
@@ -343,6 +369,7 @@ function flushEdit(state: StreamState): void {
 
     state.bot.api
       .sendMessage(state.chatId, displayText, {
+        parse_mode: "HTML" as const,
         ...(state.replyTo ? { reply_parameters: { message_id: state.replyTo } } : {}),
       })
       .then((msg) => {
@@ -359,7 +386,9 @@ function flushEdit(state: StreamState): void {
   } else {
     // Edit existing message
     state.bot.api
-      .editMessageText(state.chatId, state.messageId, displayText)
+      .editMessageText(state.chatId, state.messageId, displayText, {
+        parse_mode: "HTML" as const,
+      })
       .catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("message is not modified")) return;
@@ -373,19 +402,15 @@ function flushEdit(state: StreamState): void {
   }
 }
 
-async function sendOverflowChunks(
+async function sendOverflowHtmlChunks(
   state: StreamState,
-  fullText: string,
+  chunks: string[],
 ): Promise<void> {
-  // First message already has the first TELEGRAM_MAX_CHARS chars.
-  // Send remaining text as new messages.
-  let remaining = fullText.slice(TELEGRAM_MAX_CHARS);
-  while (remaining.length > 0) {
-    const chunk = remaining.slice(0, TELEGRAM_MAX_CHARS);
-    remaining = remaining.slice(TELEGRAM_MAX_CHARS);
-
+  for (const chunk of chunks) {
     try {
-      const msg = await state.bot.api.sendMessage(state.chatId, chunk);
+      const msg = await state.bot.api.sendMessage(state.chatId, chunk, {
+        parse_mode: "HTML" as const,
+      });
       state.sentMessageIds.push(msg.message_id);
     } catch (err) {
       console.warn("[telegram-stream] overflow chunk failed", {
