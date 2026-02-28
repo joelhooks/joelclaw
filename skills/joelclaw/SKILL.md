@@ -117,6 +117,10 @@ joelclaw notify send "Worker restarted and healthy" --priority normal
 joelclaw notify send "Immediate action required" --priority urgent --telegram-only
 ```
 
+### Capability Adapter Paths (ADR-0169 phase 4)
+
+`mail`, `otel`, `recall`, and `subscribe` now run through the CLI capability registry/adapter runtime while preserving their existing command UX and JSON envelopes.
+
 ### Deploy
 
 ```bash

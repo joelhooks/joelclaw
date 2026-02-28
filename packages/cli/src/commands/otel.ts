@@ -1,171 +1,59 @@
-import { Args, Command, Options } from "@effect/cli";
-import { Console, Effect } from "effect";
-import { respond, respondError } from "../response";
-import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth";
+import { Args, Command, Options } from "@effect/cli"
+import { Console, Effect } from "effect"
+import type { CapabilityError } from "../capabilities/contract"
+import { executeCapabilityCommand } from "../capabilities/runtime"
+import { respond, respondError } from "../response"
 
-const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108";
-const COLLECTION = "otel_events";
-const QUERY_BY = "action,error,component,source,metadata_json,search_text";
+type OptionalText = { _tag: "Some"; value: string } | { _tag: "None" }
 
-function parseOptionText(value: { _tag: "Some"; value: string } | { _tag: "None" }): string | undefined {
-  return value._tag === "Some" ? value.value : undefined;
+function parseOptionText(value: OptionalText): string | undefined {
+  return value._tag === "Some" ? value.value : undefined
 }
 
-function parsePositiveInt(value: number, fallback: number, max: number): number {
-  if (!Number.isFinite(value) || value <= 0) return fallback;
-  return Math.min(Math.floor(value), max);
+function codeOrFallback(error: CapabilityError, fallback: string): string {
+  return error.code || fallback
 }
 
-function splitCsv(value: string | undefined): string[] {
-  if (!value) return [];
-  return value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function buildFilter(input: {
-  level?: string;
-  source?: string;
-  component?: string;
-  success?: string;
-  hours?: number;
-}): string | undefined {
-  const filters: string[] = [];
-
-  if (typeof input.hours === "number" && Number.isFinite(input.hours) && input.hours > 0) {
-    const cutoff = Date.now() - input.hours * 60 * 60 * 1000;
-    filters.push(`timestamp:>=${Math.floor(cutoff)}`);
-  }
-
-  const levels = splitCsv(input.level);
-  if (levels.length > 0) filters.push(`level:=[${levels.join(",")}]`);
-
-  const sources = splitCsv(input.source);
-  if (sources.length > 0) filters.push(`source:=[${sources.join(",")}]`);
-
-  const components = splitCsv(input.component);
-  if (components.length > 0) filters.push(`component:=[${components.join(",")}]`);
-
-  if (input.success === "true" || input.success === "false") {
-    filters.push(`success:=${input.success}`);
-  }
-
-  return filters.length > 0 ? filters.join(" && ") : undefined;
-}
-
-type OtelQueryResult = { ok: true; data: any } | {
-  ok: false;
-  error: string;
-  code?: string;
-  fix?: string;
-};
-
-async function queryOtel(options: {
-  q: string;
-  page: number;
-  limit: number;
-  filterBy?: string;
-  facetBy?: string;
-}): Promise<OtelQueryResult> {
-  try {
-    const apiKey = resolveTypesenseApiKey();
-    const searchParams = new URLSearchParams({
-      q: options.q,
-      query_by: QUERY_BY,
-      per_page: String(options.limit),
-      page: String(options.page),
-      sort_by: "timestamp:desc",
-      exclude_fields: "embedding",
-    });
-    if (options.filterBy) searchParams.set("filter_by", options.filterBy);
-    if (options.facetBy) searchParams.set("facet_by", options.facetBy);
-
-    const resp = await fetch(
-      `${TYPESENSE_URL}/collections/${COLLECTION}/documents/search?${searchParams}`,
-      {
-        headers: { "X-TYPESENSE-API-KEY": apiKey },
-      }
-    );
-    if (!resp.ok) {
-      const text = await resp.text();
-      return { ok: false, error: `Typesense query failed (${resp.status}): ${text}` };
-    }
-    return { ok: true, data: await resp.json() };
-  } catch (error) {
-    if (isTypesenseApiKeyError(error)) {
-      return {
-        ok: false,
-        error: error.message,
-        code: error.code,
-        fix: error.fix,
-      };
-    }
-    return { ok: false, error: String(error) };
-  }
-}
-
-function simplifyHit(hit: any): Record<string, unknown> {
-  const doc = hit?.document ?? {};
-  return {
-    id: doc.id,
-    ts: typeof doc.timestamp === "number" ? new Date(doc.timestamp).toISOString() : doc.timestamp,
-    level: doc.level,
-    source: doc.source,
-    component: doc.component,
-    action: doc.action,
-    success: doc.success,
-    duration_ms: doc.duration_ms,
-    error: doc.error,
-    metadata_keys: doc.metadata_keys,
-  };
-}
-
-function readFacet(data: any, field: string, value: string): number {
-  const facets = Array.isArray(data?.facet_counts) ? data.facet_counts : [];
-  const facet = facets.find((item: any) => item?.field_name === field);
-  const count = Array.isArray(facet?.counts)
-    ? facet.counts.find((item: any) => item?.value === value)?.count
-    : 0;
-  return typeof count === "number" ? count : 0;
+function fixOrFallback(error: CapabilityError, fallback: string): string {
+  return error.fix ?? fallback
 }
 
 const levelOpt = Options.text("level").pipe(
   Options.withDescription("Comma-separated levels (debug,info,warn,error,fatal)"),
-  Options.optional
-);
+  Options.optional,
+)
 
 const sourceOpt = Options.text("source").pipe(
   Options.withDescription("Comma-separated source filter"),
-  Options.optional
-);
+  Options.optional,
+)
 
 const componentOpt = Options.text("component").pipe(
   Options.withDescription("Comma-separated component filter"),
-  Options.optional
-);
+  Options.optional,
+)
 
 const successOpt = Options.text("success").pipe(
   Options.withDescription("true | false"),
-  Options.optional
-);
+  Options.optional,
+)
 
 const hoursOpt = Options.integer("hours").pipe(
   Options.withAlias("h"),
   Options.withDefault(24),
-  Options.withDescription("Lookback window in hours")
-);
+  Options.withDescription("Lookback window in hours"),
+)
 
 const limitOpt = Options.integer("limit").pipe(
   Options.withAlias("n"),
   Options.withDefault(30),
-  Options.withDescription("Results per page")
-);
+  Options.withDescription("Results per page"),
+)
 
 const pageOpt = Options.integer("page").pipe(
   Options.withDefault(1),
-  Options.withDescription("Page number")
-);
+  Options.withDescription("Page number"),
+)
 
 const otelListCmd = Command.make(
   "list",
@@ -180,58 +68,48 @@ const otelListCmd = Command.make(
   },
   ({ level, source, component, success, hours, limit, page }) =>
     Effect.gen(function* () {
-      const filterBy = buildFilter({
-        level: parseOptionText(level),
-        source: parseOptionText(source),
-        component: parseOptionText(component),
-        success: parseOptionText(success),
-        hours,
-      });
-      const result = yield* Effect.promise(() =>
-        queryOtel({
-          q: "*",
-          page: parsePositiveInt(page, 1, 10_000),
-          limit: parsePositiveInt(limit, 30, 200),
-          filterBy,
-          facetBy: "level,source,component,success",
-        })
-      );
+      const result = yield* executeCapabilityCommand<Record<string, unknown>>({
+        capability: "otel",
+        subcommand: "list",
+        args: {
+          level: parseOptionText(level),
+          source: parseOptionText(source),
+          component: parseOptionText(component),
+          success: parseOptionText(success),
+          hours,
+          limit,
+          page,
+        },
+      }).pipe(Effect.either)
 
-      if (!result.ok) {
+      if (result._tag === "Left") {
+        const error = result.left
         yield* Console.log(
           respondError(
             "otel list",
-            result.error,
-            result.code ?? "OTEL_QUERY_FAILED",
-            result.fix ?? "Check Typesense health and API key",
-            [{ command: "joelclaw status", description: "Check worker/server health" }]
-          )
-        );
-        return;
+            error.message,
+            codeOrFallback(error, "OTEL_QUERY_FAILED"),
+            fixOrFallback(error, "Check Typesense health and API key"),
+            [{ command: "joelclaw status", description: "Check worker/server health" }],
+          ),
+        )
+        return
       }
 
-      const hits = Array.isArray(result.data?.hits) ? result.data.hits.map(simplifyHit) : [];
       yield* Console.log(
         respond(
           "otel list",
-          {
-            found: result.data?.found ?? 0,
-            page,
-            limit,
-            filterBy,
-            events: hits,
-            facets: result.data?.facet_counts ?? [],
-          },
+          result.right,
           [
-            { command: `joelclaw otel search "fatal" --hours 24`, description: "Search text in recent events" },
+            { command: "joelclaw otel search \"fatal\" --hours 24", description: "Search text in recent events" },
             { command: "joelclaw otel stats --hours 24", description: "Error-rate snapshot" },
-          ]
-        )
-      );
-    })
-);
+          ],
+        ),
+      )
+    }),
+)
 
-const searchArg = Args.text({ name: "query" }).pipe(Args.withDescription("Full-text query"));
+const searchArg = Args.text({ name: "query" }).pipe(Args.withDescription("Full-text query"))
 
 const otelSearchCmd = Command.make(
   "search",
@@ -247,60 +125,50 @@ const otelSearchCmd = Command.make(
   },
   ({ query, level, source, component, success, hours, limit, page }) =>
     Effect.gen(function* () {
-      const filterBy = buildFilter({
-        level: parseOptionText(level),
-        source: parseOptionText(source),
-        component: parseOptionText(component),
-        success: parseOptionText(success),
-        hours,
-      });
-      const result = yield* Effect.promise(() =>
-        queryOtel({
-          q: query.trim() || "*",
-          page: parsePositiveInt(page, 1, 10_000),
-          limit: parsePositiveInt(limit, 30, 200),
-          filterBy,
-          facetBy: "level,source,component,success",
-        })
-      );
+      const result = yield* executeCapabilityCommand<Record<string, unknown>>({
+        capability: "otel",
+        subcommand: "search",
+        args: {
+          query,
+          level: parseOptionText(level),
+          source: parseOptionText(source),
+          component: parseOptionText(component),
+          success: parseOptionText(success),
+          hours,
+          limit,
+          page,
+        },
+      }).pipe(Effect.either)
 
-      if (!result.ok) {
+      if (result._tag === "Left") {
+        const error = result.left
         yield* Console.log(
           respondError(
             "otel search",
-            result.error,
-            result.code ?? "OTEL_QUERY_FAILED",
-            result.fix ?? "Check Typesense health and API key",
-            [{ command: "joelclaw status", description: "Check worker/server health" }]
-          )
-        );
-        return;
+            error.message,
+            codeOrFallback(error, "OTEL_QUERY_FAILED"),
+            fixOrFallback(error, "Check Typesense health and API key"),
+            [{ command: "joelclaw status", description: "Check worker/server health" }],
+          ),
+        )
+        return
       }
 
-      const hits = Array.isArray(result.data?.hits) ? result.data.hits.map(simplifyHit) : [];
       yield* Console.log(
         respond(
           "otel search",
-          {
-            query,
-            found: result.data?.found ?? 0,
-            page,
-            limit,
-            filterBy,
-            events: hits,
-            facets: result.data?.facet_counts ?? [],
-          },
+          result.right,
           [
             {
               command: `joelclaw otel search "${query}" --level error,fatal --hours 24`,
               description: "Narrow to high-severity",
             },
             { command: "joelclaw otel stats --hours 24", description: "Get aggregate error rate" },
-          ]
-        )
-      );
-    })
-);
+          ],
+        ),
+      )
+    }),
+)
 
 const otelStatsCmd = Command.make(
   "stats",
@@ -311,89 +179,42 @@ const otelStatsCmd = Command.make(
   },
   ({ source, component, hours }) =>
     Effect.gen(function* () {
-      const baseFilter = buildFilter({
-        source: parseOptionText(source),
-        component: parseOptionText(component),
-        hours,
-      });
-      const [windowData, recentData] = yield* Effect.promise(() =>
-        Promise.all([
-          queryOtel({
-            q: "*",
-            page: 1,
-            limit: 1,
-            filterBy: baseFilter,
-            facetBy: "level,source,component,success",
-          }),
-          queryOtel({
-            q: "*",
-            page: 1,
-            limit: 1,
-            filterBy: buildFilter({
-              source: parseOptionText(source),
-              component: parseOptionText(component),
-              hours: 0.25,
-            }),
-            facetBy: "level",
-          }),
-        ])
-      );
+      const result = yield* executeCapabilityCommand<Record<string, unknown>>({
+        capability: "otel",
+        subcommand: "stats",
+        args: {
+          source: parseOptionText(source),
+          component: parseOptionText(component),
+          hours,
+        },
+      }).pipe(Effect.either)
 
-      if (!windowData.ok) {
+      if (result._tag === "Left") {
+        const error = result.left
         yield* Console.log(
           respondError(
             "otel stats",
-            windowData.error,
-            windowData.code ?? "OTEL_STATS_FAILED",
-            windowData.fix ?? "Check Typesense health and API key",
-            [{ command: "joelclaw status", description: "Check worker/server health" }]
-          )
-        );
-        return;
+            error.message,
+            codeOrFallback(error, "OTEL_STATS_FAILED"),
+            fixOrFallback(error, "Check Typesense health and API key"),
+            [{ command: "joelclaw status", description: "Check worker/server health" }],
+          ),
+        )
+        return
       }
-
-      if (!recentData.ok) {
-        yield* Console.log(
-          respondError(
-            "otel stats",
-            recentData.error,
-            recentData.code ?? "OTEL_STATS_FAILED",
-            recentData.fix ?? "Check Typesense health and API key",
-            [{ command: "joelclaw status", description: "Check worker/server health" }]
-          )
-        );
-        return;
-      }
-
-      const total = Number(windowData.data?.found ?? 0);
-      const errors = readFacet(windowData.data, "level", "error") + readFacet(windowData.data, "level", "fatal");
-      const recentTotal = Number(recentData.data?.found ?? 0);
-      const recentErrors = readFacet(recentData.data, "level", "error") + readFacet(recentData.data, "level", "fatal");
 
       yield* Console.log(
         respond(
           "otel stats",
-          {
-            windowHours: hours,
-            filterBy: baseFilter,
-            total,
-            errors,
-            errorRate: total > 0 ? errors / total : 0,
-            recent15m: {
-              total: recentTotal,
-              errors: recentErrors,
-              errorRate: recentTotal > 0 ? recentErrors / recentTotal : 0,
-            },
-            facets: windowData.data?.facet_counts ?? [],
-          },
+          result.right,
           [
             { command: "joelclaw otel list --level error,fatal --hours 24", description: "Inspect high severity events" },
-            { command: `joelclaw otel search "system.fatal" --hours 48`, description: "Find escalation history" },
-          ]
-        )
-      );
-    })
-);
+            { command: "joelclaw otel search \"system.fatal\" --hours 48", description: "Find escalation history" },
+          ],
+        ),
+      )
+    }),
+)
 
 export const otelCmd = Command.make("otel", {}, () =>
   Console.log(
@@ -412,7 +233,7 @@ export const otelCmd = Command.make("otel", {}, () =>
         { command: 'joelclaw otel search "gateway" --level error,fatal --hours 24', description: "Search failures by text" },
         { command: "joelclaw otel stats --hours 24", description: "Error-rate snapshot" },
       ],
-      true
-    )
-  )
-).pipe(Command.withSubcommands([otelListCmd, otelSearchCmd, otelStatsCmd]));
+      true,
+    ),
+  ),
+).pipe(Command.withSubcommands([otelListCmd, otelSearchCmd, otelStatsCmd]))

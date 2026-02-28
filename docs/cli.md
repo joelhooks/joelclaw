@@ -25,6 +25,8 @@ Canonical operator interface for joelclaw.
 - `joelclaw log`
 - `joelclaw notify`
 - `joelclaw otel`
+- `joelclaw recall`
+- `joelclaw subscribe`
 - `joelclaw inngest`
 - `joelclaw capabilities`
 
@@ -43,7 +45,7 @@ Current env keys:
 - `JOELCLAW_CAPABILITY_<CAPABILITY>_ADAPTER`
 - `JOELCLAW_CAPABILITY_<CAPABILITY>_ENABLED`
 
-## Phase-1 capability command roots
+## Capability-backed command roots (ADR-0169 through phase 4)
 
 ```bash
 joelclaw secrets status
@@ -56,6 +58,14 @@ joelclaw secrets env --dry-run [--ttl 1h] [--force]
 joelclaw log write --action <action> --tool <tool> --detail <detail> [--reason <reason>]
 
 joelclaw notify send "<message>" [--priority low|normal|high|urgent] [--channel gateway|main|all] [--context '{"k":"v"}']
+
+joelclaw mail {status|register|send|inbox|read|reserve|release|locks|search}
+
+joelclaw otel {list|search|stats}
+
+joelclaw recall <query> [--limit N] [--min-score F] [--raw] [--include-hold] [--include-discard] [--budget auto|lean|balanced|deep] [--category <id|alias>]
+
+joelclaw subscribe {list|add|remove|check|summary}
 ```
 
 Semantics:
@@ -63,6 +73,7 @@ Semantics:
 - `log` writes structured system entries (slog backend).
 - `logs` reads/analyzes runtime logs.
 - `notify` is the canonical operator alert command; `gateway push` remains transport/debug.
+- `mail`, `otel`, `recall`, and `subscribe` keep their existing UX/envelopes while now executing through capability registry adapters (`mcp-agent-mail`, `typesense-otel`, `typesense-recall`, `redis-subscriptions`).
 
 ## Skills command tree (ADR-0179)
 

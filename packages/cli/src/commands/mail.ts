@@ -1,8 +1,9 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
-import { callMcpTool, fetchMailApi, getAgentMailUrl } from "../lib/agent-mail"
-import type { NextAction } from "../response"
-import { respond, respondError } from "../response"
+import type { CapabilityError } from "../capabilities/contract"
+import { executeCapabilityCommand } from "../capabilities/runtime"
+import { getAgentMailUrl } from "../lib/agent-mail"
+import { type NextAction, respond, respondError } from "../response"
 
 const defaultProject = Options.text("project").pipe(
   Options.withDefault("/Users/joel/Code/joelhooks/joelclaw"),
@@ -14,203 +15,78 @@ const defaultAgent = Options.text("agent").pipe(
   Options.withDescription("Agent name — AdjectiveNoun format (default: MaroonReef)"),
 )
 
-const asRecord = (value: unknown): Record<string, unknown> | null =>
-  value && typeof value === "object" ? (value as Record<string, unknown>) : null
+type OptionalText = { _tag: "Some"; value: string } | { _tag: "None" }
 
-const asString = (value: unknown): string | undefined =>
-  typeof value === "string" && value.trim().length > 0 ? value : undefined
-
-const asNumber = (value: unknown): number | undefined =>
-  typeof value === "number" && Number.isFinite(value) ? value : undefined
-
-const errorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error)
-
-const parseJsonText = (value: string): unknown => {
-  try {
-    return JSON.parse(value)
-  } catch {
-    return value
-  }
+function parseOptionalText(value: OptionalText): string | undefined {
+  if (value._tag !== "Some") return undefined
+  const normalized = value.value.trim()
+  return normalized.length > 0 ? normalized : undefined
 }
 
-const attempt = <T>(op: () => Promise<T>): Effect.Effect<T, Error> =>
-  Effect.tryPromise({
-    try: op,
-    catch: (error) => new Error(errorMessage(error)),
-  })
-
-const commandError = (
-  command: string,
-  code: string,
-  fix: string,
-  nextActions: readonly NextAction[],
-) =>
-  (error: unknown) =>
-    Console.log(respondError(command, errorMessage(error), code, fix, nextActions))
-
-const normalizeToolResult = (result: unknown): unknown => {
-  const record = asRecord(result)
-  if (!record) return result
-
-  if (record.structuredContent !== undefined) {
-    return record.structuredContent
-  }
-
-  if (Array.isArray(record.content)) {
-    const texts = record.content
-      .map((item) => {
-        const entry = asRecord(item)
-        if (!entry) return undefined
-        return asString(entry.text)
-      })
-      .filter((value): value is string => Boolean(value))
-
-    if (texts.length === 1) return parseJsonText(texts[0])
-    if (texts.length > 1) return texts.map(parseJsonText)
-  }
-
-  return result
-}
-
-const toRecordArray = (value: unknown): Record<string, unknown>[] =>
-  Array.isArray(value)
-    ? value.filter((item): item is Record<string, unknown> => Boolean(asRecord(item)))
-    : []
-
-const extractMessages = (input: unknown): Record<string, unknown>[] => {
-  const normalized = normalizeToolResult(input)
-  const direct = toRecordArray(normalized)
-  if (direct.length > 0) return direct
-
-  const record = asRecord(normalized)
-  if (!record) return []
-
-  const candidates = [record.messages, record.inbox, record.items, record.results, record.result, record.data]
-  for (const candidate of candidates) {
-    const rows = toRecordArray(candidate)
-    if (rows.length > 0) return rows
-
-    const nested = asRecord(candidate)
-    if (!nested) continue
-
-    const nestedRows = [nested.messages, nested.inbox, nested.items, nested.results, nested.data]
-    for (const nestedCandidate of nestedRows) {
-      const list = toRecordArray(nestedCandidate)
-      if (list.length > 0) return list
-    }
-  }
-
-  return []
-}
-
-const messageIdOf = (message: Record<string, unknown>): string | undefined =>
-  asString(message.id)
-  ?? asString(message.message_id)
-  ?? asString(message.messageId)
-  ?? asString(message.uuid)
-
-const isUnreadMessage = (message: Record<string, unknown>): boolean => {
-  if (typeof message.unread === "boolean") return message.unread
-  if (typeof message.is_unread === "boolean") return message.is_unread
-  if (typeof message.read === "boolean") return !message.read
-  if (typeof message.read_at === "string") return message.read_at.trim().length === 0
-  if (typeof message.status === "string") return message.status.toLowerCase() === "unread"
-  return false
-}
-
-const pathListFromCsv = (paths: string): string[] =>
-  paths
+function pathListFromCsv(paths: string): string[] {
+  return paths
     .split(",")
     .map((path) => path.trim())
     .filter((path) => path.length > 0)
-
-const projectFromMessage = (message: Record<string, unknown>): string | undefined => {
-  const direct =
-    asString(message.project_key)
-    ?? asString(message.projectKey)
-    ?? asString(message.project_id)
-    ?? asString(message.project)
-  if (direct) return direct
-
-  const nestedProject = asRecord(message.project)
-  if (!nestedProject) return undefined
-
-  return (
-    asString(nestedProject.key)
-    ?? asString(nestedProject.project_key)
-    ?? asString(nestedProject.name)
-    ?? asString(nestedProject.id)
-  )
 }
 
-const summarizeUnifiedInbox = (unifiedInbox: unknown): Record<string, unknown> => {
-  const normalized = normalizeToolResult(unifiedInbox)
-  const summary: Record<string, unknown> = {}
-  const messages = extractMessages(normalized)
-
-  if (messages.length > 0) {
-    summary.message_count = messages.length
-    summary.unread_count = messages.filter(isUnreadMessage).length
-
-    const projects = new Set<string>()
-    for (const message of messages) {
-      const project = projectFromMessage(message)
-      if (project) projects.add(project)
-    }
-
-    summary.project_count = projects.size
-    if (projects.size > 0) summary.projects = Array.from(projects).sort()
-    return summary
-  }
-
-  const record = asRecord(normalized)
-  if (!record) {
-    return { message_count: 0, unread_count: 0, project_count: 0 }
-  }
-
-  summary.message_count =
-    asNumber(record.message_count)
-    ?? asNumber(record.messages_count)
-    ?? asNumber(record.count)
-    ?? 0
-  summary.unread_count =
-    asNumber(record.unread_count)
-    ?? asNumber(record.unread)
-    ?? 0
-  summary.project_count =
-    asNumber(record.project_count)
-    ?? asNumber(record.projects_count)
-    ?? toRecordArray(record.projects).length
-
-  if (Array.isArray(record.projects)) summary.projects = record.projects
-  return summary
+function codeOrFallback(error: CapabilityError, fallback: string): string {
+  return error.code || fallback
 }
 
-const asBoolOk = (value: unknown): boolean => {
-  const record = asRecord(value)
-  if (!record) return false
-  if (typeof record.ok === "boolean") return record.ok
-  if (typeof record.alive === "boolean") return record.alive
-  if (typeof record.status === "string") {
-    const status = record.status.toLowerCase()
-    return status === "ok" || status === "healthy" || status === "alive"
-  }
-  return true
+function fixOrFallback(error: CapabilityError, fallback: string): string {
+  return error.fix ?? fallback
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined
+}
+
+function messageIdOf(message: Record<string, unknown>): string | undefined {
+  return asString(message.id)
+    ?? asString(message.message_id)
+    ?? asString(message.messageId)
+    ?? asString(message.uuid)
 }
 
 const statusCmd = Command.make("status", {}, () =>
   Effect.gen(function* () {
-    const liveness = yield* attempt(() => fetchMailApi("/health/liveness"))
-    const unifiedInbox = yield* attempt(() => fetchMailApi("/mail/api/unified-inbox"))
+    const result = yield* executeCapabilityCommand<{
+      base_url: string
+      liveness: unknown
+      unified_inbox: unknown
+      healthy?: boolean
+    }>({
+      capability: "mail",
+      subcommand: "status",
+      args: {},
+    }).pipe(Effect.either)
+
+    if (result._tag === "Left") {
+      const error = result.left
+      yield* Console.log(
+        respondError(
+          "mail status",
+          error.message,
+          codeOrFallback(error, "MAIL_STATUS_FAILED"),
+          fixOrFallback(error, "Ensure mcp_agent_mail is running on http://127.0.0.1:8765"),
+          [{ command: "joelclaw mail status", description: "Retry mail status" }],
+        ),
+      )
+      return
+    }
 
     yield* Console.log(
       respond(
         "mail status",
         {
-          base_url: getAgentMailUrl(),
-          liveness,
-          unified_inbox: summarizeUnifiedInbox(unifiedInbox),
+          base_url: result.right.base_url,
+          liveness: result.right.liveness,
+          unified_inbox: result.right.unified_inbox,
         },
         [
           {
@@ -222,19 +98,10 @@ const statusCmd = Command.make("status", {}, () =>
             description: "View active file reservations",
           },
         ],
-        asBoolOk(liveness),
+        result.right.healthy ?? true,
       ),
     )
-  }).pipe(
-    Effect.catchAll(
-      commandError(
-        "mail status",
-        "MAIL_STATUS_FAILED",
-        "Ensure mcp_agent_mail is running on http://127.0.0.1:8765",
-        [{ command: "joelclaw mail status", description: "Retry mail status" }],
-      ),
-    ),
-  ),
+  }),
 ).pipe(Command.withDescription("Server liveness + unified inbox summary"))
 
 const registerCmd = Command.make(
@@ -257,32 +124,36 @@ const registerCmd = Command.make(
   },
   ({ project, agent, program, model, task }) =>
     Effect.gen(function* () {
-      // ensure_project first (idempotent) — needs human_key (abs path)
-      yield* attempt(() => callMcpTool("ensure_project", { human_key: project }))
+      const result = yield* executeCapabilityCommand<Record<string, unknown>>({
+        capability: "mail",
+        subcommand: "register",
+        args: {
+          project,
+          agent,
+          program,
+          model,
+          task: parseOptionalText(task),
+        },
+      }).pipe(Effect.either)
 
-      const args: Record<string, unknown> = {
-        project_key: project,
-        name: agent,
-        program,
-        model,
+      if (result._tag === "Left") {
+        const error = result.left
+        yield* Console.log(
+          respondError(
+            "mail register",
+            error.message,
+            codeOrFallback(error, "MAIL_REGISTER_FAILED"),
+            fixOrFallback(error, "Verify project/agent and mcp_agent_mail availability"),
+            [{ command: "joelclaw mail register --project <project> --agent <agent>", description: "Retry register" }],
+          ),
+        )
+        return
       }
-      if (task._tag === "Some") args.task_description = task.value
-
-      const result = normalizeToolResult(
-        yield* attempt(() => callMcpTool("register_agent", args)),
-      )
 
       yield* Console.log(
         respond(
           "mail register",
-          {
-            project,
-            agent,
-            program,
-            model,
-            task: task._tag === "Some" ? task.value : undefined,
-            result,
-          },
+          result.right,
           [
             {
               command: "joelclaw mail status",
@@ -295,16 +166,7 @@ const registerCmd = Command.make(
           ],
         ),
       )
-    }).pipe(
-      Effect.catchAll(
-        commandError(
-          "mail register",
-          "MAIL_REGISTER_FAILED",
-          "Verify project/agent and mcp_agent_mail availability",
-          [{ command: "joelclaw mail register --project <project> --agent <agent>", description: "Retry register" }],
-        ),
-      ),
-    ),
+    }),
 ).pipe(Command.withDescription("Register an agent"))
 
 const sendCmd = Command.make(
@@ -318,29 +180,36 @@ const sendCmd = Command.make(
   },
   ({ project, from, to, subject, body }) =>
     Effect.gen(function* () {
-      const result = normalizeToolResult(
-        yield* attempt(() =>
-          callMcpTool("send_message", {
-            project_key: project,
-            sender_name: from,
-            to: [to],
-            subject,
-            body_md: body,
-          }),
-        ),
-      )
+      const result = yield* executeCapabilityCommand<Record<string, unknown>>({
+        capability: "mail",
+        subcommand: "send",
+        args: {
+          project,
+          from,
+          to,
+          subject,
+          body,
+        },
+      }).pipe(Effect.either)
+
+      if (result._tag === "Left") {
+        const error = result.left
+        yield* Console.log(
+          respondError(
+            "mail send",
+            error.message,
+            codeOrFallback(error, "MAIL_SEND_FAILED"),
+            fixOrFallback(error, "Verify sender/recipient and retry"),
+            [{ command: "joelclaw mail send --project <project> --from <agent> --to <agent> --subject <subject> <body>", description: "Retry send" }],
+          ),
+        )
+        return
+      }
 
       yield* Console.log(
         respond(
           "mail send",
-          {
-            project,
-            from,
-            to,
-            subject,
-            body,
-            result,
-          },
+          result.right,
           [
             {
               command: "joelclaw mail inbox --project <project> --agent <agent>",
@@ -361,16 +230,7 @@ const sendCmd = Command.make(
           ],
         ),
       )
-    }).pipe(
-      Effect.catchAll(
-        commandError(
-          "mail send",
-          "MAIL_SEND_FAILED",
-          "Verify sender/recipient and retry",
-          [{ command: "joelclaw mail send --project <project> --from <agent> --to <agent> --subject <subject> <body>", description: "Retry send" }],
-        ),
-      ),
-    ),
+    }),
 ).pipe(Command.withDescription("Send a message"))
 
 const inboxCmd = Command.make(
@@ -385,30 +245,38 @@ const inboxCmd = Command.make(
   },
   ({ project, agent, unread }) =>
     Effect.gen(function* () {
-      const raw = yield* attempt(() =>
-        callMcpTool("fetch_inbox", {
-          project_key: project,
-          agent_name: agent,
-        }),
-      )
+      const result = yield* executeCapabilityCommand<Record<string, unknown>>({
+        capability: "mail",
+        subcommand: "inbox",
+        args: {
+          project,
+          agent,
+          unread,
+        },
+      }).pipe(Effect.either)
 
-      const normalized = normalizeToolResult(raw)
-      const allMessages = extractMessages(normalized)
-      const messages = unread ? allMessages.filter(isUnreadMessage) : allMessages
+      if (result._tag === "Left") {
+        const error = result.left
+        yield* Console.log(
+          respondError(
+            "mail inbox",
+            error.message,
+            codeOrFallback(error, "MAIL_INBOX_FAILED"),
+            fixOrFallback(error, "Verify project/agent and server availability"),
+            [{ command: "joelclaw mail inbox --project <project> --agent <agent>", description: "Retry inbox fetch" }],
+          ),
+        )
+        return
+      }
+
+      const messageRows = Array.isArray(result.right.messages)
+        ? result.right.messages.filter((message): message is Record<string, unknown> => Boolean(asRecord(message)))
+        : []
 
       yield* Console.log(
         respond(
           "mail inbox",
-          {
-            project,
-            agent,
-            unread_only: unread,
-            total_messages: allMessages.length,
-            unread_messages: allMessages.filter(isUnreadMessage).length,
-            count: messages.length,
-            messages,
-            raw: allMessages.length > 0 ? undefined : normalized,
-          },
+          result.right,
           [
             {
               command: "joelclaw mail read --project <project> --agent <agent> --id <message_id>",
@@ -417,7 +285,7 @@ const inboxCmd = Command.make(
                 project: { value: project, required: true, description: "Project key" },
                 agent: { value: agent, required: true, description: "Agent name" },
                 message_id: {
-                  value: messageIdOf(messages[0] ?? {}) ?? "MESSAGE_ID",
+                  value: messageIdOf(messageRows[0] ?? {}) ?? "MESSAGE_ID",
                   required: true,
                   description: "Message identifier",
                 },
@@ -434,16 +302,7 @@ const inboxCmd = Command.make(
           ],
         ),
       )
-    }).pipe(
-      Effect.catchAll(
-        commandError(
-          "mail inbox",
-          "MAIL_INBOX_FAILED",
-          "Verify project/agent and server availability",
-          [{ command: "joelclaw mail inbox --project <project> --agent <agent>", description: "Retry inbox fetch" }],
-        ),
-      ),
-    ),
+    }),
 ).pipe(Command.withDescription("Fetch inbox messages"))
 
 const readCmd = Command.make(
@@ -455,36 +314,34 @@ const readCmd = Command.make(
   },
   ({ project, agent, id }) =>
     Effect.gen(function* () {
-      const marked = normalizeToolResult(
-        yield* attempt(() =>
-          callMcpTool("mark_message_read", {
-            project_key: project,
-            agent_name: agent,
-            message_id: id,
-          }),
-        ),
-      )
+      const result = yield* executeCapabilityCommand<Record<string, unknown>>({
+        capability: "mail",
+        subcommand: "read",
+        args: {
+          project,
+          agent,
+          id,
+        },
+      }).pipe(Effect.either)
 
-      const inboxRaw = yield* attempt(() =>
-        callMcpTool("fetch_inbox", {
-          project_key: project,
-          agent_name: agent,
-        }),
-      )
-
-      const message =
-        extractMessages(inboxRaw).find((candidate) => messageIdOf(candidate) === id) ?? null
+      if (result._tag === "Left") {
+        const error = result.left
+        yield* Console.log(
+          respondError(
+            "mail read",
+            error.message,
+            codeOrFallback(error, "MAIL_READ_FAILED"),
+            fixOrFallback(error, "Verify message id and retry"),
+            [{ command: "joelclaw mail read --project <project> --agent <agent> --id <message_id>", description: "Retry read" }],
+          ),
+        )
+        return
+      }
 
       yield* Console.log(
         respond(
           "mail read",
-          {
-            project,
-            agent,
-            message_id: id,
-            marked_read: marked,
-            message,
-          },
+          result.right,
           [
             {
               command: "joelclaw mail inbox --project <project> --agent <agent>",
@@ -505,16 +362,7 @@ const readCmd = Command.make(
           ],
         ),
       )
-    }).pipe(
-      Effect.catchAll(
-        commandError(
-          "mail read",
-          "MAIL_READ_FAILED",
-          "Verify message id and retry",
-          [{ command: "joelclaw mail read --project <project> --agent <agent> --id <message_id>", description: "Retry read" }],
-        ),
-      ),
-    ),
+    }),
 ).pipe(Command.withDescription("Mark message read and display it"))
 
 const reserveCmd = Command.make(
@@ -542,25 +390,34 @@ const reserveCmd = Command.make(
         return
       }
 
-      const result = normalizeToolResult(
-        yield* attempt(() =>
-          callMcpTool("file_reservation_paths", {
-            project_key: project,
-            agent_name: agent,
-            paths: parsedPaths,
-          }),
-        ),
-      )
+      const result = yield* executeCapabilityCommand<Record<string, unknown>>({
+        capability: "mail",
+        subcommand: "reserve",
+        args: {
+          project,
+          agent,
+          paths: parsedPaths,
+        },
+      }).pipe(Effect.either)
+
+      if (result._tag === "Left") {
+        const error = result.left
+        yield* Console.log(
+          respondError(
+            "mail reserve",
+            error.message,
+            codeOrFallback(error, "MAIL_RESERVE_FAILED"),
+            fixOrFallback(error, "Verify paths and registration, then retry"),
+            [{ command: "joelclaw mail reserve --project <project> --agent <agent> --paths <comma-separated-paths>", description: "Retry reserve" }],
+          ),
+        )
+        return
+      }
 
       yield* Console.log(
         respond(
           "mail reserve",
-          {
-            project,
-            agent,
-            paths: parsedPaths,
-            result,
-          },
+          result.right,
           [
             {
               command: "joelclaw mail locks --project <project>",
@@ -581,16 +438,7 @@ const reserveCmd = Command.make(
           ],
         ),
       )
-    }).pipe(
-      Effect.catchAll(
-        commandError(
-          "mail reserve",
-          "MAIL_RESERVE_FAILED",
-          "Verify paths and registration, then retry",
-          [{ command: "joelclaw mail reserve --project <project> --agent <agent> --paths <comma-separated-paths>", description: "Retry reserve" }],
-        ),
-      ),
-    ),
+    }),
 ).pipe(Command.withDescription("Reserve file paths"))
 
 const releaseCmd = Command.make(
@@ -626,27 +474,35 @@ const releaseCmd = Command.make(
         return
       }
 
-      const args: Record<string, unknown> = {
-        project_key: project,
-        agent_name: agent,
-      }
-      if (all) args.all = true
-      if (parsedPaths.length > 0) args.paths = parsedPaths
+      const result = yield* executeCapabilityCommand<Record<string, unknown>>({
+        capability: "mail",
+        subcommand: "release",
+        args: {
+          project,
+          agent,
+          paths: parsedPaths,
+          all,
+        },
+      }).pipe(Effect.either)
 
-      const result = normalizeToolResult(
-        yield* attempt(() => callMcpTool("release_file_reservations", args)),
-      )
+      if (result._tag === "Left") {
+        const error = result.left
+        yield* Console.log(
+          respondError(
+            "mail release",
+            error.message,
+            codeOrFallback(error, "MAIL_RELEASE_FAILED"),
+            fixOrFallback(error, "Verify release scope and retry"),
+            [{ command: "joelclaw mail release --project <project> --agent <agent> [--paths <paths>] [--all]", description: "Retry release" }],
+          ),
+        )
+        return
+      }
 
       yield* Console.log(
         respond(
           "mail release",
-          {
-            project,
-            agent,
-            all,
-            paths: parsedPaths,
-            result,
-          },
+          result.right,
           [
             {
               command: "joelclaw mail locks --project <project>",
@@ -658,16 +514,7 @@ const releaseCmd = Command.make(
           ],
         ),
       )
-    }).pipe(
-      Effect.catchAll(
-        commandError(
-          "mail release",
-          "MAIL_RELEASE_FAILED",
-          "Verify release scope and retry",
-          [{ command: "joelclaw mail release --project <project> --agent <agent> [--paths <paths>] [--all]", description: "Retry release" }],
-        ),
-      ),
-    ),
+    }),
 ).pipe(Command.withDescription("Release file reservations"))
 
 const locksCmd = Command.make(
@@ -677,23 +524,32 @@ const locksCmd = Command.make(
   },
   ({ project }) =>
     Effect.gen(function* () {
-      const locks = yield* attempt(() =>
-        fetchMailApi("/mail/api/locks"),
-      )
+      const result = yield* executeCapabilityCommand<Record<string, unknown>>({
+        capability: "mail",
+        subcommand: "locks",
+        args: {
+          project,
+        },
+      }).pipe(Effect.either)
 
-      const lockRows = toRecordArray(locks)
-      const count = lockRows.length > 0
-        ? lockRows.length
-        : asNumber(asRecord(locks)?.count) ?? 0
+      if (result._tag === "Left") {
+        const error = result.left
+        yield* Console.log(
+          respondError(
+            "mail locks",
+            error.message,
+            codeOrFallback(error, "MAIL_LOCKS_FAILED"),
+            fixOrFallback(error, "Verify project and server availability"),
+            [{ command: "joelclaw mail locks --project <project>", description: "Retry locks query" }],
+          ),
+        )
+        return
+      }
 
       yield* Console.log(
         respond(
           "mail locks",
-          {
-            project,
-            count,
-            locks,
-          },
+          result.right,
           [
             {
               command: "joelclaw mail reserve --project <project> --agent <agent> --paths <paths>",
@@ -715,16 +571,7 @@ const locksCmd = Command.make(
           ],
         ),
       )
-    }).pipe(
-      Effect.catchAll(
-        commandError(
-          "mail locks",
-          "MAIL_LOCKS_FAILED",
-          "Verify project and server availability",
-          [{ command: "joelclaw mail locks --project <project>", description: "Retry locks query" }],
-        ),
-      ),
-    ),
+    }),
 ).pipe(Command.withDescription("List active file reservations"))
 
 const searchCmd = Command.make(
@@ -735,26 +582,37 @@ const searchCmd = Command.make(
   },
   ({ project, query }) =>
     Effect.gen(function* () {
-      const raw = yield* attempt(() =>
-        callMcpTool("search_messages", {
-          project_key: project,
+      const result = yield* executeCapabilityCommand<Record<string, unknown>>({
+        capability: "mail",
+        subcommand: "search",
+        args: {
+          project,
           query,
-        }),
-      )
+        },
+      }).pipe(Effect.either)
 
-      const normalized = normalizeToolResult(raw)
-      const messages = extractMessages(normalized)
+      if (result._tag === "Left") {
+        const error = result.left
+        yield* Console.log(
+          respondError(
+            "mail search",
+            error.message,
+            codeOrFallback(error, "MAIL_SEARCH_FAILED"),
+            fixOrFallback(error, "Verify query/project and retry"),
+            [{ command: "joelclaw mail search --project <project> --query <text>", description: "Retry search" }],
+          ),
+        )
+        return
+      }
+
+      const messageRows = Array.isArray(result.right.messages)
+        ? result.right.messages.filter((message): message is Record<string, unknown> => Boolean(asRecord(message)))
+        : []
 
       yield* Console.log(
         respond(
           "mail search",
-          {
-            project,
-            query,
-            count: messages.length,
-            messages: messages.length > 0 ? messages : undefined,
-            result: messages.length > 0 ? undefined : normalized,
-          },
+          result.right,
           [
             {
               command: "joelclaw mail inbox --project <project> --agent <agent>",
@@ -771,7 +629,7 @@ const searchCmd = Command.make(
                 project: { value: project, required: true, description: "Project key" },
                 agent: { value: "panda", required: true, description: "Agent name" },
                 message_id: {
-                  value: messageIdOf(messages[0] ?? {}) ?? "MESSAGE_ID",
+                  value: messageIdOf(messageRows[0] ?? {}) ?? "MESSAGE_ID",
                   required: true,
                   description: "Message id from result",
                 },
@@ -780,54 +638,43 @@ const searchCmd = Command.make(
           ],
         ),
       )
-    }).pipe(
-      Effect.catchAll(
-        commandError(
-          "mail search",
-          "MAIL_SEARCH_FAILED",
-          "Verify query/project and retry",
-          [{ command: "joelclaw mail search --project <project> --query <text>", description: "Retry search" }],
-        ),
-      ),
-    ),
+    }),
 ).pipe(Command.withDescription("Search project mailbox"))
 
 export const mailCmd = Command.make("mail", {}, () =>
   Effect.gen(function* () {
-    yield* Console.log(
-      respond(
-        "mail",
-        {
-          description: "Agent mail coordination commands (ADR-0172 phase 1)",
-          base_url: getAgentMailUrl(),
-          commands: {
-            status: "joelclaw mail status",
-            register: "joelclaw mail register --project <project> --agent <agent> [--role <role>]",
-            send: "joelclaw mail send --project <project> --from <agent> --to <agent> --subject <subject> <body>",
-            inbox: "joelclaw mail inbox --project <project> --agent <agent> [--unread]",
-            read: "joelclaw mail read --project <project> --agent <agent> --id <message_id>",
-            reserve: "joelclaw mail reserve --project <project> --agent <agent> --paths <comma-separated-paths>",
-            release: "joelclaw mail release --project <project> --agent <agent> [--paths <paths>] [--all]",
-            locks: "joelclaw mail locks --project <project>",
-            search: "joelclaw mail search --project <project> --query <text>",
-          },
-        },
-        [
-          {
-            command: "joelclaw mail status",
-            description: "Check mail service health",
-          },
-          {
-            command: "joelclaw mail register",
-            description: "Register default agent (joelclaw/panda)",
-          },
-          {
-            command: "joelclaw mail inbox",
-            description: "Fetch inbox for default agent",
-          },
-        ],
-      ),
-    )
+    const result: Record<string, unknown> = {
+      description: "Agent mail coordination commands (ADR-0172 phase 1)",
+      base_url: getAgentMailUrl(),
+      commands: {
+        status: "joelclaw mail status",
+        register: "joelclaw mail register --project <project> --agent <agent> [--role <role>]",
+        send: "joelclaw mail send --project <project> --from <agent> --to <agent> --subject <subject> <body>",
+        inbox: "joelclaw mail inbox --project <project> --agent <agent> [--unread]",
+        read: "joelclaw mail read --project <project> --agent <agent> --id <message_id>",
+        reserve: "joelclaw mail reserve --project <project> --agent <agent> --paths <comma-separated-paths>",
+        release: "joelclaw mail release --project <project> --agent <agent> [--paths <paths>] [--all]",
+        locks: "joelclaw mail locks --project <project>",
+        search: "joelclaw mail search --project <project> --query <text>",
+      },
+    }
+
+    const nextActions: NextAction[] = [
+      {
+        command: "joelclaw mail status",
+        description: "Check mail service health",
+      },
+      {
+        command: "joelclaw mail register",
+        description: "Register default agent (joelclaw/panda)",
+      },
+      {
+        command: "joelclaw mail inbox",
+        description: "Fetch inbox for default agent",
+      },
+    ]
+
+    yield* Console.log(respond("mail", result, nextActions))
   }),
 ).pipe(
   Command.withDescription("Agent-to-agent mail coordination via mcp_agent_mail"),

@@ -8,7 +8,23 @@ import { createCapabilityRegistry } from "../capabilities/registry"
 import { capabilityRegistry } from "../capabilities/setup"
 
 describe("capability config resolution", () => {
-  test("defaults include deploy/heal capability roots", () => {
+  test("defaults include phase-4 capability roots", () => {
+    expect(DEFAULT_CAPABILITY_CONFIG.mail).toMatchObject({
+      enabled: true,
+      adapter: "mcp-agent-mail",
+    })
+    expect(DEFAULT_CAPABILITY_CONFIG.otel).toMatchObject({
+      enabled: true,
+      adapter: "typesense-otel",
+    })
+    expect(DEFAULT_CAPABILITY_CONFIG.recall).toMatchObject({
+      enabled: true,
+      adapter: "typesense-recall",
+    })
+    expect(DEFAULT_CAPABILITY_CONFIG.subscribe).toMatchObject({
+      enabled: true,
+      adapter: "redis-subscriptions",
+    })
     expect(DEFAULT_CAPABILITY_CONFIG.deploy).toMatchObject({
       enabled: true,
       adapter: "scripted-deploy",
@@ -87,11 +103,32 @@ adapter = "project-adapter"
 
     rmSync(root, { recursive: true, force: true })
   })
+
+  test("new capability adapters honor precedence and adapter settings merge", () => {
+    const config = resolveCapabilitiesConfig({
+      cwd: "/tmp",
+      env: {
+        JOELCLAW_CAPABILITY_MAIL_ADAPTER: "env-mail",
+      },
+      flags: {
+        mail: { adapter: "flag-mail" },
+      },
+      projectConfigPath: "/tmp/does-not-exist-project.toml",
+      userConfigPath: "/tmp/does-not-exist-user.toml",
+    })
+
+    expect(config.capabilities.mail?.adapter).toBe("flag-mail")
+    expect(config.capabilities.mail?.source.adapter).toBe("flag")
+  })
 })
 
 describe("capability registry", () => {
-  test("runtime registry includes deploy/heal adapters", () => {
+  test("runtime registry includes phase-4 adapters", () => {
     const entries = capabilityRegistry.list()
+    expect(entries.some((entry) => entry.capability === "mail" && entry.adapter === "mcp-agent-mail")).toBe(true)
+    expect(entries.some((entry) => entry.capability === "otel" && entry.adapter === "typesense-otel")).toBe(true)
+    expect(entries.some((entry) => entry.capability === "recall" && entry.adapter === "typesense-recall")).toBe(true)
+    expect(entries.some((entry) => entry.capability === "subscribe" && entry.adapter === "redis-subscriptions")).toBe(true)
     expect(entries.some((entry) => entry.capability === "deploy" && entry.adapter === "scripted-deploy")).toBe(true)
     expect(entries.some((entry) => entry.capability === "heal" && entry.adapter === "runbook-heal")).toBe(true)
   })

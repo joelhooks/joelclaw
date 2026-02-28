@@ -4,7 +4,7 @@
 
 import { randomUUID } from "node:crypto"
 import { Effect, Schema } from "effect"
-import { traceRecallRewrite } from "../../commands/langfuse"
+import { traceRecallRewrite } from "../../langfuse"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../../typesense-auth"
 import { capabilityError, type CapabilityPort } from "../contract"
 
