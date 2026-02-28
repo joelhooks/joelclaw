@@ -1,5 +1,3 @@
-import Langfuse from "langfuse";
-import type { LangfuseTraceClient, LangfuseSpanClient } from "langfuse";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 type UsageLike = {
@@ -119,6 +117,67 @@ function stripChannelHeader(text: string): { clean: string; headerMeta?: Record<
 }
 
 
+type LangfuseGenerationLike = {
+  end: (payload?: Record<string, unknown>) => void;
+};
+
+type LangfuseSpanLike = {
+  span: (payload: Record<string, unknown>) => LangfuseSpanLike;
+  generation: (payload: Record<string, unknown>) => LangfuseGenerationLike;
+  end: (payload?: Record<string, unknown>) => void;
+};
+
+type LangfuseTraceLike = {
+  span: (payload: Record<string, unknown>) => LangfuseSpanLike;
+  generation: (payload: Record<string, unknown>) => LangfuseGenerationLike;
+  update: (payload: Record<string, unknown>) => void;
+};
+
+type LangfuseLike = {
+  trace: (payload: Record<string, unknown>) => LangfuseTraceLike;
+  flush?: () => Promise<unknown>;
+  shutdownAsync: () => Promise<void>;
+};
+
+type LangfuseCtor = new (payload: {
+  publicKey: string;
+  secretKey: string;
+  baseUrl?: string;
+  environment?: string;
+}) => LangfuseLike;
+
+let cachedLangfuseCtor: LangfuseCtor | null | undefined;
+let reportedMissingLangfuseModule = false;
+
+async function loadLangfuseCtor(): Promise<LangfuseCtor | null> {
+  if (cachedLangfuseCtor !== undefined) {
+    return cachedLangfuseCtor;
+  }
+
+  try {
+    const mod = await import("langfuse");
+    const ctorCandidate = (mod as { default?: unknown }).default;
+    if (typeof ctorCandidate !== "function") {
+      cachedLangfuseCtor = null;
+      if (!reportedMissingLangfuseModule) {
+        reportedMissingLangfuseModule = true;
+        console.warn("langfuse-cost: 'langfuse' module loaded without a default constructor; telemetry disabled.");
+      }
+      return null;
+    }
+
+    cachedLangfuseCtor = ctorCandidate as LangfuseCtor;
+    return cachedLangfuseCtor;
+  } catch {
+    cachedLangfuseCtor = null;
+    if (!reportedMissingLangfuseModule) {
+      reportedMissingLangfuseModule = true;
+      console.warn("langfuse-cost: cannot load optional dependency 'langfuse'; telemetry disabled.");
+    }
+    return null;
+  }
+}
+
 const GLOBAL_KEY = "__langfuse_cost_loaded__";
 
 export default function (pi: ExtensionAPI) {
@@ -127,18 +186,19 @@ export default function (pi: ExtensionAPI) {
     return;
   }
   (globalThis as any)[GLOBAL_KEY] = true;
-  let langfuse: Langfuse | null = null;
+  let langfuse: LangfuseLike | null = null;
   let flushTimer: ReturnType<typeof setInterval> | undefined;
+  let initPromise: Promise<void> | null = null;
 
   // --- Span hierarchy state ---
   // Session trace: one per pi session lifetime
-  let sessionTrace: LangfuseTraceClient | null = null;
-  let sessionSpan: LangfuseSpanClient | null = null;
+  let sessionTrace: LangfuseTraceLike | null = null;
+  let sessionSpan: LangfuseSpanLike | null = null;
   let sessionStartTime: Date | null = null;
   let sessionTurnCount = 0;
 
   // Message span: one per user→assistant exchange
-  let messageSpan: LangfuseSpanClient | null = null;
+  let messageSpan: LangfuseSpanLike | null = null;
   let messageStartTime: Date | null = null;
   let lastUserInput: string | undefined;
   let lastInputHeaderMeta: Record<string, string> | undefined;
@@ -146,45 +206,63 @@ export default function (pi: ExtensionAPI) {
 
   // Tool spans: one per tool_call→tool_result
   let pendingToolNames: string[] = [];
-  let activeToolSpans: Map<string, LangfuseSpanClient> = new Map();
+  let activeToolSpans: Map<string, LangfuseSpanLike> = new Map();
 
   const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
   const secretKey = process.env.LANGFUSE_SECRET_KEY;
   const baseUrl = process.env.LANGFUSE_HOST || process.env.LANGFUSE_BASE_URL;
+
+  const initializeLangfuse = (): Promise<void> => {
+    if (langfuse) return Promise.resolve();
+    if (initPromise) return initPromise;
+    if (!publicKey || !secretKey) return Promise.resolve();
+
+    initPromise = (async () => {
+      const Langfuse = await loadLangfuseCtor();
+      if (!Langfuse) return;
+
+      try {
+        langfuse = new Langfuse({
+          publicKey,
+          secretKey,
+          baseUrl,
+          environment: "production",
+        });
+
+        flushTimer = setInterval(() => {
+          try {
+            langfuse?.flush?.()?.catch?.(() => {}); // Swallow async flush failures silently
+          } catch {
+            // Swallow sync flush failures silently
+          }
+        }, FLUSH_INTERVAL_MS);
+      } catch (error) {
+        console.error("langfuse-cost: Failed to initialize Langfuse; telemetry disabled.", error);
+        langfuse = null;
+        if (flushTimer) {
+          clearInterval(flushTimer);
+          flushTimer = undefined;
+        }
+      }
+    })().finally(() => {
+      initPromise = null;
+    });
+
+    return initPromise;
+  };
 
   if (!publicKey || !secretKey) {
     console.warn(
       "langfuse-cost: LANGFUSE_PUBLIC_KEY and/or LANGFUSE_SECRET_KEY missing; telemetry disabled.",
     );
   } else {
-    try {
-      langfuse = new Langfuse({
-        publicKey,
-        secretKey,
-        baseUrl,
-        environment: "production",
-      });
-
-      flushTimer = setInterval(() => {
-        try {
-          langfuse?.flush()?.catch?.(() => {}); // Swallow async flush failures silently
-        } catch {
-          // Swallow sync flush failures silently
-        }
-      }, FLUSH_INTERVAL_MS);
-    } catch (error) {
-      console.error("langfuse-cost: Failed to initialize Langfuse; telemetry disabled.", error);
-      langfuse = null;
-      if (flushTimer) {
-        clearInterval(flushTimer);
-        flushTimer = undefined;
-      }
-    }
+    void initializeLangfuse();
   }
 
   // ─── SESSION SPAN ───────────────────────────────────────────────
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", async (_event, ctx) => {
     try {
+      await initializeLangfuse();
       sessionId = ctx.sessionManager.getSessionId() ?? null;
       if (!langfuse || !sessionId) return;
 
