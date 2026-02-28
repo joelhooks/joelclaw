@@ -124,12 +124,12 @@ Talon is a Rust binary that supervises the worker process. It leases secrets fro
 secrets add my_new_secret --value "the-secret-value"
 
 # 2. Update Talon source — add mapping to SECRET_MAPPINGS array
-#    File: ~/Code/system-bus-worker/infra/talon/src/worker.rs
+#    File: ~/Code/joelhooks/joelclaw/infra/talon/src/worker.rs
 #    ("my_new_secret", "MY_NEW_SECRET_ENV_VAR"),
 
 # 3. Recompile (fast — ~3s incremental)
 export PATH="$HOME/.cargo/bin:$PATH"
-cd ~/Code/system-bus-worker/infra/talon
+cd ~/Code/joelhooks/joelclaw/infra/talon
 cargo build --release
 
 # 4. Install + re-sign (macOS kills unsigned binaries)
@@ -164,7 +164,7 @@ curl -X PUT http://localhost:3111/api/inngest  # Force function sync
 | What | Path |
 |------|------|
 | Binary | `~/.local/bin/talon` |
-| Source | `~/Code/system-bus-worker/infra/talon/src/` |
+| Source | `~/Code/joelhooks/joelclaw/infra/talon/src/` |
 | LaunchAgent plist | `~/Library/LaunchAgents/com.joel.talon.plist` |
 | Logs | `~/.local/log/talon.log` / `talon.err` |
 | ADR | `~/Vault/docs/decisions/0159-talon-worker-manager.md` |

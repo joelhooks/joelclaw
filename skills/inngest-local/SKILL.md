@@ -18,7 +18,7 @@ This skill sets up Inngest as a self-hosted durable workflow engine on a Mac. In
 - Bun or Node.js for the worker process
 
 **Optional:**
-- k8s cluster (k3d, Talos, etc.) for persistent deployment
+- k8s cluster (Talos on Colima, etc.) for persistent deployment
 - Redis (for state sharing between functions and gateway integration)
 
 ## Intent Alignment
@@ -93,7 +93,7 @@ Now Inngest state survives container restarts. `--restart unless-stopped` brings
 
 ### Tier 3: Kubernetes (production-grade)
 
-For full persistence with proper health checks. Requires a k8s cluster (k3d, Talos, etc.).
+For full persistence with proper health checks. Requires a k8s cluster (Talos on Colima, etc.).
 
 ```yaml
 # inngest.yaml
@@ -424,7 +424,7 @@ This skill's architecture is backed by a chain of Architecture Decision Records.
 |----------|--------|-------------|------|
 | Workflow engine | Inngest (self-hosted) | Step-level durability vs complexity. Cron+scripts has no per-step retry. | [ADR-0010](/adrs/0010-system-loop-gateway) |
 | Container runtime | Colima (VZ framework) | Replaces Docker Desktop. Free, headless, less RAM. | [ADR-0029](/adrs/0029-colima-talos-migration) |
-| k8s for 3 containers | Yes (k3d → Talos) | 380MB overhead for reconciliation loop + multi-node future. Docker Compose = no self-healing. | [joel-deploys-k8s](/joel-deploys-k8s) |
+| k8s for 3 containers | Yes (Talos on Colima) | 380MB overhead for reconciliation loop + multi-node future. Docker Compose = no self-healing. | [joel-deploys-k8s](/joel-deploys-k8s) |
 | Service naming | `inngest-svc` not `inngest` | k8s injects `INNGEST_PORT` env var. Binary expects integer, gets URL. | Hard-won debugging |
 | Worker runtime | Bun + Hono | Faster cold start than Node. Hono = minimal HTTP. launchd KeepAlive for persistence. | Practical choice |
 | Step data pattern | Claim-check (file path) | Step outputs have size limits. Write large data to disk, pass path between steps. | Inngest docs |

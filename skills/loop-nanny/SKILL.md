@@ -13,7 +13,7 @@ Monitor, triage, and clean up after agent loops. The agent-loop skill starts loo
 joelclaw loop status <LOOP_ID>
 ```
 
-`joelclaw` is the primary CLI (`igs` is a legacy alias for the same binary).
+`joelclaw` is the primary CLI.
 
 Poll every 2–3 minutes. A story typically takes 3–8 minutes (test-write → implement → review → judge). If a story shows no progress for 10+ minutes, something is stuck.
 
@@ -99,11 +99,11 @@ Per AGENTS.md: *"over-specified tests that mock internal step names are worse th
 cd <project> && bunx tsc --noEmit
 ```
 
-### 5. Restart worker (if loop touched Inngest functions)
+### 5. Restart worker deployment (if loop touched Inngest functions)
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker
-sleep 3
+kubectl -n joelclaw rollout restart deployment/system-bus-worker
+kubectl -n joelclaw rollout status deployment/system-bus-worker --timeout=180s
 joelclaw refresh
 joelclaw status
 ```
@@ -126,7 +126,7 @@ Delete stale acceptance tests, verify N pass / 0 fail / tsc clean"
 ### Intervene — something is broken
 - **Same error on retry**: Check attempt output. If retry 2 has identical error to retry 1, the feedback loop isn't helping — cancel and fix the root cause.
 - **Merge conflict during complete**: `joelclaw logs errors` will show merge abort. Manually resolve: `cd <project> && git merge --abort` then merge the branch by hand.
-- **Worker crashed**: `joelclaw status` shows worker down. Restart: `launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker`
+- **Worker crashed**: `joelclaw status` shows worker down. Restart deployment: `kubectl -n joelclaw rollout restart deployment/system-bus-worker`
 - **All stories skipping**: The PRD likely has a bad assumption. Cancel, review prd.json, re-fire.
 - **Loop stuck (no progress for 15min)**: Check `joelclaw runs --count 5` — if the latest run is COMPLETED but no new run dispatched, there's a state bug. Cancel and re-fire from the stuck story.
 
@@ -171,7 +171,7 @@ Use this sequence when babysitting a loop:
 
 ## Improve joelclaw While You Nanny
 
-The nanny is the primary consumer of `joelclaw` output. When you hit a gap — missing info, unclear output, an extra step you had to do manually — **fix joelclaw right then**. The joelclaw package is at `~/Code/joelhooks/joelclaw/` (safe to edit while a loop runs against the worker clone).
+The nanny is the primary consumer of `joelclaw` output. When you hit a gap — missing info, unclear output, an extra step you had to do manually — **fix joelclaw right then**. The joelclaw source lives at `~/Code/joelhooks/joelclaw/`.
 
 ### What to improve
 
@@ -184,9 +184,9 @@ The nanny is the primary consumer of `joelclaw` output. When you hit a gap — m
 ### How to improve
 
 ```bash
-# Commands are in src/commands/ — one file per command
-# Response helpers in src/response.ts
-# Inngest client methods in src/inngest.ts
+# Commands are in packages/cli/src/commands/ — one file per command
+# Response helpers in packages/cli/src/response.ts
+# Inngest client methods in packages/cli/src/inngest.ts
 
 # Test your change
 joelclaw <command> 2>&1 | python3 -m json.tool
@@ -203,13 +203,13 @@ When a loop stops progressing, use the diagnostic command FIRST:
 
 ```bash
 # Quick diagnosis of all loops
-igs loop diagnose all -c
+joelclaw loop diagnose all -c
 
 # Diagnose + auto-fix (clears claims, re-fires plan events)
-igs loop diagnose all -c --fix
+joelclaw loop diagnose all -c --fix
 
 # Verify fix worked (~30s later)
-igs loop status <loop-id> -c
+joelclaw loop status <loop-id> -c
 ```
 
 Common diagnoses:
@@ -223,7 +223,7 @@ See [loop-diagnosis skill](../loop-diagnosis/SKILL.md) for full reference.
 ## Gotchas
 
 - **Don't edit the monorepo while a loop runs** — `git add -A` in the worktree scoops unrelated changes
-- **joelclaw IS safe to edit while a loop runs** — the worker clone is separate from the monorepo
+- **CLI-focused edits are safest during active loops** — avoid changing `packages/system-bus` mid-run unless you're intentionally redeploying the worker
 - **prd.json and progress.txt get dirty** — this is normal; complete.ts stashes before merge
 - **Worktree branch not auto-deleted on cancel** — clean manually (see Cancel section)
 - **Cross-file test pollution** — agent-generated `__tests__/` files can cause failures in real tests when run together; delete them

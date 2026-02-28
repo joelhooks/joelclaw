@@ -1,6 +1,6 @@
 ---
 name: agent-loop
-description: Start, monitor, and cancel durable multi-agent coding loops via Inngest. Use when the user wants to run autonomous coding workloads, execute a PRD with multiple stories, kick off an AFK coding session, have agents implement features from a plan, or manage running loops. Triggers on "start a coding loop", "run this PRD", "implement these stories", "go AFK and code this", "check loop status", "cancel the loop", "igs loop", or any request for autonomous multi-story code execution.
+description: Start, monitor, and cancel durable multi-agent coding loops via Inngest. Use when the user wants to run autonomous coding workloads, execute a PRD with multiple stories, kick off an AFK coding session, have agents implement features from a plan, or manage running loops. Triggers on "start a coding loop", "run this PRD", "implement these stories", "go AFK and code this", "check loop status", "cancel the loop", "joelclaw loop", or any request for autonomous multi-story code execution.
 ---
 
 # Agent Loop
@@ -22,7 +22,7 @@ joelclaw loop status [LOOP_ID]
 joelclaw loop cancel LOOP_ID
 ```
 
-The `joelclaw` CLI is the primary interface (`igs` is a legacy alias). Run with `bun run src/cli.ts loop start ...` from the joelclaw package.
+The `joelclaw` CLI is the primary interface. Run with `bun run packages/cli/src/cli.ts loop start ...` from the monorepo root.
 
 ## PRD Format
 
@@ -87,24 +87,21 @@ Create a `progress.txt` in the project root with a `## Codebase Patterns` sectio
 ## Infrastructure
 
 - **Canonical source**: `~/Code/joelhooks/joelclaw/packages/system-bus/` (monorepo)
-- **Worker clone**: `~/Code/system-bus-worker/` (deployed copy, auto-synced)
 - **Inngest functions**: `agent-loop-plan`, `agent-loop-implement`, `agent-loop-review`, `agent-loop-judge`, `agent-loop-complete`, `agent-loop-retro`
 - **Inngest server**: k8s StatefulSet at localhost:8288
-- **Loop --project target**: Always use `~/Code/joelhooks/joelclaw/packages/system-bus` (the monorepo). complete.ts auto-syncs the worker clone after merge + restarts the worker. Never target the worker clone directly.
-- **Restart worker**: `launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker`
+- **Loop --project target**: Always use `~/Code/joelhooks/joelclaw/packages/system-bus` (the monorepo).
+- **Apply worker changes**: `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh`
 - **Verify functions**: `joelclaw functions`
 - **View runs**: `joelclaw runs -c`
 - **Inspect a run**: `joelclaw run RUN_ID`
 
-### Two-clone architecture
+### Single-source deployment flow
 
-The worker runs from a separate clone (`~/Code/system-bus-worker/`) so that editing the monorepo mid-session doesn't break the running worker. After a loop merges to monorepo, `complete.ts` auto-syncs:
+The monorepo is the source of truth for loop function code. After loop-related function changes merge, deploy the worker from the monorepo:
 
-1. `git pull --ff-only` in worker clone (falls back to `git reset --hard origin/main`)
-2. `bun install` for new deps
-3. `launchctl kickstart` to restart worker
-
-**Never manually sync** — complete.ts handles it. If you need to force-sync: `cd ~/Code/system-bus-worker && git fetch origin && git reset --hard origin/main`.
+1. Run `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh`
+2. Wait for rollout: `kubectl -n joelclaw rollout status deployment/system-bus-worker --timeout=180s`
+3. Refresh registration: `joelclaw refresh`
 
 ## Event Schema
 
@@ -140,7 +137,7 @@ Default: codex for implementation, claude for review. Override per-story via `to
 - Concurrency keys use CEL expressions (`event.data.project`), not `{{ }}` templates
 - `loop` is reserved in CEL — don't use in concurrency key strings
 - `codex exec --full-auto PROMPT` (no `-q` flag)
-- Worker must be restarted after function code changes (launchctl kickstart)
+- Worker changes require a k8s deploy (`k8s/publish-system-bus-worker.sh`)
 - Docker must be running for Inngest server (`open -a OrbStack`)
 - Large tool output uses claim-check pattern (written to `/tmp/agent-loop/{loopId}/`)
 
@@ -165,4 +162,4 @@ Actions: `story-pass`, `story-retry`, `story-skip`, `build-complete`
 | `~/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/agent-loop/review.ts` | REVIEWER |
 | `~/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/agent-loop/judge.ts` | JUDGE |
 | `~/Code/joelhooks/joelclaw/packages/system-bus/src/serve.ts` | Worker registration |
-| `~/Code/joelhooks/joelclaw/src/cli.ts` | joelclaw CLI (loop subcommands) |
+| `~/Code/joelhooks/joelclaw/packages/cli/src/cli.ts` | joelclaw CLI (loop subcommands) |

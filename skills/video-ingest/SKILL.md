@@ -10,7 +10,7 @@ Videos are ingested through the Inngest event bus. **Do not run yt-dlp, mlx-whis
 ## Quick Start
 
 ```bash
-igs send pipeline/video.download -d '{"url":"URL_HERE"}'
+joelclaw send pipeline/video.download -d '{"url":"URL_HERE"}'
 ```
 
 That's it. The event chain handles the rest.
@@ -65,9 +65,9 @@ docker ps --filter ancestor=inngest/inngest --format "table {{.Status}}\t{{.Port
 
 If the worker is down:
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker
-sleep 2
-curl -s -X PUT "http://host.docker.internal:3111/api/inngest"  # re-register functions
+kubectl -n joelclaw rollout restart deployment/system-bus-worker
+kubectl -n joelclaw rollout status deployment/system-bus-worker --timeout=180s
+joelclaw refresh
 ```
 
 ## Monitoring a Run
@@ -75,11 +75,8 @@ curl -s -X PUT "http://host.docker.internal:3111/api/inngest"  # re-register fun
 ### Watch progress in real-time
 
 ```bash
-# Worker stdout — shows step execution
-tail -f ~/.local/log/system-bus-worker.log
-
-# Worker errors — shows failures
-tail -f ~/.local/log/system-bus-worker.err
+# Worker logs — shows step execution + failures
+kubectl logs -n joelclaw deploy/system-bus-worker -f
 
 # Docker logs — shows event dispatch
 docker logs -f $(docker ps -q --filter ancestor=inngest/inngest) 2>&1 | grep -v DEBUG
@@ -111,9 +108,9 @@ tail -10 ~/Vault/system/system-log.jsonl | grep -i video
 Send multiple events. Inngest queues and processes them with concurrency control:
 
 ```bash
-igs send pipeline/video.download -d '{"url":"https://youtube.com/watch?v=XXXX"}'
-igs send pipeline/video.download -d '{"url":"https://youtube.com/watch?v=YYYY"}'
-igs send pipeline/video.download -d '{"url":"https://youtube.com/watch?v=ZZZZ"}'
+joelclaw send pipeline/video.download -d '{"url":"https://youtube.com/watch?v=XXXX"}'
+joelclaw send pipeline/video.download -d '{"url":"https://youtube.com/watch?v=YYYY"}'
+joelclaw send pipeline/video.download -d '{"url":"https://youtube.com/watch?v=ZZZZ"}'
 ```
 
 ## Manual Transcript (Non-YouTube)
@@ -122,10 +119,10 @@ For audio files already on disk, or raw text from Granola/Fathom:
 
 ```bash
 # From audio file
-igs send pipeline/transcript.process -d '{"source":"manual","audioPath":"/path/to/audio.mp4","title":"Recording Title","slug":"recording-title"}'
+joelclaw send pipeline/transcript.process -d '{"source":"manual","audioPath":"/path/to/audio.mp4","title":"Recording Title","slug":"recording-title"}'
 
 # From raw text (Granola, Fathom, etc.)
-igs send pipeline/transcript.process -d '{"source":"granola","text":"transcript text...","title":"Meeting Title","slug":"meeting-title"}'
+joelclaw send pipeline/transcript.process -d '{"source":"granola","text":"transcript text...","title":"Meeting Title","slug":"meeting-title"}'
 ```
 
 ## Re-run Summary Only
@@ -133,7 +130,7 @@ igs send pipeline/transcript.process -d '{"source":"granola","text":"transcript 
 If the vault note exists but needs a better summary:
 
 ```bash
-igs send content/summarize -d '{"vaultPath":"/Users/joel/Vault/Resources/videos/SLUG.md"}'
+joelclaw send content/summarize -d '{"vaultPath":"/Users/joel/Vault/Resources/videos/SLUG.md"}'
 ```
 
 ## Options
@@ -164,12 +161,13 @@ If events are accepted (200 OK) but nothing happens:
 
 2. **Check worker is actually running**:
    ```bash
-   launchctl print gui/$(id -u)/com.joel.system-bus-worker 2>&1 | grep -E "state|pid"
+   kubectl get deploy -n joelclaw system-bus-worker
+   kubectl get pods -n joelclaw -l app=system-bus-worker
    ```
 
 3. **Check worker errors for the specific function**:
    ```bash
-   tail -30 ~/.local/log/system-bus-worker.err
+   kubectl logs -n joelclaw deploy/system-bus-worker --tail=80
    ```
 
 4. **Use inngest-debug skill** for deep inspection of specific run IDs via GraphQL.

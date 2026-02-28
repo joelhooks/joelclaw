@@ -60,25 +60,18 @@ Two deployment modes controlled by `WORKER_ROLE` env var:
 
 | Role | Where | Functions |
 |------|-------|-----------|
-| `host` | Local Mac Mini via launchd | Agent loops, heartbeat checks, memory pipeline, content sync, video ingest, book download — anything needing local filesystem, pi CLI, or docker |
+| `host` | Local Mac Mini via Talon supervisor (optional) | Agent loops, heartbeat checks, memory pipeline, content sync, video ingest, book download — anything needing local filesystem, pi CLI, or docker |
 | `cluster` | k8s pod (GHCR image) | Webhooks (Front, GitHub, Vercel, Todoist, Mux), approvals, notifications, Slack backfill — stateless, network-only |
 
 Functions are split between `index.host.ts` and `index.cluster.ts`. The combined `index.ts` exports everything for tooling/tests.
 
-## Two-Clone Architecture
+## Deployment Model
 
-- **Monorepo** (`~/Code/joelhooks/joelclaw/packages/system-bus/`) — source of truth, where you edit code
-- **Worker clone** (`~/Code/system-bus-worker/`) — deployed copy the host worker runs from
+- **Source of truth**: `~/Code/joelhooks/joelclaw/packages/system-bus/`
+- **Primary runtime**: `system-bus-worker` Deployment in the Talos/Colima k8s cluster
+- **Deploy path**: `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh`
 
-**Never edit the worker clone directly.** Never target it for loops. Changes flow:
-1. Edit in monorepo
-2. `git push` to origin
-3. Worker clone: `git fetch origin && git reset --hard origin/main` (not pull — lock file has local changes)
-4. `bun install` in worker clone
-5. Restart worker: find PID of `bun run src/serve.ts`, kill it, restart
-6. Force Inngest re-registration: `curl -X PUT http://127.0.0.1:3111/api/inngest`
-
-For k8s cluster worker: run `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh`
+No standalone worker clone is used for deploys. Edit in monorepo, then publish to k8s.
 
 ## Adding a New Inngest Function
 
@@ -163,31 +156,12 @@ await gateway?.progress("Step 3/5 complete");
 - **`step.invoke` over fan-out events for rate-limited APIs** — fan-out starts all near-simultaneously even with throttle.
 - **Silent failure anti-pattern**: Functions that shell to CLIs must detect and propagate subprocess failures.
 
-## Deploy: Host Worker
-
-```bash
-# 1. Push changes
-cd ~/Code/joelhooks/joelclaw && git push
-
-# 2. Sync worker clone
-cd ~/Code/system-bus-worker
-git fetch origin && git reset --hard origin/main
-bun install
-
-# 3. Restart
-# Find and kill the running worker
-ps aux | grep "bun run src/serve.ts" | grep -v grep
-kill <PID>
-cd ~/Code/system-bus-worker && nohup bun run src/serve.ts > /tmp/system-bus-worker.log 2>&1 &
-
-# 4. Force function re-registration
-sleep 3 && curl -X PUT http://127.0.0.1:3111/api/inngest
-```
-
-## Deploy: K8s Cluster Worker
+## Deploy: system-bus-worker (k8s)
 
 ```bash
 ~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh
+kubectl -n joelclaw rollout status deployment/system-bus-worker --timeout=180s
+joelclaw refresh
 ```
 
 Builds ARM64 image, pushes to GHCR, updates k8s deployment, verifies rollout.
@@ -215,9 +189,6 @@ joelclaw runs --count 20
 
 # Inspect a specific run
 joelclaw run <RUN_ID>
-
-# Worker logs (host)
-tail -f /tmp/system-bus-worker.log
 
 # Worker logs (k8s)
 kubectl logs -n joelclaw deploy/system-bus-worker -f

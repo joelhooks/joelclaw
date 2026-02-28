@@ -1,6 +1,6 @@
 ---
 name: loop-diagnosis
-description: Diagnose and fix stalled agent loops using the igs CLI. Use when loops appear stuck, stories aren't progressing, or the event chain broke. Triggers on "loop stalled", "why isn't the loop progressing", "diagnose loops", "fix stuck loop", "loop not moving", "what happened to the loop", "stories stuck at pending", or any request to debug loop infrastructure.
+description: Diagnose and fix stalled agent loops using the joelclaw CLI. Use when loops appear stuck, stories aren't progressing, or the event chain broke. Triggers on "loop stalled", "why isn't the loop progressing", "diagnose loops", "fix stuck loop", "loop not moving", "what happened to the loop", "stories stuck at pending", or any request to debug loop infrastructure.
 ---
 
 # Loop Diagnosis
@@ -11,16 +11,16 @@ Diagnose and fix stalled agent coding loops. This skill covers the diagnostic CL
 
 ```bash
 # Diagnose all active loops at once
-igs loop diagnose all -c
+joelclaw loop diagnose all -c
 
 # Diagnose a specific loop
-igs loop diagnose <loop-id> -c
+joelclaw loop diagnose <loop-id> -c
 
 # Diagnose AND auto-fix
-igs loop diagnose all -c --fix
+joelclaw loop diagnose all -c --fix
 
 # Full JSON output (for detailed inspection)
-igs loop diagnose <loop-id>
+joelclaw loop diagnose <loop-id>
 ```
 
 ## What Diagnosis Checks
@@ -41,9 +41,9 @@ The `diagnose` command runs 6 checks in order:
 | `CHAIN_BROKEN` | Judge sent `story.passed` but plan never received it. Event lost in transit. | Re-fires `agent/loop.story.passed` → plan picks next story |
 | `ORPHANED_CLAIM` | Story claimed by an event, but agent died and no Inngest run is active. | Clears claim + re-fires plan event |
 | `STUCK_RUN` | Inngest run marked RUNNING but agent process is dead. Run won't complete. | Clears claims + re-fires (manual run cancellation may be needed in Inngest dashboard) |
-| `WORKER_UNHEALTHY` | Worker registering fewer functions than expected. Missing imports or crash loop. | Restarts worker via `launchctl kickstart` |
+| `WORKER_UNHEALTHY` | Worker registering fewer functions than expected. Missing imports or crash loop. | Restarts `system-bus-worker` deployment in k8s |
 | `NO_PRD` | Loop has no PRD in Redis — was nuked or never created. | None — start a new loop |
-| `COMPLETE` | All stories passed or skipped. Nothing to do. | None — run `igs loop nuke dead` to clean up |
+| `COMPLETE` | All stories passed or skipped. Nothing to do. | None — run `joelclaw loop nuke dead` to clean up |
 
 ## When to Use (vs Other Skills)
 
@@ -93,19 +93,19 @@ When an agent needs to debug loops manually, follow this sequence:
 
 ```bash
 # 1. Quick overview
-igs loop diagnose all -c
+joelclaw loop diagnose all -c
 
 # 2. If fix needed
-igs loop diagnose all -c --fix
+joelclaw loop diagnose all -c --fix
 
 # 3. Verify fix worked (wait ~30s for plan to fire)
-igs loop status <loop-id> -c
+joelclaw loop status <loop-id> -c
 
 # 4. If still stuck, check worker
 curl -s localhost:3111/api/inngest | python3 -c "import json,sys; print(json.load(sys.stdin)['function_count'])"
 
 # 5. Nuclear option: full restart
-igs loop restart <loop-id>
+joelclaw loop restart <loop-id>
 ```
 
 ## Making Loops More Resilient
@@ -121,5 +121,5 @@ The root cause of most stalls is **lost events in the judge→plan chain**. Solu
 
 - [agent-loop skill](/Users/joel/.pi/agent/skills/agent-loop/SKILL.md) — starting loops
 - [loop-nanny skill](/Users/joel/.pi/agent/skills/loop-nanny/SKILL.md) — monitoring + cleanup
-- [igs skill](/Users/joel/.pi/agent/skills/igs/SKILL.md) — full CLI reference
+- [joelclaw skill](../joelclaw/SKILL.md) — full CLI reference
 - [ADR-0028](/Users/joel/Vault/docs/decisions/0028-inngest-reliability-patterns.md) — reliability patterns

@@ -62,7 +62,7 @@ See `~/Vault/Contacts/Matt Pocock.md` for a fully enriched example.
 
 ### Option 1: Fire the Enrichment Pipeline (preferred)
 
-Send an Inngest event. The `contact-enrich` function fans out across 7 sources (Slack, Roam, web/GitHub, Granola, Qdrant memory, Typesense), synthesizes with LLM, and writes the Vault file.
+Send an Inngest event. The `contact-enrich` function fans out across 7 sources (Slack, Roam, web/GitHub, Granola, recall memory, Typesense), synthesizes with LLM, and writes the Vault file.
 
 ```bash
 # Via curl (CLI has OTEL import bug under Bun v1.3.9)
@@ -263,7 +263,7 @@ Then fire enrichment with the resolved name and hints.
 - Event: `contact/enrich.requested`
 - ADR: `~/Vault/docs/decisions/0133-contact-enrichment-pipeline.md`
 - Concurrency: 3 max
-- Sources: Slack, Slack Connect, Roam archive, GitHub/web, Granola meetings, Qdrant memory, Typesense
+- Sources: Slack, Slack Connect, Roam archive, GitHub/web, Granola meetings, recall memory, Typesense
 
 ## Privacy
 

@@ -29,11 +29,11 @@ The `skill-garden` function runs daily at 6am PT and checks:
 2. **Non-canonical REAL DIRs** — directories in home skill dirs that should be symlinks
 3. **Missing frontmatter** — skills without SKILL.md or required frontmatter (name, description)
 4. **Stale patterns** — skills referencing known-dead infrastructure:
-   - `k3d`, `k3s` → replaced by Talos on Colima
-   - `qdrant` → removed, using Typesense vector search
-   - `launchctl.*system-bus` → worker runs in k8s
-   - `~/Code/system-bus-worker` → monorepo `packages/system-bus/`
-   - `~/Code/joelhooks/igs/` → CLI is `packages/cli/`
+   - legacy lightweight-k8s distro terms → replaced by Talos on Colima
+   - retired vector DB terms → replaced by Typesense vector search
+   - launchctl commands targeting worker labels → worker runs in k8s
+   - old standalone worker clone paths → monorepo `packages/system-bus/`
+   - old standalone CLI repo paths/aliases → CLI is `packages/cli/` + `joelclaw`
 5. **Orphans** — skills in repo with no symlink from any home dir
 
 ### Monthly (1st of month, LLM deep review)
@@ -129,15 +129,14 @@ Keep this list updated as infrastructure changes. The Inngest function reads the
 
 | Pattern | What it means | Current reality |
 |---------|--------------|-----------------|
-| `k3d` | Old k8s distribution | Talos v1.12.4 on Colima |
-| `k3s` | Old k8s distribution | Talos v1.12.4 on Colima |
-| `qdrant` | Old vector DB | Typesense with vector search |
-| `launchctl.*system-bus` | Old worker deploy | k8s Deployment |
-| `~/Code/system-bus-worker` | Old worker path | `packages/system-bus/` in monorepo |
-| `~/Code/joelhooks/igs/` | Old CLI path | `packages/cli/` in monorepo |
-| `igs` (as command) | Old CLI name | `joelclaw` CLI |
+| legacy k8s distro token | Old k8s distribution reference | Talos v1.12.4 on Colima |
+| legacy vector DB token | Old vector store reference | Typesense with vector search |
+| launchctl worker command token | Old worker deploy mode | k8s Deployment |
+| standalone worker clone path token | Old worker path | `packages/system-bus/` in monorepo |
+| standalone CLI path token | Old CLI path | `packages/cli/` in monorepo |
+| short CLI alias token | Old CLI name | `joelclaw` CLI |
 
-**When infrastructure changes, update this table AND the `STALE_PATTERNS` array in `skill-garden.ts`.**
+**When infrastructure changes, update this table AND the exact regex list in `STALE_PATTERNS` inside `skill-garden.ts`.**
 
 ## Required Frontmatter
 

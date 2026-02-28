@@ -161,7 +161,6 @@ launchctl kickstart -k gui/$(id -u)/com.joel.talon
 
 **Legacy services should stay disabled:**
 ```bash
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.joel.system-bus-worker.plist
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.joel.k8s-reboot-heal.plist
 ```
 
