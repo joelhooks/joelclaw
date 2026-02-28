@@ -1,5 +1,6 @@
 import { echoFizzle } from "../../memory/echo-fizzle";
 import { agentDispatch } from "./agent-dispatch";
+import { agentTaskRun } from "./agent-task-run";
 import {
   agentLoopComplete,
   agentLoopImplement,
@@ -129,6 +130,7 @@ export const hostFunctionDefinitions = [
   heartbeatCron,
   heartbeatWake,
   agentDispatch,
+  agentTaskRun,
   storyPipeline,
   agentLoopPlan,
   agentLoopTestWriter,

@@ -1077,6 +1077,42 @@ export type Events = {
     };
   };
 
+  // ADR-0180: Roster-based agent dispatch
+  "agent/task.run": {
+    data: {
+      taskId: string;
+      agent: string;
+      task: string;
+      originSession?: string;
+      cwd?: string;
+      timeoutMs?: number;
+      metadata?: Record<string, unknown>;
+    };
+  };
+  "agent/task.complete": {
+    data: {
+      taskId: string;
+      agent: string;
+      status: "completed" | "failed";
+      text?: string;
+      model?: string;
+      provider?: string;
+      durationMs?: number;
+      usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+      originSession?: string;
+      error?: string;
+    };
+  };
+  "agent/task.progress": {
+    data: {
+      taskId: string;
+      agent: string;
+      step: string;
+      message: string;
+      originSession?: string;
+    };
+  };
+
   // --- Backfill ---
   "memory/backfill.requested": {
     data: {

@@ -2,6 +2,7 @@ import { emitOtelEvent } from "../../observability/emit";
 
 export { echoFizzle } from "../../memory/echo-fizzle";
 export { agentDispatch } from "./agent-dispatch";
+export { agentTaskRun } from "./agent-task-run";
 export {
   agentLoopComplete,
   agentLoopImplement,
