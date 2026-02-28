@@ -1,0 +1,15 @@
+{
+
+  "settings": {
+    "toolPrefix": "server",
+    "idleTimeout": 10
+  },
+  "mcpServers": {
+    "granola": {
+      "url": "https://mcp.granola.ai/mcp",
+      "auth": "oauth",
+      "lifecycle": "lazy",
+      "directTools": ["query_granola_meetings", "list_meetings", "get_meetings", "get_meeting_transcript"]
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "lastChangelogVersion": "0.55.3",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.3-codex",
+  "steeringMode": "all",
+  "followUpMode": "all",
+  "hideThinkingBlock": false,
+  "quietStartup": false,
+  "defaultThinkingLevel": "xhigh",
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 40000,
+    "keepRecentTokens": 20000
+  },
+  "packages": [
+    "git:github.com/joelhooks/pi-tools",
+    "npm:pi-interactive-shell",
+    "npm:pi-subagents",
+    "npm:pi-mcp-adapter",
+    "https://github.com/nicobailon/visual-explainer"
+  ]
+}
