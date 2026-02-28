@@ -177,6 +177,7 @@ When writing in Joel's voice, you are putting words in a real person's mouth. Ev
 - Fabricating conversations, reactions, or emotional responses
 - Inventing links to posts or resources that don't exist
 - Making up metrics, timelines, or results
+- **Guessing temporal facts instead of looking them up.** If the text says "a couple of weeks" and you don't know the actual timeframe, LOOK IT UP in git history, slog, or ADRs. Never substitute one guess for another ("weeks" → "months"). Temporal claims must be verified against source data or flagged as `[TODO: verify timeframe]`.
 - Writing endorsements or testimonials Joel never gave
 
 ### What to do instead:
