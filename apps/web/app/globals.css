@@ -233,6 +233,19 @@ html.dark [data-rehype-pretty-code-figure] pre {
   overflow: visible;
 }
 
+/* Prevent wide children from causing horizontal page scroll on mobile */
+.prose-joelclaw pre,
+.prose-joelclaw table,
+.prose-joelclaw iframe,
+.prose-joelclaw img,
+.prose-joelclaw video {
+  max-width: 100%;
+}
+.prose-joelclaw table {
+  display: block;
+  overflow-x: auto;
+}
+
 input.margin-toggle {
   display: none;
 }

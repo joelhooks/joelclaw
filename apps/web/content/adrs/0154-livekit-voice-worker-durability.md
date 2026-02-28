@@ -96,6 +96,8 @@ Normalization contract:
 - remove non-digit characters,
 - for US numbers, collapse leading `1` on 11-digit numbers to canonical 10-digit form.
 
+Policy is fail-closed: if caller extraction/normalization yields an empty value, reject the call.
+
 Rejection logs must include both raw and normalized caller forms for incident forensics.
 
 ## Implementation Plan
@@ -114,6 +116,7 @@ Rejection logs must include both raw and normalized caller forms for incident fo
 - [ ] Killing the worker process results in automatic recovery (`KeepAlive`/kickstart).
 - [ ] Inbound test call shows non-SIP participant join in LiveKit for answered calls.
 - [ ] Caller allowlist accepts equivalent Joel number formats (`817...`, `+1817...`, punctuation variants) after normalization.
+- [ ] Missing/unparseable caller IDs are rejected (fail-closed) with raw+normalized logging.
 - [ ] `joelclaw otel search "voice.worker.heartbeat" --hours 1` returns fresh events.
 - [ ] `joelclaw otel search "voice.worker.heal" --hours 1` shows attempt/success/failure when forced.
 - [ ] `joelclaw voice status` reports launchd state + heartbeat age.

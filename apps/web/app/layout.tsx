@@ -100,7 +100,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${dankMono.variable} ${GeistPixelSquare.variable} font-sans bg-neutral-950 text-neutral-100 antialiased`}
       >
-        <div className="mx-auto max-w-[1800px] px-4 sm:px-6 lg:px-8 xl:px-12 py-8 sm:py-12 lg:py-16">
+        <div className="mx-auto max-w-[1800px] overflow-x-hidden px-4 sm:px-6 lg:px-8 xl:px-12 py-8 sm:py-12 lg:py-16">
           <Suspense fallback={<header className="mb-16" />}>
             <SiteHeader />
           </Suspense>
