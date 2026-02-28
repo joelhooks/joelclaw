@@ -6,6 +6,7 @@ import { getAdr, getAdrSlugs } from "@/lib/adrs";
 import { SITE_NAME, SITE_URL } from "@/lib/constants";
 import { toDateString } from "@/lib/date";
 import { mdxComponents } from "@/lib/mdx";
+import { escapeMdxAngleBrackets } from "@/lib/mdx-escape";
 import { rehypePlugins, remarkPlugins } from "@/lib/mdx-plugins";
 import { remarkAdrLinks } from "@/lib/remark-adr-links";
 
@@ -109,7 +110,9 @@ async function AdrContent({ content }: { content: string }) {
   return (
     <div className="prose-joelclaw">
       <MDXRemote
-        source={content.replace(/^#\s+(?:ADR-\d+:\s*)?.*$/m, "").trim()}
+        source={escapeMdxAngleBrackets(
+          content.replace(/^#\s+(?:ADR-\d+:\s*)?.*$/m, "").trim()
+        )}
         components={mdxComponents}
         options={{
           mdxOptions: {
