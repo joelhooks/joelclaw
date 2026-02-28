@@ -228,7 +228,7 @@ export const secretsCliAdapter: CapabilityPort<typeof commands> = {
             return yield* Effect.fail(
               capabilityError(
                 "SECRETS_LEASE_FAILED",
-                (backendError.message ?? proc.stderr) || proc.stdout || `Failed to lease secret "${args.name}"`,
+                (backendError.message ?? proc.stderr) || (proc.stdout || `Failed to lease secret "${args.name}"`),
                 backendError.fix ?? `Verify secret "${args.name}" exists and secrets daemon is healthy.`
               )
             )
@@ -286,7 +286,7 @@ export const secretsCliAdapter: CapabilityPort<typeof commands> = {
             return yield* Effect.fail(
               capabilityError(
                 "SECRETS_REVOKE_FAILED",
-                (backendError.message ?? proc.stderr) || proc.stdout || "Failed to revoke secret lease",
+                (backendError.message ?? proc.stderr) || (proc.stdout || "Failed to revoke secret lease"),
                 backendError.fix ?? "Retry with a valid lease ID or `--all`."
               )
             )
@@ -317,7 +317,7 @@ export const secretsCliAdapter: CapabilityPort<typeof commands> = {
             return yield* Effect.fail(
               capabilityError(
                 "SECRETS_AUDIT_FAILED",
-                (backendError.message ?? proc.stderr) || proc.stdout || "Failed to read secrets audit log",
+                (backendError.message ?? proc.stderr) || (proc.stdout || "Failed to read secrets audit log"),
                 backendError.fix ?? "Run `secrets audit --tail 20` directly to inspect backend output."
               )
             )
@@ -350,7 +350,7 @@ export const secretsCliAdapter: CapabilityPort<typeof commands> = {
             return yield* Effect.fail(
               capabilityError(
                 "SECRETS_ENV_FAILED",
-                (backendError.message ?? proc.stderr) || proc.stdout || "Failed to sync .env.local from secrets backend",
+                (backendError.message ?? proc.stderr) || (proc.stdout || "Failed to sync .env.local from secrets backend"),
                 backendError.fix ?? "Run `secrets env --dry-run` and verify .secrets.json exists."
               )
             )
