@@ -1,6 +1,7 @@
 import { readdirSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { type ConvexSyncResult, upsertAdr, upsertPost } from "../../lib/convex-content-sync";
+import { revalidateContentCache } from "../../lib/revalidate";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
@@ -38,6 +39,7 @@ type SyncDirResult = {
   upserted: number;
   skipped: number;
   errors: string[];
+  writtenSlugs: string[];
 };
 
 /**
@@ -97,6 +99,7 @@ export const contentSync = inngest.createFunction(
           upserted: 0,
           skipped: 0,
           errors: [],
+          writtenSlugs: [],
         };
 
         for (const filePath of files) {
@@ -113,6 +116,7 @@ export const contentSync = inngest.createFunction(
               result.skipped++;
             } else {
               result.upserted++;
+              result.writtenSlugs.push(basename(filePath, extname(filePath)));
             }
           } catch (err) {
             result.errors.push(`${basename(filePath)}: ${String(err)}`);
@@ -134,6 +138,30 @@ export const contentSync = inngest.createFunction(
       console.log(`[content-sync] ${r.name}: ${r.upserted} written, ${r.skipped} unchanged, ${r.errors.length} errors (${r.sourceCount} sources)`);
     }
     console.log(`[content-sync] done — ${totalUpserted} written, ${totalSkipped} unchanged, ${totalErrors} errors`);
+
+    // Revalidate Next.js cache for changed content
+    if (totalUpserted > 0) {
+      await step.run("revalidate-cache", async () => {
+        const tags: string[] = [];
+        for (const r of results) {
+          if (r.writtenSlugs.length === 0) continue;
+          if (r.name === "adrs") {
+            tags.push("adrs");
+            for (const slug of r.writtenSlugs) {
+              tags.push(`adr:${slug}`);
+            }
+          } else if (r.name === "posts") {
+            tags.push("articles");
+            for (const slug of r.writtenSlugs) {
+              tags.push(`post:${slug}`, `article:${slug}`);
+            }
+          }
+        }
+        const result = await revalidateContentCache({ tags });
+        console.log(`[content-sync] revalidated ${result.tags.length} cache tags`);
+        return result;
+      });
+    }
 
     // Notify gateway
     if (totalUpserted > 0 && gateway) {

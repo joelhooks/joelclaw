@@ -65,6 +65,10 @@ export default async function PostPage({ params }: Props) {
 async function StaticArticleShell({ slug }: { slug: string }) {
   return (
     <>
+      {/* Realtime: Convex subscription detects content changes, triggers router.refresh() */}
+      <ConvexReaderProvider>
+        <ContentLive resourceId={`post:${slug}`} />
+      </ConvexReaderProvider>
       <FeedbackStatusSlot slug={slug} />
       {await CachedArticleContent({ slug })}
     </>
