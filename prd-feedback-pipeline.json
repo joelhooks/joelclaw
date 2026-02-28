@@ -28,7 +28,7 @@
       "id": "FBP-2",
       "title": "Bridge feedbackItems to content-review Inngest function",
       "description": "The feedback:create Convex mutation stores feedback but doesn't trigger the content-review agent. Add a feedbackSubmitted Convex action (or modify feedback:create) that fires content/review.submitted to Inngest after storing the feedback item. This bridges the new feedback form path to the existing content-review-apply Inngest function. The action should POST to CONVEX_INNGEST_EVENT_URL (env var in Convex dashboard). File: apps/web/convex/feedback.ts",
-      "status": "pending",
+      "status": "done",
       "priority": 2,
       "acceptance": [
         "feedback:create mutation triggers content/review.submitted event to Inngest",

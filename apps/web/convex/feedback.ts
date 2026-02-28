@@ -1,6 +1,7 @@
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import type { MutationCtx } from "./_generated/server";
-import { mutation, query } from "./_generated/server";
+import { internalAction, mutation, query } from "./_generated/server";
 
 async function patchByStatus(
   ctx: MutationCtx,
@@ -48,12 +49,57 @@ export const create = mutation({
       resolvedAt: undefined,
     });
 
+    // Fire-and-forget: bridge to Inngest content review pipeline
+    const parts = resourceId.split(":");
+    const contentType = parts[0] ?? "post";
+    const contentSlug = parts.slice(1).join(":") || resourceId;
+    await ctx.scheduler.runAfter(0, internal.feedback.notifyInngest, {
+      resourceId,
+      contentType,
+      contentSlug,
+    });
+
     return {
       feedbackId,
       resourceId,
       status: "pending" as const,
       createdAt,
     };
+  },
+});
+
+export const notifyInngest = internalAction({
+  args: {
+    resourceId: v.string(),
+    contentType: v.string(),
+    contentSlug: v.string(),
+  },
+  handler: async (_ctx, { resourceId, contentType, contentSlug }) => {
+    const url = process.env.INNGEST_EVENT_URL;
+    if (!url) {
+      console.warn("[feedback] INNGEST_EVENT_URL not set, skipping event");
+      return;
+    }
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "content/review.submitted",
+          data: {
+            resourceId,
+            contentSlug,
+            contentType,
+            source: "feedback-form",
+          },
+        }),
+      });
+      if (!res.ok) {
+        console.error("[feedback] Inngest event send failed:", await res.text());
+      }
+    } catch (err) {
+      console.error("[feedback] Inngest unreachable:", err);
+    }
   },
 });
 
