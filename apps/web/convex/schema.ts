@@ -127,6 +127,7 @@ export default defineSchema({
     type: v.string(), // discriminator: "vault_note", "memory_observation", etc.
     fields: v.any(), // type-specific payload bag
     searchText: v.string(), // concatenated searchable text from fields
+    contentHash: v.optional(v.string()), // SHA-256 of raw source — skip writes when unchanged
     createdAt: v.number(),
     updatedAt: v.number(),
     deletedAt: v.optional(v.number()),

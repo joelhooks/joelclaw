@@ -36,8 +36,9 @@ export const upsertContent = mutation({
     type: v.union(v.literal("adr"), v.literal("post")),
     fields: v.union(adrFieldsValidator, postFieldsValidator),
     searchText: v.string(),
+    contentHash: v.optional(v.string()),
   },
-  handler: async (ctx, { resourceId, type, fields, searchText }) => {
+  handler: async (ctx, { resourceId, type, fields, searchText, contentHash }) => {
     const normalizedFields = fields as Record<string, unknown>;
     const slug = normalizedFields.slug;
     if (typeof slug !== "string" || slug.trim().length === 0) {
@@ -58,11 +59,20 @@ export const upsertContent = mutation({
       .withIndex("by_resourceId", (q) => q.eq("resourceId", resourceId))
       .first();
 
+    // Hash guard: skip write if content unchanged (saves write units on repeated seeds)
+    if (existing && contentHash) {
+      const existingHash = (existing as Record<string, unknown>).contentHash;
+      if (existingHash === contentHash) {
+        return { action: "skipped", resourceId };
+      }
+    }
+
     const doc = {
       resourceId,
       type: type as ContentType,
       fields: normalizedFields,
       searchText,
+      contentHash,
       updatedAt: now,
       deletedAt: undefined,
     };

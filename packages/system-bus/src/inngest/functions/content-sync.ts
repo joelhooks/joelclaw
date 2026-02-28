@@ -36,6 +36,7 @@ type SyncDirResult = {
   name: string;
   sourceCount: number;
   upserted: number;
+  skipped: number;
   errors: string[];
 };
 
@@ -94,18 +95,25 @@ export const contentSync = inngest.createFunction(
           name: source.name,
           sourceCount: files.length,
           upserted: 0,
+          skipped: 0,
           errors: [],
         };
 
         for (const filePath of files) {
           try {
+            let action: string;
             if (source.extension === ".md") {
-              await upsertAdr(filePath);
+              action = await upsertAdr(filePath);
             } else if (source.extension === ".mdx") {
-              const upserted = await upsertPost(filePath);
-              if (!upserted) continue; // draft, skip count
+              action = await upsertPost(filePath);
+            } else {
+              continue;
             }
-            result.upserted++;
+            if (action === "skipped" || action === "draft") {
+              result.skipped++;
+            } else {
+              result.upserted++;
+            }
           } catch (err) {
             result.errors.push(`${basename(filePath)}: ${String(err)}`);
           }
@@ -118,13 +126,14 @@ export const contentSync = inngest.createFunction(
     });
 
     const totalUpserted = results.reduce((sum, r) => sum + r.upserted, 0);
+    const totalSkipped = results.reduce((sum, r) => sum + r.skipped, 0);
     const totalErrors = results.reduce((sum, r) => sum + r.errors.length, 0);
 
     // Log summary
     for (const r of results) {
-      console.log(`[content-sync] ${r.name}: ${r.upserted}/${r.sourceCount} upserted, ${r.errors.length} errors`);
+      console.log(`[content-sync] ${r.name}: ${r.upserted} written, ${r.skipped} unchanged, ${r.errors.length} errors (${r.sourceCount} sources)`);
     }
-    console.log(`[content-sync] done — ${totalUpserted} upserted, ${totalErrors} errors`);
+    console.log(`[content-sync] done — ${totalUpserted} written, ${totalSkipped} unchanged, ${totalErrors} errors`);
 
     // Notify gateway
     if (totalUpserted > 0 && gateway) {
@@ -155,11 +164,13 @@ export const contentSync = inngest.createFunction(
         metadata: {
           trigger: event.name,
           totalUpserted,
+          totalSkipped,
           totalErrors,
           content: results.map((r) => ({
             name: r.name,
             sourceCount: r.sourceCount,
             upserted: r.upserted,
+            skipped: r.skipped,
             errorCount: r.errors.length,
             errors: r.errors.slice(0, 5), // cap logged errors
           })),
@@ -170,11 +181,13 @@ export const contentSync = inngest.createFunction(
     return {
       status: "completed",
       totalUpserted,
+      totalSkipped,
       totalErrors,
       content: results.map((r) => ({
         name: r.name,
         sourceCount: r.sourceCount,
         upserted: r.upserted,
+        skipped: r.skipped,
         errors: r.errors,
       })),
     };

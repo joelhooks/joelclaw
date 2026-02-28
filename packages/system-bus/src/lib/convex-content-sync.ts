@@ -5,6 +5,7 @@
  * - content-sync Inngest function (incremental, after vault sync)
  * - scripts/sync-content-to-convex.ts (full sync, manual)
  */
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { ConvexHttpClient } from "convex/browser";
@@ -124,14 +125,20 @@ function getClient(): ConvexHttpClient {
 
 const upsertRef = (anyApi as any).contentIngest.upsertContent as FunctionReference<"mutation">;
 
+function contentHash(raw: string): string {
+  return createHash("sha256").update(raw).digest("hex");
+}
+
 /**
  * Upsert a single ADR file into Convex.
+ * Returns "inserted" | "updated" | "skipped".
  */
-export async function upsertAdr(filePath: string): Promise<void> {
+export async function upsertAdr(filePath: string): Promise<string> {
   if (!existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
   const slug = basename(filePath, extname(filePath));
   const number = slug.match(/^(\d+)/)?.[1] ?? "";
   const raw = readFileSync(filePath, "utf-8");
+  const hash = contentHash(raw);
   const { data, content } = matter(raw);
   const meta = data as Record<string, unknown>;
 
@@ -146,27 +153,30 @@ export async function upsertAdr(filePath: string): Promise<void> {
     description: asString(meta.description) ?? extractAdrDescription(content),
   };
 
-  await getClient().mutation(upsertRef, {
+  const result = await getClient().mutation(upsertRef, {
     resourceId: `adr:${slug}`,
     type: "adr" as const,
     fields,
     searchText: buildAdrSearchText(fields),
+    contentHash: hash,
   });
+  return result?.action ?? "updated";
 }
 
 /**
  * Upsert a single post (MDX) file into Convex. Skips drafts.
- * Returns true if upserted, false if skipped (draft).
+ * Returns "inserted" | "updated" | "skipped" | "draft" (skipped because draft).
  */
-export async function upsertPost(filePath: string): Promise<boolean> {
+export async function upsertPost(filePath: string): Promise<string> {
   if (!existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
   const slug = basename(filePath, extname(filePath));
   const raw = readFileSync(filePath, "utf-8");
   const { data, content } = matter(raw);
   const meta = data as Record<string, unknown>;
 
-  if (meta.draft === true) return false;
+  if (meta.draft === true) return "draft";
 
+  const hash = contentHash(raw);
   const tags = Array.isArray(meta.tags)
     ? meta.tags.filter((t: unknown): t is string => typeof t === "string")
     : [];
@@ -187,13 +197,14 @@ export async function upsertPost(filePath: string): Promise<boolean> {
     draft: meta.draft === true ? true : undefined,
   };
 
-  await getClient().mutation(upsertRef, {
+  const result = await getClient().mutation(upsertRef, {
     resourceId: `post:${slug}`,
     type: "post" as const,
     fields,
     searchText: buildPostSearchText(fields),
+    contentHash: hash,
   });
-  return true;
+  return result?.action ?? "updated";
 }
 
 /**
