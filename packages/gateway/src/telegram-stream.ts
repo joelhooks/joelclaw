@@ -25,7 +25,8 @@ const CURSOR = " ▌";
 
 // Minimum text length before we send the first message.
 // Avoids sending a tiny fragment that immediately gets edited.
-const MIN_FIRST_SEND = 20;
+// Keep low — finish() can await the initial send, so short responses still stream.
+const MIN_FIRST_SEND = 8;
 
 export type TelegramStreamOptions = {
   chatId: number;
@@ -56,6 +57,7 @@ type StreamState = {
   finished: boolean;
   toolStatus: string | undefined;
   sendingInitial: boolean; // guards against duplicate initial sends
+  initialSendPromise: Promise<void> | undefined; // tracks the first sendMessage flight
 };
 
 let activeStream: StreamState | undefined;
@@ -88,6 +90,7 @@ export function begin(options: TelegramStreamOptions): void {
     finished: false,
     toolStatus: undefined,
     sendingInitial: false,
+    initialSendPromise: undefined,
   };
 
   // Start typing indicator loop immediately
@@ -170,6 +173,12 @@ export async function finish(
     cleanup(state);
     activeStream = undefined;
     return false;
+  }
+
+  // Wait for the initial send to complete if it's in flight.
+  // This handles the race where finish() fires before sendMessage resolves.
+  if (state.initialSendPromise) {
+    await state.initialSendPromise;
   }
 
   // If we never sent an initial message, this wasn't really "streaming"
@@ -367,14 +376,16 @@ function flushEdit(state: StreamState): void {
     // Stop typing indicator once we start showing text
     stopTyping(state);
 
-    // Send plain text — no parse_mode during streaming
-    state.bot.api
+    // Send plain text — no parse_mode during streaming.
+    // Track the promise so finish() can await it if it arrives before we resolve.
+    state.initialSendPromise = state.bot.api
       .sendMessage(state.chatId, displayText, {
         ...(state.replyTo ? { reply_parameters: { message_id: state.replyTo } } : {}),
       })
       .then((msg) => {
         state.messageId = msg.message_id;
         state.sentMessageIds.push(msg.message_id);
+        console.log("[telegram-stream] initial message sent", { messageId: msg.message_id });
       })
       .catch((err) => {
         console.warn("[telegram-stream] initial send failed", {
