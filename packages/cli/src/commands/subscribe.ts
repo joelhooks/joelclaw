@@ -21,6 +21,99 @@ const COMMON_NEXT_ACTIONS: NextAction[] = [
   },
 ]
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)]
+}
+
+function extractRunIds(result: Record<string, unknown>): string[] {
+  const response = asRecord(result.response)
+  const runs = Array.isArray(result.runs) ? result.runs : []
+  const runIdsFromRuns = runs.flatMap((run) => {
+    const record = asRecord(run)
+    return record && typeof record.id === "string" ? [record.id] : []
+  })
+
+  return unique([
+    ...asStringArray(result.runIds),
+    ...asStringArray(result.run_ids),
+    ...asStringArray(response?.runIds),
+    ...asStringArray(response?.run_ids),
+    ...runIdsFromRuns,
+  ])
+}
+
+function extractEventIds(result: Record<string, unknown>): string[] {
+  const response = asRecord(result.response)
+  const responseIds = typeof result.event === "string"
+    ? asStringArray(response?.ids)
+    : []
+
+  return unique([
+    ...asStringArray(result.eventIds),
+    ...asStringArray(result.event_ids),
+    ...asStringArray(response?.eventIds),
+    ...asStringArray(response?.event_ids),
+    ...responseIds,
+  ])
+}
+
+function runsNextAction(): NextAction {
+  return {
+    command: "joelclaw runs [--count <count>]",
+    description: "Check feed-check run progress",
+    params: { count: { default: 5, description: "Number of runs" } },
+  }
+}
+
+function buildSubscribeCheckNextActions(
+  result: Record<string, unknown>,
+  hasScopedId: boolean,
+): NextAction[] {
+  if (!hasScopedId) {
+    return [
+      runsNextAction(),
+      ...COMMON_NEXT_ACTIONS,
+    ]
+  }
+
+  const runIds = extractRunIds(result)
+  const eventIds = extractEventIds(result)
+  const nextActions: NextAction[] = []
+
+  if (runIds[0]) {
+    nextActions.push({
+      command: "joelclaw run <run-id>",
+      description: "Check the run progress",
+      params: { "run-id": { value: runIds[0], required: true } },
+    })
+  }
+
+  if (eventIds[0]) {
+    nextActions.push({
+      command: "joelclaw event <event-id>",
+      description: "Inspect the request event and triggered runs",
+      params: { "event-id": { value: eventIds[0], required: true } },
+    })
+  }
+
+  if (!runIds[0]) {
+    nextActions.push(runsNextAction())
+  }
+
+  nextActions.push(...COMMON_NEXT_ACTIONS)
+  return nextActions
+}
+
 const subscribeList = Command.make("list", {}, () =>
   Effect.gen(function* () {
     const result = yield* executeCapabilityCommand<Record<string, unknown>>({
@@ -233,36 +326,10 @@ const subscribeCheck = Command.make(
         return
       }
 
-      const ids = ((result.right.response as { ids?: unknown } | undefined)?.ids)
-      const runIds = Array.isArray(ids) ? ids : []
-
-      if (id._tag === "Some") {
-        yield* Console.log(respond(
-          "subscribe check",
-          result.right,
-          [
-            {
-              command: "joelclaw run <run-id>",
-              description: "Check the run progress",
-              params: { "run-id": { value: typeof runIds[0] === "string" ? runIds[0] : "<run-id>", required: true } },
-            },
-            ...COMMON_NEXT_ACTIONS,
-          ],
-        ))
-        return
-      }
-
       yield* Console.log(respond(
         "subscribe check",
         result.right,
-        [
-          {
-            command: "joelclaw runs [--count <count>]",
-            description: "Check feed-check run progress",
-            params: { count: { default: 5, description: "Number of runs" } },
-          },
-          ...COMMON_NEXT_ACTIONS,
-        ],
+        buildSubscribeCheckNextActions(result.right, id._tag === "Some"),
       ))
     }),
 ).pipe(
@@ -347,3 +414,9 @@ export const subscribeCmd = Command.make("subscribe", {}, () =>
   Command.withDescription("Monitor blogs, repos, and pages for changes (ADR-0127)"),
   Command.withSubcommands([subscribeList, subscribeAdd, subscribeRemove, subscribeCheck, subscribeSummary]),
 )
+
+export const __subscribeTestUtils = {
+  extractRunIds,
+  extractEventIds,
+  buildSubscribeCheckNextActions,
+}
