@@ -145,6 +145,11 @@ function extractDescription(content: string): string {
   return "";
 }
 
+function extractDateFromContent(content: string): string {
+  const match = content.match(/\*\*Date\*\*\s*[:：]\s*(\d{4}-\d{2}-\d{2})/);
+  return match?.[1] ?? "";
+}
+
 function parseAdrFields(value: unknown, fallbackSlug?: string): ParsedAdrFields | null {
   const fields = asRecord(value);
 
@@ -156,8 +161,8 @@ function parseAdrFields(value: unknown, fallbackSlug?: string): ParsedAdrFields 
     asOptionalString(fields.title)
     ?? (content ? extractTitle({}, content) : undefined)
     ?? `ADR-${numberFromSlug(slug) || ""}`;
-  const date = toDateString(fields.date);
-  if (!title || !date) return null;
+  const date = toDateString(fields.date) || (content ? extractDateFromContent(content) : "") || "Unknown";
+  if (!title) return null;
 
   const number = asOptionalString(fields.number) ?? numberFromSlug(slug);
 
