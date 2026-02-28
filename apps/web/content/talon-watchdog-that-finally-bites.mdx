@@ -1,0 +1,145 @@
+---
+title: "Talon: the watchdog that finally bites"
+date: "2026-02-27T21:15:00"
+updated: "2026-02-27T21:15:00"
+description: "I replaced brittle bash watchdogs with a single Rust daemon that supervises the worker, probes the cluster, escalates failures, and actually tells me when things are on fire."
+type: "essay"
+tags: ["talon", "reliability", "k8s", "infrastructure", "rust"]
+---
+
+I had a watchdog running every few minutes for six days that recovered absolutely nothing.
+
+It looked busy. It logged errors. It failed quietly and repeatedly while the cluster sat there broken.
+
+That class of failure is unacceptable.
+
+So I replaced the pile of bash wrappers with a single daemon called **Talon**.
+
+## The problem wasn't one bug
+
+The failure that triggered this was launchd PATH drift. `limactl` wasn't available in the watchdog environment, so recovery never even started.
+
+But that wasn't the whole problem.
+
+There were multiple failure classes stacked on top of each other:
+
+- brittle env assumptions in launchd jobs
+- fixed-script recovery with no diagnosis path
+- no escalation when recovery failed
+- orphan Bun workers holding `:3111` after shell death
+- no durable state machine to reason about system health over time
+
+A shell script can be useful. A shell script pretending to be a control plane is a trap.
+
+## What Talon actually does
+
+Talon is a compiled Rust daemon running under `com.joel.talon`.
+
+It does two jobs:
+
+1. **Supervises the system-bus worker process** (spawn, health check, sync, restart, signal forwarding)
+2. **Runs infrastructure probes on a loop** and escalates when failure persists
+
+Right now it monitors 14 probes on my machine, including cluster readiness, Redis, worker HTTP health, flannel, dynamic launchd services, and dynamic HTTP services.
+
+It also persists state and probe history so I can inspect what happened instead of guessing.
+
+## Before and after
+
+| Area | Before | After |
+|---|---|---|
+| Recovery | fixed bash checklist | tiered state machine + service-specific heal |
+| Worker supervision | shell script + background bun | child-process supervisor with health loop |
+| Escalation | basically none | heal script → cloud agent → local agent → SOS |
+| Alerts | log noise | Telegram + iMessage fan-out at Tier 4 |
+| Dynamic services | edit script + restart | edit `services.toml` + hot-reload |
+| Operator visibility | grep random logs | `talon validate`, `talon --check`, `talon --status`, `/health` |
+
+The key change is simple: **failure now has a path**.
+
+## The escalation ladder
+
+Talon doesn't jump straight to panic.
+
+It escalates in tiers:
+
+1. run fast deterministic heal
+2. if that fails, spawn a cloud model through `pi`
+3. if cloud path is unavailable, fall back to local model
+4. if still critical past threshold, send SOS via Telegram + iMessage
+
+That gives me automation first, diagnosis second, and human interruption last.
+
+## Dynamic service probes are the practical win
+
+The most useful operational feature isn't fancy. It's hot-reload.
+
+I can add service monitors in `~/.joelclaw/talon/services.toml` and Talon picks them up without restart (mtime) or immediately with `SIGHUP`.
+
+```toml
+[launchd.gateway]
+label = "com.joel.gateway"
+critical = true
+timeout_secs = 5
+
+[launchd.voice_agent]
+label = "com.joel.voice-agent"
+critical = true
+timeout_secs = 5
+
+[http.voice_agent]
+url = "http://127.0.0.1:8081/"
+critical = true
+timeout_secs = 5
+```
+
+That one file turned Talon from "cluster watchdog" into "host watchdog".
+
+## Health as a first-class signal
+
+Talon exposes a local health endpoint:
+
+- `GET http://127.0.0.1:9999/health`
+
+Gateway heartbeat now consumes that signal and degrades when Talon is unhealthy or unreachable.
+
+That matters because watchdogs need watchdogs. If you can't observe the observer, you're back to vibes.
+
+## Small papercuts matter too
+
+There was a dumb but annoying one: piping Talon output into `head` could throw a broken-pipe panic.
+
+Fixed.
+
+Now these exit cleanly:
+
+```bash
+talon --check | head -n 1 >/dev/null
+talon --status | head -n 1 >/dev/null
+talon validate | head -n 1 >/dev/null
+```
+
+If the interface is stdout, stdout has to be boring and reliable.
+
+## Why I like this architecture
+
+I don't want "smart" infrastructure that hides what it did.
+
+I want infrastructure that's explicit, inspectable, and opinionated about failure.
+
+Talon gives me that:
+
+- explicit probes
+- explicit state transitions
+- explicit escalation boundaries
+- explicit local health surface
+
+No heroics. No mystery cron jobs. No fake green.
+
+Just a system that either recovers or tells me it's fucked.
+
+That's a win.
+
+---
+
+Related ADR: [ADR-0159 — Talon k8s watchdog daemon](/adrs/0159-talon-k8s-watchdog-daemon)
