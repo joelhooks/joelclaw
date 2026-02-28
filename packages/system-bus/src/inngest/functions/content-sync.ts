@@ -1,6 +1,7 @@
 import { readdirSync } from "node:fs";
 import { basename, extname, join } from "node:path";
-import { type ConvexSyncResult, upsertAdr, upsertPost } from "../../lib/convex-content-sync";
+import { removeContentResources } from "../../lib/convex";
+import { upsertAdr, upsertPost } from "../../lib/convex-content-sync";
 import { revalidateContentCache } from "../../lib/revalidate";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
@@ -41,6 +42,89 @@ type SyncDirResult = {
   errors: string[];
   writtenSlugs: string[];
 };
+
+export type ContentGapResult = {
+  name: string;
+  vaultCount: number;
+  convexCount: number;
+  missingInConvex: string[];
+  extraInConvex: string[];
+};
+
+export function isContentGapHealthy(gap: ContentGapResult): boolean {
+  if (gap.name === "adrs") {
+    return gap.missingInConvex.length === 0 && gap.extraInConvex.length === 0;
+  }
+  return gap.missingInConvex.length === 0;
+}
+
+export function isContentVerifyHealthy(gaps: readonly ContentGapResult[]): boolean {
+  return gaps.every(isContentGapHealthy);
+}
+
+function adrExtraSlugsFromGaps(gaps: readonly ContentGapResult[]): string[] {
+  return gaps.find((gap) => gap.name === "adrs")?.extraInConvex ?? [];
+}
+
+export function adrExtraResourceIdsFromGaps(gaps: readonly ContentGapResult[]): string[] {
+  return adrExtraSlugsFromGaps(gaps).map((slug) => `adr:${slug}`);
+}
+
+async function collectContentGaps(): Promise<ContentGapResult[]> {
+  const { ConvexHttpClient } = await import("convex/browser");
+  const { anyApi } = await import("convex/server");
+
+  const convexUrl =
+    process.env.CONVEX_URL?.trim() ||
+    process.env.NEXT_PUBLIC_CONVEX_URL?.trim() ||
+    "https://tough-panda-917.convex.cloud";
+  const client = new ConvexHttpClient(convexUrl);
+
+  const listRef = (anyApi as any).contentResources.listByType;
+
+  const report: ContentGapResult[] = [];
+
+  // Check ADRs
+  const adrFiles = listSourceFiles(
+    CONTENT_SOURCES[0].vaultDir,
+    CONTENT_SOURCES[0].extension,
+    CONTENT_SOURCES[0].skipFiles,
+  ).map((f) => basename(f, ".md"));
+  const adrFileSet = new Set(adrFiles);
+
+  const adrDocs = await client.query(listRef, { type: "adr", limit: 5000 });
+  const adrSlugs = new Set(
+    (Array.isArray(adrDocs) ? adrDocs : [])
+      .map((d: any) => d.fields?.slug)
+      .filter(Boolean) as string[],
+  );
+
+  report.push({
+    name: "adrs",
+    vaultCount: adrFiles.length,
+    convexCount: adrSlugs.size,
+    missingInConvex: adrFiles.filter((slug) => !adrSlugs.has(slug)),
+    extraInConvex: [...adrSlugs].filter((slug) => !adrFileSet.has(slug)),
+  });
+
+  // Posts are Convex-canonical (no Vault source). Just report count.
+  const postDocs = await client.query(listRef, { type: "article", limit: 5000 });
+  const postSlugs = new Set(
+    (Array.isArray(postDocs) ? postDocs : [])
+      .map((d: any) => d.fields?.slug)
+      .filter(Boolean) as string[],
+  );
+
+  report.push({
+    name: "posts",
+    vaultCount: postSlugs.size, // posts are Convex-canonical, no vault source
+    convexCount: postSlugs.size,
+    missingInConvex: [],
+    extraInConvex: [],
+  });
+
+  return report;
+}
 
 /**
  * Content sync — Vault → Convex direct.
@@ -234,68 +318,9 @@ export const contentVerify = inngest.createFunction(
   },
   { event: "content/verify.requested" },
   async ({ step }) => {
-    const gaps = await step.run("verify-content", async () => {
-      const { ConvexHttpClient } = await import("convex/browser");
-      const { anyApi } = await import("convex/server");
+    const gaps = await step.run("verify-content", collectContentGaps);
 
-      const convexUrl =
-        process.env.CONVEX_URL?.trim() ||
-        process.env.NEXT_PUBLIC_CONVEX_URL?.trim() ||
-        "https://tough-panda-917.convex.cloud";
-      const client = new ConvexHttpClient(convexUrl);
-
-      const listRef = (anyApi as any).contentResources.listByType;
-
-      const report: {
-        name: string;
-        vaultCount: number;
-        convexCount: number;
-        missingInConvex: string[];
-        extraInConvex: string[];
-      }[] = [];
-
-      // Check ADRs
-      const adrFiles = listSourceFiles(
-        CONTENT_SOURCES[0].vaultDir,
-        CONTENT_SOURCES[0].extension,
-        CONTENT_SOURCES[0].skipFiles,
-      ).map((f) => basename(f, ".md"));
-
-      const adrDocs = await client.query(listRef, { type: "adr", limit: 5000 });
-      const adrSlugs = new Set(
-        (Array.isArray(adrDocs) ? adrDocs : [])
-          .map((d: any) => d.fields?.slug)
-          .filter(Boolean) as string[],
-      );
-
-      report.push({
-        name: "adrs",
-        vaultCount: adrFiles.length,
-        convexCount: adrSlugs.size,
-        missingInConvex: adrFiles.filter((s) => !adrSlugs.has(s)),
-        extraInConvex: [...adrSlugs].filter((s) => !adrFiles.includes(s)),
-      });
-
-      // Posts are Convex-canonical (no Vault source). Just report count.
-      const postDocs = await client.query(listRef, { type: "article", limit: 5000 });
-      const postSlugs = new Set(
-        (Array.isArray(postDocs) ? postDocs : [])
-          .map((d: any) => d.fields?.slug)
-          .filter(Boolean) as string[],
-      );
-
-      report.push({
-        name: "posts",
-        vaultCount: postSlugs.size, // posts are Convex-canonical, no vault source
-        convexCount: postSlugs.size,
-        missingInConvex: [],
-        extraInConvex: [],
-      });
-
-      return report;
-    });
-
-    const healthy = gaps.every((g) => g.missingInConvex.length === 0);
+    const healthy = isContentVerifyHealthy(gaps);
 
     await step.run("otel-verify", async () => {
       await emitOtelEvent({
@@ -310,5 +335,77 @@ export const contentVerify = inngest.createFunction(
     });
 
     return { status: healthy ? "healthy" : "gaps_found", gaps };
+  },
+);
+
+/**
+ * Content prune — remove ADR records from Convex that no longer exist in Vault.
+ * Dry-run by default to prevent accidental deletes.
+ */
+export const contentPrune = inngest.createFunction(
+  {
+    id: "system/content-prune",
+    retries: 1,
+    concurrency: { limit: 1, key: "content-prune" },
+  },
+  { event: "content/prune.requested" },
+  async ({ event, step }) => {
+    const apply = event.data?.apply === true;
+    const source =
+      typeof event.data?.source === "string" && event.data.source.trim().length > 0
+        ? event.data.source.trim()
+        : "unknown";
+
+    const gaps = await step.run("collect-content-gaps", collectContentGaps);
+    const extraResourceIds = adrExtraResourceIdsFromGaps(gaps);
+
+    const removedResourceIds = apply
+      ? await step.run("remove-adr-extras", async () => {
+          if (extraResourceIds.length === 0) return [];
+          await removeContentResources(extraResourceIds);
+          return extraResourceIds;
+        })
+      : [];
+
+    if (removedResourceIds.length > 0) {
+      await step.run("revalidate-pruned-cache", async () => {
+        const tags = ["adrs", ...removedResourceIds];
+        return revalidateContentCache({ tags });
+      });
+    }
+
+    const status =
+      extraResourceIds.length === 0 ? "clean" : apply ? "pruned" : "dry_run";
+
+    await step.run("otel-prune", async () => {
+      await emitOtelEvent({
+        level: extraResourceIds.length === 0 ? "info" : "warn",
+        source: "worker",
+        component: "content-sync",
+        action: "content_prune.completed",
+        success: true,
+        metadata: {
+          source,
+          apply,
+          status,
+          totalExtras: extraResourceIds.length,
+          totalRemoved: removedResourceIds.length,
+          extraResourceIds,
+          removedResourceIds,
+          gaps,
+        },
+      });
+    });
+
+    return {
+      status,
+      apply,
+      source,
+      totalExtras: extraResourceIds.length,
+      totalRemoved: removedResourceIds.length,
+      extraResourceIds,
+      removedResourceIds,
+      gaps,
+    };
   },
 );

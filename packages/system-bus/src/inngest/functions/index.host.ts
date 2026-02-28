@@ -27,7 +27,7 @@ import { checkTriggers } from "./check-triggers";
 import { checkVaultSync } from "./check-vault-sync";
 import { contactEnrich } from "./contact-enrich";
 import { contentReviewApply } from "./content-review";
-import { contentSync, contentVerify } from "./content-sync";
+import { contentPrune, contentSync, contentVerify } from "./content-sync";
 import { dailyDigest } from "./daily-digest";
 import { discoveryCapture } from "./discovery-capture";
 import { docsIngest } from "./docs-ingest";
@@ -117,6 +117,7 @@ export const hostFunctionDefinitions = [
   reflect,
   contentSync,
   contentVerify,
+  contentPrune,
   contentReviewApply,
   discoveryCapture,
   xPost,

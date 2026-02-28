@@ -12,6 +12,10 @@ See [ADR-0168](../../docs/decisions/0168-convex-canonical-content-lifecycle.md) 
 ## Seeding
 
 ```bash
-joelclaw content seed    # full Vault → Convex sync
-joelclaw content verify  # diff Vault vs Convex, report gaps
+joelclaw content seed           # full Vault → Convex sync
+joelclaw content verify         # strict ADR diff: missing + extra in Convex
+joelclaw content prune          # dry-run ADR extras in Convex
+joelclaw content prune --apply  # remove ADR extras from Convex
 ```
+
+`verify` is intentionally strict for ADRs: any Convex-only ADR record (`extraInConvex`) is unhealthy drift per ADR-0168.

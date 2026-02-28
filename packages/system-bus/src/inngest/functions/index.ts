@@ -30,7 +30,7 @@ export { checkTriggers } from "./check-triggers";
 export { checkVaultSync } from "./check-vault-sync";
 export { contactEnrich } from "./contact-enrich";
 export { contentReviewApply } from "./content-review";
-export { contentSync, contentVerify } from "./content-sync";
+export { contentPrune, contentSync, contentVerify } from "./content-sync";
 export { dailyDigest } from "./daily-digest";
 export { discoveryCapture } from "./discovery-capture";
 export { docsIngest } from "./docs-ingest";
