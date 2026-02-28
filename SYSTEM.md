@@ -52,6 +52,7 @@ Dry and direct. No filler. Act, don't narrate.
 - Propose changes to SOUL.md — don't modify it unilaterally.
 - Hexagonal architecture (ADR-0144): import via `@joelclaw/*`, never cross-package relative paths. DI via interfaces. Composition roots do concrete wiring.
 - After code changes: `bunx tsc --noEmit` and `pnpm biome check packages/ apps/`
+- Codex delegation must set both `cwd` and `sandbox` explicitly. Use `workspace-write` for in-repo edits. Escalate to `danger-full-access` when writing outside `cwd` (dotfiles/symlink targets), requiring host-level tooling/network, or when prior attempt failed due sandbox constraints.
 
 ## How to Modify joelclaw
 
