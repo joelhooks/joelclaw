@@ -19,6 +19,7 @@ import {
   resolveProfile,
 } from "@joelclaw/inference-router";
 import { emitOtelEvent } from "../observability/emit";
+import { loadAgentDefinition } from "./agent-roster";
 import { type LlmUsage, parsePiJsonAssistant, traceLlmGeneration } from "./langfuse";
 
 type InferenceMetadata = Record<string, unknown>;
@@ -32,10 +33,15 @@ export type InferOptions = BuildRouteInput & {
   json?: boolean;
   system?: string;
   agent?: string;
+  thinking?: string;
+  tools?: string[];
+  extensions?: string[];
+  appendSystemPrompt?: string;
   component?: string;
   action?: string;
   print?: boolean;
   noTools?: boolean;
+  noExtensions?: boolean;
   env?: Record<string, string | undefined>;
   requestId?: string;
   policy?: Partial<InferencePolicy>;
@@ -107,20 +113,33 @@ async function runPiAttempt(
   promptPath: string,
   model: string,
   timeoutMs: number,
-  opts: Pick<InferOptions, "system" | "print" | "noTools" | "env">,
+  opts: Pick<
+    InferOptions,
+    "appendSystemPrompt" | "env" | "noExtensions" | "noTools" | "print" | "system" | "thinking" | "tools"
+  >,
 ): Promise<PiAttemptResult> {
-  const args: string[] = ["pi", "-p", "--no-session", "--no-extensions"];
+  const args: string[] = ["pi", "-p", "--no-session"];
+  if (opts.noExtensions ?? true) {
+    args.push("--no-extensions");
+  }
   if (opts.noTools) {
     args.push("--no-tools");
+  }
+  if (!opts.noTools && opts.tools?.length) {
+    args.push("--tools", opts.tools.join(","));
   }
   if (opts.print) {
     args.push("--print");
   }
   if (model) {
-    args.push("--model", model);
+    const thinking = normalizeText(opts.thinking);
+    args.push("--models", thinking ? `${model}:${thinking}` : model);
   }
   if (opts.system) {
     args.push("--system-prompt", opts.system);
+  }
+  if (opts.appendSystemPrompt) {
+    args.push("--append-system-prompt", opts.appendSystemPrompt);
   }
 
   const proc = Bun.spawn(args, {
@@ -171,13 +190,32 @@ function wrapError(error: unknown, attemptIndex: number, metadata?: string): PiA
 }
 
 export async function infer(prompt: string, opts: InferOptions = {}): Promise<InferResult> {
-  const profile = opts.agent ? resolveProfile(opts.agent) : undefined;
-  if (opts.agent && !profile) {
-    throw new Error(`infer: unknown agent profile "${opts.agent}"`);
+  const requestedAgentName = normalizeText(opts.agent);
+  const rosterAgent = requestedAgentName ? loadAgentDefinition(requestedAgentName) : null;
+  const profile = !rosterAgent && requestedAgentName ? resolveProfile(requestedAgentName) : undefined;
+  if (requestedAgentName && !rosterAgent && !profile) {
+    throw new Error(`infer: unknown agent "${requestedAgentName}"`);
   }
+
+  const agentSource: "direct" | "profile" | "roster" = rosterAgent
+    ? "roster"
+    : profile
+      ? "profile"
+      : "direct";
+  const agentName = rosterAgent?.name ?? profile?.name ?? requestedAgentName ?? "direct";
+  const agentDefinitionPath = rosterAgent?.filePath;
 
   const resolvedOpts: InferOptions = {
     ...profile?.defaults,
+    ...(rosterAgent
+      ? {
+          appendSystemPrompt: rosterAgent.systemPrompt,
+          extensions: rosterAgent.extensions,
+          model: rosterAgent.model,
+          thinking: rosterAgent.thinking,
+          tools: rosterAgent.tools,
+        }
+      : {}),
     ...opts,
   };
 
@@ -221,6 +259,18 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
     policy,
   );
 
+  const baseAgentMetadata = {
+    agentSource,
+    agentName,
+    ...(agentDefinitionPath ? { agentDefinitionPath } : {}),
+  };
+  const withAgentMetadata = (metadata: Record<string, unknown>, resolvedModel?: string) => ({
+    ...metadata,
+    ...baseAgentMetadata,
+    ...(resolvedModel ? { resolvedModel } : {}),
+  });
+  const routeResolvedModel = route.attempts[0]?.model ?? route.requestedModel ?? requestedModel;
+
   await emitOtelEvent({
     level: "info",
     source: "system-bus",
@@ -233,6 +283,8 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
       task: route.normalizedTask,
       requestedModel: route.requestedModel ?? requestedModel,
       attemptsPlanned: route.attempts.length,
+      ...baseAgentMetadata,
+      ...(routeResolvedModel ? { resolvedModel: routeResolvedModel } : {}),
       ...(resolvedOpts.metadata ?? {}),
       ...(profile
         ? {
@@ -275,6 +327,7 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
         provider: attempt.provider,
         reason: attempt.reason,
       })),
+      ...withAgentMetadata({}, attempts[0]?.model ?? routeResolvedModel),
       ...(resolvedOpts.metadata ?? {}),
       ...(profile
         ? {
@@ -299,9 +352,15 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
       const attemptStartedAt = Date.now();
       try {
         const piResult = await runPiAttempt(promptPath, attempt.model, timeoutMs, {
+          appendSystemPrompt: resolvedOpts.appendSystemPrompt,
+          noExtensions:
+            resolvedOpts.noExtensions ??
+            !(agentSource === "roster" && (resolvedOpts.extensions?.length ?? 0) > 0),
           system: resolvedOpts.system,
           print: resolvedOpts.print,
           noTools: resolvedOpts.noTools,
+          thinking: resolvedOpts.thinking,
+          tools: resolvedOpts.tools,
           env: resolvedOpts.env,
         });
 
@@ -318,14 +377,16 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
 
         const outputText = piResult.rawText.trim();
         const parsedData = resolvedOpts.json ? parseJsonFromText(outputText) : undefined;
+        const provider = (piResult.provider || attempt.provider) ?? undefined;
+        const model = (piResult.model || attempt.model) ?? undefined;
 
-        const metadata = {
+        const metadata = withAgentMetadata({
           requestId,
           policyVersion: route.policyVersion,
           task: route.normalizedTask,
           attemptIndex: attempt.attempt,
-          model: piResult.model || attempt.model,
-          provider: piResult.provider || attempt.provider,
+          model,
+          provider,
           fallbackUsed: attempt.attempt > 0,
           durationMs: piResult.durationMs,
           ...(resolvedOpts.metadata ?? {}),
@@ -336,10 +397,7 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
                 agentToolset: profile.builtinTools,
               }
             : {}),
-        };
-
-        const provider = (piResult.provider || attempt.provider) ?? undefined;
-        const model = (piResult.model || attempt.model) ?? undefined;
+        }, model);
 
         await emitOtelEvent({
           level: "info",
@@ -377,6 +435,8 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
             requestId,
             policyVersion: route.policyVersion,
             attemptIndex: attempt.attempt,
+            ...baseAgentMetadata,
+            ...(model ? { resolvedModel: model } : {}),
             ...(resolvedOpts.metadata ?? {}),
             ...(profile
               ? {
@@ -425,6 +485,8 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
             policyVersion: route.policyVersion,
             attemptIndex: attempt.attempt,
             fallbackRemaining: attemptsLeft,
+            ...baseAgentMetadata,
+            resolvedModel: attempt.model,
             ...(resolvedOpts.metadata ?? {}),
             ...(profile
               ? {
@@ -451,6 +513,8 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
             model: attempt.model,
             provider: attempt.provider,
             fallbackRemaining: attemptsLeft,
+            ...baseAgentMetadata,
+            resolvedModel: attempt.model,
             ...(resolvedOpts.metadata ?? {}),
           },
         });
@@ -478,6 +542,8 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
         task: route.normalizedTask,
         requestId,
         policyVersion: route.policyVersion,
+        ...baseAgentMetadata,
+        ...(attempts[attempts.length - 1]?.model ? { resolvedModel: attempts[attempts.length - 1]?.model } : {}),
         ...(resolvedOpts.metadata ?? {}),
         ...(profile
           ? {
