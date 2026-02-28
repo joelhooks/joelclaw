@@ -32,7 +32,7 @@ export const DEFAULT_CAPABILITY_CONFIG: Record<string, Omit<ResolvedCapabilityCo
   otel: { enabled: true, adapter: "typesense-otel", adapters: {} },
   recall: { enabled: true, adapter: "typesense-recall", adapters: {} },
   secrets: { enabled: true, adapter: "agent-secrets-cli", adapters: {} },
-  mail: { enabled: false, adapter: "mcp-agent-mail", adapters: {} },
+  mail: { enabled: true, adapter: "mcp-agent-mail", adapters: {} },
   deploy: { enabled: true, adapter: "scripted-deploy", adapters: {} },
   notify: { enabled: true, adapter: "gateway-redis", adapters: {} },
   heal: { enabled: true, adapter: "runbook-heal", adapters: {} },
