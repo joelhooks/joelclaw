@@ -849,6 +849,11 @@ const wsServer = Bun.serve({
 await writeFile(WS_PORT_FILE, `${wsServer.port}\n`);
 
 session.subscribe((event: any) => {
+  // Any model activity resets the fallback timeout (tool calls take time)
+  if (event.type === "message_start" || event.type === "message_update") {
+    fallbackController.onActivity();
+  }
+
   // Collect text deltas
   if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
     const delta = typeof event.assistantMessageEvent.delta === "string"
@@ -924,6 +929,7 @@ session.subscribe((event: any) => {
   }
 
   if (event.type === "tool_call") {
+    fallbackController.onActivity(); // model is alive, restart timeout
     broadcastWs({
       type: "tool_call",
       id: event.toolCallId,
@@ -938,6 +944,7 @@ session.subscribe((event: any) => {
   }
 
   if (event.type === "tool_result") {
+    fallbackController.onActivity(); // model is alive, restart timeout
     broadcastWs({
       type: "tool_result",
       id: event.toolCallId,

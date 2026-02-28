@@ -133,6 +133,21 @@ export class ModelFallbackController {
     }
   }
 
+  /**
+   * Called on any model activity (tool calls, tool results, message updates).
+   * Restarts the timeout watch without marking first token — the model is
+   * alive and working, just not emitting text yet. Without this, tool-heavy
+   * turns that exceed fallbackTimeoutMs trigger false fallbacks.
+   */
+  onActivity(): void {
+    if (this._firstTokenAt > 0) return; // text already flowing, no need
+    if (!this._timeoutTimer) return; // no active watch
+    if (this._active) return; // already on fallback
+
+    // Restart the timeout window — model is alive
+    this._startTimeoutWatch();
+  }
+
   /** Called on turn_end — prompt completed successfully. */
   onTurnEnd(): void {
     this._clearTimeoutWatch();
