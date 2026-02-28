@@ -70,7 +70,7 @@ launchd (com.joel.talon)
       │   ├─ Talos container running?
       │   ├─ k8s API reachable?
       │   ├─ Node Ready + schedulable?
-      │   ├─ Flannel daemonset ready?
+      │   ├─ Flannel healthy?
       │   ├─ Redis PONG?
       │   ├─ Inngest /health 200?
       │   ├─ Typesense /health ok?
@@ -136,7 +136,7 @@ Each probe is a subprocess with a timeout:
 | k8s-api | `kubectl get nodes` | 10s | Yes |
 | node-ready | `kubectl get nodes -o jsonpath=...` | 5s | Yes |
 | node-schedulable | Check for taints + cordon state | 5s | Yes |
-| flannel | `kubectl -n kube-system get daemonset kube-flannel -o jsonpath={.status.numberAvailable}/{.status.desiredNumberScheduled}` | 10s | No |
+| flannel | `kubectl get pods -n kube-system` + parse | 10s | No |
 | redis | `kubectl exec redis-0 -- redis-cli ping` | 5s | Yes |
 | inngest | `curl localhost:8288/health` | 5s | No |
 | typesense | `curl localhost:8108/health` | 5s | No |
@@ -171,7 +171,6 @@ TOML at `~/.config/talon/config.toml`:
 check_interval_secs = 60
 heal_script = "/Users/joel/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh"
 heal_timeout_secs = 90
-services_file = "~/.joelclaw/talon/services.toml"
 
 [worker]
 dir = "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus"
@@ -179,15 +178,12 @@ command = ["bun", "run", "src/serve.ts"]
 port = 3111
 health_endpoint = "/api/inngest"
 sync_endpoint = "/api/inngest"
-log_stdout = "~/.local/log/system-bus-worker.log"
-log_stderr = "~/.local/log/system-bus-worker.err"
-env_file = "~/.config/system-bus.env"
+log_stdout = "/Users/joel/.local/log/system-bus-worker.log"
+log_stderr = "/Users/joel/.local/log/system-bus-worker.err"
 drain_timeout_secs = 5
 health_interval_secs = 30
 health_failures_before_restart = 3
 restart_backoff_max_secs = 30
-startup_sync_delay_secs = 5
-http_timeout_secs = 5
 
 [escalation]
 agent_cooldown_secs = 600       # 10min between agent spawns
@@ -206,22 +202,6 @@ k8s_timeout_secs = 10
 service_timeout_secs = 5
 consecutive_failures_before_escalate = 3
 ```
-
-Service-specific monitors live in `~/.joelclaw/talon/services.toml`:
-
-```toml
-[launchd.voice_agent]
-label = "com.joel.voice-agent"
-critical = true
-timeout_secs = 5
-
-[http.voice_agent]
-url = "http://127.0.0.1:8081/"
-critical = true
-timeout_secs = 5
-```
-
-Talon hot-reloads `services.toml` on file mtime changes and supports immediate reload via `SIGHUP`.
 
 ### Agent Prompt Template
 
@@ -271,17 +251,15 @@ CONSTRAINTS:
 ### Affected paths
 
 - `~/Code/joelhooks/joelclaw/infra/talon/` — new Rust crate
-- `~/Code/joelhooks/joelclaw/infra/talon/src/main.rs` — daemon entry + watchdog loop/signal handling
+- `~/Code/joelhooks/joelclaw/infra/talon/src/main.rs` — daemon entry + tokio runtime
 - `~/Code/joelhooks/joelclaw/infra/talon/src/probes.rs` — health probe definitions
 - `~/Code/joelhooks/joelclaw/infra/talon/src/state.rs` — state machine
 - `~/Code/joelhooks/joelclaw/infra/talon/src/escalation.rs` — tier 1-4 handlers
 - `~/Code/joelhooks/joelclaw/infra/talon/src/worker.rs` — bun process supervisor (port cleanup, spawn, signal forwarding, crash recovery)
-- `~/Code/joelhooks/joelclaw/infra/talon/src/config.rs` — TOML config loading + dynamic service monitor parsing
-- `~/Code/joelhooks/joelclaw/infra/talon/services.default.toml` — template for dynamic service monitor config
+- `~/Code/joelhooks/joelclaw/infra/talon/src/config.rs` — TOML config loading
 - `~/Code/joelhooks/joelclaw/infra/launchd/com.joel.talon.plist` — launchd service (replaces com.joel.system-bus-worker AND com.joel.k8s-reboot-heal)
 - `~/Code/joelhooks/joelclaw/skills/k8s/SKILL.md` — reference talon
 - `~/.config/talon/config.toml` — runtime config
-- `~/.joelclaw/talon/services.toml` — runtime dynamic service monitors (launchd/http)
 - `~/.local/state/talon/` — state + logs
 
 ### Removed paths (on deploy)
@@ -302,10 +280,16 @@ cp target/release/talon ~/.local/bin/talon
 
 ```toml
 [dependencies]
-# intentionally empty
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
 ```
 
-Implementation is std-only (no tokio/serde/toml crates). Probes use subprocess commands (`curl`, `kubectl`, `docker`) and config/state parsing is hand-rolled. Keeps the binary small and removes dependency drift risk in launchd-recovery paths.
+No HTTP client needed — all probes are subprocess calls (curl, kubectl, etc.). Keeps the binary small and avoids TLS dependency complexity.
 
 ### Verification
 
@@ -330,11 +314,8 @@ Implementation is std-only (no tokio/serde/toml crates). Probes use subprocess c
 **General:**
 - [ ] Binary compiles for aarch64-apple-darwin, <5MB
 - [ ] State persists across daemon restart
-- [ ] `talon validate` parses and validates `~/.config/talon/config.toml` and `~/.joelclaw/talon/services.toml`
 - [ ] `talon --check` runs single probe cycle and exits (for manual/CI use)
 - [ ] `talon --status` prints current state + worker state + last probe results
-- [ ] Editing `~/.joelclaw/talon/services.toml` updates runtime probes without daemon restart (mtime-triggered reload)
-- [ ] `SIGHUP` triggers immediate service-probe reload without shutting down talon
 - [ ] `talon --worker-only` mode for testing worker supervision without infra probes
 
 ## Consequences
