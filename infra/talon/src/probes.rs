@@ -97,6 +97,22 @@ pub fn run_all_probes(config: &Config) -> Vec<ProbeResult> {
             env: vec![],
         },
         Probe {
+            name: "flannel".to_string(),
+            args: vec![
+                "kubectl".to_string(),
+                "-n".to_string(),
+                "kube-system".to_string(),
+                "get".to_string(),
+                "daemonset".to_string(),
+                "kube-flannel".to_string(),
+                "-o".to_string(),
+                "jsonpath={.status.numberAvailable}/{.status.desiredNumberScheduled}".to_string(),
+            ],
+            timeout: Duration::from_secs(config.probes.k8s_timeout_secs),
+            critical: false,
+            env: vec![],
+        },
+        Probe {
             name: "redis".to_string(),
             args: vec![
                 "kubectl".to_string(),
@@ -251,6 +267,7 @@ fn validate_probe_output(name: &str, raw_output: &str) -> bool {
         "talos_container" => output.eq_ignore_ascii_case("running"),
         "node_ready" => output == "True",
         "node_schedulable" => is_node_schedulable(output),
+        "flannel" => is_flannel_ready(output),
         "redis" => output.contains("PONG"),
         _ if name.starts_with("http:") => output.contains("200"),
         _ if name.starts_with("launchd:") => launchd_list_running(output),
@@ -278,6 +295,21 @@ fn is_node_schedulable(spec_output: &str) -> bool {
     }
 
     true
+}
+
+fn is_flannel_ready(status_output: &str) -> bool {
+    let trimmed = status_output.trim();
+    let Some((available, desired)) = trimmed.split_once('/') else {
+        return false;
+    };
+
+    let available = available.trim().parse::<u32>().ok();
+    let desired = desired.trim().parse::<u32>().ok();
+
+    match (available, desired) {
+        (Some(available), Some(desired)) => desired > 0 && available == desired,
+        _ => false,
+    }
 }
 
 fn collect_child_output(child: &mut std::process::Child) -> String {
@@ -309,5 +341,23 @@ fn collect_child_output(child: &mut std::process::Child) -> String {
     }
 
     format!("{stdout}\n{stderr}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_flannel_ready;
+
+    #[test]
+    fn flannel_probe_passes_when_available_matches_desired() {
+        assert!(is_flannel_ready("1/1"));
+        assert!(is_flannel_ready(" 2 / 2 "));
+    }
+
+    #[test]
+    fn flannel_probe_fails_when_unavailable_or_malformed() {
+        assert!(!is_flannel_ready("0/1"));
+        assert!(!is_flannel_ready("0/0"));
+        assert!(!is_flannel_ready("not-ready"));
+    }
 }
 

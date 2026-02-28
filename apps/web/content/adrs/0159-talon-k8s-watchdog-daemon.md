@@ -70,6 +70,7 @@ launchd (com.joel.talon)
       │   ├─ Talos container running?
       │   ├─ k8s API reachable?
       │   ├─ Node Ready + schedulable?
+      │   ├─ Flannel daemonset ready?
       │   ├─ Redis PONG?
       │   ├─ Inngest /health 200?
       │   ├─ Typesense /health ok?
@@ -135,7 +136,7 @@ Each probe is a subprocess with a timeout:
 | k8s-api | `kubectl get nodes` | 10s | Yes |
 | node-ready | `kubectl get nodes -o jsonpath=...` | 5s | Yes |
 | node-schedulable | Check for taints + cordon state | 5s | Yes |
-| flannel | `kubectl get pods -n kube-system` + parse | 10s | No |
+| flannel | `kubectl -n kube-system get daemonset kube-flannel -o jsonpath={.status.numberAvailable}/{.status.desiredNumberScheduled}` | 10s | No |
 | redis | `kubectl exec redis-0 -- redis-cli ping` | 5s | Yes |
 | inngest | `curl localhost:8288/health` | 5s | No |
 | typesense | `curl localhost:8108/health` | 5s | No |

@@ -58,6 +58,7 @@ talon (single binary)
 │   ├── Talos container running?
 │   ├── k8s API reachable?
 │   ├── Node Ready + schedulable?
+│   ├── Flannel daemonset ready?
 │   ├── Redis PONG?
 │   ├── Inngest /health 200?
 │   ├── Typesense /health ok?
@@ -92,6 +93,7 @@ any → healthy (all probes pass)
 | k8s_api | `kubectl get nodes` | Yes |
 | node_ready | kubectl jsonpath for Ready condition | Yes |
 | node_schedulable | kubectl jsonpath for spec (taints/cordon) | Yes |
+| flannel | `kubectl -n kube-system get daemonset kube-flannel -o jsonpath=...` | No |
 | redis | `kubectl exec redis-0 -- redis-cli ping` | Yes |
 | inngest | `curl localhost:8288/health` | No |
 | typesense | `curl localhost:8108/health` | No |
