@@ -171,15 +171,44 @@ const showNextActions = (name: string): readonly NextAction[] => [
   { command: "joelclaw agent list", description: "List all available agents" },
 ]
 
-const runNextActions = (taskId: string): readonly NextAction[] => [
-  { command: "joelclaw runs --count 5", description: "Check run progress" },
-  {
-    command: `joelclaw run ${taskId}`,
-    description: "View run details",
-    params: { "run-id": { value: taskId, description: "Inngest run ID (once available)" } },
-  },
-  { command: "joelclaw agent list", description: "List available agents" },
-]
+function extractInngestEventIds(result: unknown): string[] {
+  if (!result || typeof result !== "object") return []
+  const ids = (result as { ids?: unknown }).ids
+  if (!Array.isArray(ids)) return []
+  return ids
+    .filter((id): id is string => typeof id === "string")
+    .map((id) => id.trim())
+    .filter(Boolean)
+}
+
+const runNextActions = (eventIds: readonly string[]): readonly NextAction[] => {
+  const actions: NextAction[] = [
+    { command: "joelclaw runs --count 5", description: "Check run progress" },
+  ]
+
+  const eventId = eventIds.find((id) => id.trim().length > 0)
+  if (eventId) {
+    actions.push({
+      command: "joelclaw event <event-id>",
+      description: "Inspect emitted event and mapped function runs",
+      params: {
+        "event-id": {
+          value: eventId,
+          required: true,
+          description: "Inngest event ID returned by the send API",
+        },
+      },
+    })
+  } else {
+    actions.push({
+      command: "joelclaw events --prefix agent/task. --hours 1 --count 20",
+      description: "Find recent agent task events when event ID is unavailable",
+    })
+  }
+
+  actions.push({ command: "joelclaw agent list", description: "List available agents" })
+  return actions
+}
 
 const chainNextActions = (chainId: string): readonly NextAction[] => [
   { command: "joelclaw runs --count 5", description: "Check worker run progress" },
@@ -304,6 +333,7 @@ const runCmd = Command.make(
 
       const inngest = yield* Inngest
       const result = yield* inngest.send("agent/task.run", eventData)
+      const eventIds = extractInngestEventIds(result)
 
       yield* Console.log(
         respond(
@@ -315,9 +345,10 @@ const runCmd = Command.make(
             thinking: agent.thinking ?? "off",
             task,
             eventSent: true,
+            eventIds,
             inngestResult: result,
           },
-          runNextActions(taskId),
+          runNextActions(eventIds),
         ),
       )
     }),
@@ -424,3 +455,12 @@ export const agentCmd = Command.make("agent", {}, () =>
     )
   }),
 ).pipe(Command.withSubcommands([listCmd, showCmd, runCmd, chainCmd]))
+
+export const __agentTestUtils = {
+  parseChainStepsInput,
+  listNextActions,
+  showNextActions,
+  runNextActions,
+  chainNextActions,
+  extractInngestEventIds,
+}

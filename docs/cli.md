@@ -102,7 +102,8 @@ joelclaw agent
 
 Semantics:
 
-- `run` emits `agent/task.run` for single roster agent execution.
+- `run` emits `agent/task.run` for single roster agent execution and returns `taskId` plus `eventIds` from the Inngest send response.
+- `run` `next_actions` are truthful: use `joelclaw event <event-id>` when an event ID exists (or `joelclaw events ...` fallback), and never assume `taskId` is a run ID.
 - `chain` emits `agent/chain.run` with comma-separated sequential steps and `+` parallel groups (e.g. `scout,planner+reviewer,coder`).
 
 ## Vault command tree
