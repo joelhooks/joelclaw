@@ -106,6 +106,64 @@ joelclaw status
 slog write --action deploy --tool system-bus-worker --detail "deployed ${IMAGE}" --reason "sync worker changes"
 ```
 
+## Talon Rebuild (Adding Secrets / Changing Worker Supervision)
+
+Talon is a Rust binary that supervises the worker process. It leases secrets from `agent-secrets` and injects them as env vars. When adding new webhook secrets or changing supervision behavior:
+
+```bash
+# 1. Add secret to agent-secrets
+secrets add my_new_secret --value "the-secret-value"
+
+# 2. Update Talon source — add mapping to SECRET_MAPPINGS array
+#    File: ~/Code/system-bus-worker/infra/talon/src/worker.rs
+#    ("my_new_secret", "MY_NEW_SECRET_ENV_VAR"),
+
+# 3. Recompile (fast — ~3s incremental)
+export PATH="$HOME/.cargo/bin:$PATH"
+cd ~/Code/system-bus-worker/infra/talon
+cargo build --release
+
+# 4. Install + re-sign (macOS kills unsigned binaries)
+cp target/release/talon ~/.local/bin/talon
+codesign -fs - ~/.local/bin/talon
+
+# 5. Restart via launchd
+launchctl bootout gui/$(id -u)/com.joel.talon
+sleep 1
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.joel.talon.plist
+sleep 12
+
+# 6. Verify
+curl -s http://localhost:3111/ | jq '.status'
+curl -X PUT http://localhost:3111/api/inngest  # Force function sync
+```
+
+### Current SECRET_MAPPINGS (worker.rs)
+
+| Secret Name | Env Var |
+|------------|---------|
+| `claude_oauth_token` | `CLAUDE_CODE_OAUTH_TOKEN` |
+| `todoist_client_secret` | `TODOIST_CLIENT_SECRET` |
+| `todoist_api_token` | `TODOIST_API_TOKEN` |
+| `front_rules_webhook_secret` | `FRONT_WEBHOOK_SECRET` |
+| `front_api_token` | `FRONT_API_TOKEN` |
+| `vercel_webhook_secret` | `VERCEL_WEBHOOK_SECRET` |
+| `joelclaw_webhook_secret` | `JOELCLAW_WEBHOOK_SECRET` |
+
+### Talon Key Paths
+
+| What | Path |
+|------|------|
+| Binary | `~/.local/bin/talon` |
+| Source | `~/Code/system-bus-worker/infra/talon/src/` |
+| LaunchAgent plist | `~/Library/LaunchAgents/com.joel.talon.plist` |
+| Logs | `~/.local/log/talon.log` / `talon.err` |
+| ADR | `~/Vault/docs/decisions/0159-talon-worker-manager.md` |
+
+### Gotcha: `codesign -fs -` is required
+
+After `cargo build`, the binary has adhoc linker-signed signature. macOS launchd may SIGKILL:9 it. Re-signing with `codesign -fs -` fixes this.
+
 ## Common Gotchas
 
 | Problem | Cause | Fix |
