@@ -171,6 +171,7 @@ TOML at `~/.config/talon/config.toml`:
 check_interval_secs = 60
 heal_script = "/Users/joel/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh"
 heal_timeout_secs = 90
+services_file = "~/.joelclaw/talon/services.toml"
 
 [worker]
 dir = "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus"
@@ -178,17 +179,22 @@ command = ["bun", "run", "src/serve.ts"]
 port = 3111
 health_endpoint = "/api/inngest"
 sync_endpoint = "/api/inngest"
-log_stdout = "/Users/joel/.local/log/system-bus-worker.log"
-log_stderr = "/Users/joel/.local/log/system-bus-worker.err"
+log_stdout = "~/.local/log/system-bus-worker.log"
+log_stderr = "~/.local/log/system-bus-worker.err"
+env_file = "~/.config/system-bus.env"
 drain_timeout_secs = 5
 health_interval_secs = 30
 health_failures_before_restart = 3
 restart_backoff_max_secs = 30
+startup_sync_delay_secs = 5
+http_timeout_secs = 5
 
 [escalation]
 agent_cooldown_secs = 600       # 10min between agent spawns
-sos_cooldown_secs = 1800        # 30min between iMessage SOS
+sos_cooldown_secs = 1800        # 30min between SOS notifications
 sos_recipient = "joelhooks@gmail.com"
+sos_telegram_chat_id = "7718912466"
+sos_telegram_secret_name = "telegram_bot_token"
 critical_threshold_secs = 900   # 15min in critical before SOS
 
 [agent]
@@ -201,7 +207,31 @@ colima_timeout_secs = 5
 k8s_timeout_secs = 10
 service_timeout_secs = 5
 consecutive_failures_before_escalate = 3
+
+[health]
+enabled = true
+bind = "127.0.0.1:9999"
 ```
+
+Service-specific monitors live in `~/.joelclaw/talon/services.toml`:
+
+```toml
+[launchd.voice_agent]
+label = "com.joel.voice-agent"
+critical = true
+timeout_secs = 5
+
+[http.voice_agent]
+url = "http://127.0.0.1:8081/"
+critical = true
+timeout_secs = 5
+```
+
+Talon hot-reloads `services.toml` on file mtime changes and supports immediate reload via `SIGHUP`.
+
+Health endpoint:
+- `GET http://127.0.0.1:9999/health`
+- returns current Talon state, failed probe names/count, and worker restart count
 
 ### Agent Prompt Template
 
@@ -239,7 +269,7 @@ CONSTRAINTS:
 |-----------|---------------------|
 | k8s-reboot-heal.sh | Talon calls it as Tier 1. Script remains for standalone use. |
 | start.sh + com.joel.system-bus-worker | **Replaced.** Talon owns the worker process. Remove the worker launchd plist. |
-| ADR-0037 gateway watchdog | Complementary. Gateway watchdog monitors pi session liveness. Talon monitors infra. |
+| ADR-0037 gateway watchdog | Integrated. Gateway heartbeat now includes Talon `/health` signal in addition to local process/Redis checks. |
 | ADR-0138 self-healing | Complementary. Self-healing handles Inngest function failures. Talon handles infra. |
 | ADR-0158 worker-supervisor | **Superseded.** All worker supervision absorbed into talon. |
 | ADR-0090 O11y triage | Talon fires before o11y triage — triage needs a working cluster to run. |
@@ -250,16 +280,20 @@ CONSTRAINTS:
 
 ### Affected paths
 
-- `~/Code/joelhooks/joelclaw/infra/talon/` — new Rust crate
-- `~/Code/joelhooks/joelclaw/infra/talon/src/main.rs` — daemon entry + tokio runtime
-- `~/Code/joelhooks/joelclaw/infra/talon/src/probes.rs` — health probe definitions
-- `~/Code/joelhooks/joelclaw/infra/talon/src/state.rs` — state machine
-- `~/Code/joelhooks/joelclaw/infra/talon/src/escalation.rs` — tier 1-4 handlers
+- `~/Code/joelhooks/joelclaw/infra/talon/` — Rust watchdog crate
+- `~/Code/joelhooks/joelclaw/infra/talon/src/main.rs` — daemon entry + watchdog loop/signal handling
+- `~/Code/joelhooks/joelclaw/infra/talon/src/probes.rs` — health probe definitions (includes flannel)
+- `~/Code/joelhooks/joelclaw/infra/talon/src/state.rs` — state machine + probe history persistence
+- `~/Code/joelhooks/joelclaw/infra/talon/src/escalation.rs` — tier 1-4 handlers + service-specific heal + telegram/imessage SOS fan-out
 - `~/Code/joelhooks/joelclaw/infra/talon/src/worker.rs` — bun process supervisor (port cleanup, spawn, signal forwarding, crash recovery)
-- `~/Code/joelhooks/joelclaw/infra/talon/src/config.rs` — TOML config loading
+- `~/Code/joelhooks/joelclaw/infra/talon/src/config.rs` — TOML config loading + dynamic service monitor parsing + health endpoint config
+- `~/Code/joelhooks/joelclaw/infra/talon/src/health.rs` — tiny localhost health endpoint (`/health`)
+- `~/Code/joelhooks/joelclaw/infra/talon/config.default.toml` — default runtime config template
+- `~/Code/joelhooks/joelclaw/infra/talon/services.default.toml` — template for dynamic service monitor config
+- `~/Code/joelhooks/joelclaw/packages/gateway/src/heartbeat.ts` — gateway watchdog now incorporates Talon health signal
 - `~/Code/joelhooks/joelclaw/infra/launchd/com.joel.talon.plist` — launchd service (replaces com.joel.system-bus-worker AND com.joel.k8s-reboot-heal)
-- `~/Code/joelhooks/joelclaw/skills/k8s/SKILL.md` — reference talon
 - `~/.config/talon/config.toml` — runtime config
+- `~/.joelclaw/talon/services.toml` — runtime dynamic service monitors (launchd/http)
 - `~/.local/state/talon/` — state + logs
 
 ### Removed paths (on deploy)
@@ -280,16 +314,10 @@ cp target/release/talon ~/.local/bin/talon
 
 ```toml
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-toml = "0.8"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-chrono = { version = "0.4", features = ["serde"] }
+# intentionally empty
 ```
 
-No HTTP client needed — all probes are subprocess calls (curl, kubectl, etc.). Keeps the binary small and avoids TLS dependency complexity.
+Implementation is std-only (no tokio/serde/toml crates). Probes and integrations use subprocess commands (`curl`, `kubectl`, `docker`, `launchctl`, `secrets`) and hand-rolled parsing to keep recovery paths dependency-light.
 
 ### Verification
 
@@ -314,8 +342,12 @@ No HTTP client needed — all probes are subprocess calls (curl, kubectl, etc.).
 **General:**
 - [ ] Binary compiles for aarch64-apple-darwin, <5MB
 - [ ] State persists across daemon restart
+- [ ] `talon validate` parses and validates `~/.config/talon/config.toml` and `~/.joelclaw/talon/services.toml`
 - [ ] `talon --check` runs single probe cycle and exits (for manual/CI use)
 - [ ] `talon --status` prints current state + worker state + last probe results
+- [ ] Editing `~/.joelclaw/talon/services.toml` updates runtime probes without daemon restart (mtime-triggered reload)
+- [ ] `SIGHUP` triggers immediate service-probe reload without shutting down talon
+- [ ] `GET http://127.0.0.1:9999/health` returns Talon state JSON
 - [ ] `talon --worker-only` mode for testing worker supervision without infra probes
 
 ## Consequences
@@ -325,7 +357,7 @@ No HTTP client needed — all probes are subprocess calls (curl, kubectl, etc.).
 - **Eliminates the 6-day silence class of bug.** Talon compiles its PATH — no launchd env dependency.
 - **No more orphan bun processes.** Proper signal forwarding + pre-start port cleanup.
 - **Intelligent escalation.** Novel failures get diagnosed by an agent, not ignored by a bash script.
-- **Last resort channel.** iMessage SOS works even when the entire cloud stack is down — it's local Apple infrastructure.
+- **Last resort channels.** Tier 4 fans out to Telegram + iMessage, giving both cloud and local delivery paths.
 - **Local model fallback.** Ollama on M4 Pro can run 8B models fast enough for emergency diagnosis.
 - **Replaces dumb cron with a state machine.** No more "heal script runs every 3 minutes even when everything is fine."
 - **One binary, one plist.** Replaces 3 launchd services (worker, heal timer, future supervisor) with one. Fewer moving parts.
@@ -336,7 +368,7 @@ No HTTP client needed — all probes are subprocess calls (curl, kubectl, etc.).
 - Rust binary to maintain (but infrastructure daemons should be compiled, and this replaces 3 bash scripts)
 - Ollama adds ~500MB disk + model weight download (~5GB for 8B model)
 - Agent spawning is slow (~30s) compared to bash fixes (~5s) — but that's the point of tiering
-- iMessage SOS requires imsg-rpc daemon to be running (single point of failure for Tier 4)
+- Tier 4 now fans out to Telegram + iMessage, but each channel still has its own failure mode (network/API outage for Telegram, local imsg-rpc availability for iMessage)
 - Worker + infra in one process means a talon crash takes down both. Mitigated by: Rust stability, launchd KeepAlive, and the binary being simple.
 
 ### Non-goals
@@ -348,7 +380,7 @@ No HTTP client needed — all probes are subprocess calls (curl, kubectl, etc.).
 
 ### Follow-up work
 
-- Add Telegram notification as parallel to iMessage SOS
-- Expose a tiny HTTP status endpoint (e.g., `localhost:9999/health`) for remote monitoring
-- Wire talon health into the gateway watchdog (ADR-0037) as an additional signal
-- Consider supervising the gateway pi session as well (currently launchd-only)
+- [x] Add Telegram notification as parallel to iMessage SOS (shipped 2026-02-27)
+- [x] Expose a tiny HTTP status endpoint (`localhost:9999/health`) for remote monitoring (shipped 2026-02-27)
+- [x] Wire Talon health into the gateway watchdog (ADR-0037) as an additional signal (shipped 2026-02-27)
+- [ ] Consider supervising the gateway pi session as well (currently launchd-only)

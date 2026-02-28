@@ -23,6 +23,8 @@ http_timeout_secs = 5
 agent_cooldown_secs = 600
 sos_cooldown_secs = 1800
 sos_recipient = "joelhooks@gmail.com"
+sos_telegram_chat_id = "7718912466"
+sos_telegram_secret_name = "telegram_bot_token"
 critical_threshold_secs = 900
 
 [agent]
@@ -35,3 +37,7 @@ colima_timeout_secs = 5
 k8s_timeout_secs = 10
 service_timeout_secs = 5
 consecutive_failures_before_escalate = 3
+
+[health]
+enabled = true
+bind = "127.0.0.1:9999"

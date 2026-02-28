@@ -68,7 +68,7 @@ talon (single binary)
     ├── Tier 1: k8s-reboot-heal.sh (90s timeout)
     ├── Tier 2: pi agent (cloud model, 10min cooldown)
     ├── Tier 3: pi agent (Ollama local, network-down fallback)
-    └── Tier 4: iMessage SOS (15min critical threshold)
+    └── Tier 4: Telegram + iMessage SOS fan-out (15min critical threshold)
 ```
 
 ## State Machine
@@ -79,7 +79,7 @@ degraded → failed (3 consecutive failures)
 failed → investigating (agent spawned)
 investigating → healthy (probes pass again)
 investigating → critical (agent failed to fix)
-critical → sos (iMessage sent)
+critical → sos (SOS sent via Telegram + iMessage)
 any → healthy (all probes pass)
 ```
 
@@ -123,6 +123,20 @@ timeout_secs = 5
 - Talon hot-reloads service probes when `services.toml` mtime changes (no restart required)
 - `kill -HUP $(launchctl print gui/$(id -u)/com.joel.talon | awk '/pid =/{print $3; exit}')` forces immediate reload
 
+### Health endpoint
+
+- `GET http://127.0.0.1:9999/health` returns Talon state JSON
+- Gateway heartbeat consumes this as an additional watchdog signal
+- Configure via `[health]` in `~/.config/talon/config.toml`
+
+### SOS channel config
+
+- Tier 4 sends to both Telegram and iMessage
+- Telegram fields in `[escalation]`:
+  - `sos_telegram_chat_id`
+  - `sos_telegram_secret_name` (defaults to `telegram_bot_token`)
+- iMessage recipient remains `sos_recipient`
+
 ## Launchd Management
 
 **Talon is active as `com.joel.talon`:**
@@ -152,6 +166,9 @@ talon --check | python3 -m json.tool
 
 # Check state machine
 talon --status | python3 -m json.tool
+
+# Check health endpoint payload
+curl -sS http://127.0.0.1:9999/health | python3 -m json.tool
 
 # Check talon's own logs
 tail -20 ~/.local/state/talon/talon.log | python3 -m json.tool

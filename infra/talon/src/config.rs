@@ -22,6 +22,7 @@ pub struct Config {
     pub escalation: EscalationConfig,
     pub agent: AgentConfig,
     pub probes: ProbesConfig,
+    pub health: HealthConfig,
     pub http_service_probes: Vec<HttpServiceProbe>,
     pub launchd_service_probes: Vec<LaunchdServiceProbe>,
 }
@@ -49,6 +50,8 @@ pub struct EscalationConfig {
     pub agent_cooldown_secs: u64,
     pub sos_cooldown_secs: u64,
     pub sos_recipient: String,
+    pub sos_telegram_chat_id: String,
+    pub sos_telegram_secret_name: String,
     pub critical_threshold_secs: u64,
 }
 
@@ -65,6 +68,12 @@ pub struct ProbesConfig {
     pub k8s_timeout_secs: u64,
     pub service_timeout_secs: u64,
     pub consecutive_failures_before_escalate: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct HealthConfig {
+    pub enabled: bool,
+    pub bind: String,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +118,7 @@ impl Default for Config {
             escalation: EscalationConfig::default(),
             agent: AgentConfig::default(),
             probes: ProbesConfig::default(),
+            health: HealthConfig::default(),
             http_service_probes: builtin_http_service_probes(),
             launchd_service_probes: Vec::new(),
         }
@@ -146,6 +156,8 @@ impl Default for EscalationConfig {
             agent_cooldown_secs: 600,
             sos_cooldown_secs: 1800,
             sos_recipient: "joelhooks@gmail.com".to_string(),
+            sos_telegram_chat_id: "7718912466".to_string(),
+            sos_telegram_secret_name: "telegram_bot_token".to_string(),
             critical_threshold_secs: 900,
         }
     }
@@ -169,6 +181,15 @@ impl Default for ProbesConfig {
             k8s_timeout_secs: 10,
             service_timeout_secs: 5,
             consecutive_failures_before_escalate: 3,
+        }
+    }
+}
+
+impl Default for HealthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            bind: "127.0.0.1:9999".to_string(),
         }
     }
 }
@@ -332,6 +353,8 @@ http_timeout_secs = 5
 agent_cooldown_secs = 600
 sos_cooldown_secs = 1800
 sos_recipient = "joelhooks@gmail.com"
+sos_telegram_chat_id = "7718912466"
+sos_telegram_secret_name = "telegram_bot_token"
 critical_threshold_secs = 900
 
 [agent]
@@ -344,6 +367,10 @@ colima_timeout_secs = 5
 k8s_timeout_secs = 10
 service_timeout_secs = 5
 consecutive_failures_before_escalate = 3
+
+[health]
+enabled = true
+bind = "127.0.0.1:9999"
 "#;
     content.to_string()
 }
@@ -420,6 +447,12 @@ fn apply_toml_overrides(config: &mut Config, raw: &str) -> Result<(), DynError> 
             ("escalation", "sos_recipient") => {
                 config.escalation.sos_recipient = parse_toml_string(value)?
             }
+            ("escalation", "sos_telegram_chat_id") => {
+                config.escalation.sos_telegram_chat_id = parse_toml_string(value)?
+            }
+            ("escalation", "sos_telegram_secret_name") => {
+                config.escalation.sos_telegram_secret_name = parse_toml_string(value)?
+            }
             ("escalation", "critical_threshold_secs") => {
                 config.escalation.critical_threshold_secs = parse_toml_int(value, line_number + 1)?
             }
@@ -443,6 +476,11 @@ fn apply_toml_overrides(config: &mut Config, raw: &str) -> Result<(), DynError> 
                 config.probes.consecutive_failures_before_escalate =
                     parse_toml_int(value, line_number + 1)? as u32
             }
+
+            ("health", "enabled") => {
+                config.health.enabled = parse_toml_bool(value, line_number + 1)?
+            }
+            ("health", "bind") => config.health.bind = parse_toml_string(value)?,
             _ => {}
         }
     }

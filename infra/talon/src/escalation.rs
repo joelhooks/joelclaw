@@ -201,9 +201,11 @@ pub fn run_sos(
         "🚨 TALON SOS: k8s cluster down, all recovery failed. Failed probes: {failed_list}. SSH to panda and investigate."
     );
 
-    log::error("sending SOS escalation via imsg/osascript");
+    log::error("sending SOS escalation via telegram + imsg/osascript");
 
-    let (imsg_success, _) = run_process(
+    let telegram_success = send_telegram_sos(config, &message);
+
+    let (imsg_success, imsg_output) = run_process(
         "imsg",
         &[
             "send",
@@ -218,35 +220,116 @@ pub fn run_sos(
     )
     .unwrap_or((false, "imsg unavailable".to_string()));
 
-    if imsg_success {
-        state.last_sos_time = Some(now);
-        return Ok(TierOutcome::Fixed);
+    let mut delivered = telegram_success || imsg_success;
+
+    if !imsg_success {
+        let script = format!(
+            "tell application \"Messages\" to send \"{}\" to buddy \"{}\"",
+            escape_applescript(&message),
+            escape_applescript(&config.escalation.sos_recipient)
+        );
+
+        let (osa_success, osa_output) = run_process(
+            "osascript",
+            &["-e", &script],
+            &[],
+            Duration::from_secs(20),
+            None,
+        )
+        .unwrap_or((false, "osascript unavailable".to_string()));
+
+        if osa_success {
+            delivered = true;
+        } else {
+            log::warn_fields(
+                "iMessage SOS delivery failed",
+                &[
+                    ("imsg", truncate(&imsg_output, 1000)),
+                    ("osascript", truncate(&osa_output, 1000)),
+                ],
+            );
+        }
     }
 
-    let script = format!(
-        "tell application \"Messages\" to send \"{}\" to buddy \"{}\"",
-        escape_applescript(&message),
-        escape_applescript(&config.escalation.sos_recipient)
-    );
-
-    let (osa_success, osa_output) = run_process(
-        "osascript",
-        &["-e", &script],
-        &[],
-        Duration::from_secs(20),
-        None,
-    )
-    .unwrap_or((false, "osascript unavailable".to_string()));
-
-    if osa_success {
+    if delivered {
         state.last_sos_time = Some(now);
         Ok(TierOutcome::Fixed)
     } else {
-        log::error_fields(
-            "SOS escalation failed",
-            &[("error", truncate(&osa_output, 1000))],
-        );
+        log::error("SOS escalation failed across all channels");
         Ok(TierOutcome::Failed)
+    }
+}
+
+fn send_telegram_sos(config: &Config, message: &str) -> bool {
+    let chat_id = config.escalation.sos_telegram_chat_id.trim();
+    if chat_id.is_empty() {
+        log::warn("telegram SOS skipped: sos_telegram_chat_id is empty");
+        return false;
+    }
+
+    let secret_name = config.escalation.sos_telegram_secret_name.trim();
+    if secret_name.is_empty() {
+        log::warn("telegram SOS skipped: sos_telegram_secret_name is empty");
+        return false;
+    }
+
+    let (lease_success, lease_output) = run_process(
+        "secrets",
+        &["lease", secret_name, "--ttl", "30m", "--raw"],
+        &[],
+        Duration::from_secs(10),
+        None,
+    )
+    .unwrap_or((false, "secrets CLI unavailable".to_string()));
+
+    if !lease_success {
+        log::warn_fields(
+            "telegram SOS skipped: failed to lease bot token",
+            &[("error", truncate(&lease_output, 300))],
+        );
+        return false;
+    }
+
+    let token = lease_output.trim();
+    if token.is_empty() {
+        log::warn("telegram SOS skipped: leased token was empty");
+        return false;
+    }
+
+    let url = format!("https://api.telegram.org/bot{token}/sendMessage");
+    let body = format!(
+        "{{\"chat_id\":\"{}\",\"text\":\"{}\",\"disable_notification\":false}}",
+        json_escape(chat_id),
+        json_escape(message)
+    );
+
+    let (success, output) = run_process(
+        "curl",
+        &[
+            "-sS",
+            "-X",
+            "POST",
+            &url,
+            "-H",
+            "Content-Type: application/json",
+            "--data-binary",
+            "@-",
+        ],
+        &[],
+        Duration::from_secs(15),
+        Some(&body),
+    )
+    .unwrap_or((false, "curl unavailable".to_string()));
+
+    if success && output.contains("\"ok\":true") {
+        log::info("telegram SOS delivered");
+        true
+    } else {
+        log::warn_fields(
+            "telegram SOS delivery failed",
+            &[("error", truncate(&output, 500))],
+        );
+        false
     }
 }
 
@@ -478,6 +561,24 @@ fn collect_child_output(child: &mut std::process::Child) -> String {
 
 fn escape_applescript(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn json_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push(' '),
+            c => out.push(c),
+        }
+    }
+
+    out
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {

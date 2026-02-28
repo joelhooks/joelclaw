@@ -1,5 +1,6 @@
 mod config;
 mod escalation;
+mod health;
 mod log;
 mod probes;
 mod state;
@@ -92,6 +93,11 @@ fn main() -> Result<(), DynError> {
         return worker::run_worker_supervisor(&config);
     }
 
+    if config.health.enabled {
+        health::publish_state(&state::load_state()?);
+        health::start(config.health.bind.clone());
+    }
+
     log::info("starting talon watchdog");
 
     let worker_config = config.clone();
@@ -121,6 +127,7 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
         None
     };
     let mut service_tracker = config.service_probe_tracker()?;
+    health::publish_state(&current_state);
 
     loop {
         if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
@@ -171,6 +178,7 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
             current_state.consecutive_failures = 0;
             critical_since = None;
             state::transition(&mut current_state, "Healthy");
+            health::publish_state(&current_state);
             state::save_state(&current_state)?;
             sleep_with_shutdown(config.check_interval_secs);
             continue;
@@ -187,6 +195,7 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
                 >= config.probes.consecutive_failures_before_escalate;
 
         if !should_escalate {
+            health::publish_state(&current_state);
             state::save_state(&current_state)?;
             sleep_with_shutdown(config.check_interval_secs);
             continue;
@@ -218,6 +227,7 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
                     current_state.consecutive_failures = 0;
                     critical_since = None;
                     state::transition(&mut current_state, "Healthy");
+                    health::publish_state(&current_state);
                     state::save_state(&current_state)?;
                     sleep_with_shutdown(config.check_interval_secs);
                     continue;
@@ -277,6 +287,7 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
             }
         }
 
+        health::publish_state(&current_state);
         state::save_state(&current_state)?;
         sleep_with_shutdown(config.check_interval_secs);
     }

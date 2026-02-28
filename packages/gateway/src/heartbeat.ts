@@ -5,10 +5,11 @@
  * Health checks are handled by Inngest check/* functions (ADR-0062)
  * which push to gateway only when actionable.
  *
- * This module only:
+ * This module:
  * 1. Writes a tripwire file so launchd can detect a dead gateway
  * 2. Runs a watchdog alarm if tripwire goes stale
- * 3. Flushes batched event digests hourly
+ * 3. Emits a local health snapshot + Talon health signal (localhost)
+ * 4. Flushes batched event digests hourly
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
@@ -21,6 +22,8 @@ const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const THIRTY_MINUTES_MS = 30 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
+const TALON_HEALTH_URL = process.env.TALON_HEALTH_URL ?? "http://127.0.0.1:9999/health";
+const TALON_HEALTH_TIMEOUT_MS = Number.parseInt(process.env.TALON_HEALTH_TIMEOUT_MS ?? "1200", 10) || 1200;
 
 const HEARTBEAT_CHECKLIST_PATH = `${homedir()}/Vault/HEARTBEAT.md`;
 const TRIPWIRE_DIR = "/tmp/joelclaw";
@@ -41,16 +44,69 @@ async function writeTripwire(ts: number): Promise<void> {
   await writeFile(TRIPWIRE_PATH, `export const lastHeartbeatTs = ${ts};\n`);
 }
 
+type LocalHealth = {
+  redis: boolean;
+  session: boolean;
+  queueDepth: number;
+};
+
+type TalonHealth = {
+  ok: boolean;
+  reachable: boolean;
+  state?: string;
+  failedProbeCount?: number;
+  error?: string;
+};
+
 /**
- * Lightweight local health snapshot — no tool calls, no API hits.
- * Checks in-process state only. Used for OTEL and watchdog decisions.
+ * Lightweight gateway health snapshot.
+ * Local checks stay in-process; Talon check is localhost-only and times out fast.
  */
-function getLocalHealth(): { healthy: boolean; redis: boolean; session: boolean; queueDepth: number } {
+function getLocalHealth(): LocalHealth {
   const failures = getConsecutiveFailures();
   const queueDepth = getQueueDepth();
   const redis = isRedisHealthy();
   const session = failures < 3;
-  return { healthy: redis && session && queueDepth <= 2, redis, session, queueDepth };
+  return { redis, session, queueDepth };
+}
+
+async function getTalonHealth(): Promise<TalonHealth> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TALON_HEALTH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(TALON_HEALTH_URL, {
+      method: "GET",
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      return { ok: false, reachable: true, error: `http_${response.status}` };
+    }
+
+    const payload = await response.json() as Record<string, unknown>;
+    const ok = payload.ok === true;
+    const state = typeof payload.state === "string" ? payload.state : undefined;
+    const failedProbeCount = typeof payload.failed_probe_count === "number"
+      ? payload.failed_probe_count
+      : undefined;
+
+    return {
+      ok,
+      reachable: true,
+      state,
+      failedProbeCount,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      reachable: false,
+      error: message,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function tickHeartbeat(): Promise<void> {
@@ -74,22 +130,33 @@ async function tickHeartbeat(): Promise<void> {
     });
   }
 
-  // Emit local health snapshot (no tool calls)
-  const health = getLocalHealth();
+  const local = getLocalHealth();
+  const talon = await getTalonHealth();
+
+  const healthy = local.redis
+    && local.session
+    && local.queueDepth <= 2
+    && talon.ok;
+
   void emitGatewayOtel({
-    level: health.healthy ? "debug" : "warn",
+    level: healthy ? "debug" : "warn",
     component: "heartbeat",
     action: "heartbeat.tick",
-    success: health.healthy,
+    success: healthy,
     metadata: {
-      redis: health.redis ? "ok" : "degraded",
-      session: health.session ? "ok" : "degraded",
-      queueDepth: health.queueDepth,
+      redis: local.redis ? "ok" : "degraded",
+      session: local.session ? "ok" : "degraded",
+      queueDepth: local.queueDepth,
+      talon: talon.ok ? "ok" : talon.reachable ? "degraded" : "failed",
+      talonState: talon.state ?? "unknown",
+      talonFailedProbeCount: talon.failedProbeCount ?? -1,
+      talonHealthUrl: TALON_HEALTH_URL,
+      ...(talon.error ? { talonError: talon.error } : {}),
     },
   });
 
-  if (!health.healthy) {
-    console.warn("[heartbeat] local health degraded", health);
+  if (!healthy) {
+    console.warn("[heartbeat] health degraded", { local, talon });
   }
 }
 
