@@ -27,50 +27,36 @@ These are joelclaw's foundational rules. They govern every decision.
 
 1. **Single canonical sources.** Never copy files across boundaries. Symlink. One source of truth per concept. Copy drift is a bug class.
 
-2. **Silent failures are bugs.** Every pipeline step emits structured telemetry via `joelclaw otel`. If something can fail silently, instrument it or it will bite you. Observability is not optional.
+2. **Silent failures are bugs.** Every pipeline step must be observable. If something can fail silently, instrument it or it will bite you. Use the **observe** capability.
 
-3. **Inngest is the backbone.** All durable work flows through Inngest. Retries are sacred — `retries: 0` is NEVER acceptable. Event-driven, step-memoized, idempotent by default. Manage via `joelclaw runs`, `joelclaw send`, `joelclaw inngest`.
+3. **Inngest is the backbone.** All durable work flows through Inngest. Retries are sacred — `retries: 0` is NEVER acceptable. Event-driven, step-memoized, idempotent by default.
 
-4. **CLI-first operations.** The `joelclaw` CLI is the primary operator interface for everything — events, runs, logs, search, memory, secrets, mail, deploy, gateway. Agent-first design: JSON always, HATEOAS `next_actions` in every response. If the CLI crashes, that's the highest priority fix.
+4. **CLI-first operations.** The `joelclaw` CLI is the primary operator interface. Agent-first design: JSON always, HATEOAS `next_actions` in every response. If the CLI crashes, that's the highest priority fix.
 
 5. **Skills are institutional memory.** Canonical source is `joelclaw/skills/` in the repo, git-tracked. When operational reality changes, update the relevant skill immediately. Stale skills produce stale agent work.
 
-6. **Memory captures patterns, not noise.** Every session should leave the system smarter. Durable patterns go in skills. Semantic search via `joelclaw recall`. Transient context stays ephemeral.
+6. **Memory captures patterns, not noise.** Every session should leave the system smarter. Durable patterns go in skills. Use **recall** for semantic search. Transient context stays ephemeral.
 
 7. **Gateway is triage, not implementation.** The gateway orchestrates and delegates. It does not write code. Strict role boundaries between interfaces (voice/Telegram/pi) and specialists (coder/researcher/writer).
 
-8. **Agent coordination via mail.** Agents communicate through `joelclaw mail` — identity registration, messaging, file reservations. This prevents edit conflicts when multiple agents work the same repo. Designed to evolve toward AT Protocol and PDS-backed agent communication.
+8. **Agent coordination via mail.** Agents communicate through **mail** — identity registration, messaging, file reservations. This prevents edit conflicts when multiple agents work the same repo. Designed to evolve toward AT Protocol and PDS-backed agent communication.
 
-9. **Never expose secrets.** No secrets in vault, repos, or version-controlled files. Use `joelclaw secrets` for all credential access. Leases with TTL, audit trail.
+9. **Never expose secrets.** No secrets in vault, repos, or version-controlled files. Use **secrets** for all credential access. Leases with TTL, audit trail.
 
-10. **Explicit deploy workflows.** No magic. Deploy via `joelclaw deploy`. Scripts are scripted, logged, and verifiable.
+10. **Explicit deploy workflows.** No magic. Use **deploy** for scripted, logged, verifiable deployments.
 
-## The joelclaw CLI
+## System Capabilities
 
-The CLI is how agents operate this system. Every subsystem is a subcommand.
+These are the platform capabilities available to agents. They may surface as registered tools, CLI commands, or both — the interface varies by agent context, but the capabilities are the same.
 
-```
-joelclaw status                        # Health check (server, worker, k8s)
-joelclaw runs [--count N] [--hours H]  # Recent Inngest runs
-joelclaw run <run-id>                  # Step trace for a run
-joelclaw send <event> [-d JSON]        # Send Inngest event
-joelclaw logs worker|errors|server     # Service logs
-joelclaw otel list|search|stats        # Observability / telemetry
-joelclaw recall <query>                # Semantic memory search
-joelclaw secrets lease|status|revoke   # Credential management (TTL, audit)
-joelclaw mail send|read|reserve|release # Agent coordination + file reservation
-joelclaw deploy worker|web|cli         # Explicit deploy workflows
-joelclaw subscribe list|add|remove     # Feed subscriptions
-joelclaw gateway status|events|test    # Gateway operations
-joelclaw loop start|status|cancel      # Agent coding loops
-joelclaw discover <url> [-c context]   # Capture discovery
-joelclaw inngest status|restart-worker # Inngest management
-```
-
-Log every operational action:
-```
-slog write --action <verb> --tool <tool> --detail "..." --reason "..."
-```
+- **observe** — Emit and query structured telemetry. Every pipeline step must be observable. Search events, aggregate stats, check for silent failures.
+- **recall** — Semantic search across agent memory. Find past decisions, debugging insights, operational patterns. The system gets smarter when you feed it.
+- **mail** — Send and receive messages between agents. Register identity, reserve files to prevent edit conflicts, release when done. Evolves toward AT Protocol / PDS-backed communication.
+- **secrets** — Lease credentials with TTL and audit trail. Never hardcode tokens or keys. Every lease is logged.
+- **deploy** — Trigger explicit, logged, verifiable deployments. No magic — every deploy is scripted and auditable.
+- **notify** — Push alerts and reports to the gateway for human delivery. Use when something needs human attention.
+- **heal** — Detect and fix system issues autonomously. All fixes must be revertable (git commits) and the operator must be notified.
+- **log** — Write structured entries to the system log. Log deploys, config changes, debug findings, service restarts. Bias toward logging — you can't filter nothing into something later.
 
 ## Non-Negotiable
 
