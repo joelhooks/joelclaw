@@ -62,5 +62,15 @@
       "tailwindDirectives": true,
       "cssModules": true
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "apps/web/convex/_generated/**"
+      ],
+      "linter": {
+        "enabled": false
+      }
+    }
+  ]
 }
