@@ -16,21 +16,23 @@ export function FeedbackStatus({ resourceId }: FeedbackStatusProps) {
   if (processingCount === 0) return null;
 
   return (
-    <div className="mx-auto mb-4 w-full max-w-2xl rounded-md border border-amber-400/40 bg-amber-950/90 px-4 py-3 text-amber-100 shadow-lg backdrop-blur">
-      <div className="flex items-center gap-2 text-sm font-mono">
-        <span className="relative inline-flex h-2.5 w-2.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-300/70" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-200" />
-        </span>
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        <span className="animate-pulse">
-          🔄 Agent reviewing your feedback — comments paused until complete
-        </span>
+    <div className="pointer-events-none fixed inset-x-0 top-20 z-50 mx-auto w-full max-w-2xl px-4">
+      <div className="rounded-md border border-amber-400/40 bg-amber-950/90 px-4 py-3 text-amber-100 shadow-lg backdrop-blur">
+        <div className="flex items-center gap-2 text-sm font-mono">
+          <span className="relative inline-flex h-2.5 w-2.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-300/70" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-200" />
+          </span>
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <span className="animate-pulse">
+            🔄 Agent reviewing your feedback — comments paused until complete
+          </span>
+        </div>
+        <p className="mt-0.5 text-[11px] text-amber-200/80">
+          Processing {processingCount} feedback item
+          {processingCount === 1 ? "" : "s"}.
+        </p>
       </div>
-      <p className="mt-0.5 text-[11px] text-amber-200/80">
-        Processing {processingCount} feedback item
-        {processingCount === 1 ? "" : "s"}.
-      </p>
     </div>
   );
 }

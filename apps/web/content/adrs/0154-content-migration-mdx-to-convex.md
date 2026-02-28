@@ -224,6 +224,20 @@ The `.mdx` files in `apps/web/content/` become:
 
 New articles are created in Convex directly (via dashboard, API, or agent). The MDX files can stay in the repo as archival artifacts but are not part of the build.
 
+## Implementation Status
+
+Shipped (2026-02-27):
+- `apps/web/lib/posts.ts` reads Convex as canonical source and only permits filesystem fallback behind explicit dev flag `JOELCLAW_ALLOW_FILESYSTEM_POSTS_FALLBACK=1`.
+- `app/api/revalidate/route.ts` accepts single or multiple tags/paths (`tag`, `tags`, `path`, `paths`).
+- `packages/system-bus/src/inngest/functions/content-review.ts` revalidates article tags plus homepage/feed paths after content updates.
+
+Stability hardening (2026-02-28):
+- `apps/web/lib/posts.ts` now returns runtime diagnostics (`source`, `resourceId`, content hash, content length, `updatedAt`) with every post read to make source-of-truth observable in-page.
+- `apps/web/app/[slug]/page.tsx` emits `data-content-*` attributes and a `?debug=1` panel so source provenance is explicit during incident triage.
+- Review-only Convex islands (`LazyReviewGate`, `LazyFeedbackStatusIsland`) are opt-in via `?review=1` to avoid default client-side re-wrap/flicker on public article reads.
+- Feedback processing banner uses fixed overlay positioning to remove layout shift from dynamic status changes.
+- `scripts/seed-articles.ts` preserves frontmatter `type` (`essay` / `note` / `tutorial`) in Convex fields instead of forcing `article`.
+
 ## Consequences
 
 **Good:**

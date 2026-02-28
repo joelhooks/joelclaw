@@ -7,6 +7,8 @@ import { ConvexHttpClient } from "../apps/web/node_modules/convex/browser";
 import type { FunctionReference } from "../apps/web/node_modules/convex/server";
 import matter from "../apps/web/node_modules/gray-matter";
 
+type ContentType = "article" | "essay" | "note" | "tutorial";
+
 type ArticleFields = {
   slug: string;
   title: string;
@@ -14,7 +16,7 @@ type ArticleFields = {
   content: string;
   image?: string;
   tags: string[];
-  type: "article";
+  type: ContentType;
   date: string;
   updated?: string;
   draft: boolean;
@@ -63,6 +65,13 @@ function asBoolean(value: unknown): boolean {
   }
   if (typeof value === "number") return value === 1;
   return false;
+}
+
+function asContentType(value: unknown): ContentType {
+  if (value === "essay" || value === "note" || value === "tutorial" || value === "article") {
+    return value;
+  }
+  return "article";
 }
 
 function buildSearchText(fields: ArticleFields): string {
@@ -294,7 +303,7 @@ async function main() {
       content,
       image: asString(meta.image),
       tags: asStringArray(meta.tags),
-      type: "article",
+      type: asContentType(meta.type),
       date: toDateString(meta.date),
       updated: toDateString(meta.updated) || undefined,
       draft: asBoolean(meta.draft),

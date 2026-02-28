@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { cacheLife, cacheTag } from "next/cache";
 import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
-import { Suspense } from "react";
+import { ContentDebugPanel } from "@/components/content-debug-panel";
 import { LazyFeedbackStatusIsland } from "@/components/review/lazy-feedback-status-island";
 import { LazyReviewGate } from "@/components/review/lazy-review-gate";
 import { SITE_NAME, SITE_URL } from "@/lib/constants";
@@ -60,16 +60,11 @@ export default async function PostPage({ params }: Props) {
   return <StaticArticleShell slug={slug} />;
 }
 
-function StaticArticleShell({ slug }: { slug: string }) {
+async function StaticArticleShell({ slug }: { slug: string }) {
   return (
     <>
-      <Suspense fallback={null}>
-        <FeedbackStatusSlot slug={slug} />
-      </Suspense>
-
-      <Suspense fallback={<ArticleFallback />}>
-        <CachedArticleContent slug={slug} />
-      </Suspense>
+      <FeedbackStatusSlot slug={slug} />
+      {await CachedArticleContent({ slug })}
     </>
   );
 }
@@ -83,7 +78,7 @@ async function CachedArticleContent({ slug }: { slug: string }) {
   const post = await getPost(slug);
   if (!post) notFound();
 
-  const { meta, content } = post;
+  const { meta, content, diagnostics } = post;
 
   const postJsonLd = blogPostingJsonLd(meta);
   const breadcrumbs = breadcrumbJsonLd([
@@ -92,7 +87,14 @@ async function CachedArticleContent({ slug }: { slug: string }) {
   ]);
 
   return (
-    <article className="mx-auto max-w-2xl" data-pagefind-body data-pagefind-meta={`type:${meta.type}`}>
+    <article
+      className="mx-auto max-w-2xl"
+      data-pagefind-body
+      data-pagefind-meta={`type:${meta.type}`}
+      data-content-source={diagnostics.source}
+      data-content-resource={diagnostics.resourceId}
+      data-content-hash={diagnostics.contentHash}
+    >
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(postJsonLd) }}
@@ -127,6 +129,11 @@ async function CachedArticleContent({ slug }: { slug: string }) {
             ))}
           </div>
         )}
+        <ContentDebugPanel
+          slug={slug}
+          diagnostics={diagnostics}
+          filesystemFallbackEnabled={process.env.JOELCLAW_ALLOW_FILESYSTEM_POSTS_FALLBACK === "1"}
+        />
       </header>
       <LazyReviewGate
         contentId={`post:${slug}`}
@@ -150,10 +157,6 @@ function PostContent({ content }: { content: string }) {
       />
     </div>
   );
-}
-
-function ArticleFallback() {
-  return <article className="mx-auto max-w-2xl" data-pagefind-body />;
 }
 
 function FeedbackStatusSlot({ slug }: { slug: string }) {

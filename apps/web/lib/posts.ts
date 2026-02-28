@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { ConvexHttpClient } from "convex/browser";
 import fs from "fs";
 import matter from "gray-matter";
@@ -23,9 +24,18 @@ export type PostMeta = {
   image?: string;
 };
 
-type Post = {
+export type PostDiagnostics = {
+  source: "convex" | "filesystem";
+  resourceId: string;
+  contentHash: string;
+  contentLength: number;
+  contentUpdatedAt?: number;
+};
+
+export type Post = {
   meta: PostMeta;
   content: string;
+  diagnostics: PostDiagnostics;
 };
 
 type ParsedPostFields = {
@@ -74,6 +84,10 @@ function asOptionalString(value: unknown): string | undefined {
 
 function asOptionalBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function asOptionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function asStringArray(value: unknown): string[] {
@@ -164,6 +178,10 @@ function toPostMeta(fields: ParsedPostFields): PostMeta {
   };
 }
 
+function contentFingerprint(content: string): string {
+  return createHash("sha1").update(content).digest("hex").slice(0, 12);
+}
+
 function getAllPostsFromFilesystem(): PostMeta[] {
   const files = fs.readdirSync(contentDir).filter((f) => f.endsWith(".mdx"));
 
@@ -214,6 +232,13 @@ function getPostFromFilesystem(slug: string): Post | null {
       image: data.image,
     } satisfies PostMeta,
     content,
+    diagnostics: {
+      source: "filesystem",
+      resourceId: `article:${slug}`,
+      contentHash: contentFingerprint(content),
+      contentLength: content.length,
+      contentUpdatedAt: undefined,
+    },
   };
 }
 
@@ -306,6 +331,13 @@ export async function getPost(slug: string): Promise<Post | null> {
     return {
       meta: toPostMeta(fields),
       content: fields.content,
+      diagnostics: {
+        source: "convex",
+        resourceId: `article:${slug}`,
+        contentHash: contentFingerprint(fields.content),
+        contentLength: fields.content.length,
+        contentUpdatedAt: asOptionalNumber(docRecord.updatedAt),
+      },
     };
   } catch (error) {
     return fallbackOrThrow({
