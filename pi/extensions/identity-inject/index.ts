@@ -1,48 +1,60 @@
-import type { PiExtension } from "@anthropic-ai/pi";
-import { readFileSync, existsSync } from "fs";
-import { join } from "path";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
-const JOELCLAW_DIR = join(process.env.HOME || "", ".joelclaw");
+const HOME = process.env.HOME ?? "~";
+const JOELCLAW_DIR = join(HOME, ".joelclaw");
 
 const IDENTITY_FILES = [
-  { label: "Identity", path: join(JOELCLAW_DIR, "IDENTITY.md") },
-  { label: "Soul", path: join(JOELCLAW_DIR, "SOUL.md") },
-  { label: "Role", path: join(JOELCLAW_DIR, "ROLE.md") },
-  { label: "User", path: join(JOELCLAW_DIR, "USER.md") },
-  { label: "Tools", path: join(JOELCLAW_DIR, "TOOLS.md") },
-];
+  { label: "Identity", file: "IDENTITY.md" },
+  { label: "Soul", file: "SOUL.md" },
+  { label: "Role", file: "ROLE.md" },
+  { label: "User", file: "USER.md" },
+  { label: "Tools", file: "TOOLS.md", maxChars: 6_000 },
+] as const;
 
-function loadIdentityBlock(): string {
-  const blocks: string[] = [];
-  for (const { label, path } of IDENTITY_FILES) {
-    if (!existsSync(path)) continue;
-    try {
-      const content = readFileSync(path, "utf-8").trim();
-      if (content) blocks.push(content);
-    } catch {
-      // skip unreadable files
-    }
+function readIfExists(path: string, maxChars?: number): string | null {
+  try {
+    const content = readFileSync(path, "utf-8").trim();
+    if (!content) return null;
+    if (!maxChars || content.length <= maxChars) return content;
+    return `${content.slice(0, maxChars)}\n\n[Truncated to ${maxChars} chars]`;
+  } catch {
+    return null;
   }
-  return blocks.length > 0 ? "\n\n" + blocks.join("\n\n---\n\n") : "";
 }
 
-const extension: PiExtension = (pi) => {
-  // Cache the identity block at session start — these files don't change mid-session
-  const identityBlock = loadIdentityBlock();
+function loadIdentityBlock(): string {
+  const sections: string[] = [];
 
-  if (!identityBlock) {
-    console.error("[identity-inject] No identity files found in", JOELCLAW_DIR);
-    return;
+  for (const { file, maxChars } of IDENTITY_FILES) {
+    const content = readIfExists(join(JOELCLAW_DIR, file), maxChars);
+    if (content) sections.push(content);
   }
 
-  const fileCount = IDENTITY_FILES.filter(f => existsSync(f.path)).length;
-  console.error(`[identity-inject] Loaded ${fileCount} identity files`);
+  if (sections.length === 0) return "";
+
+  return (
+    "\n\n# Identity & Context\n\n"
+    + sections.join("\n\n---\n\n")
+    + "\n"
+  );
+}
+
+export default function (pi: ExtensionAPI) {
+  let identityBlock = "";
+
+  pi.on("session_start", async () => {
+    identityBlock = loadIdentityBlock();
+    const count = IDENTITY_FILES.filter(f => readIfExists(join(JOELCLAW_DIR, f.file))).length;
+    console.error(`[identity-inject] Loaded ${count} identity files from ${JOELCLAW_DIR}`);
+  });
 
   pi.on("before_agent_start", async (event) => {
+    if (!identityBlock) return;
+
     return {
-      systemPrompt: event.systemPrompt + identityBlock,
+      systemPrompt: identityBlock + "\n" + event.systemPrompt,
     };
   });
-};
-
-export default extension;
+}
