@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import { capabilityError, type CapabilityPort } from "../contract"
+import { type CapabilityPort, capabilityError } from "../contract"
 
 const PRIORITIES = ["low", "normal", "high", "urgent"] as const
 

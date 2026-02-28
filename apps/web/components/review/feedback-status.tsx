@@ -1,9 +1,9 @@
 "use client";
 
+import type { StatusKind } from "@repo/ui/status-badge";
+import { StatusPulseDot } from "@repo/ui/status-badge";
 import { useQuery } from "convex/react";
 import { useEffect, useRef, useState } from "react";
-import { StatusPulseDot } from "@repo/ui/status-badge";
-import type { StatusKind } from "@repo/ui/status-badge";
 import { api } from "@/convex/_generated/api";
 
 interface FeedbackStatusProps {

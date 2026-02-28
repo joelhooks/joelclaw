@@ -1,6 +1,6 @@
 import { Effect } from "effect"
-import { resolveCapabilitiesConfig, type CapabilityFlagsOverride } from "./config"
-import { capabilityError, type CapabilityContext, type CapabilityError } from "./contract"
+import { type CapabilityFlagsOverride, resolveCapabilitiesConfig } from "./config"
+import { type CapabilityContext, type CapabilityError, capabilityError } from "./contract"
 import { capabilityRegistry } from "./setup"
 
 export interface CapabilityExecutionOptions {

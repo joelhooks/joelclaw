@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
 import { MDXRemote } from "next-mdx-remote/rsc";
+import { Suspense } from "react";
 import { ContentLive } from "@/components/content-live";
 import { ConvexReaderProvider } from "@/components/convex-reader-provider";
 import { LazyReviewGate } from "@/components/review/lazy-review-gate";

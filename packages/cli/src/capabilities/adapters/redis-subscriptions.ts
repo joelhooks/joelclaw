@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect"
 import { Inngest } from "../../inngest"
-import { capabilityError, type CapabilityPort } from "../contract"
+import { type CapabilityPort, capabilityError } from "../contract"
 
 const SUBSCRIPTIONS_KEY = "joelclaw:subscriptions"
 

@@ -1,5 +1,4 @@
-import type { Effect } from "effect"
-import type { Schema } from "effect"
+import type { Effect, Schema } from "effect"
 
 export type CapabilityConfigSource = "default" | "user" | "project" | "env" | "flag"
 

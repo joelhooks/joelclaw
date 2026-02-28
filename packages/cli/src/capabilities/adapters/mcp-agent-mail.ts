@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect"
 import { callMcpTool, fetchMailApi, getAgentMailUrl } from "../../lib/agent-mail"
-import { capabilityError, type CapabilityPort } from "../contract"
+import { type CapabilityPort, capabilityError } from "../contract"
 
 const MailStatusArgsSchema = Schema.Struct({})
 const MailStatusResultSchema = Schema.Unknown

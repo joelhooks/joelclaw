@@ -1,7 +1,7 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
-import { executeCapabilityCommand } from "../capabilities/runtime"
 import type { CapabilityError } from "../capabilities/contract"
+import { executeCapabilityCommand } from "../capabilities/runtime"
 import { respond, respondError } from "../response"
 
 type OptionalText = { _tag: "Some"; value: string } | { _tag: "None" }

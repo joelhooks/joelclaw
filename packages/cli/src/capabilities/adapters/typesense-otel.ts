@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../../typesense-auth"
-import { capabilityError, type CapabilityPort } from "../contract"
+import { type CapabilityPort, capabilityError } from "../contract"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 const COLLECTION = "otel_events"

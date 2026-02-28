@@ -90,14 +90,15 @@ joelclaw skills
 - waits for the corresponding run and returns the findings report in-envelope
 - supports `--deep` for LLM staleness checks
 
-## Agent command tree (ADR-0180 phases 2-3)
+## Agent command tree (ADR-0180 phases 2-4)
 
 ```bash
 joelclaw agent
 ├── list
 ├── show <name>
 ├── run <name> <task> [--cwd <cwd>] [--timeout <seconds>]
-└── chain <steps> --task <task> [--cwd <cwd>] [--fail-fast]
+├── chain <steps> --task <task> [--cwd <cwd>] [--fail-fast]
+└── watch <id> [--timeout <seconds>]
 ```
 
 Semantics:
@@ -105,6 +106,8 @@ Semantics:
 - `run` emits `agent/task.run` for single roster agent execution and returns `taskId` plus `eventIds` from the Inngest send response.
 - `run` `next_actions` are truthful: use `joelclaw event <event-id>` when an event ID exists (or `joelclaw events ...` fallback), and never assume `taskId` is a run ID.
 - `chain` emits `agent/chain.run` with comma-separated sequential steps and `+` parallel groups (e.g. `scout,planner+reviewer,coder`).
+- `watch` streams NDJSON progress for a task (`at-...`) or chain (`ac-...`) by subscribing to `joelclaw:notify:gateway`, replaying `joelclaw:events:gateway`, and falling back to Inngest polling.
+- `watch` default timeout is 300 seconds for tasks and 900 seconds for chains; terminal events always include `next_actions` on completion, timeout, or interrupt.
 
 ## Vault command tree
 

@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto"
 import { Effect, Schema } from "effect"
 import { traceRecallRewrite } from "../../langfuse"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../../typesense-auth"
-import { capabilityError, type CapabilityPort } from "../contract"
+import { type CapabilityPort, capabilityError } from "../contract"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 const OTEL_INGEST_URL = process.env.JOELCLAW_OTEL_INGEST_URL || "http://localhost:3111/observability/emit"

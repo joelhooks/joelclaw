@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { cacheLife, cacheTag } from "next/cache";
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
 import { MDXRemote } from "next-mdx-remote/rsc";
+import { Suspense } from "react";
 import { ContentDebugPanel } from "@/components/content-debug-panel";
 import { ContentLive } from "@/components/content-live";
 import { ConvexReaderProvider } from "@/components/convex-reader-provider";

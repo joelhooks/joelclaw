@@ -1,4 +1,4 @@
-import { capabilityError, type AnyCapabilityPort, type JoelclawCapabilitiesConfig } from "./contract"
+import { type AnyCapabilityPort, capabilityError, type JoelclawCapabilitiesConfig } from "./contract"
 
 type CapabilityKey = `${string}:${string}`
 
