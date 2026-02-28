@@ -6,8 +6,8 @@
  */
 import { NextResponse } from "next/server";
 
-const INNGEST_EVENT_URL =
-  process.env.INNGEST_EVENT_URL ?? "http://127.0.0.1:3111/e/local";
+const DEFAULT_INNGEST_EVENT_URL = "https://panda.tail7af24.ts.net:3111/e/local";
+const INNGEST_EVENT_URL = process.env.INNGEST_EVENT_URL ?? DEFAULT_INNGEST_EVENT_URL;
 
 export async function POST(request: Request) {
   try {
@@ -24,18 +24,29 @@ export async function POST(request: Request) {
       );
     }
 
-    const res = await fetch(INNGEST_EVENT_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: "content/review.submitted",
-        data: {
-          contentSlug,
-          contentType,
-          source: "joelclaw-web",
-        },
-      }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(INNGEST_EVENT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "content/review.submitted",
+          data: {
+            contentSlug,
+            contentType,
+            source: "joelclaw-web",
+          },
+        }),
+      });
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message : "Unable to reach Inngest event endpoint";
+      console.error("Inngest event endpoint unreachable:", error);
+      return NextResponse.json(
+        { error: "Inngest unavailable", detail },
+        { status: 502 },
+      );
+    }
 
     if (!res.ok) {
       const text = await res.text();

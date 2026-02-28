@@ -1,5 +1,12 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/create-next-app).
 
+## Environment Variables
+
+Set these in local `.env.local` and in Vercel project environment variables:
+
+- `INNGEST_EVENT_URL`: endpoint used by `POST /api/review/submit` to emit `content/review.submitted`.
+  - Production: `https://panda.tail7af24.ts.net:3111/e/local`
+
 ## Getting Started
 
 First, run the development server:
