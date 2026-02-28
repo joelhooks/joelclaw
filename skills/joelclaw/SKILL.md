@@ -163,6 +163,8 @@ joelclaw sleep [on|off|status]             # Sleep mode for gateway
 joelclaw note <text>                       # Quick note to Vault
 joelclaw vault read <ref>                  # Resolve/read ADR/project/path refs
 joelclaw vault search <query>              # Search vault markdown
+joelclaw vault adr list                    # ADR inventory (optionally by status)
+joelclaw vault adr collisions              # ADR number collision report
 joelclaw vault adr audit                   # ADR health + collision + index checks
 joelclaw search <query>                    # Full-text search
 joelclaw email [scan|triage]               # Email operations
@@ -172,6 +174,8 @@ joelclaw diagnose <topic>                  # System diagnosis
 joelclaw langfuse [traces|costs]           # Langfuse analytics
 joelclaw inngest sync-worker [--restart]   # Worker lifecycle
 ```
+
+For vault-heavy or ADR-gardening tasks, use the dedicated [`vault`](../vault/SKILL.md) skill.
 
 ### Output Modes
 
