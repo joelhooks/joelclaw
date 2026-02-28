@@ -8,7 +8,6 @@ related:
   - "[ADR-0018 — Pi-native gateway with Redis event bridge](0018-pi-native-gateway-redis-event-bridge.md)"
   - "[ADR-0035 — Central + satellite session routing](0035-gateway-session-routing-central-satellite.md)"
   - "[ADR-0036 — launchd central gateway session](0036-launchd-central-gateway-session.md)"
-  - "[ADR-0159 — Talon infrastructure watchdog](0159-talon-k8s-watchdog-daemon.md)"
 credits:
   - "Classic 'who watches the watchmen' pattern — layered failure detection with independent monitoring planes"
 ---
@@ -82,8 +81,6 @@ When the central session receives a heartbeat, it runs the `joelclaw-system-chec
 ### Follow-up Tasks
 
 - [x] Extension watchdog implemented (5-min check interval, 30-min threshold)
-- [x] Added Talon `/health` signal to heartbeat metadata and degrade detection (shipped 2026-02-27)
-- [x] Added Talon dynamic launchd probe for `com.joel.gateway` so service-heal can restart dead gateway sessions (shipped 2026-02-27)
 - [ ] Build launchd tripwire (`com.joel.gateway-tripwire`) — bash script + osascript notification
 - [ ] Extension writes `/tmp/joelclaw/last-heartbeat.ts` on each heartbeat for tripwire to read
 - [ ] Consider healthchecks.io or similar external ping for off-machine monitoring
@@ -95,7 +92,7 @@ When the central session receives a heartbeat, it runs the `joelclaw-system-chec
 
 | File | Change |
 |------|--------|
-| `packages/gateway/src/heartbeat.ts` | Watchdog timer, tripwire writes, local health + Talon health signal |
+| `~/.pi/agent/extensions/gateway/index.ts` | Watchdog timer, lastHeartbeatTs tracking, alarm injection |
 | `~/Vault/HEARTBEAT.md` | Central session checks reference this |
 | `~/Library/LaunchAgents/com.joel.gateway-tripwire.plist` | Future: independent launchd timer |
 | `~/.joelclaw/scripts/gateway-tripwire.sh` | Future: stale-heartbeat checker |
