@@ -30,8 +30,6 @@ This is a durability failure, not a LiveKit server failure.
 
 OpenRouter usage in the LiveKit voice path is intentional and remains in scope per ADR-0043.
 
-Observed follow-up issue on 2026-02-27: strict raw caller matching rejected legitimate Joel calls when caller ID arrived in variant formats (`+1`, punctuation, or SIP/tel prefixes).
-
 ## Decision
 
 Adopt a first-class durability contract for the LiveKit voice worker.
@@ -87,19 +85,6 @@ Expose voice runtime controls as first-class CLI commands:
 
 For the LiveKit voice worker, OpenRouter remains explicitly allowed until superseded by a new ADR. This avoids policy drift against ADR-0043.
 
-### 7) Caller identity matching contract
-
-Allowlist checks must compare normalized caller IDs, not raw room tokens.
-
-Normalization contract:
-- strip `tel:` / `sip:` prefixes,
-- remove non-digit characters,
-- for US numbers, collapse leading `1` on 11-digit numbers to canonical 10-digit form.
-
-Policy is fail-closed: if caller extraction/normalization yields an empty value, reject the call.
-
-Rejection logs must include both raw and normalized caller forms for incident forensics.
-
 ## Implementation Plan
 
 1. Add launchd assets to repo under `ops/voice-agent/`.
@@ -115,8 +100,6 @@ Rejection logs must include both raw and normalized caller forms for incident fo
 - [ ] Service survives reboot and restarts automatically.
 - [ ] Killing the worker process results in automatic recovery (`KeepAlive`/kickstart).
 - [ ] Inbound test call shows non-SIP participant join in LiveKit for answered calls.
-- [ ] Caller allowlist accepts equivalent Joel number formats (`817...`, `+1817...`, punctuation variants) after normalization.
-- [ ] Missing/unparseable caller IDs are rejected (fail-closed) with raw+normalized logging.
 - [ ] `joelclaw otel search "voice.worker.heartbeat" --hours 1` returns fresh events.
 - [ ] `joelclaw otel search "voice.worker.heal" --hours 1` shows attempt/success/failure when forced.
 - [ ] `joelclaw voice status` reports launchd state + heartbeat age.
