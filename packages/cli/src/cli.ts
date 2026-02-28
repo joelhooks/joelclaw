@@ -11,15 +11,18 @@ import { contentCmd } from "./commands/content"
 import { discoverCmd } from "./commands/discover"
 import { docsCmd } from "./commands/docs"
 import { emailCmd } from "./commands/email"
+import { mailCmd } from "./commands/mail"
 import { eventCmd } from "./commands/event"
 import { eventsCmd } from "./commands/events"
 import { gatewayCmd } from "./commands/gateway"
 import { inngestCmd } from "./commands/inngest"
 import { langfuseCmd } from "./commands/langfuse"
+import { logCmd } from "./commands/log"
 import { logsCmd } from "./commands/logs"
 import { loopCmd } from "./commands/loop"
 import { nasCmd } from "./commands/nas"
 import { noteCmd } from "./commands/note"
+import { notifyCmd } from "./commands/notify"
 import { otelCmd } from "./commands/otel"
 import { recallCmd } from "./commands/recall"
 import { recoverCmd } from "./commands/recover"
@@ -31,6 +34,7 @@ import { search } from "./commands/search"
 import { sendCmd } from "./commands/send"
 import { sleepCmd, wakeCmd } from "./commands/sleep"
 import { functionsCmd, statusCmd } from "./commands/status"
+import { secretsCmd } from "./commands/secrets"
 import { subscribeCmd } from "./commands/subscribe"
 import { tuiCmd } from "./commands/tui"
 import { vaultCmd } from "./commands/vault"
@@ -118,11 +122,14 @@ const root = Command.make("joelclaw", {}, () =>
           capabilities: "joelclaw capabilities",
           recover: "joelclaw recover <error-code> [--phase fix] [--execute]",
           logs: "joelclaw logs [worker|errors|server|analyze] [-n lines] [--grep text]", 
+          log: "joelclaw log write --action <action> --tool <tool> --detail <detail> [--reason <reason>]",
           loop: "joelclaw loop {start|status|list|cancel|restart|nuke}",
           watch: "joelclaw watch [LOOP_ID] [-i 15]",
           discover: "joelclaw discover <url> [-c context]",
           note: "joelclaw note <text> [--source source] [--tags a,b,c]",
           gateway: "joelclaw gateway {status|events|push|drain|test}",
+          notify: "joelclaw notify send <message> [--channel <channel>] [--priority <priority>] [--context <json>]",
+          secrets: "joelclaw secrets {status|lease|revoke|audit|env}",
           sleep: "joelclaw sleep [--for <duration>] [--reason <reason>] | joelclaw sleep status",
           wake: "joelclaw wake",
           tui: "joelclaw tui [--url ws://127.0.0.1:3018] [--observe]",
@@ -150,6 +157,9 @@ const root = Command.make("joelclaw", {}, () =>
         { command: "joelclaw recover list", description: "List deterministic recovery runbooks" },
         { command: "joelclaw loop status", description: "Active loop status (Redis)" },
         { command: "joelclaw runs", description: "List recent runs" },
+        { command: "joelclaw secrets status", description: "Check secrets backend capability health" },
+        { command: "joelclaw log write --action checkpoint --tool cli --detail \"manual checkpoint\"", description: "Write structured system log entry" },
+        { command: "joelclaw notify send \"System check complete\" --priority normal", description: "Send canonical gateway notification" },
         { command: "joelclaw langfuse aggregate --hours 24", description: "Aggregate cloud LLM trace trends" },
         { command: "joelclaw schema", description: "Event types and payloads" },
       ],
@@ -157,7 +167,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, logsCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, docsCmd, emailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd])
+  Command.withSubcommands([contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, logsCmd, logCmd, secretsCmd, notifyCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, docsCmd, emailCmd, mailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd])
 )
 
 const cli = Command.run(root, {

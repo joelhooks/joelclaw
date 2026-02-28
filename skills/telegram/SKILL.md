@@ -1,3 +1,8 @@
+---
+name: telegram
+description: Operate the joelclaw Telegram channel — primary mobile interface between Joel and the gateway. Covers grammy Bot API, text/media/reactions, inline buttons, callbacks, and streaming.
+---
+
 # Telegram Channel Skill
 
 Operate the joelclaw Telegram channel — the primary mobile interface between Joel and the gateway agent. Built on grammy (Bot API wrapper), supports text, media, reactions, replies, inline buttons, callbacks, and streaming.
