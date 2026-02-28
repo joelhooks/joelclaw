@@ -28,6 +28,7 @@
     "@opentelemetry/semantic-conventions": "^1.30.0",
     "convex": "^1.32.0",
     "fast-xml-parser": "^5.3.7",
+    "gray-matter": "^4.0.3",
     "hono": "^4.11.9",
     "inngest": "^3.52.0",
     "ioredis": "^5.9.3",

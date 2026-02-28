@@ -1,4 +1,6 @@
+import { join } from "node:path";
 import Redis from "ioredis";
+import { upsertFiles } from "../../lib/convex-content-sync";
 import { infer } from "../../lib/inference";
 import { getRedisPort } from "../../lib/redis";
 import { emitOtelEvent } from "../../observability/emit";
@@ -142,6 +144,39 @@ export const contentSync = inngest.createFunction(
       `[content-sync] done — ${allSynced.length} total changes, committed=${committed}`
     );
 
+    // ── Sync changed files to Convex ──────────────────────
+    // Production site reads from Convex, not filesystem. Without this step,
+    // new ADRs/posts are committed to git but invisible on the live site.
+    let convexResult: { adrUpserts: number; postUpserts: number; errors: string[] } | undefined;
+    if (allSynced.length > 0) {
+      convexResult = await step.run("sync-to-convex", async () => {
+        // Build full file paths for changed files
+        const changedPaths: string[] = [];
+        for (const r of results) {
+          const dir = CONTENT_DIRS.find((d) => d.name === r.name);
+          if (!dir) continue;
+          for (const s of r.synced) {
+            if (s.status === "deleted") continue; // can't upsert deleted files
+            changedPaths.push(join(dir.dest, s.file));
+          }
+        }
+
+        if (changedPaths.length === 0) {
+          return { adrUpserts: 0, postUpserts: 0, errors: [] };
+        }
+
+        console.log(`[content-sync] upserting ${changedPaths.length} files to Convex`);
+        const result = await upsertFiles(changedPaths);
+        console.log(
+          `[content-sync] Convex sync: ${result.adrUpserts} ADRs, ${result.postUpserts} posts, ${result.errors.length} errors`
+        );
+        if (result.errors.length > 0) {
+          console.warn("[content-sync] Convex errors:", result.errors);
+        }
+        return result;
+      });
+    }
+
     // Notify gateway if anything changed
     if (allSynced.length > 0 && gateway) {
       await step.run("notify-gateway", async () => {
@@ -154,6 +189,9 @@ export const contentSync = inngest.createFunction(
             files: allSynced.length,
             committed,
             summary,
+            convex: convexResult
+              ? `${convexResult.adrUpserts} ADRs, ${convexResult.postUpserts} posts`
+              : "skipped",
           });
         } catch {}
       });
@@ -213,6 +251,7 @@ export const contentSync = inngest.createFunction(
       status: "completed",
       committed,
       totalSynced: allSynced.length,
+      convex: convexResult ?? null,
       content: results.map((r) => ({
         name: r.name,
         sourceCount: r.sourceCount,

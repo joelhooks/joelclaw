@@ -1,0 +1,204 @@
+/**
+ * Convex content sync — upserts ADR and post files into Convex contentResources.
+ *
+ * Used by:
+ * - content-sync Inngest function (incremental, after vault sync)
+ * - scripts/sync-content-to-convex.ts (full sync, manual)
+ */
+import { existsSync, readFileSync } from "node:fs";
+import { basename, extname } from "node:path";
+import { ConvexHttpClient } from "convex/browser";
+import { anyApi, type FunctionReference } from "convex/server";
+import matter from "gray-matter";
+
+const CONVEX_URL = process.env.CONVEX_URL?.trim()
+  || process.env.NEXT_PUBLIC_CONVEX_URL?.trim()
+  || "https://tough-panda-917.convex.cloud";
+
+type AdrFields = {
+  slug: string;
+  title: string;
+  number: string;
+  status: string;
+  date: string;
+  content: string;
+  supersededBy?: string;
+  description?: string;
+};
+
+type PostFields = {
+  slug: string;
+  title: string;
+  date: string;
+  content: string;
+  description?: string;
+  image?: string;
+};
+
+const VALID_STATUSES = [
+  "proposed",
+  "accepted",
+  "implemented",
+  "shipped",
+  "superseded",
+  "deprecated",
+  "rejected",
+] as const;
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+}
+
+function toDateString(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
+}
+
+function normalizeStatus(raw: unknown): string {
+  if (typeof raw !== "string") return "proposed";
+  const lower = raw.toLowerCase().trim();
+  for (const status of VALID_STATUSES) {
+    if (lower === status || lower.startsWith(status)) return status;
+  }
+  return "proposed";
+}
+
+function extractAdrTitle(frontmatter: Record<string, unknown>, content: string): string {
+  const title = asString(frontmatter.title);
+  if (title) return title;
+  const h1 = content.match(/^#\s+(?:ADR-\d+:\s*)?(.+)$/m);
+  return h1?.[1]?.trim() ?? "Untitled";
+}
+
+function extractAdrDescription(content: string): string | undefined {
+  const ctx = content.match(
+    /## Context and Problem Statement\s+(.+?)(?:\n\n|\n##)/s,
+  );
+  const raw = ctx?.[1];
+  if (!raw) return undefined;
+  const first = (raw.split("\n\n")[0] ?? "").trim();
+  if (!first) return undefined;
+  return first.length > 200 ? `${first.slice(0, 197)}…` : first;
+}
+
+function buildAdrSearchText(fields: AdrFields): string {
+  return [
+    fields.slug, fields.number, fields.title, fields.status,
+    fields.date, fields.supersededBy, fields.description, fields.content,
+  ].filter((p): p is string => typeof p === "string" && p.length > 0).join(" ");
+}
+
+function buildPostSearchText(fields: PostFields): string {
+  return [
+    fields.slug, fields.title, fields.date,
+    fields.description, fields.image, fields.content,
+  ].filter((p): p is string => typeof p === "string" && p.length > 0).join(" ");
+}
+
+export type ConvexSyncResult = {
+  adrUpserts: number;
+  postUpserts: number;
+  errors: string[];
+};
+
+let _client: ConvexHttpClient | undefined;
+
+function getClient(): ConvexHttpClient {
+  if (!_client) {
+    _client = new ConvexHttpClient(CONVEX_URL);
+  }
+  return _client;
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: convex anyApi typing
+const upsertRef = (anyApi as any).contentIngest.upsertContent as FunctionReference<"mutation">;
+
+/**
+ * Upsert a single ADR file into Convex.
+ */
+export async function upsertAdr(filePath: string): Promise<void> {
+  if (!existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
+  const slug = basename(filePath, extname(filePath));
+  const number = slug.match(/^(\d+)/)?.[1] ?? "";
+  const raw = readFileSync(filePath, "utf-8");
+  const { data, content } = matter(raw);
+  const meta = data as Record<string, unknown>;
+
+  const fields: AdrFields = {
+    slug,
+    title: extractAdrTitle(meta, content),
+    number,
+    status: normalizeStatus(meta.status),
+    date: toDateString(meta.date),
+    content,
+    supersededBy: asString(meta["superseded-by"]) ?? asString(meta.supersededBy),
+    description: asString(meta.description) ?? extractAdrDescription(content),
+  };
+
+  await getClient().mutation(upsertRef, {
+    resourceId: `adr:${slug}`,
+    type: "adr" as const,
+    fields,
+    searchText: buildAdrSearchText(fields),
+  });
+}
+
+/**
+ * Upsert a single post (MDX) file into Convex. Skips drafts.
+ * Returns true if upserted, false if skipped (draft).
+ */
+export async function upsertPost(filePath: string): Promise<boolean> {
+  if (!existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
+  const slug = basename(filePath, extname(filePath));
+  const raw = readFileSync(filePath, "utf-8");
+  const { data, content } = matter(raw);
+  const meta = data as Record<string, unknown>;
+
+  if (meta.draft === true) return false;
+
+  const fields: PostFields = {
+    slug,
+    title: asString(meta.title) ?? "Untitled",
+    date: toDateString(meta.date),
+    content,
+    description: asString(meta.description),
+    image: asString(meta.image),
+  };
+
+  await getClient().mutation(upsertRef, {
+    resourceId: `post:${slug}`,
+    type: "post" as const,
+    fields,
+    searchText: buildPostSearchText(fields),
+  });
+  return true;
+}
+
+/**
+ * Upsert multiple content files into Convex. Handles mixed ADR/post paths.
+ * Files are identified by extension (.md → ADR, .mdx → post).
+ */
+export async function upsertFiles(filePaths: string[]): Promise<ConvexSyncResult> {
+  const result: ConvexSyncResult = { adrUpserts: 0, postUpserts: 0, errors: [] };
+
+  for (const filePath of filePaths) {
+    try {
+      const ext = extname(filePath);
+      if (ext === ".md") {
+        await upsertAdr(filePath);
+        result.adrUpserts++;
+      } else if (ext === ".mdx") {
+        const upserted = await upsertPost(filePath);
+        if (upserted) result.postUpserts++;
+      }
+    } catch (err) {
+      result.errors.push(`${basename(filePath)}: ${String(err)}`);
+    }
+  }
+
+  return result;
+}
