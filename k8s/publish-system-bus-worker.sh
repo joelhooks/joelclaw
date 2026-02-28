@@ -39,8 +39,21 @@ export DOCKER_CONFIG="$DOCKER_CONFIG_DIR"
 
 GH_USER="$(gh api user -q .login)"
 
-echo "Logging in to GHCR as $GH_USER"
-gh auth token | docker login "$REGISTRY" -u "$GH_USER" --password-stdin >/dev/null
+auth_source="gh auth token"
+ghcr_token="${GHCR_TOKEN:-}"
+
+if [[ -z "$ghcr_token" ]] && command -v secrets >/dev/null 2>&1; then
+  if ghcr_token="$(secrets lease ghcr_pat --ttl 20m --client-id publish-system-bus-worker 2>/dev/null)"; then
+    auth_source="agent-secrets:ghcr_pat"
+  fi
+fi
+
+echo "Logging in to GHCR as $GH_USER ($auth_source)"
+if [[ -n "$ghcr_token" ]]; then
+  printf '%s' "$ghcr_token" | docker login "$REGISTRY" -u "$GH_USER" --password-stdin >/dev/null
+else
+  gh auth token | docker login "$REGISTRY" -u "$GH_USER" --password-stdin >/dev/null
+fi
 
 echo "Building $IMAGE"
 docker build \

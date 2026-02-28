@@ -2,7 +2,7 @@
 name: sync-system-bus
 displayName: Sync System Bus
 description: "Deploy the system-bus-worker to the joelclaw Kubernetes cluster from local machine. Use when syncing changes in packages/system-bus to k8s, especially because the GitHub Actions deploy job targets a non-existent self-hosted runner and cannot complete deploys automatically."
-version: 2.0.0
+version: 2.1.0
 author: Joel Hooks
 tags: [joelclaw, system-bus, kubernetes, deploy, ghcr, inngest]
 ---
@@ -27,10 +27,19 @@ Optional: pass a tag (defaults to timestamp):
 k8s/publish-system-bus-worker.sh a6de1e0
 ```
 
+### GHCR Auth Order
+
+`publish-system-bus-worker.sh` now authenticates in this order:
+1. `GHCR_TOKEN` env var (if provided)
+2. `secrets lease ghcr_pat` (agent-secrets)
+3. `gh auth token` fallback
+
+If your `gh auth token` lacks `read:packages/write:packages`, push will 403. Use `ghcr_pat`.
+
 ## What the Script Does
 
 1. Builds ARM64 Docker image (required — Talos/Colima node is aarch64)
-2. Authenticates to GHCR via `gh auth token` (temp Docker config, auto-cleaned)
+2. Authenticates to GHCR (prefers `agent-secrets` lease `ghcr_pat`; falls back to `gh auth token`) with temp Docker config
 3. Pushes `ghcr.io/joelhooks/system-bus-worker:${TAG}` and `:latest`
 4. Updates the image ref in `k8s/system-bus-worker.yaml`
 5. `kubectl apply` the manifest
@@ -169,6 +178,7 @@ After `cargo build`, the binary has adhoc linker-signed signature. macOS launchd
 | Problem | Cause | Fix |
 |---------|-------|-----|
 | `exec format error` in pod | Built for amd64, not arm64 | Rebuild with `--platform linux/arm64` |
+| GHCR push fails with `403 Forbidden` on blob HEAD | `gh auth token` missing package scopes | Use `ghcr_pat` via `agent-secrets` or export `GHCR_TOKEN` with package scope |
 | `docker-credential-desktop` error | Docker config has credsStore | Script uses temp config dir — if manual, remove `"credsStore": "desktop"` |
 | Function missing after deploy | Not in index file | Add to both `index.host.ts` AND `index.cluster.ts` |
 | Function still missing | Stale Inngest registration | `joelclaw refresh` then check again |
