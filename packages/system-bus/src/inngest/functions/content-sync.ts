@@ -1,6 +1,6 @@
 import { readdirSync } from "node:fs";
 import { basename, extname, join } from "node:path";
-import { upsertAdr, upsertPost, type ConvexSyncResult } from "../../lib/convex-content-sync";
+import { type ConvexSyncResult, upsertAdr, upsertPost } from "../../lib/convex-content-sync";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
@@ -203,7 +203,6 @@ export const contentVerify = inngest.createFunction(
         "https://tough-panda-917.convex.cloud";
       const client = new ConvexHttpClient(convexUrl);
 
-      // biome-ignore lint/suspicious/noExplicitAny: convex anyApi typing
       const listRef = (anyApi as any).contentResources.listByType;
 
       const report: {

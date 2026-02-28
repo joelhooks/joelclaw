@@ -122,7 +122,6 @@ function getClient(): ConvexHttpClient {
   return _client;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: convex anyApi typing
 const upsertRef = (anyApi as any).contentIngest.upsertContent as FunctionReference<"mutation">;
 
 /**
