@@ -28,6 +28,7 @@ type UpsertResult = {
 };
 
 type ContentResourceDocument = {
+  resourceId?: unknown;
   type?: unknown;
   fields?: unknown;
 };
@@ -41,6 +42,11 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
 }
 
 function toDateString(value: unknown): string {
@@ -72,6 +78,15 @@ function asContentType(value: unknown): ContentType {
     return value;
   }
   return "article";
+}
+
+function stripLeadingFrontmatter(content: string): string {
+  if (!content.startsWith("---")) return content;
+  try {
+    return matter(content).content;
+  } catch {
+    return content;
+  }
 }
 
 function buildSearchText(fields: ArticleFields): string {
@@ -255,13 +270,10 @@ async function main() {
 
   const contentDir = join(repoRoot, "apps", "web", "content");
   const articleFiles = listArticleFiles(contentDir);
-  if (articleFiles.length === 0) {
-    console.log("[seed-articles] no article files found.");
-    return;
-  }
 
   const upsertRef = api.contentResources.upsert as FunctionReference<"mutation">;
   const getByResourceIdRef = api.contentResources.getByResourceId as FunctionReference<"query">;
+  const listByTypeRef = api.contentResources.listByType as FunctionReference<"query">;
 
   const convex = new ConvexHttpClient(convexUrl);
   if (adminAuth) {
@@ -280,8 +292,89 @@ async function main() {
 
   let inserted = 0;
   let updated = 0;
+  let sanitized = 0;
   const expectedResources: Array<{ slug: string; resourceId: string }> = [];
   const seenResourceIds = new Set<string>();
+
+  if (articleFiles.length === 0) {
+    console.log(
+      "[seed-articles] no local MDX files found in apps/web/content; reseeding existing Convex article records.",
+    );
+
+    const docs = (await convex.query(listByTypeRef, {
+      type: "article",
+      limit: 5000,
+    })) as unknown;
+
+    if (!Array.isArray(docs) || docs.length === 0) {
+      console.log("[seed-articles] no article records found in Convex.");
+      return;
+    }
+
+    for (const doc of docs) {
+      const docRecord = asRecord(doc);
+      const fieldsRecord = asRecord(docRecord.fields);
+      const resourceId = asString(docRecord.resourceId);
+      const slug = asString(fieldsRecord.slug) ?? resourceId?.replace(/^article:/, "");
+      const rawContent = asString(fieldsRecord.content);
+
+      if (!resourceId || !slug || !rawContent) {
+        console.warn(
+          `[seed-articles] skipped malformed article record (resourceId=${resourceId ?? "unknown"})`,
+        );
+        continue;
+      }
+
+      const content = stripLeadingFrontmatter(rawContent);
+      if (content !== rawContent) sanitized += 1;
+
+      const fields: ArticleFields = {
+        slug,
+        title: asString(fieldsRecord.title) ?? "Untitled",
+        description: asString(fieldsRecord.description) ?? "",
+        content,
+        image: asString(fieldsRecord.image),
+        tags: asStringArray(fieldsRecord.tags),
+        type: asContentType(fieldsRecord.type),
+        date: toDateString(fieldsRecord.date),
+        updated: toDateString(fieldsRecord.updated) || undefined,
+        draft: asBoolean(fieldsRecord.draft),
+      };
+
+      expectedResources.push({ slug, resourceId });
+
+      const before = (await convex.query(getByResourceIdRef, {
+        resourceId,
+      })) as ContentResourceDocument | null;
+
+      const result = (await convex.mutation(upsertRef, {
+        resourceId,
+        type: "article",
+        fields,
+        searchText: buildSearchText(fields),
+      })) as UpsertResult;
+
+      const action: "inserted" | "updated" = result.action ?? (before ? "updated" : "inserted");
+      if (action === "inserted") inserted += 1;
+      if (action === "updated") updated += 1;
+
+      const seeded = (await convex.query(getByResourceIdRef, {
+        resourceId,
+      })) as ContentResourceDocument | null;
+      assertSeededDocument(slug, seeded);
+
+      console.log(
+        `[seed-articles] reseeded ${slug} (${action}${content !== rawContent ? ", stripped-frontmatter" : ""})`,
+      );
+    }
+
+    await verifySeedCoverage(getByResourceIdRef, convex, expectedResources);
+    console.log(`[seed-articles] verified ${expectedResources.length} article resources in Convex`);
+    console.log(
+      `[seed-articles] complete (source=convex, articles=${expectedResources.length}, inserted=${inserted}, updated=${updated}, strippedFrontmatter=${sanitized})`,
+    );
+    return;
+  }
 
   for (const filePath of articleFiles) {
     const slug = slugFromFilePath(contentDir, filePath);
@@ -293,8 +386,10 @@ async function main() {
     expectedResources.push({ slug, resourceId });
 
     const raw = readFileSync(filePath, "utf-8");
-    const { data, content } = matter(raw);
+    const { data, content: parsedContent } = matter(raw);
     const meta = data as Record<string, unknown>;
+    const content = stripLeadingFrontmatter(parsedContent);
+    if (content !== parsedContent) sanitized += 1;
 
     const fields: ArticleFields = {
       slug,
@@ -336,7 +431,7 @@ async function main() {
   console.log(`[seed-articles] verified ${expectedResources.length} article resources in Convex`);
 
   console.log(
-    `[seed-articles] complete (${articleFiles.length} articles, inserted=${inserted}, updated=${updated})`,
+    `[seed-articles] complete (source=files, ${articleFiles.length} articles, inserted=${inserted}, updated=${updated}, strippedFrontmatter=${sanitized})`,
   );
 }
 

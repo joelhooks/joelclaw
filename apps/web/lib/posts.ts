@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { ConvexHttpClient } from "convex/browser";
+import matter from "gray-matter";
 import { cacheLife, cacheTag } from "next/cache";
 import { api } from "@/convex/_generated/api";
 import { compareDateDesc, toDateString } from "./date";
@@ -84,6 +85,16 @@ function shouldIncludeDrafts(): boolean {
   return process.env.NODE_ENV === "development";
 }
 
+function stripLeadingFrontmatter(content: string): string {
+  if (!content.startsWith("---")) return content;
+
+  try {
+    return matter(content).content;
+  } catch {
+    return content;
+  }
+}
+
 type ParsedPostFields = {
   slug: string;
   title: string;
@@ -105,6 +116,8 @@ function parsePostFields(value: unknown, fallbackSlug?: string): ParsedPostField
   const slug = asOptionalString(fields.slug) ?? fallbackSlug;
   const title = asOptionalString(fields.title);
   const date = toDateString(fields.date);
+  const rawContent = asOptionalString(fields.content);
+  const content = rawContent ? stripLeadingFrontmatter(rawContent) : undefined;
   if (!slug || !title || !date) return null;
 
   const typeValue = asOptionalString(fields.type);
@@ -124,7 +137,7 @@ function parsePostFields(value: unknown, fallbackSlug?: string): ParsedPostField
     duration: asOptionalString(fields.duration),
     draft: fields.draft === true,
     image: asOptionalString(fields.image),
-    content: asOptionalString(fields.content),
+    content,
   };
 }
 

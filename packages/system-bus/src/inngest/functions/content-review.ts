@@ -119,6 +119,63 @@ function stripMarkdownFence(text: string): string {
   return trimmed;
 }
 
+const POST_FRONTMATTER_KEY_PATTERN =
+  /^(title|type|date|description|image|tags|updated|draft|source|channel|duration):\s*/iu;
+
+function stripLoosePostFrontmatter(content: string): string {
+  const lines = content.split(/\r?\n/u);
+
+  let index = 0;
+  while (index < lines.length && lines[index]?.trim().length === 0) {
+    index += 1;
+  }
+
+  let metadataLineCount = 0;
+  for (; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const trimmedLine = line.trim();
+
+    if (trimmedLine.length === 0) {
+      if (metadataLineCount >= 3) {
+        return lines.slice(index + 1).join("\n").trimStart();
+      }
+      return content;
+    }
+
+    if (!POST_FRONTMATTER_KEY_PATTERN.test(trimmedLine)) {
+      return content;
+    }
+
+    metadataLineCount += 1;
+  }
+
+  return content;
+}
+
+function stripPostFrontmatter(content: string): string {
+  const withoutBom = content.replace(/^\uFEFF/u, "");
+  const trimmedStart = withoutBom.trimStart();
+
+  if (trimmedStart.startsWith("---")) {
+    const match = /^---\s*\r?\n[\s\S]*?\r?\n---\s*(?:\r?\n)?/u.exec(trimmedStart);
+    if (match?.[0]) {
+      return trimmedStart.slice(match[0].length).trimStart();
+    }
+
+    return content;
+  }
+
+  return stripLoosePostFrontmatter(trimmedStart);
+}
+
+function normalizeStoredContent(resourceType: string, content: string): string {
+  if (resourceType !== "article" && resourceType !== "post") {
+    return content;
+  }
+
+  return stripPostFrontmatter(content);
+}
+
 function ensureTrailingNewline(text: string): string {
   return text.endsWith("\n") ? text : `${text}\n`;
 }
@@ -246,12 +303,15 @@ async function fetchCurrentContent(
     const fields = ensureRecord(doc.fields);
     const content = asString(fields.content);
     if (!content) continue;
+    const normalizedContent =
+      contentType === "post" ? normalizeStoredContent(doc.type, content) : content;
+    if (!normalizedContent) continue;
 
     return {
       resourceId: doc.resourceId,
       type: doc.type,
       fields,
-      content,
+      content: normalizedContent,
     };
   }
 
@@ -751,9 +811,10 @@ async function updateArticleContent(args: {
   updatedContent: string;
 }): Promise<void> {
   const client = getConvexClient();
+  const normalizedContent = normalizeStoredContent(args.type, args.updatedContent);
   const nextFields: Record<string, unknown> = {
     ...args.existingFields,
-    content: args.updatedContent,
+    content: normalizedContent,
   };
 
   if (typeof nextFields.updated === "string") {
@@ -985,18 +1046,21 @@ export const contentReviewApply = inngest.createFunction(
         historicalAppliedFeedbackItems,
       });
     });
+    const normalizedRewrittenContent = await step.run("normalize-edited-content", async () => {
+      return normalizeStoredContent(article.type, rewrittenContent);
+    });
 
     await step.run("validate-edited-content", async () => {
-      assertNoRewriteMetaCommentary(rewrittenContent);
-      validateRewriteLength(article.content, rewrittenContent);
+      assertNoRewriteMetaCommentary(normalizedRewrittenContent);
+      validateRewriteLength(article.content, normalizedRewrittenContent);
       assertNoHistoricalRegression({
         currentContent: article.content,
-        rewrittenContent,
+        rewrittenContent: normalizedRewrittenContent,
         assertions: historicalAssertions,
       });
       return {
         currentLength: article.content.trim().length,
-        rewrittenLength: rewrittenContent.trim().length,
+        rewrittenLength: normalizedRewrittenContent.trim().length,
         historicalAssertionCount: historicalAssertions.length,
       };
     });
@@ -1007,7 +1071,7 @@ export const contentReviewApply = inngest.createFunction(
         contentType,
         contentSlug,
         previousContent: article.content,
-        updatedContent: rewrittenContent,
+        updatedContent: normalizedRewrittenContent,
         comments: submittedComments,
         runId,
       });
@@ -1018,7 +1082,7 @@ export const contentReviewApply = inngest.createFunction(
         resourceId: article.resourceId,
         type: article.type,
         existingFields: article.fields,
-        updatedContent: rewrittenContent,
+        updatedContent: normalizedRewrittenContent,
       });
     });
 
