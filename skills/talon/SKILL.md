@@ -5,6 +5,7 @@ Compiled Rust binary that supervises the system-bus worker AND monitors the full
 ## Quick Reference
 
 ```bash
+talon validate         # Parse/validate config + services files, print summary JSON
 talon --check          # Single probe cycle, print results, exit
 talon --status         # Current state machine position
 talon --dry-run        # Print loaded config, exit
@@ -117,6 +118,8 @@ timeout_secs = 5
 - `launchd.<name>` passes when `launchctl list <label>` reports a non-zero PID
 - `http.<name>` passes on HTTP `200`
 - `critical = true` escalates immediately when the probe fails
+- Talon hot-reloads service probes when `services.toml` mtime changes (no restart required)
+- `kill -HUP $(launchctl print gui/$(id -u)/com.joel.talon | awk '/pid =/{print $3; exit}')` forces immediate reload
 
 ## Launchd Management
 
@@ -135,6 +138,9 @@ launchctl unload ~/Library/LaunchAgents/com.joel.k8s-reboot-heal.plist
 ## Troubleshooting
 
 ```bash
+# Validate config + service monitor files
+talon validate | python3 -m json.tool
+
 # Check what talon sees right now
 talon --check | python3 -m json.tool
 

@@ -297,16 +297,7 @@ pub fn validate_config_files(path: &Path) -> Result<ValidationSummary, DynError>
 
 pub fn validation_summary_to_json(summary: &ValidationSummary) -> String {
     format!(
-        concat!(
-            "{\n",
-            "  \"ok\": true,\n",
-            "  \"config_path\": \"{}\",\n",
-            "  \"services_path\": \"{}\",\n",
-            "  \"check_interval_secs\": {},\n",
-            "  \"http_probe_count\": {},\n",
-            "  \"launchd_probe_count\": {}\n",
-            "}}\n"
-        ),
+        "{{\n  \"ok\": true,\n  \"config_path\": \"{}\",\n  \"services_path\": \"{}\",\n  \"check_interval_secs\": {},\n  \"http_probe_count\": {},\n  \"launchd_probe_count\": {}\n}}\n",
         json_escape(&summary.config_path.display().to_string()),
         json_escape(&summary.services_path.display().to_string()),
         summary.check_interval_secs,
@@ -526,7 +517,7 @@ fn default_services_toml() -> String {
     r#"# Talon dynamic service monitors.
 #
 # Add HTTP probes under [http.<name>] and launchd probes under [launchd.<name>].
-# Talon will load this file at startup without any binary rebuild.
+# Talon hot-reloads this file on mtime change (or immediately on SIGHUP).
 
 [launchd.voice_agent]
 label = "com.joel.voice-agent"
@@ -796,6 +787,24 @@ fn unescape_string(value: &str) -> String {
     out
 }
 
+fn json_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push(' '),
+            c => out.push(c),
+        }
+    }
+
+    out
+}
+
 pub fn expand_home(path: &str) -> PathBuf {
     PathBuf::from(expand_tilde(path))
 }
@@ -859,7 +868,9 @@ critical = true
 "#;
 
         let error = parse_services_toml(raw, 5).expect_err("missing url must fail validation");
-        assert!(error.to_string().contains("http.voice_agent is missing required key: url"));
+        assert!(error
+            .to_string()
+            .contains("http.voice_agent is missing required key: url"));
     }
 
     #[test]

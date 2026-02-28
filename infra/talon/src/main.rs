@@ -36,11 +36,17 @@ struct Cli {
     config_path: PathBuf,
     check: bool,
     status: bool,
+    validate: bool,
     worker_only: bool,
     dry_run: bool,
 }
 
 extern "C" fn signal_handler(sig: CInt) {
+    if sig == SIGHUP {
+        RELOAD_REQUESTED.store(true, Ordering::SeqCst);
+        return;
+    }
+
     RECEIVED_SIGNAL.store(sig, Ordering::SeqCst);
     SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
 }
@@ -51,6 +57,13 @@ fn main() -> Result<(), DynError> {
     state::ensure_state_dir()?;
     log::init()?;
     config::ensure_default_config(&cli.config_path)?;
+
+    if cli.validate {
+        let summary = config::validate_config_files(&cli.config_path)?;
+        println!("{}", config::validation_summary_to_json(&summary));
+        return Ok(());
+    }
+
     let config = config::load_config(&cli.config_path)?;
 
     if cli.dry_run {
@@ -84,7 +97,7 @@ fn main() -> Result<(), DynError> {
     let worker_config = config.clone();
     let worker_handle = thread::spawn(move || worker::run_worker_supervisor(&worker_config));
 
-    let loop_result = run_watchdog_loop(&config);
+    let loop_result = run_watchdog_loop(config);
 
     SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
 
@@ -100,13 +113,14 @@ fn main() -> Result<(), DynError> {
     }
 }
 
-fn run_watchdog_loop(config: &Config) -> Result<(), DynError> {
+fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
     let mut current_state = state::load_state()?;
     let mut critical_since = if current_state.current_state == "Critical" {
         current_state.last_agent_time
     } else {
         None
     };
+    let mut service_tracker = config.service_probe_tracker()?;
 
     loop {
         if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
@@ -114,12 +128,43 @@ fn run_watchdog_loop(config: &Config) -> Result<(), DynError> {
             break;
         }
 
-        let results = probes::run_all_probes(config);
+        let force_reload = RELOAD_REQUESTED.swap(false, Ordering::SeqCst);
+        if force_reload {
+            log::info("received SIGHUP; forcing service probe reload");
+        }
+
+        match config.refresh_service_probes(&mut service_tracker, force_reload) {
+            Ok(true) => {
+                log::info_fields(
+                    "dynamic service probes reloaded",
+                    &[
+                        (
+                            "services_file",
+                            service_tracker.services_path.display().to_string(),
+                        ),
+                        ("http_probes", config.http_service_probes.len().to_string()),
+                        (
+                            "launchd_probes",
+                            config.launchd_service_probes.len().to_string(),
+                        ),
+                    ],
+                );
+            }
+            Ok(false) => {}
+            Err(error) => {
+                log::warn_fields(
+                    "failed to refresh service probes",
+                    &[("error", error.to_string())],
+                );
+            }
+        }
+
+        let results = probes::run_all_probes(&config);
         current_state.last_probe_results = results.clone();
         current_state.worker_restarts = worker::worker_restart_count();
         state::write_last_probe(&results)?;
 
-        let mut critical_failures = collect_critical_failures(&results, config);
+        let mut critical_failures = collect_critical_failures(&results, &config);
 
         if critical_failures.is_empty() {
             current_state.consecutive_failures = 0;
@@ -145,14 +190,14 @@ fn run_watchdog_loop(config: &Config) -> Result<(), DynError> {
 
         if current_state.current_state == "Failed" {
             let (heal_outcome, heal_output) =
-                escalation::run_heal(config, &mut current_state, false)?;
+                escalation::run_heal(&config, &mut current_state, false)?;
 
             if heal_outcome == TierOutcome::Fixed {
-                let post_heal = probes::run_all_probes(config);
+                let post_heal = probes::run_all_probes(&config);
                 current_state.last_probe_results = post_heal.clone();
                 current_state.worker_restarts = worker::worker_restart_count();
                 state::write_last_probe(&post_heal)?;
-                critical_failures = collect_critical_failures(&post_heal, config);
+                critical_failures = collect_critical_failures(&post_heal, &config);
 
                 if critical_failures.is_empty() {
                     current_state.consecutive_failures = 0;
@@ -166,7 +211,7 @@ fn run_watchdog_loop(config: &Config) -> Result<(), DynError> {
 
             state::transition(&mut current_state, "Investigating");
             let agent_outcome = escalation::run_agents(
-                config,
+                &config,
                 &mut current_state,
                 &critical_failures,
                 &heal_output,
@@ -175,11 +220,11 @@ fn run_watchdog_loop(config: &Config) -> Result<(), DynError> {
 
             match agent_outcome {
                 TierOutcome::Fixed => {
-                    let post_agent = probes::run_all_probes(config);
+                    let post_agent = probes::run_all_probes(&config);
                     current_state.last_probe_results = post_agent.clone();
                     current_state.worker_restarts = worker::worker_restart_count();
                     state::write_last_probe(&post_agent)?;
-                    let remaining_failures = collect_critical_failures(&post_agent, config);
+                    let remaining_failures = collect_critical_failures(&post_agent, &config);
 
                     if remaining_failures.is_empty() {
                         current_state.consecutive_failures = 0;
@@ -204,7 +249,7 @@ fn run_watchdog_loop(config: &Config) -> Result<(), DynError> {
 
             if let Some(since) = critical_since {
                 match escalation::run_sos(
-                    config,
+                    &config,
                     &mut current_state,
                     &critical_failures,
                     since,
@@ -238,6 +283,9 @@ fn sleep_with_shutdown(seconds: u64) {
         if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
             return;
         }
+        if RELOAD_REQUESTED.load(Ordering::SeqCst) {
+            return;
+        }
         thread::sleep(Duration::from_millis(250));
     }
 }
@@ -257,6 +305,7 @@ fn parse_args() -> Result<Cli, DynError> {
     let mut config_path = expand_home(DEFAULT_CONFIG_PATH);
     let mut check = false;
     let mut status = false;
+    let mut validate = false;
     let mut worker_only = false;
     let mut dry_run = false;
 
@@ -274,6 +323,9 @@ fn parse_args() -> Result<Cli, DynError> {
             "--status" => {
                 status = true;
             }
+            "validate" | "--validate" => {
+                validate = true;
+            }
             "--worker-only" => {
                 worker_only = true;
             }
@@ -281,7 +333,9 @@ fn parse_args() -> Result<Cli, DynError> {
                 dry_run = true;
             }
             "--help" | "-h" => {
-                println!("talon [--config PATH] [--check] [--status] [--worker-only] [--dry-run]");
+                println!(
+                    "talon [--config PATH] [validate|--validate] [--check] [--status] [--worker-only] [--dry-run]"
+                );
                 std::process::exit(0);
             }
             unknown => {
@@ -298,6 +352,7 @@ fn parse_args() -> Result<Cli, DynError> {
         config_path,
         check,
         status,
+        validate,
         worker_only,
         dry_run,
     })
