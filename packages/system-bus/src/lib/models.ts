@@ -25,6 +25,7 @@ export const ALLOWED_MODELS = [
   "anthropic/claude-haiku-4-5",
   // OpenAI (codex exec, agent loops, friction-fix)
   "gpt-5.3-codex",
+  "gpt-5.3-codex-spark",
   "gpt-5.2-codex-spark",
   "o4-mini",
   "o3",
@@ -43,7 +44,9 @@ export const MODEL = {
   /** Codex agent loops — OpenAI's coding model. */
   CODEX: "gpt-5.3-codex" as const,
   /** Codex spark fallback for structured router reasoning. */
-  CODEX_SPARK: "gpt-5.2-codex-spark" as const,
+  CODEX_SPARK: "gpt-5.3-codex-spark" as const,
+  /** Legacy codex spark id kept for compatibility with older configs. */
+  CODEX_SPARK_LEGACY: "gpt-5.2-codex-spark" as const,
   /** Fast OpenAI reasoning — friction fixes, quick tasks. */
   O4_MINI: "o4-mini" as const,
   /** OpenAI reasoning — heavier tasks. */
