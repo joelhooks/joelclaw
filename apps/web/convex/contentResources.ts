@@ -14,6 +14,25 @@ export const getByResourceId = query({
   },
 });
 
+/**
+ * Lightweight hash-only query for realtime change detection.
+ * Client subscribes to this — when hash changes, trigger router.refresh().
+ */
+export const getContentHash = query({
+  args: { resourceId: v.string() },
+  handler: async (ctx, { resourceId }) => {
+    const doc = await ctx.db
+      .query("contentResources")
+      .withIndex("by_resourceId", (q) => q.eq("resourceId", resourceId))
+      .first();
+    if (!doc || doc.deletedAt !== undefined) return null;
+    return {
+      contentHash: (doc as Record<string, unknown>).contentHash as string | undefined,
+      updatedAt: doc.updatedAt,
+    };
+  },
+});
+
 export const listByType = query({
   args: {
     type: v.string(),

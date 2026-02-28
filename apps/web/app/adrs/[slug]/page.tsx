@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
+import { ContentLive } from "@/components/content-live";
+import { ConvexReaderProvider } from "@/components/convex-reader-provider";
 import { LazyReviewGate } from "@/components/review/lazy-review-gate";
 import { getAdr, getAdrSlugs } from "@/lib/adrs";
 import { SITE_NAME, SITE_URL } from "@/lib/constants";
@@ -67,6 +69,11 @@ export default async function AdrPage({ params }: Props) {
       data-pagefind-body
       data-pagefind-meta={`type:ADR, status:${meta.status}`}
     >
+      {/* Realtime: refresh page when content changes in Convex */}
+      <ConvexReaderProvider>
+        <ContentLive resourceId={`adr:${slug}`} />
+      </ConvexReaderProvider>
+
       {/* Static shell: header renders immediately */}
       <header className="mb-10">
         <div className="flex items-center gap-3 mb-2">

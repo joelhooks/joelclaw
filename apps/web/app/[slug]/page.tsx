@@ -3,6 +3,8 @@ import { cacheLife, cacheTag } from "next/cache";
 import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import { ContentDebugPanel } from "@/components/content-debug-panel";
+import { ContentLive } from "@/components/content-live";
+import { ConvexReaderProvider } from "@/components/convex-reader-provider";
 import { LazyFeedbackStatusIsland } from "@/components/review/lazy-feedback-status-island";
 import { LazyReviewGate } from "@/components/review/lazy-review-gate";
 import { SITE_NAME, SITE_URL } from "@/lib/constants";
