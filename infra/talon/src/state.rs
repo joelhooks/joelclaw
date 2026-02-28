@@ -75,6 +75,17 @@ pub fn load_state() -> Result<PersistentState, DynError> {
         state.worker_restarts = value as u32;
     }
 
+    if let Some(value) = parse_json_array(&raw, "last_probe_results") {
+        state.last_probe_results = parse_probe_results_json(&value);
+    }
+
+    if state.last_probe_results.is_empty() {
+        let last_probe_path = last_probe_file_path();
+        if let Ok(raw_last_probe) = fs::read_to_string(last_probe_path) {
+            state.last_probe_results = parse_probe_results_json(&raw_last_probe);
+        }
+    }
+
     Ok(state)
 }
 
@@ -224,6 +235,126 @@ fn parse_json_optional_u64(raw: &str, key: &str) -> Option<Option<u64>> {
     token.parse::<u64>().ok().map(Some)
 }
 
+fn parse_json_array(raw: &str, key: &str) -> Option<String> {
+    let start = key_position(raw, key)?;
+    let mut index = skip_whitespace(raw, start)?;
+    let bytes = raw.as_bytes();
+
+    if bytes.get(index).copied()? != b'[' {
+        return None;
+    }
+
+    let array_start = index;
+    let mut depth = 0_i32;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    while index < bytes.len() {
+        let ch = bytes[index] as char;
+
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            index += 1;
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(raw[array_start..=index].to_string());
+                }
+            }
+            _ => {}
+        }
+
+        index += 1;
+    }
+
+    None
+}
+
+fn parse_probe_results_json(raw: &str) -> Vec<ProbeResult> {
+    let mut results = Vec::new();
+
+    for object_raw in extract_top_level_objects(raw) {
+        if let Some(result) = parse_probe_result_object(&object_raw) {
+            results.push(result);
+        }
+    }
+
+    results
+}
+
+fn parse_probe_result_object(raw: &str) -> Option<ProbeResult> {
+    let name = parse_json_string(raw, "name")?;
+    let output = parse_json_string(raw, "output").unwrap_or_default();
+    let duration_ms = parse_json_u64(raw, "duration_ms").unwrap_or(0);
+    let passed = parse_json_token(raw, "passed")
+        .map(|value| value.trim() == "true")
+        .unwrap_or(false);
+
+    Some(ProbeResult {
+        name,
+        passed,
+        output,
+        duration_ms,
+    })
+}
+
+fn extract_top_level_objects(raw: &str) -> Vec<String> {
+    let mut objects = Vec::new();
+    let mut depth = 0_i32;
+    let mut start_index: Option<usize> = None;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (index, ch) in raw.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => {
+                if depth == 0 {
+                    start_index = Some(index);
+                }
+                depth += 1;
+            }
+            '}' => {
+                if depth > 0 {
+                    depth -= 1;
+                    if depth == 0 {
+                        if let Some(start) = start_index {
+                            objects.push(raw[start..=index].to_string());
+                        }
+                        start_index = None;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    objects
+}
+
 fn parse_json_token(raw: &str, key: &str) -> Option<String> {
     let start = key_position(raw, key)?;
     let mut index = skip_whitespace(raw, start)?;
@@ -292,4 +423,40 @@ fn json_escape(value: &str) -> String {
 #[allow(dead_code)]
 fn _state_parse_error(message: &str) -> DynError {
     io::Error::new(io::ErrorKind::InvalidData, message).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_json_array_extracts_last_probe_results() {
+        let raw = r#"{
+  "current_state": "Healthy",
+  "last_probe_results": [{"name":"http:voice_agent","passed":false,"output":"500","duration_ms":12}],
+  "worker_restarts": 0
+}"#;
+
+        let array = parse_json_array(raw, "last_probe_results").expect("array should be present");
+        let parsed = parse_probe_results_json(&array);
+
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "http:voice_agent");
+        assert!(!parsed[0].passed);
+        assert_eq!(parsed[0].output, "500");
+        assert_eq!(parsed[0].duration_ms, 12);
+    }
+
+    #[test]
+    fn parse_probe_results_json_handles_escaped_content() {
+        let raw =
+            "[{\"name\":\"redis\",\"passed\":true,\"output\":\"PONG\\nready\",\"duration_ms\":5}]";
+
+        let parsed = parse_probe_results_json(raw);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].name, "redis");
+        assert!(parsed[0].passed);
+        assert_eq!(parsed[0].output, "PONG\nready");
+        assert_eq!(parsed[0].duration_ms, 5);
+    }
 }

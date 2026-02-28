@@ -123,16 +123,20 @@ timeout_secs = 5
 
 ## Launchd Management
 
-**Install (not yet active — currently worker uses separate plist):**
+**Talon is active as `com.joel.talon`:**
 ```bash
-cp ~/Code/joelhooks/joelclaw/infra/launchd/com.joel.talon.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.joel.talon.plist
+launchctl print gui/$(id -u)/com.joel.talon | rg "state =|pid =|program =|last exit code ="
 ```
 
-**When activating talon, disable old services:**
+**Reload binary/config after deploy:**
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.joel.system-bus-worker.plist
-launchctl unload ~/Library/LaunchAgents/com.joel.k8s-reboot-heal.plist
+launchctl kickstart -k gui/$(id -u)/com.joel.talon
+```
+
+**Legacy services should stay disabled:**
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.joel.system-bus-worker.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.joel.k8s-reboot-heal.plist
 ```
 
 ## Troubleshooting

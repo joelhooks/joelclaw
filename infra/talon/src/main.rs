@@ -164,9 +164,10 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
         current_state.worker_restarts = worker::worker_restart_count();
         state::write_last_probe(&results)?;
 
-        let mut critical_failures = collect_critical_failures(&results, &config);
+        let mut failed_probes = collect_failed_probes(&results);
+        let critical_failures = collect_critical_failures(&failed_probes, &config);
 
-        if critical_failures.is_empty() {
+        if failed_probes.is_empty() {
             current_state.consecutive_failures = 0;
             critical_since = None;
             state::transition(&mut current_state, "Healthy");
@@ -181,25 +182,39 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
             state::transition(&mut current_state, "Degraded");
         }
 
+        let should_escalate = !critical_failures.is_empty()
+            || current_state.consecutive_failures
+                >= config.probes.consecutive_failures_before_escalate;
+
+        if !should_escalate {
+            state::save_state(&current_state)?;
+            sleep_with_shutdown(config.check_interval_secs);
+            continue;
+        }
+
         if current_state.current_state == "Degraded"
-            && current_state.consecutive_failures
-                >= config.probes.consecutive_failures_before_escalate
+            || current_state.current_state == "Investigating"
         {
             state::transition(&mut current_state, "Failed");
         }
 
         if current_state.current_state == "Failed" {
-            let (heal_outcome, heal_output) =
-                escalation::run_heal(&config, &mut current_state, false)?;
+            let (heal_outcome, heal_output) = if should_use_service_heal(&failed_probes, &config) {
+                log::warn("running service-specific heal for dynamic service probe failures");
+                escalation::run_service_heal(&config, &mut current_state, &failed_probes, false)?
+            } else {
+                escalation::run_heal(&config, &mut current_state, false)?
+            };
 
             if heal_outcome == TierOutcome::Fixed {
                 let post_heal = probes::run_all_probes(&config);
                 current_state.last_probe_results = post_heal.clone();
                 current_state.worker_restarts = worker::worker_restart_count();
                 state::write_last_probe(&post_heal)?;
-                critical_failures = collect_critical_failures(&post_heal, &config);
 
-                if critical_failures.is_empty() {
+                failed_probes = collect_failed_probes(&post_heal);
+
+                if failed_probes.is_empty() {
                     current_state.consecutive_failures = 0;
                     critical_since = None;
                     state::transition(&mut current_state, "Healthy");
@@ -213,7 +228,7 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
             let agent_outcome = escalation::run_agents(
                 &config,
                 &mut current_state,
-                &critical_failures,
+                &failed_probes,
                 &heal_output,
                 false,
             )?;
@@ -224,7 +239,7 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
                     current_state.last_probe_results = post_agent.clone();
                     current_state.worker_restarts = worker::worker_restart_count();
                     state::write_last_probe(&post_agent)?;
-                    let remaining_failures = collect_critical_failures(&post_agent, &config);
+                    let remaining_failures = collect_failed_probes(&post_agent);
 
                     if remaining_failures.is_empty() {
                         current_state.consecutive_failures = 0;
@@ -251,7 +266,7 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
                 match escalation::run_sos(
                     &config,
                     &mut current_state,
-                    &critical_failures,
+                    &failed_probes,
                     since,
                     false,
                 )? {
@@ -269,12 +284,49 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
     Ok(())
 }
 
+fn collect_failed_probes(results: &[ProbeResult]) -> Vec<ProbeResult> {
+    results
+        .iter()
+        .filter(|result| !result.passed)
+        .cloned()
+        .collect()
+}
+
 fn collect_critical_failures(results: &[ProbeResult], config: &Config) -> Vec<ProbeResult> {
     results
         .iter()
-        .filter(|result| !result.passed && config.is_critical_probe(&result.name))
+        .filter(|result| config.is_critical_probe(&result.name))
         .cloned()
         .collect()
+}
+
+fn should_use_service_heal(failures: &[ProbeResult], config: &Config) -> bool {
+    !failures.is_empty()
+        && failures
+            .iter()
+            .all(|probe| is_dynamic_service_probe(&probe.name, config))
+}
+
+fn is_dynamic_service_probe(name: &str, config: &Config) -> bool {
+    if let Some(service_name) = name.strip_prefix("launchd:") {
+        return config
+            .launchd_service_probes
+            .iter()
+            .any(|probe| probe.name == service_name);
+    }
+
+    if let Some(service_name) = name.strip_prefix("http:") {
+        if matches!(service_name, "inngest" | "typesense" | "worker") {
+            return false;
+        }
+
+        return config
+            .http_service_probes
+            .iter()
+            .any(|probe| probe.name == service_name);
+    }
+
+    false
 }
 
 fn sleep_with_shutdown(seconds: u64) {
@@ -356,4 +408,60 @@ fn parse_args() -> Result<Cli, DynError> {
         worker_only,
         dry_run,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{HttpServiceProbe, LaunchdServiceProbe};
+
+    #[test]
+    fn service_heal_selection_uses_only_dynamic_service_failures() {
+        let mut config = Config::default();
+        config.http_service_probes.push(HttpServiceProbe {
+            name: "voice_agent".to_string(),
+            url: "http://127.0.0.1:8081/".to_string(),
+            timeout_secs: 5,
+            critical: true,
+        });
+        config.launchd_service_probes.push(LaunchdServiceProbe {
+            name: "voice_agent".to_string(),
+            label: "com.joel.voice-agent".to_string(),
+            timeout_secs: 5,
+            critical: true,
+        });
+
+        let only_dynamic = vec![ProbeResult {
+            name: "http:voice_agent".to_string(),
+            passed: false,
+            output: "500".to_string(),
+            duration_ms: 12,
+        }];
+
+        let mixed_failures = vec![
+            ProbeResult {
+                name: "http:voice_agent".to_string(),
+                passed: false,
+                output: "500".to_string(),
+                duration_ms: 12,
+            },
+            ProbeResult {
+                name: "redis".to_string(),
+                passed: false,
+                output: "timeout".to_string(),
+                duration_ms: 1000,
+            },
+        ];
+
+        let builtin_http_failure = vec![ProbeResult {
+            name: "http:worker".to_string(),
+            passed: false,
+            output: "503".to_string(),
+            duration_ms: 10,
+        }];
+
+        assert!(should_use_service_heal(&only_dynamic, &config));
+        assert!(!should_use_service_heal(&mixed_failures, &config));
+        assert!(!should_use_service_heal(&builtin_http_failure, &config));
+    }
 }
