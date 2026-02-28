@@ -301,6 +301,15 @@ function toHtml(markdown: string): string {
   }
 }
 
+/**
+ * Build display text for streaming updates.
+ * Sends PLAIN TEXT (no parse_mode, no HTML) during streaming to avoid:
+ * - markdown→HTML conversion overhead on every throttled edit
+ * - broken HTML tags when truncating for the 4096 char limit
+ * - HTML escaping issues with partial content (<, >, & in code blocks)
+ *
+ * The final message gets full HTML formatting via finish().
+ */
 function buildDisplayText(state: StreamState): string {
   let text = state.fullText;
 
@@ -309,20 +318,11 @@ function buildDisplayText(state: StreamState): string {
     text = text + "\n\n" + state.toolStatus;
   }
 
-  // Add cursor before conversion
+  // Add cursor
   text = text + CURSOR;
 
-  // Convert markdown → HTML for Telegram
-  const html = toHtml(text);
-
-  // Truncate for Telegram limit
-  if (html.length > TELEGRAM_MAX_CHARS) {
-    // Re-convert a truncated source to avoid cutting mid-tag
-    const truncatedMd = state.fullText.slice(0, TELEGRAM_MAX_CHARS - 200) + " …" + CURSOR;
-    return toHtml(truncatedMd);
-  }
-
-  return html;
+  // Plain text truncation — no HTML tags to worry about
+  return truncateForTelegram(text);
 }
 
 function scheduleEdit(state: StreamState): void {
@@ -367,9 +367,9 @@ function flushEdit(state: StreamState): void {
     // Stop typing indicator once we start showing text
     stopTyping(state);
 
+    // Send plain text — no parse_mode during streaming
     state.bot.api
       .sendMessage(state.chatId, displayText, {
-        parse_mode: "HTML" as const,
         ...(state.replyTo ? { reply_parameters: { message_id: state.replyTo } } : {}),
       })
       .then((msg) => {
@@ -384,11 +384,9 @@ function flushEdit(state: StreamState): void {
         state.sendingInitial = false;
       });
   } else {
-    // Edit existing message
+    // Edit existing message — plain text, no parse_mode during streaming
     state.bot.api
-      .editMessageText(state.chatId, state.messageId, displayText, {
-        parse_mode: "HTML" as const,
-      })
+      .editMessageText(state.chatId, state.messageId, displayText)
       .catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("message is not modified")) return;
