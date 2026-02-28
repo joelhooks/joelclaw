@@ -91,12 +91,51 @@ function asString(value: unknown): string | undefined {
 
 function stripMarkdownFence(text: string): string {
   const trimmed = text.trim();
-  const fenced = trimmed.match(/^```(?:markdown|md|mdx)?\s*([\s\S]*?)\s*```$/iu);
-  return fenced?.[1] ?? trimmed;
+
+  const strictFenced = trimmed.match(/^```(?:markdown|md|mdx)?\s*\n?([\s\S]*?)\n?```$/iu);
+  if (strictFenced?.[1]) {
+    return strictFenced[1].trim();
+  }
+
+  if (trimmed.startsWith("```")) {
+    const lines = trimmed.split(/\r?\n/u);
+    const opener = lines[0] ?? "";
+
+    if (/^```(?:markdown|md|mdx)?\s*$/iu.test(opener)) {
+      let closingIndex = -1;
+      for (let index = lines.length - 1; index > 0; index -= 1) {
+        if (/^```\s*$/u.test(lines[index] ?? "")) {
+          closingIndex = index;
+          break;
+        }
+      }
+
+      if (closingIndex > 0) {
+        return lines.slice(1, closingIndex).join("\n").trim();
+      }
+    }
+  }
+
+  return trimmed;
 }
 
 function ensureTrailingNewline(text: string): string {
   return text.endsWith("\n") ? text : `${text}\n`;
+}
+
+function assertNoRewriteMetaCommentary(rewrittenContent: string): void {
+  const forbiddenLinePatterns = [
+    /^\*\*change applied:\*\*/imu,
+    /^change applied:/imu,
+    /^applied changes:/imu,
+    /^summary of changes:/imu,
+  ];
+
+  for (const pattern of forbiddenLinePatterns) {
+    if (pattern.test(rewrittenContent)) {
+      throw new Error("rewritten content included meta commentary outside the document body");
+    }
+  }
 }
 
 function formatError(error: unknown): string {
@@ -445,6 +484,7 @@ function buildReviewPrompt(args: {
     "Apply all submitted review comments and pending feedback items to the content below.",
     "Do not regress previously applied edits unless new feedback explicitly requests reversal.",
     "Return only the full updated markdown/MDX document.",
+    "Do not include summaries, notes, or lines like 'Change applied'.",
     "",
     "## Current Content",
     "```md",
@@ -472,6 +512,7 @@ function systemPromptForContentType(contentType: SupportedContentType): string {
       "Preserve technical intent, structure, and frontmatter.",
       "Only make changes implied by the feedback.",
       "Return the complete updated markdown file only.",
+      "No markdown fences and no commentary or change summaries.",
     ].join(" ");
   }
 
@@ -481,6 +522,7 @@ function systemPromptForContentType(contentType: SupportedContentType): string {
       "Preserve the author's voice and remove filler.",
       "Apply suggested fixes, clarity improvements, and corrections.",
       "Return the complete updated MDX file only.",
+      "No markdown fences and no commentary or change summaries.",
     ].join(" ");
   }
 
@@ -488,6 +530,7 @@ function systemPromptForContentType(contentType: SupportedContentType): string {
     "You edit discovery notes using submitted review feedback.",
     "Keep the note concise, factual, and actionable.",
     "Return the complete updated markdown file only.",
+    "No markdown fences and no commentary or change summaries.",
   ].join(" ");
 }
 
@@ -932,6 +975,7 @@ export const contentReviewApply = inngest.createFunction(
     });
 
     await step.run("validate-edited-content", async () => {
+      assertNoRewriteMetaCommentary(rewrittenContent);
       validateRewriteLength(article.content, rewrittenContent);
       assertNoHistoricalRegression({
         currentContent: article.content,
