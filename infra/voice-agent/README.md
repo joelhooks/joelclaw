@@ -1,6 +1,6 @@
 # joelclaw Voice Agent
 
-Bidirectional voice conversations with system tool access. ADR-0043 + ADR-0154.
+Bidirectional voice conversations with system tool access. ADR-0043 + ADR-0178.
 
 ## Source of truth
 

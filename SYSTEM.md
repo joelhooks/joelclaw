@@ -51,6 +51,7 @@ These are `joelclaw` CLI commands. Each defines an interface contract with ports
 
 - **`joelclaw otel`** — Emit and query structured telemetry. Every pipeline step must be observable. Search events, aggregate stats, check for silent failures.
 - **`joelclaw recall`** — Semantic search across agent memory. Find past decisions, debugging insights, operational patterns. The system gets smarter when you feed it.
+- **`joelclaw vault`** — Read/search/list vault content and run ADR hygiene checks (`vault adr list|collisions|audit`) as the canonical decision inventory interface.
 - **`joelclaw mail`** — Send and receive messages between agents. Register identity, reserve files to prevent edit conflicts, release when done. Always include paths and task context.
 - **`joelclaw secrets`** — Lease credentials with TTL and audit trail. Never hardcode tokens or keys. Every lease is logged.
 - **`joelclaw deploy`** — Trigger explicit, logged, verifiable deployments. No magic — every deploy is scripted and auditable.

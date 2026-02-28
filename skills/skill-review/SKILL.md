@@ -9,7 +9,7 @@ tags: [joelclaw, skills, maintenance, gardening, automation]
 
 # Skill Review & Gardening
 
-Automated and manual processes for keeping the 51+ joelclaw skills accurate and healthy. ADR-0158.
+Automated and manual processes for keeping the 51+ joelclaw skills accurate and healthy. ADR-0179.
 
 ## Canonical Contract
 
@@ -163,7 +163,7 @@ displayName: Human Readable Name
 |------|------|
 | Repo skills (canonical) | `~/Code/joelhooks/joelclaw/skills/` |
 | Inngest function | `packages/system-bus/src/inngest/functions/skill-garden.ts` |
-| ADR | `~/Vault/docs/decisions/0158-automated-skill-gardening.md` |
+| ADR | `~/Vault/docs/decisions/0179-automated-skill-gardening.md` |
 | Home dir: agents | `~/.agents/skills/` |
 | Home dir: pi | `~/.pi/agent/skills/` |
 | Stale patterns | `STALE_PATTERNS` in `skill-garden.ts` |
