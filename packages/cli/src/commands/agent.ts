@@ -4,12 +4,13 @@
  * `joelclaw agent list`              — discover agents from project + user scopes
  * `joelclaw agent show <name>`       — display full agent definition
  * `joelclaw agent run <name> <task>` — fire agent/task.run event via Inngest
+ * `joelclaw agent chain <steps> --task <task>` — fire agent/chain.run event
  */
 
-import { Args, Command, Options } from "@effect/cli"
-import { Console, Effect } from "effect"
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join, resolve } from "node:path"
+import { Args, Command, Options } from "@effect/cli"
+import { Console, Effect } from "effect"
 import { Inngest } from "../inngest"
 import { type NextAction, respond, respondError } from "../response"
 
@@ -25,6 +26,18 @@ interface AgentSummary {
   source: "project" | "user" | "builtin"
   filePath: string
 }
+
+type ChainStepSpec =
+  | {
+      agent: string
+      task?: string
+    }
+  | {
+      parallel: Array<{
+        agent: string
+        task?: string
+      }>
+    }
 
 function parseAgentFile(filePath: string, source: AgentSummary["source"]): AgentSummary | null {
   try {
@@ -88,11 +101,66 @@ function discoverAgents(cwd: string): AgentSummary[] {
   return Array.from(agents.values()).sort((a, b) => a.name.localeCompare(b.name))
 }
 
+function parseChainStepsInput(raw: string): {
+  steps: ChainStepSpec[]
+  agents: string[]
+  error?: string
+} {
+  const rawSegments = raw.split(",")
+  if (rawSegments.some((segment) => segment.trim().length === 0)) {
+    return {
+      steps: [],
+      agents: [],
+      error: "Chain steps contain an empty segment",
+    }
+  }
+
+  const segments = rawSegments.map((segment) => segment.trim())
+
+  if (segments.length === 0) {
+    return { steps: [], agents: [], error: "Chain steps cannot be empty" }
+  }
+
+  const steps: ChainStepSpec[] = []
+  const agents: string[] = []
+
+  for (const [segmentIndex, segment] of segments.entries()) {
+    const parallelParts = segment
+      .split("+")
+      .map((part) => part.trim())
+
+    if (parallelParts.some((part) => part.length === 0)) {
+      return {
+        steps: [],
+        agents: [],
+        error: `Invalid chain segment at position ${segmentIndex + 1}`,
+      }
+    }
+
+    if (parallelParts.length === 1) {
+      steps.push({ agent: parallelParts[0] })
+      agents.push(parallelParts[0])
+      continue
+    }
+
+    steps.push({
+      parallel: parallelParts.map((agent) => ({ agent })),
+    })
+    agents.push(...parallelParts)
+  }
+
+  return { steps, agents }
+}
+
 // ── Next actions ──
 
 const listNextActions: readonly NextAction[] = [
   { command: "joelclaw agent show <name>", description: "View full agent definition" },
   { command: "joelclaw agent run <name> <task>", description: "Run an agent task via Inngest" },
+  {
+    command: "joelclaw agent chain scout,planner+reviewer,coder --task <task>",
+    description: "Run a sequential/parallel agent chain",
+  },
 ]
 
 const showNextActions = (name: string): readonly NextAction[] => [
@@ -111,6 +179,12 @@ const runNextActions = (taskId: string): readonly NextAction[] => [
     params: { "run-id": { value: taskId, description: "Inngest run ID (once available)" } },
   },
   { command: "joelclaw agent list", description: "List available agents" },
+]
+
+const chainNextActions = (chainId: string): readonly NextAction[] => [
+  { command: "joelclaw runs --count 5", description: "Check worker run progress" },
+  { command: "joelclaw events --prefix agent/chain --hours 1", description: "Inspect chain events" },
+  { command: "joelclaw agent list", description: "Inspect available roster agents" },
 ]
 
 // ── Subcommands ──
@@ -249,6 +323,83 @@ const runCmd = Command.make(
     }),
 )
 
+const chainStepsArg = Args.text({ name: "steps" })
+const chainTaskOption = Options.text("task")
+const chainCwdOption = Options.text("cwd").pipe(Options.optional)
+const chainFailFastOption = Options.boolean("fail-fast").pipe(Options.withDefault(false))
+
+const chainCmd = Command.make(
+  "chain",
+  {
+    steps: chainStepsArg,
+    task: chainTaskOption,
+    cwd: chainCwdOption,
+    failFast: chainFailFastOption,
+  },
+  ({ steps, task, cwd, failFast }) =>
+    Effect.gen(function* () {
+      const resolvedCwd = resolve(process.cwd())
+      const parsed = parseChainStepsInput(steps)
+
+      if (parsed.error) {
+        yield* Console.log(
+          respondError(
+            "agent chain",
+            parsed.error,
+            "INVALID_CHAIN_STEPS",
+            "Use comma-separated agents and + for parallel groups, e.g. scout,planner+reviewer,coder",
+            listNextActions,
+          ),
+        )
+        return
+      }
+
+      const agents = discoverAgents(resolvedCwd)
+      const knownAgents = new Set(agents.map((agent) => agent.name))
+      const missing = parsed.agents.filter((agent) => !knownAgents.has(agent))
+
+      if (missing.length > 0) {
+        yield* Console.log(
+          respondError(
+            "agent chain",
+            `Unknown agent(s): ${missing.join(", ")}`,
+            "AGENT_NOT_FOUND",
+            "Run 'joelclaw agent list' and update the chain steps to known roster entries.",
+            listNextActions,
+          ),
+        )
+        return
+      }
+
+      const chainId = `ac-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      const eventData: Record<string, unknown> = {
+        chainId,
+        task,
+        steps: parsed.steps,
+        failFast,
+      }
+      if (cwd._tag === "Some") eventData.cwd = cwd.value
+
+      const inngest = yield* Inngest
+      const result = yield* inngest.send("agent/chain.run", eventData)
+
+      yield* Console.log(
+        respond(
+          "agent chain",
+          {
+            chainId,
+            task,
+            steps: parsed.steps,
+            failFast,
+            eventSent: true,
+            inngestResult: result,
+          },
+          chainNextActions(chainId),
+        ),
+      )
+    }),
+)
+
 // ── Parent command ──
 
 export const agentCmd = Command.make("agent", {}, () =>
@@ -267,9 +418,9 @@ export const agentCmd = Command.make("agent", {}, () =>
     yield* Console.log(
       respond(
         "agent",
-        { agents: summary, total: agents.length, hint: "Use 'joelclaw agent list|show|run'" },
+        { agents: summary, total: agents.length, hint: "Use 'joelclaw agent list|show|run|chain'" },
         listNextActions,
       ),
     )
   }),
-).pipe(Command.withSubcommands([listCmd, showCmd, runCmd]))
+).pipe(Command.withSubcommands([listCmd, showCmd, runCmd, chainCmd]))

@@ -14,6 +14,7 @@ Canonical operator interface for joelclaw.
 
 - `joelclaw status`
 - `joelclaw runs`
+- `joelclaw agent`
 - `joelclaw content`
 - `joelclaw gateway`
 - `joelclaw loop`
@@ -88,6 +89,21 @@ joelclaw skills
 - triggers the `skill-garden/check` event on-demand
 - waits for the corresponding run and returns the findings report in-envelope
 - supports `--deep` for LLM staleness checks
+
+## Agent command tree (ADR-0180 phases 2-3)
+
+```bash
+joelclaw agent
+├── list
+├── show <name>
+├── run <name> <task> [--cwd <cwd>] [--timeout <seconds>]
+└── chain <steps> --task <task> [--cwd <cwd>] [--fail-fast]
+```
+
+Semantics:
+
+- `run` emits `agent/task.run` for single roster agent execution.
+- `chain` emits `agent/chain.run` with comma-separated sequential steps and `+` parallel groups (e.g. `scout,planner+reviewer,coder`).
 
 ## Vault command tree
 

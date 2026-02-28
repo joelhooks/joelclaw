@@ -1,8 +1,8 @@
 import { emitOtelEvent } from "../../observability/emit";
 
 export { echoFizzle } from "../../memory/echo-fizzle";
+export { agentChainRun } from "./agent-chain-run";
 export { agentDispatch } from "./agent-dispatch";
-export { agentTaskRun } from "./agent-task-run";
 export {
   agentLoopComplete,
   agentLoopImplement,
@@ -12,6 +12,7 @@ export {
   agentLoopReview,
   agentLoopTestWriter,
 } from "./agent-loop";
+export { agentTaskRun } from "./agent-task-run";
 export { approvalRequest, approvalResolve } from "./approval";
 export { backfillObserve } from "./backfill-observe";
 export { bookDownload } from "./book-download";

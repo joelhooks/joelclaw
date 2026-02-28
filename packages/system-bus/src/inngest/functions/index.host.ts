@@ -1,6 +1,6 @@
 import { echoFizzle } from "../../memory/echo-fizzle";
+import { agentChainRun } from "./agent-chain-run";
 import { agentDispatch } from "./agent-dispatch";
-import { agentTaskRun } from "./agent-task-run";
 import {
   agentLoopComplete,
   agentLoopImplement,
@@ -10,6 +10,7 @@ import {
   agentLoopReview,
   agentLoopTestWriter,
 } from "./agent-loop";
+import { agentTaskRun } from "./agent-task-run";
 import { backfillObserve } from "./backfill-observe";
 import { bookDownload } from "./book-download";
 import { channelMessageClassify } from "./channel-message-classify";
@@ -131,6 +132,7 @@ export const hostFunctionDefinitions = [
   heartbeatWake,
   agentDispatch,
   agentTaskRun,
+  agentChainRun,
   storyPipeline,
   agentLoopPlan,
   agentLoopTestWriter,

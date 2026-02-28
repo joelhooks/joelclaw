@@ -1112,6 +1112,56 @@ export type Events = {
       originSession?: string;
     };
   };
+  "agent/chain.run": {
+    data: {
+      chainId: string;
+      task: string;
+      steps: Array<
+        | {
+            agent: string;
+            task?: string;
+          }
+        | {
+            parallel: Array<{
+              agent: string;
+              task?: string;
+            }>;
+          }
+      >;
+      failFast?: boolean;
+      originSession?: string;
+      cwd?: string;
+      metadata?: Record<string, unknown>;
+    };
+  };
+  "agent/chain.complete": {
+    data: {
+      chainId: string;
+      status: "completed" | "completed_with_errors" | "failed";
+      task: string;
+      results: Array<{
+        stepIndex: number;
+        parallelIndex?: number;
+        agent: string;
+        task: string;
+        status: "completed" | "failed";
+        text: string;
+        model?: string;
+        provider?: string;
+        usage?: {
+          inputTokens?: number;
+          outputTokens?: number;
+          totalTokens?: number;
+        };
+        durationMs: number;
+        error?: string;
+      }>;
+      durationMs: number;
+      originSession?: string;
+      metadata?: Record<string, unknown>;
+      error?: string;
+    };
+  };
 
   // --- Backfill ---
   "memory/backfill.requested": {
