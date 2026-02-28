@@ -1,23 +1,18 @@
 "use client";
 
 import { type ComponentType, useEffect, useState } from "react";
+import { authClient } from "@/lib/auth-client";
 
 interface LazyFeedbackStatusIslandProps {
   resourceId: string;
   enabled?: boolean;
 }
 
-function hasTruthyParam(value: string | null): boolean {
-  if (!value) return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
-}
-
 /**
  * Defers the Convex island import until after hydration to keep
  * static prerender paths free from convex/react module evaluation.
  *
- * Default behavior: disabled unless URL has ?review=1.
+ * Default behavior: enabled when the user is authenticated.
  */
 type LoadedFeedbackIslandProps = Omit<LazyFeedbackStatusIslandProps, "enabled">;
 
@@ -28,14 +23,8 @@ export function LazyFeedbackStatusIsland({
   const [Island, setIsland] = useState<ComponentType<LoadedFeedbackIslandProps> | null>(
     null,
   );
-  const [queryEnabled, setQueryEnabled] = useState(false);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    setQueryEnabled(hasTruthyParam(params.get("review")));
-  }, []);
-
-  const active = enabled ?? queryEnabled;
+  const { data: session } = authClient.useSession();
+  const active = enabled ?? !!session?.user;
 
   useEffect(() => {
     if (!active) return;
