@@ -1195,7 +1195,20 @@ try {
 // ── Init fallback controller (ADR-0091) ──────────────────
 // Must happen after Telegram starts so notify can send alerts.
 fallbackController.init(
-  { setModel: (m) => session.setModel(m as any), get model() { return session.model; } },
+  {
+    setModel: async (m) => {
+      // Resolve the full pi model object (with api, baseUrl, cost, etc.)
+      // The fallback controller passes { provider, id } from the joelclaw catalog,
+      // but pi's stream() needs model.api to resolve the API provider.
+      const ref = m as { provider: string; id: string };
+      const fullModel = getModel(ref.provider as any, ref.id as any);
+      if (!fullModel) {
+        throw new Error(`[gateway:fallback] pi model not found: ${ref.provider}/${ref.id}`);
+      }
+      return session.setModel(fullModel as any);
+    },
+    get model() { return session.model; },
+  },
   (text: string) => {
     console.log("[gateway:fallback]", text);
     if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
