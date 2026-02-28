@@ -3,6 +3,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::DynError;
 
@@ -82,6 +83,21 @@ pub struct LaunchdServiceProbe {
     pub critical: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct ServiceProbeTracker {
+    pub services_path: PathBuf,
+    pub last_modified: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidationSummary {
+    pub config_path: PathBuf,
+    pub services_path: PathBuf,
+    pub check_interval_secs: u64,
+    pub http_probe_count: usize,
+    pub launchd_probe_count: usize,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -93,26 +109,7 @@ impl Default for Config {
             escalation: EscalationConfig::default(),
             agent: AgentConfig::default(),
             probes: ProbesConfig::default(),
-            http_service_probes: vec![
-                HttpServiceProbe {
-                    name: "inngest".to_string(),
-                    url: "http://localhost:8288/health".to_string(),
-                    timeout_secs: 5,
-                    critical: false,
-                },
-                HttpServiceProbe {
-                    name: "typesense".to_string(),
-                    url: "http://localhost:8108/health".to_string(),
-                    timeout_secs: 5,
-                    critical: false,
-                },
-                HttpServiceProbe {
-                    name: "worker".to_string(),
-                    url: "http://localhost:3111/api/inngest".to_string(),
-                    timeout_secs: 5,
-                    critical: false,
-                },
-            ],
+            http_service_probes: builtin_http_service_probes(),
             launchd_service_probes: Vec::new(),
         }
     }
@@ -211,6 +208,44 @@ impl Config {
 
         false
     }
+
+    pub fn services_path(&self) -> PathBuf {
+        expand_home(&self.services_file)
+    }
+
+    pub fn service_probe_tracker(&self) -> Result<ServiceProbeTracker, DynError> {
+        let services_path = self.services_path();
+        ensure_services_file(&services_path)?;
+
+        Ok(ServiceProbeTracker {
+            services_path: services_path.clone(),
+            last_modified: file_modified(&services_path)?,
+        })
+    }
+
+    pub fn refresh_service_probes(
+        &mut self,
+        tracker: &mut ServiceProbeTracker,
+        force: bool,
+    ) -> Result<bool, DynError> {
+        let expected_path = self.services_path();
+        if tracker.services_path != expected_path {
+            tracker.services_path = expected_path;
+            tracker.last_modified = None;
+        }
+
+        ensure_services_file(&tracker.services_path)?;
+        let current_modified = file_modified(&tracker.services_path)?;
+        let changed = force || current_modified != tracker.last_modified;
+
+        if !changed {
+            return Ok(false);
+        }
+
+        reload_service_probes(self)?;
+        tracker.last_modified = current_modified;
+        Ok(true)
+    }
 }
 
 pub fn ensure_default_config(path: &Path) -> Result<(), DynError> {
@@ -242,9 +277,42 @@ pub fn load_config(path: &Path) -> Result<Config, DynError> {
         .into());
     }
 
-    load_service_probes(&mut config)?;
+    reload_service_probes(&mut config)?;
 
     Ok(config)
+}
+
+pub fn validate_config_files(path: &Path) -> Result<ValidationSummary, DynError> {
+    ensure_default_config(path)?;
+    let config = load_config(path)?;
+
+    Ok(ValidationSummary {
+        config_path: path.to_path_buf(),
+        services_path: config.services_path(),
+        check_interval_secs: config.check_interval_secs,
+        http_probe_count: config.http_service_probes.len(),
+        launchd_probe_count: config.launchd_service_probes.len(),
+    })
+}
+
+pub fn validation_summary_to_json(summary: &ValidationSummary) -> String {
+    format!(
+        concat!(
+            "{\n",
+            "  \"ok\": true,\n",
+            "  \"config_path\": \"{}\",\n",
+            "  \"services_path\": \"{}\",\n",
+            "  \"check_interval_secs\": {},\n",
+            "  \"http_probe_count\": {},\n",
+            "  \"launchd_probe_count\": {}\n",
+            "}}\n"
+        ),
+        json_escape(&summary.config_path.display().to_string()),
+        json_escape(&summary.services_path.display().to_string()),
+        summary.check_interval_secs,
+        summary.http_probe_count,
+        summary.launchd_probe_count
+    )
 }
 
 pub fn default_config_toml() -> String {
@@ -391,16 +459,38 @@ fn apply_toml_overrides(config: &mut Config, raw: &str) -> Result<(), DynError> 
     Ok(())
 }
 
+fn builtin_http_service_probes() -> Vec<HttpServiceProbe> {
+    vec![
+        HttpServiceProbe {
+            name: "inngest".to_string(),
+            url: "http://localhost:8288/health".to_string(),
+            timeout_secs: 5,
+            critical: false,
+        },
+        HttpServiceProbe {
+            name: "typesense".to_string(),
+            url: "http://localhost:8108/health".to_string(),
+            timeout_secs: 5,
+            critical: false,
+        },
+        HttpServiceProbe {
+            name: "worker".to_string(),
+            url: "http://localhost:3111/api/inngest".to_string(),
+            timeout_secs: 5,
+            critical: false,
+        },
+    ]
+}
+
+fn reload_service_probes(config: &mut Config) -> Result<(), DynError> {
+    config.http_service_probes = builtin_http_service_probes();
+    config.launchd_service_probes.clear();
+    load_service_probes(config)
+}
+
 fn load_service_probes(config: &mut Config) -> Result<(), DynError> {
-    let services_path = expand_home(&config.services_file);
-
-    if let Some(parent) = services_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    if !services_path.exists() {
-        fs::write(&services_path, default_services_toml())?;
-    }
+    let services_path = config.services_path();
+    ensure_services_file(&services_path)?;
 
     let raw = fs::read_to_string(&services_path)?;
     let (http_probes, launchd_probes) =
@@ -410,6 +500,26 @@ fn load_service_probes(config: &mut Config) -> Result<(), DynError> {
     config.launchd_service_probes.extend(launchd_probes);
 
     Ok(())
+}
+
+fn ensure_services_file(path: &Path) -> Result<(), DynError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    if !path.exists() {
+        fs::write(path, default_services_toml())?;
+    }
+
+    Ok(())
+}
+
+fn file_modified(path: &Path) -> Result<Option<SystemTime>, DynError> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.modified().ok()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn default_services_toml() -> String {
@@ -708,4 +818,85 @@ pub fn now_unix_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_services_toml_parses_http_and_launchd_sections() {
+        let raw = r#"
+[launchd.voice_agent]
+label = "com.joel.voice-agent"
+critical = true
+
+[http.voice_agent]
+url = "http://127.0.0.1:8081/"
+"#;
+
+        let (http, launchd) = parse_services_toml(raw, 7).expect("services TOML should parse");
+
+        assert_eq!(http.len(), 1);
+        assert_eq!(launchd.len(), 1);
+
+        assert_eq!(http[0].name, "voice_agent");
+        assert_eq!(http[0].url, "http://127.0.0.1:8081/");
+        assert_eq!(http[0].timeout_secs, 7);
+        assert!(!http[0].critical);
+
+        assert_eq!(launchd[0].name, "voice_agent");
+        assert_eq!(launchd[0].label, "com.joel.voice-agent");
+        assert_eq!(launchd[0].timeout_secs, 7);
+        assert!(launchd[0].critical);
+    }
+
+    #[test]
+    fn parse_services_toml_fails_when_http_url_missing() {
+        let raw = r#"
+[http.voice_agent]
+critical = true
+"#;
+
+        let error = parse_services_toml(raw, 5).expect_err("missing url must fail validation");
+        assert!(error.to_string().contains("http.voice_agent is missing required key: url"));
+    }
+
+    #[test]
+    fn parse_services_toml_fails_on_invalid_bool() {
+        let raw = r#"
+[launchd.voice_agent]
+label = "com.joel.voice-agent"
+critical = maybe
+"#;
+
+        let error = parse_services_toml(raw, 5).expect_err("invalid bool should fail validation");
+        assert!(error.to_string().contains("invalid boolean"));
+    }
+
+    #[test]
+    fn is_critical_probe_matches_exact_dynamic_probe_names() {
+        let mut config = Config::default();
+        config.http_service_probes.push(HttpServiceProbe {
+            name: "voice_agent".to_string(),
+            url: "http://127.0.0.1:8081/".to_string(),
+            timeout_secs: 5,
+            critical: true,
+        });
+        config.launchd_service_probes.push(LaunchdServiceProbe {
+            name: "voice_agent".to_string(),
+            label: "com.joel.voice-agent".to_string(),
+            timeout_secs: 5,
+            critical: true,
+        });
+
+        assert!(config.is_critical_probe("redis"));
+        assert!(config.is_critical_probe("http:voice_agent"));
+        assert!(config.is_critical_probe("launchd:voice_agent"));
+
+        assert!(!config.is_critical_probe("http:voice"));
+        assert!(!config.is_critical_probe("http:voice_agent_extra"));
+        assert!(!config.is_critical_probe("launchd:voice"));
+        assert!(!config.is_critical_probe("launchd:voice_agent_extra"));
+    }
 }

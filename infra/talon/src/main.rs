@@ -25,6 +25,7 @@ const SIGHUP: CInt = 1;
 
 pub static RECEIVED_SIGNAL: AtomicI32 = AtomicI32::new(0);
 pub static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+pub static RELOAD_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 unsafe extern "C" {
     fn signal(sig: CInt, handler: usize) -> usize;

@@ -9,10 +9,12 @@ function toReviewEventData(resourceId: string): {
   contentType: string;
   contentSlug: string;
 } {
-  const [typePart, ...slugParts] = resourceId.split(":");
-  const rawType = typePart?.trim() || "post";
+  // resourceId format: "type/slug" (e.g. "post/knowledge-adventure-club-graph")
+  const slashIdx = resourceId.indexOf("/");
+  const rawType = slashIdx > 0 ? resourceId.slice(0, slashIdx).trim() : "post";
   const contentType = rawType === "article" ? "post" : rawType;
-  const contentSlug = slugParts.join(":").trim() || resourceId;
+  const contentSlug =
+    slashIdx > 0 ? resourceId.slice(slashIdx + 1).trim() : resourceId;
 
   return {
     contentType,
@@ -109,13 +111,36 @@ export const feedbackSubmitted = internalAction({
     }
 
     try {
+      const eventBody = JSON.stringify({
+        name: "content/review.submitted",
+        data: payload,
+      });
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+
+      // Compute HMAC-SHA256 signature if secret is available
+      const webhookSecret = process.env.CONVEX_JOELCLAW_WEBHOOK_SECRET?.trim();
+      if (webhookSecret) {
+        const enc = new TextEncoder();
+        const key = await crypto.subtle.importKey(
+          "raw",
+          enc.encode(webhookSecret),
+          { name: "HMAC", hash: "SHA-256" },
+          false,
+          ["sign"],
+        );
+        const sig = await crypto.subtle.sign("HMAC", key, enc.encode(eventBody));
+        headers["x-joelclaw-signature"] = Array.from(new Uint8Array(sig))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+      }
+
       const res = await fetch(eventUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: "content/review.submitted",
-          data: payload,
-        }),
+        headers,
+        body: eventBody,
       });
 
       if (!res.ok) {
