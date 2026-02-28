@@ -59,7 +59,7 @@ export const TRACKED_PROJECTS = [
 When a discovery has an identifiable author:
 1. Check `~/Vault/Contacts/` for existing contact
 2. If found → link in vault note
-3. If not found but appears relevant (core contributor, >10 commits) → fire `contact/enrich` event (ADR-0133)
+3. If not found but appears relevant (core contributor, `>10 commits`) → fire `contact/enrich` event (ADR-0133)
 4. Include author context in the enriched vault note
 
 ### Privilege Rules (ADR-0131)

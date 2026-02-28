@@ -1,0 +1,104 @@
+{
+  "title": "Gateway Reactions, Replies & Channel Config (ADR-0162)",
+  "description": "Add reaction and reply-to-message capabilities across Telegram/Discord/Slack channels, implement <<react:EMOJI>> and <<reply:ID>> directive parsing in the outbound router, inject inbound message IDs into prompt context, and lay groundwork for channels.toml configuration. All work in packages/gateway/.",
+  "stories": [
+    {
+      "id": "S1",
+      "title": "Add react() method to Channel interface and types",
+      "description": "In packages/gateway/src/channels/types.ts, add a `react(target: string, messageId: string, emoji: string): Promise<void>` method to the Channel interface. It should be optional (not all channels support reactions). Also add a `ReactOptions` type if needed. Update SendOptions to include an optional `replyToMessageId?: string` field for reply targeting.",
+      "acceptance_criteria": [
+        "Channel interface in types.ts has optional react() method with signature: react?(target: string, messageId: string, emoji: string): Promise<void>",
+        "TypeScript compiles: bunx tsc --noEmit -p packages/gateway/tsconfig.json",
+        "Existing channel adapters (telegram.ts, discord.ts, slack.ts, imessage.ts) still compile without implementing react() since it's optional"
+      ],
+      "priority": 1,
+      "passes": false
+    },
+    {
+      "id": "S2",
+      "title": "Implement react() in Telegram channel adapter",
+      "description": "In packages/gateway/src/channels/telegram.ts, implement the react() method using grammy's bot.api.setMessageReaction(chatId, messageId, [{type: 'emoji', emoji}]). The bot instance is available via getBot(). chatId comes from the target param (parse as number). Wrap in try/catch — log warning on failure but don't throw. Telegram only supports a fixed set of emoji reactions; invalid ones return an API error which we silently catch.",
+      "acceptance_criteria": [
+        "TelegramChannel class implements react() method",
+        "react() calls bot.api.setMessageReaction with correct parameters",
+        "Errors are caught and logged, not thrown",
+        "TypeScript compiles: bunx tsc --noEmit -p packages/gateway/tsconfig.json"
+      ],
+      "priority": 2,
+      "passes": false
+    },
+    {
+      "id": "S3",
+      "title": "Implement react() in Discord channel adapter",
+      "description": "In packages/gateway/src/channels/discord.ts, implement the react() method. Discord reactions use message.react(emoji) on a Message object. The target is a channel/thread ID, messageId is the Discord message ID. Use client.channels.fetch(target) to get the channel, then channel.messages.fetch(messageId), then message.react(emoji). Wrap in try/catch with warning log.",
+      "acceptance_criteria": [
+        "DiscordChannel class implements react() method",
+        "react() fetches the message and calls .react(emoji)",
+        "Errors are caught and logged, not thrown",
+        "TypeScript compiles: bunx tsc --noEmit -p packages/gateway/tsconfig.json"
+      ],
+      "priority": 3,
+      "passes": false
+    },
+    {
+      "id": "S4",
+      "title": "Implement react() in Slack channel adapter",
+      "description": "In packages/gateway/src/channels/slack.ts, implement the react() method. Slack uses client.reactions.add({channel, timestamp, name}). The target is the channel ID, messageId is the message timestamp (ts). The emoji param needs to be converted from Unicode emoji to Slack emoji name (e.g. '👍' → 'thumbsup'). Add a small EMOJI_TO_SLACK_NAME map for common emoji. Unknown emoji → skip silently. The Slack web client is available as the module-level `app.client`.",
+      "acceptance_criteria": [
+        "SlackChannel class implements react() method",
+        "react() calls app.client.reactions.add with correct parameters",
+        "Unicode emoji are mapped to Slack emoji names via a lookup table",
+        "Unknown emoji are silently skipped (no error thrown)",
+        "Errors are caught and logged, not thrown",
+        "TypeScript compiles: bunx tsc --noEmit -p packages/gateway/tsconfig.json"
+      ],
+      "priority": 4,
+      "passes": false
+    },
+    {
+      "id": "S5",
+      "title": "Parse <<react:EMOJI>> and <<reply:ID>> directives in outbound router",
+      "description": "In packages/gateway/src/outbound/router.ts, add directive parsing to the routeResponse() function (or normalizeMessage). Before routing, scan the beginning of the response text for directives: <<react:EMOJI>> and <<reply:ID>>. Strip them from the text. Return the extracted emoji and replyToMessageId alongside the cleaned text. Directives must be at the start of the text. Multiple directives can appear (e.g. <<react:👍>><<reply:5872>>text). Add a parseDirectives(text: string) function that returns { emoji?: string, replyToMessageId?: string, cleanText: string }. Wire the parsed replyToMessageId into the OutboundEnvelope's replyTo field. The emoji needs to be passed to a new react() call on the channel — add a react field to OutboundChannelContext.",
+      "acceptance_criteria": [
+        "parseDirectives function exists and correctly extracts <<react:EMOJI>> and <<reply:ID>>",
+        "parseDirectives('<<react:👍>>Hello') returns { emoji: '👍', cleanText: 'Hello' }",
+        "parseDirectives('<<react:🔥>><<reply:123>>Text') returns { emoji: '🔥', replyToMessageId: '123', cleanText: 'Text' }",
+        "parseDirectives('No directives') returns { cleanText: 'No directives' }",
+        "parseDirectives('<<react:👍>>') returns { emoji: '👍', cleanText: '' } (reaction-only, no text)",
+        "routeResponse integrates parseDirectives and passes emoji/replyTo to channel handler",
+        "TypeScript compiles: bunx tsc --noEmit -p packages/gateway/tsconfig.json",
+        "Unit test in packages/gateway/src/outbound/__tests__/directives.test.ts covers all parseDirectives cases"
+      ],
+      "priority": 5,
+      "passes": false
+    },
+    {
+      "id": "S6",
+      "title": "Inject inbound message ID into prompt context",
+      "description": "In packages/gateway/src/command-queue.ts, when a message is enqueued with metadata containing telegramMessageId (or equivalent per-channel message ID), prepend a [msg:ID] prefix to the prompt text so the agent knows which message it's responding to. Format: '[msg:5872] Original prompt text'. This gives the agent the ID it needs to use <<reply:ID>> directives. Only add the prefix if a message ID exists in metadata. The metadata fields to check: telegramMessageId (telegram), messageId (discord), messageTs (slack).",
+      "acceptance_criteria": [
+        "Prompts from Telegram include [msg:TELEGRAM_MSG_ID] prefix when telegramMessageId is in metadata",
+        "Prompts from Discord include [msg:DISCORD_MSG_ID] prefix when messageId is in metadata (if available)",
+        "Prompts from Slack include [msg:SLACK_TS] prefix when messageTs is in metadata (if available)",
+        "Prompts without message ID metadata are unchanged",
+        "TypeScript compiles: bunx tsc --noEmit -p packages/gateway/tsconfig.json"
+      ],
+      "priority": 6,
+      "passes": false
+    },
+    {
+      "id": "S7",
+      "title": "Wire react() calls through outbound router to channel adapters",
+      "description": "In packages/gateway/src/outbound/router.ts routeResponse(), after parseDirectives extracts an emoji, call react() on the target channel handler if it supports it. The channel handler (OutboundChannelHandler) needs a new optional react() method. The router should: (1) parse directives, (2) if emoji present, find the channel and call react() with the source chatId, the inbound messageId from context, and the emoji, (3) route the cleaned text normally. The inbound messageId needs to flow through the context — add messageId to OutboundChannelContext. The daemon.ts wireSession subscriber needs to capture the inbound messageId from the command queue and pass it into the outbound context.",
+      "acceptance_criteria": [
+        "OutboundChannelHandler has optional react?(target: string, messageId: string, emoji: string): Promise<void>",
+        "routeResponse calls react() when parseDirectives returns an emoji",
+        "OutboundChannelContext has optional messageId field",
+        "Reaction errors don't prevent text delivery",
+        "TypeScript compiles: bunx tsc --noEmit -p packages/gateway/tsconfig.json"
+      ],
+      "priority": 7,
+      "passes": false
+    }
+  ]
+}

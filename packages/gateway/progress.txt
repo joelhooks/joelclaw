@@ -1,0 +1,26 @@
+## Codebase Patterns
+
+- Runtime: Bun
+- Tests: bun test
+- TypeScript strict mode
+- Package: packages/gateway/ within the joelclaw monorepo
+- Channel adapters: packages/gateway/src/channels/{telegram,discord,slack,imessage}.ts
+- Channel interface: packages/gateway/src/channels/types.ts
+- Outbound routing: packages/gateway/src/outbound/router.ts
+- Command queue: packages/gateway/src/command-queue.ts
+- Daemon entry: packages/gateway/src/daemon.ts
+- Telegram SDK: grammy (bot instance via getBot() export from telegram.ts)
+- Discord SDK: discord.js (Client instance at module scope)
+- Slack SDK: @slack/bolt (App instance at module scope, client via app.client)
+- iMessage: imsg-rpc Unix socket daemon (no reaction support)
+- Existing reaction ack in Slack: client.reactions.add with 'eyes' emoji on inbound
+- Existing reply support in Telegram: reply_parameters in sendMessage
+- Inbound metadata already carries telegramMessageId from ctx.message.message_id
+- OutboundEnvelope type defined in packages/gateway/src/outbound/envelope.ts
+- All telemetry via emitGatewayOtel from @joelclaw/telemetry
+- Lint: pnpm biome check packages/gateway/
+- Typecheck: bunx tsc --noEmit -p packages/gateway/tsconfig.json
+
+## Progress
+
+(stories will be appended here)
