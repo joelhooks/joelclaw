@@ -18,6 +18,8 @@ import {
   readLessons,
   readPatterns,
   readRecommendations,
+  releaseFiles,
+  reserveFiles,
   renewLease,
   spawnInContainer,
   TOOL_TIMEOUTS,
@@ -382,12 +384,28 @@ export const agentLoopImplement = inngest.createFunction(
 
     // Step 0: Check cancellation
     const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
-    if (cancelled) return { status: "cancelled", loopId, storyId };
+    if (cancelled) {
+      await releaseFiles(loopId, workDir);
+      return { status: "cancelled", loopId, storyId };
+    }
 
     // Step 0.5: Idempotency — check if commit already exists
     const alreadyDone = await step.run("check-idempotency", () =>
       commitExists(workDir, loopId, storyId, attempt)
     );
+
+    // Reserve files for this story's scope
+    const reserved = await step.run("reserve-files", async () => {
+      // Reserve the project directory as a coarse lock
+      // Future: parse story.description for specific file paths
+      const storyPaths = [`stories/${storyId}`];
+      return reserveFiles(loopId, workDir, storyPaths);
+    });
+    if (!reserved) {
+      console.warn(
+        `[agent-loop-implement] proceeding without file reservation for ${storyId}`
+      );
+    }
 
     let sha: string;
 
@@ -398,6 +416,7 @@ export const agentLoopImplement = inngest.createFunction(
           await $`cd ${workDir} && git log --oneline --all --grep="[${loopId}] [${storyId}] attempt-${attempt}" --format="%H"`.quiet();
         return result.text().trim().split("\n")[0] ?? "";
       });
+      await releaseFiles(loopId, workDir);
     } else {
       // Step 1: Record HEAD before tool runs (to detect tool auto-commits)
       const headBefore = await step.run("record-head-before", () =>
@@ -421,6 +440,7 @@ export const agentLoopImplement = inngest.createFunction(
         return { blocked: false as const, exitCode };
       });
       if (runToolResult.blocked) {
+        await releaseFiles(loopId, workDir);
         return { status: "blocked", loopId, storyId, reason: runToolResult.reason };
       }
 
@@ -456,9 +476,13 @@ export const agentLoopImplement = inngest.createFunction(
         return { blocked: false as const, sha };
       });
       if (commitResult.blocked) {
+        await releaseFiles(loopId, workDir);
         return { status: "blocked", loopId, storyId, reason: commitResult.reason };
       }
       sha = commitResult.sha;
+
+      // Release file reservations after commit
+      await step.run("release-files", () => releaseFiles(loopId, workDir));
     }
 
     // Step 3: Determine reviewer tool (default: claude)
@@ -477,6 +501,7 @@ export const agentLoopImplement = inngest.createFunction(
       return { event: "agent/loop.code.committed", storyId, sha: sha.slice(0, 8), reviewer: reviewerTool };
     });
     if ("blocked" in emitResult && emitResult.blocked) {
+      await releaseFiles(loopId, workDir);
       return { status: "blocked", loopId, storyId, reason: emitResult.reason };
     }
 

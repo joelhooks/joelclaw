@@ -14,6 +14,92 @@ if (redisClass.defaultOptions) {
 }
 
 const LOOP_TMP = "/tmp/agent-loop";
+const AGENT_MAIL_URL = process.env.AGENT_MAIL_URL?.trim() || "http://127.0.0.1:8765";
+
+export async function callAgentMailMcp(
+  toolName: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const resp = await fetch(`${AGENT_MAIL_URL}/mcp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: `loop-${Date.now()}`,
+      method: "tools/call",
+      params: { name: toolName, arguments: args },
+    }),
+  });
+  if (!resp.ok) throw new Error(`agent-mail ${toolName}: HTTP ${resp.status}`);
+  const body = await resp.json() as { error?: { message?: string }; result?: unknown };
+  if (body.error) throw new Error(`agent-mail ${toolName}: ${body.error.message ?? "unknown error"}`);
+  return body.result;
+}
+
+/**
+ * Derive a deterministic AdjectiveNoun agent name from a loop ID.
+ * Loop IDs are like "loop-abc123" — we use a simple hash to pick from a small set.
+ */
+export function loopAgentName(loopId: string): string {
+  const adjectives = ["Red", "Blue", "Green", "Gold", "Iron", "Dark", "Bright", "Swift", "Calm", "Bold"];
+  const nouns = ["Fox", "Wolf", "Hawk", "Bear", "Lynx", "Crow", "Deer", "Ox", "Ram", "Elk"];
+  let hash = 0;
+  for (const ch of loopId) hash = (hash * 31 + ch.charCodeAt(0)) & 0xffff;
+  const adj = adjectives[hash % adjectives.length];
+  const noun = nouns[Math.floor(hash / adjectives.length) % nouns.length];
+  return `${adj}${noun}`;
+}
+
+/**
+ * Reserve file paths for a loop worker agent. Uses loopId as agent identity.
+ * Automatically ensures project and registers agent (both idempotent).
+ * Returns true if reservation succeeded, false if failed (non-fatal).
+ */
+export async function reserveFiles(
+  loopId: string,
+  project: string,
+  paths: string[]
+): Promise<boolean> {
+  if (paths.length === 0) return true;
+  const agentName = loopAgentName(loopId);
+  const projectKey = project;
+  try {
+    // Ensure project + agent exist (idempotent)
+    await callAgentMailMcp("ensure_project", { human_key: projectKey });
+    await callAgentMailMcp("register_agent", {
+      project_key: projectKey,
+      name: agentName,
+      program: "inngest-loop",
+      model: "codex",
+    });
+    // Reserve
+    await callAgentMailMcp("file_reservation_paths", {
+      project_key: projectKey,
+      agent_name: agentName,
+      paths,
+    });
+    return true;
+  } catch (err) {
+    console.warn(`[agent-loop] file reservation failed (non-fatal): ${err}`);
+    return false;
+  }
+}
+
+/**
+ * Release all file reservations for a loop worker agent.
+ * Non-fatal — logs warning on failure.
+ */
+export async function releaseFiles(loopId: string, project: string): Promise<void> {
+  const agentName = loopAgentName(loopId);
+  try {
+    await callAgentMailMcp("release_file_reservations", {
+      project_key: project,
+      agent_name: agentName,
+    });
+  } catch (err) {
+    console.warn(`[agent-loop] file release failed (non-fatal): ${err}`);
+  }
+}
 
 /**
  * Lease a fresh Claude OAuth token from agent-secrets at runtime.
