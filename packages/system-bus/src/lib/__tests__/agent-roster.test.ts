@@ -17,6 +17,12 @@ function writeProjectAgent(name: string, content: string) {
   writeFileSync(join(dir, `${name}.md`), content, "utf-8");
 }
 
+function writeBuiltinAgent(name: string, content: string) {
+  const dir = join(projectDir, "agents");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${name}.md`), content, "utf-8");
+}
+
 function writeUserAgent(name: string, content: string) {
   const dir = join(userHome, ".pi", "agent", "agents");
   mkdirSync(dir, { recursive: true });
@@ -131,6 +137,57 @@ describe("loadAgentDefinition", () => {
     expect(definition?.source).toBe("project");
     expect(definition?.model).toBe("project-model");
     expect(definition?.systemPrompt).toBe("From project.");
+  });
+
+  test("loads from builtin agents directory when project/user entries are absent", () => {
+    writeBuiltinAgent(
+      "ops",
+      [
+        "---",
+        "name: ops",
+        "model: claude-sonnet-4-6",
+        "tools: read, bash, edit, write",
+        "---",
+        "Builtin ops prompt.",
+      ].join("\n"),
+    );
+
+    const definition = loadAgentDefinition("ops", projectDir);
+
+    expect(definition).not.toBeNull();
+    expect(definition?.source).toBe("builtin");
+    expect(definition?.model).toBe("claude-sonnet-4-6");
+    expect(definition?.systemPrompt).toBe("Builtin ops prompt.");
+  });
+
+  test("user definition overrides builtin definition", () => {
+    writeBuiltinAgent(
+      "designer",
+      [
+        "---",
+        "name: designer",
+        "model: builtin-model",
+        "---",
+        "From builtin.",
+      ].join("\n"),
+    );
+    writeUserAgent(
+      "designer",
+      [
+        "---",
+        "name: designer",
+        "model: user-model",
+        "---",
+        "From user.",
+      ].join("\n"),
+    );
+
+    const definition = loadAgentDefinition("designer", projectDir);
+
+    expect(definition).not.toBeNull();
+    expect(definition?.source).toBe("user");
+    expect(definition?.model).toBe("user-model");
+    expect(definition?.systemPrompt).toBe("From user.");
   });
 
   test("returns cached definition on subsequent reads", () => {

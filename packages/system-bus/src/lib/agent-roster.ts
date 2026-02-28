@@ -11,7 +11,7 @@ export type AgentDefinition = {
   skills: string[];
   extensions: string[];
   systemPrompt: string;
-  source: "project" | "user";
+  source: "project" | "user" | "builtin";
   filePath: string;
 };
 
@@ -39,7 +39,11 @@ function normalizeList(value: unknown): string[] {
   return [];
 }
 
-function parseAgentDefinition(markdown: string, filePath: string, source: "project" | "user"): AgentDefinition | null {
+function parseAgentDefinition(
+  markdown: string,
+  filePath: string,
+  source: "project" | "user" | "builtin"
+): AgentDefinition | null {
   try {
     const parsed = matter<Record<string, unknown>>(markdown);
     const name = normalizeText(parsed.data.name);
@@ -88,11 +92,13 @@ export function loadAgentDefinition(name: string, cwd = process.cwd()): AgentDef
   }
 
   const projectPath = join(resolvedCwd, ".pi", "agents", `${normalizedName}.md`);
+  const builtinPath = join(resolvedCwd, "agents", `${normalizedName}.md`);
   const userPath = homeDir ? join(homeDir, ".pi", "agent", "agents", `${normalizedName}.md`) : null;
 
-  const candidates: Array<{ path: string; source: "project" | "user" }> = [
+  const candidates: Array<{ path: string; source: "project" | "user" | "builtin" }> = [
     { path: projectPath, source: "project" },
     ...(userPath ? [{ path: userPath, source: "user" as const }] : []),
+    { path: builtinPath, source: "builtin" },
   ];
 
   for (const candidate of candidates) {
