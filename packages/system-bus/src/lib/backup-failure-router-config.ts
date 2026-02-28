@@ -80,7 +80,7 @@ type BackupFailureRouterConfig = {
 export const SYSTEM_BUS_CONFIG_PATH = join(HOME_DIR, ".joelclaw", "system-bus.config.json");
 
 const DEFAULT_SELF_HEALING_ROUTER = {
-  model: "gpt-5.2-codex-spark",
+  model: "gpt-5.3-codex-spark",
   fallbackModel: "gpt-5.3-codex",
   maxRetries: 5,
   sleepMinMs: 5 * 60_000,

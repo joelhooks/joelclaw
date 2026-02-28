@@ -11,6 +11,15 @@ import type {
 const CHUNK_MAX = 4000;
 const DEDUPE_MAX = 500;
 const MEDIA_FETCH_TIMEOUT_MS = 15_000;
+const CHANNEL_RESOLVE_TRANSIENT_COOLDOWN_MS = 10 * 60_000;
+const CHANNEL_RESOLVE_PERMANENT_COOLDOWN_MS = 6 * 60 * 60_000;
+const PERMANENT_CHANNEL_RESOLVE_ERRORS = new Set([
+  "channel_not_found",
+  "not_in_channel",
+  "missing_scope",
+  "is_archived",
+  "method_not_supported_for_channel_type",
+]);
 
 type SlackStartOptions = {
   botToken?: string;
@@ -135,6 +144,7 @@ let reactionAckEmoji = "eyes";
 let defaultInstance: SlackChannel | undefined;
 
 const channelNameCache = new Map<string, string>();
+const channelResolveCooldownUntil = new Map<string, number>();
 const userNameCache = new Map<string, string>();
 const seenEvents = new Set<string>();
 const seenOrder: string[] = [];
@@ -304,29 +314,76 @@ function parseReactionEvent(input: unknown): SlackReactionEvent | undefined {
   };
 }
 
+function readSlackErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+
+  const value = error as Record<string, unknown>;
+  if (typeof value.code === "string" && value.code.trim().length > 0) {
+    return value.code.trim();
+  }
+
+  const data = value.data;
+  if (data && typeof data === "object") {
+    const code = (data as Record<string, unknown>).error;
+    if (typeof code === "string" && code.trim().length > 0) {
+      return code.trim();
+    }
+  }
+
+  const message = typeof value.message === "string" ? value.message : String(error);
+  const match = message.match(/:\s*([a-z_]+)\s*$/i);
+  return match?.[1]?.toLowerCase();
+}
+
+function isPermanentChannelResolveError(code: string | undefined): boolean {
+  if (!code) return false;
+  return PERMANENT_CHANNEL_RESOLVE_ERRORS.has(code.toLowerCase());
+}
+
 async function resolveChannelName(channelId: string): Promise<string | undefined> {
   const cached = channelNameCache.get(channelId);
   if (cached) return cached;
+
+  const blockedUntil = channelResolveCooldownUntil.get(channelId);
+  if (blockedUntil && blockedUntil > Date.now()) return undefined;
+
   if (!app) return undefined;
 
   try {
     const response = await app.client.conversations.info({ channel: channelId });
     const name = response.channel?.name;
     if (!name) return undefined;
+    channelResolveCooldownUntil.delete(channelId);
     channelNameCache.set(channelId, name);
     return name;
   } catch (error) {
-    console.warn("[gateway:slack] failed to resolve channel name", {
-      channelId,
-      error: String(error),
-    });
+    const errorText = String(error);
+    const errorCode = readSlackErrorCode(error);
+    const isPermanent = isPermanentChannelResolveError(errorCode);
+    const cooldownMs = isPermanent
+      ? CHANNEL_RESOLVE_PERMANENT_COOLDOWN_MS
+      : CHANNEL_RESOLVE_TRANSIENT_COOLDOWN_MS;
+    channelResolveCooldownUntil.set(channelId, Date.now() + cooldownMs);
+
+    if (!isPermanent) {
+      console.warn("[gateway:slack] failed to resolve channel name", {
+        channelId,
+        error: errorText,
+        errorCode,
+      });
+    }
+
     void emitGatewayOtel({
-      level: "warn",
+      level: isPermanent ? "debug" : "warn",
       component: "slack-channel",
-      action: "slack.channel.resolve_failed",
+      action: isPermanent ? "slack.channel.resolve_unavailable" : "slack.channel.resolve_failed",
       success: false,
-      error: String(error),
-      metadata: { channelId },
+      error: errorText,
+      metadata: {
+        channelId,
+        errorCode,
+        cooldownMs,
+      },
     });
     return undefined;
   }

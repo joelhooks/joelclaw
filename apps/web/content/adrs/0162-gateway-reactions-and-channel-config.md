@@ -1,4 +1,4 @@
-# ADR-0162: Gateway Reactions & Social Channel Configuration
+# ADR-0162: Gateway Reactions, Replies & Social Channel Configuration
 
 - **Status**: Accepted
 - **Date**: 2026-02-28
@@ -38,7 +38,39 @@ Per-channel API mapping:
 | Slack | `client.reactions.add({channel, timestamp, name})` | Slack emoji name without colons |
 | iMessage | no-op | tapback not exposed via imsg-rpc |
 
-**System prompt addition.** The gateway agent's system prompt is updated to encourage contextual reactions:
+### 1b. Reply-to-Message System
+
+**Targeted replies.** The gateway agent can reply to a specific inbound message using a `<<reply:MESSAGE_ID>>` directive. The outbound router strips the directive and passes the message ID as `replyTo` context to the channel adapter.
+
+```
+<<reply:5872>>That's the right approach.
+<<react:👍>><<reply:5872>>Confirmed.
+```
+
+The reply infrastructure already exists in the Telegram adapter (`reply_parameters`), Discord (thread-based), and Slack (`thread_ts`). What's missing is the agent's ability to target a specific message.
+
+**Context injection.** When a message arrives, the inbound metadata already carries the platform message ID (e.g. `telegramMessageId`). The command queue injects this into the prompt context so the agent knows which message ID to reference:
+
+```
+[msg:5872] Hey, did the deploy finish?
+```
+
+Per-channel reply support:
+
+| Channel | Mechanism | Notes |
+|---------|-----------|-------|
+| Telegram | `reply_parameters: { message_id }` | Native quote-reply, shows referenced message |
+| Discord | Already thread-based | Replies are implicit within threads |
+| Slack | `thread_ts` | Reply in thread |
+| iMessage | Not supported | No reply-to via imsg-rpc |
+
+Rules:
+- `<<reply:ID>>` is optional — omitting it sends a normal message (current behavior)
+- Can combine with `<<react:EMOJI>>` — both directives stripped before text routing
+- Invalid/stale message IDs silently ignored (Telegram returns error, we catch and send without reply)
+- Agent should reply when the conversation has multiple messages in flight and context matters
+
+**System prompt addition.** The gateway agent's system prompt is updated to encourage contextual reactions and replies:
 - 👀 on receipt of messages that will take time to process
 - 👍 for simple acknowledgments where no text reply is needed
 - 🔥 for genuinely cool/impressive things shared
@@ -108,12 +140,14 @@ A `channel-config` skill documents the `channels.toml` schema, valid options per
 ## Implementation Order
 
 1. Add `react()` to `Channel` interface + implement per-channel
-2. Parse `<<react:EMOJI>>` directive in outbound router
-3. Update gateway system prompt with reaction guidance
-4. Create `channels.toml` schema + loader with env var fallback
-5. Migrate daemon.ts channel startup to use config loader
-6. Create `channel-config` skill
-7. Remove env var fallback after verification period
+2. Parse `<<react:EMOJI>>` and `<<reply:ID>>` directives in outbound router
+3. Inject inbound message ID into prompt context (`[msg:ID]` prefix)
+4. Update gateway system prompt with reaction + reply guidance
+5. Create `channels.toml` schema + loader with env var fallback
+6. Migrate daemon.ts channel startup to use config loader
+7. Create `telegram` skill (Telegram-specific capabilities, API patterns, troubleshooting)
+8. Create `channel-config` skill (channels.toml schema, secrets, per-channel options)
+9. Remove env var fallback after verification period
 
 ## Tech Debt
 
