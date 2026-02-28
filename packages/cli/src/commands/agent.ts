@@ -83,16 +83,67 @@ function parseAgentFile(filePath: string, source: AgentSummary["source"]): Agent
   }
 }
 
+function collectAncestors(startDir: string, maxDepth = 8): string[] {
+  const dirs: string[] = []
+  let current = resolve(startDir)
+  for (let depth = 0; depth < maxDepth; depth++) {
+    dirs.push(current)
+    const parent = resolve(current, "..")
+    if (parent === current) break
+    current = parent
+  }
+  return dirs
+}
+
+/**
+ * Resolve the joelclaw repo root for builtin agent discovery.
+ * Priority: JOELCLAW_REPO env var → ancestor scan from cwd → well-known fallback.
+ */
+function resolveRepoRoot(cwd: string, homeDir: string): string | null {
+  // 1. Explicit env override
+  const envRepo = process.env.JOELCLAW_REPO?.trim()
+  if (envRepo && existsSync(join(envRepo, "agents"))) return envRepo
+
+  // 2. Ancestor traversal: find a directory containing both agents/ and pnpm-workspace.yaml
+  for (const dir of collectAncestors(resolve(cwd))) {
+    if (existsSync(join(dir, "agents")) && existsSync(join(dir, "pnpm-workspace.yaml"))) {
+      return dir
+    }
+  }
+
+  // 3. Well-known fallback (matches inngest.ts convention)
+  const fallback = join(homeDir, "Code", "joelhooks", "joelclaw")
+  if (existsSync(join(fallback, "agents"))) return fallback
+
+  return null
+}
+
 function discoverAgents(cwd: string): AgentSummary[] {
   const agents = new Map<string, AgentSummary>()
   const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? "/Users/joel"
+  const ancestors = collectAncestors(resolve(cwd))
+  const repoRoot = resolveRepoRoot(cwd, homeDir)
 
-  // Priority: project > user > builtin (last write wins in reverse order)
-  const dirs: Array<{ dir: string; source: AgentSummary["source"] }> = [
-    { dir: join(cwd, "agents"), source: "builtin" },
-    { dir: join(homeDir, ".pi", "agent", "agents"), source: "user" },
-    { dir: join(cwd, ".pi", "agents"), source: "project" },
-  ]
+  // Priority: project > user > builtin (last write wins in reverse order).
+  const dirs: Array<{ dir: string; source: AgentSummary["source"] }> = []
+
+  // Builtin: repo-root agents/ (canonical), then ancestor fallbacks
+  if (repoRoot) {
+    dirs.push({ dir: join(repoRoot, "agents"), source: "builtin" })
+  }
+  for (const d of ancestors.toReversed()) {
+    const candidate = join(d, "agents")
+    if (repoRoot && candidate === join(repoRoot, "agents")) continue // already added
+    dirs.push({ dir: candidate, source: "builtin" })
+  }
+
+  // User: fixed absolute path
+  dirs.push({ dir: join(homeDir, ".pi", "agent", "agents"), source: "user" })
+
+  // Project: ancestor scan for .pi/agents/ (closest wins)
+  for (const d of ancestors.toReversed()) {
+    dirs.push({ dir: join(d, ".pi", "agents"), source: "project" })
+  }
 
   for (const { dir, source } of dirs) {
     if (!existsSync(dir)) continue
@@ -1293,4 +1344,6 @@ export const __agentTestUtils = {
   runNextActions,
   chainNextActions,
   extractInngestEventIds,
+  discoverAgents,
+  resolveRepoRoot,
 }

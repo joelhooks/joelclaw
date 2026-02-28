@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { buildSuccessEnvelope, validateJoelclawEnvelope } from "../response"
 import { __agentTestUtils } from "./agent"
 
@@ -7,6 +9,8 @@ const {
   showNextActions,
   runNextActions,
   extractInngestEventIds,
+  discoverAgents,
+  resolveRepoRoot,
 } = __agentTestUtils
 
 describe("agent command envelopes", () => {
@@ -101,5 +105,56 @@ describe("agent command envelopes", () => {
     expect(extractInngestEventIds({ ids: ["01A", "  ", 42, "01B"] })).toEqual(["01A", "01B"])
     expect(extractInngestEventIds({ ids: null })).toEqual([])
     expect(extractInngestEventIds(null)).toEqual([])
+  })
+})
+
+describe("agent discovery", () => {
+  test("resolveRepoRoot honors JOELCLAW_REPO override", () => {
+    const root = mkdtempSync("/tmp/joelclaw-agent-root-")
+    const repoDir = join(root, "repo")
+    mkdirSync(join(repoDir, "agents"), { recursive: true })
+
+    const prevRepo = process.env.JOELCLAW_REPO
+    process.env.JOELCLAW_REPO = repoDir
+
+    try {
+      expect(resolveRepoRoot(join(repoDir, "packages", "system-bus"), "/tmp/home")).toBe(repoDir)
+    } finally {
+      if (prevRepo === undefined) delete process.env.JOELCLAW_REPO
+      else process.env.JOELCLAW_REPO = prevRepo
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("discoverAgents finds builtin agents from repo root when cwd is nested", () => {
+    const root = mkdtempSync("/tmp/joelclaw-agent-discovery-")
+    const repoDir = join(root, "repo")
+    const nestedCwd = join(repoDir, "packages", "system-bus")
+
+    mkdirSync(join(repoDir, "agents"), { recursive: true })
+    mkdirSync(nestedCwd, { recursive: true })
+    writeFileSync(
+      join(repoDir, "agents", "coder.md"),
+      `---\nname: coder\nmodel: claude-sonnet-4-6\ndescription: Builtin coder\n---\n\n# coder`,
+    )
+
+    const prevRepo = process.env.JOELCLAW_REPO
+    const prevHome = process.env.HOME
+    process.env.JOELCLAW_REPO = repoDir
+    process.env.HOME = join(root, "home")
+
+    try {
+      const agents = discoverAgents(nestedCwd)
+      const coder = agents.find((agent) => agent.name === "coder")
+      expect(coder).toBeDefined()
+      expect(coder?.source).toBe("builtin")
+      expect(coder?.filePath).toBe(join(repoDir, "agents", "coder.md"))
+    } finally {
+      if (prevRepo === undefined) delete process.env.JOELCLAW_REPO
+      else process.env.JOELCLAW_REPO = prevRepo
+      if (prevHome === undefined) delete process.env.HOME
+      else process.env.HOME = prevHome
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
