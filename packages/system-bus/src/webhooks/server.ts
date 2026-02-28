@@ -10,6 +10,7 @@ import { isTodoistTaskAgentClosed } from "../lib/todoist-agent-closed";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../observability/emit";
 import { frontProvider } from "./providers/front";
 import { githubProvider } from "./providers/github";
+import { forwardJoelclawEvent, joelclawProvider } from "./providers/joelclaw";
 import { muxProvider } from "./providers/mux";
 import { todoistProvider } from "./providers/todoist";
 import { vercelProvider } from "./providers/vercel";
@@ -22,6 +23,7 @@ providers.set(frontProvider.id, frontProvider);
 providers.set(vercelProvider.id, vercelProvider);
 providers.set(githubProvider.id, githubProvider);
 providers.set(muxProvider.id, muxProvider);
+providers.set(joelclawProvider.id, joelclawProvider);
 
 // ── Rate limiting (auth failures per IP) ─────────────────
 const RATE_LIMIT_WINDOW_MS = 60_000;
@@ -205,6 +207,32 @@ webhookApp.post("/:provider", async (c) => {
         const challenge = (challengeEvent.data as any).challenge;
         console.log("[webhooks] challenge response", { provider: providerId });
         return c.text(challenge, 200, { "Content-Type": "text/plain" });
+      }
+
+      if (providerId === joelclawProvider.id) {
+        const event = events[0];
+        if (!event) {
+          return c.json({ ok: false, error: "Missing event payload" }, 400);
+        }
+
+        try {
+          const proxyResponse = await forwardJoelclawEvent({
+            name: event.name,
+            data: event.data,
+          });
+          const responseText = await proxyResponse.text();
+          const contentType = proxyResponse.headers.get("content-type") ?? "application/json";
+
+          return new Response(responseText, {
+            status: proxyResponse.status,
+            headers: { "Content-Type": contentType },
+          });
+        } catch (error: any) {
+          console.error("[webhooks] joelclaw proxy failed", {
+            error: error?.message,
+          });
+          return c.json({ ok: false, error: "Failed to proxy event" }, 502);
+        }
       }
 
       // Emit to Inngest

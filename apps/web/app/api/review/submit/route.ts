@@ -4,10 +4,12 @@
  * Fires a content/review.submitted Inngest event.
  * Called by the ReviewSheet after marking drafts as submitted in Convex.
  */
+import { createHmac } from "node:crypto";
 import { NextResponse } from "next/server";
 
-const DEFAULT_INNGEST_EVENT_URL = "https://panda.tail7af24.ts.net:3111/e/local";
+const DEFAULT_INNGEST_EVENT_URL = "https://panda.tail7af24.ts.net/webhooks/joelclaw";
 const INNGEST_EVENT_URL = process.env.INNGEST_EVENT_URL ?? DEFAULT_INNGEST_EVENT_URL;
+const JOELCLAW_WEBHOOK_SECRET = process.env.JOELCLAW_WEBHOOK_SECRET;
 
 export async function POST(request: Request) {
   try {
@@ -26,17 +28,30 @@ export async function POST(request: Request) {
 
     let res: Response;
     try {
+      if (!JOELCLAW_WEBHOOK_SECRET) {
+        throw new Error("JOELCLAW_WEBHOOK_SECRET is not configured");
+      }
+
+      const eventBody = JSON.stringify({
+        name: "content/review.submitted",
+        data: {
+          contentSlug,
+          contentType,
+          source: "joelclaw-web",
+        },
+      });
+
+      const signature = createHmac("sha256", JOELCLAW_WEBHOOK_SECRET)
+        .update(eventBody)
+        .digest("hex");
+
       res = await fetch(INNGEST_EVENT_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: "content/review.submitted",
-          data: {
-            contentSlug,
-            contentType,
-            source: "joelclaw-web",
-          },
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          "x-joelclaw-signature": signature,
+        },
+        body: eventBody,
       });
     } catch (error) {
       const detail =

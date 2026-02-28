@@ -79,6 +79,7 @@ async function CachedArticleContent({ slug }: { slug: string }) {
   "use cache";
   cacheLife("max");
   cacheTag(`article:${slug}`);
+  cacheTag(`post:${slug}`);
 
   const post = await getPost(slug);
   if (!post) notFound();
