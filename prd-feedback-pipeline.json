@@ -47,7 +47,7 @@
       "id": "FBP-3",
       "title": "Content-review function reads feedbackItems not just reviewComments",
       "description": "content-review-apply currently only reads reviewComments (inline paragraph comments). It needs to also read feedbackItems (general feedback). In the fetch-submitted-comments step, also query feedbackItems with status='pending' for the same resourceId. Merge both sources into the prompt sent to the agent. After the agent edits, mark feedbackItems as 'applied' or 'failed'. File: packages/system-bus/src/inngest/functions/content-review.ts",
-      "status": "pending",
+      "status": "done",
       "priority": 3,
       "acceptance": [
         "content-review-apply fetches both reviewComments AND feedbackItems for the resource",
