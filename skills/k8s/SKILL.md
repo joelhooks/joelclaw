@@ -29,6 +29,8 @@ Mac Mini (localhost ports)
                       └─ joelclaw namespace (privileged PSA)
 ```
 
+**⚠️ Talos has NO shell.** No bash, no /bin/sh, nothing. You cannot `docker exec` into the Talos container. Use `talosctl` for node operations and the Colima VM (`ssh lima-colima`) for host-level operations like `modprobe`.
+
 For port mappings, recovery procedures, and cluster recreation steps, read [references/operations.md](references/operations.md).
 
 ## Quick Health Check
@@ -129,6 +131,8 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 1. **Never kill Lima SSH mux** — it handles ALL tunnels. Killing anything on the SSH socket kills all port access.
 2. **Adding Docker port mappings** — can be hot-added without cluster recreation via `hostconfig.json` edit. See [references/operations.md](references/operations.md) for the procedure.
 3. **Inngest `host.k3d.internal`** — Stale k3d hostname in manifest. Works anyway (worker uses connect mode, not polling). Fix is pending.
+4. **Colima zombie state** — `colima status` reports "Running" but docker socket / SSH tunnels are dead. All k8s ports unresponsive. `colima start` is a no-op. Only `colima restart` recovers. Detect with: `ssh -F ~/.colima/_lima/colima/ssh.config lima-colima "docker info"` — if that fails while `colima status` passes, it's a zombie. The heal script handles this automatically.
+5. **Talos container has NO shell** — No bash, no /bin/sh. Cannot `docker exec` into it. Kernel modules like `br_netfilter` must be loaded at the Colima VM level: `ssh lima-colima "sudo modprobe br_netfilter"`.
 
 ## Key Files
 

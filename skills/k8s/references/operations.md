@@ -94,6 +94,46 @@ ssh -F ~/.colima/_lima/colima/ssh.config lima-colima \
 kubectl get pods -n joelclaw
 ```
 
+### Colima Zombie State Recovery
+
+**Symptoms**: `colima status` says Running, but all k8s ports (8288, 6379, 8108, etc.) refuse connections. `kubectl` gets connection refused. Docker socket is dead.
+
+**Detection** (what the heal script does):
+```bash
+# colima status returns 0 (lies)
+colima status && echo "claims running"
+
+# But docker inside VM is unreachable (truth)
+ssh -F ~/.colima/_lima/colima/ssh.config lima-colima "docker info" 2>/dev/null
+# ^ fails = zombie
+```
+
+**Fix**: `colima start` is a no-op in zombie state. Must use `colima restart`:
+```bash
+colima restart
+
+# Then standard post-restart recovery:
+kubectl taint nodes joelclaw-controlplane-1 node-role.kubernetes.io/control-plane:NoSchedule- || true
+kubectl uncordon joelclaw-controlplane-1 || true
+
+# Load br_netfilter at VM level (NOT inside Talos — Talos has no shell)
+ssh -F ~/.colima/_lima/colima/ssh.config lima-colima "sudo modprobe br_netfilter"
+
+# If flannel is CrashLoopBackOff, force-delete the pod
+kubectl get pods -n kube-system | grep flannel
+kubectl delete pod -n kube-system <flannel-pod> --force --grace-period=0
+
+# Clean zombie pods in joelclaw namespace
+kubectl get pods -n joelclaw --field-selector=status.phase=Unknown \
+  -o name | xargs -r kubectl delete -n joelclaw --force --grace-period=0
+
+# Taint can reappear — check again after 5s
+sleep 5
+kubectl taint nodes joelclaw-controlplane-1 node-role.kubernetes.io/control-plane:NoSchedule- || true
+```
+
+**Root cause**: Unknown. Colima VM's SSH tunnel layer dies but the VM process stays alive. Possibly triggered by macOS sleep/wake, Docker daemon crash inside VM, or Lima SSH socket corruption. The heal script (`infra/k8s-reboot-heal.sh`) now detects and auto-recovers from this state.
+
 ### After Mac Reboot
 
 Colima starts via launchd (`com.joel.colima`). Wait ~60s for full stack: VM → Docker → Talos → k8s → pods. Worker auto-starts via `com.joel.system-bus-worker`.
@@ -354,6 +394,10 @@ livekit  https://helm.livekit.io     # LiveKit server
 5. **`serveHost` in serve.ts** — Host worker may use `INNGEST_SERVE_HOST=http://host.docker.internal:3111` for Docker callback compatibility, but cluster worker should leave `INNGEST_SERVE_HOST` unset/empty in connect mode.
 
 6. **Control-plane taint can reappear after reboot** — Single-node workloads may remain `Pending` with `untolerated taint(s)` until `node-role.kubernetes.io/control-plane:NoSchedule` is removed again.
+
+8. **Colima zombie state** — `colima status` lies (returns 0) when VM tunnels are dead. Only real connectivity check (SSH + `docker info`) detects it. `colima restart` (not `start`) is the only fix. The heal script handles this automatically. See "Colima Zombie State Recovery" above.
+
+9. **Talos container has no shell** — No bash, no /bin/sh, no busybox. Cannot `docker exec` into `joelclaw-controlplane-1`. Use `talosctl` for node operations. Kernel modules must be loaded at the Colima VM level via SSH: `ssh lima-colima "sudo modprobe br_netfilter"`.
 
 7. **LiveKit hostNetwork probe target** — With `hostNetwork: true`, probing pod IP (`10.5.0.2`) can fail even while LiveKit serves on `127.0.0.1:7880`, causing CrashLoopBackOff (`exit code 0`, then kubelet SIGTERM on failed liveness/startup checks). Keep probe host pinned to loopback and use `Recreate` strategy for single-node hostPort scheduling:
 
