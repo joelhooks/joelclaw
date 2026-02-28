@@ -160,6 +160,29 @@ describe("loadAgentDefinition", () => {
     expect(definition?.systemPrompt).toBe("Builtin ops prompt.");
   });
 
+  test("loads builtin agents from workspace root when cwd is nested", () => {
+    writeBuiltinAgent(
+      "coder",
+      [
+        "---",
+        "name: coder",
+        "model: claude-sonnet-4-6",
+        "---",
+        "Root builtin coder.",
+      ].join("\n"),
+    );
+
+    const nestedCwd = join(projectDir, "packages", "system-bus");
+    mkdirSync(nestedCwd, { recursive: true });
+
+    const definition = loadAgentDefinition("coder", nestedCwd);
+
+    expect(definition).not.toBeNull();
+    expect(definition?.source).toBe("builtin");
+    expect(definition?.model).toBe("claude-sonnet-4-6");
+    expect(definition?.systemPrompt).toBe("Root builtin coder.");
+  });
+
   test("user definition overrides builtin definition", () => {
     writeBuiltinAgent(
       "designer",

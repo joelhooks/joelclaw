@@ -74,6 +74,50 @@ function buildCacheKey(name: string, cwd: string, home: string | undefined): str
   return [name.toLowerCase(), cwd, home ?? ""].join("::");
 }
 
+function collectAncestorDirectories(startDir: string, maxDepth = 8): string[] {
+  const directories: string[] = [];
+  let current = resolve(startDir);
+
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    directories.push(current);
+    const parent = resolve(current, "..");
+    if (parent === current) break;
+    current = parent;
+  }
+
+  return directories;
+}
+
+function buildAgentCandidates(
+  normalizedName: string,
+  resolvedCwd: string,
+  homeDir: string | undefined
+): Array<{ path: string; source: "project" | "user" | "builtin" }> {
+  const candidates: Array<{ path: string; source: "project" | "user" | "builtin" }> = [];
+  const seenPaths = new Set<string>();
+  const directories = collectAncestorDirectories(resolvedCwd);
+
+  const pushCandidate = (path: string, source: "project" | "user" | "builtin") => {
+    if (seenPaths.has(path)) return;
+    seenPaths.add(path);
+    candidates.push({ path, source });
+  };
+
+  for (const directory of directories) {
+    pushCandidate(join(directory, ".pi", "agents", `${normalizedName}.md`), "project");
+  }
+
+  if (homeDir) {
+    pushCandidate(join(homeDir, ".pi", "agent", "agents", `${normalizedName}.md`), "user");
+  }
+
+  for (const directory of directories) {
+    pushCandidate(join(directory, "agents", `${normalizedName}.md`), "builtin");
+  }
+
+  return candidates;
+}
+
 export function clearAgentDefinitionCache(): void {
   agentDefinitionCache.clear();
 }
@@ -91,15 +135,7 @@ export function loadAgentDefinition(name: string, cwd = process.cwd()): AgentDef
     return agentDefinitionCache.get(cacheKey) ?? null;
   }
 
-  const projectPath = join(resolvedCwd, ".pi", "agents", `${normalizedName}.md`);
-  const builtinPath = join(resolvedCwd, "agents", `${normalizedName}.md`);
-  const userPath = homeDir ? join(homeDir, ".pi", "agent", "agents", `${normalizedName}.md`) : null;
-
-  const candidates: Array<{ path: string; source: "project" | "user" | "builtin" }> = [
-    { path: projectPath, source: "project" },
-    ...(userPath ? [{ path: userPath, source: "user" as const }] : []),
-    { path: builtinPath, source: "builtin" },
-  ];
+  const candidates = buildAgentCandidates(normalizedName, resolvedCwd, homeDir);
 
   for (const candidate of candidates) {
     if (!existsSync(candidate.path)) {
