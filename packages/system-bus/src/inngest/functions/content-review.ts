@@ -47,6 +47,12 @@ type FeedbackItem = {
   status?: string;
 };
 
+type ReplacementAssertion = {
+  from: string;
+  to: string;
+  source: string;
+};
+
 type FailureEventData = {
   contentSlug: string;
   contentType: ContentType;
@@ -342,12 +348,30 @@ async function listPendingFeedbackItems(resourceId: string): Promise<FeedbackIte
     .filter((entry): entry is FeedbackItem => Boolean(entry));
 }
 
+async function listFeedbackItemsByStatus(
+  resourceId: string,
+  status: "pending" | "processing" | "applied" | "failed",
+): Promise<FeedbackItem[]> {
+  const client = getConvexClient();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ref = (anyApi as any).feedback.listByResourceAndStatus as FunctionReference<"query">;
+  const result = await client.query(ref, { resourceId, status });
+
+  if (!Array.isArray(result)) return [];
+
+  return result
+    .map((entry) => toFeedbackItem(entry))
+    .filter((entry): entry is FeedbackItem => Boolean(entry));
+}
+
 function buildReviewPrompt(args: {
   contentType: SupportedContentType;
   contentSlug: string;
   content: string;
   comments: ReviewComment[];
   feedbackItems: FeedbackItem[];
+  historicalResolvedComments: ReviewComment[];
+  historicalAppliedFeedbackItems: FeedbackItem[];
 }): string {
   const commentsText =
     args.comments.length === 0
@@ -387,9 +411,39 @@ function buildReviewPrompt(args: {
           })
           .join("\n\n");
 
+  const historicalResolvedText =
+    args.historicalResolvedComments.length === 0
+      ? "None."
+      : args.historicalResolvedComments
+          .slice(-40)
+          .map((comment, index) => {
+            return [
+              `Resolved ${index + 1}:`,
+              `- paragraphId: ${comment.paragraphId}`,
+              `- threadId: ${comment.threadId}`,
+              `- feedback: ${comment.content}`,
+            ].join("\n");
+          })
+          .join("\n\n");
+
+  const historicalAppliedFeedbackText =
+    args.historicalAppliedFeedbackItems.length === 0
+      ? "None."
+      : args.historicalAppliedFeedbackItems
+          .slice(-40)
+          .map((item, index) => {
+            return [
+              `Applied ${index + 1}:`,
+              `- feedbackId: ${item.feedbackId}`,
+              `- feedback: ${item.content}`,
+            ].join("\n");
+          })
+          .join("\n\n");
+
   return [
     `Resource: ${args.contentType}:${args.contentSlug}`,
     "Apply all submitted review comments and pending feedback items to the content below.",
+    "Do not regress previously applied edits unless new feedback explicitly requests reversal.",
     "Return only the full updated markdown/MDX document.",
     "",
     "## Current Content",
@@ -397,11 +451,17 @@ function buildReviewPrompt(args: {
     args.content.trimEnd(),
     "```",
     "",
-    "## Inline Review Comments",
+    "## Inline Review Comments (new)",
     commentsText,
     "",
-    "## General Feedback Items",
+    "## General Feedback Items (new)",
     feedbackItemsText,
+    "",
+    "## Previously Resolved Review Comments (preserve intent; do not regress)",
+    historicalResolvedText,
+    "",
+    "## Previously Applied Feedback Items (preserve intent; do not regress)",
+    historicalAppliedFeedbackText,
   ].join("\n");
 }
 
@@ -437,6 +497,8 @@ async function rewriteContent(args: {
   currentContent: string;
   comments: ReviewComment[];
   feedbackItems: FeedbackItem[];
+  historicalResolvedComments: ReviewComment[];
+  historicalAppliedFeedbackItems: FeedbackItem[];
 }): Promise<string> {
   const prompt = buildReviewPrompt({
     contentType: args.contentType,
@@ -444,6 +506,8 @@ async function rewriteContent(args: {
     content: args.currentContent,
     comments: args.comments,
     feedbackItems: args.feedbackItems,
+    historicalResolvedComments: args.historicalResolvedComments,
+    historicalAppliedFeedbackItems: args.historicalAppliedFeedbackItems,
   });
 
   const result = await infer(prompt, {
@@ -480,6 +544,92 @@ function validateRewriteLength(currentContent: string, rewrittenContent: string)
   if (rewrittenLength < minLength || rewrittenLength > maxLength) {
     throw new Error(
       `rewritten article length ${rewrittenLength} is outside allowed range ${minLength}-${maxLength}`,
+    );
+  }
+}
+
+function normalizeAssertionPhrase(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
+}
+
+function extractReplacementAssertionsFromText(source: string): ReplacementAssertion[] {
+  const assertions: ReplacementAssertion[] = [];
+
+  const replaceWithPattern =
+    /replace\s+["“”']([^"“”']{2,180})["“”']\s+with\s+["“”']([^"“”']{2,180})["“”']/giu;
+  const arrowPattern = /["“”']([^"“”']{2,180})["“”']\s*(?:->|→|to)\s*["“”']([^"“”']{2,180})["“”']/giu;
+
+  for (const pattern of [replaceWithPattern, arrowPattern]) {
+    let match: RegExpExecArray | null = pattern.exec(source);
+    while (match) {
+      const from = normalizeAssertionPhrase(match[1] ?? "");
+      const to = normalizeAssertionPhrase(match[2] ?? "");
+      if (from.length >= 3 && to.length >= 3 && from !== to) {
+        assertions.push({ from, to, source });
+      }
+      match = pattern.exec(source);
+    }
+  }
+
+  return assertions;
+}
+
+function buildHistoricalAssertions(
+  resolvedComments: ReviewComment[],
+  appliedFeedbackItems: FeedbackItem[],
+): ReplacementAssertion[] {
+  const candidates = [
+    ...resolvedComments.map((comment) => comment.content),
+    ...appliedFeedbackItems.map((item) => item.content),
+  ];
+
+  const out: ReplacementAssertion[] = [];
+  const seen = new Set<string>();
+
+  for (const candidate of candidates) {
+    for (const assertion of extractReplacementAssertionsFromText(candidate)) {
+      const key = `${assertion.from}=>${assertion.to}`.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(assertion);
+    }
+  }
+
+  return out;
+}
+
+function assertNoHistoricalRegression(args: {
+  currentContent: string;
+  rewrittenContent: string;
+  assertions: ReplacementAssertion[];
+}): void {
+  if (args.assertions.length === 0) return;
+
+  const current = args.currentContent.toLowerCase();
+  const rewritten = args.rewrittenContent.toLowerCase();
+
+  const regressions: string[] = [];
+
+  for (const assertion of args.assertions) {
+    const from = assertion.from.toLowerCase();
+    const to = assertion.to.toLowerCase();
+
+    const currentHasTo = current.includes(to);
+    const rewrittenHasTo = rewritten.includes(to);
+    const currentHasFrom = current.includes(from);
+    const rewrittenHasFrom = rewritten.includes(from);
+
+    const removedExpected = currentHasTo && !rewrittenHasTo;
+    const reintroducedOld = !currentHasFrom && rewrittenHasFrom;
+
+    if (removedExpected || reintroducedOld) {
+      regressions.push(`"${assertion.from}" -> "${assertion.to}"`);
+    }
+  }
+
+  if (regressions.length > 0) {
+    throw new Error(
+      `rewrite regressed previously applied feedback assertions: ${regressions.slice(0, 6).join(", ")}`,
     );
   }
 }
@@ -722,20 +872,26 @@ export const contentReviewApply = inngest.createFunction(
       return fetchCurrentContent(contentType, contentSlug);
     });
 
-    const { submittedComments, pendingFeedbackItems } = await step.run(
-      "fetch-submitted-comments",
-      async () => {
-        const [comments, feedbackItems] = await Promise.all([
-          listLinkedReviewComments(parentResourceId, "submitted"),
-          listPendingFeedbackItems(feedbackResourceId),
-        ]);
+    const {
+      submittedComments,
+      pendingFeedbackItems,
+      historicalResolvedComments,
+      historicalAppliedFeedbackItems,
+    } = await step.run("fetch-review-feedback-state", async () => {
+      const [comments, feedbackItems, resolvedComments, appliedFeedbackItems] = await Promise.all([
+        listLinkedReviewComments(parentResourceId, "submitted"),
+        listPendingFeedbackItems(feedbackResourceId),
+        listLinkedReviewComments(parentResourceId, "resolved"),
+        listFeedbackItemsByStatus(feedbackResourceId, "applied"),
+      ]);
 
-        return {
-          submittedComments: comments,
-          pendingFeedbackItems: feedbackItems,
-        };
-      },
-    );
+      return {
+        submittedComments: comments,
+        pendingFeedbackItems: feedbackItems,
+        historicalResolvedComments: resolvedComments,
+        historicalAppliedFeedbackItems: appliedFeedbackItems,
+      };
+    });
 
     if (submittedComments.length === 0 && pendingFeedbackItems.length === 0) {
       return {
@@ -746,6 +902,10 @@ export const contentReviewApply = inngest.createFunction(
         resourceId: article.resourceId,
       };
     }
+
+    const historicalAssertions = await step.run("build-historical-assertions", async () => {
+      return buildHistoricalAssertions(historicalResolvedComments, historicalAppliedFeedbackItems);
+    });
 
     const feedbackProcessingCount = await step.run("mark-feedback-processing", async () => {
       return updateFeedbackStatuses(feedbackResourceId, "processing");
@@ -766,14 +926,22 @@ export const contentReviewApply = inngest.createFunction(
         currentContent: article.content,
         comments: submittedComments,
         feedbackItems: pendingFeedbackItems,
+        historicalResolvedComments,
+        historicalAppliedFeedbackItems,
       });
     });
 
     await step.run("validate-edited-content", async () => {
       validateRewriteLength(article.content, rewrittenContent);
+      assertNoHistoricalRegression({
+        currentContent: article.content,
+        rewrittenContent,
+        assertions: historicalAssertions,
+      });
       return {
         currentLength: article.content.trim().length,
         rewrittenLength: rewrittenContent.trim().length,
+        historicalAssertionCount: historicalAssertions.length,
       };
     });
 
@@ -833,6 +1001,7 @@ export const contentReviewApply = inngest.createFunction(
         contentSlug,
         commentsResolved: resolvedCount,
         feedbackResolved: feedbackAppliedCount,
+        historicalAssertionCount: historicalAssertions.length,
       });
 
       return { notified: true };
@@ -849,6 +1018,7 @@ export const contentReviewApply = inngest.createFunction(
       resolvedCount,
       feedbackProcessingCount,
       feedbackAppliedCount,
+      historicalAssertionCount: historicalAssertions.length,
       cacheTag: primaryCacheTag,
       cacheTags,
       cachePaths,

@@ -203,6 +203,34 @@ export const listPendingByResource = query({
   },
 });
 
+export const listByResourceAndStatus = query({
+  args: {
+    resourceId: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("processing"),
+      v.literal("applied"),
+      v.literal("failed"),
+    ),
+  },
+  handler: async (ctx, { resourceId, status }) => {
+    const docs = await ctx.db
+      .query("feedbackItems")
+      .withIndex("by_resource_status", (q) => q.eq("resourceId", resourceId).eq("status", status))
+      .collect();
+
+    return docs
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((doc) => ({
+        feedbackId: doc._id,
+        content: doc.content,
+        status: doc.status,
+        createdAt: doc.createdAt,
+        resolvedAt: doc.resolvedAt,
+      }));
+  },
+});
+
 export const markProcessing = mutation({
   args: {
     resourceId: v.string(),
