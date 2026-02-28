@@ -1,7 +1,7 @@
 ---
 name: add-skill
 displayName: Add Skill
-description: Create new joelclaw skills with the idiomatic process — repo-canonical, symlinked, git-tracked, slogged.
+description: Create new joelclaw skills with the idiomatic process — repo-canonical, symlinked, git-tracked, slogged. Triggers on 'add a skill', 'create skill', 'new skill', 'canonical skill', 'make a skill for', or any request to formalize a process or domain into a reusable skill.
 version: 0.1.0
 author: joel
 tags:
