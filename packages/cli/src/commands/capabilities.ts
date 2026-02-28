@@ -139,12 +139,12 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
   {
     id: "deterministic-recovery",
     category: "diagnostics",
-    goal: "Apply dry-run-first deterministic runbooks for known failure codes.",
+    goal: "Apply dry-run-first deterministic heal runbooks for known failure codes.",
     prerequisites: ["Known error code from previous command response"],
     commands: [
-      { command: "recover list", description: "List available recovery runbooks" },
+      { command: "heal list", description: "List available deterministic heal runbooks" },
       {
-        command: "recover <error-code> [--phase <phase>] [--context <context>]",
+        command: "heal run <error-code> [--phase <phase>] [--context <context>]",
         description: "Preview runbook steps (dry-run)",
         params: {
           "error-code": { description: "Runbook error code", required: true },
@@ -153,7 +153,7 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
         },
       },
       {
-        command: "recover <error-code> --phase <phase> --execute [--context <context>]",
+        command: "heal run <error-code> --phase <phase> --execute [--context <context>]",
         description: "Execute selected runbook phase",
         params: {
           "error-code": { description: "Runbook error code", required: true },
@@ -165,6 +165,35 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
     verification: [
       "Dry-run preview inspected before execute",
       "Verify phase run after fix phase",
+    ],
+  },
+  {
+    id: "worker-deploy-sync",
+    category: "operations",
+    goal: "Promote worker deployment/sync through deterministic dry-run-first capability flow.",
+    prerequisites: ["Capability adapter configured (deploy/scripted-deploy)"],
+    commands: [
+      {
+        command: "deploy worker [--restart] [--wait-ms <wait-ms>]",
+        description: "Preview worker sync deployment command without executing",
+        params: {
+          restart: { description: "Include restart in plan", value: "false", default: "false" },
+          "wait-ms": { description: "Inter-step wait time", value: 1500, default: 1500 },
+        },
+      },
+      {
+        command: "deploy worker --restart --execute [--wait-ms <wait-ms>] [--force]",
+        description: "Execute worker sync deploy (restart/register/probe path)",
+        params: {
+          "wait-ms": { description: "Inter-step wait time", value: 1500, default: 1500 },
+          force: { description: "Allow restart with active runs", value: "false", default: "false" },
+        },
+      },
+      { command: "inngest status", description: "Confirm worker and server health after deploy sync" },
+    ],
+    verification: [
+      "Dry-run preview reviewed before execute",
+      "sync-worker downstream envelope reports ok=true",
     ],
   },
   {
@@ -439,7 +468,9 @@ export const capabilitiesCmd = Command.make(
                 hours: { description: "Lookback window in hours", value: 24, default: 24 },
               },
             },
-            { command: "secrets status", description: "Check capability backend readiness for secrets/log/notify flows" },
+            { command: "deploy worker", description: "Preview worker deploy sync plan (dry-run)" },
+            { command: "heal list", description: "List deterministic heal runbooks" },
+            { command: "secrets status", description: "Check capability backend readiness for secrets/log/notify/deploy/heal flows" },
             {
               command: "notify send <message> [--priority <priority>]",
               description: "Send canonical gateway notification",

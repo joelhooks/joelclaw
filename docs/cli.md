@@ -14,6 +14,7 @@ Canonical operator interface for joelclaw.
 
 - `joelclaw status`
 - `joelclaw runs`
+- `joelclaw content`
 - `joelclaw gateway`
 - `joelclaw loop`
 - `joelclaw docs`
@@ -108,6 +109,22 @@ Canonical statuses:
 - `superseded`
 - `deprecated`
 - `rejected`
+
+## Content command tree (ADR-0168)
+
+```bash
+joelclaw content
+├── seed
+├── verify
+└── prune [--apply]
+```
+
+Semantics:
+
+- `seed` — full Vault ADR sync to Convex.
+- `verify` — strict ADR drift check (fails healthy state on both missing and extra ADR records in Convex).
+- `prune` — dry-run report of Convex ADR extras (`status: dry_run`).
+- `prune --apply` — removes ADR extras from Convex (`status: pruned`) and should be followed by `joelclaw content verify`.
 
 ## Build and verify
 

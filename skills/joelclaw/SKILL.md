@@ -117,6 +117,22 @@ joelclaw notify send "Worker restarted and healthy" --priority normal
 joelclaw notify send "Immediate action required" --priority urgent --telegram-only
 ```
 
+### Deploy
+
+```bash
+joelclaw deploy worker                              # dry-run deploy plan
+joelclaw deploy worker --restart --execute         # execute worker sync deployment
+joelclaw deploy worker --restart --execute --force # force with active runs (disruptive)
+```
+
+### Heal
+
+```bash
+joelclaw heal list
+joelclaw heal run RUN_FAILED --phase fix --context '{"run-id":"01ABC"}'           # dry-run
+joelclaw heal run RUN_FAILED --phase fix --context '{"run-id":"01ABC"}' --execute # execute
+```
+
 ### Gateway
 
 ```bash
@@ -199,6 +215,8 @@ joelclaw x [post|mentions]                 # X/Twitter operations
 joelclaw nas [status|health]               # NAS operations
 joelclaw diagnose <topic>                  # System diagnosis
 joelclaw langfuse [traces|costs]           # Langfuse analytics
+joelclaw deploy worker [--restart] [--execute]
+joelclaw heal [list|run]
 joelclaw inngest sync-worker [--restart]   # Worker lifecycle
 ```
 

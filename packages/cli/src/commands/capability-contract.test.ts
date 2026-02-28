@@ -1,12 +1,24 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
 import { describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { Effect, Schema } from "effect"
-import { parseMinimalToml, resolveCapabilitiesConfig } from "../capabilities/config"
+import { DEFAULT_CAPABILITY_CONFIG, parseMinimalToml, resolveCapabilitiesConfig } from "../capabilities/config"
 import type { CapabilityPort, JoelclawCapabilitiesConfig } from "../capabilities/contract"
 import { createCapabilityRegistry } from "../capabilities/registry"
+import { capabilityRegistry } from "../capabilities/setup"
 
 describe("capability config resolution", () => {
+  test("defaults include deploy/heal capability roots", () => {
+    expect(DEFAULT_CAPABILITY_CONFIG.deploy).toMatchObject({
+      enabled: true,
+      adapter: "scripted-deploy",
+    })
+    expect(DEFAULT_CAPABILITY_CONFIG.heal).toMatchObject({
+      enabled: true,
+      adapter: "runbook-heal",
+    })
+  })
+
   test("minimal TOML parser reads capability sections", () => {
     const parsed = parseMinimalToml(`
 [capabilities.secrets]
@@ -78,6 +90,12 @@ adapter = "project-adapter"
 })
 
 describe("capability registry", () => {
+  test("runtime registry includes deploy/heal adapters", () => {
+    const entries = capabilityRegistry.list()
+    expect(entries.some((entry) => entry.capability === "deploy" && entry.adapter === "scripted-deploy")).toBe(true)
+    expect(entries.some((entry) => entry.capability === "heal" && entry.adapter === "runbook-heal")).toBe(true)
+  })
+
   test("resolves configured adapter and returns descriptive errors", () => {
     const registry = createCapabilityRegistry()
 

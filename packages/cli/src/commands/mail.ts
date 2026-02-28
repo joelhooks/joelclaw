@@ -10,8 +10,8 @@ const defaultProject = Options.text("project").pipe(
 )
 
 const defaultAgent = Options.text("agent").pipe(
-  Options.withDefault("GreenPanda"),
-  Options.withDescription("Agent name — AdjectiveNoun format (default: GreenPanda)"),
+  Options.withDefault("MaroonReef"),
+  Options.withDescription("Agent name — AdjectiveNoun format (default: MaroonReef)"),
 )
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>

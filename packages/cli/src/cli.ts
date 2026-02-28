@@ -8,12 +8,14 @@ import { approvalsCmd } from "./commands/approvals"
 import { callCmd } from "./commands/call"
 import { capabilitiesCmd } from "./commands/capabilities"
 import { contentCmd } from "./commands/content"
+import { deployCmd } from "./commands/deploy"
 import { discoverCmd } from "./commands/discover"
 import { docsCmd } from "./commands/docs"
 import { emailCmd } from "./commands/email"
 import { eventCmd } from "./commands/event"
 import { eventsCmd } from "./commands/events"
 import { gatewayCmd } from "./commands/gateway"
+import { healCmd } from "./commands/heal"
 import { inngestCmd } from "./commands/inngest"
 import { langfuseCmd } from "./commands/langfuse"
 import { logCmd } from "./commands/log"
@@ -113,6 +115,7 @@ const root = Command.make("joelclaw", {}, () =>
           started: r.startedAt,
         })),
         commands: {
+          content: "joelclaw content {seed|verify|prune [--apply]}",
           send: "joelclaw send <event> [-d JSON]",
           runs: "joelclaw runs [--count N] [--status S] [--hours H]",
           run: "joelclaw run <run-id>",
@@ -122,6 +125,8 @@ const root = Command.make("joelclaw", {}, () =>
           status: "joelclaw status",
           capabilities: "joelclaw capabilities",
           recover: "joelclaw recover <error-code> [--phase fix] [--execute]",
+          deploy: "joelclaw deploy worker [--restart] [--execute] [--wait-ms 1500] [--force]",
+          heal: "joelclaw heal {list|run}",
           logs: "joelclaw logs [worker|errors|server|analyze] [-n lines] [--grep text]", 
           log: "joelclaw log write --action <action> --tool <tool> --detail <detail> [--reason <reason>]",
           loop: "joelclaw loop {start|status|list|cancel|restart|nuke}",
@@ -158,6 +163,8 @@ const root = Command.make("joelclaw", {}, () =>
         { command: "joelclaw status", description: "Health check all components" },
         { command: "joelclaw capabilities", description: "Discover goal-oriented command flows" },
         { command: "joelclaw recover list", description: "List deterministic recovery runbooks" },
+        { command: "joelclaw deploy worker", description: "Preview worker deploy sync (dry-run)" },
+        { command: "joelclaw heal list", description: "List deterministic heal runbooks" },
         { command: "joelclaw loop status", description: "Active loop status (Redis)" },
         { command: "joelclaw runs", description: "List recent runs" },
         { command: "joelclaw secrets status", description: "Check secrets backend capability health" },
@@ -171,7 +178,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, logsCmd, logCmd, secretsCmd, notifyCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, skillsCmd, docsCmd, emailCmd, mailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd])
+  Command.withSubcommands([contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, deployCmd, healCmd, logsCmd, logCmd, secretsCmd, notifyCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, skillsCmd, docsCmd, emailCmd, mailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd])
 )
 
 const cli = Command.run(root, {
