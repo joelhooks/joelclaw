@@ -936,6 +936,12 @@ export type Events = {
       source?: string; // "cli" | "manual"
     };
   };
+  "content/prune.requested": {
+    data: {
+      source?: string; // "cli" | "manual"
+      apply?: boolean;
+    };
+  };
   "content/published": {
     data: {
       type: "post" | "adr";
