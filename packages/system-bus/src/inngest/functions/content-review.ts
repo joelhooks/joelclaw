@@ -134,7 +134,7 @@ function toContentResourceCandidates(contentType: SupportedContentType, contentS
 
 function toCacheTag(contentType: SupportedContentType, contentSlug: string): string {
   if (contentType === "post") {
-    return `article:${contentSlug}`;
+    return `post:${contentSlug}`;
   }
   return `${contentType}:${contentSlug}`;
 }
@@ -568,9 +568,8 @@ async function revalidateContentTag(cacheTag: string): Promise<void> {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-revalidation-secret": revalidationSecret,
     },
-    body: JSON.stringify({ tag: cacheTag }),
+    body: JSON.stringify({ tag: cacheTag, secret: revalidationSecret }),
     signal: AbortSignal.timeout(15_000),
   });
 
@@ -640,7 +639,7 @@ export const contentReviewApply = inngest.createFunction(
     concurrency: {
       limit: 1,
       key:
-        'event.data.resourceId ? event.data.resourceId : (event.data.contentType == "post" ? "article:" + event.data.contentSlug : event.data.contentType + ":" + event.data.contentSlug)',
+        'event.data.resourceId ? event.data.resourceId : (event.data.contentType == "post" ? "post:" + event.data.contentSlug : event.data.contentType + ":" + event.data.contentSlug)',
     },
     onFailure: async ({ error, event, step, runId, ...rest }) => {
       const failureInput = parseFailureInput(event.data);
