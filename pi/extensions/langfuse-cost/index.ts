@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 type UsageLike = {
@@ -148,26 +149,45 @@ type LangfuseCtor = new (payload: {
 
 let cachedLangfuseCtor: LangfuseCtor | null | undefined;
 let reportedMissingLangfuseModule = false;
+const requireFromHere = createRequire(import.meta.url);
 
 async function loadLangfuseCtor(): Promise<LangfuseCtor | null> {
   if (cachedLangfuseCtor !== undefined) {
     return cachedLangfuseCtor;
   }
 
+  const moduleName = ["lang", "fuse"].join("");
+
+  // First try CommonJS require — avoids static ESM import analysis during extension load.
   try {
-    const mod = await import("langfuse");
-    const ctorCandidate = (mod as { default?: unknown }).default;
-    if (typeof ctorCandidate !== "function") {
-      cachedLangfuseCtor = null;
-      if (!reportedMissingLangfuseModule) {
-        reportedMissingLangfuseModule = true;
-        console.warn("langfuse-cost: 'langfuse' module loaded without a default constructor; telemetry disabled.");
-      }
-      return null;
+    const mod = requireFromHere(moduleName) as { default?: unknown };
+    const ctorCandidate = mod.default ?? mod;
+    if (typeof ctorCandidate === "function") {
+      cachedLangfuseCtor = ctorCandidate as LangfuseCtor;
+      return cachedLangfuseCtor;
+    }
+  } catch {
+    // fall through to dynamic import fallback
+  }
+
+  // Then try dynamic import, but keep module name dynamic to avoid static resolver crashes.
+  try {
+    const dynamicImport = new Function("name", "return import(name)") as (
+      name: string,
+    ) => Promise<{ default?: unknown }>;
+    const mod = await dynamicImport(moduleName);
+    const ctorCandidate = mod.default;
+    if (typeof ctorCandidate === "function") {
+      cachedLangfuseCtor = ctorCandidate as LangfuseCtor;
+      return cachedLangfuseCtor;
     }
 
-    cachedLangfuseCtor = ctorCandidate as LangfuseCtor;
-    return cachedLangfuseCtor;
+    cachedLangfuseCtor = null;
+    if (!reportedMissingLangfuseModule) {
+      reportedMissingLangfuseModule = true;
+      console.warn("langfuse-cost: 'langfuse' module loaded without a constructor; telemetry disabled.");
+    }
+    return null;
   } catch {
     cachedLangfuseCtor = null;
     if (!reportedMissingLangfuseModule) {
