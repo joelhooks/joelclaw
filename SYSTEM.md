@@ -29,7 +29,7 @@ These are joelclaw's foundational rules. They govern every decision.
 
 2. **Silent failures are bugs.** Every pipeline step must be observable. If something can fail silently, instrument it or it will bite you. Use `joelclaw otel`.
 
-3. **Inngest is the backbone.** All durable work flows through Inngest. Retries are sacred — `retries: 0` is NEVER acceptable. Event-driven, step-memoized, idempotent by default. **Before doing any Inngest work, load the relevant inngest skills** (`inngest-durable-functions`, `inngest-steps`, `inngest-events`, `inngest-flow-control`, `inngest-middleware`, `inngest-setup`).
+3. **Inngest is the backbone.** All durable work flows through Inngest. Retries are sacred — `retries: 0` is NEVER acceptable. Event-driven, step-memoized, idempotent by default. **Before any Inngest work, you MUST load the relevant inngest skills**: `inngest-durable-functions`, `inngest-steps`, `inngest-events`, `inngest-flow-control`, `inngest-middleware`, `inngest-setup`.
 
 4. **CLI-first operations.** The `joelclaw` CLI is the primary operator interface. Agent-first design: JSON always, HATEOAS `next_actions` in every response. If the CLI crashes, that's the highest priority fix.
 
@@ -92,6 +92,22 @@ Reference documentation lives in `docs/` in the joelclaw repo (`~/Code/joelhooks
 **ALL writers — codex, gateway, interactive pi, any agent that touches this system — MUST update the relevant docs/ file when they change the system it describes.** Add a new Inngest function? Update docs/inngest-functions.md. Change the deploy process? Update docs/deploy.md. Modify the gateway? Update docs/gateway.md.
 
 Stale docs are as bad as stale skills. If you change reality, update the docs that describe reality. This is not optional.
+
+## How to Modify Codex (for joelclaw)
+
+Codex (`openai/codex`) is our autonomous coding agent. Override its system prompt via:
+
+- **`model_instructions_file`** in `~/.codex/config.toml` — path to a `.md` file that replaces the model-specific base prompt entirely
+- **`base_instructions`** — string override passed programmatically (e.g. `codex exec --instructions "..."`)
+- **AGENTS.md** — per-directory instructions injected as user messages alongside the base prompt
+
+Codex also supports:
+- **Custom prompts**: `.md` files in `$CODEX_HOME/prompts/` with optional YAML frontmatter (`description`, `argument-hint`)
+- **Skills**: `skills/*/SKILL.md` — same pattern as pi, injected as `<skill>` fragments
+- **Personalities**: configurable via `personality` in config
+- **Config profiles**: per-project overrides in `[projects."<path>"]` sections
+
+Codex is monitored daily via feed subscription for changes.
 
 ## How to Modify Pi (for joelclaw)
 
