@@ -205,11 +205,12 @@ function extractSnippet(
 
 // --- ADR search (local, same as /api/search) ---
 
-function searchAdrs(query: string, limit: number): SearchHit[] {
+async function searchAdrs(query: string, limit: number): Promise<SearchHit[]> {
   const q = query.toLowerCase();
   const hits: SearchHit[] = [];
 
-  for (const adr of getAllAdrs()) {
+  const adrs = await getAllAdrs();
+  for (const adr of adrs) {
     const title = `ADR-${adr.number.padStart(4, "0")}: ${adr.title}`;
     const haystack = `${title} ${adr.description || ""} ${adr.status}`.toLowerCase();
     if (!haystack.includes(q)) continue;
@@ -383,7 +384,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Add ADR results for public searches
-    for (const hit of searchAdrs(q, perCollection)) {
+    for (const hit of await searchAdrs(q, perCollection)) {
       const existing = seen.get(hit.url);
       if (!existing || existing.score < hit.score) {
         seen.set(hit.url, hit);

@@ -12,12 +12,13 @@ import { remarkAdrLinks } from "@/lib/remark-adr-links";
 type Props = { params: Promise<{ slug: string }> };
 
 export async function generateStaticParams() {
-  return getAdrSlugs().map((slug) => ({ slug }));
+  const slugs = await getAdrSlugs();
+  return slugs.map((slug) => ({ slug }));
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const adr = getAdr(slug);
+  const adr = await getAdr(slug);
   if (!adr) return {};
 
   const number = adr.meta.number.padStart(4, "0");
@@ -51,7 +52,7 @@ const STATUS_COLORS: Record<string, string> = {
 /** Entry: request-aware, prepares static header + dynamic MDX/review holes. */
 export default async function AdrPage({ params }: Props) {
   const { slug } = await params;
-  const adr = getAdr(slug);
+  const adr = await getAdr(slug);
   if (!adr) notFound();
 
   const { meta, content } = adr;

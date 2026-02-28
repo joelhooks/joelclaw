@@ -181,12 +181,24 @@ function toCacheTags(contentType: SupportedContentType, contentSlug: string): st
   if (contentType === "post") {
     return [`post:${contentSlug}`, `article:${contentSlug}`, "articles"];
   }
+  if (contentType === "adr") {
+    return [`adr:${contentSlug}`, "adrs"];
+  }
+  if (contentType === "discovery") {
+    return [`discovery:${contentSlug}`, "discoveries"];
+  }
   return [`${contentType}:${contentSlug}`];
 }
 
 function toRevalidationPaths(contentType: SupportedContentType, contentSlug: string): string[] {
   if (contentType === "post") {
     return ["/", `/${contentSlug}`, "/feed.xml"];
+  }
+  if (contentType === "adr") {
+    return ["/adrs", `/adrs/${contentSlug}`, "/feed.xml"];
+  }
+  if (contentType === "discovery") {
+    return ["/cool", `/cool/${contentSlug}`, "/feed.xml"];
   }
   return [];
 }

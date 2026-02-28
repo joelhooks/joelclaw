@@ -9,12 +9,14 @@ function toReviewEventData(resourceId: string): {
   contentType: string;
   contentSlug: string;
 } {
-  // resourceId format: "type/slug" (e.g. "post/knowledge-adventure-club-graph")
-  const slashIdx = resourceId.indexOf("/");
-  const rawType = slashIdx > 0 ? resourceId.slice(0, slashIdx).trim() : "post";
+  // resourceId formats accepted:
+  // - "type:slug" (canonical, e.g. "post:knowledge-adventure-club-graph")
+  // - "type/slug" (legacy)
+  const separator = resourceId.includes(":") ? ":" : "/";
+  const splitIndex = resourceId.indexOf(separator);
+  const rawType = splitIndex > 0 ? resourceId.slice(0, splitIndex).trim() : "post";
   const contentType = rawType === "article" ? "post" : rawType;
-  const contentSlug =
-    slashIdx > 0 ? resourceId.slice(slashIdx + 1).trim() : resourceId;
+  const contentSlug = splitIndex > 0 ? resourceId.slice(splitIndex + 1).trim() : resourceId;
 
   return {
     contentType,

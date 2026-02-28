@@ -28,8 +28,8 @@ function discoveryDate(iso: string): string {
   return formatDateStatic(iso, { monthStyle: "short", includeYear: false });
 }
 
-export default function CoolPage() {
-  const discoveries = getAllDiscoveries();
+export default async function CoolPage() {
+  const discoveries = await getAllDiscoveries();
 
   return (
     <div className="mx-auto max-w-2xl">

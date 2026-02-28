@@ -4,7 +4,7 @@ import { getAllPosts } from "@/lib/posts";
 
 export async function GET() {
   const posts = await getAllPosts();
-  const adrs = getAllAdrs();
+  const adrs = await getAllAdrs();
 
   const lines: string[] = [
     `# ${SITE_NAME}`,

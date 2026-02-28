@@ -2,7 +2,7 @@
 name: joelclaw-web
 displayName: Joelclaw Web
 description: "Update and maintain joelclaw.com — the Next.js web app at apps/web/. Use when writing blog posts, editing pages, updating the network page, changing layout/header/footer, adding components, or fixing anything on the site. Hard content triggers: 'write article about X' (draft in Convex), 'publish article <slug>' (set draft=false + revalidate tags/paths). Also triggers on: 'update the site', 'write a post', 'fix the blog', 'joelclaw.com', 'update network page', 'add a page', 'change the header', or any task involving the public-facing web app."
-version: 1.1.0
+version: 1.2.0
 author: Joel Hooks
 tags: [joelclaw, web, nextjs, content, site]
 ---
@@ -34,12 +34,20 @@ Current King universe mapping (network page):
 
 ## Content Model (Convex-first)
 
-Articles are canonical in Convex (`contentResources` with `resourceId = article:<slug>`).
-Filesystem `.mdx` under `apps/web/content/` is seed/backfill material, not runtime source.
+Canonical runtime content lives in Convex `contentResources`:
+- `article:<slug>` (`type = article`)
+- `adr:<slug>` (`type = adr`)
+- `discovery:<slug>` (`type = discovery`)
+
+Filesystem content under `apps/web/content/` is seed/backfill material, not runtime source.
 
 Runtime read policy:
-- `apps/web/lib/posts.ts` reads Convex first and fails loudly if Convex is unavailable.
-- Optional local escape hatch: set `JOELCLAW_ALLOW_FILESYSTEM_POSTS_FALLBACK=1` (non-production only).
+- `apps/web/lib/posts.ts` → Convex-first articles (`article:*`)
+- `apps/web/lib/adrs.ts` → Convex-first ADRs (`adr:*`)
+- `apps/web/lib/discoveries.ts` → Convex-first discoveries (`discovery:*`)
+- Optional local escape hatches (non-production only):
+  - `JOELCLAW_ALLOW_FILESYSTEM_POSTS_FALLBACK=1` (articles)
+  - `JOELCLAW_ALLOW_FILESYSTEM_CONTENT_FALLBACK=1` (ADRs/discoveries)
 
 Article fields still mirror MDX frontmatter shape:
 
@@ -115,14 +123,17 @@ Use the `joel-writing-style` skill for prose. Key traits: direct, first-person, 
 | `components/site-header.tsx` | Header with active nav (client component) |
 | `components/mobile-nav.tsx` | Mobile overlay nav |
 | `components/search-dialog.tsx` | ⌘K search |
-| `lib/posts.ts` | Post loading, sorting, types |
-| `lib/adrs.ts` | ADR loading from Vault symlink |
+| `lib/posts.ts` | Article loading from Convex (`article:*`) |
+| `lib/adrs.ts` | ADR loading from Convex (`adr:*`) |
+| `lib/discoveries.ts` | Discovery loading from Convex (`discovery:*`) |
 | `lib/constants.ts` | Site name, URL, tagline |
 | `lib/claw.ts` | SVG path for claw icon |
 
 ## ADR Display Rules
 
-- ADRs are synced from `~/Vault/docs/decisions/` via content-sync
+- ADR runtime source is Convex (`contentResources` with `resourceId = adr:<slug>`)
+- Vault sync still updates repo snapshots under `apps/web/content/adrs/`
+- Project snapshots into Convex with: `bun scripts/seed-adrs-discoveries.ts`
 - The detail page (`app/adrs/[slug]/page.tsx`) strips the H1 from markdown content because the page already renders the title with ADR number prefix
 - Regex: `content.replace(/^#\s+(?:ADR-\d+:\s*)?.*$/m, "").trim()`
 
@@ -134,7 +145,9 @@ Use the `joel-writing-style` skill for prose. Key traits: direct, first-person, 
 4. Publish by setting `draft: false`, then revalidate tags + paths (`post:<slug>`, `article:<slug>`, `articles`, `/`, `/<slug>`, `/feed.xml`).
 5. Verify route + homepage + feed consistency.
 
-For one-time backfill from repo MDX, use `scripts/seed-articles.ts`.
+Backfill scripts:
+- `scripts/seed-articles.ts` for article resources
+- `scripts/seed-adrs-discoveries.ts` for ADR + discovery resources
 
 ## Network Page
 

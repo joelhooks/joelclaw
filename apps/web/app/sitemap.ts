@@ -14,7 +14,7 @@ function getLastModified(...candidates: unknown[]): string {
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const posts = await getAllPosts();
-  const adrs = getAllAdrs();
+  const adrs = await getAllAdrs();
 
   const postEntries = posts.map((post) => ({
     url: `${SITE_URL}/${post.slug}`,

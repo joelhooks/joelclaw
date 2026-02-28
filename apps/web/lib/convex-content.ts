@@ -153,7 +153,7 @@ function mergePostMeta(fields: PostFields, fallback: PostMeta | null): PostMeta 
 }
 
 export async function getAdrFromConvex(slug: string) {
-  const fallback = getAdr(slug);
+  const fallback = await getAdr(slug);
   const doc = await queryAdrDoc(slug);
   const fields = parseAdrFields(doc?.fields);
   if (!fields) return fallback;
@@ -175,7 +175,7 @@ export async function getPostFromConvex(slug: string) {
 }
 
 export async function getAdrSlugsFromConvex(): Promise<string[]> {
-  const fallback = getAdrSlugs();
+  const fallback = await getAdrSlugs();
   const convex = getConvexClient();
   if (!convex) return fallback;
 

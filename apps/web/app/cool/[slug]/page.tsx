@@ -10,12 +10,13 @@ import { rehypePlugins, remarkPlugins } from "@/lib/mdx-plugins";
 type Props = { params: Promise<{ slug: string }> };
 
 export async function generateStaticParams() {
-  return getDiscoverySlugs().map((slug) => ({ slug }));
+  const slugs = await getDiscoverySlugs();
+  return slugs.map((slug) => ({ slug }));
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const discovery = getDiscovery(slug);
+  const discovery = await getDiscovery(slug);
   if (!discovery) return {};
 
   return {
@@ -46,7 +47,7 @@ function tagColor(tag: string): string {
 
 export default async function DiscoveryPage({ params }: Props) {
   const { slug } = await params;
-  const discovery = getDiscovery(slug);
+  const discovery = await getDiscovery(slug);
   if (!discovery) notFound();
 
   const { meta, content } = discovery;

@@ -20,8 +20,8 @@ const TAG_COLORS: Record<string, string> = {
   "agent-loops": CLAW_COLOR,
 };
 
-export default function Image() {
-  const discoveries = getAllDiscoveries();
+export default async function Image() {
+  const discoveries = await getAllDiscoveries();
   const total = discoveries.length;
   const recent = discoveries.slice(0, 4);
 

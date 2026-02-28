@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 };
 
 export default async function AdrsPage() {
-  const allAdrs = getAllAdrs();
+  const allAdrs = await getAllAdrs();
 
   const counts = allAdrs.reduce(
     (acc, a) => {

@@ -6,8 +6,8 @@ import { getAllPosts } from "@/lib/posts";
 
 export async function GET() {
   const posts = await getAllPosts();
-  const adrs = getAllAdrs();
-  const discoveries = getAllDiscoveries();
+  const adrs = await getAllAdrs();
+  const discoveries = await getAllDiscoveries();
 
   const postItems = posts.map((post) => ({
     title: post.title,

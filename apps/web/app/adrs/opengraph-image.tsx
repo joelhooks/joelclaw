@@ -15,7 +15,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default async function Image() {
-  const adrs = getAllAdrs();
+  const adrs = await getAllAdrs();
   const total = adrs.length;
 
   const counts = adrs.reduce(
