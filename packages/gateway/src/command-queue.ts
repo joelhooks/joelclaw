@@ -212,6 +212,41 @@ export function resetFailureCount(): void {
   consecutiveFailures = 0;
 }
 
+// ── Consecutive duplicate detection ──────────────────────
+// Tracks recent prompts to drop consecutive identical messages from the
+// same source. Catches duplicates that slip past the persist-layer dedup
+// (e.g. 31s apart, replayed on restart, or race conditions).
+const DEDUP_RING_SIZE = 10;
+const DEDUP_WINDOW_MS = 120_000; // 2 minutes
+type DedupEntry = { hash: string; source: string; ts: number };
+const dedupRing: DedupEntry[] = [];
+
+function contentHash(source: string, prompt: string): string {
+  // Normalize whitespace and trim to ignore trivial formatting differences
+  const normalized = prompt.replace(/\s+/g, " ").trim().slice(0, 200);
+  return `${source}::${normalized}`;
+}
+
+function isDuplicateConsecutive(source: string, prompt: string): boolean {
+  const hash = contentHash(source, prompt);
+  const now = Date.now();
+
+  // Prune expired entries
+  while (dedupRing.length > 0 && now - dedupRing[0]!.ts > DEDUP_WINDOW_MS) {
+    dedupRing.shift();
+  }
+
+  // Check if this exact content was recently processed from the same source
+  const isDup = dedupRing.some((e) => e.hash === hash);
+
+  if (!isDup) {
+    dedupRing.push({ hash, source, ts: now });
+    if (dedupRing.length > DEDUP_RING_SIZE) dedupRing.shift();
+  }
+
+  return isDup;
+}
+
 async function dequeue(failedStreamIds: Set<string>): Promise<QueueEntry | null> {
   if (activeRequest) return null;
 
@@ -240,6 +275,27 @@ export async function drain(): Promise<void> {
     while (true) {
       const entry = await dequeue(failedStreamIds);
       if (!entry) break;
+
+      // Drop consecutive duplicates — same source + same content within 2min window
+      if (isDuplicateConsecutive(entry.source, entry.prompt)) {
+        console.log("[command-queue] dropped consecutive duplicate", {
+          source: entry.source,
+          streamId: entry.streamId,
+          promptPreview: entry.prompt.slice(0, 60),
+        });
+        void emitGatewayOtel({
+          level: "info",
+          component: "command-queue",
+          action: "queue.consecutive_dedup_dropped",
+          success: true,
+          metadata: {
+            source: entry.source,
+            streamId: entry.streamId,
+          },
+        });
+        if (entry.streamId) await ack(entry.streamId);
+        continue;
+      }
 
       activeRequest = {
         id: crypto.randomUUID(),
