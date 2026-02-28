@@ -341,6 +341,28 @@ export const agentLoopReview = inngest.createFunction(
     const cancelled = await step.run("check-cancel", () => isCancelled(loopId));
     if (cancelled) return { status: "cancelled", loopId, storyId };
 
+    // Log active file reservations for awareness (non-fatal)
+    await step.run("check-reservations", async () => {
+      const AGENT_MAIL_URL = process.env.AGENT_MAIL_URL?.trim() || "http://127.0.0.1:8765";
+      try {
+        const resp = await fetch(
+          `${AGENT_MAIL_URL}/mail/api/locks?project_key=${encodeURIComponent(workDir)}`,
+          { headers: { Accept: "application/json" } }
+        );
+        if (!resp.ok) return null;
+        const data = await resp.json() as { locks?: unknown[]; summary?: { active?: number } };
+        if (data.summary?.active && data.summary.active > 0) {
+          console.log(
+            `[agent-loop-review] ${data.summary.active} active file reservation(s)`,
+            JSON.stringify(data.locks)
+          );
+        }
+        return data.summary ?? null;
+      } catch {
+        return null; // Non-fatal — agent-mail may be unavailable
+      }
+    });
+
     // Step 1: Run checks (typecheck + lint + tests)
     const results = await step.run("run-checks", () => runChecks(workDir));
 

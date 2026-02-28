@@ -41,6 +41,43 @@ import * as telegramStream from "./telegram-stream";
 // Optional: JOELCLAW_LLM_OBS_ENABLED, JOELCLAW_ENV, JOELCLAW_RELEASE, GIT_SHA.
 initTracing({});
 
+/**
+ * Register the gateway's agent identity with agent-mail (non-fatal).
+ * Ensures project exists and registers MaroonReef as the gateway agent.
+ */
+async function registerGatewayAgent(): Promise<void> {
+  const AGENT_MAIL_URL = process.env.AGENT_MAIL_URL?.trim() || "http://127.0.0.1:8765";
+  const PROJECT_KEY = "/Users/joel/Code/joelhooks/joelclaw";
+  const AGENT_NAME = "MaroonReef";
+
+  async function mcpCall(toolName: string, args: Record<string, unknown>): Promise<void> {
+    const resp = await fetch(`${AGENT_MAIL_URL}/mcp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: `gw-${Date.now()}`,
+        method: "tools/call",
+        params: { name: toolName, arguments: args },
+      }),
+    });
+    if (!resp.ok) throw new Error(`agent-mail ${toolName}: HTTP ${resp.status}`);
+  }
+
+  try {
+    await mcpCall("ensure_project", { human_key: PROJECT_KEY });
+    await mcpCall("register_agent", {
+      project_key: PROJECT_KEY,
+      name: AGENT_NAME,
+      program: "pi-gateway",
+      model: "claude-sonnet-4",
+    });
+    console.log("[gateway] registered agent identity with agent-mail", { agent: AGENT_NAME });
+  } catch (err) {
+    console.warn("[gateway] agent-mail registration failed (non-fatal):", err);
+  }
+}
+
 const HOME = homedir();
 const AGENT_DIR = join(HOME, ".pi/agent");
 const PID_DIR = "/tmp/joelclaw";
@@ -1448,6 +1485,10 @@ console.log("[gateway] daemon started", {
   wsPort: wsServer.port,
   wsPortFile: WS_PORT_FILE,
 });
+
+// Register gateway agent with agent-mail (non-blocking, non-fatal)
+void registerGatewayAgent();
+
 void emitGatewayOtel({
   level: "info",
   component: "daemon",
