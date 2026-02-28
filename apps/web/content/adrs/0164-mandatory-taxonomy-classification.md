@@ -33,7 +33,7 @@ TOOLING (CLI/skills/extensions), PIPELINE (Inngest/event flows), BUILD (code/tes
 KNOWLEDGE (docs/memory/taxonomy), COMMS (messaging/notifications), OBSERVE (telemetry/logs),
 META (ADRs/governance/process).
 
-When unsure, classify with best guess + confidence < 0.5. Never omit classification.
+When unsure, classify with best guess + confidence `< 0.5`. Never omit classification.
 ```
 
 This is ~500 tokens. It goes in the base system prompt at BEDROCK stability tier — updated weekly if the taxonomy evolves.

@@ -84,14 +84,16 @@ Score: `0.5 * taxonomy_score + 0.3 * semantic_score + 0.2 * recency_score`
 Replace `<available_skills>` with:
 
 ```xml
+```xml
 <relevant_skills turn_context="k8s pod debugging" confidence="0.87">
-  <skill name="k8s" relevance="0.94" reason="Primary workload match: PLATFORM/k8s">
+  `<skill name="k8s" relevance="0.94" reason="Primary workload match: PLATFORM/k8s">`
     <location>/Users/joel/.pi/agent/skills/k8s/SKILL.md</location>
   </skill>
-  <skill name="sync-system-bus" relevance="0.72" reason="Related: system-bus deploys to k8s">
+  `<skill name="sync-system-bus" relevance="0.72" reason="Related: system-bus deploys to k8s">`
     <location>/Users/joel/.pi/agent/skills/sync-system-bus/SKILL.md</location>
   </skill>
 </relevant_skills>
+```
 ```
 
 ### Integration with Pi
