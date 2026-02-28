@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { internalAction, mutation, query } from "./_generated/server";
 
 export const getByResourceId = query({
   args: { resourceId: v.string() },
@@ -143,16 +144,72 @@ export const upsert = mutation({
       deletedAt: undefined,
     };
 
+    let action: "updated" | "inserted";
+
     if (existing) {
       await ctx.db.patch(existing._id, doc);
-      return { action: "updated", resourceId: args.resourceId };
+      action = "updated";
+    } else {
+      await ctx.db.insert("contentResources", {
+        ...doc,
+        createdAt: now,
+      });
+      action = "inserted";
     }
 
-    await ctx.db.insert("contentResources", {
-      ...doc,
-      createdAt: now,
-    });
-    return { action: "inserted", resourceId: args.resourceId };
+    try {
+      await ctx.scheduler.runAfter(0, internal.contentResources.revalidateCache, {
+        resourceId: args.resourceId,
+        type: args.type,
+      });
+    } catch (error) {
+      console.error("[contentResources] Failed to schedule revalidateCache action", {
+        resourceId: args.resourceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    return { action, resourceId: args.resourceId };
+  },
+});
+
+export const revalidateCache = internalAction({
+  args: {
+    resourceId: v.string(),
+    type: v.string(),
+  },
+  handler: async (_ctx, { resourceId, type }) => {
+    const secret = process.env.REVALIDATION_SECRET;
+    const siteUrl = process.env.SITE_URL || "https://joelclaw.com";
+
+    if (!secret) {
+      console.warn("[revalidate] REVALIDATION_SECRET not set", { resourceId, type });
+      return;
+    }
+
+    const slug = resourceId.includes(":")
+      ? (resourceId.split(":").pop() ?? resourceId)
+      : resourceId;
+    const normalizedType = type === "article" ? "post" : type;
+    const tags = [`${normalizedType}:${slug}`];
+    const paths = slug ? [`/${slug}`] : [];
+
+    try {
+      const response = await fetch(`${siteUrl}/api/revalidate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ secret, tags, paths }),
+      });
+
+      if (!response.ok) {
+        console.error(`[revalidate] Failed (${response.status}) for ${resourceId}`);
+      }
+    } catch (error) {
+      console.error("[revalidate] Request failed", {
+        resourceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   },
 });
 
