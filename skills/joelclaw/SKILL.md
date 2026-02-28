@@ -192,6 +192,7 @@ joelclaw vault search <query>              # Search vault markdown
 joelclaw vault adr list                    # ADR inventory (optionally by status)
 joelclaw vault adr collisions              # ADR number collision report
 joelclaw vault adr audit                   # ADR health + collision + index checks
+joelclaw skills audit [--deep]             # On-demand skill garden report
 joelclaw search <query>                    # Full-text search
 joelclaw email [scan|triage]               # Email operations
 joelclaw x [post|mentions]                 # X/Twitter operations

@@ -18,6 +18,7 @@ Canonical operator interface for joelclaw.
 - `joelclaw loop`
 - `joelclaw docs`
 - `joelclaw vault`
+- `joelclaw skills`
 - `joelclaw mail`
 - `joelclaw secrets`
 - `joelclaw log`
@@ -61,6 +62,19 @@ Semantics:
 - `log` writes structured system entries (slog backend).
 - `logs` reads/analyzes runtime logs.
 - `notify` is the canonical operator alert command; `gateway push` remains transport/debug.
+
+## Skills command tree (ADR-0179)
+
+```bash
+joelclaw skills
+└── audit [--deep] [--wait-ms <wait-ms>] [--poll-ms <poll-ms>]
+```
+
+### `joelclaw skills audit` purpose
+
+- triggers the `skill-garden/check` event on-demand
+- waits for the corresponding run and returns the findings report in-envelope
+- supports `--deep` for LLM staleness checks
 
 ## Vault command tree
 

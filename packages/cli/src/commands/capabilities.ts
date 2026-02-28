@@ -358,6 +358,10 @@ export const CAPABILITY_FLOWS: readonly CapabilityFlow[] = [
         command: "vault adr audit",
         description: "Audit ADR inventory, collisions, and README index alignment",
       },
+      {
+        command: "skills audit [--deep]",
+        description: "Run on-demand skill garden checks (ADR-0179)",
+      },
     ],
     verification: [
       "Relevant context found in <= 2 command hops",
