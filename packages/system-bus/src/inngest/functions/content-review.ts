@@ -132,11 +132,18 @@ function toContentResourceCandidates(contentType: SupportedContentType, contentS
   return [`${contentType}:${contentSlug}`];
 }
 
-function toCacheTag(contentType: SupportedContentType, contentSlug: string): string {
+function toCacheTags(contentType: SupportedContentType, contentSlug: string): string[] {
   if (contentType === "post") {
-    return `post:${contentSlug}`;
+    return [`post:${contentSlug}`, `article:${contentSlug}`, "articles"];
   }
-  return `${contentType}:${contentSlug}`;
+  return [`${contentType}:${contentSlug}`];
+}
+
+function toRevalidationPaths(contentType: SupportedContentType, contentSlug: string): string[] {
+  if (contentType === "post") {
+    return ["/", `/${contentSlug}`, "/feed.xml"];
+  }
+  return [];
 }
 
 function getSiteUrl(): string {
@@ -558,10 +565,20 @@ async function updateArticleContent(args: {
   });
 }
 
-async function revalidateContentTag(cacheTag: string): Promise<void> {
+async function revalidateContentCache(args: {
+  tags: string[];
+  paths?: string[];
+}): Promise<void> {
   const revalidationSecret = process.env.REVALIDATION_SECRET?.trim();
   if (!revalidationSecret) {
     throw new NonRetriableError("REVALIDATION_SECRET is required for content revalidation");
+  }
+
+  const tags = args.tags.filter((tag) => typeof tag === "string" && tag.trim().length > 0);
+  const paths = (args.paths ?? []).filter((path) => typeof path === "string" && path.trim().length > 0);
+
+  if (tags.length === 0 && paths.length === 0) {
+    throw new NonRetriableError("No cache tags or paths provided for revalidation");
   }
 
   const response = await fetch(`${getSiteUrl()}/api/revalidate`, {
@@ -569,7 +586,11 @@ async function revalidateContentTag(cacheTag: string): Promise<void> {
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ tag: cacheTag, secret: revalidationSecret }),
+    body: JSON.stringify({
+      secret: revalidationSecret,
+      tags,
+      paths,
+    }),
     signal: AbortSignal.timeout(15_000),
   });
 
@@ -693,7 +714,9 @@ export const contentReviewApply = inngest.createFunction(
 
     const parentResourceId = toParentResourceId(contentType, contentSlug);
     const feedbackResourceId = asString(event.data.resourceId) ?? parentResourceId;
-    const cacheTag = toCacheTag(contentType, contentSlug);
+    const cacheTags = toCacheTags(contentType, contentSlug);
+    const cachePaths = toRevalidationPaths(contentType, contentSlug);
+    const primaryCacheTag = cacheTags[0] ?? `${contentType}:${contentSlug}`;
 
     const article = await step.run("fetch-article", async () => {
       return fetchCurrentContent(contentType, contentSlug);
@@ -787,8 +810,11 @@ export const contentReviewApply = inngest.createFunction(
       return updateFeedbackStatuses(feedbackResourceId, "applied");
     });
 
-    await step.run("revalidate-cache-tag", async () => {
-      await revalidateContentTag(cacheTag);
+    await step.run("revalidate-cache", async () => {
+      await revalidateContentCache({
+        tags: cacheTags,
+        paths: cachePaths,
+      });
     });
 
     await step.run("notify-gateway-success", async () => {
@@ -800,7 +826,9 @@ export const contentReviewApply = inngest.createFunction(
         parentResourceId,
         feedbackResourceId,
         revisionResourceId,
-        cacheTag,
+        cacheTag: primaryCacheTag,
+        cacheTags,
+        cachePaths,
         contentType,
         contentSlug,
         commentsResolved: resolvedCount,
@@ -821,7 +849,9 @@ export const contentReviewApply = inngest.createFunction(
       resolvedCount,
       feedbackProcessingCount,
       feedbackAppliedCount,
-      cacheTag,
+      cacheTag: primaryCacheTag,
+      cacheTags,
+      cachePaths,
     };
   },
 );

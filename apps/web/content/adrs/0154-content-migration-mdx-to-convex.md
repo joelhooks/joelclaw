@@ -1,7 +1,7 @@
 ---
 number: "154"
 title: Article Content Migration — MDX to Convex ContentResource
-status: proposed
+status: accepted
 date: 2026-02-27
 tags: [content, convex, migration, mdx, cache-components, articles]
 related:
@@ -15,7 +15,7 @@ related:
 
 ## Status
 
-proposed
+accepted
 
 ## Context
 
@@ -26,9 +26,11 @@ Auth is shipped. Convex is deployed in k8s (ADR-0039). ContentResource schema ex
 ### Decisions Made
 
 - **Convex is source of truth** — filesystem MDX becomes seed input only, not read at runtime
+- **Runtime fallback is disabled by default** — if Convex is unavailable, reads fail loudly instead of silently falling back to filesystem
 - **Feedback is Joel-only** — auth-gated, single user
 - **Agent edits auto-publish** — no approval step, revision history provides safety net
 - **Raw MDX stored in Convex** — preserves component imports and JSX
+- **Publish invalidates tags and paths** — revalidation supports multi-tag + path busting for `/`, `/${slug}`, and `/feed.xml`
 
 ## Decision
 
@@ -223,6 +225,13 @@ The `.mdx` files in `apps/web/content/` become:
 - **Not read at runtime** — Convex is the live source
 
 New articles are created in Convex directly (via dashboard, API, or agent). The MDX files can stay in the repo as archival artifacts but are not part of the build.
+
+## Implementation Status (2026-02-27)
+
+Shipped:
+- `apps/web/lib/posts.ts` reads Convex as canonical source and only permits filesystem fallback behind explicit dev flag `JOELCLAW_ALLOW_FILESYSTEM_POSTS_FALLBACK=1`.
+- `app/api/revalidate/route.ts` accepts single or multiple tags/paths (`tag`, `tags`, `path`, `paths`).
+- `packages/system-bus/src/inngest/functions/content-review.ts` revalidates article tags plus homepage/feed paths after content updates.
 
 ## Consequences
 

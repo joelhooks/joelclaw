@@ -1,8 +1,8 @@
 ---
 name: joelclaw-web
 displayName: Joelclaw Web
-description: "Update and maintain joelclaw.com — the Next.js web app at apps/web/. Use when writing blog posts, editing pages, updating the network page, changing layout/header/footer, adding components, or fixing anything on the site. Triggers on: 'update the site', 'write a post', 'fix the blog', 'joelclaw.com', 'update network page', 'add a page', 'change the header', or any task involving the public-facing web app."
-version: 1.0.0
+description: "Update and maintain joelclaw.com — the Next.js web app at apps/web/. Use when writing blog posts, editing pages, updating the network page, changing layout/header/footer, adding components, or fixing anything on the site. Hard content triggers: 'write article about X' (draft in Convex), 'publish article <slug>' (set draft=false + revalidate tags/paths). Also triggers on: 'update the site', 'write a post', 'fix the blog', 'joelclaw.com', 'update network page', 'add a page', 'change the header', or any task involving the public-facing web app."
+version: 1.1.0
 author: Joel Hooks
 tags: [joelclaw, web, nextjs, content, site]
 ---
@@ -32,9 +32,16 @@ Current King universe mapping (network page):
 | Linux server | Blaine | The Dark Tower |
 | Router (exit node) | Todash | The Dark Tower |
 
-## Content Types & Frontmatter
+## Content Model (Convex-first)
 
-Posts live in `apps/web/content/*.mdx`. Four content types with required frontmatter:
+Articles are canonical in Convex (`contentResources` with `resourceId = article:<slug>`).
+Filesystem `.mdx` under `apps/web/content/` is seed/backfill material, not runtime source.
+
+Runtime read policy:
+- `apps/web/lib/posts.ts` reads Convex first and fails loudly if Convex is unavailable.
+- Optional local escape hatch: set `JOELCLAW_ALLOW_FILESYSTEM_POSTS_FALLBACK=1` (non-production only).
+
+Article fields still mirror MDX frontmatter shape:
 
 ```yaml
 ---
@@ -53,7 +60,25 @@ duration: "00:42:02"                # optional, for video-notes
 
 **Sorting**: Posts sort by `updated ?? date` descending. Use full ISO datetimes (not bare dates) for deterministic ordering. Setting `updated` bumps a post to the top without changing its original publish date.
 
-**Slugs**: Derived from filename. `my-cool-post.mdx` → `/my-cool-post`.
+**Slugs**: Derived from `fields.slug` in Convex (`resourceId = article:<slug>`).
+
+## Hard Trigger Workflow
+
+### `write article about X`
+
+1. Generate slug from title/topic.
+2. Upsert `contentResources` with `resourceId = article:<slug>`, `type = "article"`, full MDX body in `fields.content`, and `fields.draft = true`.
+3. Set `fields.date` to current ISO timestamp.
+4. Return slug + draft preview link (`/<slug>` if draft-visible in dev).
+
+### `publish article <slug>`
+
+1. Read `article:<slug>` from Convex.
+2. Patch/upsert with `fields.draft = false` and `fields.updated = now`.
+3. Revalidate all affected surfaces via `POST /api/revalidate` with:
+   - tags: `post:<slug>`, `article:<slug>`, `articles`
+   - paths: `/`, `/<slug>`, `/feed.xml`
+4. Verify `/`, `/<slug>`, and `/feed.xml` include the published post.
 
 ## Media Embeds
 
@@ -103,11 +128,13 @@ Use the `joel-writing-style` skill for prose. Key traits: direct, first-person, 
 
 ## Adding a New Post
 
-1. Create `apps/web/content/my-slug.mdx` with frontmatter (see above)
-2. Use ISO datetime in `date` field
-3. Add images to `apps/web/public/images/my-slug/` if needed
-4. Reference images as `/images/my-slug/filename.png` in MDX
-5. Commit and push to `main` — Vercel deploys automatically
+1. Draft in Convex (`contentResources.upsert`, `resourceId = article:<slug>`, `draft: true`).
+2. Use ISO datetime in `date` field.
+3. Add images to `apps/web/public/images/<slug>/` if needed and reference `/images/<slug>/...` in MDX.
+4. Publish by setting `draft: false`, then revalidate tags + paths (`post:<slug>`, `article:<slug>`, `articles`, `/`, `/<slug>`, `/feed.xml`).
+5. Verify route + homepage + feed consistency.
+
+For one-time backfill from repo MDX, use `scripts/seed-articles.ts`.
 
 ## Network Page
 

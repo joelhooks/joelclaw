@@ -89,6 +89,36 @@ function shouldIncludeDrafts(): boolean {
   return process.env.NODE_ENV === "development";
 }
 
+function canUseFilesystemFallback(): boolean {
+  return process.env.NODE_ENV !== "production"
+    && process.env.JOELCLAW_ALLOW_FILESYSTEM_POSTS_FALLBACK === "1";
+}
+
+function throwPostsError(message: string, error?: unknown): never {
+  if (error instanceof Error) {
+    throw new Error(`${message}: ${error.message}`, { cause: error });
+  }
+  if (typeof error === "string" && error.trim().length > 0) {
+    throw new Error(`${message}: ${error}`);
+  }
+  throw new Error(message);
+}
+
+function fallbackOrThrow<T>(args: {
+  message: string;
+  error?: unknown;
+  fallback: () => T;
+}): T {
+  if (!canUseFilesystemFallback()) {
+    throwPostsError(args.message, args.error);
+  }
+
+  console.warn(
+    `[posts] ${args.message}. Falling back to filesystem because JOELCLAW_ALLOW_FILESYSTEM_POSTS_FALLBACK=1.`,
+  );
+  return args.fallback();
+}
+
 function parsePostFields(value: unknown, fallbackSlug?: string): ParsedPostFields | null {
   const fields = asRecord(value);
   const slug = asOptionalString(fields.slug) ?? fallbackSlug;
@@ -196,16 +226,26 @@ export async function getAllPosts(): Promise<PostMeta[]> {
   cacheLife("days");
   cacheTag("articles");
 
-  const fallback = getAllPostsFromFilesystem();
   const convex = getConvexClient();
-  if (!convex) return fallback;
+  if (!convex) {
+    return fallbackOrThrow({
+      message:
+        "CONVEX_URL or NEXT_PUBLIC_CONVEX_URL is required for article reads (runtime MDX fallback disabled)",
+      fallback: getAllPostsFromFilesystem,
+    });
+  }
 
   try {
     const docs = await convex.query(api.contentResources.listByType, {
       type: "article",
       limit: 2000,
     });
-    if (!Array.isArray(docs)) return fallback;
+    if (!Array.isArray(docs)) {
+      return fallbackOrThrow({
+        message: "Convex listByType returned a non-array payload for articles",
+        fallback: getAllPostsFromFilesystem,
+      });
+    }
 
     const posts = docs
       .map((doc) => {
@@ -217,9 +257,20 @@ export async function getAllPosts(): Promise<PostMeta[]> {
       .filter((post): post is PostMeta => post !== null)
       .sort((a, b) => compareDateDesc(a.date, b.date));
 
-    return posts.length > 0 ? posts : fallback;
-  } catch {
-    return fallback;
+    if (docs.length > 0 && posts.length === 0) {
+      return fallbackOrThrow({
+        message: "Convex returned article docs but none passed schema parsing",
+        fallback: getAllPostsFromFilesystem,
+      });
+    }
+
+    return posts;
+  } catch (error) {
+    return fallbackOrThrow({
+      message: "Convex article query failed",
+      error,
+      fallback: getAllPostsFromFilesystem,
+    });
   }
 }
 
@@ -229,28 +280,39 @@ export async function getPost(slug: string): Promise<Post | null> {
   cacheTag(`article:${slug}`);
   cacheTag(`post:${slug}`);
 
-  const fallback = getPostFromFilesystem(slug);
   const convex = getConvexClient();
-  if (!convex) return fallback;
+  if (!convex) {
+    return fallbackOrThrow({
+      message:
+        `CONVEX_URL or NEXT_PUBLIC_CONVEX_URL is required for article:${slug} reads (runtime MDX fallback disabled)`,
+      fallback: () => getPostFromFilesystem(slug),
+    });
+  }
 
   try {
     const doc = await convex.query(api.contentResources.getByResourceId, {
       resourceId: `article:${slug}`,
     });
-    if (!doc || typeof doc !== "object") return fallback;
+    if (!doc || typeof doc !== "object") return null;
+
     const docRecord = asRecord(doc);
     const docType = asOptionalString(docRecord.type);
-    if (docType && docType !== "article") return fallback;
+    if (docType && docType !== "article") return null;
 
     const fields = parsePostFields(docRecord.fields, slug);
-    if (!fields?.content) return fallback;
+    if (!fields?.content) return null;
+    if (!shouldIncludeDrafts() && fields.draft) return null;
 
     return {
       meta: toPostMeta(fields),
       content: fields.content,
     };
-  } catch {
-    return fallback;
+  } catch (error) {
+    return fallbackOrThrow({
+      message: `Convex article query failed for slug ${slug}`,
+      error,
+      fallback: () => getPostFromFilesystem(slug),
+    });
   }
 }
 
@@ -259,16 +321,26 @@ export async function getPostSlugs(): Promise<string[]> {
   cacheLife("days");
   cacheTag("articles");
 
-  const fallback = getPostSlugsFromFilesystem();
   const convex = getConvexClient();
-  if (!convex) return fallback;
+  if (!convex) {
+    return fallbackOrThrow({
+      message:
+        "CONVEX_URL or NEXT_PUBLIC_CONVEX_URL is required for article slug reads (runtime MDX fallback disabled)",
+      fallback: getPostSlugsFromFilesystem,
+    });
+  }
 
   try {
     const docs = await convex.query(api.contentResources.listByType, {
       type: "article",
       limit: 2000,
     });
-    if (!Array.isArray(docs)) return fallback;
+    if (!Array.isArray(docs)) {
+      return fallbackOrThrow({
+        message: "Convex listByType returned a non-array payload for article slugs",
+        fallback: getPostSlugsFromFilesystem,
+      });
+    }
 
     const slugs = docs
       .map((doc) => {
@@ -277,10 +349,21 @@ export async function getPostSlugs(): Promise<string[]> {
         if (!shouldIncludeDrafts() && fields.draft) return null;
         return fields.slug;
       })
-      .filter((slug): slug is string => Boolean(slug));
+      .filter((entry): entry is string => Boolean(entry));
 
-    return slugs.length > 0 ? Array.from(new Set(slugs)) : fallback;
-  } catch {
-    return fallback;
+    if (docs.length > 0 && slugs.length === 0) {
+      return fallbackOrThrow({
+        message: "Convex returned article docs but none produced usable slugs",
+        fallback: getPostSlugsFromFilesystem,
+      });
+    }
+
+    return Array.from(new Set(slugs));
+  } catch (error) {
+    return fallbackOrThrow({
+      message: "Convex article slug query failed",
+      error,
+      fallback: getPostSlugsFromFilesystem,
+    });
   }
 }

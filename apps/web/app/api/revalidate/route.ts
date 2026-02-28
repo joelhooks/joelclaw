@@ -1,10 +1,33 @@
-import { revalidateTag } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { NextResponse } from "next/server";
 
 type RevalidateBody = {
   tag?: unknown;
+  tags?: unknown;
+  path?: unknown;
+  paths?: unknown;
   secret?: unknown;
 };
+
+function toStringList(value: unknown): string[] {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? [trimmed] : [];
+  }
+
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function normalizePaths(paths: string[]): string[] {
+  return paths
+    .map((path) => (path.startsWith("/") ? path : `/${path}`))
+    .filter((path, index, array) => array.indexOf(path) === index);
+}
 
 export async function POST(request: Request) {
   const expectedSecret = process.env.REVALIDATION_SECRET?.trim();
@@ -24,12 +47,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const tag = typeof body.tag === "string" ? body.tag.trim() : "";
-  if (!tag) {
-    return NextResponse.json({ error: "Missing tag" }, { status: 400 });
+  const tags = Array.from(new Set([...toStringList(body.tag), ...toStringList(body.tags)]));
+  const paths = normalizePaths(toStringList(body.path).concat(toStringList(body.paths)));
+
+  if (tags.length === 0 && paths.length === 0) {
+    return NextResponse.json({ error: "Missing revalidation target (tag/tags/path/paths)" }, { status: 400 });
   }
 
-  revalidateTag(tag, "max");
+  for (const tag of tags) {
+    revalidateTag(tag, "max");
+  }
 
-  return NextResponse.json({ revalidated: true });
+  for (const path of paths) {
+    revalidatePath(path);
+  }
+
+  return NextResponse.json({
+    revalidated: true,
+    tags,
+    paths,
+  });
 }
