@@ -25,6 +25,7 @@ joelclaw has **two Langfuse integration points**:
 - **What it traces**: Every gateway + interactive pi session LLM call
 - **How**: Hooks into pi session events (`session_start`, `message_start`, `message_end`, `tool_call`, `tool_result`, `session_shutdown`)
 - **Dedup**: `globalThis.__langfuse_cost_loaded__` guard prevents duplicate instances from symlink/realpath module resolution split
+- **Optional dependency behavior**: `langfuse` is lazily loaded (no top-level hard import). Missing module must disable telemetry, not crash extension import. Regression test: `pi/extensions/langfuse-cost/index.test.ts`
 
 ### 2. System-bus OTEL bridge (`langfuse.ts`)
 - **Source**: `packages/system-bus/src/lib/langfuse.ts`

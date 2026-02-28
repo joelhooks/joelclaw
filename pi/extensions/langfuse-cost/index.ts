@@ -157,6 +157,10 @@ async function loadLangfuseCtor(): Promise<LangfuseCtor | null> {
   }
 
   const moduleName = ["lang", "fuse"].join("");
+  // Optional dependency contract:
+  // - importing this extension must never hard-fail when `langfuse` is absent
+  // - runtime gracefully disables telemetry instead
+  // - guarded by regression test: pi/extensions/langfuse-cost/index.test.ts
 
   // First try CommonJS require — avoids static ESM import analysis during extension load.
   try {
