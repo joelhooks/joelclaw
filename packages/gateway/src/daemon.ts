@@ -12,7 +12,7 @@ import { fetchChannel as fetchDiscordChannel, getClient as getDiscordClient, mar
 import { send as sendIMessage, shutdown as shutdownIMessage, start as startIMessage } from "./channels/imessage";
 import { getRedisClient, isHealthy as isRedisHealthy, shutdown as shutdownRedisChannel, start as startRedisChannel } from "./channels/redis";
 import { isStarted as isSlackStarted, send as sendSlack, shutdown as shutdownSlack, start as startSlack } from "./channels/slack";
-import { parseChatId, send as sendTelegram, sendMedia as sendTelegramMedia, shutdown as shutdownTelegram, start as startTelegram } from "./channels/telegram";
+import { getBot, parseChatId, send as sendTelegram, sendMedia as sendTelegramMedia, shutdown as shutdownTelegram, start as startTelegram } from "./channels/telegram";
 import {
   drain,
   enqueue,
@@ -34,6 +34,7 @@ import { injectChannelContext } from "./formatting";
 import { startHeartbeatRunner, TRIPWIRE_PATH } from "./heartbeat";
 import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
 import { registerChannel, routeResponse } from "./outbound/router";
+import * as telegramStream from "./telegram-stream";
 
 // Initialize Langfuse tracing for inference routing (reads from env vars):
 // LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, and LANGFUSE_HOST or LANGFUSE_BASE_URL.
@@ -569,6 +570,16 @@ let _lastPromptAt = 0;
 onPrompt(() => {
   _lastPromptAt = Date.now();
   fallbackController.onPromptDispatched();
+
+  // Start Telegram typing indicator + streaming if this prompt came from Telegram
+  const source = getActiveSource();
+  if (source?.startsWith("telegram:") && TELEGRAM_USER_ID) {
+    const chatId = parseChatId(source) ?? TELEGRAM_USER_ID;
+    const bot = getBot();
+    if (bot && chatId) {
+      telegramStream.begin({ chatId, bot });
+    }
+  }
 });
 onQueueError((failures) => fallbackController.onPromptError(failures));
 
@@ -847,6 +858,9 @@ session.subscribe((event: any) => {
     responseChunks.push(delta);
     fallbackController.onFirstToken();
     broadcastWs({ type: "text_delta", delta });
+
+    // Forward to Telegram streaming
+    telegramStream.pushDelta(delta);
   }
 
   // On message end, route the full response to the source channel
@@ -875,10 +889,13 @@ session.subscribe((event: any) => {
         });
         // Treat as a prompt failure — let fallback controller decide whether to swap
         void fallbackController.onPromptError(getConsecutiveFailures() + 1);
+        // Abort any active Telegram stream on API error
+        telegramStream.abort();
         return;
       }
       // Other errors — log but don't route
       console.error("[gateway] message_end with error", { errorMsg: errorMsg.slice(0, 200) });
+      telegramStream.abort();
       return;
     }
 
@@ -886,6 +903,23 @@ session.subscribe((event: any) => {
 
     const source = getActiveSource() ?? "console";
     console.log("[gateway] response ready", { source, length: fullText.length });
+
+    // If Telegram streaming is active, finalize the current message segment.
+    // finish() returns true if it handled delivery. After finishing, the stream
+    // resets for the next message segment (tool calls may produce more text).
+    if (telegramStream.isActive() && source.startsWith("telegram:")) {
+      telegramStream.finish(fullText).then((handled) => {
+        if (!handled) {
+          // Streaming didn't actually send anything — fall back to normal path
+          routeResponse(source, fullText);
+        }
+      }).catch((err) => {
+        console.error("[telegram-stream] finish failed, falling back", { error: String(err) });
+        routeResponse(source, fullText);
+      });
+      return;
+    }
+
     routeResponse(source, fullText);
   }
 
@@ -896,6 +930,11 @@ session.subscribe((event: any) => {
       toolName: event.toolName,
       input: event.input,
     });
+
+    // Show tool status in Telegram stream
+    if (telegramStream.isActive()) {
+      telegramStream.onToolCall(event.toolName ?? "tool");
+    }
   }
 
   if (event.type === "tool_result") {
@@ -919,6 +958,8 @@ session.subscribe((event: any) => {
     _lastTurnEndAt = Date.now();
     fallbackController.onTurnEnd();
     broadcastWs({ type: "turn_end" });
+    // Clean up Telegram streaming state for this turn
+    telegramStream.turnEnd();
     // Release the idle waiter so the drain loop can process the next entry
     if (_idleResolve) {
       const resolve = _idleResolve;

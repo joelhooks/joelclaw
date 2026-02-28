@@ -378,6 +378,11 @@ let bot: Bot | undefined;
 let allowedUserId: number | undefined;
 let enqueuePrompt: EnqueueFn | undefined;
 let started = false;
+
+/** Expose the raw grammy Bot instance for streaming (telegram-stream.ts). */
+export function getBot(): Bot | undefined {
+  return bot;
+}
 let defaultInstance: TelegramChannel | undefined;
 let inboundMessageHandler: MessageHandler | undefined;
 
