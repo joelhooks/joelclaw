@@ -1,0 +1,86 @@
+{
+  "id": "feedback-pipeline",
+  "title": "Content Feedback Pipeline — Bridge & Agent Edit Loop",
+  "description": "Wire the remaining feedback pipeline: Convex → Inngest bridge, agent-driven article edits, revision storage, cache invalidation, and status UI. ADR-0106 covers the design.",
+  "repository": "/Users/joel/Code/joelhooks/joelclaw",
+  "codex_timeout_seconds": 900,
+  "stories": [
+    {
+      "id": "FBP-1",
+      "title": "Fix review submit route for Vercel → self-hosted Inngest",
+      "description": "The /api/review/submit route hardcodes INNGEST_EVENT_URL to localhost. On Vercel this fails silently. Replace with a Convex httpAction that receives the submit webhook and forwards to Inngest via the system-bus webhook server, OR use a Next.js server action that writes a 'reviewSubmitted' flag to Convex and let a Convex cron/scheduler trigger the Inngest event via the worker's event endpoint. The simplest approach: make the submit route POST directly to the system-bus webhook endpoint at https://panda.tail7af24.ts.net:3111/e/local (Tailscale). Add INNGEST_EVENT_URL to Vercel env vars pointing to the Tailscale Inngest event endpoint. File: apps/web/app/api/review/submit/route.ts",
+      "status": "pending",
+      "priority": 1,
+      "acceptance": [
+        "POST /api/review/submit from Vercel production sends content/review.submitted event to self-hosted Inngest",
+        "Event appears in Inngest dashboard within 5 seconds of submission",
+        "INNGEST_EVENT_URL env var documented in .env.example or README",
+        "Fallback behavior when Inngest is unreachable: return 502 with error message, don't crash"
+      ],
+      "context": {
+        "current_route": "apps/web/app/api/review/submit/route.ts",
+        "inngest_event_url": "http://127.0.0.1:8288/e/local",
+        "problem": "Vercel cannot reach localhost Inngest. Need reachable endpoint.",
+        "note": "Do NOT use Tailscale URLs directly — they require auth. Instead, set INNGEST_EVENT_URL as Vercel env var. The actual URL will be configured by ops, not hardcoded."
+      }
+    },
+    {
+      "id": "FBP-2",
+      "title": "Bridge feedbackItems to content-review Inngest function",
+      "description": "The feedback:create Convex mutation stores feedback but doesn't trigger the content-review agent. Add a feedbackSubmitted Convex action (or modify feedback:create) that fires content/review.submitted to Inngest after storing the feedback item. This bridges the new feedback form path to the existing content-review-apply Inngest function. The action should POST to CONVEX_INNGEST_EVENT_URL (env var in Convex dashboard). File: apps/web/convex/feedback.ts",
+      "status": "pending",
+      "priority": 2,
+      "acceptance": [
+        "feedback:create mutation triggers content/review.submitted event to Inngest",
+        "Event payload includes resourceId, contentSlug (extracted from resourceId), contentType, and source='feedback-form'",
+        "If Inngest is unreachable, feedback is still stored (fire-and-forget, don't block mutation)",
+        "TypeScript compiles clean"
+      ],
+      "context": {
+        "feedback_mutation": "apps/web/convex/feedback.ts",
+        "content_review_fn": "packages/system-bus/src/inngest/functions/content-review.ts",
+        "event_name": "content/review.submitted",
+        "note": "Use Convex scheduler.runAfter or internal action for async fire-and-forget. Don't block the mutation on the HTTP call."
+      }
+    },
+    {
+      "id": "FBP-3",
+      "title": "Content-review function reads feedbackItems not just reviewComments",
+      "description": "content-review-apply currently only reads reviewComments (inline paragraph comments). It needs to also read feedbackItems (general feedback). In the fetch-submitted-comments step, also query feedbackItems with status='pending' for the same resourceId. Merge both sources into the prompt sent to the agent. After the agent edits, mark feedbackItems as 'applied' or 'failed'. File: packages/system-bus/src/inngest/functions/content-review.ts",
+      "status": "pending",
+      "priority": 3,
+      "acceptance": [
+        "content-review-apply fetches both reviewComments AND feedbackItems for the resource",
+        "Feedback items with status='pending' are included in the agent's edit prompt",
+        "After successful edit, feedbackItems are marked 'applied' via Convex mutation",
+        "After failed edit, feedbackItems are marked 'failed'",
+        "If only feedbackItems exist (no reviewComments), the function still proceeds",
+        "TypeScript compiles clean: bunx tsc --noEmit"
+      ],
+      "context": {
+        "file": "packages/system-bus/src/inngest/functions/content-review.ts",
+        "convex_feedback": "apps/web/convex/feedback.ts",
+        "convex_url": "https://tough-panda-917.convex.cloud",
+        "note": "Use ConvexHttpClient to query feedback:listByResource and call feedback:markApplied/markFailed mutations."
+      }
+    },
+    {
+      "id": "FBP-4",
+      "title": "Cache invalidation after content-review edit",
+      "description": "After the agent edits an article, the cached version on joelclaw.com must be invalidated. The StaticArticleShell uses cacheTag('post:slug'). After a successful edit, the content-review function should call revalidateTag via a Next.js API route or on-demand revalidation endpoint. Add a POST /api/revalidate route that accepts a tag and calls revalidateTag(). The content-review function calls this after writing the revision. File: apps/web/app/api/revalidate/route.ts (new), packages/system-bus/src/inngest/functions/content-review.ts (update)",
+      "status": "pending",
+      "priority": 4,
+      "acceptance": [
+        "POST /api/revalidate with {tag: 'post:slug', secret: REVALIDATION_SECRET} invalidates the cached page",
+        "content-review-apply calls /api/revalidate after successful revision write",
+        "Unauthorized requests (wrong/missing secret) return 401",
+        "Route uses REVALIDATION_SECRET env var for auth",
+        "TypeScript compiles clean"
+      ],
+      "context": {
+        "cache_pattern": "apps/web/app/[slug]/page.tsx uses cacheTag('post:slug')",
+        "note": "Next.js 16 uses revalidateTag() from next/cache. The API route must be a server route that imports and calls revalidateTag."
+      }
+    }
+  ]
+}
