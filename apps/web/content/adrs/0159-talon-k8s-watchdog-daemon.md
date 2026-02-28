@@ -348,7 +348,8 @@ No HTTP client needed — all probes are subprocess calls (curl, kubectl, etc.).
 
 ### Follow-up work
 
-- Add Telegram notification as parallel to iMessage SOS
-- Expose a tiny HTTP status endpoint (e.g., `localhost:9999/health`) for remote monitoring
-- Wire talon health into the gateway watchdog (ADR-0037) as an additional signal
-- Consider supervising the gateway pi session as well (currently launchd-only)
+- [x] Add Telegram notification as parallel to iMessage SOS (shipped 2026-02-27)
+- [x] Expose a tiny HTTP status endpoint (`localhost:9999/health`) for remote monitoring (shipped 2026-02-27)
+- [x] Wire talon health into the gateway watchdog (ADR-0037) as an additional signal (shipped 2026-02-27)
+- [x] Supervise the gateway pi session via dynamic launchd probe (`launchd.gateway`) (shipped 2026-02-27)
+- [x] Handle broken-pipe stdout when piping `talon validate|--check|--status` output (shipped 2026-02-27)

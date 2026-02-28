@@ -7,7 +7,7 @@ mod state;
 mod worker;
 
 use std::env;
-use std::io;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::thread;
@@ -23,6 +23,8 @@ type CInt = i32;
 const SIGTERM: CInt = 15;
 const SIGINT: CInt = 2;
 const SIGHUP: CInt = 1;
+const HELP_TEXT: &str =
+    "talon [--config PATH] [validate|--validate] [--check] [--status] [--worker-only] [--dry-run]";
 
 pub static RECEIVED_SIGNAL: AtomicI32 = AtomicI32::new(0);
 pub static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -61,28 +63,44 @@ fn main() -> Result<(), DynError> {
 
     if cli.validate {
         let summary = config::validate_config_files(&cli.config_path)?;
-        println!("{}", config::validation_summary_to_json(&summary));
+        let payload = config::validation_summary_to_json(&summary);
+        if write_stdout_line(&payload)? {
+            return Ok(());
+        }
         return Ok(());
     }
 
     let config = config::load_config(&cli.config_path)?;
 
     if cli.dry_run {
-        println!("talon dry run config path: {}", cli.config_path.display());
-        println!("{config:#?}");
+        if write_stdout_line(&format!(
+            "talon dry run config path: {}",
+            cli.config_path.display()
+        ))? {
+            return Ok(());
+        }
+        if write_stdout_line(&format!("{config:#?}"))? {
+            return Ok(());
+        }
         return Ok(());
     }
 
     if cli.status {
         let current_state = state::load_state()?;
-        println!("{}", state::state_to_json(&current_state));
+        let payload = state::state_to_json(&current_state);
+        if write_stdout_line(&payload)? {
+            return Ok(());
+        }
         return Ok(());
     }
 
     if cli.check {
         let results = probes::run_all_probes(&config);
-        println!("{}", state::probe_results_to_json(&results));
         state::write_last_probe(&results)?;
+        let payload = state::probe_results_to_json(&results);
+        if write_stdout_line(&payload)? {
+            return Ok(());
+        }
         return Ok(());
     }
 
@@ -117,6 +135,36 @@ fn main() -> Result<(), DynError> {
         (Ok(_), Err(error)) => Err(error),
         (Ok(_), Ok(_)) => Ok(()),
     }
+}
+
+fn write_stdout_line(payload: &str) -> Result<bool, DynError> {
+    let mut stdout = io::stdout().lock();
+    write_line(&mut stdout, payload).map_err(Into::into)
+}
+
+fn write_line<W: Write>(writer: &mut W, payload: &str) -> io::Result<bool> {
+    if let Err(error) = writer.write_all(payload.as_bytes()) {
+        if error.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(true);
+        }
+        return Err(error);
+    }
+
+    if let Err(error) = writer.write_all(b"\n") {
+        if error.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(true);
+        }
+        return Err(error);
+    }
+
+    if let Err(error) = writer.flush() {
+        if error.kind() == io::ErrorKind::BrokenPipe {
+            return Ok(true);
+        }
+        return Err(error);
+    }
+
+    Ok(false)
 }
 
 fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
@@ -396,9 +444,7 @@ fn parse_args() -> Result<Cli, DynError> {
                 dry_run = true;
             }
             "--help" | "-h" => {
-                println!(
-                    "talon [--config PATH] [validate|--validate] [--check] [--status] [--worker-only] [--dry-run]"
-                );
+                let _ = write_stdout_line(HELP_TEXT)?;
                 std::process::exit(0);
             }
             unknown => {
@@ -474,5 +520,34 @@ mod tests {
         assert!(should_use_service_heal(&only_dynamic, &config));
         assert!(!should_use_service_heal(&mixed_failures, &config));
         assert!(!should_use_service_heal(&builtin_http_failure, &config));
+    }
+
+    #[test]
+    fn write_line_appends_newline() {
+        let mut output = Vec::new();
+        let broken_pipe = write_line(&mut output, "hello").expect("write should succeed");
+
+        assert!(!broken_pipe);
+        assert_eq!(output, b"hello\n");
+    }
+
+    #[test]
+    fn write_line_handles_broken_pipe() {
+        struct BrokenPipeWriter;
+
+        impl std::io::Write for BrokenPipeWriter {
+            fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "pipe closed"))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = BrokenPipeWriter;
+        let broken_pipe = write_line(&mut writer, "hello").expect("broken pipe should be handled");
+
+        assert!(broken_pipe);
     }
 }

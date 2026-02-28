@@ -172,6 +172,9 @@ talon --check | python3 -m json.tool
 # Check state machine
 talon --status | python3 -m json.tool
 
+# Broken-pipe robustness smoke test (should exit 0)
+talon --check | head -n 1 >/dev/null
+
 # Check health endpoint payload
 curl -sS http://127.0.0.1:9999/health | python3 -m json.tool
 
