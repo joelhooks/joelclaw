@@ -177,7 +177,7 @@ export function mdToTelegramHtmlAst(md: string): string {
   const rendered = children.map(renderNode).filter((chunk) => chunk.trim().length > 0);
   if (!rendered.length) return "";
 
-  return collapseConsecutiveNewlines(rendered.join("\n")).trim();
+  return collapseConsecutiveNewlines(rendered.join("\n\n")).trim();
 }
 
 export function chunkTelegramHtml(html: string, nodes: MdastNode[]): string[] {
