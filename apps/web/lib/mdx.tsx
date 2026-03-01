@@ -2,6 +2,7 @@ import type { MDXComponents } from "mdx/types";
 import Image from "next/image";
 import Link from "next/link";
 import { CodeBlockCopyButton } from "../components/copy-button";
+import { ContainmentBreach } from "../components/containment-breach";
 
 // ── Tufte-style sidenotes ──────────────────────────────────────
 // Numbered sidenotes (superscript toggle) and unnumbered margin notes.
@@ -106,6 +107,7 @@ function extractText(children: React.ReactNode): string {
 export const mdxComponents: MDXComponents = {
   AgentOnly,
   AgentNote,
+  ContainmentBreach,
   YouTube,
   YouTubeEmbed,
   Sidenote,
