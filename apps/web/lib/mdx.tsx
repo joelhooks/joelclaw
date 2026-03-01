@@ -219,15 +219,17 @@ export const mdxComponents: MDXComponents = {
   img: ({ src, alt, ...props }) => {
     if (!src) return null;
     return (
-      <Image
-        src={src}
-        alt={alt ?? ""}
-        width={1200}
-        height={800}
-        className="max-w-full h-auto rounded-lg my-6"
-        sizes="(max-width: 768px) 100vw, 720px"
-        {...props}
-      />
+      <span className="block my-6 overflow-hidden rounded-lg" style={{ aspectRatio: "3 / 2" }}>
+        <Image
+          src={src}
+          alt={alt ?? ""}
+          width={1200}
+          height={800}
+          className="h-full w-full rounded-lg object-cover"
+          sizes="(max-width: 768px) 100vw, 720px"
+          {...props}
+        />
+      </span>
     );
   },
 };
