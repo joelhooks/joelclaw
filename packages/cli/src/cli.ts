@@ -120,7 +120,7 @@ const root = Command.make("joelclaw", {}, () =>
           content: "joelclaw content {seed|verify|prune [--apply]}",
           send: "joelclaw send <event> [-d JSON]",
           runs: "joelclaw runs [--count N] [--status S] [--hours H]",
-          run: "joelclaw run <run-id>",
+          run: "joelclaw run <run-id> [--cancel] [--wait-ms 3000]",
           event: "joelclaw event <event-id>",
           events: "joelclaw events [--prefix P] [--hours H] [--count N]",
           functions: "joelclaw functions",

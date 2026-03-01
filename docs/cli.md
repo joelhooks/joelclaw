@@ -24,6 +24,7 @@ Probe detail strings include the selected endpoint class (`localhost|vm|svc_dns`
 
 - `joelclaw status`
 - `joelclaw runs`
+- `joelclaw run`
 - `joelclaw agent`
 - `joelclaw content`
 - `joelclaw gateway`
@@ -41,6 +42,21 @@ Probe detail strings include the selected endpoint class (`localhost|vm|svc_dns`
 - `joelclaw webhook`
 - `joelclaw inngest`
 - `joelclaw capabilities`
+
+## Run inspection + cancellation
+
+```bash
+joelclaw run <run-id> [--cancel] [--wait-ms 3000]
+```
+
+Semantics:
+
+- default mode returns run detail, trigger event, trace, and step errors.
+- `--cancel` issues Inngest GraphQL `cancelRun` for active runs, then polls status up to `--wait-ms`.
+- deterministic error envelopes:
+  - `RUN_CANCEL_FAILED` when `cancelRun` mutation fails.
+  - `RUN_CANCEL_TIMEOUT` when run remains `RUNNING|QUEUED` after the wait window.
+- terminal runs are never re-cancelled; response includes `cancellation.skipped = "already_terminal"`.
 
 ## Capability adapter config precedence (ADR-0169 phase 0)
 

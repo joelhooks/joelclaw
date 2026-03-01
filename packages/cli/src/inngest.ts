@@ -31,7 +31,7 @@ class InngestError {
 
 // ── GQL helper ───────────────────────────────────────────────────────
 
-const gql = (query: string) =>
+const gql = (query: string, variables?: Record<string, unknown>) =>
   Effect.tryPromise({
     try: async () => {
       const controller = new AbortController()
@@ -40,7 +40,10 @@ const gql = (query: string) =>
         const res = await fetch(GQL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query }),
+          body: JSON.stringify({
+            query,
+            ...(variables ? { variables } : {}),
+          }),
           signal: controller.signal,
         })
         const json = await res.json() as { errors?: Array<{ message: string }>; data: any }
@@ -176,6 +179,26 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
       }
     })
 
+    // ── cancel run ────────────────────────────────────────────────
+
+    const cancelRun = Effect.fn("Inngest.cancelRun")(function* (runID: string) {
+      const data = (yield* gql(`
+        mutation CancelRun($runID: ULID!) {
+          cancelRun(runID: $runID) {
+            id
+            status
+          }
+        }
+      `, { runID })) as {
+        cancelRun?: {
+          id?: string | null
+          status?: string | null
+        } | null
+      }
+
+      return data.cancelRun ?? null
+    })
+
     // ── events ─────────────────────────────────────────────────────
 
     const events = Effect.fn("Inngest.events")(function* (opts: {
@@ -297,7 +320,7 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
       return checks
     })
 
-    return { send, functions, runs, run, event, events, health } as const
+    return { send, functions, runs, run, cancelRun, event, events, health } as const
   },
 }) {}
 
