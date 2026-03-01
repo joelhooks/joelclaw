@@ -9,7 +9,7 @@ description: >-
   'send a message to', 'check inbox', 'mail status', 'reserve files',
   'release files', 'agent coordination', 'file lock', 'mail an agent',
   'who has this file', or any multi-agent coordination task.
-version: 0.3.0
+version: 0.3.1
 author: joel
 tags:
   - coordination
@@ -122,6 +122,7 @@ joelclaw mail search --query "refactor"
 - Collects agent-mail traffic signals (`Starting:`, `Task:`, `Status:`, handoff phrasing), lock health, and OTEL mail query coverage.
 - Scores reminder effectiveness and injects a targeted steering hint into hidden per-turn reminder text when drift is detected.
 - Emits `agent-mail/steering.reviewed` and appends a short daily log entry.
+- Event key lookup is resilient: `INNGEST_EVENT_KEY` resolves from env, then `~/.config/inngest/env`, then `~/.config/system-bus.env`, then `packages/system-bus/.env`.
 
 ## Pi Extension Tools
 

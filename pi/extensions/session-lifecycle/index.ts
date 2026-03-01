@@ -53,6 +53,30 @@ function readSafe(p: string): string | null {
   }
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readEnvVarFromFiles(name: string, filePaths: string[]): string {
+  const pattern = new RegExp(`^(?:export\\s+)?${escapeRegExp(name)}=(.+)$`, "m");
+
+  for (const filePath of filePaths) {
+    const content = readSafe(filePath);
+    if (!content) continue;
+
+    const match = content.match(pattern);
+    if (!match) continue;
+
+    const raw = match[1]?.trim() ?? "";
+    if (!raw) continue;
+
+    const unquoted = raw.replace(/^"|"$/g, "").replace(/^'|'$/g, "");
+    if (unquoted.length > 0) return unquoted;
+  }
+
+  return "";
+}
+
 function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -71,19 +95,20 @@ function appendToDaily(text: string): void {
 
 export function emitEvent(name: string, data: Record<string, unknown>): void {
   // Send event to Inngest via HTTP API.
-  // Reads keys from ~/.config/inngest/env (created during Inngest setup).
-  // Falls back silently if Inngest isn't running — events are best-effort.
-  const envPath = path.join(os.homedir(), ".config/inngest/env");
-  let eventKey = process.env.INNGEST_EVENT_KEY || "";
-  const baseUrl = process.env.INNGEST_BASE_URL || "http://localhost:8288";
+  // Key/base URL resolution order:
+  // 1) process env
+  // 2) ~/.config/inngest/env
+  // 3) ~/.config/system-bus.env
+  // 4) ~/Code/joelhooks/joelclaw/packages/system-bus/.env
+  // Falls back silently if unresolved — events are best-effort.
+  const envPaths = [
+    path.join(HOME, ".config", "inngest", "env"),
+    path.join(HOME, ".config", "system-bus.env"),
+    path.join(JOELCLAW_REPO, "packages", "system-bus", ".env"),
+  ];
 
-  if (!eventKey) {
-    try {
-      const envContent = fs.readFileSync(envPath, "utf-8");
-      const match = envContent.match(/INNGEST_EVENT_KEY=(\S+)/);
-      if (match) eventKey = match[1];
-    } catch {}
-  }
+  const eventKey = process.env.INNGEST_EVENT_KEY || readEnvVarFromFiles("INNGEST_EVENT_KEY", envPaths);
+  const baseUrl = process.env.INNGEST_BASE_URL || readEnvVarFromFiles("INNGEST_BASE_URL", envPaths) || "http://localhost:8288";
 
   if (!eventKey) return; // No key = no Inngest = skip silently
 
