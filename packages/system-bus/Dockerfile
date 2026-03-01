@@ -8,9 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   g++ \
   && rm -rf /var/lib/apt/lists/*
 
-# Monorepo install so workspace deps resolve for @joelclaw/system-bus.
+# Install only the system-bus workspace graph to avoid unrelated native builds.
 COPY . .
-RUN bun install
+RUN bun install --production --filter @joelclaw/system-bus --no-save
 
 WORKDIR /app/packages/system-bus
 
