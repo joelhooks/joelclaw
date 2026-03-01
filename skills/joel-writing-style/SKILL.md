@@ -187,6 +187,18 @@ When writing in Joel's voice, you are putting words in a real person's mouth. Ev
 - **Attribute the source.** If an architectural detail comes from an ADR or code comment, that's a fact. If you're inferring Joel's feelings about it, that's fabrication.
 - **Stick to third-person for uncertain claims.** "The system does X" is always safe. "I love how X works" requires Joel to have actually said that.
 
+### Pontification must come from Joel
+
+If a passage expresses *how Joel thinks*, *what Joel believes*, or *Joel's philosophy* about a topic — it **must be sourced from Joel's actual words** (conversations, vault notes, past writing, direct quotes). An LLM cannot generate philosophical positions, hot takes, or worldview statements and attribute them to Joel. These are the highest-trust sentences in any article.
+
+- ❌ "I think it is. Not because the metaphor is precise, but because it's *useful*." (LLM inventing Joel's philosophical stance)
+- ❌ "The question is whether 'alive' is the right frame..." (LLM constructing Joel's intellectual framing)
+- ✅ Describe what the system does factually, then `[TODO: Joel's take on what this means]`
+- ✅ Quote Joel directly from a conversation or past writing
+- ✅ Joel writes the closing himself via feedback
+
+When in doubt: **end the article before the pontification.** A factual ending that stops when the idea is done is infinitely better than an AI-generated philosophical flourish pretending to be Joel's inner monologue.
+
 Writing in someone's voice is a privilege. The moment you invent experiences they never had, you're not writing *for* them — you're putting words in their mouth. That's not a style problem. That's a trust problem.
 
 ---
