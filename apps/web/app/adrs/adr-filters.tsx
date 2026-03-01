@@ -72,7 +72,7 @@ const SORT_FNS: Record<SortKey, (a: AdrMeta, b: AdrMeta) => number> = {
 export function useAdrFilters(allStatuses: string[], allBands: PriorityBand[]) {
   const [activeStatuses, setActiveStatuses] = useState<Set<string>>(() => new Set(allStatuses));
   const [activeBands, setActiveBands] = useState<Set<string>>(() => new Set([...allBands, "__none__"]));
-  const [sortKey, setSortKey] = useState<SortKey>("number-desc");
+  const [sortKey, setSortKey] = useState<SortKey>("rubric");
 
   const toggleStatus = useCallback((status: string) => {
     setActiveStatuses((prev) => {
