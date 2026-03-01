@@ -44,7 +44,7 @@ export const listByType = query({
       .query("contentResources")
       .withIndex("by_type_updatedAt", (q) => q.eq("type", type))
       .order("desc")
-      .take(limit * 2);
+      .collect();
 
     return docs.filter((doc) => doc.deletedAt === undefined).slice(0, limit);
   },
