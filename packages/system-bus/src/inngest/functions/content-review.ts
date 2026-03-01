@@ -73,7 +73,7 @@ type FailureEventData = {
   resourceId?: string;
 };
 
-const REVIEW_MODEL = "anthropic/claude-sonnet-4-6";
+const REVIEW_MODEL = "openai/gpt-5.3-codex";
 const MAX_FEEDBACK_VERIFICATION_RETRIES = 2;
 
 function parseContentType(value: string): ContentType {
