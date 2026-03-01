@@ -32,7 +32,8 @@ joelclaw vault
 └── adr
     ├── list [--status <status>] [--limit <limit>]
     ├── collisions
-    └── audit
+    ├── audit
+    └── rank [--status <status,status>] [--limit <limit>] [--strict]
 ```
 
 ## Core Workflows
@@ -58,6 +59,7 @@ joelclaw vault search "content lifecycle" --semantic --limit 5
 joelclaw vault adr list --status proposed --limit 50
 joelclaw vault adr collisions
 joelclaw vault adr audit
+joelclaw vault adr rank --status accepted,proposed --limit 50
 ```
 
 `vault adr audit` is the canonical pre-flight for ADR grooming. It reports:
@@ -67,6 +69,8 @@ joelclaw vault adr audit
 - duplicate ADR number collisions
 - broken `superseded-by` targets
 - ADR README index drift
+
+`vault adr rank` is the daily prioritization pass. It enforces NRC scoring and applies a novelty/cool-factor facet (`priority-novelty`, alias `priority-interest`) with a neutral default of `3` when missing.
 
 ## Rules
 

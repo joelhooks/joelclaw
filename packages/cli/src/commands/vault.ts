@@ -16,46 +16,25 @@ const DECISIONS_DIR = join(VAULT_ROOT, "docs", "decisions")
 const ADR_INDEX_PATH = join(DECISIONS_DIR, "README.md")
 const ADR_VALID_STATUSES = ["proposed", "accepted", "shipped", "superseded", "deprecated", "rejected"] as const
 const ADR_VALID_STATUS_SET = new Set<string>(ADR_VALID_STATUSES)
-const ADR_PRIORITY_STATUS_DEFAULT = ["accepted", "proposed"] as const
-const ADR_PRIORITY_DIMENSIONS = [
-  "impact",
-  "urgency",
-  "unblock",
-  "risk_reduction",
-  "effort",
-  "confidence",
-] as const
-const ADR_PRIORITY_FIELD_MAP: Record<(typeof ADR_PRIORITY_DIMENSIONS)[number], string> = {
-  impact: "priority-impact",
-  urgency: "priority-urgency",
-  unblock: "priority-unblock",
-  risk_reduction: "priority-risk-reduction",
-  effort: "priority-effort",
-  confidence: "priority-confidence",
+const ADR_OPEN_STATUSES = ["accepted", "proposed"] as const
+const ADR_PRIORITY_STATUS_DEFAULT = ADR_OPEN_STATUSES
+const ADR_PRIORITY_BANDS = ["do-now", "next", "de-risk", "park"] as const
+const ADR_PRIORITY_BAND_SET = new Set<string>(ADR_PRIORITY_BANDS)
+const ADR_PRIORITY_BAND_ORDER: Record<(typeof ADR_PRIORITY_BANDS)[number], number> = {
+  "do-now": 0,
+  next: 1,
+  "de-risk": 2,
+  park: 3,
 }
-const ADR_PRIORITY_WEIGHTS: Record<(typeof ADR_PRIORITY_DIMENSIONS)[number], number> = {
-  impact: 5,
-  urgency: 4,
-  unblock: 3,
-  risk_reduction: 2,
-  effort: -3,
-  confidence: 1,
-}
-const ADR_PRIORITY_STATUS_BONUS: Partial<Record<(typeof ADR_VALID_STATUSES)[number], number>> = {
-  accepted: 4,
-  proposed: 0,
-}
-const ADR_PRIORITY_SCALE_MIN = 0
-const ADR_PRIORITY_SCALE_MAX = 5
-const ADR_PRIORITY_RAW_MIN = ADR_PRIORITY_WEIGHTS.effort * ADR_PRIORITY_SCALE_MAX
-const ADR_PRIORITY_RAW_MAX =
-  ADR_PRIORITY_WEIGHTS.impact * ADR_PRIORITY_SCALE_MAX
-  + ADR_PRIORITY_WEIGHTS.urgency * ADR_PRIORITY_SCALE_MAX
-  + ADR_PRIORITY_WEIGHTS.unblock * ADR_PRIORITY_SCALE_MAX
-  + ADR_PRIORITY_WEIGHTS.risk_reduction * ADR_PRIORITY_SCALE_MAX
-  + ADR_PRIORITY_WEIGHTS.confidence * ADR_PRIORITY_SCALE_MAX
-  + ADR_PRIORITY_STATUS_BONUS.accepted!
-const ADR_PRIORITY_RAW_RANGE = ADR_PRIORITY_RAW_MAX - ADR_PRIORITY_RAW_MIN
+const ADR_PRIORITY_AXIS_MIN = 0
+const ADR_PRIORITY_AXIS_MAX = 5
+const ADR_PRIORITY_SCORE_MIN = 0
+const ADR_PRIORITY_SCORE_MAX = 100
+const ADR_PRIORITY_NEED_WEIGHT = 0.5
+const ADR_PRIORITY_READINESS_WEIGHT = 0.3
+const ADR_PRIORITY_CONFIDENCE_WEIGHT = 0.2
+const ADR_PRIORITY_NOVELTY_DEFAULT = 3
+const ADR_PRIORITY_NOVELTY_DELTA_PER_POINT = 5
 
 type ProcessResult = {
   exitCode: number
@@ -84,6 +63,31 @@ type AdrCatalogItem = {
 type AdrNumberCollision = {
   number: string
   files: string[]
+}
+
+type AdrPriorityBand = (typeof ADR_PRIORITY_BANDS)[number]
+
+type AdrPriorityAssessment = {
+  number: string
+  title: string
+  filename: string
+  status: string | null
+  date: string | null
+  need: number | null
+  readiness: number | null
+  confidence: number | null
+  novelty: number | null
+  noveltyUsed: number
+  declaredScore: number | null
+  declaredBand: AdrPriorityBand | null
+  expectedScore: number | null
+  expectedBand: AdrPriorityBand | null
+  scoreDrift: number | null
+  bandDrift: boolean
+  reviewed: string | null
+  rationale: string | null
+  requiredIssues: string[]
+  consistencyIssues: string[]
 }
 
 const shq = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
@@ -503,6 +507,218 @@ function parseAdrReadmeRows(markdown: string): string[] {
   return rows
 }
 
+function parseStatusFilterList(raw: string): string[] {
+  return raw
+    .split(/[\s,]+/g)
+    .map((token) => token.trim().toLowerCase())
+    .filter((token) => token.length > 0)
+}
+
+function parseBoundedNumber(value: string | undefined, min: number, max: number): number | null {
+  if (!value) return null
+  const parsed = Number.parseFloat(value)
+  if (!Number.isFinite(parsed)) return null
+  if (parsed < min || parsed > max) return null
+  return parsed
+}
+
+function parsePriorityBand(value: string | null): AdrPriorityBand | null {
+  if (!value) return null
+  const normalized = sanitizeSimpleValue(value).toLowerCase()
+  return ADR_PRIORITY_BAND_SET.has(normalized)
+    ? normalized as AdrPriorityBand
+    : null
+}
+
+function derivePriorityBand(score: number): AdrPriorityBand {
+  if (score >= 80) return "do-now"
+  if (score >= 60) return "next"
+  if (score >= 40) return "de-risk"
+  return "park"
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function computePriorityScore(input: {
+  need: number
+  readiness: number
+  confidence: number
+  novelty?: number | null
+}): number {
+  const weightedBase = 20 * (
+    ADR_PRIORITY_NEED_WEIGHT * input.need
+    + ADR_PRIORITY_READINESS_WEIGHT * input.readiness
+    + ADR_PRIORITY_CONFIDENCE_WEIGHT * input.confidence
+  )
+
+  const noveltyUsed = input.novelty ?? ADR_PRIORITY_NOVELTY_DEFAULT
+  const noveltyDelta = Math.round((noveltyUsed - ADR_PRIORITY_NOVELTY_DEFAULT) * ADR_PRIORITY_NOVELTY_DELTA_PER_POINT)
+
+  return clampNumber(
+    Math.round(weightedBase) + noveltyDelta,
+    ADR_PRIORITY_SCORE_MIN,
+    ADR_PRIORITY_SCORE_MAX,
+  )
+}
+
+function parsePriorityAxis(frontmatter: Record<string, string>, field: string): {
+  value: number | null
+  issue?: string
+} {
+  const raw = frontmatter[field]
+  if (!raw) return { value: null, issue: `missing ${field}` }
+
+  const parsed = parseBoundedNumber(raw, ADR_PRIORITY_AXIS_MIN, ADR_PRIORITY_AXIS_MAX)
+  if (parsed === null) {
+    return {
+      value: null,
+      issue: `invalid ${field} (${raw}); expected ${ADR_PRIORITY_AXIS_MIN}-${ADR_PRIORITY_AXIS_MAX}`,
+    }
+  }
+
+  return { value: parsed }
+}
+
+function parsePriorityNovelty(frontmatter: Record<string, string>): {
+  value: number | null
+  issue?: string
+  source?: string
+} {
+  const keys = [
+    "priority-novelty",
+    "priority-interest",
+    "priority-interestingness",
+    "priority-cool-factor",
+  ]
+
+  for (const key of keys) {
+    const raw = frontmatter[key]
+    if (!raw) continue
+
+    const parsed = parseBoundedNumber(raw, ADR_PRIORITY_AXIS_MIN, ADR_PRIORITY_AXIS_MAX)
+    if (parsed === null) {
+      return {
+        value: null,
+        issue: `invalid ${key} (${raw}); expected ${ADR_PRIORITY_AXIS_MIN}-${ADR_PRIORITY_AXIS_MAX}`,
+        source: key,
+      }
+    }
+
+    return { value: parsed, source: key }
+  }
+
+  return { value: null }
+}
+
+function assessAdrPriority(item: AdrCatalogItem): AdrPriorityAssessment {
+  const frontmatter = item.frontmatter
+
+  const need = parsePriorityAxis(frontmatter, "priority-need")
+  const readiness = parsePriorityAxis(frontmatter, "priority-readiness")
+  const confidence = parsePriorityAxis(frontmatter, "priority-confidence")
+  const novelty = parsePriorityNovelty(frontmatter)
+
+  const declaredScore = parseBoundedNumber(frontmatter["priority-score"], ADR_PRIORITY_SCORE_MIN, ADR_PRIORITY_SCORE_MAX)
+  const declaredBand = parsePriorityBand(frontmatter["priority-band"] ?? null)
+  const reviewed = frontmatter["priority-reviewed"] ?? null
+  const rationale = frontmatter["priority-rationale"] ?? null
+
+  const requiredIssues = [need.issue, readiness.issue, confidence.issue]
+    .filter((issue): issue is string => Boolean(issue))
+
+  if (!frontmatter["priority-score"]) requiredIssues.push("missing priority-score")
+  else if (declaredScore === null) {
+    requiredIssues.push(
+      `invalid priority-score (${frontmatter["priority-score"]}); expected ${ADR_PRIORITY_SCORE_MIN}-${ADR_PRIORITY_SCORE_MAX}`,
+    )
+  }
+
+  if (!frontmatter["priority-band"]) requiredIssues.push("missing priority-band")
+  else if (!declaredBand) {
+    requiredIssues.push(`invalid priority-band (${frontmatter["priority-band"]}); expected ${ADR_PRIORITY_BANDS.join("|")}`)
+  }
+
+  if (!reviewed) requiredIssues.push("missing priority-reviewed")
+  if (!rationale) requiredIssues.push("missing priority-rationale")
+
+  const consistencyIssues: string[] = []
+
+  if (novelty.issue) consistencyIssues.push(novelty.issue)
+  if (novelty.value === null && !novelty.issue) {
+    consistencyIssues.push(`missing priority-novelty (assumed neutral ${ADR_PRIORITY_NOVELTY_DEFAULT})`)
+  }
+
+  const canCompute = need.value !== null && readiness.value !== null && confidence.value !== null
+
+  let expectedScore: number | null = null
+  let expectedBand: AdrPriorityBand | null = null
+  let scoreDrift: number | null = null
+  let bandDrift = false
+
+  if (canCompute) {
+    expectedScore = computePriorityScore({
+      need: need.value,
+      readiness: readiness.value,
+      confidence: confidence.value,
+      novelty: novelty.value,
+    })
+    expectedBand = derivePriorityBand(expectedScore)
+
+    if (declaredScore !== null) {
+      scoreDrift = declaredScore - expectedScore
+      if (scoreDrift !== 0) {
+        consistencyIssues.push(`priority-score drift: declared=${declaredScore}, expected=${expectedScore}`)
+      }
+    }
+
+    if (declaredBand && declaredBand !== expectedBand) {
+      bandDrift = true
+      consistencyIssues.push(`priority-band drift: declared=${declaredBand}, expected=${expectedBand}`)
+    }
+  }
+
+  return {
+    number: item.number,
+    title: item.title,
+    filename: item.filename,
+    status: item.status,
+    date: item.date,
+    need: need.value,
+    readiness: readiness.value,
+    confidence: confidence.value,
+    novelty: novelty.value,
+    noveltyUsed: novelty.value ?? ADR_PRIORITY_NOVELTY_DEFAULT,
+    declaredScore,
+    declaredBand,
+    expectedScore,
+    expectedBand,
+    scoreDrift,
+    bandDrift,
+    reviewed,
+    rationale,
+    requiredIssues,
+    consistencyIssues,
+  }
+}
+
+function comparePriorityAssessments(a: AdrPriorityAssessment, b: AdrPriorityAssessment): number {
+  const aBandRank = a.expectedBand ? ADR_PRIORITY_BAND_ORDER[a.expectedBand] : Number.MAX_SAFE_INTEGER
+  const bBandRank = b.expectedBand ? ADR_PRIORITY_BAND_ORDER[b.expectedBand] : Number.MAX_SAFE_INTEGER
+  if (aBandRank !== bBandRank) return aBandRank - bBandRank
+
+  const aScore = a.expectedScore ?? -1
+  const bScore = b.expectedScore ?? -1
+  if (aScore !== bScore) return bScore - aScore
+
+  const aNeed = a.need ?? -1
+  const bNeed = b.need ?? -1
+  if (aNeed !== bNeed) return bNeed - aNeed
+
+  return a.number.localeCompare(b.number) || a.filename.localeCompare(b.filename)
+}
+
 async function listAdrPaths(): Promise<string[]> {
   const out = await runShell(`find ${shq(DECISIONS_DIR)} -maxdepth 1 -type f -name "[0-9][0-9][0-9][0-9]-*.md" | sort`)
   if (out.exitCode !== 0 && out.stdout.trim().length === 0) return []
@@ -532,6 +748,7 @@ async function loadAdrCatalogItem(path: string): Promise<AdrCatalogItem | null> 
     status,
     date: frontmatter.date ?? null,
     supersededByRaw: frontmatter["superseded-by"] ?? null,
+    frontmatter,
   }
 }
 
@@ -1121,23 +1338,162 @@ const adrAuditCmd = Command.make("audit", {}, () =>
   })
 )
 
+const adrRankCmd = Command.make(
+  "rank",
+  {
+    status: Options.text("status").pipe(Options.withDefault(ADR_PRIORITY_STATUS_DEFAULT.join(","))),
+    limit: Options.integer("limit").pipe(Options.withDefault(100)),
+    strict: Options.boolean("strict").pipe(Options.withDefault(false)),
+  },
+  ({ status, limit, strict }) =>
+    Effect.gen(function* () {
+      const requestedStatuses = parseStatusFilterList(status)
+      const effectiveStatuses = requestedStatuses.length > 0
+        ? requestedStatuses
+        : [...ADR_PRIORITY_STATUS_DEFAULT]
+
+      const invalidStatuses = effectiveStatuses.filter((value) => !ADR_VALID_STATUS_SET.has(value))
+      if (invalidStatuses.length > 0) {
+        yield* Console.log(respondError(
+          "vault adr rank",
+          `Invalid ADR status filter(s): ${invalidStatuses.join(", ")}`,
+          "INVALID_ADR_STATUS",
+          `Use one of: ${ADR_VALID_STATUSES.join(", ")}`,
+          [
+            {
+              command: "joelclaw vault adr rank --status accepted,proposed",
+              description: "Rank open ADRs with the NRC+Novelty rubric",
+            },
+            { command: "joelclaw vault adr list", description: "List ADRs without rubric ranking" },
+          ]
+        ))
+        return
+      }
+
+      const safeLimit = Math.max(1, Math.min(limit, 500))
+      const statusSet = new Set(effectiveStatuses)
+      const catalog = yield* Effect.tryPromise(() => loadAdrCatalog())
+      const filtered = catalog.filter((item) => item.status !== null && statusSet.has(item.status))
+
+      const assessments = filtered
+        .map((item) => assessAdrPriority(item))
+        .sort(comparePriorityAssessments)
+
+      const scored = assessments.filter((item) => item.expectedScore !== null)
+      const unscored = assessments.filter((item) => item.expectedScore === null)
+      const requiredIssueCount = assessments.reduce((sum, item) => sum + item.requiredIssues.length, 0)
+      const consistencyIssueCount = assessments.reduce((sum, item) => sum + item.consistencyIssues.length, 0)
+      const noveltyMissingCount = assessments.filter((item) => item.novelty === null).length
+
+      const compliant = assessments.filter((item) => item.requiredIssues.length === 0 && item.consistencyIssues.length === 0)
+      const output = (strict ? compliant : assessments)
+        .slice(0, safeLimit)
+        .map((item) => ({
+          number: item.number,
+          title: item.title,
+          status: item.status,
+          date: item.date,
+          filename: item.filename,
+          rubric: {
+            need: item.need,
+            readiness: item.readiness,
+            confidence: item.confidence,
+            novelty: item.novelty,
+            novelty_used: item.noveltyUsed,
+            score: item.expectedScore,
+            band: item.expectedBand,
+            reviewed: item.reviewed,
+            rationale: item.rationale,
+          },
+          declared: {
+            score: item.declaredScore,
+            band: item.declaredBand,
+          },
+          drift: {
+            score: item.scoreDrift,
+            band: item.bandDrift,
+          },
+          issues: {
+            required: item.requiredIssues,
+            consistency: item.consistencyIssues,
+          },
+        }))
+
+      yield* Console.log(respond("vault adr rank", {
+        total: catalog.length,
+        filtered: filtered.length,
+        limit: safeLimit,
+        strict,
+        status_filter: effectiveStatuses,
+        summary: {
+          scored: scored.length,
+          unscored: unscored.length,
+          compliant: compliant.length,
+          required_issue_count: requiredIssueCount,
+          consistency_issue_count: consistencyIssueCount,
+          novelty_missing_count: noveltyMissingCount,
+        },
+        rubric: {
+          axes: {
+            need: { field: "priority-need", range: "0-5", weight: ADR_PRIORITY_NEED_WEIGHT },
+            readiness: { field: "priority-readiness", range: "0-5", weight: ADR_PRIORITY_READINESS_WEIGHT },
+            confidence: { field: "priority-confidence", range: "0-5", weight: ADR_PRIORITY_CONFIDENCE_WEIGHT },
+            novelty: {
+              field: "priority-novelty (aliases: priority-interest|priority-interestingness|priority-cool-factor)",
+              range: "0-5",
+              default: ADR_PRIORITY_NOVELTY_DEFAULT,
+              delta_per_point: ADR_PRIORITY_NOVELTY_DELTA_PER_POINT,
+            },
+          },
+          formula: "score = clamp(round(20*(0.5*Need + 0.3*Readiness + 0.2*Confidence)) + round((Novelty-3)*5), 0, 100)",
+          band_thresholds: {
+            "do-now": "80-100",
+            next: "60-79",
+            "de-risk": "40-59",
+            park: "0-39",
+          },
+        },
+        items: output,
+        unscored: unscored.slice(0, safeLimit).map((item) => ({
+          number: item.number,
+          title: item.title,
+          filename: item.filename,
+          status: item.status,
+          required: item.requiredIssues,
+        })),
+      }, [
+        {
+          command: "joelclaw vault adr rank --status accepted,proposed --limit 50",
+          description: "Run open-ADR ranking with rubric diagnostics",
+        },
+        {
+          command: "joelclaw vault adr rank --status accepted,proposed --strict",
+          description: "Show only fully compliant ADR rubric rows",
+        },
+        { command: "joelclaw vault adr audit", description: "Run structural ADR health audit" },
+      ], requiredIssueCount === 0))
+    })
+)
+
 const adrCmd = Command.make("adr", {}, () =>
   Console.log(respond("vault adr", {
-    description: "ADR-focused command tree for inventory, collisions, and index integrity",
+    description: "ADR-focused command tree for inventory, collisions, ranking, and index integrity",
     decisions_dir: DECISIONS_DIR,
     index_path: ADR_INDEX_PATH,
     subcommands: {
       list: "joelclaw vault adr list [--status <status>] [--limit <limit>]",
       collisions: "joelclaw vault adr collisions",
       audit: "joelclaw vault adr audit",
+      rank: "joelclaw vault adr rank [--status <status,status>] [--limit <limit>] [--strict]",
     },
   }, [
     { command: "joelclaw vault adr list", description: "List ADR metadata" },
     { command: "joelclaw vault adr collisions", description: "Show duplicate ADR numbers" },
     { command: "joelclaw vault adr audit", description: "Run full ADR health audit" },
+    { command: "joelclaw vault adr rank --status accepted,proposed", description: "Rank open ADRs by NRC+novelty rubric" },
   ]))
 ).pipe(
-  Command.withSubcommands([adrListCmd, adrCollisionsCmd, adrAuditCmd])
+  Command.withSubcommands([adrListCmd, adrCollisionsCmd, adrAuditCmd, adrRankCmd])
 )
 
 const treeCmd = Command.make("tree", {}, () =>
@@ -1185,7 +1541,7 @@ export const vaultCmd = Command.make("vault", {}, () =>
         search: "joelclaw vault search <query> [--semantic] [--limit <limit>]",
         ls: "joelclaw vault ls [section]",
         tree: "joelclaw vault tree",
-        adr: "joelclaw vault adr {list|collisions|audit}",
+        adr: "joelclaw vault adr {list|collisions|audit|rank}",
       },
     }, [
       {
@@ -1205,6 +1561,7 @@ export const vaultCmd = Command.make("vault", {}, () =>
       { command: "joelclaw vault ls", description: "List vault sections" },
       { command: "joelclaw vault tree", description: "Show vault directory tree" },
       { command: "joelclaw vault adr audit", description: "Run ADR metadata/index audit" },
+      { command: "joelclaw vault adr rank --status accepted,proposed", description: "Rank open ADRs with rubric drift checks" },
     ]))
   })
 ).pipe(
@@ -1217,4 +1574,8 @@ export const __vaultTestUtils = {
   normalizeStatusValue,
   findAdrNumberCollisions,
   parseAdrReadmeRows,
+  parseStatusFilterList,
+  parsePriorityBand,
+  derivePriorityBand,
+  computePriorityScore,
 }

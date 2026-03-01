@@ -7,6 +7,10 @@ const {
   normalizeStatusValue,
   findAdrNumberCollisions,
   parseAdrReadmeRows,
+  parseStatusFilterList,
+  parsePriorityBand,
+  derivePriorityBand,
+  computePriorityScore,
 } = __vaultTestUtils
 
 describe("vault ADR filename parsing", () => {
@@ -82,5 +86,38 @@ describe("vault ADR README row parsing", () => {
       "0168-convex-canonical-content-lifecycle.md",
       "0173-adr-number-collision-remediation.md",
     ])
+  })
+})
+
+describe("vault ADR rank rubric helpers", () => {
+  test("parses comma/space separated status filters", () => {
+    expect(parseStatusFilterList("accepted, proposed shipped")).toEqual([
+      "accepted",
+      "proposed",
+      "shipped",
+    ])
+  })
+
+  test("maps score to rubric band", () => {
+    expect(derivePriorityBand(81)).toBe("do-now")
+    expect(derivePriorityBand(70)).toBe("next")
+    expect(derivePriorityBand(50)).toBe("de-risk")
+    expect(derivePriorityBand(20)).toBe("park")
+  })
+
+  test("accepts only canonical priority bands", () => {
+    expect(parsePriorityBand("do-now")).toBe("do-now")
+    expect(parsePriorityBand("NEXT")).toBe("next")
+    expect(parsePriorityBand("wild")).toBeNull()
+  })
+
+  test("computes novelty-adjusted score", () => {
+    const base = computePriorityScore({ need: 3, readiness: 5, confidence: 5, novelty: 3 })
+    const cool = computePriorityScore({ need: 3, readiness: 5, confidence: 5, novelty: 5 })
+    const stale = computePriorityScore({ need: 3, readiness: 5, confidence: 5, novelty: 0 })
+
+    expect(base).toBe(80)
+    expect(cool).toBe(90)
+    expect(stale).toBe(65)
   })
 })
