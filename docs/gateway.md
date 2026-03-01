@@ -17,6 +17,16 @@ joelclaw gateway unmute imessage
 
 Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 
+## Gateway operator check-in cadence
+
+The gateway role prompt (`roles/gateway.md`) requires proactive status check-ins during active work:
+
+- one short check-in at start
+- another every ~3–5 minutes while work is still active
+- immediate check-in on state changes (delegated, blocked, recovered, done)
+
+Keep updates concise for mobile Telegram reading.
+
 ## Telegram control commands
 
 From Telegram chat with `@JoelClawPandaBot`:
