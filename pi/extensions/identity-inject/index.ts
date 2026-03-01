@@ -18,7 +18,7 @@ const IDENTITY_FILES: ReadonlyArray<{
   { label: "Tools", file: "TOOLS.md", maxChars: 6_000 },
 ] as const;
 
-async function emitOtel(data: Record<string, unknown>) {
+async function emitOtel(action: string, data: Record<string, unknown>) {
   try {
     await fetch("http://localhost:3111/observability/emit", {
       method: "POST",
@@ -29,7 +29,7 @@ async function emitOtel(data: Record<string, unknown>) {
         level: "info",
         source: "gateway",
         component: "identity-inject",
-        action: "identity-loaded",
+        action,
         success: true,
         metadata: data,
       }),
@@ -111,8 +111,10 @@ function loadIdentityBlock(loadedFiles: LoadedIdentityFile[]): string {
 
 export default function (pi: ExtensionAPI) {
   let identityBlock = "";
+  let loaded = false;
 
-  pi.on("session_start", async () => {
+  function ensureLoaded() {
+    if (loaded) return;
     const {
       loadedFiles,
       totalChars,
@@ -121,9 +123,10 @@ export default function (pi: ExtensionAPI) {
       loadTimeMs,
     } = loadIdentityFiles();
     identityBlock = loadIdentityBlock(loadedFiles);
+    loaded = true;
     const count = loadedFiles.length;
     console.error(`[identity-inject] Loaded ${count} identity files from ${JOELCLAW_DIR}`);
-    await emitOtel({
+    emitOtel("identity-loaded", {
       fileCount: count,
       files: loadedFiles.map(({ file, size }) => ({ file, size })),
       totalChars,
@@ -132,10 +135,27 @@ export default function (pi: ExtensionAPI) {
       loadTimeMs,
       identityDir: JOELCLAW_DIR,
     });
+  }
+
+  pi.on("session_start", async () => {
+    ensureLoaded();
   });
 
   pi.on("before_agent_start", async (event) => {
-    if (!identityBlock) return;
+    ensureLoaded();
+
+    if (!identityBlock) {
+      await emitOtel("prompt-inject-skipped", {
+        reason: "no-identity-files-found",
+      });
+      return;
+    }
+
+    await emitOtel("prompt-injected", {
+      identityChars: identityBlock.length,
+      systemPromptChars: event.systemPrompt.length,
+      totalChars: identityBlock.length + event.systemPrompt.length,
+    });
 
     return {
       systemPrompt: identityBlock + "\n" + event.systemPrompt,

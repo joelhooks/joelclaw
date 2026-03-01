@@ -234,8 +234,8 @@ export async function upsertPost(filePath: string): Promise<string> {
 }
 
 /**
- * Upsert a single discovery (MD) file into Convex.
- * Returns "inserted" | "updated" | "skipped".
+ * Upsert a single discovery (MD) file into Convex. Skips private discoveries.
+ * Returns "inserted" | "updated" | "skipped" | "private" (skipped because private).
  */
 export async function upsertDiscovery(filePath: string): Promise<string> {
   if (!existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
@@ -244,6 +244,8 @@ export async function upsertDiscovery(filePath: string): Promise<string> {
   const hash = contentHash(raw);
   const { data, content } = matter(raw);
   const meta = data as Record<string, unknown>;
+
+  if (meta.private === true) return "private";
 
   const tags = Array.isArray(meta.tags)
     ? meta.tags.filter((t: unknown): t is string => typeof t === "string")

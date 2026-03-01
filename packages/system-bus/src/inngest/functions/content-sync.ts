@@ -247,7 +247,7 @@ export const contentSync = inngest.createFunction(
             } else {
               continue;
             }
-            if (action === "skipped" || action === "draft") {
+            if (action === "skipped" || action === "draft" || action === "private") {
               result.skipped++;
             } else {
               result.upserted++;
@@ -266,6 +266,31 @@ export const contentSync = inngest.createFunction(
       }
 
       return out;
+    });
+
+    // Remove private discoveries from Convex (prevents republishing)
+    const privateRemoved = await step.run("remove-private-discoveries", async () => {
+      const discoverySource = CONTENT_SOURCES.find((s) => s.name === "discoveries");
+      if (!discoverySource) return 0;
+      const files = listSourceFiles(discoverySource.vaultDir, discoverySource.extension, discoverySource.skipFiles);
+      const privateResourceIds: string[] = [];
+      for (const filePath of files) {
+        try {
+          const raw = readFileSync(filePath, "utf-8");
+          const { data } = matter(raw);
+          if (data.private === true) {
+            const slug = typeof data.slug === "string" && data.slug.trim().length > 0
+              ? data.slug.trim()
+              : basename(filePath, ".md");
+            privateResourceIds.push(`discovery:${slug}`);
+          }
+        } catch {}
+      }
+      if (privateResourceIds.length > 0) {
+        await removeContentResources(privateResourceIds);
+        console.log(`[content-sync] removed ${privateResourceIds.length} private discoveries from Convex`);
+      }
+      return privateResourceIds.length;
     });
 
     const totalUpserted = results.reduce((sum, r) => sum + r.upserted, 0);

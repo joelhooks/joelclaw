@@ -17,13 +17,14 @@ type CInt = i32;
 const SIGTERM: CInt = 15;
 const SIGKILL: CInt = 9;
 
-pub const SECRET_MAPPINGS: [(&str, &str); 6] = [
+pub const SECRET_MAPPINGS: [(&str, &str); 7] = [
     ("claude_oauth_token", "CLAUDE_CODE_OAUTH_TOKEN"),
     ("todoist_client_secret", "TODOIST_CLIENT_SECRET"),
     ("todoist_api_token", "TODOIST_API_TOKEN"),
     ("front_rules_webhook_secret", "FRONT_WEBHOOK_SECRET"),
     ("front_api_token", "FRONT_API_TOKEN"),
     ("vercel_webhook_secret", "VERCEL_WEBHOOK_SECRET"),
+    ("revalidation_secret", "REVALIDATION_SECRET"),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
