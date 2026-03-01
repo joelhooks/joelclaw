@@ -43,7 +43,7 @@ export function CopyAsPrompt({ markdown, title, slug }: CopyAsPromptProps) {
   return (
     <button
       onClick={handleCopy}
-      className="inline-flex items-center gap-1.5 text-xs font-mono text-neutral-500 hover:text-orange-500 transition-colors border border-neutral-800 hover:border-orange-500/50 rounded px-2 py-1"
+      className="inline-flex items-center gap-1.5 text-xs font-mono text-neutral-500 hover:text-claw transition-colors border border-neutral-800 hover:border-claw/50 rounded px-2 py-1"
       title="Copy as agent prompt"
     >
       {copied ? (
