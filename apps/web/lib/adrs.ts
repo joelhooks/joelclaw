@@ -8,6 +8,16 @@ import { toDateString } from "./date";
  * No filesystem fallback. Vault is write-side, Convex is read-side.
  */
 
+export type AdrPriority = {
+  need: number;
+  readiness: number;
+  confidence: number;
+  score: number;
+  band: "do-now" | "next" | "de-risk" | "park";
+  reviewed?: string;
+  rationale?: string;
+};
+
 export type AdrMeta = {
   title: string;
   date: string;
@@ -16,6 +26,7 @@ export type AdrMeta = {
   number: string;
   supersededBy?: string;
   description?: string;
+  priority?: AdrPriority;
 };
 
 type ParsedAdrFields = {
@@ -27,6 +38,7 @@ type ParsedAdrFields = {
   supersededBy?: string;
   description?: string;
   content?: string;
+  priority?: AdrPriority;
 };
 
 const CONVEX_URL =
@@ -72,6 +84,46 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function asOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+const VALID_BANDS = ["do-now", "next", "de-risk", "park"] as const;
+type PriorityBand = (typeof VALID_BANDS)[number];
+
+function asOptionalNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
+function parsePriorityBand(value: unknown): PriorityBand | undefined {
+  if (typeof value !== "string") return undefined;
+  const lower = value.toLowerCase().trim() as PriorityBand;
+  return (VALID_BANDS as readonly string[]).includes(lower) ? lower : undefined;
+}
+
+function parsePriority(fields: Record<string, unknown>): AdrPriority | undefined {
+  const band = parsePriorityBand(fields.priorityBand ?? fields["priority-band"]);
+  if (!band) return undefined;
+
+  const need = asOptionalNumber(fields.priorityNeed ?? fields["priority-need"]);
+  const readiness = asOptionalNumber(fields.priorityReadiness ?? fields["priority-readiness"]);
+  const confidence = asOptionalNumber(fields.priorityConfidence ?? fields["priority-confidence"]);
+  const score = asOptionalNumber(fields.priorityScore ?? fields["priority-score"]);
+
+  if (need == null || readiness == null || confidence == null || score == null) return undefined;
+
+  return {
+    need,
+    readiness,
+    confidence,
+    score,
+    band,
+    reviewed: asOptionalString(fields.priorityReviewed ?? fields["priority-reviewed"]),
+    rationale: asOptionalString(fields.priorityRationale ?? fields["priority-rationale"]),
+  };
 }
 
 function slugFromResourceId(value: unknown): string | undefined {
@@ -138,6 +190,7 @@ function parseAdrFields(value: unknown, fallbackSlug?: string): ParsedAdrFields 
     supersededBy: asOptionalString(fields.supersededBy) ?? asOptionalString(fields["superseded-by"]),
     description: asOptionalString(fields.description) ?? (content ? extractDescription(content) : undefined),
     content,
+    priority: parsePriority(fields),
   };
 }
 
@@ -150,6 +203,7 @@ function toAdrMeta(fields: ParsedAdrFields): AdrMeta {
     number: fields.number,
     supersededBy: fields.supersededBy,
     description: fields.description,
+    priority: fields.priority,
   };
 }
 

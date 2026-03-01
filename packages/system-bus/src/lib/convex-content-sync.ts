@@ -16,6 +16,16 @@ const CONVEX_URL = process.env.CONVEX_URL?.trim()
   || process.env.NEXT_PUBLIC_CONVEX_URL?.trim()
   || "https://tough-panda-917.convex.cloud";
 
+type AdrPriorityFields = {
+  priorityNeed?: number;
+  priorityReadiness?: number;
+  priorityConfidence?: number;
+  priorityScore?: number;
+  priorityBand?: string;
+  priorityReviewed?: string;
+  priorityRationale?: string;
+};
+
 type AdrFields = {
   slug: string;
   title: string;
@@ -25,7 +35,7 @@ type AdrFields = {
   content: string;
   supersededBy?: string;
   description?: string;
-};
+} & AdrPriorityFields;
 
 type PostFields = {
   slug: string;
@@ -74,6 +84,38 @@ function toDateString(value: unknown): string {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? "" : value.toISOString();
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   return "";
+}
+
+function asOptionalNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
+const VALID_BANDS = ["do-now", "next", "de-risk", "park"] as const;
+
+function normalizeband(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const lower = raw.toLowerCase().trim();
+  return (VALID_BANDS as readonly string[]).includes(lower) ? lower : undefined;
+}
+
+function extractPriorityFields(meta: Record<string, unknown>): AdrPriorityFields {
+  const band = normalizeband(meta["priority-band"]);
+  if (!band) return {}; // no band = no rubric applied
+
+  return {
+    priorityNeed: asOptionalNumber(meta["priority-need"]),
+    priorityReadiness: asOptionalNumber(meta["priority-readiness"]),
+    priorityConfidence: asOptionalNumber(meta["priority-confidence"]),
+    priorityScore: asOptionalNumber(meta["priority-score"]),
+    priorityBand: band,
+    priorityReviewed: toDateString(meta["priority-reviewed"]) || undefined,
+    priorityRationale: asString(meta["priority-rationale"]),
+  };
 }
 
 function normalizeStatus(raw: unknown): string {
@@ -168,6 +210,8 @@ export async function upsertAdr(filePath: string): Promise<string> {
   const { data, content } = matter(raw);
   const meta = data as Record<string, unknown>;
 
+  const priority = extractPriorityFields(meta);
+
   const fields: AdrFields = {
     slug,
     title: extractAdrTitle(meta, content),
@@ -177,6 +221,7 @@ export async function upsertAdr(filePath: string): Promise<string> {
     content,
     supersededBy: asString(meta["superseded-by"]) ?? asString(meta.supersededBy),
     description: asString(meta.description) ?? extractAdrDescription(content),
+    ...priority,
   };
 
   const result = await getClient().mutation(upsertRef, {

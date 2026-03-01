@@ -73,7 +73,9 @@ export const upsertContent = mutation({
       .first();
 
     // Hash guard: skip write if content unchanged (saves write units on repeated seeds)
-    if (existing && contentHash) {
+    // But always re-upsert if the record was soft-deleted (so removals can be reversed by re-sync)
+    const isSoftDeleted = existing && (existing as Record<string, unknown>).deletedAt !== undefined;
+    if (existing && !isSoftDeleted && contentHash) {
       const existingHash = (existing as Record<string, unknown>).contentHash;
       if (existingHash === contentHash) {
         return { action: "skipped", resourceId };

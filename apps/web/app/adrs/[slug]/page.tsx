@@ -12,6 +12,7 @@ import { mdxComponents } from "@/lib/mdx";
 import { escapeMdxAngleBrackets } from "@/lib/mdx-escape";
 import { rehypePlugins, remarkPlugins } from "@/lib/mdx-plugins";
 import { remarkAdrLinks } from "@/lib/remark-adr-links";
+import { PriorityRubric } from "./priority-rubric";
 
 type Props = { params: Promise<{ slug: string }> };
 
@@ -100,6 +101,7 @@ export default async function AdrPage({ params }: Props) {
             Superseded by {meta.supersededBy}
           </p>
         )}
+        {meta.priority && <PriorityRubric priority={meta.priority} />}
       </header>
 
       <LazyReviewGate
