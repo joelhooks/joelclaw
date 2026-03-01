@@ -158,6 +158,7 @@ curl -X PUT http://localhost:3111/api/inngest  # Force function sync
 | `front_api_token` | `FRONT_API_TOKEN` |
 | `vercel_webhook_secret` | `VERCEL_WEBHOOK_SECRET` |
 | `joelclaw_webhook_secret` | `JOELCLAW_WEBHOOK_SECRET` |
+| `revalidation_secret` | `REVALIDATION_SECRET` |
 
 ### Talon Key Paths
 
