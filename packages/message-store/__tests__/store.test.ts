@@ -4,6 +4,19 @@ import {
   Priority,
   type StoredMessage,
 } from "../src";
+import { __messageStoreTestUtils } from "../src/store";
+
+const { hashDedupKey, stripInjectedChannelContext } = __messageStoreTestUtils;
+
+const telegramHeader = `---
+Channel: telegram
+Date: Saturday, February 28, 2026 at 3:49 PM PST
+Platform capabilities: HTML formatting, inline keyboards, slash commands, reply markup
+Formatting guide:
+- Use Telegram HTML tags for rich formatting
+- Keep answers concise and readable
+---
+`;
 
 describe("classifyPriority", () => {
   test("returns P0 for slash command messages", () => {
@@ -67,5 +80,30 @@ describe("StoredMessage type shape", () => {
       priority: Priority.P1,
       acked: true,
     });
+  });
+});
+
+describe("dedup hashing", () => {
+  test("strips injected channel context and preserves message body", () => {
+    const prompt = `${telegramHeader}\nhey mate`;
+    expect(stripInjectedChannelContext(prompt)).toBe("hey mate");
+  });
+
+  test("hash differs for different bodies even when channel preamble is identical", () => {
+    const a = `${telegramHeader}\nfirst message body`;
+    const b = `${telegramHeader}\nsecond message body`;
+
+    expect(hashDedupKey("telegram:7718912466", a)).not.toBe(
+      hashDedupKey("telegram:7718912466", b),
+    );
+  });
+
+  test("hash remains stable across channel preamble timestamp changes", () => {
+    const a = `${telegramHeader}\nwhat happened?`;
+    const b = `${telegramHeader.replace("3:49 PM PST", "3:50 PM PST")}\nwhat happened?`;
+
+    expect(hashDedupKey("telegram:7718912466", a)).toBe(
+      hashDedupKey("telegram:7718912466", b),
+    );
   });
 });

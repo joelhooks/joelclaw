@@ -119,6 +119,8 @@ export async function enqueue(
     try {
       const persisted = await persist({ source, prompt, metadata });
       if (!persisted) {
+        const { normalizedBody, strippedInjectedContext } = normalizePromptForDedup(prompt);
+        const dedupDigest = createHash("sha256").update(normalizedBody).digest("hex");
         void emitGatewayOtel({
           level: "debug",
           component: "command-queue",
@@ -126,6 +128,11 @@ export async function enqueue(
           success: true,
           metadata: {
             source,
+            dedupLayer: "message-store",
+            dedupHashPrefix: dedupDigest.slice(0, 12),
+            promptLength: prompt.length,
+            normalizedLength: normalizedBody.length,
+            strippedInjectedContext,
           },
         });
         return;
@@ -237,10 +244,22 @@ function stripInjectedChannelContext(prompt: string): string {
   return body || trimmed;
 }
 
+function normalizePromptForDedup(prompt: string): {
+  normalizedBody: string;
+  strippedInjectedContext: boolean;
+} {
+  const trimmed = prompt.trim();
+  const stripped = stripInjectedChannelContext(prompt);
+  return {
+    normalizedBody: stripped.replace(/\s+/g, " ").trim(),
+    strippedInjectedContext: stripped !== trimmed,
+  };
+}
+
 function contentHash(source: string, prompt: string): string {
   // Dedup should be based on semantic message body, not the injected channel preamble.
   // The preamble contains mostly static formatting and minute-level timestamps.
-  const normalizedBody = stripInjectedChannelContext(prompt).replace(/\s+/g, " ").trim();
+  const { normalizedBody } = normalizePromptForDedup(prompt);
   const digest = createHash("sha256").update(normalizedBody).digest("hex");
   return `${source}::${digest}`;
 }
@@ -296,6 +315,9 @@ export async function drain(): Promise<void> {
 
       // Drop consecutive duplicates — same source + same content within 2min window
       if (isDuplicateConsecutive(entry.source, entry.prompt)) {
+        const { normalizedBody, strippedInjectedContext } = normalizePromptForDedup(entry.prompt);
+        const dedupDigest = createHash("sha256").update(normalizedBody).digest("hex");
+
         console.log("[command-queue] dropped consecutive duplicate", {
           source: entry.source,
           streamId: entry.streamId,
@@ -309,6 +331,11 @@ export async function drain(): Promise<void> {
           metadata: {
             source: entry.source,
             streamId: entry.streamId,
+            dedupLayer: "consecutive-ring",
+            dedupHashPrefix: dedupDigest.slice(0, 12),
+            promptLength: entry.prompt.length,
+            normalizedLength: normalizedBody.length,
+            strippedInjectedContext,
           },
         });
         if (entry.streamId) await ack(entry.streamId);

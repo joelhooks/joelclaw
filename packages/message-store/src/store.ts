@@ -124,12 +124,39 @@ function extractEventHints(metadata?: Record<string, unknown>): string[] {
   return out;
 }
 
+function stripInjectedChannelContext(prompt: string): string {
+  const trimmed = prompt.trim();
+  if (!trimmed.startsWith("---\nChannel:")) {
+    return trimmed;
+  }
+
+  const contextEnd = trimmed.indexOf("\n---\n", 4);
+  if (contextEnd === -1) {
+    return trimmed;
+  }
+
+  const body = trimmed.slice(contextEnd + "\n---\n".length).trim();
+  return body || trimmed;
+}
+
+function normalizePromptForDedup(prompt: string): {
+  normalizedBody: string;
+  strippedInjectedContext: boolean;
+} {
+  const trimmed = prompt.trim();
+  const stripped = stripInjectedChannelContext(prompt);
+  return {
+    normalizedBody: stripped.replace(/\s+/g, " ").trim(),
+    strippedInjectedContext: stripped !== trimmed,
+  };
+}
+
 function hashDedupKey(source: string, prompt: string): string {
-  const contentPrefix = prompt.slice(0, 100);
+  const { normalizedBody } = normalizePromptForDedup(prompt);
   return createHash("sha256")
     .update(source)
     .update("\n")
-    .update(contentPrefix)
+    .update(normalizedBody)
     .digest("hex");
 }
 
@@ -251,15 +278,34 @@ export async function persist(msg: {
 
   await redis.zadd(PRIORITY_KEY, `${scoreForPriority(priority, timestamp)}`, streamId);
 
-  const dedupKey = `${DEDUP_KEY_PREFIX}${hashDedupKey(msg.source, msg.prompt)}`;
+  const { normalizedBody, strippedInjectedContext } = normalizePromptForDedup(msg.prompt);
+  const dedupHash = hashDedupKey(msg.source, msg.prompt);
+  const dedupKey = `${DEDUP_KEY_PREFIX}${dedupHash}`;
   const dedupResult = await redis.set(dedupKey, streamId, "EX", DEDUP_WINDOW_SECONDS, "NX");
   if (dedupResult !== "OK") {
     await redis.zrem(PRIORITY_KEY, streamId);
     await redis.xdel(STREAM_KEY, streamId);
+
+    emitMessageStoreTelemetry("message.dedup_dropped", "debug", {
+      source: msg.source,
+      message_source: msg.source,
+      streamId,
+      priority,
+      priority_label: priorityName(priority),
+      dedup_layer: "message-store",
+      dedup_window_seconds: DEDUP_WINDOW_SECONDS,
+      dedup_hash_prefix: dedupHash.slice(0, 12),
+      prompt_length: msg.prompt.length,
+      normalized_length: normalizedBody.length,
+      stripped_injected_context: strippedInjectedContext,
+    });
+
     console.log("[gateway:store] dropped duplicate inbound message", {
       streamId,
       source: msg.source,
       dedupWindowSeconds: DEDUP_WINDOW_SECONDS,
+      dedupHashPrefix: dedupHash.slice(0, 12),
+      strippedInjectedContext,
     });
     return null;
   }
@@ -747,3 +793,9 @@ export async function trimOld(maxAge: number = DEFAULT_MAX_AGE_MS): Promise<numb
 
   return deleted;
 }
+
+export const __messageStoreTestUtils = {
+  stripInjectedChannelContext,
+  normalizePromptForDedup,
+  hashDedupKey,
+};

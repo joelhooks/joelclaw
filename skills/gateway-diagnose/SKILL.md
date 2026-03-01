@@ -2,7 +2,7 @@
 name: gateway-diagnose
 displayName: Gateway Diagnose
 description: "Diagnose gateway failures by reading daemon logs, session transcripts, Redis state, and OTEL telemetry. Full Telegram path triage: daemon process → Redis channel → command queue → pi session → model API → Telegram delivery. Use when: 'gateway broken', 'telegram not working', 'why is gateway down', 'gateway not responding', 'check gateway logs', 'what happened to gateway', 'gateway diagnose', 'gateway errors', 'review gateway logs', 'fallback activated', 'gateway stuck', or any request to understand why the gateway failed. Distinct from the gateway skill (operations) — this skill is diagnostic."
-version: 1.0.1
+version: 1.0.2
 author: Joel Hooks
 tags: [joelclaw, gateway, diagnosis, logs, telegram, reliability]
 ---
@@ -147,6 +147,10 @@ joelclaw otel search "fallback" --hours 1
 
 # Queue events
 joelclaw otel search "command-queue" --hours 1
+
+# Dedup events (store-level + drain-level)
+joelclaw otel search "queue.dedup_dropped" --hours 6
+joelclaw otel search "message.dedup_dropped" --hours 6
 ```
 
 ### Layer 7: Model API Health
@@ -211,9 +215,10 @@ kubectl exec -n joelclaw redis-0 -- redis-cli XRANGE gateway:messages - + COUNT 
 
 ### 6. False duplicate suppression (channel preamble collision)
 
-**Symptoms:** inbound messages are persisted, then immediately logged as `dropped consecutive duplicate`; user reports "it ignored my message".
-**Cause:** dedup hash built from the first slice of prompt text, which can be identical across messages because channel context preamble is stable.
-**Fix:** dedup on semantic message body (strip injected channel context, hash full normalized body).
+**Symptoms:** user reports "it ignored my message" while queue dedup events fire.
+**Current behavior (post-fix):** both store-level and queue-level dedup hash the normalized message body (channel preamble stripped), so false positives should be rare.
+**How to verify:** inspect OTEL metadata on `queue.dedup_dropped` / `message.dedup_dropped` (`dedupHashPrefix`, `strippedInjectedContext`, `promptLength`, `normalizedLength`). If normalized lengths differ materially from expected user payload, dedup normalization is wrong.
+**Fix path:** keep dedup enabled, tune normalization + telemetry first. Remove dedup only if telemetry proves systemic false drops and no safe normalization exists.
 
 ## Fallback Controller State
 
