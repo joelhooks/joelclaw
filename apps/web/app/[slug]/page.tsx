@@ -147,7 +147,7 @@ async function CachedArticleContent({ slug }: { slug: string }) {
                 {tag}
               </span>
             ))}
-            <span className="text-neutral-700 mx-0.5">·</span>
+            <span className="flex-1" />
             <CopyAsPrompt markdown={content} title={meta.title} slug={meta.slug} />
           </div>
         )}
