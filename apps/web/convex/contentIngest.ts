@@ -51,7 +51,7 @@ type ContentType = "adr" | "post" | "discovery";
 export const upsertContent = mutation({
   args: {
     resourceId: v.string(),
-    type: v.union(v.literal("adr"), v.literal("post"), v.literal("discovery")),
+    type: v.union(v.literal("adr"), v.literal("post"), v.literal("article"), v.literal("discovery")),
     fields: v.union(adrFieldsValidator, postFieldsValidator, discoveryFieldsValidator),
     searchText: v.string(),
     contentHash: v.optional(v.string()),
