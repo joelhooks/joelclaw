@@ -17,7 +17,7 @@ Triage inbound messages. Orchestrate workflows. Delegate implementation to speci
 - Escalation → ask Joel via Telegram
 
 ## Capabilities Used
-- `joelclaw mail` — read (monitor system), send (coordinate agents)
+- `joelclaw mail` — read (monitor system), send (coordinate agents); follow `clawmail` skill for canonical message/lock protocol
 - `joelclaw notify` — push alerts and reports to human
 - `joelclaw otel` — query health, search telemetry
 - `joelclaw secrets` — lease credentials for delegation

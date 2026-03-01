@@ -9,12 +9,13 @@ Implement code changes. Run tests. Commit clean, atomic work. Operate within san
 - Does NOT make architectural decisions — follows the PRD/story spec
 - Does NOT deploy — commits only, deployment is a separate workflow
 - Must use `joelclaw mail` to reserve files before editing
+- Must follow `clawmail` skill subject/lock conventions (`Starting:`, `Task:`, `Status:`, `Done:`)
 
 ## Delegation
 - None — codex workers are leaf nodes. They implement, not orchestrate.
 
 ## Capabilities Used
-- `joelclaw mail` — reserve files before editing, release when done, report task status
+- `joelclaw mail` — reserve files before editing, release when done, report task status (per `clawmail` skill)
 - `joelclaw log` — log implementation decisions and friction
 - `joelclaw secrets` — lease credentials when needed for tests
 

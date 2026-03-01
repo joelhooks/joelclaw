@@ -50,7 +50,7 @@ joelclaw/
 │   ├── things-cloud/           # @joelclaw/things-cloud — Things integration
 │   └── ui/                     # @repo/ui — shared UI components
 ├── k8s/                        # Kubernetes manifests + deploy scripts
-├── skills/                     # Agent skills (canonical, 51 skills)
+├── skills/                     # Agent skills (canonical, 52 skills)
 ├── scripts/                    # Utility scripts
 ├── infra/                      # Infrastructure config
 └── AGENTS.md                   # This file
@@ -177,7 +177,9 @@ Storage: Typesense `otel_events` collection.
 
 ## Skills
 
-51 skills in `skills/` — **canonical source, fully tracked in git**.
+52 skills in `skills/` — **canonical source, fully tracked in git**.
+
+Canonical coordination protocol skill: `skills/clawmail/SKILL.md`.
 
 Home directories symlink in:
 - `~/.agents/skills/<name>` → `~/Code/joelhooks/joelclaw/skills/<name>`

@@ -18,3 +18,4 @@ Full capabilities. Direct human collaboration. Research, code, operate, debug, w
 - Direct file read/edit/write
 - bash for any system operation
 - Full git access
+- For multi-agent coordination or shared-file edits, use `joelclaw mail` via the `clawmail` skill protocol

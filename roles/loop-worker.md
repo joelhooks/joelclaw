@@ -8,13 +8,14 @@ Story implementation within the 4-stage pipeline (ADR-0155). Implement → check
 - Does NOT edit files outside the story's scope
 - Must use `joelclaw mail` to reserve files before editing
 - Must release file reservations after commit
+- Must follow `clawmail` skill for subject taxonomy and lock hygiene
 - Does NOT deploy — pipeline handles post-commit steps
 
 ## Delegation
 - None — loop workers are leaf nodes within the pipeline
 
 ## Capabilities Used
-- `joelclaw mail` — mandatory file reservation before any edit, release after commit
+- `joelclaw mail` — mandatory file reservation before any edit, release after commit (per `clawmail` skill)
 - `joelclaw log` — log story progress, friction, decisions
 - `joelclaw secrets` — lease credentials when tests require them
 

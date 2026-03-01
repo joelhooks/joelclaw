@@ -39,7 +39,7 @@ These are joelclaw's foundational rules. They govern every decision.
 
 6. **Memory captures patterns, not noise.** Every session should leave the system smarter. Durable patterns go in skills. Semantic search via `joelclaw recall`. Transient context stays ephemeral.
 
-7. **Agent communication is mandatory.** Use `joelclaw mail` to communicate file usage, current task, and friction. Read mail frequently for system activity. Always include file paths and task context. Designed to evolve toward AT Protocol and PDS-backed agent communication.
+7. **Agent communication is mandatory.** Use `joelclaw mail` to communicate file usage, current task, and friction. Read mail frequently for system activity. Always include file paths and task context. **Load the `clawmail` skill for the canonical protocol** (subject taxonomy, reserve/release workflow, and prompt contract checklist). Designed to evolve toward AT Protocol and PDS-backed agent communication.
 
 8. **Never expose secrets.** No secrets in vault, repos, or version-controlled files. Use `joelclaw secrets` for all credential access. Leases with TTL, audit trail.
 
@@ -52,7 +52,7 @@ These are `joelclaw` CLI commands. Each defines an interface contract with ports
 - **`joelclaw otel`** — Emit and query structured telemetry. Every pipeline step must be observable. Search events, aggregate stats, check for silent failures.
 - **`joelclaw recall`** — Semantic search across agent memory. Find past decisions, debugging insights, operational patterns. The system gets smarter when you feed it.
 - **`joelclaw vault`** — Read/search/list vault content and run ADR hygiene checks (`vault adr list|collisions|audit`) as the canonical decision inventory interface.
-- **`joelclaw mail`** — Send and receive messages between agents. Register identity, reserve files to prevent edit conflicts, release when done. Always include paths and task context.
+- **`joelclaw mail`** — Send and receive messages between agents. Register identity, reserve files to prevent edit conflicts, release when done. Always include paths and task context. Protocol details live in `skills/clawmail/SKILL.md`.
 - **`joelclaw secrets`** — Lease credentials with TTL and audit trail. Never hardcode tokens or keys. Every lease is logged.
 - **`joelclaw deploy`** — Trigger explicit, logged, verifiable deployments. No magic — every deploy is scripted and auditable.
 - **`joelclaw notify`** — Push alerts and reports to the gateway for human delivery. Use when something needs human attention.
