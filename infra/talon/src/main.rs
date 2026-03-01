@@ -106,7 +106,20 @@ fn main() -> Result<(), DynError> {
 
     install_signal_handlers();
 
+    let supervise_worker = worker::should_supervise_worker(&config);
+
     if cli.worker_only {
+        if !supervise_worker {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!(
+                    "external supervisor {} is loaded; unload it before running --worker-only",
+                    config.worker.external_launchd_label
+                ),
+            )
+            .into());
+        }
+
         log::info("starting talon in worker-only mode");
         return worker::run_worker_supervisor(&config);
     }
@@ -118,16 +131,25 @@ fn main() -> Result<(), DynError> {
 
     log::info("starting talon watchdog");
 
-    let worker_config = config.clone();
-    let worker_handle = thread::spawn(move || worker::run_worker_supervisor(&worker_config));
+    let worker_handle = if supervise_worker {
+        let worker_config = config.clone();
+        Some(thread::spawn(move || {
+            worker::run_worker_supervisor(&worker_config)
+        }))
+    } else {
+        None
+    };
 
     let loop_result = run_watchdog_loop(config);
 
     SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
 
-    let worker_result = match worker_handle.join() {
-        Ok(result) => result,
-        Err(_) => Err(io::Error::other("worker supervisor thread panicked").into()),
+    let worker_result = match worker_handle {
+        Some(handle) => match handle.join() {
+            Ok(result) => result,
+            Err(_) => Err(io::Error::other("worker supervisor thread panicked").into()),
+        },
+        None => Ok(()),
     };
 
     match (loop_result, worker_result) {

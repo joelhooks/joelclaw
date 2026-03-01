@@ -6,6 +6,7 @@ services_file = "~/.joelclaw/talon/services.toml"
 [worker]
 dir = "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus"
 command = ["bun", "run", "src/serve.ts"]
+external_launchd_label = "com.joel.system-bus-worker"
 port = 3111
 health_endpoint = "/api/inngest"
 sync_endpoint = "/api/inngest"

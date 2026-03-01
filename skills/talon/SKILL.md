@@ -50,7 +50,7 @@ cp target/release/talon ~/.local/bin/talon
 
 ```
 talon (single binary)
-├── Worker Supervisor Thread
+├── Worker Supervisor Thread (only when external launchd supervisor is not loaded)
 │   ├── Kill orphan on port 3111
 │   ├── Spawn bun (child process)
 │   ├── Signal forwarding (SIGTERM → bun)
@@ -169,7 +169,15 @@ launchctl print gui/$(id -u)/com.joel.talon | rg "state =|pid =|program =|last e
 launchctl kickstart -k gui/$(id -u)/com.joel.talon
 ```
 
-**Legacy services should stay disabled:**
+**Single owner for worker supervision is mandatory:**
+- If `com.joel.system-bus-worker` is loaded, Talon now auto-disables its internal worker supervisor to prevent port-3111 thrash.
+- Preferred end-state is Talon-only supervision, but coexistence no longer causes kill/restart loops.
+
+```bash
+launchctl list com.joel.system-bus-worker
+```
+
+**Legacy services should stay disabled when fully cut over:**
 ```bash
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.joel.k8s-reboot-heal.plist
 ```

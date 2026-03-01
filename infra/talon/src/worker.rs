@@ -35,6 +35,39 @@ enum SessionOutcome {
 
 static WORKER_RESTARTS: AtomicU32 = AtomicU32::new(0);
 
+pub fn should_supervise_worker(config: &Config) -> bool {
+    let label = config.worker.external_launchd_label.trim();
+    if label.is_empty() {
+        return true;
+    }
+
+    match launchd_job_loaded(label) {
+        Ok(true) => {
+            log::warn_fields(
+                "external worker supervisor detected; skipping talon worker supervisor",
+                &[("label", label.to_string())],
+            );
+            false
+        }
+        Ok(false) => true,
+        Err(error) => {
+            log::warn_fields(
+                "failed to detect external worker supervisor; proceeding",
+                &[
+                    ("label", label.to_string()),
+                    ("error", error.to_string()),
+                ],
+            );
+            true
+        }
+    }
+}
+
+fn launchd_job_loaded(label: &str) -> Result<bool, DynError> {
+    let output = Command::new("launchctl").arg("list").arg(label).output()?;
+    Ok(output.status.success())
+}
+
 unsafe extern "C" {
     fn kill(pid: CInt, sig: CInt) -> CInt;
 }

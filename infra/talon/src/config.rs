@@ -31,6 +31,7 @@ pub struct Config {
 pub struct WorkerConfig {
     pub dir: String,
     pub command: Vec<String>,
+    pub external_launchd_label: String,
     pub port: u16,
     pub health_endpoint: String,
     pub sync_endpoint: String,
@@ -134,6 +135,7 @@ impl Default for WorkerConfig {
                 "run".to_string(),
                 "src/serve.ts".to_string(),
             ],
+            external_launchd_label: "com.joel.system-bus-worker".to_string(),
             port: 3111,
             health_endpoint: "/api/inngest".to_string(),
             sync_endpoint: "/api/inngest".to_string(),
@@ -337,6 +339,7 @@ services_file = "~/.joelclaw/talon/services.toml"
 [worker]
 dir = "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus"
 command = ["bun", "run", "src/serve.ts"]
+external_launchd_label = "com.joel.system-bus-worker"
 port = 3111
 health_endpoint = "/api/inngest"
 sync_endpoint = "/api/inngest"
@@ -409,6 +412,9 @@ fn apply_toml_overrides(config: &mut Config, raw: &str) -> Result<(), DynError> 
 
             ("worker", "dir") => config.worker.dir = parse_toml_string(value)?,
             ("worker", "command") => config.worker.command = parse_toml_string_array(value)?,
+            ("worker", "external_launchd_label") => {
+                config.worker.external_launchd_label = parse_toml_string(value)?
+            }
             ("worker", "port") => {
                 config.worker.port = parse_toml_int(value, line_number + 1)? as u16
             }
@@ -922,6 +928,24 @@ critical = maybe
 
         let error = parse_services_toml(raw, 5).expect_err("invalid bool should fail validation");
         assert!(error.to_string().contains("invalid boolean"));
+    }
+
+    #[test]
+    fn worker_external_launchd_label_defaults_to_legacy_supervisor() {
+        let config = Config::default();
+        assert_eq!(config.worker.external_launchd_label, "com.joel.system-bus-worker");
+    }
+
+    #[test]
+    fn parse_worker_external_launchd_label_override() {
+        let mut config = Config::default();
+        let raw = r#"
+[worker]
+external_launchd_label = "com.joel.custom-worker"
+"#;
+
+        apply_toml_overrides(&mut config, raw).expect("worker override should parse");
+        assert_eq!(config.worker.external_launchd_label, "com.joel.custom-worker");
     }
 
     #[test]
