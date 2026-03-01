@@ -13,6 +13,14 @@ const INNGEST_RESTART_CMD = [
   "--wait-ms",
   "1500",
 ] as const;
+const INNGEST_STATUS_TIMEOUT_MS = Number.parseInt(
+  process.env.INNGEST_RUNTIME_STATUS_TIMEOUT_MS ?? "15000",
+  10
+);
+const INNGEST_RESTART_TIMEOUT_MS = Number.parseInt(
+  process.env.INNGEST_RUNTIME_RESTART_TIMEOUT_MS ?? "30000",
+  10
+);
 
 type InngestRuntimeRequest = {
   domain?: string;
@@ -140,14 +148,40 @@ function normalizeChecks(input: unknown): InngestCheckSummary[] {
   return checks.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function runCliCommand(args: readonly string[]): CliCommandResult {
+async function runCliCommand(
+  args: readonly string[],
+  timeoutMs: number
+): Promise<CliCommandResult> {
   const startedAt = Date.now();
-  const proc = Bun.spawnSync([...args], {
+  const safeTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 15000;
+
+  const proc = Bun.spawn([...args], {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const stdout = toText(proc.stdout);
-  const stderr = toText(proc.stderr);
+
+  const stdoutPromise = new Response(proc.stdout).text().catch(() => "");
+  const stderrPromise = new Response(proc.stderr).text().catch(() => "");
+
+  let timedOut = false;
+  const exitCode = await Promise.race<number>([
+    proc.exited.then((code) => code ?? 1),
+    Bun.sleep(safeTimeoutMs).then(() => {
+      timedOut = true;
+      try {
+        proc.kill();
+      } catch {
+        // best effort
+      }
+      return 124;
+    }),
+  ]);
+
+  const stdout = toText(await stdoutPromise);
+  const baseStderr = toText(await stderrPromise);
+  const stderr = timedOut
+    ? [baseStderr, `command timed out after ${safeTimeoutMs}ms`].filter(Boolean).join("; ")
+    : baseStderr;
 
   const stdoutParsed = parseJsonFromText(stdout);
   const stderrParsed = parseJsonFromText(stderr);
@@ -169,7 +203,7 @@ function runCliCommand(args: readonly string[]): CliCommandResult {
 
   return {
     command: args.join(" "),
-    exitCode: proc.exitCode ?? 1,
+    exitCode,
     stdout,
     stderr,
     parsed,
@@ -344,7 +378,7 @@ export const selfHealingInngestRuntime = inngest.createFunction(
     });
 
     const statusBeforeCommand = await step.run("probe-inngest-status-before", async () =>
-      runCliCommand(INNGEST_STATUS_CMD)
+      runCliCommand(INNGEST_STATUS_CMD, INNGEST_STATUS_TIMEOUT_MS)
     );
     const before = parseInngestHealth(statusBeforeCommand);
 
@@ -356,10 +390,10 @@ export const selfHealingInngestRuntime = inngest.createFunction(
     if (!before.healthy && !dryRun) {
       remediationAttempted = true;
       restartCommand = await step.run("restart-inngest-worker", async () =>
-        runCliCommand(INNGEST_RESTART_CMD)
+        runCliCommand(INNGEST_RESTART_CMD, INNGEST_RESTART_TIMEOUT_MS)
       );
       statusAfterCommand = await step.run("probe-inngest-status-after", async () =>
-        runCliCommand(INNGEST_STATUS_CMD)
+        runCliCommand(INNGEST_STATUS_CMD, INNGEST_STATUS_TIMEOUT_MS)
       );
       after = parseInngestHealth(statusAfterCommand);
     }
