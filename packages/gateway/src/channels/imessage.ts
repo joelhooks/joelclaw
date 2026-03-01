@@ -21,6 +21,12 @@ const RECONNECT_MAX_MS = 5 * 60_000; // 5 minutes max backoff
 const SEND_TIMEOUT_MS = 10_000;
 const HEAL_COOLDOWN_MS = 60_000;
 
+const IMESSAGE_ABORT_COMMANDS = new Set(["/stop", "stop", "/esc", "esc"]);
+
+export type IMessageStartOptions = {
+  abortCurrentTurn?: () => Promise<void>;
+};
+
 const execFileAsync = (command: string, args: string[]): Promise<void> =>
   new Promise((resolve, reject) => {
     execFile(command, args, (error) => {
@@ -75,7 +81,10 @@ export class IMessageChannel implements Channel {
   private lastHealAt = 0;
   private healing = false;
 
-  constructor(private sender: string) {}
+  constructor(
+    private sender: string,
+    private options?: IMessageStartOptions,
+  ) {}
 
   async start(): Promise<void> {
     if (this.running) return;
@@ -413,6 +422,14 @@ export class IMessageChannel implements Channel {
 
     const chatId = msg.chat_id ?? 0;
     const text = msg.text.trim();
+    const normalized = text.toLowerCase();
+
+    if (IMESSAGE_ABORT_COMMANDS.has(normalized)) {
+      const command: "stop" | "esc" = normalized.includes("esc") ? "esc" : "stop";
+      await this.handleAbortCommand(chatId, command);
+      return;
+    }
+
     const inbound: InboundMessage = {
       source: "imessage",
       prompt: text,
@@ -435,6 +452,49 @@ export class IMessageChannel implements Channel {
 
     if (!this.messageHandler) return;
     void this.messageHandler(inbound);
+  }
+
+  private async handleAbortCommand(chatId: number, command: "stop" | "esc"): Promise<void> {
+    if (!this.options?.abortCurrentTurn) {
+      void emitGatewayOtel({
+        level: "warn",
+        component: "imessage-channel",
+        action: "imessage.command.stop_unavailable",
+        success: false,
+        metadata: { chatId, command },
+      });
+      await this.sendControlReply("⚠️ Stop is unavailable in this gateway build.");
+      return;
+    }
+
+    try {
+      await this.options.abortCurrentTurn();
+      void emitGatewayOtel({
+        level: "info",
+        component: "imessage-channel",
+        action: "imessage.command.stop",
+        success: true,
+        metadata: { chatId, command },
+      });
+      await this.sendControlReply("🛑 Stopped current operation.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[gateway:imessage] ${command} failed`, { error: message });
+      void emitGatewayOtel({
+        level: "error",
+        component: "imessage-channel",
+        action: "imessage.command.stop_failed",
+        success: false,
+        error: message,
+        metadata: { chatId, command },
+      });
+      await this.sendControlReply(`❌ Stop failed: ${message}`);
+    }
+  }
+
+  private async sendControlReply(text: string): Promise<void> {
+    if (!this.sender) return;
+    await this.send(this.sender, text);
   }
 
   private sendRequest(socket: net.Socket, method: string, params: Record<string, unknown>): Promise<unknown> {
@@ -463,9 +523,13 @@ export function parseChatId(source: string): number | undefined {
 
 let defaultInstance: IMessageChannel | undefined;
 
-export async function start(sender: string, enqueue: EnqueueFn): Promise<void> {
+export async function start(
+  sender: string,
+  enqueue: EnqueueFn,
+  options?: IMessageStartOptions,
+): Promise<void> {
   if (!defaultInstance || !defaultInstance.isRunning) {
-    defaultInstance = new IMessageChannel(sender);
+    defaultInstance = new IMessageChannel(sender, options);
   }
 
   defaultInstance.onMessage((message) => {

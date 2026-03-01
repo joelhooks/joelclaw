@@ -1196,7 +1196,11 @@ if (IMESSAGE_ALLOWED_SENDER) {
     },
   });
 
-  await startIMessage(IMESSAGE_ALLOWED_SENDER, enqueueToGateway);
+  await startIMessage(IMESSAGE_ALLOWED_SENDER, enqueueToGateway, {
+    abortCurrentTurn: async () => {
+      await session.abort();
+    },
+  });
 } else {
   console.warn("[gateway] imessage disabled — set IMESSAGE_ALLOWED_SENDER env var");
   void emitGatewayOtel({

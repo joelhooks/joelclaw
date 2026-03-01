@@ -180,6 +180,9 @@ export function classifyPriority(msg: InboundMessage): Priority {
   if (lowerSource === "telegram" || lowerSource.startsWith("telegram:") || lowerSource.startsWith("telegram.") || lowerHints.some((event) => event.includes("telegram.human"))) {
     return Priority.P1;
   }
+  if (lowerSource === "imessage" || lowerSource.startsWith("imessage:") || lowerSource.startsWith("imessage.") || lowerHints.some((event) => event.includes("imessage.human"))) {
+    return Priority.P1;
+  }
   if (lowerHints.some((event) => /deploy\.failed|friction-fix/u.test(event))) {
     return Priority.P1;
   }

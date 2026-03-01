@@ -35,6 +35,14 @@ describe("classifyPriority", () => {
     })).toBe(Priority.P1);
   });
 
+  test("returns P1 for imessage human messages", () => {
+    expect(classifyPriority({
+      source: "imessage:123",
+      prompt: "stop",
+      metadata: { event: "imessage.human" },
+    })).toBe(Priority.P1);
+  });
+
   test("returns P2 for heartbeat messages", () => {
     expect(classifyPriority({
       source: "heartbeat",

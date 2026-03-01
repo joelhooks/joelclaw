@@ -27,18 +27,23 @@ The gateway role prompt (`roles/gateway.md`) requires proactive status check-ins
 
 Keep updates concise for mobile Telegram reading.
 
-## Telegram control commands
+## Interrupt controls by channel
 
-From Telegram chat with `@JoelClawPandaBot`:
+Telegram chat (`@JoelClawPandaBot`):
 
 - `/stop` — aborts the active turn without killing the gateway daemon.
 - `/esc` — alias for `/stop`.
 
-Emergency-only manual control:
+iMessage chat (plain text):
+
+- `stop` or `/stop` — aborts the active turn.
+- `esc` or `/esc` — alias for stop.
+
+Emergency-only manual control (Telegram only):
 
 - `/kill` — hard stop: disables launchd service and kills the daemon process.
 
-`/kill` is intentionally destructive. Use `/stop` or `/esc` first.
+`/kill` is intentionally destructive. Use stop/esc first.
 
 ## Automated monitoring
 
