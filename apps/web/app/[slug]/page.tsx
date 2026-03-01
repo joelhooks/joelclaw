@@ -148,12 +148,12 @@ async function CachedArticleContent({ slug }: { slug: string }) {
               </span>
             ))}
             <span className="flex-1" />
-            <CopyAsPrompt markdown={content} title={meta.title} slug={meta.slug} />
+            <CopyAsPrompt title={meta.title} slug={meta.slug} description={meta.description} />
           </div>
         )}
         {meta.tags.length === 0 && (
           <div className="mt-3">
-            <CopyAsPrompt markdown={content} title={meta.title} slug={meta.slug} />
+            <CopyAsPrompt title={meta.title} slug={meta.slug} description={meta.description} />
           </div>
         )}
         <ContentDebugPanel

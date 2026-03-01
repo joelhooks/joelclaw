@@ -5,29 +5,16 @@ import { useCallback, useState } from "react";
 import { CLAW_PATH } from "@/lib/claw";
 
 interface CopyAsPromptProps {
-  markdown: string;
   title: string;
   slug: string;
+  description?: string;
 }
 
-function buildPrompt(markdown: string, title: string, slug: string): string {
-  return `# Spec: ${title}
-
-Source: https://joelclaw.com/${slug}
-
-## Instructions
-
-Build a system matching this spec. Use whatever tools and frameworks match your current project. The architecture matters more than the specific implementations mentioned.
-
-Before starting:
-- Read the full spec
-- Ask clarifying questions about anything ambiguous
-- Propose your tech choices for each component before writing code
-- Build incrementally — get the core loop working before adding polish
-
-## Spec
-
-${markdown}
+function buildPrompt(title: string, slug: string, description?: string): string {
+  const desc = description ? `\n${description}\n` : "";
+  return `Read this spec and build it: https://joelclaw.com/${slug}/md
+${desc}
+Ask clarifying questions before starting. Propose tech choices, then build incrementally.
 `;
 }
 
@@ -39,13 +26,13 @@ function ClawIcon({ className }: { className?: string }) {
   );
 }
 
-export function CopyAsPrompt({ markdown, title, slug }: CopyAsPromptProps) {
+export function CopyAsPrompt({ title, slug, description }: CopyAsPromptProps) {
   const [copied, setCopied] = useState(false);
   const [grabbing, setGrabbing] = useState(false);
 
   const handleCopy = useCallback(async () => {
     setGrabbing(true);
-    const prompt = buildPrompt(markdown, title, slug);
+    const prompt = buildPrompt(title, slug, description);
     await navigator.clipboard.writeText(prompt);
 
     // Grab animation, then show "copied"
