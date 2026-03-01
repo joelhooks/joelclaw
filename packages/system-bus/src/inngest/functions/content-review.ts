@@ -2,6 +2,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { anyApi, type FunctionReference } from "convex/server";
 import { NonRetriableError } from "inngest";
 import { infer } from "../../lib/inference";
+import { revalidateContentCache } from "../../lib/revalidate";
 import { inngest } from "../client";
 import type { GatewayContext } from "../middleware/gateway";
 import { buildGatewaySignalMeta } from "../middleware/gateway-signal";
@@ -258,11 +259,6 @@ function toRevalidationPaths(contentType: SupportedContentType, contentSlug: str
     return ["/cool", `/cool/${contentSlug}`, "/feed.xml"];
   }
   return [];
-}
-
-function getSiteUrl(): string {
-  const configured = process.env.SITE_URL?.trim() ?? "https://joelclaw.com";
-  return configured.endsWith("/") ? configured.slice(0, -1) : configured;
 }
 
 async function queryContentResource(resourceId: string): Promise<ContentResourceDoc | null> {
@@ -830,44 +826,6 @@ async function updateArticleContent(args: {
     searchText: buildGenericSearchText(nextFields),
   });
 }
-
-async function revalidateContentCache(args: {
-  tags: string[];
-  paths?: string[];
-}): Promise<void> {
-  const revalidationSecret = process.env.REVALIDATION_SECRET?.trim();
-  if (!revalidationSecret) {
-    throw new NonRetriableError("REVALIDATION_SECRET is required for content revalidation");
-  }
-
-  const tags = args.tags.filter((tag) => typeof tag === "string" && tag.trim().length > 0);
-  const paths = (args.paths ?? []).filter((path) => typeof path === "string" && path.trim().length > 0);
-
-  if (tags.length === 0 && paths.length === 0) {
-    throw new NonRetriableError("No cache tags or paths provided for revalidation");
-  }
-
-  const response = await fetch(`${getSiteUrl()}/api/revalidate`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      secret: revalidationSecret,
-      tags,
-      paths,
-    }),
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(
-      `revalidate failed (${response.status})${body ? `: ${body.slice(0, 300)}` : ""}`,
-    );
-  }
-}
-
 function parseFailureInput(data: unknown): FailureEventData | null {
   const record = ensureRecord(data);
 
