@@ -190,7 +190,7 @@ export async function getAllPosts(): Promise<PostMeta[]> {
 
 export async function getPost(slug: string): Promise<Post | null> {
   "use cache";
-  cacheLife("minutes");
+  cacheLife("max");
   cacheTag(`article:${slug}`);
   cacheTag(`post:${slug}`);
 

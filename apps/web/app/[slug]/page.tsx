@@ -64,6 +64,9 @@ export default async function PostPage({ params }: Props) {
 }
 
 async function StaticArticleShell({ slug }: { slug: string }) {
+  const content = await CachedArticleContent({ slug });
+  if (!content) notFound();
+
   return (
     <>
       {/* Realtime: Convex subscription detects content changes, triggers router.refresh() */}
@@ -73,19 +76,19 @@ async function StaticArticleShell({ slug }: { slug: string }) {
         </ConvexReaderProvider>
       </Suspense>
       <FeedbackStatusSlot slug={slug} />
-      {await CachedArticleContent({ slug })}
+      {content}
     </>
   );
 }
 
 async function CachedArticleContent({ slug }: { slug: string }) {
   "use cache";
-  cacheLife("max");
+  cacheLife("minutes");
   cacheTag(`article:${slug}`);
   cacheTag(`post:${slug}`);
 
   const post = await getPost(slug);
-  if (!post) notFound();
+  if (!post) return null;
 
   const { meta, content, diagnostics } = post;
 
