@@ -16,6 +16,7 @@ COLIMA_DOCKER_HOST="unix:///Users/joel/.colima/default/docker.sock"
 COLIMA_SSH_CONFIG="$HOME/.colima/_lima/colima/ssh.config"
 COLIMA_SSH_HOST="lima-colima"
 KUBELET_PROXY_RBAC_MANIFEST="$HOME/Code/joelhooks/joelclaw/k8s/apiserver-kubelet-client-rbac.yaml"
+CORE_WARMUP_TIMEOUT_SECS=300
 
 # ADR-0182 invariant target users for kubelet proxy authz.
 KUBELET_PROXY_USERS=(
@@ -32,6 +33,43 @@ force_cycle_colima() {
   colima stop --force >>"$LOG_FILE" 2>&1 || log "WARNING: colima stop --force failed"
   sleep 1
   colima start >>"$LOG_FILE" 2>&1 || log "WARNING: colima start failed"
+}
+
+ensure_vm_br_netfilter() {
+  local bridge_state
+
+  bridge_state="$(ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" '
+    if [ ! -e /proc/sys/net/bridge/bridge-nf-call-iptables ]; then
+      sudo modprobe br_netfilter >/dev/null 2>&1 || true
+    fi
+
+    if [ -e /proc/sys/net/bridge/bridge-nf-call-iptables ]; then
+      sudo sysctl -w net.bridge.bridge-nf-call-iptables=1 >/dev/null 2>&1 || true
+      sudo sysctl -w net.bridge.bridge-nf-call-ip6tables=1 >/dev/null 2>&1 || true
+      echo present
+    else
+      echo missing
+    fi
+  ' 2>>"$LOG_FILE" || true)"
+
+  if [ "$bridge_state" = "present" ]; then
+    log "invariant: br_netfilter present in Colima VM"
+    return 0
+  fi
+
+  log "WARNING: br_netfilter missing in Colima VM"
+  return 1
+}
+
+restart_flannel_if_unhealthy() {
+  local flannel_pods
+
+  flannel_pods="$(kubectl get pods -n kube-system --no-headers 2>/dev/null | awk '/kube-flannel/ {print $1":"$3}')"
+  if echo "$flannel_pods" | grep -Eq 'Error|CrashLoopBackOff|Unknown'; then
+    log "flannel unhealthy; restarting kube-flannel pods"
+    kubectl get pods -n kube-system --no-headers | awk '/kube-flannel/ {print $1}' | \
+      xargs -r kubectl delete pod -n kube-system >>"$LOG_FILE" 2>&1 || true
+  fi
 }
 
 kubelet_proxy_rbac_check_user() {
@@ -75,25 +113,81 @@ ensure_kubelet_proxy_rbac() {
   return 1
 }
 
-check_http_health() {
-  local name="$1"
-  local url="$2"
-  local attempts="${3:-6}"
-  local delay_secs="${4:-2}"
+daemonset_ready() {
+  local namespace="$1"
+  local daemonset_name="$2"
+  local status
 
-  local attempt
-  for attempt in $(seq 1 "$attempts"); do
-    if curl -fsS --max-time 5 "$url" >/dev/null 2>&1; then
-      log "invariant: $name health ok"
-      return 0
+  status="$(kubectl -n "$namespace" get daemonset "$daemonset_name" -o jsonpath='{.status.numberAvailable}/{.status.desiredNumberScheduled}' 2>/dev/null || true)"
+
+  if [[ ! "$status" =~ ^[0-9]+/[0-9]+$ ]]; then
+    return 1
+  fi
+
+  local available="${status%%/*}"
+  local desired="${status##*/}"
+
+  [[ "$desired" -gt 0 && "$available" -eq "$desired" ]]
+}
+
+pod_ready() {
+  local namespace="$1"
+  local pod_name="$2"
+  local ready
+
+  ready="$(kubectl get pod -n "$namespace" "$pod_name" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+  [[ "$ready" == "True" ]]
+}
+
+wait_for_service_convergence() {
+  local timeout_secs="${1:-$CORE_WARMUP_TIMEOUT_SECS}"
+  local deadline=$((SECONDS + timeout_secs))
+  local stable_passes=0
+  local next_flannel_repair_at=0
+  local pending=()
+
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    pending=()
+
+    daemonset_ready "kube-system" "kube-flannel" || pending+=("kube-flannel")
+    pod_ready "joelclaw" "redis-0" || pending+=("redis-0")
+    pod_ready "joelclaw" "inngest-0" || pending+=("inngest-0")
+    pod_ready "joelclaw" "typesense-0" || pending+=("typesense-0")
+
+    if [[ " ${pending[*]-} " == *" kube-flannel "* ]] && [ "$SECONDS" -ge "$next_flannel_repair_at" ]; then
+      ensure_vm_br_netfilter || true
+      restart_flannel_if_unhealthy
+      next_flannel_repair_at=$((SECONDS + 20))
     fi
 
-    if [ "$attempt" -lt "$attempts" ]; then
-      sleep "$delay_secs"
+    if [ "${#pending[@]}" -eq 0 ]; then
+      kubectl logs -n joelclaw redis-0 --tail=1 >/dev/null 2>&1 || pending+=("kubectl-logs")
+      kubectl exec -n joelclaw redis-0 -- redis-cli ping >/dev/null 2>&1 || pending+=("kubectl-exec")
+      curl -fsS --max-time 5 http://localhost:8288/health >/dev/null 2>&1 || pending+=("inngest")
+      curl -fsS --max-time 5 http://localhost:8108/health >/dev/null 2>&1 || pending+=("typesense")
     fi
+
+    if [ "${#pending[@]}" -eq 0 ]; then
+      stable_passes=$((stable_passes + 1))
+      if [ "$stable_passes" -ge 2 ]; then
+        log "invariant: service convergence stable"
+        return 0
+      fi
+      log "invariant: service convergence pass $stable_passes/2"
+    else
+      stable_passes=0
+      log "warmup: waiting for ${pending[*]}"
+    fi
+
+    sleep 5
   done
 
-  log "ERROR: invariant failed: $name health check failed ($url)"
+  if [ "${#pending[@]}" -gt 0 ]; then
+    log "ERROR: service convergence timeout (${timeout_secs}s); pending ${pending[*]}"
+  else
+    log "ERROR: service convergence timeout (${timeout_secs}s)"
+  fi
+
   return 1
 }
 
@@ -121,25 +215,9 @@ post_colima_invariant_gate() {
     failures=$((failures + 1))
   fi
 
-  if kubectl logs -n joelclaw redis-0 --tail=1 >/dev/null 2>&1; then
-    log "invariant: kubectl logs path healthy"
-  else
-    log "ERROR: invariant failed: kubectl logs path unhealthy"
-    failures=$((failures + 1))
-  fi
-
-  if kubectl exec -n joelclaw redis-0 -- redis-cli ping >/dev/null 2>&1; then
-    log "invariant: kubectl exec path healthy"
-  else
-    log "ERROR: invariant failed: kubectl exec path unhealthy"
-    failures=$((failures + 1))
-  fi
-
-  if ! check_http_health "inngest" "http://localhost:8288/health"; then
-    failures=$((failures + 1))
-  fi
-
-  if ! check_http_health "typesense" "http://localhost:8108/health"; then
+  # Post-cycle startup can flap while flannel/services settle. Require two
+  # consecutive clean passes before declaring convergence.
+  if ! wait_for_service_convergence "$CORE_WARMUP_TIMEOUT_SECS"; then
     failures=$((failures + 1))
   fi
 
@@ -175,8 +253,9 @@ if ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "docker inspect joelclaw-contr
     ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "docker start joelclaw-controlplane-1" >>"$LOG_FILE" 2>&1 || log "WARNING: failed to start Talos container"
   fi
   ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "docker update --restart unless-stopped joelclaw-controlplane-1" >>"$LOG_FILE" 2>&1 || true
-  ssh -F "$COLIMA_SSH_CONFIG" "$COLIMA_SSH_HOST" "sudo modprobe br_netfilter" >>"$LOG_FILE" 2>&1 || true
 fi
+
+ensure_vm_br_netfilter || true
 
 # Wait briefly for kube api.
 for _ in {1..12}; do
@@ -190,12 +269,7 @@ if kubectl get nodes >/dev/null 2>&1; then
   kubectl taint nodes joelclaw-controlplane-1 node-role.kubernetes.io/control-plane:NoSchedule- >>"$LOG_FILE" 2>&1 || true
   kubectl uncordon joelclaw-controlplane-1 >>"$LOG_FILE" 2>&1 || true
 
-  FLANNEL_PODS=$(kubectl get pods -n kube-system --no-headers 2>/dev/null | awk '/kube-flannel/ {print $1":"$3}')
-  if echo "$FLANNEL_PODS" | grep -Eq 'Error|CrashLoopBackOff|Unknown'; then
-    log "flannel unhealthy; restarting kube-flannel pods"
-    kubectl get pods -n kube-system --no-headers | awk '/kube-flannel/ {print $1}' | \
-      xargs -r kubectl delete pod -n kube-system >>"$LOG_FILE" 2>&1 || true
-  fi
+  restart_flannel_if_unhealthy
 
   ensure_kubelet_proxy_rbac
 else

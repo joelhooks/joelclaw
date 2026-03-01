@@ -72,7 +72,7 @@ talon (single binary)
 │
 └── Escalation (on failure)
     ├── Tier 1a: bridge-heal (force-cycle Colima on localhost↔VM split-brain)
-    ├── Tier 1b: k8s-reboot-heal.sh (90s timeout, RBAC drift guard + post-Colima invariant gate)
+    ├── Tier 1b: k8s-reboot-heal.sh (300s timeout, RBAC drift guard, VM `br_netfilter` repair, warmup-aware post-Colima invariants)
     ├── Tier 2: pi agent (cloud model, 10min cooldown)
     ├── Tier 3: pi agent (Ollama local, network-down fallback)
     └── Tier 4: Telegram + iMessage SOS fan-out (15min critical threshold)
@@ -140,6 +140,7 @@ timeout_secs = 5
 - `launchd.<name>` passes when `launchctl list <label>` reports a non-zero PID
 - `http.<name>` passes on HTTP `200`
 - `critical = true` escalates immediately when the probe fails
+- Service-heal pre-cleanup for `voice_agent` now clears stale `uv/main.py` listeners on `:8081` before `launchctl kickstart` to avoid bind conflicts after force-cycles
 - Talon hot-reloads service probes when `services.toml` mtime changes (no restart required)
 - `kill -HUP $(launchctl print gui/$(id -u)/com.joel.talon | awk '/pid =/{print $3; exit}')` forces immediate reload
 

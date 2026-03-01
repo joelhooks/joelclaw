@@ -113,7 +113,7 @@ impl Default for Config {
         Self {
             check_interval_secs: 60,
             heal_script: "/Users/joel/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh".to_string(),
-            heal_timeout_secs: 90,
+            heal_timeout_secs: 300,
             services_file: DEFAULT_SERVICES_PATH.to_string(),
             worker: WorkerConfig::default(),
             escalation: EscalationConfig::default(),
@@ -333,7 +333,7 @@ pub fn validation_summary_to_json(summary: &ValidationSummary) -> String {
 pub fn default_config_toml() -> String {
     let content = r#"check_interval_secs = 60
 heal_script = "/Users/joel/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh"
-heal_timeout_secs = 90
+heal_timeout_secs = 300
 services_file = "~/.joelclaw/talon/services.toml"
 
 [worker]
@@ -933,7 +933,10 @@ critical = maybe
     #[test]
     fn worker_external_launchd_label_defaults_to_legacy_supervisor() {
         let config = Config::default();
-        assert_eq!(config.worker.external_launchd_label, "com.joel.system-bus-worker");
+        assert_eq!(
+            config.worker.external_launchd_label,
+            "com.joel.system-bus-worker"
+        );
     }
 
     #[test]
@@ -945,7 +948,10 @@ external_launchd_label = "com.joel.custom-worker"
 "#;
 
         apply_toml_overrides(&mut config, raw).expect("worker override should parse");
-        assert_eq!(config.worker.external_launchd_label, "com.joel.custom-worker");
+        assert_eq!(
+            config.worker.external_launchd_label,
+            "com.joel.custom-worker"
+        );
     }
 
     #[test]

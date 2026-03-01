@@ -122,6 +122,16 @@ pub fn run_service_heal(
     let mut output_lines = Vec::new();
 
     for label in launchd_labels {
+        if let Some(service_name) = service_name_for_label(config, &label) {
+            if should_run_pre_restart_cleanup(service_name, failed_probes) {
+                let cleanup_output = run_service_pre_restart_cleanup(config, service_name)?;
+                output_lines.push(format!(
+                    "pre-cleanup {service_name}: {}",
+                    truncate(&cleanup_output, 1000)
+                ));
+            }
+        }
+
         let target = format!("gui/{uid}/{label}");
         let (success, output) = run_process(
             "launchctl",
@@ -470,6 +480,199 @@ fn restart_targets_for_failed_services(
     labels.into_iter().collect()
 }
 
+fn service_name_for_label<'a>(config: &'a Config, label: &str) -> Option<&'a str> {
+    config
+        .launchd_service_probes
+        .iter()
+        .find(|monitor| monitor.label == label)
+        .map(|monitor| monitor.name.as_str())
+}
+
+fn should_run_pre_restart_cleanup(service_name: &str, failed_probes: &[ProbeResult]) -> bool {
+    if service_name != "voice_agent" {
+        return false;
+    }
+
+    let launchd_probe = format!("launchd:{service_name}");
+    let http_probe = format!("http:{service_name}");
+
+    failed_probes
+        .iter()
+        .any(|probe| probe.name == launchd_probe || probe.name == http_probe)
+}
+
+fn run_service_pre_restart_cleanup(
+    config: &Config,
+    service_name: &str,
+) -> Result<String, DynError> {
+    match service_name {
+        "voice_agent" => run_voice_agent_pre_restart_cleanup(config),
+        _ => Ok("no pre-restart cleanup rule".to_string()),
+    }
+}
+
+fn run_voice_agent_pre_restart_cleanup(config: &Config) -> Result<String, DynError> {
+    let port = service_http_port(config, "voice_agent").unwrap_or(8081);
+    let listening_pids = listening_pids_on_port(port)?;
+
+    if listening_pids.is_empty() {
+        return Ok(format!("no listener on :{port}"));
+    }
+
+    let mut unknown_listeners = Vec::new();
+    for pid in &listening_pids {
+        let command = command_for_pid(*pid)?.unwrap_or_else(|| "<unknown>".to_string());
+        if !looks_like_voice_agent_command(&command) {
+            unknown_listeners.push(format!("{pid}:{command}"));
+        }
+    }
+
+    if !unknown_listeners.is_empty() {
+        let detail = truncate(&unknown_listeners.join(" | "), 500);
+        log::warn_fields(
+            "skipping voice-agent pre-restart cleanup due to non-voice listener",
+            &[("detail", detail.clone())],
+        );
+        return Ok(format!(
+            "skipped cleanup on :{port}; non-voice listeners detected ({detail})"
+        ));
+    }
+
+    let cleanup_command = r#"pkill -f "infra/voice-agent/.venv/bin/python3 main.py start" >/dev/null 2>&1 || true; pkill -f "uv run python main.py start" >/dev/null 2>&1 || true; sleep 1"#;
+
+    let (success, output) = run_process(
+        "/bin/bash",
+        &["-lc", cleanup_command],
+        &[],
+        Duration::from_secs(10),
+        None,
+    )?;
+
+    let remaining = listening_pids_on_port(port)?;
+
+    if remaining.is_empty() {
+        let detail = format!(
+            "cleared listeners {:?} on :{port}",
+            listening_pids
+                .iter()
+                .map(|pid| pid.to_string())
+                .collect::<Vec<_>>()
+        );
+        log::info_fields(
+            "voice-agent pre-restart cleanup complete",
+            &[("detail", detail.clone())],
+        );
+        return Ok(detail);
+    }
+
+    let detail = format!(
+        "cleanup attempted on :{port} (ok={success}); remaining listeners={:?}; output={}",
+        remaining,
+        truncate(&output, 300)
+    );
+
+    log::warn_fields(
+        "voice-agent pre-restart cleanup left listeners",
+        &[("detail", detail.clone())],
+    );
+
+    Ok(detail)
+}
+
+fn service_http_port(config: &Config, service_name: &str) -> Option<u16> {
+    config
+        .http_service_probes
+        .iter()
+        .find(|probe| probe.name == service_name)
+        .and_then(|probe| parse_http_port(&probe.url))
+}
+
+fn parse_http_port(url: &str) -> Option<u16> {
+    let trimmed = url.trim();
+    let (scheme, rest) = if let Some(rest) = trimmed.strip_prefix("http://") {
+        ("http", rest)
+    } else if let Some(rest) = trimmed.strip_prefix("https://") {
+        ("https", rest)
+    } else {
+        return None;
+    };
+
+    let authority = rest.split('/').next()?.trim();
+    if authority.is_empty() {
+        return None;
+    }
+
+    if authority.starts_with('[') {
+        let end = authority.find(']')?;
+        let after = &authority[end + 1..];
+        if let Some(port) = after.strip_prefix(':') {
+            return port.parse::<u16>().ok();
+        }
+
+        return Some(if scheme == "https" { 443 } else { 80 });
+    }
+
+    if let Some((_, port)) = authority.rsplit_once(':') {
+        if port.chars().all(|ch| ch.is_ascii_digit()) {
+            return port.parse::<u16>().ok();
+        }
+    }
+
+    Some(if scheme == "https" { 443 } else { 80 })
+}
+
+fn listening_pids_on_port(port: u16) -> Result<Vec<u32>, DynError> {
+    let port_arg = format!("-iTCP:{port}");
+    let (success, output) = run_process(
+        "/usr/sbin/lsof",
+        &["-nP", "-t", &port_arg, "-sTCP:LISTEN"],
+        &[],
+        Duration::from_secs(4),
+        None,
+    )?;
+
+    if !success && output.starts_with("spawn failed") {
+        return Ok(Vec::new());
+    }
+
+    let mut pids = output
+        .lines()
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .collect::<Vec<_>>();
+
+    pids.sort_unstable();
+    pids.dedup();
+
+    Ok(pids)
+}
+
+fn command_for_pid(pid: u32) -> Result<Option<String>, DynError> {
+    let pid_arg = pid.to_string();
+    let (success, output) = run_process(
+        "ps",
+        &["-p", &pid_arg, "-o", "command="],
+        &[],
+        Duration::from_secs(2),
+        None,
+    )?;
+
+    if !success {
+        return Ok(None);
+    }
+
+    let command = output.lines().next().unwrap_or("").trim();
+    if command.is_empty() || command == "ok" {
+        return Ok(None);
+    }
+
+    Ok(Some(command.to_string()))
+}
+
+fn looks_like_voice_agent_command(command: &str) -> bool {
+    let lowered = command.to_ascii_lowercase();
+    lowered.contains("infra/voice-agent") || lowered.contains("main.py start")
+}
+
 fn current_uid() -> Option<String> {
     if let Ok(uid) = std::env::var("UID") {
         let trimmed = uid.trim();
@@ -678,5 +881,39 @@ mod tests {
 
         let targets = restart_targets_for_failed_services(&config, &failed);
         assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn pre_restart_cleanup_only_targets_voice_agent_failures() {
+        let failed = vec![ProbeResult {
+            name: "http:voice_agent".to_string(),
+            passed: false,
+            output: "503".to_string(),
+            duration_ms: 10,
+        }];
+
+        assert!(should_run_pre_restart_cleanup("voice_agent", &failed));
+        assert!(!should_run_pre_restart_cleanup("gateway", &failed));
+    }
+
+    #[test]
+    fn parse_http_port_supports_explicit_and_default_ports() {
+        assert_eq!(parse_http_port("http://127.0.0.1:8081/"), Some(8081));
+        assert_eq!(parse_http_port("http://localhost/health"), Some(80));
+        assert_eq!(parse_http_port("https://example.com/status"), Some(443));
+        assert_eq!(parse_http_port("https://[::1]:8443/health"), Some(8443));
+    }
+
+    #[test]
+    fn voice_agent_command_matcher_is_narrow() {
+        assert!(looks_like_voice_agent_command(
+            "/Users/joel/Code/joelhooks/joelclaw/infra/voice-agent/.venv/bin/python3 main.py start"
+        ));
+        assert!(looks_like_voice_agent_command(
+            "uv run python main.py start"
+        ));
+        assert!(!looks_like_voice_agent_command(
+            "/usr/bin/python3 other-service.py"
+        ));
     }
 }
