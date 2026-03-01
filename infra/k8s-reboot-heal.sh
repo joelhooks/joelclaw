@@ -78,11 +78,20 @@ ensure_kubelet_proxy_rbac() {
 check_http_health() {
   local name="$1"
   local url="$2"
+  local attempts="${3:-6}"
+  local delay_secs="${4:-2}"
 
-  if curl -fsS --max-time 5 "$url" >/dev/null 2>&1; then
-    log "invariant: $name health ok"
-    return 0
-  fi
+  local attempt
+  for attempt in $(seq 1 "$attempts"); do
+    if curl -fsS --max-time 5 "$url" >/dev/null 2>&1; then
+      log "invariant: $name health ok"
+      return 0
+    fi
+
+    if [ "$attempt" -lt "$attempts" ]; then
+      sleep "$delay_secs"
+    fi
+  done
 
   log "ERROR: invariant failed: $name health check failed ($url)"
   return 1
