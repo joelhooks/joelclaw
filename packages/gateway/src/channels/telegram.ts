@@ -533,8 +533,8 @@ async function startTelegramChannel(
     await options.configureBot(bot);
   }
 
-  // /stop — abort current turn without killing the daemon
-  bot.command("stop", async (ctx) => {
+  // /stop|/esc — abort current turn without killing the daemon
+  const handleAbortCommand = async (ctx: any, command: "stop" | "esc") => {
     const chatId = ctx.chat.id;
 
     if (!options?.abortCurrentTurn) {
@@ -543,7 +543,7 @@ async function startTelegramChannel(
         component: "telegram-channel",
         action: "telegram.command.stop_unavailable",
         success: false,
-        metadata: { chatId },
+        metadata: { chatId, command },
       });
       await ctx.reply("⚠️ Stop is unavailable in this gateway build.");
       return;
@@ -556,22 +556,30 @@ async function startTelegramChannel(
         component: "telegram-channel",
         action: "telegram.command.stop",
         success: true,
-        metadata: { chatId },
+        metadata: { chatId, command },
       });
       await ctx.reply("🛑 Stopped current operation.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error("[gateway:telegram] /stop failed", { error: message });
+      console.error(`[gateway:telegram] /${command} failed`, { error: message });
       void emitGatewayOtel({
         level: "error",
         component: "telegram-channel",
         action: "telegram.command.stop_failed",
         success: false,
         error: message,
-        metadata: { chatId },
+        metadata: { chatId, command },
       });
       await ctx.reply(`❌ Stop failed: ${message}`);
     }
+  };
+
+  bot.command("stop", async (ctx) => {
+    await handleAbortCommand(ctx, "stop");
+  });
+
+  bot.command("esc", async (ctx) => {
+    await handleAbortCommand(ctx, "esc");
   });
 
   // /kill — hard stop: disable launchd + kill process

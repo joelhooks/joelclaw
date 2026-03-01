@@ -22,9 +22,13 @@ Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 From Telegram chat with `@JoelClawPandaBot`:
 
 - `/stop` — aborts the active turn without killing the gateway daemon.
-- `/kill` — emergency hard stop: disables launchd service and kills the daemon process.
+- `/esc` — alias for `/stop`.
 
-`/kill` is intentionally destructive. Use `/stop` first.
+Emergency-only manual control:
+
+- `/kill` — hard stop: disables launchd service and kills the daemon process.
+
+`/kill` is intentionally destructive. Use `/stop` or `/esc` first.
 
 ## Automated monitoring
 

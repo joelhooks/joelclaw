@@ -59,7 +59,7 @@ const LIGHT_MODEL_MAP: Record<string, { provider: string; id: string }> = {
 
 const TELEGRAM_NATIVE_COMMANDS = [
   { command: "stop", description: "Abort current operation" },
-  { command: "kill", description: "Hard stop gateway daemon" },
+  { command: "esc", description: "Alias for /stop" },
 ] as const;
 
 let pinnedStatusContext: CommandHandlerInit | undefined;

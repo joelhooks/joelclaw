@@ -90,7 +90,7 @@ function buildHelpHtml(): string {
     "",
     "<b>Native controls</b>",
     "<code>/stop</code> — Abort current operation",
-    "<code>/kill</code> — Hard stop gateway daemon",
+    "<code>/esc</code> — Alias for /stop",
   );
 
   return lines.join("\n");
