@@ -28,13 +28,23 @@ const postFieldsValidator = v.object({
   draft: v.optional(v.boolean()),
 });
 
-type ContentType = "adr" | "post";
+const discoveryFieldsValidator = v.object({
+  title: v.string(),
+  slug: v.string(),
+  source: v.string(),
+  discovered: v.string(),
+  tags: v.array(v.string()),
+  relevance: v.string(),
+  content: v.string(),
+});
+
+type ContentType = "adr" | "post" | "discovery";
 
 export const upsertContent = mutation({
   args: {
     resourceId: v.string(),
-    type: v.union(v.literal("adr"), v.literal("post")),
-    fields: v.union(adrFieldsValidator, postFieldsValidator),
+    type: v.union(v.literal("adr"), v.literal("post"), v.literal("discovery")),
+    fields: v.union(adrFieldsValidator, postFieldsValidator, discoveryFieldsValidator),
     searchText: v.string(),
     contentHash: v.optional(v.string()),
   },
@@ -51,6 +61,9 @@ export const upsertContent = mutation({
     }
     if (type === "post" && normalizedFields.number !== undefined) {
       throw new Error("Post content must not include ADR-only fields");
+    }
+    if (type === "discovery" && normalizedFields.number !== undefined) {
+      throw new Error("Discovery content must not include ADR-only fields");
     }
 
     const now = Date.now();

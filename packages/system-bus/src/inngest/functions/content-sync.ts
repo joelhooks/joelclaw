@@ -1,10 +1,11 @@
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import { removeContentResources } from "../../lib/convex";
-import { upsertAdr, upsertPost } from "../../lib/convex-content-sync";
+import { upsertAdr, upsertDiscovery, upsertPost } from "../../lib/convex-content-sync";
 import { revalidateContentCache } from "../../lib/revalidate";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
+import matter from "gray-matter";
 
 /**
  * Vault source directories — canonical write-side for content.
@@ -16,6 +17,12 @@ const CONTENT_SOURCES = [
     vaultDir: "/Users/joel/Vault/docs/decisions/",
     extension: ".md",
     skipFiles: ["readme.md"],
+  },
+  {
+    name: "discoveries",
+    vaultDir: "/Users/joel/Vault/Resources/discoveries/",
+    extension: ".md",
+    skipFiles: [],
   },
   // Posts are authored via Convex directly (joelclaw-web skill, publish flow).
   // No Vault source for posts — they live in Convex as canonical.
@@ -31,6 +38,19 @@ function listSourceFiles(dir: string, extension: string, skipFiles: readonly str
       .map((f) => join(dir, f));
   } catch {
     return [];
+  }
+}
+
+function readDiscoverySlug(filePath: string): string {
+  const fallback = basename(filePath, ".md");
+  try {
+    const raw = readFileSync(filePath, "utf-8");
+    const { data } = matter(raw);
+    return typeof data.slug === "string" && data.slug.trim().length > 0
+      ? data.slug.trim()
+      : fallback;
+  } catch {
+    return fallback;
   }
 }
 
@@ -85,10 +105,13 @@ async function collectContentGaps(): Promise<ContentGapResult[]> {
   const report: ContentGapResult[] = [];
 
   // Check ADRs
+  const adrSource = CONTENT_SOURCES.find((source) => source.name === "adrs");
+  if (!adrSource) throw new Error("Missing content source configuration for adrs");
+
   const adrFiles = listSourceFiles(
-    CONTENT_SOURCES[0].vaultDir,
-    CONTENT_SOURCES[0].extension,
-    CONTENT_SOURCES[0].skipFiles,
+    adrSource.vaultDir,
+    adrSource.extension,
+    adrSource.skipFiles,
   ).map((f) => basename(f, ".md"));
   const adrFileSet = new Set(adrFiles);
 
@@ -105,6 +128,32 @@ async function collectContentGaps(): Promise<ContentGapResult[]> {
     convexCount: adrSlugs.size,
     missingInConvex: adrFiles.filter((slug) => !adrSlugs.has(slug)),
     extraInConvex: [...adrSlugs].filter((slug) => !adrFileSet.has(slug)),
+  });
+
+  // Check discoveries
+  const discoverySource = CONTENT_SOURCES.find((source) => source.name === "discoveries");
+  if (!discoverySource) throw new Error("Missing content source configuration for discoveries");
+
+  const discoveryFiles = listSourceFiles(
+    discoverySource.vaultDir,
+    discoverySource.extension,
+    discoverySource.skipFiles,
+  ).map(readDiscoverySlug);
+  const discoveryFileSet = new Set(discoveryFiles);
+
+  const discoveryDocs = await client.query(listRef, { type: "discovery", limit: 5000 });
+  const discoverySlugs = new Set(
+    (Array.isArray(discoveryDocs) ? discoveryDocs : [])
+      .map((d: any) => d.fields?.slug)
+      .filter(Boolean) as string[],
+  );
+
+  report.push({
+    name: "discoveries",
+    vaultCount: discoveryFiles.length,
+    convexCount: discoverySlugs.size,
+    missingInConvex: discoveryFiles.filter((slug) => !discoverySlugs.has(slug)),
+    extraInConvex: [...discoverySlugs].filter((slug) => !discoveryFileSet.has(slug)),
   });
 
   // Posts are Convex-canonical (no Vault source). Just report count.
@@ -189,8 +238,10 @@ export const contentSync = inngest.createFunction(
         for (const filePath of files) {
           try {
             let action: string;
-            if (source.extension === ".md") {
+            if (source.name === "adrs") {
               action = await upsertAdr(filePath);
+            } else if (source.name === "discoveries") {
+              action = await upsertDiscovery(filePath);
             } else if (source.extension === ".mdx") {
               action = await upsertPost(filePath);
             } else {
@@ -200,7 +251,11 @@ export const contentSync = inngest.createFunction(
               result.skipped++;
             } else {
               result.upserted++;
-              result.writtenSlugs.push(basename(filePath, extname(filePath)));
+              if (source.name === "discoveries") {
+                result.writtenSlugs.push(readDiscoverySlug(filePath));
+              } else {
+                result.writtenSlugs.push(basename(filePath, extname(filePath)));
+              }
             }
           } catch (err) {
             result.errors.push(`${basename(filePath)}: ${String(err)}`);
@@ -233,6 +288,11 @@ export const contentSync = inngest.createFunction(
             tags.push("adrs");
             for (const slug of r.writtenSlugs) {
               tags.push(`adr:${slug}`);
+            }
+          } else if (r.name === "discoveries") {
+            tags.push("discoveries");
+            for (const slug of r.writtenSlugs) {
+              tags.push(`discovery:${slug}`);
             }
           } else if (r.name === "posts") {
             tags.push("articles");

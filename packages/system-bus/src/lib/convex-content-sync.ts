@@ -1,5 +1,5 @@
 /**
- * Convex content sync — upserts ADR and post files into Convex contentResources.
+ * Convex content sync — upserts ADR, discovery, and post files into Convex contentResources.
  *
  * Used by:
  * - content-sync Inngest function (incremental, after vault sync)
@@ -43,6 +43,16 @@ type PostFields = {
   draft?: boolean;
 };
 
+type DiscoveryFields = {
+  title: string;
+  slug: string;
+  source: string;
+  discovered: string;
+  tags: string[];
+  relevance: string;
+  content: string;
+};
+
 const VALID_STATUSES = [
   "proposed",
   "accepted",
@@ -75,11 +85,15 @@ function normalizeStatus(raw: unknown): string {
   return "proposed";
 }
 
+function extractHeadingTitle(content: string): string | undefined {
+  const h1 = content.match(/^#\s+(?:ADR-\d+:\s*)?(.+)$/m);
+  return h1?.[1]?.trim();
+}
+
 function extractAdrTitle(frontmatter: Record<string, unknown>, content: string): string {
   const title = asString(frontmatter.title);
   if (title) return title;
-  const h1 = content.match(/^#\s+(?:ADR-\d+:\s*)?(.+)$/m);
-  return h1?.[1]?.trim() ?? "Untitled";
+  return extractHeadingTitle(content) ?? "Untitled";
 }
 
 function extractAdrDescription(content: string): string | undefined {
@@ -105,6 +119,18 @@ function buildPostSearchText(fields: PostFields): string {
     fields.slug, fields.title, fields.date, fields.type,
     fields.description, fields.image, fields.content,
     ...(fields.tags ?? []),
+  ].filter((p): p is string => typeof p === "string" && p.length > 0).join(" ");
+}
+
+function buildDiscoverySearchText(fields: DiscoveryFields): string {
+  return [
+    fields.title,
+    fields.slug,
+    fields.source,
+    fields.discovered,
+    fields.relevance,
+    fields.content,
+    ...fields.tags,
   ].filter((p): p is string => typeof p === "string" && p.length > 0).join(" ");
 }
 
@@ -202,6 +228,43 @@ export async function upsertPost(filePath: string): Promise<string> {
     type: "post" as const,
     fields,
     searchText: buildPostSearchText(fields),
+    contentHash: hash,
+  });
+  return result?.action ?? "updated";
+}
+
+/**
+ * Upsert a single discovery (MD) file into Convex.
+ * Returns "inserted" | "updated" | "skipped".
+ */
+export async function upsertDiscovery(filePath: string): Promise<string> {
+  if (!existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
+  const fallbackSlug = basename(filePath, extname(filePath));
+  const raw = readFileSync(filePath, "utf-8");
+  const hash = contentHash(raw);
+  const { data, content } = matter(raw);
+  const meta = data as Record<string, unknown>;
+
+  const tags = Array.isArray(meta.tags)
+    ? meta.tags.filter((t: unknown): t is string => typeof t === "string")
+    : [];
+  const slug = asString(meta.slug) ?? fallbackSlug;
+
+  const fields: DiscoveryFields = {
+    title: extractHeadingTitle(content) ?? slug,
+    slug,
+    source: asString(meta.source) ?? "",
+    discovered: toDateString(meta.discovered),
+    tags,
+    relevance: asString(meta.relevance) ?? "",
+    content,
+  };
+
+  const result = await getClient().mutation(upsertRef, {
+    resourceId: `discovery:${slug}`,
+    type: "discovery" as const,
+    fields,
+    searchText: buildDiscoverySearchText(fields),
     contentHash: hash,
   });
   return result?.action ?? "updated";
