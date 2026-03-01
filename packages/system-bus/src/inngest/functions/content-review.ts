@@ -1539,6 +1539,62 @@ export const contentReviewApply = inngest.createFunction(
       return { notified: true };
     });
 
+    await step.run("notify-operator-telegram", async () => {
+      const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+      const TELEGRAM_CHAT_ID = process.env.TELEGRAM_USER_ID;
+
+      if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+        return { sent: false, reason: "telegram-not-configured" };
+      }
+
+      const messageHtml = [
+        "✅ <b>Feedback applied</b>",
+        "",
+        `<a href="https://joelclaw.com/${contentSlug}">${contentSlug}</a>`,
+        "",
+        `${feedbackStatusResult.appliedUpdated} applied · ${feedbackStatusResult.failedUpdated} failed`,
+      ].join("\n");
+
+      try {
+        const response = await fetch(
+          `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: TELEGRAM_CHAT_ID,
+              text: messageHtml,
+              parse_mode: "HTML",
+              disable_web_page_preview: false,
+            }),
+          },
+        );
+
+        if (!response.ok) {
+          const responseBody = await response.text().catch(() => "");
+          console.error("[content-review] failed to send telegram notification", {
+            contentType,
+            contentSlug,
+            status: response.status,
+            statusText: response.statusText,
+            body: responseBody,
+          });
+
+          return { sent: false, reason: "telegram-send-failed", status: response.status };
+        }
+
+        return { sent: true };
+      } catch (error) {
+        console.error("[content-review] failed to send telegram notification", {
+          contentType,
+          contentSlug,
+          error: formatError(error),
+        });
+
+        return { sent: false, reason: "telegram-send-failed" };
+      }
+    });
+
     return {
       status: "completed",
       contentType,
