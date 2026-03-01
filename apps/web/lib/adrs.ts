@@ -51,6 +51,9 @@ const VALID_STATUSES = [
   "withdrawn",
 ] as const;
 
+const ADR_NUMBER_PATTERN = /^\d{4}$/;
+const REVIEW_PATTERN = /\breview\b/i;
+
 function getConvexClient(): ConvexHttpClient {
   if (convexClient) return convexClient;
   if (!CONVEX_URL) {
@@ -150,8 +153,94 @@ function toAdrMeta(fields: ParsedAdrFields): AdrMeta {
   };
 }
 
+function isCanonicalAdrMeta(adr: AdrMeta): boolean {
+  return ADR_NUMBER_PATTERN.test(adr.number) && adr.slug.startsWith(`${adr.number}-`);
+}
+
+function isReviewLike(adr: AdrMeta): boolean {
+  return REVIEW_PATTERN.test(adr.slug) || REVIEW_PATTERN.test(adr.title);
+}
+
+function statusQuality(status: string): number {
+  switch (status) {
+    case "shipped":
+      return 60;
+    case "accepted":
+      return 50;
+    case "implemented":
+      return 40;
+    case "superseded":
+    case "deprecated":
+    case "rejected":
+      return 30;
+    case "proposed":
+      return 20;
+    default:
+      return 10;
+  }
+}
+
+function adrQualityScore(adr: AdrMeta): number {
+  let score = 0;
+
+  if (!isReviewLike(adr)) score += 100;
+  score += statusQuality(adr.status);
+
+  if (adr.date && adr.date !== "Unknown") score += 10;
+  if (adr.description) score += 1;
+
+  return score;
+}
+
+function compareAdrQuality(a: AdrMeta, b: AdrMeta): number {
+  const scoreDiff = adrQualityScore(a) - adrQualityScore(b);
+  if (scoreDiff !== 0) return scoreDiff;
+
+  if (a.slug === b.slug) return 0;
+  return a.slug.localeCompare(b.slug);
+}
+
+function dedupeByNumber(adrs: AdrMeta[]): AdrMeta[] {
+  const deduped = new Map<string, AdrMeta>();
+
+  for (const adr of adrs) {
+    const current = deduped.get(adr.number);
+    if (!current) {
+      deduped.set(adr.number, adr);
+      continue;
+    }
+
+    if (compareAdrQuality(adr, current) > 0) {
+      deduped.set(adr.number, adr);
+    }
+  }
+
+  return [...deduped.values()];
+}
+
 function sortByAdrNumberDesc(a: AdrMeta, b: AdrMeta): number {
-  return a.number > b.number ? -1 : 1;
+  const aNum = Number.parseInt(a.number, 10);
+  const bNum = Number.parseInt(b.number, 10);
+
+  if (Number.isFinite(aNum) && Number.isFinite(bNum) && aNum !== bNum) {
+    return bNum - aNum;
+  }
+
+  return a.slug.localeCompare(b.slug);
+}
+
+function normalizeAdrList(docs: unknown[]): AdrMeta[] {
+  const parsed = docs
+    .map((doc) => {
+      const record = asRecord(doc);
+      const fields = parseAdrFields(record.fields, slugFromResourceId(record.resourceId));
+      if (!fields) return null;
+      return toAdrMeta(fields);
+    })
+    .filter((adr): adr is AdrMeta => adr !== null)
+    .filter(isCanonicalAdrMeta);
+
+  return dedupeByNumber(parsed).sort(sortByAdrNumberDesc);
 }
 
 export async function getAllAdrs(): Promise<AdrMeta[]> {
@@ -169,15 +258,7 @@ export async function getAllAdrs(): Promise<AdrMeta[]> {
     throw new Error("Convex listByType returned a non-array payload for ADRs");
   }
 
-  return docs
-    .map((doc) => {
-      const record = asRecord(doc);
-      const fields = parseAdrFields(record.fields, slugFromResourceId(record.resourceId));
-      if (!fields) return null;
-      return toAdrMeta(fields);
-    })
-    .filter((adr): adr is AdrMeta => adr !== null)
-    .sort(sortByAdrNumberDesc);
+  return normalizeAdrList(docs);
 }
 
 export async function getAdr(slug: string) {
@@ -221,11 +302,5 @@ export async function getAdrSlugs(): Promise<string[]> {
     throw new Error("Convex listByType returned a non-array payload for ADR slugs");
   }
 
-  return docs
-    .map((doc) => {
-      const record = asRecord(doc);
-      const fields = parseAdrFields(record.fields, slugFromResourceId(record.resourceId));
-      return fields?.slug;
-    })
-    .filter((entry): entry is string => Boolean(entry));
+  return normalizeAdrList(docs).map((adr) => adr.slug);
 }

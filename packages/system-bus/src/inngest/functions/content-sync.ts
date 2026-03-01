@@ -1,39 +1,57 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
+import matter from "gray-matter";
 import { removeContentResources } from "../../lib/convex";
 import { upsertAdr, upsertDiscovery, upsertPost } from "../../lib/convex-content-sync";
 import { revalidateContentCache } from "../../lib/revalidate";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
-import matter from "gray-matter";
 
 /**
  * Vault source directories — canonical write-side for content.
  * ADR-0168: Vault is write-side, Convex is read-side, repo holds zero content.
  */
+const ADR_FILENAME_PATTERN = /^\d{4}-.+\.md$/;
+
+export function isCanonicalAdrFilename(fileName: string): boolean {
+  return ADR_FILENAME_PATTERN.test(fileName);
+}
+
 const CONTENT_SOURCES = [
   {
     name: "adrs",
     vaultDir: "/Users/joel/Vault/docs/decisions/",
     extension: ".md",
     skipFiles: ["readme.md"],
+    filePattern: ADR_FILENAME_PATTERN,
   },
   {
     name: "discoveries",
     vaultDir: "/Users/joel/Vault/Resources/discoveries/",
     extension: ".md",
     skipFiles: [],
+    filePattern: undefined,
   },
   // Posts are authored via Convex directly (joelclaw-web skill, publish flow).
   // No Vault source for posts — they live in Convex as canonical.
   // Add a Vault source here if posts move to Vault authoring.
 ] as const;
 
-function listSourceFiles(dir: string, extension: string, skipFiles: readonly string[]): string[] {
+function listSourceFiles(
+  dir: string,
+  extension: string,
+  skipFiles: readonly string[],
+  filePattern?: RegExp,
+): string[] {
   try {
     const skipLower = skipFiles.map((f) => f.toLowerCase());
     return readdirSync(dir)
-      .filter((f) => extname(f) === extension && !skipLower.includes(f.toLowerCase()))
+      .filter((f) => {
+        if (extname(f) !== extension) return false;
+        if (skipLower.includes(f.toLowerCase())) return false;
+        if (filePattern && !filePattern.test(f)) return false;
+        return true;
+      })
       .sort()
       .map((f) => join(dir, f));
   } catch {
@@ -112,6 +130,7 @@ async function collectContentGaps(): Promise<ContentGapResult[]> {
     adrSource.vaultDir,
     adrSource.extension,
     adrSource.skipFiles,
+    adrSource.filePattern,
   ).map((f) => basename(f, ".md"));
   const adrFileSet = new Set(adrFiles);
 
@@ -138,6 +157,7 @@ async function collectContentGaps(): Promise<ContentGapResult[]> {
     discoverySource.vaultDir,
     discoverySource.extension,
     discoverySource.skipFiles,
+    discoverySource.filePattern,
   ).map(readDiscoverySlug);
   const discoveryFileSet = new Set(discoveryFiles);
 
@@ -225,7 +245,12 @@ export const contentSync = inngest.createFunction(
       const out: SyncDirResult[] = [];
 
       for (const source of CONTENT_SOURCES) {
-        const files = listSourceFiles(source.vaultDir, source.extension, source.skipFiles);
+        const files = listSourceFiles(
+          source.vaultDir,
+          source.extension,
+          source.skipFiles,
+          source.filePattern,
+        );
         const result: SyncDirResult = {
           name: source.name,
           sourceCount: files.length,
@@ -272,7 +297,12 @@ export const contentSync = inngest.createFunction(
     const privateRemoved = await step.run("remove-private-discoveries", async () => {
       const discoverySource = CONTENT_SOURCES.find((s) => s.name === "discoveries");
       if (!discoverySource) return 0;
-      const files = listSourceFiles(discoverySource.vaultDir, discoverySource.extension, discoverySource.skipFiles);
+      const files = listSourceFiles(
+        discoverySource.vaultDir,
+        discoverySource.extension,
+        discoverySource.skipFiles,
+        discoverySource.filePattern,
+      );
       const privateResourceIds: string[] = [];
       for (const filePath of files) {
         try {

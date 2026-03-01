@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   adrExtraResourceIdsFromGaps,
   type ContentGapResult,
+  isCanonicalAdrFilename,
   isContentVerifyHealthy,
 } from "./content-sync";
 
@@ -15,6 +16,18 @@ function gap(overrides: Partial<ContentGapResult>): ContentGapResult {
     ...overrides,
   };
 }
+
+describe("ADR filename guard", () => {
+  test("allows canonical ADR filenames", () => {
+    expect(isCanonicalAdrFilename("0182-node-0-fleet-contract-and-localhost-resilience.md")).toBe(true);
+  });
+
+  test("rejects review notes and non-canonical files", () => {
+    expect(isCanonicalAdrFilename("review-0182-pdf-brain-codex.md")).toBe(false);
+    expect(isCanonicalAdrFilename("REVIEW-2026-02-25.md")).toBe(false);
+    expect(isCanonicalAdrFilename("README.md")).toBe(false);
+  });
+});
 
 describe("content verify health logic", () => {
   test("is healthy when no gaps exist", () => {

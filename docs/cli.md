@@ -168,8 +168,8 @@ joelclaw content
 
 Semantics:
 
-- `seed` — full Vault ADR sync to Convex.
-- `verify` — strict ADR drift check (fails healthy state on both missing and extra ADR records in Convex).
+- `seed` — full Vault ADR sync to Convex for canonical ADR filenames only (`NNNN-*.md`).
+- `verify` — strict ADR drift check against canonical ADR files (fails healthy state on both missing and extra ADR records in Convex).
 - `prune` — dry-run report of Convex ADR extras (`status: dry_run`).
 - `prune --apply` — removes ADR extras from Convex (`status: pruned`) and should be followed by `joelclaw content verify`.
 
