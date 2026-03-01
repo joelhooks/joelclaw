@@ -3,6 +3,15 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/* Ping keyframes for StatusPulseDot — Tailwind v4 won't generate
+   animate-ping from dynamic class maps in @repo/ui */
+@keyframes ping {
+  75%, 100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme {

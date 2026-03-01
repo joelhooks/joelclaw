@@ -200,8 +200,13 @@ export function StatusPulseDot({
     >
       {shouldPulse ? (
         <span
-          className="absolute inset-0 animate-ping rounded-full opacity-75"
-          style={{ backgroundColor: colors.bg, animationDelay: pulseDelay }}
+          className="absolute inset-0 rounded-full"
+          style={{
+            backgroundColor: colors.bg,
+            opacity: 0.75,
+            animation: `ping 1s cubic-bezier(0, 0, 0.2, 1) infinite`,
+            animationDelay: pulseDelay,
+          }}
         />
       ) : null}
       <span
