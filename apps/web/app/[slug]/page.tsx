@@ -12,7 +12,7 @@ import { SITE_NAME, SITE_URL } from "@/lib/constants";
 import { blogPostingJsonLd, breadcrumbJsonLd } from "@/lib/jsonld";
 import { mdxComponents } from "@/lib/mdx";
 import { rehypePlugins, remarkPlugins } from "@/lib/mdx-plugins";
-import { getPost, getPostSlugs } from "@/lib/posts";
+import { getPost, getPostSlugs, type Post } from "@/lib/posts";
 import { RelativeTime } from "@/lib/relative-time";
 
 type Props = { params: Promise<{ slug: string }> };
@@ -60,10 +60,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function PostPage({ params }: Props) {
   const { slug } = await params;
-  return <StaticArticleShell slug={slug} />;
+  const post = await getPost(slug);
+  if (!post) notFound();
+
+  return <StaticArticleShell slug={slug} post={post} />;
 }
 
-async function StaticArticleShell({ slug }: { slug: string }) {
+async function StaticArticleShell({ slug, post }: { slug: string; post: Post }) {
   return (
     <>
       {/* Realtime: Convex subscription detects content changes, triggers router.refresh() */}
@@ -73,19 +76,16 @@ async function StaticArticleShell({ slug }: { slug: string }) {
         </ConvexReaderProvider>
       </Suspense>
       <FeedbackStatusSlot slug={slug} />
-      {await CachedArticleContent({ slug })}
+      {await CachedArticleContent({ slug, post })}
     </>
   );
 }
 
-async function CachedArticleContent({ slug }: { slug: string }) {
+async function CachedArticleContent({ slug, post }: { slug: string; post: Post }) {
   "use cache";
   cacheLife("max");
   cacheTag(`article:${slug}`);
   cacheTag(`post:${slug}`);
-
-  const post = await getPost(slug);
-  if (!post) notFound();
 
   const { meta, content, diagnostics } = post;
 
