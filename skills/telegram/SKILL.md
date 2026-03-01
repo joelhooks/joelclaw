@@ -125,6 +125,7 @@ Callback data max: 64 bytes. Format: `action:context`.
 
 ### Commands
 
+- `/stop` — abort current turn without killing the daemon.
 - `/kill` — hard stop: disables launchd service + kills process. Emergency use only.
 
 ## Configuration

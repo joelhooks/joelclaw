@@ -17,6 +17,15 @@ joelclaw gateway unmute imessage
 
 Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 
+## Telegram control commands
+
+From Telegram chat with `@JoelClawPandaBot`:
+
+- `/stop` — aborts the active turn without killing the gateway daemon.
+- `/kill` — emergency hard stop: disables launchd service and kills the daemon process.
+
+`/kill` is intentionally destructive. Use `/stop` first.
+
 ## Automated monitoring
 
 Heartbeat fan-out now includes:

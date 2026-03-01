@@ -86,6 +86,13 @@ function buildHelpHtml(): string {
     }
   }
 
+  lines.push(
+    "",
+    "<b>Native controls</b>",
+    "<code>/stop</code> — Abort current operation",
+    "<code>/kill</code> — Hard stop gateway daemon",
+  );
+
   return lines.join("\n");
 }
 

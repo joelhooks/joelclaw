@@ -1219,6 +1219,9 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
         getStatusSnapshot: getGatewayStatusSnapshot,
       });
     },
+    abortCurrentTurn: async () => {
+      await session.abort();
+    },
   });
 
   try {

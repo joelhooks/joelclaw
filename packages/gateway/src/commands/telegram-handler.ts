@@ -57,6 +57,11 @@ const LIGHT_MODEL_MAP: Record<string, { provider: string; id: string }> = {
   sonnet: { provider: "anthropic", id: "claude-sonnet-4-5" },
 };
 
+const TELEGRAM_NATIVE_COMMANDS = [
+  { command: "stop", description: "Abort current operation" },
+  { command: "kill", description: "Hard stop gateway daemon" },
+] as const;
+
 let pinnedStatusContext: CommandHandlerInit | undefined;
 
 function escapeHtml(text: string): string {
@@ -497,12 +502,18 @@ export async function initializeTelegramCommandHandler(init: CommandHandlerInit)
   pinnedStatusContext = init;
 
   const menuCommands = getCommands().filter((command) => !command.hidden);
-  // Telegram API issues (e.g. stale/invalid bot state) should not crash the gateway.
-  try {
-    await init.bot.api.setMyCommands(menuCommands.map((command) => ({
+  const seenMenuCommands = new Set(menuCommands.map((command) => command.nativeName));
+  const botMenuCommands = [
+    ...menuCommands.map((command) => ({
       command: command.nativeName,
       description: command.description,
-    })));
+    })),
+    ...TELEGRAM_NATIVE_COMMANDS.filter((command) => !seenMenuCommands.has(command.command)),
+  ];
+
+  // Telegram API issues (e.g. stale/invalid bot state) should not crash the gateway.
+  try {
+    await init.bot.api.setMyCommands(botMenuCommands);
   } catch (error) {
     console.warn("[gateway:telegram] setMyCommands failed; continuing without command registration", error);
   }
