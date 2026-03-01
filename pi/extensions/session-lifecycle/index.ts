@@ -38,6 +38,10 @@ const MEMORY_MD = path.join(HOME, ".joelclaw", "workspace", "MEMORY.md");
 const MEMORY_DIR = path.join(HOME, ".joelclaw", "workspace", "memory");
 const SLOG_PATH = path.join(VAULT, "system", "system-log.jsonl");
 const PROJECTS_DIR = path.join(VAULT, "Projects");
+const JOELCLAW_REPO = path.join(HOME, "Code", "joelhooks", "joelclaw");
+const AGENT_MAIL_STEERING_DIR = path.join(HOME, ".joelclaw", "workspace", "agent-mail-steering");
+const JOELCLAW_COMMAND_TIMEOUT_MS = 7000;
+const AGENT_MAIL_MIN_DAILY_SIGNALS = 2;
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -194,6 +198,333 @@ function activeProjects(): string[] {
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") return null;
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function asNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return value;
+}
+
+type JoelclawJsonResult =
+  | { ok: true; envelope: Record<string, unknown> }
+  | { ok: false; error: string; envelope?: Record<string, unknown> };
+
+async function runJoelclawJsonCommand(args: string[], timeoutMs = JOELCLAW_COMMAND_TIMEOUT_MS): Promise<JoelclawJsonResult> {
+  return new Promise((resolve) => {
+    const child = spawn("joelclaw", args, {
+      env: { ...process.env, TERM: "dumb" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+
+    const done = (result: JoelclawJsonResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      done({ ok: false, error: `timeout after ${timeoutMs}ms` });
+    }, timeoutMs);
+
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", (error) => {
+      done({ ok: false, error: error.message });
+    });
+
+    child.on("close", (code) => {
+      const raw = stdout.trim();
+      if (code !== 0 || raw.length === 0) {
+        const details = stderr.trim() || raw || `exit ${String(code ?? "?")}`;
+        done({ ok: false, error: details });
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(raw);
+        const envelope = asRecord(parsed);
+        if (!envelope) {
+          done({ ok: false, error: "command returned non-object JSON" });
+          return;
+        }
+
+        const ok = envelope.ok;
+        if (ok === false) {
+          const errorRecord = asRecord(envelope.error);
+          done({
+            ok: false,
+            envelope,
+            error: asString(errorRecord?.message) ?? "command returned ok=false",
+          });
+          return;
+        }
+
+        done({ ok: true, envelope });
+      } catch (error) {
+        done({ ok: false, error: `invalid JSON output: ${String(error)}` });
+      }
+    });
+  });
+}
+
+type AgentMailSteeringStatus = "good" | "watch" | "poor";
+
+type AgentMailSteeringSnapshot = {
+  date: string;
+  generatedAt: string;
+  promptHash: string;
+  mail: {
+    locksActive: number;
+    locksStale: number;
+    announceSignalsTotal: number;
+    taskSignalsTotal: number;
+    statusSignalsTotal: number;
+    handoffSignalsTotal: number;
+    coordinationSignalsTotal: number;
+    coordinationSignalsDelta: number | null;
+  };
+  otel: {
+    available: boolean;
+    query: string;
+    found: number | null;
+    error: string | null;
+  };
+  effectiveness: {
+    score: number;
+    status: AgentMailSteeringStatus;
+    recommendations: string[];
+  };
+};
+
+function steeringSnapshotPath(date = todayStr()): string {
+  return path.join(AGENT_MAIL_STEERING_DIR, `${date}.json`);
+}
+
+function readSteeringSnapshot(date = todayStr()): AgentMailSteeringSnapshot | null {
+  const raw = readSafe(steeringSnapshotPath(date));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as AgentMailSteeringSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+function readLatestSteeringSnapshotBefore(date: string): AgentMailSteeringSnapshot | null {
+  try {
+    const entries = fs
+      .readdirSync(AGENT_MAIL_STEERING_DIR)
+      .filter((name) => /^\d{4}-\d{2}-\d{2}\.json$/.test(name) && name < `${date}.json`)
+      .sort();
+
+    const latest = entries.at(-1);
+    if (!latest) return null;
+
+    const raw = readSafe(path.join(AGENT_MAIL_STEERING_DIR, latest));
+    if (!raw) return null;
+
+    return JSON.parse(raw) as AgentMailSteeringSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+function writeSteeringSnapshot(snapshot: AgentMailSteeringSnapshot): void {
+  try {
+    fs.mkdirSync(AGENT_MAIL_STEERING_DIR, { recursive: true });
+    fs.writeFileSync(
+      steeringSnapshotPath(snapshot.date),
+      JSON.stringify(snapshot, null, 2) + "\n",
+      "utf-8",
+    );
+  } catch {}
+}
+
+function mailSignalCount(result: JoelclawJsonResult): number {
+  if (!result.ok) return 0;
+  const payload = asRecord(result.envelope.result);
+  return asNumber(payload?.count) ?? 0;
+}
+
+function appendSteeringSummaryToDaily(snapshot: AgentMailSteeringSnapshot): void {
+  const delta = snapshot.mail.coordinationSignalsDelta;
+  const lines = [
+    `\n### 📡 Agent-mail steering (${timeStamp()})`,
+    `status: **${snapshot.effectiveness.status}** (${snapshot.effectiveness.score}/100)`,
+    `signals: announce=${snapshot.mail.announceSignalsTotal}, task=${snapshot.mail.taskSignalsTotal}, status=${snapshot.mail.statusSignalsTotal}, handoff=${snapshot.mail.handoffSignalsTotal}, total=${snapshot.mail.coordinationSignalsTotal}${delta === null ? "" : ` (Δ ${delta >= 0 ? "+" : ""}${delta})`}`,
+    `locks: active=${snapshot.mail.locksActive}, stale=${snapshot.mail.locksStale}`,
+    snapshot.otel.available
+      ? `otel(${snapshot.otel.query},24h): found=${snapshot.otel.found ?? 0}`
+      : `otel(${snapshot.otel.query},24h): unavailable (${snapshot.otel.error ?? "unknown"})`,
+  ];
+
+  const steering = snapshot.effectiveness.recommendations.at(0);
+  if (steering) lines.push(`steering: ${steering}`);
+
+  appendToDaily(lines.join("\n") + "\n");
+}
+
+function buildSteeringHint(snapshot: AgentMailSteeringSnapshot | null): string | null {
+  if (!snapshot) return null;
+  if (snapshot.effectiveness.status === "good") return null;
+  const first = snapshot.effectiveness.recommendations.at(0);
+  if (!first) return null;
+  return `🎯 Today's steering hint: ${first}`;
+}
+
+const TURN_REMINDER_LINES = [
+  "🪵 BEFORE your final response: Did you install, configure, fix, remove, or change any tool/service/infra this turn? If yes → `slog write` NOW, not later. The user should never have to remind you. If NOTHING changed (no installs, no config, no fixes, no infra) → do NOT mention slog at all. No \"no slog needed\" or \"no infra changed\" filler.",
+  "📐 joelclaw work should be backed by an ADR. If there isn't one, ask why. Keep ADRs groomed — update status, mark superseded, close what's done.",
+  "📋 For non-trivial tasks: ack and summarize your plan BEFORE starting work, then pause ~10 seconds for a possible course-correction. This is NOT a permission gate — proceed after the pause. It's just a window for Joel to intervene if the direction is wrong. Trivial tasks (quick lookups, small edits) don't need this.",
+  "📬 Agent mail protocol is mandatory: announce active task/scope via `mail_send`/`joelclaw mail send`, check `mail_inbox`/`joelclaw mail inbox`, reserve edit paths with short leases (`joelclaw mail reserve --ttl-seconds 900`), renew when needed (`joelclaw mail renew --extend-seconds 900`), and always release (`mail_release`/`joelclaw mail release`) after commit/handoff.",
+  "📡 Daily monitor+steer loop runs once/day using agent mail traffic + OTEL + prompt-hash effectiveness. Apply any steering hint shown below.",
+  "If this turn has no coordination risk or file edits, do NOT mention agent mail at all. No filler. No need to reply to this reminder.",
+] as const;
+
+const TURN_REMINDER_TEMPLATE = TURN_REMINDER_LINES.join("\n");
+
+function buildTurnReminderContent(snapshot: AgentMailSteeringSnapshot | null): string {
+  const lines = [...TURN_REMINDER_LINES];
+  const hint = buildSteeringHint(snapshot);
+  if (hint) {
+    lines.splice(lines.length - 1, 0, hint);
+  }
+  return lines.join("\n");
+}
+
+function promptTemplateHash(promptTemplate: string): string {
+  return crypto
+    .createHash("sha256")
+    .update(promptTemplate)
+    .digest("hex")
+    .slice(0, 16);
+}
+
+async function collectAgentMailSteeringSnapshot(promptTemplate: string): Promise<AgentMailSteeringSnapshot> {
+  const date = todayStr();
+  const promptHash = promptTemplateHash(promptTemplate);
+
+  const [locksResult, announceResult, taskResult, statusResult, handoffResult, otelResult] = await Promise.all([
+    runJoelclawJsonCommand(["mail", "locks", "--project", JOELCLAW_REPO]),
+    runJoelclawJsonCommand(["mail", "search", "--project", JOELCLAW_REPO, "--query", "Starting:"]),
+    runJoelclawJsonCommand(["mail", "search", "--project", JOELCLAW_REPO, "--query", "Task:"]),
+    runJoelclawJsonCommand(["mail", "search", "--project", JOELCLAW_REPO, "--query", "Status:"]),
+    runJoelclawJsonCommand(["mail", "search", "--project", JOELCLAW_REPO, "--query", "reserved paths"]),
+    runJoelclawJsonCommand(["otel", "search", "mail", "--hours", "24", "--limit", "1"]),
+  ]);
+
+  const locksPayload = locksResult.ok ? asRecord(locksResult.envelope.result) : null;
+  const lockSummary = asRecord(asRecord(locksPayload?.locks)?.summary);
+
+  const locksActive = asNumber(locksPayload?.count) ?? 0;
+  const locksStale = asNumber(lockSummary?.stale) ?? 0;
+
+  const announceSignalsTotal = mailSignalCount(announceResult);
+  const taskSignalsTotal = mailSignalCount(taskResult);
+  const statusSignalsTotal = mailSignalCount(statusResult);
+  const handoffSignalsTotal = mailSignalCount(handoffResult);
+  const coordinationSignalsTotal = announceSignalsTotal + taskSignalsTotal + statusSignalsTotal + handoffSignalsTotal;
+
+  const previous = readLatestSteeringSnapshotBefore(date);
+  const previousComparable = previous?.promptHash === promptHash
+    ? previous.mail.coordinationSignalsTotal
+    : null;
+  const coordinationSignalsDelta = previousComparable === null
+    ? null
+    : coordinationSignalsTotal - previousComparable;
+
+  const otelPayload = otelResult.ok ? asRecord(otelResult.envelope.result) : null;
+  const otelFound = asNumber(otelPayload?.found);
+  const otelErrorRecord = !otelResult.ok ? asRecord(otelResult.envelope?.error) : null;
+
+  const recommendations: string[] = [];
+  let score = 100;
+
+  if (locksStale > 0) {
+    score -= 60;
+    recommendations.push("Stale locks detected. Tighten release discipline in the reminder and enforce explicit release commands at task end.");
+  }
+
+  if (locksActive > 0) {
+    score -= 15;
+    recommendations.push("Active locks are accumulating. Keep leases short and renew only while work is in flight.");
+  }
+
+  if (coordinationSignalsTotal === 0) {
+    score -= 30;
+    recommendations.push("No coordination mail signals found. Keep announce/status/handoff examples explicit in prompt guidance.");
+  } else if (coordinationSignalsDelta !== null && coordinationSignalsDelta < AGENT_MAIL_MIN_DAILY_SIGNALS) {
+    score -= 25;
+    recommendations.push("Daily coordination signal growth is low. Strengthen prompt wording around status updates and handoffs.");
+  }
+
+  if (otelResult.ok) {
+    if ((otelFound ?? 0) === 0) {
+      score -= 20;
+      recommendations.push("OTEL found no mail-related events in the last 24h. Verify telemetry emission and query coverage.");
+    }
+  } else {
+    score -= 10;
+    recommendations.push("OTEL query failed. Fix Typesense/OTEL availability so prompt steering has live feedback.");
+  }
+
+  score = Math.max(0, Math.min(100, score));
+
+  const status: AgentMailSteeringStatus = score >= 80
+    ? "good"
+    : score >= 55
+      ? "watch"
+      : "poor";
+
+  const uniqueRecommendations = [...new Set(recommendations)];
+
+  return {
+    date,
+    generatedAt: new Date().toISOString(),
+    promptHash,
+    mail: {
+      locksActive,
+      locksStale,
+      announceSignalsTotal,
+      taskSignalsTotal,
+      statusSignalsTotal,
+      handoffSignalsTotal,
+      coordinationSignalsTotal,
+      coordinationSignalsDelta,
+    },
+    otel: {
+      available: otelResult.ok,
+      query: "mail",
+      found: otelFound,
+      error: otelResult.ok ? null : (asString(otelErrorRecord?.message) ?? otelResult.error),
+    },
+    effectiveness: {
+      score,
+      status,
+      recommendations: status === "good" ? [] : uniqueRecommendations,
+    },
+  };
+}
+
 // ── Static system prompt awareness (same every turn → cacheable) ──
 
 function currentTimestamp(): string {
@@ -235,6 +566,60 @@ export default function (pi: ExtensionAPI) {
   let sessionStartTime = Date.now();
   let userMessageCount = 0;
   let firstUserMessage = "";
+  let steeringSnapshotCache: AgentMailSteeringSnapshot | null = null;
+  let steeringSnapshotPromise: Promise<AgentMailSteeringSnapshot | null> | null = null;
+
+  async function ensureDailySteeringSnapshot(): Promise<AgentMailSteeringSnapshot | null> {
+    const date = todayStr();
+    const expectedPromptHash = promptTemplateHash(TURN_REMINDER_TEMPLATE);
+
+    if (
+      steeringSnapshotCache &&
+      steeringSnapshotCache.date === date &&
+      steeringSnapshotCache.promptHash === expectedPromptHash
+    ) {
+      return steeringSnapshotCache;
+    }
+
+    const existing = readSteeringSnapshot(date);
+    if (existing && existing.promptHash === expectedPromptHash) {
+      steeringSnapshotCache = existing;
+      return existing;
+    }
+
+    if (!steeringSnapshotPromise) {
+      steeringSnapshotPromise = (async () => {
+        try {
+          const snapshot = await collectAgentMailSteeringSnapshot(TURN_REMINDER_TEMPLATE);
+          writeSteeringSnapshot(snapshot);
+          appendSteeringSummaryToDaily(snapshot);
+          emitEvent("agent-mail/steering.reviewed", {
+            date: snapshot.date,
+            generatedAt: snapshot.generatedAt,
+            promptHash: snapshot.promptHash,
+            status: snapshot.effectiveness.status,
+            score: snapshot.effectiveness.score,
+            locksActive: snapshot.mail.locksActive,
+            locksStale: snapshot.mail.locksStale,
+            coordinationSignalsTotal: snapshot.mail.coordinationSignalsTotal,
+            coordinationSignalsDelta: snapshot.mail.coordinationSignalsDelta,
+            otelAvailable: snapshot.otel.available,
+            otelFound: snapshot.otel.found,
+            recommendations: snapshot.effectiveness.recommendations,
+          });
+          steeringSnapshotCache = snapshot;
+          return snapshot;
+        } catch (error) {
+          console.log(`[session-lifecycle] agent-mail steering check failed: ${String(error)}`);
+          return null;
+        } finally {
+          steeringSnapshotPromise = null;
+        }
+      })();
+    }
+
+    return steeringSnapshotPromise;
+  }
 
   // ── name_session tool: let the agent name the session ───────
 
@@ -309,6 +694,10 @@ export default function (pi: ExtensionAPI) {
     userMessageCount = 0;
     firstUserMessage = "";
     networkErrorSeen.clear();
+    steeringSnapshotPromise = null;
+    if (steeringSnapshotCache && steeringSnapshotCache.date !== todayStr()) {
+      steeringSnapshotCache = null;
+    }
   });
 
   // ── before_agent_start: briefing + awareness ────────────────
@@ -336,17 +725,20 @@ export default function (pi: ExtensionAPI) {
     // The full SLOG_REMINDER stays in systemPrompt for reference/categories,
     // but this message sits right next to the user prompt where the LLM sees it.
     if (hasBriefed) {
+      const steeringSnapshot = await ensureDailySteeringSnapshot();
       return {
         systemPrompt,
         message: {
           customType: "slog-nudge",
-          content:
-            "🪵 BEFORE your final response: Did you install, configure, fix, remove, or change any tool/service/infra this turn? If yes → `slog write` NOW, not later. The user should never have to remind you. If NOTHING changed (no installs, no config, no fixes, no infra) → do NOT mention slog at all. No \"no slog needed\" or \"no infra changed\" filler.\n📐 joelclaw work should be backed by an ADR. If there isn't one, ask why. Keep ADRs groomed — update status, mark superseded, close what's done.\n📋 For non-trivial tasks: ack and summarize your plan BEFORE starting work, then pause ~10 seconds for a possible course-correction. This is NOT a permission gate — proceed after the pause. It's just a window for Joel to intervene if the direction is wrong. Trivial tasks (quick lookups, small edits) don't need this.\n📬 Agent mail protocol is mandatory: announce active task/scope via `mail_send`/`joelclaw mail send`, check `mail_inbox`/`joelclaw mail inbox`, reserve edit paths with short leases (`joelclaw mail reserve --ttl-seconds 900`), renew when needed (`joelclaw mail renew --extend-seconds 900`), and always release (`mail_release`/`joelclaw mail release`) after commit/handoff.\n📡 Daily monitor+steer loop (once/day): review agent mail traffic + related OTEL + current reminder text, then tighten prompts/rules based on observed failures.\nIf this turn has no coordination risk or file edits, do NOT mention agent mail at all. No filler. No need to reply to this reminder.",
+          content: buildTurnReminderContent(steeringSnapshot),
           display: false,
         },
       };
     }
     hasBriefed = true;
+
+    // Kick off daily steering collection in the background on first turn.
+    void ensureDailySteeringSnapshot();
 
     // Build briefing from live system state
     const sections: string[] = [];

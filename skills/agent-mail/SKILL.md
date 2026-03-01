@@ -9,7 +9,7 @@ description: >-
   'send a message to', 'check inbox', 'mail status', 'reserve files',
   'release files', 'agent coordination', 'file lock', 'mail an agent',
   'who has this file', or any multi-agent coordination task.
-version: 0.2.0
+version: 0.3.0
 author: joel
 tags:
   - coordination
@@ -35,6 +35,7 @@ pi session → mail_* tools (extension)
 - **Server**: mcp_agent_mail at `http://127.0.0.1:8765`, managed by launchd (`com.joelclaw.agent-mail`)
 - **CLI**: `joelclaw mail {status|register|send|inbox|read|reserve|renew|release|locks|search}`
 - **Extension**: `~/.pi/agent/extensions/agent-mail/` — 6 tools (mail_send, mail_inbox, mail_read, mail_reserve, mail_release, mail_status)
+- **Prompt steering**: `pi/extensions/session-lifecycle/index.ts` runs a daily monitor+steer loop using agent-mail signals + OTEL + reminder hash and writes snapshots to `~/.joelclaw/workspace/agent-mail-steering/YYYY-MM-DD.json`.
 - **Project key**: `/Users/joel/Code/joelhooks/joelclaw` (absolute path, required by server)
 - **Agent naming**: AdjectiveNoun format (e.g. BlueFox, RedStone). Server rejects non-conforming names.
 
@@ -115,6 +116,12 @@ joelclaw mail search --query "refactor"
 - Workers `reserve` before editing and `release` after commit/exit path
 - Story pipeline checks reservations before dispatching
 - Conflicts are surfaced and must be coordinated explicitly
+
+### Daily monitor + steer loop (shipped)
+- Runs once/day from `pi/extensions/session-lifecycle`.
+- Collects agent-mail traffic signals (`Starting:`, `Task:`, `Status:`, handoff phrasing), lock health, and OTEL mail query coverage.
+- Scores reminder effectiveness and injects a targeted steering hint into hidden per-turn reminder text when drift is detected.
+- Emits `agent-mail/steering.reviewed` and appends a short daily log entry.
 
 ## Pi Extension Tools
 
