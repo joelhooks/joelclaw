@@ -17,15 +17,27 @@ joelclaw gateway unmute imessage
 
 Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 
-## Gateway operator check-in cadence
+## Gateway operator steering cadence
 
-The gateway role prompt (`roles/gateway.md`) requires proactive status check-ins during active work:
+The gateway role prompt (`roles/gateway.md`) requires proactive steering check-ins during active work:
 
 - one short check-in at start
-- another every ~3–5 minutes while work is still active
+- another every ~60–120 seconds while work is still active
+- never more than 2 autonomous actions in a row without a check-in
 - immediate check-in on state changes (delegated, blocked, recovered, done)
+- if behavior looks frenzy/noisy, stop and request steering before continuing
 
 Keep updates concise for mobile Telegram reading.
+
+## Role resolution (gateway vs interactive)
+
+Gateway sessions run with `GATEWAY_ROLE=central`. The `identity-inject` extension resolves the role file in this order:
+
+1. `JOELCLAW_ROLE_FILE` env override (if set)
+2. `~/.joelclaw/roles/gateway.md` when `GATEWAY_ROLE=central`
+3. fallback to `~/.joelclaw/ROLE.md`
+
+This prevents the gateway session from inheriting interactive role instructions.
 
 ## Interrupt controls by channel
 

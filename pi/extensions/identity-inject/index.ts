@@ -1,22 +1,43 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 
 const HOME = process.env.HOME ?? "~";
 const JOELCLAW_DIR = join(HOME, ".joelclaw");
+const DEFAULT_ROLE_FILE = "ROLE.md";
+const GATEWAY_ROLE_FILE = "roles/gateway.md";
 
-const IDENTITY_FILES: ReadonlyArray<{
+type IdentityFileSpec = {
   label: string;
   file: string;
   maxChars?: number;
-}> = [
+};
+
+const BASE_IDENTITY_FILES: ReadonlyArray<IdentityFileSpec> = [
   { label: "Identity", file: "IDENTITY.md" },
   { label: "Soul", file: "SOUL.md" },
-  { label: "Role", file: "ROLE.md" },
+  { label: "Role", file: DEFAULT_ROLE_FILE },
   { label: "User", file: "USER.md" },
   { label: "Tools", file: "TOOLS.md", maxChars: 6_000 },
 ] as const;
+
+function resolvePreferredRoleFile(): string {
+  const override = process.env.JOELCLAW_ROLE_FILE?.trim();
+  if (override && override.length > 0) return override;
+  if (process.env.GATEWAY_ROLE === "central") return GATEWAY_ROLE_FILE;
+  return DEFAULT_ROLE_FILE;
+}
+
+function resolveIdentityPath(file: string): string {
+  return isAbsolute(file) ? file : join(JOELCLAW_DIR, file);
+}
+
+function resolveIdentitySpecs(roleFile: string): IdentityFileSpec[] {
+  return BASE_IDENTITY_FILES.map((spec) =>
+    spec.label === "Role" ? { ...spec, file: roleFile } : spec,
+  );
+}
 
 async function emitOtel(action: string, data: Record<string, unknown>) {
   try {
@@ -58,6 +79,7 @@ function readIfExists(path: string, maxChars?: number): ReadIdentityFileResult {
 
 type LoadedIdentityFile = {
   file: string;
+  path: string;
   content: string;
   size: number;
 };
@@ -68,6 +90,8 @@ type LoadedIdentityFilesResult = {
   missingFiles: string[];
   truncatedFiles: string[];
   loadTimeMs: number;
+  roleFileRequested: string;
+  roleFileApplied: string;
 };
 
 function loadIdentityFiles(): LoadedIdentityFilesResult {
@@ -77,17 +101,36 @@ function loadIdentityFiles(): LoadedIdentityFilesResult {
   const truncatedFiles: string[] = [];
   let totalChars = 0;
 
-  for (const { file, maxChars } of IDENTITY_FILES) {
-    const { content, truncated } = readIfExists(join(JOELCLAW_DIR, file), maxChars);
+  const roleFileRequested = resolvePreferredRoleFile();
+  let roleFileApplied = roleFileRequested;
+
+  for (const spec of resolveIdentitySpecs(roleFileRequested)) {
+    const primaryPath = resolveIdentityPath(spec.file);
+    let effectiveFile = spec.file;
+    let effectivePath = primaryPath;
+    let { content, truncated } = readIfExists(primaryPath, spec.maxChars);
+
+    if (!content && spec.label === "Role" && spec.file !== DEFAULT_ROLE_FILE) {
+      const fallbackPath = resolveIdentityPath(DEFAULT_ROLE_FILE);
+      const fallback = readIfExists(fallbackPath, spec.maxChars);
+      if (fallback.content) {
+        content = fallback.content;
+        truncated = fallback.truncated;
+        effectiveFile = DEFAULT_ROLE_FILE;
+        effectivePath = fallbackPath;
+      }
+    }
+
     if (!content) {
-      missingFiles.push(file);
+      missingFiles.push(spec.file);
       continue;
     }
 
     const size = content.length;
-    loaded.push({ file, content, size });
+    loaded.push({ file: effectiveFile, path: effectivePath, content, size });
     totalChars += size;
-    if (truncated) truncatedFiles.push(file);
+    if (truncated) truncatedFiles.push(effectiveFile);
+    if (spec.label === "Role") roleFileApplied = effectiveFile;
   }
 
   return {
@@ -96,6 +139,8 @@ function loadIdentityFiles(): LoadedIdentityFilesResult {
     missingFiles,
     truncatedFiles,
     loadTimeMs: Date.now() - startTime,
+    roleFileRequested,
+    roleFileApplied,
   };
 }
 
@@ -121,19 +166,26 @@ export default function (pi: ExtensionAPI) {
       missingFiles,
       truncatedFiles,
       loadTimeMs,
+      roleFileRequested,
+      roleFileApplied,
     } = loadIdentityFiles();
     identityBlock = loadIdentityBlock(loadedFiles);
     loaded = true;
     const count = loadedFiles.length;
-    console.error(`[identity-inject] Loaded ${count} identity files from ${JOELCLAW_DIR}`);
-    emitOtel("identity-loaded", {
+    console.error(
+      `[identity-inject] Loaded ${count} identity files from ${JOELCLAW_DIR} (role=${roleFileApplied}, requested=${roleFileRequested})`,
+    );
+    void emitOtel("identity-loaded", {
       fileCount: count,
-      files: loadedFiles.map(({ file, size }) => ({ file, size })),
+      files: loadedFiles.map(({ file, path, size }) => ({ file, path, size })),
       totalChars,
       missingFiles,
       truncatedFiles,
       loadTimeMs,
       identityDir: JOELCLAW_DIR,
+      roleFileRequested,
+      roleFileApplied,
+      gatewayRole: process.env.GATEWAY_ROLE ?? null,
     });
   }
 

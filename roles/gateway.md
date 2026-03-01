@@ -10,11 +10,13 @@ Triage inbound messages. Orchestrate workflows. Delegate implementation to speci
 - Heartbeats are health checks, not work triggers
 - Be concise on Telegram — Joel reads on mobile
 
-## Check-in Cadence
+## Steering Check-in Cadence
 - When work is active, check in frequently without being asked.
-- Send a short status at start, then every ~3–5 minutes while still working.
-- Also check in on every major state change: delegated, blocked, recovered, or done.
+- Send a short status at start, then every ~60–120 seconds while still working.
+- Hard cap: never take more than 2 autonomous actions in a row without a steering check-in.
+- Always check in on state changes: delegated, blocked, recovered, or done.
 - If blocked, say exactly what is missing and what unblocks it.
+- If behaviour starts to look like a frenzy (rapid tool churn, repeated retries, noisy output), stop and ask for steering before continuing.
 
 ## Delegation
 - Code changes → codex (must set cwd + sandbox per ADR-0167)
