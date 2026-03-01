@@ -5,6 +5,10 @@ import { executeCapabilityCommand } from "../capabilities/runtime"
 import { getAgentMailUrl } from "../lib/agent-mail"
 import { type NextAction, respond, respondError } from "../response"
 
+const DEFAULT_MAIL_RESERVE_TTL_SECONDS = 900
+const DEFAULT_MAIL_RENEW_EXTEND_SECONDS = 900
+const MIN_MAIL_RESERVE_TTL_SECONDS = 60
+
 const defaultProject = Options.text("project").pipe(
   Options.withDefault("/Users/joel/Code/joelhooks/joelclaw"),
   Options.withDescription("Project key — absolute path (default: joelclaw repo)"),
@@ -373,8 +377,12 @@ const reserveCmd = Command.make(
     paths: Options.text("paths").pipe(
       Options.withDescription("Comma-separated paths"),
     ),
+    ttlSeconds: Options.integer("ttl-seconds").pipe(
+      Options.withDefault(DEFAULT_MAIL_RESERVE_TTL_SECONDS),
+      Options.withDescription(`Reservation TTL seconds (default: ${String(DEFAULT_MAIL_RESERVE_TTL_SECONDS)})`),
+    ),
   },
-  ({ project, agent, paths }) =>
+  ({ project, agent, paths, ttlSeconds }) =>
     Effect.gen(function* () {
       const parsedPaths = pathListFromCsv(paths)
       if (parsedPaths.length === 0) {
@@ -384,7 +392,20 @@ const reserveCmd = Command.make(
             "--paths must include at least one path",
             "MAIL_RESERVE_PATHS_REQUIRED",
             "Provide comma-separated paths via --paths",
-            [{ command: "joelclaw mail reserve --project <project> --agent <agent> --paths <comma-separated-paths>", description: "Retry with valid paths" }],
+            [{ command: "joelclaw mail reserve --project <project> --agent <agent> --paths <comma-separated-paths> [--ttl-seconds 900]", description: "Retry with valid paths" }],
+          ),
+        )
+        return
+      }
+
+      if (ttlSeconds < MIN_MAIL_RESERVE_TTL_SECONDS) {
+        yield* Console.log(
+          respondError(
+            "mail reserve",
+            `--ttl-seconds must be >= ${String(MIN_MAIL_RESERVE_TTL_SECONDS)}`,
+            "MAIL_RESERVE_TTL_INVALID",
+            `Use --ttl-seconds ${String(DEFAULT_MAIL_RESERVE_TTL_SECONDS)} (or another value >= ${String(MIN_MAIL_RESERVE_TTL_SECONDS)}).`,
+            [{ command: "joelclaw mail reserve --project <project> --agent <agent> --paths <comma-separated-paths> --ttl-seconds 900", description: "Retry reserve with valid TTL" }],
           ),
         )
         return
@@ -397,6 +418,7 @@ const reserveCmd = Command.make(
           project,
           agent,
           paths: parsedPaths,
+          ttlSeconds,
         },
       }).pipe(Effect.either)
 
@@ -407,8 +429,8 @@ const reserveCmd = Command.make(
             "mail reserve",
             error.message,
             codeOrFallback(error, "MAIL_RESERVE_FAILED"),
-            fixOrFallback(error, "Verify paths and registration, then retry"),
-            [{ command: "joelclaw mail reserve --project <project> --agent <agent> --paths <comma-separated-paths>", description: "Retry reserve" }],
+            fixOrFallback(error, "Verify paths, ttl, and registration, then retry"),
+            [{ command: "joelclaw mail reserve --project <project> --agent <agent> --paths <comma-separated-paths> [--ttl-seconds 900]", description: "Retry reserve" }],
           ),
         )
         return
@@ -427,6 +449,16 @@ const reserveCmd = Command.make(
               },
             },
             {
+              command: "joelclaw mail renew --project <project> --agent <agent> --paths <paths> --extend-seconds <seconds>",
+              description: "Extend lease before it expires",
+              params: {
+                project: { value: project, required: true, description: "Project key" },
+                agent: { value: agent, required: true, description: "Agent name" },
+                paths: { value: parsedPaths.join(","), required: true, description: "Paths CSV" },
+                seconds: { value: String(DEFAULT_MAIL_RENEW_EXTEND_SECONDS), required: true, description: "Extend seconds" },
+              },
+            },
+            {
               command: "joelclaw mail release --project <project> --agent <agent> --paths <paths>",
               description: "Release the same paths",
               params: {
@@ -439,7 +471,89 @@ const reserveCmd = Command.make(
         ),
       )
     }),
-).pipe(Command.withDescription("Reserve file paths"))
+).pipe(Command.withDescription("Reserve file paths with TTL"))
+
+const renewCmd = Command.make(
+  "renew",
+  {
+    project: defaultProject,
+    agent: defaultAgent,
+    paths: Options.text("paths").pipe(
+      Options.optional,
+      Options.withDescription("Comma-separated paths (optional; defaults to all active reservations for agent)"),
+    ),
+    extendSeconds: Options.integer("extend-seconds").pipe(
+      Options.withDefault(DEFAULT_MAIL_RENEW_EXTEND_SECONDS),
+      Options.withDescription(`Lease extension in seconds (default: ${String(DEFAULT_MAIL_RENEW_EXTEND_SECONDS)})`),
+    ),
+  },
+  ({ project, agent, paths, extendSeconds }) =>
+    Effect.gen(function* () {
+      const parsedPaths = paths._tag === "Some" ? pathListFromCsv(paths.value) : []
+
+      if (extendSeconds < MIN_MAIL_RESERVE_TTL_SECONDS) {
+        yield* Console.log(
+          respondError(
+            "mail renew",
+            `--extend-seconds must be >= ${String(MIN_MAIL_RESERVE_TTL_SECONDS)}`,
+            "MAIL_RENEW_TTL_INVALID",
+            `Use --extend-seconds ${String(DEFAULT_MAIL_RENEW_EXTEND_SECONDS)} (or another value >= ${String(MIN_MAIL_RESERVE_TTL_SECONDS)}).`,
+            [{ command: "joelclaw mail renew --project <project> --agent <agent> [--paths <paths>] --extend-seconds 900", description: "Retry renew with valid extension" }],
+          ),
+        )
+        return
+      }
+
+      const result = yield* executeCapabilityCommand<Record<string, unknown>>({
+        capability: "mail",
+        subcommand: "renew",
+        args: {
+          project,
+          agent,
+          paths: parsedPaths,
+          extendSeconds,
+        },
+      }).pipe(Effect.either)
+
+      if (result._tag === "Left") {
+        const error = result.left
+        yield* Console.log(
+          respondError(
+            "mail renew",
+            error.message,
+            codeOrFallback(error, "MAIL_RENEW_FAILED"),
+            fixOrFallback(error, "Verify renew scope and retry"),
+            [{ command: "joelclaw mail renew --project <project> --agent <agent> [--paths <paths>] [--extend-seconds <seconds>]", description: "Retry renew" }],
+          ),
+        )
+        return
+      }
+
+      yield* Console.log(
+        respond(
+          "mail renew",
+          result.right,
+          [
+            {
+              command: "joelclaw mail locks --project <project>",
+              description: "Check active locks",
+              params: {
+                project: { value: project, required: true, description: "Project key" },
+              },
+            },
+            {
+              command: "joelclaw mail release --project <project> --agent <agent> [--paths <paths>]",
+              description: "Release when work is complete",
+              params: {
+                project: { value: project, required: true, description: "Project key" },
+                agent: { value: agent, required: true, description: "Agent name" },
+              },
+            },
+          ],
+        ),
+      )
+    }),
+).pipe(Command.withDescription("Extend active file reservation TTL"))
 
 const releaseCmd = Command.make(
   "release",
@@ -552,8 +666,8 @@ const locksCmd = Command.make(
           result.right,
           [
             {
-              command: "joelclaw mail reserve --project <project> --agent <agent> --paths <paths>",
-              description: "Reserve additional files",
+              command: "joelclaw mail reserve --project <project> --agent <agent> --paths <paths> [--ttl-seconds 900]",
+              description: "Reserve additional files", 
               params: {
                 project: { value: project, required: true, description: "Project key" },
                 agent: { value: "panda", required: true, description: "Agent name" },
@@ -652,7 +766,8 @@ export const mailCmd = Command.make("mail", {}, () =>
         send: "joelclaw mail send --project <project> --from <agent> --to <agent> --subject <subject> <body>",
         inbox: "joelclaw mail inbox --project <project> --agent <agent> [--unread]",
         read: "joelclaw mail read --project <project> --agent <agent> --id <message_id>",
-        reserve: "joelclaw mail reserve --project <project> --agent <agent> --paths <comma-separated-paths>",
+        reserve: "joelclaw mail reserve --project <project> --agent <agent> --paths <comma-separated-paths> [--ttl-seconds 900]",
+        renew: "joelclaw mail renew --project <project> --agent <agent> [--paths <paths>] [--extend-seconds 900]",
         release: "joelclaw mail release --project <project> --agent <agent> [--paths <paths>] [--all]",
         locks: "joelclaw mail locks --project <project>",
         search: "joelclaw mail search --project <project> --query <text>",
@@ -685,6 +800,7 @@ export const mailCmd = Command.make("mail", {}, () =>
     inboxCmd,
     readCmd,
     reserveCmd,
+    renewCmd,
     releaseCmd,
     locksCmd,
     searchCmd,

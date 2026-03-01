@@ -87,7 +87,7 @@ joelclaw log write --action <action> --tool <tool> --detail <detail> [--reason <
 
 joelclaw notify send "<message>" [--priority low|normal|high|urgent] [--channel gateway|main|all] [--context '{"k":"v"}']
 
-joelclaw mail {status|register|send|inbox|read|reserve|release|locks|search}
+joelclaw mail {status|register|send|inbox|read|reserve|renew|release|locks|search}
 
 joelclaw otel {list|search|stats}
 
@@ -102,6 +102,8 @@ Semantics:
 - `logs` reads/analyzes runtime logs.
 - `notify` is the canonical operator alert command; `gateway push` remains transport/debug.
 - `mail`, `otel`, `recall`, and `subscribe` keep their existing UX/envelopes while now executing through capability registry adapters (`mcp-agent-mail`, `typesense-otel`, `typesense-recall`, `redis-subscriptions`).
+- `mail reserve` now sends explicit lease TTL (`--ttl-seconds`, default `900`) and enforces a minimum of 60s.
+- `mail renew` extends active file reservations without releasing/reacquiring (`--extend-seconds`, default `900`, optional `--paths`).
 - `subscribe check` emits Inngest request events; `response.ids` are event/request IDs (inspect via `joelclaw event <event-id>`), not run IDs unless explicitly returned as `runIds`.
 
 ## Webhook command tree (ADR-0185)

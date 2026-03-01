@@ -9,7 +9,7 @@ description: >-
   'send a message to', 'check inbox', 'mail status', 'reserve files',
   'release files', 'agent coordination', 'file lock', 'mail an agent',
   'who has this file', or any multi-agent coordination task.
-version: 0.1.0
+version: 0.2.0
 author: joel
 tags:
   - coordination
@@ -33,7 +33,7 @@ pi session → mail_* tools (extension)
 ```
 
 - **Server**: mcp_agent_mail at `http://127.0.0.1:8765`, managed by launchd (`com.joelclaw.agent-mail`)
-- **CLI**: `joelclaw mail {status|register|send|inbox|read|reserve|release|locks|search}`
+- **CLI**: `joelclaw mail {status|register|send|inbox|read|reserve|renew|release|locks|search}`
 - **Extension**: `~/.pi/agent/extensions/agent-mail/` — 6 tools (mail_send, mail_inbox, mail_read, mail_reserve, mail_release, mail_status)
 - **Project key**: `/Users/joel/Code/joelhooks/joelclaw` (absolute path, required by server)
 - **Agent naming**: AdjectiveNoun format (e.g. BlueFox, RedStone). Server rejects non-conforming names.
@@ -66,9 +66,16 @@ joelclaw mail inbox --agent RedStone --unread
 joelclaw mail read --agent RedStone --id 1
 ```
 
-### Reserve files before editing
+### Reserve files before editing (short TTL)
 ```bash
-joelclaw mail reserve --agent BlueFox --paths "packages/cli/src/cli.ts,packages/cli/src/commands/mail.ts"
+joelclaw mail reserve --agent BlueFox --paths "packages/cli/src/cli.ts,packages/cli/src/commands/mail.ts" --ttl-seconds 900
+```
+
+### Renew active reservations if work continues
+```bash
+joelclaw mail renew --agent BlueFox --paths "packages/cli/src/cli.ts" --extend-seconds 900
+# or renew all active reservations for the agent:
+joelclaw mail renew --agent BlueFox --extend-seconds 900
 ```
 
 ### Release files after commit
@@ -90,23 +97,24 @@ joelclaw mail search --query "refactor"
 
 ## Coordination Patterns
 
-### Before editing shared files
-1. `joelclaw mail locks` — check if anyone has reservations
-2. `joelclaw mail reserve --paths "..."` — claim your files
-3. Do your edits
-4. Commit and push
-5. `joelclaw mail release --all` — release reservations
+### Required coordination protocol (default)
+1. `joelclaw mail inbox --unread` — read pending coordination before starting.
+2. `joelclaw mail send --to <agent|team> --subject "Starting: ..." "scope + files + intent"` — announce active work.
+3. `joelclaw mail reserve --paths "..." --ttl-seconds 900` — claim file intent with short lease.
+4. If work runs long: `joelclaw mail renew --paths "..." --extend-seconds 900`.
+5. On completion/handoff: send status update via `joelclaw mail send`.
+6. Always `joelclaw mail release --paths "..."` or `--all` after commit/handoff.
 
 ### Task handoff
-1. `joelclaw mail send --to OtherAgent --subject "Task: ..." "Description + context"`
+1. `joelclaw mail send --to OtherAgent --subject "Task: ..." "Description + context + reserved paths"`
 2. Other agent checks `joelclaw mail inbox --unread`
 3. Other agent reads and acts
-4. Reports back via `joelclaw mail send`
+4. Other agent reports back via `joelclaw mail send`
 
-### Loop worker coordination (Phase 3 — planned)
-- Workers must `reserve` before editing, `release` after commit
+### Loop worker coordination (Phase 3 — shipped)
+- Workers `reserve` before editing and `release` after commit/exit path
 - Story pipeline checks reservations before dispatching
-- Conflict = fail-fast if file already reserved
+- Conflicts are surfaced and must be coordinated explicitly
 
 ## Pi Extension Tools
 

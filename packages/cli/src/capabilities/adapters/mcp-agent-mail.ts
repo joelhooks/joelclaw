@@ -2,6 +2,10 @@ import { Effect, Schema } from "effect"
 import { callMcpTool, fetchMailApi, getAgentMailUrl } from "../../lib/agent-mail"
 import { type CapabilityPort, capabilityError } from "../contract"
 
+const DEFAULT_MAIL_RESERVE_TTL_SECONDS = 900
+const MIN_MAIL_RESERVE_TTL_SECONDS = 60
+const DEFAULT_MAIL_RENEW_EXTEND_SECONDS = 900
+
 const MailStatusArgsSchema = Schema.Struct({})
 const MailStatusResultSchema = Schema.Unknown
 
@@ -41,8 +45,17 @@ const MailReserveArgsSchema = Schema.Struct({
   project: Schema.String,
   agent: Schema.String,
   paths: Schema.Array(Schema.String),
+  ttlSeconds: Schema.optional(Schema.Number),
 })
 const MailReserveResultSchema = Schema.Unknown
+
+const MailRenewArgsSchema = Schema.Struct({
+  project: Schema.String,
+  agent: Schema.String,
+  paths: Schema.Array(Schema.String),
+  extendSeconds: Schema.optional(Schema.Number),
+})
+const MailRenewResultSchema = Schema.Unknown
 
 const MailReleaseArgsSchema = Schema.Struct({
   project: Schema.String,
@@ -90,9 +103,14 @@ const commands = {
     resultSchema: MailReadResultSchema,
   },
   reserve: {
-    summary: "Reserve file paths",
+    summary: "Reserve file paths with short-lived TTL",
     argsSchema: MailReserveArgsSchema,
     resultSchema: MailReserveResultSchema,
+  },
+  renew: {
+    summary: "Extend active file reservation TTL",
+    argsSchema: MailRenewArgsSchema,
+    resultSchema: MailRenewResultSchema,
   },
   release: {
     summary: "Release file reservations",
@@ -448,21 +466,71 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
               )
             )
           }
+
+          const ttlSeconds = Math.floor(args.ttlSeconds ?? DEFAULT_MAIL_RESERVE_TTL_SECONDS)
+          if (!Number.isFinite(ttlSeconds) || ttlSeconds < MIN_MAIL_RESERVE_TTL_SECONDS) {
+            return yield* Effect.fail(
+              capabilityError(
+                "MAIL_RESERVE_TTL_INVALID",
+                `ttlSeconds must be >= ${MIN_MAIL_RESERVE_TTL_SECONDS}`,
+                `Set --ttl-seconds ${DEFAULT_MAIL_RESERVE_TTL_SECONDS} (or another value >= ${MIN_MAIL_RESERVE_TTL_SECONDS}).`
+              )
+            )
+          }
+
           const result = yield* Effect.tryPromise(() =>
             callMcpTool("file_reservation_paths", {
               project_key: args.project,
               agent_name: args.agent,
               paths: args.paths,
+              ttl_seconds: ttlSeconds,
             })
           ).pipe(
             Effect.map(normalizeToolResult),
-            Effect.mapError(mapMailError("MAIL_RESERVE_FAILED", "Verify paths and registration, then retry"))
+            Effect.mapError(mapMailError("MAIL_RESERVE_FAILED", "Verify paths, TTL, and registration, then retry"))
           )
 
           return {
             project: args.project,
             agent: args.agent,
             paths: args.paths,
+            ttlSeconds,
+            result,
+          }
+        }
+        case "renew": {
+          const args = yield* decodeArgs("renew", rawArgs)
+          const extendSeconds = Math.floor(args.extendSeconds ?? DEFAULT_MAIL_RENEW_EXTEND_SECONDS)
+
+          if (!Number.isFinite(extendSeconds) || extendSeconds < MIN_MAIL_RESERVE_TTL_SECONDS) {
+            return yield* Effect.fail(
+              capabilityError(
+                "MAIL_RENEW_TTL_INVALID",
+                `extendSeconds must be >= ${MIN_MAIL_RESERVE_TTL_SECONDS}`,
+                `Set --extend-seconds ${DEFAULT_MAIL_RENEW_EXTEND_SECONDS} (or another value >= ${MIN_MAIL_RESERVE_TTL_SECONDS}).`
+              )
+            )
+          }
+
+          const payload: Record<string, unknown> = {
+            project_key: args.project,
+            agent_name: args.agent,
+            extend_seconds: extendSeconds,
+          }
+          if (args.paths.length > 0) payload.paths = args.paths
+
+          const result = yield* Effect.tryPromise(() =>
+            callMcpTool("renew_file_reservations", payload)
+          ).pipe(
+            Effect.map(normalizeToolResult),
+            Effect.mapError(mapMailError("MAIL_RENEW_FAILED", "Verify renew scope and retry"))
+          )
+
+          return {
+            project: args.project,
+            agent: args.agent,
+            paths: args.paths,
+            extendSeconds,
             result,
           }
         }

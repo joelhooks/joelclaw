@@ -27,8 +27,8 @@ import crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
 
 // ── Paths ───────────────────────────────────────────────────────────
 
@@ -341,7 +341,7 @@ export default function (pi: ExtensionAPI) {
         message: {
           customType: "slog-nudge",
           content:
-            "🪵 BEFORE your final response: Did you install, configure, fix, remove, or change any tool/service/infra this turn? If yes → `slog write` NOW, not later. The user should never have to remind you. If NOTHING changed (no installs, no config, no fixes, no infra) → do NOT mention slog at all. No \"no slog needed\" or \"no infra changed\" filler.\n📐 joelclaw work should be backed by an ADR. If there isn't one, ask why. Keep ADRs groomed — update status, mark superseded, close what's done.\n📋 For non-trivial tasks: ack and summarize your plan BEFORE starting work, then pause ~10 seconds for a possible course-correction. This is NOT a permission gate — proceed after the pause. It's just a window for Joel to intervene if the direction is wrong. Trivial tasks (quick lookups, small edits) don't need this.",
+            "🪵 BEFORE your final response: Did you install, configure, fix, remove, or change any tool/service/infra this turn? If yes → `slog write` NOW, not later. The user should never have to remind you. If NOTHING changed (no installs, no config, no fixes, no infra) → do NOT mention slog at all. No \"no slog needed\" or \"no infra changed\" filler.\n📐 joelclaw work should be backed by an ADR. If there isn't one, ask why. Keep ADRs groomed — update status, mark superseded, close what's done.\n📋 For non-trivial tasks: ack and summarize your plan BEFORE starting work, then pause ~10 seconds for a possible course-correction. This is NOT a permission gate — proceed after the pause. It's just a window for Joel to intervene if the direction is wrong. Trivial tasks (quick lookups, small edits) don't need this.\n📬 Agent mail protocol is mandatory: announce active task/scope via `mail_send`/`joelclaw mail send`, check `mail_inbox`/`joelclaw mail inbox`, reserve edit paths with short leases (`joelclaw mail reserve --ttl-seconds 900`), renew when needed (`joelclaw mail renew --extend-seconds 900`), and always release (`mail_release`/`joelclaw mail release`) after commit/handoff.\n📡 Daily monitor+steer loop (once/day): review agent mail traffic + related OTEL + current reminder text, then tighten prompts/rules based on observed failures.\nIf this turn has no coordination risk or file edits, do NOT mention agent mail at all. No filler. No need to reply to this reminder.",
           display: false,
         },
       };
