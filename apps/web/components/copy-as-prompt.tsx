@@ -41,7 +41,7 @@ export function CopyAsPrompt({ title, slug, description }: CopyAsPromptProps) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }, 400);
-  }, [markdown, title, slug]);
+  }, [title, slug, description]);
 
   return (
     <button
