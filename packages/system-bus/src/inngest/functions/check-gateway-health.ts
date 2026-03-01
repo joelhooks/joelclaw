@@ -20,6 +20,7 @@ const GENERAL_ALERT_COOLDOWN_KEY = "gateway:health:monitor:general-alert-cooldow
 const GENERAL_RESTART_COOLDOWN_KEY = "gateway:health:monitor:restart-cooldown";
 const CHANNEL_STREAK_KEY_PREFIX = "gateway:health:monitor:channel-streak:";
 const CHANNEL_ALERT_COOLDOWN_KEY = "gateway:health:monitor:channel-alert-cooldown";
+const MUTED_CHANNELS_KEY = "gateway:health:muted-channels";
 
 const STREAK_TTL_SECONDS = 6 * 60 * 60;
 const GENERAL_ALERT_COOLDOWN_SECONDS = 20 * 60;
@@ -180,6 +181,8 @@ const CHANNEL_PROBES: ChannelProbeConfig[] = [
   },
 ];
 
+const CHANNEL_IDS = new Set<ChannelProbeConfig["id"]>(CHANNEL_PROBES.map((probe) => probe.id));
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -272,6 +275,58 @@ async function claimCooldown(key: string, ttlSeconds: number): Promise<boolean> 
   const redis = getRedis();
   const claimed = await redis.set(key, String(Date.now()), "EX", ttlSeconds, "NX");
   return claimed === "OK";
+}
+
+function normalizeChannelId(value: unknown): ChannelProbeConfig["id"] | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (!CHANNEL_IDS.has(normalized as ChannelProbeConfig["id"])) return null;
+  return normalized as ChannelProbeConfig["id"];
+}
+
+function parseMutedChannels(raw: string | null): ChannelProbeConfig["id"][] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const muted = new Set<ChannelProbeConfig["id"]>();
+    for (const value of parsed) {
+      const normalized = normalizeChannelId(value);
+      if (normalized) muted.add(normalized);
+    }
+    return [...muted];
+  } catch {
+    return [];
+  }
+}
+
+async function loadMutedChannelsFromRedis(): Promise<ChannelProbeConfig["id"][]> {
+  try {
+    const redis = getRedis();
+    const raw = await redis.get(MUTED_CHANNELS_KEY);
+    return parseMutedChannels(raw);
+  } catch {
+    return [];
+  }
+}
+
+function partitionAlertableChannels(
+  channels: ChannelHealthSummary[],
+  mutedChannels: ChannelProbeConfig["id"][],
+): { alertableChannels: ChannelHealthSummary[]; mutedActionableChannels: ChannelHealthSummary[] } {
+  const muted = new Set(mutedChannels);
+  const alertableChannels: ChannelHealthSummary[] = [];
+  const mutedActionableChannels: ChannelHealthSummary[] = [];
+
+  for (const channel of channels) {
+    if (muted.has(channel.channel)) {
+      mutedActionableChannels.push(channel);
+    } else {
+      alertableChannels.push(channel);
+    }
+  }
+
+  return { alertableChannels, mutedActionableChannels };
 }
 
 async function countActionEvents(filterBy: string): Promise<number> {
@@ -447,6 +502,11 @@ function buildChannelAlertPrompt(channels: ChannelHealthSummary[]): string {
   return lines.join("\n");
 }
 
+export const __checkGatewayHealthTestUtils = {
+  parseMutedChannels,
+  partitionAlertableChannels,
+};
+
 export const checkGatewayHealth = inngest.createFunction(
   {
     id: "check/gateway-health",
@@ -455,6 +515,10 @@ export const checkGatewayHealth = inngest.createFunction(
   },
   { event: GATEWAY_MONITOR_EVENT },
   async ({ step }) => {
+    const mutedChannels = await step.run("load-muted-channels", async () =>
+      loadMutedChannelsFromRedis()
+    );
+
     const diagnose = await step.run("diagnose-gateway", async () =>
       runJoelclawEnvelope<GatewayDiagnoseResult>(
         ["gateway", "diagnose", "--hours", "1", "--lines", "120"],
@@ -560,8 +624,13 @@ export const checkGatewayHealth = inngest.createFunction(
         && item.streak >= CHANNEL_ALERT_STREAK_THRESHOLD,
     );
 
+    const { alertableChannels, mutedActionableChannels } = partitionAlertableChannels(
+      actionableChannels,
+      mutedChannels,
+    );
+
     const channelAlertSent = await step.run("maybe-alert-channel-degradation", async () => {
-      if (actionableChannels.length === 0) return false;
+      if (alertableChannels.length === 0) return false;
 
       const shouldAlert = await claimCooldown(CHANNEL_ALERT_COOLDOWN_KEY, CHANNEL_ALERT_COOLDOWN_SECONDS);
       if (!shouldAlert) return false;
@@ -570,10 +639,12 @@ export const checkGatewayHealth = inngest.createFunction(
         type: "gateway.channels.degraded",
         source: "inngest/check-gateway-health",
         payload: {
-          prompt: buildChannelAlertPrompt(actionableChannels),
+          prompt: buildChannelAlertPrompt(alertableChannels),
           level: "warn",
           immediateTelegram: true,
-          channels: actionableChannels,
+          channels: alertableChannels,
+          mutedChannels,
+          mutedActionableChannels,
           windowMinutes: CHANNEL_WINDOW_MINUTES,
         },
       });
@@ -654,6 +725,21 @@ export const checkGatewayHealth = inngest.createFunction(
           generalAlertSent,
           channelAlertSent,
           selfHealedSent,
+          mutedChannels,
+          alertableChannels: alertableChannels.map((channel) => ({
+            channel: channel.channel,
+            status: channel.status,
+            severeCount: channel.severeCount,
+            successCount: channel.successCount,
+            streak: channel.streak,
+          })),
+          mutedActionableChannels: mutedActionableChannels.map((channel) => ({
+            channel: channel.channel,
+            status: channel.status,
+            severeCount: channel.severeCount,
+            successCount: channel.successCount,
+            streak: channel.streak,
+          })),
           restartAttempt,
           criticalFailures: criticalFailures.map((layer) => ({
             layer: layer.layer,
@@ -694,6 +780,14 @@ export const checkGatewayHealth = inngest.createFunction(
       },
       channels: {
         alertSent: channelAlertSent,
+        mutedChannels,
+        muted: mutedActionableChannels.map((item) => ({
+          channel: item.channel,
+          status: item.status,
+          severeCount: item.severeCount,
+          successCount: item.successCount,
+          streak: item.streak,
+        })),
         actionable: actionableChannels.map((item) => ({
           channel: item.channel,
           status: item.status,

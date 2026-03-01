@@ -135,7 +135,7 @@ const root = Command.make("joelclaw", {}, () =>
           watch: "joelclaw watch [LOOP_ID] [-i 15]",
           discover: "joelclaw discover <url> [-c context]",
           note: "joelclaw note <text> [--source source] [--tags a,b,c]",
-          gateway: "joelclaw gateway {status|events|push|drain|test}",
+          gateway: "joelclaw gateway {status|events|push|drain|test|restart|stream|diagnose|review|known-issues|mute|unmute}",
           notify: "joelclaw notify send <message> [--channel <channel>] [--priority <priority>] [--context <json>]",
           secrets: "joelclaw secrets {status|lease|revoke|audit|env}",
           sleep: "joelclaw sleep [--for <duration>] [--reason <reason>] | joelclaw sleep status",

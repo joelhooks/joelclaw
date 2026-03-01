@@ -10,6 +10,9 @@ joelclaw gateway diagnose --hours 1 --lines 120
 joelclaw gateway test
 joelclaw gateway events
 joelclaw gateway restart
+joelclaw gateway known-issues
+joelclaw gateway mute imessage --reason "imsg-rpc reconnect instability"
+joelclaw gateway unmute imessage
 ```
 
 Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
@@ -41,6 +44,7 @@ Heartbeat fan-out now includes:
 - Tracks per-incident streaks in Redis (noise suppression)
 - Auto-restarts gateway on sustained general failure (cooldown-protected)
 - Alerts on sustained unresolved failure/degradation
+- Supports muted channel known-issues list; muted channels are still probed + logged, but excluded from channel alert notifications
 - Emits OTEL event:
   - component: `check-gateway-health`
   - action: `gateway.health.checked`
@@ -52,6 +56,8 @@ Heartbeat fan-out now includes:
 - `gateway:health:monitor:restart-cooldown`
 - `gateway:health:monitor:channel-streak:<channel>`
 - `gateway:health:monitor:channel-alert-cooldown`
+- `gateway:health:muted-channels` (JSON array of channel IDs)
+- `gateway:health:mute-reasons` (JSON object mapping channel → reason)
 
 ## Related files
 

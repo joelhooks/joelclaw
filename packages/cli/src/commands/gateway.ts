@@ -3,6 +3,10 @@ import { Console, Effect } from "effect"
 import { respond, respondError } from "../response"
 
 const SESSIONS_SET = "joelclaw:gateway:sessions"
+const GATEWAY_HEALTH_MUTED_CHANNELS_KEY = "gateway:health:muted-channels"
+const GATEWAY_HEALTH_MUTE_REASONS_KEY = "gateway:health:mute-reasons"
+
+type OptionalText = { _tag: "Some"; value: string } | { _tag: "None" }
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -22,6 +26,95 @@ function makeRedis() {
     },
     catch: (e) => new Error(`Redis connection failed: ${e}`),
   })
+}
+
+function parseOptionalText(value: OptionalText): string | undefined {
+  if (value._tag !== "Some") return undefined
+  const normalized = value.value.trim()
+  return normalized.length > 0 ? normalized : undefined
+}
+
+function normalizeChannelId(channel: string): string | null {
+  const normalized = channel.trim().toLowerCase()
+  return normalized.length > 0 ? normalized : null
+}
+
+function parseStringArrayJson(raw: string | null): string[] {
+  if (!raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    const seen = new Set<string>()
+    const values: string[] = []
+    for (const item of parsed) {
+      if (typeof item !== "string") continue
+      const normalized = normalizeChannelId(item)
+      if (!normalized || seen.has(normalized)) continue
+      seen.add(normalized)
+      values.push(normalized)
+    }
+    return values
+  } catch {
+    return []
+  }
+}
+
+function parseStringMapJson(raw: string | null): Record<string, string> {
+  if (!raw) return {}
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {}
+    const map: Record<string, string> = {}
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value !== "string") continue
+      const normalizedKey = normalizeChannelId(key)
+      const reason = value.trim()
+      if (!normalizedKey || reason.length === 0) continue
+      map[normalizedKey] = reason
+    }
+    return map
+  } catch {
+    return {}
+  }
+}
+
+function sortChannels(channels: string[]): string[] {
+  return [...channels].sort((a, b) => a.localeCompare(b))
+}
+
+function buildKnownIssuesPayload(
+  mutedChannels: string[],
+  muteReasons: Record<string, string>,
+) {
+  const sortedChannels = sortChannels(mutedChannels)
+  return {
+    count: sortedChannels.length,
+    mutedChannels: sortedChannels,
+    issues: sortedChannels.map((channel) => ({
+      channel,
+      reason: muteReasons[channel] ?? null,
+    })),
+  }
+}
+
+async function loadMutedChannelState(redis: { mget: (...keys: string[]) => Promise<(string | null)[]> }) {
+  const [mutedRaw, reasonsRaw] = await redis.mget(
+    GATEWAY_HEALTH_MUTED_CHANNELS_KEY,
+    GATEWAY_HEALTH_MUTE_REASONS_KEY,
+  )
+  return {
+    mutedChannels: parseStringArrayJson(mutedRaw),
+    muteReasons: parseStringMapJson(reasonsRaw),
+  }
+}
+
+async function persistMutedChannelState(
+  redis: { set: (key: string, value: string) => Promise<unknown> },
+  mutedChannels: string[],
+  muteReasons: Record<string, string>,
+) {
+  await redis.set(GATEWAY_HEALTH_MUTED_CHANNELS_KEY, JSON.stringify(sortChannels(mutedChannels)))
+  await redis.set(GATEWAY_HEALTH_MUTE_REASONS_KEY, JSON.stringify(muteReasons))
 }
 
 // ── gateway status ──────────────────────────────────────────────────
@@ -349,6 +442,193 @@ const gatewayTest = Command.make("test", {}, () =>
     ))
   })
 ).pipe(Command.withDescription("Push test event and verify delivery"))
+
+// ── gateway known-issues / mute / unmute ───────────────────────────
+
+const muteReason = Options.text("reason").pipe(
+  Options.withDescription("Optional reason for muting this channel"),
+  Options.optional,
+)
+
+const gatewayKnownIssues = Command.make("known-issues", {}, () =>
+  Effect.gen(function* () {
+    const redis = yield* makeRedis()
+    const { mutedChannels, muteReasons } = yield* Effect.tryPromise({
+      try: () => loadMutedChannelState(redis),
+      catch: (e) => new Error(`${e}`),
+    })
+    yield* Effect.tryPromise({ try: () => redis.quit(), catch: () => {} })
+
+    yield* Console.log(respond(
+      "gateway known-issues",
+      {
+        ...buildKnownIssuesPayload(mutedChannels, muteReasons),
+        keys: {
+          mutedChannels: GATEWAY_HEALTH_MUTED_CHANNELS_KEY,
+          muteReasons: GATEWAY_HEALTH_MUTE_REASONS_KEY,
+        },
+      },
+      [
+        {
+          command: "joelclaw gateway mute <channel> [--reason <reason>]",
+          description: "Mute a noisy/degraded channel",
+          params: {
+            channel: { description: "Channel ID (e.g. imessage)", required: true },
+            reason: { description: "Optional known-issue context" },
+          },
+        },
+        {
+          command: "joelclaw gateway unmute <channel>",
+          description: "Remove a channel from known issues",
+          params: {
+            channel: { description: "Channel ID (e.g. imessage)", required: true },
+          },
+        },
+      ],
+      true,
+    ))
+  })
+).pipe(Command.withDescription("List muted channel health alerts (known issues)"))
+
+const gatewayMute = Command.make(
+  "mute",
+  {
+    channel: Args.text({ name: "channel" }).pipe(
+      Args.withDescription("Channel ID to mute (e.g. imessage)"),
+    ),
+    reason: muteReason,
+  },
+  ({ channel, reason }) =>
+    Effect.gen(function* () {
+      const normalizedChannel = normalizeChannelId(channel)
+      if (!normalizedChannel) {
+        yield* Console.log(respondError(
+          "gateway mute",
+          "Channel must be a non-empty string",
+          "INVALID_CHANNEL",
+          "Provide a channel ID like `imessage` or `telegram`.",
+          [
+            {
+              command: "joelclaw gateway mute <channel> [--reason <reason>]",
+              description: "Retry with a valid channel ID",
+              params: {
+                channel: { description: "Channel ID", required: true },
+                reason: { description: "Optional reason" },
+              },
+            },
+            { command: "joelclaw gateway known-issues", description: "Inspect current muted channels" },
+          ],
+        ))
+        return
+      }
+
+      const redis = yield* makeRedis()
+      const { mutedChannels, muteReasons } = yield* Effect.tryPromise({
+        try: () => loadMutedChannelState(redis),
+        catch: (e) => new Error(`${e}`),
+      })
+
+      const reasonText = parseOptionalText(reason)
+      const nextMutedChannels = sortChannels([...new Set([...mutedChannels, normalizedChannel])])
+      const nextMuteReasons = { ...muteReasons }
+      if (reasonText) {
+        nextMuteReasons[normalizedChannel] = reasonText
+      }
+
+      yield* Effect.tryPromise({
+        try: () => persistMutedChannelState(redis, nextMutedChannels, nextMuteReasons),
+        catch: (e) => new Error(`${e}`),
+      })
+      yield* Effect.tryPromise({ try: () => redis.quit(), catch: () => {} })
+
+      yield* Console.log(respond(
+        "gateway mute",
+        {
+          channel: normalizedChannel,
+          muted: true,
+          reason: nextMuteReasons[normalizedChannel] ?? null,
+          ...buildKnownIssuesPayload(nextMutedChannels, nextMuteReasons),
+        },
+        [
+          { command: "joelclaw gateway known-issues", description: "List all muted channels with reasons" },
+          {
+            command: "joelclaw gateway unmute <channel>",
+            description: "Unmute this channel when issue is resolved",
+            params: { channel: { value: normalizedChannel, required: true } },
+          },
+        ],
+        true,
+      ))
+    }),
+).pipe(Command.withDescription("Mute a channel from triggering gateway health alerts"))
+
+const gatewayUnmute = Command.make(
+  "unmute",
+  {
+    channel: Args.text({ name: "channel" }).pipe(
+      Args.withDescription("Channel ID to unmute"),
+    ),
+  },
+  ({ channel }) =>
+    Effect.gen(function* () {
+      const normalizedChannel = normalizeChannelId(channel)
+      if (!normalizedChannel) {
+        yield* Console.log(respondError(
+          "gateway unmute",
+          "Channel must be a non-empty string",
+          "INVALID_CHANNEL",
+          "Provide a channel ID like `imessage` or `telegram`.",
+          [
+            {
+              command: "joelclaw gateway unmute <channel>",
+              description: "Retry with a valid channel ID",
+              params: { channel: { description: "Channel ID", required: true } },
+            },
+            { command: "joelclaw gateway known-issues", description: "Inspect current muted channels" },
+          ],
+        ))
+        return
+      }
+
+      const redis = yield* makeRedis()
+      const { mutedChannels, muteReasons } = yield* Effect.tryPromise({
+        try: () => loadMutedChannelState(redis),
+        catch: (e) => new Error(`${e}`),
+      })
+
+      const wasMuted = mutedChannels.includes(normalizedChannel)
+      const nextMutedChannels = mutedChannels.filter((value) => value !== normalizedChannel)
+      const nextMuteReasons = { ...muteReasons }
+      delete nextMuteReasons[normalizedChannel]
+
+      yield* Effect.tryPromise({
+        try: () => persistMutedChannelState(redis, nextMutedChannels, nextMuteReasons),
+        catch: (e) => new Error(`${e}`),
+      })
+      yield* Effect.tryPromise({ try: () => redis.quit(), catch: () => {} })
+
+      yield* Console.log(respond(
+        "gateway unmute",
+        {
+          channel: normalizedChannel,
+          unmuted: wasMuted,
+          ...buildKnownIssuesPayload(nextMutedChannels, nextMuteReasons),
+        },
+        [
+          { command: "joelclaw gateway known-issues", description: "List muted channels" },
+          {
+            command: "joelclaw gateway mute <channel> [--reason <reason>]",
+            description: "Mute a channel again if needed",
+            params: {
+              channel: { value: normalizedChannel, required: true },
+              reason: { description: "Optional reason" },
+            },
+          },
+        ],
+        true,
+      ))
+    }),
+).pipe(Command.withDescription("Remove a channel from muted health alerts"))
 
 // ── gateway restart ─────────────────────────────────────────────────
 
@@ -1115,12 +1395,16 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
         stream: "joelclaw gateway stream — NDJSON stream of all gateway events (ADR-0058)",
         diagnose: "joelclaw gateway diagnose [--hours N] — Full diagnostic across all layers",
         review: "joelclaw gateway review [--hours N] — Recent session context (exchanges, tools, errors)",
+        "known-issues": "joelclaw gateway known-issues — List muted channels + reasons for health alert suppression",
+        mute: "joelclaw gateway mute <channel> [--reason \"...\"] — Suppress alerting for a known channel issue",
+        unmute: "joelclaw gateway unmute <channel> — Re-enable alerting for a muted channel",
       },
     },
     [
       { command: "joelclaw gateway status", description: "Check gateway health" },
       { command: "joelclaw gateway diagnose", description: "Full diagnostic (process → redis → model → delivery)" },
       { command: "joelclaw gateway review", description: "Recent session context (what happened?)" },
+      { command: "joelclaw gateway known-issues", description: "List muted channels that won't trigger alerts" },
       { command: "joelclaw gateway stream", description: "Stream all gateway events (NDJSON)" },
       { command: "joelclaw gateway test", description: "Push test event + verify" },
       { command: "joelclaw gateway restart", description: "Restart the gateway daemon" },
@@ -1128,5 +1412,18 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
     true
   ))
 ).pipe(
-  Command.withSubcommands([gatewayStatus, gatewayEvents, gatewayPush, gatewayDrain, gatewayTest, gatewayRestart, gatewayStream, gatewayDiagnose, gatewayReview])
+  Command.withSubcommands([
+    gatewayStatus,
+    gatewayEvents,
+    gatewayPush,
+    gatewayDrain,
+    gatewayTest,
+    gatewayKnownIssues,
+    gatewayMute,
+    gatewayUnmute,
+    gatewayRestart,
+    gatewayStream,
+    gatewayDiagnose,
+    gatewayReview,
+  ])
 )

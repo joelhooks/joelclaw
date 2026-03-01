@@ -67,6 +67,20 @@ Semantics:
 - `joelclaw inngest`
 - `joelclaw capabilities`
 
+## Gateway known issues / muted channels
+
+```bash
+joelclaw gateway known-issues
+joelclaw gateway mute <channel> [--reason "<why muted>"]
+joelclaw gateway unmute <channel>
+```
+
+Semantics:
+
+- stores muted channel IDs at Redis key `gateway:health:muted-channels` (JSON array).
+- stores optional mute reasons at Redis key `gateway:health:mute-reasons` (JSON object).
+- muted channels remain in probe telemetry but are excluded from `gateway.channels.degraded` alerts.
+
 ## Run inspection + cancellation
 
 ```bash
