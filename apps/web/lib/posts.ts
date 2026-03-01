@@ -189,6 +189,11 @@ export async function getAllPosts(): Promise<PostMeta[]> {
 }
 
 export async function getPost(slug: string): Promise<Post | null> {
+  "use cache";
+  cacheLife("minutes");
+  cacheTag(`article:${slug}`);
+  cacheTag(`post:${slug}`);
+
   const convex = getConvexClient();
   const doc = await convex.query(api.contentResources.getByResourceId, {
     resourceId: `article:${slug}`,
