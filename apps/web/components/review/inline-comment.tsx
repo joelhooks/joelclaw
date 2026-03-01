@@ -164,7 +164,7 @@ export function InlineComment({
                       resizeEdit();
                     }}
                     onKeyDown={handleKeyDown}
-                    className="min-h-[48px] resize-none border-neutral-700 bg-neutral-900 text-sm text-neutral-200 placeholder:text-neutral-600 focus-visible:ring-claw/30"
+                    className="min-h-[48px] resize-none border-neutral-700 bg-neutral-900 text-base text-neutral-200 placeholder:text-neutral-600 focus-visible:ring-claw/30"
                     autoFocus
                   />
                   <div className="flex gap-1 justify-end">
@@ -234,7 +234,7 @@ export function InlineComment({
                 : "Add a comment…"
             }
             rows={1}
-            className="min-h-[48px] resize-none border-neutral-800 bg-neutral-950/60 text-sm text-neutral-200 placeholder:text-neutral-600 focus-visible:ring-claw/30 pr-9"
+            className="min-h-[48px] resize-none border-neutral-800 bg-neutral-950/60 text-base text-neutral-200 placeholder:text-neutral-600 focus-visible:ring-claw/30 pr-9"
           />
           <button
             onClick={handleSubmit}

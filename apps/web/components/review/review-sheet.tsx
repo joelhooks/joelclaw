@@ -177,7 +177,7 @@ export function ReviewSheet({
                             value={editContent}
                             onChange={(e) => setEditContent(e.target.value)}
                             disabled={isProcessingFeedback}
-                            className="min-h-[60px] resize-none border-neutral-700 bg-neutral-900 text-sm text-neutral-200 placeholder:text-neutral-600 focus-visible:ring-claw/30"
+                            className="min-h-[60px] resize-none border-neutral-700 bg-neutral-900 text-base text-neutral-200 placeholder:text-neutral-600 focus-visible:ring-claw/30"
                             autoFocus
                             onKeyDown={(e) => {
                               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
