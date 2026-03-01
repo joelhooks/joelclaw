@@ -193,11 +193,20 @@ export function StatusPulseDot({
 
   return (
     <span
-      className={`inline-flex shrink-0 rounded-full ${sizeClass} ${style.dot} shadow-sm ${style.shadow} ${shouldPulse ? "animate-pulse" : ""} ${className ?? ""}`}
+      className={`relative inline-flex shrink-0 ${sizeClass} ${className ?? ""}`}
       role="img"
       aria-label={statusLabel}
       title={statusLabel}
-      style={{ animationDelay: pulseDelay }}
-    />
+    >
+      {shouldPulse ? (
+        <span
+          className={`absolute inset-0 animate-ping rounded-full ${style.dot} opacity-75`}
+          style={{ animationDelay: pulseDelay }}
+        />
+      ) : null}
+      <span
+        className={`relative inline-flex rounded-full ${sizeClass} ${style.dot} shadow-sm ${style.shadow}`}
+      />
+    </span>
   );
 }
