@@ -1,3 +1,8 @@
+import {
+  buildServiceHealthCandidates,
+  resolveEndpoint,
+  summarizeSkippedCandidates,
+} from "@joelclaw/endpoint-resolver"
 import { Effect, Schema } from "effect"
 import { loadConfig } from "./config"
 import {EventsV2Response, 
@@ -8,11 +13,13 @@ import {EventsV2Response,
 const cfg = loadConfig()
 const GQL = `${cfg.inngestUrl}/v0/gql`
 const EVENT_API = `${cfg.inngestUrl}/e/${cfg.eventKey}`
-const WORKER = cfg.workerUrl
-const INNGEST_HEALTH = `${cfg.inngestUrl}/health`
 const GQL_TIMEOUT_MS = Math.max(
   5000,
   Number.parseInt(process.env.JOELCLAW_INNGEST_GQL_TIMEOUT_MS ?? "20000", 10)
+)
+const HEALTH_PROBE_TIMEOUT_MS = Math.max(
+  600,
+  Number.parseInt(process.env.JOELCLAW_HEALTH_PROBE_TIMEOUT_MS ?? "1500", 10),
 )
 
 // ── Errors ───────────────────────────────────────────────────────────
@@ -298,33 +305,30 @@ export class Inngest extends Effect.Service<Inngest>()("joelclaw/Inngest", {
 
 type HealthCheck = { ok: boolean; detail: string }
 
-async function fetchTextWithTimeout(url: string, timeoutMs = 4000): Promise<{ ok: boolean; status: number; body: string }> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
-
-  try {
-    const res = await fetch(url, { signal: controller.signal })
-    const body = await res.text().catch(() => "")
-    return {
-      ok: res.ok,
-      status: res.status,
-      body,
-    }
-  } catch {
-    return {
-      ok: false,
-      status: 0,
-      body: "",
-    }
-  } finally {
-    clearTimeout(timer)
-  }
+function formatSkippedEndpointSummary(detailPrefix: string, skippedCount: number): string {
+  return skippedCount > 0 ? `${detailPrefix}; skipped=${skippedCount}` : detailPrefix
 }
 
 async function probeServerHealth(): Promise<HealthCheck> {
-  const res = await fetchTextWithTimeout(INNGEST_HEALTH)
-  if (!res.ok) return { ok: false, detail: `unreachable (${INNGEST_HEALTH})` }
-  return { ok: true, detail: res.body || `HTTP ${res.status}` }
+  const resolution = await resolveEndpoint(
+    buildServiceHealthCandidates("inngest"),
+    { timeoutMs: HEALTH_PROBE_TIMEOUT_MS },
+  )
+
+  if (!resolution.ok) {
+    return {
+      ok: false,
+      detail: `unreachable (${resolution.reason})`,
+    }
+  }
+
+  const bodyDetail = resolution.body.trim().length > 0 ? resolution.body.trim() : `HTTP ${resolution.status}`
+  const detail = `${bodyDetail} [${resolution.endpointClass}] (${resolution.probeUrl})`
+
+  return {
+    ok: true,
+    detail: formatSkippedEndpointSummary(detail, resolution.skippedCandidates.length),
+  }
 }
 
 function parseWorkerDetail(rawBody: string, endpoint: string, status: number): string {
@@ -352,26 +356,30 @@ function parseWorkerDetail(rawBody: string, endpoint: string, status: number): s
 }
 
 async function probeWorkerHealth(): Promise<HealthCheck> {
-  const base = WORKER.replace(/\/$/u, "")
-  const candidates = [...new Set([base, `${base}/health`, `${base}/api/inngest`])]
-  let lastDetail = `unreachable (${base})`
+  const resolution = await resolveEndpoint(
+    buildServiceHealthCandidates("worker"),
+    { timeoutMs: HEALTH_PROBE_TIMEOUT_MS },
+  )
 
-  for (const endpoint of candidates) {
-    const res = await fetchTextWithTimeout(endpoint)
-    if (!res.ok) {
-      lastDetail = res.status > 0
-        ? `HTTP ${res.status} (${endpoint})`
-        : `unreachable (${endpoint})`
-      continue
-    }
-
+  if (!resolution.ok) {
     return {
-      ok: true,
-      detail: parseWorkerDetail(res.body, endpoint, res.status),
+      ok: false,
+      detail: `unreachable (${summarizeSkippedCandidates(resolution.skippedCandidates)})`,
     }
   }
 
-  return { ok: false, detail: lastDetail }
+  const workerDetail = parseWorkerDetail(resolution.body, resolution.probeUrl, resolution.status)
+  const detailWithClass = `${workerDetail} [${resolution.endpointClass}]`
+
+  return {
+    ok: true,
+    detail: formatSkippedEndpointSummary(detailWithClass, resolution.skippedCandidates.length),
+  }
+}
+
+export const __inngestHealthTestUtils = {
+  probeServerHealth,
+  probeWorkerHealth,
 }
 
 function flattenSpans(span: any): Array<{ name: string; status: string; outputID?: string }> {

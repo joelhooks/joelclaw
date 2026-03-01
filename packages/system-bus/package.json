@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@joelclaw/email": "workspace:^",
+    "@joelclaw/endpoint-resolver": "workspace:*",
     "@joelclaw/inference-router": "workspace:*",
     "@joelclaw/mdx-pipeline": "workspace:^",
     "@langfuse/otel": "^4.6.1",

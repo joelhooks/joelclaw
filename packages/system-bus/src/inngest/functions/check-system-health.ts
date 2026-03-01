@@ -7,6 +7,13 @@ import { getRedisPort } from "../../lib/redis";
 
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import {
+  buildServiceHealthCandidates,
+  type EndpointCandidateFailure,
+  type EndpointClass,
+  resolveEndpoint,
+  summarizeSkippedCandidates,
+} from "@joelclaw/endpoint-resolver";
 import Redis from "ioredis";
 import { pushNotification, pushSystemStatus } from "../../lib/convex";
 import * as typesense from "../../lib/typesense";
@@ -15,7 +22,15 @@ import { getCurrentTasks, hasTaskMatching } from "../../tasks";
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
 
-type ServiceStatus = { name: string; ok: boolean; detail?: string; durationMs?: number };
+type ServiceStatus = {
+  name: string;
+  ok: boolean;
+  detail?: string;
+  durationMs?: number;
+  endpoint?: string;
+  endpointClass?: EndpointClass;
+  skippedCandidates?: EndpointCandidateFailure[];
+};
 type HealthCheckMode = "core" | "signals" | "full";
 type HealthSlicePolicy = {
   cadenceMinutes: number;
@@ -75,6 +90,10 @@ const GATEWAY_HEALING_RETRY_POLICY = {
   sleepMaxMs: 900_000,
   sleepStepMs: 45_000,
 };
+const ENDPOINT_RESOLVE_TIMEOUT_MS = Math.max(
+  600,
+  Number.parseInt(process.env.JOELCLAW_HEALTH_PROBE_TIMEOUT_MS ?? "1200", 10),
+);
 
 function normalizeTimestampToMs(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -340,22 +359,62 @@ async function checkRedis(): Promise<ServiceStatus> {
   }
 }
 
+function formatHealthEndpointLabel(endpointClass: EndpointClass, probeUrl: string): string {
+  return `[${endpointClass}] (${probeUrl})`;
+}
+
 async function checkInngest(): Promise<ServiceStatus> {
-  try {
-    const res = await fetch("http://localhost:8288/health", { signal: AbortSignal.timeout(3000) });
-    return { name: "Inngest", ok: res.ok };
-  } catch (err) {
-    return { name: "Inngest", ok: false, detail: String(err) };
+  const resolution = await resolveEndpoint(
+    buildServiceHealthCandidates("inngest"),
+    { timeoutMs: ENDPOINT_RESOLVE_TIMEOUT_MS },
+  );
+
+  if (!resolution.ok) {
+    return {
+      name: "Inngest",
+      ok: false,
+      detail: `unreachable (${resolution.reason})`,
+      skippedCandidates: resolution.skippedCandidates,
+    };
   }
+
+  const detail = formatHealthEndpointLabel(resolution.endpointClass, resolution.probeUrl);
+  return {
+    name: "Inngest",
+    ok: true,
+    detail:
+      resolution.skippedCandidates.length > 0
+        ? `${detail}; skipped=${resolution.skippedCandidates.length}`
+        : detail,
+    endpoint: resolution.probeUrl,
+    endpointClass: resolution.endpointClass,
+    skippedCandidates: resolution.skippedCandidates,
+  };
 }
 
 async function checkWorker(): Promise<ServiceStatus> {
-  try {
-    const res = await fetch("http://localhost:3111/", { signal: AbortSignal.timeout(3000) });
-    return { name: "Worker", ok: res.ok };
-  } catch (err) {
-    return { name: "Worker", ok: false, detail: String(err) };
+  const resolution = await resolveEndpoint(
+    buildServiceHealthCandidates("worker"),
+    { timeoutMs: ENDPOINT_RESOLVE_TIMEOUT_MS },
+  );
+
+  if (!resolution.ok) {
+    return {
+      name: "Worker",
+      ok: false,
+      detail: `unreachable (${summarizeSkippedCandidates(resolution.skippedCandidates)})`,
+      skippedCandidates: resolution.skippedCandidates,
+    };
   }
+
+  return {
+    name: "Worker",
+    ok: true,
+    detail: formatHealthEndpointLabel(resolution.endpointClass, resolution.probeUrl),
+    endpoint: resolution.probeUrl,
+    endpointClass: resolution.endpointClass,
+    skippedCandidates: resolution.skippedCandidates,
+  };
 }
 
 async function checkGateway(): Promise<ServiceStatus> {
@@ -397,15 +456,40 @@ async function checkGateway(): Promise<ServiceStatus> {
 }
 
 async function checkTypesense(): Promise<ServiceStatus> {
+  const resolution = await resolveEndpoint(
+    buildServiceHealthCandidates("typesense"),
+    { timeoutMs: ENDPOINT_RESOLVE_TIMEOUT_MS },
+  );
+
+  if (!resolution.ok) {
+    return {
+      name: "Typesense",
+      ok: false,
+      detail: `unreachable (${resolution.reason})`,
+      skippedCandidates: resolution.skippedCandidates,
+    };
+  }
+
   try {
-    const res = await fetch("http://localhost:8108/health", {
-      signal: AbortSignal.timeout(3000),
-      headers: { "X-TYPESENSE-API-KEY": process.env.TYPESENSE_API_KEY ?? "" },
-    });
-    const data = await res.json() as { ok?: boolean };
-    return { name: "Typesense", ok: data.ok === true };
-  } catch (err) {
-    return { name: "Typesense", ok: false, detail: String(err) };
+    const data = resolution.body.length > 0 ? JSON.parse(resolution.body) as { ok?: boolean } : {};
+    const ok = data.ok === true;
+    return {
+      name: "Typesense",
+      ok,
+      detail: `${formatHealthEndpointLabel(resolution.endpointClass, resolution.probeUrl)}${ok ? "" : " (health payload not ok)"}`,
+      endpoint: resolution.probeUrl,
+      endpointClass: resolution.endpointClass,
+      skippedCandidates: resolution.skippedCandidates,
+    };
+  } catch (error) {
+    return {
+      name: "Typesense",
+      ok: false,
+      detail: `invalid health payload [${resolution.endpointClass}] (${resolution.probeUrl}): ${String(error)}`,
+      endpoint: resolution.probeUrl,
+      endpointClass: resolution.endpointClass,
+      skippedCandidates: resolution.skippedCandidates,
+    };
   }
 }
 
@@ -796,6 +880,10 @@ export const checkSystemHealth = inngest.createFunction(
               name: service.name,
               ok: service.ok,
               durationMs: service.durationMs ?? 0,
+              endpoint: service.endpoint ?? "n/a",
+              endpointClass: service.endpointClass ?? "n/a",
+              skippedCandidates: service.skippedCandidates ?? [],
+              detail: service.detail ?? "",
             })),
             otelErrorRate,
             writeGateDrift,
@@ -1235,6 +1323,12 @@ export const checkSystemHealth = inngest.createFunction(
     };
   }
 );
+
+export const __checkSystemHealthTestUtils = {
+  checkInngest,
+  checkWorker,
+  checkTypesense,
+};
 
 export const checkSystemHealthSignalsSchedule = inngest.createFunction(
   { id: "check/system-health-signals-schedule" },

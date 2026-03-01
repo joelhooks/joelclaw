@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@joelclaw/discord-ui": "workspace:*",
+    "@joelclaw/endpoint-resolver": "workspace:*",
     "@joelclaw/inference-router": "workspace:*",
     "@joelclaw/markdown-formatter": "workspace:*",
     "@joelclaw/model-fallback": "workspace:*",

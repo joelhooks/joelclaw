@@ -8,12 +8,18 @@
  * This module:
  * 1. Writes a tripwire file so launchd can detect a dead gateway
  * 2. Runs a watchdog alarm if tripwire goes stale
- * 3. Emits a local health snapshot + Talon health signal (localhost)
+ * 3. Emits a local health snapshot + Talon health signal with endpoint fallback
  * 4. Flushes batched event digests hourly
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import {
+  buildEndpointCandidates,
+  type EndpointCandidateFailure,
+  type EndpointClass,
+  resolveEndpoint,
+} from "@joelclaw/endpoint-resolver";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { flushBatchDigest, getGatewayMode, isHealthy as isRedisHealthy } from "./channels/redis";
 import { getConsecutiveFailures, getQueueDepth } from "./command-queue";
@@ -23,6 +29,8 @@ const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const THIRTY_MINUTES_MS = 30 * 60 * 1000;
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const TALON_HEALTH_URL = process.env.TALON_HEALTH_URL ?? "http://127.0.0.1:9999/health";
+const TALON_HEALTH_SVC_DNS_URL = process.env.TALON_HEALTH_SVC_DNS_URL
+  ?? "http://talon.joelclaw.svc.cluster.local:9999/health";
 const TALON_HEALTH_TIMEOUT_MS = Number.parseInt(process.env.TALON_HEALTH_TIMEOUT_MS ?? "1200", 10) || 1200;
 
 const HEARTBEAT_CHECKLIST_PATH = `${homedir()}/Vault/HEARTBEAT.md`;
@@ -55,12 +63,15 @@ type TalonHealth = {
   reachable: boolean;
   state?: string;
   failedProbeCount?: number;
+  endpoint?: string;
+  endpointClass?: EndpointClass;
+  skippedCandidates?: EndpointCandidateFailure[];
   error?: string;
 };
 
 /**
  * Lightweight gateway health snapshot.
- * Local checks stay in-process; Talon check is localhost-only and times out fast.
+ * Local checks stay in-process; Talon check falls back across localhost → VM → service DNS.
  */
 function getLocalHealth(): LocalHealth {
   const failures = getConsecutiveFailures();
@@ -71,42 +82,47 @@ function getLocalHealth(): LocalHealth {
 }
 
 async function getTalonHealth(): Promise<TalonHealth> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TALON_HEALTH_TIMEOUT_MS);
+  const candidates = buildEndpointCandidates({
+    localhostUrl: TALON_HEALTH_URL,
+    serviceDnsUrl: TALON_HEALTH_SVC_DNS_URL,
+  });
 
-  try {
-    const response = await fetch(TALON_HEALTH_URL, {
-      method: "GET",
-      signal: controller.signal,
-    });
+  const resolution = await resolveEndpoint(candidates, {
+    timeoutMs: TALON_HEALTH_TIMEOUT_MS,
+  });
 
-    if (!response.ok) {
-      return { ok: false, reachable: true, error: `http_${response.status}` };
-    }
-
-    const payload = await response.json() as Record<string, unknown>;
-    const ok = payload.ok === true;
-    const state = typeof payload.state === "string" ? payload.state : undefined;
-    const failedProbeCount = typeof payload.failed_probe_count === "number"
-      ? payload.failed_probe_count
-      : undefined;
-
-    return {
-      ok,
-      reachable: true,
-      state,
-      failedProbeCount,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+  if (!resolution.ok) {
     return {
       ok: false,
       reachable: false,
-      error: message,
+      error: resolution.reason,
+      skippedCandidates: resolution.skippedCandidates,
     };
-  } finally {
-    clearTimeout(timeout);
   }
+
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = resolution.body.length > 0 ? JSON.parse(resolution.body) as Record<string, unknown> : {};
+  } catch {
+    payload = {};
+  }
+
+  const ok = payload.ok === true;
+  const state = typeof payload.state === "string" ? payload.state : undefined;
+  const failedProbeCount = typeof payload.failed_probe_count === "number"
+    ? payload.failed_probe_count
+    : undefined;
+
+  return {
+    ok,
+    reachable: true,
+    state,
+    failedProbeCount,
+    endpoint: resolution.probeUrl,
+    endpointClass: resolution.endpointClass,
+    skippedCandidates: resolution.skippedCandidates,
+    ...(ok ? {} : { error: `talon payload status not ok via ${resolution.endpointClass}` }),
+  };
 }
 
 async function tickHeartbeat(): Promise<void> {
@@ -150,7 +166,9 @@ async function tickHeartbeat(): Promise<void> {
       talon: talon.ok ? "ok" : talon.reachable ? "degraded" : "failed",
       talonState: talon.state ?? "unknown",
       talonFailedProbeCount: talon.failedProbeCount ?? -1,
-      talonHealthUrl: TALON_HEALTH_URL,
+      talonHealthUrl: talon.endpoint ?? TALON_HEALTH_URL,
+      talonEndpointClass: talon.endpointClass ?? "unknown",
+      talonSkippedCandidates: talon.skippedCandidates ?? [],
       ...(talon.error ? { talonError: talon.error } : {}),
     },
   });
@@ -241,5 +259,6 @@ export function startHeartbeatRunner(): HeartbeatRunner {
 }
 
 export { HEARTBEAT_CHECKLIST_PATH, TRIPWIRE_PATH };
+export const __heartbeatTestUtils = { getTalonHealth };
 
 export default startHeartbeatRunner;

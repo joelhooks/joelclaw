@@ -215,6 +215,9 @@ importers:
       '@effect/platform-bun':
         specifier: ^0.87.1
         version: 0.87.1(@effect/cluster@0.56.4(@effect/platform@0.94.5(effect@3.19.17))(@effect/rpc@0.73.1(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17))(@effect/sql@0.49.0(@effect/experimental@0.58.0(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17)(ioredis@5.9.3))(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17))(@effect/workflow@0.16.0(@effect/experimental@0.58.0(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17)(ioredis@5.9.3))(@effect/platform@0.94.5(effect@3.19.17))(@effect/rpc@0.73.1(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17))(effect@3.19.17))(effect@3.19.17))(@effect/platform@0.94.5(effect@3.19.17))(@effect/rpc@0.73.1(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17))(@effect/sql@0.49.0(@effect/experimental@0.58.0(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17)(ioredis@5.9.3))(@effect/platform@0.94.5(effect@3.19.17))(effect@3.19.17))(effect@3.19.17)
+      '@joelclaw/endpoint-resolver':
+        specifier: workspace:*
+        version: link:../endpoint-resolver
       '@joelclaw/inference-router':
         specifier: workspace:*
         version: link:../inference-router
@@ -288,11 +291,16 @@ importers:
         specifier: ^5.7.0
         version: 5.9.2
 
+  packages/endpoint-resolver: {}
+
   packages/gateway:
     dependencies:
       '@joelclaw/discord-ui':
         specifier: workspace:*
         version: link:../discord-ui
+      '@joelclaw/endpoint-resolver':
+        specifier: workspace:*
+        version: link:../endpoint-resolver
       '@joelclaw/inference-router':
         specifier: workspace:*
         version: link:../inference-router
@@ -491,6 +499,9 @@ importers:
       '@joelclaw/email':
         specifier: workspace:^
         version: link:../email
+      '@joelclaw/endpoint-resolver':
+        specifier: workspace:*
+        version: link:../endpoint-resolver
       '@joelclaw/inference-router':
         specifier: workspace:*
         version: link:../inference-router

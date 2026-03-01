@@ -10,6 +10,16 @@ Canonical operator interface for joelclaw.
 - Heavy dependencies loaded lazily when possible
 - Capability adapter registry with typed command contracts (`packages/cli/src/capabilities/`)
 
+## Health endpoint fallback (ADR-0182)
+
+CLI health probes for Inngest and worker resolve endpoints in this order:
+
+1. `localhost`
+2. discovered Colima VM IP (`JOELCLAW_COLIMA_VM_IP`, fallback `192.168.64.2`)
+3. k8s service DNS (`*.joelclaw.svc.cluster.local`)
+
+Probe detail strings include the selected endpoint class (`localhost|vm|svc_dns`) and skipped-candidate counts.
+
 ## Command roots
 
 - `joelclaw status`
