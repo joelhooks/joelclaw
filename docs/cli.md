@@ -20,6 +20,30 @@ CLI health probes for Inngest and worker resolve endpoints in this order:
 
 Probe detail strings include the selected endpoint class (`localhost|vm|svc_dns`) and skipped-candidate counts.
 
+## Inngest status truth model (ADR-0187 + ADR-0159)
+
+```bash
+joelclaw inngest status [--heal] [--wait-ms 1500]
+```
+
+Semantics:
+
+- reports both raw and normalized checks:
+  - `checks_raw`: direct probe outcomes
+  - `checks`: normalized truth surface used for `ok`
+- worker truth is route-aware:
+  - if direct worker endpoint probe fails but `deployment/system-bus-worker` is ready, worker is reported as healthy with `summary.route = "k8s-only"`
+- k8s truth uses core workload readiness (not every pod phase):
+  - `statefulset/inngest`, `statefulset/redis`, `statefulset/typesense`, `deployment/system-bus-worker`
+- includes Talon watchdog health (`http://127.0.0.1:9999/health`) plus launchd state to guide escalation.
+
+`--heal` performs targeted remediation before re-check:
+
+1. enforce worker single-source binding
+2. restart/register worker when worker checks fail
+3. kickstart Talon + run `talon --check` when server/k8s checks fail
+4. re-collect status and return before/after snapshots
+
 ## Command roots
 
 - `joelclaw status`

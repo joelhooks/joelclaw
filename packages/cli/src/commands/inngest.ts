@@ -10,6 +10,9 @@ const HOME_DIR = process.env.HOME ?? "/Users/joel"
 const WORKER_URL = cfg.workerUrl
 const WORKER_REGISTER_URL = `${WORKER_URL}/api/inngest`
 const WORKER_LABEL = "com.joel.system-bus-worker"
+const TALON_LABEL = "com.joel.talon"
+const TALON_HEALTH_URL = process.env.TALON_HEALTH_URL?.trim() || "http://127.0.0.1:9999/health"
+const JOELCLAW_NAMESPACE = "joelclaw"
 const WORKER_LAUNCHD_PLIST_SOURCE = `${HOME_DIR}/Code/joelhooks/joelclaw/infra/launchd/${WORKER_LABEL}.plist`
 const WORKER_LAUNCHD_PLIST_TARGET = `${HOME_DIR}/Library/LaunchAgents/${WORKER_LABEL}.plist`
 const WORKER_EXPECTED_START_FALLBACK = `${HOME_DIR}/Code/joelhooks/joelclaw/packages/system-bus/start.sh`
@@ -26,6 +29,13 @@ const MEMORY_COMPONENTS = [
   "echo-fizzle",
   "nightly-maintenance",
   "weekly-maintenance",
+]
+
+const CORE_K8S_WORKLOADS: Array<{ kind: "statefulset" | "deployment"; namespace: string; name: string }> = [
+  { kind: "statefulset", namespace: JOELCLAW_NAMESPACE, name: "inngest" },
+  { kind: "statefulset", namespace: JOELCLAW_NAMESPACE, name: "redis" },
+  { kind: "statefulset", namespace: JOELCLAW_NAMESPACE, name: "typesense" },
+  { kind: "deployment", namespace: JOELCLAW_NAMESPACE, name: "system-bus-worker" },
 ]
 
 const sleepMs = (ms: number) =>
@@ -471,6 +481,255 @@ function parseLaunchctlField(raw: string, field: string): string | null {
   return match?.[1]?.trim() ?? null
 }
 
+function parsePositiveInteger(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.floor(value))
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10)
+    if (Number.isFinite(parsed)) return Math.max(0, parsed)
+  }
+  return fallback
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  if (!raw || raw.trim().length === 0) return null
+  try {
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+function inspectLaunchdService(label: string): {
+  loaded: boolean
+  state: string | null
+  pid: number | null
+  service: string
+  detail: string
+} {
+  const uid = process.getuid?.() ?? 0
+  const service = `gui/${uid}/${label}`
+  const proc = Bun.spawnSync(["launchctl", "print", service], {
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+
+  if (proc.exitCode !== 0) {
+    const stderr = decodeText(proc.stderr).trim()
+    return {
+      loaded: false,
+      state: null,
+      pid: null,
+      service,
+      detail: stderr || `launchctl print exited with ${proc.exitCode}`,
+    }
+  }
+
+  const output = decodeText(proc.stdout)
+  const state = parseLaunchctlField(output, "state")
+  const pidRaw = parseLaunchctlField(output, "pid")
+  const pidParsed = pidRaw ? Number.parseInt(pidRaw, 10) : Number.NaN
+
+  return {
+    loaded: true,
+    state,
+    pid: Number.isFinite(pidParsed) ? pidParsed : null,
+    service,
+    detail: `loaded${state ? ` state=${state}` : ""}`,
+  }
+}
+
+function probeK8sCoreWorkloads(): K8sCoreProbeSnapshot {
+  const workloads: K8sCoreWorkloadProbe[] = CORE_K8S_WORKLOADS.map((target) => {
+    const resource = `${target.kind}/${target.name}`
+    const proc = Bun.spawnSync(
+      ["kubectl", "-n", target.namespace, "get", target.kind, target.name, "-o", "json"],
+      { stdout: "pipe", stderr: "pipe" },
+    )
+
+    if (proc.exitCode !== 0) {
+      const stderr = decodeText(proc.stderr).trim()
+      return {
+        resource,
+        kind: target.kind,
+        namespace: target.namespace,
+        name: target.name,
+        desired: 1,
+        ready: 0,
+        ok: false,
+        detail: stderr || `kubectl exited with ${proc.exitCode}`,
+      }
+    }
+
+    const body = parseJsonObject(decodeText(proc.stdout))
+    if (!body) {
+      return {
+        resource,
+        kind: target.kind,
+        namespace: target.namespace,
+        name: target.name,
+        desired: 1,
+        ready: 0,
+        ok: false,
+        detail: "invalid kubectl JSON payload",
+      }
+    }
+
+    const spec = (body.spec ?? {}) as Record<string, unknown>
+    const status = (body.status ?? {}) as Record<string, unknown>
+    const desired = Math.max(1, parsePositiveInteger(spec.replicas, 1))
+    const ready = target.kind === "statefulset"
+      ? parsePositiveInteger(status.readyReplicas, 0)
+      : Math.max(
+          parsePositiveInteger(status.readyReplicas, 0),
+          parsePositiveInteger(status.availableReplicas, 0),
+        )
+    const ok = ready >= desired
+
+    return {
+      resource,
+      kind: target.kind,
+      namespace: target.namespace,
+      name: target.name,
+      desired,
+      ready,
+      ok,
+      detail: `ready=${ready}/${desired}`,
+    }
+  })
+
+  const ok = workloads.every((workload) => workload.ok)
+  const detail = workloads
+    .map((workload) => `${workload.resource} ${workload.detail}`)
+    .join(" | ")
+
+  return {
+    ok,
+    detail,
+    workloads,
+  }
+}
+
+function workerReadyViaK8s(snapshot: K8sCoreProbeSnapshot): { ok: boolean; detail: string } {
+  const workload = snapshot.workloads.find((entry) => entry.resource === "deployment/system-bus-worker")
+  if (!workload) {
+    return {
+      ok: false,
+      detail: "deployment/system-bus-worker missing from core probe",
+    }
+  }
+
+  return {
+    ok: workload.ok,
+    detail: `${workload.resource} ${workload.detail}`,
+  }
+}
+
+const probeTalonHealth = () =>
+  Effect.tryPromise({
+    try: async (): Promise<TalonHealthSnapshot> => {
+      const launchd = inspectLaunchdService(TALON_LABEL)
+
+      try {
+        const resp = await fetch(TALON_HEALTH_URL, {
+          signal: AbortSignal.timeout(1500),
+        })
+        const rawText = await resp.text()
+        const parsed = parseJsonObject(rawText)
+        const stateCandidate = typeof parsed?.state === "string"
+          ? parsed.state
+          : typeof parsed?.status === "string"
+            ? parsed.status
+            : null
+
+        if (!resp.ok) {
+          return {
+            ok: false,
+            reachable: false,
+            launchdLoaded: launchd.loaded,
+            launchdState: launchd.state,
+            launchdPid: launchd.pid,
+            detail: `HTTP ${resp.status} (${TALON_HEALTH_URL}); ${launchd.detail}`,
+            healthUrl: TALON_HEALTH_URL,
+            raw: parsed,
+          }
+        }
+
+        return {
+          ok: true,
+          reachable: true,
+          launchdLoaded: launchd.loaded,
+          launchdState: launchd.state,
+          launchdPid: launchd.pid,
+          detail: `state=${stateCandidate ?? "unknown"} (${TALON_HEALTH_URL}); ${launchd.detail}`,
+          healthUrl: TALON_HEALTH_URL,
+          raw: parsed,
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        return {
+          ok: false,
+          reachable: false,
+          launchdLoaded: launchd.loaded,
+          launchdState: launchd.state,
+          launchdPid: launchd.pid,
+          detail: `unreachable (${detail}) (${TALON_HEALTH_URL}); ${launchd.detail}`,
+          healthUrl: TALON_HEALTH_URL,
+          raw: null,
+        }
+      }
+    },
+    catch: (error) => new Error(`Failed to probe Talon health: ${error}`),
+  }).pipe(
+    Effect.catchAll((error) =>
+      Effect.succeed({
+        ok: false,
+        reachable: false,
+        launchdLoaded: false,
+        launchdState: null,
+        launchdPid: null,
+        detail: error.message,
+        healthUrl: TALON_HEALTH_URL,
+        raw: null,
+      } satisfies TalonHealthSnapshot)
+    )
+  )
+
+const kickstartTalon = () =>
+  Effect.sync(() => {
+    const uid = process.getuid?.() ?? 0
+    const proc = Bun.spawnSync(["launchctl", "kickstart", "-k", `gui/${uid}/${TALON_LABEL}`], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+
+    return {
+      ok: proc.exitCode === 0,
+      exitCode: proc.exitCode,
+      stdout: decodeText(proc.stdout).trim(),
+      stderr: decodeText(proc.stderr).trim(),
+    }
+  })
+
+const talonCheck = () =>
+  Effect.sync(() => {
+    const proc = Bun.spawnSync(["talon", "--check"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const stdout = decodeText(proc.stdout).trim()
+    const stderr = decodeText(proc.stderr).trim()
+
+    return {
+      ok: proc.exitCode === 0,
+      exitCode: proc.exitCode,
+      stdout,
+      stderr,
+      parsed: parseJsonObject(stdout),
+    }
+  })
+
 const inspectWorkerLaunchdBinding = () =>
   Effect.try({
     try: () => {
@@ -854,12 +1113,14 @@ function hasSdkUrlError(runDetail: unknown): boolean {
 
 const TERMINAL_RUN_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED"])
 
-const inngestStatusCmd = Command.make("status", {}, () =>
+const collectInngestStatusSnapshot = (inngestClient: any) =>
   Effect.gen(function* () {
-    const inngestClient = yield* Inngest
-    const checks = yield* inngestClient.health()
+    const checksRaw = (yield* inngestClient.health()) as Record<string, StatusCheck>
     const functions = yield* inngestClient.functions()
     const worker = yield* workerProbe().pipe(Effect.either)
+    const coreK8s = probeK8sCoreWorkloads()
+    const workerK8s = workerReadyViaK8s(coreK8s)
+    const talon = yield* probeTalonHealth()
 
     const workerInfo = worker._tag === "Right"
       ? {
@@ -885,19 +1146,162 @@ const inngestStatusCmd = Command.make("status", {}, () =>
           error: worker.left.message,
         }
 
-    const ok = Object.values(checks).every((c) => c.ok)
+    const checks: Record<string, StatusCheck> = {
+      ...checksRaw,
+      k8s: {
+        ok: coreK8s.ok,
+        detail: coreK8s.detail,
+      },
+    }
 
-    yield* Console.log(respond("inngest status", {
+    const workerCheckRaw = checksRaw.worker ?? {
+      ok: false,
+      detail: "worker probe missing",
+    }
+
+    checks.worker = workerCheckRaw.ok
+      ? workerCheckRaw
+      : workerK8s.ok
+        ? {
+            ok: true,
+            detail: `endpoint unreachable from CLI (${workerCheckRaw.detail ?? "unknown"}); workload ready (${workerK8s.detail})`,
+          }
+        : {
+            ok: false,
+            detail: `${workerCheckRaw.detail ?? "unknown"}; ${workerK8s.detail}`,
+          }
+
+    const summary: InngestStatusSummary = {
+      server: checks.server?.ok === true,
+      worker: checks.worker?.ok === true,
+      workerEndpoint: workerInfo.reachable,
+      workerK8s: workerK8s.ok,
+      k8sCore: coreK8s.ok,
+      talon: talon.ok,
+      route: workerInfo.reachable ? "direct" : workerK8s.ok ? "k8s-only" : "down",
+      ok: false,
+    }
+
+    summary.ok = summary.server && summary.worker && summary.k8sCore
+
+    return {
+      checksRaw,
       checks,
       registeredFunctionCount: functions.length,
       worker: workerInfo,
-    }, [
-      { command: "joelclaw inngest source", description: "Verify single-source worker binding" },
-      { command: "joelclaw inngest register", description: "Register functions from worker" },
-      { command: "joelclaw inngest restart-worker", description: "Restart system-bus worker" },
-      { command: "joelclaw refresh", description: "Full delete + re-register reconciliation" },
-    ], ok))
+      coreK8s,
+      talon,
+      summary,
+    } satisfies InngestStatusSnapshot
   })
+
+const buildInngestStatusNextActions = (
+  snapshot: InngestStatusSnapshot,
+  healRequested: boolean,
+) => {
+  const next = [
+    { command: "joelclaw inngest workers", description: "Worker role + duplicate-id diagnostics" },
+    { command: "joelclaw inngest source", description: "Verify/repair single-source worker binding" },
+    { command: "joelclaw runs --count 5 --hours 1", description: "Inspect recent run activity" },
+  ]
+
+  if (!snapshot.summary.workerEndpoint) {
+    next.push({ command: "joelclaw inngest sync-worker --restart", description: "Restore host worker endpoint and function registration" })
+  }
+
+  if (!snapshot.summary.server) {
+    next.push({ command: "kubectl rollout restart statefulset/inngest -n joelclaw", description: "Restart Inngest server StatefulSet" })
+  }
+
+  if (!snapshot.summary.k8sCore) {
+    next.push({ command: "joelclaw heal run K8S_UNREACHABLE --phase fix --execute", description: "Run deterministic k8s recovery runbook" })
+  }
+
+  if (!snapshot.talon.ok) {
+    next.push({ command: "launchctl kickstart -k gui/$(id -u)/com.joel.talon", description: "Restart Talon watchdog daemon" })
+    next.push({ command: "talon --check", description: "Run single Talon probe cycle" })
+  }
+
+  if (!healRequested && !snapshot.summary.ok) {
+    next.push({ command: "joelclaw inngest status --heal", description: "Attempt targeted self-healing and re-check status" })
+  }
+
+  return next
+}
+
+const inngestStatusCmd = Command.make(
+  "status",
+  {
+    heal: Options.boolean("heal").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Attempt targeted self-healing when status checks fail")
+    ),
+    waitMs: Options.integer("wait-ms").pipe(
+      Options.withDefault(1500),
+      Options.withDescription("Wait between heal actions and post-heal verification (default: 1500)")
+    ),
+  },
+  ({ heal, waitMs }) =>
+    Effect.gen(function* () {
+      const inngestClient = yield* Inngest
+      const safeWaitMs = Math.max(200, waitMs)
+
+      const before = yield* collectInngestStatusSnapshot(inngestClient)
+      let after = before
+
+      const healResult: InngestStatusHealResult = {
+        requested: heal,
+        attempted: false,
+        reasons: [],
+        worker: {},
+      }
+
+      if (heal && !before.summary.ok) {
+        healResult.attempted = true
+
+        if (!before.summary.worker || !before.summary.workerEndpoint) {
+          healResult.reasons.push("worker")
+          healResult.worker.sourceCheck = yield* ensureSingleSourceWorkerBinding(true).pipe(Effect.either)
+          healResult.worker.restarted = yield* restartWorker({ enforceSingleSource: false }).pipe(Effect.either)
+          if ((healResult.worker.restarted as any)?._tag === "Right") {
+            if (safeWaitMs > 0) yield* sleepMs(safeWaitMs)
+            healResult.worker.registered = yield* registerWorkerFunctions().pipe(Effect.either)
+          }
+        }
+
+        if (!before.summary.server || !before.summary.k8sCore) {
+          healResult.reasons.push("talon")
+          const kickstart = yield* kickstartTalon()
+          const check = yield* talonCheck()
+          healResult.talon = {
+            kickstart,
+            check,
+          }
+        }
+
+        if (safeWaitMs > 0) yield* sleepMs(safeWaitMs)
+        after = yield* collectInngestStatusSnapshot(inngestClient)
+      }
+
+      const ok = after.summary.ok
+
+      yield* Console.log(respond("inngest status", {
+        checks: after.checks,
+        checks_raw: after.checksRaw,
+        summary: after.summary,
+        registeredFunctionCount: after.registeredFunctionCount,
+        worker: after.worker,
+        core_k8s: after.coreK8s,
+        talon: after.talon,
+        healing: healResult,
+        before: healResult.attempted
+          ? {
+              checks: before.checks,
+              summary: before.summary,
+            }
+          : null,
+      }, buildInngestStatusNextActions(after, heal), ok))
+    })
 )
 
 const inngestSourceCmd = Command.make(
@@ -2565,7 +2969,7 @@ export const inngestCmd = Command.make("inngest", {}, () =>
   Console.log(respond("inngest", {
     description: "Inngest operational shortcuts",
     subcommands: {
-      status: "joelclaw inngest status",
+      status: "joelclaw inngest status [--heal] [--wait-ms 1500]",
       workers: "joelclaw inngest workers",
       source: "joelclaw inngest source [--repair]",
       invoke: "joelclaw inngest invoke <function-slug> [--mode auto|event|invoke] [--data '{}'] [--wait-ms 30000]",
@@ -2581,7 +2985,7 @@ export const inngestCmd = Command.make("inngest", {}, () =>
       deep_reconcile_alias: "joelclaw refresh",
     },
   }, [
-    { command: "joelclaw inngest status", description: "Check worker/server/function health" },
+    { command: "joelclaw inngest status", description: "Check worker/server/k8s truth snapshot" },
     { command: "joelclaw inngest workers", description: "Worker role + duplicate-id diagnostics" },
     { command: "joelclaw inngest source", description: "Verify ADR-0089 single-source launchd binding" },
     { command: "joelclaw inngest invoke <function-slug> --data '{}'", description: "Invoke one function and wait for terminal status" },
