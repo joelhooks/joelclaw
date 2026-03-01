@@ -70,6 +70,7 @@ const MEMORY_LOG_ROOT = `${HOME_DIR}/.joelclaw/workspace/memory`;
 const MEMORY_LOG_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/logs`;
 const SLOG_PATH = `${HOME_DIR}/Vault/system/system-log.jsonl`;
 const SLOG_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/slog`;
+const NAS_BACKUP_QUEUE_ROOT = process.env.NAS_BACKUP_QUEUE_ROOT?.trim() || "/tmp/joelclaw/nas-queue";
 
 type BackupTarget = "typesense" | "redis";
 type BackupFailureAction = "retry" | "pause" | "escalate";
@@ -114,11 +115,13 @@ type ShellResult = {
   stderr: Buffer | Uint8Array | string;
 };
 
-type BackupMode = "local" | "remote";
+type BackupMode = "local" | "remote" | "queued";
 
 type RetryResult = {
   mode: BackupMode;
   attempts: number;
+  queuedPath?: string;
+  queuedReason?: string;
 };
 
 type RetryError = Error | unknown;
@@ -696,8 +699,10 @@ function normalizeRetryData(raw: Record<string, unknown>): BackupFailureEventDat
       typeof raw.transportMode === "string"
         ? raw.transportMode === "remote"
           ? "remote"
-          : "local"
-      : undefined,
+          : raw.transportMode === "queued"
+            ? "queued"
+            : "local"
+        : undefined,
     transportAttempts: parseAttempt(raw.transportAttempts, 0),
     transportDestination:
       typeof raw.transportDestination === "string" ? raw.transportDestination : undefined,
@@ -750,6 +755,12 @@ async function ensureRemoteDirectory(path: string): Promise<void> {
     `mkdir -p ${path} via remote`,
     $`ssh ${NAS_SSH_FLAGS} ${NAS_SSH_HOST} "mkdir -p ${path}"`.quiet().nothrow()
   );
+}
+
+function queuePathForDestination(destinationPath: string): string {
+  const sanitized = destinationPath.replace(/^\/+/, "");
+  if (!sanitized) return join(NAS_BACKUP_QUEUE_ROOT, "unknown-target");
+  return join(NAS_BACKUP_QUEUE_ROOT, sanitized);
 }
 
 async function runWithBackupTransport<T>(
@@ -825,32 +836,47 @@ async function copyDirectoryWithFallback(
   localDestination: string,
   remoteDestination: string,
 ): Promise<RetryResult> {
-  const { mode, attempts } = await runWithBackupTransport(
-    `copy ${source} to backup target`,
-    localDestination,
-    remoteDestination,
-    async () => {
-      await runShell(
-        `mkdir -p ${localDestination}`,
-        $`mkdir -p ${localDestination}`.quiet().nothrow()
-      );
-      await runShell(
-        `rsync -az ${source}/ ${localDestination}/`,
-        $`rsync -az ${source}/ ${localDestination}/`.quiet().nothrow()
-      );
-      return;
-    },
-    async () => {
-      await ensureRemoteDirectory(remoteDestination);
-      await runShell(
-        `scp -r ${source}/. ${NAS_SSH_HOST}:${remoteDestination}/`,
-        $`scp -o ${NAS_SSH_FLAGS} -r ${source}/. ${NAS_SSH_HOST}:${remoteDestination}/`.quiet().nothrow()
-      );
-      return;
-    }
-  );
+  try {
+    const { mode, attempts } = await runWithBackupTransport(
+      `copy ${source} to backup target`,
+      localDestination,
+      remoteDestination,
+      async () => {
+        await runShell(
+          `mkdir -p ${localDestination}`,
+          $`mkdir -p ${localDestination}`.quiet().nothrow()
+        );
+        await runShell(
+          `rsync -az ${source}/ ${localDestination}/`,
+          $`rsync -az ${source}/ ${localDestination}/`.quiet().nothrow()
+        );
+        return;
+      },
+      async () => {
+        await ensureRemoteDirectory(remoteDestination);
+        await runShell(
+          `scp -r ${source}/. ${NAS_SSH_HOST}:${remoteDestination}/`,
+          $`scp -o ${NAS_SSH_FLAGS} -r ${source}/. ${NAS_SSH_HOST}:${remoteDestination}/`.quiet().nothrow()
+        );
+        return;
+      }
+    );
 
-  return { mode, attempts };
+    return { mode, attempts };
+  } catch (error) {
+    const queuedPath = queuePathForDestination(localDestination);
+    await runShell(`mkdir -p ${queuedPath}`, $`mkdir -p ${queuedPath}`.quiet().nothrow());
+    await runShell(
+      `rsync -az ${source}/ ${queuedPath}/`,
+      $`rsync -az ${source}/ ${queuedPath}/`.quiet().nothrow()
+    );
+    return {
+      mode: "queued",
+      attempts: BACKUP_MAX_ATTEMPTS,
+      queuedPath,
+      queuedReason: stringifyFailureError(error),
+    };
+  }
 }
 
 async function copyFileWithFallback(
@@ -860,32 +886,46 @@ async function copyFileWithFallback(
 ): Promise<RetryResult> {
   const localDir = dirname(localDestination);
   const remoteDir = dirname(remoteDestination);
-  const { mode, attempts } = await runWithBackupTransport(
-    `copy file ${source} to backup target`,
-    localDir,
-    remoteDir,
-    async () => {
-      await runShell(
-        `mkdir -p ${localDir}`,
-        $`mkdir -p ${localDir}`.quiet().nothrow()
-      );
-      await runShell(
-        `cp ${source} ${localDestination}`,
-        $`cp ${source} ${localDestination}`.quiet().nothrow()
-      );
-      return;
-    },
-    async () => {
-      await ensureRemoteDirectory(remoteDir);
-      await runShell(
-        `scp ${source} to remote backup`,
-        $`scp -o ${NAS_SSH_FLAGS} ${source} ${NAS_SSH_HOST}:${remoteDestination}`.quiet().nothrow()
-      );
-      return;
-    }
-  );
 
-  return { mode, attempts };
+  try {
+    const { mode, attempts } = await runWithBackupTransport(
+      `copy file ${source} to backup target`,
+      localDir,
+      remoteDir,
+      async () => {
+        await runShell(
+          `mkdir -p ${localDir}`,
+          $`mkdir -p ${localDir}`.quiet().nothrow()
+        );
+        await runShell(
+          `cp ${source} ${localDestination}`,
+          $`cp ${source} ${localDestination}`.quiet().nothrow()
+        );
+        return;
+      },
+      async () => {
+        await ensureRemoteDirectory(remoteDir);
+        await runShell(
+          `scp ${source} to remote backup`,
+          $`scp -o ${NAS_SSH_FLAGS} ${source} ${NAS_SSH_HOST}:${remoteDestination}`.quiet().nothrow()
+        );
+        return;
+      }
+    );
+
+    return { mode, attempts };
+  } catch (error) {
+    const queuedPath = queuePathForDestination(localDestination);
+    const queuedDir = dirname(queuedPath);
+    await runShell(`mkdir -p ${queuedDir}`, $`mkdir -p ${queuedDir}`.quiet().nothrow());
+    await runShell(`cp ${source} ${queuedPath}`, $`cp ${source} ${queuedPath}`.quiet().nothrow());
+    return {
+      mode: "queued",
+      attempts: BACKUP_MAX_ATTEMPTS,
+      queuedPath,
+      queuedReason: stringifyFailureError(error),
+    };
+  }
 }
 
 function toText(value: Buffer | Uint8Array | string): string {
@@ -1310,6 +1350,8 @@ export const backupTypesense = inngest.createFunction(
     const attempt = resolveEventAttempt(eventData);
     let transportMode: BackupMode = "local";
     let transportAttempts = 0;
+    let transportQueuedPath: string | null = null;
+    let transportQueuedReason: string | null = null;
 
     if (attempt > 0) {
       metadata.retryAttempt = attempt;
@@ -1370,6 +1412,8 @@ export const backupTypesense = inngest.createFunction(
           );
           transportMode = result.mode;
           transportAttempts = result.attempts;
+          transportQueuedPath = result.queuedPath ?? null;
+          transportQueuedReason = result.queuedReason ?? null;
         });
 
         await step.run("cleanup-stage", async () => {
@@ -1410,6 +1454,8 @@ export const backupTypesense = inngest.createFunction(
         metadata.retryAttempt = attempt;
         metadata.transportMode = transportMode;
         metadata.transportAttempts = transportAttempts;
+        metadata.transportQueuedPath = transportQueuedPath;
+        metadata.transportQueuedReason = transportQueuedReason;
         metadata.snapshotResult = snapshotResult;
         metadata.snapshotCleanup = snapshotCleanup;
         metadata.snapshotPrune = snapshotPrune;
@@ -1418,6 +1464,8 @@ export const backupTypesense = inngest.createFunction(
           date: dateStamp,
           transportMode,
           transportAttempts,
+          transportQueuedPath,
+          transportQueuedReason,
           snapshotRoot,
           snapshotPath,
           snapshotFallbackAttempted: snapshotSelection.fallbackAttempted,
@@ -1455,6 +1503,8 @@ export const backupRedis = inngest.createFunction(
     const attempt = resolveEventAttempt(eventData);
     let transportMode: BackupMode = "local";
     let transportAttempts = 0;
+    let transportQueuedPath: string | null = null;
+    let transportQueuedReason: string | null = null;
 
     if (attempt > 0) {
       metadata.retryAttempt = attempt;
@@ -1502,6 +1552,8 @@ export const backupRedis = inngest.createFunction(
           const result = await copyFileWithFallback(stagingPath, destinationPath, remoteDestinationPath);
           transportMode = result.mode;
           transportAttempts = result.attempts;
+          transportQueuedPath = result.queuedPath ?? null;
+          transportQueuedReason = result.queuedReason ?? null;
         });
 
         await step.run("cleanup-redis-stage", async () => {
@@ -1514,11 +1566,15 @@ export const backupRedis = inngest.createFunction(
         metadata.retryAttempt = attempt;
         metadata.transportMode = transportMode;
         metadata.transportAttempts = transportAttempts;
+        metadata.transportQueuedPath = transportQueuedPath;
+        metadata.transportQueuedReason = transportQueuedReason;
 
         return {
           date: dateStamp,
           transportMode,
           transportAttempts,
+          transportQueuedPath,
+          transportQueuedReason,
           destinationPath,
         };
       }

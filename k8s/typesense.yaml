@@ -1,6 +1,7 @@
 ---
 # Typesense v30.1 — Unified search for JoelClaw network (ADR-0082)
 # Single-node deployment with local-path PVC.
+# Primary data stays local; no NAS mount at runtime (ADR-0187).
 # Access via: kubectl port-forward svc/typesense -n joelclaw 8108:8108
 # Later: Tailscale operator will expose as typesense.ts.net (ADR-0083)
 apiVersion: v1
@@ -31,6 +32,10 @@ spec:
         app: typesense
     spec:
       terminationGracePeriodSeconds: 60
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
       containers:
         - name: typesense
           image: typesense/typesense:30.1
@@ -52,18 +57,18 @@ spec:
               name: http
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 200m
+              memory: 512Mi
             limits:
               cpu: "2"
-              memory: 1Gi
+              memory: 2Gi
           readinessProbe:
             httpGet:
               path: /health
               port: http
               httpHeaders:
                 - name: X-TYPESENSE-API-KEY
-                  value: "unused"  # /health doesn't need auth
+                  value: "unused" # /health doesn't need auth
             initialDelaySeconds: 5
             periodSeconds: 10
           volumeMounts:

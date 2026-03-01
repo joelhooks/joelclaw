@@ -48,7 +48,11 @@ Canonical notes for `packages/system-bus/src/inngest/functions/`.
 - function: `system/backup.typesense`
 - file: `packages/system-bus/src/inngest/functions/nas-backup.ts`
 - snapshot creation supports primary→fallback root selection.
-- after successful NAS sync:
+- backup transport now uses a three-tier write policy:
+  1. local NAS mount (`/Volumes/three-body`)
+  2. direct remote copy over SSH/SCP to NAS
+  3. local deferred queue spool (when both NAS paths are unavailable)
+- after successful sync/defer:
   - delete just-created snapshot dir in pod
   - prune old snapshot dirs by retention count
 
@@ -57,6 +61,11 @@ Environment variables:
 - `TYPESENSE_SNAPSHOT_ROOT` (default: `/data/snapshots`)
 - `TYPESENSE_SNAPSHOT_FALLBACK_ROOT` (default: `/data/snapshots`)
 - `TYPESENSE_SNAPSHOT_RETENTION_COUNT` (default: `2`, min `1`)
+- `NAS_BACKUP_QUEUE_ROOT` (default: `/tmp/joelclaw/nas-queue`)
+
+Kubernetes note:
+
+- `k8s/typesense.yaml` keeps `typesense-0` NAS-independent at runtime (no hard NFS mount). Snapshot durability is handled by the backup transport flow above, not by pod startup dependencies.
 
 ## Webhook subscription dispatch (ADR-0185)
 
@@ -95,3 +104,4 @@ joelclaw inngest status
 
 - `docs/decisions/0010-system-loop-gateway.md`
 - `~/Vault/docs/decisions/0088-nas-backed-storage-tiering.md`
+- `~/Vault/docs/decisions/0187-nas-degradation-local-temp-queue-fallback-contract.md`
