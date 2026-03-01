@@ -82,6 +82,8 @@ const WRITE_GATE_DRIFT_LAST_NOTIFIED_KEY = "memory:health:write_gate_drift:last_
 const WRITE_GATE_DRIFT_NOTIFY_COOLDOWN_SECONDS = 6 * 60 * 60;
 const SELF_HEALING_GATEWAY_REQUEST_EVENT = "system/self.healing.requested";
 const GATEWAY_BRIDGE_HEALTH_REQUEST_EVENT = "system/gateway.bridge.health.requested";
+const INNGEST_RUNTIME_HEALING_DOMAIN = "inngest-runtime";
+const INNGEST_RUNTIME_HEALTH_REQUEST_EVENT = "system/inngest.runtime.health.requested";
 const HEALTH_OTEL_GAP_LAST_NOTIFIED_KEY = "memory:health:otel_gap:last_notified";
 const HEALTH_OTEL_GAP_NOTIFY_COOLDOWN_SECONDS = 10 * 60;
 const GATEWAY_HEALING_RETRY_POLICY = {
@@ -215,7 +217,7 @@ type HealthSelfHealingRequest = {
   targetComponent: string;
   targetEventName: string;
   problemSummary: string;
-  domain: "gateway-bridge" | "otel-pipeline";
+  domain: "gateway-bridge" | "otel-pipeline" | "inngest-runtime";
   attempt: number;
   reason: string;
   evidence: Array<{ type: string; detail: string }>;
@@ -1042,6 +1044,104 @@ export const checkSystemHealth = inngest.createFunction(
               targetEventName: GATEWAY_BRIDGE_HEALTH_REQUEST_EVENT,
               targetServices: gatewayCriticalDegrade.map((service) => service.name),
               evidenceSummary: summarizeEvidenceForOtel(evidence),
+            },
+          });
+        })
+      );
+    }
+
+    const inngestRuntimeDegrade = degraded.filter((service) =>
+      service.name === "Inngest" || service.name === "Worker"
+    );
+
+    if (inngestRuntimeDegrade.length > 0) {
+      await withTiming(stepDurationsMs, "core.dispatch-inngest-runtime-self-heal", async () =>
+        step.run("dispatch-inngest-runtime-self-heal", async () => {
+          const evidence = inngestRuntimeDegrade.map((service) => ({
+            type: "service-health",
+            detail: `${service.name}: ${service.detail ?? "down"}`,
+          }));
+          const summaryLine = inngestRuntimeDegrade
+            .map((service) => `${service.name}=${service.ok ? "ok" : "down"}`)
+            .join(", ");
+          const dispatchFlowContext = buildSelfHealingFlowContext({
+            sourceFunction: "system/check-system-health",
+            targetComponent: "inngest-runtime",
+            targetEventName: INNGEST_RUNTIME_HEALTH_REQUEST_EVENT,
+            domain: INNGEST_RUNTIME_HEALING_DOMAIN,
+            eventName,
+            eventId: event.id,
+            attempt: 0,
+            evidenceCount: evidence.length,
+          });
+
+          await step.sendEvent("emit-inngest-runtime-self-healing-request", {
+            name: SELF_HEALING_GATEWAY_REQUEST_EVENT,
+            data: {
+              sourceFunction: "system/check-system-health",
+              targetComponent: "inngest-runtime",
+              targetEventName: INNGEST_RUNTIME_HEALTH_REQUEST_EVENT,
+              problemSummary: `Inngest runtime degradation detected: ${summaryLine}`,
+              domain: INNGEST_RUNTIME_HEALING_DOMAIN,
+              attempt: 0,
+              evidence,
+              context: {
+                checkMode: mode,
+                services: inngestRuntimeDegrade.map((service) => ({
+                  name: service.name,
+                  detail: service.detail ?? "",
+                })),
+                runContextKey: dispatchFlowContext.runContextKey,
+                flowTrace: dispatchFlowContext.flowTrace,
+                summaryLine,
+                sourceEventName: dispatchFlowContext.sourceEventName,
+                sourceEventId: dispatchFlowContext.sourceEventId,
+                evidenceSummary: summarizeEvidenceForOtel(evidence),
+                flowContext: dispatchFlowContext,
+                serviceDetails: inngestRuntimeDegrade.map((service) => ({
+                  name: service.name,
+                  detail: service.detail ?? "",
+                })),
+              },
+              playbook: {
+                actions: [
+                  "Run runtime health probe",
+                  "Capture current Inngest + worker state",
+                ],
+                restart: [
+                  "joelclaw inngest restart-worker --register",
+                ],
+                kill: [],
+                defer: ["joelclaw inngest status"],
+                notify: ["joelclaw otel search \"system.self-healing.inngest-runtime\" --hours 1"],
+                links: [
+                  "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/self-healing-inngest-runtime.ts",
+                  "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/check-system-health.ts",
+                ],
+              },
+              owner: "system",
+              fallbackAction: "manual",
+              requestedBy: "system/check-system-health",
+              dryRun: false,
+            },
+          });
+          await emitOtelEvent({
+            level: "info",
+            source: "worker",
+            component: "check-system-health",
+            action: "system.health.self-healing.dispatch",
+            success: true,
+            metadata: {
+              flowContext: dispatchFlowContext,
+              mode,
+              severity: "inngest-runtime",
+              targetEventName: INNGEST_RUNTIME_HEALTH_REQUEST_EVENT,
+              targetServices: inngestRuntimeDegrade.map((service) => service.name),
+              evidenceSummary: summarizeEvidenceForOtel(evidence),
+              playbookCommands: [
+                "joelclaw inngest status",
+                "joelclaw inngest restart-worker --register",
+              ],
             },
           });
         })

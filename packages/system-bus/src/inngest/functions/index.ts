@@ -77,6 +77,7 @@ export { observeSessionFunction } from "./observe";
 export { observeSessionNoted } from "./observe-session-noted";
 export { promote } from "./promote";
 export { reflect } from "./reflect";
+export { selfHealingInngestRuntime } from "./self-healing-inngest-runtime";
 export { slackBackfillBatch, slackChannelBackfill } from "./slack-backfill";
 export { sleepModeRequested, wakeModeRequested } from "./sleep-mode";
 export { storyPipeline } from "./story-pipeline";

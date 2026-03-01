@@ -19,7 +19,19 @@ const NAS_HDD_ROOT = BACKUP_ROUTER_CONFIG.transport.nasHddRoot; // bulk archive 
 const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
 const TYPESENSE_POD = "typesense-0";
 const TYPESENSE_NAMESPACE = "joelclaw";
-const TYPESENSE_SNAPSHOT_ROOT = "/data/snapshots";
+const TYPESENSE_SNAPSHOT_ROOT = normalizeSnapshotRoot(
+  process.env.TYPESENSE_SNAPSHOT_ROOT,
+  "/data/snapshots"
+);
+const TYPESENSE_SNAPSHOT_FALLBACK_ROOT = normalizeSnapshotRoot(
+  process.env.TYPESENSE_SNAPSHOT_FALLBACK_ROOT,
+  "/data/snapshots"
+);
+const TYPESENSE_SNAPSHOT_RETENTION_COUNT = parsePositiveIntEnv(
+  "TYPESENSE_SNAPSHOT_RETENTION_COUNT",
+  2,
+  1
+);
 const TYPESENSE_BACKUP_ROOT = `${NAS_HDD_ROOT}/backups/typesense`;
 const TYPESENSE_STAGE_ROOT = "/tmp/joelclaw/typesense-snapshots";
 const TYPESENSE_BACKUP_REMOTE_ROOT = "/volume1/joelclaw/backups/typesense";
@@ -119,6 +131,40 @@ type TypesenseSearchResult = {
   hits?: TypesenseHit[];
 };
 
+type SnapshotAttemptResult = {
+  root: string;
+  path: string;
+  ok: boolean;
+  error?: string;
+};
+
+type TypesenseSnapshotSelection = {
+  snapshotRoot: string;
+  snapshotPath: string;
+  snapshotResult: unknown;
+  fallbackAttempted: boolean;
+  fallbackUsed: boolean;
+  attempts: SnapshotAttemptResult[];
+};
+
+type SnapshotCleanupOutcome = {
+  attempted: boolean;
+  path: string;
+  ok: boolean;
+  error?: string;
+};
+
+type SnapshotPruneOutcome = {
+  root: string;
+  exists: boolean;
+  retentionCount: number;
+  discoveredPaths: string[];
+  keptPaths: string[];
+  prunedPaths: string[];
+  ok: boolean;
+  error?: string;
+};
+
 function parseAttempt(value: unknown, fallback: number): number {
   if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.floor(value));
   if (typeof value === "string") {
@@ -126,6 +172,18 @@ function parseAttempt(value: unknown, fallback: number): number {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
   return fallback;
+}
+
+function parsePositiveIntEnv(name: string, fallback: number, min = 1): number {
+  const value = process.env[name];
+  const parsed = parseAttempt(value, fallback);
+  return Math.max(min, parsed || fallback);
+}
+
+function normalizeSnapshotRoot(raw: string | undefined, fallback: string): string {
+  const candidate = raw?.trim().length ? raw.trim() : fallback;
+  const normalized = candidate.replace(/\/+$/u, "");
+  return normalized.length > 0 ? normalized : fallback;
 }
 
 type BackupFailureFlowContext = {
@@ -987,6 +1045,153 @@ async function triggerTypesenseSnapshot(snapshotPath: string): Promise<unknown> 
   }
 }
 
+function escapeSingleQuotesForSh(value: string): string {
+  return value.replace(/'/g, "'\\''");
+}
+
+async function pathExistsInTypesensePod(path: string): Promise<boolean> {
+  const escapedPath = escapeSingleQuotesForSh(path);
+  const result = await $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- sh -lc "test -d '${escapedPath}'"`.quiet().nothrow();
+  return result.exitCode === 0;
+}
+
+async function listSnapshotDirsInTypesensePod(root: string): Promise<string[]> {
+  const escapedRoot = escapeSingleQuotesForSh(root);
+  const result = await runShell(
+    `list snapshot dirs under ${root} in ${TYPESENSE_POD}`,
+    $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- sh -lc "find '${escapedRoot}' -mindepth 1 -maxdepth 1 -type d -print"`.quiet().nothrow()
+  );
+
+  const stdout = toText(result.stdout);
+  if (!stdout) return [];
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+async function triggerTypesenseSnapshotWithFallback(dateStamp: string): Promise<TypesenseSnapshotSelection> {
+  const primaryPath = `${TYPESENSE_SNAPSHOT_ROOT}/${dateStamp}`;
+  const fallbackPath = `${TYPESENSE_SNAPSHOT_FALLBACK_ROOT}/${dateStamp}`;
+  const fallbackDiffers = TYPESENSE_SNAPSHOT_FALLBACK_ROOT !== TYPESENSE_SNAPSHOT_ROOT;
+  const attempts: SnapshotAttemptResult[] = [];
+
+  try {
+    const snapshotResult = await triggerTypesenseSnapshot(primaryPath);
+    attempts.push({ root: TYPESENSE_SNAPSHOT_ROOT, path: primaryPath, ok: true });
+    return {
+      snapshotRoot: TYPESENSE_SNAPSHOT_ROOT,
+      snapshotPath: primaryPath,
+      snapshotResult,
+      fallbackAttempted: false,
+      fallbackUsed: false,
+      attempts,
+    };
+  } catch (error) {
+    attempts.push({
+      root: TYPESENSE_SNAPSHOT_ROOT,
+      path: primaryPath,
+      ok: false,
+      error: stringifyFailureError(error),
+    });
+
+    if (!fallbackDiffers) {
+      throw error;
+    }
+  }
+
+  try {
+    const snapshotResult = await triggerTypesenseSnapshot(fallbackPath);
+    attempts.push({ root: TYPESENSE_SNAPSHOT_FALLBACK_ROOT, path: fallbackPath, ok: true });
+    return {
+      snapshotRoot: TYPESENSE_SNAPSHOT_FALLBACK_ROOT,
+      snapshotPath: fallbackPath,
+      snapshotResult,
+      fallbackAttempted: true,
+      fallbackUsed: true,
+      attempts,
+    };
+  } catch (error) {
+    attempts.push({
+      root: TYPESENSE_SNAPSHOT_FALLBACK_ROOT,
+      path: fallbackPath,
+      ok: false,
+      error: stringifyFailureError(error),
+    });
+    const summary = attempts
+      .map((attempt) =>
+        `${attempt.root} (${attempt.path}): ${attempt.ok ? "ok" : attempt.error ?? "failed"}`
+      )
+      .join(" | ");
+    throw new Error(`Typesense snapshot failed for primary and fallback roots: ${summary}`);
+  }
+}
+
+async function cleanupSnapshotInTypesensePod(snapshotPath: string): Promise<SnapshotCleanupOutcome> {
+  try {
+    await runShell(
+      `rm -rf ${snapshotPath} in ${TYPESENSE_POD}`,
+      $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- rm -rf ${snapshotPath}`.quiet().nothrow()
+    );
+    return {
+      attempted: true,
+      path: snapshotPath,
+      ok: true,
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      path: snapshotPath,
+      ok: false,
+      error: stringifyFailureError(error),
+    };
+  }
+}
+
+async function pruneSnapshotRootInTypesensePod(
+  root: string,
+  retentionCount: number
+): Promise<SnapshotPruneOutcome> {
+  const safeRetention = Math.max(1, retentionCount);
+  const exists = await pathExistsInTypesensePod(root);
+  if (!exists) {
+    return {
+      root,
+      exists: false,
+      retentionCount: safeRetention,
+      discoveredPaths: [],
+      keptPaths: [],
+      prunedPaths: [],
+      ok: true,
+    };
+  }
+
+  const discoveredPaths = await listSnapshotDirsInTypesensePod(root);
+  const keepCount = Math.max(0, discoveredPaths.length - safeRetention);
+  const prunedPaths = discoveredPaths.slice(0, keepCount);
+  const keptPaths = discoveredPaths.slice(keepCount);
+
+  const errors: string[] = [];
+  for (const path of prunedPaths) {
+    const result = await $`kubectl exec -n ${TYPESENSE_NAMESPACE} ${TYPESENSE_POD} -- rm -rf ${path}`.quiet().nothrow();
+    if (result.exitCode !== 0) {
+      errors.push(`failed ${path}: ${toText(result.stderr) || toText(result.stdout) || `exit ${result.exitCode}`}`);
+    }
+  }
+
+  return {
+    root,
+    exists: true,
+    retentionCount: safeRetention,
+    discoveredPaths,
+    keptPaths,
+    prunedPaths,
+    ok: errors.length === 0,
+    error: errors.length > 0 ? errors.join(" | ") : undefined,
+  };
+}
+
 async function fetchOtelPage(
   cutoffTimestamp: number,
   page: number,
@@ -1120,7 +1325,6 @@ export const backupTypesense = inngest.createFunction(
       },
       async () => {
         const dateStamp = await step.run("resolve-date-stamp", async () => getDateStamp());
-        const snapshotPath = `${TYPESENSE_SNAPSHOT_ROOT}/${dateStamp}`;
         const stagedSnapshotPath = `${TYPESENSE_STAGE_ROOT}/${dateStamp}`;
         const destinationPath = `${TYPESENSE_BACKUP_ROOT}/${dateStamp}`;
         const remoteDestinationPath = `${TYPESENSE_BACKUP_REMOTE_ROOT}/${dateStamp}`;
@@ -1133,9 +1337,12 @@ export const backupTypesense = inngest.createFunction(
           );
         });
 
-        const snapshotResult = await step.run("trigger-snapshot", async () =>
-          triggerTypesenseSnapshot(snapshotPath)
+        const snapshotSelection = await step.run("trigger-snapshot-with-fallback", async () =>
+          triggerTypesenseSnapshotWithFallback(dateStamp)
         );
+        const snapshotPath = snapshotSelection.snapshotPath;
+        const snapshotRoot = snapshotSelection.snapshotRoot;
+        const snapshotResult = snapshotSelection.snapshotResult;
 
         await step.run("copy-snapshot-to-host", async () => {
           // kubectl cp strips the source directory name when copying into an existing local dir.
@@ -1172,7 +1379,31 @@ export const backupTypesense = inngest.createFunction(
           );
         });
 
+        const snapshotCleanup = await step.run("cleanup-typesense-snapshot-in-pod", async () =>
+          cleanupSnapshotInTypesensePod(snapshotPath)
+        );
+
+        const pruneRoots = [...new Set([TYPESENSE_SNAPSHOT_ROOT, TYPESENSE_SNAPSHOT_FALLBACK_ROOT])];
+        const snapshotPrune = await step.run("prune-typesense-snapshot-roots", async () => {
+          const outcomes: SnapshotPruneOutcome[] = [];
+          for (const root of pruneRoots) {
+            const outcome = await pruneSnapshotRootInTypesensePod(
+              root,
+              TYPESENSE_SNAPSHOT_RETENTION_COUNT
+            );
+            outcomes.push(outcome);
+          }
+          return outcomes;
+        });
+
         metadata.date = dateStamp;
+        metadata.snapshotRootPrimary = TYPESENSE_SNAPSHOT_ROOT;
+        metadata.snapshotRootFallback = TYPESENSE_SNAPSHOT_FALLBACK_ROOT;
+        metadata.snapshotRootEffective = snapshotRoot;
+        metadata.snapshotFallbackAttempted = snapshotSelection.fallbackAttempted;
+        metadata.snapshotFallbackUsed = snapshotSelection.fallbackUsed;
+        metadata.snapshotCreateAttempts = snapshotSelection.attempts;
+        metadata.snapshotRetentionCount = TYPESENSE_SNAPSHOT_RETENTION_COUNT;
         metadata.snapshotPath = snapshotPath;
         metadata.destinationPath = destinationPath;
         metadata.remoteDestinationPath = remoteDestinationPath;
@@ -1180,12 +1411,20 @@ export const backupTypesense = inngest.createFunction(
         metadata.transportMode = transportMode;
         metadata.transportAttempts = transportAttempts;
         metadata.snapshotResult = snapshotResult;
+        metadata.snapshotCleanup = snapshotCleanup;
+        metadata.snapshotPrune = snapshotPrune;
 
         return {
           date: dateStamp,
           transportMode,
           transportAttempts,
+          snapshotRoot,
           snapshotPath,
+          snapshotFallbackAttempted: snapshotSelection.fallbackAttempted,
+          snapshotFallbackUsed: snapshotSelection.fallbackUsed,
+          snapshotRetentionCount: TYPESENSE_SNAPSHOT_RETENTION_COUNT,
+          snapshotCleanup,
+          snapshotPrune,
           destinationPath,
         };
       }

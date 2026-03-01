@@ -72,6 +72,7 @@ import { observeSessionNoted } from "./observe-session-noted";
 import { promote } from "./promote";
 import { reflect } from "./reflect";
 import { selfHealingGatewayBridge } from "./self-healing-gateway-bridge";
+import { selfHealingInngestRuntime } from "./self-healing-inngest-runtime";
 import { selfHealingInvestigator } from "./self-healing-investigator";
 import { selfHealingRouter } from "./self-healing-router";
 import { skillGarden } from "./skill-garden";
@@ -184,6 +185,7 @@ export const hostFunctionDefinitions = [
   selfHealingInvestigator,
   selfHealingRouter,
   selfHealingGatewayBridge,
+  selfHealingInngestRuntime,
   dailyDigest,
   sleepModeRequested,
   wakeModeRequested,
