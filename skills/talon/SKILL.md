@@ -70,7 +70,8 @@ talon (single binary)
 │   └── Worker /api/inngest 200?
 │
 └── Escalation (on failure)
-    ├── Tier 1: k8s-reboot-heal.sh (90s timeout)
+    ├── Tier 1a: bridge-heal (force-cycle Colima on localhost↔VM split-brain)
+    ├── Tier 1b: k8s-reboot-heal.sh (90s timeout)
     ├── Tier 2: pi agent (cloud model, 10min cooldown)
     ├── Tier 3: pi agent (Ollama local, network-down fallback)
     └── Tier 4: Telegram + iMessage SOS fan-out (15min critical threshold)
@@ -100,11 +101,18 @@ any → healthy (all probes pass)
 | node_schedulable | kubectl jsonpath for spec (taints/cordon) | Yes |
 | flannel | `kubectl -n kube-system get daemonset kube-flannel -o jsonpath=...` | No |
 | redis | `kubectl exec redis-0 -- redis-cli ping` | Yes |
+| vm:docker | `ssh -F ~/.colima/_lima/colima/ssh.config lima-colima docker ps` | No |
+| vm:k8s_api | `ssh ... python socket probe :64784` | No |
+| vm:redis | `ssh ... python socket probe :6379` | No |
+| vm:inngest | `ssh ... python socket probe :8288` | No |
+| vm:typesense | `ssh ... python socket probe :8108` | No |
 | inngest | `curl localhost:8288/health` | No |
 | typesense | `curl localhost:8108/health` | No |
 | worker | `curl localhost:3111/api/inngest` | No |
 
 Critical probes trigger escalation immediately. Non-critical need 3 consecutive failures.
+
+VM probes are witness probes only. They let Talon classify "service alive in VM but dead on localhost" as a Colima bridge split-brain and run bridge-heal instead of full recovery first.
 
 ### Dynamic service probes
 
@@ -192,6 +200,10 @@ tail -50 ~/.local/log/talon.err
 # Manual probe test
 DOCKER_HOST=unix:///Users/joel/.colima/default/docker.sock docker inspect --format '{{.State.Status}}' joelclaw-controlplane-1
 kubectl exec -n joelclaw redis-0 -- redis-cli ping
+ssh -F ~/.colima/_lima/colima/ssh.config lima-colima 'curl -sS http://127.0.0.1:8288/health'
+
+# Force bridge repair (same behavior Talon uses for split-brain)
+colima stop --force && colima start
 ```
 
 ## Key Design Decisions
@@ -200,7 +212,7 @@ kubectl exec -n joelclaw redis-0 -- redis-cli ping
 - **Compiles its own PATH** — immune to launchd environment brittleness (the class of bug that caused the 6-day outage).
 - **Worker is a child process** — not a separate launchd service. Signal forwarding prevents orphans.
 - **TOML config parsed by hand** — same pattern as worker-supervisor. No dependency just for config.
-- **Probes use Colima docker socket** — not SSH to Talos internal Docker.
+- **Probes use Colima docker socket** for critical host checks and add VM witness probes over Colima SSH for split-brain detection.
 
 ## Related
 

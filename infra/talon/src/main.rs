@@ -259,6 +259,9 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
             let (heal_outcome, heal_output) = if should_use_service_heal(&failed_probes, &config) {
                 log::warn("running service-specific heal for dynamic service probe failures");
                 escalation::run_service_heal(&config, &mut current_state, &failed_probes, false)?
+            } else if should_use_bridge_heal(&failed_probes, &results) {
+                log::warn("running bridge-specific heal for localhost/colima split-brain failures");
+                escalation::run_bridge_heal(&config, &mut current_state, false)?
             } else {
                 escalation::run_heal(&config, &mut current_state, false)?
             };
@@ -364,6 +367,39 @@ fn should_use_service_heal(failures: &[ProbeResult], config: &Config) -> bool {
         && failures
             .iter()
             .all(|probe| is_dynamic_service_probe(&probe.name, config))
+}
+
+fn should_use_bridge_heal(failures: &[ProbeResult], all_results: &[ProbeResult]) -> bool {
+    if failures.is_empty() {
+        return false;
+    }
+
+    if !probe_passed(all_results, "colima") {
+        return false;
+    }
+
+    let docker_bridge = probe_failed(failures, "docker") && probe_passed(all_results, "vm:docker");
+
+    let k8s_local_failed = probe_failed(failures, "k8s_api")
+        || probe_failed(failures, "node_ready")
+        || probe_failed(failures, "node_schedulable");
+    let k8s_bridge = k8s_local_failed && probe_passed(all_results, "vm:k8s_api");
+
+    let redis_bridge = probe_failed(failures, "redis") && probe_passed(all_results, "vm:redis");
+    let inngest_bridge =
+        probe_failed(failures, "http:inngest") && probe_passed(all_results, "vm:inngest");
+    let typesense_bridge =
+        probe_failed(failures, "http:typesense") && probe_passed(all_results, "vm:typesense");
+
+    docker_bridge || k8s_bridge || redis_bridge || inngest_bridge || typesense_bridge
+}
+
+fn probe_passed(results: &[ProbeResult], name: &str) -> bool {
+    results.iter().any(|probe| probe.name == name && probe.passed)
+}
+
+fn probe_failed(results: &[ProbeResult], name: &str) -> bool {
+    results.iter().any(|probe| probe.name == name && !probe.passed)
 }
 
 fn is_dynamic_service_probe(name: &str, config: &Config) -> bool {
@@ -520,6 +556,74 @@ mod tests {
         assert!(should_use_service_heal(&only_dynamic, &config));
         assert!(!should_use_service_heal(&mixed_failures, &config));
         assert!(!should_use_service_heal(&builtin_http_failure, &config));
+    }
+
+    #[test]
+    fn bridge_heal_selection_detects_localhost_split_brain() {
+        let failures = vec![
+            ProbeResult {
+                name: "k8s_api".to_string(),
+                passed: false,
+                output: "connection refused".to_string(),
+                duration_ms: 50,
+            },
+            ProbeResult {
+                name: "redis".to_string(),
+                passed: false,
+                output: "timeout".to_string(),
+                duration_ms: 60,
+            },
+        ];
+
+        let all_results = vec![
+            ProbeResult {
+                name: "colima".to_string(),
+                passed: true,
+                output: "running".to_string(),
+                duration_ms: 10,
+            },
+            ProbeResult {
+                name: "vm:k8s_api".to_string(),
+                passed: true,
+                output: "ok".to_string(),
+                duration_ms: 11,
+            },
+            ProbeResult {
+                name: "vm:redis".to_string(),
+                passed: true,
+                output: "ok".to_string(),
+                duration_ms: 12,
+            },
+        ];
+
+        assert!(should_use_bridge_heal(&failures, &all_results));
+    }
+
+    #[test]
+    fn bridge_heal_selection_requires_vm_witness_probe() {
+        let failures = vec![ProbeResult {
+            name: "k8s_api".to_string(),
+            passed: false,
+            output: "connection refused".to_string(),
+            duration_ms: 50,
+        }];
+
+        let all_results = vec![
+            ProbeResult {
+                name: "colima".to_string(),
+                passed: true,
+                output: "running".to_string(),
+                duration_ms: 10,
+            },
+            ProbeResult {
+                name: "vm:k8s_api".to_string(),
+                passed: false,
+                output: "connection refused".to_string(),
+                duration_ms: 11,
+            },
+        ];
+
+        assert!(!should_use_bridge_heal(&failures, &all_results));
     }
 
     #[test]

@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 use crate::config::{Config, DEFAULT_PATH};
 
 const COLIMA_DOCKER_HOST: &str = "unix:///Users/joel/.colima/default/docker.sock";
+const COLIMA_SSH_CONFIG: &str = "/Users/joel/.colima/_lima/colima/ssh.config";
+const COLIMA_SSH_HOST: &str = "lima-colima";
 
 #[derive(Debug, Clone)]
 pub struct Probe {
@@ -126,6 +128,82 @@ pub fn run_all_probes(config: &Config) -> Vec<ProbeResult> {
             ],
             timeout: Duration::from_secs(config.probes.service_timeout_secs),
             critical: true,
+            env: vec![],
+        },
+        Probe {
+            name: "vm:docker".to_string(),
+            args: vec![
+                "ssh".to_string(),
+                "-F".to_string(),
+                COLIMA_SSH_CONFIG.to_string(),
+                COLIMA_SSH_HOST.to_string(),
+                "docker".to_string(),
+                "ps".to_string(),
+                "--format".to_string(),
+                "{{.Names}}".to_string(),
+            ],
+            timeout: Duration::from_secs(config.probes.k8s_timeout_secs),
+            critical: false,
+            env: vec![],
+        },
+        Probe {
+            name: "vm:k8s_api".to_string(),
+            args: vec![
+                "ssh".to_string(),
+                "-F".to_string(),
+                COLIMA_SSH_CONFIG.to_string(),
+                COLIMA_SSH_HOST.to_string(),
+                "python3".to_string(),
+                "-c".to_string(),
+                vm_tcp_probe_script(64784),
+            ],
+            timeout: Duration::from_secs(config.probes.k8s_timeout_secs),
+            critical: false,
+            env: vec![],
+        },
+        Probe {
+            name: "vm:redis".to_string(),
+            args: vec![
+                "ssh".to_string(),
+                "-F".to_string(),
+                COLIMA_SSH_CONFIG.to_string(),
+                COLIMA_SSH_HOST.to_string(),
+                "python3".to_string(),
+                "-c".to_string(),
+                vm_tcp_probe_script(6379),
+            ],
+            timeout: Duration::from_secs(config.probes.service_timeout_secs),
+            critical: false,
+            env: vec![],
+        },
+        Probe {
+            name: "vm:inngest".to_string(),
+            args: vec![
+                "ssh".to_string(),
+                "-F".to_string(),
+                COLIMA_SSH_CONFIG.to_string(),
+                COLIMA_SSH_HOST.to_string(),
+                "python3".to_string(),
+                "-c".to_string(),
+                vm_tcp_probe_script(8288),
+            ],
+            timeout: Duration::from_secs(config.probes.service_timeout_secs),
+            critical: false,
+            env: vec![],
+        },
+        Probe {
+            name: "vm:typesense".to_string(),
+            args: vec![
+                "ssh".to_string(),
+                "-F".to_string(),
+                COLIMA_SSH_CONFIG.to_string(),
+                COLIMA_SSH_HOST.to_string(),
+                "python3".to_string(),
+                "-c".to_string(),
+                vm_tcp_probe_script(8108),
+            ],
+            timeout: Duration::from_secs(config.probes.service_timeout_secs),
+            critical: false,
             env: vec![],
         },
     ];
@@ -343,9 +421,15 @@ fn collect_child_output(child: &mut std::process::Child) -> String {
     format!("{stdout}\n{stderr}")
 }
 
+fn vm_tcp_probe_script(port: u16) -> String {
+    format!(
+        "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', {port})); s.close(); print('ok')"
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::is_flannel_ready;
+    use super::{is_flannel_ready, vm_tcp_probe_script};
 
     #[test]
     fn flannel_probe_passes_when_available_matches_desired() {
@@ -358,6 +442,13 @@ mod tests {
         assert!(!is_flannel_ready("0/1"));
         assert!(!is_flannel_ready("0/0"));
         assert!(!is_flannel_ready("not-ready"));
+    }
+
+    #[test]
+    fn vm_tcp_probe_script_targets_loopback_and_port() {
+        let script = vm_tcp_probe_script(64784);
+        assert!(script.contains("127.0.0.1"));
+        assert!(script.contains("64784"));
     }
 }
 

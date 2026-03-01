@@ -6,6 +6,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::config::{expand_home, now_unix_secs, Config, DEFAULT_PATH};
+
+const COLIMA_DOCKER_HOST: &str = "unix:///Users/joel/.colima/default/docker.sock";
 use crate::log;
 use crate::probes::ProbeResult;
 use crate::state::PersistentState;
@@ -51,6 +53,41 @@ pub fn run_heal(
         Ok((TierOutcome::Fixed, output))
     } else {
         log::warn("heal script failed");
+        Ok((TierOutcome::Failed, output))
+    }
+}
+
+pub fn run_bridge_heal(
+    config: &Config,
+    state: &mut PersistentState,
+    dry_run: bool,
+) -> Result<(TierOutcome, String), DynError> {
+    if dry_run {
+        let output = "dry-run: bridge heal skipped".to_string();
+        return Ok((TierOutcome::Cooldown, output));
+    }
+
+    state.last_heal_time = Some(now_unix_secs());
+
+    log::warn("running bridge heal (force-cycling colima to restore localhost bridges)");
+
+    let bridge_command = format!(
+        "set -euo pipefail; colima stop --force >/dev/null 2>&1 || true; sleep 1; colima start; DOCKER_HOST={COLIMA_DOCKER_HOST} docker ps --format '{{{{.Names}}}}' >/dev/null"
+    );
+
+    let (success, output) = run_process(
+        "/bin/zsh",
+        &["-lc", &bridge_command],
+        &[],
+        Duration::from_secs(config.heal_timeout_secs.max(240)),
+        None,
+    )?;
+
+    if success {
+        log::info("bridge heal reported success");
+        Ok((TierOutcome::Fixed, output))
+    } else {
+        log::warn("bridge heal failed");
         Ok((TierOutcome::Failed, output))
     }
 }
