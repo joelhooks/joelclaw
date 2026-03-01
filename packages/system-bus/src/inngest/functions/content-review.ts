@@ -48,6 +48,18 @@ type FeedbackItem = {
   status?: string;
 };
 
+type FeedbackVerdict = {
+  feedbackId: string;
+  applied: boolean;
+  evidence: string;
+};
+
+type FeedbackVerificationSummary = {
+  verdicts: FeedbackVerdict[];
+  appliedFeedbackIds: string[];
+  failedFeedbackIds: string[];
+};
+
 type ReplacementAssertion = {
   from: string;
   to: string;
@@ -62,6 +74,7 @@ type FailureEventData = {
 };
 
 const REVIEW_MODEL = "anthropic/claude-sonnet-4-6";
+const MAX_FEEDBACK_VERIFICATION_RETRIES = 2;
 
 function parseContentType(value: string): ContentType {
   if (value === "adr" || value === "post" || value === "discovery" || value === "video-note") {
@@ -589,6 +602,9 @@ function systemPromptForContentType(contentType: SupportedContentType): string {
       "You edit joelclaw articles using submitted review feedback.",
       "Preserve the author's voice and remove filler.",
       "Apply suggested fixes, clarity improvements, and corrections.",
+      "You MUST apply every single feedback item. Do not skip any.",
+      "If feedback says to remove something, remove it completely.",
+      "If feedback says to change wording, change it exactly as requested.",
       "Return the complete updated MDX file only.",
       "No markdown fences and no commentary or change summaries.",
     ].join(" ");
@@ -635,6 +651,295 @@ async function rewriteContent(args: {
   }
 
   return ensureTrailingNewline(rewritten);
+}
+
+function buildMissedFeedbackPrompt(args: {
+  contentType: SupportedContentType;
+  contentSlug: string;
+  currentContent: string;
+  missedFeedbackItems: FeedbackItem[];
+  missedComments: ReviewComment[];
+}): string {
+  const missedFeedbackText =
+    args.missedFeedbackItems.length === 0
+      ? "None."
+      : args.missedFeedbackItems
+          .map((item, index) => {
+            return [
+              `Missed Feedback ${index + 1}:`,
+              `- feedbackId: ${item.feedbackId}`,
+              `- feedback: ${item.content}`,
+            ].join("\n");
+          })
+          .join("\n\n");
+
+  const missedCommentsText =
+    args.missedComments.length === 0
+      ? "None."
+      : args.missedComments
+          .map((comment, index) => {
+            return [
+              `Missed Comment ${index + 1}:`,
+              `- resourceId: ${comment.resourceId}`,
+              `- paragraphId: ${comment.paragraphId}`,
+              `- threadId: ${comment.threadId}`,
+              `- feedback: ${comment.content}`,
+            ].join("\n");
+          })
+          .join("\n\n");
+
+  return [
+    `Resource: ${args.contentType}:${args.contentSlug}`,
+    "You MUST apply these specific changes. You missed them on the previous attempt:",
+    "",
+    "## Missed Feedback Items",
+    missedFeedbackText,
+    "",
+    "## Missed Inline Review Comments",
+    missedCommentsText,
+    "",
+    "Start from the current content below and make only the required edits.",
+    "Preserve previously applied fixes.",
+    "Return only the full updated markdown/MDX document.",
+    "Do not include summaries, notes, or lines like 'Change applied'.",
+    "",
+    "## Current Content",
+    "```md",
+    args.currentContent.trimEnd(),
+    "```",
+  ].join("\n");
+}
+
+async function rewriteContentWithMissedFeedback(args: {
+  contentType: SupportedContentType;
+  contentSlug: string;
+  currentContent: string;
+  missedFeedbackItems: FeedbackItem[];
+  missedComments: ReviewComment[];
+}): Promise<string> {
+  if (args.missedFeedbackItems.length === 0 && args.missedComments.length === 0) {
+    return ensureTrailingNewline(args.currentContent.trim());
+  }
+
+  const prompt = buildMissedFeedbackPrompt(args);
+
+  const result = await infer(prompt, {
+    task: "rewrite",
+    model: REVIEW_MODEL,
+    system: systemPromptForContentType(args.contentType),
+    component: "content-review",
+    action: "content.review.retry",
+  });
+
+  const rewritten = stripMarkdownFence(result.text).trim();
+  if (!rewritten) {
+    throw new Error("content review retry returned empty output");
+  }
+
+  return ensureTrailingNewline(rewritten);
+}
+
+function parseJsonArrayFromText(raw: string): unknown[] {
+  const trimmed = raw.trim();
+  const stripped = stripMarkdownFence(trimmed);
+
+  const candidates = new Set<string>([trimmed, stripped]);
+
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/iu);
+  if (fencedMatch?.[1]) {
+    candidates.add(fencedMatch[1].trim());
+  }
+
+  const listStart = stripped.indexOf("[");
+  const listEnd = stripped.lastIndexOf("]");
+  if (listStart >= 0 && listEnd > listStart) {
+    candidates.add(stripped.slice(listStart, listEnd + 1));
+  }
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+
+  throw new Error("verification response was not valid JSON array");
+}
+
+function summarizeFeedbackVerification(
+  feedbackItems: FeedbackItem[],
+  verdicts: FeedbackVerdict[],
+): FeedbackVerificationSummary {
+  const expectedIds = new Set(feedbackItems.map((item) => item.feedbackId));
+  const verdictMap = new Map<string, FeedbackVerdict>();
+
+  for (const verdict of verdicts) {
+    if (!expectedIds.has(verdict.feedbackId)) continue;
+    verdictMap.set(verdict.feedbackId, verdict);
+  }
+
+  const normalizedVerdicts = feedbackItems.map((item) => {
+    const verdict = verdictMap.get(item.feedbackId);
+    if (verdict) return verdict;
+    return {
+      feedbackId: item.feedbackId,
+      applied: false,
+      evidence: "No verification verdict returned for this feedback item.",
+    };
+  });
+
+  return {
+    verdicts: normalizedVerdicts,
+    appliedFeedbackIds: normalizedVerdicts
+      .filter((verdict) => verdict.applied)
+      .map((verdict) => verdict.feedbackId),
+    failedFeedbackIds: normalizedVerdicts
+      .filter((verdict) => !verdict.applied)
+      .map((verdict) => verdict.feedbackId),
+  };
+}
+
+function buildFeedbackVerificationPrompt(args: {
+  originalContent: string;
+  rewrittenContent: string;
+  feedbackItems: FeedbackItem[];
+  comments: ReviewComment[];
+}): string {
+  const feedbackText = args.feedbackItems
+    .map((item, index) => {
+      return [
+        `Feedback ${index + 1}:`,
+        `- feedbackId: ${item.feedbackId}`,
+        `- request: ${item.content}`,
+      ].join("\n");
+    })
+    .join("\n\n");
+
+  const commentsText =
+    args.comments.length === 0
+      ? "None."
+      : args.comments
+          .map((comment, index) => {
+            return [
+              `Comment ${index + 1}:`,
+              `- resourceId: ${comment.resourceId}`,
+              `- paragraphId: ${comment.paragraphId}`,
+              `- threadId: ${comment.threadId}`,
+              `- content: ${comment.content}`,
+            ].join("\n");
+          })
+          .join("\n\n");
+
+  return [
+    "You are verifying whether feedback items were applied in rewritten content.",
+    "Compare ORIGINAL content to REWRITTEN content for EACH feedback item.",
+    "A feedback item is applied only if the requested outcome clearly exists in the rewritten content.",
+    "If ambiguous or missing, mark applied=false.",
+    "Evidence must be concise and quote/paraphrase concrete text differences.",
+    "",
+    "Return STRICT JSON array only, with one object per feedback item:",
+    '[{"feedbackId":"string","applied":true,"evidence":"string"}]',
+    "",
+    "## Feedback Items to Verify",
+    feedbackText,
+    "",
+    "## Related Review Comments (context only)",
+    commentsText,
+    "",
+    "## ORIGINAL CONTENT",
+    "```md",
+    args.originalContent.trimEnd(),
+    "```",
+    "",
+    "## REWRITTEN CONTENT",
+    "```md",
+    args.rewrittenContent.trimEnd(),
+    "```",
+  ].join("\n");
+}
+
+async function verifyFeedbackApplication(args: {
+  originalContent: string;
+  rewrittenContent: string;
+  feedbackItems: FeedbackItem[];
+  comments: ReviewComment[];
+}): Promise<FeedbackVerdict[]> {
+  if (args.feedbackItems.length === 0) {
+    return [];
+  }
+
+  const prompt = buildFeedbackVerificationPrompt(args);
+
+  try {
+    const result = await infer(prompt, {
+      task: "json",
+      model: REVIEW_MODEL,
+      system:
+        "You are a strict editor QA verifier. Return only JSON. Do not include markdown fences.",
+      component: "content-review",
+      action: "content.review.verify",
+    });
+
+    const parsed = parseJsonArrayFromText(result.text);
+    const parsedVerdicts = parsed
+      .map((entry) => {
+        const record = ensureRecord(entry);
+        const feedbackId = asString(record.feedbackId);
+        if (!feedbackId) return null;
+
+        const appliedValue = record.applied;
+        const applied =
+          typeof appliedValue === "boolean"
+            ? appliedValue
+            : typeof appliedValue === "string"
+              ? appliedValue.toLowerCase() === "true"
+              : false;
+
+        return {
+          feedbackId,
+          applied,
+          evidence: asString(record.evidence) ?? "No evidence provided.",
+        } satisfies FeedbackVerdict;
+      })
+      .filter((entry): entry is FeedbackVerdict => Boolean(entry));
+
+    return summarizeFeedbackVerification(args.feedbackItems, parsedVerdicts).verdicts;
+  } catch (error) {
+    const message = formatError(error);
+    return args.feedbackItems.map((item) => ({
+      feedbackId: item.feedbackId,
+      applied: false,
+      evidence: `Verification failed: ${message}`,
+    }));
+  }
+}
+
+async function updateFeedbackStatusesByIds(
+  status: "applied" | "failed",
+  feedbackIds: string[],
+): Promise<number> {
+  if (feedbackIds.length === 0) return 0;
+
+  const client = getConvexClient();
+  const mutationName =
+    status === "applied" ? "markAppliedByFeedbackIds" : "markFailedByFeedbackIds";
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ref = (anyApi as any).feedback[mutationName] as FunctionReference<"mutation"> | undefined;
+
+  if (!ref) {
+    throw new Error(`feedback.${mutationName} mutation is not available`);
+  }
+
+  const result = await client.mutation(ref, { feedbackIds });
+  if (!result || typeof result !== "object") return 0;
+
+  const updated = (result as { updated?: unknown }).updated;
+  return typeof updated === "number" ? updated : 0;
 }
 
 function validateRewriteLength(currentContent: string, rewrittenContent: string): void {
@@ -1023,13 +1328,90 @@ export const contentReviewApply = inngest.createFunction(
       };
     });
 
+    let finalRewrittenContent = normalizedRewrittenContent;
+    let verification = await step.run("verify-feedback-applied", async () => {
+      return verifyFeedbackApplication({
+        originalContent: article.content,
+        rewrittenContent: finalRewrittenContent,
+        feedbackItems: pendingFeedbackItems,
+        comments: submittedComments,
+      });
+    });
+    let verificationSummary = summarizeFeedbackVerification(
+      pendingFeedbackItems,
+      verification,
+    );
+    let retryAttempts = 0;
+
+    while (
+      verificationSummary.failedFeedbackIds.length > 0 &&
+      retryAttempts < MAX_FEEDBACK_VERIFICATION_RETRIES
+    ) {
+      retryAttempts += 1;
+
+      const missedFeedbackIdSet = new Set(verificationSummary.failedFeedbackIds);
+      const missedFeedbackItems = pendingFeedbackItems.filter((item) =>
+        missedFeedbackIdSet.has(item.feedbackId),
+      );
+      const missedComments = submittedComments.filter((comment) =>
+        missedFeedbackIdSet.has(comment.resourceId),
+      );
+
+      const retryStepId =
+        retryAttempts === 1 ? "retry-missed-feedback" : `retry-missed-feedback-${retryAttempts}`;
+      const retryRewrittenContent = await step.run(retryStepId, async () => {
+        return rewriteContentWithMissedFeedback({
+          contentType,
+          contentSlug,
+          currentContent: finalRewrittenContent,
+          missedFeedbackItems,
+          missedComments,
+        });
+      });
+
+      const retryNormalizeStepId = `normalize-retry-edited-content-${retryAttempts}`;
+      const normalizedRetryContent = await step.run(retryNormalizeStepId, async () => {
+        return normalizeStoredContent(article.type, retryRewrittenContent);
+      });
+
+      const retryValidateStepId = `validate-retry-edited-content-${retryAttempts}`;
+      await step.run(retryValidateStepId, async () => {
+        assertNoRewriteMetaCommentary(normalizedRetryContent);
+        validateRewriteLength(article.content, normalizedRetryContent);
+        assertNoHistoricalRegression({
+          currentContent: article.content,
+          rewrittenContent: normalizedRetryContent,
+          assertions: historicalAssertions,
+        });
+
+        return {
+          attempt: retryAttempts,
+          rewrittenLength: normalizedRetryContent.trim().length,
+          missedCount: missedFeedbackItems.length,
+        };
+      });
+
+      finalRewrittenContent = normalizedRetryContent;
+
+      const retryVerifyStepId = `verify-feedback-applied-retry-${retryAttempts}`;
+      verification = await step.run(retryVerifyStepId, async () => {
+        return verifyFeedbackApplication({
+          originalContent: article.content,
+          rewrittenContent: finalRewrittenContent,
+          feedbackItems: pendingFeedbackItems,
+          comments: submittedComments,
+        });
+      });
+      verificationSummary = summarizeFeedbackVerification(pendingFeedbackItems, verification);
+    }
+
     const revisionResourceId = await step.run("write-content-revision", async () => {
       return writeContentRevision({
         articleResourceId: article.resourceId,
         contentType,
         contentSlug,
         previousContent: article.content,
-        updatedContent: normalizedRewrittenContent,
+        updatedContent: finalRewrittenContent,
         comments: submittedComments,
         runId,
       });
@@ -1040,7 +1422,7 @@ export const contentReviewApply = inngest.createFunction(
         resourceId: article.resourceId,
         type: article.type,
         existingFields: article.fields,
-        updatedContent: normalizedRewrittenContent,
+        updatedContent: finalRewrittenContent,
       });
     });
 
@@ -1052,8 +1434,53 @@ export const contentReviewApply = inngest.createFunction(
       });
     });
 
-    const feedbackAppliedCount = await step.run("mark-feedback-applied", async () => {
-      return updateFeedbackStatuses(feedbackResourceId, "applied");
+    const feedbackStatusResult = await step.run("mark-feedback-by-verification", async () => {
+      const appliedFeedbackIds = verificationSummary.appliedFeedbackIds;
+      const failedFeedbackIds = verificationSummary.failedFeedbackIds;
+
+      if (pendingFeedbackItems.length === 0) {
+        return {
+          strategy: "none",
+          appliedUpdated: 0,
+          failedUpdated: 0,
+        };
+      }
+
+      if (failedFeedbackIds.length === 0) {
+        const appliedUpdated = await updateFeedbackStatuses(feedbackResourceId, "applied");
+        return {
+          strategy: "bulk-applied",
+          appliedUpdated,
+          failedUpdated: 0,
+        };
+      }
+
+      if (appliedFeedbackIds.length === 0) {
+        const failedUpdated = await updateFeedbackStatuses(feedbackResourceId, "failed");
+        return {
+          strategy: "bulk-failed",
+          appliedUpdated: 0,
+          failedUpdated,
+        };
+      }
+
+      try {
+        const appliedUpdated = await updateFeedbackStatusesByIds("applied", appliedFeedbackIds);
+        const failedUpdated = await updateFeedbackStatusesByIds("failed", failedFeedbackIds);
+        return {
+          strategy: "per-item",
+          appliedUpdated,
+          failedUpdated,
+        };
+      } catch (error) {
+        const failedUpdated = await updateFeedbackStatuses(feedbackResourceId, "failed");
+        return {
+          strategy: "mixed-fallback-failed",
+          appliedUpdated: 0,
+          failedUpdated,
+          warning: formatError(error),
+        };
+      }
     });
 
     await step.run("revalidate-cache", async () => {
@@ -1078,7 +1505,16 @@ export const contentReviewApply = inngest.createFunction(
         contentType,
         contentSlug,
         commentsResolved: resolvedCount,
-        feedbackResolved: feedbackAppliedCount,
+        feedbackResolved: feedbackStatusResult.appliedUpdated + feedbackStatusResult.failedUpdated,
+        feedbackApplied: feedbackStatusResult.appliedUpdated,
+        feedbackFailed: feedbackStatusResult.failedUpdated,
+        feedbackStatusStrategy: feedbackStatusResult.strategy,
+        feedbackStatusWarning:
+          "warning" in feedbackStatusResult ? feedbackStatusResult.warning : undefined,
+        feedbackVerificationRetries: retryAttempts,
+        feedbackVerification: verificationSummary.verdicts,
+        feedbackVerificationAppliedIds: verificationSummary.appliedFeedbackIds,
+        feedbackVerificationFailedIds: verificationSummary.failedFeedbackIds,
         historicalAssertionCount: historicalAssertions.length,
       });
 
@@ -1095,7 +1531,15 @@ export const contentReviewApply = inngest.createFunction(
       revisionResourceId,
       resolvedCount,
       feedbackProcessingCount,
-      feedbackAppliedCount,
+      feedbackAppliedCount: feedbackStatusResult.appliedUpdated,
+      feedbackFailedCount: feedbackStatusResult.failedUpdated,
+      feedbackStatusStrategy: feedbackStatusResult.strategy,
+      feedbackStatusWarning:
+        "warning" in feedbackStatusResult ? feedbackStatusResult.warning : undefined,
+      feedbackVerificationRetries: retryAttempts,
+      feedbackVerification: verificationSummary.verdicts,
+      feedbackVerificationAppliedIds: verificationSummary.appliedFeedbackIds,
+      feedbackVerificationFailedIds: verificationSummary.failedFeedbackIds,
       historicalAssertionCount: historicalAssertions.length,
       cacheTag: primaryCacheTag,
       cacheTags,

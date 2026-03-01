@@ -276,3 +276,45 @@ export const markFailed = mutation({
     return { resourceId, updated, resolvedAt };
   },
 });
+
+export const markAppliedByFeedbackIds = mutation({
+  args: {
+    feedbackIds: v.array(v.string()),
+  },
+  handler: async (ctx, { feedbackIds }) => {
+    const resolvedAt = Date.now();
+    let updated = 0;
+    for (const id of feedbackIds) {
+      const doc = await ctx.db
+        .query("feedbackItems")
+        .filter((q) => q.eq(q.field("_id"), id))
+        .first();
+      if (doc && (doc.status === "pending" || doc.status === "processing")) {
+        await ctx.db.patch(doc._id, { status: "applied", resolvedAt });
+        updated++;
+      }
+    }
+    return { updated, resolvedAt };
+  },
+});
+
+export const markFailedByFeedbackIds = mutation({
+  args: {
+    feedbackIds: v.array(v.string()),
+  },
+  handler: async (ctx, { feedbackIds }) => {
+    const resolvedAt = Date.now();
+    let updated = 0;
+    for (const id of feedbackIds) {
+      const doc = await ctx.db
+        .query("feedbackItems")
+        .filter((q) => q.eq(q.field("_id"), id))
+        .first();
+      if (doc && (doc.status === "pending" || doc.status === "processing")) {
+        await ctx.db.patch(doc._id, { status: "failed", resolvedAt });
+        updated++;
+      }
+    }
+    return { updated, resolvedAt };
+  },
+});
