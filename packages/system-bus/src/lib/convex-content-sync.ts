@@ -73,6 +73,9 @@ const VALID_STATUSES = [
   "rejected",
 ] as const;
 
+// Bump when derived ADR fields change so seeds can backfill Convex records.
+const ADR_CONTENT_HASH_VERSION = "adr-v2";
+
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
@@ -206,11 +209,15 @@ export async function upsertAdr(filePath: string): Promise<string> {
   const slug = basename(filePath, extname(filePath));
   const number = slug.match(/^(\d+)/)?.[1] ?? "";
   const raw = readFileSync(filePath, "utf-8");
-  const hash = contentHash(raw);
   const { data, content } = matter(raw);
   const meta = data as Record<string, unknown>;
 
   const priority = extractPriorityFields(meta);
+  const hash = contentHash(JSON.stringify({
+    version: ADR_CONTENT_HASH_VERSION,
+    raw,
+    priority,
+  }));
 
   const fields: AdrFields = {
     slug,

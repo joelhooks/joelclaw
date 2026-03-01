@@ -10,6 +10,14 @@ const adrFieldsValidator = v.object({
   content: v.string(),
   supersededBy: v.optional(v.string()),
   description: v.optional(v.string()),
+  // ADR-0183 priority rubric fields (optional on open ADRs)
+  priorityNeed: v.optional(v.number()),
+  priorityReadiness: v.optional(v.number()),
+  priorityConfidence: v.optional(v.number()),
+  priorityScore: v.optional(v.number()),
+  priorityBand: v.optional(v.string()),
+  priorityReviewed: v.optional(v.string()),
+  priorityRationale: v.optional(v.string()),
 });
 
 const postFieldsValidator = v.object({
