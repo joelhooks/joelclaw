@@ -63,6 +63,7 @@ export const githubProvider: WebhookProvider = {
         idempotencyKey: `github-workflow-run-completed-${delivery}-${runId || Date.now()}`,
         data: {
           action,
+          deliveryId: delivery,
           runId,
           runNumber: Number(workflowRun.run_number ?? 0) || null,
           runAttempt: Number(workflowRun.run_attempt ?? 0) || null,

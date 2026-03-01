@@ -20,6 +20,15 @@ import {
   emitStep,
 } from "../stream"
 
+function safeDisconnect(client: { disconnect: () => void } | undefined): void {
+  if (!client) return
+  try {
+    client.disconnect()
+  } catch {
+    // best effort
+  }
+}
+
 export const sendCmd = Command.make(
   "send",
   {
@@ -162,7 +171,7 @@ export const sendCmd = Command.make(
       const cleanup = () => {
         if (ended) return
         ended = true
-        sub.disconnect().catch(() => {})
+        safeDisconnect(sub)
       }
 
       const onSignal = () => {

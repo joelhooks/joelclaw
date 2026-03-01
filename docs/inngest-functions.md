@@ -58,13 +58,29 @@ Environment variables:
 - `TYPESENSE_SNAPSHOT_FALLBACK_ROOT` (default: `/data/snapshots`)
 - `TYPESENSE_SNAPSHOT_RETENTION_COUNT` (default: `2`, min `1`)
 
+## Webhook subscription dispatch (ADR-0185)
+
+### GitHub workflow completion fan-out
+
+- function: `webhook-subscription-dispatch-github-workflow-run-completed`
+- file: `packages/system-bus/src/inngest/functions/webhook-subscription-dispatch.ts`
+- trigger: `github/workflow_run.completed`
+- responsibilities:
+  1. match Redis-backed session subscriptions (`joelclaw:webhook:*`)
+  2. prune expired/invalid subscriptions
+  3. best-effort fetch workflow artifacts from GitHub Actions API
+  4. dedupe delivery per subscription
+  5. publish match payloads to subscription NDJSON channels
+  6. push `webhook.subscription.matched` to gateway with `originSession` for immediate follow-up turns
+
 ## Verification
 
 ```bash
 bunx tsc --noEmit
 bun test packages/system-bus/src/inngest/functions/check-system-health.test.ts
+bun test packages/system-bus/src/lib/webhook-subscriptions.test.ts
 joelclaw inngest status
-joelclaw otel search "system.self-healing.inngest-runtime" --hours 1
+joelclaw otel search "webhook.subscription.dispatch" --hours 1
 ```
 
 ## Deploy

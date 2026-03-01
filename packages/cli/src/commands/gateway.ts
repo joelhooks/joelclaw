@@ -488,6 +488,15 @@ import {
   emitStart,
 } from "../stream"
 
+function safeDisconnect(client: { disconnect: () => void } | undefined): void {
+  if (!client) return
+  try {
+    client.disconnect()
+  } catch {
+    // best effort
+  }
+}
+
 const gatewayStream = Command.make(
   "stream",
   {
@@ -540,7 +549,7 @@ const gatewayStream = Command.make(
 
       const onSignal = () => {
         ended = true
-        sub.disconnect().catch(() => {})
+        safeDisconnect(sub)
         emitResult(cmd, {
           reason: "interrupted",
           events_received: eventCount,
@@ -591,7 +600,7 @@ const gatewayStream = Command.make(
       ended = true
       process.off("SIGINT", onSignal)
       process.off("SIGTERM", onSignal)
-      sub.disconnect().catch(() => {})
+      safeDisconnect(sub)
 
       emitResult(cmd, {
         reason: timeout > 0 ? "timeout" : "ended",

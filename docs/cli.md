@@ -38,6 +38,7 @@ Probe detail strings include the selected endpoint class (`localhost|vm|svc_dns`
 - `joelclaw otel`
 - `joelclaw recall`
 - `joelclaw subscribe`
+- `joelclaw webhook`
 - `joelclaw inngest`
 - `joelclaw capabilities`
 
@@ -87,6 +88,26 @@ Semantics:
 - `mail`, `otel`, `recall`, and `subscribe` keep their existing UX/envelopes while now executing through capability registry adapters (`mcp-agent-mail`, `typesense-otel`, `typesense-recall`, `redis-subscriptions`).
 - `subscribe check` emits Inngest request events; `response.ids` are event/request IDs (inspect via `joelclaw event <event-id>`), not run IDs unless explicitly returned as `runIds`.
 
+## Webhook command tree (ADR-0185)
+
+```bash
+joelclaw webhook
+├── subscribe <provider> <event>
+│   [--repo <owner/repo>] [--workflow <name>] [--branch <name>] [--conclusion <status>]
+│   [--session <session-id>] [--ttl <duration>] [--stream] [--timeout <seconds>] [--replay <count>]
+├── unsubscribe <subscription-id>
+├── list [--provider <provider>] [--event <event>] [--session <session-id>]
+└── stream <subscription-id> [--timeout <seconds>] [--replay <count>]
+```
+
+Semantics:
+
+- Subscriptions are Redis-backed and session-scoped (`joelclaw:webhook:*`).
+- `subscribe --stream` starts an NDJSON stream immediately after creation.
+- `stream` emits ADR-0058 NDJSON (`start`, `log`, `event`, terminal `result|error`).
+- Default session target is `gateway` for central gateway role, otherwise `pid-<ppid>`.
+- TTL defaults to `24h` and is enforced at match time.
+
 ## Skills command tree (ADR-0179)
 
 ```bash
@@ -135,7 +156,8 @@ joelclaw vault
 └── adr
     ├── list [--status <status>] [--limit <limit>]
     ├── collisions
-    └── audit
+    ├── audit
+    └── rank [--status <status,status>] [--limit <limit>] [--strict]
 ```
 
 ### `joelclaw vault adr` purpose
@@ -147,6 +169,11 @@ joelclaw vault
   - number collisions
   - missing `superseded-by` targets
   - README index alignment against ADR files
+- `rank` — score + rank ADRs by NRC+novelty rubric for daily prioritization:
+  - required axes: `priority-need`, `priority-readiness`, `priority-confidence`
+  - novelty facet: `priority-novelty` (or alias `priority-interest`), defaults to neutral `3` when missing
+  - score formula: `clamp(round(20*(0.5*Need + 0.3*Readiness + 0.2*Confidence)) + round((Novelty-3)*5), 0, 100)`
+  - bands: `do-now` (80-100), `next` (60-79), `de-risk` (40-59), `park` (0-39)
 
 Canonical statuses:
 

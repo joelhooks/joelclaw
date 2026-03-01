@@ -1367,6 +1367,7 @@ export type Events = {
   "github/workflow_run.completed": {
     data: {
       action: string;
+      deliveryId: string;
       runId: number;
       runNumber: number | null;
       runAttempt: number | null;

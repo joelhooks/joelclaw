@@ -14,6 +14,7 @@ import {
   todoistTaskCompleted,
   todoistTaskCreated,
 } from "./todoist-notify";
+import { webhookSubscriptionDispatchGithubWorkflowRunCompleted } from "./webhook-subscription-dispatch";
 
 function getFunctionId(fn: { opts?: { id?: string } }): string {
   return fn.opts?.id ?? "unknown";
@@ -32,6 +33,7 @@ export const clusterFunctionDefinitions = [
   todoistMemoryReviewBridge,
   githubWorkflowRunCompleted,
   githubPackagePublished,
+  webhookSubscriptionDispatchGithubWorkflowRunCompleted,
 ];
 
 export const clusterFunctionIds = clusterFunctionDefinitions.map(getFunctionId);

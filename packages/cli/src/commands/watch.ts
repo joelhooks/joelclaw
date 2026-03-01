@@ -25,6 +25,15 @@ import {
   type StreamEvent,
 } from "../stream"
 
+function safeDisconnect(client: { disconnect: () => void } | undefined): void {
+  if (!client) return
+  try {
+    client.disconnect()
+  } catch {
+    // best effort
+  }
+}
+
 export const watchCmd = Command.make(
   "watch",
   {
@@ -145,7 +154,7 @@ export const watchCmd = Command.make(
 
       const onSignal = () => {
         ended = true
-        sub.disconnect().catch(() => {})
+        safeDisconnect(sub)
         emitResult(cmd, { reason: "interrupted", loop_id: loop.id }, [])
         process.exit(0)
       }
@@ -264,7 +273,7 @@ export const watchCmd = Command.make(
       ended = true
       process.off("SIGINT", onSignal)
       process.off("SIGTERM", onSignal)
-      sub.disconnect().catch(() => {})
+      safeDisconnect(sub)
 
       const finalPassed = stories.filter((s: any) => s.passes).length
       const finalSkipped = stories.filter((s: any) => s.skipped).length

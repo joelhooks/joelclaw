@@ -109,6 +109,7 @@ export {
 export { videoDownload } from "./video-download";
 export { vipEmailReceived } from "./vip-email-received";
 export { voiceCallCompleted } from "./voice-call-completed";
+export { webhookSubscriptionDispatchGithubWorkflowRunCompleted } from "./webhook-subscription-dispatch";
 export { xContentHook } from "./x-content-hook";
 export { xDiscoveryHook } from "./x-discovery-hook";
 export { xPost } from "./x-post";
