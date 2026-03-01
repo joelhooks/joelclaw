@@ -117,13 +117,20 @@ async function CachedArticleContent({ slug }: { slug: string }) {
         dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbs) }}
       />
       <header className="mb-10">
-        {meta.type !== "article" && (
-          <span className="inline-block text-[11px] font-medium uppercase tracking-wider text-neutral-500 border border-neutral-800 rounded px-1.5 py-0.5 mb-3">
-            {meta.type}
-          </span>
-        )}
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          {meta.type !== "article" && (
+            <span className="text-[11px] font-medium uppercase tracking-wider text-neutral-500 border border-neutral-800 rounded px-1.5 py-0.5">
+              {meta.type}
+            </span>
+          )}
+          {meta.draft && (
+            <span className="text-[11px] font-medium uppercase tracking-wider text-claw border border-claw/40 rounded px-1.5 py-0.5">
+              draft
+            </span>
+          )}
+        </div>
         <h1 className="text-3xl font-bold tracking-tight">{meta.title}</h1>
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-neutral-500">
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-neutral-500">
           <RelativeTime date={meta.date} />
           {meta.updated && (
             <span>
@@ -133,18 +140,22 @@ async function CachedArticleContent({ slug }: { slug: string }) {
           {meta.channel && <span>· {meta.channel}</span>}
           {meta.duration && <span>· {meta.duration}</span>}
         </div>
-        {meta.tags.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
+        {(meta.tags.length > 0) && (
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
             {meta.tags.map((tag) => (
               <span key={tag} className="text-[11px] font-medium text-neutral-500 border border-neutral-800 rounded px-1.5 py-0.5">
                 {tag}
               </span>
             ))}
+            <span className="text-neutral-700 mx-0.5">·</span>
+            <CopyAsPrompt markdown={content} title={meta.title} slug={meta.slug} />
           </div>
         )}
-        <div className="mt-3">
-          <CopyAsPrompt markdown={content} title={meta.title} slug={meta.slug} />
-        </div>
+        {meta.tags.length === 0 && (
+          <div className="mt-3">
+            <CopyAsPrompt markdown={content} title={meta.title} slug={meta.slug} />
+          </div>
+        )}
         <ContentDebugPanel
           slug={slug}
           diagnostics={diagnostics}
