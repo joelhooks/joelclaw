@@ -205,6 +205,7 @@ impl Config {
                 | "node_ready"
                 | "node_schedulable"
                 | "redis"
+                | "kubelet_proxy_rbac"
         ) {
             return true;
         }
@@ -940,6 +941,7 @@ critical = maybe
         });
 
         assert!(config.is_critical_probe("redis"));
+        assert!(config.is_critical_probe("kubelet_proxy_rbac"));
         assert!(config.is_critical_probe("http:voice_agent"));
         assert!(config.is_critical_probe("launchd:voice_agent"));
 

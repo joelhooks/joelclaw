@@ -32,6 +32,7 @@ talon                  # Full daemon mode (worker + probes + escalation)
 | Probe results | `~/.local/state/talon/last-probe.json` |
 | Log | `~/.local/state/talon/talon.log` (JSON lines, 10MB rotation) |
 | Launchd plist | `~/Code/joelhooks/joelclaw/infra/launchd/com.joel.talon.plist` |
+| RBAC guard manifest | `~/Code/joelhooks/joelclaw/k8s/apiserver-kubelet-client-rbac.yaml` |
 | Worker stdout | `~/.local/log/system-bus-worker.log` |
 | Worker stderr | `~/.local/log/system-bus-worker.err` |
 | Talon launchd log | `~/.local/log/talon.err` |
@@ -71,7 +72,7 @@ talon (single binary)
 │
 └── Escalation (on failure)
     ├── Tier 1a: bridge-heal (force-cycle Colima on localhost↔VM split-brain)
-    ├── Tier 1b: k8s-reboot-heal.sh (90s timeout)
+    ├── Tier 1b: k8s-reboot-heal.sh (90s timeout, RBAC drift guard + post-Colima invariant gate)
     ├── Tier 2: pi agent (cloud model, 10min cooldown)
     ├── Tier 3: pi agent (Ollama local, network-down fallback)
     └── Tier 4: Telegram + iMessage SOS fan-out (15min critical threshold)
@@ -101,6 +102,7 @@ any → healthy (all probes pass)
 | node_schedulable | kubectl jsonpath for spec (taints/cordon) | Yes |
 | flannel | `kubectl -n kube-system get daemonset kube-flannel -o jsonpath=...` | No |
 | redis | `kubectl exec redis-0 -- redis-cli ping` | Yes |
+| kubelet_proxy_rbac | `kubectl auth can-i --as=<apiserver-kubelet-client*> {get,create} nodes --subresource=proxy` | Yes |
 | vm:docker | `ssh -F ~/.colima/_lima/colima/ssh.config lima-colima docker ps` | No |
 | vm:k8s_api | `ssh ... python socket probe :64784` | No |
 | vm:redis | `ssh ... python socket probe :6379` | No |
@@ -200,6 +202,8 @@ tail -50 ~/.local/log/talon.err
 # Manual probe test
 DOCKER_HOST=unix:///Users/joel/.colima/default/docker.sock docker inspect --format '{{.State.Status}}' joelclaw-controlplane-1
 kubectl exec -n joelclaw redis-0 -- redis-cli ping
+kubectl auth can-i --as=apiserver-kubelet-client get nodes --subresource=proxy --all-namespaces
+kubectl auth can-i --as=apiserver-kubelet-client create nodes --subresource=proxy --all-namespaces
 ssh -F ~/.colima/_lima/colima/ssh.config lima-colima 'curl -sS http://127.0.0.1:8288/health'
 
 # Force bridge repair (same behavior Talon uses for split-brain)

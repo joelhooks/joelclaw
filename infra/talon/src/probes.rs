@@ -131,6 +131,17 @@ pub fn run_all_probes(config: &Config) -> Vec<ProbeResult> {
             env: vec![],
         },
         Probe {
+            name: "kubelet_proxy_rbac".to_string(),
+            args: vec![
+                "/bin/bash".to_string(),
+                "-lc".to_string(),
+                kubelet_proxy_rbac_probe_script(),
+            ],
+            timeout: Duration::from_secs(config.probes.k8s_timeout_secs),
+            critical: true,
+            env: vec![],
+        },
+        Probe {
             name: "vm:docker".to_string(),
             args: vec![
                 "ssh".to_string(),
@@ -421,15 +432,19 @@ fn collect_child_output(child: &mut std::process::Child) -> String {
     format!("{stdout}\n{stderr}")
 }
 
+fn kubelet_proxy_rbac_probe_script() -> String {
+    "set -euo pipefail; for user in apiserver-kubelet-client kube-apiserver-kubelet-client; do kubectl auth can-i -q --as=\"$user\" get nodes --subresource=proxy --all-namespaces 2>/dev/null; kubectl auth can-i -q --as=\"$user\" create nodes --subresource=proxy --all-namespaces 2>/dev/null; done; echo ok".to_string()
+}
+
 fn vm_tcp_probe_script(port: u16) -> String {
     format!(
-        "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', {port})); s.close(); print('ok')"
+        "'import socket; s=socket.socket(); s.settimeout(2); s.connect((\"127.0.0.1\", {port})); s.close(); print(\"ok\")'"
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_flannel_ready, vm_tcp_probe_script};
+    use super::{is_flannel_ready, kubelet_proxy_rbac_probe_script, vm_tcp_probe_script};
 
     #[test]
     fn flannel_probe_passes_when_available_matches_desired() {
@@ -445,10 +460,20 @@ mod tests {
     }
 
     #[test]
+    fn kubelet_proxy_rbac_probe_script_checks_both_users_and_verbs() {
+        let script = kubelet_proxy_rbac_probe_script();
+        assert!(script.contains("apiserver-kubelet-client"));
+        assert!(script.contains("kube-apiserver-kubelet-client"));
+        assert!(script.contains("get nodes --subresource=proxy"));
+        assert!(script.contains("create nodes --subresource=proxy"));
+    }
+
+    #[test]
     fn vm_tcp_probe_script_targets_loopback_and_port() {
         let script = vm_tcp_probe_script(64784);
-        assert!(script.contains("127.0.0.1"));
+        assert!(script.starts_with("'import socket"));
+        assert!(script.contains("\"127.0.0.1\""));
         assert!(script.contains("64784"));
+        assert!(script.ends_with("'"));
     }
 }
-
