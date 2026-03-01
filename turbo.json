@@ -3,19 +3,38 @@
   "ui": "tui",
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
-      "inputs": ["$TURBO_DEFAULT$", ".env*"],
-      "outputs": [".next/**", "!.next/cache/**"],
+      "dependsOn": [
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".env*"
+      ],
+      "outputs": [
+        ".next/**",
+        "!.next/cache/**"
+      ],
       "env": [
         "NEXT_PUBLIC_CONVEX_URL",
         "NEXT_PUBLIC_CONVEX_SITE_URL",
         "CONVEX_DEPLOY_KEY",
         "TYPESENSE_API_KEY",
-        "TYPESENSE_URL"
+        "TYPESENSE_URL",
+        "KV_REST_API_URL",
+        "KV_URL",
+        "KV_REST_API_READ_ONLY_TOKEN",
+        "KV_REST_API_TOKEN",
+        "REDIS_URL",
+        "PDF_BRAIN_API_TOKEN",
+        "INNGEST_EVENT_URL",
+        "JOELCLAW_WEBHOOK_SECRET",
+        "REVALIDATION_SECRET"
       ]
     },
     "check-types": {
-      "dependsOn": ["^check-types"]
+      "dependsOn": [
+        "^check-types"
+      ]
     },
     "dev": {
       "cache": false,
