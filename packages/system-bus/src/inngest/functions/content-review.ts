@@ -1282,6 +1282,24 @@ export const contentReviewApply = inngest.createFunction(
       };
     }
 
+    await step.run("ack-feedback-received", async () => {
+      if (!gateway) return { notified: false, reason: "gateway-unavailable" };
+
+      const itemCount = pendingFeedbackItems.length + submittedComments.length;
+      const itemLabel = itemCount === 1 ? "item" : "items";
+      await gateway.notify(
+        `📝 Feedback received for <b>${contentType}/${contentSlug}</b> — ${itemCount} ${itemLabel}. Processing now.`,
+        {
+          ...buildGatewaySignalMeta("content.review", "info"),
+          contentType,
+          contentSlug,
+          feedbackCount: pendingFeedbackItems.length,
+          commentCount: submittedComments.length,
+        },
+      );
+      return { notified: true };
+    });
+
     const historicalAssertions = await step.run("build-historical-assertions", async () => {
       return buildHistoricalAssertions(historicalResolvedComments, historicalAppliedFeedbackItems);
     });
