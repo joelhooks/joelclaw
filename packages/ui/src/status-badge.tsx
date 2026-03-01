@@ -43,16 +43,16 @@ const STATUS_LED_SIZES: Record<StatusLedSize, string> = {
   lg: "h-3 w-3",
 };
 
-const STATUS_PULSE_COLORS: Record<StatusKind, { bg: string; shadow: string }> = {
-  healthy: { bg: "#10b981", shadow: "rgba(16,185,129,0.5)" },
-  degraded: { bg: "#f59e0b", shadow: "rgba(245,158,11,0.5)" },
-  down: { bg: "#f43f5e", shadow: "rgba(244,63,94,0.5)" },
-  unknown: { bg: "#737373", shadow: "rgba(115,115,115,0.5)" },
-  debug: { bg: "#737373", shadow: "rgba(115,115,115,0.5)" },
-  info: { bg: "#0ea5e9", shadow: "rgba(14,165,233,0.5)" },
-  warn: { bg: "#f59e0b", shadow: "rgba(245,158,11,0.5)" },
-  error: { bg: "#f97316", shadow: "rgba(249,115,22,0.5)" },
-  fatal: { bg: "#f43f5e", shadow: "rgba(244,63,94,0.5)" },
+const STATUS_PULSE_STYLES: Record<StatusKind, { dot: string; shadow: string }> = {
+  healthy: { dot: "bg-emerald-500", shadow: "shadow-emerald-500/50" },
+  degraded: { dot: "bg-amber-500", shadow: "shadow-amber-500/50" },
+  down: { dot: "bg-rose-500", shadow: "shadow-rose-500/50" },
+  unknown: { dot: "bg-neutral-500", shadow: "shadow-neutral-500/50" },
+  debug: { dot: "bg-neutral-500", shadow: "shadow-neutral-500/50" },
+  info: { dot: "bg-sky-500", shadow: "shadow-sky-500/50" },
+  warn: { dot: "bg-amber-500", shadow: "shadow-amber-500/50" },
+  error: { dot: "bg-orange-500", shadow: "shadow-orange-500/50" },
+  fatal: { dot: "bg-rose-500", shadow: "shadow-rose-500/50" },
 };
 
 const PULSE_OFFSET_WINDOW_MS = 1400;
@@ -181,7 +181,7 @@ export function StatusPulseDot({
   pulseOffsetMs?: number;
 }): JSX.Element {
   const kind = normalizeStatusKind(typeof status === "string" ? status : String(status));
-  const colors = STATUS_PULSE_COLORS[kind];
+  const style = STATUS_PULSE_STYLES[kind];
   const sizeClass = STATUS_LED_SIZES[size];
   const statusLabel = label ?? kind;
   const shouldPulse = pulse ?? kind === "healthy";
@@ -200,18 +200,12 @@ export function StatusPulseDot({
     >
       {shouldPulse ? (
         <span
-          className="absolute inset-0 rounded-full"
-          style={{
-            backgroundColor: colors.bg,
-            opacity: 0.75,
-            animation: `ping 1s cubic-bezier(0, 0, 0.2, 1) infinite`,
-            animationDelay: pulseDelay,
-          }}
+          className={`absolute inset-0 animate-ping rounded-full ${style.dot} opacity-75`}
+          style={{ animationDelay: pulseDelay }}
         />
       ) : null}
       <span
-        className={`relative inline-flex rounded-full ${sizeClass}`}
-        style={{ backgroundColor: colors.bg, boxShadow: `0 1px 2px 0 ${colors.shadow}` }}
+        className={`relative inline-flex rounded-full ${sizeClass} ${style.dot} shadow-sm ${style.shadow}`}
       />
     </span>
   );
