@@ -1,6 +1,6 @@
 ---
 name: pdf-brain
-description: Research and library synthesis from the docs/PDF corpus, mapped to joelclaw system philosophy and concrete operational actions (especially k8s reliability). Trigger on: "research this", "from the library", "from the books", "pdf brain", "correlate this", "synthesize", or any request to derive practical architecture/ops guidance from the docs corpus. This skill is analysis-only; for ingestion/backfill workflows use pdf-brain-ingest.
+description: "Research and library synthesis from the docs/PDF corpus, mapped to joelclaw system philosophy and concrete operational actions (especially k8s reliability). Trigger on: 'research this', 'from the library', 'from the books', 'pdf brain', 'correlate this', 'synthesize', or any request to derive practical architecture/ops guidance from the docs corpus. This skill is analysis-only; for ingestion/backfill workflows use pdf-brain-ingest."
 ---
 
 # PDF Brain — Research → Practical System Moves
