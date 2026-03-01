@@ -19,7 +19,7 @@ spec:
         - name: ghcr-pull
       containers:
         - name: system-bus-worker
-          image: ghcr.io/joelhooks/system-bus-worker:20260301-082215
+          image: ghcr.io/joelhooks/system-bus-worker:20260301-084739
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true
@@ -48,6 +48,11 @@ spec:
             # Advertise the in-cluster service URL for SDK callbacks.
             - name: INNGEST_SERVE_HOST
               value: "http://system-bus-worker:3111"
+            # Webhook subscription dispatch uses Redis-backed state.
+            - name: REDIS_HOST
+              value: "redis"
+            - name: REDIS_PORT
+              value: "6379"
           ports:
             - containerPort: 3111
               name: http

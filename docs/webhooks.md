@@ -38,6 +38,12 @@ Redis keys:
 - `joelclaw:webhook:notify:<subscription-id>` (pub/sub channel)
 - `joelclaw:webhook:dedup:<subscription-id>:<delivery-key>` (idempotency)
 
+Runtime requirement (cluster worker):
+
+- `REDIS_HOST=redis`
+- `REDIS_PORT=6379`
+- configured in `k8s/system-bus-worker.yaml`
+
 CLI surface:
 
 ```bash
