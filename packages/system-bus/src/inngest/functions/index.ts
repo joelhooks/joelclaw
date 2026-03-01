@@ -20,6 +20,7 @@ export { channelMessageClassify } from "./channel-message-classify";
 export { channelMessageIngest } from "./channel-message-ingest";
 export { checkCalendar } from "./check-calendar";
 export { checkEmail } from "./check-email";
+export { checkGatewayHealth } from "./check-gateway-health";
 export { checkGranola, granolaCheckCron } from "./check-granola";
 export { checkLoops } from "./check-loops";
 export { checkMemoryReview } from "./check-memory-review";

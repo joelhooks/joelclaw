@@ -17,6 +17,7 @@ import { channelMessageClassify } from "./channel-message-classify";
 import { channelMessageIngest } from "./channel-message-ingest";
 import { checkCalendar } from "./check-calendar";
 import { checkEmail } from "./check-email";
+import { checkGatewayHealth } from "./check-gateway-health";
 import { checkGranola, granolaCheckCron } from "./check-granola";
 import { checkLoops } from "./check-loops";
 import { checkMemoryReview } from "./check-memory-review";
@@ -173,6 +174,7 @@ export const hostFunctionDefinitions = [
   checkGranola,
   granolaCheckCron,
   checkEmail,
+  checkGatewayHealth,
   vipEmailReceived,
   checkCalendar,
   checkLoops,

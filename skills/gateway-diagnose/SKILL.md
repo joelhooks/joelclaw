@@ -2,7 +2,7 @@
 name: gateway-diagnose
 displayName: Gateway Diagnose
 description: "Diagnose gateway failures by reading daemon logs, session transcripts, Redis state, and OTEL telemetry. Full Telegram path triage: daemon process → Redis channel → command queue → pi session → model API → Telegram delivery. Use when: 'gateway broken', 'telegram not working', 'why is gateway down', 'gateway not responding', 'check gateway logs', 'what happened to gateway', 'gateway diagnose', 'gateway errors', 'review gateway logs', 'fallback activated', 'gateway stuck', or any request to understand why the gateway failed. Distinct from the gateway skill (operations) — this skill is diagnostic."
-version: 1.0.2
+version: 1.0.3
 author: Joel Hooks
 tags: [joelclaw, gateway, diagnosis, logs, telegram, reliability]
 ---
@@ -24,6 +24,20 @@ joelclaw gateway review [--hours 1] [--max 20]
 ```
 
 Start with `diagnose` to find the failure layer. Use `review` to understand what the gateway was doing when it broke. Only drop to manual log reading (below) when the CLI output isn't enough.
+
+## Autonomous Monitor (cross-channel)
+
+Gateway health is now checked automatically by Inngest function `check/gateway-health` on heartbeat fan-out event `gateway/health.check.requested`.
+
+What it monitors:
+- **General gateway failure**: critical `joelclaw gateway diagnose` layers (`process`, `cli-status`, `e2e-test`, `redis-state`)
+- **Specific channel degradation**: OTEL severe action counts for `telegram-channel`, `discord-channel`, `imessage-channel`, `slack-channel`
+
+What it does:
+- Tracks failure streaks in Redis to suppress one-off noise
+- Auto-restarts gateway on sustained general failure (cooldown-protected)
+- Sends immediate Telegram alert only on sustained unresolved failures
+- Emits OTEL with component `check-gateway-health`, action `gateway.health.checked`
 
 ## Artifact Locations
 

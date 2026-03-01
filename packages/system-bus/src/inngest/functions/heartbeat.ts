@@ -24,6 +24,7 @@ const HEARTBEAT_EVENTS = [
     name: "system/health.requested" as const,
     data: { mode: "core" as const, source: "heartbeat-15m" as const },
   },
+  { name: "gateway/health.check.requested" as const, data: {} },
   { name: "memory/review.check" as const, data: {} },
   { name: "vault/sync.check" as const, data: {} },
   { name: "email/triage.requested" as const, data: {} },
