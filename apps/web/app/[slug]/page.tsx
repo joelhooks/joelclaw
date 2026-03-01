@@ -5,6 +5,7 @@ import { MDXRemote } from "next-mdx-remote/rsc";
 import { Suspense } from "react";
 import { ContentDebugPanel } from "@/components/content-debug-panel";
 import { ContentLive } from "@/components/content-live";
+import { CopyAsPrompt } from "@/components/copy-as-prompt";
 import { ConvexReaderProvider } from "@/components/convex-reader-provider";
 import { LazyFeedbackStatusIsland } from "@/components/review/lazy-feedback-status-island";
 import { LazyReviewGate } from "@/components/review/lazy-review-gate";
@@ -141,6 +142,9 @@ async function CachedArticleContent({ slug }: { slug: string }) {
             ))}
           </div>
         )}
+        <div className="mt-3">
+          <CopyAsPrompt markdown={content} title={meta.title} slug={meta.slug} />
+        </div>
         <ContentDebugPanel
           slug={slug}
           diagnostics={diagnostics}
