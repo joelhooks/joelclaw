@@ -24,6 +24,13 @@ KUBELET_PROXY_USERS=(
   "kube-apiserver-kubelet-client"
 )
 
+CRITICAL_DEPLOYMENTS=(
+  "bluesky-pds"
+  "docs-api"
+  "livekit-server"
+  "system-bus-worker"
+)
+
 docker_socket_healthy() {
   DOCKER_HOST="$COLIMA_DOCKER_HOST" docker ps --format '{{.Names}}' >/dev/null 2>&1
 }
@@ -139,12 +146,52 @@ pod_ready() {
   [[ "$ready" == "True" ]]
 }
 
+deployment_ready() {
+  local namespace="$1"
+  local deployment_name="$2"
+  local desired
+  local available
+
+  desired="$(kubectl -n "$namespace" get deployment "$deployment_name" -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+  available="$(kubectl -n "$namespace" get deployment "$deployment_name" -o jsonpath='{.status.availableReplicas}' 2>/dev/null || true)"
+
+  desired="${desired:-0}"
+  available="${available:-0}"
+
+  [[ "$desired" =~ ^[0-9]+$ && "$available" =~ ^[0-9]+$ && "$desired" -gt 0 && "$available" -ge "$desired" ]]
+}
+
+restart_image_pull_backoff_workloads() {
+  local pods
+  local deployment_regex
+
+  deployment_regex="$(printf '%s|' "${CRITICAL_DEPLOYMENTS[@]}")"
+  deployment_regex="^(${deployment_regex%|})-"
+
+  pods="$(kubectl get pods -n joelclaw --no-headers 2>/dev/null | awk -v deployment_regex="$deployment_regex" '
+    ($1 ~ deployment_regex) &&
+    ($3 ~ /^(ImagePullBackOff|ErrImagePull|Init:ImagePullBackOff)$/) {
+      print $1":"$3
+    }
+  ')"
+
+  if [ -z "$pods" ]; then
+    return 1
+  fi
+
+  log "workload recovery: restarting pods stuck in image pull backoff (${pods//$'\n'/, })"
+  printf '%s\n' "$pods" | awk -F: '{print $1}' | xargs -r kubectl delete pod -n joelclaw >>"$LOG_FILE" 2>&1 || true
+  return 0
+}
+
 wait_for_service_convergence() {
   local timeout_secs="${1:-$CORE_WARMUP_TIMEOUT_SECS}"
   local deadline=$((SECONDS + timeout_secs))
   local stable_passes=0
   local next_flannel_repair_at=0
+  local next_image_pull_repair_at=0
   local pending=()
+  local deployment
 
   while [ "$SECONDS" -lt "$deadline" ]; do
     pending=()
@@ -154,10 +201,20 @@ wait_for_service_convergence() {
     pod_ready "joelclaw" "inngest-0" || pending+=("inngest-0")
     pod_ready "joelclaw" "typesense-0" || pending+=("typesense-0")
 
+    for deployment in "${CRITICAL_DEPLOYMENTS[@]}"; do
+      deployment_ready "joelclaw" "$deployment" || pending+=("deploy:$deployment")
+    done
+
     if [[ " ${pending[*]-} " == *" kube-flannel "* ]] && [ "$SECONDS" -ge "$next_flannel_repair_at" ]; then
       ensure_vm_br_netfilter || true
       restart_flannel_if_unhealthy
       next_flannel_repair_at=$((SECONDS + 20))
+    fi
+
+    if [ "$SECONDS" -ge "$next_image_pull_repair_at" ]; then
+      if restart_image_pull_backoff_workloads; then
+        next_image_pull_repair_at=$((SECONDS + 20))
+      fi
     fi
 
     if [ "${#pending[@]}" -eq 0 ]; then
@@ -215,8 +272,8 @@ post_colima_invariant_gate() {
     failures=$((failures + 1))
   fi
 
-  # Post-cycle startup can flap while flannel/services settle. Require two
-  # consecutive clean passes before declaring convergence.
+  # Post-cycle startup can flap while flannel/core services/workloads settle.
+  # Require two consecutive clean passes before declaring convergence.
   if ! wait_for_service_convergence "$CORE_WARMUP_TIMEOUT_SECS"; then
     failures=$((failures + 1))
   fi

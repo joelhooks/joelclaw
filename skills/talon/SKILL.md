@@ -72,7 +72,7 @@ talon (single binary)
 │
 └── Escalation (on failure)
     ├── Tier 1a: bridge-heal (force-cycle Colima on localhost↔VM split-brain)
-    ├── Tier 1b: k8s-reboot-heal.sh (300s timeout, RBAC drift guard, VM `br_netfilter` repair, warmup-aware post-Colima invariants)
+    ├── Tier 1b: k8s-reboot-heal.sh (300s timeout, RBAC drift guard, VM `br_netfilter` repair, warmup-aware post-Colima invariants including deployment readiness + ImagePullBackOff pod reset)
     ├── Tier 2: pi agent (cloud model, 10min cooldown)
     ├── Tier 3: pi agent (Ollama local, network-down fallback)
     └── Tier 4: Telegram + iMessage SOS fan-out (15min critical threshold)
