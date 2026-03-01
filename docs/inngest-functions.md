@@ -8,6 +8,7 @@ Canonical notes for `packages/system-bus/src/inngest/functions/`.
 - Retries are mandatory (`retries: 0` is forbidden unless explicitly justified in ADR).
 - Every critical branch emits OTEL evidence.
 - Health checks should route remediation via `system/self.healing.requested` and carry playbook context.
+- Never use `Bun.spawnSync` for `joelclaw` CLI calls inside handlers that also depend on worker/HTTP probes; use async subprocesses with explicit timeouts to avoid worker event-loop deadlocks.
 
 ## Key reliability flows
 
