@@ -28,6 +28,7 @@ talon                  # Full daemon mode (worker + probes + escalation)
 | Service monitors | `~/.joelclaw/talon/services.toml` |
 | Default config | `~/Code/joelhooks/joelclaw/infra/talon/config.default.toml` |
 | Default services template | `~/Code/joelhooks/joelclaw/infra/talon/services.default.toml` |
+| Voice stale cleanup | `~/Code/joelhooks/joelclaw/infra/voice-agent/cleanup-stale.sh` |
 | State | `~/.local/state/talon/state.json` |
 | Probe results | `~/.local/state/talon/last-probe.json` |
 | Log | `~/.local/state/talon/talon.log` (JSON lines, 10MB rotation) |
@@ -72,7 +73,7 @@ talon (single binary)
 │
 └── Escalation (on failure)
     ├── Tier 1a: bridge-heal (force-cycle Colima on localhost↔VM split-brain)
-    ├── Tier 1b: k8s-reboot-heal.sh (300s timeout, RBAC drift guard, VM `br_netfilter` repair, warmup-aware post-Colima invariants including deployment readiness + ImagePullBackOff pod reset)
+    ├── Tier 1b: k8s-reboot-heal.sh (300s timeout, RBAC drift guard, VM `br_netfilter` repair, warmup-aware post-Colima invariants including deployment readiness + ImagePullBackOff pod reset, then voice-agent stale cleanup + launchd kickstart via `infra/voice-agent/cleanup-stale.sh`)
     ├── Tier 2: pi agent (cloud model, 10min cooldown)
     ├── Tier 3: pi agent (Ollama local, network-down fallback)
     └── Tier 4: Telegram + iMessage SOS fan-out (15min critical threshold)
@@ -217,6 +218,9 @@ ssh -F ~/.colima/_lima/colima/ssh.config lima-colima 'curl -sS http://127.0.0.1:
 
 # Force bridge repair (same behavior Talon uses for split-brain)
 colima stop --force && colima start
+
+# Manual voice-agent stale cleanup (same post-gate step k8s-reboot-heal runs)
+~/Code/joelhooks/joelclaw/infra/voice-agent/cleanup-stale.sh
 ```
 
 ## Key Design Decisions

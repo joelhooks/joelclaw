@@ -17,6 +17,8 @@ COLIMA_SSH_CONFIG="$HOME/.colima/_lima/colima/ssh.config"
 COLIMA_SSH_HOST="lima-colima"
 KUBELET_PROXY_RBAC_MANIFEST="$HOME/Code/joelhooks/joelclaw/k8s/apiserver-kubelet-client-rbac.yaml"
 CORE_WARMUP_TIMEOUT_SECS=300
+WARMUP_GRACE_SECS="${WARMUP_GRACE_SECS:-120}"
+COLIMA_START_EPOCH=""
 
 # ADR-0182 invariant target users for kubelet proxy authz.
 KUBELET_PROXY_USERS=(
@@ -39,7 +41,11 @@ force_cycle_colima() {
   log "force-cycling colima runtime"
   colima stop --force >>"$LOG_FILE" 2>&1 || log "WARNING: colima stop --force failed"
   sleep 1
-  colima start >>"$LOG_FILE" 2>&1 || log "WARNING: colima start failed"
+  if colima start >>"$LOG_FILE" 2>&1; then
+    COLIMA_START_EPOCH="$(date +%s)"
+  else
+    log "WARNING: colima start failed"
+  fi
 }
 
 ensure_vm_br_netfilter() {
@@ -161,19 +167,81 @@ deployment_ready() {
   [[ "$desired" =~ ^[0-9]+$ && "$available" =~ ^[0-9]+$ && "$desired" -gt 0 && "$available" -ge "$desired" ]]
 }
 
-restart_image_pull_backoff_workloads() {
-  local pods
+colima_uptime_secs() {
+  local uptime_secs
+
+  uptime_secs="$(ssh -F "$COLIMA_SSH_CONFIG" -o ConnectTimeout=2 "$COLIMA_SSH_HOST" "awk '{print int(\$1)}' /proc/uptime" 2>/dev/null || true)"
+  if [[ "$uptime_secs" =~ ^[0-9]+$ ]]; then
+    echo "$uptime_secs"
+    return 0
+  fi
+
+  return 1
+}
+
+warmup_grace_remaining_secs() {
+  local uptime_secs
+  local now
+  local elapsed
+
+  uptime_secs="$(colima_uptime_secs || true)"
+  if [[ "$uptime_secs" =~ ^[0-9]+$ ]]; then
+    if [ "$uptime_secs" -lt "$WARMUP_GRACE_SECS" ]; then
+      echo $((WARMUP_GRACE_SECS - uptime_secs))
+    else
+      echo 0
+    fi
+    return 0
+  fi
+
+  if [ -n "${COLIMA_START_EPOCH:-}" ]; then
+    now="$(date +%s)"
+    elapsed=$((now - COLIMA_START_EPOCH))
+    if [ "$elapsed" -lt "$WARMUP_GRACE_SECS" ]; then
+      echo $((WARMUP_GRACE_SECS - elapsed))
+      return 0
+    fi
+  fi
+
+  echo 0
+}
+
+critical_deployment_regex() {
   local deployment_regex
 
   deployment_regex="$(printf '%s|' "${CRITICAL_DEPLOYMENTS[@]}")"
-  deployment_regex="^(${deployment_regex%|})-"
+  echo "^(${deployment_regex%|})-"
+}
 
-  pods="$(kubectl get pods -n joelclaw --no-headers 2>/dev/null | awk -v deployment_regex="$deployment_regex" '
+list_image_pull_backoff_pods() {
+  local deployment_regex
+
+  deployment_regex="$(critical_deployment_regex)"
+  kubectl get pods -n joelclaw --no-headers 2>/dev/null | awk -v deployment_regex="$deployment_regex" '
     ($1 ~ deployment_regex) &&
     ($3 ~ /^(ImagePullBackOff|ErrImagePull|Init:ImagePullBackOff)$/) {
       print $1":"$3
     }
-  ')"
+  ' || true
+}
+
+list_non_image_pull_crash_pods() {
+  local deployment_regex
+
+  deployment_regex="$(critical_deployment_regex)"
+  kubectl get pods -n joelclaw --no-headers 2>/dev/null | awk -v deployment_regex="$deployment_regex" '
+    ($1 ~ deployment_regex) &&
+    ($3 !~ /^(ImagePullBackOff|ErrImagePull|Init:ImagePullBackOff)$/) &&
+    ($3 ~ /^(CrashLoopBackOff|Error|RunContainerError|CreateContainerConfigError|CreateContainerError|Init:CrashLoopBackOff|Init:Error|ContainerStatusUnknown|InvalidImageName)$/) {
+      print $1":"$3
+    }
+  ' || true
+}
+
+restart_image_pull_backoff_workloads() {
+  local pods
+
+  pods="$(list_image_pull_backoff_pods)"
 
   if [ -z "$pods" ]; then
     return 1
@@ -191,12 +259,31 @@ wait_for_service_convergence() {
   local next_flannel_repair_at=0
   local next_image_pull_repair_at=0
   local pending=()
+  local transient_failures=()
+  local hard_failures=()
   local deployment
+  local image_pull_backoff_pods
+  local crashed_workload_pods
+  local warmup_remaining=0
+  local curl_rc=0
 
   while [ "$SECONDS" -lt "$deadline" ]; do
     pending=()
+    transient_failures=()
+    hard_failures=()
 
-    daemonset_ready "kube-system" "kube-flannel" || pending+=("kube-flannel")
+    if kubectl get nodes >/dev/null 2>&1; then
+      kubelet_proxy_rbac_healthy || hard_failures+=("kubelet proxy RBAC unhealthy")
+    else
+      hard_failures+=("kubernetes api unreachable")
+    fi
+
+    if daemonset_ready "kube-system" "kube-flannel"; then
+      :
+    else
+      pending+=("kube-flannel")
+      transient_failures+=("kube-flannel not ready")
+    fi
     pod_ready "joelclaw" "redis-0" || pending+=("redis-0")
     pod_ready "joelclaw" "inngest-0" || pending+=("inngest-0")
     pod_ready "joelclaw" "typesense-0" || pending+=("typesense-0")
@@ -204,6 +291,16 @@ wait_for_service_convergence() {
     for deployment in "${CRITICAL_DEPLOYMENTS[@]}"; do
       deployment_ready "joelclaw" "$deployment" || pending+=("deploy:$deployment")
     done
+
+    image_pull_backoff_pods="$(list_image_pull_backoff_pods)"
+    if [ -n "$image_pull_backoff_pods" ]; then
+      transient_failures+=("image pull backoff: ${image_pull_backoff_pods//$'\n'/, }")
+    fi
+
+    crashed_workload_pods="$(list_non_image_pull_crash_pods)"
+    if [ -n "$crashed_workload_pods" ]; then
+      hard_failures+=("deployment crash (non-image-pull): ${crashed_workload_pods//$'\n'/, }")
+    fi
 
     if [[ " ${pending[*]-} " == *" kube-flannel "* ]] && [ "$SECONDS" -ge "$next_flannel_repair_at" ]; then
       ensure_vm_br_netfilter || true
@@ -220,8 +317,55 @@ wait_for_service_convergence() {
     if [ "${#pending[@]}" -eq 0 ]; then
       kubectl logs -n joelclaw redis-0 --tail=1 >/dev/null 2>&1 || pending+=("kubectl-logs")
       kubectl exec -n joelclaw redis-0 -- redis-cli ping >/dev/null 2>&1 || pending+=("kubectl-exec")
-      curl -fsS --max-time 5 http://localhost:8288/health >/dev/null 2>&1 || pending+=("inngest")
-      curl -fsS --max-time 5 http://localhost:8108/health >/dev/null 2>&1 || pending+=("typesense")
+
+      if curl -fsS --max-time 5 http://localhost:8288/health >/dev/null 2>&1; then
+        :
+      else
+        curl_rc=$?
+        pending+=("inngest")
+        if [ "$curl_rc" -eq 7 ] || [ "$curl_rc" -eq 28 ]; then
+          transient_failures+=("inngest health timeout/refused")
+        else
+          hard_failures+=("inngest health check failed (curl exit $curl_rc)")
+        fi
+      fi
+
+      if curl -fsS --max-time 5 http://localhost:8108/health >/dev/null 2>&1; then
+        :
+      else
+        curl_rc=$?
+        pending+=("typesense")
+        if [ "$curl_rc" -eq 7 ] || [ "$curl_rc" -eq 28 ]; then
+          transient_failures+=("typesense health timeout/refused")
+        else
+          hard_failures+=("typesense health check failed (curl exit $curl_rc)")
+        fi
+      fi
+    fi
+
+    if [ "${#hard_failures[@]}" -gt 0 ]; then
+      if [ "${#pending[@]}" -gt 0 ]; then
+        log "ERROR: service convergence hard failure: ${hard_failures[*]} (pending ${pending[*]})"
+      else
+        log "ERROR: service convergence hard failure: ${hard_failures[*]}"
+      fi
+      return 1
+    fi
+
+    if [ "${#transient_failures[@]}" -gt 0 ]; then
+      warmup_remaining="$(warmup_grace_remaining_secs)"
+      if [ "$warmup_remaining" -gt 0 ]; then
+        stable_passes=0
+        log "WARNING: warmup grace: transient failures tolerated for ${warmup_remaining}s more (${transient_failures[*]})"
+        if [ "${#pending[@]}" -gt 0 ]; then
+          log "warmup: waiting for ${pending[*]}"
+        fi
+        sleep 5
+        continue
+      fi
+
+      log "ERROR: service convergence failure after warmup grace expired (${transient_failures[*]})"
+      return 1
     fi
 
     if [ "${#pending[@]}" -eq 0 ]; then
@@ -334,5 +478,16 @@ else
 fi
 
 post_colima_invariant_gate
+
+# Clean up stale voice-agent processes that may hold port 8081 after Colima cycles.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -x "$SCRIPT_DIR/voice-agent/cleanup-stale.sh" ]; then
+  log "running voice-agent stale-process cleanup"
+  if ! "$SCRIPT_DIR/voice-agent/cleanup-stale.sh" 2>&1 | tee -a "$LOG_FILE"; then
+    log "WARNING: voice-agent stale-process cleanup failed"
+  fi
+else
+  log "voice-agent stale-process cleanup script missing or not executable; skipping"
+fi
 
 log "k8s reboot heal tick complete"
