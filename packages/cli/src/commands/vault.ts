@@ -16,6 +16,46 @@ const DECISIONS_DIR = join(VAULT_ROOT, "docs", "decisions")
 const ADR_INDEX_PATH = join(DECISIONS_DIR, "README.md")
 const ADR_VALID_STATUSES = ["proposed", "accepted", "shipped", "superseded", "deprecated", "rejected"] as const
 const ADR_VALID_STATUS_SET = new Set<string>(ADR_VALID_STATUSES)
+const ADR_PRIORITY_STATUS_DEFAULT = ["accepted", "proposed"] as const
+const ADR_PRIORITY_DIMENSIONS = [
+  "impact",
+  "urgency",
+  "unblock",
+  "risk_reduction",
+  "effort",
+  "confidence",
+] as const
+const ADR_PRIORITY_FIELD_MAP: Record<(typeof ADR_PRIORITY_DIMENSIONS)[number], string> = {
+  impact: "priority-impact",
+  urgency: "priority-urgency",
+  unblock: "priority-unblock",
+  risk_reduction: "priority-risk-reduction",
+  effort: "priority-effort",
+  confidence: "priority-confidence",
+}
+const ADR_PRIORITY_WEIGHTS: Record<(typeof ADR_PRIORITY_DIMENSIONS)[number], number> = {
+  impact: 5,
+  urgency: 4,
+  unblock: 3,
+  risk_reduction: 2,
+  effort: -3,
+  confidence: 1,
+}
+const ADR_PRIORITY_STATUS_BONUS: Partial<Record<(typeof ADR_VALID_STATUSES)[number], number>> = {
+  accepted: 4,
+  proposed: 0,
+}
+const ADR_PRIORITY_SCALE_MIN = 0
+const ADR_PRIORITY_SCALE_MAX = 5
+const ADR_PRIORITY_RAW_MIN = ADR_PRIORITY_WEIGHTS.effort * ADR_PRIORITY_SCALE_MAX
+const ADR_PRIORITY_RAW_MAX =
+  ADR_PRIORITY_WEIGHTS.impact * ADR_PRIORITY_SCALE_MAX
+  + ADR_PRIORITY_WEIGHTS.urgency * ADR_PRIORITY_SCALE_MAX
+  + ADR_PRIORITY_WEIGHTS.unblock * ADR_PRIORITY_SCALE_MAX
+  + ADR_PRIORITY_WEIGHTS.risk_reduction * ADR_PRIORITY_SCALE_MAX
+  + ADR_PRIORITY_WEIGHTS.confidence * ADR_PRIORITY_SCALE_MAX
+  + ADR_PRIORITY_STATUS_BONUS.accepted!
+const ADR_PRIORITY_RAW_RANGE = ADR_PRIORITY_RAW_MAX - ADR_PRIORITY_RAW_MIN
 
 type ProcessResult = {
   exitCode: number
@@ -38,6 +78,7 @@ type AdrCatalogItem = {
   status: string | null
   date: string | null
   supersededByRaw: string | null
+  frontmatter: Record<string, string>
 }
 
 type AdrNumberCollision = {

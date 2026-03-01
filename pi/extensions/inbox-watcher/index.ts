@@ -509,6 +509,12 @@ export default function (pi: ExtensionAPI) {
       cwd: Type.Optional(Type.String({ description: "Optional working directory override." })),
       timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (default: 600).", default: 600 })),
       model: Type.Optional(Type.String({ description: "Optional model override for the target agent." })),
+      readFiles: Type.Optional(
+        Type.Boolean({
+          description:
+            "Set true when the task must read local files/repository content.",
+        }),
+      ),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -523,10 +529,24 @@ export default function (pi: ExtensionAPI) {
 
       const tool = (params.tool || "codex") as BackgroundTool;
       const timeout = params.timeout ?? 600;
+      const readFiles = params.readFiles ?? false;
       const requestId = generateRequestId();
       const sessionId = extractSessionId(ctx);
       const cwd = params.cwd?.trim() || (ctx as { cwd?: string }).cwd || undefined;
       const model = params.model?.trim() || undefined;
+
+      if (tool === "pi" && readFiles) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "background_agent: tool=pi cannot be used with readFiles=true. Use codex or claude.",
+            },
+          ],
+          isError: true,
+          details: undefined,
+        };
+      }
 
       tracked.set(requestId, {
         requestId,
@@ -545,6 +565,7 @@ export default function (pi: ExtensionAPI) {
       const data: Record<string, unknown> = { requestId, task, tool, timeout };
       if (cwd) data.cwd = cwd;
       if (model) data.model = model;
+      if (readFiles) data.readFiles = true;
       if (sessionId) data.sessionId = sessionId;
 
       fetch(inngestEventUrl(), {

@@ -1058,6 +1058,7 @@ export type Events = {
       timeout?: number; // seconds, default 600 (10min)
       model?: string;
       sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+      readFiles?: boolean;
     };
   };
   "system/agent.cancelled": {

@@ -105,6 +105,7 @@ export const agentDispatch = inngest.createFunction(
       timeout = 600,
       model,
       sandbox,
+      readFiles = false,
     } = event.data;
 
     if (!requestId || !task || !tool) {
@@ -116,6 +117,14 @@ export const agentDispatch = inngest.createFunction(
     if (!["codex", "claude", "pi"].includes(tool)) {
       throw new NonRetriableError(
         `Unknown tool: ${tool}. Must be codex, claude, or pi.`
+      );
+    }
+
+    // NOTE: pi background dispatch defaults to --no-tools. For file access,
+    // dispatch with tool=codex or tool=claude instead.
+    if (tool === "pi" && readFiles) {
+      throw new NonRetriableError(
+        "tool:pi with readFiles:true is unsupported — use tool:codex or tool:claude"
       );
     }
 
