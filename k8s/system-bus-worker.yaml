@@ -19,7 +19,7 @@ spec:
         - name: ghcr-pull
       containers:
         - name: system-bus-worker
-          image: ghcr.io/joelhooks/system-bus-worker:20260301-074156
+          image: ghcr.io/joelhooks/system-bus-worker:20260301-080749
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true
