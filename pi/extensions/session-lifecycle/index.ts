@@ -301,6 +301,8 @@ type AgentMailSteeringSnapshot = {
     handoffSignalsTotal: number;
     coordinationSignalsTotal: number;
     coordinationSignalsDelta: number | null;
+    signalsDegraded: boolean;
+    degradedReasons: string[];
   };
   otel: {
     available: boolean;
@@ -359,10 +361,38 @@ function writeSteeringSnapshot(snapshot: AgentMailSteeringSnapshot): void {
   } catch {}
 }
 
-function mailSignalCount(result: JoelclawJsonResult): number {
-  if (!result.ok) return 0;
+type MailSignalSummary = {
+  count: number;
+  degraded: boolean;
+  reason: string | null;
+};
+
+function mailSignalSummary(result: JoelclawJsonResult): MailSignalSummary {
+  if (!result.ok) {
+    return {
+      count: 0,
+      degraded: true,
+      reason: result.error,
+    };
+  }
+
   const payload = asRecord(result.envelope.result);
-  return asNumber(payload?.count) ?? 0;
+  const count = asNumber(payload?.count) ?? 0;
+  const diagnostic = asString(payload?.result);
+
+  if (diagnostic && /error calling tool|database error|failed/i.test(diagnostic)) {
+    return {
+      count,
+      degraded: true,
+      reason: diagnostic,
+    };
+  }
+
+  return {
+    count,
+    degraded: false,
+    reason: null,
+  };
 }
 
 function appendSteeringSummaryToDaily(snapshot: AgentMailSteeringSnapshot): void {
@@ -376,6 +406,11 @@ function appendSteeringSummaryToDaily(snapshot: AgentMailSteeringSnapshot): void
       ? `otel(${snapshot.otel.query},24h): found=${snapshot.otel.found ?? 0}`
       : `otel(${snapshot.otel.query},24h): unavailable (${snapshot.otel.error ?? "unknown"})`,
   ];
+
+  if (snapshot.mail.signalsDegraded) {
+    const degradedReason = snapshot.mail.degradedReasons.at(0);
+    lines.push(`mail-signals: degraded${degradedReason ? ` (${degradedReason.slice(0, 180)})` : ""}`);
+  }
 
   const steering = snapshot.effectiveness.recommendations.at(0);
   if (steering) lines.push(`steering: ${steering}`);
@@ -438,11 +473,21 @@ async function collectAgentMailSteeringSnapshot(promptTemplate: string): Promise
   const locksActive = asNumber(locksPayload?.count) ?? 0;
   const locksStale = asNumber(lockSummary?.stale) ?? 0;
 
-  const announceSignalsTotal = mailSignalCount(announceResult);
-  const taskSignalsTotal = mailSignalCount(taskResult);
-  const statusSignalsTotal = mailSignalCount(statusResult);
-  const handoffSignalsTotal = mailSignalCount(handoffResult);
+  const announceSignal = mailSignalSummary(announceResult);
+  const taskSignal = mailSignalSummary(taskResult);
+  const statusSignal = mailSignalSummary(statusResult);
+  const handoffSignal = mailSignalSummary(handoffResult);
+
+  const announceSignalsTotal = announceSignal.count;
+  const taskSignalsTotal = taskSignal.count;
+  const statusSignalsTotal = statusSignal.count;
+  const handoffSignalsTotal = handoffSignal.count;
   const coordinationSignalsTotal = announceSignalsTotal + taskSignalsTotal + statusSignalsTotal + handoffSignalsTotal;
+  const signalSummaries = [announceSignal, taskSignal, statusSignal, handoffSignal];
+  const mailSignalsDegraded = signalSummaries.some((signal) => signal.degraded);
+  const mailSignalDegradedReasons = signalSummaries
+    .map((signal) => signal.reason)
+    .filter((reason): reason is string => typeof reason === "string" && reason.length > 0);
 
   const previous = readLatestSteeringSnapshotBefore(date);
   const previousComparable = previous?.promptHash === promptHash
@@ -467,6 +512,11 @@ async function collectAgentMailSteeringSnapshot(promptTemplate: string): Promise
   if (locksActive > 0) {
     score -= 15;
     recommendations.push("Active locks are accumulating. Keep leases short and renew only while work is in flight.");
+  }
+
+  if (mailSignalsDegraded) {
+    score -= 10;
+    recommendations.push("Mail search signals are degraded. Fix agent-mail search reliability so daily steering is based on real traffic.");
   }
 
   if (coordinationSignalsTotal === 0) {
@@ -510,6 +560,8 @@ async function collectAgentMailSteeringSnapshot(promptTemplate: string): Promise
       handoffSignalsTotal,
       coordinationSignalsTotal,
       coordinationSignalsDelta,
+      signalsDegraded: mailSignalsDegraded,
+      degradedReasons: mailSignalDegradedReasons,
     },
     otel: {
       available: otelResult.ok,
@@ -603,6 +655,8 @@ export default function (pi: ExtensionAPI) {
             locksStale: snapshot.mail.locksStale,
             coordinationSignalsTotal: snapshot.mail.coordinationSignalsTotal,
             coordinationSignalsDelta: snapshot.mail.coordinationSignalsDelta,
+            mailSignalsDegraded: snapshot.mail.signalsDegraded,
+            mailSignalsDegradedReasons: snapshot.mail.degradedReasons,
             otelAvailable: snapshot.otel.available,
             otelFound: snapshot.otel.found,
             recommendations: snapshot.effectiveness.recommendations,
