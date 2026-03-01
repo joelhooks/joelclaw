@@ -163,6 +163,18 @@ Semantics:
 - `prune` — dry-run report of Convex ADR extras (`status: dry_run`).
 - `prune --apply` — removes ADR extras from Convex (`status: pruned`) and should be followed by `joelclaw content verify`.
 
+## Inngest source guard (ADR-0089)
+
+```bash
+joelclaw inngest source [--repair]
+```
+
+Semantics:
+
+- Verifies launchd binding for `com.joel.system-bus-worker` against the canonical `infra/launchd/com.joel.system-bus-worker.plist` values (program + working directory).
+- `--repair` copies canonical plist into `~/Library/LaunchAgents`, performs `launchctl bootout`, then `bootstrap` with retry for transient `Bootstrap failed: 5` launchd races.
+- Use before `joelclaw inngest restart-worker` when host runtime/source drift is suspected.
+
 ## Build and verify
 
 ```bash

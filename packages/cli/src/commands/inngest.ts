@@ -12,8 +12,8 @@ const WORKER_REGISTER_URL = `${WORKER_URL}/api/inngest`
 const WORKER_LABEL = "com.joel.system-bus-worker"
 const WORKER_LAUNCHD_PLIST_SOURCE = `${HOME_DIR}/Code/joelhooks/joelclaw/infra/launchd/${WORKER_LABEL}.plist`
 const WORKER_LAUNCHD_PLIST_TARGET = `${HOME_DIR}/Library/LaunchAgents/${WORKER_LABEL}.plist`
-const WORKER_EXPECTED_START = `${HOME_DIR}/Code/joelhooks/joelclaw/packages/system-bus/start.sh`
-const WORKER_EXPECTED_CWD = `${HOME_DIR}/Code/joelhooks/joelclaw/packages/system-bus`
+const WORKER_EXPECTED_START_FALLBACK = `${HOME_DIR}/Code/joelhooks/joelclaw/packages/system-bus/start.sh`
+const WORKER_EXPECTED_CWD_FALLBACK = `${HOME_DIR}/Code/joelhooks/joelclaw/packages/system-bus`
 const LEGACY_WORKER_PATH_FRAGMENT = "/Code/system-bus-worker/"
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 const OTEL_QUERY_BY = "action,error,component,source,metadata_json,search_text"
@@ -39,6 +39,50 @@ const decodeText = (value: string | Uint8Array | null | undefined): string => {
   if (value instanceof Uint8Array) return new TextDecoder().decode(value)
   return ""
 }
+
+type WorkerExpectedBinding = {
+  program: string
+  workingDirectory: string
+  plistSource: string
+  plistTarget: string
+}
+
+function readLaunchdPlistValue(plistPath: string, keyPath: string): string | null {
+  const proc = Bun.spawnSync([
+    "plutil",
+    "-extract",
+    keyPath,
+    "raw",
+    "-o",
+    "-",
+    plistPath,
+  ], {
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+
+  if (proc.exitCode !== 0) return null
+  const value = decodeText(proc.stdout).trim()
+  return value.length > 0 ? value : null
+}
+
+function resolveExpectedWorkerBinding(): WorkerExpectedBinding {
+  const program =
+    readLaunchdPlistValue(WORKER_LAUNCHD_PLIST_SOURCE, "ProgramArguments.0")
+    ?? WORKER_EXPECTED_START_FALLBACK
+  const workingDirectory =
+    readLaunchdPlistValue(WORKER_LAUNCHD_PLIST_SOURCE, "WorkingDirectory")
+    ?? WORKER_EXPECTED_CWD_FALLBACK
+
+  return {
+    program,
+    workingDirectory,
+    plistSource: WORKER_LAUNCHD_PLIST_SOURCE,
+    plistTarget: WORKER_LAUNCHD_PLIST_TARGET,
+  }
+}
+
+const WORKER_EXPECTED_BINDING = resolveExpectedWorkerBinding()
 
 type MemorySnapshot = {
   count: number
@@ -458,8 +502,8 @@ const inspectWorkerLaunchdBinding = () =>
 function evaluateWorkerSource(binding: WorkerLaunchdBinding): WorkerSourceEvaluation {
   const program = binding.program ?? ""
   const workingDirectory = binding.workingDirectory ?? ""
-  const programMatches = program === WORKER_EXPECTED_START
-  const workingDirectoryMatches = workingDirectory === WORKER_EXPECTED_CWD
+  const programMatches = program === WORKER_EXPECTED_BINDING.program
+  const workingDirectoryMatches = workingDirectory === WORKER_EXPECTED_BINDING.workingDirectory
   const legacyPathDetected =
     program.includes(LEGACY_WORKER_PATH_FRAGMENT)
     || workingDirectory.includes(LEGACY_WORKER_PATH_FRAGMENT)
@@ -490,7 +534,7 @@ const repairWorkerLaunchdBinding = () =>
         throw new Error(stderr || `cp exited with ${copyProc.exitCode}`)
       }
 
-      Bun.spawnSync([
+      const bootoutProc = Bun.spawnSync([
         "launchctl",
         "bootout",
         `gui/${uid}/${WORKER_LABEL}`,
@@ -499,28 +543,63 @@ const repairWorkerLaunchdBinding = () =>
         stderr: "pipe",
       })
 
-      const bootstrapProc = Bun.spawnSync([
-        "launchctl",
-        "bootstrap",
-        `gui/${uid}`,
-        WORKER_LAUNCHD_PLIST_TARGET,
-      ], {
-        stdout: "pipe",
-        stderr: "pipe",
-      })
+      if (bootoutProc.exitCode !== 0) {
+        const stderr = decodeText(bootoutProc.stderr).trim()
+        const expectedBootoutMiss = /could not find service|no such process|not loaded/iu.test(stderr)
+        if (!expectedBootoutMiss) {
+          throw new Error(stderr || `launchctl bootout exited with ${bootoutProc.exitCode}`)
+        }
+      }
 
-      if (bootstrapProc.exitCode !== 0) {
+      // launchd can briefly race after bootout; retry bootstrap on transient I/O failure.
+      const bootstrapAttempts = 4
+      let bootstrapSuccessAttempt = 0
+      let bootstrapLastError = ""
+
+      for (let attempt = 1; attempt <= bootstrapAttempts; attempt++) {
+        if (attempt > 1) {
+          Bun.spawnSync(["sleep", "0.5"], { stdout: "pipe", stderr: "pipe" })
+        }
+
+        const bootstrapProc = Bun.spawnSync([
+          "launchctl",
+          "bootstrap",
+          `gui/${uid}`,
+          WORKER_LAUNCHD_PLIST_TARGET,
+        ], {
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+
+        if (bootstrapProc.exitCode === 0) {
+          bootstrapSuccessAttempt = attempt
+          break
+        }
+
         const stderr = decodeText(bootstrapProc.stderr).trim()
         const alreadyLoaded = /already loaded|in progress|service is disabled/iu.test(stderr)
-        if (!alreadyLoaded) {
-          throw new Error(stderr || `launchctl bootstrap exited with ${bootstrapProc.exitCode}`)
+        if (alreadyLoaded) {
+          bootstrapSuccessAttempt = attempt
+          break
         }
+
+        bootstrapLastError = stderr || `launchctl bootstrap exited with ${bootstrapProc.exitCode}`
+
+        const transientIo = /bootstrap failed:\s*5|input\/output error/iu.test(bootstrapLastError)
+        if (!transientIo || attempt === bootstrapAttempts) {
+          throw new Error(bootstrapLastError)
+        }
+      }
+
+      if (bootstrapSuccessAttempt === 0) {
+        throw new Error(bootstrapLastError || "launchctl bootstrap did not succeed")
       }
 
       return {
         repaired: true,
         sourcePlist: WORKER_LAUNCHD_PLIST_SOURCE,
         targetPlist: WORKER_LAUNCHD_PLIST_TARGET,
+        bootstrapAttempts: bootstrapSuccessAttempt,
       }
     },
     catch: (e) => new Error(`Failed to repair worker launchd binding: ${e}`),
@@ -922,10 +1001,10 @@ const inngestSourceCmd = Command.make(
         compliant: true,
         repaired,
         expected: {
-          program: WORKER_EXPECTED_START,
-          workingDirectory: WORKER_EXPECTED_CWD,
-          plistSource: WORKER_LAUNCHD_PLIST_SOURCE,
-          plistTarget: WORKER_LAUNCHD_PLIST_TARGET,
+          program: WORKER_EXPECTED_BINDING.program,
+          workingDirectory: WORKER_EXPECTED_BINDING.workingDirectory,
+          plistSource: WORKER_EXPECTED_BINDING.plistSource,
+          plistTarget: WORKER_EXPECTED_BINDING.plistTarget,
         },
         launchd: {
           before,
