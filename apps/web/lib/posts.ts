@@ -168,14 +168,23 @@ export async function getAllPosts(): Promise<PostMeta[]> {
   cacheTag("articles");
 
   const convex = getConvexClient();
-  const docs = await convex.query(api.contentResources.listByType, {
-    type: "article",
-    limit: 2000,
-  });
+  const [articleDocs, tutorialDocs, essayDocs, noteDocs] = await Promise.all([
+    convex.query(api.contentResources.listByType, { type: "article", limit: 2000 }),
+    convex.query(api.contentResources.listByType, { type: "tutorial", limit: 2000 }),
+    convex.query(api.contentResources.listByType, { type: "essay", limit: 2000 }),
+    convex.query(api.contentResources.listByType, { type: "note", limit: 2000 }),
+  ]);
 
-  if (!Array.isArray(docs)) {
-    throw new Error("Convex listByType returned a non-array payload for articles");
+  if (
+    !Array.isArray(articleDocs) ||
+    !Array.isArray(tutorialDocs) ||
+    !Array.isArray(essayDocs) ||
+    !Array.isArray(noteDocs)
+  ) {
+    throw new Error("Convex listByType returned a non-array payload for post listing");
   }
+
+  const docs = [...articleDocs, ...tutorialDocs, ...essayDocs, ...noteDocs];
 
   return docs
     .map((doc) => {
@@ -228,14 +237,23 @@ export async function getPostSlugs(): Promise<string[]> {
   cacheTag("articles");
 
   const convex = getConvexClient();
-  const docs = await convex.query(api.contentResources.listByType, {
-    type: "article",
-    limit: 2000,
-  });
+  const [articleDocs, tutorialDocs, essayDocs, noteDocs] = await Promise.all([
+    convex.query(api.contentResources.listByType, { type: "article", limit: 2000 }),
+    convex.query(api.contentResources.listByType, { type: "tutorial", limit: 2000 }),
+    convex.query(api.contentResources.listByType, { type: "essay", limit: 2000 }),
+    convex.query(api.contentResources.listByType, { type: "note", limit: 2000 }),
+  ]);
 
-  if (!Array.isArray(docs)) {
-    throw new Error("Convex listByType returned a non-array payload for article slugs");
+  if (
+    !Array.isArray(articleDocs) ||
+    !Array.isArray(tutorialDocs) ||
+    !Array.isArray(essayDocs) ||
+    !Array.isArray(noteDocs)
+  ) {
+    throw new Error("Convex listByType returned a non-array payload for post slugs");
   }
+
+  const docs = [...articleDocs, ...tutorialDocs, ...essayDocs, ...noteDocs];
 
   return docs
     .map((doc) => {
