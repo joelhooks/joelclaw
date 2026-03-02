@@ -41,6 +41,21 @@ Gateway operation is orchestration-first, not execution-first:
 
 If the gateway starts doing long solo work, that is a role failure and should be corrected immediately.
 
+## Message-class triage and operator routing (ADR-0189 related)
+
+Gateway handles two distinct inbound classes:
+
+1. **User/operator messages** (Joel direct chat)
+2. **System/automation messages** (`## 🔔`, `## 📋`, `## ❌`, `## ⚠️`, `## VIP`)
+
+Routing rule:
+
+- do **not** forward all system traffic to operator
+- escalate to operator only for high-signal/action-required states (blocked flows, repeated unresolved failures, security/safety concerns, or explicit decision points)
+- low-signal/transient system chatter is triaged/logged/monitored without operator interruption
+
+This keeps operator channel high signal while preserving autonomous handling.
+
 ## Role resolution (gateway vs interactive)
 
 Gateway sessions run with `GATEWAY_ROLE=central`. The `identity-inject` extension resolves the role file in this order:
