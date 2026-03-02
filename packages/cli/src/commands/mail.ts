@@ -51,10 +51,18 @@ function asString(value: unknown): string | undefined {
 }
 
 function messageIdOf(message: Record<string, unknown>): string | undefined {
-  return asString(message.id)
+  const direct =
+    asString(message.id)
     ?? asString(message.message_id)
     ?? asString(message.messageId)
     ?? asString(message.uuid)
+
+  if (direct) return direct
+
+  const numeric = [message.id, message.message_id, message.messageId]
+    .find((value) => typeof value === "number" && Number.isFinite(value))
+
+  return typeof numeric === "number" ? String(numeric) : undefined
 }
 
 const statusCmd = Command.make("status", {}, () =>

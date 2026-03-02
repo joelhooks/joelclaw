@@ -223,10 +223,20 @@ function extractMessages(input: unknown): Record<string, unknown>[] {
 }
 
 function messageIdOf(message: Record<string, unknown>): string | undefined {
-  return asString(message.id)
+  const direct =
+    asString(message.id)
     ?? asString(message.message_id)
     ?? asString(message.messageId)
     ?? asString(message.uuid)
+
+  if (direct) return direct
+
+  const numericId =
+    asNumber(message.id)
+    ?? asNumber(message.message_id)
+    ?? asNumber(message.messageId)
+
+  return numericId === undefined ? undefined : String(numericId)
 }
 
 function isUnreadMessage(message: Record<string, unknown>): boolean {
@@ -243,6 +253,8 @@ function projectFromMessage(message: Record<string, unknown>): string | undefine
     asString(message.project_key)
     ?? asString(message.projectKey)
     ?? asString(message.project_id)
+    ?? asString(message.project_name)
+    ?? asString(message.project_slug)
     ?? asString(message.project)
   if (direct) return direct
 
@@ -254,7 +266,120 @@ function projectFromMessage(message: Record<string, unknown>): string | undefine
     ?? asString(nestedProject.project_key)
     ?? asString(nestedProject.name)
     ?? asString(nestedProject.id)
+    ?? asString(nestedProject.slug)
   )
+}
+
+function normalizeProjectSlug(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+}
+
+function messageProjectCandidates(message: Record<string, unknown>): string[] {
+  const candidates = [
+    projectFromMessage(message),
+    asString(message.project_name),
+    asString(message.project_slug),
+  ].filter((value): value is string => Boolean(value))
+
+  const nestedProject = asRecord(message.project)
+  if (nestedProject) {
+    const nested = [
+      asString(nestedProject.name),
+      asString(nestedProject.slug),
+      asString(nestedProject.key),
+      asString(nestedProject.project_key),
+    ].filter((value): value is string => Boolean(value))
+    candidates.push(...nested)
+  }
+
+  return [...new Set(candidates)]
+}
+
+function messageMatchesProject(message: Record<string, unknown>, project: string): boolean {
+  const target = project.trim().toLowerCase()
+  const targetSlug = normalizeProjectSlug(project)
+  const candidates = messageProjectCandidates(message)
+
+  if (candidates.length === 0) return true
+
+  return candidates.some((candidate) => {
+    const normalizedCandidate = candidate.toLowerCase()
+    return normalizedCandidate === target || normalizeProjectSlug(candidate) === targetSlug
+  })
+}
+
+function messageSearchText(message: Record<string, unknown>): string {
+  const fields = [
+    asString(message.subject),
+    asString(message.body_md),
+    asString(message.excerpt),
+    asString(message.sender),
+    asString(message.recipients),
+    asString(message.project_name),
+    asString(message.project_slug),
+    asString(message.importance),
+  ].filter((value): value is string => Boolean(value))
+
+  return fields.join("\n").toLowerCase()
+}
+
+function messageMatchesQuery(message: Record<string, unknown>, query: string): boolean {
+  const needle = query.trim().toLowerCase()
+  if (needle.length === 0) return true
+  return messageSearchText(message).includes(needle)
+}
+
+function filterProjectMessagesByQuery(
+  messages: Record<string, unknown>[],
+  project: string,
+  query: string,
+): Record<string, unknown>[] {
+  return messages.filter((message) =>
+    messageMatchesProject(message, project) && messageMatchesQuery(message, query)
+  )
+}
+
+function searchResultLooksDegraded(value: unknown): boolean {
+  const text = asString(value)
+  if (text && /error calling tool|database error|search_messages|failed/i.test(text)) return true
+
+  const record = asRecord(value)
+  if (!record) return false
+
+  const reason = asString(record.error) ?? asString(record.message) ?? asString(record.result)
+  return typeof reason === "string" && /error calling tool|database error|search_messages|failed/i.test(reason)
+}
+
+function summarizeSearchFallbackError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function summarizeSearchDegradedReason(raw: unknown): string {
+  const text = asString(raw)
+  if (text) return text
+
+  const record = asRecord(raw)
+  if (!record) return "search_messages returned degraded response"
+
+  return (
+    asString(record.error)
+    ?? asString(record.message)
+    ?? asString(record.result)
+    ?? "search_messages returned degraded response"
+  )
+}
+
+function summarizeUnifiedInboxWithFilter(
+  unifiedInbox: unknown,
+  project: string,
+  query: string,
+): Record<string, unknown>[] {
+  const allMessages = extractMessages(unifiedInbox)
+  return filterProjectMessagesByQuery(allMessages, project, query)
 }
 
 function summarizeUnifiedInbox(unifiedInbox: unknown): Record<string, unknown> {
@@ -586,25 +711,86 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
         }
         case "search": {
           const args = yield* decodeArgs("search", rawArgs)
-          const raw = yield* Effect.tryPromise(() =>
+
+          const searchAttempt = yield* Effect.tryPromise(() =>
             callMcpTool("search_messages", {
               project_key: args.project,
               query: args.query,
             })
-          ).pipe(
-            Effect.mapError(mapMailError("MAIL_SEARCH_FAILED", "Verify query/project and retry"))
-          )
+          ).pipe(Effect.either)
 
-          const normalized = normalizeToolResult(raw)
-          const messages = extractMessages(normalized)
+          if (searchAttempt._tag === "Right") {
+            const normalized = normalizeToolResult(searchAttempt.right)
+            const messages = extractMessages(normalized)
+            const scoped = filterProjectMessagesByQuery(messages, args.project, args.query)
 
-          return {
-            project: args.project,
-            query: args.query,
-            count: messages.length,
-            messages: messages.length > 0 ? messages : undefined,
-            result: messages.length > 0 ? undefined : normalized,
+            if (!searchResultLooksDegraded(normalized)) {
+              return {
+                project: args.project,
+                query: args.query,
+                count: scoped.length,
+                messages: scoped.length > 0 ? scoped : undefined,
+                result: scoped.length > 0 ? undefined : normalized,
+              }
+            }
+
+            const fallbackAttempt = yield* Effect.tryPromise(() =>
+              fetchMailApi("/mail/api/unified-inbox")
+            ).pipe(Effect.either)
+
+            if (fallbackAttempt._tag === "Right") {
+              const fallbackMessages = summarizeUnifiedInboxWithFilter(
+                fallbackAttempt.right,
+                args.project,
+                args.query,
+              )
+              return {
+                project: args.project,
+                query: args.query,
+                count: fallbackMessages.length,
+                messages: fallbackMessages.length > 0 ? fallbackMessages : undefined,
+                fallback: {
+                  source: "unified-inbox",
+                  reason: summarizeSearchDegradedReason(normalized),
+                },
+              }
+            }
+
+            return {
+              project: args.project,
+              query: args.query,
+              count: scoped.length,
+              messages: scoped.length > 0 ? scoped : undefined,
+              result: normalized,
+              fallback_error: summarizeSearchFallbackError(fallbackAttempt.left),
+            }
           }
+
+          const fallbackAttempt = yield* Effect.tryPromise(() =>
+            fetchMailApi("/mail/api/unified-inbox")
+          ).pipe(Effect.either)
+
+          if (fallbackAttempt._tag === "Right") {
+            const fallbackMessages = summarizeUnifiedInboxWithFilter(
+              fallbackAttempt.right,
+              args.project,
+              args.query,
+            )
+            return {
+              project: args.project,
+              query: args.query,
+              count: fallbackMessages.length,
+              messages: fallbackMessages.length > 0 ? fallbackMessages : undefined,
+              fallback: {
+                source: "unified-inbox",
+                reason: summarizeSearchFallbackError(searchAttempt.left),
+              },
+            }
+          }
+
+          return yield* Effect.fail(
+            mapMailError("MAIL_SEARCH_FAILED", "Verify query/project and retry")(searchAttempt.left)
+          )
         }
         default:
           return yield* Effect.fail(
@@ -622,4 +808,10 @@ export const __mailAdapterTestUtils = {
   normalizeToolResult,
   extractMessages,
   summarizeUnifiedInbox,
+  normalizeProjectSlug,
+  messageMatchesProject,
+  messageMatchesQuery,
+  filterProjectMessagesByQuery,
+  searchResultLooksDegraded,
+  messageIdOf,
 }
