@@ -106,7 +106,7 @@ export {
   vercelDeployError,
   vercelDeploySucceeded,
 } from "./vercel-notify";
-export { adrDailyPitch } from "./adr-daily-pitch";
+export { adrDailyPitch, adrPitchApproved, adrPitchRejected } from "./adr-daily-pitch";
 export { videoDownload } from "./video-download";
 export { vipEmailReceived } from "./vip-email-received";
 export { voiceCallCompleted } from "./voice-call-completed";

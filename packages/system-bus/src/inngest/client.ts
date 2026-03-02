@@ -908,17 +908,11 @@ export type Events = {
   "adr/pitch.approved": {
     data: {
       adr_number: string;
-      action: string;
-      chatId?: number | null;
-      messageId?: number | null;
     };
   };
   "adr/pitch.rejected": {
     data: {
       adr_number: string;
-      action: string;
-      chatId?: number | null;
-      messageId?: number | null;
     };
   };
   "adr/review.submitted": {

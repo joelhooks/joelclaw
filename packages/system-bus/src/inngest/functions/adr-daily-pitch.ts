@@ -83,6 +83,26 @@ function parseFrontmatter(content: string, adrNumber: string): AdrFrontmatter | 
   };
 }
 
+async function updatePitchHistoryResponse(
+  adrNumber: string,
+  response: "approved" | "rejected",
+): Promise<boolean> {
+  const redis = getRedis();
+  const historyRaw = await redis.get(PITCH_HISTORY_KEY);
+  const history: PitchRecord[] = historyRaw ? (JSON.parse(historyRaw) as PitchRecord[]) : [];
+
+  for (let i = history.length - 1; i >= 0; i--) {
+    const entry = history[i];
+    if (entry && entry.adr_number === adrNumber && entry.response === "pending") {
+      entry.response = response;
+      await redis.set(PITCH_HISTORY_KEY, JSON.stringify(history));
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export const adrDailyPitch = inngest.createFunction(
   {
     id: "adr-daily-pitch",
@@ -255,6 +275,42 @@ export const adrDailyPitch = inngest.createFunction(
       adr_number: candidate.number,
       title: candidate.title,
       score: candidate.score,
+    };
+  },
+);
+
+export const adrPitchApproved = inngest.createFunction(
+  {
+    id: "adr-pitch-approved",
+    name: "ADR: Pitch Approved",
+    retries: 2,
+  },
+  { event: "adr/pitch.approved" },
+  async ({ event }) => {
+    const adr_number = event.data.adr_number;
+    const updated = await updatePitchHistoryResponse(adr_number, "approved");
+
+    return {
+      updated,
+      adr_number,
+    };
+  },
+);
+
+export const adrPitchRejected = inngest.createFunction(
+  {
+    id: "adr-pitch-rejected",
+    name: "ADR: Pitch Rejected",
+    retries: 2,
+  },
+  { event: "adr/pitch.rejected" },
+  async ({ event }) => {
+    const adr_number = event.data.adr_number;
+    const updated = await updatePitchHistoryResponse(adr_number, "rejected");
+
+    return {
+      updated,
+      adr_number,
     };
   },
 );

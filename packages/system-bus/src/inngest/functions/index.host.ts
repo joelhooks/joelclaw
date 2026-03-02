@@ -1,5 +1,5 @@
 import { echoFizzle } from "../../memory/echo-fizzle";
-import { adrDailyPitch } from "./adr-daily-pitch";
+import { adrDailyPitch, adrPitchApproved, adrPitchRejected } from "./adr-daily-pitch";
 import { agentChainRun } from "./agent-chain-run";
 import { agentDispatch } from "./agent-dispatch";
 import {
@@ -114,6 +114,8 @@ function getFunctionId(fn: { opts?: { id?: string } }): string {
 // Until cluster-safe ownership is finalized, host worker remains authoritative.
 export const hostFunctionDefinitions = [
   adrDailyPitch,
+  adrPitchApproved,
+  adrPitchRejected,
   videoDownload,
   transcriptProcess,
   transcriptIndexWeb,
