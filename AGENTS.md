@@ -103,6 +103,25 @@ bunx tsc --noEmit
 pnpm biome check packages/ apps/
 ```
 
+### Post-Push Deploy Verification
+
+After every `git push` that touches `apps/web/` or root config (`turbo.json`, `package.json`, `pnpm-lock.yaml`):
+1. Wait 60–90s, then: `cd ~/Code/joelhooks/joelclaw && vercel ls --yes 2>&1 | head -10`
+2. **● Error** → STOP. Fix the build before pushing anything else.
+3. **● Ready** → Continue.
+Never stack commits on a broken deploy. This rule exists because a 2026-03-01 session pushed 57 commits without checking — broke production for 45 minutes.
+
+### Mandatory Skill Loading
+
+Before modifying code in any domain, load the relevant skills FIRST:
+
+| Path | Required Skills |
+|---|---|
+| `apps/web/` | `next-best-practices`, `next-cache-components`, `nextjs-static-shells`, `vercel-debug` |
+| `packages/system-bus/` | `inngest-durable-functions`, `inngest-steps`, `inngest-events`, `inngest-flow-control`, `system-bus` |
+| `packages/gateway/` | `gateway`, `telegram` |
+| `k8s/` | `k8s` |
+
 ## CLI — `joelclaw`
 
 The CLI is the primary operator interface. Built with `@effect/cli`, compiled to binary at `~/.bun/bin/joelclaw`. Returns HATEOAS JSON envelopes.
