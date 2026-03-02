@@ -204,15 +204,18 @@ export async function getPost(slug: string): Promise<Post | null> {
   cacheTag(`post:${slug}`);
 
   const convex = getConvexClient();
-  const doc = await convex.query(api.contentResources.getByResourceId, {
-    resourceId: `article:${slug}`,
-  });
+  let docRecord: Record<string, unknown> | null = null;
+  let matchedResourceId: string | null = null;
+  for (const type of ["article", "tutorial", "essay", "note"] as const) {
+    const resourceId = `${type}:${slug}`;
+    const doc = await convex.query(api.contentResources.getByResourceId, { resourceId });
+    if (!doc || typeof doc !== "object") continue;
+    docRecord = asRecord(doc);
+    matchedResourceId = resourceId;
+    break;
+  }
 
-  if (!doc || typeof doc !== "object") return null;
-
-  const docRecord = asRecord(doc);
-  const docType = asOptionalString(docRecord.type);
-  if (docType && docType !== "article") return null;
+  if (!docRecord || !matchedResourceId) return null;
 
   const fields = parsePostFields(docRecord.fields, slug);
   if (!fields?.content) return null;
@@ -223,7 +226,7 @@ export async function getPost(slug: string): Promise<Post | null> {
     content: fields.content,
     diagnostics: {
       source: "convex",
-      resourceId: `article:${slug}`,
+      resourceId: matchedResourceId,
       contentHash: contentFingerprint(fields.content),
       contentLength: fields.content.length,
       contentUpdatedAt: asOptionalNumber(docRecord.updatedAt),
