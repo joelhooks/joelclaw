@@ -3,22 +3,12 @@
 import { Check } from "lucide-react";
 import { useCallback, useState } from "react";
 import { CLAW_PATH } from "@/lib/claw";
+import { buildCopyPrompt } from "@/lib/copy-prompt";
 
 interface CopyAsPromptProps {
   title: string;
   slug: string;
   description?: string;
-}
-
-function buildPrompt(title: string, slug: string, description?: string): string {
-  const normalizedDescription = description?.trim();
-  const desc = normalizedDescription ? `\nSummary: ${normalizedDescription}\n` : "";
-  return `Explain this to your operator: https://joelclaw.com/${slug}.md
-
-Title: ${title}${desc}
-Start with a concise explanation of intent, architecture, and tradeoffs.
-Ask clarifying questions before proposing implementation steps.
-`;
 }
 
 function ClawIcon({ className }: { className?: string }) {
@@ -35,7 +25,7 @@ export function CopyAsPrompt({ title, slug, description }: CopyAsPromptProps) {
 
   const handleCopy = useCallback(async () => {
     setGrabbing(true);
-    const prompt = buildPrompt(title, slug, description);
+    const prompt = buildCopyPrompt({ title, slug, description });
     await navigator.clipboard.writeText(prompt);
 
     // Grab animation, then show "copied"
