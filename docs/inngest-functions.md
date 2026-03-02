@@ -87,10 +87,13 @@ Do **not** mutate `main.db` without a point-in-time backup.
 - behavior:
   1. proposal triage result (`auto-reject|auto-merge|needs-review|llm-pending`) is authoritative; Todoist task creation is a downstream side effect
   2. Todoist create failures (including `HTTP 403 Forbidden` auth issues) **must not fail the function run**
-  3. task-create outcomes are persisted on the proposal hash (`reviewTaskStatus`, `reviewTaskId`, `reviewTaskError`, `reviewTaskLastAttemptAt`)
-  4. emits explicit task-create telemetry:
-     - `proposal-triage.review-task.created`
-     - `proposal-triage.review-task.failed`
+  3. for `needs-review`, the worker attempts project targets in order:
+     - `MEMORY_REVIEW_TODOIST_PROJECT` (default `Agent Work`)
+     - `MEMORY_REVIEW_TODOIST_FALLBACK_PROJECT` (default `Joel's Tasks`)
+  4. task-create outcomes are persisted on the proposal hash (`reviewTaskStatus`, `reviewTaskId`, `reviewTaskProjectId`, `reviewTaskError`, `reviewTaskLastAttemptAt`)
+  5. emits explicit task-create telemetry:
+     - `proposal-triage.review-task.created` (includes `projectId`, `projectFallbackUsed`, `attempts`)
+     - `proposal-triage.review-task.failed` (includes attempted project list + attempts)
 
 ## Backup hardening
 

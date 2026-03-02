@@ -32,6 +32,8 @@ const originalTodoistCreateTask = TodoistTaskAdapter.prototype.createTask;
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
 const originalOtelEnabled = process.env.OTEL_EVENTS_ENABLED;
+const originalReviewProject = process.env.MEMORY_REVIEW_TODOIST_PROJECT;
+const originalReviewFallbackProject = process.env.MEMORY_REVIEW_TODOIST_FALLBACK_PROJECT;
 
 const redisStrings = new Map<string, string>();
 const redisHashes = new Map<string, Record<string, string>>();
@@ -40,6 +42,7 @@ const redisLists = new Map<string, string[]>();
 let tempHome = "";
 let createTaskCalls: CreateTaskInput[] = [];
 let createTaskError: Error | null = null;
+let createTaskHandler: ((task: CreateTaskInput) => Task | Promise<Task>) | null = null;
 
 function upsertHash(key: string, args: unknown[]): number {
   const existing = redisHashes.get(key) ?? {};
@@ -174,6 +177,7 @@ beforeAll(() => {
 
   (TodoistTaskAdapter.prototype as any).createTask = async function (task: CreateTaskInput) {
     createTaskCalls.push(task);
+    if (createTaskHandler) return createTaskHandler(task);
     if (createTaskError) throw createTaskError;
 
     return {
@@ -207,6 +211,7 @@ beforeEach(() => {
   redisLists.clear();
   createTaskCalls = [];
   createTaskError = null;
+  createTaskHandler = null;
 
   tempHome = mkdtempSync(join(tmpdir(), "proposal-triage-home-"));
   const workspaceDir = join(tempHome, ".joelclaw", "workspace");
@@ -216,6 +221,8 @@ beforeEach(() => {
   process.env.HOME = tempHome;
   process.env.USERPROFILE = tempHome;
   process.env.OTEL_EVENTS_ENABLED = "0";
+  process.env.MEMORY_REVIEW_TODOIST_PROJECT = "Agent Work";
+  process.env.MEMORY_REVIEW_TODOIST_FALLBACK_PROJECT = "Joel's Tasks";
 });
 
 afterEach(() => {
@@ -227,6 +234,12 @@ afterEach(() => {
 
   if (originalOtelEnabled === undefined) delete process.env.OTEL_EVENTS_ENABLED;
   else process.env.OTEL_EVENTS_ENABLED = originalOtelEnabled;
+
+  if (originalReviewProject === undefined) delete process.env.MEMORY_REVIEW_TODOIST_PROJECT;
+  else process.env.MEMORY_REVIEW_TODOIST_PROJECT = originalReviewProject;
+
+  if (originalReviewFallbackProject === undefined) delete process.env.MEMORY_REVIEW_TODOIST_FALLBACK_PROJECT;
+  else process.env.MEMORY_REVIEW_TODOIST_FALLBACK_PROJECT = originalReviewFallbackProject;
 
   rmSync(tempHome, { recursive: true, force: true });
 });
@@ -254,6 +267,7 @@ describe("memory/proposal-triage review task reliability", () => {
         attempted: true,
         created: false,
         authFailure: true,
+        attempts: 2,
       },
     });
 
@@ -262,12 +276,77 @@ describe("memory/proposal-triage review task reliability", () => {
     });
     expect(reviewHash.reviewTaskError).toContain("HTTP 403");
 
+    expect(createTaskCalls).toHaveLength(2);
+    expect(createTaskCalls[0]?.projectId).toBe("Agent Work");
+    expect(createTaskCalls[1]?.projectId).toBe("Joel's Tasks");
+
     expect(sendEventCalls[0]).toMatchObject({
       name: "memory/proposal.triaged",
       data: {
         proposalId,
         action: "needs-review",
       },
+    });
+  });
+
+  test("falls back to secondary project when primary project is forbidden", async () => {
+    const proposalId = "p-20260302-fallback";
+    stageProposal({
+      id: proposalId,
+      section: "Patterns",
+      change: "Needs human review and should fall back to writable Todoist project.",
+      source: "reflect",
+      timestamp: "2026-03-02T18:30:00.000Z",
+    });
+
+    createTaskHandler = async (task) => {
+      if (task.projectId === "Agent Work") {
+        throw new Error("todoist-cli add failed (1): {\"ok\":false,\"error\":\"add failed: HTTP 403: Forbidden\"}");
+      }
+
+      return {
+        id: "mock-task-fallback",
+        content: task.content,
+        description: task.description,
+        priority: task.priority ?? 1,
+        due: task.due,
+        dueString: task.dueString,
+        isRecurring: false,
+        deadline: task.deadline,
+        completed: false,
+        projectId: task.projectId,
+        sectionId: task.sectionId,
+        parentId: task.parentId,
+        labels: task.labels ?? [],
+        url: "",
+        createdAt: new Date(),
+      } satisfies Task;
+    };
+
+    const { result } = await executeProposalTriage(proposalId);
+    const reviewHash = redisHashes.get(`memory:review:proposal:${proposalId}`) ?? {};
+
+    expect(result).toMatchObject({
+      proposalId,
+      action: "needs-review",
+      reviewTask: {
+        attempted: true,
+        created: true,
+        taskId: "mock-task-fallback",
+        projectId: "Joel's Tasks",
+        projectFallbackUsed: true,
+        attempts: 2,
+      },
+    });
+
+    expect(createTaskCalls).toHaveLength(2);
+    expect(createTaskCalls[0]?.projectId).toBe("Agent Work");
+    expect(createTaskCalls[1]?.projectId).toBe("Joel's Tasks");
+
+    expect(reviewHash).toMatchObject({
+      reviewTaskStatus: "created",
+      reviewTaskId: "mock-task-fallback",
+      reviewTaskProjectId: "Joel's Tasks",
     });
   });
 
@@ -291,12 +370,16 @@ describe("memory/proposal-triage review task reliability", () => {
         attempted: true,
         created: true,
         authFailure: false,
+        projectId: "Agent Work",
+        projectFallbackUsed: false,
+        attempts: 1,
       },
     });
 
     expect(reviewHash).toMatchObject({
       reviewTaskStatus: "created",
       reviewTaskId: "mock-task-1",
+      reviewTaskProjectId: "Agent Work",
     });
     expect(createTaskCalls).toHaveLength(1);
   });

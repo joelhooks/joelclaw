@@ -63,12 +63,21 @@ function isTodoistAuthFailure(message: string): boolean {
   );
 }
 
+function getReviewTaskProjects(): string[] {
+  const preferred = (process.env.MEMORY_REVIEW_TODOIST_PROJECT ?? "Agent Work").trim();
+  const fallback = (process.env.MEMORY_REVIEW_TODOIST_FALLBACK_PROJECT ?? "Joel's Tasks").trim();
+  return Array.from(new Set([preferred, fallback].filter((value) => value.length > 0)));
+}
+
 type ReviewTaskOutcome = {
   attempted: boolean;
   created: boolean;
   taskId: string | null;
+  projectId: string | null;
+  projectFallbackUsed: boolean;
   error: string | null;
   authFailure: boolean;
+  attempts: number;
 };
 
 function toProposalRecord(input: Partial<Proposal> & { id: string }): Proposal {
@@ -263,106 +272,144 @@ export const proposalTriage = inngest.createFunction(
               attempted: false,
               created: false,
               taskId: null,
+              projectId: null,
+              projectFallbackUsed: false,
               error: "proposal missing before review task creation",
               authFailure: false,
+              attempts: 0,
             } satisfies ReviewTaskOutcome;
           }
 
           const taskAdapter = new TodoistTaskAdapter();
+          const projectTargets = getReviewTaskProjects();
           const summary = proposal.change.replace(/\s+/gu, " ").trim().slice(0, 90);
           const source = proposal.source?.trim() || "unknown";
           const capturedAt = proposal.timestamp?.trim() || "unknown";
+          const baseTaskInput = {
+            content: `Memory: ${proposal.section} (${resolvedProposalId}) — ${summary}`,
+            description: [
+              `Proposal: ${resolvedProposalId}`,
+              `Section: ${proposal.section}`,
+              `Reason: ${triaged.reason}`,
+              `Source: ${source}`,
+              `CapturedAt: ${capturedAt}`,
+              "Decision: Complete = approve. Add @rejected label, then complete = reject.",
+              "",
+              "Change:",
+              proposal.change,
+            ].join("\n"),
+            labels: ["memory-review", "agent"],
+            priority: 4 as const,
+            dueString: "today",
+          };
+          const failures: Array<{ projectId: string; message: string; authFailure: boolean }> = [];
 
-          try {
-            const task = await taskAdapter.createTask({
-              content: `Memory: ${proposal.section} (${resolvedProposalId}) — ${summary}`,
-              description: [
-                `Proposal: ${resolvedProposalId}`,
-                `Section: ${proposal.section}`,
-                `Reason: ${triaged.reason}`,
-                `Source: ${source}`,
-                `CapturedAt: ${capturedAt}`,
-                "Decision: Complete = approve. Add @rejected label, then complete = reject.",
+          for (const [index, projectId] of projectTargets.entries()) {
+            try {
+              const task = await taskAdapter.createTask({
+                ...baseTaskInput,
+                projectId,
+              });
+
+              const projectFallbackUsed = index > 0;
+
+              await redis.hset(
+                hashKey(proposal.id),
+                "reviewTaskStatus",
+                "created",
+                "reviewTaskId",
+                task.id,
+                "reviewTaskProjectId",
+                projectId,
+                "reviewTaskError",
                 "",
-                "Change:",
-                proposal.change,
-              ].join("\n"),
-              labels: ["memory-review", "agent"],
-              projectId: "Agent Work",
-              priority: 4,
-              dueString: "today",
-            });
+                "reviewTaskLastAttemptAt",
+                new Date().toISOString(),
+              );
 
-            await redis.hset(
-              hashKey(proposal.id),
-              "reviewTaskStatus",
-              "created",
-              "reviewTaskId",
-              task.id,
-              "reviewTaskError",
-              "",
-              "reviewTaskLastAttemptAt",
-              new Date().toISOString(),
-            );
+              await emitOtelEvent({
+                level: "info",
+                source: "worker",
+                component: "proposal-triage",
+                action: "proposal-triage.review-task.created",
+                success: true,
+                metadata: {
+                  eventId,
+                  proposalId: proposal.id,
+                  taskId: task.id,
+                  projectId,
+                  projectFallbackUsed,
+                  attempts: index + 1,
+                },
+              });
 
-            await emitOtelEvent({
-              level: "info",
-              source: "worker",
-              component: "proposal-triage",
-              action: "proposal-triage.review-task.created",
-              success: true,
-              metadata: {
-                eventId,
-                proposalId: proposal.id,
+              return {
+                attempted: true,
+                created: true,
                 taskId: task.id,
-              },
-            });
-
-            return {
-              attempted: true,
-              created: true,
-              taskId: task.id,
-              error: null,
-              authFailure: false,
-            } satisfies ReviewTaskOutcome;
-          } catch (taskError) {
-            const message = truncateErrorMessage(taskError);
-            const authFailure = isTodoistAuthFailure(message);
-
-            await redis.hset(
-              hashKey(proposal.id),
-              "reviewTaskStatus",
-              "failed",
-              "reviewTaskId",
-              "",
-              "reviewTaskError",
-              message,
-              "reviewTaskLastAttemptAt",
-              new Date().toISOString(),
-            );
-
-            await emitOtelEvent({
-              level: "warn",
-              source: "worker",
-              component: "proposal-triage",
-              action: "proposal-triage.review-task.failed",
-              success: false,
-              error: message,
-              metadata: {
-                eventId,
-                proposalId: proposal.id,
-                authFailure,
-              },
-            });
-
-            return {
-              attempted: true,
-              created: false,
-              taskId: null,
-              error: message,
-              authFailure,
-            } satisfies ReviewTaskOutcome;
+                projectId,
+                projectFallbackUsed,
+                error: null,
+                authFailure: false,
+                attempts: index + 1,
+              } satisfies ReviewTaskOutcome;
+            } catch (taskError) {
+              const message = truncateErrorMessage(taskError);
+              failures.push({
+                projectId,
+                message,
+                authFailure: isTodoistAuthFailure(message),
+              });
+            }
           }
+
+          const authFailure = failures.some((failure) => failure.authFailure);
+          const message = truncateErrorMessage(
+            failures
+              .map((failure) => `[${failure.projectId}] ${failure.message}`)
+              .join(" | ") || "todoist review task creation failed",
+          );
+
+          await redis.hset(
+            hashKey(proposal.id),
+            "reviewTaskStatus",
+            "failed",
+            "reviewTaskId",
+            "",
+            "reviewTaskProjectId",
+            "",
+            "reviewTaskError",
+            message,
+            "reviewTaskLastAttemptAt",
+            new Date().toISOString(),
+          );
+
+          await emitOtelEvent({
+            level: "warn",
+            source: "worker",
+            component: "proposal-triage",
+            action: "proposal-triage.review-task.failed",
+            success: false,
+            error: message,
+            metadata: {
+              eventId,
+              proposalId: proposal.id,
+              authFailure,
+              attempts: failures.length,
+              attemptedProjects: projectTargets,
+            },
+          });
+
+          return {
+            attempted: projectTargets.length > 0,
+            created: false,
+            taskId: null,
+            projectId: null,
+            projectFallbackUsed: false,
+            error: message,
+            authFailure,
+            attempts: failures.length,
+          } satisfies ReviewTaskOutcome;
         });
       }
 
@@ -404,6 +451,9 @@ export const proposalTriage = inngest.createFunction(
             reviewTaskAuthFailure: reviewTaskOutcome?.authFailure ?? false,
             reviewTaskError: reviewTaskOutcome?.error ?? null,
             reviewTaskId: reviewTaskOutcome?.taskId ?? null,
+            reviewTaskProjectId: reviewTaskOutcome?.projectId ?? null,
+            reviewTaskProjectFallbackUsed: reviewTaskOutcome?.projectFallbackUsed ?? false,
+            reviewTaskAttempts: reviewTaskOutcome?.attempts ?? 0,
           },
         });
       });

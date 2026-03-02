@@ -155,7 +155,7 @@ await gateway?.progress("Step 3/5 complete");
 - **Step names must be unique within a function** — Inngest uses them for memoization.
 - **`step.invoke` over fan-out events for rate-limited APIs** — fan-out starts all near-simultaneously even with throttle.
 - **Silent failure anti-pattern**: Functions that shell to CLIs must detect and propagate subprocess failures.
-- **Non-authoritative side effects must degrade, not crash the workflow.** Example: `memory/proposal-triage` must keep triage completion authoritative even if Todoist review-task creation fails (`proposal-triage.review-task.failed` telemetry + persisted reviewTask* metadata).
+- **Non-authoritative side effects must degrade, not crash the workflow.** Example: `memory/proposal-triage` keeps triage authoritative, retries review-task creation across primary/fallback Todoist projects (`MEMORY_REVIEW_TODOIST_PROJECT` → `MEMORY_REVIEW_TODOIST_FALLBACK_PROJECT`), and only records degraded state if both fail.
 - **Never call `joelclaw` CLI with `Bun.spawnSync` from inside a running Inngest function.** `joelclaw inngest status` probes the worker endpoint; sync subprocesses can deadlock the worker event loop. Use async subprocess execution (`Bun.spawn`/`Bun.$`) with explicit timeouts, or direct internal health probes.
 
 ## Deploy: system-bus-worker (k8s)
