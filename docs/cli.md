@@ -244,6 +244,10 @@ joelclaw vault
   - novelty facet: `priority-novelty` (or alias `priority-interest`), defaults to neutral `3` when missing
   - score formula: `clamp(round(20*(0.5*Need + 0.3*Readiness + 0.2*Confidence)) + round((Novelty-3)*5), 0, 100)`
   - bands: `do-now` (80-100), `next` (60-79), `de-risk` (40-59), `park` (0-39)
+  - emits CLI OTEL via `component=vault-cli`:
+    - `vault.adr.rank.started`
+    - `vault.adr.rank.completed`
+    - `vault.adr.rank.failed`
 
 Canonical statuses:
 

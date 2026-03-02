@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { constants as fsConstants } from "node:fs"
 import { access, readFile, stat } from "node:fs/promises"
 import { homedir } from "node:os"
@@ -12,6 +13,9 @@ const READ_MAX_LINES = 500
 const READ_MAX_MATCHES = 3
 const DEFAULT_LIMIT = 10
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
+const OTEL_INGEST_URL = process.env.JOELCLAW_OTEL_INGEST_URL || "http://localhost:3111/observability/emit"
+const OTEL_INGEST_TOKEN = process.env.OTEL_EMIT_TOKEN?.trim()
+const VAULT_OTEL_ENABLED = (process.env.JOELCLAW_VAULT_OTEL ?? "1") !== "0"
 const DECISIONS_DIR = join(VAULT_ROOT, "docs", "decisions")
 const ADR_INDEX_PATH = join(DECISIONS_DIR, "README.md")
 const ADR_VALID_STATUSES = ["proposed", "accepted", "shipped", "superseded", "deprecated", "rejected"] as const
@@ -122,6 +126,46 @@ async function runProcess(cmd: string[], input?: string, env?: Record<string, st
 
 async function runShell(command: string, input?: string): Promise<ProcessResult> {
   return runProcess(["bash", "-lc", command], input)
+}
+
+async function emitVaultOtel(input: {
+  level: "debug" | "info" | "warn" | "error"
+  action: string
+  success: boolean
+  durationMs?: number
+  error?: string
+  metadata?: Record<string, unknown>
+}): Promise<void> {
+  if (!VAULT_OTEL_ENABLED) return
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" }
+  if (OTEL_INGEST_TOKEN) headers["x-otel-emit-token"] = OTEL_INGEST_TOKEN
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 1500)
+  try {
+    await fetch(OTEL_INGEST_URL, {
+      method: "POST",
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify({
+        id: randomUUID(),
+        timestamp: Date.now(),
+        level: input.level,
+        source: "cli",
+        component: "vault-cli",
+        action: input.action,
+        success: input.success,
+        duration_ms: input.durationMs,
+        error: input.error,
+        metadata: input.metadata ?? {},
+      }),
+    })
+  } catch {
+    // never fail vault commands on telemetry transport issues
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function expandPath(path: string): string {
@@ -1347,13 +1391,42 @@ const adrRankCmd = Command.make(
   },
   ({ status, limit, strict }) =>
     Effect.gen(function* () {
+      const startedAt = Date.now()
       const requestedStatuses = parseStatusFilterList(status)
       const effectiveStatuses = requestedStatuses.length > 0
         ? requestedStatuses
         : [...ADR_PRIORITY_STATUS_DEFAULT]
+      const safeLimit = Math.max(1, Math.min(limit, 500))
+
+      yield* Effect.promise(() => emitVaultOtel({
+        level: "debug",
+        action: "vault.adr.rank.started",
+        success: true,
+        metadata: {
+          status_input: status,
+          status_filter: effectiveStatuses,
+          strict,
+          limit: safeLimit,
+        },
+      }))
 
       const invalidStatuses = effectiveStatuses.filter((value) => !ADR_VALID_STATUS_SET.has(value))
       if (invalidStatuses.length > 0) {
+        yield* Effect.promise(() => emitVaultOtel({
+          level: "warn",
+          action: "vault.adr.rank.failed",
+          success: false,
+          durationMs: Date.now() - startedAt,
+          error: `invalid_status_filter:${invalidStatuses.join(",")}`,
+          metadata: {
+            status_input: status,
+            status_filter: effectiveStatuses,
+            invalid_statuses: invalidStatuses,
+            strict,
+            limit: safeLimit,
+          },
+        }))
+
         yield* Console.log(respondError(
           "vault adr rank",
           `Invalid ADR status filter(s): ${invalidStatuses.join(", ")}`,
@@ -1370,9 +1443,9 @@ const adrRankCmd = Command.make(
         return
       }
 
-      const safeLimit = Math.max(1, Math.min(limit, 500))
-      const statusSet = new Set(effectiveStatuses)
-      const catalog = yield* Effect.tryPromise(() => loadAdrCatalog())
+      try {
+        const statusSet = new Set(effectiveStatuses)
+        const catalog = yield* Effect.tryPromise(() => loadAdrCatalog())
       const filtered = catalog.filter((item) => item.status !== null && statusSet.has(item.status))
 
       const assessments = filtered
@@ -1418,6 +1491,30 @@ const adrRankCmd = Command.make(
             consistency: item.consistencyIssues,
           },
         }))
+
+      const commandOk = requiredIssueCount === 0
+
+      yield* Effect.promise(() => emitVaultOtel({
+        level: commandOk ? "info" : "warn",
+        action: "vault.adr.rank.completed",
+        success: true,
+        durationMs: Date.now() - startedAt,
+        metadata: {
+          status_input: status,
+          status_filter: effectiveStatuses,
+          strict,
+          limit: safeLimit,
+          total: catalog.length,
+          filtered: filtered.length,
+          scored: scored.length,
+          unscored: unscored.length,
+          compliant: compliant.length,
+          required_issue_count: requiredIssueCount,
+          consistency_issue_count: consistencyIssueCount,
+          novelty_missing_count: noveltyMissingCount,
+          ok: commandOk,
+        },
+      }))
 
       yield* Console.log(respond("vault adr rank", {
         total: catalog.length,
@@ -1471,7 +1568,35 @@ const adrRankCmd = Command.make(
           description: "Show only fully compliant ADR rubric rows",
         },
         { command: "joelclaw vault adr audit", description: "Run structural ADR health audit" },
-      ], requiredIssueCount === 0))
+      ], commandOk))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+
+        yield* Effect.promise(() => emitVaultOtel({
+          level: "error",
+          action: "vault.adr.rank.failed",
+          success: false,
+          durationMs: Date.now() - startedAt,
+          error: message,
+          metadata: {
+            status_input: status,
+            status_filter: effectiveStatuses,
+            strict,
+            limit: safeLimit,
+          },
+        }))
+
+        yield* Console.log(respondError(
+          "vault adr rank",
+          message,
+          "ADR_RANK_FAILED",
+          "Verify Vault readability and ADR frontmatter integrity, then retry.",
+          [
+            { command: "joelclaw vault adr list", description: "List ADR metadata rows" },
+            { command: "joelclaw vault adr audit", description: "Run structural ADR health audit" },
+          ]
+        ))
+      }
     })
 )
 
