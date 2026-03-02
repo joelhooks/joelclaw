@@ -90,6 +90,9 @@ joelclaw runs [--status RUNNING|FAILED|COMPLETED|QUEUED|CANCELLED]
 Semantics:
 
 - applies backend status filtering and a local status guard so mixed-status payloads cannot leak through.
+- for suspicious `RUNNING` rows (endedAt present while running, or long-running health checks), runs performs bounded detail reconciliation (max 5 lookups) to detect stale SDK-unreachable ghosts.
+- runs with stale indicators include `staleSignal` with `likely`, `confidence`, and machine-readable `reasons`.
+- response includes `staleSignals` summary (`detected`, `likely`, `detailChecked`) and suggests `joelclaw inngest sweep-stale-runs` when likely ghosts are present.
 - `count` in response reflects post-filter rows (what the operator actually sees).
 
 ## Run inspection + cancellation

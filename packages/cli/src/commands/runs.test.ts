@@ -44,7 +44,7 @@ describe("run command helpers", () => {
     const errors = {
       Finalization: {
         error: {
-          stack: "\"Unable to reach SDK URL\"",
+          stack: '"Unable to reach SDK URL"',
         },
       },
     }
@@ -52,5 +52,94 @@ describe("run command helpers", () => {
     expect(__runsTestUtils.hasSdkReachabilityError(errors)).toBe(true)
     expect(__runsTestUtils.hasSdkReachabilityError({})).toBe(false)
     expect(__runsTestUtils.hasSdkReachabilityError(undefined)).toBe(false)
+  })
+
+  test("needsRunningGhostDetailCheck selects ended RUNNING rows", () => {
+    expect(__runsTestUtils.needsRunningGhostDetailCheck({
+      status: "RUNNING",
+      endedAt: "2026-03-02T20:30:45.071Z",
+      startedAt: "2026-03-02T20:30:45.070Z",
+      functionName: "check/o11y-triage",
+    })).toBe(true)
+  })
+
+  test("detectLikelyStaleRunningGhost flags finalization-only SDK unreachable runs", () => {
+    const signal = __runsTestUtils.detectLikelyStaleRunningGhost(
+      {
+        id: "01RUN",
+        status: "RUNNING",
+        functionName: "check/o11y-triage",
+        startedAt: "2026-03-02T20:30:45.070Z",
+        endedAt: "2026-03-02T20:30:45.071Z",
+      },
+      {
+        detail: {
+          run: { status: "RUNNING" },
+          errors: {
+            Finalization: { error: { stack: '"Unable to reach SDK URL"' } },
+          },
+          trace: {
+            name: "Run",
+            status: "RUNNING",
+            childrenSpans: [
+              { name: "Finalization", status: "FAILED", childrenSpans: [] },
+            ],
+          },
+        },
+      },
+    )
+
+    expect(signal?.likely).toBe(true)
+    expect(signal?.reasons).toContain("finalization_failed_without_execution")
+  })
+
+  test("detectLikelyStaleRunningGhost flags list/detail status mismatch", () => {
+    const signal = __runsTestUtils.detectLikelyStaleRunningGhost(
+      {
+        status: "RUNNING",
+        functionName: "check/system-health",
+        startedAt: "2026-03-02T20:00:00.000Z",
+      },
+      {
+        detail: {
+          run: { status: "CANCELLED" },
+          errors: undefined,
+          trace: { name: "Run", status: "COMPLETED", childrenSpans: [] },
+        },
+      },
+    )
+
+    expect(signal?.likely).toBe(true)
+    expect(signal?.confidence).toBe("high")
+    expect(signal?.reasons).toContain("list_detail_status_mismatch:CANCELLED")
+  })
+
+  test("detectLikelyStaleRunningGhost ignores healthy active execution", () => {
+    const signal = __runsTestUtils.detectLikelyStaleRunningGhost(
+      {
+        status: "RUNNING",
+        functionName: "tasks/triage",
+        startedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+      },
+      {
+        detail: {
+          run: { status: "RUNNING" },
+          errors: undefined,
+          trace: {
+            name: "Run",
+            status: "RUNNING",
+            childrenSpans: [
+              {
+                name: "Execution",
+                status: "RUNNING",
+                childrenSpans: [{ name: "Attempt 0", status: "RUNNING" }],
+              },
+            ],
+          },
+        },
+      },
+    )
+
+    expect(signal).toBeNull()
   })
 })

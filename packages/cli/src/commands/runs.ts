@@ -6,6 +6,22 @@ import { respond, respondError } from "../response"
 
 const TERMINAL_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED"])
 const CANCELLED_STATUSES = new Set(["CANCELLED", "CANCELED"])
+const RUNNING_GHOST_DETAIL_LOOKUPS_MAX = 5
+const HEALTH_CHECK_FUNCTIONS = new Set(["check/o11y-triage", "check/system-health"])
+const RUNNING_GHOST_AGE_MINUTES = 30
+
+type RunningGhostSignal = {
+  likely: boolean
+  confidence: "low" | "medium" | "high"
+  reasons: string[]
+  detailStatus: string | null
+  ageMinutes: number | null
+}
+
+type RunningGhostDetailResult = {
+  detail?: any
+  error?: string
+}
 
 const sleepMs = (ms: number) =>
   Effect.tryPromise({
@@ -35,6 +51,116 @@ function hasSdkReachabilityError(errors: Record<string, any> | undefined): boole
     const payload = `${message} ${stack}`
     return /Unable to reach SDK URL|EOF writing request to SDK/i.test(payload)
   })
+}
+
+function ageMinutesFromStartedAt(startedAt: unknown): number | null {
+  if (typeof startedAt !== "string" || startedAt.trim().length === 0) return null
+  const startedMs = Date.parse(startedAt)
+  if (!Number.isFinite(startedMs)) return null
+  const ageMs = Date.now() - startedMs
+  if (!Number.isFinite(ageMs) || ageMs < 0) return 0
+  return Math.floor(ageMs / 60000)
+}
+
+function flattenTraceSpans(trace: any): any[] {
+  const spans: any[] = []
+
+  const visit = (span: any) => {
+    if (!span || typeof span !== "object") return
+    spans.push(span)
+    const children = Array.isArray(span.childrenSpans) ? span.childrenSpans : []
+    for (const child of children) {
+      visit(child)
+    }
+  }
+
+  visit(trace)
+  return spans
+}
+
+function hasRunningExecutionSpan(trace: any): boolean {
+  return flattenTraceSpans(trace).some((span) => (
+    String(span?.name ?? "").toLowerCase() === "execution"
+    && normalizeStatus(span?.status) === "RUNNING"
+  ))
+}
+
+function hasFailedFinalizationSpan(trace: any): boolean {
+  return flattenTraceSpans(trace).some((span) => (
+    String(span?.name ?? "").toLowerCase() === "finalization"
+    && normalizeStatus(span?.status) === "FAILED"
+  ))
+}
+
+function needsRunningGhostDetailCheck(row: any): boolean {
+  if (normalizeStatus(row?.status) !== "RUNNING") return false
+  if (row?.endedAt) return true
+
+  const fnName = String(row?.functionName ?? row?.functionID ?? "")
+  const ageMinutes = ageMinutesFromStartedAt(row?.startedAt)
+  if (!HEALTH_CHECK_FUNCTIONS.has(fnName)) return false
+
+  return ageMinutes != null && ageMinutes >= RUNNING_GHOST_AGE_MINUTES
+}
+
+function detectLikelyStaleRunningGhost(listRun: any, detailResult?: RunningGhostDetailResult): RunningGhostSignal | null {
+  if (normalizeStatus(listRun?.status) !== "RUNNING") return null
+
+  const reasons: string[] = []
+  const ageMinutes = ageMinutesFromStartedAt(listRun?.startedAt)
+
+  if (listRun?.endedAt) {
+    reasons.push("list_ended_at_present_while_running")
+  }
+
+  const fnName = String(listRun?.functionName ?? listRun?.functionID ?? "")
+  if (HEALTH_CHECK_FUNCTIONS.has(fnName) && ageMinutes != null && ageMinutes >= RUNNING_GHOST_AGE_MINUTES) {
+    reasons.push("health_check_running_older_than_30m")
+  }
+
+  let detailStatus: string | null = null
+  let sdkReachabilityError = false
+
+  if (detailResult?.detail) {
+    detailStatus = normalizeStatus(detailResult.detail?.run?.status)
+    sdkReachabilityError = hasSdkReachabilityError(detailResult.detail?.errors)
+
+    if (detailStatus !== "RUNNING" && detailStatus !== "QUEUED") {
+      reasons.push(`list_detail_status_mismatch:${detailStatus}`)
+    }
+
+    if (sdkReachabilityError) {
+      reasons.push("sdk_unreachable_error")
+    }
+
+    const finalizationFailed = hasFailedFinalizationSpan(detailResult.detail?.trace)
+    const executionRunning = hasRunningExecutionSpan(detailResult.detail?.trace)
+    if (finalizationFailed && !executionRunning && sdkReachabilityError) {
+      reasons.push("finalization_failed_without_execution")
+    }
+  }
+
+  if (detailResult?.error) {
+    reasons.push("detail_lookup_failed")
+  }
+
+  if (reasons.length === 0) return null
+
+  const likely = reasons.some((reason) => reason.startsWith("list_detail_status_mismatch:"))
+    || reasons.includes("finalization_failed_without_execution")
+    || (reasons.includes("list_ended_at_present_while_running") && reasons.includes("sdk_unreachable_error"))
+
+  const confidence: RunningGhostSignal["confidence"] = likely
+    ? (reasons.some((reason) => reason.startsWith("list_detail_status_mismatch:")) ? "high" : "medium")
+    : "low"
+
+  return {
+    likely,
+    confidence,
+    reasons,
+    detailStatus,
+    ageMinutes,
+  }
 }
 
 function buildRunNextActions(result: any, runId: string): NextAction[] {
@@ -131,9 +257,43 @@ export const runsCmd = Command.make(
       const result = yield* inngestClient.runs({ count, status: statusVal, hours })
       const filteredResult = filterRunsByStatus(result as any[], statusVal)
 
+      const ghostDetailCandidates = (filteredResult as any[])
+        .filter((row) => needsRunningGhostDetailCheck(row))
+        .slice(0, RUNNING_GHOST_DETAIL_LOOKUPS_MAX)
+
+      const ghostDetailPairs = yield* Effect.forEach(
+        ghostDetailCandidates,
+        (row: any) =>
+          inngestClient.run(String(row.id)).pipe(
+            Effect.map((detail) => [String(row.id), { detail }] as const),
+            Effect.catchAll((error) => Effect.succeed([
+              String(row.id),
+              { error: error instanceof Error ? error.message : String(error) },
+            ] as const)),
+          ),
+        { concurrency: 3 },
+      )
+
+      const ghostDetailMap = new Map<string, RunningGhostDetailResult>(ghostDetailPairs)
+
+      const enrichedRuns = (filteredResult as any[]).map((row) => {
+        const runId = String(row?.id ?? "")
+        const staleSignal = detectLikelyStaleRunningGhost(row, ghostDetailMap.get(runId))
+        if (!staleSignal) return row
+        return {
+          ...row,
+          staleSignal,
+        }
+      })
+
+      const staleSignals = enrichedRuns
+        .map((row: any) => row.staleSignal)
+        .filter((signal: RunningGhostSignal | undefined): signal is RunningGhostSignal => !!signal)
+      const likelyStaleRuns = enrichedRuns.filter((row: any) => row.staleSignal?.likely)
+
       if (compact) {
-        const firstRunId = (filteredResult as any[])[0]?.id ?? "RUN_ID"
-        const rows = (filteredResult as any[]).map((r) => {
+        const firstRunId = (enrichedRuns as any[])[0]?.id ?? "RUN_ID"
+        const rows = (enrichedRuns as any[]).map((r) => {
           const statusBadge = r.status === "COMPLETED"
             ? "✅"
             : r.status === "FAILED"
@@ -154,7 +314,16 @@ export const runsCmd = Command.make(
           }
         })
 
-        yield* Console.log(respond("runs", { count: rows.length, compact: true, rows }, [
+        yield* Console.log(respond("runs", {
+          count: rows.length,
+          compact: true,
+          staleSignals: {
+            detected: staleSignals.length,
+            likely: likelyStaleRuns.length,
+            detailChecked: ghostDetailMap.size,
+          },
+          rows,
+        }, [
           {
             command: "joelclaw runs [--status <status>] [--hours <hours>]",
             description: "Refine compact list with filters",
@@ -178,7 +347,7 @@ export const runsCmd = Command.make(
         return
       }
 
-      const next: NextAction[] = filteredResult
+      const next: NextAction[] = enrichedRuns
         .filter((r: any) => r.status === "FAILED" || r.status === "RUNNING" || r.status === "QUEUED")
         .slice(0, 3)
         .map((r: any) => ({
@@ -189,7 +358,7 @@ export const runsCmd = Command.make(
           },
         }))
 
-      const firstActiveRun = (filteredResult as any[]).find((r) => r.status === "RUNNING" || r.status === "QUEUED")
+      const firstActiveRun = (enrichedRuns as any[]).find((r) => r.status === "RUNNING" || r.status === "QUEUED")
       if (firstActiveRun) {
         next.unshift({
           command: "joelclaw run <run-id> --cancel",
@@ -198,6 +367,26 @@ export const runsCmd = Command.make(
             "run-id": { description: "Run ID", value: firstActiveRun.id, required: true },
           },
         })
+      }
+
+      if (likelyStaleRuns.length > 0) {
+        next.unshift(
+          {
+            command: "joelclaw inngest sweep-stale-runs",
+            description: `Preview stale RUNNING ghost candidates (${likelyStaleRuns.length} likely in current list)`,
+          },
+          {
+            command: "joelclaw run <run-id>",
+            description: "Inspect likely stale RUNNING ghost",
+            params: {
+              "run-id": {
+                description: "Run ID",
+                value: likelyStaleRuns[0].id,
+                required: true,
+              },
+            },
+          },
+        )
       }
 
       next.push(
@@ -222,7 +411,15 @@ export const runsCmd = Command.make(
         },
       )
 
-      yield* Console.log(respond("runs", { count: filteredResult.length, runs: filteredResult }, next))
+      yield* Console.log(respond("runs", {
+        count: enrichedRuns.length,
+        staleSignals: {
+          detected: staleSignals.length,
+          likely: likelyStaleRuns.length,
+          detailChecked: ghostDetailMap.size,
+        },
+        runs: enrichedRuns,
+      }, next))
     })
 )
 
@@ -381,6 +578,11 @@ export const __runsTestUtils = {
   normalizeStatus,
   filterRunsByStatus,
   hasSdkReachabilityError,
+  ageMinutesFromStartedAt,
+  hasRunningExecutionSpan,
+  hasFailedFinalizationSpan,
+  needsRunningGhostDetailCheck,
+  detectLikelyStaleRunningGhost,
   buildRunNextActions,
   cancelledStatuses: [...CANCELLED_STATUSES],
 }
