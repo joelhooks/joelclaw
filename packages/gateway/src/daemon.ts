@@ -606,12 +606,30 @@ const fallbackController = new ModelFallbackController(
 // Track prompt dispatch timing for stuck-session detection
 let _lastTurnEndAt = Date.now();
 let _lastPromptAt = 0;
+// Some SDK event sequences can emit a late assistant segment after the active
+// source has already been cleared. Keep a short-lived channel-source hint so
+// those trailing segments still route back to the correct user channel.
+let lastPromptSource: string | undefined;
+let lastPromptSourceAt = 0;
+const RESPONSE_SOURCE_RECOVERY_WINDOW_MS = 30_000;
 onPrompt(() => {
-  _lastPromptAt = Date.now();
+  const now = Date.now();
+  _lastPromptAt = now;
   fallbackController.onPromptDispatched();
 
   // Start Telegram typing indicator + streaming if this prompt came from Telegram
   const source = getActiveSource();
+  if (source) {
+    // Pre-seed response source for turns where message_start arrives late.
+    responseSource = source;
+  }
+
+  // Keep only channel-like sources for short-lived recovery.
+  if (source?.includes(":")) {
+    lastPromptSource = source;
+    lastPromptSourceAt = now;
+  }
+
   if (source?.startsWith("telegram:") && TELEGRAM_USER_ID) {
     const chatId = parseChatId(source) ?? TELEGRAM_USER_ID;
     const bot = getBot();
@@ -959,10 +977,45 @@ session.subscribe((event: any) => {
 
     if (!fullText.trim()) return;
 
-    const source = getActiveSource() ?? captureResponseSource() ?? "console";
-    if (source === "console") {
+    const activeSource = getActiveSource();
+    const capturedSource = captureResponseSource();
+    const sourceRecoveryAgeMs = lastPromptSourceAt > 0 ? Date.now() - lastPromptSourceAt : undefined;
+    const recoveredSource = (
+      !activeSource
+      && !capturedSource
+      && typeof lastPromptSource === "string"
+      && lastPromptSource.length > 0
+      && sourceRecoveryAgeMs !== undefined
+      && sourceRecoveryAgeMs <= RESPONSE_SOURCE_RECOVERY_WINDOW_MS
+    )
+      ? lastPromptSource
+      : undefined;
+
+    const source = activeSource ?? capturedSource ?? recoveredSource ?? "console";
+
+    if (recoveredSource) {
+      console.log("[gateway] recovered response source from recent prompt", {
+        source,
+        ageMs: sourceRecoveryAgeMs,
+      });
+      void emitGatewayOtel({
+        level: "info",
+        component: "daemon",
+        action: "daemon.response.source_recovered_recent_prompt",
+        success: true,
+        metadata: {
+          source,
+          ageMs: sourceRecoveryAgeMs,
+          length: fullText.length,
+        },
+      });
+    } else if (source === "console") {
       console.warn("[gateway] response source fallback to console", {
         length: fullText.length,
+        hasActiveSource: Boolean(activeSource),
+        hasCapturedSource: Boolean(capturedSource),
+        recentPromptSourcePrefix: lastPromptSource?.split(":")[0],
+        recentPromptSourceAgeMs: sourceRecoveryAgeMs,
       });
       void emitGatewayOtel({
         level: "warn",
@@ -971,6 +1024,10 @@ session.subscribe((event: any) => {
         success: false,
         metadata: {
           length: fullText.length,
+          hasActiveSource: Boolean(activeSource),
+          hasCapturedSource: Boolean(capturedSource),
+          recentPromptSourcePrefix: lastPromptSource?.split(":")[0],
+          recentPromptSourceAgeMs: sourceRecoveryAgeMs,
         },
       });
     }
@@ -1544,6 +1601,38 @@ void emitGatewayOtel({
 
 let shuttingDown = false;
 
+async function removeFileIfOwned(path: string, expectedValue: string, label: string): Promise<void> {
+  let currentValue: string | undefined;
+  try {
+    currentValue = (await readFile(path, "utf8")).trim();
+  } catch (error: unknown) {
+    if (
+      typeof error === "object"
+      && error !== null
+      && "code" in error
+      && (error as { code?: string }).code === "ENOENT"
+    ) {
+      return;
+    }
+    console.error(`[gateway] failed reading ${label} before cleanup`, { error: String(error) });
+    return;
+  }
+
+  if (currentValue !== expectedValue) {
+    console.warn(`[gateway] skipping ${label} cleanup; ownership changed`, {
+      expected: expectedValue,
+      actual: currentValue,
+    });
+    return;
+  }
+
+  try {
+    await rm(path, { force: true });
+  } catch (error) {
+    console.error(`[gateway] failed removing ${label}`, { error });
+  }
+}
+
 async function gracefulShutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -1612,23 +1701,9 @@ async function gracefulShutdown(signal: string): Promise<void> {
     console.error("[gateway] session disposal failed", { error });
   }
 
-  try {
-    await rm(PID_FILE, { force: true });
-  } catch (error) {
-    console.error("[gateway] failed removing PID file", { error });
-  }
-
-  try {
-    await rm(WS_PORT_FILE, { force: true });
-  } catch (error) {
-    console.error("[gateway] failed removing WS port file", { error });
-  }
-
-  try {
-    await rm(SESSION_ID_FILE, { force: true });
-  } catch (error) {
-    console.error("[gateway] failed removing session ID file", { error });
-  }
+  await removeFileIfOwned(PID_FILE, String(process.pid), "PID file");
+  await removeFileIfOwned(WS_PORT_FILE, String(wsServer.port), "WS port file");
+  await removeFileIfOwned(SESSION_ID_FILE, session.sessionId, "session ID file");
 
   process.exit(0);
 }

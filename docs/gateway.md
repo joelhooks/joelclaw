@@ -17,6 +17,8 @@ joelclaw gateway unmute imessage
 
 Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 
+Restart race hardening: daemon shutdown now removes PID/WS/session files only when the file still belongs to that process. This prevents old-process cleanup from deleting newly written marker files during fast restarts.
+
 ## Gateway operator steering cadence
 
 The gateway role prompt (`roles/gateway.md`) requires proactive steering check-ins during active work:
@@ -73,11 +75,19 @@ Startup logs include `rolePath=...` in the `[identity-inject]` line so role sele
 
 ## Telegram reply routing guard
 
-The daemon now captures the active source at `message_start`/delta time and reuses it on `message_end` if `getActiveSource()` is missing.
+The daemon now uses a three-layer source resolution strategy for `message_end` routing:
 
-- goal: prevent `source: "console"` fallback for Telegram-origin turns
-- impact: avoids short Telegram replies being dropped by console-channel suppression rules
-- telemetry: `daemon.response.source_fallback_console` warns if fallback still occurs
+1. active queue source (`getActiveSource()`)
+2. source captured during `message_start`/text deltas
+3. **recent prompt source recovery** (30s window, channel-like sources only)
+
+This protects against late assistant segments that arrive after the active source is cleared (observed once at `daemon.response.source_fallback_console`).
+
+- goal: prevent accidental `source: "console"` fallback for Telegram-origin turns
+- impact: avoids short trailing replies being dropped by console-channel suppression rules
+- telemetry:
+  - `daemon.response.source_recovered_recent_prompt` (info) when recovery path is used
+  - `daemon.response.source_fallback_console` (warn) with richer source-debug metadata if fallback still occurs
 
 ## Interrupt controls by channel
 
