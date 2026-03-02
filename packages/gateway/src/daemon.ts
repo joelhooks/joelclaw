@@ -1010,26 +1010,37 @@ session.subscribe((event: any) => {
         },
       });
     } else if (source === "console") {
-      console.warn("[gateway] response source fallback to console", {
+      const hasRecentPromptContext = sourceRecoveryAgeMs !== undefined
+        && sourceRecoveryAgeMs <= RESPONSE_SOURCE_RECOVERY_WINDOW_MS;
+      const fallbackMetadata = {
         length: fullText.length,
         hasActiveSource: Boolean(activeSource),
         hasCapturedSource: Boolean(capturedSource),
         recentPromptSourcePrefix: lastPromptSource?.split(":")[0],
         recentPromptSourceAgeMs: sourceRecoveryAgeMs,
-      });
-      void emitGatewayOtel({
-        level: "warn",
-        component: "daemon",
-        action: "daemon.response.source_fallback_console",
-        success: false,
-        metadata: {
-          length: fullText.length,
-          hasActiveSource: Boolean(activeSource),
-          hasCapturedSource: Boolean(capturedSource),
-          recentPromptSourcePrefix: lastPromptSource?.split(":")[0],
-          recentPromptSourceAgeMs: sourceRecoveryAgeMs,
-        },
-      });
+      };
+
+      if (hasRecentPromptContext) {
+        // Suspicious: we recently handled a channel-origin prompt but lost source context.
+        console.warn("[gateway] response source fallback to console", fallbackMetadata);
+        void emitGatewayOtel({
+          level: "warn",
+          component: "daemon",
+          action: "daemon.response.source_fallback_console",
+          success: false,
+          metadata: fallbackMetadata,
+        });
+      } else {
+        // Expected in some startup/background console turns. Keep observable without paging.
+        console.log("[gateway] response routed to console (no recent channel context)", fallbackMetadata);
+        void emitGatewayOtel({
+          level: "info",
+          component: "daemon",
+          action: "daemon.response.source_console_no_context",
+          success: true,
+          metadata: fallbackMetadata,
+        });
+      }
     }
     console.log("[gateway] response ready", { source, length: fullText.length });
 

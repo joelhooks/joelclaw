@@ -87,7 +87,8 @@ This protects against late assistant segments that arrive after the active sourc
 - impact: avoids short trailing replies being dropped by console-channel suppression rules
 - telemetry:
   - `daemon.response.source_recovered_recent_prompt` (info) when recovery path is used
-  - `daemon.response.source_fallback_console` (warn) with richer source-debug metadata if fallback still occurs
+  - `daemon.response.source_fallback_console` (warn) only when a recent channel-origin prompt exists but routing still collapses to console
+  - `daemon.response.source_console_no_context` (info) for expected startup/background console turns (observable but non-paging)
 
 ## Interrupt controls by channel
 
