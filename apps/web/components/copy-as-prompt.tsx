@@ -11,10 +11,13 @@ interface CopyAsPromptProps {
 }
 
 function buildPrompt(title: string, slug: string, description?: string): string {
-  const desc = description ? `\n${description}\n` : "";
-  return `Read this spec and build it: https://joelclaw.com/${slug}/md
-${desc}
-Ask clarifying questions before starting. Propose tech choices, then build incrementally.
+  const normalizedDescription = description?.trim();
+  const desc = normalizedDescription ? `\nSummary: ${normalizedDescription}\n` : "";
+  return `Explain this to your operator: https://joelclaw.com/${slug}.md
+
+Title: ${title}${desc}
+Start with a concise explanation of intent, architecture, and tradeoffs.
+Ask clarifying questions before proposing implementation steps.
 `;
 }
 
