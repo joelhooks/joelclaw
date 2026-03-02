@@ -20,11 +20,11 @@ Langfuse is the LLM observability layer for joelclaw. Every LLM call produces a 
 joelclaw has **two Langfuse integration points**:
 
 ### 1. Pi-session extension (`langfuse-cost`)
-- **Source**: `~/Code/joelhooks/pi-tools/langfuse-cost/index.ts`
-- **Runtime**: `~/.pi/agent/git/github.com/joelhooks/pi-tools/langfuse-cost/index.ts` (copy, NOT symlink)
+- **Source**: `pi/extensions/langfuse-cost/index.ts` (canonical, git-tracked in this repo)
+- **Runtime**: loaded as a pi extension from the same source tree
 - **What it traces**: Every gateway + interactive pi session LLM call
 - **How**: Hooks into pi session events (`session_start`, `message_start`, `message_end`, `tool_call`, `tool_result`, `session_shutdown`)
-- **Dedup**: `globalThis.__langfuse_cost_loaded__` guard prevents duplicate instances from symlink/realpath module resolution split
+- **Dedup**: `globalThis.__langfuse_cost_loaded__` guard prevents duplicate extension instances
 - **Optional dependency behavior**: `langfuse` is lazily loaded (no top-level hard import). Missing module must disable telemetry, not crash extension import. Regression test: `pi/extensions/langfuse-cost/index.test.ts`
 
 ### 2. System-bus OTEL bridge (`langfuse.ts`)
@@ -87,7 +87,7 @@ Every trace MUST have:
 - `userId: "joel"`
 - `sessionId` — pi session ID for grouping
 - `tags` — minimum: `["joelclaw", "pi-session"]`
-- Dynamic tags: `provider:anthropic`, `model:claude-opus-4-6`, `channel:central`, `session:central`
+- Dynamic tags: `provider:anthropic`, `model:anthropic/claude-opus-4-6`, `channel:central`, `session:central`
 
 ### Metadata Shape (flat, filterable)
 ```typescript
@@ -95,7 +95,7 @@ Every trace MUST have:
   channel: "central",           // GATEWAY_ROLE env
   sessionType: "central",       // "gateway" | "interactive" | "codex" | "central"
   component: "pi-session",
-  model: "claude-opus-4-6",
+  model: "anthropic/claude-opus-4-6",
   provider: "anthropic",
   stopReason: "toolUse",        // or "endTurn"
   turnCount: 5,                 // Updated on each turn
@@ -119,12 +119,36 @@ Every trace MUST have:
 }
 ```
 
+## Pi session guardrails (alert-only)
+
+Long-running pi sessions can dominate Langfuse spend. The extension now tracks per-session totals and emits **warnings only** on first threshold breach per guardrail type:
+
+- `JOELCLAW_LANGFUSE_ALERT_MAX_LLM_CALLS` (default: `120`)
+- `JOELCLAW_LANGFUSE_ALERT_MAX_TOTAL_TOKENS` (default: `1200000`)
+- `JOELCLAW_LANGFUSE_ALERT_MAX_COST_USD` (default: `20`)
+
+Behavior:
+
+- no automatic model switch
+- no forced compaction
+- no stop/interruption
+- emits `console.warn(...)` with session ID + current counters
+- records breach flags and first breach turn index in trace metadata (`guardrails`)
+
+## Model/provider normalization
+
+Both the pi-session extension and system-bus Langfuse bridge normalize provider/model before writing tags, trace metadata, and generation model fields. This keeps `provider:*` + `model:*` tags aligned with metadata after model switches and for provider-prefixed IDs such as:
+
+- `anthropic/claude-opus-4-6`
+- `openai-codex/gpt-5.3-codex-spark`
+
+Normalization is fail-open: tracing continues even if normalization cannot resolve a value.
+
 ## Known Gaps
 
 | Issue | Severity | Notes |
 |-------|----------|-------|
 | `cache_write_input_tokens` not priced | Medium | Langfuse platform limitation — no cache write rate in their pricing table |
-| Some continuation turns `totalCost: 0` | Low | Dedup key collision edge case |
 | No `completionStartTime` on first turn | Low | `lastAssistantStartTime` not set before first `message_start[assistant]` |
 | `tool_result` matching | Low | Relies on `toolCallId` — if pi changes the field name, spans won't close |
 
@@ -153,24 +177,22 @@ curl -s -u "$LF_PK:$LF_SK" "https://us.cloud.langfuse.com/api/public/observation
 | `[toolUse]` output instead of tool names | `tool_call` events not firing | Check pi version, verify `toolName` field on event |
 | No traces at all | Langfuse creds missing | Check `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY` env |
 | `channel:interactive` on gateway | `GATEWAY_ROLE` not set | Must be in `gateway-start.sh` |
-| Stale extension code | Runtime copy not updated | Copy dev → `~/.pi/agent/git/.../langfuse-cost/index.ts` |
+| Stale extension code | Gateway/interactive session not reloaded after change | Restart gateway and start a fresh interactive session |
 | OTEL emit errors in gateway | system-bus-worker port-forward down | `kubectl port-forward -n joelclaw svc/system-bus-worker 3111:3111` |
 
 ## Key Files
 
-- Pi extension (dev): `~/Code/joelhooks/pi-tools/langfuse-cost/index.ts`
-- Pi extension (runtime): `~/.pi/agent/git/github.com/joelhooks/pi-tools/langfuse-cost/index.ts`
+- Pi extension: `pi/extensions/langfuse-cost/index.ts`
+- Pi extension tests: `pi/extensions/langfuse-cost/index.test.ts`
 - System-bus bridge: `packages/system-bus/src/lib/langfuse.ts`
-- Gateway start: `~/.joelclaw/scripts/gateway-start.sh`
-- Extension deps: `~/Code/joelhooks/pi-tools/langfuse-cost/node_modules/langfuse/`
+- Gateway ops notes: `docs/gateway.md`
 
 ## Deployment Workflow
 
-After editing `langfuse-cost/index.ts`:
-1. `cd ~/Code/joelhooks/pi-tools && git add -A && git commit -m "..." && git push`
-2. `cp langfuse-cost/index.ts ~/.pi/agent/git/github.com/joelhooks/pi-tools/langfuse-cost/index.ts`
-3. Restart gateway: kill process, `bash ~/.joelclaw/scripts/gateway-start.sh`
-4. For interactive sessions: `/reload` or start new session
+After editing the pi extension:
+1. Commit changes in this repo (source of truth).
+2. Restart gateway so the updated extension is loaded.
+3. Start a new interactive pi session (or reload) so per-session tracing uses the new code.
 
 ## ADRs
 

@@ -174,6 +174,89 @@ function compactMetadata(metadata: Record<string, unknown>): Record<string, unkn
   return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined));
 }
 
+function normalizeProviderToken(provider?: string): string | undefined {
+  if (typeof provider !== "string") return undefined;
+  const normalized = provider.trim().toLowerCase();
+  if (!normalized) return undefined;
+
+  if (normalized === "claude") return "anthropic";
+  if (normalized === "codex") return "openai-codex";
+  return normalized;
+}
+
+const MODEL_ALIASES: Record<string, string> = {
+  "claude-opus-4-6": "anthropic/claude-opus-4-6",
+  "claude-sonnet-4-6": "anthropic/claude-sonnet-4-6",
+  "claude-sonnet-4-5": "anthropic/claude-sonnet-4-5",
+  "claude-haiku-4-5": "anthropic/claude-haiku-4-5",
+  "gpt-5.3-codex": "openai-codex/gpt-5.3-codex",
+  "gpt-5.3-codex-spark": "openai-codex/gpt-5.3-codex-spark",
+  "gpt-5.2-codex-spark": "openai-codex/gpt-5.2-codex-spark",
+  "gpt-5.2": "openai/gpt-5.2",
+  "o3": "openai/o3",
+  "o4-mini": "openai/o4-mini",
+};
+
+function normalizeModelToken(model?: string): string | undefined {
+  if (typeof model !== "string") return undefined;
+  const normalized = model.trim().toLowerCase();
+  if (!normalized) return undefined;
+  return MODEL_ALIASES[normalized] ?? normalized;
+}
+
+function inferProviderFromModelToken(model?: string): string | undefined {
+  if (!model) return undefined;
+  const normalized = model.toLowerCase();
+
+  if (normalized.includes("/")) {
+    return normalizeProviderToken(normalized.split("/")[0]);
+  }
+
+  if (normalized.startsWith("claude")) return "anthropic";
+  if (normalized.includes("codex")) return "openai-codex";
+  if (normalized.startsWith("gpt-") || normalized.startsWith("o1") || normalized.startsWith("o3") || normalized.startsWith("o4")) {
+    return "openai";
+  }
+
+  return undefined;
+}
+
+function normalizeModelProvider(input: { provider?: string; model?: string }): { provider?: string; model?: string } {
+  try {
+    let provider = normalizeProviderToken(input.provider);
+    let model = normalizeModelToken(input.model);
+
+    if (model && model.includes("/")) {
+      const [prefix, ...rest] = model.split("/");
+      const suffix = rest.join("/");
+      const normalizedPrefix = normalizeProviderToken(prefix);
+      if (normalizedPrefix && suffix) {
+        provider = normalizedPrefix;
+        model = normalizeModelToken(normalizedPrefix + "/" + suffix);
+      }
+    }
+
+    if (!provider) {
+      provider = inferProviderFromModelToken(model);
+    }
+
+    if (model && !model.includes("/") && provider) {
+      model = normalizeModelToken(provider + "/" + model);
+    }
+
+    if (!provider && model) {
+      provider = inferProviderFromModelToken(model);
+    }
+
+    return { provider, model };
+  } catch {
+    return {
+      provider: typeof input.provider === "string" ? input.provider : undefined,
+      model: typeof input.model === "string" ? input.model : undefined,
+    };
+  }
+}
+
 function mergeTraceTags(
   inputTags: string[] = [],
   dynamic?: {
@@ -306,10 +389,14 @@ export async function traceLlmGeneration(input: TraceLlmGenerationInput): Promis
     const additionalMetadata = stripOtelMetadata(input.metadata);
     const baseMetadata = additionalMetadata ?? {};
     const task = typeof baseMetadata.task === "string" ? baseMetadata.task : input.task;
-
-    const traceTags = mergeTraceTags(input.tags, {
+    const normalizedAttribution = normalizeModelProvider({
       provider: input.provider,
       model: input.model,
+    });
+
+    const traceTags = mergeTraceTags(input.tags, {
+      provider: normalizedAttribution.provider,
+      model: normalizedAttribution.model,
       task,
     });
 
@@ -317,8 +404,8 @@ export async function traceLlmGeneration(input: TraceLlmGenerationInput): Promis
       source: "system-bus",
       component: input.component,
       action: input.action,
-      provider: input.provider,
-      model: input.model,
+      provider: normalizedAttribution.provider,
+      model: normalizedAttribution.model,
       durationMs: input.durationMs,
       task,
       agentProfile: input.agentProfile,
@@ -332,7 +419,7 @@ export async function traceLlmGeneration(input: TraceLlmGenerationInput): Promis
       attemptIndex: baseMetadata.attemptIndex,
       fallbackRemaining: baseMetadata.fallbackRemaining,
       retryLevel: baseMetadata.retryLevel,
-      provider: input.provider,
+      provider: normalizedAttribution.provider,
       durationMs: input.durationMs,
       error: input.error,
     });
@@ -353,7 +440,7 @@ export async function traceLlmGeneration(input: TraceLlmGenerationInput): Promis
     const generation = trace.startObservation(
       input.generationName,
       {
-        model: input.model,
+        model: normalizedAttribution.model,
         input: cleanedInput,
         output: cleanedOutput,
         usageDetails: usageDetailsFrom(input.usage),

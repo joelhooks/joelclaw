@@ -19,6 +19,21 @@ Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 
 Restart race hardening: daemon shutdown now removes PID/WS/session files only when the file still belongs to that process. This prevents old-process cleanup from deleting newly written marker files during fast restarts.
 
+## Pi-session Langfuse guardrails (alert-only)
+
+The `pi/extensions/langfuse-cost` extension now tracks per-session LLM call count, token totals, and cumulative cost (when usage payloads include cost fields).
+
+- Guardrails emit `console.warn(...)` on first breach per threshold type.
+- Guardrails are **alert-only**: no auto-stop, no auto-downgrade, no forced compaction.
+
+Tune thresholds with environment variables on the gateway process:
+
+- `JOELCLAW_LANGFUSE_ALERT_MAX_LLM_CALLS` (default `120`)
+- `JOELCLAW_LANGFUSE_ALERT_MAX_TOTAL_TOKENS` (default `1200000`)
+- `JOELCLAW_LANGFUSE_ALERT_MAX_COST_USD` (default `20`)
+
+Restart the gateway after changing threshold env vars.
+
 ## Gateway operator steering cadence
 
 The gateway role prompt (`roles/gateway.md`) requires proactive steering check-ins during active work:
