@@ -23,6 +23,17 @@ interface Subscription {
   active: boolean
 }
 
+const LEGACY_SUBSCRIPTION_URLS: Record<string, string> = {
+  "https://github.com/mariozechner/pi-coding-agent": "https://github.com/badlogic/pi-mono",
+}
+
+const LEGACY_SUBSCRIPTION_OVERRIDES: Record<string, Pick<Subscription, "feedUrl" | "checkInterval">> = {
+  "pi-coding-agent": {
+    feedUrl: "https://github.com/badlogic/pi-mono",
+    checkInterval: "daily",
+  },
+}
+
 const ListArgsSchema = Schema.Struct({})
 const AddArgsSchema = Schema.Struct({
   url: Schema.String,
@@ -102,15 +113,45 @@ function makeRedis() {
   })
 }
 
-function parseSubscription(raw: string): Subscription | null {
+function parseSubscription(raw: string): { subscription: Subscription; changed: boolean } | null {
   try {
     const parsed = JSON.parse(raw)
     if (!parsed || typeof parsed !== "object") return null
     if (!parsed.id || !parsed.name || !parsed.feedUrl) return null
-    return parsed as Subscription
+    const subscription = parsed as Subscription
+    return applyLegacySubscriptionMigrations(subscription)
   } catch {
     return null
   }
+}
+
+function applyLegacySubscriptionMigrations(subscription: Subscription): {
+  subscription: Subscription
+  changed: boolean
+} {
+  let next = subscription
+  let changed = false
+
+  const trimmedFeedUrl = next.feedUrl.trim()
+  const normalizedFeedUrl = LEGACY_SUBSCRIPTION_URLS[trimmedFeedUrl] ?? trimmedFeedUrl
+  if (normalizedFeedUrl !== next.feedUrl) {
+    next = { ...next, feedUrl: normalizedFeedUrl }
+    changed = true
+  }
+
+  const legacyOverride = LEGACY_SUBSCRIPTION_OVERRIDES[next.id]
+  if (legacyOverride) {
+    if (next.feedUrl !== legacyOverride.feedUrl || next.checkInterval !== legacyOverride.checkInterval) {
+      next = {
+        ...next,
+        feedUrl: legacyOverride.feedUrl,
+        checkInterval: legacyOverride.checkInterval,
+      }
+      changed = true
+    }
+  }
+
+  return { subscription: next, changed }
 }
 
 function slugify(name: string): string {
@@ -177,9 +218,32 @@ export const redisSubscriptionsAdapter: CapabilityPort<typeof commands> = {
               catch: (e) => fail("SUBSCRIBE_LIST_FAILED", String(e), "Retry after Redis connectivity is restored."),
             })
 
-            const subs = Object.values(map)
-              .map(parseSubscription)
-              .filter((s): s is Subscription => s !== null)
+            const parsedSubs = Object.entries(map)
+              .map(([id, raw]) => ({ id, parsed: parseSubscription(raw) }))
+              .filter(
+                (entry): entry is { id: string; parsed: { subscription: Subscription; changed: boolean } } =>
+                  entry.parsed !== null
+              )
+
+            const migrated = parsedSubs.filter((entry) => entry.parsed.changed)
+            if (migrated.length > 0) {
+              yield* Effect.tryPromise({
+                try: () =>
+                  Promise.all(
+                    migrated.map((entry) =>
+                      redis.hset(
+                        SUBSCRIPTIONS_KEY,
+                        entry.id,
+                        JSON.stringify(entry.parsed.subscription),
+                      )
+                    )
+                  ),
+                catch: (e) => fail("SUBSCRIBE_LIST_FAILED", String(e), "Retry after Redis connectivity is restored."),
+              })
+            }
+
+            const subs = parsedSubs
+              .map((entry) => entry.parsed.subscription)
               .sort((a, b) => a.name.localeCompare(b.name))
 
             const active = subs.filter((s) => s.active)
@@ -316,9 +380,33 @@ export const redisSubscriptionsAdapter: CapabilityPort<typeof commands> = {
               catch: (e) => fail("SUBSCRIBE_SUMMARY_FAILED", String(e), "Retry after Redis connectivity is restored."),
             })
 
-            const subs = Object.values(map)
-              .map(parseSubscription)
-              .filter((s): s is Subscription => s !== null && s.active)
+            const parsedSubs = Object.entries(map)
+              .map(([id, raw]) => ({ id, parsed: parseSubscription(raw) }))
+              .filter(
+                (entry): entry is { id: string; parsed: { subscription: Subscription; changed: boolean } } =>
+                  entry.parsed !== null
+              )
+
+            const migrated = parsedSubs.filter((entry) => entry.parsed.changed)
+            if (migrated.length > 0) {
+              yield* Effect.tryPromise({
+                try: () =>
+                  Promise.all(
+                    migrated.map((entry) =>
+                      redis.hset(
+                        SUBSCRIPTIONS_KEY,
+                        entry.id,
+                        JSON.stringify(entry.parsed.subscription),
+                      )
+                    )
+                  ),
+                catch: (e) => fail("SUBSCRIBE_SUMMARY_FAILED", String(e), "Retry after Redis connectivity is restored."),
+              })
+            }
+
+            const subs = parsedSubs
+              .map((entry) => entry.parsed.subscription)
+              .filter((s): s is Subscription => s.active)
               .sort((a, b) => b.lastChecked - a.lastChecked)
 
             const now = Date.now()

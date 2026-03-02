@@ -21,6 +21,17 @@ export interface Subscription {
   active: boolean;
 }
 
+const LEGACY_SUBSCRIPTION_URLS: Record<string, string> = {
+  "https://github.com/mariozechner/pi-coding-agent": "https://github.com/badlogic/pi-mono",
+};
+
+const LEGACY_SUBSCRIPTION_OVERRIDES: Record<string, Pick<Subscription, "feedUrl" | "checkInterval">> = {
+  "pi-coding-agent": {
+    feedUrl: "https://github.com/badlogic/pi-mono",
+    checkInterval: "daily",
+  },
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
 }
@@ -79,11 +90,42 @@ function serializeSubscription(subscription: Subscription): string {
   return JSON.stringify(subscription);
 }
 
-function parseSubscription(raw: string | null): Subscription | null {
+function normalizeLegacySubscription(subscription: Subscription): {
+  subscription: Subscription;
+  changed: boolean;
+} {
+  let changed = false;
+  let next = subscription;
+
+  const trimmedFeedUrl = subscription.feedUrl.trim();
+  const normalizedFeedUrl = LEGACY_SUBSCRIPTION_URLS[trimmedFeedUrl] ?? trimmedFeedUrl;
+  if (normalizedFeedUrl !== next.feedUrl) {
+    next = { ...next, feedUrl: normalizedFeedUrl };
+    changed = true;
+  }
+
+  const legacyOverride = LEGACY_SUBSCRIPTION_OVERRIDES[next.id];
+  if (legacyOverride) {
+    if (next.feedUrl !== legacyOverride.feedUrl || next.checkInterval !== legacyOverride.checkInterval) {
+      next = {
+        ...next,
+        feedUrl: legacyOverride.feedUrl,
+        checkInterval: legacyOverride.checkInterval,
+      };
+      changed = true;
+    }
+  }
+
+  return { subscription: next, changed };
+}
+
+function parseSubscription(raw: string | null): { subscription: Subscription; changed: boolean } | null {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as unknown;
-    return normalizeSubscription(parsed);
+    const normalized = normalizeSubscription(parsed);
+    if (!normalized) return null;
+    return normalizeLegacySubscription(normalized);
   } catch {
     return null;
   }
@@ -109,9 +151,28 @@ export async function listSubscriptions(): Promise<Subscription[]> {
   const redis = getRedisClient();
   const map = await redis.hgetall(SUBSCRIPTIONS_REDIS_KEY);
 
-  const subscriptions = Object.values(map)
-    .map((value) => parseSubscription(value))
-    .filter((item): item is Subscription => item !== null)
+  const parsed = Object.entries(map)
+    .map(([id, value]) => ({ id, parsed: parseSubscription(value) }))
+    .filter(
+      (item): item is { id: string; parsed: { subscription: Subscription; changed: boolean } } =>
+        item.parsed !== null
+    );
+
+  const migrated = parsed.filter((item) => item.parsed.changed);
+  if (migrated.length > 0) {
+    await Promise.all(
+      migrated.map((item) =>
+        redis.hset(
+          SUBSCRIPTIONS_REDIS_KEY,
+          item.id,
+          serializeSubscription(item.parsed.subscription)
+        )
+      )
+    );
+  }
+
+  const subscriptions = parsed
+    .map((item) => item.parsed.subscription)
     .sort((a, b) => a.name.localeCompare(b.name));
 
   return subscriptions;
@@ -120,7 +181,18 @@ export async function listSubscriptions(): Promise<Subscription[]> {
 export async function getSubscription(id: string): Promise<Subscription | null> {
   const redis = getRedisClient();
   const raw = await redis.hget(SUBSCRIPTIONS_REDIS_KEY, id);
-  return parseSubscription(raw);
+  const parsed = parseSubscription(raw);
+  if (!parsed) return null;
+
+  if (parsed.changed) {
+    await redis.hset(
+      SUBSCRIPTIONS_REDIS_KEY,
+      id,
+      serializeSubscription(parsed.subscription)
+    );
+  }
+
+  return parsed.subscription;
 }
 
 export async function updateSubscription(

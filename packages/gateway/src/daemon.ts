@@ -70,7 +70,7 @@ async function registerGatewayAgent(): Promise<void> {
       project_key: PROJECT_KEY,
       name: AGENT_NAME,
       program: "pi-gateway",
-      model: "claude-sonnet-4",
+      model: "claude-sonnet-4-6",
     });
     console.log("[gateway] registered agent identity with agent-mail", { agent: AGENT_NAME });
   } catch (err) {
