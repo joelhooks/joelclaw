@@ -56,15 +56,16 @@ Routing rule:
 
 This keeps operator channel high signal while preserving autonomous handling.
 
-## Role resolution (gateway vs interactive)
+## Role resolution (gateway/system/interactive)
 
-Gateway sessions run with `GATEWAY_ROLE=central`. The `identity-inject` extension resolves the role file in this order:
+Gateway sessions run with `GATEWAY_ROLE=central`. System sessions can set `JOELCLAW_ROLE=system` (or another role alias). The `identity-inject` extension resolves the role file in this order:
 
-1. `JOELCLAW_ROLE_FILE` env override (if set)
-2. `~/.joelclaw/roles/gateway.md` when `GATEWAY_ROLE=central`
-3. fallback to `~/.joelclaw/ROLE.md`
+1. `JOELCLAW_ROLE_FILE` env override (explicit path)
+2. `JOELCLAW_ROLE` alias (maps `system` → `~/.joelclaw/roles/system.md`, `<name>` → `~/.joelclaw/roles/<name>.md`)
+3. `~/.joelclaw/roles/gateway.md` when `GATEWAY_ROLE=central`
+4. fallback to `~/.joelclaw/ROLE.md`
 
-This prevents the gateway session from inheriting interactive role instructions.
+If the selected role file is missing, it falls back to `ROLE.md`.
 
 ## Telegram reply routing guard
 

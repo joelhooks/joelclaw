@@ -7,6 +7,16 @@ const HOME = process.env.HOME ?? "~";
 const JOELCLAW_DIR = join(HOME, ".joelclaw");
 const DEFAULT_ROLE_FILE = "ROLE.md";
 const GATEWAY_ROLE_FILE = "roles/gateway.md";
+const ROLE_DIR_PREFIX = "roles/";
+
+function resolveRoleAlias(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return DEFAULT_ROLE_FILE;
+  if (isAbsolute(trimmed)) return trimmed;
+  if (trimmed.includes("/")) return trimmed;
+  if (trimmed.endsWith(".md")) return `${ROLE_DIR_PREFIX}${trimmed}`;
+  return `${ROLE_DIR_PREFIX}${trimmed}.md`;
+}
 
 type IdentityFileSpec = {
   label: string;
@@ -25,6 +35,10 @@ const BASE_IDENTITY_FILES: ReadonlyArray<IdentityFileSpec> = [
 function resolvePreferredRoleFile(): string {
   const override = process.env.JOELCLAW_ROLE_FILE?.trim();
   if (override && override.length > 0) return override;
+
+  const roleAlias = process.env.JOELCLAW_ROLE?.trim();
+  if (roleAlias && roleAlias.length > 0) return resolveRoleAlias(roleAlias);
+
   if (process.env.GATEWAY_ROLE === "central") return GATEWAY_ROLE_FILE;
   return DEFAULT_ROLE_FILE;
 }
@@ -186,6 +200,8 @@ export default function (pi: ExtensionAPI) {
       roleFileRequested,
       roleFileApplied,
       gatewayRole: process.env.GATEWAY_ROLE ?? null,
+      joelclawRole: process.env.JOELCLAW_ROLE ?? null,
+      joelclawRoleFile: process.env.JOELCLAW_ROLE_FILE ?? null,
     });
   }
 
