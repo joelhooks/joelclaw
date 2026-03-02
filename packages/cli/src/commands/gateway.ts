@@ -1121,6 +1121,25 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       layers.push({ layer: "redis-state", status: "failed", detail: `Redis query failed: ${e}` })
     }
 
+    // ── Reconciliation: stale watchdog entries vs current e2e health ──
+    const e2eLayer = layers.find((layer) => layer.layer === "e2e-test")
+    const errorLogLayer = layers.find((layer) => layer.layer === "error-log")
+    const watchdogLabels = new Set(["watchdog-stuck", "watchdog-dead"])
+    const errorLogHasOnlyWatchdogFindings =
+      errPatterns.length > 0 &&
+      errPatterns.every((pattern) => watchdogLabels.has(pattern.label))
+
+    if (
+      e2eLayer?.status === "ok" &&
+      errorLogLayer?.status === "failed" &&
+      errorLogHasOnlyWatchdogFindings
+    ) {
+      const note = "stale watchdog entries — e2e passing"
+      errorLogLayer.status = "degraded"
+      errorLogLayer.detail = `${errorLogLayer.detail}; ${note}`
+      errorLogLayer.findings = [...(errorLogLayer.findings ?? []), note]
+    }
+
     // ── Summary ──
     const failed = layers.filter((l) => l.status === "failed")
     const degraded = layers.filter((l) => l.status === "degraded")

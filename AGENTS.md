@@ -24,6 +24,8 @@ Personal AI infrastructure monorepo. Event-driven pipelines, always-on gateway, 
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+Load the `system-architecture` skill before any cross-cutting architectural work, debugging event flow, or tracing why something ran/didn't run.
+
 ## Monorepo Layout
 
 ```
@@ -121,6 +123,7 @@ Before modifying code in any domain, load the relevant skills FIRST:
 | `packages/system-bus/` | `inngest-durable-functions`, `inngest-steps`, `inngest-events`, `inngest-flow-control`, `system-bus` |
 | `packages/gateway/` | `gateway`, `telegram` |
 | `k8s/` | `k8s` |
+| Architecture / cross-cutting | `system-architecture` |
 
 ## CLI — `joelclaw`
 
