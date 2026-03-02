@@ -39,6 +39,14 @@ Gateway sessions run with `GATEWAY_ROLE=central`. The `identity-inject` extensio
 
 This prevents the gateway session from inheriting interactive role instructions.
 
+## Telegram reply routing guard
+
+The daemon now captures the active source at `message_start`/delta time and reuses it on `message_end` if `getActiveSource()` is missing.
+
+- goal: prevent `source: "console"` fallback for Telegram-origin turns
+- impact: avoids short Telegram replies being dropped by console-channel suppression rules
+- telemetry: `daemon.response.source_fallback_console` warns if fallback still occurs
+
 ## Interrupt controls by channel
 
 Telegram chat (`@JoelClawPandaBot`):

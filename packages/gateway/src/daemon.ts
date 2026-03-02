@@ -735,7 +735,16 @@ type WsClientMessage =
   | { type: "status" };
 // ── Outbound: collect assistant responses and route to source channel ──
 let responseChunks: string[] = [];
+let responseSource: string | undefined;
 const wsClients = new Set<Bun.ServerWebSocket<unknown>>();
+
+function captureResponseSource(): string | undefined {
+  const active = getActiveSource();
+  if (typeof active === "string" && active.length > 0) {
+    responseSource = active;
+  }
+  return responseSource;
+}
 
 function getStatusPayload(): Record<string, unknown> {
   const fb = fallbackController.state;
@@ -893,8 +902,13 @@ session.subscribe((event: any) => {
     fallbackController.onActivity();
   }
 
+  if (event.type === "message_start") {
+    captureResponseSource();
+  }
+
   // Collect text deltas
   if (event.type === "message_update" && event.assistantMessageEvent?.type === "text_delta") {
+    captureResponseSource();
     const delta = typeof event.assistantMessageEvent.delta === "string"
       ? event.assistantMessageEvent.delta
       : "";
@@ -945,7 +959,21 @@ session.subscribe((event: any) => {
 
     if (!fullText.trim()) return;
 
-    const source = getActiveSource() ?? "console";
+    const source = getActiveSource() ?? captureResponseSource() ?? "console";
+    if (source === "console") {
+      console.warn("[gateway] response source fallback to console", {
+        length: fullText.length,
+      });
+      void emitGatewayOtel({
+        level: "warn",
+        component: "daemon",
+        action: "daemon.response.source_fallback_console",
+        success: false,
+        metadata: {
+          length: fullText.length,
+        },
+      });
+    }
     console.log("[gateway] response ready", { source, length: fullText.length });
 
     // If Telegram streaming is active, finalize the current message segment.
@@ -1012,6 +1040,7 @@ session.subscribe((event: any) => {
       _idleResolve = undefined;
       resolve();
     }
+    responseSource = undefined;
 
     // ── Proactive context health check (ADR-0141) ───────────
     // After each turn, estimate context usage. If critical, compact BEFORE
