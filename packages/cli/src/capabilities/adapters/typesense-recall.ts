@@ -34,7 +34,7 @@ async function runInference(prompt: string, options: Record<string, unknown>): P
   return result as InferenceResult
 }
 
-type RewriteStrategy = "haiku" | "openai" | "fallback" | "disabled"
+type RewriteStrategy = "haiku" | "openai" | "fallback" | "disabled" | "skipped"
 type BudgetProfile = "lean" | "balanced" | "deep" | "auto"
 
 type BudgetPlan = {
@@ -93,6 +93,7 @@ type RewrittenQuery = {
   rewrittenQuery: string
   rewritten: boolean
   strategy: RewriteStrategy
+  rewriteReason: string
   model?: string
   provider?: string
   usage?: RewriteUsage
@@ -138,6 +139,29 @@ function clamp(value: number, min: number, max: number): number {
 
 function normalizeQuery(text: string): string {
   return text.trim().replace(/\s+/gu, " ").slice(0, 300)
+}
+
+function detectRewriteSkipReason(query: string): string | null {
+  if (!query) return "skip.empty_query"
+
+  const tokenCount = query.split(/\s+/gu).filter(Boolean).length
+  if (query.length <= 24 && tokenCount <= 3) {
+    return "skip.short_query"
+  }
+
+  if ((query.startsWith('"') && query.endsWith('"')) || (query.startsWith("'") && query.endsWith("'"))) {
+    return "skip.literal_query"
+  }
+
+  if (/^[\w./:-]+$/u.test(query) && /[/:.]/u.test(query)) {
+    return "skip.direct_identifier"
+  }
+
+  if (/^(show|find|list|get|open)\b/iu.test(query)) {
+    return "skip.command_like"
+  }
+
+  return null
 }
 
 function normalizeBudgetProfile(input: string): BudgetProfile {
@@ -495,6 +519,19 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
       rewrittenQuery: normalized,
       rewritten: false,
       strategy: "disabled",
+      rewriteReason: "disabled",
+    }
+  }
+
+  const skipReason = detectRewriteSkipReason(normalized)
+  if (skipReason) {
+    return {
+      inputQuery: normalized,
+      rewritePrompt: normalized,
+      rewrittenQuery: normalized,
+      rewritten: false,
+      strategy: "skipped",
+      rewriteReason: skipReason,
     }
   }
 
@@ -519,6 +556,15 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
     return message.slice(0, 220)
   }
 
+  function toFailureReasonTag(value: string): string {
+    const normalizedReason = value
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/gu, "_")
+      .replace(/^_+|_+$/gu, "")
+      .slice(0, 80)
+    return normalizedReason || "rewrite_failed"
+  }
+
   async function runSpawnRewrite(): Promise<RewrittenQuery> {
     if (options.spawn) {
       const proc = options.spawn([], rewritePrompt, rewriteTimeoutMs)
@@ -535,6 +581,7 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
           rewrittenQuery,
           rewritten: rewrittenQuery.toLowerCase() !== normalized.toLowerCase(),
           strategy: "haiku",
+          rewriteReason: "success",
           provider: parsedJson?.provider,
           model: parsedJson?.model ?? RECALL_REWRITE_MODEL,
           usage: parsedJson?.usage,
@@ -558,6 +605,8 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
       action: "recall.rewrite",
       timeout: rewriteTimeoutMs,
       json: true,
+      requireJson: true,
+      requireTextOutput: true,
     })
 
     const rewrittenQuery = parseInferenceRewriteOutput(result.data, result.text)
@@ -573,6 +622,7 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
       rewrittenQuery,
       rewritten: rewrittenQuery.toLowerCase() !== normalized.toLowerCase(),
       strategy,
+      rewriteReason: "success",
       provider: result.provider,
       model: result.model ?? RECALL_REWRITE_MODEL,
       usage: result.usage,
@@ -590,12 +640,15 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
     attemptErrors.push(formatRewriteError(error, rewriteTimeoutMs))
   }
 
+  const lastError = attemptErrors[attemptErrors.length - 1] ?? "rewrite_failed"
+
   return {
     inputQuery: normalized,
     rewritePrompt,
     rewrittenQuery: normalized,
     rewritten: false,
     strategy: "fallback",
+    rewriteReason: `failure.${toFailureReasonTag(lastError)}`,
     durationMs: Date.now() - startedAt,
     error: attemptErrors.join(" | ").slice(0, 220),
   }
@@ -717,6 +770,7 @@ function runRecallCapability(args: RecallCapabilityArgs): Effect.Effect<RecallCa
       rewrittenQuery: rewrite.rewrittenQuery,
       rewritten: rewrite.rewritten,
       strategy: rewrite.strategy,
+      rewriteReason: rewrite.rewriteReason,
       provider: rewrite.provider,
       model: rewrite.model,
       usage: rewrite.usage,
@@ -737,6 +791,7 @@ function runRecallCapability(args: RecallCapabilityArgs): Effect.Effect<RecallCa
           query: args.query,
           rewrittenQuery: rewrite.rewrittenQuery,
           rewriteStrategy: rewrite.strategy,
+          rewriteReason: rewrite.rewriteReason,
           rewriteModel: rewrite.model,
           rewriteProvider: rewrite.provider,
           rewriteUsage: rewrite.usage,
@@ -802,6 +857,7 @@ function runRecallCapability(args: RecallCapabilityArgs): Effect.Effect<RecallCa
           query: args.query,
           rewrittenQuery: rewrite.rewrittenQuery,
           rewriteStrategy: rewrite.strategy,
+          rewriteReason: rewrite.rewriteReason,
           rewriteModel: rewrite.model,
           rewriteProvider: rewrite.provider,
           rewriteUsage: rewrite.usage,
@@ -840,6 +896,7 @@ function runRecallCapability(args: RecallCapabilityArgs): Effect.Effect<RecallCa
           rewrite: {
             rewritten: rewrite.rewritten,
             strategy: rewrite.strategy,
+            reason: rewrite.rewriteReason,
             model: rewrite.model,
             provider: rewrite.provider,
             usage: rewrite.usage,
@@ -901,6 +958,7 @@ function runRecallCapability(args: RecallCapabilityArgs): Effect.Effect<RecallCa
           query: args.query,
           rewrittenQuery: rewrite.rewrittenQuery,
           rewriteStrategy: rewrite.strategy,
+          rewriteReason: rewrite.rewriteReason,
           rewriteModel: rewrite.model,
           rewriteProvider: rewrite.provider,
           rewriteUsage: rewrite.usage,

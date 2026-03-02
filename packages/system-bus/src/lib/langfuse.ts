@@ -357,8 +357,6 @@ export function parsePiJsonAssistant(raw: string): {
     .join("")
     .trim();
 
-  if (!text) return null;
-
   const usage = assistant.usage
     ? {
         inputTokens: toFiniteNumber(assistant.usage.input),

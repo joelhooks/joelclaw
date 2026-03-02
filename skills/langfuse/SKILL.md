@@ -144,6 +144,22 @@ Both the pi-session extension and system-bus Langfuse bridge normalize provider/
 
 Normalization is fail-open: tracing continues even if normalization cannot resolve a value.
 
+## Output-contract + usage-coverage signals (2026-03-02)
+
+System-bus inference now emits explicit coverage/output-contract metadata so low-yield calls are queryable:
+
+- `usageCoverage: "present"|"missing"`
+- `usageCaptured: boolean`
+- `jsonRequested`, `jsonParsed`, `outputChars`
+- warning OTEL event: `model_router.usage_missing`
+
+For strict machine-readable paths, callers can require output contracts:
+
+- `requireJson: true` — parse failure becomes inference failure
+- `requireTextOutput: true` — empty text becomes inference failure
+
+Recall rewrite traces now include `rewriteReason` in addition to strategy (`disabled|skipped|haiku|openai|fallback`) to separate deliberate skips from failure fallbacks.
+
 ## Known Gaps
 
 | Issue | Severity | Notes |

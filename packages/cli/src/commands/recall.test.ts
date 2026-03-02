@@ -31,28 +31,45 @@ describe("recall rewrite", () => {
       rewrittenQuery: "redis dedupe",
       rewritten: false,
       strategy: "disabled",
+      rewriteReason: "disabled",
     })
   })
 
+  test("skips rewrite for short high-signal queries", async () => {
+    const result = await runRewriteQueryWith("redis setnx", {
+      rewriteEnabled: true,
+      spawn: () => {
+        throw new Error("rewrite should be skipped before spawn")
+      },
+    })
+
+    expect(result.strategy).toBe("skipped")
+    expect(result.rewritten).toBe(false)
+    expect(result.rewrittenQuery).toBe("redis setnx")
+    expect(result.rewriteReason).toBe("skip.short_query")
+  })
+
   test("falls back cleanly when rewrite subprocess fails", async () => {
-    const result = await runRewriteQueryWith("redis setnx pattern", {
+    const result = await runRewriteQueryWith("redis setnx pattern for distributed job dedupe", {
       rewriteEnabled: true,
       spawn: () => ({ exitCode: 1, stdout: "", stderr: "mock rewrite failure" }),
     })
 
     expect(result.strategy).toBe("fallback")
     expect(result.rewritten).toBe(false)
-    expect(result.rewrittenQuery).toBe("redis setnx pattern")
+    expect(result.rewrittenQuery).toBe("redis setnx pattern for distributed job dedupe")
+    expect(result.rewriteReason).toContain("failure")
     expect(result.error).toContain("mock rewrite failure")
   })
 
   test("accepts successful rewrite output and sanitizes quotes", async () => {
-    const result = await runRewriteQueryWith("redis setnx pattern", {
+    const result = await runRewriteQueryWith("redis setnx pattern for distributed job dedupe", {
       rewriteEnabled: true,
       spawn: () => ({ exitCode: 0, stdout: "\"Redis SETNX idempotency strategy\"", stderr: "" }),
     })
 
     expect(result.strategy).toBe("haiku")
+    expect(result.rewriteReason).toBe("success")
     expect(result.rewritten).toBe(true)
     expect(result.rewrittenQuery).toBe("Redis SETNX idempotency strategy")
   })

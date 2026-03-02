@@ -31,6 +31,8 @@ const OTL_OUTPUT_PREVIEW_CHARS = 6_000;
 export type InferOptions = BuildRouteInput & {
   timeout?: number;
   json?: boolean;
+  requireJson?: boolean;
+  requireTextOutput?: boolean;
   system?: string;
   agent?: string;
   thinking?: string;
@@ -109,6 +111,26 @@ function parseJsonFromText(raw: string): unknown | null {
   return null;
 }
 
+function hasUsageSignal(usage?: LlmUsage): boolean {
+  if (!usage) return false;
+  const values = [
+    usage.inputTokens,
+    usage.outputTokens,
+    usage.totalTokens,
+    usage.cacheReadTokens,
+    usage.cacheWriteTokens,
+    usage.costInput,
+    usage.costOutput,
+    usage.costTotal,
+  ];
+
+  return values.some((value) => typeof value === "number" && Number.isFinite(value));
+}
+
+function usageCoverageLabel(usage?: LlmUsage): "present" | "missing" {
+  return hasUsageSignal(usage) ? "present" : "missing";
+}
+
 async function runPiAttempt(
   promptPath: string,
   model: string,
@@ -166,7 +188,8 @@ async function runPiAttempt(
   clearTimeout(timeoutId);
 
   const parsed = parsePiJsonAssistant(stdoutRaw);
-  const rawText = normalizeText(parsed?.text) || stdoutRaw.trim();
+  const parsedText = normalizeText(parsed?.text);
+  const rawText = parsed ? parsedText : stdoutRaw.trim();
 
   return {
     rawText,
@@ -379,6 +402,21 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
         const parsedData = resolvedOpts.json ? parseJsonFromText(outputText) : undefined;
         const provider = (piResult.provider || attempt.provider) ?? undefined;
         const model = (piResult.model || attempt.model) ?? undefined;
+        const usageCoverage = usageCoverageLabel(piResult.usage);
+        const requiresJson = Boolean(resolvedOpts.json && resolvedOpts.requireJson);
+        const requiresTextOutput = Boolean(resolvedOpts.requireTextOutput);
+
+        if (requiresTextOutput && outputText.length === 0) {
+          throw wrapError(new Error("inference_text_output_empty"), attempt.attempt, "text output required");
+        }
+
+        if (requiresJson && parsedData === null) {
+          throw wrapError(
+            new Error("inference_json_parse_empty"),
+            attempt.attempt,
+            trimForMetadata(outputText || "<empty>", 500),
+          );
+        }
 
         const metadata = withAgentMetadata({
           requestId,
@@ -389,6 +427,11 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
           provider,
           fallbackUsed: attempt.attempt > 0,
           durationMs: piResult.durationMs,
+          usageCoverage,
+          usageCaptured: usageCoverage === "present",
+          outputChars: outputText.length,
+          jsonRequested: Boolean(resolvedOpts.json),
+          jsonParsed: resolvedOpts.json ? parsedData !== null : undefined,
           ...(resolvedOpts.metadata ?? {}),
           ...(profile
             ? {
@@ -409,6 +452,25 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
           metadata,
         });
 
+        if (usageCoverage === "missing") {
+          await emitOtelEvent({
+            level: "warn",
+            source: "system-bus",
+            component,
+            action: "model_router.usage_missing",
+            success: false,
+            metadata: {
+              requestId,
+              task: route.normalizedTask,
+              attemptIndex: attempt.attempt,
+              provider,
+              model,
+              ...baseAgentMetadata,
+              ...(resolvedOpts.metadata ?? {}),
+            },
+          });
+        }
+
         await traceLlmGeneration({
           traceName: "joelclaw.inference",
           generationName: "system-bus.infer",
@@ -424,7 +486,7 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
           },
           output: {
             text: trimForMetadata(outputText, OTL_OUTPUT_PREVIEW_CHARS),
-            hasJson: typeof parsedData !== "undefined",
+            hasJson: resolvedOpts.json ? parsedData !== null : false,
           },
           provider,
           model,
@@ -435,6 +497,9 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
             requestId,
             policyVersion: route.policyVersion,
             attemptIndex: attempt.attempt,
+            usageCoverage,
+            usageCaptured: usageCoverage === "present",
+            outputChars: outputText.length,
             ...baseAgentMetadata,
             ...(model ? { resolvedModel: model } : {}),
             ...(resolvedOpts.metadata ?? {}),

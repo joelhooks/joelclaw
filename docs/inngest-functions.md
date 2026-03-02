@@ -9,6 +9,7 @@ Canonical notes for `packages/system-bus/src/inngest/functions/`.
 - Every critical branch emits OTEL evidence.
 - Health checks should route remediation via `system/self.healing.requested` and carry playbook context.
 - Never use `Bun.spawnSync` for `joelclaw` CLI calls inside handlers that also depend on worker/HTTP probes; use async subprocesses with explicit timeouts to avoid worker event-loop deadlocks.
+- For inference calls that must return machine-readable output, set `json: true` plus `requireJson: true` (and `requireTextOutput: true` where needed) so null/empty outputs are treated as failures, not successes.
 
 ## Key reliability flows
 
@@ -40,6 +41,17 @@ Canonical notes for `packages/system-bus/src/inngest/functions/`.
   1. probe runtime health (`joelclaw inngest status`)
   2. if degraded and not dry run, run `joelclaw inngest restart-worker --register --wait-ms 1500`
   3. re-probe and emit before/after OTEL evidence
+
+### Task triage classification contract
+
+- function: `tasks/triage`
+- file: `packages/system-bus/src/inngest/functions/task-triage.ts`
+- behavior:
+  1. enforces strict JSON classification schema (`id`, `category`, `reason`) for every task ID
+  2. retries once with a repair prompt when output is invalid
+  3. returns `status: degraded` (not success) when classification remains invalid/null
+  4. sets cooldown only when a gateway notification is actually pushed
+  5. emits telemetry with `classificationValid`, `triageItemsCount`, `actionableCount`, and `outputFailureReason`
 
 ## Backup hardening
 

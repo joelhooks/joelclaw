@@ -12,6 +12,7 @@ import { getRedisPort } from "../../lib/redis";
 
 import Redis from "ioredis";
 import { infer } from "../../lib/inference";
+import { emitOtelEvent } from "../../observability/emit";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import type { Task } from "../../tasks/port";
 import { inngest } from "../client";
@@ -72,32 +73,59 @@ function normalizeCategory(v: unknown): TriageCategory | null {
   return typeof v === "string" && valid.includes(v as TriageCategory) ? (v as TriageCategory) : null;
 }
 
-function parseTriageResult(raw: string): { triage: TriageItem[]; insights: string[] } {
-  const parsed = parseClaudeOutput(raw);
-  if (!isRecord(parsed)) return { triage: [], insights: [] };
+type TriageParseReason = "null_output" | "schema_invalid" | "missing_ids" | "duplicate_ids";
 
-  const triage = Array.isArray(parsed.triage)
-    ? parsed.triage
-        .map((item): TriageItem | null => {
-          if (!isRecord(item)) return null;
-          const id = String(item.id ?? "").trim();
-          const category = normalizeCategory(item.category);
-          if (!id || !category) return null;
-          return {
-            id,
-            category,
-            reason: String(item.reason ?? "").trim(),
-            suggestedAction: typeof item.suggestedAction === "string" ? item.suggestedAction : undefined,
-          };
-        })
-        .filter((item): item is TriageItem => item !== null)
-    : [];
+type TriageParseResult =
+  | { ok: true; triage: TriageItem[]; insights: string[] }
+  | { ok: false; triage: TriageItem[]; insights: string[]; reason: TriageParseReason };
+
+function parseTriageResult(raw: string, expectedTaskIds: Set<string>): TriageParseResult {
+  const parsed = parseClaudeOutput(raw);
+  if (!isRecord(parsed)) {
+    return { ok: false, reason: "null_output", triage: [], insights: [] };
+  }
+
+  if (!Array.isArray(parsed.triage)) {
+    return { ok: false, reason: "schema_invalid", triage: [], insights: [] };
+  }
+
+  const triage: TriageItem[] = [];
+  for (const item of parsed.triage) {
+    if (!isRecord(item)) {
+      return { ok: false, reason: "schema_invalid", triage: [], insights: [] };
+    }
+
+    const id = String(item.id ?? "").trim();
+    const category = normalizeCategory(item.category);
+    const reason = String(item.reason ?? "").trim();
+    if (!id || !category || !reason) {
+      return { ok: false, reason: "schema_invalid", triage: [], insights: [] };
+    }
+
+    triage.push({
+      id,
+      category,
+      reason,
+      suggestedAction: typeof item.suggestedAction === "string" ? item.suggestedAction.trim() : undefined,
+    });
+  }
+
+  const uniqueIds = new Set(triage.map((item) => item.id));
+  if (uniqueIds.size !== triage.length) {
+    return { ok: false, reason: "duplicate_ids", triage: [], insights: [] };
+  }
+
+  for (const taskId of expectedTaskIds) {
+    if (!uniqueIds.has(taskId)) {
+      return { ok: false, reason: "missing_ids", triage: [], insights: [] };
+    }
+  }
 
   const insights = Array.isArray(parsed.insights)
     ? parsed.insights.filter((i): i is string => typeof i === "string")
     : [];
 
-  return { triage, insights };
+  return { ok: true, triage, insights };
 }
 
 let redisClient: Redis | null = null;
@@ -177,26 +205,106 @@ export const taskTriage = inngest.createFunction(
       return { status: "noop", reason: "cooldown active (2h)", taskCount: tasks.length };
     }
 
-    // Step 4: Sonnet reviews ALL tasks
+    // Step 4: Sonnet reviews ALL tasks with strict output contract
     const triageResult = await step.run("sonnet-triage", async () => {
       const taskBlocks = tasks.map(formatTaskForLLM);
-      const userPrompt = [
+      const expectedTaskIds = new Set(tasks.map((task) => task.id));
+      const basePrompt = [
         `Review these ${tasks.length} tasks. Return one triage entry per task ID.`,
         "",
         taskBlocks.join("\n\n---\n\n"),
       ].join("\n");
 
-      const { text } = await infer(userPrompt, {
-        agent: "triage",
-        system: TRIAGE_SYSTEM_PROMPT,
+      const attemptClassify = async (prompt: string, stage: "primary" | "repair") => {
+        try {
+          const { text } = await infer(prompt, {
+            agent: "triage",
+            system: TRIAGE_SYSTEM_PROMPT,
+            component: "task-triage",
+            action: "tasks.triage.classify",
+            json: true,
+            requireJson: true,
+            requireTextOutput: true,
+            metadata: {
+              taskCount: tasks.length,
+              classificationStage: stage,
+            },
+          });
+
+          const parsed = parseTriageResult(text, expectedTaskIds);
+          if (parsed.ok) return { ok: true as const, triage: parsed.triage, insights: parsed.insights };
+          return { ok: false as const, reason: parsed.reason };
+        } catch (error) {
+          const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+          const reason: TriageParseReason =
+            message.includes("json") || message.includes("output_empty") ? "null_output" : "schema_invalid";
+          return { ok: false as const, reason };
+        }
+      };
+
+      const primary = await attemptClassify(basePrompt, "primary");
+      if (primary.ok) {
+        return {
+          classificationValid: true,
+          triage: primary.triage,
+          insights: primary.insights,
+          fallbackUsed: false,
+        };
+      }
+
+      const repairPrompt = [
+        basePrompt,
+        "",
+        "Your previous response failed schema validation.",
+        "Return ONLY strict JSON with this exact shape:",
+        '{"triage":[{"id":"task-id","category":"agent-can-do-now|needs-human-decision|blocked|human-only|stale","reason":"required","suggestedAction":"optional"}],"insights":["optional"]}',
+        "Every task ID must appear exactly once.",
+      ].join("\n");
+
+      const repair = await attemptClassify(repairPrompt, "repair");
+      if (repair.ok) {
+        return {
+          classificationValid: true,
+          triage: repair.triage,
+          insights: repair.insights,
+          fallbackUsed: true,
+        };
+      }
+
+      return {
+        classificationValid: false,
+        triage: [] as TriageItem[],
+        insights: [] as string[],
+        fallbackUsed: true,
+        failureReason: repair.reason,
+      };
+    });
+
+    if (!triageResult.classificationValid) {
+      await emitOtelEvent({
+        level: "warn",
+        source: "system-bus",
         component: "task-triage",
-        action: "tasks.triage.classify",
-        json: true,
+        action: "tasks.triage.degraded",
+        success: false,
+        metadata: {
+          taskCount: tasks.length,
+          classificationValid: false,
+          outputFailureReason: triageResult.failureReason,
+          fallbackUsed: triageResult.fallbackUsed,
+        },
       });
 
-      const triage = parseTriageResult(text);
-      return triage;
-    });
+      return {
+        status: "degraded",
+        taskCount: tasks.length,
+        classificationValid: false,
+        triageItemsCount: 0,
+        actionableCount: 0,
+        outputFailureReason: triageResult.failureReason,
+        fallbackUsed: triageResult.fallbackUsed,
+      };
+    }
 
     // Step 5: Build gateway notification — only if actionable
     const result = await step.run("notify-gateway", async () => {
@@ -216,9 +324,15 @@ export const taskTriage = inngest.createFunction(
       const needsDecision = rows.filter((r) => r.category === "needs-human-decision");
       const stale = rows.filter((r) => r.category === "stale");
 
-      // NOOP: nothing actionable
+      // NOOP: classification valid, but nothing actionable
       if (canDo.length === 0 && needsDecision.length === 0 && stale.length === 0 && triageResult.insights.length === 0) {
-        return { pushed: false, actionableCount: 0, totalTasks: rows.length };
+        return {
+          pushed: false,
+          actionableCount: 0,
+          totalTasks: rows.length,
+          staleCount: 0,
+          triageItemsCount: triageResult.triage.length,
+        };
       }
 
       const sections: string[] = [`## 📋 Task Review (${tasks.length} total)`, ""];
@@ -262,7 +376,7 @@ export const taskTriage = inngest.createFunction(
         payload: { prompt: sections.join("\n") },
       });
 
-      // Set cooldown
+      // Set cooldown only when a notification is actually pushed.
       const redis = getRedis();
       await redis.set(TRIAGE_NOTIFIED_KEY, new Date().toISOString(), "EX", TRIAGE_TTL_SECONDS);
 
@@ -271,12 +385,36 @@ export const taskTriage = inngest.createFunction(
         actionableCount: canDo.length + needsDecision.length,
         totalTasks: rows.length,
         staleCount: stale.length,
+        triageItemsCount: triageResult.triage.length,
       };
+    });
+
+    await emitOtelEvent({
+      level: "info",
+      source: "system-bus",
+      component: "task-triage",
+      action: "tasks.triage.completed",
+      success: true,
+      metadata: {
+        taskCount: tasks.length,
+        classificationValid: true,
+        triageItemsCount: result.triageItemsCount,
+        actionableCount: result.actionableCount,
+        staleCount: result.staleCount,
+        pushed: result.pushed,
+      },
     });
 
     return {
       status: result.pushed ? "notified" : "noop",
+      classificationValid: true,
+      outputFailureReason: null,
+      fallbackUsed: triageResult.fallbackUsed,
       ...result,
     };
   }
 );
+
+export const __taskTriageTestUtils = {
+  parseTriageResult,
+};

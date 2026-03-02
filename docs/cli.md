@@ -144,6 +144,7 @@ Semantics:
 - `mail reserve` now sends explicit lease TTL (`--ttl-seconds`, default `900`) and enforces a minimum of 60s.
 - `mail renew` extends active file reservations without releasing/reacquiring (`--extend-seconds`, default `900`, optional `--paths`).
 - `subscribe check` emits Inngest request events; `response.ids` are event/request IDs (inspect via `joelclaw event <event-id>`), not run IDs unless explicitly returned as `runIds`.
+- `recall` rewrite telemetry now exposes `rewrite.strategy` (`disabled|skipped|haiku|openai|fallback`) and `rewrite.reason` so low-ROI rewrite skips/fallbacks are queryable; short/literal/direct-id queries skip LLM rewrite by design.
 
 ## Webhook command tree (ADR-0185)
 

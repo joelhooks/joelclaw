@@ -40,6 +40,7 @@ export type RecallRewriteTraceInput = {
   rewrittenQuery: string;
   rewritten: boolean;
   strategy: string;
+  rewriteReason?: string;
   provider?: string;
   model?: string;
   usage?: RecallRewriteUsage;
@@ -247,6 +248,7 @@ export async function traceRecallRewrite(input: RecallRewriteTraceInput): Promis
         costDetails: costDetailsFrom(input.usage),
         metadata: {
           strategy: input.strategy,
+          rewriteReason: input.rewriteReason,
           provider: input.provider,
           durationMs: input.durationMs,
           rewriteError: input.error,
@@ -262,6 +264,7 @@ export async function traceRecallRewrite(input: RecallRewriteTraceInput): Promis
     generation.update({
       metadata: {
         strategy: input.strategy,
+        rewriteReason: input.rewriteReason,
       },
     });
 
@@ -274,6 +277,7 @@ export async function traceRecallRewrite(input: RecallRewriteTraceInput): Promis
       },
       metadata: {
         strategy: input.strategy,
+        rewriteReason: input.rewriteReason,
         provider: input.provider,
         model: input.model,
         durationMs: input.durationMs,
