@@ -902,6 +902,25 @@ export type Events = {
   "system/wake.requested": {
     data: Record<string, never>;
   };
+  "adr/pitch.requested": {
+    data: Record<string, never>;
+  };
+  "adr/pitch.approved": {
+    data: {
+      adr_number: string;
+      action: string;
+      chatId?: number | null;
+      messageId?: number | null;
+    };
+  };
+  "adr/pitch.rejected": {
+    data: {
+      adr_number: string;
+      action: string;
+      chatId?: number | null;
+      messageId?: number | null;
+    };
+  };
   "adr/review.submitted": {
     data: {
       adrSlug: string;

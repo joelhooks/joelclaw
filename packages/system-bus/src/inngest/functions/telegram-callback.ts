@@ -7,6 +7,8 @@ const SNOOZE_ACTION = "s4h";
 const SNOOZE_HOURS = 4;
 const DEDUP_KEY_PATTERN = /^[a-f0-9]{64}$/iu;
 const MEMORY_CALLBACK_PATTERN = /^memory:(approve|reject):([^:]+)$/iu;
+const PITCH_CALLBACK_PATTERN = /^pitch:(approve|reject):(\d{4})$/iu;
+const PITCH_HISTORY_KEY = "adr:pitch:history";
 
 let redisClient: Redis | null = null;
 
@@ -168,6 +170,78 @@ export const telegramCallbackReceived = inngest.createFunction(
         action: "memory:reject",
         proposalId,
         hasProposalContext: Boolean(proposalContext),
+      };
+    }
+
+    const pitchMatch = PITCH_CALLBACK_PATTERN.exec(callbackData);
+    if (pitchMatch) {
+      const pitchAction = pitchMatch[1]?.toLowerCase();
+      const adrNumber = (pitchMatch[2] ?? "").trim();
+
+      if (!adrNumber) {
+        return { handled: false, reason: "invalid_adr_number", action, callbackData };
+      }
+
+      // Update pitch history in Redis
+      await step.run("update-pitch-history", async () => {
+        const redis = getRedis();
+        const historyRaw = await redis.get(PITCH_HISTORY_KEY);
+
+        interface PitchRecord {
+          adr_number: string;
+          pitched_at: string;
+          response: string;
+        }
+
+        const history: PitchRecord[] = historyRaw
+          ? (JSON.parse(historyRaw) as PitchRecord[])
+          : [];
+
+        // Update the most recent pending entry for this ADR
+        for (let i = history.length - 1; i >= 0; i--) {
+          const entry = history[i];
+          if (entry && entry.adr_number === adrNumber && entry.response === "pending") {
+            entry.response = pitchAction === "approve" ? "approved" : "rejected";
+            break;
+          }
+        }
+
+        await redis.set(PITCH_HISTORY_KEY, JSON.stringify(history));
+      });
+
+      const eventName =
+        pitchAction === "approve" ? "adr/pitch.approved" : "adr/pitch.rejected";
+
+      await step.sendEvent(`emit-pitch-${pitchAction}`, {
+        name: eventName,
+        data: {
+          adr_number: adrNumber,
+          action: pitchAction,
+          chatId,
+          messageId,
+        },
+      });
+
+      await step.run("emit-pitch-callback-otel", async () => {
+        await emitOtelEvent({
+          level: "info",
+          source: "worker",
+          component: "adr-pitch",
+          action: `adr.pitch.${pitchAction}`,
+          success: true,
+          metadata: {
+            adr_number: adrNumber,
+            callbackData,
+            chatId,
+            messageId,
+          },
+        });
+      });
+
+      return {
+        handled: true,
+        action: `pitch:${pitchAction}`,
+        adr_number: adrNumber,
       };
     }
 
