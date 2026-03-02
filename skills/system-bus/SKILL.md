@@ -216,12 +216,15 @@ Operational truths:
 
 Safe reconciliation sequence:
 
-1. Backup DB: `kubectl -n joelclaw exec inngest-0 -- sqlite3 /data/main.db '.backup /data/main.db.pre-sweep-<ts>.sqlite'`
-2. Find stale candidates via `trace_runs` + `function_finishes` + `history` joins.
-3. Insert missing terminal history (`FunctionCancelled`) for stale candidates.
-4. Ensure `function_finishes` rows exist.
-5. Update `trace_runs.status` to cancelled (`500`) only after 3/4.
-6. Verify with `joelclaw run <id>` and a fresh `joelclaw runs --status RUNNING`.
+1. Preview with `joelclaw inngest sweep-stale-runs`.
+2. Apply with `joelclaw inngest sweep-stale-runs --apply` (auto backup + transactional writes).
+3. If manual fallback is required:
+   - Backup DB: `kubectl -n joelclaw exec inngest-0 -- sqlite3 /data/main.db '.backup /data/main.db.pre-sweep-<ts>.sqlite'`
+   - Find stale candidates via `trace_runs` + `function_finishes` + `history` joins.
+   - Insert missing terminal history (`FunctionCancelled`) for stale candidates.
+   - Ensure `function_finishes` rows exist.
+   - Update `trace_runs.status` to cancelled (`500`) only after history/finishes.
+4. Verify with `joelclaw run <id>` and a fresh `joelclaw runs --status RUNNING`.
 
 ## Key Files
 

@@ -30,6 +30,14 @@ const MEMORY_COMPONENTS = [
   "nightly-maintenance",
   "weekly-maintenance",
 ]
+const INNGEST_RUNTIME_POD = process.env.JOELCLAW_INNGEST_RUNTIME_POD?.trim() || "inngest-0"
+const INNGEST_RUNTIME_DB_PATH = process.env.JOELCLAW_INNGEST_RUNTIME_DB_PATH?.trim() || "/data/main.db"
+const SWEEP_STALE_DEFAULT_FUNCTIONS = ["check/o11y-triage", "check/system-health"] as const
+const SWEEP_STALE_DEFAULT_AGE_MINUTES = 30
+const SWEEP_STALE_MIN_AGE_MINUTES = 5
+const SWEEP_STALE_DEFAULT_SAMPLE_LIMIT = 25
+const SWEEP_STALE_DEFAULT_MAX_APPLY = 200
+const CROCKFORD_BASE32_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 const CORE_K8S_WORKLOADS: Array<{ kind: "statefulset" | "deployment"; namespace: string; name: string }> = [
   { kind: "statefulset", namespace: JOELCLAW_NAMESPACE, name: "inngest" },
@@ -499,6 +507,220 @@ function parseJsonObject(raw: string): Record<string, unknown> | null {
   } catch {
     return null
   }
+}
+
+type SweepStaleRunScope = {
+  namespace: string
+  pod: string
+  dbPath: string
+  functionNames: string[]
+  olderThanMinutes: number
+  sampleLimit: number
+  maxApplyCandidates: number
+}
+
+type SweepCandidateRow = {
+  run_id_hex?: string
+  function_name?: string
+  trace_status?: number
+  started_at?: number
+  ended_at?: number | null
+  age_minutes?: number
+  has_finish?: number
+  has_terminal_history?: number
+}
+
+type SweepCandidate = {
+  runIdHex: string
+  runId: string | null
+  functionName: string
+  traceStatus: number
+  startedAt: number
+  startedAtIso: string | null
+  endedAt: number | null
+  endedAtIso: string | null
+  ageMinutes: number
+  hasFinish: boolean
+  hasTerminalHistory: boolean
+}
+
+function parseCsvList(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0)
+}
+
+function quoteSqlLiteral(value: string): string {
+  return `'${value.replace(/'/gu, "''")}'`
+}
+
+function buildSweepStalePredicate(scope: SweepStaleRunScope): string {
+  const names = scope.functionNames.map(quoteSqlLiteral).join(", ")
+  return [
+    "tr.status = 200",
+    `tr.started_at < ((strftime('%s', 'now') * 1000) - (${scope.olderThanMinutes} * 60 * 1000))`,
+    `f.name IN (${names})`,
+  ].join("\n  AND ")
+}
+
+function parseSqliteJsonRows(stdout: string): Array<Record<string, unknown>> {
+  const trimmed = stdout.trim()
+  if (!trimmed) return []
+
+  const parseChunk = (chunk: string): Array<Record<string, unknown>> => {
+    const parsed = JSON.parse(chunk)
+    if (Array.isArray(parsed)) {
+      return parsed.filter((entry): entry is Record<string, unknown> => (
+        !!entry && typeof entry === "object" && !Array.isArray(entry)
+      ))
+    }
+    if (parsed && typeof parsed === "object") {
+      return [parsed as Record<string, unknown>]
+    }
+    return []
+  }
+
+  try {
+    return parseChunk(trimmed)
+  } catch {
+    return trimmed
+      .split(/\r?\n/gu)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("[") || line.startsWith("{"))
+      .flatMap((line) => {
+        try {
+          return parseChunk(line)
+        } catch {
+          return []
+        }
+      })
+  }
+}
+
+function runKubectlSqlite(
+  scope: Pick<SweepStaleRunScope, "namespace" | "pod" | "dbPath">,
+  sql: string,
+  options: { json?: boolean } = {},
+): {
+  command: string[]
+  exitCode: number
+  stdout: string
+  stderr: string
+  ok: boolean
+  rows: Array<Record<string, unknown>>
+} {
+  const json = options.json ?? true
+  const args = [
+    "kubectl",
+    "-n",
+    scope.namespace,
+    "exec",
+    scope.pod,
+    "--",
+    "sqlite3",
+    ...(json ? ["-json"] : []),
+    scope.dbPath,
+    sql,
+  ]
+
+  const proc = Bun.spawnSync(args, {
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  })
+
+  const stdout = decodeText(proc.stdout).trim()
+  const stderr = decodeText(proc.stderr).trim()
+  const rows = json ? parseSqliteJsonRows(stdout) : []
+
+  return {
+    command: args,
+    exitCode: proc.exitCode,
+    stdout,
+    stderr,
+    ok: proc.exitCode === 0,
+    rows,
+  }
+}
+
+function asNumber(value: unknown, fallback: number): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return fallback
+}
+
+function epochMsToIso(value: number | null): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null
+  try {
+    return new Date(value).toISOString()
+  } catch {
+    return null
+  }
+}
+
+function runIdHexToUlid(runIdHex: string): string | null {
+  const normalized = runIdHex.trim().toUpperCase()
+  if (!/^[0-9A-F]{32}$/u.test(normalized)) return null
+
+  let value = 0n
+  for (let i = 0; i < normalized.length; i += 2) {
+    const byte = Number.parseInt(normalized.slice(i, i + 2), 16)
+    if (!Number.isFinite(byte)) return null
+    value = (value << 8n) | BigInt(byte)
+  }
+
+  let out = ""
+  for (let i = 0; i < 26; i += 1) {
+    const idx = Number(value & 31n)
+    out = `${CROCKFORD_BASE32_ALPHABET[idx]}${out}`
+    value >>= 5n
+  }
+
+  return out
+}
+
+function sweepTimestamp(): string {
+  const now = new Date()
+  const pad = (num: number) => String(num).padStart(2, "0")
+  return [
+    now.getUTCFullYear(),
+    pad(now.getUTCMonth() + 1),
+    pad(now.getUTCDate()),
+    "T",
+    pad(now.getUTCHours()),
+    pad(now.getUTCMinutes()),
+    pad(now.getUTCSeconds()),
+  ].join("")
+}
+
+function backupPathForSweep(dbPath: string, stamp: string): string {
+  return `${dbPath}.pre-sweep-${stamp}.sqlite`
+}
+
+function mapSweepCandidates(rows: Array<Record<string, unknown>>): SweepCandidate[] {
+  return rows.map((row) => {
+    const runIdHex = String(row.run_id_hex ?? "").toLowerCase()
+    const startedAt = asNumber(row.started_at, 0)
+    const endedAt = row.ended_at == null ? null : asNumber(row.ended_at, 0)
+
+    return {
+      runIdHex,
+      runId: runIdHexToUlid(runIdHex),
+      functionName: String(row.function_name ?? "unknown"),
+      traceStatus: asNumber(row.trace_status, 0),
+      startedAt,
+      startedAtIso: epochMsToIso(startedAt),
+      endedAt,
+      endedAtIso: epochMsToIso(endedAt),
+      ageMinutes: asNumber(row.age_minutes, 0),
+      hasFinish: asNumber(row.has_finish, 0) > 0,
+      hasTerminalHistory: asNumber(row.has_terminal_history, 0) > 0,
+    }
+  })
 }
 
 function inspectLaunchdService(label: string): {
@@ -1602,6 +1824,542 @@ const inngestSyncWorkerCmd = Command.make(
         { command: "joelclaw functions", description: "List currently registered functions" },
         { command: "joelclaw inngest sync-worker --restart --force", description: "Force restart despite active runs (disruptive)" },
       ], regOk && probeOk))
+    })
+)
+
+const inngestSweepStaleRunsCmd = Command.make(
+  "sweep-stale-runs",
+  {
+    apply: Options.boolean("apply").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Apply terminalization after preview (default: false)")
+    ),
+    functions: Options.text("functions").pipe(
+      Options.withDefault(SWEEP_STALE_DEFAULT_FUNCTIONS.join(",")),
+      Options.withDescription("Comma-separated function names to target")
+    ),
+    olderThanMinutes: Options.integer("older-than-minutes").pipe(
+      Options.withDefault(SWEEP_STALE_DEFAULT_AGE_MINUTES),
+      Options.withDescription(`Only target runs older than this age in minutes (default: ${SWEEP_STALE_DEFAULT_AGE_MINUTES})`)
+    ),
+    sampleLimit: Options.integer("sample-limit").pipe(
+      Options.withDefault(SWEEP_STALE_DEFAULT_SAMPLE_LIMIT),
+      Options.withDescription(`Max sample rows to return in preview (default: ${SWEEP_STALE_DEFAULT_SAMPLE_LIMIT})`)
+    ),
+    maxApplyCandidates: Options.integer("max-apply-candidates").pipe(
+      Options.withDefault(SWEEP_STALE_DEFAULT_MAX_APPLY),
+      Options.withDescription(`Safety cap: refuse apply when candidate count exceeds this value (default: ${SWEEP_STALE_DEFAULT_MAX_APPLY})`)
+    ),
+    namespace: Options.text("namespace").pipe(
+      Options.withDefault(JOELCLAW_NAMESPACE),
+      Options.withDescription(`Kubernetes namespace hosting Inngest (default: ${JOELCLAW_NAMESPACE})`)
+    ),
+    pod: Options.text("pod").pipe(
+      Options.withDefault(INNGEST_RUNTIME_POD),
+      Options.withDescription(`Inngest runtime pod name (default: ${INNGEST_RUNTIME_POD})`)
+    ),
+    dbPath: Options.text("db-path").pipe(
+      Options.withDefault(INNGEST_RUNTIME_DB_PATH),
+      Options.withDescription(`SQLite DB path inside pod (default: ${INNGEST_RUNTIME_DB_PATH})`)
+    ),
+  },
+  ({ apply, functions, olderThanMinutes, sampleLimit, maxApplyCandidates, namespace, pod, dbPath }) =>
+    Effect.gen(function* () {
+      const commandName = "inngest sweep-stale-runs"
+      const functionNames = parseCsvList(functions)
+      const safeSampleLimit = Math.max(1, Math.min(250, sampleLimit))
+      const safeMaxApplyCandidates = Math.max(1, maxApplyCandidates)
+
+      if (functionNames.length === 0) {
+        yield* Console.log(respondError(
+          commandName,
+          "No target functions supplied",
+          "INVALID_SWEEP_SCOPE",
+          "Pass --functions with at least one function name",
+          [
+            {
+              command: "joelclaw inngest sweep-stale-runs [--functions <functions>]",
+              description: "Preview stale runs with explicit function scope",
+              params: {
+                functions: {
+                  description: "Comma-separated function names",
+                  value: SWEEP_STALE_DEFAULT_FUNCTIONS.join(","),
+                },
+              },
+            },
+          ],
+        ))
+        return
+      }
+
+      if (olderThanMinutes < SWEEP_STALE_MIN_AGE_MINUTES) {
+        yield* Console.log(respondError(
+          commandName,
+          `Refusing sweep scope: --older-than-minutes must be >= ${SWEEP_STALE_MIN_AGE_MINUTES}`,
+          "SWEEP_AGE_TOO_YOUNG",
+          `Increase --older-than-minutes to at least ${SWEEP_STALE_MIN_AGE_MINUTES} to avoid touching active runs`,
+          [
+            {
+              command: "joelclaw inngest sweep-stale-runs [--older-than-minutes <minutes>]",
+              description: "Retry with safe age threshold",
+              params: {
+                minutes: {
+                  description: "Age threshold in minutes",
+                  value: SWEEP_STALE_DEFAULT_AGE_MINUTES,
+                  default: SWEEP_STALE_DEFAULT_AGE_MINUTES,
+                },
+              },
+            },
+          ],
+        ))
+        return
+      }
+
+      const scope: SweepStaleRunScope = {
+        namespace,
+        pod,
+        dbPath,
+        functionNames,
+        olderThanMinutes,
+        sampleLimit: safeSampleLimit,
+        maxApplyCandidates: safeMaxApplyCandidates,
+      }
+
+      const runtimeTarget = {
+        namespace: scope.namespace,
+        pod: scope.pod,
+        dbPath: scope.dbPath,
+      }
+
+      const whereClause = buildSweepStalePredicate(scope)
+      const summarySql = `
+SELECT
+  count(*) AS total,
+  sum(CASE WHEN ff.run_id IS NULL THEN 1 ELSE 0 END) AS missing_finishes,
+  sum(CASE WHEN hterm.run_id IS NULL THEN 1 ELSE 0 END) AS missing_terminal_history,
+  sum(CASE WHEN fr.run_id IS NULL THEN 1 ELSE 0 END) AS missing_function_runs,
+  min(tr.started_at) AS oldest_started_at,
+  max(tr.started_at) AS newest_started_at
+FROM trace_runs tr
+JOIN functions f ON tr.function_id = f.id
+LEFT JOIN function_runs fr ON tr.run_id = fr.run_id
+LEFT JOIN function_finishes ff ON tr.run_id = ff.run_id
+LEFT JOIN (
+  SELECT DISTINCT run_id
+  FROM history
+  WHERE type IN ('FunctionCompleted', 'FunctionFailed', 'FunctionCancelled')
+) hterm ON tr.run_id = hterm.run_id
+WHERE ${whereClause};`
+      const summaryResult = runKubectlSqlite(runtimeTarget, summarySql)
+
+      if (!summaryResult.ok) {
+        yield* Console.log(respondError(
+          commandName,
+          summaryResult.stderr || "Failed querying Inngest runtime sqlite summary",
+          "SWEEP_SQL_QUERY_FAILED",
+          "Check kubectl access and ensure sqlite3 exists in the Inngest pod",
+          [
+            { command: "joelclaw inngest status", description: "Confirm Inngest runtime health" },
+            {
+              command: "kubectl -n joelclaw exec inngest-0 -- sqlite3 /data/main.db '.schema trace_runs'",
+              description: "Verify runtime DB access",
+            },
+          ],
+        ))
+        return
+      }
+
+      const summaryRow = summaryResult.rows[0] ?? {}
+      const totalCandidates = asNumber(summaryRow.total, 0)
+      const missingFinishes = asNumber(summaryRow.missing_finishes, 0)
+      const missingTerminalHistory = asNumber(summaryRow.missing_terminal_history, 0)
+      const missingFunctionRuns = asNumber(summaryRow.missing_function_runs, 0)
+      const oldestStartedAt = asNumber(summaryRow.oldest_started_at, 0)
+      const newestStartedAt = asNumber(summaryRow.newest_started_at, 0)
+
+      const byFunctionSql = `
+SELECT
+  f.name AS function_name,
+  count(*) AS count
+FROM trace_runs tr
+JOIN functions f ON tr.function_id = f.id
+WHERE ${whereClause}
+GROUP BY f.name
+ORDER BY count DESC, f.name ASC;`
+      const byFunctionResult = runKubectlSqlite(runtimeTarget, byFunctionSql)
+
+      if (!byFunctionResult.ok) {
+        yield* Console.log(respondError(
+          commandName,
+          byFunctionResult.stderr || "Failed querying grouped stale-run counts",
+          "SWEEP_SQL_QUERY_FAILED",
+          "Inspect sqlite query permissions in the Inngest runtime pod",
+          [
+            { command: "joelclaw inngest status", description: "Confirm Inngest runtime health" },
+          ],
+        ))
+        return
+      }
+
+      const sampleSql = `
+SELECT
+  lower(hex(tr.run_id)) AS run_id_hex,
+  f.name AS function_name,
+  tr.status AS trace_status,
+  tr.started_at,
+  tr.ended_at,
+  CAST(((strftime('%s', 'now') * 1000) - tr.started_at) / 60000 AS INT) AS age_minutes,
+  CASE WHEN ff.run_id IS NULL THEN 0 ELSE 1 END AS has_finish,
+  CASE WHEN hterm.run_id IS NULL THEN 0 ELSE 1 END AS has_terminal_history
+FROM trace_runs tr
+JOIN functions f ON tr.function_id = f.id
+LEFT JOIN function_finishes ff ON tr.run_id = ff.run_id
+LEFT JOIN (
+  SELECT DISTINCT run_id
+  FROM history
+  WHERE type IN ('FunctionCompleted', 'FunctionFailed', 'FunctionCancelled')
+) hterm ON tr.run_id = hterm.run_id
+WHERE ${whereClause}
+ORDER BY tr.started_at ASC
+LIMIT ${scope.sampleLimit};`
+      const sampleResult = runKubectlSqlite(runtimeTarget, sampleSql)
+
+      if (!sampleResult.ok) {
+        yield* Console.log(respondError(
+          commandName,
+          sampleResult.stderr || "Failed querying stale-run samples",
+          "SWEEP_SQL_QUERY_FAILED",
+          "Inspect sqlite query permissions in the Inngest runtime pod",
+          [
+            { command: "joelclaw inngest status", description: "Confirm Inngest runtime health" },
+          ],
+        ))
+        return
+      }
+
+      const sampleCandidates = mapSweepCandidates(sampleResult.rows)
+      const groupedByFunction = byFunctionResult.rows.map((row) => ({
+        functionName: String(row.function_name ?? "unknown"),
+        count: asNumber(row.count, 0),
+      }))
+
+      const scopePayload = {
+        namespace: scope.namespace,
+        pod: scope.pod,
+        dbPath: scope.dbPath,
+        statusCode: 200,
+        olderThanMinutes: scope.olderThanMinutes,
+        functionNames: scope.functionNames,
+        sampleLimit: scope.sampleLimit,
+        maxApplyCandidates: scope.maxApplyCandidates,
+      }
+
+      const candidatePayload = {
+        total: totalCandidates,
+        missingFinishes,
+        missingTerminalHistory,
+        missingFunctionRuns,
+        oldestStartedAt,
+        oldestStartedAtIso: epochMsToIso(oldestStartedAt),
+        newestStartedAt,
+        newestStartedAtIso: epochMsToIso(newestStartedAt),
+        groupedByFunction,
+        sampleCount: sampleCandidates.length,
+        sample: sampleCandidates,
+      }
+
+      if (!apply) {
+        yield* Console.log(respond(commandName, {
+          mode: "preview",
+          scope: scopePayload,
+          candidates: candidatePayload,
+          applyReady: totalCandidates > 0,
+        }, [
+          {
+            command: "joelclaw inngest sweep-stale-runs --apply [--older-than-minutes <minutes>] [--functions <functions>]",
+            description: "Apply backup + terminalization for this stale-run scope",
+            params: {
+              minutes: {
+                description: "Age threshold in minutes",
+                value: scope.olderThanMinutes,
+                default: SWEEP_STALE_DEFAULT_AGE_MINUTES,
+              },
+              functions: {
+                description: "Comma-separated function names",
+                value: scope.functionNames.join(","),
+              },
+            },
+          },
+          { command: "joelclaw runs --status RUNNING --hours 24 --count 20", description: "Compare current RUNNING list" },
+          ...(sampleCandidates[0]?.runId
+            ? [{
+                command: "joelclaw run <run-id>",
+                description: "Inspect one stale sample run",
+                params: {
+                  "run-id": { description: "Run ID", value: sampleCandidates[0].runId, required: true },
+                },
+              }]
+            : []),
+        ]))
+        return
+      }
+
+      if (totalCandidates === 0) {
+        yield* Console.log(respond(commandName, {
+          mode: "apply",
+          scope: scopePayload,
+          candidates: candidatePayload,
+          applied: false,
+          reason: "no_candidates",
+        }, [
+          { command: "joelclaw runs --status RUNNING --hours 24 --count 20", description: "Check for newly active runs" },
+        ]))
+        return
+      }
+
+      if (missingFunctionRuns > 0) {
+        yield* Console.log(respondError(
+          commandName,
+          `Refusing apply: ${missingFunctionRuns} candidate run(s) are missing function_runs rows required for safe terminal history inserts`,
+          "SWEEP_INVARIANT_MISSING_FUNCTION_RUNS",
+          "Investigate runtime DB consistency first; do not mutate stale runs with incomplete function run records",
+          [
+            { command: "joelclaw runs --status RUNNING --hours 24 --count 20", description: "Inspect stale candidates before manual remediation" },
+            { command: "joelclaw inngest status", description: "Confirm Inngest runtime health" },
+          ],
+        ))
+        return
+      }
+
+      if (totalCandidates > scope.maxApplyCandidates) {
+        yield* Console.log(respondError(
+          commandName,
+          `Refusing apply: candidate count ${totalCandidates} exceeds max-apply-candidates=${scope.maxApplyCandidates}`,
+          "SWEEP_SCOPE_TOO_BROAD",
+          "Narrow --functions or increase --older-than-minutes before applying",
+          [
+            {
+              command: "joelclaw inngest sweep-stale-runs [--functions <functions>] [--older-than-minutes <minutes>]",
+              description: "Preview a narrower sweep scope",
+              params: {
+                functions: { description: "Comma-separated function names", value: scope.functionNames.join(",") },
+                minutes: { description: "Age threshold in minutes", value: scope.olderThanMinutes + 10 },
+              },
+            },
+          ],
+        ))
+        return
+      }
+
+      const sweepStamp = sweepTimestamp()
+      const backupPath = backupPathForSweep(scope.dbPath, sweepStamp)
+      const backupResult = runKubectlSqlite(runtimeTarget, `.backup ${backupPath}`, { json: false })
+
+      if (!backupResult.ok) {
+        yield* Console.log(respondError(
+          commandName,
+          backupResult.stderr || "Failed creating sqlite backup before sweep",
+          "SWEEP_BACKUP_FAILED",
+          "Resolve pod/db access issues, then rerun preview before apply",
+          [
+            { command: "joelclaw inngest sweep-stale-runs", description: "Re-run preview" },
+            { command: "joelclaw inngest status", description: "Confirm Inngest runtime health" },
+          ],
+        ))
+        return
+      }
+
+      const backupVerifyProc = Bun.spawnSync([
+        "kubectl",
+        "-n",
+        scope.namespace,
+        "exec",
+        scope.pod,
+        "--",
+        "test",
+        "-f",
+        backupPath,
+      ], {
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      })
+
+      if (backupVerifyProc.exitCode !== 0) {
+        const verifyErr = decodeText(backupVerifyProc.stderr).trim()
+        yield* Console.log(respondError(
+          commandName,
+          verifyErr || `Backup file not found at ${backupPath}`,
+          "SWEEP_BACKUP_VERIFY_FAILED",
+          "Do not apply writes without a verified backup artifact",
+          [
+            { command: "joelclaw inngest sweep-stale-runs", description: "Re-run preview before retrying apply" },
+          ],
+        ))
+        return
+      }
+
+      const applySql = `
+BEGIN;
+CREATE TEMP TABLE __sweep_candidates AS
+SELECT
+  tr.run_id,
+  tr.function_id
+FROM trace_runs tr
+JOIN functions f ON tr.function_id = f.id
+WHERE ${whereClause};
+
+CREATE TEMP TABLE __sweep_metrics (
+  metric TEXT,
+  value INT
+);
+
+INSERT INTO __sweep_metrics (metric, value)
+VALUES ('candidates', (SELECT count(*) FROM __sweep_candidates));
+
+INSERT INTO __sweep_metrics (metric, value)
+VALUES (
+  'missing_function_runs',
+  (
+    SELECT count(*)
+    FROM __sweep_candidates c
+    LEFT JOIN function_runs fr ON c.run_id = fr.run_id
+    WHERE fr.run_id IS NULL
+  )
+);
+
+INSERT INTO history (
+  id,
+  created_at,
+  run_started_at,
+  function_id,
+  function_version,
+  event_id,
+  batch_id,
+  group_id,
+  run_id,
+  idempotency_key,
+  type,
+  attempt,
+  latency_ms,
+  step_name,
+  step_id,
+  url,
+  cancel_request,
+  sleep,
+  wait_for_event,
+  wait_result,
+  invoke_function,
+  invoke_function_result,
+  result,
+  step_type
+)
+SELECT
+  randomblob(16),
+  CURRENT_TIMESTAMP,
+  fr.run_started_at,
+  fr.function_id,
+  fr.function_version,
+  fr.event_id,
+  fr.batch_id,
+  NULL,
+  fr.run_id,
+  fr.function_id || ':sweep-stale-runs:' || lower(hex(fr.run_id)),
+  'FunctionCancelled',
+  0,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL
+FROM __sweep_candidates c
+JOIN function_runs fr ON c.run_id = fr.run_id
+LEFT JOIN history hterm
+  ON hterm.run_id = c.run_id
+ AND hterm.type IN ('FunctionCompleted', 'FunctionFailed', 'FunctionCancelled')
+WHERE hterm.run_id IS NULL;
+
+INSERT INTO __sweep_metrics (metric, value)
+VALUES ('terminal_history_inserted', changes());
+
+INSERT INTO function_finishes (run_id, status, output, completed_step_count, created_at)
+SELECT c.run_id, 'Cancelled', '{}', 1, CURRENT_TIMESTAMP
+FROM __sweep_candidates c
+LEFT JOIN function_finishes ff ON c.run_id = ff.run_id
+WHERE ff.run_id IS NULL;
+
+INSERT INTO __sweep_metrics (metric, value)
+VALUES ('function_finishes_inserted', changes());
+
+UPDATE trace_runs
+SET status = 500,
+    ended_at = (strftime('%s', 'now') * 1000)
+WHERE run_id IN (SELECT run_id FROM __sweep_candidates);
+
+INSERT INTO __sweep_metrics (metric, value)
+VALUES ('trace_runs_terminalized', changes());
+
+SELECT metric, value FROM __sweep_metrics ORDER BY metric ASC;
+
+DROP TABLE __sweep_candidates;
+DROP TABLE __sweep_metrics;
+COMMIT;`
+
+      const applyResult = runKubectlSqlite(runtimeTarget, applySql)
+
+      if (!applyResult.ok) {
+        yield* Console.log(respondError(
+          commandName,
+          applyResult.stderr || "Failed applying stale-run sweep transaction",
+          "SWEEP_APPLY_FAILED",
+          "Use the backup artifact to restore if needed, then inspect sqlite transaction errors",
+          [
+            { command: "joelclaw runs --status RUNNING --hours 24 --count 20", description: "Check current run state after failed apply" },
+            { command: "joelclaw inngest status", description: "Confirm runtime health" },
+          ],
+        ))
+        return
+      }
+
+      const applyMetrics = Object.fromEntries(
+        applyResult.rows
+          .map((row) => [String(row.metric ?? "").trim(), asNumber(row.value, 0)] as const)
+          .filter(([metric]) => metric.length > 0),
+      )
+
+      const postSummaryResult = runKubectlSqlite(runtimeTarget, summarySql)
+      const remainingCandidates = postSummaryResult.ok
+        ? asNumber(postSummaryResult.rows[0]?.total, -1)
+        : -1
+
+      const ok = remainingCandidates === 0
+
+      yield* Console.log(respond(commandName, {
+        mode: "apply",
+        scope: scopePayload,
+        candidatesBefore: candidatePayload,
+        backup: {
+          path: backupPath,
+          timestamp: sweepStamp,
+          verified: true,
+        },
+        apply: {
+          applied: true,
+          metrics: applyMetrics,
+          remainingCandidates,
+        },
+      }, [
+        { command: "joelclaw runs --status RUNNING --hours 24 --count 20", description: "Verify RUNNING list after sweep" },
+        { command: "joelclaw logs server --grep 'Unable to reach SDK URL' --lines 120", description: "Check for ongoing SDK reachability errors" },
+        { command: "joelclaw inngest status", description: "Confirm worker/server steady state" },
+      ], ok))
     })
 )
 
@@ -2976,6 +3734,7 @@ export const inngestCmd = Command.make("inngest", {}, () =>
       register: "joelclaw inngest register [--wait-ms 1200]", 
       "restart-worker": "joelclaw inngest restart-worker [--register] [--wait-ms 1500] [--force]",
       "sync-worker": "joelclaw inngest sync-worker [--restart] [--wait-ms 1500] [--force] (single-source; no file copy)",
+      "sweep-stale-runs": "joelclaw inngest sweep-stale-runs [--apply] [--older-than-minutes 30] [--functions 'check/o11y-triage,check/system-health']",
       reconcile: "joelclaw inngest reconcile [--deep]",
       "memory-e2e": "joelclaw inngest memory-e2e [--wait-ms 90000] [--poll-ms 1500]",
       "memory-weekly": "joelclaw inngest memory-weekly [--wait-ms 30000] [--poll-ms 1000]",
@@ -2992,6 +3751,7 @@ export const inngestCmd = Command.make("inngest", {}, () =>
     { command: "joelclaw inngest register", description: "Register functions from worker" },
     { command: "joelclaw inngest restart-worker --register", description: "Restart worker and register functions" },
     { command: "joelclaw inngest sync-worker --restart", description: "Compatibility alias: restart then register worker (no file sync)" },
+    { command: "joelclaw inngest sweep-stale-runs", description: "Preview stale RUNNING ghost candidates (backup-first apply)" },
     { command: "joelclaw inngest reconcile", description: "Restart worker + register functions" },
     { command: "joelclaw inngest memory-e2e", description: "Run memory observe→Typesense→recall E2E check" },
     { command: "joelclaw inngest memory-weekly", description: "Manually run weekly memory maintenance summary and verify OTEL" },
@@ -3008,6 +3768,7 @@ export const inngestCmd = Command.make("inngest", {}, () =>
     inngestRegisterCmd,
     inngestRestartWorkerCmd,
     inngestSyncWorkerCmd,
+    inngestSweepStaleRunsCmd,
     inngestReconcileCmd,
     inngestMemoryE2ECmd,
     inngestMemoryWeeklyCmd,
@@ -3016,3 +3777,11 @@ export const inngestCmd = Command.make("inngest", {}, () =>
     inngestMemoryHealthCmd,
   ])
 )
+
+export const __inngestTestUtils = {
+  parseCsvList,
+  buildSweepStalePredicate,
+  parseSqliteJsonRows,
+  runIdHexToUlid,
+  mapSweepCandidates,
+}

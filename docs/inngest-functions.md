@@ -65,6 +65,8 @@ Operational contract:
    - run detail should resolve terminal status,
    - `joelclaw runs --status RUNNING` should reflect only active runs.
 
+Preferred operator path: `joelclaw inngest sweep-stale-runs` (preview by default; `--apply` performs backup + transactional terminalization).
+
 Do **not** mutate `main.db` without a point-in-time backup.
 
 ### Task triage classification contract

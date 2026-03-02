@@ -374,20 +374,23 @@ joelclaw otel search "error" --hours 1     # 5. OTEL telemetry
 
 When `joelclaw runs --status RUNNING` shows old health jobs that never clear:
 
-1. **Validate the symptom class**
+1. **Use the operator command first**
+   - Preview: `joelclaw inngest sweep-stale-runs`
+   - Apply (backup + transaction): `joelclaw inngest sweep-stale-runs --apply`
+2. **Validate the symptom class**
    - `joelclaw run <run-id>`
    - Look for trace/finalization errors containing `Unable to reach SDK URL` or `EOF writing request to SDK`.
-2. **Treat list vs detail disagreements as a known mask issue**
+3. **Treat list vs detail disagreements as a known mask issue**
    - `runs` list can show stale metadata.
    - `run` detail + trace/history is the source of truth.
-3. **Use raw runtime DB only with backup-first discipline**
+4. **Raw runtime DB edits are last resort only**
    - Inngest state is in k8s StatefulSet PVC: `inngest-0:/data/main.db`.
    - Backup first: `kubectl -n joelclaw exec inngest-0 -- sqlite3 /data/main.db '.backup /data/main.db.pre-sweep-<ts>.sqlite'`.
-4. **Terminalize stale runs with full contract, not partial edits**
+5. **Terminalize stale runs with full contract, not partial edits**
    - Insert missing `history.type='FunctionCancelled'` for stale runs.
    - Ensure `function_finishes` row exists.
    - Then set `trace_runs.status=500` (cancelled) for stale candidates.
-5. **Verify after mutation**
+6. **Verify after mutation**
    - `joelclaw run <run-id>` should resolve terminal state.
    - `joelclaw runs --status RUNNING` should only show genuinely active runs.
 

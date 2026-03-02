@@ -282,6 +282,36 @@ Semantics:
 - `--repair` copies canonical plist into `~/Library/LaunchAgents`, performs `launchctl bootout`, then `bootstrap` with retry for transient `Bootstrap failed: 5` launchd races.
 - Use before `joelclaw inngest restart-worker` when host runtime/source drift is suspected.
 
+## Inngest stale-run sweep (ADR-0194)
+
+```bash
+joelclaw inngest sweep-stale-runs
+joelclaw inngest sweep-stale-runs --apply
+```
+
+Semantics:
+
+- preview-first by default (`--apply` required for mutation).
+- scope defaults to stale health checks older than 30 minutes:
+  - `check/o11y-triage`
+  - `check/system-health`
+- runtime target defaults:
+  - namespace `joelclaw`
+  - pod `inngest-0`
+  - sqlite path `/data/main.db`
+- apply mode safety gates:
+  - refuses if age threshold is too young (`<5m`)
+  - refuses when candidate count exceeds `--max-apply-candidates`
+  - refuses when `function_runs` rows are missing (cannot insert terminal history safely)
+  - always creates and verifies point-in-time backup before transaction:
+    - `/data/main.db.pre-sweep-<UTC-stamp>.sqlite`
+- terminalization contract (single transaction):
+  1. insert missing `history.type = FunctionCancelled`
+  2. insert missing `function_finishes`
+  3. set `trace_runs.status = 500` + terminal `ended_at`
+
+This command exists for cases where Inngest API cancellation returns `not found` for stale RUNNING ghosts after SDK reachability failures.
+
 ## Build and verify
 
 ```bash
