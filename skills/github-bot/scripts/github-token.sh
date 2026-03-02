@@ -11,8 +11,7 @@ set -euo pipefail
 SECRETS=/Users/joel/.local/bin/secrets
 
 lease_value() {
-  "$SECRETS" lease "$1" --ttl 2m --output json 2>/dev/null \
-    | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['value'])"
+  "$SECRETS" lease "$1" --ttl 2m 2>/dev/null
 }
 
 APP_ID=$(lease_value github_app_id)
