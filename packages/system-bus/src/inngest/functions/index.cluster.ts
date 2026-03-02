@@ -1,4 +1,3 @@
-import { adrDailyPitch } from "./adr-daily-pitch";
 import { approvalRequest, approvalResolve } from "./approval";
 import {
   frontAssigneeChanged,
@@ -35,7 +34,6 @@ export const clusterFunctionDefinitions = [
   githubWorkflowRunCompleted,
   githubPackagePublished,
   webhookSubscriptionDispatchGithubWorkflowRunCompleted,
-  adrDailyPitch,
 ];
 
 export const clusterFunctionIds = clusterFunctionDefinitions.map(getFunctionId);

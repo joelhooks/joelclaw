@@ -1,0 +1,1 @@
+- [ ] Make TOOLS.md dynamic per agent type (same pattern as ROLE.md via identity-inject)
