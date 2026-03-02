@@ -46,6 +46,31 @@ function mergeChanges(primary: string, secondary: string): string {
   return a.length >= b.length ? `${a}\n${b}` : `${b}\n${a}`;
 }
 
+function truncateErrorMessage(error: unknown, max = 500): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const trimmed = raw.trim();
+  if (!trimmed) return "unknown error";
+  return trimmed.length > max ? `${trimmed.slice(0, max - 3)}...` : trimmed;
+}
+
+function isTodoistAuthFailure(message: string): boolean {
+  const text = message.toLowerCase();
+  return (
+    text.includes("http 403")
+    || text.includes("forbidden")
+    || text.includes("unauthorized")
+    || text.includes("todoist_api_token env var is required")
+  );
+}
+
+type ReviewTaskOutcome = {
+  attempted: boolean;
+  created: boolean;
+  taskId: string | null;
+  error: string | null;
+  authFailure: boolean;
+};
+
 function toProposalRecord(input: Partial<Proposal> & { id: string }): Proposal {
   return {
     id: input.id,
@@ -224,37 +249,120 @@ export const proposalTriage = inngest.createFunction(
 
       console.log(`[memory/proposal-triage] ${proposalId} -> ${triaged.action}: ${triaged.reason}`);
 
+      let reviewTaskOutcome: ReviewTaskOutcome | null = null;
+
       // Only create Todoist task for proposals that need human review.
       // Auto-promoted and auto-rejected proposals don't need tasks.
       // This prevents 50+ junk tasks per compaction from instruction-text artifacts.
       if (triaged.action === "needs-review") {
-        await step.run("create-review-task", async () => {
+        reviewTaskOutcome = await step.run("create-review-task", async () => {
           const redis = getRedis();
           const proposal = await readProposal(redis, resolvedProposalId);
-          if (!proposal) return;
+          if (!proposal) {
+            return {
+              attempted: false,
+              created: false,
+              taskId: null,
+              error: "proposal missing before review task creation",
+              authFailure: false,
+            } satisfies ReviewTaskOutcome;
+          }
 
           const taskAdapter = new TodoistTaskAdapter();
           const summary = proposal.change.replace(/\s+/gu, " ").trim().slice(0, 90);
           const source = proposal.source?.trim() || "unknown";
           const capturedAt = proposal.timestamp?.trim() || "unknown";
-          await taskAdapter.createTask({
-            content: `Memory: ${proposal.section} (${resolvedProposalId}) — ${summary}`,
-            description: [
-              `Proposal: ${resolvedProposalId}`,
-              `Section: ${proposal.section}`,
-              `Reason: ${triaged.reason}`,
-              `Source: ${source}`,
-              `CapturedAt: ${capturedAt}`,
-              "Decision: Complete = approve. Add @rejected label, then complete = reject.",
+
+          try {
+            const task = await taskAdapter.createTask({
+              content: `Memory: ${proposal.section} (${resolvedProposalId}) — ${summary}`,
+              description: [
+                `Proposal: ${resolvedProposalId}`,
+                `Section: ${proposal.section}`,
+                `Reason: ${triaged.reason}`,
+                `Source: ${source}`,
+                `CapturedAt: ${capturedAt}`,
+                "Decision: Complete = approve. Add @rejected label, then complete = reject.",
+                "",
+                "Change:",
+                proposal.change,
+              ].join("\n"),
+              labels: ["memory-review", "agent"],
+              projectId: "Agent Work",
+              priority: 4,
+              dueString: "today",
+            });
+
+            await redis.hset(
+              hashKey(proposal.id),
+              "reviewTaskStatus",
+              "created",
+              "reviewTaskId",
+              task.id,
+              "reviewTaskError",
               "",
-              "Change:",
-              proposal.change,
-            ].join("\n"),
-            labels: ["memory-review", "agent"],
-            projectId: "Agent Work",
-            priority: 4,
-            dueString: "today",
-          });
+              "reviewTaskLastAttemptAt",
+              new Date().toISOString(),
+            );
+
+            await emitOtelEvent({
+              level: "info",
+              source: "worker",
+              component: "proposal-triage",
+              action: "proposal-triage.review-task.created",
+              success: true,
+              metadata: {
+                eventId,
+                proposalId: proposal.id,
+                taskId: task.id,
+              },
+            });
+
+            return {
+              attempted: true,
+              created: true,
+              taskId: task.id,
+              error: null,
+              authFailure: false,
+            } satisfies ReviewTaskOutcome;
+          } catch (taskError) {
+            const message = truncateErrorMessage(taskError);
+            const authFailure = isTodoistAuthFailure(message);
+
+            await redis.hset(
+              hashKey(proposal.id),
+              "reviewTaskStatus",
+              "failed",
+              "reviewTaskId",
+              "",
+              "reviewTaskError",
+              message,
+              "reviewTaskLastAttemptAt",
+              new Date().toISOString(),
+            );
+
+            await emitOtelEvent({
+              level: "warn",
+              source: "worker",
+              component: "proposal-triage",
+              action: "proposal-triage.review-task.failed",
+              success: false,
+              error: message,
+              metadata: {
+                eventId,
+                proposalId: proposal.id,
+                authFailure,
+              },
+            });
+
+            return {
+              attempted: true,
+              created: false,
+              taskId: null,
+              error: message,
+              authFailure,
+            } satisfies ReviewTaskOutcome;
+          }
         });
       }
 
@@ -274,6 +382,7 @@ export const proposalTriage = inngest.createFunction(
       const result = {
         proposalId: resolvedProposalId,
         ...triaged,
+        reviewTask: reviewTaskOutcome,
       };
 
       await step.run("otel-proposal-triage-completed", async () => {
@@ -290,6 +399,11 @@ export const proposalTriage = inngest.createFunction(
             proposalCount: 1,
             action: triaged.action,
             mergeWith: triagedMergeWith ?? null,
+            reviewTaskAttempted: reviewTaskOutcome?.attempted ?? false,
+            reviewTaskCreated: reviewTaskOutcome?.created ?? false,
+            reviewTaskAuthFailure: reviewTaskOutcome?.authFailure ?? false,
+            reviewTaskError: reviewTaskOutcome?.error ?? null,
+            reviewTaskId: reviewTaskOutcome?.taskId ?? null,
           },
         });
       });

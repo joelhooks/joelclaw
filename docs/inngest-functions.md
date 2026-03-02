@@ -80,6 +80,18 @@ Do **not** mutate `main.db` without a point-in-time backup.
   4. sets cooldown only when a gateway notification is actually pushed
   5. emits telemetry with `classificationValid`, `triageItemsCount`, `actionableCount`, and `outputFailureReason`
 
+### Memory proposal triage review-task contract
+
+- function: `memory/proposal-triage`
+- file: `packages/system-bus/src/inngest/functions/memory/proposal-triage.ts`
+- behavior:
+  1. proposal triage result (`auto-reject|auto-merge|needs-review|llm-pending`) is authoritative; Todoist task creation is a downstream side effect
+  2. Todoist create failures (including `HTTP 403 Forbidden` auth issues) **must not fail the function run**
+  3. task-create outcomes are persisted on the proposal hash (`reviewTaskStatus`, `reviewTaskId`, `reviewTaskError`, `reviewTaskLastAttemptAt`)
+  4. emits explicit task-create telemetry:
+     - `proposal-triage.review-task.created`
+     - `proposal-triage.review-task.failed`
+
 ## Backup hardening
 
 ### Typesense backup + snapshot retention
