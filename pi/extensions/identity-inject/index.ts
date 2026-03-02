@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
 const HOME = process.env.HOME ?? "~";
@@ -45,6 +45,14 @@ function resolvePreferredRoleFile(): string {
 
 function resolveIdentityPath(file: string): string {
   return isAbsolute(file) ? file : join(JOELCLAW_DIR, file);
+}
+
+function resolvePathForLog(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 function resolveIdentitySpecs(roleFile: string): IdentityFileSpec[] {
@@ -106,6 +114,7 @@ type LoadedIdentityFilesResult = {
   loadTimeMs: number;
   roleFileRequested: string;
   roleFileApplied: string;
+  rolePathApplied: string;
 };
 
 function loadIdentityFiles(): LoadedIdentityFilesResult {
@@ -117,6 +126,7 @@ function loadIdentityFiles(): LoadedIdentityFilesResult {
 
   const roleFileRequested = resolvePreferredRoleFile();
   let roleFileApplied = roleFileRequested;
+  let rolePathApplied = resolvePathForLog(resolveIdentityPath(roleFileRequested));
 
   for (const spec of resolveIdentitySpecs(roleFileRequested)) {
     const primaryPath = resolveIdentityPath(spec.file);
@@ -144,7 +154,10 @@ function loadIdentityFiles(): LoadedIdentityFilesResult {
     loaded.push({ file: effectiveFile, path: effectivePath, content, size });
     totalChars += size;
     if (truncated) truncatedFiles.push(effectiveFile);
-    if (spec.label === "Role") roleFileApplied = effectiveFile;
+    if (spec.label === "Role") {
+      roleFileApplied = effectiveFile;
+      rolePathApplied = resolvePathForLog(effectivePath);
+    }
   }
 
   return {
@@ -155,6 +168,7 @@ function loadIdentityFiles(): LoadedIdentityFilesResult {
     loadTimeMs: Date.now() - startTime,
     roleFileRequested,
     roleFileApplied,
+    rolePathApplied,
   };
 }
 
@@ -170,10 +184,8 @@ function loadIdentityBlock(loadedFiles: LoadedIdentityFile[]): string {
 
 export default function (pi: ExtensionAPI) {
   let identityBlock = "";
-  let loaded = false;
 
-  function ensureLoaded() {
-    if (loaded) return;
+  function ensureLoaded(options?: { force?: boolean }) {
     const {
       loadedFiles,
       totalChars,
@@ -182,12 +194,18 @@ export default function (pi: ExtensionAPI) {
       loadTimeMs,
       roleFileRequested,
       roleFileApplied,
+      rolePathApplied,
     } = loadIdentityFiles();
-    identityBlock = loadIdentityBlock(loadedFiles);
-    loaded = true;
+
+    const nextIdentityBlock = loadIdentityBlock(loadedFiles);
+    const changed = nextIdentityBlock !== identityBlock;
+    if (!changed && !options?.force) return;
+
+    identityBlock = nextIdentityBlock;
     const count = loadedFiles.length;
+    const mode = changed ? "loaded" : "reloaded";
     console.error(
-      `[identity-inject] Loaded ${count} identity files from ${JOELCLAW_DIR} (role=${roleFileApplied}, requested=${roleFileRequested})`,
+      `[identity-inject] ${mode} ${count} identity files from ${JOELCLAW_DIR} (role=${roleFileApplied}, requested=${roleFileRequested}, rolePath=${rolePathApplied})`,
     );
     void emitOtel("identity-loaded", {
       fileCount: count,
@@ -199,6 +217,7 @@ export default function (pi: ExtensionAPI) {
       identityDir: JOELCLAW_DIR,
       roleFileRequested,
       roleFileApplied,
+      rolePathApplied,
       gatewayRole: process.env.GATEWAY_ROLE ?? null,
       joelclawRole: process.env.JOELCLAW_ROLE ?? null,
       joelclawRoleFile: process.env.JOELCLAW_ROLE_FILE ?? null,
@@ -206,7 +225,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async () => {
-    ensureLoaded();
+    ensureLoaded({ force: true });
   });
 
   pi.on("before_agent_start", async (event) => {

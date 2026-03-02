@@ -67,6 +67,10 @@ Gateway sessions run with `GATEWAY_ROLE=central`. System sessions can set `JOELC
 
 If the selected role file is missing, it falls back to `ROLE.md`.
 
+Identity files are reloaded on each `session_start`, so role changes apply on the next session without requiring a process restart.
+
+Startup logs include `rolePath=...` in the `[identity-inject]` line so role selection is explicit.
+
 ## Telegram reply routing guard
 
 The daemon now captures the active source at `message_start`/delta time and reuses it on `message_end` if `getActiveSource()` is missing.
