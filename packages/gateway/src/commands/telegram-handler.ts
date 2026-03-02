@@ -485,12 +485,92 @@ function registerCallbackHandler(init: CommandHandlerInit): void {
   });
 }
 
+async function sendPitchDecisionEvent(eventName: "adr/pitch.approved" | "adr/pitch.rejected", adrNumber: number): Promise<void> {
+  const eventKey = process.env.INNGEST_EVENT_KEY;
+  if (!eventKey) {
+    console.warn("[gateway:telegram] INNGEST_EVENT_KEY missing; skipping pitch callback event");
+    return;
+  }
+
+  const response = await fetch(`http://localhost:8288/e/${eventKey}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: eventName,
+      data: { adr_number: adrNumber },
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    console.warn("[gateway:telegram] Failed to send pitch callback event", {
+      eventName,
+      status: response.status,
+      body,
+    });
+  }
+}
+
+function registerPitchCallbackHandler(bot: Bot, chatId: string): void {
+  bot.on("callback_query:data", async (ctx, next) => {
+    if (String(ctx.chat?.id ?? "") !== chatId) {
+      await next();
+      return;
+    }
+
+    const data = ctx.callbackQuery.data;
+    if (!data.startsWith("pitch:")) {
+      await next();
+      return;
+    }
+
+    const [, action, rawAdrNumber] = data.split(":");
+    const adrNumber = Number.parseInt(rawAdrNumber ?? "", 10);
+
+    if ((action !== "approve" && action !== "reject") || Number.isNaN(adrNumber)) {
+      await ctx.answerCallbackQuery({ text: "⚠️ Invalid decision" });
+      return;
+    }
+
+    const approved = action === "approve";
+    const callbackText = approved ? "✅ Approved!" : "❌ Rejected";
+    const decisionText = approved ? "✅ Approved" : "❌ Rejected";
+    const eventName = approved ? "adr/pitch.approved" : "adr/pitch.rejected";
+
+    await ctx.answerCallbackQuery({ text: callbackText });
+
+    const callbackMessage = ctx.callbackQuery.message;
+    const originalText = callbackMessage && "text" in callbackMessage
+      ? (callbackMessage.text ?? "")
+      : "";
+    const updatedText = originalText
+      ? `${originalText}\n\n${decisionText}`
+      : decisionText;
+
+    try {
+      await ctx.editMessageText(updatedText, {
+        reply_markup: { inline_keyboard: [] },
+      });
+    } catch (error) {
+      console.warn("[gateway:telegram] Error editing pitch callback message", error);
+    }
+
+    try {
+      await sendPitchDecisionEvent(eventName, adrNumber);
+    } catch (error) {
+      console.warn("[gateway:telegram] Error sending pitch callback event", error);
+    }
+  });
+}
+
+
 export async function initializeTelegramCommandHandler(init: CommandHandlerInit): Promise<void> {
   const skillCommands = await loadSkillCommands();
   const skillsMenuCommand = createSkillsMenuCommand(skillCommands.skills);
 
   registerMcqAdapter(init.bot, init.chatId);
   registerWorktreeCallbackHandler(init.bot, init.chatId);
+  registerPitchCallbackHandler(init.bot, String(init.chatId));
 
   registerCommands([
     ...BUILTIN_COMMANDS,
