@@ -1,4 +1,5 @@
 import { echoFizzle } from "../../memory/echo-fizzle";
+import { adrDailyPitch } from "./adr-daily-pitch";
 import { agentChainRun } from "./agent-chain-run";
 import { agentDispatch } from "./agent-dispatch";
 import {
@@ -112,6 +113,7 @@ function getFunctionId(fn: { opts?: { id?: string } }): string {
 // ADR-0089: Transitional role split.
 // Until cluster-safe ownership is finalized, host worker remains authoritative.
 export const hostFunctionDefinitions = [
+  adrDailyPitch,
   videoDownload,
   transcriptProcess,
   transcriptIndexWeb,
