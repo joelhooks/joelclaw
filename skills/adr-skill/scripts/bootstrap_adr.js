@@ -139,6 +139,20 @@ Conventions:
 * Bad, because writing ADRs takes time — though a good ADR saves more time than it costs
 * Neutral, because ADRs require periodic review to mark outdated decisions as deprecated or superseded
 
+## Implementation Plan
+
+* **Required skills (load before implementation starts)**: \`adr-skill\` (canonical ADR workflow and review checklist)
+* **Affected paths**: \`${adrDir}/\`, \`${adrDir}/README.md\`
+* **Dependencies**: none
+* **Patterns to follow**: keep ADR files self-contained and use repository naming conventions
+* **Patterns to avoid**: do not store ADR decisions in external docs without linking back into version control
+
+### Verification
+
+- [ ] ADR directory exists at \`${adrDir}/\`
+- [ ] ADR index exists and links to the first ADR
+- [ ] First ADR file exists and is readable from the repo
+
 ## Alternatives Considered
 
 * No formal records: Continue making decisions in conversations and code comments. Rejected because context is lost and decisions get relitigated.

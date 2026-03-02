@@ -2,7 +2,7 @@
 name: adr-skill
 displayName: ADR Skill
 description: Create and maintain Architecture Decision Records (ADRs) optimized for agentic coding workflows. Use when you need to propose, write, update, accept/reject, deprecate, or supersede an ADR; bootstrap an adr folder and index; consult existing ADRs before implementing changes; or enforce ADR conventions. This skill uses Socratic questioning to capture intent before drafting, and validates output against an agent-readiness checklist.
-version: 1.1.0
+version: 1.2.0
 author: Joel Hooks
 tags: [adr, architecture, decision-records, documentation, workflows, visual-explainer]
 ---
@@ -20,6 +20,7 @@ This means:
 - Non-goals must be stated to prevent scope creep
 - The ADR must be self-contained — no tribal knowledge assumptions
 - **The ADR must include an implementation plan** — which files to touch, which patterns to follow, which tests to write, and how to verify the decision was implemented correctly
+- **The ADR must include a required-skills preflight list** — which skills must be loaded before implementation starts, and why each one is needed
 - When architecture shape is important, capture visual artifacts (diagrams/review pages) and link them from the ADR
 
 ## When to Write an ADR
@@ -69,9 +70,11 @@ Before asking any questions, gather context from the repo:
 
 4. **Check for ADR references in code.** Look for `ADR-NNNN` references in comments and docs (see "Code ↔ ADR Linking" below). This reveals which existing decisions govern which parts of the codebase.
 
-5. **Note what you found.** Carry this context into Phase 1 — it will sharpen your questions and prevent the ADR from contradicting existing decisions.
+5. **Draft required-skills preflight.** Based on impacted areas, list the skills that must be loaded before implementation starts. Use canonical skill names and include a one-line reason per skill.
 
-6. **Capture a visual baseline when helpful.** If `visual-explainer` is available, run `/project-recap` for unfamiliar systems or `/generate-web-diagram` for current architecture. Use this as pre-decision context, not as a replacement for written reasoning.
+6. **Note what you found.** Carry this context into Phase 1 — it will sharpen your questions and prevent the ADR from contradicting existing decisions.
+
+7. **Capture a visual baseline when helpful.** If `visual-explainer` is available, run `/project-recap` for unfamiliar systems or `/generate-web-diagram` for current architecture. Use this as pre-decision context, not as a replacement for written reasoning.
 
 ### Phase 1: Capture Intent (Socratic)
 
@@ -82,12 +85,13 @@ Interview the human to understand the decision space. Ask questions **one at a t
 1. **What are you deciding?** — Get a short, specific title. Push for a verb phrase ("Choose X", "Adopt Y", "Replace Z with W").
 2. **Why now?** — What broke, what's changing, or what will break if you do nothing? This is the trigger.
 3. **What constraints exist?** — Tech stack, timeline, budget, team size, existing code, compliance. Be concrete. Reference what you found in Phase 0 ("I see you're already using X — does that constrain this?").
-4. **What does success look like?** — Measurable outcomes. Push past "it works" to specifics (latency, throughput, DX, maintenance burden).
-5. **What options have you considered?** — At least two. For each: what's the core tradeoff? If they only have one option, help them articulate why alternatives were rejected.
-6. **What's your current lean?** — Capture gut intuition early. Often reveals unstated priorities.
-7. **Who needs to know or approve?** — Decision-makers, consulted experts, informed stakeholders.
-8. **What would an agent need to implement this?** — Which files/directories are affected? What existing patterns should it follow? What should it avoid? What tests would prove it's working? This directly feeds the Implementation Plan.
-9. **Would visual artifacts reduce ambiguity?** — If yes, decide which outputs are required (`/generate-web-diagram`, `/plan-review`, `/diff-review`) and where links should live.
+4. **Which skills are required before implementation starts?** — List canonical skill names and why each is needed. If coverage is unclear, call out the gap and queue `find-skills`.
+5. **What does success look like?** — Measurable outcomes. Push past "it works" to specifics (latency, throughput, DX, maintenance burden).
+6. **What options have you considered?** — At least two. For each: what's the core tradeoff? If they only have one option, help them articulate why alternatives were rejected.
+7. **What's your current lean?** — Capture gut intuition early. Often reveals unstated priorities.
+8. **Who needs to know or approve?** — Decision-makers, consulted experts, informed stakeholders.
+9. **What would an agent need to implement this?** — Which files/directories are affected? What existing patterns should it follow? What should it avoid? What tests would prove it's working? This directly feeds the Implementation Plan.
+10. **Would visual artifacts reduce ambiguity?** — If yes, decide which outputs are required (`/generate-web-diagram`, `/plan-review`, `/diff-review`) and where links should live.
 
 **Adaptive follow-ups**: Based on answers, probe deeper where the decision is fuzzy. Common follow-ups:
 - "What's the worst-case outcome if this decision is wrong?"
@@ -105,6 +109,7 @@ Interview the human to understand the decision space. Ask questions **one at a t
 > - **Title**: {title}
 > - **Trigger**: {why now}
 > - **Constraints**: {list}
+> - **Required skills (preflight)**: {skill names + why needed}
 > - **Options**: {option 1} vs {option 2} [vs ...]
 > - **Lean**: {which option and why}
 > - **Non-goals**: {what's explicitly out of scope}
@@ -134,7 +139,7 @@ Do NOT proceed to Phase 2 until the human confirms the summary.
 
 4. **Fill every section from the confirmed intent summary.** Do not leave placeholder text. Every section should contain real content or be removed (optional sections only).
 
-5. **Write the Implementation Plan.** This is the most important section for agent-first ADRs. It tells the next agent exactly what to do. See the template for structure.
+5. **Write the Implementation Plan (including required skills preflight).** This is the most important section for agent-first ADRs. It tells the next agent exactly what to do and which skills to load before starting. See the template for structure.
 
 6. **Write Verification criteria as checkboxes.** These must be specific enough that an agent can programmatically or manually check each one.
 
@@ -208,6 +213,7 @@ The Implementation Plan section names specific files, directories, and patterns:
 
 ```markdown
 ## Implementation Plan
+- **Required skills (load before implementation starts)**: `inngest-steps` (durable step patterns), `system-bus` (repo conventions)
 - **Affected paths**: `src/db/`, `src/config/database.ts`, `tests/integration/`
 - **Pattern**: all database queries go through `src/db/client.ts`
 ```

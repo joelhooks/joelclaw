@@ -22,6 +22,7 @@ Use this checklist in Phase 3 to validate an ADR before finalizing. The goal: **
 - [ ] No consequence is a disguised restatement of the decision
 
 ### Implementation Plan
+- [ ] Required skills preflight list exists with canonical skill names and one-line purpose per skill
 - [ ] Affected files/directories are named explicitly (not "the database code" but "src/db/client.ts")
 - [ ] Dependencies to add/remove are specified with version constraints
 - [ ] Patterns to follow reference existing code (not abstract descriptions)

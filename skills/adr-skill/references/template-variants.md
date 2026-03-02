@@ -33,7 +33,7 @@ This template aligns with [MADR 4.0](https://adr.github.io/madr/) and extends it
 ## Both Templates Share
 
 - **YAML front matter** for metadata (status, date, decision-makers, consulted, informed)
-- **Implementation Plan** — affected paths, dependencies, patterns to follow/avoid, configuration, migration steps. This is what makes the ADR an executable spec for agents.
+- **Implementation Plan** — required-skills preflight, affected paths, dependencies, patterns to follow/avoid, configuration, migration steps. This is what makes the ADR an executable spec for agents.
 - **Verification as checkboxes** — testable criteria an agent can validate after implementation
 - **Optional Visual Artifacts section** — links to `/generate-web-diagram`, `/plan-review`, `/diff-review` outputs when architecture impact needs visual review
 - **Agent-first framing**: placeholder text prompts you to be specific, measurable, and self-contained

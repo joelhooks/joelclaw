@@ -22,6 +22,7 @@ decision-makers: "{list everyone who owns the decision}"
 
 ## Implementation Plan
 
+* **Required skills (load before implementation starts)**: {canonical skill names + one-line reason each}
 * **Affected paths**: {files and directories that change}
 * **Dependencies**: {packages to add/remove/update}
 * **Patterns to follow**: {existing code patterns to match}

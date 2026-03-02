@@ -33,6 +33,7 @@ For agent-first ADRs, also ensure:
 - Constraints are explicit and measurable
 - Non-goals are stated
 - Follow-up tasks are identified
+- Implementation Plan includes a required-skills preflight list (canonical names + why each skill is needed before work starts)
 
 ## Status Values
 

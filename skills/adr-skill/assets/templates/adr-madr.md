@@ -41,6 +41,7 @@ Chosen option: "{title of option 1}", because {justification — reference drive
 
 {This section tells an agent exactly what to do to implement this decision. Be specific — an agent should be able to start coding from this without asking follow-up questions.}
 
+* **Required skills (load before implementation starts)**: {canonical skill names + one-line reason each}
 * **Affected paths**: {list files and directories that need to change, e.g., `src/db/`, `src/config/database.ts`, `tests/integration/`}
 * **Dependencies**: {packages to add/remove/update, e.g., "add `better-sqlite3@11.x`, remove `pg-mem`"}
 * **Patterns to follow**: {reference existing code patterns, e.g., "follow the repository pattern in `src/db/repositories/`"}

@@ -33,6 +33,7 @@ Non-goals: we are NOT migrating production to SQLite or building a full ORM abst
 
 ## Implementation Plan
 
+* **Required skills (load before implementation starts)**: `adr-skill` (decision structure + review gate), `next-best-practices` (app-level implementation hygiene)
 * **Affected paths**: `src/db/client.ts` (new abstraction layer), `src/db/sqlite-client.ts` (new), `src/db/pg-client.ts` (refactored from current inline usage), `tests/setup.ts`, `package.json`
 * **Dependencies**: add `better-sqlite3@11.x` and `@types/better-sqlite3@7.x` as devDependencies; no production dependency changes
 * **Patterns to follow**: existing repository pattern in `src/db/repositories/` — all queries go through repository methods, never raw SQL in business logic
@@ -111,6 +112,7 @@ Chosen option: "SQLite via better-sqlite3", because it eliminates the CI bottlen
 
 ## Implementation Plan
 
+* **Required skills (load before implementation starts)**: `adr-skill` (decision conformance), `next-best-practices` (implementation constraints), `nextjs-testing` (verification criteria design)
 * **Affected paths**:
   - `src/db/client.ts` — new: unified database interface (DatabaseClient type + factory function)
   - `src/db/sqlite-client.ts` — new: SQLite implementation of DatabaseClient
