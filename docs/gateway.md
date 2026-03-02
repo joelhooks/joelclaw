@@ -29,6 +29,18 @@ The gateway role prompt (`roles/gateway.md`) requires proactive steering check-i
 
 Keep updates concise for mobile Telegram reading.
 
+## Availability-first posture (ADR-0189 related)
+
+Gateway operation is orchestration-first, not execution-first:
+
+- stay highly available and interruptible
+- avoid heads-down implementation/research in the gateway session
+- delegate heavy work immediately, then monitor + report progress
+- keep check-ins frequent while delegated tasks are running
+- include/suggest required skills in delegation prompts for domain work
+
+If the gateway starts doing long solo work, that is a role failure and should be corrected immediately.
+
 ## Role resolution (gateway vs interactive)
 
 Gateway sessions run with `GATEWAY_ROLE=central`. The `identity-inject` extension resolves the role file in this order:
