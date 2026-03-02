@@ -201,6 +201,28 @@ kubectl logs -n joelclaw inngest-0 | grep ERROR
 curl -X PUT http://127.0.0.1:3111/api/inngest
 ```
 
+### Runtime forensics: stale `RUNNING` runs
+
+When Inngest APIs disagree (`runs` list shows `RUNNING`, `run` detail shows terminal or non-cancellable state), treat it as runtime metadata drift, usually after SDK reachability failures.
+
+Operational truths:
+
+- Runtime DB is SQLite inside k8s Inngest pod: `inngest-0:/data/main.db`.
+- `trace_runs.status` alone is not sufficient to infer terminality.
+- Terminal source-of-truth is the presence of terminal history entries:
+  - `FunctionCompleted`
+  - `FunctionFailed`
+  - `FunctionCancelled`
+
+Safe reconciliation sequence:
+
+1. Backup DB: `kubectl -n joelclaw exec inngest-0 -- sqlite3 /data/main.db '.backup /data/main.db.pre-sweep-<ts>.sqlite'`
+2. Find stale candidates via `trace_runs` + `function_finishes` + `history` joins.
+3. Insert missing terminal history (`FunctionCancelled`) for stale candidates.
+4. Ensure `function_finishes` rows exist.
+5. Update `trace_runs.status` to cancelled (`500`) only after 3/4.
+6. Verify with `joelclaw run <id>` and a fresh `joelclaw runs --status RUNNING`.
+
 ## Key Files
 
 | File | Purpose |

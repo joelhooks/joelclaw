@@ -42,6 +42,31 @@ Canonical notes for `packages/system-bus/src/inngest/functions/`.
   2. if degraded and not dry run, run `joelclaw inngest restart-worker --register --wait-ms 1500`
   3. re-probe and emit before/after OTEL evidence
 
+### Stale RUNNING run forensics (SDK outage fallout)
+
+Observed failure mode during worker/runtime blips:
+
+- Inngest server logs show `Unable to reach SDK URL` / `EOF writing request to SDK`.
+- Historical runs can remain listed as `RUNNING` even when there is no live cancellable execution.
+- `cancelRun` can return `not found` for those stale IDs.
+
+Operational contract:
+
+1. **Trust run detail over list**
+   - use `joelclaw run <run-id>` to inspect trace/errors first.
+2. **Use backup-first DB surgery only when needed**
+   - runtime DB: `kubectl -n joelclaw exec inngest-0 -- sqlite3 /data/main.db`
+   - backup first: `.backup /data/main.db.pre-sweep-<ts>.sqlite`
+3. **Terminalize stale runs with full state updates**
+   - ensure terminal history row exists (`FunctionCancelled`),
+   - ensure `function_finishes` row exists,
+   - then set `trace_runs.status=500` for stale candidates.
+4. **Re-verify**
+   - run detail should resolve terminal status,
+   - `joelclaw runs --status RUNNING` should reflect only active runs.
+
+Do **not** mutate `main.db` without a point-in-time backup.
+
 ### Task triage classification contract
 
 - function: `tasks/triage`
@@ -117,3 +142,4 @@ joelclaw inngest status
 - `docs/decisions/0010-system-loop-gateway.md`
 - `~/Vault/docs/decisions/0088-nas-backed-storage-tiering.md`
 - `~/Vault/docs/decisions/0187-nas-degradation-local-temp-queue-fallback-contract.md`
+- `~/Vault/docs/decisions/0194-inngest-runtime-sqlite-forensics-and-stale-run-sweep.md`
