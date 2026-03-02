@@ -21,6 +21,22 @@ function normalizeStatus(status: string | null | undefined): string {
   return (status ?? "UNKNOWN").toUpperCase()
 }
 
+function filterRunsByStatus(rows: any[], status: string | undefined): any[] {
+  if (!status) return rows
+  const wanted = normalizeStatus(status)
+  return rows.filter((row) => normalizeStatus(row?.status) === wanted)
+}
+
+function hasSdkReachabilityError(errors: Record<string, any> | undefined): boolean {
+  if (!errors) return false
+  return Object.values(errors).some((entry) => {
+    const message = String(entry?.error?.message ?? "")
+    const stack = String(entry?.error?.stack ?? "")
+    const payload = `${message} ${stack}`
+    return /Unable to reach SDK URL|EOF writing request to SDK/i.test(payload)
+  })
+}
+
 function buildRunNextActions(result: any, runId: string): NextAction[] {
   const next: NextAction[] = []
 
@@ -113,10 +129,11 @@ export const runsCmd = Command.make(
       const inngestClient = yield* Inngest
       const statusVal = status._tag === "Some" ? status.value : undefined
       const result = yield* inngestClient.runs({ count, status: statusVal, hours })
+      const filteredResult = filterRunsByStatus(result as any[], statusVal)
 
       if (compact) {
-        const firstRunId = (result as any[])[0]?.id ?? "RUN_ID"
-        const rows = (result as any[]).map((r) => {
+        const firstRunId = (filteredResult as any[])[0]?.id ?? "RUN_ID"
+        const rows = (filteredResult as any[]).map((r) => {
           const statusBadge = r.status === "COMPLETED"
             ? "✅"
             : r.status === "FAILED"
@@ -161,7 +178,7 @@ export const runsCmd = Command.make(
         return
       }
 
-      const next: NextAction[] = result
+      const next: NextAction[] = filteredResult
         .filter((r: any) => r.status === "FAILED" || r.status === "RUNNING" || r.status === "QUEUED")
         .slice(0, 3)
         .map((r: any) => ({
@@ -172,7 +189,7 @@ export const runsCmd = Command.make(
           },
         }))
 
-      const firstActiveRun = (result as any[]).find((r) => r.status === "RUNNING" || r.status === "QUEUED")
+      const firstActiveRun = (filteredResult as any[]).find((r) => r.status === "RUNNING" || r.status === "QUEUED")
       if (firstActiveRun) {
         next.unshift({
           command: "joelclaw run <run-id> --cancel",
@@ -205,7 +222,7 @@ export const runsCmd = Command.make(
         },
       )
 
-      yield* Console.log(respond("runs", { count: result.length, runs: result }, next))
+      yield* Console.log(respond("runs", { count: filteredResult.length, runs: filteredResult }, next))
     })
 )
 
@@ -252,6 +269,37 @@ export const runCmd = Command.make(
 
       const cancelAttempt = yield* inngestClient.cancelRun(runId).pipe(Effect.either)
       if (cancelAttempt._tag === "Left") {
+        const sdkReachabilityIssue = hasSdkReachabilityError(initialResult.errors)
+
+        if (sdkReachabilityIssue && initialStatus === "RUNNING") {
+          const next = [
+            {
+              command: "joelclaw inngest status",
+              description: "Confirm SDK endpoint and worker registration are healthy",
+            },
+            {
+              command: "joelclaw run <run-id>",
+              description: "Re-check stale run status",
+              params: {
+                "run-id": { description: "Run ID", value: runId, required: true },
+              },
+            },
+            {
+              command: "joelclaw logs server --grep \"Unable to reach SDK URL\"",
+              description: "Inspect server-side SDK reachability failures",
+            },
+          ]
+
+          yield* Console.log(respondError(
+            "run",
+            `Run ${runId} is stuck in RUNNING after SDK reachability failure; cancellation endpoint cannot find a cancellable execution`,
+            "RUN_STALE_SDK_UNREACHABLE",
+            "Treat as stale run metadata. Validate current worker health; new runs should complete normally.",
+            next,
+          ))
+          return
+        }
+
         yield* Console.log(respondError(
           "run",
           `Failed to request cancellation for ${runId}`,
@@ -331,6 +379,8 @@ export const runCmd = Command.make(
 export const __runsTestUtils = {
   isTerminalRunStatus,
   normalizeStatus,
+  filterRunsByStatus,
+  hasSdkReachabilityError,
   buildRunNextActions,
   cancelledStatuses: [...CANCELLED_STATUSES],
 }

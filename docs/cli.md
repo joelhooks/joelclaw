@@ -81,6 +81,17 @@ Semantics:
 - stores optional mute reasons at Redis key `gateway:health:mute-reasons` (JSON object).
 - muted channels remain in probe telemetry but are excluded from `gateway.channels.degraded` alerts.
 
+## Run listing semantics
+
+```bash
+joelclaw runs [--status RUNNING|FAILED|COMPLETED|QUEUED|CANCELLED]
+```
+
+Semantics:
+
+- applies backend status filtering and a local status guard so mixed-status payloads cannot leak through.
+- `count` in response reflects post-filter rows (what the operator actually sees).
+
 ## Run inspection + cancellation
 
 ```bash
@@ -94,6 +105,7 @@ Semantics:
 - deterministic error envelopes:
   - `RUN_CANCEL_FAILED` when `cancelRun` mutation fails.
   - `RUN_CANCEL_TIMEOUT` when run remains `RUNNING|QUEUED` after the wait window.
+  - `RUN_STALE_SDK_UNREACHABLE` when a run appears `RUNNING` but trace errors show `Unable to reach SDK URL` and cancellation has no live execution to target.
 - terminal runs are never re-cancelled; response includes `cancellation.skipped = "already_terminal"`.
 
 ## Capability adapter config precedence (ADR-0169 phase 0)
