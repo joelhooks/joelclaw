@@ -235,7 +235,20 @@ function buildMcqToolResult(params: McqParams, answers: Record<string, string>):
   };
 }
 
+// Extensions that require TUI/interactive features and crash in headless gateway
+const GATEWAY_EXCLUDED_EXTENSIONS = new Set(["auto-update"]);
+
 function withChannelMcqOverride(base: LoadExtensionsResult): LoadExtensionsResult {
+  // Filter out TUI-dependent extensions that crash in headless mode
+  base.extensions = base.extensions.filter((ext) => {
+    const name = ext.path.split("/").pop()?.replace(/\.(ts|js)$/, "") ?? "";
+    if (GATEWAY_EXCLUDED_EXTENSIONS.has(name)) {
+      console.log(`[gateway] excluding extension: ${name} (TUI-dependent)`);
+      return false;
+    }
+    return true;
+  });
+
   let overridesApplied = 0;
 
   for (const extension of base.extensions) {
@@ -432,6 +445,8 @@ const { session } = await createAgentSession({
   sessionManager,
   resourceLoader,
 });
+// Fire extension lifecycle hooks (session_start) so extensions like memory-enforcer can initialize.
+await session.bindExtensions({});
 void emitGatewayOtel({
   level: "info",
   component: "daemon",
