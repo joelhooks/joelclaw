@@ -1,9 +1,12 @@
-import { normalizeErrorCode } from "../../../cli/src/error-codes";
 import {
   getRunbook,
   type RunbookPhase,
   resolveRunbookPhase,
-} from "../../../cli/src/runbooks";
+} from "@joelclaw/sdk";
+
+function normalizeErrorCode(value: string): string {
+  return value.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+}
 
 export type ResolvedRunbookPlan = {
   code: string;

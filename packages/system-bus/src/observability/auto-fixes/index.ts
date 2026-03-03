@@ -1,5 +1,4 @@
-import type { ErrorCode } from "../../../../cli/src/error-codes";
-import type { RunbookPhase } from "../../../../cli/src/runbooks";
+import type { RunbookErrorCode as ErrorCode, RunbookPhase } from "@joelclaw/sdk";
 import type { OtelEvent } from "../otel-event";
 import { autoCommitAndRetry } from "./auto-commit-retry";
 import { ignore } from "./ignore";
