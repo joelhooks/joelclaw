@@ -85,8 +85,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <ClawmailSourceComment />
       <head>
+        <ClawmailSourceComment />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(personJsonLd()) }}

@@ -1,4 +1,10 @@
 const CLAWMAIL_SOURCE_COMMENT = `<!--
+   _   _
+  / \\_/ \\   CLAWMAIL
+ (  o o  )  claws out, parse smart
+ /   ^   \\
+ \\ \\___/ /
+  \\_____/
 CLAWMAIL AGENT NAVIGATION PROMPT (HTML PAGES ONLY):
 - START: GET https://joelclaw.com/sitemap.md
   Send: Accept: text/markdown, text/plain;q=0.9

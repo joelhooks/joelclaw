@@ -14,7 +14,7 @@ Regular HTML pages include a rendered HTML source comment labeled `CLAWMAIL` fro
 
 - Component: `apps/web/components/clawmail-source-comment.tsx`
 - Mounted in: `apps/web/app/layout.tsx`
-- Placement: first node directly under `<html>`, before `<head>` and `<body>` in `app/layout.tsx`, which is the highest safe placement available from the app layout
+- Placement: first child inside `<head>` in `app/layout.tsx` (before JSON-LD script); this is stable with Next.js head reordering and keeps the marker near the top of View Source
 
 The comment is intended for agents using **View Source** and includes:
 
@@ -24,6 +24,7 @@ The comment is intended for agents using **View Source** and includes:
 4. Plain-text hint endpoint instructions (`https://joelclaw.com/llms.txt`) with `Accept: text/plain`
 5. Explicit `Content-Type` verification requirements for markdown/plain/json responses
 6. A wrong-endpoint guard (`Content-Type: text/html` means fallback HTML / wrong route)
+7. A concise claw-themed ASCII art header at the top of the comment for quick human scanning in raw source
 
 Required content-type checks called out in the marker:
 
