@@ -9,7 +9,6 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
-    "@joelclaw/system-bus": "workspace:^",
     "@langfuse/otel": "^4.6.1",
     "@langfuse/tracing": "^4.6.1",
     "@opentelemetry/sdk-trace-base": "^2.5.1",

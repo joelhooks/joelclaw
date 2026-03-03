@@ -27,9 +27,103 @@ type InferenceResult = {
 }
 
 async function runInference(prompt: string, options: Record<string, unknown>): Promise<InferenceResult> {
-  const inference = await import("@joelclaw/system-bus/src/lib/inference")
-  const result = await inference.infer(prompt, options)
-  return result as InferenceResult
+  const { spawn } = await import("node:child_process")
+
+  const timeoutRaw = options.timeout
+  const timeoutMs = typeof timeoutRaw === "number" && Number.isFinite(timeoutRaw)
+    ? Math.max(1_000, Math.min(timeoutRaw, 10 * 60 * 1_000))
+    : REWRITE_TIMEOUT_MS
+
+  const model = typeof options.model === "string" ? options.model.trim() : ""
+  const systemPrompt = typeof options.system === "string" ? options.system.trim() : ""
+  const shouldPrint = options.print !== false
+
+  const home = process.env.HOME ?? ""
+  const pathSegments = [
+    home ? `${home}/.local/bin` : "",
+    home ? `${home}/.bun/bin` : "",
+    process.env.PATH ?? "",
+  ].filter(Boolean)
+
+  const args = ["-p", "--no-session", "--no-extensions"]
+  if (shouldPrint) args.push("--print")
+  if (model) args.push("--models", model)
+  if (systemPrompt) args.push("--system-prompt", systemPrompt)
+
+  const { stdout, stderr, exitCode } = await new Promise<{
+    stdout: string
+    stderr: string
+    exitCode: number
+  }>((resolve, reject) => {
+    const child = spawn("pi", args, {
+      env: {
+        ...process.env,
+        PATH: pathSegments.join(":"),
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    })
+
+    let stdout = ""
+    let stderr = ""
+    let settled = false
+
+    const timeoutId = setTimeout(() => {
+      if (settled) return
+      child.kill("SIGKILL")
+      settled = true
+      resolve({ stdout, stderr, exitCode: -1 })
+    }, timeoutMs)
+
+    function settleWith(result: { stdout: string; stderr: string; exitCode: number }): void {
+      if (settled) return
+      settled = true
+      clearTimeout(timeoutId)
+      resolve(result)
+    }
+
+    function settleError(error: Error): void {
+      if (settled) return
+      settled = true
+      clearTimeout(timeoutId)
+      reject(error)
+    }
+
+    child.stdout?.on("data", (chunk: unknown) => {
+      stdout += readShellText(chunk)
+    })
+
+    child.stderr?.on("data", (chunk: unknown) => {
+      stderr += readShellText(chunk)
+    })
+
+    child.on("error", settleError)
+
+    child.on("close", (code) => {
+      settleWith({ stdout, stderr, exitCode: typeof code === "number" ? code : -1 })
+    })
+
+    child.stdin?.write(prompt)
+    child.stdin?.end()
+  })
+
+  if (exitCode !== 0) {
+    const errorText = sanitizeRewriteResult(stderr) || `rewrite_exit_${exitCode}`
+    throw new Error(errorText)
+  }
+
+  const parsed = parsePiRewriteJsonOutput(stdout)
+  const rewrittenQuery = parsed?.rewrittenQuery ?? sanitizeRewriteResult(stdout)
+  if (!rewrittenQuery) {
+    throw new Error("inference_rewrite_empty")
+  }
+
+  return {
+    text: rewrittenQuery,
+    data: parsed ? { rewrittenQuery: parsed.rewrittenQuery } : rewrittenQuery,
+    provider: parsed?.provider,
+    model: parsed?.model ?? (model || undefined),
+    usage: parsed?.usage,
+  }
 }
 
 type RewriteStrategy = "haiku" | "openai" | "fallback" | "disabled" | "skipped"
