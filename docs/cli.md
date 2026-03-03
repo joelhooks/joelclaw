@@ -146,7 +146,7 @@ joelclaw notify send "<message>" [--priority low|normal|high|urgent] [--channel 
 
 joelclaw mail {status|register|send|inbox|read|reserve|renew|release|locks|search}
 
-joelclaw otel {list|search|stats}
+joelclaw otel {list|search|stats|emit}
 
 joelclaw recall <query> [--limit N] [--min-score F] [--raw] [--include-hold] [--include-discard] [--budget auto|lean|balanced|deep] [--category <id|alias>]
 
@@ -159,6 +159,7 @@ Semantics:
 - `logs` reads/analyzes runtime logs.
 - `notify` is the canonical operator alert command; `gateway push` remains transport/debug.
 - `mail`, `otel`, `recall`, and `subscribe` keep their existing UX/envelopes while now executing through capability registry adapters (`mcp-agent-mail`, `typesense-otel`, `typesense-recall`, `redis-subscriptions`).
+- `otel emit` accepts stdin JSON payloads (or convenience args/positional action), normalizes defaults (`id`, `timestamp`, `level=info`, `success=true`), and forwards to the worker ingest endpoint (`/observability/emit`).
 - `mail search` auto-falls back to `/mail/api/unified-inbox` filtering when MCP `search_messages` returns transient DB/tool errors, so steering signals remain usable.
 - `mail reserve` now sends explicit lease TTL (`--ttl-seconds`, default `900`) and enforces a minimum of 60s.
 - `mail renew` extends active file reservations without releasing/reacquiring (`--extend-seconds`, default `900`, optional `--paths`).

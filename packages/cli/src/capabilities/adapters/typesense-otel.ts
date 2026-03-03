@@ -1,10 +1,14 @@
+import { randomUUID } from "node:crypto"
 import { Effect, Schema } from "effect"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../../typesense-auth"
 import { type CapabilityPort, capabilityError } from "../contract"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
+const OTEL_EMIT_URL = process.env.JOELCLAW_OTEL_INGEST_URL || "http://localhost:3111/observability/emit"
+const OTEL_EMIT_TOKEN = process.env.OTEL_EMIT_TOKEN?.trim()
 const COLLECTION = "otel_events"
 const QUERY_BY = "action,error,component,source,metadata_json,search_text"
+const OTEL_LEVELS = new Set(["debug", "info", "warn", "error", "fatal"])
 
 type OtelQueryResult = { ok: true; data: unknown } | {
   ok: false
@@ -40,6 +44,19 @@ const StatsArgsSchema = Schema.Struct({
   hours: Schema.Number,
 })
 
+const EmitArgsSchema = Schema.Struct({
+  event: Schema.optional(Schema.Unknown),
+  action: Schema.optional(Schema.String),
+  source: Schema.optional(Schema.String),
+  component: Schema.optional(Schema.String),
+  level: Schema.optional(Schema.String),
+  success: Schema.optional(Schema.Boolean),
+  metadata: Schema.optional(Schema.Unknown),
+  id: Schema.optional(Schema.String),
+  timestamp: Schema.optional(Schema.Number),
+  error: Schema.optional(Schema.String),
+})
+
 const commands = {
   list: {
     summary: "List OTEL events",
@@ -54,6 +71,11 @@ const commands = {
   stats: {
     summary: "Compute OTEL aggregate stats",
     argsSchema: StatsArgsSchema,
+    resultSchema: Schema.Unknown,
+  },
+  emit: {
+    summary: "Emit OTEL event to worker ingest endpoint",
+    argsSchema: EmitArgsSchema,
     resultSchema: Schema.Unknown,
   },
 } as const
@@ -122,6 +144,7 @@ async function queryOtel(options: {
   q: string
   page: number
   limit: number
+  queryBy?: string
   filterBy?: string
   facetBy?: string
 }): Promise<OtelQueryResult> {
@@ -129,7 +152,7 @@ async function queryOtel(options: {
     const apiKey = resolveTypesenseApiKey()
     const searchParams = new URLSearchParams({
       q: options.q,
-      query_by: QUERY_BY,
+      query_by: options.queryBy ?? QUERY_BY,
       per_page: String(options.limit),
       page: String(options.page),
       sort_by: "timestamp:desc",
@@ -161,6 +184,131 @@ async function queryOtel(options: {
       }
     }
     return { ok: false, error: String(error) }
+  }
+}
+
+function safeParseJson(text: string): unknown | undefined {
+  const trimmed = text.trim()
+  if (!trimmed) return undefined
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    return undefined
+  }
+}
+
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  return value as Record<string, unknown>
+}
+
+function asNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+function asFiniteNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined
+  return value
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  if (typeof value !== "boolean") return undefined
+  return value
+}
+
+function normalizeLevel(value: unknown): string | undefined {
+  const text = asNonEmptyString(value)?.toLowerCase()
+  if (!text) return undefined
+  return OTEL_LEVELS.has(text) ? text : undefined
+}
+
+type EmitPayloadBuildResult =
+  | { ok: true; payload: Record<string, unknown> }
+  | { ok: false; error: string; fix: string }
+
+function buildEmitPayload(args: Schema.Schema.Type<typeof EmitArgsSchema>): EmitPayloadBuildResult {
+  const baseEvent = asObject(args.event) ?? {}
+  const action = asNonEmptyString(args.action) ?? asNonEmptyString(baseEvent.action)
+
+  if (!action) {
+    return {
+      ok: false,
+      error: "OTEL emit requires an action (stdin JSON action, positional action, or --action).",
+      fix: "Provide action via stdin payload `{\"action\":\"...\"}`, positional arg, or --action.",
+    }
+  }
+
+  const metadataCandidate = args.metadata !== undefined ? args.metadata : baseEvent.metadata
+  const metadata = metadataCandidate === undefined ? {} : asObject(metadataCandidate)
+  if (!metadata) {
+    return {
+      ok: false,
+      error: "OTEL emit metadata must be a JSON object.",
+      fix: "Pass --metadata as JSON object (for example: --metadata '{\"k\":\"v\"}')",
+    }
+  }
+
+  const level = normalizeLevel(args.level) ?? normalizeLevel(baseEvent.level) ?? "info"
+  const payload: Record<string, unknown> = {
+    ...baseEvent,
+    id: asNonEmptyString(args.id) ?? asNonEmptyString(baseEvent.id) ?? randomUUID(),
+    timestamp: asFiniteNumber(args.timestamp) ?? asFiniteNumber(baseEvent.timestamp) ?? Date.now(),
+    level,
+    source: asNonEmptyString(args.source) ?? asNonEmptyString(baseEvent.source) ?? "cli",
+    component: asNonEmptyString(args.component) ?? asNonEmptyString(baseEvent.component) ?? "otel-cli",
+    action,
+    success: args.success ?? asBoolean(baseEvent.success) ?? true,
+    metadata,
+  }
+
+  const error = asNonEmptyString(args.error) ?? asNonEmptyString(baseEvent.error)
+  if (error) payload.error = error
+
+  return { ok: true, payload }
+}
+
+async function emitOtel(payload: Record<string, unknown>): Promise<OtelQueryResult> {
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" }
+    if (OTEL_EMIT_TOKEN) headers["x-otel-emit-token"] = OTEL_EMIT_TOKEN
+
+    const resp = await fetch(OTEL_EMIT_URL, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    })
+
+    const raw = await resp.text()
+    const parsed = safeParseJson(raw)
+    const responsePayload = parsed ?? (raw || null)
+
+    if (!resp.ok) {
+      return {
+        ok: false,
+        error: `OTEL emit request failed (${resp.status}): ${raw || resp.statusText}`,
+        code: "OTEL_EMIT_FAILED",
+        fix: `Ensure worker endpoint ${OTEL_EMIT_URL} is reachable and accepts the payload.`,
+      }
+    }
+
+    return {
+      ok: true,
+      data: {
+        endpoint: OTEL_EMIT_URL,
+        status: resp.status,
+        response: responsePayload,
+        event: payload,
+      },
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error: `OTEL emit request failed: ${String(error)}`,
+      code: "OTEL_EMIT_FAILED",
+      fix: `Check system-bus worker health and ${OTEL_EMIT_URL} connectivity.`,
+    }
   }
 }
 
@@ -368,6 +516,29 @@ export const typesenseOtelAdapter: CapabilityPort<typeof commands> = {
             },
             facets: (windowData.data as any)?.facet_counts ?? [],
           }
+        }
+        case "emit": {
+          const args = yield* decodeArgs("emit", rawArgs)
+          const payloadResult = buildEmitPayload(args)
+
+          if (!payloadResult.ok) {
+            return yield* Effect.fail(
+              capabilityError("OTEL_INVALID_ARGS", payloadResult.error, payloadResult.fix)
+            )
+          }
+
+          const result = yield* Effect.promise(() => emitOtel(payloadResult.payload))
+          if (!result.ok) {
+            return yield* Effect.fail(
+              failFromResult(
+                result,
+                "OTEL_EMIT_FAILED",
+                `Ensure ${OTEL_EMIT_URL} is reachable and worker is healthy.`
+              )
+            )
+          }
+
+          return result.data
         }
         default:
           return yield* Effect.fail(
