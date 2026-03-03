@@ -830,12 +830,21 @@ async function startTelegramChannel(
   });
 
   // Callback query handler — inline keyboard button presses (ADR-0070)
-  bot.on("callback_query:data", async (ctx) => {
+  // NOTE: pitch: and mcq: prefixed callbacks are handled by dedicated handlers
+  // registered in telegram-handler.ts via configureBot(). Pass them through.
+  bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery.data;
     const chatId = ctx.callbackQuery.message?.chat.id;
     const messageId = ctx.callbackQuery.message?.message_id;
 
     console.log("[gateway:telegram] callback_query", { data, chatId, messageId });
+
+    // Let dedicated handlers process their own prefixes
+    if (data.startsWith("pitch:") || data.startsWith("mcq:")) {
+      console.log(`[gateway:telegram] delegating ${data.split(":")[0]}: callback to dedicated handler`);
+      await next();
+      return;
+    }
     void emitGatewayOtel({
       level: "info",
       component: "telegram-channel",
