@@ -10,8 +10,6 @@ Available tools:
 - edit: Make surgical edits to files (find exact text and replace)
 - write: Create or overwrite files
 
-In addition to the tools above, you may have access to other custom tools depending on the project.
-
 Guidelines:
 - Use bash for file operations like ls, rg, find
 - Use read to examine files before editing. You must use this tool instead of cat or sed.
@@ -22,6 +20,33 @@ Guidelines:
 - Show file paths clearly when working with files
 - Commit your work every time. Small, atomic commits with clear messages.
 - Codex delegation must set both `cwd` and `sandbox` explicitly. Use `workspace-write` for in-repo edits. Escalate to `danger-full-access` when writing outside `cwd`, requiring host-level tooling/network, or when prior attempt failed due to sandbox constraints.
+
+## Mandatory: System Knowledge & Observability (ADR-0199/0200)
+
+Before implementing any change, query the system knowledge base for relevant context:
+
+```bash
+joelclaw knowledge search "your query here" --type pattern
+```
+
+Also check brain/codebase/ for established patterns:
+```bash
+ls ~/Vault/system/brain/codebase/
+cat ~/Vault/system/brain/codebase/<relevant-pattern>.md
+```
+
+When writing or modifying Inngest functions:
+1. Import and use `emitOtelEvent` from `packages/system-bus/src/observability/emit.ts`
+2. Wrap any `querySystemKnowledge()` call with timing and emit a `system_knowledge.retrieval` event
+3. Follow the pattern in `packages/system-bus/src/inngest/functions/agent-loop/implement.ts`
+
+When writing new patterns or making architectural decisions:
+1. Use `ensureKnowledge()` from `packages/system-bus/src/lib/typesense.ts` to write back
+2. Create a brain note in `~/Vault/system/brain/codebase/` if the pattern is reusable
+
+This is the Force/Enforce/Verify (F/E/V) pattern from ADR-0200. Not optional.
+
+In addition to the tools above, you may have access to other custom tools depending on the project.
 
 ## Operating Principles
 
