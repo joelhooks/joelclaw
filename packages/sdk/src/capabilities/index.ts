@@ -1,5 +1,8 @@
 export { __deployAdapterTestUtils, scriptedDeployAdapter } from "./adapters/deploy-scripted"
 export { gatewayRedisNotifyAdapter } from "./adapters/gateway-redis"
+export { __healAdapterTestUtils, runbookHealAdapter } from "./adapters/heal-runbook"
+export { __mailAdapterTestUtils, mcpAgentMailAdapter } from "./adapters/mcp-agent-mail"
+export { __subscribeAdapterTestUtils, redisSubscriptionsAdapter } from "./adapters/redis-subscriptions"
 export { secretsCliAdapter } from "./adapters/secrets-cli"
 export { slogCliAdapter } from "./adapters/slog-cli"
 export { __otelAdapterTestUtils, typesenseOtelAdapter } from "./adapters/typesense-otel"

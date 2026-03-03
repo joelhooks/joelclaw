@@ -1,6 +1,9 @@
 import { Effect } from "effect"
 import { scriptedDeployAdapter } from "./adapters/deploy-scripted"
 import { gatewayRedisNotifyAdapter } from "./adapters/gateway-redis"
+import { runbookHealAdapter } from "./adapters/heal-runbook"
+import { mcpAgentMailAdapter } from "./adapters/mcp-agent-mail"
+import { redisSubscriptionsAdapter } from "./adapters/redis-subscriptions"
 import { secretsCliAdapter } from "./adapters/secrets-cli"
 import { slogCliAdapter } from "./adapters/slog-cli"
 import { typesenseOtelAdapter } from "./adapters/typesense-otel"
@@ -9,11 +12,14 @@ import { type CapabilityContext, type CapabilityError, capabilityError } from ".
 
 const capabilityRegistry = {
   deploy: scriptedDeployAdapter,
+  heal: runbookHealAdapter,
   log: slogCliAdapter,
+  mail: mcpAgentMailAdapter,
   notify: gatewayRedisNotifyAdapter,
   otel: typesenseOtelAdapter,
   recall: typesenseRecallAdapter,
   secrets: secretsCliAdapter,
+  subscribe: redisSubscriptionsAdapter,
 } as const
 
 export type SdkCapability = keyof typeof capabilityRegistry
