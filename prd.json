@@ -1,54 +1,22 @@
 {
-  "title": "ADR-0196: Cancel-on-New-Message — Foundation",
-  "description": "Implement the cancel-on-new-message pattern for gateway message handling. Goal: when a new human message arrives, cancel any running agent processing for that chat and start fresh with the latest message. This also dogfoods the ADR-0199 knowledge pipeline — all stages should query system_knowledge and emit OTEL.",
+  "title": "ADR-0194: Stale Run Sweep CLI",
+  "description": "Add a stale-run sweep command to the joelclaw CLI that identifies and reports stale Inngest runs using kubectl + SQLite forensics.",
   "stories": [
     {
-      "id": "message-type-discriminator",
-      "title": "Add message type discrimination utility",
-      "description": "Create a utility function in packages/system-bus/src/lib/message-types.ts that classifies inbound messages as 'human' or 'system'. Human messages: Telegram messages without the automated headers (🔔, 📋, ❌, ⚠️, VIP). System messages: anything with those headers, heartbeats, batch digests, gateway probes. Export `isHumanMessage(text: string): boolean` and `isSystemMessage(text: string): boolean`. Also export the type `MessageType = 'human' | 'system'` and `classifyMessage(text: string): MessageType`. Include tests in packages/system-bus/src/lib/message-types.test.ts covering: plain text (human), 🔔 header (system), 📋 Batch Digest (system), empty string (system), mixed content with header (system).",
-      "acceptance": "Utility exports classifyMessage, isHumanMessage, isSystemMessage. Tests pass: `bun test packages/system-bus/src/lib/message-types.test.ts`. Compiles clean: `bunx tsc --noEmit`.",
-      "files": [
-        "packages/system-bus/src/lib/message-types.ts",
-        "packages/system-bus/src/lib/message-types.test.ts"
-      ],
-      "priority": 1,
-      "passes": true
+      "id": "stale-run-detect",
+      "title": "Add joelclaw runs stale command to detect stale runs",
+      "description": "Add a 'stale' subcommand to the existing 'runs' command in packages/cli/src/commands/runs.ts. It should: (1) Run `joelclaw runs --status RUNNING --hours 24` to get currently-running runs, (2) For each run, call `joelclaw run <run-id>` to get the trace, (3) If the trace shows a terminal state (completed/failed/cancelled) but the list still shows RUNNING, flag it as stale, (4) Output a HATEOAS JSON envelope with the stale runs list and next_actions suggesting backup + sweep. Use the existing run/runs command patterns in the file. Register the subcommand properly.",
+      "acceptance": "Command `joelclaw runs stale` returns JSON envelope with stale run IDs. Compiles clean: `bunx tsc --noEmit`. Follow existing command patterns.",
+      "files": ["packages/cli/src/commands/runs.ts"],
+      "priority": 1
     },
     {
-      "id": "gateway-message-handler-fn",
-      "title": "Create gateway-handle-message Inngest function with cancelOn",
-      "description": "Create packages/system-bus/src/inngest/functions/gateway-handle-message.ts. This Inngest function triggers on 'gateway/message.processing' events and uses cancelOn + concurrency to implement cancel-on-new-message. Config: concurrency limit 1 keyed on event.data.chatId, cancelOn matching gateway/message.processing on data.chatId. ONLY cancel when the NEW message is a human message (use classifyMessage from message-types.ts in a guard step). The function body should be a placeholder that logs the message and returns { processed: true, messageId: event.data.messageId }. Register in index.host.ts. Event schema: { data: { chatId: string, messageId: string, text: string, channel: string, isHuman: boolean, timestamp: number } }. Add the event type to the client events.",
-      "acceptance": "Function registered in index.host.ts. Event type added to client. cancelOn configured correctly — only cancels on same chatId. Compiles clean: `bunx tsc --noEmit`.",
-      "files": [
-        "packages/system-bus/src/inngest/functions/gateway-handle-message.ts",
-        "packages/system-bus/src/inngest/functions/index.host.ts",
-        "packages/system-bus/src/inngest/client.ts"
-      ],
-      "priority": 2,
-      "passes": true
-    },
-    {
-      "id": "message-batching-window",
-      "title": "Add batching window to gateway-handle-message",
-      "description": "In gateway-handle-message.ts, add a 1.5 second batching window as the first step. Use step.sleep('batch-window', '1.5s') to wait, then check Redis for any newer messages in the same chat that arrived during the window. Redis key: 'gateway:chat:{chatId}:latest_message_id'. If a newer message exists, return early with { status: 'superseded', by: newerId }. Otherwise proceed. This lets rapid-fire messages (corrections, follow-ups) coalesce before processing starts.",
-      "acceptance": "First step is a 1.5s sleep. Second step checks Redis for newer message. Returns early if superseded. Compiles clean.",
-      "files": [
-        "packages/system-bus/src/inngest/functions/gateway-handle-message.ts"
-      ],
-      "priority": 3,
-      "passes": true
-    },
-    {
-      "id": "system-event-bypass",
-      "title": "Ensure system events don't cancel human conversations",
-      "description": "In gateway-handle-message.ts, add a guard step after the batching window. Use classifyMessage(event.data.text) to check if the triggering event is a system message. If it IS a system message, process it directly without the cancelOn behavior taking effect. The key insight: cancelOn should only match when event.data.isHuman is true. Update the cancelOn config to use an if condition or add a step that checks the message type. Also add a test file at packages/system-bus/src/inngest/functions/gateway-handle-message.test.ts that verifies: (1) human messages get the cancelOn behavior, (2) system messages are processed without cancelling anything.",
-      "acceptance": "System events (heartbeats, digests) don't cancel human message processing. Test file exists with meaningful assertions. Compiles clean.",
-      "files": [
-        "packages/system-bus/src/inngest/functions/gateway-handle-message.ts",
-        "packages/system-bus/src/inngest/functions/gateway-handle-message.test.ts"
-      ],
-      "priority": 4,
-      "passes": true
+      "id": "stale-run-backup",
+      "title": "Add joelclaw runs backup command for pre-sweep safety",
+      "description": "Add a 'backup' subcommand to runs command that executes: kubectl -n joelclaw exec inngest-0 -- sqlite3 /data/main.db '.backup /data/main.db.pre-sweep-<timestamp>.sqlite'. Return the backup filename in a HATEOAS envelope. This is the mandatory pre-mutation step from ADR-0194.",
+      "acceptance": "Command `joelclaw runs backup` creates a timestamped SQLite backup inside the inngest-0 pod. Returns backup path in JSON envelope. Compiles clean.",
+      "files": ["packages/cli/src/commands/runs.ts"],
+      "priority": 2
     }
   ]
 }
