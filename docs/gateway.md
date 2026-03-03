@@ -2,6 +2,21 @@
 
 Canonical notes for the always-on gateway daemon (`packages/gateway`) and its automated health checks.
 
+## Extension scope (context-local only)
+
+The `gateway` pi extension is now **context-local**, not global:
+
+- Canonical source: `pi/extensions/gateway/index.ts` (repo-tracked)
+- Active install path: `~/.joelclaw/gateway/.pi/extensions/gateway` (symlink to canonical source)
+- Global path `~/.pi/agent/extensions/gateway` must stay absent
+
+Daemon startup now enforces this invariant:
+
+- missing local extension → startup fails
+- global gateway extension present → startup fails
+
+This prevents non-gateway pi sessions from loading gateway automation hooks.
+
 ## Manual CLI checks
 
 ```bash

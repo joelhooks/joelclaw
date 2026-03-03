@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -91,9 +91,32 @@ const GATEWAY_SESSION_DIR = join(JOELCLAW_DIR, "sessions", "gateway");
 // Project-level settings (cwd/.pi/settings.json) override global (~/.pi/agent/settings.json).
 // This keeps gateway compaction isolated from interactive pi sessions.
 const GATEWAY_CWD = join(JOELCLAW_DIR, "gateway");
+const GATEWAY_LOCAL_EXTENSION_PATH = join(GATEWAY_CWD, ".pi", "extensions", "gateway");
+const GATEWAY_GLOBAL_EXTENSION_PATH = join(AGENT_DIR, "extensions", "gateway");
 const DEFAULT_WS_PORT = 3018;
 const WS_PORT = Number.parseInt(process.env.PI_GATEWAY_WS_PORT ?? String(DEFAULT_WS_PORT), 10) || DEFAULT_WS_PORT;
 const startedAt = Date.now();
+
+function enforceGatewayExtensionScope(): void {
+  const hasLocalExtension = existsSync(GATEWAY_LOCAL_EXTENSION_PATH);
+  const hasGlobalExtension = existsSync(GATEWAY_GLOBAL_EXTENSION_PATH);
+
+  if (!hasLocalExtension) {
+    throw new Error(
+      `[gateway] missing required context-local extension at ${GATEWAY_LOCAL_EXTENSION_PATH}. `
+      + "Install/symlink it before starting the daemon.",
+    );
+  }
+
+  if (hasGlobalExtension) {
+    throw new Error(
+      `[gateway] global extension detected at ${GATEWAY_GLOBAL_EXTENSION_PATH}. `
+      + "Gateway extension must be context-local only.",
+    );
+  }
+}
+
+enforceGatewayExtensionScope();
 
 const startupGatewayConfig = await (async () => {
   try {

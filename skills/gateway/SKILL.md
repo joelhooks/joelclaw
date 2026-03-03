@@ -108,7 +108,15 @@ launchd (com.joel.gateway)
             └─ Heartbeat runner (periodic autonomous checks)
 ```
 
-The gateway reads `~/.pi/agent/` at boot, which includes SOUL.md (§ Agency: "act, don't narrate"), AGENTS.md, MEMORY.md, and today's daily log. This is the layer that has the system philosophy — downstream agents (codex, claude) get clean technical prompts.
+The gateway reads `~/.pi/agent/` at boot for identity/prompt context (SOUL.md, AGENTS.md, MEMORY.md, daily log), but the **gateway extension itself is context-local**:
+
+- Canonical source: `~/Code/joelhooks/joelclaw/pi/extensions/gateway/index.ts`
+- Active path: `~/.joelclaw/gateway/.pi/extensions/gateway` (symlink)
+- Do **not** install/restore `~/.pi/agent/extensions/gateway` globally
+
+Daemon startup enforces this invariant and will fail if local extension is missing or a global gateway extension is detected.
+
+This keeps gateway automation hooks out of normal interactive pi sessions.
 
 ## Key Files
 
