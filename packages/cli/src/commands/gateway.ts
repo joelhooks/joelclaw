@@ -1023,6 +1023,7 @@ const KNOWN_ERR_PATTERNS: Array<{ pattern: RegExp; label: string; severity: "err
   { pattern: /no streaming tokens after/i, label: "model-timeout", severity: "error" },
   { pattern: /session still streaming, retrying/i, label: "streaming-retry", severity: "warn" },
   { pattern: /session appears stuck/i, label: "watchdog-stuck", severity: "error" },
+  { pattern: /stuck recovery timed out/i, label: "watchdog-stuck-timeout", severity: "error" },
   { pattern: /session appears dead/i, label: "watchdog-dead", severity: "error" },
   { pattern: /prompt failed.*consecutiveFailures/i, label: "prompt-failure", severity: "error" },
   { pattern: /OTEL emit request failed/i, label: "otel-timeout", severity: "warn" },
@@ -1322,7 +1323,7 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
     // ── Reconciliation: stale watchdog entries vs current e2e health ──
     const e2eLayer = layers.find((layer) => layer.layer === "e2e-test")
     const errorLogLayer = layers.find((layer) => layer.layer === "error-log")
-    const watchdogLabels = new Set(["watchdog-stuck", "watchdog-dead"])
+    const watchdogLabels = new Set(["watchdog-stuck", "watchdog-stuck-timeout", "watchdog-dead"])
     const errorLogHasOnlyWatchdogFindings =
       errPatterns.length > 0 &&
       errPatterns.every((pattern) => watchdogLabels.has(pattern.label))
