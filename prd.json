@@ -1,147 +1,54 @@
 {
-  "name": "Content Feedback Pipeline",
-  "description": "Migrate articles from filesystem MDX to Convex ContentResource, wire the existing review UI to trigger agent edits, and close the feedback loop with cache invalidation.",
-  "adrs": [
-    "0106",
-    "0154",
-    "0084",
-    "0039"
-  ],
+  "title": "ADR-0198: Adaptive Heartbeat — Check Cheaply, Act Rarely",
+  "description": "Add cheap gate steps to cron-triggered Inngest functions. First step checks if work is needed using Redis reads, file stats, or time comparisons. If gate fails, return early with { status: 'skipped', reason: '...' }. No LLM calls, no heavy I/O on skip.",
   "stories": [
     {
-      "id": "CFP-1",
-      "title": "Seed articles into Convex ContentResources",
-      "priority": 1,
-      "status": "done",
-      "description": "Write an idempotent seed script that reads all .mdx files from apps/web/content/, parses frontmatter with gray-matter, and upserts each as a ContentResource with type 'article' and resourceId 'article:{slug}'. Fields: slug, title, description, content (MDX body without frontmatter), image, tags, type, date, updated, draft.",
-      "acceptance": [
-        "Script at scripts/seed-articles.ts runs with `bun scripts/seed-articles.ts`",
-        "All .mdx files in apps/web/content/ are upserted to Convex contentResources table",
-        "Re-running the script updates existing records (idempotent upsert)",
-        "Discoveries in apps/web/content/discoveries/ are NOT included (articles only)",
-        "Script logs each article seeded with slug"
-      ],
-      "files": [
-        "scripts/seed-articles.ts",
-        "apps/web/convex/contentResources.ts"
-      ]
+      "id": "gate-heartbeat",
+      "title": "Add cheap gate to system-heartbeat (heartbeat.ts)",
+      "description": "Add a first step 'check-if-needed' that reads Redis for last heartbeat timestamp. If <10min since last successful run, return { status: 'skipped', reason: 'last run <10min ago' }. Store last-run timestamp in Redis key `heartbeat:last_run` after successful completion. The heartbeat runs every 15min — most runs should be acts, but this creates the pattern for others to follow.",
+      "acceptance": "Function has gate step as step 0. Skipped runs show in Inngest dashboard with reason. Gate uses Redis read only (no LLM). Compiles clean with `bunx tsc --noEmit`.",
+      "files": ["packages/system-bus/src/inngest/functions/heartbeat.ts"],
+      "priority": 1
     },
     {
-      "id": "CFP-2",
-      "title": "Read articles from Convex instead of filesystem",
-      "priority": 2,
-      "status": "done",
-      "description": "Update apps/web/lib/posts.ts so getPost() and getAllPosts() read from Convex via ConvexHttpClient (already at apps/web/lib/convex-content.ts). Keep the existing PostMeta type but add 'image' field. generateStaticParams in app/[slug]/page.tsx should use ConvexHttpClient to list article slugs. Filesystem fallback: if Convex is unreachable, fall back to filesystem reads so the site still builds.\n\nCRITICAL: This story MUST be implemented together with CFP-3 (cache components). Async Convex reads break Next.js 16 PPR prerender without use cache boundaries. The codex agent must add use cache + cacheLife + cacheTag to [slug]/page.tsx in the same changeset.",
-      "acceptance": [
-        "getPost(slug) queries Convex contentResources for resourceId 'article:{slug}'",
-        "getAllPosts() queries Convex contentResources with type 'article', sorted by date desc, excluding drafts",
-        "generateStaticParams uses ConvexHttpClient to list slugs",
-        "If CONVEX_URL is not set or Convex is unreachable, falls back to filesystem reads",
-        "TypeScript compiles clean: bunx tsc --noEmit",
-        "Site builds successfully: pnpm --filter web build",
-        "Site builds successfully with zero prerender errors: pnpm --filter web build"
-      ],
-      "files": [
-        "apps/web/lib/posts.ts",
-        "apps/web/app/[slug]/page.tsx"
-      ]
+      "id": "gate-batch-review",
+      "title": "Add cheap gate to memory batch-review",
+      "description": "Add gate step to batch-review.ts. Check Redis for pending observation count (the function already queries pending observations). If 0 pending observations, return early with skip. The function runs every 30min — most runs have nothing to review.",
+      "acceptance": "Gate step checks pending count before any LLM work. Skip returns { status: 'skipped', reason: 'no pending observations' }. Compiles clean.",
+      "files": ["packages/system-bus/src/inngest/functions/memory/batch-review.ts"],
+      "priority": 2
     },
     {
-      "id": "CFP-3",
-      "title": "Cache components: static shell with cached article content",
-      "priority": 3,
-      "status": "done",
-      "description": "Refactor app/[slug]/page.tsx to use Next.js 16 cache components (PPR). The article content should be in a cached async component with 'use cache', cacheLife('max'), and cacheTag('article:{slug}'). The page shell (header, footer, nav) stays static. FeedbackStatus (future) will be a dynamic Suspense slot. Ensure cacheComponents is enabled in next.config.ts.",
-      "acceptance": [
-        "next.config.ts has cacheComponents: true",
-        "Article content rendered inside a 'use cache' component with cacheTag",
-        "Page has Suspense boundary ready for future FeedbackStatus dynamic slot",
-        "Site builds with no errors",
-        "Article pages still render correctly at /mineclaw, /build-a-voice-agent-that-answers-the-phone"
-      ],
-      "files": [
-        "apps/web/app/[slug]/page.tsx",
-        "apps/web/next.config.ts"
-      ]
+      "id": "gate-knowledge-watchdog",
+      "title": "Add cheap gate to knowledge-watchdog",
+      "description": "Add gate step. Check Redis for `knowledge:watchdog:last_run` timestamp. If <3h since last run, skip. The cron is every 4h so this mainly protects against manual re-triggers and drift.",
+      "acceptance": "Gate step as step 0. Sets `knowledge:watchdog:last_run` on completion. Compiles clean.",
+      "files": ["packages/system-bus/src/inngest/functions/knowledge-watchdog.ts"],
+      "priority": 3
     },
     {
-      "id": "CFP-4",
-      "title": "Cache invalidation endpoint",
-      "priority": 4,
-      "status": "done",
-      "description": "Create POST /api/revalidate route handler that accepts { tag: string } body, validates a shared secret via x-revalidation-secret header, and calls revalidateTag(tag). Secret comes from REVALIDATION_SECRET env var.",
-      "acceptance": [
-        "POST /api/revalidate with valid secret and { tag: 'article:mineclaw' } returns { revalidated: true }",
-        "Missing or invalid secret returns 401",
-        "Missing tag returns 400",
-        "TypeScript compiles clean"
-      ],
-      "files": [
-        "apps/web/app/api/revalidate/route.ts"
-      ]
+      "id": "gate-check-granola",
+      "title": "Add cheap gate to granola check cron",
+      "description": "Add gate step to check-granola.ts. Read Redis for `granola:last_check` timestamp. If <45min since last check, skip. The cron runs hourly.",
+      "acceptance": "Gate step as step 0. Stores timestamp on completion. Compiles clean.",
+      "files": ["packages/system-bus/src/inngest/functions/check-granola.ts"],
+      "priority": 4
     },
     {
-      "id": "CFP-5",
-      "title": "Inngest function: content/review.submitted handler",
-      "priority": 5,
-      "status": "done",
-      "description": "Create an Inngest function in packages/system-bus that handles 'content/review.submitted' events. Steps: (1) read current article content from Convex, (2) read submitted review comments from Convex, (3) call infer() with content + feedback to produce updated article, (4) validate output is non-empty and similar length to input (±50%), (5) write new contentRevision to Convex, (6) update article contentResource with new content, (7) mark review comments as resolved, (8) POST to /api/revalidate to bust cache tag, (9) notify via gateway. Use concurrency key on resourceId with limit 1.",
-      "acceptance": [
-        "Function registered as 'content-review-apply' in system-bus worker",
-        "Handles content/review.submitted events",
-        "Concurrency limited to 1 per resourceId",
-        "Uses infer() from packages/system-bus/src/lib/inference.ts (pi session, NOT OpenRouter)",
-        "Creates contentRevision record in Convex before overwriting content",
-        "Marks review comments as resolved after successful edit",
-        "Calls /api/revalidate with correct cache tag",
-        "Notifies gateway on completion",
-        "Has onFailure handler that resets comment status to 'submitted' and notifies gateway",
-        "TypeScript compiles: bunx tsc --noEmit -p packages/system-bus/tsconfig.json"
-      ],
-      "files": [
-        "packages/system-bus/src/inngest/functions/content-review.ts",
-        "packages/system-bus/src/inngest/client.ts"
-      ]
+      "id": "gate-reflect",
+      "title": "Add cheap gate to reflect observations",
+      "description": "Add gate step to reflect.ts. Check if there are any new observations since last reflection by reading Redis counter or timestamp. If no new observations accumulated, skip. The reflect function runs daily at 6am AND on accumulated event — the cron trigger should gate, the event trigger should always proceed.",
+      "acceptance": "Gate only applies to cron trigger (check event.name or absence of event data). Event-triggered runs bypass gate. Compiles clean.",
+      "files": ["packages/system-bus/src/inngest/functions/reflect.ts"],
+      "priority": 5
     },
     {
-      "id": "CFP-6",
-      "title": "Add feedbackItems and contentRevisions tables to Convex schema",
-      "priority": 6,
-      "status": "done",
-      "description": "Add feedbackItems table (resourceId, content, status, authorId, createdAt, resolvedAt) and contentRevisions table (resourceId, revisionNumber, content, diff, feedbackIds, agentModel, createdAt) to the Convex schema. Add corresponding mutations: feedback.create, feedback.markProcessing, feedback.markApplied, feedback.markFailed, content.createRevision, content.getRevisions.",
-      "acceptance": [
-        "feedbackItems table in schema.ts with indexes by_resource and by_resource_status",
-        "contentRevisions table in schema.ts with indexes by_resource and by_resource_revision",
-        "Mutations for feedback lifecycle (create, markProcessing, markApplied, markFailed)",
-        "Mutations for revision lifecycle (createRevision, getRevisions)",
-        "npx convex dev deploys without errors"
-      ],
-      "files": [
-        "apps/web/convex/schema.ts",
-        "apps/web/convex/feedback.ts",
-        "apps/web/convex/contentRevisions.ts"
-      ]
-    },
-    {
-      "id": "CFP-7",
-      "title": "Wire feedback form to Convex + show processing status",
-      "priority": 7,
-      "status": "done",
-      "description": "The existing review UI components (components/review/) submit via the existing /api/review/submit route which fires Inngest events. Add a FeedbackStatus client island component that subscribes to Convex feedbackItems for the current article and shows a 'revision in progress' indicator when any feedback has status 'processing'. Use provider island pattern — wrap only FeedbackStatus in ConvexProvider, not the whole page.",
-      "acceptance": [
-        "FeedbackStatus component shows amber indicator when feedback is processing",
-        "Indicator disappears when all feedback is resolved",
-        "ConvexProvider is scoped to FeedbackStatus island only, not the layout",
-        "Submitting a review via existing UI triggers the full pipeline: Convex → Inngest → agent → revision → cache bust",
-        "No regressions on article rendering"
-      ],
-      "files": [
-        "apps/web/components/review/feedback-status.tsx",
-        "apps/web/app/[slug]/page.tsx"
-      ]
+      "id": "gate-check-system-health",
+      "title": "Add cheap gate to system health check",
+      "description": "Add gate step to check-system-health.ts. Read Redis for `health:last_check` timestamp + last result. If <45min since last check AND last result was healthy, skip. Hourly cron.",
+      "acceptance": "Gate step as step 0. Stores timestamp + healthy/unhealthy on completion. Skip only when last check was recent AND healthy. Compiles clean.",
+      "files": ["packages/system-bus/src/inngest/functions/check-system-health.ts"],
+      "priority": 6
     }
-  ],
-  "context": {
-    "codex_timeout_seconds": 900
-  }
+  ]
 }
