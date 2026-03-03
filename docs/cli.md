@@ -8,7 +8,7 @@ Canonical operator interface for joelclaw.
 - Deterministic error codes via `respondError`
 - HATEOAS navigation in every command response
 - Heavy dependencies loaded lazily when possible
-- Capability adapter registry with typed command contracts (`packages/cli/src/capabilities/`)
+- Capability adapter registry with typed command contracts (`packages/cli/src/capabilities/`; otel/recall adapter implementations live in `@joelclaw/sdk`)
 
 ## SDK surface (`@joelclaw/sdk`)
 
