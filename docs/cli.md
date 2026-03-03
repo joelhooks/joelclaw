@@ -81,6 +81,8 @@ Semantics:
 - stores optional mute reasons at Redis key `gateway:health:mute-reasons` (JSON object).
 - muted channels remain in probe telemetry but are excluded from `gateway.channels.degraded` alerts.
 
+Gateway process-layer diagnostics (`joelclaw gateway diagnose`) now inspect exact launchd state for `com.joel.gateway` and report disabled services explicitly. `joelclaw gateway restart` now re-enables the launch agent before bootstrap/kickstart to avoid restart failures when launchd has the service disabled.
+
 ## Run listing semantics
 
 ```bash

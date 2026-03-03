@@ -639,6 +639,9 @@ const gatewayRestart = Command.make("restart", {}, () =>
   Effect.gen(function* () {
     const LAUNCHD_LABEL = "com.joel.gateway"
     const DAEMON_MATCH = "/Users/joel/Code/joelhooks/joelclaw/packages/gateway/src/daemon.ts"
+    const LAUNCHD_UID = process.getuid?.() ?? 0
+    const LAUNCHD_DOMAIN = `gui/${LAUNCHD_UID}`
+    const LAUNCHD_SERVICE = `${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}`
     const PID_FILE = "/tmp/joelclaw/gateway.pid"
     const LOG_FILE = "/tmp/joelclaw/gateway.log"
     const MAX_RESTART_WAIT_SECONDS = 30
@@ -690,7 +693,7 @@ const gatewayRestart = Command.make("restart", {}, () =>
 
     // Stop via launchctl (SIGTERM → graceful shutdown)
     try {
-      execSync(`launchctl bootout gui/$(id -u) system/${LAUNCHD_LABEL} 2>/dev/null || launchctl stop ${LAUNCHD_LABEL}`, {
+      execSync(`launchctl bootout ${LAUNCHD_DOMAIN} system/${LAUNCHD_LABEL} 2>/dev/null || launchctl stop ${LAUNCHD_LABEL}`, {
         timeout: 10_000,
         stdio: "pipe",
       })
@@ -706,15 +709,25 @@ const gatewayRestart = Command.make("restart", {}, () =>
       waited += 500
     }
 
-    // Re-bootstrap + kickstart (KeepAlive ensures it comes back)
+    // Re-enable + bootstrap + kickstart (KeepAlive ensures it comes back)
     try {
-      execSync(`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.joel.gateway.plist 2>/dev/null || true`, {
-        timeout: 5_000, stdio: "pipe",
+      execSync(`launchctl enable ${LAUNCHD_SERVICE}`, {
+        timeout: 5_000,
+        stdio: "pipe",
       })
     } catch {}
+
     try {
-      execSync(`launchctl kickstart -k gui/$(id -u)/${LAUNCHD_LABEL}`, {
-        timeout: 5_000, stdio: "pipe",
+      execSync(`launchctl bootstrap ${LAUNCHD_DOMAIN} ~/Library/LaunchAgents/com.joel.gateway.plist 2>/dev/null || true`, {
+        timeout: 5_000,
+        stdio: "pipe",
+      })
+    } catch {}
+
+    try {
+      execSync(`launchctl kickstart -k ${LAUNCHD_SERVICE}`, {
+        timeout: 5_000,
+        stdio: "pipe",
       })
     } catch {}
 
@@ -909,6 +922,16 @@ const LOG_FILE = "/tmp/joelclaw/gateway.log"
 const ERR_FILE = "/tmp/joelclaw/gateway.err"
 const PID_FILE = "/tmp/joelclaw/gateway.pid"
 const SESSION_DIR = `${process.env.HOME}/.joelclaw/sessions/gateway`
+const GATEWAY_LAUNCHD_LABEL = "com.joel.gateway"
+const GATEWAY_DAEMON_MATCH = "/Users/joel/Code/joelhooks/joelclaw/packages/gateway/src/daemon.ts"
+
+type GatewayLaunchdSnapshot = {
+  disabled: boolean | null
+  registered: boolean
+  pid: string | null
+  state: string | null
+  lastExitCode: string | null
+}
 
 type DiagLayer = {
   layer: string
@@ -965,39 +988,137 @@ function scanForPatterns(lines: string[]): Array<{ label: string; severity: stri
   }))
 }
 
+function parseLaunchctlField(raw: string, field: string): string | null {
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const match = raw.match(new RegExp(`^\\s*${escaped}\\s*=\\s*(.+)$`, "mi"))
+  return match?.[1]?.trim() ?? null
+}
+
+function parseLaunchctlDisabled(raw: string, label: string): boolean | null {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const match = raw.match(new RegExp(`"${escapedLabel}"\\s*=>\\s*(disabled|enabled)`, "i"))
+  if (!match) return null
+  return match[1]?.toLowerCase() === "disabled"
+}
+
+function inspectGatewayLaunchd(): GatewayLaunchdSnapshot {
+  const uid = process.getuid?.() ?? 0
+  const domain = `gui/${uid}`
+  const service = `${domain}/${GATEWAY_LAUNCHD_LABEL}`
+
+  let disabled: boolean | null = null
+  try {
+    const output = execSync(`launchctl print-disabled ${domain} 2>/dev/null`, {
+      encoding: "utf-8",
+      timeout: 3000,
+    })
+    disabled = parseLaunchctlDisabled(output, GATEWAY_LAUNCHD_LABEL)
+  } catch {
+    // ignore
+  }
+
+  try {
+    const output = execSync(`launchctl print ${service} 2>/dev/null`, {
+      encoding: "utf-8",
+      timeout: 3000,
+    })
+    const pidRaw = parseLaunchctlField(output, "pid")
+
+    return {
+      disabled,
+      registered: true,
+      pid: pidRaw && /^\d+$/.test(pidRaw) ? pidRaw : null,
+      state: parseLaunchctlField(output, "state"),
+      lastExitCode: parseLaunchctlField(output, "last exit code"),
+    }
+  } catch {
+    return {
+      disabled,
+      registered: false,
+      pid: null,
+      state: null,
+      lastExitCode: null,
+    }
+  }
+}
+
+function findGatewayDaemonPid(): string | null {
+  try {
+    const pid = execSync(`pgrep -f '${GATEWAY_DAEMON_MATCH}' | head -n 1`, {
+      encoding: "utf-8",
+      timeout: 2000,
+      stdio: "pipe",
+    }).trim()
+    return /^\d+$/.test(pid) ? pid : null
+  } catch {
+    return null
+  }
+}
+
 const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: diagnoseLines }, ({ hours, lines: maxLines }) =>
   Effect.gen(function* () {
     const layers: DiagLayer[] = []
     const ts = new Date().toISOString()
-    const cutoffMs = Date.now() - hours * 60 * 60 * 1000
 
     // ── Layer 0: Process Health ──
-    let daemonPid: string | null = null
-    let launchdOk = false
-    try {
-      const launchctl = execSync("launchctl list 2>/dev/null | grep gateway", {
-        encoding: "utf-8",
-        timeout: 3000,
-      }).trim()
-      launchdOk = launchctl.includes("com.joel.gateway")
-      const match = launchctl.match(/^(\d+)\s/)
-      if (match) daemonPid = match[1]
-    } catch { /* not running */ }
+    const launchd = inspectGatewayLaunchd()
 
     let pidFileValue: string | null = null
     try {
       pidFileValue = readFileSync(PID_FILE, "utf-8").trim()
     } catch { /* missing */ }
 
+    const daemonPid = launchd.pid ?? findGatewayDaemonPid() ?? pidFileValue
+    const daemonPidLabel = daemonPid ?? "unknown"
     const processAlive = daemonPid ? isPidAlive(parseInt(daemonPid, 10)) : false
-    const pidMatch = daemonPid && pidFileValue && daemonPid === pidFileValue
+    const pidFileMatches = daemonPid !== null && pidFileValue !== null && daemonPid === pidFileValue
+    const launchdState = launchd.state ?? (launchd.registered ? "unknown" : "not registered")
+    const disabledState =
+      launchd.disabled === null
+        ? "unknown"
+        : launchd.disabled
+          ? "disabled"
+          : "enabled"
 
-    if (processAlive && pidMatch) {
-      layers.push({ layer: "process", status: "ok", detail: `PID ${daemonPid} alive, launchd registered` })
+    if (launchd.disabled === true && processAlive) {
+      layers.push({
+        layer: "process",
+        status: "degraded",
+        detail: `PID ${daemonPidLabel} alive but launchd service ${GATEWAY_LAUNCHD_LABEL} is disabled`,
+      })
+    } else if (launchd.disabled === true) {
+      layers.push({
+        layer: "process",
+        status: "failed",
+        detail: `Launchd service ${GATEWAY_LAUNCHD_LABEL} is disabled`,
+      })
+    } else if (processAlive && launchd.registered) {
+      if (pidFileValue && !pidFileMatches) {
+        layers.push({
+          layer: "process",
+          status: "degraded",
+          detail: `PID ${daemonPidLabel} alive, launchd state ${launchdState}, PID file stale (file: ${pidFileValue})`,
+        })
+      } else {
+        layers.push({
+          layer: "process",
+          status: "ok",
+          detail: `PID ${daemonPidLabel} alive, launchd state ${launchdState}, PID file ${pidFileValue ? "matches" : "missing"}`,
+        })
+      }
     } else if (processAlive) {
-      layers.push({ layer: "process", status: "degraded", detail: `PID ${daemonPid} alive but PID file ${pidMatch ? "matches" : `stale (file: ${pidFileValue})`}` })
+      layers.push({
+        layer: "process",
+        status: "degraded",
+        detail: `PID ${daemonPidLabel} alive but launchd service is not registered`,
+      })
     } else {
-      layers.push({ layer: "process", status: "failed", detail: `Daemon not running (launchd: ${launchdOk}, pidFile: ${pidFileValue})` })
+      const lastExitDetail = launchd.lastExitCode ? `, lastExit: ${launchd.lastExitCode}` : ""
+      layers.push({
+        layer: "process",
+        status: "failed",
+        detail: `Daemon not running (launchd: ${launchdState}, disabled: ${disabledState}${lastExitDetail}, pidFile: ${pidFileValue})`,
+      })
     }
 
     // ── Layer 1: CLI Status ──

@@ -2,7 +2,7 @@
 name: gateway-diagnose
 displayName: Gateway Diagnose
 description: "Diagnose gateway failures by reading daemon logs, session transcripts, Redis state, and OTEL telemetry. Full Telegram path triage: daemon process → Redis channel → command queue → pi session → model API → Telegram delivery. Use when: 'gateway broken', 'telegram not working', 'why is gateway down', 'gateway not responding', 'check gateway logs', 'what happened to gateway', 'gateway diagnose', 'gateway errors', 'review gateway logs', 'fallback activated', 'gateway stuck', or any request to understand why the gateway failed. Distinct from the gateway skill (operations) — this skill is diagnostic."
-version: 1.0.3
+version: 1.0.4
 author: Joel Hooks
 tags: [joelclaw, gateway, diagnosis, logs, telegram, reliability]
 ---
@@ -23,7 +23,7 @@ joelclaw gateway diagnose [--hours 1] [--lines 100]
 joelclaw gateway review [--hours 1] [--max 20]
 ```
 
-Start with `diagnose` to find the failure layer. Use `review` to understand what the gateway was doing when it broke. Only drop to manual log reading (below) when the CLI output isn't enough.
+Start with `diagnose` to find the failure layer. It now reports disabled launchd state for `com.joel.gateway` explicitly (instead of a generic process failure). Use `review` to understand what the gateway was doing when it broke. Only drop to manual log reading (below) when the CLI output isn't enough.
 
 ## Autonomous Monitor (cross-channel)
 
@@ -61,19 +61,24 @@ Run these steps in order. Stop and report at the first failure.
 ### Layer 0: Process Health
 
 ```bash
-# Is the daemon running?
-launchctl list | grep gateway
-ps aux | grep gateway | grep -v grep
+# Is launchd service disabled?
+launchctl print-disabled gui/$(id -u) | rg "com\\.joel\\.gateway"
 
-# What's the PID and uptime?
+# Exact launchd service state (+ pid, last exit code)
+launchctl print gui/$(id -u)/com.joel.gateway
+
+# Is daemon process running outside launchd?
+ps aux | grep "/packages/gateway/src/daemon.ts" | grep -v grep
+
+# Optional PID file cross-check (missing PID file is non-fatal)
 cat /tmp/joelclaw/gateway.pid
-# Compare PID to launchctl list output — mismatch = stale PID file
 ```
 
 **Failure patterns:**
-- PID mismatch between launchctl and PID file → daemon restarted, PID file stale
-- Exit code non-zero in launchctl → crash loop, check gateway.err
-- Process not running but launchctl shows it → zombie, `launchctl kickstart -k`
+- `"com.joel.gateway" => disabled` → launchd service disabled (restart must re-enable before kickstart)
+- launchctl service missing + no daemon process → gateway down
+- launchd PID differs from PID file → stale PID file (degraded, not fatal)
+- daemon process alive but launchd service missing/disabled → manual run or launchd drift
 
 ### Layer 1: CLI Status
 
