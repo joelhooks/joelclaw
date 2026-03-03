@@ -41,6 +41,8 @@ Gateway process diagnostics now use exact launchd state inspection (`launchctl p
 
 Watchdog hardening: when a turn is stuck for >10 minutes, the daemon now aborts once and starts a recovery grace timer (90s). If no recovery signal (`turn_end` or next prompt dispatch) arrives before the deadline, the daemon self-restarts via launchd. This prevents the "process alive but session wedged" state where queues stop draining indefinitely.
 
+Stuck detection now only runs while the queue is actively waiting for `turn_end` (`idleWaiter` pending). If the idle waiter itself times out (5 minutes safety valve), the daemon emits `daemon.watchdog:watchdog.idle_waiter.timeout`, releases the drain lock, marks the turn as ended, and clears pending stuck-recovery state. This prevents stale prompt markers from causing repeated false `watchdog.session_stuck` restart loops.
+
 Prompt dispatch tracking now starts **after** `session.prompt()` successfully accepts the prompt (instead of before the call). This prevents immediate auth/model rejection failures from being misclassified as "stuck turn" incidents.
 
 Fallback standardization guard: gateway fallback is now `openai-codex/gpt-5.3-codex`. If Redis still has legacy Anthropic fallbacks (`claude-sonnet-4-6` or `claude-sonnet-4-5`), daemon startup remaps to codex and emits `daemon.fallback:fallback.model.remapped`.

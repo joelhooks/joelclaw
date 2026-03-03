@@ -108,7 +108,8 @@ tail -100 /tmp/joelclaw/gateway.err
 | `Authentication failed for "anthropic"` | Prompt rejected before model stream starts | Anthropic OAuth expired/missing (`/login anthropic` required) |
 | `no streaming tokens after Ns` | Timeout — prompt dispatched but no response | Model API latency/outage, or session not ready |
 | `session still streaming, retrying` | Drain loop retry (3 attempts, 2s each) | Turn taking longer than expected |
-| `watchdog: session appears stuck` | No turn_end for 10+ minutes after prompt | Hung tool call or model hang |
+| `watchdog: session appears stuck` | No turn_end for 10+ minutes while idle waiter is pending | Hung tool call or model hang |
+| `watchdog.idle_waiter.timeout` | `turn_end` never arrived within 5-minute idle safety valve | Drain lock released and stale stuck state cleared |
 | `watchdog: stuck recovery timed out` | Abort did not recover session within 90s grace | Triggers self-restart via graceful shutdown |
 | `watchdog: session appears dead` | 3+ consecutive prompt failures | Triggers self-restart via graceful shutdown |
 | `OTEL emit request failed: TimeoutError` | Typesense unreachable | k8s port-forward or Typesense pod issue (secondary) |
@@ -232,8 +233,8 @@ kubectl exec -n joelclaw redis-0 -- redis-cli XRANGE gateway:messages - + COUNT 
 ### 3. Stuck Tool Call
 
 **Symptoms:** Watchdog fires after 10 min, session stuck.
-**Cause:** A tool call (bash, read, etc.) hanging indefinitely.
-**Fix:** Watchdog now auto-aborts once, then self-restarts after a 90s recovery grace if no `turn_end`/next-prompt signal arrives. If it still loops, run `joelclaw gateway diagnose --hours 2 --lines 240` and inspect `watchdog.session_stuck.recovery_timeout` telemetry.
+**Cause:** A tool call (bash, read, etc.) hanging indefinitely while the queue is still waiting for `turn_end`.
+**Fix:** Watchdog auto-aborts once, then self-restarts after a 90s recovery grace if no `turn_end`/next-prompt signal arrives. If `turn_end` never arrives but idle waiter releases at 5 minutes, expect `watchdog.idle_waiter.timeout` instead (no restart). If restarts still loop, run `joelclaw gateway diagnose --hours 2 --lines 240` and inspect `watchdog.session_stuck.recovery_timeout` telemetry.
 
 ### 4. Redis Disconnection
 

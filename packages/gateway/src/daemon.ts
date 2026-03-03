@@ -907,13 +907,49 @@ setIdleWaiter(() => {
   return new Promise<void>((resolve) => {
     _idleResolve = resolve;
     // Safety timeout — if turn_end never fires (e.g. API hang),
-    // don't block the drain loop forever. The watchdog handles
-    // true stuck sessions separately.
+    // don't block the drain loop forever. Clear stuck-recovery state so
+    // watchdog doesn't keep restarting on stale prompt markers.
     const timer = setTimeout(() => {
       if (_idleResolve === resolve) {
+        const now = Date.now();
+        const promptAgeMs = _lastPromptAt > 0 ? now - _lastPromptAt : 0;
+
         console.warn("[gateway] idle waiter timed out — releasing drain lock", {
           timeoutMs: IDLE_TIMEOUT_MS,
+          promptAgeMs,
         });
+        void emitGatewayOtel({
+          level: "warn",
+          component: "daemon.watchdog",
+          action: "watchdog.idle_waiter.timeout",
+          success: false,
+          metadata: {
+            timeoutMs: IDLE_TIMEOUT_MS,
+            promptAgeMs,
+            queueDepth: getQueueDepth(),
+          },
+        });
+
+        _lastTurnEndAt = Math.max(_lastTurnEndAt, now);
+
+        if (stuckRecovery) {
+          const recoveredAfterMs = now - stuckRecovery.startedAt;
+          console.warn("[gateway:watchdog] session recovered after idle timeout release", {
+            recoveredAfterMs,
+          });
+          void emitGatewayOtel({
+            level: "info",
+            component: "daemon.watchdog",
+            action: "watchdog.session_stuck.recovered",
+            success: true,
+            metadata: {
+              recoveredAfterMs,
+              recoverySignal: "idle_waiter_timeout",
+            },
+          });
+          stuckRecovery = undefined;
+        }
+
         _idleResolve = undefined;
         resolve();
       }
@@ -2002,7 +2038,8 @@ const watchdogTimer = setInterval(() => {
   const uptimeMs = now - startedAt;
   const redisOk = isRedisHealthy();
   const telegramOk = channelInfo.telegram; // grammy self-heals via long-polling retry
-  const stuckMs = _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
+  const waitingForTurnEnd = Boolean(_idleResolve);
+  const stuckMs = waitingForTurnEnd && _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
   const isStuck = stuckMs > STUCK_THRESHOLD_MS;
   const failures = getConsecutiveFailures();
   const isDead = failures >= 3;
@@ -2040,6 +2077,7 @@ const watchdogTimer = setInterval(() => {
       queueDepth: getQueueDepth(),
       uptimeMs,
       consecutiveFailures: failures,
+      waitingForTurnEnd,
       ...(isStuck ? { stuckForMs: stuckMs, lastPromptAt: new Date(_lastPromptAt).toISOString() } : {}),
       ...(stuckRecovery
         ? {
@@ -2116,7 +2154,8 @@ const watchdogTimer = setInterval(() => {
 function getHealthStatus(): { healthy: boolean; components: Record<string, string | number | boolean> } {
   const now = Date.now();
   const redisOk = isRedisHealthy();
-  const stuckMs = _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
+  const waitingForTurnEnd = Boolean(_idleResolve);
+  const stuckMs = waitingForTurnEnd && _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
   const failures = getConsecutiveFailures();
   const isDead = failures >= 3;
   const recoveryPending = Boolean(stuckRecovery);
@@ -2138,6 +2177,7 @@ function getHealthStatus(): { healthy: boolean; components: Record<string, strin
             ? `stuck (${Math.round(stuckMs / 1000)}s)`
             : "ok",
       consecutivePromptFailures: failures,
+      waitingForTurnEnd,
       stuckRecoveryPending: recoveryPending,
       stuckRecoveryDeadlineMs: recoveryDeadlineInMs,
     },
