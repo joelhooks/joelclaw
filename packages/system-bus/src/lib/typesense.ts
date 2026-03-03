@@ -236,9 +236,11 @@ export const SYSTEM_KNOWLEDGE_COLLECTION_SCHEMA = {
 } satisfies Record<string, unknown>;
 
 /**
- * Query system_knowledge for relevant context.
+ * Fan-out query across system_knowledge + memory_observations + system_log + discoveries.
  * Returns formatted text suitable for injection into agent prompts.
- * Gracefully returns empty string if collection doesn't exist yet.
+ * Uses multi_search for single round-trip. Gracefully skips collections that don't exist.
+ *
+ * This is the mandatory brain query — called by buildPrompt(), memory-enforcer, pitch mise brief.
  */
 export async function querySystemKnowledge(
   query: string,
@@ -246,40 +248,104 @@ export async function querySystemKnowledge(
     types?: string[];
     limit?: number;
     project?: string;
+    collections?: string[];
   } = {},
 ): Promise<string> {
   const { types, limit = 5, project } = options;
+  const collections = options.collections ?? [
+    SYSTEM_KNOWLEDGE_COLLECTION,
+    "memory_observations",
+    "system_log",
+    "discoveries",
+  ];
 
-  const filterParts: string[] = [];
-  if (types?.length) filterParts.push(`type:[${types.join(",")}]`);
-  if (project) filterParts.push(`project:=${project}`);
+  // Build per-collection search params
+  const searches = collections.map((col) => {
+    const params: Record<string, unknown> = {
+      collection: col,
+      q: query,
+      per_page: Math.max(2, Math.ceil(limit / collections.length)),
+      exclude_fields: "embedding",
+    };
+
+    // Collection-specific query_by fields
+    switch (col) {
+      case SYSTEM_KNOWLEDGE_COLLECTION:
+        params.query_by = "title,content";
+        if (types?.length) params.filter_by = `type:[${types.join(",")}]`;
+        if (project) {
+          const existing = params.filter_by ? `${params.filter_by} && ` : "";
+          params.filter_by = `${existing}project:=${project}`;
+        }
+        break;
+      case "memory_observations":
+        params.query_by = "observation";
+        break;
+      case "system_log":
+        params.query_by = "detail,tool,action";
+        break;
+      case "discoveries":
+        params.query_by = "title,summary";
+        break;
+      default:
+        params.query_by = "title,content";
+    }
+    return params;
+  });
 
   try {
-    const result = await search({
-      collection: SYSTEM_KNOWLEDGE_COLLECTION,
-      q: query,
-      query_by: "title,content",
-      per_page: limit,
-      filter_by: filterParts.length ? filterParts.join(" && ") : undefined,
-      exclude_fields: "embedding",
+    const resp = await typesenseRequest("/multi_search", {
+      method: "POST",
+      body: JSON.stringify({ searches }),
     });
 
-    if (!result.hits?.length) return "";
-
-    return result.hits
-      .map((hit: TypesenseHit) => {
-        const doc = hit.document as Record<string, unknown>;
-        const type = doc.type as string;
-        const title = doc.title as string;
-        const content = doc.content as string;
-        return `### [${type}] ${title}\n${content}`;
-      })
-      .join("\n\n");
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (msg.includes("404") || msg.includes("Not Found") || msg.includes("not found")) {
+    if (!resp.ok) {
+      const text = await resp.text();
+      if (text.includes("404") || text.includes("not found")) return "";
+      console.warn(`[system-knowledge] multi_search failed (${resp.status}): ${text}`);
       return "";
     }
+
+    const data = (await resp.json()) as { results?: Array<{ hits?: TypesenseHit[]; error?: string }> };
+    if (!data.results) return "";
+
+    const allHits: Array<{ source: string; hit: TypesenseHit }> = [];
+    for (let i = 0; i < data.results.length; i++) {
+      const result = data.results[i];
+      if (result?.error || !result?.hits) continue;
+      const source = collections[i] ?? "unknown";
+      for (const hit of result.hits) {
+        allHits.push({ source, hit });
+      }
+    }
+
+    if (allHits.length === 0) return "";
+
+    // Take top N by text_match score across all collections
+    allHits.sort((a, b) => {
+      const scoreA = Number(a.hit.text_match_info?.score ?? a.hit.hybrid_search_info?.rank_fusion_score ?? 0);
+      const scoreB = Number(b.hit.text_match_info?.score ?? b.hit.hybrid_search_info?.rank_fusion_score ?? 0);
+      return scoreB - scoreA;
+    });
+
+    return allHits.slice(0, limit).map(({ source, hit }) => {
+      const doc = hit.document as Record<string, unknown>;
+      switch (source) {
+        case SYSTEM_KNOWLEDGE_COLLECTION:
+          return `### [${doc.type}] ${doc.title}\n${String(doc.content ?? "").slice(0, 1000)}`;
+        case "memory_observations":
+          return `### [memory] ${String(doc.observation ?? "").slice(0, 1000)}`;
+        case "system_log":
+          return `### [slog] ${doc.action}: ${String(doc.detail ?? "").slice(0, 500)}`;
+        case "discoveries":
+          return `### [discovery] ${doc.title}\n${String(doc.summary ?? "").slice(0, 500)}`;
+        default:
+          return `### [${source}] ${doc.title ?? doc.id}\n${String(doc.content ?? doc.observation ?? "").slice(0, 500)}`;
+      }
+    }).join("\n\n");
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("404") || msg.includes("ECONNREFUSED")) return "";
     console.warn(`[system-knowledge] query failed: ${msg}`);
     return "";
   }

@@ -949,6 +949,16 @@ export async function llmEvaluate(opts: {
       ? `${opts.conventions.slice(0, MAX_CONVENTIONS_CHARS)}\n\n[Conventions truncated at ${MAX_CONVENTIONS_CHARS} characters]`
       : opts.conventions;
 
+  // System knowledge injection (ADR-0199)
+  let systemContext = "";
+  try {
+    const { querySystemKnowledge } = await import("../../../lib/typesense");
+    systemContext = await querySystemKnowledge(
+      opts.criteria.join(" "),
+      { types: ["lesson", "pattern", "failed_target"], limit: 3 },
+    );
+  } catch { /* graceful */ }
+
   const prompt = [
     "You are an automated code quality judge for ADR-0013.",
     "Evaluate whether the implementation genuinely satisfies the acceptance criteria, not just whether tests passed.",
@@ -956,6 +966,7 @@ export async function llmEvaluate(opts: {
     "Return ONLY valid JSON with this exact shape:",
     '{"verdict":"pass"|"fail","reasoning":"<concise explanation>"}',
     "",
+    ...(systemContext ? ["System context from prior loops:", systemContext, ""] : []),
     "Evaluation criteria:",
     ...opts.criteria.map((c, i) => `${i + 1}. ${c}`),
     "",

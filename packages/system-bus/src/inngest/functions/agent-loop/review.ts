@@ -81,20 +81,31 @@ async function readTestFilesFromDisk(
   return out;
 }
 
-function buildEvaluationPrompt(params: {
+async function buildEvaluationPrompt(params: {
   story: { id: string; title: string; description: string; acceptance_criteria: string[] };
   diff: string;
   testFiles: Array<{ path: string; content: string }>;
-}): string {
+}): Promise<string> {
+  const { querySystemKnowledge } = await import("../../../lib/typesense");
+  const systemContext = await querySystemKnowledge(
+    `${params.story.title} review patterns failures`,
+    { types: ["lesson", "pattern", "failed_target"], limit: 3 },
+  ).catch(() => "");
+
   const testFileSection = params.testFiles.length > 0
     ? params.testFiles
       .map((file) => `### ${file.path}\n\`\`\`ts\n${file.content}\n\`\`\``)
       .join("\n\n")
     : "(No new test files found in this diff.)";
 
+  const contextSection = systemContext
+    ? ["", "## System Context (from prior loops)", systemContext, ""]
+    : [];
+
   return [
     `## Evaluate Story Implementation: ${params.story.title} (${params.story.id})`,
     "",
+    ...contextSection,
     "You are reviewing implementation quality and test integrity.",
     "Answer only questions q2, q3, q4 using the provided implementation diff and test files.",
     "Return ONLY valid JSON.",
@@ -393,7 +404,7 @@ export const agentLoopReview = inngest.createFunction(
         return { blocked: true as const, reason: guard.reason };
       }
 
-      const prompt = buildEvaluationPrompt({ story, diff, testFiles });
+      const prompt = await buildEvaluationPrompt({ story, diff, testFiles });
       const questions = await evaluateQuestionsWithClaude(prompt, workDir, loopId);
       await renewLease(loopId, storyId, runToken);
       return { blocked: false as const, questions };

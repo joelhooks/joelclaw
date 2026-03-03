@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { MODEL } from "../../../lib/models";
 import { querySystemKnowledge } from "../../../lib/typesense";
+import { emitOtelEvent } from "../../../observability/emit";
 import { inngest } from "../../client";
 import {
   cleanupPid,
@@ -172,10 +173,23 @@ async function buildPrompt(
   const agentsMd = await readFileIfExists(`${project}/AGENTS.md`);
 
   // System knowledge retrieval — involuntary, highest priority (ADR-0199)
+  const skStarted = Date.now();
   const systemKnowledge = await querySystemKnowledge(
     `${story.title} ${story.description}`,
     { types: ["lesson", "pattern", "failed_target", "retro"], limit: 5, project },
   );
+  void emitOtelEvent({
+    action: "system_knowledge.retrieval",
+    component: "agent-loop",
+    source: "implement",
+    success: true,
+    metadata: {
+      story_id: story.id,
+      has_results: systemKnowledge.length > 0,
+      result_length: systemKnowledge.length,
+      latency_ms: Date.now() - skStarted,
+    },
+  });
 
   // Assemble context sections with budget
   const contextSections: { label: string; content: string; priority: number }[] = [];

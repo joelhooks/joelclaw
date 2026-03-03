@@ -397,8 +397,37 @@ export const agentLoopPlan = inngest.createFunction(
       });
     }
 
+    // Check failed targets from system_knowledge (ADR-0199)
+    let failedTargetIds: Set<string> = new Set();
+    try {
+      const { search, SYSTEM_KNOWLEDGE_COLLECTION } = await import("../../../lib/typesense");
+      const result = await search({
+        collection: SYSTEM_KNOWLEDGE_COLLECTION,
+        q: "*",
+        query_by: "title,content",
+        per_page: 100,
+        filter_by: `type:=failed_target && project:=${project}`,
+        include_fields: "id,title,content",
+      });
+      if (result.hits) {
+        for (const hit of result.hits) {
+          const doc = hit.document as Record<string, unknown>;
+          // Extract story ID from content or title
+          const storyMatch = String(doc.content ?? "").match(/Story (\S+)/);
+          if (storyMatch?.[1]) failedTargetIds.add(storyMatch[1]);
+        }
+      }
+    } catch { /* graceful — don't block planning */ }
+
     const remaining = prd.stories
-      .filter((s) => !s.passes && !(s as any).skipped)
+      .filter((s) => {
+        if (s.passes || (s as any).skipped) return false;
+        if (failedTargetIds.has(s.id)) {
+          console.warn(`[agent-loop-plan] skipping failed target: ${s.id} (${s.title})`);
+          return false;
+        }
+        return true;
+      })
       .sort((a, b) => a.priority - b.priority);
 
     // Step 2: Check maxIterations limit

@@ -11,15 +11,25 @@ import {
   writePidFile,
 } from "./utils";
 
-function buildTestWriterPrompt(story: {
+async function buildTestWriterPrompt(story: {
   id: string;
   title: string;
   description: string;
   acceptance_criteria: string[];
-}): string {
+}): Promise<string> {
+  let systemContext = "";
+  try {
+    const { querySystemKnowledge } = await import("../../../lib/typesense");
+    systemContext = await querySystemKnowledge(
+      `${story.title} test patterns failures`,
+      { types: ["lesson", "pattern"], limit: 3 },
+    );
+  } catch { /* graceful */ }
+
   return [
     `## Write Acceptance Tests: ${story.title} (${story.id})`,
     "",
+    ...(systemContext ? ["## System Context (from prior loops)", systemContext, ""] : []),
     "You are writing acceptance tests for this story.",
     "Focus on observable behavior and product intent only.",
     "Do NOT test internal structure, private functions, or implementation details.",
@@ -182,7 +192,7 @@ export const agentLoopTestWriter = inngest.createFunction(
         );
         return { blocked: true as const, reason: guard.reason };
       }
-      const prompt = buildTestWriterPrompt(story);
+      const prompt = await buildTestWriterPrompt(story);
       const result = await spawnReviewer(tool, prompt, workDir, loopId);
       await renewLease(loopId, storyId, runToken);
       return { blocked: false as const, result };
