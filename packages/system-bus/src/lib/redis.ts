@@ -58,3 +58,7 @@ export function getRedisClient(): Redis {
 
   return redisClient;
 }
+
+export function getRedis(): Redis {
+  return getRedisClient();
+}

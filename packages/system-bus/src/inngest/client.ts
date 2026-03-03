@@ -924,6 +924,16 @@ export type Events = {
       remove_keyboard?: boolean;
     };
   };
+  "gateway/message.processing": {
+    data: {
+      chatId: string;
+      messageId: string;
+      text: string;
+      channel: string;
+      isHuman: boolean;
+      timestamp: number;
+    };
+  };
   "adr/review.submitted": {
     data: {
       adrSlug: string;

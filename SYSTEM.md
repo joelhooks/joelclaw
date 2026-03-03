@@ -23,26 +23,28 @@ Guidelines:
 
 ## Mandatory: System Knowledge & Observability (ADR-0199/0200)
 
-Before implementing any change, query the system knowledge base for relevant context:
+Before implementing any change, query the system knowledge base:
 
 ```bash
-joelclaw knowledge search "your query here" --type pattern
+joelclaw knowledge search "relevant query for your task"
 ```
 
-Also check brain/codebase/ for established patterns:
+Or programmatically via `@joelclaw/sdk`:
+```typescript
+import { createJoelclawClient } from "@joelclaw/sdk"
+const jc = createJoelclawClient()
+const context = await jc.recall("relevant query")
+```
+
+Check brain/codebase/ for established patterns:
 ```bash
 ls ~/Vault/system/brain/codebase/
-cat ~/Vault/system/brain/codebase/<relevant-pattern>.md
 ```
 
-When writing or modifying Inngest functions:
-1. Import and use `emitOtelEvent` from `packages/system-bus/src/observability/emit.ts`
-2. Wrap any `querySystemKnowledge()` call with timing and emit a `system_knowledge.retrieval` event
-3. Follow the pattern in `packages/system-bus/src/inngest/functions/agent-loop/implement.ts`
-
-When writing new patterns or making architectural decisions:
-1. Use `ensureKnowledge()` from `packages/system-bus/src/lib/typesense.ts` to write back
-2. Create a brain note in `~/Vault/system/brain/codebase/` if the pattern is reusable
+After completing work, emit an OTEL event:
+```bash
+joelclaw otel emit "task.completed" --source codex --component agent-loop --success
+```
 
 This is the Force/Enforce/Verify (F/E/V) pattern from ADR-0200. Not optional.
 
