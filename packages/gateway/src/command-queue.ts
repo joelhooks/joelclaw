@@ -28,7 +28,12 @@ type PromptSession = {
 
 type PromptCallback = () => void;
 type IdleWaiter = () => Promise<void>;
-type ErrorCallback = (consecutiveFailures: number) => void | Promise<void> | Promise<boolean>;
+export type QueueErrorEvent = {
+  consecutiveFailures: number;
+  source: string;
+  error: string;
+};
+type ErrorCallback = (event: QueueErrorEvent) => void | Promise<void> | Promise<boolean>;
 /** Called before new session creation. Returns a compression summary to seed the fresh session. */
 type ContextOverflowCallback = () => Promise<string>;
 
@@ -79,7 +84,7 @@ export function onPrompt(cb: PromptCallback): void {
   onPromptSent = cb;
 }
 
-/** Register a callback fired when a prompt fails. Receives the consecutive failure count. */
+/** Register a callback fired when a prompt fails. Receives source, error text, and consecutive failure count. */
 export function onError(cb: ErrorCallback): void {
   onPromptError = cb;
 }
@@ -505,20 +510,31 @@ export async function drain(): Promise<void> {
         if (entry.streamId) failedStreamIds.add(entry.streamId);
         consecutiveFailures += 1;
         contextOverflowCount = 0; // reset overflow counter on non-overflow errors
+        const errorText = error instanceof Error
+          ? `${error.name}: ${error.message}`
+          : String(error);
         console.error("command-queue: prompt failed", {
           source: entry.source,
           consecutiveFailures,
           error,
         });
         // Notify fallback controller (may trigger model swap)
-        try { await onPromptError?.(consecutiveFailures); } catch { /* swallow */ }
+        try {
+          await onPromptError?.({
+            consecutiveFailures,
+            source: entry.source,
+            error: errorText,
+          });
+        } catch {
+          /* swallow */
+        }
         void emitGatewayOtel({
           level: consecutiveFailures >= 3 ? "fatal" : "error",
           component: "command-queue",
           action: "queue.prompt.failed",
           success: false,
           duration_ms: Date.now() - startedAt,
-          error: String(error),
+          error: errorText,
           metadata: {
             source: entry.source,
             consecutiveFailures,

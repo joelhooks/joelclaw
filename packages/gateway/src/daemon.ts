@@ -22,6 +22,7 @@ import {
   onContextOverflowRecovery,
   onPrompt,
   onError as onQueueError,
+  type QueueErrorEvent,
   replayUnacked,
   setIdleWaiter,
   setSession,
@@ -753,7 +754,102 @@ onPrompt(() => {
     }
   }
 });
-onQueueError((failures) => fallbackController.onPromptError(failures));
+const MODEL_FAILURE_ALERT_COOLDOWN_MS = 2 * 60 * 1000;
+const modelFailureAlertLastSent = new Map<string, number>();
+
+function classifyModelFailure(errorText: string):
+  | "auth"
+  | "missing-api-key"
+  | "rate-limit"
+  | "provider-overloaded"
+  | "model-not-found"
+  | "network"
+  | undefined {
+  const lower = errorText.toLowerCase();
+  if (lower.includes("authentication failed")) return "auth";
+  if (lower.includes("no api key found")) return "missing-api-key";
+  if (lower.includes("rate_limit") || lower.includes("429")) return "rate-limit";
+  if (lower.includes("overloaded") || lower.includes("529")) return "provider-overloaded";
+  if (lower.includes("pi model not found")) return "model-not-found";
+  if (lower.includes("network is unavailable")) return "network";
+  return undefined;
+}
+
+function compactErrorForAlert(errorText: string, maxLength = 220): string {
+  const compacted = errorText.replace(/\s+/g, " ").trim();
+  if (compacted.length <= maxLength) return compacted;
+  return `${compacted.slice(0, maxLength - 1)}…`;
+}
+
+async function pingModelFailure(event: QueueErrorEvent): Promise<void> {
+  const reason = classifyModelFailure(event.error);
+  if (!reason && event.consecutiveFailures < 3) return;
+
+  const dedupeKey = `${reason ?? "generic"}:${event.source}`;
+  const now = Date.now();
+  const lastSent = modelFailureAlertLastSent.get(dedupeKey) ?? 0;
+  if (now - lastSent < MODEL_FAILURE_ALERT_COOLDOWN_MS) {
+    void emitGatewayOtel({
+      level: "debug",
+      component: "daemon.alerting",
+      action: "model_failure.alert.suppressed",
+      success: true,
+      metadata: {
+        dedupeKey,
+        cooldownMs: MODEL_FAILURE_ALERT_COOLDOWN_MS,
+        secondsUntilNext: Math.ceil((MODEL_FAILURE_ALERT_COOLDOWN_MS - (now - lastSent)) / 1000),
+      },
+    });
+    return;
+  }
+
+  if (!TELEGRAM_TOKEN || !TELEGRAM_USER_ID) return;
+
+  const fallback = `${startupGatewayConfig.fallbackProvider}/${startupGatewayConfig.fallbackModel}`;
+  const lines = [
+    "⚠️ Gateway model failure",
+    `reason: ${reason ?? "unknown"}`,
+    `source: ${event.source}`,
+    `failures: ${event.consecutiveFailures}`,
+    `fallback: ${fallback}`,
+    `error: ${compactErrorForAlert(event.error)}`,
+  ];
+
+  try {
+    await sendTelegram(TELEGRAM_USER_ID, lines.join("\n"), { silent: false });
+    modelFailureAlertLastSent.set(dedupeKey, now);
+    void emitGatewayOtel({
+      level: "warn",
+      component: "daemon.alerting",
+      action: "model_failure.alert.sent",
+      success: true,
+      metadata: {
+        reason: reason ?? "unknown",
+        source: event.source,
+        consecutiveFailures: event.consecutiveFailures,
+        dedupeKey,
+      },
+    });
+  } catch (error) {
+    void emitGatewayOtel({
+      level: "error",
+      component: "daemon.alerting",
+      action: "model_failure.alert.failed",
+      success: false,
+      error: String(error),
+      metadata: {
+        reason: reason ?? "unknown",
+        source: event.source,
+        dedupeKey,
+      },
+    });
+  }
+}
+
+onQueueError((event) => {
+  void fallbackController.onPromptError(event.consecutiveFailures);
+  void pingModelFailure(event);
+});
 
 // ── Idle waiter: gate drain loop on turn_end ───────────
 // session.prompt() resolves when the message is queued, not when the
@@ -1078,8 +1174,14 @@ session.subscribe((event: any) => {
           success: false,
           error: reason,
         });
+        const predictedFailures = getConsecutiveFailures() + 1;
         // Treat as a prompt failure — let fallback controller decide whether to swap
-        void fallbackController.onPromptError(getConsecutiveFailures() + 1);
+        void fallbackController.onPromptError(predictedFailures);
+        void pingModelFailure({
+          consecutiveFailures: predictedFailures,
+          source: getActiveSource() ?? "unknown",
+          error: errorMsg,
+        });
         // Abort any active Telegram stream on API error
         telegramStream.abort();
         return;

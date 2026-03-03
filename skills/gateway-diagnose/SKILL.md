@@ -2,7 +2,7 @@
 name: gateway-diagnose
 displayName: Gateway Diagnose
 description: "Diagnose gateway failures by reading daemon logs, session transcripts, Redis state, and OTEL telemetry. Full Telegram path triage: daemon process → Redis channel → command queue → pi session → model API → Telegram delivery. Use when: 'gateway broken', 'telegram not working', 'why is gateway down', 'gateway not responding', 'check gateway logs', 'what happened to gateway', 'gateway diagnose', 'gateway errors', 'review gateway logs', 'fallback activated', 'gateway stuck', or any request to understand why the gateway failed. Distinct from the gateway skill (operations) — this skill is diagnostic."
-version: 1.0.7
+version: 1.0.8
 author: Joel Hooks
 tags: [joelclaw, gateway, diagnosis, logs, telegram, reliability]
 ---
@@ -255,6 +255,7 @@ The gateway has a model fallback controller (ADR-0091) that swaps models when th
 - **Fallback model:** `openai-codex/gpt-5.3-codex` (daemon remaps legacy Anthropic fallback configs to codex at startup)
 - **Recovery:** Probes primary model every 10 minutes
 - **OTEL events:** `model_fallback.swapped`, `model_fallback.primary_restored`, `model_fallback.probe_failed`, `fallback.model.remapped`
+- **Operator alerting:** model failures ping the default channel (Telegram) with 2-minute dedupe window per reason/source. Alert telemetry: `model_failure.alert.sent`, `model_failure.alert.suppressed`, `model_failure.alert.failed`
 
 Check fallback state in gateway.log: `[gateway:fallback] activated` / `recovered`.
 
