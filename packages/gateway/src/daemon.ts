@@ -633,9 +633,20 @@ const fallbackController = new ModelFallbackController(
   fallbackTelemetryAdapter,
 );
 
-// Track prompt dispatch timing for stuck-session detection
+// Track prompt dispatch timing for stuck-session detection.
+// If a turn is stuck for >10m, abort once, then restart daemon if no recovery
+// signal (turn_end or next prompt) arrives within grace window.
 let _lastTurnEndAt = Date.now();
 let _lastPromptAt = 0;
+const STUCK_THRESHOLD_MS = 10 * 60 * 1000;
+const STUCK_RECOVERY_GRACE_MS = 90_000;
+type StuckRecoveryState = {
+  startedAt: number;
+  promptAt: number;
+  deadlineAt: number;
+};
+let stuckRecovery: StuckRecoveryState | undefined;
+
 // Some SDK event sequences can emit a late assistant segment after the active
 // source has already been cleared. Keep a short-lived channel-source hint so
 // those trailing segments still route back to the correct user channel.
@@ -645,6 +656,25 @@ const RESPONSE_SOURCE_RECOVERY_WINDOW_MS = 30_000;
 onPrompt(() => {
   const now = Date.now();
   _lastPromptAt = now;
+
+  if (stuckRecovery) {
+    const recoveredAfterMs = now - stuckRecovery.startedAt;
+    console.warn("[gateway:watchdog] session recovered after stuck abort", {
+      recoveredAfterMs,
+    });
+    void emitGatewayOtel({
+      level: "info",
+      component: "daemon.watchdog",
+      action: "watchdog.session_stuck.recovered",
+      success: true,
+      metadata: {
+        recoveredAfterMs,
+        recoverySignal: "next_prompt",
+      },
+    });
+    stuckRecovery = undefined;
+  }
+
   fallbackController.onPromptDispatched();
 
   // Start Telegram typing indicator + streaming if this prompt came from Telegram
@@ -1127,7 +1157,27 @@ session.subscribe((event: any) => {
   }
 
   if (event.type === "turn_end") {
-    _lastTurnEndAt = Date.now();
+    const turnEndAt = Date.now();
+    _lastTurnEndAt = turnEndAt;
+
+    if (stuckRecovery) {
+      const recoveredAfterMs = turnEndAt - stuckRecovery.startedAt;
+      console.warn("[gateway:watchdog] session recovered after stuck abort", {
+        recoveredAfterMs,
+      });
+      void emitGatewayOtel({
+        level: "info",
+        component: "daemon.watchdog",
+        action: "watchdog.session_stuck.recovered",
+        success: true,
+        metadata: {
+          recoveredAfterMs,
+          recoverySignal: "turn_end",
+        },
+      });
+      stuckRecovery = undefined;
+    }
+
     fallbackController.onTurnEnd();
     broadcastWs({ type: "turn_end" });
     // Clean up Telegram streaming state for this turn
@@ -1594,8 +1644,6 @@ const queueDrainTimer = setInterval(() => {
 // Monitors subsystem health every 30s. Logs degraded state.
 // Detects stuck sessions (no turn_end for 10min after a prompt).
 // _lastTurnEndAt and _lastPromptAt declared near session init (line ~85) to avoid TDZ
-const STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
-
 const watchdogTimer = setInterval(() => {
   const now = Date.now();
   const uptimeMs = now - startedAt;
@@ -1605,8 +1653,33 @@ const watchdogTimer = setInterval(() => {
   const isStuck = stuckMs > STUCK_THRESHOLD_MS;
   const failures = getConsecutiveFailures();
   const isDead = failures >= 3;
+  const recoveryPending = Boolean(stuckRecovery);
 
-  if (!redisOk || isStuck || isDead) {
+  if (stuckRecovery && now >= stuckRecovery.deadlineAt) {
+    const overdueMs = now - stuckRecovery.deadlineAt;
+    console.error("[gateway:watchdog] stuck recovery timed out — restarting daemon", {
+      overdueMs,
+      queueDepth: getQueueDepth(),
+      promptAgeMs: now - stuckRecovery.promptAt,
+    });
+    void emitGatewayOtel({
+      level: "fatal",
+      component: "daemon.watchdog",
+      action: "watchdog.session_stuck.recovery_timeout",
+      success: false,
+      error: "stuck_recovery_timeout",
+      metadata: {
+        overdueMs,
+        recoveryGraceMs: STUCK_RECOVERY_GRACE_MS,
+        queueDepth: getQueueDepth(),
+        immediateTelegram: true,
+      },
+    });
+    void gracefulShutdown("watchdog:stuck-recovery-timeout");
+    return;
+  }
+
+  if (!redisOk || isStuck || isDead || recoveryPending) {
     console.warn("[gateway:watchdog] health check", {
       redis: redisOk ? "ok" : "DEGRADED",
       telegram: telegramOk ? "ok" : "disabled",
@@ -1615,57 +1688,89 @@ const watchdogTimer = setInterval(() => {
       uptimeMs,
       consecutiveFailures: failures,
       ...(isStuck ? { stuckForMs: stuckMs, lastPromptAt: new Date(_lastPromptAt).toISOString() } : {}),
+      ...(stuckRecovery
+        ? {
+            recoveryPending: true,
+            recoveryDeadlineInMs: Math.max(0, stuckRecovery.deadlineAt - now),
+          }
+        : {}),
+    });
+  }
+
+  if (isStuck && !stuckRecovery) {
+    stuckRecovery = {
+      startedAt: now,
+      promptAt: _lastPromptAt,
+      deadlineAt: now + STUCK_RECOVERY_GRACE_MS,
+    };
+
+    console.error("[gateway:watchdog] session appears stuck — attempting abort", {
+      stuckForMs: stuckMs,
+      recoveryGraceMs: STUCK_RECOVERY_GRACE_MS,
+    });
+    void emitGatewayOtel({
+      level: "error",
+      component: "daemon.watchdog",
+      action: "watchdog.session_stuck",
+      success: false,
+      metadata: {
+        stuckForMs: stuckMs,
+        queueDepth: getQueueDepth(),
+        recoveryGraceMs: STUCK_RECOVERY_GRACE_MS,
+      },
     });
 
-    if (isStuck) {
-      console.error("[gateway:watchdog] session appears stuck — attempting abort");
+    session.abort().catch((e: any) => {
+      console.error("[gateway:watchdog] abort failed", { error: e?.message });
       void emitGatewayOtel({
         level: "error",
         component: "daemon.watchdog",
-        action: "watchdog.session_stuck",
+        action: "watchdog.session_stuck.abort_failed",
         success: false,
+        error: e?.message ?? String(e),
         metadata: {
-          stuckForMs: stuckMs,
           queueDepth: getQueueDepth(),
+          recoveryGraceMs: STUCK_RECOVERY_GRACE_MS,
         },
       });
-      session.abort().catch((e: any) =>
-        console.error("[gateway:watchdog] abort failed", { error: e?.message })
-      );
-      // Reset so we don't spam abort
-      _lastPromptAt = 0;
-    }
+    });
+  }
 
-    if (isDead) {
-      console.error("[gateway:watchdog] session appears dead — too many consecutive prompt failures", {
+  if (isDead) {
+    console.error("[gateway:watchdog] session appears dead — too many consecutive prompt failures", {
+      consecutiveFailures: failures,
+    });
+    void emitGatewayOtel({
+      level: "fatal",
+      component: "daemon.watchdog",
+      action: "watchdog.session_dead",
+      success: false,
+      error: "session_recovery_restart",
+      metadata: {
         consecutiveFailures: failures,
-      });
-      void emitGatewayOtel({
-        level: "fatal",
-        component: "daemon.watchdog",
-        action: "watchdog.session_dead",
-        success: false,
-        error: "session_recovery_restart",
-        metadata: {
-          consecutiveFailures: failures,
-          queueDepth: getQueueDepth(),
-          immediateTelegram: true,
-        },
-      });
-      // Self-restart: the launchd service will bring us back
-      // Messages are persisted in Redis Stream, so they'll replay on restart
-      console.error("[gateway:watchdog] initiating self-restart for session recovery");
-      void gracefulShutdown("watchdog:dead-session");
-    }
+        queueDepth: getQueueDepth(),
+        immediateTelegram: true,
+      },
+    });
+    // Self-restart: the launchd service will bring us back
+    // Messages are persisted in Redis Stream, so they'll replay on restart
+    console.error("[gateway:watchdog] initiating self-restart for session recovery");
+    void gracefulShutdown("watchdog:dead-session");
   }
 }, 30_000);
 
 // Expose health for CLI / external checks
-function getHealthStatus(): { healthy: boolean; components: Record<string, string | number> } {
+function getHealthStatus(): { healthy: boolean; components: Record<string, string | number | boolean> } {
+  const now = Date.now();
   const redisOk = isRedisHealthy();
-  const stuckMs = _lastPromptAt > _lastTurnEndAt ? Date.now() - _lastPromptAt : 0;
+  const stuckMs = _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
   const failures = getConsecutiveFailures();
   const isDead = failures >= 3;
+  const recoveryPending = Boolean(stuckRecovery);
+  const recoveryDeadlineInMs = stuckRecovery
+    ? Math.max(0, stuckRecovery.deadlineAt - now)
+    : 0;
+
   return {
     healthy: redisOk && stuckMs < STUCK_THRESHOLD_MS && !isDead,
     components: {
@@ -1674,10 +1779,14 @@ function getHealthStatus(): { healthy: boolean; components: Record<string, strin
       ws: `ok (${wsClients.size} clients)`,
       session: isDead
         ? `dead (${failures} consecutive failures)`
-        : stuckMs > STUCK_THRESHOLD_MS
-          ? `stuck (${Math.round(stuckMs / 1000)}s)`
-          : "ok",
+        : recoveryPending
+          ? `recovering (${Math.round(recoveryDeadlineInMs / 1000)}s)`
+          : stuckMs > STUCK_THRESHOLD_MS
+            ? `stuck (${Math.round(stuckMs / 1000)}s)`
+            : "ok",
       consecutivePromptFailures: failures,
+      stuckRecoveryPending: recoveryPending,
+      stuckRecoveryDeadlineMs: recoveryDeadlineInMs,
     },
   };
 }

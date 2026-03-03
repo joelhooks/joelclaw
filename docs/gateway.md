@@ -24,6 +24,8 @@ Gateway process diagnostics now use exact launchd state inspection (`launchctl p
 
 `joelclaw gateway enable` is a direct launch-agent recovery command: enable service, bootstrap plist, kickstart daemon, then report pid/state.
 
+Watchdog hardening: when a turn is stuck for >10 minutes, the daemon now aborts once and starts a recovery grace timer (90s). If no recovery signal (`turn_end` or next prompt dispatch) arrives before the deadline, the daemon self-restarts via launchd. This prevents the "process alive but session wedged" state where queues stop draining indefinitely.
+
 ## Pi-session Langfuse guardrails (alert-only)
 
 The `pi/extensions/langfuse-cost` extension now tracks per-session LLM call count, token totals, and cumulative cost (when usage payloads include cost fields).
