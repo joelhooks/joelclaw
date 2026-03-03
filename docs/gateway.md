@@ -176,6 +176,18 @@ Runtime suppression guard (minimal behavior gate):
 - suppression is OTEL-visible via `daemon.outbound:outbound.console_forward.suppressed_policy`
 - this guard only affects unsolicited background-origin console forwards; explicit channel replies and recovered recent-prompt replies still route normally
 
+## Turn-level knowledge writes (ADR-0202)
+
+Gateway turn-end flow now emits a default-on `knowledge/turn.write.requested` event for every turn:
+
+- meaningful turn → captures `summary/decision/evidence/usefulnessTags`
+- non-meaningful turn → sends explicit `skipReason`:
+  - `routine-heartbeat`
+  - `duplicate-signal`
+  - `no-new-information`
+
+Gateway emits eligibility OTEL (`knowledge.turn_write.eligible`) before dispatch so compliance can detect drift when write dispatch fails.
+
 ## Interrupt controls by channel
 
 Telegram chat (`@JoelClawPandaBot`):

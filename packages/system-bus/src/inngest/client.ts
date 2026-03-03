@@ -1677,6 +1677,31 @@ export type Events = {
     };
   };
 
+  "knowledge/turn.write.requested": {
+    data: {
+      source: string;
+      agent: string;
+      channel?: string;
+      session?: string;
+      turnId: string;
+      turnNumber?: number;
+      summary?: string;
+      decision?: string;
+      evidence?: string[];
+      usefulnessTags?: string[];
+      skipReason?: "routine-heartbeat" | "duplicate-signal" | "no-new-information";
+      context?: {
+        project?: string;
+        loopId?: string;
+        storyId?: string;
+        runId?: string;
+        toolNames?: string[];
+        sourceMessageId?: string;
+      };
+      occurredAt?: string;
+    };
+  };
+
   // --- Legacy ---
 };
 

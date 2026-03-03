@@ -5,7 +5,8 @@
  * Checks:
  * 1. OTEL events: any system_knowledge.retrieval in the window?
  * 2. system_knowledge collection: non-empty? stale?
- * 3. Recent loop dispatches without retrieval events → alert
+ * 3. Turn-write compliance: eligible turns vs write outcomes
+ * 4. Recent loop dispatches without retrieval events → alert
  *
  * ADR-0199: Force/enforce/verify at every level.
  */
@@ -154,6 +155,16 @@ async function auditKnowledgeHealth(): Promise<KnowledgeAuditResult> {
   const windowStart = now - WINDOW_HOURS * 3600;
   const issues: string[] = [];
   const stats: Record<string, unknown> = {};
+  const countOtelAction = async (action: string): Promise<number> => {
+    const result = await typesense.search({
+      collection: "otel_events",
+      q: action,
+      query_by: "action",
+      filter_by: `timestamp:>${windowStart}`,
+      per_page: 1,
+    });
+    return result.found ?? 0;
+  };
 
   // 1. Collection exists and has docs?
   try {
@@ -222,7 +233,44 @@ async function auditKnowledgeHealth(): Promise<KnowledgeAuditResult> {
     stats.otel_search_error = true;
   }
 
-  // 3. Check for stale content (no sync in 48h)
+  // 3. Turn-level write compliance (eligible turn => completed|skipped|failed)
+  try {
+    const [
+      eligible,
+      started,
+      completed,
+      skipped,
+      failed,
+    ] = await Promise.all([
+      countOtelAction("knowledge.turn_write.eligible"),
+      countOtelAction("knowledge.turn_write.started"),
+      countOtelAction("knowledge.turn_write.completed"),
+      countOtelAction("knowledge.turn_write.skipped"),
+      countOtelAction("knowledge.turn_write.failed"),
+    ]);
+
+    const accounted = completed + skipped + failed;
+    stats.turn_writes_eligible = eligible;
+    stats.turn_writes_started = started;
+    stats.turn_writes_completed = completed;
+    stats.turn_writes_skipped = skipped;
+    stats.turn_writes_failed = failed;
+    stats.turn_writes_accounted = accounted;
+
+    if (eligible > accounted) {
+      issues.push(
+        `turn-write drift: ${eligible} eligible turns but only ${accounted} outcomes in ${WINDOW_HOURS}h`,
+      );
+    }
+
+    if (failed > 0) {
+      issues.push(`turn-write failures detected: ${failed} in ${WINDOW_HOURS}h`);
+    }
+  } catch {
+    stats.turn_write_otel_search_error = true;
+  }
+
+  // 4. Check for stale content (no sync in 48h)
   try {
     const result = await typesense.search({
       collection: typesense.SYSTEM_KNOWLEDGE_COLLECTION,
@@ -351,6 +399,7 @@ export const knowledgeWatchdog = inngest.createFunction(
             ...checks.issues.map((i) => `• ${i}`),
             "",
             `<code>docs: ${checks.stats.num_documents ?? "?"} | retrievals: ${checks.stats.retrievals_in_window ?? "?"} | last sync: ${checks.stats.last_sync_age_hours ?? "?"}h ago</code>`,
+            `<code>turn writes: eligible=${checks.stats.turn_writes_eligible ?? "?"} accounted=${checks.stats.turn_writes_accounted ?? "?"} failed=${checks.stats.turn_writes_failed ?? "?"}</code>`,
           ].join("\n"),
           parse_mode: "HTML",
         },

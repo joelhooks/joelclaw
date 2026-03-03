@@ -18,6 +18,7 @@ import { eventsCmd } from "./commands/events"
 import { gatewayCmd } from "./commands/gateway"
 import { healCmd } from "./commands/heal"
 import { inngestCmd } from "./commands/inngest"
+import { knowledgeCmd } from "./commands/knowledge"
 import { langfuseCmd } from "./commands/langfuse"
 import { logCmd } from "./commands/log"
 import { logsCmd } from "./commands/logs"
@@ -43,7 +44,6 @@ import { subscribeCmd } from "./commands/subscribe"
 import { tuiCmd } from "./commands/tui"
 import { vaultCmd } from "./commands/vault"
 import { watchCmd } from "./commands/watch"
-import { knowledgeCmd } from "./commands/knowledge"
 import { webhookCmd } from "./commands/webhook"
 import { Inngest } from "./inngest"
 import { respond } from "./response"
@@ -158,6 +158,7 @@ const root = Command.make("joelclaw", {}, () =>
           langfuse: "joelclaw langfuse {aggregate}",
           subscribe: "joelclaw subscribe {list|add|remove|check|summary}",
           webhook: "joelclaw webhook {subscribe|unsubscribe|list|stream}",
+          knowledge: "joelclaw knowledge {sync|search|note|clear-failed}",
           inngest: "joelclaw inngest {status|workers|register|restart-worker|reconcile|memory-e2e|memory-weekly|memory-gate|memory-schema-reconcile|memory-health}",
           schema: "joelclaw schema",
           refresh: "joelclaw refresh",

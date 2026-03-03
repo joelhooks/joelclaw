@@ -542,7 +542,7 @@ export async function createCollection(schema: Record<string, unknown>): Promise
 
 export interface KnowledgeDoc {
   id: string;
-  type: "adr" | "skill" | "lesson" | "pattern" | "retro" | "failed_target" | "decision" | "insight";
+  type: "adr" | "skill" | "lesson" | "pattern" | "retro" | "failed_target" | "decision" | "insight" | "turn_note";
   title: string;
   content: string;
   source?: string;

@@ -556,6 +556,59 @@ export const agentLoopImplement = inngest.createFunction(
       },
     });
 
+    await step.run("emit-turn-knowledge-eligible", async () => {
+      await emitOtelEvent({
+        action: "knowledge.turn_write.eligible",
+        component: "agent-loop-implement",
+        source: "implement",
+        level: "info",
+        success: true,
+        metadata: {
+          loop_id: loopId,
+          story_id: storyId,
+          attempt,
+          tool,
+          commit_sha: sha.slice(0, 12),
+        },
+      });
+    });
+
+    await step.sendEvent("emit-turn-knowledge-write", {
+      name: "knowledge/turn.write.requested",
+      data: {
+        source: "agent-loop",
+        agent: "agent-loop-implement",
+        channel: "system",
+        session: loopId,
+        turnId: `agent-loop:${loopId}:${storyId}:attempt-${attempt}`,
+        turnNumber: attempt,
+        summary: alreadyDone
+          ? `Story ${storyId} already implemented; reused existing commit ${sha.slice(0, 12)}.`
+          : `Implemented story ${storyId} with ${tool}; emitted commit ${sha.slice(0, 12)} for review.`,
+        decision: `Proceed to review stage with reviewer tool ${reviewerTool}.`,
+        evidence: [
+          `commit:${sha}`,
+          `event:agent/loop.code.committed`,
+          `story:${storyId}`,
+          `attempt:${attempt}`,
+        ],
+        usefulnessTags: [
+          "agent-loop",
+          "implementation",
+          `tool:${tool}`,
+          `reviewer:${reviewerTool}`,
+        ],
+        context: {
+          project,
+          loopId,
+          storyId,
+          runId: runToken,
+          toolNames: [tool, reviewerTool],
+        },
+        occurredAt: new Date().toISOString(),
+      },
+    });
+
     return { status: "implemented", loopId, storyId, attempt, sha, tool };
   }
 );

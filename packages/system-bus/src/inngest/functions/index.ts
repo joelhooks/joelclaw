@@ -1,6 +1,7 @@
 import { emitOtelEvent } from "../../observability/emit";
 
 export { echoFizzle } from "../../memory/echo-fizzle";
+export { adrDailyPitch, adrPitchApproved, adrPitchRejected } from "./adr-daily-pitch";
 export { agentChainRun } from "./agent-chain-run";
 export { agentDispatch } from "./agent-dispatch";
 export {
@@ -61,6 +62,7 @@ export { granolaBackfill } from "./granola-backfill";
 export { heartbeatCron, heartbeatWake } from "./heartbeat";
 export { clusterFunctionDefinitions, clusterFunctionIds } from "./index.cluster";
 export { hostFunctionDefinitions, hostFunctionIds } from "./index.host";
+export { knowledgeTurnWrite } from "./knowledge-turn-write";
 export { manifestArchive } from "./manifest-archive";
 export { mediaProcess } from "./media-process";
 export { meetingAnalyze } from "./meeting-analyze";
@@ -106,7 +108,6 @@ export {
   vercelDeployError,
   vercelDeploySucceeded,
 } from "./vercel-notify";
-export { adrDailyPitch, adrPitchApproved, adrPitchRejected } from "./adr-daily-pitch";
 export { videoDownload } from "./video-download";
 export { vipEmailReceived } from "./vip-email-received";
 export { voiceCallCompleted } from "./voice-call-completed";

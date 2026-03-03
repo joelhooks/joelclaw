@@ -33,6 +33,7 @@ import { getActiveMcqAdapter, type McqParams } from "./commands/mcq-adapter";
 import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands/telegram-handler";
 import { injectChannelContext } from "./formatting";
 import { startHeartbeatRunner, TRIPWIRE_PATH } from "./heartbeat";
+import { buildGatewayTurnKnowledgeWrite, sendGatewayTurnKnowledgeWrite } from "./knowledge-turn";
 import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
 import { type OutboundAttribution, registerChannel, routeResponse } from "./outbound/router";
 import * as telegramStream from "./telegram-stream";
@@ -757,6 +758,10 @@ const RESPONSE_SOURCE_RECOVERY_WINDOW_MS = 30_000;
 onPrompt(() => {
   const now = Date.now();
   _lastPromptAt = now;
+  turnKnowledgeCounter += 1;
+  turnKnowledgeText = "";
+  turnKnowledgeToolCalls = [];
+  turnKnowledgeToolErrors = 0;
 
   if (stuckRecovery) {
     const recoveredAfterMs = now - stuckRecovery.startedAt;
@@ -1151,6 +1156,11 @@ type WsClientMessage =
 // ── Outbound: collect assistant responses and route to source channel ──
 let responseChunks: string[] = [];
 let responseSource: string | undefined;
+let turnKnowledgeCounter = 0;
+let turnKnowledgeText = "";
+let turnKnowledgeToolCalls: string[] = [];
+let turnKnowledgeToolErrors = 0;
+let lastTurnKnowledgeFingerprint: string | undefined;
 const wsClients = new Set<Bun.ServerWebSocket<unknown>>();
 
 function captureResponseSource(): string | undefined {
@@ -1379,6 +1389,12 @@ session.subscribe((event: any) => {
     }
 
     if (!fullText.trim()) return;
+    const normalizedTurnText = fullText.trim();
+    if (!turnKnowledgeText) {
+      turnKnowledgeText = normalizedTurnText;
+    } else {
+      turnKnowledgeText = `${turnKnowledgeText}\n\n${normalizedTurnText}`;
+    }
 
     const activeSource = getActiveSource();
     const capturedSource = captureResponseSource();
@@ -1514,6 +1530,9 @@ session.subscribe((event: any) => {
 
   if (event.type === "tool_call") {
     fallbackController.onActivity(); // model is alive, restart timeout
+    if (typeof event.toolName === "string" && event.toolName.trim()) {
+      turnKnowledgeToolCalls.push(event.toolName.trim());
+    }
     broadcastWs({
       type: "tool_call",
       id: event.toolCallId,
@@ -1529,6 +1548,9 @@ session.subscribe((event: any) => {
 
   if (event.type === "tool_result") {
     fallbackController.onActivity(); // model is alive, restart timeout
+    if (event.isError) {
+      turnKnowledgeToolErrors += 1;
+    }
     broadcastWs({
       type: "tool_result",
       id: event.toolCallId,
@@ -1577,6 +1599,23 @@ session.subscribe((event: any) => {
       _idleResolve = undefined;
       resolve();
     }
+
+    const turnSource = getActiveSource() ?? responseSource ?? lastPromptSource ?? "gateway";
+    const { payload, fingerprint } = buildGatewayTurnKnowledgeWrite({
+      source: turnSource,
+      sessionId: session.sessionId,
+      turnNumber: Math.max(turnKnowledgeCounter, 1),
+      assistantText: turnKnowledgeText,
+      toolCalls: turnKnowledgeToolCalls,
+      toolErrorCount: turnKnowledgeToolErrors,
+      previousFingerprint: lastTurnKnowledgeFingerprint,
+    });
+    lastTurnKnowledgeFingerprint = fingerprint;
+    turnKnowledgeText = "";
+    turnKnowledgeToolCalls = [];
+    turnKnowledgeToolErrors = 0;
+    void sendGatewayTurnKnowledgeWrite(payload);
+
     responseSource = undefined;
 
     // ── Proactive context health check (ADR-0141) ───────────

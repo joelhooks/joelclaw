@@ -1,15 +1,17 @@
 import { readdir, readFile } from "node:fs/promises"
-import { join, basename } from "node:path"
+import { join } from "node:path"
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
+import { Inngest } from "../inngest"
+import { respond, respondError } from "../response"
 import { resolveTypesenseApiKey } from "../typesense-auth"
-import { respond } from "../response"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
 const VAULT_DIR = process.env.VAULT_DIR || `${process.env.HOME}/Vault`
 const SKILLS_DIR = process.env.JOELCLAW_SKILLS_DIR || `${process.env.HOME}/Code/joelhooks/joelclaw/skills`
 
 const COLLECTION = "system_knowledge"
+const TURN_SKIP_REASONS = ["routine-heartbeat", "duplicate-signal", "no-new-information"] as const
 
 const SCHEMA = {
   name: COLLECTION,
@@ -29,6 +31,133 @@ const SCHEMA = {
   ],
   default_sorting_field: "created_at",
   enable_nested_fields: false,
+}
+
+type OptionalValue<T> = { _tag: "Some"; value: T } | { _tag: "None" }
+
+type KnowledgeNoteInput = {
+  source: string
+  agent: string
+  channel?: string
+  session: string
+  turn: number
+  turnId?: string
+  summary?: string
+  decision?: string
+  evidence?: string
+  usefulness?: string
+  skipReason?: (typeof TURN_SKIP_REASONS)[number]
+  project?: string
+  loopId?: string
+  storyId?: string
+  runId?: string
+  tools?: string
+}
+
+type KnowledgeNoteValidated = {
+  source: string
+  agent: string
+  channel?: string
+  session: string
+  turn: number
+  turnId: string
+  summary?: string
+  decision?: string
+  evidence: string[]
+  usefulnessTags: string[]
+  skipReason?: (typeof TURN_SKIP_REASONS)[number]
+  context: {
+    project?: string
+    loopId?: string
+    storyId?: string
+    runId?: string
+    toolNames?: string[]
+  }
+}
+
+function optionalText(value: OptionalValue<string>): string | undefined {
+  if (value._tag !== "Some") return undefined
+  const trimmed = value.value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+function parseCsvList(value: string | undefined, max = 20): string[] {
+  if (!value) return []
+  const unique = new Set<string>()
+  for (const entry of value.split(",")) {
+    const trimmed = entry.trim()
+    if (!trimmed) continue
+    unique.add(trimmed)
+    if (unique.size >= max) break
+  }
+  return Array.from(unique)
+}
+
+function buildTurnId(input: {
+  source: string
+  agent: string
+  channel?: string
+  session: string
+  turn: number
+}): string {
+  const channel = input.channel?.trim() ? input.channel.trim() : "internal"
+  return `${input.source}:${input.agent}:${channel}:${input.session}:${input.turn}`
+}
+
+function validateKnowledgeNoteInput(input: KnowledgeNoteInput): {
+  ok: true
+  value: KnowledgeNoteValidated
+} | {
+  ok: false
+  message: string
+} {
+  const source = input.source.trim()
+  const agent = input.agent.trim()
+  const session = input.session.trim()
+  const channel = input.channel?.trim() || undefined
+  const turn = Number.isFinite(input.turn) ? Math.floor(input.turn) : Number.NaN
+  const summary = input.summary?.trim() || undefined
+  const decision = input.decision?.trim() || undefined
+  const skipReason = input.skipReason
+  const evidence = parseCsvList(input.evidence, 30)
+  const usefulnessTags = parseCsvList(input.usefulness, 20).map((tag) =>
+    tag.toLowerCase().replace(/\s+/g, "-")
+  )
+  const toolNames = parseCsvList(input.tools, 20)
+
+  if (!source) return { ok: false, message: "--source is required" }
+  if (!agent) return { ok: false, message: "--agent is required" }
+  if (!session) return { ok: false, message: "--session is required" }
+  if (!Number.isFinite(turn) || turn < 0) {
+    return { ok: false, message: "--turn must be a non-negative integer" }
+  }
+  if (!skipReason && !summary) {
+    return { ok: false, message: "--summary is required unless --skip-reason is provided" }
+  }
+
+  return {
+    ok: true,
+    value: {
+      source,
+      agent,
+      channel,
+      session,
+      turn,
+      turnId: input.turnId?.trim() || buildTurnId({ source, agent, channel, session, turn }),
+      summary,
+      decision,
+      evidence,
+      usefulnessTags,
+      skipReason,
+      context: {
+        project: input.project?.trim() || undefined,
+        loopId: input.loopId?.trim() || undefined,
+        storyId: input.storyId?.trim() || undefined,
+        runId: input.runId?.trim() || undefined,
+        toolNames: toolNames.length > 0 ? toolNames : undefined,
+      },
+    },
+  }
 }
 
 async function headers(): Promise<Record<string, string>> {
@@ -221,7 +350,7 @@ const searchCmd = Command.make(
     query: Args.text({ name: "query" }).pipe(Args.withDescription("Search query")),
     type: Options.text("type").pipe(
       Options.withAlias("t"),
-      Options.withDescription("Filter by type (adr, skill, lesson, pattern, retro, failed_target)"),
+      Options.withDescription("Filter by type (adr, skill, lesson, pattern, retro, failed_target, turn_note)"),
       Options.optional,
     ),
     limit: Options.integer("limit").pipe(
@@ -274,6 +403,99 @@ const searchCmd = Command.make(
             command: "joelclaw knowledge sync",
             description: "Re-sync ADRs and skills",
           },
+        ]),
+      )
+    }),
+)
+
+const noteCmd = Command.make(
+  "note",
+  {
+    source: Options.text("source").pipe(Options.withAlias("s"), Options.withDescription("Origin source (gateway, agent-loop, etc.)")),
+    agent: Options.text("agent").pipe(Options.withAlias("a"), Options.withDescription("Agent or component name")),
+    channel: Options.text("channel").pipe(Options.withDescription("Channel context (telegram, slack, system)"), Options.optional),
+    session: Options.text("session").pipe(Options.withDescription("Session or loop context key")),
+    turn: Options.integer("turn").pipe(Options.withDescription("Turn number within the session")),
+    turnId: Options.text("turn-id").pipe(Options.withDescription("Optional stable turn id (defaults to derived id)"), Options.optional),
+    summary: Options.text("summary").pipe(Options.withDescription("Turn summary (required unless --skip-reason)"), Options.optional),
+    decision: Options.text("decision").pipe(Options.withDescription("Decision captured from the turn"), Options.optional),
+    evidence: Options.text("evidence").pipe(Options.withDescription("Comma-separated evidence pointers"), Options.optional),
+    usefulness: Options.text("usefulness").pipe(Options.withDescription("Comma-separated usefulness tags"), Options.optional),
+    skipReason: Options.choice("skip-reason", TURN_SKIP_REASONS).pipe(
+      Options.withDescription("Explicit skip reason"),
+      Options.optional,
+    ),
+    project: Options.text("project").pipe(Options.withDescription("Optional project context"), Options.optional),
+    loopId: Options.text("loop-id").pipe(Options.withDescription("Optional loop id context"), Options.optional),
+    storyId: Options.text("story-id").pipe(Options.withDescription("Optional story id context"), Options.optional),
+    runId: Options.text("run-id").pipe(Options.withDescription("Optional run id context"), Options.optional),
+    tools: Options.text("tools").pipe(Options.withDescription("Comma-separated tools used in the turn"), Options.optional),
+  },
+  ({ source, agent, channel, session, turn, turnId, summary, decision, evidence, usefulness, skipReason, project, loopId, storyId, runId, tools }) =>
+    Effect.gen(function* () {
+      const validated = validateKnowledgeNoteInput({
+        source,
+        agent,
+        channel: optionalText(channel),
+        session,
+        turn,
+        turnId: optionalText(turnId),
+        summary: optionalText(summary),
+        decision: optionalText(decision),
+        evidence: optionalText(evidence),
+        usefulness: optionalText(usefulness),
+        skipReason: skipReason._tag === "Some" ? skipReason.value : undefined,
+        project: optionalText(project),
+        loopId: optionalText(loopId),
+        storyId: optionalText(storyId),
+        runId: optionalText(runId),
+        tools: optionalText(tools),
+      })
+
+      if (!validated.ok) {
+        yield* Console.log(
+          respondError(
+            "knowledge note",
+            validated.message,
+            "INVALID_KNOWLEDGE_NOTE",
+            "Provide required turn context and summary/skip-reason fields",
+            [
+              { command: "joelclaw knowledge note --source <source> --agent <agent> --session <session> --turn <turn> --summary <summary>", description: "Retry with required fields" },
+            ],
+          ),
+        )
+        return
+      }
+
+      const note = validated.value
+      const inngestClient = yield* Inngest
+      const result = yield* inngestClient.send("knowledge/turn.write.requested", {
+        source: note.source,
+        agent: note.agent,
+        channel: note.channel,
+        session: note.session,
+        turnId: note.turnId,
+        turnNumber: note.turn,
+        summary: note.summary,
+        decision: note.decision,
+        evidence: note.evidence,
+        usefulnessTags: note.usefulnessTags,
+        skipReason: note.skipReason,
+        context: note.context,
+        occurredAt: new Date().toISOString(),
+      })
+
+      yield* Console.log(
+        respond("knowledge note", {
+          queued: true,
+          event: "knowledge/turn.write.requested",
+          turnId: note.turnId,
+          skipReason: note.skipReason ?? null,
+          response: result,
+        }, [
+          { command: "joelclaw runs --count 3", description: "Inspect recent worker runs" },
+          { command: "joelclaw otel search knowledge.turn_write --hours 1", description: "Verify write OTEL lifecycle events" },
+          { command: "joelclaw knowledge search turn_note --type turn_note --limit 5", description: "Verify indexed turn notes" },
         ]),
       )
     }),
@@ -336,6 +558,12 @@ const clearFailedCmd = Command.make(
 )
 
 export const knowledgeCmd = Command.make("knowledge").pipe(
-  Command.withDescription("System knowledge index — sync and search ADRs, skills, retros, lessons"),
-  Command.withSubcommands([syncCmd, searchCmd, clearFailedCmd]),
+  Command.withDescription("System knowledge index — sync/search plus turn-level knowledge note writes"),
+  Command.withSubcommands([syncCmd, searchCmd, noteCmd, clearFailedCmd]),
 )
+
+export const __knowledgeTestUtils = {
+  parseCsvList,
+  buildTurnId,
+  validateKnowledgeNoteInput,
+}

@@ -117,7 +117,21 @@ Semantics:
 - `joelclaw subscribe`
 - `joelclaw webhook`
 - `joelclaw inngest`
+- `joelclaw knowledge`
 - `joelclaw capabilities`
+
+## Knowledge turn-write command
+
+```bash
+joelclaw knowledge note \
+  --source gateway \
+  --agent gateway-daemon \
+  --session <session-id> \
+  --turn <turn-number> \
+  --summary "<what changed>"
+```
+
+Use `--skip-reason routine-heartbeat|duplicate-signal|no-new-information` when a turn is eligible but has no durable signal to capture.
 
 ## Gateway known issues / muted channels
 

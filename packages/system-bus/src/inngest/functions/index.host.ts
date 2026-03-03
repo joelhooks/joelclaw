@@ -1,7 +1,5 @@
 import { echoFizzle } from "../../memory/echo-fizzle";
 import { adrDailyPitch, adrPitchApproved, adrPitchRejected } from "./adr-daily-pitch";
-import { gatewaySendMessage } from "./gateway-send-message";
-import { gatewayHandleMessage } from "./gateway-handle-message";
 import { agentChainRun } from "./agent-chain-run";
 import { agentDispatch } from "./agent-dispatch";
 import {
@@ -48,8 +46,12 @@ import { emailInboxCleanup } from "./email-cleanup";
 import { embedText } from "./embed";
 import { friction } from "./friction";
 import { frictionFix } from "./friction-fix";
+import { gatewayHandleMessage } from "./gateway-handle-message";
+import { gatewaySendMessage } from "./gateway-send-message";
 import { granolaBackfill } from "./granola-backfill";
 import { heartbeatCron, heartbeatWake } from "./heartbeat";
+import { knowledgeTurnWrite } from "./knowledge-turn-write";
+import { knowledgeWatchdog } from "./knowledge-watchdog";
 import { manifestArchive } from "./manifest-archive";
 import { mediaProcess } from "./media-process";
 import { meetingAnalyze } from "./meeting-analyze";
@@ -89,7 +91,6 @@ import { telegramCallbackReceived } from "./telegram-callback";
 import { telnyxNotify } from "./telnyx-notify";
 import { transcriptIndexWeb } from "./transcript-index-web";
 import { transcriptProcess } from "./transcript-process";
-import { knowledgeWatchdog } from "./knowledge-watchdog";
 import {
   typesenseBlogSync,
   typesenseFullSync,
@@ -202,6 +203,7 @@ export const hostFunctionDefinitions = [
   typesenseVaultSync,
   typesenseBlogSync,
   typesenseFullSync,
+  knowledgeTurnWrite,
   knowledgeWatchdog,
   nasSoakSample,
   nasSoakReview,

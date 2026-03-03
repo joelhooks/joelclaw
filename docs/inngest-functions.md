@@ -120,6 +120,25 @@ Do **not** mutate `main.db` without a point-in-time backup.
   3. warning is logged with file path + parse error for operator visibility
 - impact: transient YAML/frontmatter edits no longer leave new ADRs missing from `/adrs`; they degrade to default metadata (`status: proposed`, empty rubric) until frontmatter is fixed
 
+### Knowledge turn-write contract (ADR-0202)
+
+- function: `knowledge-turn-write`
+- file: `packages/system-bus/src/inngest/functions/knowledge-turn-write.ts`
+- trigger: `knowledge/turn.write.requested`
+- behavior:
+  1. validates turn payload shape and skip-reason enum
+  2. enforces summary-or-skip policy (`summary` required unless explicit skip reason)
+  3. writes `turn_note` documents into `system_knowledge`
+  4. emits OTEL lifecycle events:
+     - `knowledge.turn_write.started`
+     - `knowledge.turn_write.completed`
+     - `knowledge.turn_write.skipped`
+     - `knowledge.turn_write.failed`
+
+Watchdog extension:
+
+- `knowledge-watchdog` now checks drift between `knowledge.turn_write.eligible` and accounted outcomes (`completed + skipped + failed`) and alerts on mismatch.
+
 ## Backup hardening
 
 ### Typesense backup + snapshot retention
@@ -167,8 +186,10 @@ Kubernetes note:
 bunx tsc --noEmit
 bun test packages/system-bus/src/inngest/functions/check-system-health.test.ts
 bun test packages/system-bus/src/lib/webhook-subscriptions.test.ts
+bun test packages/gateway/src/knowledge-turn.test.ts
 joelclaw inngest status
 joelclaw otel search "webhook.subscription.dispatch" --hours 1
+joelclaw otel search "knowledge.turn_write" --hours 1
 ```
 
 ## Deploy
