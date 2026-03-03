@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process"
-import { JoelclawEnvelopeError, JoelclawProcessError } from "./errors"
+import { executeSdkCapabilityCommand, type SdkCapability } from "./capabilities"
+import { JoelclawCapabilityError, JoelclawEnvelopeError, JoelclawProcessError } from "./errors"
 import type {
   JoelclawClientOptions,
   JoelclawEnvelope,
   JoelclawRunOptions,
+  JoelclawTransport,
   OtelEmitInput,
   OtelListOptions,
   OtelSearchOptions,
@@ -24,6 +26,12 @@ type ProcessRunResult = {
 
 type InternalRunOptions = JoelclawRunOptions & {
   throwOnEnvelopeError?: boolean
+}
+
+type RecallCapabilityPayload = {
+  raw: boolean
+  text?: string
+  payload?: Record<string, unknown>
 }
 
 function appendOption(args: string[], name: string, value: string | number | undefined): void {
@@ -96,6 +104,15 @@ function truncateOutput(value: string, maxChars = 1000): string {
   const trimmed = value.trim()
   if (trimmed.length <= maxChars) return trimmed
   return `${trimmed.slice(0, maxChars)}...`
+}
+
+function buildSuccessEnvelope<TResult>(command: string, result: TResult): JoelclawEnvelope<TResult> {
+  return {
+    ok: true,
+    command,
+    result,
+    next_actions: [],
+  }
 }
 
 async function runProcess(
@@ -178,10 +195,49 @@ async function runProcess(
 export class JoelclawClient {
   readonly #bin: string
   readonly #defaults: JoelclawClientOptions
+  readonly #transport: JoelclawTransport
 
   constructor(options: JoelclawClientOptions = {}) {
     this.#bin = options.bin ?? process.env.JOELCLAW_BIN ?? "joelclaw"
     this.#defaults = options
+    this.#transport = options.transport ?? "hybrid"
+  }
+
+  private shouldTryInProcess(): boolean {
+    return this.#transport === "inprocess" || this.#transport === "hybrid"
+  }
+
+  private shouldUseSubprocessFallback(): boolean {
+    return this.#transport === "subprocess" || this.#transport === "hybrid"
+  }
+
+  private async runSdkCapability<TResult>(input: {
+    capability: SdkCapability
+    subcommand: string
+    args: unknown
+    command: string
+  }): Promise<JoelclawEnvelope<TResult> | null> {
+    if (!this.shouldTryInProcess()) return null
+
+    const result = await executeSdkCapabilityCommand<TResult>({
+      capability: input.capability,
+      subcommand: input.subcommand,
+      args: input.args,
+    })
+
+    if (result.ok) {
+      return buildSuccessEnvelope(input.command, result.result)
+    }
+
+    if (this.#transport === "inprocess") {
+      throw new JoelclawCapabilityError({
+        capability: input.capability,
+        subcommand: input.subcommand,
+        error: result.error,
+      })
+    }
+
+    return null
   }
 
   async run<TResult = unknown>(
@@ -254,8 +310,27 @@ export class JoelclawClient {
   }
 
   async otelList<TResult = unknown>(options: OtelListOptions = {}): Promise<JoelclawEnvelope<TResult>> {
-    const args = ["otel", "list"]
+    const inProcess = await this.runSdkCapability<TResult>({
+      capability: "otel",
+      subcommand: "list",
+      args: {
+        level: toCsv(options.level),
+        source: toCsv(options.source),
+        component: toCsv(options.component),
+        success: typeof options.success === "boolean" ? (options.success ? "true" : "false") : undefined,
+        hours: options.hours ?? 24,
+        limit: options.limit ?? 30,
+        page: options.page ?? 1,
+      },
+      command: "joelclaw otel list",
+    })
 
+    if (inProcess) return inProcess
+    if (!this.shouldUseSubprocessFallback()) {
+      throw new Error("subprocess transport is disabled")
+    }
+
+    const args = ["otel", "list"]
     appendOption(args, "level", toCsv(options.level))
     appendOption(args, "source", toCsv(options.source))
     appendOption(args, "component", toCsv(options.component))
@@ -273,8 +348,28 @@ export class JoelclawClient {
     query: string,
     options: OtelSearchOptions = {},
   ): Promise<JoelclawEnvelope<TResult>> {
-    const args = ["otel", "search", query]
+    const inProcess = await this.runSdkCapability<TResult>({
+      capability: "otel",
+      subcommand: "search",
+      args: {
+        query,
+        level: toCsv(options.level),
+        source: toCsv(options.source),
+        component: toCsv(options.component),
+        success: typeof options.success === "boolean" ? (options.success ? "true" : "false") : undefined,
+        hours: options.hours ?? 24,
+        limit: options.limit ?? 30,
+        page: options.page ?? 1,
+      },
+      command: "joelclaw otel search",
+    })
 
+    if (inProcess) return inProcess
+    if (!this.shouldUseSubprocessFallback()) {
+      throw new Error("subprocess transport is disabled")
+    }
+
+    const args = ["otel", "search", query]
     appendOption(args, "level", toCsv(options.level))
     appendOption(args, "source", toCsv(options.source))
     appendOption(args, "component", toCsv(options.component))
@@ -293,8 +388,23 @@ export class JoelclawClient {
     component?: string | readonly string[]
     hours?: number
   } = {}): Promise<JoelclawEnvelope<TResult>> {
-    const args = ["otel", "stats"]
+    const inProcess = await this.runSdkCapability<TResult>({
+      capability: "otel",
+      subcommand: "stats",
+      args: {
+        source: toCsv(options.source),
+        component: toCsv(options.component),
+        hours: options.hours ?? 24,
+      },
+      command: "joelclaw otel stats",
+    })
 
+    if (inProcess) return inProcess
+    if (!this.shouldUseSubprocessFallback()) {
+      throw new Error("subprocess transport is disabled")
+    }
+
+    const args = ["otel", "stats"]
     appendOption(args, "source", toCsv(options.source))
     appendOption(args, "component", toCsv(options.component))
     appendOption(args, "hours", options.hours)
@@ -308,11 +418,36 @@ export class JoelclawClient {
       if (!action) {
         throw new Error("otelEmit(action): action must be a non-empty string")
       }
+
+      const inProcess = await this.runSdkCapability<TResult>({
+        capability: "otel",
+        subcommand: "emit",
+        args: { action },
+        command: "joelclaw otel emit",
+      })
+
+      if (inProcess) return inProcess
+      if (!this.shouldUseSubprocessFallback()) {
+        throw new Error("subprocess transport is disabled")
+      }
+
       return await this.runOrThrow<TResult>(["otel", "emit", action])
     }
 
     if (!event.action?.trim()) {
       throw new Error("otelEmit(event): event.action is required")
+    }
+
+    const inProcess = await this.runSdkCapability<TResult>({
+      capability: "otel",
+      subcommand: "emit",
+      args: { event },
+      command: "joelclaw otel emit",
+    })
+
+    if (inProcess) return inProcess
+    if (!this.shouldUseSubprocessFallback()) {
+      throw new Error("subprocess transport is disabled")
     }
 
     return await this.runOrThrow<TResult>(["otel", "emit"], {
@@ -324,8 +459,28 @@ export class JoelclawClient {
     query: string,
     options: RecallQueryOptions = {},
   ): Promise<JoelclawEnvelope<TResult>> {
-    const args = ["recall", query]
+    const inProcess = await this.runSdkCapability<TResult>({
+      capability: "recall",
+      subcommand: "query",
+      args: {
+        query,
+        limit: options.limit ?? 5,
+        minScore: options.minScore ?? 0,
+        raw: false,
+        includeHold: options.includeHold ?? false,
+        includeDiscard: options.includeDiscard ?? false,
+        budget: options.budget ?? "auto",
+        category: options.category ?? "",
+      },
+      command: "joelclaw recall",
+    })
 
+    if (inProcess) return inProcess
+    if (!this.shouldUseSubprocessFallback()) {
+      throw new Error("subprocess transport is disabled")
+    }
+
+    const args = ["recall", query]
     appendOption(args, "limit", options.limit)
     appendOption(args, "min-score", options.minScore)
     appendFlag(args, "include-hold", options.includeHold)
@@ -337,6 +492,39 @@ export class JoelclawClient {
   }
 
   async recallRaw(query: string, options: Omit<RecallQueryOptions, "includeHold" | "includeDiscard"> = {}): Promise<string> {
+    if (this.shouldTryInProcess()) {
+      const result = await executeSdkCapabilityCommand<RecallCapabilityPayload>({
+        capability: "recall",
+        subcommand: "query",
+        args: {
+          query,
+          limit: options.limit ?? 5,
+          minScore: options.minScore ?? 0,
+          raw: true,
+          includeHold: false,
+          includeDiscard: false,
+          budget: options.budget ?? "auto",
+          category: options.category ?? "",
+        },
+      })
+
+      if (result.ok) {
+        return result.result.text?.trim() ?? ""
+      }
+
+      if (this.#transport === "inprocess") {
+        throw new JoelclawCapabilityError({
+          capability: "recall",
+          subcommand: "query",
+          error: result.error,
+        })
+      }
+    }
+
+    if (!this.shouldUseSubprocessFallback()) {
+      throw new Error("subprocess transport is disabled")
+    }
+
     const args = ["recall", query, "--raw"]
     appendOption(args, "limit", options.limit)
     appendOption(args, "min-score", options.minScore)
@@ -395,6 +583,15 @@ export class JoelclawClient {
   }
 
   formatProcessError(error: unknown): string {
+    if (error instanceof JoelclawCapabilityError) {
+      return [
+        error.message,
+        `capability: ${error.capability}/${error.subcommand}`,
+        `code: ${error.causePayload.code}`,
+        error.causePayload.fix ? `fix: ${error.causePayload.fix}` : null,
+      ].filter(Boolean).join("\n")
+    }
+
     if (!(error instanceof JoelclawProcessError)) return String(error)
 
     return [

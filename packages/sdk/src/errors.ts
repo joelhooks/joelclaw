@@ -1,3 +1,4 @@
+import type { CapabilityError } from "./capabilities"
 import type { JoelclawEnvelope } from "./types"
 
 export class JoelclawProcessError extends Error {
@@ -25,6 +26,24 @@ export class JoelclawProcessError extends Error {
     this.signal = input.signal
     this.stdout = input.stdout
     this.stderr = input.stderr
+  }
+}
+
+export class JoelclawCapabilityError extends Error {
+  readonly capability: string
+  readonly subcommand: string
+  readonly causePayload: CapabilityError
+
+  constructor(input: {
+    capability: string
+    subcommand: string
+    error: CapabilityError
+  }) {
+    super(input.error.message)
+    this.name = "JoelclawCapabilityError"
+    this.capability = input.capability
+    this.subcommand = input.subcommand
+    this.causePayload = input.error
   }
 }
 

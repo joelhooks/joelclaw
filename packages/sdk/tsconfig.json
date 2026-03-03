@@ -10,8 +10,7 @@
     "strict": true,
     "noCheck": true,
     "skipLibCheck": true,
-    "noEmit": true,
-    "types": ["bun"]
+    "noEmit": true
   },
   "include": ["src"]
 }

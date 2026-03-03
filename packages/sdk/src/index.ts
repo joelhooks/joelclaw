@@ -1,13 +1,15 @@
-export { JoelclawClient, createJoelclawClient } from "./client"
-export { JoelclawEnvelopeError, JoelclawProcessError } from "./errors"
+export * from "./capabilities"
+export { createJoelclawClient, JoelclawClient } from "./client"
+export { JoelclawCapabilityError, JoelclawEnvelopeError, JoelclawProcessError } from "./errors"
 
 export type {
   JoelclawClientOptions,
-  JoelclawEnvelope,
   JoelclawEnv,
+  JoelclawEnvelope,
   JoelclawNextAction,
   JoelclawNextActionParam,
   JoelclawRunOptions,
+  JoelclawTransport,
   OtelEmitInput,
   OtelEventLevel,
   OtelListOptions,

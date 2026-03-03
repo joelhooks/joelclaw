@@ -26,11 +26,14 @@ export interface JoelclawEnvelope<TResult = unknown> {
 
 export type JoelclawEnv = Record<string, string | undefined>
 
+export type JoelclawTransport = "subprocess" | "inprocess" | "hybrid"
+
 export interface JoelclawClientOptions {
   readonly bin?: string
   readonly cwd?: string
   readonly env?: JoelclawEnv
   readonly timeoutMs?: number
+  readonly transport?: JoelclawTransport
 }
 
 export interface JoelclawRunOptions {
