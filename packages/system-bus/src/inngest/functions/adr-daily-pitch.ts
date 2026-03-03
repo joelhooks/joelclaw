@@ -151,11 +151,13 @@ export const adrDailyPitch = inngest.createFunction(
           const filePath = join(VAULT_PATH, "docs/decisions", item.filename);
           const content = readFileSync(filePath, "utf-8");
           const fm = parseFrontmatter(content, item.number);
-          // Gate: high confidence, tractable scope
-          // confidence >= 4 = we know what to build
-          // readiness >= 3 = dependencies met, not blocked
-          // Sorted by score, so highest-value work gets pitched first
-          if (fm && fm.confidence >= 4 && fm.readiness >= 3) {
+          // ADR-0183 rubric gates:
+          // - readiness >= 3 (hard gate: don't start if blocked/vague)
+          // - confidence >= 3 (hard gate: need spike first if lower)
+          // - band = do-now or next (score >= 60)
+          // Score drives sort order — highest value pitches first
+          const pitchableBands = new Set(["do-now", "next"]);
+          if (fm && fm.readiness >= 3 && fm.confidence >= 3 && pitchableBands.has(fm.band)) {
             scored.push(fm);
           }
         } catch {
