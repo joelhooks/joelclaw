@@ -1,8 +1,9 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { $ } from "bun";
+import { bulkImport, SYSTEM_KNOWLEDGE_COLLECTION } from "../../../lib/typesense";
 import { inngest } from "../../client";
-import { createLoopOnFailure, ensureClaudeAuth, readPrd, readProgress, writeRecommendations } from "./utils";
+import { appendLessons, createLoopOnFailure, ensureClaudeAuth, readPrd, readProgress, writeRecommendations } from "./utils";
 
 type StoryDetail = {
   id: string;
@@ -372,12 +373,119 @@ export const agentLoopRetro = inngest.createFunction(
       return { project, sourceLoopId: loopId };
     });
 
+    // Append key findings to Redis lessons list (ADR-0199 — was never invoked)
+    await step.run("append-lessons", async () => {
+      const entries: string[] = [];
+      if (reflection.analysis) {
+        const bullets = reflection.analysis
+          .split("\n")
+          .filter((l) => l.trim().startsWith("-") || l.trim().startsWith("•"))
+          .map((l) => l.replace(/^[\s\-•]+/, "").trim())
+          .filter((l) => l.length > 20)
+          .slice(0, 5);
+        entries.push(...bullets);
+      }
+      if (entries.length === 0 && summary) {
+        entries.push(`Loop ${loopId}: ${summary.slice(0, 200)}`);
+      }
+      for (const entry of entries) {
+        await appendLessons(project, entry);
+      }
+      return { appended: entries.length };
+    });
+
     await step.run("write-codebase-patterns", async () => {
       const utils = await import("./utils");
       if (typeof utils.writePatterns === "function") {
         await utils.writePatterns(project, codebasePatterns ?? "");
       }
       return { project, hasPatterns: Boolean(codebasePatterns) };
+    });
+
+    // Index findings to system_knowledge (ADR-0199)
+    await step.run("index-to-system-knowledge", async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const docs: Record<string, unknown>[] = [];
+
+      // Retro summary document
+      docs.push({
+        id: `retro:${loopId}`,
+        type: "retro",
+        title: `Loop ${loopId} retro — ${storiesCompleted} passed, ${storiesFailed} failed`,
+        content: [
+          summary || "",
+          reflection.analysis || "",
+          reflection.narrative || "",
+          codebasePatterns || "",
+        ].filter(Boolean).join("\n\n").slice(0, 8000),
+        source: `vault:system/retrospectives/${loopId}.md`,
+        project,
+        loop_id: loopId,
+        tags: ["retro", "loop"],
+        created_at: now,
+      });
+
+      // Individual lessons from reflection analysis
+      if (reflection.analysis) {
+        const bullets = reflection.analysis
+          .split("\n")
+          .filter((l) => l.trim().startsWith("-") || l.trim().startsWith("•"))
+          .map((l) => l.replace(/^[\s\-•]+/, "").trim())
+          .filter((l) => l.length > 20);
+
+        for (let i = 0; i < bullets.length; i++) {
+          docs.push({
+            id: `lesson:${loopId}:${i}`,
+            type: "lesson",
+            title: bullets[i].slice(0, 120),
+            content: bullets[i],
+            project,
+            loop_id: loopId,
+            tags: ["lesson", "loop"],
+            created_at: now,
+          });
+        }
+      }
+
+      // Codebase patterns
+      if (codebasePatterns && codebasePatterns.length > 50) {
+        docs.push({
+          id: `pattern:${loopId}`,
+          type: "pattern",
+          title: `Codebase patterns from loop ${loopId}`,
+          content: codebasePatterns.slice(0, 6000),
+          project,
+          loop_id: loopId,
+          tags: ["pattern", "loop"],
+          created_at: now,
+        });
+      }
+
+      // Failed targets — stories that failed permanently
+      const failedStories = storyDetails.filter((s) => !s.passed && !s.skipped);
+      for (const s of failedStories) {
+        docs.push({
+          id: `failed_target:${loopId}:${s.id}`,
+          type: "failed_target",
+          title: `Failed: ${s.title}`,
+          content: `Story ${s.id} failed after ${s.attempts} attempt(s) with ${s.tool}. Loop: ${loopId}, Project: ${project}`,
+          project,
+          loop_id: loopId,
+          tags: ["failed_target", "loop"],
+          created_at: now,
+        });
+      }
+
+      if (docs.length === 0) return { indexed: 0 };
+
+      try {
+        const result = await bulkImport(SYSTEM_KNOWLEDGE_COLLECTION, docs);
+        return { indexed: result.success, errors: result.errors, docCount: docs.length };
+      } catch (err) {
+        // Graceful — don't fail the retro if indexing fails
+        console.warn(`[retro] system_knowledge indexing failed: ${err}`);
+        return { indexed: 0, error: String(err) };
+      }
     });
 
     await step.sendEvent("emit-retro-complete", {
