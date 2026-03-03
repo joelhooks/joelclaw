@@ -1473,6 +1473,88 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
   });
 }
 
+// ── Message outbound: Inngest functions push messages, we deliver via channel interface ──
+{
+  const startMessageOutbound = async () => {
+    const Redis = (await import("ioredis")).default;
+    const msgSub = new Redis({
+      host: process.env.REDIS_HOST ?? "localhost",
+      port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+      lazyConnect: true,
+      retryStrategy: (times: number) => Math.min(times * 500, 30_000),
+    });
+    const msgCmd = new Redis({
+      host: process.env.REDIS_HOST ?? "localhost",
+      port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+      lazyConnect: true,
+      retryStrategy: (times: number) => Math.min(times * 500, 30_000),
+    });
+    msgSub.on("error", () => {});
+    msgCmd.on("error", () => {});
+    await msgSub.connect();
+    await msgCmd.connect();
+    await msgSub.subscribe("joelclaw:notify:outbound");
+
+    const drainMessageOutbound = async () => {
+      try {
+        const raw = await msgCmd.lrange("joelclaw:outbound:messages", 0, -1);
+        if (raw.length === 0) return;
+        await msgCmd.del("joelclaw:outbound:messages");
+
+        for (const item of raw) {
+          try {
+            const msg = JSON.parse(item) as {
+              channel: string;
+              text: string;
+              inline_keyboard?: Array<Array<{ text: string; callback_data: string }>>;
+              edit_message_id?: number;
+              remove_keyboard?: boolean;
+            };
+
+            console.log("[gateway] message outbound →", { channel: msg.channel, hasKeyboard: !!msg.inline_keyboard, edit: msg.edit_message_id });
+
+            if (msg.channel === "telegram") {
+              const tgBot = getBot();
+              if (!tgBot) {
+                console.error("[gateway] message outbound: telegram bot not available");
+                continue;
+              }
+              const chatId = TELEGRAM_USER_ID;
+              if (!chatId) continue;
+
+              if (msg.edit_message_id) {
+                // Edit existing message
+                await tgBot.api.editMessageText(chatId, msg.edit_message_id, msg.text, {
+                  parse_mode: "HTML",
+                  reply_markup: msg.remove_keyboard ? { inline_keyboard: [] } : undefined,
+                }).catch((err) => console.warn("[gateway] edit message failed", err));
+              } else {
+                // Send new message
+                await tgBot.api.sendMessage(chatId, msg.text, {
+                  parse_mode: "HTML",
+                  reply_markup: msg.inline_keyboard ? { inline_keyboard: msg.inline_keyboard } : undefined,
+                });
+              }
+            }
+          } catch (err) {
+            console.error("[gateway] message outbound item failed", { error: err });
+          }
+        }
+      } catch (err) {
+        console.error("[gateway] message outbound drain failed", { error: err });
+      }
+    };
+
+    msgSub.on("message", () => { void drainMessageOutbound(); });
+    await drainMessageOutbound();
+    console.log("[gateway] message outbound listener started");
+  };
+
+  startMessageOutbound().catch((error) => {
+    console.error("[gateway] message outbound initial connect failed — ioredis will retry", { error: String(error) });
+  });
+}
+
 const heartbeatRunner = startHeartbeatRunner();
 const queueDrainTimer = setInterval(() => {
   void drain();

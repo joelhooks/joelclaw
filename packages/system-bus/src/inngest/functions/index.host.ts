@@ -1,5 +1,6 @@
 import { echoFizzle } from "../../memory/echo-fizzle";
 import { adrDailyPitch, adrPitchApproved, adrPitchRejected } from "./adr-daily-pitch";
+import { gatewaySendMessage } from "./gateway-send-message";
 import { agentChainRun } from "./agent-chain-run";
 import { agentDispatch } from "./agent-dispatch";
 import {
@@ -116,6 +117,7 @@ export const hostFunctionDefinitions = [
   adrDailyPitch,
   adrPitchApproved,
   adrPitchRejected,
+  gatewaySendMessage,
   videoDownload,
   transcriptProcess,
   transcriptIndexWeb,
