@@ -486,101 +486,52 @@ function registerCallbackHandler(init: CommandHandlerInit): void {
   });
 }
 
-async function sendPitchDecisionEvent(eventName: "adr/pitch.approved" | "adr/pitch.rejected", adrNumber: number): Promise<void> {
-  // Try CLI first, fall back to direct HTTP
+async function sendPitchDecisionEvent(
+  eventName: "adr/pitch.approved" | "adr/pitch.rejected",
+  adrNumber: number,
+  messageId?: number,
+): Promise<void> {
   const { execSync } = await import("node:child_process");
+  const data = JSON.stringify({ adr_number: adrNumber, telegram_message_id: messageId });
   try {
-    const data = JSON.stringify({ adr_number: adrNumber });
     execSync(`/Users/joel/.bun/bin/joelclaw send '${eventName}' -d '${data}'`, {
       timeout: 10_000,
       stdio: "pipe",
     });
-    console.log(`[gateway:telegram] pitch decision sent via CLI: ${eventName} adr=${adrNumber}`);
-    return;
-  } catch (cliError) {
-    console.warn("[gateway:telegram] CLI send failed, trying direct HTTP", {
-      error: cliError instanceof Error ? cliError.message : String(cliError),
-    });
-  }
-
-  // Fallback: direct HTTP to Inngest
-  const eventKey = process.env.INNGEST_EVENT_KEY ?? "37aa349b89692d657d276a40e0e47a15";
-  const response = await fetch(`http://localhost:8288/e/${eventKey}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: eventName, data: { adr_number: adrNumber } }),
-  });
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    console.warn("[gateway:telegram] Direct HTTP send also failed", { status: response.status, body });
-  } else {
-    console.log(`[gateway:telegram] pitch decision sent via HTTP: ${eventName} adr=${adrNumber}`);
+  } catch {
+    // Fallback: direct HTTP
+    const eventKey = process.env.INNGEST_EVENT_KEY ?? "37aa349b89692d657d276a40e0e47a15";
+    await fetch(`http://localhost:8288/e/${eventKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: eventName, data: { adr_number: adrNumber, telegram_message_id: messageId } }),
+    }).catch(() => {});
   }
 }
 
 function registerPitchCallbackHandler(bot: Bot, chatId: string): void {
-  console.log(`[gateway:pitch] registering pitch callback handler for chat=${chatId}`);
-
   bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery.data;
-    const chatIdStr = String(ctx.chat?.id ?? "");
-
-    console.log(`[gateway:pitch] callback_query received: data="${data}" chat=${chatIdStr} expected=${chatId}`);
-
-    if (chatIdStr !== chatId) {
-      console.log(`[gateway:pitch] chat mismatch, passing to next`);
-      await next();
-      return;
-    }
-
-    if (!data.startsWith("pitch:")) {
-      console.log(`[gateway:pitch] not a pitch callback, passing to next`);
+    if (String(ctx.chat?.id ?? "") !== chatId || !data.startsWith("pitch:")) {
       await next();
       return;
     }
 
     const [, action, rawAdrNumber] = data.split(":");
     const adrNumber = Number.parseInt(rawAdrNumber ?? "", 10);
-    console.log(`[gateway:pitch] parsed: action=${action} adrNumber=${adrNumber}`);
-
     if ((action !== "approve" && action !== "reject") || Number.isNaN(adrNumber)) {
-      console.warn(`[gateway:pitch] invalid action or adr number`);
-      await ctx.answerCallbackQuery({ text: "⚠️ Invalid decision" });
+      await ctx.answerCallbackQuery({ text: "⚠️ Invalid" });
       return;
     }
 
+    // Dumb relay: answer the spinner, fire the event, done.
+    // Inngest handles Redis, message editing, everything else.
     const approved = action === "approve";
-    const callbackText = approved ? "✅ Approved!" : "❌ Rejected";
-    const decisionText = approved ? "✅ Approved" : "❌ Rejected";
+    await ctx.answerCallbackQuery({ text: approved ? "✅" : "❌" });
+
     const eventName = approved ? "adr/pitch.approved" : "adr/pitch.rejected";
-
-    console.log(`[gateway:pitch] answering callback query: ${callbackText}`);
-    await ctx.answerCallbackQuery({ text: callbackText });
-
-    const callbackMessage = ctx.callbackQuery.message;
-    const originalText = callbackMessage && "text" in callbackMessage
-      ? (callbackMessage.text ?? "")
-      : "";
-    const updatedText = originalText
-      ? `${originalText}\n\n${decisionText}`
-      : decisionText;
-
-    try {
-      await ctx.editMessageText(updatedText, {
-        reply_markup: { inline_keyboard: [] },
-      });
-      console.log(`[gateway:pitch] message edited successfully`);
-    } catch (error) {
-      console.warn("[gateway:pitch] error editing message", error);
-    }
-
-    try {
-      console.log(`[gateway:pitch] sending event: ${eventName} adr=${adrNumber}`);
-      await sendPitchDecisionEvent(eventName, adrNumber);
-      console.log(`[gateway:pitch] event sent successfully`);
-    } catch (error) {
-      console.warn("[gateway:pitch] error sending event", error);
-    }
+    const messageId = ctx.callbackQuery.message?.message_id;
+    await sendPitchDecisionEvent(eventName, adrNumber, messageId);
   });
 }
 

@@ -283,6 +283,24 @@ export const adrDailyPitch = inngest.createFunction(
   },
 );
 
+async function editTelegramMessage(messageId: number, text: string): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_USER_ID ?? process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId || !messageId) return;
+
+  await fetch(`https://api.telegram.org/bot${token}/editMessageText`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      parse_mode: "HTML",
+      reply_markup: { inline_keyboard: [] },
+    }),
+  }).catch(() => {});
+}
+
 export const adrPitchApproved = inngest.createFunction(
   {
     id: "adr-pitch-approved",
@@ -290,16 +308,27 @@ export const adrPitchApproved = inngest.createFunction(
     retries: 2,
   },
   { event: "adr/pitch.approved" },
-  async ({ event }) => {
+  async ({ event, step }) => {
     const adr_number = event.data.adr_number as string | number;
-    console.log(`[adr-pitch-approved] received: adr_number=${adr_number} (type=${typeof adr_number})`);
-    const updated = await updatePitchHistoryResponse(adr_number, "approved");
-    console.log(`[adr-pitch-approved] redis updated=${updated}`);
+    const messageId = event.data.telegram_message_id as number | undefined;
+    const normalized = String(adr_number).padStart(4, "0");
 
-    return {
-      updated,
-      adr_number: String(adr_number).padStart(4, "0"),
-    };
+    const updated = await step.run("update-redis", async () => {
+      return updatePitchHistoryResponse(adr_number, "approved");
+    });
+
+    await step.run("edit-telegram-message", async () => {
+      if (messageId) {
+        const redis = getRedis();
+        const historyRaw = await redis.get(PITCH_HISTORY_KEY);
+        const history: PitchRecord[] = historyRaw ? (JSON.parse(historyRaw) as PitchRecord[]) : [];
+        const pitch = history.find(h => String(h.adr_number).padStart(4, "0") === normalized);
+        const originalText = pitch ? `📋 <b>ADR-${normalized}</b>` : `ADR-${normalized}`;
+        await editTelegramMessage(messageId, `${originalText}\n\n✅ Approved — queued for work`);
+      }
+    });
+
+    return { updated, adr_number: normalized };
   },
 );
 
@@ -310,15 +339,21 @@ export const adrPitchRejected = inngest.createFunction(
     retries: 2,
   },
   { event: "adr/pitch.rejected" },
-  async ({ event }) => {
+  async ({ event, step }) => {
     const adr_number = event.data.adr_number as string | number;
-    console.log(`[adr-pitch-rejected] received: adr_number=${adr_number} (type=${typeof adr_number})`);
-    const updated = await updatePitchHistoryResponse(adr_number, "rejected");
-    console.log(`[adr-pitch-rejected] redis updated=${updated}`);
+    const messageId = event.data.telegram_message_id as number | undefined;
+    const normalized = String(adr_number).padStart(4, "0");
 
-    return {
-      updated,
-      adr_number: String(adr_number).padStart(4, "0"),
-    };
+    const updated = await step.run("update-redis", async () => {
+      return updatePitchHistoryResponse(adr_number, "rejected");
+    });
+
+    await step.run("edit-telegram-message", async () => {
+      if (messageId) {
+        await editTelegramMessage(messageId, `📋 <b>ADR-${normalized}</b>\n\n❌ Rejected — cooling off 7 days`);
+      }
+    });
+
+    return { updated, adr_number: normalized };
   },
 );
