@@ -2,7 +2,7 @@
 name: gateway-diagnose
 displayName: Gateway Diagnose
 description: "Diagnose gateway failures by reading daemon logs, session transcripts, Redis state, and OTEL telemetry. Full Telegram path triage: daemon process → Redis channel → command queue → pi session → model API → Telegram delivery. Use when: 'gateway broken', 'telegram not working', 'why is gateway down', 'gateway not responding', 'check gateway logs', 'what happened to gateway', 'gateway diagnose', 'gateway errors', 'review gateway logs', 'fallback activated', 'gateway stuck', or any request to understand why the gateway failed. Distinct from the gateway skill (operations) — this skill is diagnostic."
-version: 1.0.8
+version: 1.0.9
 author: Joel Hooks
 tags: [joelclaw, gateway, diagnosis, logs, telegram, reliability]
 ---
@@ -172,6 +172,12 @@ joelclaw otel search "command-queue" --hours 1
 # Dedup events (store-level + drain-level)
 joelclaw otel search "queue.dedup_dropped" --hours 6
 joelclaw otel search "message.dedup_dropped" --hours 6
+
+# Autonomous-turn attribution (classification → dispatch → forward)
+joelclaw otel search "events.triaged" --hours 6
+joelclaw otel search "events.dispatched.background_only" --hours 6
+joelclaw otel search "response.generated.background_source" --hours 6
+joelclaw otel search "outbound.console_forward" --hours 6
 ```
 
 ### Layer 7: Model API Health

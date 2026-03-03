@@ -118,6 +118,33 @@ This protects against late assistant segments that arrive after the active sourc
   - `daemon.response.source_fallback_console` (warn) only when a recent channel-origin prompt exists but routing still collapses to console
   - `daemon.response.source_console_no_context` (info) for expected startup/background console turns (observable but non-paging)
 
+## Background turn attribution telemetry
+
+To diagnose unsolicited/autonomous user-facing turns without behavior gating, gateway now emits attribution telemetry across classification → dispatch → response → console forwarding:
+
+- `redis-channel:events.triaged` (debug)
+  - counts + per-bucket reason counters (`immediate|batched|suppressed`)
+  - per-bucket event type counts (`immediateTypes`, `batchedTypes`, `suppressedTypes`)
+- `redis-channel:events.dispatched` (info)
+  - `source`, `sourceKind`, `originSession`, `eventTypes`, `backgroundOnly`
+- `redis-channel:events.dispatched.background_only` (debug)
+  - emitted when a dispatch has no human/interactive event in the actionable set
+- `daemon.response:response.generated` (debug)
+  - source attribution at response synthesis time (`hasActiveSource`, `hasCapturedSource`, recent prompt age)
+- `daemon.response:response.generated.background_source` (debug)
+  - response source resolved to internal/background (`gateway|console`)
+- `daemon.outbound:outbound.console_forward.*`
+  - `...skipped` (reasons: `no-telegram-config`, `source-is-telegram`, `filtered-by-forward-rule`)
+  - `...attempt`, `...sent`, `...failed`
+
+Quick queries:
+
+```bash
+joelclaw otel search "events.dispatched.background_only" --hours 24
+joelclaw otel search "response.generated.background_source" --hours 24
+joelclaw otel search "outbound.console_forward" --hours 24
+```
+
 ## Interrupt controls by channel
 
 Telegram chat (`@JoelClawPandaBot`):

@@ -233,6 +233,16 @@ function shouldForwardToTelegram(text: string): boolean {
   return !isHeartbeatOk && !isTrivial && !isEcho;
 }
 
+function getSourceKind(source: string | undefined): "channel" | "internal" | "unknown" {
+  if (!source) return "unknown";
+  return source.includes(":") ? "channel" : "internal";
+}
+
+function isBackgroundSource(source: string | undefined): boolean {
+  if (!source) return true;
+  return source === "gateway" || source === "console";
+}
+
 function isMcqQuestion(value: unknown): value is McqParams["questions"][number] {
   if (!value || typeof value !== "object") return false;
   const question = value as Record<string, unknown>;
@@ -902,9 +912,68 @@ const channelInfo = {
 registerChannel("console", {
   send: async (message, context) => {
     const envelope = normalizeOutboundMessage(message);
-    if (!TELEGRAM_TOKEN || !TELEGRAM_USER_ID) return;
-    if (context?.source?.startsWith("telegram:")) return;
-    if (!shouldForwardToTelegram(envelope.text)) return;
+    const source = context?.source;
+    const sourceKind = getSourceKind(source);
+
+    if (!TELEGRAM_TOKEN || !TELEGRAM_USER_ID) {
+      void emitGatewayOtel({
+        level: "debug",
+        component: "daemon.outbound",
+        action: "outbound.console_forward.skipped",
+        success: true,
+        metadata: {
+          reason: "no-telegram-config",
+          source,
+          sourceKind,
+          textLength: envelope.text.length,
+        },
+      });
+      return;
+    }
+
+    if (source?.startsWith("telegram:")) {
+      void emitGatewayOtel({
+        level: "debug",
+        component: "daemon.outbound",
+        action: "outbound.console_forward.skipped",
+        success: true,
+        metadata: {
+          reason: "source-is-telegram",
+          source,
+          sourceKind,
+          textLength: envelope.text.length,
+        },
+      });
+      return;
+    }
+
+    if (!shouldForwardToTelegram(envelope.text)) {
+      void emitGatewayOtel({
+        level: "debug",
+        component: "daemon.outbound",
+        action: "outbound.console_forward.skipped",
+        success: true,
+        metadata: {
+          reason: "filtered-by-forward-rule",
+          source,
+          sourceKind,
+          textLength: envelope.text.length,
+        },
+      });
+      return;
+    }
+
+    void emitGatewayOtel({
+      level: "info",
+      component: "daemon.outbound",
+      action: "outbound.console_forward.attempt",
+      success: true,
+      metadata: {
+        source,
+        sourceKind,
+        textLength: envelope.text.length,
+      },
+    });
 
     try {
       await sendTelegram(TELEGRAM_USER_ID, envelope.text, {
@@ -912,8 +981,32 @@ registerChannel("console", {
         silent: envelope.silent,
         replyTo: envelope.replyTo,
       });
+      void emitGatewayOtel({
+        level: "info",
+        component: "daemon.outbound",
+        action: "outbound.console_forward.sent",
+        success: true,
+        metadata: {
+          source,
+          sourceKind,
+          textLength: envelope.text.length,
+        },
+      });
     } catch (error) {
-      console.error("[gateway] telegram notification failed", { error: String(error) });
+      const errorMessage = String(error);
+      console.error("[gateway] telegram notification failed", { error: errorMessage });
+      void emitGatewayOtel({
+        level: "error",
+        component: "daemon.outbound",
+        action: "outbound.console_forward.failed",
+        success: false,
+        error: errorMessage,
+        metadata: {
+          source,
+          sourceKind,
+          textLength: envelope.text.length,
+        },
+      });
     }
   },
 });
@@ -1209,6 +1302,44 @@ session.subscribe((event: any) => {
       : undefined;
 
     const source = activeSource ?? capturedSource ?? recoveredSource ?? "console";
+    const sourceKind = getSourceKind(source);
+    const backgroundSource = isBackgroundSource(source);
+
+    void emitGatewayOtel({
+      level: "debug",
+      component: "daemon.response",
+      action: "response.generated",
+      success: true,
+      metadata: {
+        source,
+        sourceKind,
+        textLength: fullText.length,
+        hasActiveSource: Boolean(activeSource),
+        hasCapturedSource: Boolean(capturedSource),
+        recoveredFromRecentPrompt: Boolean(recoveredSource),
+        recentPromptSourcePrefix: lastPromptSource?.split(":")[0],
+        recentPromptSourceAgeMs: sourceRecoveryAgeMs,
+        backgroundSource,
+      },
+    });
+
+    if (backgroundSource) {
+      void emitGatewayOtel({
+        level: "debug",
+        component: "daemon.response",
+        action: "response.generated.background_source",
+        success: true,
+        metadata: {
+          source,
+          sourceKind,
+          textLength: fullText.length,
+          hasActiveSource: Boolean(activeSource),
+          hasCapturedSource: Boolean(capturedSource),
+          recoveredFromRecentPrompt: Boolean(recoveredSource),
+          recentPromptSourceAgeMs: sourceRecoveryAgeMs,
+        },
+      });
+    }
 
     if (recoveredSource) {
       console.log("[gateway] recovered response source from recent prompt", {

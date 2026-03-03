@@ -344,6 +344,28 @@ function isAutomationEvent(event: SystemEvent): boolean {
   return event.source.startsWith("inngest/");
 }
 
+function isHumanInboundMessageEvent(event: SystemEvent): boolean {
+  return event.type.endsWith(".message.received");
+}
+
+type TriageBucket = "immediate" | "batched" | "suppressed";
+
+function incrementCount(counter: Record<string, number>, key: string): void {
+  counter[key] = (counter[key] ?? 0) + 1;
+}
+
+function summarizeTypeCounts(events: SystemEvent[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const event of events) {
+    incrementCount(counts, event.type);
+  }
+  return counts;
+}
+
+function getSourceKind(source: string): "channel" | "internal" {
+  return source.includes(":") ? "channel" : "internal";
+}
+
 function isInlineButton(value: unknown): value is InlineButton {
   if (!value || typeof value !== "object") return false;
   const button = value as Record<string, unknown>;
@@ -466,39 +488,51 @@ async function drainEvents(): Promise<void> {
     const suppressed: SystemEvent[] = [];
     const batched: SystemEvent[] = [];
     const immediate: SystemEvent[] = [];
+    const triageReasonCounts: Record<TriageBucket, Record<string, number>> = {
+      immediate: {},
+      batched: {},
+      suppressed: {},
+    };
+
+    const assign = (bucket: TriageBucket, event: SystemEvent, reason: string) => {
+      if (bucket === "immediate") immediate.push(event);
+      if (bucket === "batched") batched.push(event);
+      if (bucket === "suppressed") suppressed.push(event);
+      incrementCount(triageReasonCounts[bucket], reason);
+    };
 
     for (const e of events) {
       if (SUPPRESSED_TYPES.has(e.type)) {
-        suppressed.push(e);
+        assign("suppressed", e, "suppressed.type-listed");
         continue;
       }
 
       if (isHeartbeatOkEvent(e)) {
         if (Date.now() - lastUserVisibleHeartbeatAt < ONE_HOUR_MS) {
-          suppressed.push(e);
+          assign("suppressed", e, "suppressed.heartbeat-ok-within-hour");
         } else {
           lastUserVisibleHeartbeatAt = Date.now();
-          batched.push(e);
+          assign("batched", e, "batched.heartbeat-ok-hourly-window");
         }
         continue;
       }
 
       if (BATCHED_TYPES.has(e.type)) {
-        batched.push(e);
+        assign("batched", e, "batched.type-listed");
         continue;
       }
 
       if (isInteractiveEvent(e) || isDegradationOrErrorEvent(e) || isImmediateTelegramEvent(e)) {
-        immediate.push(e);
+        assign("immediate", e, "immediate.interactive-or-error");
         continue;
       }
 
       if (isAutomationEvent(e)) {
-        batched.push(e);
+        assign("batched", e, "batched.automation-source");
         continue;
       }
 
-      immediate.push(e);
+      assign("immediate", e, "immediate.default-fallback");
     }
 
     // Stash batched events in Redis for hourly digest
@@ -517,6 +551,10 @@ async function drainEvents(): Promise<void> {
         immediate: immediate.length,
         batched: batched.length,
         suppressed: suppressed.length,
+        reasons: triageReasonCounts,
+        immediateTypes: summarizeTypeCounts(immediate),
+        batchedTypes: summarizeTypeCounts(batched),
+        suppressedTypes: summarizeTypeCounts(suppressed),
       },
     });
 
@@ -614,11 +652,18 @@ async function drainEvents(): Promise<void> {
       // All events filtered (e.g. stale cron.heartbeat) — nothing to enqueue
       return;
     }
+    const hasInteractiveEvent = actionable.some((event) => isInteractiveEvent(event));
+    const hasHumanMessageEvent = actionable.some((event) => isHumanInboundMessageEvent(event));
+    const backgroundOnly = !hasInteractiveEvent && !hasHumanMessageEvent;
+    const eventTypes = Array.from(new Set(actionable.map((event) => event.type)));
+
     await enqueuePrompt(source, prompt, {
       eventCount: actionable.length,
       eventIds: actionable.map((event) => event.id),
-      eventTypes: Array.from(new Set(actionable.map((event) => event.type))),
+      eventTypes,
       originSession,
+      backgroundOnly,
+      sourceKind: getSourceKind(source),
     });
     void emitGatewayOtel({
       level: "info",
@@ -627,9 +672,31 @@ async function drainEvents(): Promise<void> {
       success: true,
       metadata: {
         source,
+        sourceKind: getSourceKind(source),
+        originSession,
         eventCount: actionable.length,
+        eventTypes,
+        hasInteractiveEvent,
+        hasHumanMessageEvent,
+        backgroundOnly,
       },
     });
+
+    if (backgroundOnly) {
+      void emitGatewayOtel({
+        level: "debug",
+        component: "redis-channel",
+        action: "events.dispatched.background_only",
+        success: true,
+        metadata: {
+          source,
+          sourceKind: getSourceKind(source),
+          eventCount: actionable.length,
+          eventTypes,
+          originSession,
+        },
+      });
+    }
 
     if (wokeFromTelegram) {
       await wakeGateway({ flushDigest: false });
