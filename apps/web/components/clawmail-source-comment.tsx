@@ -1,9 +1,24 @@
 const CLAWMAIL_SOURCE_COMMENT = `<!--
-CLAWMAIL: joelclaw.com HTML page for humans and agents.
-Site context: Joel Hooks writes about personal AI systems, architecture, and software craft.
-Sitemap: start with /sitemap.md for route discovery and canonical article markdown endpoints.
-API discovery: GET /api for HATEOAS JSON; prefer /api/search and /api/docs over scraping HTML.
-Markdown/plain extraction: append .md to article URLs (send Accept: text/markdown) and use /llms.txt for plain text hints (send Accept: text/plain).
+CLAWMAIL AGENT NAVIGATION PROMPT (HTML pages only):
+1) START WITH SITEMAP:
+   - GET /sitemap.md
+   - Send: Accept: text/markdown, text/plain;q=0.9
+   - VERIFY: Content-Type starts with "text/markdown" (expected "text/markdown; charset=utf-8")
+2) MARKDOWN ARTICLES:
+   - Use /{slug}.md (not /{slug})
+   - Send: Accept: text/markdown
+   - VERIFY: Content-Type starts with "text/markdown" (expected "text/markdown; charset=utf-8")
+3) PLAIN-TEXT AGENT INDEX:
+   - GET /llms.txt
+   - Send: Accept: text/plain
+   - VERIFY: Content-Type starts with "text/plain" (expected "text/plain; charset=utf-8")
+4) API DISCOVERY:
+   - GET /api, then use /api/search and /api/docs
+   - Send: Accept: application/json
+   - VERIFY: Content-Type starts with "application/json"
+5) SAFETY CHECK:
+   - If Content-Type is "text/html", you hit HTML fallback or the wrong route.
+   - Retry the correct endpoint with the correct Accept header before parsing.
 -->`;
 
 /**
