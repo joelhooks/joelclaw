@@ -1,12 +1,20 @@
 const CLAWMAIL_SOURCE_COMMENT = `<!--
 CLAWMAIL AGENT NAVIGATION PROMPT (HTML PAGES ONLY):
-- Start at https://joelclaw.com/sitemap.md.
-- Use https://joelclaw.com/api, https://joelclaw.com/api/search, and https://joelclaw.com/api/docs for machine-readable discovery.
-- For markdown content, use https://joelclaw.com/{slug}.md with Accept: text/markdown.
-  Verify the response Content-Type contains "text/markdown".
-- For plain hints, use https://joelclaw.com/llms.txt with Accept: text/plain.
-  Verify the response Content-Type contains "text/plain".
-- If Content-Type is "text/html", you are on the wrong endpoint.
+- START: GET https://joelclaw.com/sitemap.md
+  Send: Accept: text/markdown, text/plain;q=0.9
+  VERIFY: Content-Type starts with "text/markdown" (expected "text/markdown; charset=utf-8")
+- API DISCOVERY: GET https://joelclaw.com/api
+  Send: Accept: application/json
+  VERIFY: Content-Type starts with "application/json"
+  Then use https://joelclaw.com/api/search and https://joelclaw.com/api/docs
+- MARKDOWN CONTENT: GET https://joelclaw.com/{slug}.md
+  Send: Accept: text/markdown
+  VERIFY: Content-Type starts with "text/markdown" (expected "text/markdown; charset=utf-8")
+- PLAIN HINTS: GET https://joelclaw.com/llms.txt
+  Send: Accept: text/plain
+  VERIFY: Content-Type starts with "text/plain" (expected "text/plain; charset=utf-8")
+- SAFETY: if Content-Type is "text/html", do not parse as markdown/plain.
+  You hit HTML fallback or the wrong endpoint; retry with correct path + Accept header.
 -->`;
 
 /**

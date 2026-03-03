@@ -85,9 +85,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      {/* Keep this marker first under <html> so it appears before <head> in View Source. */}
-      <ClawmailSourceComment />
       <head>
+        <ClawmailSourceComment />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(personJsonLd()) }}
