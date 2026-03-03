@@ -2,15 +2,13 @@
 // ADR-0082: Migrated from Qdrant+embed.py (Qdrant fully retired 2026-02-22) to Typesense with built-in auto-embedding.
 // ADR-0077 Workstream 1/2: query rewrite + trust pass + usage-signal-aware ranking.
 
-import { randomUUID } from "node:crypto"
 import { Effect, Schema } from "effect"
 import { traceRecallRewrite } from "../../langfuse"
+import { createOtelEventPayload, ingestOtelPayload } from "../../lib/otel-ingest"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../../typesense-auth"
 import { type CapabilityPort, capabilityError } from "../contract"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
-const OTEL_INGEST_URL = process.env.JOELCLAW_OTEL_INGEST_URL || "http://localhost:3111/observability/emit"
-const OTEL_INGEST_TOKEN = process.env.OTEL_EMIT_TOKEN?.trim()
 const MAX_INJECT = 10
 const DECAY_CONSTANT = 0.01
 const STALENESS_DAYS = 90
@@ -479,34 +477,18 @@ async function emitRecallOtel(input: {
 }): Promise<void> {
   if (!RECALL_OTEL_ENABLED) return
 
-  const headers: Record<string, string> = { "Content-Type": "application/json" }
-  if (OTEL_INGEST_TOKEN) headers["x-otel-emit-token"] = OTEL_INGEST_TOKEN
+  const payload = createOtelEventPayload({
+    level: input.level,
+    source: "cli",
+    component: "recall-cli",
+    action: input.action,
+    success: input.success,
+    durationMs: input.durationMs,
+    error: input.error,
+    metadata: input.metadata,
+  })
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 1500)
-  try {
-    await fetch(OTEL_INGEST_URL, {
-      method: "POST",
-      headers,
-      signal: controller.signal,
-      body: JSON.stringify({
-        id: randomUUID(),
-        timestamp: Date.now(),
-        level: input.level,
-        source: "cli",
-        component: "recall-cli",
-        action: input.action,
-        success: input.success,
-        duration_ms: input.durationMs,
-        error: input.error,
-        metadata: input.metadata ?? {},
-      }),
-    })
-  } catch {
-    // never fail recall on telemetry transport issues
-  } finally {
-    clearTimeout(timer)
-  }
+  await ingestOtelPayload(payload, { timeoutMs: 1500 })
 }
 
 async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions = {}): Promise<RewrittenQuery> {

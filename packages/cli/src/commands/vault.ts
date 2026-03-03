@@ -1,10 +1,10 @@
-import { randomUUID } from "node:crypto"
 import { constants as fsConstants } from "node:fs"
 import { access, readFile, stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import { basename, isAbsolute, join, normalize } from "node:path"
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
+import { createOtelEventPayload, ingestOtelPayload } from "../lib/otel-ingest"
 import { respond, respondError } from "../response"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth"
 
@@ -13,8 +13,6 @@ const READ_MAX_LINES = 500
 const READ_MAX_MATCHES = 3
 const DEFAULT_LIMIT = 10
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
-const OTEL_INGEST_URL = process.env.JOELCLAW_OTEL_INGEST_URL || "http://localhost:3111/observability/emit"
-const OTEL_INGEST_TOKEN = process.env.OTEL_EMIT_TOKEN?.trim()
 const VAULT_OTEL_ENABLED = (process.env.JOELCLAW_VAULT_OTEL ?? "1") !== "0"
 const DECISIONS_DIR = join(VAULT_ROOT, "docs", "decisions")
 const ADR_INDEX_PATH = join(DECISIONS_DIR, "README.md")
@@ -138,34 +136,18 @@ async function emitVaultOtel(input: {
 }): Promise<void> {
   if (!VAULT_OTEL_ENABLED) return
 
-  const headers: Record<string, string> = { "Content-Type": "application/json" }
-  if (OTEL_INGEST_TOKEN) headers["x-otel-emit-token"] = OTEL_INGEST_TOKEN
+  const payload = createOtelEventPayload({
+    level: input.level,
+    source: "cli",
+    component: "vault-cli",
+    action: input.action,
+    success: input.success,
+    durationMs: input.durationMs,
+    error: input.error,
+    metadata: input.metadata,
+  })
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 1500)
-  try {
-    await fetch(OTEL_INGEST_URL, {
-      method: "POST",
-      headers,
-      signal: controller.signal,
-      body: JSON.stringify({
-        id: randomUUID(),
-        timestamp: Date.now(),
-        level: input.level,
-        source: "cli",
-        component: "vault-cli",
-        action: input.action,
-        success: input.success,
-        duration_ms: input.durationMs,
-        error: input.error,
-        metadata: input.metadata ?? {},
-      }),
-    })
-  } catch {
-    // never fail vault commands on telemetry transport issues
-  } finally {
-    clearTimeout(timer)
-  }
+  await ingestOtelPayload(payload, { timeoutMs: 1500 })
 }
 
 function expandPath(path: string): string {

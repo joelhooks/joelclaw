@@ -1,13 +1,15 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 const HOME = process.env.HOME ?? "~";
 const JOELCLAW_DIR = join(HOME, ".joelclaw");
 const DEFAULT_ROLE_FILE = "ROLE.md";
 const GATEWAY_ROLE_FILE = "roles/gateway.md";
 const ROLE_DIR_PREFIX = "roles/";
+const JOELCLAW_BIN = process.env.JOELCLAW_BIN || "joelclaw";
 
 function resolveRoleAlias(value: string): string {
   const trimmed = value.trim();
@@ -61,23 +63,26 @@ function resolveIdentitySpecs(roleFile: string): IdentityFileSpec[] {
   );
 }
 
-async function emitOtel(action: string, data: Record<string, unknown>) {
-  try {
-    await fetch("http://localhost:3111/observability/emit", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: randomUUID(),
-        timestamp: Date.now(),
-        level: "info",
-        source: "gateway",
-        component: "identity-inject",
-        action,
-        success: true,
-        metadata: data,
-      }),
-    });
-  } catch {}
+function emitOtel(action: string, data: Record<string, unknown>): void {
+  const event = {
+    id: randomUUID(),
+    timestamp: Date.now(),
+    level: "info",
+    source: "gateway",
+    component: "identity-inject",
+    action,
+    success: true,
+    metadata: data,
+  };
+
+  const child = spawn(JOELCLAW_BIN, ["otel", "emit", "--json"], {
+    stdio: ["pipe", "ignore", "ignore"],
+    shell: false,
+  });
+
+  child.stdin.write(JSON.stringify(event));
+  child.stdin.end();
+  child.on("error", () => {});
 }
 
 type ReadIdentityFileResult = {
@@ -232,13 +237,13 @@ export default function (pi: ExtensionAPI) {
     ensureLoaded();
 
     if (!identityBlock) {
-      await emitOtel("prompt-inject-skipped", {
+      emitOtel("prompt-inject-skipped", {
         reason: "no-identity-files-found",
       });
       return;
     }
 
-    await emitOtel("prompt-injected", {
+    emitOtel("prompt-injected", {
       identityChars: identityBlock.length,
       systemPromptChars: event.systemPrompt.length,
       totalChars: identityBlock.length + event.systemPrompt.length,

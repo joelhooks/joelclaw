@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto"
 import { Effect, Schema } from "effect"
+import { ingestOtelPayload, OTEL_INGEST_URL } from "../../lib/otel-ingest"
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../../typesense-auth"
 import { type CapabilityPort, capabilityError } from "../contract"
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108"
-const OTEL_EMIT_URL = process.env.JOELCLAW_OTEL_INGEST_URL || "http://localhost:3111/observability/emit"
-const OTEL_EMIT_TOKEN = process.env.OTEL_EMIT_TOKEN?.trim()
 const COLLECTION = "otel_events"
 const QUERY_BY = "action,error,component,source,metadata_json,search_text"
 const OTEL_LEVELS = new Set(["debug", "info", "warn", "error", "fatal"])
@@ -187,16 +186,6 @@ async function queryOtel(options: {
   }
 }
 
-function safeParseJson(text: string): unknown | undefined {
-  const trimmed = text.trim()
-  if (!trimmed) return undefined
-  try {
-    return JSON.parse(trimmed)
-  } catch {
-    return undefined
-  }
-}
-
 function asObject(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
   return value as Record<string, unknown>
@@ -270,45 +259,25 @@ function buildEmitPayload(args: Schema.Schema.Type<typeof EmitArgsSchema>): Emit
 }
 
 async function emitOtel(payload: Record<string, unknown>): Promise<OtelQueryResult> {
-  try {
-    const headers: Record<string, string> = { "Content-Type": "application/json" }
-    if (OTEL_EMIT_TOKEN) headers["x-otel-emit-token"] = OTEL_EMIT_TOKEN
+  const result = await ingestOtelPayload(payload)
 
-    const resp = await fetch(OTEL_EMIT_URL, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    })
-
-    const raw = await resp.text()
-    const parsed = safeParseJson(raw)
-    const responsePayload = parsed ?? (raw || null)
-
-    if (!resp.ok) {
-      return {
-        ok: false,
-        error: `OTEL emit request failed (${resp.status}): ${raw || resp.statusText}`,
-        code: "OTEL_EMIT_FAILED",
-        fix: `Ensure worker endpoint ${OTEL_EMIT_URL} is reachable and accepts the payload.`,
-      }
-    }
-
-    return {
-      ok: true,
-      data: {
-        endpoint: OTEL_EMIT_URL,
-        status: resp.status,
-        response: responsePayload,
-        event: payload,
-      },
-    }
-  } catch (error) {
+  if (!result.ok) {
     return {
       ok: false,
-      error: `OTEL emit request failed: ${String(error)}`,
+      error: result.error,
       code: "OTEL_EMIT_FAILED",
-      fix: `Check system-bus worker health and ${OTEL_EMIT_URL} connectivity.`,
+      fix: `Ensure worker endpoint ${OTEL_INGEST_URL} is reachable and accepts the payload.`,
     }
+  }
+
+  return {
+    ok: true,
+    data: {
+      endpoint: result.endpoint,
+      status: result.status,
+      response: result.response,
+      event: payload,
+    },
   }
 }
 
@@ -533,7 +502,7 @@ export const typesenseOtelAdapter: CapabilityPort<typeof commands> = {
               failFromResult(
                 result,
                 "OTEL_EMIT_FAILED",
-                `Ensure ${OTEL_EMIT_URL} is reachable and worker is healthy.`
+                `Ensure ${OTEL_INGEST_URL} is reachable and worker is healthy.`
               )
             )
           }
