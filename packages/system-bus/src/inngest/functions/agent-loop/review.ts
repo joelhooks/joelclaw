@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { $ } from "bun";
+import { emitOtelEvent } from "../../../observability/emit";
 import { inngest } from "../../client";
 import {
   cleanupPid,
@@ -87,10 +88,38 @@ async function buildEvaluationPrompt(params: {
   testFiles: Array<{ path: string; content: string }>;
 }): Promise<string> {
   const { querySystemKnowledge } = await import("../../../lib/typesense");
-  const systemContext = await querySystemKnowledge(
-    `${params.story.title} review patterns failures`,
-    { types: ["lesson", "pattern", "failed_target"], limit: 3 },
-  ).catch(() => "");
+  const skStarted = Date.now();
+  let systemContext = "";
+  try {
+    systemContext = await querySystemKnowledge(
+      `${params.story.title} review patterns failures`,
+      { types: ["lesson", "pattern", "failed_target"], limit: 3 },
+    );
+    void emitOtelEvent({
+      action: "system_knowledge.retrieval",
+      component: "agent-loop",
+      source: "reviewer",
+      success: true,
+      metadata: {
+        story_id: params.story.id,
+        result_length: systemContext.length,
+        latency_ms: Date.now() - skStarted,
+      },
+    });
+  } catch (error) {
+    void emitOtelEvent({
+      action: "system_knowledge.retrieval",
+      component: "agent-loop",
+      source: "reviewer",
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+      metadata: {
+        story_id: params.story.id,
+        result_length: 0,
+        latency_ms: Date.now() - skStarted,
+      },
+    });
+  }
 
   const testFileSection = params.testFiles.length > 0
     ? params.testFiles

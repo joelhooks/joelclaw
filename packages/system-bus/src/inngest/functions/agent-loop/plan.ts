@@ -1,6 +1,8 @@
 import { join } from "node:path";
 import { $ } from "bun";
 import { NonRetriableError } from "inngest";
+import { querySystemKnowledge, SYSTEM_KNOWLEDGE_COLLECTION } from "../../../lib/typesense";
+import { emitOtelEvent } from "../../../observability/emit";
 import { inngest } from "../../client";
 import { buildGatewaySignalMeta } from "../../middleware/gateway-signal";
 import {
@@ -399,25 +401,52 @@ export const agentLoopPlan = inngest.createFunction(
 
     // Check failed targets from system_knowledge (ADR-0199)
     let failedTargetIds: Set<string> = new Set();
+    const skStarted = Date.now();
     try {
-      const { search, SYSTEM_KNOWLEDGE_COLLECTION } = await import("../../../lib/typesense");
-      const result = await search({
-        collection: SYSTEM_KNOWLEDGE_COLLECTION,
-        q: "*",
-        query_by: "title,content",
-        per_page: 100,
-        filter_by: `type:=failed_target && project:=${project}`,
-        include_fields: "id,title,content",
+      const failedTargets = await querySystemKnowledge("*", {
+        types: ["failed_target"],
+        limit: 100,
+        project,
+        collections: [SYSTEM_KNOWLEDGE_COLLECTION],
       });
-      if (result.hits) {
-        for (const hit of result.hits) {
-          const doc = hit.document as Record<string, unknown>;
-          // Extract story ID from content or title
-          const storyMatch = String(doc.content ?? "").match(/Story (\S+)/);
-          if (storyMatch?.[1]) failedTargetIds.add(storyMatch[1]);
-        }
+
+      const storyPattern = /Story (\S+)/g;
+      let storyMatch: RegExpExecArray | null = storyPattern.exec(failedTargets);
+      while (storyMatch) {
+        if (storyMatch[1]) failedTargetIds.add(storyMatch[1]);
+        storyMatch = storyPattern.exec(failedTargets);
       }
-    } catch { /* graceful — don't block planning */ }
+
+      void emitOtelEvent({
+        action: "system_knowledge.retrieval",
+        component: "agent-loop",
+        source: "planner",
+        success: true,
+        metadata: {
+          loop_id: loopId,
+          has_results: failedTargets.length > 0,
+          result_length: failedTargets.length,
+          failed_target_count: failedTargetIds.size,
+          latency_ms: Date.now() - skStarted,
+        },
+      });
+    } catch (error) {
+      void emitOtelEvent({
+        action: "system_knowledge.retrieval",
+        component: "agent-loop",
+        source: "planner",
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        metadata: {
+          loop_id: loopId,
+          has_results: false,
+          result_length: 0,
+          failed_target_count: 0,
+          latency_ms: Date.now() - skStarted,
+        },
+      });
+      // graceful — don't block planning
+    }
 
     const remaining = prd.stories
       .filter((s) => {

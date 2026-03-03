@@ -7,32 +7,44 @@
       "title": "Add OTEL emission to reviewer system_knowledge retrieval",
       "description": "In packages/system-bus/src/inngest/functions/agent-loop/review.ts, wrap the existing querySystemKnowledge call with timing and emit an OTEL event matching implement.ts pattern. Emit to the /observability/emit endpoint (already used by implement.ts — check how implement.ts does it via the emitOtelEvent helper or direct fetch). The event should have: action='system_knowledge.retrieval', component='agent-loop', source='reviewer', success=true/false, metadata with result_length and latency_ms.",
       "acceptance": "OTEL event emitted on every querySystemKnowledge call in review.ts. Compiles clean: `bunx tsc --noEmit`.",
-      "files": ["packages/system-bus/src/inngest/functions/agent-loop/review.ts"],
-      "priority": 1
+      "files": [
+        "packages/system-bus/src/inngest/functions/agent-loop/review.ts"
+      ],
+      "priority": 1,
+      "passes": true
     },
     {
       "id": "otel-judge",
       "title": "Add OTEL emission to judge system_knowledge retrieval",
       "description": "In packages/system-bus/src/inngest/functions/agent-loop/utils.ts (the llmEvaluate function), wrap the existing querySystemKnowledge call with timing and emit an OTEL event. Same pattern as implement.ts: action='system_knowledge.retrieval', component='agent-loop', source='judge', success=true/false, metadata with result_length and latency_ms.",
       "acceptance": "OTEL event emitted on every querySystemKnowledge call in llmEvaluate. Compiles clean.",
-      "files": ["packages/system-bus/src/inngest/functions/agent-loop/utils.ts"],
-      "priority": 2
+      "files": [
+        "packages/system-bus/src/inngest/functions/agent-loop/utils.ts"
+      ],
+      "priority": 2,
+      "passes": true
     },
     {
       "id": "otel-test-writer",
       "title": "Add OTEL emission to test-writer system_knowledge retrieval",
       "description": "In packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts, wrap the existing querySystemKnowledge call with timing and emit an OTEL event. Same pattern: action='system_knowledge.retrieval', component='agent-loop', source='test-writer'.",
       "acceptance": "OTEL event emitted. Compiles clean.",
-      "files": ["packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts"],
-      "priority": 3
+      "files": [
+        "packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts"
+      ],
+      "priority": 3,
+      "passes": true
     },
     {
       "id": "otel-planner",
       "title": "Add OTEL emission to planner system_knowledge retrieval",
       "description": "In packages/system-bus/src/inngest/functions/agent-loop/plan.ts, wrap the existing querySystemKnowledge call (for failed_target lookup) with timing and emit an OTEL event. Same pattern: action='system_knowledge.retrieval', component='agent-loop', source='planner'.",
       "acceptance": "OTEL event emitted. Compiles clean.",
-      "files": ["packages/system-bus/src/inngest/functions/agent-loop/plan.ts"],
-      "priority": 4
+      "files": [
+        "packages/system-bus/src/inngest/functions/agent-loop/plan.ts"
+      ],
+      "priority": 4,
+      "passes": true
     }
   ]
 }

@@ -1,4 +1,5 @@
 import { $ } from "bun";
+import { emitOtelEvent } from "../../../observability/emit";
 import { inngest } from "../../client";
 import {
   cleanupPid,
@@ -18,13 +19,40 @@ async function buildTestWriterPrompt(story: {
   acceptance_criteria: string[];
 }): Promise<string> {
   let systemContext = "";
+  const skStarted = Date.now();
   try {
     const { querySystemKnowledge } = await import("../../../lib/typesense");
     systemContext = await querySystemKnowledge(
       `${story.title} test patterns failures`,
       { types: ["lesson", "pattern"], limit: 3 },
     );
-  } catch { /* graceful */ }
+    void emitOtelEvent({
+      action: "system_knowledge.retrieval",
+      component: "agent-loop",
+      source: "test-writer",
+      success: true,
+      metadata: {
+        story_id: story.id,
+        has_results: systemContext.length > 0,
+        result_length: systemContext.length,
+        latency_ms: Date.now() - skStarted,
+      },
+    });
+  } catch (error) {
+    void emitOtelEvent({
+      action: "system_knowledge.retrieval",
+      component: "agent-loop",
+      source: "test-writer",
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+      metadata: {
+        story_id: story.id,
+        has_results: false,
+        result_length: 0,
+        latency_ms: Date.now() - skStarted,
+      },
+    });
+  }
 
   return [
     `## Write Acceptance Tests: ${story.title} (${story.id})`,

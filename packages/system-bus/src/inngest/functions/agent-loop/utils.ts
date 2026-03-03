@@ -4,6 +4,7 @@ import { $ } from "bun";
 import Redis from "ioredis";
 import { MODEL } from "../../../lib/models";
 import { getRedisPort } from "../../../lib/redis";
+import { emitOtelEvent } from "../../../observability/emit";
 
 const redisClass = Redis as unknown as {
   defaultOptions?: Record<string, unknown>;
@@ -951,13 +952,36 @@ export async function llmEvaluate(opts: {
 
   // System knowledge injection (ADR-0199)
   let systemContext = "";
+  const skStarted = Date.now();
   try {
     const { querySystemKnowledge } = await import("../../../lib/typesense");
     systemContext = await querySystemKnowledge(
       opts.criteria.join(" "),
       { types: ["lesson", "pattern", "failed_target"], limit: 3 },
     );
-  } catch { /* graceful */ }
+    void emitOtelEvent({
+      action: "system_knowledge.retrieval",
+      component: "agent-loop",
+      source: "judge",
+      success: true,
+      metadata: {
+        result_length: systemContext.length,
+        latency_ms: Date.now() - skStarted,
+      },
+    });
+  } catch (error) {
+    void emitOtelEvent({
+      action: "system_knowledge.retrieval",
+      component: "agent-loop",
+      source: "judge",
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+      metadata: {
+        result_length: 0,
+        latency_ms: Date.now() - skStarted,
+      },
+    });
+  }
 
   const prompt = [
     "You are an automated code quality judge for ADR-0013.",
