@@ -266,6 +266,22 @@ Name visual files with ADR IDs/slugs where possible (for example `0007-auth-flow
 
 2. Use `scripts/set_adr_status.js` for status changes (supports YAML front matter, bullet status, and section status).
 
+### Mandatory: Sync to System Knowledge
+
+After ANY ADR create, update, accept, reject, deprecate, or supersede:
+
+```bash
+joelclaw send system/adr.sync.requested -d '{"source":"adr-skill"}'
+```
+
+This syncs the ADR to the `system_knowledge` Typesense collection so agents can find it via semantic search. **This is not optional.** If you skip it, the brain is stale and agents make decisions without current context.
+
+For bulk sync (e.g., after editing multiple ADRs):
+
+```bash
+joelclaw knowledge sync
+```
+
 ### Post-Acceptance Lifecycle
 
 After an ADR is accepted:

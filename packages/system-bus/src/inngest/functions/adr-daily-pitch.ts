@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import Redis from "ioredis";
 import { getRedisPort } from "../../lib/redis";
+import { bulkImport, SYSTEM_KNOWLEDGE_COLLECTION } from "../../lib/typesense";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
@@ -175,6 +176,35 @@ export const adrDailyPitch = inngest.createFunction(
         return b.need - a.need;
       });
       return scored;
+    });
+
+    // Sync scored ADRs to system_knowledge with rubric data (ADR-0199)
+    await step.run("sync-adrs-to-knowledge", async () => {
+      if (candidates.length === 0) return { synced: 0 };
+      const now = Math.floor(Date.now() / 1000);
+      const docs = candidates.map((c) => ({
+        id: `adr:${c.number}`,
+        type: "adr",
+        title: `ADR-${c.number}: ${c.title}`,
+        content: (() => {
+          try {
+            const filePath = join(VAULT_PATH, "docs/decisions", `${c.number}-${c.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.md`);
+            return readFileSync(filePath, "utf-8").slice(0, 8000);
+          } catch {
+            return `ADR-${c.number}: ${c.title}. Band: ${c.band}, Score: ${c.score}, NRC: ${c.need}/${c.readiness}/${c.confidence}`;
+          }
+        })(),
+        status: c.band,
+        score: c.score,
+        tags: ["adr", c.band, `score-${c.score}`],
+        created_at: now,
+      }));
+      try {
+        const result = await bulkImport(SYSTEM_KNOWLEDGE_COLLECTION, docs);
+        return { synced: result.success, errors: result.errors };
+      } catch {
+        return { synced: 0, error: "typesense unavailable" };
+      }
     });
 
     if (candidates.length === 0) {

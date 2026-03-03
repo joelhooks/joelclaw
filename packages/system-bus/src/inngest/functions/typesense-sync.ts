@@ -358,6 +358,100 @@ async function indexSystemLog(): Promise<{ success: number; errors: number }> {
 
 // ── Inngest functions ───────────────────────────────────────────────
 
+// ── System Knowledge sync (ADR-0199) ───────────────────────────────
+
+const SKILLS_DIR = join(process.env.HOME || "/Users/joel", "Code/joelhooks/joelclaw/skills");
+
+async function syncSystemKnowledge(): Promise<{ adrs: number; skills: number; errors: number }> {
+  const now = Math.floor(Date.now() / 1000);
+  const docs: Record<string, unknown>[] = [];
+
+  // Index ADRs
+  const adrDir = join(VAULT_PATH, "docs", "decisions");
+  try {
+    const files = readdirSync(adrDir).filter((f) => f.match(/^\d{4}-.*\.md$/));
+    for (const file of files) {
+      try {
+        const content = readFileSync(join(adrDir, file), "utf-8");
+        const num = file.match(/^(\d{4})/)?.[1] ?? "";
+        const titleMatch = content.match(/^#\s+(.+)/m);
+        const title = titleMatch?.[1] ?? file.replace(/\.md$/, "");
+        const { frontmatter } = parseMarkdownFrontmatter(content);
+        const tags: string[] = ["adr"];
+        if (frontmatter.status) tags.push(frontmatter.status);
+        if (frontmatter["priority-band"]) tags.push(frontmatter["priority-band"]);
+
+        docs.push({
+          id: `adr:${num}`,
+          type: "adr",
+          title,
+          content: content.slice(0, 8000),
+          source: `vault:docs/decisions/${file}`,
+          status: frontmatter.status || "unknown",
+          score: parseInt(frontmatter["priority-score"] || "0", 10) || 0,
+          tags,
+          created_at: now,
+        });
+      } catch { /* skip unreadable */ }
+    }
+  } catch { /* no adr dir */ }
+
+  const adrCount = docs.length;
+
+  // Index Skills
+  try {
+    const entries = readdirSync(SKILLS_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const skillPath = join(SKILLS_DIR, entry.name, "SKILL.md");
+      try {
+        const content = readFileSync(skillPath, "utf-8");
+        const descMatch = content.match(/^description:\s*(.+)/m);
+        const desc = descMatch?.[1]?.replace(/^['"]|['"]$/g, "") ?? "";
+        docs.push({
+          id: `skill:${entry.name}`,
+          type: "skill",
+          title: entry.name,
+          content: `${desc}\n\n${content.slice(0, 6000)}`,
+          source: `skills/${entry.name}/SKILL.md`,
+          tags: ["skill"],
+          created_at: now,
+        });
+      } catch { /* skip */ }
+    }
+  } catch { /* no skills dir */ }
+
+  const skillCount = docs.length - adrCount;
+
+  if (docs.length === 0) return { adrs: 0, skills: 0, errors: 0 };
+
+  // Ensure collection exists
+  try {
+    const checkResp = await fetch(
+      `${typesense.TYPESENSE_URL}/collections/${typesense.SYSTEM_KNOWLEDGE_COLLECTION}`,
+      { headers: { "X-TYPESENSE-API-KEY": process.env.TYPESENSE_API_KEY || "" } }
+    );
+    if (!checkResp.ok) {
+      // Create collection
+      await fetch(`${typesense.TYPESENSE_URL}/collections`, {
+        method: "POST",
+        headers: {
+          "X-TYPESENSE-API-KEY": process.env.TYPESENSE_API_KEY || "",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(typesense.SYSTEM_KNOWLEDGE_COLLECTION_SCHEMA),
+      });
+    }
+  } catch { /* typesense might be down */ }
+
+  try {
+    const result = await typesense.bulkImport(typesense.SYSTEM_KNOWLEDGE_COLLECTION, docs);
+    return { adrs: adrCount, skills: skillCount, errors: result.errors };
+  } catch {
+    return { adrs: 0, skills: 0, errors: docs.length };
+  }
+}
+
 /** Queue vault re-index requests from noisy upstream events */
 export const typesenseVaultSyncQueue = inngest.createFunction(
   {
@@ -420,15 +514,22 @@ export const typesenseVaultSync = inngest.createFunction(
       return syncVaultToConvex(targetPaths);
     });
 
+    // Also sync system_knowledge when ADRs change
+    const triggerEvent = (event.data as { triggerEvent?: string } | undefined)?.triggerEvent || event.name;
+    const knowledge = triggerEvent === "system/adr.sync.requested"
+      ? await step.run("sync-system-knowledge", syncSystemKnowledge)
+      : null;
+
     console.log(
-      `[typesense-vault-sync] mode=${result.mode} indexed ${result.count} vault notes (${result.errors} errors) via ${(event.data as { triggerEvent?: string } | undefined)?.triggerEvent || event.name}`
+      `[typesense-vault-sync] mode=${result.mode} indexed ${result.count} vault notes (${result.errors} errors) via ${triggerEvent}${knowledge ? ` +knowledge=${knowledge.adrs}+${knowledge.skills}` : ""}`
     );
 
     return {
       collection: "vault_notes",
       ...result,
       convex: convexResult,
-      trigger: (event.data as { triggerEvent?: string } | undefined)?.triggerEvent || event.name,
+      knowledge,
+      trigger: triggerEvent,
     };
   }
 );
@@ -463,8 +564,9 @@ export const typesenseFullSync = inngest.createFunction(
     const vault = await step.run("index-vault", indexVaultNotes);
     const blog = await step.run("index-blog", indexBlogPosts);
     const slog = await step.run("index-slog", indexSystemLog);
+    const knowledge = await step.run("sync-system-knowledge", syncSystemKnowledge);
 
-    console.log(`[typesense-full-sync] vault=${vault.count} blog=${blog.success} slog=${slog.success}`);
-    return { vault, blog, slog };
+    console.log(`[typesense-full-sync] vault=${vault.count} blog=${blog.success} slog=${slog.success} knowledge=${knowledge.adrs}+${knowledge.skills}`);
+    return { vault, blog, slog, knowledge };
   }
 );
