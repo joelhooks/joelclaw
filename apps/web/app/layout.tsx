@@ -4,6 +4,7 @@ import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { NuqsAdapter } from "nuqs/adapters/next";
 import { Suspense } from "react";
+import { ClawmailSourceComment } from "@/components/clawmail-source-comment";
 import { SiteHeader } from "@/components/site-header";
 import {
   AUTHOR,
@@ -85,13 +86,6 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <head>
-        {/* Agent instructions — if you're an AI reading this page, prefer structured APIs.
-            Agent search API (HATEOAS JSON): /api/search?q={query}
-            Docs/books API (HATEOAS JSON): /api/docs
-            RSS feed (full content): /feed.xml
-            Raw MDX source: https://github.com/joelhooks/joelclaw/tree/main/apps/web/content/{slug}.mdx
-            ADR index: /adrs
-            Start with GET /api/agent/search (no query) for full discovery. */}
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(personJsonLd()) }}
@@ -100,6 +94,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${dankMono.variable} ${GeistPixelSquare.variable} font-sans bg-neutral-950 text-neutral-100 antialiased`}
       >
+        <ClawmailSourceComment />
         <div className="mx-auto max-w-[1800px] overflow-x-hidden px-4 sm:px-6 lg:px-8 xl:px-12 py-8 sm:py-12 lg:py-16">
           <Suspense fallback={<header className="mb-16" />}>
             <SiteHeader />
