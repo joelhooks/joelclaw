@@ -83,6 +83,41 @@ export interface RecallQueryOptions {
   readonly category?: string
 }
 
+export interface DeployWorkerOptions {
+  readonly restart?: boolean
+  readonly force?: boolean
+  readonly waitMs?: number
+  readonly execute?: boolean
+}
+
+export interface LogWriteInput {
+  readonly action: string
+  readonly tool: string
+  readonly detail: string
+  readonly reason?: string
+}
+
+export interface SecretsLeaseInput {
+  readonly name: string
+  readonly ttl?: string
+  readonly clientId?: string
+}
+
+export interface SecretsRevokeOptions {
+  readonly leaseId?: string
+  readonly all?: boolean
+}
+
+export interface SecretsAuditOptions {
+  readonly tail?: number
+}
+
+export interface SecretsEnvOptions {
+  readonly ttl?: string
+  readonly dryRun?: boolean
+  readonly force?: boolean
+}
+
 export interface VaultSearchOptions {
   readonly semantic?: boolean
   readonly limit?: number

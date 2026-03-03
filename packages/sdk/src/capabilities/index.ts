@@ -1,3 +1,6 @@
+export { __deployAdapterTestUtils, scriptedDeployAdapter } from "./adapters/deploy-scripted"
+export { secretsCliAdapter } from "./adapters/secrets-cli"
+export { slogCliAdapter } from "./adapters/slog-cli"
 export { __otelAdapterTestUtils, typesenseOtelAdapter } from "./adapters/typesense-otel"
 export { __recallTestUtils, typesenseRecallAdapter } from "./adapters/typesense-recall"
 export * from "./contract"

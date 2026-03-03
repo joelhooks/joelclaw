@@ -9,7 +9,7 @@ Use the SDK when software needs typed access to joelclaw behavior without reimpl
 The SDK now supports both subprocess and in-process execution:
 
 - `transport: "subprocess"` — always shell out to `joelclaw`
-- `transport: "inprocess"` — never shell out; uses SDK capability adapters directly (currently `otel` and `recall`)
+- `transport: "inprocess"` — never shell out; uses SDK capability adapters directly (currently `otel`, `recall`, `deploy`, `log`, `secrets`)
 - `transport: "hybrid"` (default) — in-process first for supported capabilities, subprocess fallback otherwise
 
 ## Installation (workspace)
@@ -40,6 +40,9 @@ const client = createJoelclawClient({
 ### Typed convenience routes
 
 - `status()`
+- `deployWorker(options)`
+- `logWrite({ action, tool, detail, reason? })`
+- `secretsStatus/lease/revoke/audit/env`
 - `otelList/search/stats/emit`
 - `recall(query, options)`
 - `recallRaw(query, options)`
@@ -51,7 +54,7 @@ const client = createJoelclawClient({
 The SDK exports capability adapters and a runtime entrypoint:
 
 - `executeSdkCapabilityCommand({ capability, subcommand, args })`
-- adapters: `typesenseOtelAdapter`, `typesenseRecallAdapter`
+- adapters: `typesenseOtelAdapter`, `typesenseRecallAdapter`, `scriptedDeployAdapter`, `slogCliAdapter`, `secretsCliAdapter`
 
 This is the canonical in-process path now used by SDK transport and reused by CLI adapter wrappers.
 
@@ -85,5 +88,5 @@ await client.otelEmit({
 ## Notes
 
 - Envelope schema mirrors CLI contract in `packages/cli/src/response.ts`.
-- OTEL + recall adapter logic now lives in `packages/sdk/src/capabilities/adapters/*` and is consumed by CLI wrapper adapters.
+- OTEL/recall/deploy/log/secrets adapter logic now lives in `packages/sdk/src/capabilities/adapters/*` and is consumed by CLI wrapper adapters.
 - Keep docs/cli.md and this file updated whenever SDK routes, capability adapters, or transport semantics change.

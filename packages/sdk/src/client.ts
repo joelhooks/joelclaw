@@ -2,14 +2,20 @@ import { spawn } from "node:child_process"
 import { executeSdkCapabilityCommand, type SdkCapability } from "./capabilities"
 import { JoelclawCapabilityError, JoelclawEnvelopeError, JoelclawProcessError } from "./errors"
 import type {
+  DeployWorkerOptions,
   JoelclawClientOptions,
   JoelclawEnvelope,
   JoelclawRunOptions,
   JoelclawTransport,
+  LogWriteInput,
   OtelEmitInput,
   OtelListOptions,
   OtelSearchOptions,
   RecallQueryOptions,
+  SecretsAuditOptions,
+  SecretsEnvOptions,
+  SecretsLeaseInput,
+  SecretsRevokeOptions,
   VaultAdrListOptions,
   VaultAdrRankOptions,
   VaultSearchOptions,
@@ -307,6 +313,190 @@ export class JoelclawClient {
 
   async status<TResult = unknown>(): Promise<JoelclawEnvelope<TResult>> {
     return await this.runOrThrow<TResult>(["status"])
+  }
+
+  async deployWorker<TResult = unknown>(options: DeployWorkerOptions = {}): Promise<JoelclawEnvelope<TResult>> {
+    const inProcess = await this.runSdkCapability<TResult>({
+      capability: "deploy",
+      subcommand: "worker",
+      args: {
+        restart: options.restart ?? false,
+        force: options.force ?? false,
+        waitMs: options.waitMs ?? 1500,
+        execute: options.execute ?? false,
+      },
+      command: "joelclaw deploy worker",
+    })
+
+    if (inProcess) return inProcess
+    if (!this.shouldUseSubprocessFallback()) {
+      throw new Error("subprocess transport is disabled")
+    }
+
+    const args = ["deploy", "worker"]
+    appendFlag(args, "restart", options.restart)
+    appendFlag(args, "force", options.force)
+    appendOption(args, "wait-ms", options.waitMs)
+    appendFlag(args, "execute", options.execute)
+
+    return await this.runOrThrow<TResult>(args)
+  }
+
+  async logWrite<TResult = unknown>(input: LogWriteInput): Promise<JoelclawEnvelope<TResult>> {
+    const action = input.action.trim()
+    const tool = input.tool.trim()
+    const detail = input.detail.trim()
+
+    if (!action || !tool || !detail) {
+      throw new Error("logWrite requires non-empty action, tool, and detail")
+    }
+
+    const inProcess = await this.runSdkCapability<TResult>({
+      capability: "log",
+      subcommand: "write",
+      args: {
+        action,
+        tool,
+        detail,
+        reason: input.reason?.trim() || undefined,
+      },
+      command: "joelclaw log write",
+    })
+
+    if (inProcess) return inProcess
+    if (!this.shouldUseSubprocessFallback()) {
+      throw new Error("subprocess transport is disabled")
+    }
+
+    const args = ["log", "write", "--action", action, "--tool", tool, "--detail", detail]
+    if (input.reason?.trim()) {
+      args.push("--reason", input.reason.trim())
+    }
+
+    return await this.runOrThrow<TResult>(args)
+  }
+
+  async secretsStatus<TResult = unknown>(): Promise<JoelclawEnvelope<TResult>> {
+    const inProcess = await this.runSdkCapability<TResult>({
+      capability: "secrets",
+      subcommand: "status",
+      args: {},
+      command: "joelclaw secrets status",
+    })
+
+    if (inProcess) return inProcess
+    if (!this.shouldUseSubprocessFallback()) {
+      throw new Error("subprocess transport is disabled")
+    }
+
+    return await this.runOrThrow<TResult>(["secrets", "status"])
+  }
+
+  async secretsLease<TResult = unknown>(input: SecretsLeaseInput): Promise<JoelclawEnvelope<TResult>> {
+    const name = input.name.trim()
+    if (!name) {
+      throw new Error("secretsLease requires a non-empty secret name")
+    }
+
+    const inProcess = await this.runSdkCapability<TResult>({
+      capability: "secrets",
+      subcommand: "lease",
+      args: {
+        name,
+        ttl: input.ttl?.trim() || undefined,
+        clientId: input.clientId?.trim() || undefined,
+      },
+      command: "joelclaw secrets lease",
+    })
+
+    if (inProcess) return inProcess
+    if (!this.shouldUseSubprocessFallback()) {
+      throw new Error("subprocess transport is disabled")
+    }
+
+    const args = ["secrets", "lease", name]
+    if (input.ttl?.trim()) args.push("--ttl", input.ttl.trim())
+    if (input.clientId?.trim()) args.push("--client-id", input.clientId.trim())
+
+    return await this.runOrThrow<TResult>(args)
+  }
+
+  async secretsRevoke<TResult = unknown>(options: SecretsRevokeOptions = {}): Promise<JoelclawEnvelope<TResult>> {
+    const leaseId = options.leaseId?.trim()
+    const all = options.all === true
+    if (!all && !leaseId) {
+      throw new Error("secretsRevoke requires leaseId or all=true")
+    }
+
+    const inProcess = await this.runSdkCapability<TResult>({
+      capability: "secrets",
+      subcommand: "revoke",
+      args: {
+        leaseId,
+        all,
+      },
+      command: "joelclaw secrets revoke",
+    })
+
+    if (inProcess) return inProcess
+    if (!this.shouldUseSubprocessFallback()) {
+      throw new Error("subprocess transport is disabled")
+    }
+
+    const args = ["secrets", "revoke"]
+    if (all) {
+      args.push("--all")
+    } else if (leaseId) {
+      args.push(leaseId)
+    }
+
+    return await this.runOrThrow<TResult>(args)
+  }
+
+  async secretsAudit<TResult = unknown>(options: SecretsAuditOptions = {}): Promise<JoelclawEnvelope<TResult>> {
+    const inProcess = await this.runSdkCapability<TResult>({
+      capability: "secrets",
+      subcommand: "audit",
+      args: {
+        tail: options.tail,
+      },
+      command: "joelclaw secrets audit",
+    })
+
+    if (inProcess) return inProcess
+    if (!this.shouldUseSubprocessFallback()) {
+      throw new Error("subprocess transport is disabled")
+    }
+
+    const args = ["secrets", "audit"]
+    appendOption(args, "tail", options.tail)
+
+    return await this.runOrThrow<TResult>(args)
+  }
+
+  async secretsEnv<TResult = unknown>(options: SecretsEnvOptions = {}): Promise<JoelclawEnvelope<TResult>> {
+    const inProcess = await this.runSdkCapability<TResult>({
+      capability: "secrets",
+      subcommand: "env",
+      args: {
+        ttl: options.ttl?.trim() || undefined,
+        dryRun: options.dryRun ?? false,
+        force: options.force ?? false,
+      },
+      command: "joelclaw secrets env",
+    })
+
+    if (inProcess) return inProcess
+    if (!this.shouldUseSubprocessFallback()) {
+      throw new Error("subprocess transport is disabled")
+    }
+
+    const args = ["secrets", "env"]
+    if (options.ttl?.trim()) args.push("--ttl", options.ttl.trim())
+    appendFlag(args, "dry-run", options.dryRun)
+    appendFlag(args, "force", options.force)
+
+    return await this.runOrThrow<TResult>(args)
   }
 
   async otelList<TResult = unknown>(options: OtelListOptions = {}): Promise<JoelclawEnvelope<TResult>> {
