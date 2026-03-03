@@ -486,19 +486,34 @@ function registerCallbackHandler(init: CommandHandlerInit): void {
 }
 
 async function sendPitchDecisionEvent(eventName: "adr/pitch.approved" | "adr/pitch.rejected", adrNumber: number): Promise<void> {
+  // Try CLI first, fall back to direct HTTP
   const { execSync } = await import("node:child_process");
-  const data = JSON.stringify({ adr_number: adrNumber });
   try {
-    execSync(`joelclaw send '${eventName}' -d '${data}'`, {
+    const data = JSON.stringify({ adr_number: adrNumber });
+    execSync(`/Users/joel/.bun/bin/joelclaw send '${eventName}' -d '${data}'`, {
       timeout: 10_000,
       stdio: "pipe",
     });
-  } catch (error) {
-    console.warn("[gateway:telegram] Failed to send pitch callback event via CLI", {
-      eventName,
-      adrNumber,
-      error: error instanceof Error ? error.message : String(error),
+    console.log(`[gateway:telegram] pitch decision sent via CLI: ${eventName} adr=${adrNumber}`);
+    return;
+  } catch (cliError) {
+    console.warn("[gateway:telegram] CLI send failed, trying direct HTTP", {
+      error: cliError instanceof Error ? cliError.message : String(cliError),
     });
+  }
+
+  // Fallback: direct HTTP to Inngest
+  const eventKey = process.env.INNGEST_EVENT_KEY ?? "37aa349b89692d657d276a40e0e47a15";
+  const response = await fetch(`http://localhost:8288/e/${eventKey}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: eventName, data: { adr_number: adrNumber } }),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    console.warn("[gateway:telegram] Direct HTTP send also failed", { status: response.status, body });
+  } else {
+    console.log(`[gateway:telegram] pitch decision sent via HTTP: ${eventName} adr=${adrNumber}`);
   }
 }
 
