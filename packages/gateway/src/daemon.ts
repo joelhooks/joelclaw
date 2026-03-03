@@ -117,6 +117,30 @@ const startupGatewayConfig = await (async () => {
   }
 })();
 
+if (startupGatewayConfig.fallbackProvider === "anthropic" && startupGatewayConfig.fallbackModel === "claude-sonnet-4-6") {
+  const hasConfiguredFallback = Boolean(getModel("anthropic" as any, "claude-sonnet-4-6" as any));
+  const hasCompatFallback = Boolean(getModel("anthropic" as any, "claude-sonnet-4-5" as any));
+
+  if (!hasConfiguredFallback && hasCompatFallback) {
+    startupGatewayConfig.fallbackModel = "claude-sonnet-4-5";
+    console.warn("[gateway:fallback] remapped unsupported fallback model", {
+      from: "anthropic/claude-sonnet-4-6",
+      to: "anthropic/claude-sonnet-4-5",
+      reason: "pi-ai model registry does not include claude-sonnet-4-6",
+    });
+    void emitGatewayOtel({
+      level: "warn",
+      component: "daemon.fallback",
+      action: "fallback.model.remapped",
+      success: true,
+      metadata: {
+        from: "anthropic/claude-sonnet-4-6",
+        to: "anthropic/claude-sonnet-4-5",
+      },
+    });
+  }
+}
+
 function resolveModel(modelIdOverride: string | undefined) {
   const modelId = modelIdOverride ?? process.env.PI_MODEL ?? process.env.PI_MODEL_ID;
   if (!modelId) return undefined;

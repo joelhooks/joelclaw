@@ -380,8 +380,8 @@ export async function drain(): Promise<void> {
         let promptSent = false;
         for (let attempt = 0; attempt < MAX_PROMPT_RETRIES; attempt++) {
           try {
-            onPromptSent?.();
             await sessionRef.prompt(entry.prompt);
+            onPromptSent?.();
             promptSent = true;
             break;
           } catch (retryError: any) {
