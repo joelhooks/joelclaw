@@ -1,50 +1,22 @@
 {
-  "title": "ADR-0199: Add OTEL emissions to loop stages",
-  "description": "Add system_knowledge.retrieval OTEL event emission to reviewer, judge, test-writer, and planner — matching the existing pattern in implement.ts. Each stage already calls querySystemKnowledge; just needs the OTEL emit wrapping it.",
+  "title": "ADR-0199: Close remaining gaps — watchdog self-heal + brain/codebase/",
+  "description": "Close the last two gaps in ADR-0199. (1) Watchdog auto-syncs when collection is missing instead of just alerting. (2) Create brain/codebase/ directory with initial pattern notes derived from the system.",
   "stories": [
     {
-      "id": "otel-reviewer",
-      "title": "Add OTEL emission to reviewer system_knowledge retrieval",
-      "description": "In packages/system-bus/src/inngest/functions/agent-loop/review.ts, wrap the existing querySystemKnowledge call with timing and emit an OTEL event matching implement.ts pattern. Emit to the /observability/emit endpoint (already used by implement.ts — check how implement.ts does it via the emitOtelEvent helper or direct fetch). The event should have: action='system_knowledge.retrieval', component='agent-loop', source='reviewer', success=true/false, metadata with result_length and latency_ms.",
-      "acceptance": "OTEL event emitted on every querySystemKnowledge call in review.ts. Compiles clean: `bunx tsc --noEmit`.",
-      "files": [
-        "packages/system-bus/src/inngest/functions/agent-loop/review.ts"
-      ],
-      "priority": 1,
-      "passes": true
+      "id": "watchdog-self-heal",
+      "title": "Watchdog self-heals when system_knowledge collection is missing",
+      "description": "In packages/system-bus/src/inngest/functions/knowledge-watchdog.ts, when the audit step detects the collection is missing, add a recovery step that re-creates the collection and re-indexes ADRs and skills. Use the existing createCollection and bulkImport functions from packages/system-bus/src/lib/typesense.ts. The schema is SYSTEM_KNOWLEDGE_COLLECTION_SCHEMA. After recovery, re-run the audit to verify. Import the schema and collection name from typesense.ts. For ADR/skill indexing, look at how packages/cli/src/commands/knowledge.ts does it in the sync subcommand — replicate that pattern (read files from ~/Vault/docs/decisions/ and skills directories, build documents, bulk import). Note: the watchdog runs on the host worker which has filesystem access to ~/Vault.",
+      "acceptance": "When collection is missing, watchdog creates it and populates with ADRs+skills. Subsequent audit passes. Alert message says 'self-healed' instead of just 'MISSING'. Compiles clean: `bunx tsc --noEmit`.",
+      "files": ["packages/system-bus/src/inngest/functions/knowledge-watchdog.ts"],
+      "priority": 1
     },
     {
-      "id": "otel-judge",
-      "title": "Add OTEL emission to judge system_knowledge retrieval",
-      "description": "In packages/system-bus/src/inngest/functions/agent-loop/utils.ts (the llmEvaluate function), wrap the existing querySystemKnowledge call with timing and emit an OTEL event. Same pattern as implement.ts: action='system_knowledge.retrieval', component='agent-loop', source='judge', success=true/false, metadata with result_length and latency_ms.",
-      "acceptance": "OTEL event emitted on every querySystemKnowledge call in llmEvaluate. Compiles clean.",
-      "files": [
-        "packages/system-bus/src/inngest/functions/agent-loop/utils.ts"
-      ],
-      "priority": 2,
-      "passes": true
-    },
-    {
-      "id": "otel-test-writer",
-      "title": "Add OTEL emission to test-writer system_knowledge retrieval",
-      "description": "In packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts, wrap the existing querySystemKnowledge call with timing and emit an OTEL event. Same pattern: action='system_knowledge.retrieval', component='agent-loop', source='test-writer'.",
-      "acceptance": "OTEL event emitted. Compiles clean.",
-      "files": [
-        "packages/system-bus/src/inngest/functions/agent-loop/test-writer.ts"
-      ],
-      "priority": 3,
-      "passes": true
-    },
-    {
-      "id": "otel-planner",
-      "title": "Add OTEL emission to planner system_knowledge retrieval",
-      "description": "In packages/system-bus/src/inngest/functions/agent-loop/plan.ts, wrap the existing querySystemKnowledge call (for failed_target lookup) with timing and emit an OTEL event. Same pattern: action='system_knowledge.retrieval', component='agent-loop', source='planner'.",
-      "acceptance": "OTEL event emitted. Compiles clean.",
-      "files": [
-        "packages/system-bus/src/inngest/functions/agent-loop/plan.ts"
-      ],
-      "priority": 4,
-      "passes": true
+      "id": "brain-codebase-bootstrap",
+      "title": "Create brain/codebase/ directory with initial pattern notes",
+      "description": "Create the directory ~/Vault/system/brain/codebase/ and populate it with 3-5 initial pattern notes as markdown files. These are browsable knowledge files that agents read before work. Create notes for patterns we've established: (1) adaptive-heartbeat-gate.md — the check-cheaply-act-rarely pattern from ADR-0198 (2) force-enforce-verify.md — the F/E/V pattern from ADR-0200 (3) system-knowledge-retrieval.md — how to query and write to system_knowledge (4) inngest-gate-step.md — the Redis timestamp gate step pattern. Each note should be ~20-40 lines, practical, with code examples from the actual codebase. Format: markdown with a YAML frontmatter (title, created, source_adr). This is a filesystem task — create the files directly.",
+      "acceptance": "Directory exists at ~/Vault/system/brain/codebase/ with 4 .md files. Each file has frontmatter + practical content with code examples. Files are readable and useful for agents.",
+      "files": [],
+      "priority": 2
     }
   ]
 }
