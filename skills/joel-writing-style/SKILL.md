@@ -224,6 +224,16 @@ Writing in someone's voice is a privilege. The moment you invent experiences the
 | "Genuinely useful" | "Useful" — the adverb adds nothing |
 | "as hell" intensifier | Just "rough" is stronger than "rough as hell" |
 | Making up kids' reactions | They "didn't give a fuck" not "saw it as dial-up" |
+| "real power" | Say what it actually does |
+| "wake-up call" | Just state the fact |
+| "fundamentally changes" | "Changes" — if it's fundamental, show it |
+| "key benefit" / "key insight" | Just state the benefit/insight |
+| "cut through the noise" | Say what it does specifically |
+| "the irony" | Show the irony, don't label it |
+| "the good news" / "the reality" | Just say the thing |
+| "it's kind of like" | Use a direct metaphor or don't |
+| "here's the thing:" | Just say the thing |
+| "hard truth" / "uncomfortable truth" | State it. If it's hard, the reader will feel it |
 
 ---
 
