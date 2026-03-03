@@ -43,6 +43,7 @@ import { subscribeCmd } from "./commands/subscribe"
 import { tuiCmd } from "./commands/tui"
 import { vaultCmd } from "./commands/vault"
 import { watchCmd } from "./commands/watch"
+import { knowledgeCmd } from "./commands/knowledge"
 import { webhookCmd } from "./commands/webhook"
 import { Inngest } from "./inngest"
 import { respond } from "./response"
@@ -181,7 +182,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([agentCmd, contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, deployCmd, healCmd, logsCmd, logCmd, secretsCmd, notifyCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, skillsCmd, docsCmd, emailCmd, mailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd, webhookCmd])
+  Command.withSubcommands([agentCmd, contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, deployCmd, healCmd, logsCmd, logCmd, secretsCmd, notifyCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, skillsCmd, docsCmd, emailCmd, mailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd, webhookCmd, knowledgeCmd])
 )
 
 const cli = Command.run(root, {
