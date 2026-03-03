@@ -149,6 +149,19 @@ export const discoveryCapture = inngest.createFunction(
             });
           });
 
+          // Ensure in system_knowledge (ADR-0199 invariant)
+          try {
+            const { ensureKnowledge } = await import("../../lib/typesense");
+            await ensureKnowledge({
+              id: `discovery:${result.noteName}`,
+              type: "insight",
+              title: title || result.noteName,
+              content: `Discovery: ${url ?? result.noteName}. ${result.noteName}`,
+              source: `vault:Resources/discoveries/${result.noteName}.md`,
+              tags: ["discovery"],
+            });
+          } catch { /* graceful */ }
+
           // Trigger sync to website
           await step.sendEvent("slog-result", {
             name: "discovery/captured",

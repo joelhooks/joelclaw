@@ -261,6 +261,19 @@ export async function promoteToMemory(proposalId: string): Promise<void> {
 
   await redis.lrem(REVIEW_PENDING_KEY, 0, proposalId);
   await redis.del(key);
+
+  // System knowledge invariant (ADR-0199): promoted observation → ensure in brain
+  try {
+    const { ensureKnowledge } = await import("../../lib/typesense");
+    await ensureKnowledge({
+      id: `memory:${proposalId}`,
+      type: "insight",
+      title: `${section}: ${promotedText.slice(0, 120)}`,
+      content: promotedText,
+      source: `memory:${section}`,
+      tags: ["memory", "promoted", section],
+    });
+  } catch { /* graceful */ }
 }
 
 export async function archiveProposal(proposalId: string, reason: string): Promise<void> {

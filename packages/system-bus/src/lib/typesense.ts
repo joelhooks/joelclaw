@@ -529,6 +529,101 @@ export async function ensureCollection(
   }
 }
 
+// ── Knowledge invariant: "Is this in system_knowledge? No → add. Yes → accurate? No → update." ──
+
+export interface KnowledgeDoc {
+  id: string;
+  type: "adr" | "skill" | "lesson" | "pattern" | "retro" | "failed_target" | "decision" | "insight";
+  title: string;
+  content: string;
+  source?: string;
+  tags?: string[];
+  score?: number;
+  status?: string;
+  project?: string;
+}
+
+/**
+ * Ensure a piece of knowledge exists and is current.
+ * - Not found → insert
+ * - Found but content differs → update
+ * - Found and matches → no-op
+ *
+ * Returns what action was taken for OTEL logging.
+ */
+export async function ensureKnowledge(
+  doc: KnowledgeDoc,
+): Promise<"inserted" | "updated" | "unchanged" | "error"> {
+  try {
+    await ensureCollection(SYSTEM_KNOWLEDGE_COLLECTION, SYSTEM_KNOWLEDGE_COLLECTION_SCHEMA);
+
+    // Check if it exists
+    const existing = await fetch(
+      `${TYPESENSE_URL}/collections/${SYSTEM_KNOWLEDGE_COLLECTION}/documents/${doc.id}`,
+      { headers: headers() },
+    );
+
+    if (!existing.ok) {
+      // Not found → insert
+      await upsert(SYSTEM_KNOWLEDGE_COLLECTION, {
+        ...doc,
+        created_at: Math.floor(Date.now() / 1000),
+      });
+      return "inserted";
+    }
+
+    // Found — check if content matches
+    const current = (await existing.json()) as { content?: string; title?: string; status?: string };
+    const contentChanged = current.content !== doc.content;
+    const titleChanged = current.title !== doc.title;
+    const statusChanged = doc.status !== undefined && current.status !== doc.status;
+
+    if (contentChanged || titleChanged || statusChanged) {
+      await upsert(SYSTEM_KNOWLEDGE_COLLECTION, {
+        ...doc,
+        created_at: Math.floor(Date.now() / 1000),
+      });
+      return "updated";
+    }
+
+    return "unchanged";
+  } catch {
+    return "error";
+  }
+}
+
+/**
+ * Batch version — run the invariant over many docs.
+ * Returns counts by action taken.
+ */
+export async function ensureKnowledgeBatch(
+  docs: KnowledgeDoc[],
+): Promise<{ inserted: number; updated: number; unchanged: number; errors: number }> {
+  const counts = { inserted: 0, updated: 0, unchanged: 0, errors: 0 };
+  // For large batches, just bulk upsert (content-check not worth the N lookups)
+  if (docs.length > 20) {
+    try {
+      await ensureCollection(SYSTEM_KNOWLEDGE_COLLECTION, SYSTEM_KNOWLEDGE_COLLECTION_SCHEMA);
+      const now = Math.floor(Date.now() / 1000);
+      const result = await bulkImport(
+        SYSTEM_KNOWLEDGE_COLLECTION,
+        docs.map((d) => ({ ...d, created_at: now })),
+      );
+      counts.inserted = result.success; // upsert = insert or update
+      counts.errors = result.errors;
+    } catch {
+      counts.errors = docs.length;
+    }
+    return counts;
+  }
+  // Small batch — individual checks for accurate reporting
+  for (const doc of docs) {
+    const action = await ensureKnowledge(doc);
+    counts[action === "error" ? "errors" : action]++;
+  }
+  return counts;
+}
+
 export async function ensureTranscriptsCollection(): Promise<void> {
   await ensureCollection(TRANSCRIPTS_COLLECTION, TRANSCRIPTS_COLLECTION_SCHEMA);
 }

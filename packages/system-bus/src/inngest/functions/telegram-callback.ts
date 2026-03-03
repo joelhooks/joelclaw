@@ -191,6 +191,21 @@ export const telegramCallbackReceived = inngest.createFunction(
         },
       });
 
+      // Update system_knowledge status (ADR-0199 invariant)
+      await step.run("update-knowledge-status", async () => {
+        try {
+          const { ensureKnowledge } = await import("../../lib/typesense");
+          await ensureKnowledge({
+            id: `adr:${adrNumber}`,
+            type: "adr",
+            title: `ADR-${adrNumber}`,
+            content: `ADR-${adrNumber} pitch ${pitchAction}d by human`,
+            status: pitchAction === "approve" ? "approved" : "rejected",
+            tags: ["adr", pitchAction === "approve" ? "approved" : "rejected"],
+          });
+        } catch { /* graceful */ }
+      });
+
       await step.run("emit-pitch-callback-otel", async () => {
         await emitOtelEvent({
           level: "info",

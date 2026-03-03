@@ -552,7 +552,25 @@ export const meetingAnalyze = inngest.createFunction(
       return { wrote: filename };
     });
 
-    // Step 8: Notify gateway
+    // Step 8: Ensure decisions in system_knowledge (ADR-0199 invariant)
+    if (analysis.decisions.length > 0) {
+      await step.run("ensure-decisions-in-knowledge", async () => {
+        try {
+          const { ensureKnowledgeBatch, type KnowledgeDoc } = await import("../../lib/typesense");
+          const docs: KnowledgeDoc[] = analysis.decisions.map((d: any, i: number) => ({
+            id: `decision:meeting:${meetingId}:${i}`,
+            type: "decision" as const,
+            title: d.decision.slice(0, 120),
+            content: `${d.decision}${d.rationale ? `\n\nRationale: ${d.rationale}` : ""}`,
+            source: `meeting:${meetingId}`,
+            tags: ["decision", "meeting"],
+          }));
+          return await ensureKnowledgeBatch(docs);
+        } catch { return { errors: analysis.decisions.length }; }
+      });
+    }
+
+    // Step 9: Notify gateway
     await step.run("notify-gateway", async () => {
       if (!gateway) return { pushed: false };
 
