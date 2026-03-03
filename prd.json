@@ -1,26 +1,38 @@
 {
-  "title": "ADR-0199: Close remaining gaps — watchdog self-heal + brain/codebase/",
-  "description": "Close the last two gaps in ADR-0199. (1) Watchdog auto-syncs when collection is missing instead of just alerting. (2) Create brain/codebase/ directory with initial pattern notes derived from the system.",
+  "title": "ADR-0196: Cancel-on-New-Message — Foundation",
+  "description": "Implement the cancel-on-new-message pattern for gateway message handling. Goal: when a new human message arrives, cancel any running agent processing for that chat and start fresh with the latest message. This also dogfoods the ADR-0199 knowledge pipeline — all stages should query system_knowledge and emit OTEL.",
   "stories": [
     {
-      "id": "watchdog-self-heal",
-      "title": "Watchdog self-heals when system_knowledge collection is missing",
-      "description": "In packages/system-bus/src/inngest/functions/knowledge-watchdog.ts, when the audit step detects the collection is missing, add a recovery step that re-creates the collection and re-indexes ADRs and skills. Use the existing createCollection and bulkImport functions from packages/system-bus/src/lib/typesense.ts. The schema is SYSTEM_KNOWLEDGE_COLLECTION_SCHEMA. After recovery, re-run the audit to verify. Import the schema and collection name from typesense.ts. For ADR/skill indexing, look at how packages/cli/src/commands/knowledge.ts does it in the sync subcommand — replicate that pattern (read files from ~/Vault/docs/decisions/ and skills directories, build documents, bulk import). Note: the watchdog runs on the host worker which has filesystem access to ~/Vault.",
-      "acceptance": "When collection is missing, watchdog creates it and populates with ADRs+skills. Subsequent audit passes. Alert message says 'self-healed' instead of just 'MISSING'. Compiles clean: `bunx tsc --noEmit`.",
-      "files": [
-        "packages/system-bus/src/inngest/functions/knowledge-watchdog.ts"
-      ],
-      "priority": 1,
-      "passes": true
+      "id": "message-type-discriminator",
+      "title": "Add message type discrimination utility",
+      "description": "Create a utility function in packages/system-bus/src/lib/message-types.ts that classifies inbound messages as 'human' or 'system'. Human messages: Telegram messages without the automated headers (🔔, 📋, ❌, ⚠️, VIP). System messages: anything with those headers, heartbeats, batch digests, gateway probes. Export `isHumanMessage(text: string): boolean` and `isSystemMessage(text: string): boolean`. Also export the type `MessageType = 'human' | 'system'` and `classifyMessage(text: string): MessageType`. Include tests in packages/system-bus/src/lib/message-types.test.ts covering: plain text (human), 🔔 header (system), 📋 Batch Digest (system), empty string (system), mixed content with header (system).",
+      "acceptance": "Utility exports classifyMessage, isHumanMessage, isSystemMessage. Tests pass: `bun test packages/system-bus/src/lib/message-types.test.ts`. Compiles clean: `bunx tsc --noEmit`.",
+      "files": ["packages/system-bus/src/lib/message-types.ts", "packages/system-bus/src/lib/message-types.test.ts"],
+      "priority": 1
     },
     {
-      "id": "brain-codebase-bootstrap",
-      "title": "Create brain/codebase/ directory with initial pattern notes",
-      "description": "Create the directory ~/Vault/system/brain/codebase/ and populate it with 3-5 initial pattern notes as markdown files. These are browsable knowledge files that agents read before work. Create notes for patterns we've established: (1) adaptive-heartbeat-gate.md — the check-cheaply-act-rarely pattern from ADR-0198 (2) force-enforce-verify.md — the F/E/V pattern from ADR-0200 (3) system-knowledge-retrieval.md — how to query and write to system_knowledge (4) inngest-gate-step.md — the Redis timestamp gate step pattern. Each note should be ~20-40 lines, practical, with code examples from the actual codebase. Format: markdown with a YAML frontmatter (title, created, source_adr). This is a filesystem task — create the files directly.",
-      "acceptance": "Directory exists at ~/Vault/system/brain/codebase/ with 4 .md files. Each file has frontmatter + practical content with code examples. Files are readable and useful for agents.",
-      "files": [],
-      "priority": 2,
-      "passes": true
+      "id": "gateway-message-handler-fn",
+      "title": "Create gateway-handle-message Inngest function with cancelOn",
+      "description": "Create packages/system-bus/src/inngest/functions/gateway-handle-message.ts. This Inngest function triggers on 'gateway/message.processing' events and uses cancelOn + concurrency to implement cancel-on-new-message. Config: concurrency limit 1 keyed on event.data.chatId, cancelOn matching gateway/message.processing on data.chatId. ONLY cancel when the NEW message is a human message (use classifyMessage from message-types.ts in a guard step). The function body should be a placeholder that logs the message and returns { processed: true, messageId: event.data.messageId }. Register in index.host.ts. Event schema: { data: { chatId: string, messageId: string, text: string, channel: string, isHuman: boolean, timestamp: number } }. Add the event type to the client events.",
+      "acceptance": "Function registered in index.host.ts. Event type added to client. cancelOn configured correctly — only cancels on same chatId. Compiles clean: `bunx tsc --noEmit`.",
+      "files": ["packages/system-bus/src/inngest/functions/gateway-handle-message.ts", "packages/system-bus/src/inngest/functions/index.host.ts", "packages/system-bus/src/inngest/client.ts"],
+      "priority": 2
+    },
+    {
+      "id": "message-batching-window",
+      "title": "Add batching window to gateway-handle-message",
+      "description": "In gateway-handle-message.ts, add a 1.5 second batching window as the first step. Use step.sleep('batch-window', '1.5s') to wait, then check Redis for any newer messages in the same chat that arrived during the window. Redis key: 'gateway:chat:{chatId}:latest_message_id'. If a newer message exists, return early with { status: 'superseded', by: newerId }. Otherwise proceed. This lets rapid-fire messages (corrections, follow-ups) coalesce before processing starts.",
+      "acceptance": "First step is a 1.5s sleep. Second step checks Redis for newer message. Returns early if superseded. Compiles clean.",
+      "files": ["packages/system-bus/src/inngest/functions/gateway-handle-message.ts"],
+      "priority": 3
+    },
+    {
+      "id": "system-event-bypass",
+      "title": "Ensure system events don't cancel human conversations",
+      "description": "In gateway-handle-message.ts, add a guard step after the batching window. Use classifyMessage(event.data.text) to check if the triggering event is a system message. If it IS a system message, process it directly without the cancelOn behavior taking effect. The key insight: cancelOn should only match when event.data.isHuman is true. Update the cancelOn config to use an if condition or add a step that checks the message type. Also add a test file at packages/system-bus/src/inngest/functions/gateway-handle-message.test.ts that verifies: (1) human messages get the cancelOn behavior, (2) system messages are processed without cancelling anything.",
+      "acceptance": "System events (heartbeats, digests) don't cancel human message processing. Test file exists with meaningful assertions. Compiles clean.",
+      "files": ["packages/system-bus/src/inngest/functions/gateway-handle-message.ts", "packages/system-bus/src/inngest/functions/gateway-handle-message.test.ts"],
+      "priority": 4
     }
   ]
 }
