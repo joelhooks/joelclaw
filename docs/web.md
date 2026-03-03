@@ -5,8 +5,8 @@ Next.js 16 App Router site for `joelclaw.com`.
 ## Agent-oriented surfaces
 
 - Human HTML pages: route `page.tsx` trees under `apps/web/app/`
-- Markdown exports: `/{slug}.md` (rewritten to `app/[slug]/md/route.ts`) and `/sitemap.md`
-- API discovery + machine endpoints: `/api`, `/api/search`, `/api/docs`, `/feed.xml`, `/llms.txt`
+- Markdown exports: `https://joelclaw.com/{slug}.md` (rewritten to `app/[slug]/md/route.ts`) and `https://joelclaw.com/sitemap.md`
+- API discovery + machine endpoints: `https://joelclaw.com/api`, `https://joelclaw.com/api/search`, `https://joelclaw.com/api/docs`, `https://joelclaw.com/feed.xml`, `https://joelclaw.com/llms.txt`
 
 ## CLAWMAIL view-source convention
 
@@ -18,16 +18,16 @@ Regular HTML pages include a rendered HTML source comment labeled `CLAWMAIL` fro
 
 The comment is intended for agents using **View Source** and includes:
 
-1. A start path (`/sitemap.md`) for route and markdown endpoint discovery
-2. API discovery instructions (`/api` → `/api/search` and `/api/docs`)
-3. Markdown endpoint instructions (`/{slug}.md`) with `Accept: text/markdown`
-4. Plain-text hint endpoint instructions (`/llms.txt`) with `Accept: text/plain`
+1. A start path (`https://joelclaw.com/sitemap.md`) for route and markdown endpoint discovery
+2. API discovery instructions (`https://joelclaw.com/api` → `https://joelclaw.com/api/search` and `https://joelclaw.com/api/docs`)
+3. Markdown endpoint instructions (`https://joelclaw.com/{slug}.md`) with `Accept: text/markdown`
+4. Plain-text hint endpoint instructions (`https://joelclaw.com/llms.txt`) with `Accept: text/plain`
 5. A wrong-endpoint guard (`Content-Type: text/html` means fallback HTML / wrong route)
 
 Required content-type checks called out in the marker:
 
-- `GET /{slug}.md` with `Accept: text/markdown` → verify response `Content-Type` contains `text/markdown`
-- `GET /llms.txt` with `Accept: text/plain` → verify response `Content-Type` contains `text/plain`
+- `GET https://joelclaw.com/{slug}.md` with `Accept: text/markdown` → verify response `Content-Type` contains `text/markdown`
+- `GET https://joelclaw.com/llms.txt` with `Accept: text/plain` → verify response `Content-Type` contains `text/plain`
 - If response `Content-Type` is `text/html`, treat it as fallback/wrong route and retry the correct endpoint.
 
-This convention is intentionally scoped to the HTML layout only. Markdown/text route handlers (for example `/sitemap.md`, `/{slug}.md`, `/llms.txt`, and API routes) are not wrapped by the layout and do not inject the HTML source marker.
+This convention is intentionally scoped to the HTML layout only. Markdown/text route handlers (for example `https://joelclaw.com/sitemap.md`, `https://joelclaw.com/{slug}.md`, `https://joelclaw.com/llms.txt`, and API routes) are not wrapped by the layout and do not inject the HTML source marker.
