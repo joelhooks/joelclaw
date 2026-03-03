@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { resolve } from "node:path"
 import { __inngestTestUtils } from "./inngest"
 
 const {
@@ -13,6 +14,49 @@ const {
   decodeConnectMessage,
   connectMessageKindName,
 } = __inngestTestUtils
+
+const CLI_ENTRY = resolve(process.cwd(), "packages/cli/src/cli.ts")
+
+type JsonEnvelope = Record<string, unknown>
+
+const defaultCliEnv = {
+  INNGEST_EVENT_KEY: "test-event-key",
+  INNGEST_SIGNING_KEY: "test-signing-key",
+}
+
+const runCli = async (commandArgs: string[], env: Record<string, string> = {}): Promise<JsonEnvelope> => {
+  const proc = Bun.spawn(["bun", "run", CLI_ENTRY, ...commandArgs], {
+    cwd: resolve(process.cwd()),
+    env: {
+      ...process.env,
+      ...defaultCliEnv,
+      ...env,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+
+  const [status, stdoutText, stderrText] = await Promise.all([
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ])
+
+  expect(status).toBe(0)
+  expect(stderrText.trim()).toBe("")
+
+  const output = stdoutText.trim()
+  expect(output.length).toBeGreaterThan(0)
+  return JSON.parse(output) as JsonEnvelope
+}
+
+const connectStartFixture = (gatewayEndpoint: string) => ({
+  connectionId: "01KJS3DYBNS2FHXFC02KXNZFE3",
+  gatewayEndpoint,
+  gatewayGroup: "gw-dev",
+  sessionToken: "eyJ.test.session",
+  syncToken: "d51bc9e432e7b6f694a4b496b2b3f7595db1e0852d031887cfb19ebcd0d139b5",
+})
 
 describe("inngest sweep-stale-runs helpers", () => {
   test("parseCsvList trims and drops empty items", () => {
@@ -102,5 +146,125 @@ describe("inngest connect-auth protobuf helpers", () => {
     expect([...decoded.payload]).toEqual([1, 2, 3, 4])
     expect(connectMessageKindName(decoded.kind)).toBe("GATEWAY_CONNECTION_READY")
     expect(connectMessageKindName(999)).toBe("UNKNOWN(999)")
+  })
+})
+
+describe("inngest connect-auth command error paths", () => {
+  test("returns CONNECT_START_AUTH_FAILED when start endpoint rejects bearer token", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname
+        if (path === "/v0/connect/start") {
+          return new Response("not authorized", { status: 401 })
+        }
+        return new Response("not found", { status: 404 })
+      },
+    })
+
+    try {
+      const envelope = await runCli([
+        "inngest",
+        "connect-auth",
+        "--url",
+        `http://127.0.0.1:${server.port}`,
+      ])
+
+      expect(envelope.ok).toBe(false)
+      expect((envelope.error as { code?: string } | undefined)?.code).toBe("CONNECT_START_AUTH_FAILED")
+    } finally {
+      server.stop(true)
+    }
+  })
+
+  test("returns CONNECT_START_PARSE_FAILED when start payload is malformed", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname
+        if (path === "/v0/connect/start") {
+          return new Response("definitely-not-protobuf", { status: 200 })
+        }
+        return new Response("not found", { status: 404 })
+      },
+    })
+
+    try {
+      const envelope = await runCli([
+        "inngest",
+        "connect-auth",
+        "--url",
+        `http://127.0.0.1:${server.port}`,
+      ])
+
+      expect(envelope.ok).toBe(false)
+      expect((envelope.error as { code?: string } | undefined)?.code).toBe("CONNECT_START_PARSE_FAILED")
+    } finally {
+      server.stop(true)
+    }
+  })
+
+  test("returns CONNECT_WS_AUTH_FAILED when websocket handshake cannot be established", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname
+        if (path === "/v0/connect/start") {
+          const payload = encodeConnectStartResponseForTest(
+            connectStartFixture(`ws://127.0.0.1:${server.port}/v0/connect`),
+          )
+          return new Response(payload, { status: 200 })
+        }
+        return new Response("not found", { status: 404 })
+      },
+    })
+
+    try {
+      const envelope = await runCli([
+        "inngest",
+        "connect-auth",
+        "--url",
+        `http://127.0.0.1:${server.port}`,
+        "--timeout-ms",
+        "1000",
+      ])
+
+      expect(envelope.ok).toBe(false)
+      expect((envelope.error as { code?: string } | undefined)?.code).toBe("CONNECT_WS_AUTH_FAILED")
+    } finally {
+      server.stop(true)
+    }
+  })
+
+  test("start-only mode succeeds with valid protobuf payload and skips websocket", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname
+        if (path === "/v0/connect/start") {
+          const payload = encodeConnectStartResponseForTest(
+            connectStartFixture("ws://127.0.0.1:65535/v0/connect"),
+          )
+          return new Response(payload, { status: 200 })
+        }
+        return new Response("not found", { status: 404 })
+      },
+    })
+
+    try {
+      const envelope = await runCli([
+        "inngest",
+        "connect-auth",
+        "--url",
+        `http://127.0.0.1:${server.port}`,
+        "--start-only",
+      ])
+
+      expect(envelope.ok).toBe(true)
+      expect((envelope.result as { mode?: string } | undefined)?.mode).toBe("start-only")
+      expect(((envelope.result as { websocket?: { skipped?: boolean } } | undefined)?.websocket)?.skipped).toBe(true)
+    } finally {
+      server.stop(true)
+    }
   })
 })
