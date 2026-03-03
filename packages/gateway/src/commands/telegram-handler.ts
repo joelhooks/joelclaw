@@ -486,27 +486,18 @@ function registerCallbackHandler(init: CommandHandlerInit): void {
 }
 
 async function sendPitchDecisionEvent(eventName: "adr/pitch.approved" | "adr/pitch.rejected", adrNumber: number): Promise<void> {
-  const eventKey = process.env.INNGEST_EVENT_KEY;
-  if (!eventKey) {
-    console.warn("[gateway:telegram] INNGEST_EVENT_KEY missing; skipping pitch callback event");
-    return;
-  }
-
-  const response = await fetch(`http://localhost:8288/e/${eventKey}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name: eventName,
-      data: { adr_number: adrNumber },
-    }),
-  });
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    console.warn("[gateway:telegram] Failed to send pitch callback event", {
+  const { execSync } = await import("node:child_process");
+  const data = JSON.stringify({ adr_number: adrNumber });
+  try {
+    execSync(`joelclaw send '${eventName}' -d '${data}'`, {
+      timeout: 10_000,
+      stdio: "pipe",
+    });
+  } catch (error) {
+    console.warn("[gateway:telegram] Failed to send pitch callback event via CLI", {
       eventName,
-      status: response.status,
-      body,
+      adrNumber,
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 }
