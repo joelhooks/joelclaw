@@ -463,6 +463,7 @@ async function executeCommand(
 function registerCallbackHandler(init: CommandHandlerInit): void {
   init.bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery.data;
+    console.log(`[gateway:callback] general handler received: data="${data}" prefix="${CALLBACK_PREFIX}"`);
     if (!data.startsWith(CALLBACK_PREFIX)) {
       await next();
       return;
@@ -518,22 +519,32 @@ async function sendPitchDecisionEvent(eventName: "adr/pitch.approved" | "adr/pit
 }
 
 function registerPitchCallbackHandler(bot: Bot, chatId: string): void {
+  console.log(`[gateway:pitch] registering pitch callback handler for chat=${chatId}`);
+
   bot.on("callback_query:data", async (ctx, next) => {
-    if (String(ctx.chat?.id ?? "") !== chatId) {
+    const data = ctx.callbackQuery.data;
+    const chatIdStr = String(ctx.chat?.id ?? "");
+
+    console.log(`[gateway:pitch] callback_query received: data="${data}" chat=${chatIdStr} expected=${chatId}`);
+
+    if (chatIdStr !== chatId) {
+      console.log(`[gateway:pitch] chat mismatch, passing to next`);
       await next();
       return;
     }
 
-    const data = ctx.callbackQuery.data;
     if (!data.startsWith("pitch:")) {
+      console.log(`[gateway:pitch] not a pitch callback, passing to next`);
       await next();
       return;
     }
 
     const [, action, rawAdrNumber] = data.split(":");
     const adrNumber = Number.parseInt(rawAdrNumber ?? "", 10);
+    console.log(`[gateway:pitch] parsed: action=${action} adrNumber=${adrNumber}`);
 
     if ((action !== "approve" && action !== "reject") || Number.isNaN(adrNumber)) {
+      console.warn(`[gateway:pitch] invalid action or adr number`);
       await ctx.answerCallbackQuery({ text: "⚠️ Invalid decision" });
       return;
     }
@@ -543,6 +554,7 @@ function registerPitchCallbackHandler(bot: Bot, chatId: string): void {
     const decisionText = approved ? "✅ Approved" : "❌ Rejected";
     const eventName = approved ? "adr/pitch.approved" : "adr/pitch.rejected";
 
+    console.log(`[gateway:pitch] answering callback query: ${callbackText}`);
     await ctx.answerCallbackQuery({ text: callbackText });
 
     const callbackMessage = ctx.callbackQuery.message;
@@ -557,14 +569,17 @@ function registerPitchCallbackHandler(bot: Bot, chatId: string): void {
       await ctx.editMessageText(updatedText, {
         reply_markup: { inline_keyboard: [] },
       });
+      console.log(`[gateway:pitch] message edited successfully`);
     } catch (error) {
-      console.warn("[gateway:telegram] Error editing pitch callback message", error);
+      console.warn("[gateway:pitch] error editing message", error);
     }
 
     try {
+      console.log(`[gateway:pitch] sending event: ${eventName} adr=${adrNumber}`);
       await sendPitchDecisionEvent(eventName, adrNumber);
+      console.log(`[gateway:pitch] event sent successfully`);
     } catch (error) {
-      console.warn("[gateway:telegram] Error sending pitch callback event", error);
+      console.warn("[gateway:pitch] error sending event", error);
     }
   });
 }
