@@ -151,7 +151,11 @@ export const adrDailyPitch = inngest.createFunction(
           const filePath = join(VAULT_PATH, "docs/decisions", item.filename);
           const content = readFileSync(filePath, "utf-8");
           const fm = parseFrontmatter(content, item.number);
-          if (fm && fm.band === "do-now" && fm.confidence >= 4 && fm.score >= 80) {
+          // Gate: high confidence, tractable scope
+          // confidence >= 4 = we know what to build
+          // readiness >= 3 = dependencies met, not blocked
+          // Sorted by score, so highest-value work gets pitched first
+          if (fm && fm.confidence >= 4 && fm.readiness >= 3) {
             scored.push(fm);
           }
         } catch {
