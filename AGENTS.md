@@ -36,6 +36,7 @@ joelclaw/
 │   └── docs-api/               # PDF/docs REST API (k8s)
 ├── packages/
 │   ├── cli/                    # @joelclaw/cli — `joelclaw` command
+│   ├── sdk/                    # @joelclaw/sdk — programmatic wrapper for CLI contracts
 │   ├── system-bus/             # @joelclaw/system-bus — 110+ Inngest functions
 │   ├── gateway/                # @joelclaw/gateway — multi-channel message routing
 │   ├── inference-router/       # @joelclaw/inference-router — model selection catalog
