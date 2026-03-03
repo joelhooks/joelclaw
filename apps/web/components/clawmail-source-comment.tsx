@@ -1,5 +1,4 @@
-const CLAWMAIL_SOURCE_COMMENT = `<!--
-   _   _
+const CLAWMAIL_AGENT_PROMPT = `   _   _
   / \\_/ \\   CLAWMAIL
  (  o o  )  claws out, parse smart
  /   ^   \\
@@ -20,18 +19,16 @@ CLAWMAIL AGENT NAVIGATION PROMPT (HTML PAGES ONLY):
   Send: Accept: text/plain
   VERIFY: Content-Type starts with "text/plain" (expected "text/plain; charset=utf-8")
 - SAFETY: if Content-Type is "text/html", do not parse as markdown/plain.
-  You hit HTML fallback or the wrong endpoint; retry with correct path + Accept header.
--->`;
+  You hit HTML fallback or the wrong endpoint; retry with correct path + Accept header.`;
 
 /**
- * Rendered in the HTML shell so "View Source" includes a CLAWMAIL marker
- * for agent-oriented discovery without changing visible UI.
+ * Rendered as a deterministic first-child head marker so "View Source" shows
+ * agent navigation guidance as literal source instead of an RSC payload fragment.
  */
 export function ClawmailSourceComment() {
   return (
-    <template
-      data-clawmail-source-comment="true"
-      dangerouslySetInnerHTML={{ __html: CLAWMAIL_SOURCE_COMMENT }}
-    />
+    <script id="clawmail-agent-prompt" type="text/plain">
+      {CLAWMAIL_AGENT_PROMPT}
+    </script>
   );
 }
