@@ -9,6 +9,8 @@ import { inngest } from "../client";
 const VAULT_PATH = process.env.VAULT_PATH ?? "/Users/joel/Vault";
 const PITCH_HISTORY_KEY = "adr:pitch:history";
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_PITCHES_PER_DAY = 3;
+const REJECTION_BACKOFF_HOURS = 4; // back off 4h after a rejection before pitching again
 
 interface AdrItem {
   number: string;
@@ -109,11 +111,16 @@ async function updatePitchHistoryResponse(
 
 export const adrDailyPitch = inngest.createFunction(
   {
-    id: "adr-daily-pitch",
-    name: "ADR: Daily Work Pitch",
+    id: "adr-work-pitch",
+    name: "ADR: Work Pitch (capacity-driven)",
     retries: 2,
   },
-  { event: "adr/pitch.requested" },
+  [
+    { event: "adr/pitch.requested" },          // manual trigger
+    { event: "agent/loop.completed" },          // loop finished
+    { event: "agent/loop.retro.completed" },    // retro finished
+    { event: "system/agent.completed" },        // agent dispatch finished
+  ],
   async ({ step }) => {
     // Step 1: Read and rank open ADRs
     const candidates = await step.run("rank-open-adrs", () => {
@@ -160,7 +167,7 @@ export const adrDailyPitch = inngest.createFunction(
       return { pitched: false, reason: "no-candidates-pass-gate" };
     }
 
-    // Step 2: Check pitch history
+    // Step 2: Check pitch history — soft cap + rejection backoff
     const candidate = await step.run("check-pitch-history", async () => {
       const redis = getRedis();
       const historyRaw = await redis.get(PITCH_HISTORY_KEY);
@@ -168,15 +175,26 @@ export const adrDailyPitch = inngest.createFunction(
       const now = Date.now();
       const today = new Date().toISOString().slice(0, 10);
 
-      // Already pitched today?
-      const pitchedToday = history.some((h) => h.pitched_at.startsWith(today));
-      if (pitchedToday) return null;
+      // Soft cap: max N pitches per day
+      const pitchesToday = history.filter((h) => h.pitched_at.startsWith(today));
+      if (pitchesToday.length >= MAX_PITCHES_PER_DAY) return null;
 
-      // Find first candidate not recently rejected
+      // Any pending pitch? Don't pile on — wait for response
+      const hasPending = history.some((h) => h.response === "pending");
+      if (hasPending) return null;
+
+      // Rejection backoff: if last pitch was rejected, wait before pitching again
+      const lastRejection = [...history].reverse().find((h) => h.response === "rejected");
+      if (lastRejection) {
+        const timeSince = now - new Date(lastRejection.pitched_at).getTime();
+        if (timeSince < REJECTION_BACKOFF_HOURS * 60 * 60 * 1000) return null;
+      }
+
+      // Find first candidate not rejected in last 7 days
       for (const c of candidates) {
         const recentRejection = history.some(
           (h) =>
-            h.adr_number === c.number &&
+            String(h.adr_number).padStart(4, "0") === c.number &&
             h.response === "rejected" &&
             now - new Date(h.pitched_at).getTime() < SEVEN_DAYS_MS,
         );
@@ -186,7 +204,7 @@ export const adrDailyPitch = inngest.createFunction(
     });
 
     if (!candidate) {
-      return { pitched: false, reason: "already-pitched-today-or-all-recently-rejected" };
+      return { pitched: false, reason: "at-cap-or-pending-or-backoff-or-all-rejected" };
     }
 
     // Step 3: Send pitch via gateway channel interface
