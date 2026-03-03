@@ -243,6 +243,7 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
 
         let mut failed_probes = collect_failed_probes(&results);
         let critical_failures = collect_critical_failures(&failed_probes, &config);
+        let service_only_failures = should_use_service_heal(&failed_probes, &config);
 
         if failed_probes.is_empty() {
             current_state.consecutive_failures = 0;
@@ -260,9 +261,12 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
             state::transition(&mut current_state, "Degraded");
         }
 
-        let should_escalate = !critical_failures.is_empty()
-            || current_state.consecutive_failures
-                >= config.probes.consecutive_failures_before_escalate;
+        let should_escalate = should_escalate_failures(
+            current_state.consecutive_failures,
+            &critical_failures,
+            service_only_failures,
+            config.probes.consecutive_failures_before_escalate,
+        );
 
         if !should_escalate {
             health::publish_state(&current_state);
@@ -382,6 +386,15 @@ fn collect_critical_failures(results: &[ProbeResult], config: &Config) -> Vec<Pr
         .filter(|result| config.is_critical_probe(&result.name))
         .cloned()
         .collect()
+}
+
+fn should_escalate_failures(
+    consecutive_failures: u32,
+    critical_failures: &[ProbeResult],
+    service_only_failures: bool,
+    threshold: u32,
+) -> bool {
+    !critical_failures.is_empty() || (!service_only_failures && consecutive_failures >= threshold)
 }
 
 fn should_use_service_heal(failures: &[ProbeResult], config: &Config) -> bool {
@@ -529,6 +542,20 @@ fn parse_args() -> Result<Cli, DynError> {
 mod tests {
     use super::*;
     use crate::config::{HttpServiceProbe, LaunchdServiceProbe};
+
+    #[test]
+    fn noncritical_service_only_failures_do_not_trigger_full_escalation() {
+        let critical = vec![ProbeResult {
+            name: "redis".to_string(),
+            passed: false,
+            output: "timeout".to_string(),
+            duration_ms: 10,
+        }];
+
+        assert!(!should_escalate_failures(10, &[], true, 3));
+        assert!(should_escalate_failures(3, &[], false, 3));
+        assert!(should_escalate_failures(1, &critical, true, 3));
+    }
 
     #[test]
     fn service_heal_selection_uses_only_dynamic_service_failures() {

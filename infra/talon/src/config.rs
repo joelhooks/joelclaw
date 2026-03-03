@@ -566,13 +566,11 @@ fn default_services_toml() -> String {
 
 [launchd.voice_agent]
 label = "com.joel.voice-agent"
-critical = true
+critical = false
 timeout_secs = 5
 
-[http.voice_agent]
-url = "http://127.0.0.1:8081/"
-critical = true
-timeout_secs = 5
+# Note: do not probe voice_agent over http://127.0.0.1:8081/ by default.
+# Its root endpoint returns 503 when idle, which is not a cluster outage.
 "#
     .to_string()
 }

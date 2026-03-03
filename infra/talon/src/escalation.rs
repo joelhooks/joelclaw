@@ -244,8 +244,9 @@ pub fn run_sos(
     }
 
     let failed_list = failed_probe_names(failed_probes);
+    let summary = sos_summary(failed_probes);
     let message = format!(
-        "🚨 TALON SOS: k8s cluster down, all recovery failed. Failed probes: {failed_list}. SSH to panda and investigate."
+        "🚨 TALON SOS: {summary}. Failed probes: {failed_list}. SSH to panda and investigate."
     );
 
     log::error("sending SOS escalation via telegram + imsg/osascript");
@@ -442,6 +443,42 @@ fn failed_probe_names(failed_probes: &[ProbeResult]) -> String {
         .map(|probe| probe.name.clone())
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn sos_summary(failed_probes: &[ProbeResult]) -> &'static str {
+    if failed_probes
+        .iter()
+        .any(|probe| is_cluster_infra_probe(&probe.name))
+    {
+        return "k8s/infra unhealthy, all recovery failed";
+    }
+
+    if !failed_probes.is_empty()
+        && failed_probes
+            .iter()
+            .all(|probe| probe.name.starts_with("http:") || probe.name.starts_with("launchd:"))
+    {
+        return "service monitors unhealthy, automated recovery failed";
+    }
+
+    "persistent watchdog failures after recovery attempts"
+}
+
+fn is_cluster_infra_probe(name: &str) -> bool {
+    matches!(
+        name,
+        "colima"
+            | "docker"
+            | "talos_container"
+            | "k8s_api"
+            | "node_ready"
+            | "node_schedulable"
+            | "redis"
+            | "kubelet_proxy_rbac"
+            | "http:inngest"
+            | "http:typesense"
+            | "http:worker"
+    )
 }
 
 fn restart_targets_for_failed_services(
@@ -833,6 +870,32 @@ fn truncate(value: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use crate::config::{HttpServiceProbe, LaunchdServiceProbe};
+
+    #[test]
+    fn sos_summary_distinguishes_cluster_vs_service_failures() {
+        let cluster = vec![ProbeResult {
+            name: "k8s_api".to_string(),
+            passed: false,
+            output: "refused".to_string(),
+            duration_ms: 10,
+        }];
+
+        let service_only = vec![ProbeResult {
+            name: "http:voice_agent".to_string(),
+            passed: false,
+            output: "503".to_string(),
+            duration_ms: 10,
+        }];
+
+        assert_eq!(
+            sos_summary(&cluster),
+            "k8s/infra unhealthy, all recovery failed"
+        );
+        assert_eq!(
+            sos_summary(&service_only),
+            "service monitors unhealthy, automated recovery failed"
+        );
+    }
 
     #[test]
     fn restart_targets_include_matching_launchd_labels_once() {

@@ -129,18 +129,14 @@ timeout_secs = 5
 
 [launchd.voice_agent]
 label = "com.joel.voice-agent"
-critical = true
-timeout_secs = 5
-
-[http.voice_agent]
-url = "http://127.0.0.1:8081/"
-critical = true
+critical = false
 timeout_secs = 5
 ```
 
 - `launchd.<name>` passes when `launchctl list <label>` reports a non-zero PID
 - `http.<name>` passes on HTTP `200`
 - `critical = true` escalates immediately when the probe fails
+- **Do not probe `http://127.0.0.1:8081/` for `voice_agent` by default** — root returns `503` when idle and causes false SOS noise
 - Service-heal pre-cleanup for `voice_agent` now clears stale `uv/main.py` listeners on `:8081` before `launchctl kickstart` to avoid bind conflicts after force-cycles
 - Talon hot-reloads service probes when `services.toml` mtime changes (no restart required)
 - `kill -HUP $(launchctl print gui/$(id -u)/com.joel.talon | awk '/pid =/{print $3; exit}')` forces immediate reload
