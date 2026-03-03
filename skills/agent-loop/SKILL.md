@@ -136,7 +136,7 @@ Default: codex for implementation, claude for review. Override per-story via `to
 
 - Concurrency keys use CEL expressions (`event.data.project`), not `{{ }}` templates
 - `loop` is reserved in CEL — don't use in concurrency key strings
-- `codex exec --full-auto PROMPT` (no `-q` flag)
+- Use explicit Codex permissions: `codex exec --ask-for-approval never --sandbox danger-full-access PROMPT` (no `-q` flag)
 - Worker changes require a k8s deploy (`k8s/publish-system-bus-worker.sh`)
 - Docker must be running for Inngest server (`open -a OrbStack`)
 - Large tool output uses claim-check pattern (written to `/tmp/agent-loop/{loopId}/`)

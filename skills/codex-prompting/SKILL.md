@@ -2,7 +2,7 @@
 name: codex-prompting
 displayName: Codex Prompting
 description: "Use this skill for any request to trigger, coordinate, or craft prompts for Codex. Use when user says 'send to codex', 'use codex', 'prompt codex', 'ask codex', 'delegate to codex', 'run in codex', or asks for a Codex-first execution handoff."
-version: 1.0.1
+version: 1.0.2
 author: Joel Hooks
 tags: [codex, prompting, automation, pi, operations]
 ---
@@ -41,6 +41,10 @@ The job is to produce a high-signal Codex request that gets directly executed wi
   - forbid force/mirror pushes
   - forbid obvious filesystem root wipe commands
   - forbid disk-destruction primitives (`diskutil eraseDisk`, `mkfs`, `dd`)
+- `pi-tools` `codex` extension defaults to:
+  - `--ask-for-approval never`
+  - `--sandbox danger-full-access`
+  - `full_auto = false` (opt-in legacy mode)
 - Expected behavior:
   - normal `git commit` and `git push` should run without permission friction
   - blocked commands fail fast with explicit `forbidden` decision
