@@ -915,6 +915,15 @@ export type Events = {
       adr_number: string;
     };
   };
+  "gateway/send.message": {
+    data: {
+      channel: string;
+      text: string;
+      inline_keyboard?: Array<Array<{ text: string; callback_data: string }>>;
+      edit_message_id?: number;
+      remove_keyboard?: boolean;
+    };
+  };
   "adr/review.submitted": {
     data: {
       adrSlug: string;

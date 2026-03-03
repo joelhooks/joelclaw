@@ -189,53 +189,34 @@ export const adrDailyPitch = inngest.createFunction(
       return { pitched: false, reason: "already-pitched-today-or-all-recently-rejected" };
     }
 
-    // Step 3: Send pitch to Telegram
+    // Step 3: Send pitch via gateway channel interface
     await step.run("send-pitch", async () => {
-      const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-      const TELEGRAM_CHAT_ID = process.env.TELEGRAM_USER_ID;
-      if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-        console.warn("[adr-daily-pitch] missing TELEGRAM_BOT_TOKEN or TELEGRAM_USER_ID");
-        return { sent: false, reason: "missing-telegram-config" };
-      }
-
       const text = [
-        `🎯 <b>Work Pitch: ADR-${candidate.number}</b>`,
+        `🎯 **Work Pitch: ADR-${candidate.number}**`,
         "",
-        `<b>${candidate.title}</b>`,
+        `**${candidate.title}**`,
         `Score: ${candidate.score}/100 (${candidate.band})`,
         `N:${candidate.need} R:${candidate.readiness} C:${candidate.confidence} ✨:${candidate.novelty}`,
         "",
-        candidate.rationale || "<i>No rationale recorded</i>",
+        candidate.rationale || "_No rationale recorded_",
         "",
-        `<i>Status: ${candidate.status} | Pitched: ${new Date().toISOString().slice(0, 10)}</i>`,
+        `_Status: ${candidate.status} | Pitched: ${new Date().toISOString().slice(0, 10)}_`,
       ].join("\n");
 
-      const response = await fetch(
-        `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: TELEGRAM_CHAT_ID,
-            text,
-            parse_mode: "HTML",
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: "👍 Ship it", callback_data: `pitch:approve:${candidate.number}` },
-                  { text: "👎 Not now", callback_data: `pitch:reject:${candidate.number}` },
-                ],
-              ],
-            },
-          }),
+      // Emit event for gateway to deliver via channel interface
+      await step.sendEvent("send-pitch-message", {
+        name: "gateway/send.message",
+        data: {
+          channel: "telegram",
+          text,
+          inline_keyboard: [
+            [
+              { text: "👍 Ship it", callback_data: `pitch:approve:${candidate.number}` },
+              { text: "👎 Not now", callback_data: `pitch:reject:${candidate.number}` },
+            ],
+          ],
         },
-      );
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        console.error("[adr-daily-pitch] telegram send failed", { status: response.status, body });
-        return { sent: false, reason: "telegram-send-failed", status: response.status };
-      }
+      });
 
       // Record in pitch history
       const redis = getRedis();
@@ -283,24 +264,6 @@ export const adrDailyPitch = inngest.createFunction(
   },
 );
 
-async function editTelegramMessage(messageId: number, text: string): Promise<void> {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_USER_ID ?? process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chatId || !messageId) return;
-
-  await fetch(`https://api.telegram.org/bot${token}/editMessageText`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      message_id: messageId,
-      text,
-      parse_mode: "HTML",
-      reply_markup: { inline_keyboard: [] },
-    }),
-  }).catch(() => {});
-}
-
 export const adrPitchApproved = inngest.createFunction(
   {
     id: "adr-pitch-approved",
@@ -317,15 +280,14 @@ export const adrPitchApproved = inngest.createFunction(
       return updatePitchHistoryResponse(adr_number, "approved");
     });
 
-    await step.run("edit-telegram-message", async () => {
-      if (messageId) {
-        const redis = getRedis();
-        const historyRaw = await redis.get(PITCH_HISTORY_KEY);
-        const history: PitchRecord[] = historyRaw ? (JSON.parse(historyRaw) as PitchRecord[]) : [];
-        const pitch = history.find(h => String(h.adr_number).padStart(4, "0") === normalized);
-        const originalText = pitch ? `📋 <b>ADR-${normalized}</b>` : `ADR-${normalized}`;
-        await editTelegramMessage(messageId, `${originalText}\n\n✅ Approved — queued for work`);
-      }
+    await step.sendEvent("notify-approved", {
+      name: "gateway/send.message",
+      data: {
+        channel: "telegram",
+        text: `📋 **ADR-${normalized}**\n\n✅ Approved — queued for work`,
+        edit_message_id: messageId,
+        remove_keyboard: true,
+      },
     });
 
     return { updated, adr_number: normalized };
@@ -348,10 +310,14 @@ export const adrPitchRejected = inngest.createFunction(
       return updatePitchHistoryResponse(adr_number, "rejected");
     });
 
-    await step.run("edit-telegram-message", async () => {
-      if (messageId) {
-        await editTelegramMessage(messageId, `📋 <b>ADR-${normalized}</b>\n\n❌ Rejected — cooling off 7 days`);
-      }
+    await step.sendEvent("notify-rejected", {
+      name: "gateway/send.message",
+      data: {
+        channel: "telegram",
+        text: `📋 **ADR-${normalized}**\n\n❌ Rejected — cooling off 7 days`,
+        edit_message_id: messageId,
+        remove_keyboard: true,
+      },
     });
 
     return { updated, adr_number: normalized };
