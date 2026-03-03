@@ -519,19 +519,23 @@ function registerPitchCallbackHandler(bot: Bot, chatId: string): void {
 
     const [, action, rawAdrNumber] = data.split(":");
     const adrNumber = Number.parseInt(rawAdrNumber ?? "", 10);
+    const messageId = ctx.callbackQuery.message?.message_id;
+
+    console.log("[gateway:pitch] callback received", { data, action, adrNumber, messageId, chat: ctx.chat?.id });
+
     if ((action !== "approve" && action !== "reject") || Number.isNaN(adrNumber)) {
+      console.warn("[gateway:pitch] invalid callback data", { data });
       await ctx.answerCallbackQuery({ text: "⚠️ Invalid" });
       return;
     }
 
-    // Dumb relay: answer the spinner, fire the event, done.
-    // Inngest handles Redis, message editing, everything else.
     const approved = action === "approve";
     await ctx.answerCallbackQuery({ text: approved ? "✅" : "❌" });
 
     const eventName = approved ? "adr/pitch.approved" : "adr/pitch.rejected";
-    const messageId = ctx.callbackQuery.message?.message_id;
+    console.log("[gateway:pitch] firing event", { eventName, adrNumber, messageId });
     await sendPitchDecisionEvent(eventName, adrNumber, messageId);
+    console.log("[gateway:pitch] event dispatched", { eventName, adrNumber });
   });
 }
 
