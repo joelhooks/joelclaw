@@ -279,7 +279,63 @@ const searchCmd = Command.make(
     }),
 )
 
+// ── clear-failed ──
+
+const clearFailedTarget = Args.text({ name: "target" }).pipe(
+  Args.withDescription("Story ID or ADR number to clear from failed targets"),
+)
+
+const clearFailedCmd = Command.make(
+  "clear-failed",
+  { target: clearFailedTarget },
+).pipe(
+  Command.withDescription("Remove a failed target from system_knowledge"),
+  Command.withHandler(({ target }) =>
+    Effect.gen(function* () {
+      const apiKey = yield* resolveTypesenseApiKey()
+
+      // Search for matching failed_target docs
+      const searchResp = yield* Effect.promise(() =>
+        fetch(`${TYPESENSE_URL}/collections/${COLLECTION}/documents/search?q=${encodeURIComponent(target)}&query_by=title,content&filter_by=type:=failed_target&per_page=50`, {
+          headers: { "X-TYPESENSE-API-KEY": apiKey },
+        }),
+      )
+
+      if (!searchResp.ok) {
+        yield* Console.error(`Search failed: ${searchResp.status}`)
+        return
+      }
+
+      const data = yield* Effect.promise(() => searchResp.json()) as any
+      const hits = data.hits ?? []
+      let deleted = 0
+
+      for (const hit of hits) {
+        const id = hit.document?.id
+        if (!id) continue
+        const delResp = yield* Effect.promise(() =>
+          fetch(`${TYPESENSE_URL}/collections/${COLLECTION}/documents/${id}`, {
+            method: "DELETE",
+            headers: { "X-TYPESENSE-API-KEY": apiKey },
+          }),
+        )
+        if (delResp.ok) deleted++
+      }
+
+      yield* Console.log(
+        respond("clear-failed", {
+          target,
+          found: hits.length,
+          deleted,
+        }, [
+          { command: "joelclaw knowledge search failed_target", description: "List remaining failed targets" },
+        ]),
+      )
+    }),
+  ),
+)
+
 export const knowledgeCmd = Command.make("knowledge").pipe(
   Command.withDescription("System knowledge index — sync and search ADRs, skills, retros, lessons"),
-  Command.withSubcommands([syncCmd, searchCmd]),
+  Command.withSubcommands([syncCmd, searchCmd, clearFailedCmd]),
 )

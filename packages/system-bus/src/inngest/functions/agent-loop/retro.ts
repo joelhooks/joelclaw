@@ -488,6 +488,54 @@ export const agentLoopRetro = inngest.createFunction(
       }
     });
 
+    // Write brain notes to Vault (ADR-0199: durable backup)
+    await step.run("write-brain-notes", async () => {
+      try {
+        const { mkdir } = await import("node:fs/promises");
+        const brainDir = `${process.env.HOME || "/Users/joel"}/Vault/system/brain/codebase`;
+        await mkdir(brainDir, { recursive: true });
+
+        const date = new Date().toISOString();
+        const failedStories = storyDetails.filter((s) => !s.passed && !s.skipped);
+
+        const note = [
+          "---",
+          `type: retro`,
+          `loop_id: "${loopId}"`,
+          `project: "${project}"`,
+          `date: ${date}`,
+          `stories_completed: ${storiesCompleted}`,
+          `stories_failed: ${storiesFailed}`,
+          `stories_skipped: ${storiesSkipped}`,
+          "---",
+          "",
+          `# Loop ${loopId}`,
+          "",
+          "## Summary",
+          summary || "(no summary)",
+          "",
+          "## Lessons",
+          reflection.analysis || "(no analysis)",
+          "",
+          "## Patterns",
+          codebasePatterns || "(no patterns)",
+          "",
+          ...(failedStories.length > 0
+            ? [
+                "## Failed Stories",
+                ...failedStories.map((s) => `- **${s.id}**: ${s.title} (${s.attempts} attempts, tool: ${s.tool})`),
+              ]
+            : []),
+        ].join("\n");
+
+        await Bun.write(`${brainDir}/${loopId}.md`, note);
+        return { wrote: `${loopId}.md` };
+      } catch (err) {
+        console.warn(`[retro] brain note write failed: ${err}`);
+        return { error: String(err) };
+      }
+    });
+
     await step.sendEvent("emit-retro-complete", {
       name: "agent/loop.retro.completed",
       data: {

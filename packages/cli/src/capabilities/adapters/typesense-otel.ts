@@ -328,6 +328,29 @@ export const typesenseOtelAdapter: CapabilityPort<typeof commands> = {
           const recentTotal = Number((recentData.data as any)?.found ?? 0)
           const recentErrors = readFacet(recentData.data, "level", "error") + readFacet(recentData.data, "level", "fatal")
 
+          // Knowledge metrics (ADR-0199)
+          const knowledgeData = yield* Effect.promise(() =>
+            Promise.all([
+              queryOtel({
+                q: "system_knowledge.retrieval",
+                page: 1,
+                limit: 1,
+                filterBy: baseFilter,
+                queryBy: "action",
+              }),
+              queryOtel({
+                q: "knowledge.watchdog.check",
+                page: 1,
+                limit: 1,
+                filterBy: baseFilter,
+                queryBy: "action",
+              }),
+            ]),
+          )
+
+          const knowledgeRetrievals = knowledgeData[0].ok ? Number((knowledgeData[0].data as any)?.found ?? 0) : 0
+          const watchdogChecks = knowledgeData[1].ok ? Number((knowledgeData[1].data as any)?.found ?? 0) : 0
+
           return {
             windowHours: args.hours,
             filterBy: baseFilter,
@@ -338,6 +361,10 @@ export const typesenseOtelAdapter: CapabilityPort<typeof commands> = {
               total: recentTotal,
               errors: recentErrors,
               errorRate: recentTotal > 0 ? recentErrors / recentTotal : 0,
+            },
+            knowledge: {
+              retrievals: knowledgeRetrievals,
+              watchdog_checks: watchdogChecks,
             },
             facets: (windowData.data as any)?.facet_counts ?? [],
           }

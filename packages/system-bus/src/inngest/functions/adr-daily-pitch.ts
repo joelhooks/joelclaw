@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import Redis from "ioredis";
 import { getRedisPort } from "../../lib/redis";
-import { bulkImport, SYSTEM_KNOWLEDGE_COLLECTION } from "../../lib/typesense";
+import { bulkImport, search, SYSTEM_KNOWLEDGE_COLLECTION } from "../../lib/typesense";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
@@ -124,7 +124,7 @@ export const adrDailyPitch = inngest.createFunction(
   ],
   async ({ step }) => {
     // Step 1: Read and rank open ADRs
-    const candidates = await step.run("rank-open-adrs", () => {
+    let candidates = await step.run("rank-open-adrs", () => {
       let raw: string;
       try {
         raw = execSync("joelclaw vault adr list --json 2>/dev/null || joelclaw vault adr list", {
@@ -211,6 +211,94 @@ export const adrDailyPitch = inngest.createFunction(
       return { pitched: false, reason: "no-candidates-pass-gate" };
     }
 
+    // Step 1b: Exclude failed targets (ADR-0199)
+    candidates = await step.run("check-failed-targets", async () => {
+      try {
+        const result = await search({
+          collection: SYSTEM_KNOWLEDGE_COLLECTION,
+          q: "*",
+          query_by: "title,content",
+          filter_by: "type:=failed_target",
+          per_page: 100,
+        });
+        const failedAdrs = new Set<string>();
+        for (const hit of result.hits ?? []) {
+          const doc = hit.document as { content?: string; title?: string };
+          const text = `${doc.title ?? ""} ${doc.content ?? ""}`;
+          const matches = text.matchAll(/ADR[- ]?(\d{4})/gi);
+          for (const m of matches) failedAdrs.add(m[1]!);
+        }
+        if (failedAdrs.size > 0) {
+          console.log(`[pitch] excluding ${failedAdrs.size} failed target ADRs: ${[...failedAdrs].join(", ")}`);
+        }
+        return candidates.filter((c) => !failedAdrs.has(c.number));
+      } catch {
+        return candidates; // graceful
+      }
+    });
+
+    if (candidates.length === 0) {
+      return { pitched: false, reason: "all-candidates-are-failed-targets" };
+    }
+
+    // Step 1c: Gather mise brief (ADR-0199)
+    const miseBrief = await step.run("gather-mise-brief", async () => {
+      const brief: {
+        recentRetros: Array<{ id: string; title: string }>;
+        failedTargets: number;
+        recentLessons: string[];
+        activeLoops: number;
+      } = { recentRetros: [], failedTargets: 0, recentLessons: [], activeLoops: 0 };
+
+      try {
+        // Recent retros
+        const retros = await search({
+          collection: SYSTEM_KNOWLEDGE_COLLECTION,
+          q: "*",
+          query_by: "title,content",
+          filter_by: "type:=retro",
+          sort_by: "created_at:desc",
+          per_page: 5,
+        });
+        brief.recentRetros = (retros.hits ?? []).map((h) => {
+          const d = h.document as { id?: string; title?: string };
+          return { id: d.id ?? "", title: d.title ?? "" };
+        });
+
+        // Failed target count
+        const ft = await search({
+          collection: SYSTEM_KNOWLEDGE_COLLECTION,
+          q: "*",
+          query_by: "title,content",
+          filter_by: "type:=failed_target",
+          per_page: 0,
+        });
+        brief.failedTargets = ft.found ?? 0;
+
+        // Recent lessons
+        const lessons = await search({
+          collection: SYSTEM_KNOWLEDGE_COLLECTION,
+          q: "*",
+          query_by: "title,content",
+          filter_by: "type:=lesson",
+          sort_by: "created_at:desc",
+          per_page: 5,
+        });
+        brief.recentLessons = (lessons.hits ?? []).map((h) => {
+          const d = h.document as { title?: string };
+          return d.title ?? "";
+        });
+
+        // Active loops
+        const redis = getRedis();
+        const loopKeys = await redis.keys("loop:*:prd");
+        brief.activeLoops = loopKeys.length;
+      } catch { /* graceful */ }
+
+      console.log(`[pitch] mise brief: ${brief.recentRetros.length} retros, ${brief.failedTargets} failed targets, ${brief.recentLessons.length} lessons, ${brief.activeLoops} active loops`);
+      return brief;
+    });
+
     // Step 2: Check pitch history — soft cap + rejection backoff
     const candidate = await step.run("check-pitch-history", async () => {
       const redis = getRedis();
@@ -263,6 +351,11 @@ export const adrDailyPitch = inngest.createFunction(
         candidate.rationale || "_No rationale recorded_",
         "",
         `_Status: ${candidate.status} | Pitched: ${new Date().toISOString().slice(0, 10)}_`,
+        "",
+        `<code>mise: ${miseBrief.recentRetros.length} retros | ${miseBrief.failedTargets} failed | ${miseBrief.activeLoops} active loops</code>`,
+        ...(miseBrief.recentLessons.length > 0
+          ? [`<i>Recent: ${miseBrief.recentLessons.slice(0, 2).join("; ").slice(0, 100)}</i>`]
+          : []),
       ].join("\n");
 
       // Emit event for gateway to deliver via channel interface

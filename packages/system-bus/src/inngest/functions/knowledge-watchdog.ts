@@ -109,6 +109,35 @@ export const knowledgeWatchdog = inngest.createFunction(
       return { issues, stats };
     });
 
+    // Prune expired failed targets (>7 days old)
+    const pruned = await step.run("prune-expired-failed-targets", async () => {
+      const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 86400;
+      try {
+        const result = await typesense.search({
+          collection: typesense.SYSTEM_KNOWLEDGE_COLLECTION,
+          q: "*",
+          query_by: "title,content",
+          filter_by: `type:=failed_target && created_at:<${sevenDaysAgo}`,
+          per_page: 100,
+        });
+        let deleted = 0;
+        for (const hit of result.hits ?? []) {
+          const doc = hit.document as { id?: string };
+          if (!doc.id) continue;
+          try {
+            await fetch(
+              `${typesense.TYPESENSE_URL}/collections/${typesense.SYSTEM_KNOWLEDGE_COLLECTION}/documents/${doc.id}`,
+              { method: "DELETE", headers: { "X-TYPESENSE-API-KEY": process.env.TYPESENSE_API_KEY || "" } },
+            );
+            deleted++;
+          } catch { /* skip */ }
+        }
+        return { pruned: deleted, found: result.found ?? 0 };
+      } catch {
+        return { pruned: 0, error: "search failed" };
+      }
+    });
+
     // Emit OTEL event for the watchdog itself
     await step.run("emit-watchdog-otel", () =>
       emitOtelEvent({
