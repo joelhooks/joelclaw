@@ -2,7 +2,7 @@
 name: codex-prompting
 displayName: Codex Prompting
 description: "Use this skill for any request to trigger, coordinate, or craft prompts for Codex. Use when user says 'send to codex', 'use codex', 'prompt codex', 'ask codex', 'delegate to codex', 'run in codex', or asks for a Codex-first execution handoff."
-version: 1.0.0
+version: 1.0.1
 author: Joel Hooks
 tags: [codex, prompting, automation, pi, operations]
 ---
@@ -30,6 +30,20 @@ The job is to produce a high-signal Codex request that gets directly executed wi
 
 - Codex tasks must set model to `gpt-5.3-codex` when unspecified.
 - Use an explicit model override only when user explicitly requests another.
+
+## Local runtime defaults (Panda)
+
+- Global defaults live in `~/.codex/config.toml`:
+  - `approval_policy = "never"`
+  - `sandbox_mode = "danger-full-access"`
+  - `allow_login_shell = false`
+- Hard safety rails live in `~/.codex/rules/safety.rules`:
+  - forbid force/mirror pushes
+  - forbid obvious filesystem root wipe commands
+  - forbid disk-destruction primitives (`diskutil eraseDisk`, `mkfs`, `dd`)
+- Expected behavior:
+  - normal `git commit` and `git push` should run without permission friction
+  - blocked commands fail fast with explicit `forbidden` decision
 
 ## System shape to anchor Codex prompts
 
