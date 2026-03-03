@@ -7,48 +7,66 @@
       "title": "Add cheap gate to system-heartbeat (heartbeat.ts)",
       "description": "Add a first step 'check-if-needed' that reads Redis for last heartbeat timestamp. If <10min since last successful run, return { status: 'skipped', reason: 'last run <10min ago' }. Store last-run timestamp in Redis key `heartbeat:last_run` after successful completion. The heartbeat runs every 15min — most runs should be acts, but this creates the pattern for others to follow.",
       "acceptance": "Function has gate step as step 0. Skipped runs show in Inngest dashboard with reason. Gate uses Redis read only (no LLM). Compiles clean with `bunx tsc --noEmit`.",
-      "files": ["packages/system-bus/src/inngest/functions/heartbeat.ts"],
-      "priority": 1
+      "files": [
+        "packages/system-bus/src/inngest/functions/heartbeat.ts"
+      ],
+      "priority": 1,
+      "passes": true
     },
     {
       "id": "gate-batch-review",
       "title": "Add cheap gate to memory batch-review",
       "description": "Add gate step to batch-review.ts. Check Redis for pending observation count (the function already queries pending observations). If 0 pending observations, return early with skip. The function runs every 30min — most runs have nothing to review.",
       "acceptance": "Gate step checks pending count before any LLM work. Skip returns { status: 'skipped', reason: 'no pending observations' }. Compiles clean.",
-      "files": ["packages/system-bus/src/inngest/functions/memory/batch-review.ts"],
-      "priority": 2
+      "files": [
+        "packages/system-bus/src/inngest/functions/memory/batch-review.ts"
+      ],
+      "priority": 2,
+      "passes": true
     },
     {
       "id": "gate-knowledge-watchdog",
       "title": "Add cheap gate to knowledge-watchdog",
       "description": "Add gate step. Check Redis for `knowledge:watchdog:last_run` timestamp. If <3h since last run, skip. The cron is every 4h so this mainly protects against manual re-triggers and drift.",
       "acceptance": "Gate step as step 0. Sets `knowledge:watchdog:last_run` on completion. Compiles clean.",
-      "files": ["packages/system-bus/src/inngest/functions/knowledge-watchdog.ts"],
-      "priority": 3
+      "files": [
+        "packages/system-bus/src/inngest/functions/knowledge-watchdog.ts"
+      ],
+      "priority": 3,
+      "passes": true
     },
     {
       "id": "gate-check-granola",
       "title": "Add cheap gate to granola check cron",
       "description": "Add gate step to check-granola.ts. Read Redis for `granola:last_check` timestamp. If <45min since last check, skip. The cron runs hourly.",
       "acceptance": "Gate step as step 0. Stores timestamp on completion. Compiles clean.",
-      "files": ["packages/system-bus/src/inngest/functions/check-granola.ts"],
-      "priority": 4
+      "files": [
+        "packages/system-bus/src/inngest/functions/check-granola.ts"
+      ],
+      "priority": 4,
+      "passes": true
     },
     {
       "id": "gate-reflect",
       "title": "Add cheap gate to reflect observations",
       "description": "Add gate step to reflect.ts. Check if there are any new observations since last reflection by reading Redis counter or timestamp. If no new observations accumulated, skip. The reflect function runs daily at 6am AND on accumulated event — the cron trigger should gate, the event trigger should always proceed.",
       "acceptance": "Gate only applies to cron trigger (check event.name or absence of event data). Event-triggered runs bypass gate. Compiles clean.",
-      "files": ["packages/system-bus/src/inngest/functions/reflect.ts"],
-      "priority": 5
+      "files": [
+        "packages/system-bus/src/inngest/functions/reflect.ts"
+      ],
+      "priority": 5,
+      "passes": true
     },
     {
       "id": "gate-check-system-health",
       "title": "Add cheap gate to system health check",
       "description": "Add gate step to check-system-health.ts. Read Redis for `health:last_check` timestamp + last result. If <45min since last check AND last result was healthy, skip. Hourly cron.",
       "acceptance": "Gate step as step 0. Stores timestamp + healthy/unhealthy on completion. Skip only when last check was recent AND healthy. Compiles clean.",
-      "files": ["packages/system-bus/src/inngest/functions/check-system-health.ts"],
-      "priority": 6
+      "files": [
+        "packages/system-bus/src/inngest/functions/check-system-health.ts"
+      ],
+      "priority": 6,
+      "passes": true
     }
   ]
 }

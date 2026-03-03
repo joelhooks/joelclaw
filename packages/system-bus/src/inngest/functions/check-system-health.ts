@@ -1,4 +1,4 @@
-import { getRedisPort } from "../../lib/redis";
+import { getRedisClient, getRedisPort } from "../../lib/redis";
 
 /**
  * System health check — ping core services.
@@ -78,6 +78,9 @@ const CRITICAL_COMPONENTS = new Set([
   "typesense",
   "agent secrets",
 ]);
+const HEALTH_LAST_CHECK_KEY = "health:last_check";
+const HEALTH_LAST_RESULT_KEY = "health:last_result";
+const HEALTH_CHECK_GATE_INTERVAL_MS = 45 * 60 * 1000;
 const WRITE_GATE_DRIFT_LAST_NOTIFIED_KEY = "memory:health:write_gate_drift:last_notified";
 const WRITE_GATE_DRIFT_NOTIFY_COOLDOWN_SECONDS = 6 * 60 * 60;
 const SELF_HEALING_GATEWAY_REQUEST_EVENT = "system/self.healing.requested";
@@ -96,6 +99,45 @@ const ENDPOINT_RESOLVE_TIMEOUT_MS = Math.max(
   600,
   Number.parseInt(process.env.JOELCLAW_HEALTH_PROBE_TIMEOUT_MS ?? "1200", 10),
 );
+
+type RecordedHealthResult = "healthy" | "degraded";
+
+export function shouldSkipHealthCheckSchedule(params: {
+  now: number;
+  lastCheckTimestamp: number;
+  lastResult: unknown;
+  gateIntervalMs?: number;
+}): boolean {
+  const gateIntervalMs = params.gateIntervalMs ?? HEALTH_CHECK_GATE_INTERVAL_MS;
+
+  if (!Number.isFinite(params.lastCheckTimestamp) || params.lastCheckTimestamp <= 0) {
+    return false;
+  }
+
+  if (params.now - params.lastCheckTimestamp >= gateIntervalMs) {
+    return false;
+  }
+
+  return params.lastResult === "healthy";
+}
+
+async function recordHealthCheckResult(
+  result: RecordedHealthResult,
+  checkedAt: number,
+): Promise<{ key: string; result: RecordedHealthResult; checkedAt: number }> {
+  const redis = getRedisClient();
+  await redis
+    .multi()
+    .set(HEALTH_LAST_CHECK_KEY, String(checkedAt))
+    .set(HEALTH_LAST_RESULT_KEY, result)
+    .exec();
+
+  return {
+    key: HEALTH_LAST_CHECK_KEY,
+    result,
+    checkedAt,
+  };
+}
 
 function normalizeTimestampToMs(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -1284,6 +1326,11 @@ export const checkSystemHealth = inngest.createFunction(
           data: { source: "check-system-health", checkedAt: Date.now() },
         })
       );
+      await withTiming(stepDurationsMs, "core.record-health-check-result-healthy", async () =>
+        step.run("record-health-check-result-healthy", async () =>
+          recordHealthCheckResult("healthy", Date.now())
+        )
+      );
       return { status: "noop", mode, slicePolicy, services, stepDurationsMs };
     }
 
@@ -1302,6 +1349,14 @@ export const checkSystemHealth = inngest.createFunction(
           name: "system/network.update",
           data: { source: "check-system-health", checkedAt: Date.now() },
         })
+      );
+      await withTiming(
+        stepDurationsMs,
+        "core.record-health-check-result-tracked-degraded",
+        async () =>
+          step.run("record-health-check-result-tracked-degraded", async () =>
+            recordHealthCheckResult("degraded", Date.now())
+          ),
       );
       return {
         status: "noop",
@@ -1411,6 +1466,11 @@ export const checkSystemHealth = inngest.createFunction(
         data: { source: "check-system-health", checkedAt: Date.now() },
       })
     );
+    await withTiming(stepDurationsMs, "core.record-health-check-result-degraded", async () =>
+      step.run("record-health-check-result-degraded", async () =>
+        recordHealthCheckResult("degraded", Date.now())
+      )
+    );
 
     return {
       status: "degraded",
@@ -1434,6 +1494,49 @@ export const checkSystemHealthSignalsSchedule = inngest.createFunction(
   { id: "check/system-health-signals-schedule" },
   [{ cron: "7 * * * *" }],
   async ({ step }) => {
+    const gate = await step.run("check-gate", async () => {
+      const redis = getRedisClient();
+      const now = Date.now();
+      const [lastCheckRaw, lastResultRaw] = await redis.mget(
+        HEALTH_LAST_CHECK_KEY,
+        HEALTH_LAST_RESULT_KEY,
+      );
+      const lastCheckTimestamp = Number(lastCheckRaw);
+      const lastResult = typeof lastResultRaw === "string" ? lastResultRaw : null;
+
+      if (
+        shouldSkipHealthCheckSchedule({
+          now,
+          lastCheckTimestamp,
+          lastResult,
+        })
+      ) {
+        return {
+          shouldRun: false as const,
+          reason: "last check <45m ago and healthy" as const,
+          lastCheckTimestamp,
+          lastResult,
+        };
+      }
+
+      return {
+        shouldRun: true as const,
+        lastCheckTimestamp: Number.isFinite(lastCheckTimestamp) ? lastCheckTimestamp : null,
+        lastResult,
+      };
+    });
+
+    if (!gate.shouldRun) {
+      return {
+        status: "skipped" as const,
+        mode: "signals" as const,
+        reason: gate.reason,
+        gateIntervalMs: HEALTH_CHECK_GATE_INTERVAL_MS,
+        lastCheckTimestamp: gate.lastCheckTimestamp,
+        lastResult: gate.lastResult,
+      };
+    }
+
     await step.sendEvent("request-health-signals-slice", {
       name: "system/health.requested",
       data: {
@@ -1457,6 +1560,12 @@ export const checkSystemHealthSignalsSchedule = inngest.createFunction(
       });
     });
 
-    return { status: "scheduled", mode: "signals" };
+    return {
+      status: "scheduled",
+      mode: "signals",
+      gateIntervalMs: HEALTH_CHECK_GATE_INTERVAL_MS,
+      lastCheckTimestamp: gate.lastCheckTimestamp,
+      lastResult: gate.lastResult,
+    };
   }
 );

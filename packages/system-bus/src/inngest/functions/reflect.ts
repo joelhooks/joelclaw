@@ -42,8 +42,19 @@ type StagedProposal = ParsedProposal & {
   id: string;
 };
 
+type ReflectGateResult = {
+  shouldRun: boolean;
+  reason: string;
+  trigger: "event" | "cron";
+  latestObservationCapturedAt?: string;
+  latestObservationTimestamp?: number;
+  lastReflectedTimestamp?: number;
+};
+
 let redisClient: Redis | null = null;
 
+const REFLECT_LOOKBACK_DAYS = 7;
+const REFLECT_LAST_OBSERVATION_TS_KEY = "memory:reflect:last_observation_ts";
 const MAX_STEP_OBSERVATIONS_CHARS = Number.parseInt(
   process.env.REFLECT_MAX_OBSERVATIONS_CHARS ?? "120000",
   10
@@ -135,6 +146,27 @@ function parseObservation(raw: string): string | null {
     // Skip malformed entries.
   }
   return null;
+}
+
+function parseObservationCapturedAt(raw: string | null): { capturedAt?: string; timestamp?: number } {
+  if (!raw) return {};
+
+  try {
+    const parsed = JSON.parse(raw) as ObservationRecord;
+    if (typeof parsed.metadata?.captured_at !== "string" || parsed.metadata.captured_at.length === 0) {
+      return {};
+    }
+    const timestamp = Date.parse(parsed.metadata.captured_at);
+    if (!Number.isFinite(timestamp)) {
+      return {};
+    }
+    return {
+      capturedAt: parsed.metadata.captured_at,
+      timestamp,
+    };
+  } catch {
+    return {};
+  }
 }
 
 function getHomeDirectory(): string {
@@ -303,27 +335,130 @@ export const reflect = inngest.createFunction(
     let proposalCount = 0;
     let retryLevel = 0;
 
-    await step.run("otel-reflect-start", async () => {
-      await emitOtelEvent({
-        level: "info",
-        source: "worker",
-        component: "reflect",
-        action: "reflect.started",
-        success: true,
-        metadata: {
-          eventId,
-        },
-      });
-    });
-
     try {
+      const gate = await step.run("check-gate", async (): Promise<ReflectGateResult> => {
+        if (event.name === "memory/observations.accumulated") {
+          const capturedAtRaw =
+            typeof (event.data as { capturedAt?: unknown } | undefined)?.capturedAt === "string"
+              ? ((event.data as { capturedAt?: string }).capturedAt ?? undefined)
+              : undefined;
+          const capturedAtTimestamp =
+            typeof capturedAtRaw === "string" ? Date.parse(capturedAtRaw) : Number.NaN;
+
+          return {
+            shouldRun: true,
+            reason: "event-trigger",
+            trigger: "event",
+            latestObservationCapturedAt: capturedAtRaw,
+            latestObservationTimestamp: Number.isFinite(capturedAtTimestamp)
+              ? capturedAtTimestamp
+              : undefined,
+          };
+        }
+
+        const redis = getRedisClient();
+        const dates = getRecentDates(toISODate(new Date()), REFLECT_LOOKBACK_DAYS);
+        const latestKeys = dates.map((date) => `memory:latest:${date}`);
+        const latestValues = latestKeys.length > 0 ? await redis.mget(...latestKeys) : [];
+
+        let latestObservationTimestamp: number | undefined;
+        let latestObservationCapturedAt: string | undefined;
+
+        for (const value of latestValues) {
+          const parsed = parseObservationCapturedAt(value);
+          if (
+            parsed.timestamp !== undefined &&
+            (latestObservationTimestamp === undefined || parsed.timestamp > latestObservationTimestamp)
+          ) {
+            latestObservationTimestamp = parsed.timestamp;
+            latestObservationCapturedAt = parsed.capturedAt;
+          }
+        }
+
+        if (latestObservationTimestamp === undefined) {
+          return {
+            shouldRun: false,
+            reason: "no-observations",
+            trigger: "cron",
+          };
+        }
+
+        const lastReflectedRaw = await redis.get(REFLECT_LAST_OBSERVATION_TS_KEY);
+        const lastReflectedTimestamp = Number.parseInt(lastReflectedRaw ?? "", 10);
+        const hasRecordedReflection =
+          Number.isFinite(lastReflectedTimestamp) && lastReflectedTimestamp > 0;
+
+        if (hasRecordedReflection && lastReflectedTimestamp >= latestObservationTimestamp) {
+          return {
+            shouldRun: false,
+            reason: "no-new-observations",
+            trigger: "cron",
+            latestObservationCapturedAt,
+            latestObservationTimestamp,
+            lastReflectedTimestamp,
+          };
+        }
+
+        return {
+          shouldRun: true,
+          reason: "new-observations",
+          trigger: "cron",
+          latestObservationCapturedAt,
+          latestObservationTimestamp,
+          lastReflectedTimestamp: hasRecordedReflection ? lastReflectedTimestamp : undefined,
+        };
+      });
+
+      if (!gate.shouldRun) {
+        await step.run("otel-reflect-skipped", async () => {
+          await emitOtelEvent({
+            level: "info",
+            source: "worker",
+            component: "reflect",
+            action: "reflect.skipped",
+            success: true,
+            duration_ms: Date.now() - startedAt,
+            metadata: {
+              eventId,
+              reason: gate.reason,
+              trigger: gate.trigger,
+              latestObservationTimestamp: gate.latestObservationTimestamp,
+              lastReflectedTimestamp: gate.lastReflectedTimestamp,
+            },
+          });
+        });
+
+        return {
+          status: "skipped" as const,
+          reason: gate.reason,
+          trigger: gate.trigger,
+          latestObservationTimestamp: gate.latestObservationTimestamp,
+          lastReflectedTimestamp: gate.lastReflectedTimestamp,
+        };
+      }
+
+      await step.run("otel-reflect-start", async () => {
+        await emitOtelEvent({
+          level: "info",
+          source: "worker",
+          component: "reflect",
+          action: "reflect.started",
+          success: true,
+          metadata: {
+            eventId,
+            gateReason: gate.reason,
+            gateTrigger: gate.trigger,
+          },
+        });
+      });
+
       const loaded = await step.run("load-observations", async () => {
         const redis = getRedisClient();
         const loadedAnchorDate =
           event.name === "memory/observations.accumulated"
             ? event.data.date
             : toISODate(new Date());
-        const dates = getRecentDates(loadedAnchorDate, 7);
+        const dates = getRecentDates(loadedAnchorDate, REFLECT_LOOKBACK_DAYS);
         const observations: string[] = [];
 
         for (const date of dates) {
@@ -531,6 +666,20 @@ export const reflect = inngest.createFunction(
         : 6000;
       const rawPreview = validated.raw.slice(0, rawPreviewLimit);
 
+      const watermark = await step.run("record-reflect-watermark", async () => {
+        if (gate.latestObservationTimestamp === undefined) {
+          return { recorded: false as const, reason: "missing-observation-timestamp" as const };
+        }
+        const redis = getRedisClient();
+        await redis.set(REFLECT_LAST_OBSERVATION_TS_KEY, String(gate.latestObservationTimestamp));
+        return {
+          recorded: true as const,
+          key: REFLECT_LAST_OBSERVATION_TS_KEY,
+          timestamp: gate.latestObservationTimestamp,
+          capturedAt: gate.latestObservationCapturedAt,
+        };
+      });
+
       const result = {
         raw: validated.raw,
         rawPreview,
@@ -544,6 +693,13 @@ export const reflect = inngest.createFunction(
         dailyLogPath: dailyLog.path,
         emittedEvent,
         emitCompleteError,
+        gate: {
+          trigger: gate.trigger,
+          reason: gate.reason,
+          latestObservationTimestamp: gate.latestObservationTimestamp,
+          lastReflectedTimestamp: gate.lastReflectedTimestamp,
+        },
+        watermark,
       };
 
       await step.run("otel-reflect-completed", async () => {
@@ -560,6 +716,11 @@ export const reflect = inngest.createFunction(
             proposalCount,
             retryLevel,
             date: loaded.anchorDate,
+            gateTrigger: gate.trigger,
+            gateReason: gate.reason,
+            gateLatestObservationTimestamp: gate.latestObservationTimestamp,
+            gateLastReflectedTimestamp: gate.lastReflectedTimestamp,
+            watermarkRecorded: watermark.recorded,
             inputTokens: validated.inputTokens,
             outputTokens: validated.outputTokens,
             observationsTextChars: loaded.observationsTextChars,

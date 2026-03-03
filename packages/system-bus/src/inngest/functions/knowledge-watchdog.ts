@@ -10,11 +10,14 @@
  * ADR-0199: Force/enforce/verify at every level.
  */
 
+import { getRedisClient } from "../../lib/redis";
 import * as typesense from "../../lib/typesense";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
 const WINDOW_HOURS = 4;
+const KNOWLEDGE_WATCHDOG_LAST_RUN_KEY = "knowledge:watchdog:last_run";
+const KNOWLEDGE_WATCHDOG_GATE_INTERVAL_MS = 3 * 60 * 60 * 1000;
 
 export const knowledgeWatchdog = inngest.createFunction(
   {
@@ -23,6 +26,35 @@ export const knowledgeWatchdog = inngest.createFunction(
   },
   { cron: "0 */4 * * *" }, // Every 4 hours
   async ({ step }) => {
+    const gate = await step.run("check-gate", async () => {
+      const redis = getRedisClient();
+      const now = Date.now();
+      const lastRunRaw = await redis.get(KNOWLEDGE_WATCHDOG_LAST_RUN_KEY);
+      const lastRunTimestamp = Number(lastRunRaw);
+
+      if (
+        Number.isFinite(lastRunTimestamp) &&
+        lastRunTimestamp > 0 &&
+        now - lastRunTimestamp < KNOWLEDGE_WATCHDOG_GATE_INTERVAL_MS
+      ) {
+        return {
+          shouldRun: false as const,
+          reason: "last run <3h ago" as const,
+          lastRunTimestamp,
+        };
+      }
+
+      return { shouldRun: true as const };
+    });
+
+    if (!gate.shouldRun) {
+      return {
+        status: "skipped" as const,
+        reason: gate.reason,
+        lastRunTimestamp: gate.lastRunTimestamp ?? null,
+      };
+    }
+
     const checks = await step.run("audit-knowledge-health", async () => {
       const now = Math.floor(Date.now() / 1000);
       const windowStart = now - WINDOW_HOURS * 3600;
@@ -170,6 +202,13 @@ export const knowledgeWatchdog = inngest.createFunction(
         },
       });
     }
+
+    await step.run("record-last-run", async () => {
+      const redis = getRedisClient();
+      const now = Date.now();
+      await redis.set(KNOWLEDGE_WATCHDOG_LAST_RUN_KEY, now.toString());
+      return { key: KNOWLEDGE_WATCHDOG_LAST_RUN_KEY, timestamp: now };
+    });
 
     return {
       healthy: checks.issues.length === 0,

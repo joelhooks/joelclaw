@@ -35,6 +35,8 @@ const HEARTBEAT_EVENTS = [
 const DAILY_DIGEST_FANOUT_KEY_PREFIX = "heartbeat:digest:fanout";
 const DAILY_DIGEST_TTL_SECONDS = 24 * 60 * 60;
 const USER_VISIBLE_HEARTBEAT_INTERVAL_MS = 60 * 60 * 1000;
+const HEARTBEAT_LAST_RUN_KEY = "heartbeat:last_run";
+const HEARTBEAT_GATE_INTERVAL_MS = 10 * 60 * 1000;
 
 let redisClient: Redis | null = null;
 let lastUserVisibleHeartbeatAt = 0;
@@ -154,6 +156,27 @@ export const heartbeatCron = inngest.createFunction(
   { id: "system-heartbeat" },
   [{ cron: "*/15 * * * *" }],
   async ({ step }) => {
+    const gate = await step.run("check-if-needed", async () => {
+      const redis = getRedis();
+      const now = Date.now();
+      const lastRunRaw = await redis.get(HEARTBEAT_LAST_RUN_KEY);
+      const lastRunTimestamp = Number(lastRunRaw);
+
+      if (
+        Number.isFinite(lastRunTimestamp) &&
+        lastRunTimestamp > 0 &&
+        now - lastRunTimestamp < HEARTBEAT_GATE_INTERVAL_MS
+      ) {
+        return { shouldRun: false as const, reason: "last run <10min ago" as const };
+      }
+
+      return { shouldRun: true as const };
+    });
+
+    if (!gate.shouldRun) {
+      return { status: "skipped" as const, reason: gate.reason };
+    }
+
     await step.run("prune-old-sessions", async () => pruneOldSessionFiles());
 
     // Fan out all checks as independent events
@@ -198,6 +221,12 @@ export const heartbeatCron = inngest.createFunction(
     await step.run("maybe-emit-user-visible-heartbeat", async () =>
       maybeEmitUserVisibleHeartbeat("cron")
     );
+
+    await step.run("record-last-run", async () => {
+      const redis = getRedis();
+      await redis.set(HEARTBEAT_LAST_RUN_KEY, Date.now().toString());
+      return { key: HEARTBEAT_LAST_RUN_KEY };
+    });
   }
 );
 

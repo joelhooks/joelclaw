@@ -3,6 +3,7 @@ import { __endpointResolverTestUtils } from "@joelclaw/endpoint-resolver";
 import {
   __checkSystemHealthTestUtils,
   resolveHealthCheckMode,
+  shouldSkipHealthCheckSchedule,
 } from "./check-system-health";
 
 const originalFetch = globalThis.fetch;
@@ -35,6 +36,41 @@ describe("check/system-health mode resolution", () => {
     expect(core).toBe("core");
     expect(signals).toBe("signals");
     expect(full).toBe("full");
+  });
+});
+
+describe("check/system-health schedule gate", () => {
+  test("skips when last run was healthy within 45 minutes", () => {
+    const now = Date.now();
+    const shouldSkip = shouldSkipHealthCheckSchedule({
+      now,
+      lastCheckTimestamp: now - 20 * 60 * 1000,
+      lastResult: "healthy",
+    });
+
+    expect(shouldSkip).toBe(true);
+  });
+
+  test("does not skip when last run was degraded", () => {
+    const now = Date.now();
+    const shouldSkip = shouldSkipHealthCheckSchedule({
+      now,
+      lastCheckTimestamp: now - 20 * 60 * 1000,
+      lastResult: "degraded",
+    });
+
+    expect(shouldSkip).toBe(false);
+  });
+
+  test("does not skip when last healthy run is stale", () => {
+    const now = Date.now();
+    const shouldSkip = shouldSkipHealthCheckSchedule({
+      now,
+      lastCheckTimestamp: now - 50 * 60 * 1000,
+      lastResult: "healthy",
+    });
+
+    expect(shouldSkip).toBe(false);
   });
 });
 

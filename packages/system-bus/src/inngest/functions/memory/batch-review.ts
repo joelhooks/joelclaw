@@ -201,6 +201,35 @@ export const batchReview = inngest.createFunction(
     const eventId = (event as { id?: string }).id ?? null;
     let proposalCount = 0;
 
+    const gate = await step.run("check-gate", async () => {
+      const redis = getRedis();
+      const pendingCount = await redis.llen(LLM_PENDING_KEY);
+      return {
+        shouldRun: pendingCount > 0,
+        pendingCount,
+      };
+    });
+
+    if (!gate.shouldRun) {
+      await step.run("otel-batch-review-skipped", async () => {
+        await emitOtelEvent({
+          level: "info",
+          source: "worker",
+          component: "batch-review",
+          action: "batch-review.skipped",
+          success: true,
+          duration_ms: Date.now() - startedAt,
+          metadata: {
+            eventId,
+            proposalCount: 0,
+            reason: "no proposals pending LLM review",
+          },
+        });
+      });
+
+      return { status: "skipped", reason: "no proposals pending LLM review" };
+    }
+
     await step.run("otel-batch-review-start", async () => {
       await emitOtelEvent({
         level: "info",
@@ -210,6 +239,7 @@ export const batchReview = inngest.createFunction(
         success: true,
         metadata: {
           eventId,
+          pendingCount: gate.pendingCount,
         },
       });
     });

@@ -14,6 +14,8 @@ import { pushGatewayEvent } from "./agent-loop/utils";
 import { meetingAnalyze } from "./meeting-analyze";
 
 const PROCESSED_SET = "granola:processed";
+const GRANOLA_LAST_CHECK_KEY = "granola:last_check";
+const GRANOLA_CHECK_GATE_INTERVAL_MS = 45 * 60 * 1000;
 
 let redisClient: Redis | null = null;
 
@@ -181,9 +183,43 @@ export const granolaCheckCron = inngest.createFunction(
   },
   [{ cron: "7 * * * *" }],
   async ({ step }) => {
+    const gate = await step.run("check-gate", async () => {
+      const redis = getRedis();
+      const now = Date.now();
+      const lastCheckRaw = await redis.get(GRANOLA_LAST_CHECK_KEY);
+      const lastCheckTimestamp = Number(lastCheckRaw);
+
+      if (
+        Number.isFinite(lastCheckTimestamp) &&
+        lastCheckTimestamp > 0 &&
+        now - lastCheckTimestamp < GRANOLA_CHECK_GATE_INTERVAL_MS
+      ) {
+        return {
+          shouldRun: false as const,
+          reason: "last check <45m ago" as const,
+          lastCheckTimestamp,
+        };
+      }
+
+      return { shouldRun: true as const, now };
+    });
+
+    if (!gate.shouldRun) {
+      return {
+        status: "skipped" as const,
+        reason: gate.reason,
+        lastCheckTimestamp: gate.lastCheckTimestamp,
+      };
+    }
+
     await step.sendEvent("request-granola-check", {
       name: "granola/check.requested",
       data: {},
+    });
+
+    await step.run("record-last-check", async () => {
+      const redis = getRedis();
+      await redis.set(GRANOLA_LAST_CHECK_KEY, String(gate.now));
     });
 
     return {

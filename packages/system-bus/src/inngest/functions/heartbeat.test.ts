@@ -16,12 +16,16 @@ import { heartbeatCron } from "./heartbeat";
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
 const originalRedisMethods = {
+  get: Redis.prototype.get,
+  set: Redis.prototype.set,
   smembers: Redis.prototype.smembers,
   lpush: Redis.prototype.lpush,
   publish: Redis.prototype.publish,
 };
 
 let tempHome = "";
+let heartbeatLastRunValue: string | null = null;
+const heartbeatLastRunSetValues: string[] = [];
 
 function createFileDaysAgo(path: string, daysAgo: number): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -71,6 +75,18 @@ async function executeHeartbeatCronWithCapturedSendEvents() {
 }
 
 beforeAll(() => {
+  (Redis.prototype as any).get = async function (key: string) {
+    if (key === "heartbeat:last_run") return heartbeatLastRunValue;
+    return null;
+  };
+
+  (Redis.prototype as any).set = async function (key: string, value: string) {
+    if (key === "heartbeat:last_run") {
+      heartbeatLastRunSetValues.push(value);
+    }
+    return "OK";
+  };
+
   (Redis.prototype as any).smembers = async function () {
     return [];
   };
@@ -85,6 +101,8 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  Redis.prototype.get = originalRedisMethods.get;
+  Redis.prototype.set = originalRedisMethods.set;
   Redis.prototype.smembers = originalRedisMethods.smembers;
   Redis.prototype.lpush = originalRedisMethods.lpush;
   Redis.prototype.publish = originalRedisMethods.publish;
@@ -94,6 +112,8 @@ beforeEach(() => {
   tempHome = mkdtempSync(join(tmpdir(), "fric-4-heartbeat-home-"));
   process.env.HOME = tempHome;
   process.env.USERPROFILE = tempHome;
+  heartbeatLastRunValue = null;
+  heartbeatLastRunSetValues.length = 0;
 });
 
 afterEach(() => {
@@ -107,6 +127,27 @@ afterEach(() => {
 });
 
 describe("FRIC-4 heartbeat pruning acceptance tests", () => {
+  test("adds check-if-needed as the first step and skips when the last run was under 10 minutes ago", async () => {
+    heartbeatLastRunValue = `${Date.now() - 5 * 60 * 1000}`;
+
+    const { ctx } = await executeHeartbeatCron();
+    const runMock = (ctx.step.run as any).mock as {
+      calls: unknown[][];
+    };
+
+    const stepNames = runMock.calls.map((call) => call[0]);
+
+    expect({
+      firstStep: stepNames[0],
+      ranPruneStep: stepNames.includes("prune-old-sessions"),
+      recordedLastRun: heartbeatLastRunSetValues.length,
+    }).toMatchObject({
+      firstStep: "check-if-needed",
+      ranPruneStep: false,
+      recordedLastRun: 0,
+    });
+  });
+
   test("adds a prune-old-sessions step that removes only files older than 30 days and reports the pruned count", async () => {
     const oldSessionJsonl = join(
       tempHome,
@@ -192,6 +233,20 @@ describe("FRIC-4 heartbeat pruning acceptance tests", () => {
         mode: "core",
         source: "heartbeat-15m",
       },
+    });
+  });
+
+  test("stores heartbeat:last_run after a successful cron run", async () => {
+    await executeHeartbeatCronWithCapturedSendEvents();
+
+    expect({
+      heartbeatLastRunWrites: heartbeatLastRunSetValues.length,
+      timestampLooksNumeric:
+        heartbeatLastRunSetValues.length > 0 &&
+        Number.isFinite(Number(heartbeatLastRunSetValues[heartbeatLastRunSetValues.length - 1])),
+    }).toMatchObject({
+      heartbeatLastRunWrites: 1,
+      timestampLooksNumeric: true,
     });
   });
 });
