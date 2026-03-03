@@ -165,7 +165,15 @@ export const adrDailyPitch = inngest.createFunction(
         }
       }
 
-      scored.sort((a, b) => b.score - a.score);
+      // Match joelclaw.com/adrs sort: band rank first, then score, then need
+      const bandRank: Record<string, number> = { "do-now": 0, "next": 1, "de-risk": 2, "park": 3 };
+      scored.sort((a, b) => {
+        const aRank = bandRank[a.band] ?? 99;
+        const bRank = bandRank[b.band] ?? 99;
+        if (aRank !== bRank) return aRank - bRank;
+        if (a.score !== b.score) return b.score - a.score;
+        return b.need - a.need;
+      });
       return scored;
     });
 
