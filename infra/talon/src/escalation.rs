@@ -323,7 +323,7 @@ fn send_telegram_sos(config: &Config, message: &str) -> bool {
 
     let (lease_success, lease_output) = run_process(
         "secrets",
-        &["lease", secret_name, "--ttl", "30m", "--raw"],
+        &["lease", secret_name, "--ttl", "30m"],
         &[],
         Duration::from_secs(10),
         None,
@@ -338,9 +338,19 @@ fn send_telegram_sos(config: &Config, message: &str) -> bool {
         return false;
     }
 
-    let token = lease_output.trim();
-    if token.is_empty() {
-        log::warn("telegram SOS skipped: leased token was empty");
+    let Some(token) = extract_secret_value(&lease_output) else {
+        log::warn_fields(
+            "telegram SOS skipped: leased token was empty or invalid",
+            &[("output", truncate(&lease_output, 300))],
+        );
+        return false;
+    };
+
+    if token == "ok" || token.chars().any(|ch| ch.is_whitespace()) {
+        log::warn_fields(
+            "telegram SOS skipped: leased token parse failed",
+            &[("output", truncate(&lease_output, 300))],
+        );
         return false;
     }
 
@@ -858,6 +868,14 @@ fn json_escape(value: &str) -> String {
     out
 }
 
+fn extract_secret_value(output: &str) -> Option<String> {
+    output
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with("WARNING:"))
+        .map(|line| line.to_string())
+}
+
 fn truncate(value: &str, max_chars: usize) -> String {
     if value.chars().count() <= max_chars {
         return value.to_string();
@@ -978,5 +996,14 @@ mod tests {
         assert!(!looks_like_voice_agent_command(
             "/usr/bin/python3 other-service.py"
         ));
+    }
+
+    #[test]
+    fn extract_secret_value_ignores_warning_lines() {
+        let output = "8552511376:abcd1234\nWARNING: --raw is deprecated";
+        assert_eq!(
+            extract_secret_value(output),
+            Some("8552511376:abcd1234".to_string())
+        );
     }
 }

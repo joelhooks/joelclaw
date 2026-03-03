@@ -153,6 +153,7 @@ timeout_secs = 5
 - Telegram fields in `[escalation]`:
   - `sos_telegram_chat_id`
   - `sos_telegram_secret_name` (defaults to `telegram_bot_token`)
+- Talon now leases Telegram tokens via `secrets lease <name> --ttl ...` (no `--raw`). If you still see `curl: (3) URL rejected: Malformed input to a URL function`, redeploy the latest Talon binary.
 - iMessage recipient remains `sos_recipient`
 
 ## Launchd Management
