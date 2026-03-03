@@ -2,7 +2,7 @@
 name: system-bus
 displayName: System Bus Worker
 description: Develop, deploy, and debug the system-bus worker — joelclaw's 110+ Inngest durable function engine, webhook gateway, and observability pipeline. Triggers on 'add a function', 'new inngest function', 'system-bus', 'worker', 'add a webhook', 'deploy worker', 'restart worker', 'function failed', 'worker not working', 'register functions', or any task involving Inngest function development, webhook providers, or worker operations.
-version: 0.1.0
+version: 0.1.1
 author: joel
 tags:
   - inngest
@@ -155,6 +155,7 @@ await gateway?.progress("Step 3/5 complete");
 - **Step names must be unique within a function** — Inngest uses them for memoization.
 - **`step.invoke` over fan-out events for rate-limited APIs** — fan-out starts all near-simultaneously even with throttle.
 - **Silent failure anti-pattern**: Functions that shell to CLIs must detect and propagate subprocess failures.
+- **ADR content sync must degrade on frontmatter parse failures.** `upsertAdr` falls back to body-only parsing (empty frontmatter + stripped frontmatter block) and logs a warning, instead of dropping the ADR from Convex.
 - **Non-authoritative side effects must degrade, not crash the workflow.** Example: `memory/proposal-triage` keeps triage authoritative, retries review-task creation across primary/fallback Todoist projects (`MEMORY_REVIEW_TODOIST_PROJECT` → `MEMORY_REVIEW_TODOIST_FALLBACK_PROJECT`), and only records degraded state if both fail.
 - **Never call `joelclaw` CLI with `Bun.spawnSync` from inside a running Inngest function.** `joelclaw inngest status` probes the worker endpoint; sync subprocesses can deadlock the worker event loop. Use async subprocess execution (`Bun.spawn`/`Bun.$`) with explicit timeouts, or direct internal health probes.
 

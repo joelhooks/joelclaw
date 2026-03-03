@@ -76,6 +76,31 @@ const VALID_STATUSES = [
 // Bump when derived ADR fields change so seeds can backfill Convex records.
 const ADR_CONTENT_HASH_VERSION = "adr-v2";
 
+export function stripLeadingFrontmatterBlock(raw: string): string {
+  if (!raw.startsWith("---")) return raw;
+  const match = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+  if (!match) return raw;
+  return raw.slice(match[0].length);
+}
+
+export function parseAdrMatter(
+  raw: string,
+): { data: Record<string, unknown>; content: string; parseError?: string } {
+  try {
+    const parsed = matter(raw);
+    return {
+      data: parsed.data as Record<string, unknown>,
+      content: parsed.content,
+    };
+  } catch (error) {
+    return {
+      data: {},
+      content: stripLeadingFrontmatterBlock(raw),
+      parseError: String(error),
+    };
+  }
+}
+
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
@@ -209,8 +234,14 @@ export async function upsertAdr(filePath: string): Promise<string> {
   const slug = basename(filePath, extname(filePath));
   const number = slug.match(/^(\d+)/)?.[1] ?? "";
   const raw = readFileSync(filePath, "utf-8");
-  const { data, content } = matter(raw);
-  const meta = data as Record<string, unknown>;
+  const { data: meta, content, parseError } = parseAdrMatter(raw);
+
+  if (parseError) {
+    console.warn("[content-sync] ADR frontmatter parse failed; falling back to body-only parse", {
+      filePath,
+      error: parseError,
+    });
+  }
 
   const priority = extractPriorityFields(meta);
   const hash = contentHash(JSON.stringify({

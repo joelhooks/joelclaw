@@ -110,6 +110,15 @@ Do **not** mutate `main.db` without a point-in-time backup.
      - `proposal-triage.review-task.created` (includes `projectId`, `projectFallbackUsed`, `attempts`)
      - `proposal-triage.review-task.failed` (includes attempted project list + attempts)
 
+### Content sync ADR frontmatter resilience
+
+- library: `packages/system-bus/src/lib/convex-content-sync.ts` (`upsertAdr`)
+- behavior:
+  1. malformed ADR frontmatter no longer blocks ADR publication into Convex
+  2. on frontmatter parse failure, sync falls back to body-only parsing (`data = {}` + frontmatter block stripped from content)
+  3. warning is logged with file path + parse error for operator visibility
+- impact: transient YAML/frontmatter edits no longer leave new ADRs missing from `/adrs`; they degrade to default metadata (`status: proposed`, empty rubric) until frontmatter is fixed
+
 ## Backup hardening
 
 ### Typesense backup + snapshot retention
