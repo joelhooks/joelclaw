@@ -21,6 +21,7 @@ import { infer } from "../../lib/inference";
 import { prefetchMemoryContext } from "../../memory/context-prefetch";
 import { inngest } from "../client";
 import type { GatewayContext } from "../middleware/gateway";
+import type { KnowledgeDoc } from "../../lib/typesense";
 
 const REDIS_KEY_PROCESSED = "granola:processed";
 const REDIS_TTL_DAYS = 90;
@@ -556,7 +557,7 @@ export const meetingAnalyze = inngest.createFunction(
     if (analysis.decisions.length > 0) {
       await step.run("ensure-decisions-in-knowledge", async () => {
         try {
-          const { ensureKnowledgeBatch, type KnowledgeDoc } = await import("../../lib/typesense");
+          const { ensureKnowledgeBatch } = await import("../../lib/typesense");
           const docs: KnowledgeDoc[] = analysis.decisions.map((d: any, i: number) => ({
             id: `decision:meeting:${meetingId}:${i}`,
             type: "decision" as const,
