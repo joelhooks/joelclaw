@@ -241,9 +241,11 @@ const GATEWAY_EXCLUDED_EXTENSIONS = new Set(["auto-update"]);
 function withChannelMcqOverride(base: LoadExtensionsResult): LoadExtensionsResult {
   // Filter out TUI-dependent extensions that crash in headless mode
   base.extensions = base.extensions.filter((ext) => {
-    const name = ext.path.split("/").pop()?.replace(/\.(ts|js)$/, "") ?? "";
+    const segments = ext.path.replace(/\/+$/, "").split("/");
+    const name = segments.pop()?.replace(/\.(ts|js)$/, "") ?? "";
+    console.error(`[gateway] extension: ${name} (path: ${ext.path})`);
     if (GATEWAY_EXCLUDED_EXTENSIONS.has(name)) {
-      console.log(`[gateway] excluding extension: ${name} (TUI-dependent)`);
+      console.error(`[gateway] EXCLUDING extension: ${name} (TUI-dependent)`);
       return false;
     }
     return true;
@@ -446,7 +448,20 @@ const { session } = await createAgentSession({
   resourceLoader,
 });
 // Fire extension lifecycle hooks (session_start) so extensions like memory-enforcer can initialize.
-await session.bindExtensions({});
+// Fire extension lifecycle hooks — catch async throws from TUI-dependent extensions
+await session.bindExtensions({}).catch((err) => {
+  console.error("[gateway] bindExtensions error (non-fatal):", err?.message ?? err);
+});
+
+// Catch unhandled rejections from async extension handlers (e.g. auto-update theme access)
+process.on("unhandledRejection", (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  if (msg.includes("Theme not initialized")) {
+    console.error("[gateway] suppressed TUI extension error:", msg);
+    return;
+  }
+  console.error("[gateway] unhandled rejection:", reason);
+});
 void emitGatewayOtel({
   level: "info",
   component: "daemon",

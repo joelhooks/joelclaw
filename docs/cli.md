@@ -10,6 +10,33 @@ Canonical operator interface for joelclaw.
 - Heavy dependencies loaded lazily when possible
 - Capability adapter registry with typed command contracts (`packages/cli/src/capabilities/`)
 
+## SDK surface (`@joelclaw/sdk`)
+
+`@joelclaw/sdk` is the programmatic wrapper for software integrations that need CLI parity without hand-rolling process spawning/parsing.
+
+Current contract:
+
+- executes `joelclaw` as a subprocess (defaults to `JOELCLAW_BIN` or `joelclaw`)
+- parses canonical JSON envelopes (`ok`, `command`, `result`, `next_actions`)
+- provides typed convenience methods for common routes:
+  - `status()`
+  - `otelList/search/stats/emit`
+  - `recall` / `recallRaw`
+  - `vaultRead/search/ls/tree` + `vaultAdrList/collisions/audit/rank`
+- exposes structured errors:
+  - `JoelclawProcessError` (spawn/exit/parse failures)
+  - `JoelclawEnvelopeError` (`ok:false` envelopes via `runOrThrow`)
+
+Example:
+
+```ts
+import { createJoelclawClient } from "@joelclaw/sdk"
+
+const client = createJoelclawClient({ timeoutMs: 15_000 })
+const status = await client.status()
+const otel = await client.otelSearch("gateway", { hours: 1, limit: 20 })
+```
+
 ## Health endpoint fallback (ADR-0182)
 
 CLI health probes for Inngest and worker resolve endpoints in this order:
