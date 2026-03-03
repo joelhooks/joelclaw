@@ -42,6 +42,21 @@ Canonical notes for `packages/system-bus/src/inngest/functions/`.
   2. if degraded and not dry run, run `joelclaw inngest restart-worker --register --wait-ms 1500`
   3. re-probe and emit before/after OTEL evidence
 
+### Host worker startup preflight + supervisor OTEL
+
+- component: `infra/worker-supervisor/src/main.rs`
+- applies to host worker launch path (`com.joel.system-bus-worker`)
+- behavior:
+  1. before spawning `bun run src/serve.ts`, supervisor runs a host-import preflight:
+     - `bun --eval "await import('./src/inngest/functions/index.host.ts');"`
+  2. if preflight fails (syntax/import regression), supervisor **does not spawn** worker, logs clipped Bun error, and retries with exponential backoff
+  3. supervisor now emits explicit OTEL events through `joelclaw otel emit`:
+     - `worker.supervisor.preflight.failed`
+     - `worker.supervisor.worker_exit`
+     - `worker.supervisor.health_check.restart`
+
+Operational impact: startup regressions are surfaced immediately with structured telemetry instead of looking like generic flapping.
+
 ### Stale RUNNING run forensics (SDK outage fallout)
 
 Observed failure mode during worker/runtime blips:

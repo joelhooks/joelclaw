@@ -125,8 +125,15 @@ Source: `infra/worker-supervisor/src/main.rs`
   - restart after 3 consecutive health failures
   - restart backoff: 1s → 30s max
 - Pre-start kills stale process on port 3111.
+- Runs host import preflight before spawn:
+  - `bun --eval "await import('./src/inngest/functions/index.host.ts');"`
+  - on failure, skips spawn and retries with exponential backoff
 - Loads env from `~/.config/system-bus.env` plus leased secrets.
 - Forces `WORKER_ROLE=host` for the supervised host worker.
+- Emits OTEL events via CLI on supervisor failures/restarts:
+  - `worker.supervisor.preflight.failed`
+  - `worker.supervisor.worker_exit`
+  - `worker.supervisor.health_check.restart`
 
 ### Worker supervision split note
 - Talon is running (`com.joel.talon`), but host worker is still launched via `com.joel.system-bus-worker` -> `worker-supervisor`.

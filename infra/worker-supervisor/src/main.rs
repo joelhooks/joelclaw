@@ -359,6 +359,25 @@ fn run_supervisor(config: Config) -> Result<(), DynError> {
     loop {
         kill_processes_on_port(config.port)?;
         let env_overrides = load_child_env(&config)?;
+
+        if let Err(error) = run_host_import_preflight(&config, &env_overrides) {
+            let error_text = error.to_string();
+            eprintln!("[worker-supervisor] ERROR: {error_text}");
+            emit_supervisor_otel(
+                "worker.supervisor.preflight.failed",
+                false,
+                "error",
+                Some(&error_text),
+            );
+            eprintln!(
+                "[worker-supervisor] preflight failed; retrying in {}s",
+                backoff_secs
+            );
+            thread::sleep(Duration::from_secs(backoff_secs));
+            backoff_secs = (backoff_secs.saturating_mul(2)).min(config.restart_backoff_max_secs);
+            continue;
+        }
+
         let mut child = spawn_worker(&config, &env_overrides)?;
 
         let outcome = monitor_child(&config, &mut child, &mut backoff_secs)?;
@@ -433,6 +452,12 @@ fn monitor_child(
 
             if consecutive_health_failures >= config.health_failures_before_restart {
                 eprintln!("[worker-supervisor] restarting worker after health check failures");
+                emit_supervisor_otel(
+                    "worker.supervisor.health_check.restart",
+                    false,
+                    "warn",
+                    Some("restarting worker after repeated health-check failures"),
+                );
                 shutdown_child(child, SIGTERM, config.drain_timeout_secs)?;
                 return Ok(SessionOutcome::Restart);
             }
@@ -480,6 +505,104 @@ fn spawn_worker(
     let child = command.spawn()?;
     eprintln!("[worker-supervisor] started worker pid={}", child.id());
     Ok(child)
+}
+
+fn run_host_import_preflight(
+    config: &Config,
+    env_overrides: &HashMap<String, String>,
+) -> Result<(), DynError> {
+    let worker_dir = expand_home(&config.worker_dir);
+    let (program, _) = config
+        .command
+        .split_first()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "command must not be empty"))?;
+
+    let program_name = Path::new(program)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(program);
+
+    if !program_name.contains("bun") {
+        return Ok(());
+    }
+
+    let output = Command::new(program)
+        .arg("--eval")
+        .arg("await import('./src/inngest/functions/index.host.ts');")
+        .current_dir(worker_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .envs(env_overrides)
+        .output()?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        "unknown preflight error".to_string()
+    };
+
+    let clipped = clip_for_log(&detail, 1_200);
+    Err(io::Error::new(
+        io::ErrorKind::Other,
+        format!("host import preflight failed: {clipped}"),
+    )
+    .into())
+}
+
+fn emit_supervisor_otel(action: &str, success: bool, level: &str, error: Option<&str>) {
+    let mut command = Command::new("joelclaw");
+    command
+        .arg("otel")
+        .arg("emit")
+        .arg(action)
+        .arg("--source")
+        .arg("worker-supervisor")
+        .arg("--component")
+        .arg("host-worker")
+        .arg("--level")
+        .arg(level)
+        .arg("--success")
+        .arg(if success { "true" } else { "false" })
+        .env("PATH", expand_path_list(DEFAULT_PATH));
+
+    if let Some(message) = error {
+        command.arg("--error").arg(message);
+    }
+
+    match command.output() {
+        Ok(output) if !output.status.success() => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!(
+                "[worker-supervisor] WARNING: failed to emit OTEL event {}: {}",
+                action,
+                clip_for_log(stderr.trim(), 400)
+            );
+        }
+        Err(error) => {
+            eprintln!(
+                "[worker-supervisor] WARNING: unable to run joelclaw otel emit for {}: {}",
+                action, error
+            );
+        }
+        _ => {}
+    }
+}
+
+fn clip_for_log(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+
+    text.chars().take(max_chars).collect::<String>() + "…"
 }
 
 fn ensure_parent_dir(path: &Path) -> Result<(), DynError> {
@@ -641,8 +764,24 @@ fn shutdown_child(child: &mut Child, signal: CInt, timeout_secs: u64) -> Result<
 
 fn log_exit_status(status: ExitStatus) {
     match status.code() {
-        Some(code) => eprintln!("[worker-supervisor] worker exited with code {}", code),
-        None => eprintln!("[worker-supervisor] worker exited due to signal"),
+        Some(code) => {
+            eprintln!("[worker-supervisor] worker exited with code {}", code);
+            emit_supervisor_otel(
+                "worker.supervisor.worker_exit",
+                false,
+                "warn",
+                Some(&format!("worker exited with code {code}")),
+            );
+        }
+        None => {
+            eprintln!("[worker-supervisor] worker exited due to signal");
+            emit_supervisor_otel(
+                "worker.supervisor.worker_exit",
+                false,
+                "warn",
+                Some("worker exited due to signal"),
+            );
+        }
     }
 }
 
