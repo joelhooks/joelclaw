@@ -8,6 +8,7 @@ import type {
   JoelclawRunOptions,
   JoelclawTransport,
   LogWriteInput,
+  NotifySendInput,
   OtelEmitInput,
   OtelListOptions,
   OtelSearchOptions,
@@ -313,6 +314,67 @@ export class JoelclawClient {
 
   async status<TResult = unknown>(): Promise<JoelclawEnvelope<TResult>> {
     return await this.runOrThrow<TResult>(["status"])
+  }
+
+  async notifySend<TResult = unknown>(input: NotifySendInput): Promise<JoelclawEnvelope<TResult>> {
+    const message = input.message.trim()
+    if (!message) {
+      throw new Error("notifySend requires a non-empty message")
+    }
+
+    const channel = input.channel?.trim() || "gateway"
+    const priority = input.priority ?? "normal"
+    const context = input.context ?? {}
+    const type = input.type?.trim() || undefined
+    const source = input.source?.trim() || undefined
+    const telegramOnly = input.telegramOnly === true
+
+    const inProcess = await this.runSdkCapability<TResult>({
+      capability: "notify",
+      subcommand: "send",
+      args: {
+        message,
+        channel,
+        priority,
+        context,
+        type,
+        source,
+        telegramOnly,
+      },
+      command: "joelclaw notify send",
+    })
+
+    if (inProcess) return inProcess
+    if (!this.shouldUseSubprocessFallback()) {
+      throw new Error("subprocess transport is disabled")
+    }
+
+    const args = ["notify", "send", message]
+    if (channel !== "gateway") {
+      args.push("--channel", channel)
+    }
+
+    if (priority !== "normal") {
+      args.push("--priority", priority)
+    }
+
+    if (Object.keys(context).length > 0) {
+      args.push("--context", JSON.stringify(context))
+    }
+
+    if (type) {
+      args.push("--type", type)
+    }
+
+    if (source) {
+      args.push("--source", source)
+    }
+
+    if (telegramOnly) {
+      args.push("--telegram-only")
+    }
+
+    return await this.runOrThrow<TResult>(args)
   }
 
   async deployWorker<TResult = unknown>(options: DeployWorkerOptions = {}): Promise<JoelclawEnvelope<TResult>> {

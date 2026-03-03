@@ -13,7 +13,8 @@
     "@langfuse/otel": "^4.6.1",
     "@langfuse/tracing": "^4.6.1",
     "@opentelemetry/sdk-trace-base": "^2.5.1",
-    "effect": "^3.19.17"
+    "effect": "^3.19.17",
+    "ioredis": "^5.9.3"
   },
   "devDependencies": {
     "@types/bun": "latest",

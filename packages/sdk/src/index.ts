@@ -12,6 +12,8 @@ export type {
   JoelclawRunOptions,
   JoelclawTransport,
   LogWriteInput,
+  NotifyPriority,
+  NotifySendInput,
   OtelEmitInput,
   OtelEventLevel,
   OtelListOptions,

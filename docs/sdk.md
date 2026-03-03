@@ -9,7 +9,7 @@ Use the SDK when software needs typed access to joelclaw behavior without reimpl
 The SDK now supports both subprocess and in-process execution:
 
 - `transport: "subprocess"` — always shell out to `joelclaw`
-- `transport: "inprocess"` — never shell out; uses SDK capability adapters directly (currently `otel`, `recall`, `deploy`, `log`, `secrets`)
+- `transport: "inprocess"` — never shell out; uses SDK capability adapters directly (currently `otel`, `recall`, `deploy`, `log`, `secrets`, `notify`)
 - `transport: "hybrid"` (default) — in-process first for supported capabilities, subprocess fallback otherwise
 
 ## Installation (workspace)
@@ -42,6 +42,7 @@ const client = createJoelclawClient({
 - `status()`
 - `deployWorker(options)`
 - `logWrite({ action, tool, detail, reason? })`
+- `notifySend({ message, channel?, priority?, context?, type?, source?, telegramOnly? })`
 - `secretsStatus/lease/revoke/audit/env`
 - `otelList/search/stats/emit`
 - `recall(query, options)`
@@ -54,7 +55,7 @@ const client = createJoelclawClient({
 The SDK exports capability adapters and a runtime entrypoint:
 
 - `executeSdkCapabilityCommand({ capability, subcommand, args })`
-- adapters: `typesenseOtelAdapter`, `typesenseRecallAdapter`, `scriptedDeployAdapter`, `slogCliAdapter`, `secretsCliAdapter`
+- adapters: `typesenseOtelAdapter`, `typesenseRecallAdapter`, `scriptedDeployAdapter`, `slogCliAdapter`, `secretsCliAdapter`, `gatewayRedisNotifyAdapter`
 
 This is the canonical in-process path now used by SDK transport and reused by CLI adapter wrappers.
 
@@ -88,5 +89,5 @@ await client.otelEmit({
 ## Notes
 
 - Envelope schema mirrors CLI contract in `packages/cli/src/response.ts`.
-- OTEL/recall/deploy/log/secrets adapter logic now lives in `packages/sdk/src/capabilities/adapters/*` and is consumed by CLI wrapper adapters.
+- OTEL/recall/deploy/log/secrets/notify adapter logic now lives in `packages/sdk/src/capabilities/adapters/*` and is consumed by CLI wrapper adapters.
 - Keep docs/cli.md and this file updated whenever SDK routes, capability adapters, or transport semantics change.

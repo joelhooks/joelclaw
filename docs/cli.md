@@ -8,7 +8,7 @@ Canonical operator interface for joelclaw.
 - Deterministic error codes via `respondError`
 - HATEOAS navigation in every command response
 - Heavy dependencies loaded lazily when possible
-- Capability adapter registry with typed command contracts (`packages/cli/src/capabilities/`; otel/recall/deploy/log/secrets adapter implementations live in `@joelclaw/sdk`)
+- Capability adapter registry with typed command contracts (`packages/cli/src/capabilities/`; otel/recall/deploy/log/secrets/notify adapter implementations live in `@joelclaw/sdk`)
 
 ## SDK surface (`@joelclaw/sdk`)
 
@@ -25,6 +25,7 @@ Current contract:
   - `status()`
   - `deployWorker(options)`
   - `logWrite({ action, tool, detail, reason? })`
+  - `notifySend({ message, channel?, priority?, context?, type?, source?, telegramOnly? })`
   - `secretsStatus/lease/revoke/audit/env`
   - `otelList/search/stats/emit`
   - `recall` / `recallRaw`
@@ -191,8 +192,8 @@ Semantics:
 - `log` writes structured system entries (slog backend).
 - `logs` reads/analyzes runtime logs.
 - `notify` is the canonical operator alert command; `gateway push` remains transport/debug.
-- `deploy`, `log`, `secrets`, `mail`, `otel`, `recall`, and `subscribe` keep their existing UX/envelopes while executing through capability registry adapters (`scripted-deploy`, `slog-cli`, `agent-secrets-cli`, `mcp-agent-mail`, `typesense-otel`, `typesense-recall`, `redis-subscriptions`).
-- `typesense-otel`, `typesense-recall`, `scripted-deploy`, `slog-cli`, and `agent-secrets-cli` adapter logic is canonical in `@joelclaw/sdk` (`packages/sdk/src/capabilities/adapters/*`); CLI adapter files are thin re-exports.
+- `deploy`, `log`, `notify`, `secrets`, `mail`, `otel`, `recall`, and `subscribe` keep their existing UX/envelopes while executing through capability registry adapters (`scripted-deploy`, `slog-cli`, `gateway-redis`, `agent-secrets-cli`, `mcp-agent-mail`, `typesense-otel`, `typesense-recall`, `redis-subscriptions`).
+- `typesense-otel`, `typesense-recall`, `scripted-deploy`, `slog-cli`, `agent-secrets-cli`, and `gateway-redis` adapter logic is canonical in `@joelclaw/sdk` (`packages/sdk/src/capabilities/adapters/*`); CLI adapter files are thin re-exports.
 - `otel emit` accepts stdin JSON payloads (or convenience args/positional action), normalizes defaults (`id`, `timestamp`, `level=info`, `success=true`), and forwards to the worker ingest endpoint (`/observability/emit`).
 - Software surfaces should route OTEL through this command contract (or shared CLI ingest helper), not ad-hoc raw HTTP calls.
 - `mail search` auto-falls back to `/mail/api/unified-inbox` filtering when MCP `search_messages` returns transient DB/tool errors, so steering signals remain usable.

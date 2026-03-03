@@ -97,6 +97,18 @@ export interface LogWriteInput {
   readonly reason?: string
 }
 
+export type NotifyPriority = "low" | "normal" | "high" | "urgent"
+
+export interface NotifySendInput {
+  readonly message: string
+  readonly channel?: string
+  readonly priority?: NotifyPriority
+  readonly context?: Record<string, unknown>
+  readonly type?: string
+  readonly source?: string
+  readonly telegramOnly?: boolean
+}
+
 export interface SecretsLeaseInput {
   readonly name: string
   readonly ttl?: string

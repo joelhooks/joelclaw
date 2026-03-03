@@ -1,4 +1,5 @@
 export { __deployAdapterTestUtils, scriptedDeployAdapter } from "./adapters/deploy-scripted"
+export { gatewayRedisNotifyAdapter } from "./adapters/gateway-redis"
 export { secretsCliAdapter } from "./adapters/secrets-cli"
 export { slogCliAdapter } from "./adapters/slog-cli"
 export { __otelAdapterTestUtils, typesenseOtelAdapter } from "./adapters/typesense-otel"
