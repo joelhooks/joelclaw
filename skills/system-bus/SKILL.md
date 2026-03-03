@@ -2,7 +2,7 @@
 name: system-bus
 displayName: System Bus Worker
 description: Develop, deploy, and debug the system-bus worker — joelclaw's 110+ Inngest durable function engine, webhook gateway, and observability pipeline. Triggers on 'add a function', 'new inngest function', 'system-bus', 'worker', 'add a webhook', 'deploy worker', 'restart worker', 'function failed', 'worker not working', 'register functions', or any task involving Inngest function development, webhook providers, or worker operations.
-version: 0.1.2
+version: 0.1.3
 author: joel
 tags:
   - inngest
@@ -158,7 +158,7 @@ await gateway?.progress("Step 3/5 complete");
 - **ADR content sync must degrade on frontmatter parse failures.** `upsertAdr` falls back to body-only parsing (empty frontmatter + stripped frontmatter block) and logs a warning, instead of dropping the ADR from Convex.
 - **Non-authoritative side effects must degrade, not crash the workflow.** Example: `memory/proposal-triage` keeps triage authoritative, retries review-task creation across primary/fallback Todoist projects (`MEMORY_REVIEW_TODOIST_PROJECT` → `MEMORY_REVIEW_TODOIST_FALLBACK_PROJECT`), and only records degraded state if both fail.
 - **Never call `joelclaw` CLI with `Bun.spawnSync` from inside a running Inngest function.** `joelclaw inngest status` probes the worker endpoint; sync subprocesses can deadlock the worker event loop. Use async subprocess execution (`Bun.spawn`/`Bun.$`) with explicit timeouts, or direct internal health probes.
-- **Do not import `packages/cli/src/*` from system-bus via relative paths.** Use `@joelclaw/sdk` for shared runbook types/helpers so production worker images built with filtered installs don't crash on missing CLI-only deps.
+- **Do not import `packages/cli/src/*` from system-bus via relative paths.** Keep runbook resolution local in `packages/system-bus` (or extract to a dedicated leaf package) and avoid creating `@joelclaw/system-bus` ↔ `@joelclaw/sdk` dependency cycles that break Turbo/Vercel.
 
 ## Deploy: system-bus-worker (k8s)
 

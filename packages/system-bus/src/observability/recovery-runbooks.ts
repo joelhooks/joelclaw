@@ -1,12 +1,4 @@
-import {
-  getRunbook,
-  type RunbookPhase,
-  resolveRunbookPhase,
-} from "@joelclaw/sdk";
-
-function normalizeErrorCode(value: string): string {
-  return value.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
-}
+export type RunbookPhase = "diagnose" | "fix" | "verify" | "rollback";
 
 export type ResolvedRunbookPlan = {
   code: string;
@@ -28,6 +20,18 @@ export type RunbookEventContext = {
   metadata?: Record<string, unknown>;
 };
 
+function normalizeErrorCode(value: string): string {
+  return value.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+}
+
+function toTitle(code: string): string {
+  return code
+    .split("_")
+    .filter(Boolean)
+    .map((segment) => segment[0] + segment.slice(1).toLowerCase())
+    .join(" ");
+}
+
 export function buildRunbookRecoverCommand(plan: ResolvedRunbookPlan): string {
   return `joelclaw recover ${plan.code} --phase ${plan.phase}`;
 }
@@ -38,19 +42,32 @@ export function resolveRunbookPlan(
   context: Record<string, unknown> = {}
 ): ResolvedRunbookPlan | null {
   const normalizedCode = normalizeErrorCode(code);
-  const runbook = getRunbook(normalizedCode);
-  if (!runbook) return null;
+  if (!normalizedCode) return null;
 
-  const commands = resolveRunbookPhase(runbook, phase, context).map((entry) => ({
-    description: entry.description,
-    command: entry.resolvedCommand,
-    destructive: entry.destructive ?? false,
-    unresolved: /<[^>]+>/.test(entry.resolvedCommand),
-  }));
+  const commands: ResolvedRunbookPlan["commands"] = [
+    {
+      description: "Run deterministic recovery command",
+      command: `joelclaw recover ${normalizedCode} --phase ${phase}`,
+      destructive: false,
+      unresolved: false,
+    },
+  ];
+
+  const runId = typeof context["run-id"] === "string"
+    ? context["run-id"].trim()
+    : "";
+  if (runId.length > 0) {
+    commands.push({
+      description: "Inspect failed run details",
+      command: `joelclaw run ${runId}`,
+      destructive: false,
+      unresolved: false,
+    });
+  }
 
   return {
-    code: runbook.code,
-    title: runbook.title,
+    code: normalizedCode,
+    title: toTitle(normalizedCode),
     phase,
     commands,
   };

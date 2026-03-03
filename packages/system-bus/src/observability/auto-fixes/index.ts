@@ -1,8 +1,10 @@
-import type { RunbookErrorCode as ErrorCode, RunbookPhase } from "@joelclaw/sdk";
 import type { OtelEvent } from "../otel-event";
+import type { RunbookPhase } from "../recovery-runbooks";
 import { autoCommitAndRetry } from "./auto-commit-retry";
 import { ignore } from "./ignore";
 import { restartWorker } from "./restart-worker";
+
+type ErrorCode = string;
 
 export type AutoFixHandler = (
   event: OtelEvent

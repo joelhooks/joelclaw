@@ -10,7 +10,7 @@ Canonical notes for `packages/system-bus/src/inngest/functions/`.
 - Health checks should route remediation via `system/self.healing.requested` and carry playbook context.
 - Never use `Bun.spawnSync` for `joelclaw` CLI calls inside handlers that also depend on worker/HTTP probes; use async subprocesses with explicit timeouts to avoid worker event-loop deadlocks.
 - For inference calls that must return machine-readable output, set `json: true` plus `requireJson: true` (and `requireTextOutput: true` where needed) so null/empty outputs are treated as failures, not successes.
-- Worker code must not import `packages/cli/src/*` via relative paths. Use `@joelclaw/sdk` exports for shared runbooks/types so filtered production images remain self-contained.
+- Worker code must not import `packages/cli/src/*` via relative paths. Keep recovery-runbook helpers local to `packages/system-bus` (or move them to a leaf package) and avoid introducing `@joelclaw/system-bus` ↔ `@joelclaw/sdk` dependency cycles that break Turbo/Vercel builds.
 
 ## Key reliability flows
 
