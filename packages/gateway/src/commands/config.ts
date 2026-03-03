@@ -27,8 +27,8 @@ const DEFAULT_THINKING_LEVEL: GatewayThinkingLevel = "low";
 const DEFAULT_VERBOSE = false;
 
 const DEFAULT_FALLBACK: FallbackConfig = {
-  fallbackProvider: "anthropic",
-  fallbackModel: "claude-sonnet-4-6",
+  fallbackProvider: "openai-codex",
+  fallbackModel: "gpt-5.3-codex",
   fallbackTimeoutMs: 120_000,
   fallbackAfterFailures: 3,
   recoveryProbeIntervalMs: 10 * 60 * 1000,

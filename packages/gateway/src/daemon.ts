@@ -117,7 +117,38 @@ const startupGatewayConfig = await (async () => {
   }
 })();
 
-if (startupGatewayConfig.fallbackProvider === "anthropic" && startupGatewayConfig.fallbackModel === "claude-sonnet-4-6") {
+const preferredFallback = {
+  provider: "openai-codex",
+  model: "gpt-5.3-codex",
+} as const;
+const hasPreferredFallback = Boolean(getModel(preferredFallback.provider as any, preferredFallback.model as any));
+
+const isLegacyAnthropicFallback = startupGatewayConfig.fallbackProvider === "anthropic"
+  && (startupGatewayConfig.fallbackModel === "claude-sonnet-4-6"
+    || startupGatewayConfig.fallbackModel === "claude-sonnet-4-5");
+
+if (isLegacyAnthropicFallback && hasPreferredFallback) {
+  const from = `${startupGatewayConfig.fallbackProvider}/${startupGatewayConfig.fallbackModel}`;
+  startupGatewayConfig.fallbackProvider = preferredFallback.provider;
+  startupGatewayConfig.fallbackModel = preferredFallback.model;
+
+  console.warn("[gateway:fallback] remapped fallback model", {
+    from,
+    to: `${preferredFallback.provider}/${preferredFallback.model}`,
+    reason: "gateway fallback standard is now gpt-5.3-codex",
+  });
+
+  void emitGatewayOtel({
+    level: "warn",
+    component: "daemon.fallback",
+    action: "fallback.model.remapped",
+    success: true,
+    metadata: {
+      from,
+      to: `${preferredFallback.provider}/${preferredFallback.model}`,
+    },
+  });
+} else if (startupGatewayConfig.fallbackProvider === "anthropic" && startupGatewayConfig.fallbackModel === "claude-sonnet-4-6") {
   const hasConfiguredFallback = Boolean(getModel("anthropic" as any, "claude-sonnet-4-6" as any));
   const hasCompatFallback = Boolean(getModel("anthropic" as any, "claude-sonnet-4-5" as any));
 

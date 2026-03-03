@@ -28,7 +28,7 @@ Watchdog hardening: when a turn is stuck for >10 minutes, the daemon now aborts 
 
 Prompt dispatch tracking now starts **after** `session.prompt()` successfully accepts the prompt (instead of before the call). This prevents immediate auth/model rejection failures from being misclassified as "stuck turn" incidents.
 
-Fallback compatibility guard: if Redis config still points at `anthropic/claude-sonnet-4-6` but the local `pi-ai` model registry lacks that ID, the daemon remaps fallback to `anthropic/claude-sonnet-4-5` at startup and emits `daemon.fallback:fallback.model.remapped`.
+Fallback standardization guard: gateway fallback is now `openai-codex/gpt-5.3-codex`. If Redis still has legacy Anthropic fallbacks (`claude-sonnet-4-6` or `claude-sonnet-4-5`), daemon startup remaps to codex and emits `daemon.fallback:fallback.model.remapped`.
 
 ## Pi-session Langfuse guardrails (alert-only)
 
