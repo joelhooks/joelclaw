@@ -14,7 +14,7 @@ Regular HTML pages include a rendered HTML source comment labeled `CLAWMAIL` fro
 
 - Component: `apps/web/components/clawmail-source-comment.tsx`
 - Mounted in: `apps/web/app/layout.tsx`
-- Placement: first explicit child in `<head>` (framework metadata may still render above it), which is the highest stable placement available from the app layout
+- Placement: first node directly under `<html>`, before `<head>` and `<body>` in `app/layout.tsx`, which is the highest safe placement available from the app layout
 
 The comment is intended for agents using **View Source** and includes:
 
