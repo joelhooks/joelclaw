@@ -12,11 +12,14 @@ Canonical operator interface for joelclaw.
 
 ## SDK surface (`@joelclaw/sdk`)
 
-`@joelclaw/sdk` is the programmatic wrapper for software integrations that need CLI parity without hand-rolling process spawning/parsing.
+`@joelclaw/sdk` is the programmatic wrapper for software integrations that need CLI parity without rebuilding adapters.
 
 Current contract:
 
-- executes `joelclaw` as a subprocess (defaults to `JOELCLAW_BIN` or `joelclaw`)
+- transport modes:
+  - `subprocess` — shell to `joelclaw`
+  - `inprocess` — run SDK capability adapters directly (no shell) for supported capabilities
+  - `hybrid` (default) — inprocess first, subprocess fallback
 - parses canonical JSON envelopes (`ok`, `command`, `result`, `next_actions`)
 - provides typed convenience methods for common routes:
   - `status()`
@@ -26,14 +29,14 @@ Current contract:
 - exposes structured errors:
   - `JoelclawProcessError` (spawn/exit/parse failures)
   - `JoelclawEnvelopeError` (`ok:false` envelopes via `runOrThrow`)
+  - `JoelclawCapabilityError` (inprocess capability failures)
 
 Example:
 
 ```ts
 import { createJoelclawClient } from "@joelclaw/sdk"
 
-const client = createJoelclawClient({ timeoutMs: 15_000 })
-const status = await client.status()
+const client = createJoelclawClient({ timeoutMs: 15_000, transport: "inprocess" })
 const otel = await client.otelSearch("gateway", { hours: 1, limit: 20 })
 ```
 
@@ -185,7 +188,8 @@ Semantics:
 - `log` writes structured system entries (slog backend).
 - `logs` reads/analyzes runtime logs.
 - `notify` is the canonical operator alert command; `gateway push` remains transport/debug.
-- `mail`, `otel`, `recall`, and `subscribe` keep their existing UX/envelopes while now executing through capability registry adapters (`mcp-agent-mail`, `typesense-otel`, `typesense-recall`, `redis-subscriptions`).
+- `mail`, `otel`, `recall`, and `subscribe` keep their existing UX/envelopes while executing through capability registry adapters (`mcp-agent-mail`, `typesense-otel`, `typesense-recall`, `redis-subscriptions`).
+- `typesense-otel` and `typesense-recall` adapter logic is canonical in `@joelclaw/sdk` (`packages/sdk/src/capabilities/adapters/*`); CLI adapter files are thin re-exports.
 - `otel emit` accepts stdin JSON payloads (or convenience args/positional action), normalizes defaults (`id`, `timestamp`, `level=info`, `success=true`), and forwards to the worker ingest endpoint (`/observability/emit`).
 - Software surfaces should route OTEL through this command contract (or shared CLI ingest helper), not ad-hoc raw HTTP calls.
 - `mail search` auto-falls back to `/mail/api/unified-inbox` filtering when MCP `search_messages` returns transient DB/tool errors, so steering signals remain usable.
