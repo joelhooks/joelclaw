@@ -153,6 +153,22 @@ joelclaw gateway stream                    # Live stream gateway events
 joelclaw otel list --hours 1               # Recent telemetry events
 joelclaw otel search "error" --hours 24    # Search OTEL events
 joelclaw otel stats --hours 24             # Aggregate stats
+joelclaw otel emit "action.name" --source codex --component agent-loop --success  # Emit event
+```
+
+### System Knowledge (ADR-0199)
+
+```bash
+joelclaw knowledge search "query"          # Search system knowledge
+joelclaw knowledge search "query" --type adr  # Filter by type (adr|skill|lesson|pattern|retro|failed_target)
+joelclaw knowledge sync                    # Re-index ADRs + skills from filesystem
+joelclaw knowledge clear-failed <target>   # Clear resolved failed targets
+```
+
+Brain/codebase patterns (browsable by agents):
+```bash
+ls ~/Vault/system/brain/codebase/          # List established patterns
+cat ~/Vault/system/brain/codebase/<name>.md  # Read a specific pattern
 ```
 
 ### Subscriptions (ADR-0127)

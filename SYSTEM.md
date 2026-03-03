@@ -29,24 +29,19 @@ Before implementing any change, query the system knowledge base:
 joelclaw knowledge search "relevant query for your task"
 ```
 
-Or programmatically via `@joelclaw/sdk`:
-```typescript
-import { createJoelclawClient } from "@joelclaw/sdk"
-const jc = createJoelclawClient()
-const context = await jc.recall("relevant query")
-```
-
 Check brain/codebase/ for established patterns:
+
 ```bash
 ls ~/Vault/system/brain/codebase/
 ```
 
 After completing work, emit an OTEL event:
+
 ```bash
 joelclaw otel emit "task.completed" --source codex --component agent-loop --success
 ```
 
-This is the Force/Enforce/Verify (F/E/V) pattern from ADR-0200. Not optional.
+The `joelclaw` CLI is your interface to the knowledge system. Not optional. (ADR-0199/0200)
 
 In addition to the tools above, you may have access to other custom tools depending on the project.
 
