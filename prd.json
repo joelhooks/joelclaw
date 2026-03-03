@@ -7,8 +7,11 @@
       "title": "Watchdog self-heals when system_knowledge collection is missing",
       "description": "In packages/system-bus/src/inngest/functions/knowledge-watchdog.ts, when the audit step detects the collection is missing, add a recovery step that re-creates the collection and re-indexes ADRs and skills. Use the existing createCollection and bulkImport functions from packages/system-bus/src/lib/typesense.ts. The schema is SYSTEM_KNOWLEDGE_COLLECTION_SCHEMA. After recovery, re-run the audit to verify. Import the schema and collection name from typesense.ts. For ADR/skill indexing, look at how packages/cli/src/commands/knowledge.ts does it in the sync subcommand — replicate that pattern (read files from ~/Vault/docs/decisions/ and skills directories, build documents, bulk import). Note: the watchdog runs on the host worker which has filesystem access to ~/Vault.",
       "acceptance": "When collection is missing, watchdog creates it and populates with ADRs+skills. Subsequent audit passes. Alert message says 'self-healed' instead of just 'MISSING'. Compiles clean: `bunx tsc --noEmit`.",
-      "files": ["packages/system-bus/src/inngest/functions/knowledge-watchdog.ts"],
-      "priority": 1
+      "files": [
+        "packages/system-bus/src/inngest/functions/knowledge-watchdog.ts"
+      ],
+      "priority": 1,
+      "passes": true
     },
     {
       "id": "brain-codebase-bootstrap",
@@ -16,7 +19,8 @@
       "description": "Create the directory ~/Vault/system/brain/codebase/ and populate it with 3-5 initial pattern notes as markdown files. These are browsable knowledge files that agents read before work. Create notes for patterns we've established: (1) adaptive-heartbeat-gate.md — the check-cheaply-act-rarely pattern from ADR-0198 (2) force-enforce-verify.md — the F/E/V pattern from ADR-0200 (3) system-knowledge-retrieval.md — how to query and write to system_knowledge (4) inngest-gate-step.md — the Redis timestamp gate step pattern. Each note should be ~20-40 lines, practical, with code examples from the actual codebase. Format: markdown with a YAML frontmatter (title, created, source_adr). This is a filesystem task — create the files directly.",
       "acceptance": "Directory exists at ~/Vault/system/brain/codebase/ with 4 .md files. Each file has frontmatter + practical content with code examples. Files are readable and useful for agents.",
       "files": [],
-      "priority": 2
+      "priority": 2,
+      "passes": true
     }
   ]
 }

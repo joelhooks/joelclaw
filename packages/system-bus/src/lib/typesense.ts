@@ -529,6 +529,15 @@ export async function ensureCollection(
   }
 }
 
+/** Create a collection from schema. No-op if it already exists. */
+export async function createCollection(schema: Record<string, unknown>): Promise<void> {
+  const name = schema.name;
+  if (typeof name !== "string" || name.trim().length === 0) {
+    throw new Error("Typesense createCollection requires schema.name");
+  }
+  await ensureCollection(name, schema);
+}
+
 // ── Knowledge invariant: "Is this in system_knowledge? No → add. Yes → accurate? No → update." ──
 
 export interface KnowledgeDoc {
