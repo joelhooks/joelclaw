@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import { MODEL } from "../../../lib/models";
+import { querySystemKnowledge } from "../../../lib/typesense";
 import { inngest } from "../../client";
 import {
   cleanupPid,
@@ -170,8 +171,22 @@ async function buildPrompt(
   const claudeMd = await readFileIfExists(`${project}/CLAUDE.md`);
   const agentsMd = await readFileIfExists(`${project}/AGENTS.md`);
 
+  // System knowledge retrieval — involuntary, highest priority (ADR-0199)
+  const systemKnowledge = await querySystemKnowledge(
+    `${story.title} ${story.description}`,
+    { types: ["lesson", "pattern", "failed_target", "retro"], limit: 5, project },
+  );
+
   // Assemble context sections with budget
   const contextSections: { label: string; content: string; priority: number }[] = [];
+
+  if (systemKnowledge) {
+    contextSections.push({
+      label: "## System Context (from prior loops)",
+      content: systemKnowledge,
+      priority: 0,
+    });
+  }
 
   if (patterns) {
     contextSections.push({ label: "## Codebase Patterns", content: patterns, priority: 1 });

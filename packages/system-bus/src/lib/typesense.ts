@@ -213,6 +213,78 @@ export const CHANNEL_MESSAGES_COLLECTION_SCHEMA = {
   default_sorting_field: "timestamp",
 } satisfies Record<string, unknown>;
 
+export const SYSTEM_KNOWLEDGE_COLLECTION = "system_knowledge";
+
+export const SYSTEM_KNOWLEDGE_COLLECTION_SCHEMA = {
+  name: SYSTEM_KNOWLEDGE_COLLECTION,
+  fields: [
+    { name: "id", type: "string" as const },
+    { name: "type", type: "string" as const, facet: true },
+    { name: "title", type: "string" as const },
+    { name: "content", type: "string" as const },
+    { name: "source", type: "string" as const, optional: true },
+    { name: "project", type: "string" as const, optional: true, facet: true },
+    { name: "loop_id", type: "string" as const, optional: true },
+    { name: "status", type: "string" as const, optional: true, facet: true },
+    { name: "score", type: "int32" as const, optional: true },
+    { name: "tags", type: "string[]" as const, optional: true, facet: true },
+    { name: "created_at", type: "int64" as const },
+    { name: "embedding", type: "float[]" as const, num_dim: 384, optional: true },
+  ],
+  default_sorting_field: "created_at",
+  enable_nested_fields: false,
+} satisfies Record<string, unknown>;
+
+/**
+ * Query system_knowledge for relevant context.
+ * Returns formatted text suitable for injection into agent prompts.
+ * Gracefully returns empty string if collection doesn't exist yet.
+ */
+export async function querySystemKnowledge(
+  query: string,
+  options: {
+    types?: string[];
+    limit?: number;
+    project?: string;
+  } = {},
+): Promise<string> {
+  const { types, limit = 5, project } = options;
+
+  const filterParts: string[] = [];
+  if (types?.length) filterParts.push(`type:[${types.join(",")}]`);
+  if (project) filterParts.push(`project:=${project}`);
+
+  try {
+    const result = await search({
+      collection: SYSTEM_KNOWLEDGE_COLLECTION,
+      q: query,
+      query_by: "title,content",
+      per_page: limit,
+      filter_by: filterParts.length ? filterParts.join(" && ") : undefined,
+      exclude_fields: "embedding",
+    });
+
+    if (!result.hits?.length) return "";
+
+    return result.hits
+      .map((hit: TypesenseHit) => {
+        const doc = hit.document as Record<string, unknown>;
+        const type = doc.type as string;
+        const title = doc.title as string;
+        const content = doc.content as string;
+        return `### [${type}] ${title}\n${content}`;
+      })
+      .join("\n\n");
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("404") || msg.includes("Not Found") || msg.includes("not found")) {
+      return "";
+    }
+    console.warn(`[system-knowledge] query failed: ${msg}`);
+    return "";
+  }
+}
+
 function asTrimmedString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();

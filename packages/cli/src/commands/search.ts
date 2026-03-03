@@ -40,6 +40,7 @@ const COLLECTIONS: readonly SearchCollection[] = [
   { name: "docs", queryBy: "title,summary,filename", titleField: "title", supportsSemantic: false },
   { name: "docs_chunks", queryBy: "retrieval_text,content", titleField: "title", supportsSemantic: true },
   { name: "otel_events", queryBy: "action,error,component,source,metadata_json,search_text", titleField: "action", supportsSemantic: false },
+  { name: "system_knowledge", queryBy: "title,content", titleField: "title", supportsSemantic: true },
 ]
 
 const COLLECTION_NAMES = COLLECTIONS.map((c) => c.name)
