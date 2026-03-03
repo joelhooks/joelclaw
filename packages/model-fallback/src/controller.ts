@@ -68,6 +68,8 @@ export class ModelFallbackController {
 
   // Recovery probe timer
   private _recoveryTimer: ReturnType<typeof setInterval> | undefined;
+  private _fallbackDistinct = true;
+  private _sameModelWarningEmitted = false;
 
   constructor(
     config: FallbackConfig,
@@ -78,12 +80,33 @@ export class ModelFallbackController {
     this.config = config;
     this.primaryModel = { provider: primaryProvider, id: primaryModelId };
     this.telemetry = telemetry;
+    this._fallbackDistinct = !(
+      primaryProvider.trim().toLowerCase() === config.fallbackProvider.trim().toLowerCase()
+      && primaryModelId.trim().toLowerCase() === config.fallbackModel.trim().toLowerCase()
+    );
   }
 
   /** Wire up the pi session and notification callback. Call after session creation. */
   init(session: FallbackSession, notify: FallbackNotifier): void {
     this.session = session;
     this.notify = notify;
+
+    if (!this._fallbackDistinct && !this._sameModelWarningEmitted) {
+      this._sameModelWarningEmitted = true;
+      const modelRef = `${this.primaryModel.provider}/${this.primaryModel.id}`;
+      console.warn("[gateway:fallback] disabled: primary and fallback models are identical", {
+        model: modelRef,
+      });
+      this._emit({
+        level: "warn",
+        component: "daemon.fallback",
+        action: "fallback.disabled.same_model",
+        success: true,
+        metadata: {
+          model: modelRef,
+        },
+      });
+    }
 
     // Start recovery probe timer
     this._recoveryTimer = setInterval(() => {
@@ -116,6 +139,8 @@ export class ModelFallbackController {
 
   /** Called when a prompt is dispatched to the session. */
   onPromptDispatched(): void {
+    if (!this._fallbackDistinct) return;
+
     this._promptDispatchedAt = Date.now();
     this._firstTokenAt = 0;
     console.log("[gateway:fallback] prompt dispatched, starting timeout watch", {
@@ -282,6 +307,7 @@ export class ModelFallbackController {
 
   private async _activateFallback(reason: string, consecutiveFailures?: number): Promise<boolean> {
     if (!this.session) return false;
+    if (!this._fallbackDistinct) return false;
 
     const currentModel = this.session.model;
     const fromModel = currentModel
@@ -362,6 +388,7 @@ export class ModelFallbackController {
   }
 
   private async _maybeRecoverPrimary(): Promise<void> {
+    if (!this._fallbackDistinct) return;
     if (!this._active || !this.session) return;
 
     this._lastRecoveryProbe = Date.now();

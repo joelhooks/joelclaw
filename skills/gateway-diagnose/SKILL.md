@@ -268,10 +268,11 @@ kubectl exec -n joelclaw redis-0 -- redis-cli XRANGE gateway:messages - + COUNT 
 
 The gateway has a model fallback controller (ADR-0091) that swaps models when the primary fails:
 
-- **Threshold:** 90s timeout for first token, or 3 consecutive prompt failures (configurable)
+- **Threshold:** 120s timeout for first token, or 3 consecutive prompt failures (configurable)
 - **Fallback model:** `openai-codex/gpt-5.3-codex` (daemon remaps legacy Anthropic fallback configs to codex at startup)
+- **No-op guard:** if primary and fallback resolve to the same provider/model, fallback swapping is disabled for that session to avoid fake swap/recover noise
 - **Recovery:** Probes primary model every 10 minutes
-- **OTEL events:** `model_fallback.swapped`, `model_fallback.primary_restored`, `model_fallback.probe_failed`, `fallback.model.remapped`
+- **OTEL events:** `model_fallback.swapped`, `model_fallback.primary_restored`, `model_fallback.probe_failed`, `fallback.model.remapped`, `fallback.disabled.same_model`
 - **Operator alerting:** model failures ping the default channel (Telegram) with 2-minute dedupe window per reason/source. Alert telemetry: `model_failure.alert.sent`, `model_failure.alert.suppressed`, `model_failure.alert.failed`
 
 Check fallback state in gateway.log: `[gateway:fallback] activated` / `recovered`.
@@ -304,7 +305,7 @@ The command queue processes ONE prompt at a time. `idleWaiter` blocks until `tur
 |------|-----------------|
 | `packages/gateway/src/daemon.ts` | Session creation, event handler, idle waiter, watchdog |
 | `packages/gateway/src/command-queue.ts` | `drain()` loop, retry logic, idle gate |
-| `packages/gateway/src/model-fallback.ts` | Timeout tracking, fallback swap, recovery probes |
+| `packages/model-fallback/src/controller.ts` | Timeout tracking, fallback swap, recovery probes |
 | `packages/gateway/src/channels/redis.ts` | Event batching, prompt building, sleep mode |
 | `packages/gateway/src/channels/telegram.ts` | Bot polling, message routing |
 | `packages/gateway/src/heartbeat.ts` | Tripwire writer only (ADR-0103: no prompt injection) |

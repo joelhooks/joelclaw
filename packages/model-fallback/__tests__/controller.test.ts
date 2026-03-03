@@ -85,6 +85,33 @@ describe("ModelFallbackController", () => {
     expect(fallbackController.state.active).toBe(true);
   });
 
+  test("does not activate fallback when primary and fallback are identical", async () => {
+    vi.useFakeTimers();
+
+    const { session, setModel, currentModel } = createSession();
+    const fallbackController = new ModelFallbackController(
+      {
+        ...BASE_CONFIG,
+        fallbackProvider: currentModel.provider,
+        fallbackModel: currentModel.id,
+        fallbackAfterFailures: 1,
+        fallbackTimeoutMs: 250,
+      },
+      currentModel.provider,
+      currentModel.id,
+    );
+    fallbackController.init(session, () => {});
+
+    expect(await fallbackController.onPromptError(1)).toBe(false);
+
+    fallbackController.onPromptDispatched();
+    vi.advanceTimersByTime(500);
+    await Promise.resolve();
+
+    expect(setModel).not.toHaveBeenCalled();
+    expect(fallbackController.state.active).toBe(false);
+  });
+
   test("restores primary on successful recovery probe", async () => {
     vi.useFakeTimers();
 
