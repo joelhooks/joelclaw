@@ -770,6 +770,83 @@ const gatewayRestart = Command.make("restart", {}, () =>
   })
 ).pipe(Command.withDescription("Restart daemon (kill, clean Redis, respawn)"))
 
+const gatewayEnable = Command.make("enable", {}, () =>
+  Effect.gen(function* () {
+    const LAUNCHD_LABEL = "com.joel.gateway"
+    const LAUNCHD_UID = process.getuid?.() ?? 0
+    const LAUNCHD_DOMAIN = `gui/${LAUNCHD_UID}`
+    const LAUNCHD_SERVICE = `${LAUNCHD_DOMAIN}/${LAUNCHD_LABEL}`
+    const PLIST_PATH = `${process.env.HOME}/Library/LaunchAgents/${LAUNCHD_LABEL}.plist`
+
+    const runLaunchctl = (command: string, timeout = 5000): { ok: boolean; error?: string } => {
+      try {
+        execSync(command, { timeout, stdio: "pipe" })
+        return { ok: true }
+      } catch (error) {
+        return { ok: false, error: `${error}` }
+      }
+    }
+
+    const enableResult = runLaunchctl(`launchctl enable ${LAUNCHD_SERVICE}`)
+
+    const bootstrapResult = runLaunchctl(`launchctl bootstrap ${LAUNCHD_DOMAIN} ${PLIST_PATH}`)
+    const bootstrapAlreadyLoaded =
+      !bootstrapResult.ok
+      && /already loaded|in progress|service is disabled/iu.test(bootstrapResult.error ?? "")
+
+    const kickstartResult = runLaunchctl(`launchctl kickstart -k ${LAUNCHD_SERVICE}`)
+
+    let pid: string | null = null
+    let attempts = 0
+    while (attempts < 20) {
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 500)))
+      attempts++
+      const launchd = inspectGatewayLaunchd()
+      const pidCandidate = launchd.pid ?? findGatewayDaemonPid()
+      if (!pidCandidate) continue
+      const parsedPid = Number.parseInt(pidCandidate, 10)
+      if (!Number.isInteger(parsedPid) || !isPidAlive(parsedPid)) continue
+      pid = pidCandidate
+      break
+    }
+
+    const launchdAfter = inspectGatewayLaunchd()
+
+    const warnings: string[] = []
+    if (!enableResult.ok) warnings.push(`launchctl enable failed: ${enableResult.error}`)
+    if (!bootstrapResult.ok && !bootstrapAlreadyLoaded) {
+      warnings.push(`launchctl bootstrap failed: ${bootstrapResult.error}`)
+    }
+    if (!kickstartResult.ok) warnings.push(`launchctl kickstart failed: ${kickstartResult.error}`)
+    if (launchdAfter.disabled === true) warnings.push("launchd service still disabled after enable")
+
+    const ok = launchdAfter.disabled !== true && !!pid
+
+    yield* Console.log(respond(
+      "gateway enable",
+      {
+        service: LAUNCHD_SERVICE,
+        enabled: launchdAfter.disabled === false,
+        registered: launchdAfter.registered,
+        state: launchdAfter.state,
+        pid,
+        actions: {
+          enable: enableResult.ok,
+          bootstrap: bootstrapResult.ok || bootstrapAlreadyLoaded,
+          kickstart: kickstartResult.ok,
+        },
+        ...(warnings.length > 0 ? { warnings } : {}),
+      },
+      [
+        { command: "joelclaw gateway status", description: "Verify gateway session registration" },
+        { command: "joelclaw gateway test", description: "Verify e2e event delivery" },
+        { command: "joelclaw gateway diagnose", description: "Run full diagnostic if still unhealthy" },
+      ],
+      ok,
+    ))
+  }),
+).pipe(Command.withDescription("Enable com.joel.gateway launch agent and start daemon"))
+
 // ── gateway stream (ADR-0058) ───────────────────────────────────────
 
 import {
@@ -1532,6 +1609,7 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
         drain: "joelclaw gateway drain — Clear all event queues",
         test: "joelclaw gateway test — Push test event to all sessions",
         restart: "joelclaw gateway restart — Roll the pi session, clean Redis, restart daemon",
+        enable: "joelclaw gateway enable — Re-enable launch agent and start daemon",
         stream: "joelclaw gateway stream — NDJSON stream of all gateway events (ADR-0058)",
         diagnose: "joelclaw gateway diagnose [--hours N] — Full diagnostic across all layers",
         review: "joelclaw gateway review [--hours N] — Recent session context (exchanges, tools, errors)",
@@ -1548,6 +1626,7 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
       { command: "joelclaw gateway stream", description: "Stream all gateway events (NDJSON)" },
       { command: "joelclaw gateway test", description: "Push test event + verify" },
       { command: "joelclaw gateway restart", description: "Restart the gateway daemon" },
+      { command: "joelclaw gateway enable", description: "Re-enable launch agent + start daemon" },
     ],
     true
   ))
@@ -1562,6 +1641,7 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
     gatewayMute,
     gatewayUnmute,
     gatewayRestart,
+    gatewayEnable,
     gatewayStream,
     gatewayDiagnose,
     gatewayReview,

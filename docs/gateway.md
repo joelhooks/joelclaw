@@ -10,6 +10,7 @@ joelclaw gateway diagnose --hours 1 --lines 120
 joelclaw gateway test
 joelclaw gateway events
 joelclaw gateway restart
+joelclaw gateway enable
 joelclaw gateway known-issues
 joelclaw gateway mute imessage --reason "imsg-rpc reconnect instability"
 joelclaw gateway unmute imessage
@@ -20,6 +21,8 @@ Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 Restart race hardening: daemon shutdown now removes PID/WS/session files only when the file still belongs to that process. This prevents old-process cleanup from deleting newly written marker files during fast restarts.
 
 Gateway process diagnostics now use exact launchd state inspection (`launchctl print-disabled` + `launchctl print gui/<uid>/com.joel.gateway`) so disabled launch agents are reported explicitly. `joelclaw gateway restart` now re-enables `com.joel.gateway` before bootstrap/kickstart, so a disabled service can recover via the normal restart command.
+
+`joelclaw gateway enable` is a direct launch-agent recovery command: enable service, bootstrap plist, kickstart daemon, then report pid/state.
 
 ## Pi-session Langfuse guardrails (alert-only)
 

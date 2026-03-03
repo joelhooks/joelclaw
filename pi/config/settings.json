@@ -1,12 +1,12 @@
 {
   "lastChangelogVersion": "0.55.4",
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.3-codex",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-sonnet-4-6",
   "steeringMode": "all",
   "followUpMode": "all",
   "hideThinkingBlock": false,
   "quietStartup": false,
-  "defaultThinkingLevel": "xhigh",
+  "defaultThinkingLevel": "high",
   "compaction": {
     "enabled": true,
     "reserveTokens": 40000,

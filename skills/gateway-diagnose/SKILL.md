@@ -2,7 +2,7 @@
 name: gateway-diagnose
 displayName: Gateway Diagnose
 description: "Diagnose gateway failures by reading daemon logs, session transcripts, Redis state, and OTEL telemetry. Full Telegram path triage: daemon process → Redis channel → command queue → pi session → model API → Telegram delivery. Use when: 'gateway broken', 'telegram not working', 'why is gateway down', 'gateway not responding', 'check gateway logs', 'what happened to gateway', 'gateway diagnose', 'gateway errors', 'review gateway logs', 'fallback activated', 'gateway stuck', or any request to understand why the gateway failed. Distinct from the gateway skill (operations) — this skill is diagnostic."
-version: 1.0.4
+version: 1.0.5
 author: Joel Hooks
 tags: [joelclaw, gateway, diagnosis, logs, telegram, reliability]
 ---
@@ -75,7 +75,7 @@ cat /tmp/joelclaw/gateway.pid
 ```
 
 **Failure patterns:**
-- `"com.joel.gateway" => disabled` → launchd service disabled (restart must re-enable before kickstart)
+- `"com.joel.gateway" => disabled` → launchd service disabled (`joelclaw gateway enable` or `joelclaw gateway restart` to recover)
 - launchctl service missing + no daemon process → gateway down
 - launchd PID differs from PID file → stale PID file (degraded, not fatal)
 - daemon process alive but launchd service missing/disabled → manual run or launchd drift

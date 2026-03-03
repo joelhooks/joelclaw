@@ -2,7 +2,7 @@
 name: gateway
 displayName: Gateway
 description: "Operate the joelclaw gateway daemon — the always-on pi session that receives events, notifications, and messages. Use the joelclaw CLI for ALL gateway operations. Use when: 'restart gateway', 'gateway status', 'is gateway healthy', 'push to gateway', 'gateway not responding', 'telegram not working', 'messages not going through', 'gateway stuck', 'gateway debug', 'check gateway', 'drain queue', 'test gateway', 'stream events', or any task involving the gateway daemon."
-version: 1.0.1
+version: 1.0.2
 author: Joel Hooks
 tags: [joelclaw, gateway, daemon, redis, telegram]
 ---
@@ -18,6 +18,7 @@ The gateway daemon is the always-on pi session that receives events from Inngest
 ```bash
 joelclaw gateway status    # Sessions, queue depths, Redis health
 joelclaw gateway restart   # Roll daemon, clean Redis, fresh session
+joelclaw gateway enable    # Re-enable launch agent + start daemon
 joelclaw gateway test      # Push test event, verify delivery
 joelclaw gateway push --type <type> [--payload JSON]  # Push to all sessions
 joelclaw gateway events    # Peek at pending events per session
@@ -25,7 +26,7 @@ joelclaw gateway drain     # Clear all event queues
 joelclaw gateway stream    # NDJSON stream of all gateway events (ADR-0058)
 ```
 
-`joelclaw gateway restart` is the canonical restart. It kills the process, cleans Redis state, re-enables `com.joel.gateway` if launchd disabled it, waits for launchd to respawn, and verifies the new session. Never use `launchctl bootout/bootstrap` directly.
+`joelclaw gateway restart` is the canonical restart. It kills the process, cleans Redis state, re-enables `com.joel.gateway` if launchd disabled it, waits for launchd to respawn, and verifies the new session. `joelclaw gateway enable` is the direct recovery path when launchd drift disabled the service. Never use `launchctl bootout/bootstrap` directly.
 
 ## Quick Triage
 
