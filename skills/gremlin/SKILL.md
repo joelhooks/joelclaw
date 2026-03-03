@@ -16,6 +16,8 @@ tags:
 
 Gremlin is the next-gen course platform built on Convex, with a provider/adapter pattern supporting multiple frameworks. Namespace: `@gremlincms`.
 
+Accounting and payouts are being developed in `skillrecordings/payout` as a reusable financial core that is a piece of Gremlin’s future platform architecture.
+
 ## When to Use
 
 Triggers: `gremlin`, `gremlincms`, `wizardshit`, `course platform`, `badass-courses`, `work on gremlin`, `gremlin repo`, or any task involving the gremlin monorepo.
@@ -81,6 +83,7 @@ Load these when working on specific areas:
 - **convex-schema-validator**: Schema design with Convex
 - **favicon**: Emoji favicon generation with emojico
 - **frontend-design**: UI/design quality standards
+- **skillrecordings-payout**: financial core + payout rules used as Gremlin/platform accounting substrate
 
 ## SEO Standards
 
