@@ -30,6 +30,7 @@ async function buildTestWriterPrompt(story: {
       action: "system_knowledge.retrieval",
       component: "agent-loop",
       source: "test-writer",
+      level: "info",
       success: true,
       metadata: {
         story_id: story.id,
@@ -43,6 +44,7 @@ async function buildTestWriterPrompt(story: {
       action: "system_knowledge.retrieval",
       component: "agent-loop",
       source: "test-writer",
+      level: "info",
       success: false,
       error: error instanceof Error ? error.message : String(error),
       metadata: {

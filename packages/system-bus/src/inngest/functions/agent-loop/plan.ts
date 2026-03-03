@@ -421,6 +421,7 @@ export const agentLoopPlan = inngest.createFunction(
         action: "system_knowledge.retrieval",
         component: "agent-loop",
         source: "planner",
+        level: "info",
         success: true,
         metadata: {
           loop_id: loopId,
@@ -435,6 +436,7 @@ export const agentLoopPlan = inngest.createFunction(
         action: "system_knowledge.retrieval",
         component: "agent-loop",
         source: "planner",
+        level: "info",
         success: false,
         error: error instanceof Error ? error.message : String(error),
         metadata: {

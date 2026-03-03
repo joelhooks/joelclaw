@@ -328,6 +328,7 @@ export const knowledgeWatchdog = inngest.createFunction(
         action: "knowledge.watchdog.check",
         component: "knowledge-watchdog",
         source: "cron",
+        level: "info",
         success: checks.issues.length === 0,
         metadata: {
           ...checks.stats,

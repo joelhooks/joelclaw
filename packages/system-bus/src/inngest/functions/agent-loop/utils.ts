@@ -963,6 +963,7 @@ export async function llmEvaluate(opts: {
       action: "system_knowledge.retrieval",
       component: "agent-loop",
       source: "judge",
+      level: "info",
       success: true,
       metadata: {
         result_length: systemContext.length,
@@ -974,6 +975,7 @@ export async function llmEvaluate(opts: {
       action: "system_knowledge.retrieval",
       component: "agent-loop",
       source: "judge",
+      level: "info",
       success: false,
       error: error instanceof Error ? error.message : String(error),
       metadata: {

@@ -182,6 +182,7 @@ async function buildPrompt(
     action: "system_knowledge.retrieval",
     component: "agent-loop",
     source: "implement",
+    level: "info",
     success: true,
     metadata: {
       story_id: story.id,

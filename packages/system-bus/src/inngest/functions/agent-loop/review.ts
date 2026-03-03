@@ -99,6 +99,7 @@ async function buildEvaluationPrompt(params: {
       action: "system_knowledge.retrieval",
       component: "agent-loop",
       source: "reviewer",
+      level: "info",
       success: true,
       metadata: {
         story_id: params.story.id,
@@ -111,6 +112,7 @@ async function buildEvaluationPrompt(params: {
       action: "system_knowledge.retrieval",
       component: "agent-loop",
       source: "reviewer",
+      level: "info",
       success: false,
       error: error instanceof Error ? error.message : String(error),
       metadata: {
