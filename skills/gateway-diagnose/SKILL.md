@@ -2,7 +2,7 @@
 name: gateway-diagnose
 displayName: Gateway Diagnose
 description: "Diagnose gateway failures by reading daemon logs, session transcripts, Redis state, and OTEL telemetry. Full Telegram path triage: daemon process → Redis channel → command queue → pi session → model API → Telegram delivery. Use when: 'gateway broken', 'telegram not working', 'why is gateway down', 'gateway not responding', 'check gateway logs', 'what happened to gateway', 'gateway diagnose', 'gateway errors', 'review gateway logs', 'fallback activated', 'gateway stuck', or any request to understand why the gateway failed. Distinct from the gateway skill (operations) — this skill is diagnostic."
-version: 1.0.9
+version: 1.1.0
 author: Joel Hooks
 tags: [joelclaw, gateway, diagnosis, logs, telegram, reliability]
 ---
@@ -178,6 +178,7 @@ joelclaw otel search "events.triaged" --hours 6
 joelclaw otel search "events.dispatched.background_only" --hours 6
 joelclaw otel search "response.generated.background_source" --hours 6
 joelclaw otel search "outbound.console_forward" --hours 6
+joelclaw otel search "outbound.console_forward.suppressed_policy" --hours 6
 ```
 
 ### Layer 7: Model API Health
@@ -252,6 +253,16 @@ kubectl exec -n joelclaw redis-0 -- redis-cli XRANGE gateway:messages - + COUNT 
 **Current behavior (post-fix):** both store-level and queue-level dedup hash the normalized message body (channel preamble stripped), so false positives should be rare.
 **How to verify:** inspect OTEL metadata on `queue.dedup_dropped` / `message.dedup_dropped` (`dedupHashPrefix`, `strippedInjectedContext`, `promptLength`, `normalizedLength`). If normalized lengths differ materially from expected user payload, dedup normalization is wrong.
 **Fix path:** keep dedup enabled, tune normalization + telemetry first. Remove dedup only if telemetry proves systemic false drops and no safe normalization exists.
+
+### 7. Background console-forward suppression (human-gated guard)
+
+**Symptoms:** autonomous/internal responses are no longer pushed to Telegram, while normal channel replies still work.
+**Cause:** policy gate suppresses console forwarding when attribution is internal + background + no active/captured/recovered source context.
+**How to verify:**
+- `outbound.console_forward.suppressed_policy` events present
+- paired with `response.generated.background_source` events
+- no corresponding `outbound.console_forward.sent` for the same turn
+**Fix path:** adjust attribution capture/recovery before relaxing policy. If legitimate user replies are suppressed, inspect `hasActiveSource`, `hasCapturedSource`, `recoveredFromRecentPrompt`, and recent source age metadata.
 
 ## Fallback Controller State
 

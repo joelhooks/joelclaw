@@ -34,7 +34,7 @@ import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands
 import { injectChannelContext } from "./formatting";
 import { startHeartbeatRunner, TRIPWIRE_PATH } from "./heartbeat";
 import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
-import { registerChannel, routeResponse } from "./outbound/router";
+import { type OutboundAttribution, registerChannel, routeResponse } from "./outbound/router";
 import * as telegramStream from "./telegram-stream";
 
 // Initialize Langfuse tracing for inference routing (reads from env vars):
@@ -241,6 +241,18 @@ function getSourceKind(source: string | undefined): "channel" | "internal" | "un
 function isBackgroundSource(source: string | undefined): boolean {
   if (!source) return true;
   return source === "gateway" || source === "console";
+}
+
+function shouldSuppressConsoleForwardByPolicy(
+  sourceKind: "channel" | "internal" | "unknown",
+  attribution?: OutboundAttribution,
+): boolean {
+  if (sourceKind !== "internal") return false;
+  if (!attribution?.backgroundSource) return false;
+  if (attribution.hasActiveSource) return false;
+  if (attribution.hasCapturedSource) return false;
+  if (attribution.recoveredFromRecentPrompt) return false;
+  return true;
 }
 
 function isMcqQuestion(value: unknown): value is McqParams["questions"][number] {
@@ -914,6 +926,7 @@ registerChannel("console", {
     const envelope = normalizeOutboundMessage(message);
     const source = context?.source;
     const sourceKind = getSourceKind(source);
+    const attribution = context?.attribution;
 
     if (!TELEGRAM_TOKEN || !TELEGRAM_USER_ID) {
       void emitGatewayOtel({
@@ -942,6 +955,27 @@ registerChannel("console", {
           source,
           sourceKind,
           textLength: envelope.text.length,
+        },
+      });
+      return;
+    }
+
+    if (shouldSuppressConsoleForwardByPolicy(sourceKind, attribution)) {
+      void emitGatewayOtel({
+        level: "info",
+        component: "daemon.outbound",
+        action: "outbound.console_forward.suppressed_policy",
+        success: true,
+        metadata: {
+          reason: "background-internal-no-source-context",
+          source,
+          sourceKind,
+          textLength: envelope.text.length,
+          backgroundSource: attribution?.backgroundSource,
+          hasActiveSource: attribution?.hasActiveSource,
+          hasCapturedSource: attribution?.hasCapturedSource,
+          recoveredFromRecentPrompt: attribution?.recoveredFromRecentPrompt,
+          recentPromptSourceAgeMs: attribution?.recentPromptSourceAgeMs,
         },
       });
       return;
@@ -1304,6 +1338,14 @@ session.subscribe((event: any) => {
     const source = activeSource ?? capturedSource ?? recoveredSource ?? "console";
     const sourceKind = getSourceKind(source);
     const backgroundSource = isBackgroundSource(source);
+    const responseAttribution: OutboundAttribution = {
+      sourceKind,
+      backgroundSource,
+      hasActiveSource: Boolean(activeSource),
+      hasCapturedSource: Boolean(capturedSource),
+      recoveredFromRecentPrompt: Boolean(recoveredSource),
+      recentPromptSourceAgeMs: sourceRecoveryAgeMs,
+    };
 
     void emitGatewayOtel({
       level: "debug",
@@ -1399,16 +1441,16 @@ session.subscribe((event: any) => {
       telegramStream.finish(fullText).then((handled) => {
         if (!handled) {
           // Streaming didn't actually send anything — fall back to normal path
-          routeResponse(source, fullText);
+          routeResponse(source, fullText, { attribution: responseAttribution });
         }
       }).catch((err) => {
         console.error("[telegram-stream] finish failed, falling back", { error: String(err) });
-        routeResponse(source, fullText);
+        routeResponse(source, fullText, { attribution: responseAttribution });
       });
       return;
     }
 
-    routeResponse(source, fullText);
+    routeResponse(source, fullText, { attribution: responseAttribution });
   }
 
   if (event.type === "tool_call") {

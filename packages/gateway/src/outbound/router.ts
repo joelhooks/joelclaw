@@ -51,10 +51,20 @@ type SessionLike = {
   subscribe: (listener: (event: any) => unknown) => unknown;
 };
 
+export type OutboundAttribution = {
+  sourceKind?: "channel" | "internal" | "unknown";
+  backgroundSource?: boolean;
+  hasActiveSource?: boolean;
+  hasCapturedSource?: boolean;
+  recoveredFromRecentPrompt?: boolean;
+  recentPromptSourceAgeMs?: number;
+};
+
 export type OutboundChannelContext = {
   source?: string;
   buttons?: InlineButton[][];
   channel?: OutboundChannelId;
+  attribution?: OutboundAttribution;
 };
 
 export type OutboundChannelHandler = {
@@ -203,6 +213,7 @@ export function routeResponse(
       source,
       buttons: normalized.buttons,
       ...(normalized.channel ? { channel: normalized.channel } : {}),
+      ...(context?.attribution ? { attribution: context.attribution } : {}),
     });
     if (maybePromise && typeof (maybePromise as PromiseLike<unknown>).then === "function") {
       void (maybePromise as PromiseLike<unknown>).then(undefined, (error: unknown) => {

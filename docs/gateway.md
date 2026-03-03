@@ -135,6 +135,7 @@ To diagnose unsolicited/autonomous user-facing turns without behavior gating, ga
   - response source resolved to internal/background (`gateway|console`)
 - `daemon.outbound:outbound.console_forward.*`
   - `...skipped` (reasons: `no-telegram-config`, `source-is-telegram`, `filtered-by-forward-rule`)
+  - `...suppressed_policy` (reason: `background-internal-no-source-context`)
   - `...attempt`, `...sent`, `...failed`
 
 Quick queries:
@@ -144,6 +145,17 @@ joelclaw otel search "events.dispatched.background_only" --hours 24
 joelclaw otel search "response.generated.background_source" --hours 24
 joelclaw otel search "outbound.console_forward" --hours 24
 ```
+
+Runtime suppression guard (minimal behavior gate):
+
+- console→Telegram forwarding is now suppressed when response attribution shows all of:
+  - `sourceKind=internal`
+  - `backgroundSource=true`
+  - `hasActiveSource=false`
+  - `hasCapturedSource=false`
+  - `recoveredFromRecentPrompt=false`
+- suppression is OTEL-visible via `daemon.outbound:outbound.console_forward.suppressed_policy`
+- this guard only affects unsolicited background-origin console forwards; explicit channel replies and recovered recent-prompt replies still route normally
 
 ## Interrupt controls by channel
 
