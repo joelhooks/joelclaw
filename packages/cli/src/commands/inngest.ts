@@ -58,6 +58,480 @@ const decodeText = (value: string | Uint8Array | null | undefined): string => {
   return ""
 }
 
+const CONNECT_GATEWAY_SUBPROTOCOL = "v0.connect.inngest.com"
+const CONNECT_START_PATH = "/v0/connect/start"
+const CONNECT_AUTH_TIMEOUT_DEFAULT_MS = 8_000
+const CONNECT_AUTH_TIMEOUT_MAX_MS = 60_000
+
+const CONNECT_MESSAGE_KIND = {
+  GATEWAY_HELLO: 0,
+  WORKER_CONNECT: 1,
+  GATEWAY_CONNECTION_READY: 2,
+  SYNC_FAILED: 14,
+} as const
+
+const CONNECT_MESSAGE_KIND_NAMES: Record<number, string> = {
+  [CONNECT_MESSAGE_KIND.GATEWAY_HELLO]: "GATEWAY_HELLO",
+  [CONNECT_MESSAGE_KIND.WORKER_CONNECT]: "WORKER_CONNECT",
+  [CONNECT_MESSAGE_KIND.GATEWAY_CONNECTION_READY]: "GATEWAY_CONNECTION_READY",
+  [CONNECT_MESSAGE_KIND.SYNC_FAILED]: "SYNC_FAILED",
+}
+
+type ConnectStartResponse = {
+  connectionId: string
+  gatewayEndpoint: string
+  gatewayGroup: string
+  sessionToken: string
+  syncToken: string
+}
+
+type ConnectSessionTokenSummary = {
+  present: boolean
+  length: number
+  issuer: string | null
+  subject: string | null
+  audience: string[]
+  issuedAt: string | null
+  expiresAt: string | null
+}
+
+type ConnectSyncTokenSummary = {
+  present: boolean
+  length: number
+  format: "hex-64" | "unknown"
+}
+
+type ConnectMessage = {
+  kind: number
+  payload: Uint8Array
+}
+
+type ConnectWebsocketProbeResult = {
+  endpoint: string
+  subprotocol: string
+  negotiatedSubprotocol: string | null
+  helloKind: string
+  postAuthKind: string
+  authenticated: boolean
+}
+
+type ProtoVarint = {
+  value: bigint
+  nextOffset: number
+}
+
+function normalizeInngestBaseUrl(url: string): string {
+  return url.replace(/\/+$/u, "")
+}
+
+function decodeBase64Url(value: string): string {
+  const normalized = value.replace(/-/gu, "+").replace(/_/gu, "/")
+  const missingPadding = normalized.length % 4
+  const padded = missingPadding === 0
+    ? normalized
+    : `${normalized}${"=".repeat(4 - missingPadding)}`
+  return Buffer.from(padded, "base64").toString("utf8")
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  const [, rawPayload] = token.split(".")
+  if (!rawPayload) return null
+
+  try {
+    const parsed = JSON.parse(decodeBase64Url(rawPayload))
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+function parseJwtTimestamp(value: unknown): string | null {
+  const unixSeconds = typeof value === "number"
+    ? value
+    : typeof value === "string"
+      ? Number.parseInt(value, 10)
+      : Number.NaN
+
+  if (!Number.isFinite(unixSeconds) || unixSeconds <= 0) return null
+
+  try {
+    return new Date(unixSeconds * 1000).toISOString()
+  } catch {
+    return null
+  }
+}
+
+function summarizeConnectSessionToken(token: string): ConnectSessionTokenSummary {
+  const payload = decodeJwtPayload(token)
+
+  const audience = Array.isArray(payload?.aud)
+    ? payload.aud.filter((entry): entry is string => typeof entry === "string")
+    : typeof payload?.aud === "string"
+      ? [payload.aud]
+      : []
+
+  return {
+    present: token.length > 0,
+    length: token.length,
+    issuer: typeof payload?.iss === "string" ? payload.iss : null,
+    subject: typeof payload?.sub === "string" ? payload.sub : null,
+    audience,
+    issuedAt: parseJwtTimestamp(payload?.iat),
+    expiresAt: parseJwtTimestamp(payload?.exp),
+  }
+}
+
+function summarizeConnectSyncToken(token: string): ConnectSyncTokenSummary {
+  return {
+    present: token.length > 0,
+    length: token.length,
+    format: /^[0-9a-f]{64}$/iu.test(token) ? "hex-64" : "unknown",
+  }
+}
+
+function protoReadVarint(bytes: Uint8Array, offset: number): ProtoVarint {
+  let index = offset
+  let shift = 0n
+  let value = 0n
+
+  while (index < bytes.length) {
+    const byte = BigInt(bytes[index])
+    value |= (byte & 0x7fn) << shift
+    index += 1
+
+    if ((byte & 0x80n) === 0n) {
+      return { value, nextOffset: index }
+    }
+
+    shift += 7n
+    if (shift > 70n) {
+      throw new Error("Protobuf varint overflow")
+    }
+  }
+
+  throw new Error("Unexpected EOF while reading protobuf varint")
+}
+
+function protoToSafeNumber(value: bigint, label: string): number {
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`Invalid protobuf ${label}: ${value.toString()}`)
+  }
+  return parsed
+}
+
+function protoSkipField(bytes: Uint8Array, offset: number, wireType: number): number {
+  switch (wireType) {
+    case 0:
+      return protoReadVarint(bytes, offset).nextOffset
+    case 1: {
+      const next = offset + 8
+      if (next > bytes.length) throw new Error("Unexpected EOF while skipping fixed64 field")
+      return next
+    }
+    case 2: {
+      const { value: lengthRaw, nextOffset } = protoReadVarint(bytes, offset)
+      const length = protoToSafeNumber(lengthRaw, "length")
+      const end = nextOffset + length
+      if (end > bytes.length) throw new Error("Unexpected EOF while skipping length-delimited field")
+      return end
+    }
+    case 5: {
+      const next = offset + 4
+      if (next > bytes.length) throw new Error("Unexpected EOF while skipping fixed32 field")
+      return next
+    }
+    default:
+      throw new Error(`Unsupported protobuf wire type ${wireType}`)
+  }
+}
+
+function decodeConnectStartResponse(payload: Uint8Array): ConnectStartResponse {
+  let offset = 0
+  const parsed: Partial<ConnectStartResponse> = {}
+
+  while (offset < payload.length) {
+    const { value: keyRaw, nextOffset: keyOffset } = protoReadVarint(payload, offset)
+    offset = keyOffset
+
+    const fieldNumber = Number(keyRaw >> 3n)
+    const wireType = Number(keyRaw & 0x07n)
+
+    if (wireType !== 2) {
+      offset = protoSkipField(payload, offset, wireType)
+      continue
+    }
+
+    const { value: lengthRaw, nextOffset: valueOffset } = protoReadVarint(payload, offset)
+    const length = protoToSafeNumber(lengthRaw, `field ${fieldNumber} length`)
+    const end = valueOffset + length
+    if (end > payload.length) {
+      throw new Error(`Connect start payload truncated at field ${fieldNumber}`)
+    }
+
+    const value = decodeText(payload.subarray(valueOffset, end))
+    offset = end
+
+    if (fieldNumber === 1) parsed.connectionId = value
+    if (fieldNumber === 2) parsed.gatewayEndpoint = value
+    if (fieldNumber === 3) parsed.gatewayGroup = value
+    if (fieldNumber === 4) parsed.sessionToken = value
+    if (fieldNumber === 5) parsed.syncToken = value
+  }
+
+  if (!parsed.connectionId || !parsed.gatewayEndpoint || !parsed.sessionToken || !parsed.syncToken) {
+    throw new Error("Connect start payload missing required fields")
+  }
+
+  return {
+    connectionId: parsed.connectionId,
+    gatewayEndpoint: parsed.gatewayEndpoint,
+    gatewayGroup: parsed.gatewayGroup ?? "",
+    sessionToken: parsed.sessionToken,
+    syncToken: parsed.syncToken,
+  }
+}
+
+function encodeConnectStartResponseForTest(value: ConnectStartResponse): Uint8Array {
+  return protoConcat([
+    protoEncodeStringField(1, value.connectionId),
+    protoEncodeStringField(2, value.gatewayEndpoint),
+    protoEncodeStringField(3, value.gatewayGroup),
+    protoEncodeStringField(4, value.sessionToken),
+    protoEncodeStringField(5, value.syncToken),
+  ])
+}
+
+function protoEncodeVarint(value: number | bigint): Uint8Array {
+  let remaining = typeof value === "bigint" ? value : BigInt(value)
+  if (remaining < 0n) throw new Error("Cannot encode negative protobuf varint")
+
+  const out: number[] = []
+  while (remaining >= 0x80n) {
+    out.push(Number((remaining & 0x7fn) | 0x80n))
+    remaining >>= 7n
+  }
+  out.push(Number(remaining))
+
+  return Uint8Array.from(out)
+}
+
+function protoConcat(parts: Uint8Array[]): Uint8Array {
+  const length = parts.reduce((total, part) => total + part.length, 0)
+  const merged = new Uint8Array(length)
+  let offset = 0
+
+  for (const part of parts) {
+    merged.set(part, offset)
+    offset += part.length
+  }
+
+  return merged
+}
+
+function protoEncodeKey(fieldNumber: number, wireType: number): Uint8Array {
+  return protoEncodeVarint((BigInt(fieldNumber) << 3n) | BigInt(wireType))
+}
+
+function protoEncodeVarintField(fieldNumber: number, value: number | bigint): Uint8Array {
+  return protoConcat([protoEncodeKey(fieldNumber, 0), protoEncodeVarint(value)])
+}
+
+function protoEncodeBytesField(fieldNumber: number, value: Uint8Array): Uint8Array {
+  return protoConcat([protoEncodeKey(fieldNumber, 2), protoEncodeVarint(value.length), value])
+}
+
+function protoEncodeStringField(fieldNumber: number, value: string): Uint8Array {
+  return protoEncodeBytesField(fieldNumber, new TextEncoder().encode(value))
+}
+
+function encodeProtoTimestampField(timeMs: number): Uint8Array {
+  const seconds = Math.floor(timeMs / 1000)
+  const nanos = (timeMs % 1000) * 1_000_000
+
+  return protoConcat([
+    protoEncodeVarintField(1, seconds),
+    protoEncodeVarintField(2, nanos),
+  ])
+}
+
+function buildWorkerConnectPayload(start: ConnectStartResponse, instanceId: string): Uint8Array {
+  const authData = protoConcat([
+    protoEncodeStringField(1, start.sessionToken),
+    protoEncodeStringField(2, start.syncToken),
+  ])
+
+  return protoConcat([
+    protoEncodeStringField(1, start.connectionId),
+    protoEncodeStringField(2, instanceId),
+    protoEncodeBytesField(3, authData),
+    protoEncodeStringField(9, "joelclaw"),
+    protoEncodeStringField(11, "cli-connect-auth"),
+    protoEncodeStringField(12, "typescript"),
+    protoEncodeBytesField(13, encodeProtoTimestampField(Date.now())),
+  ])
+}
+
+function encodeConnectMessage(kind: number, payload: Uint8Array): Uint8Array {
+  return protoConcat([
+    protoEncodeVarintField(1, kind),
+    protoEncodeBytesField(2, payload),
+  ])
+}
+
+function decodeConnectMessage(payload: Uint8Array): ConnectMessage {
+  let offset = 0
+  let kind = CONNECT_MESSAGE_KIND.GATEWAY_HELLO
+  let messagePayload = new Uint8Array(0)
+
+  while (offset < payload.length) {
+    const { value: keyRaw, nextOffset } = protoReadVarint(payload, offset)
+    offset = nextOffset
+
+    const fieldNumber = Number(keyRaw >> 3n)
+    const wireType = Number(keyRaw & 0x07n)
+
+    if (fieldNumber === 1 && wireType === 0) {
+      const field = protoReadVarint(payload, offset)
+      kind = Number(field.value)
+      offset = field.nextOffset
+      continue
+    }
+
+    if (fieldNumber === 2 && wireType === 2) {
+      const { value: lengthRaw, nextOffset: dataOffset } = protoReadVarint(payload, offset)
+      const length = protoToSafeNumber(lengthRaw, "connect message payload length")
+      const end = dataOffset + length
+      if (end > payload.length) {
+        throw new Error("Connect message payload is truncated")
+      }
+      messagePayload = payload.subarray(dataOffset, end)
+      offset = end
+      continue
+    }
+
+    offset = protoSkipField(payload, offset, wireType)
+  }
+
+  return {
+    kind,
+    payload: messagePayload,
+  }
+}
+
+function connectMessageKindName(kind: number): string {
+  return CONNECT_MESSAGE_KIND_NAMES[kind] ?? `UNKNOWN(${kind})`
+}
+
+async function websocketDataToBytes(data: unknown): Promise<Uint8Array> {
+  if (data instanceof Uint8Array) return data
+  if (data instanceof ArrayBuffer) return new Uint8Array(data)
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+  }
+  if (typeof Blob !== "undefined" && data instanceof Blob) {
+    return new Uint8Array(await data.arrayBuffer())
+  }
+  if (typeof data === "string") {
+    return new TextEncoder().encode(data)
+  }
+
+  throw new Error("Unsupported websocket message payload type")
+}
+
+async function probeConnectGatewayWebsocket(
+  start: ConnectStartResponse,
+  options: { timeoutMs: number; instanceId: string },
+): Promise<ConnectWebsocketProbeResult> {
+  const websocket = new WebSocket(start.gatewayEndpoint, CONNECT_GATEWAY_SUBPROTOCOL)
+  websocket.binaryType = "arraybuffer"
+
+  return await new Promise<ConnectWebsocketProbeResult>((resolve, reject) => {
+    let settled = false
+    let stage: "await-hello" | "await-ready" = "await-hello"
+
+    const timer = setTimeout(() => {
+      fail(new Error("Timed out waiting for websocket auth handshake"))
+    }, options.timeoutMs)
+
+    const fail = (error: Error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try {
+        websocket.close()
+      } catch {}
+      reject(error)
+    }
+
+    const succeed = (result: ConnectWebsocketProbeResult) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try {
+        websocket.close(1000, "WORKER_SHUTDOWN")
+      } catch {}
+      resolve(result)
+    }
+
+    websocket.onerror = () => {
+      fail(new Error("Websocket transport error while probing Inngest connect gateway"))
+    }
+
+    websocket.onclose = (event) => {
+      if (settled) return
+      const reason = event.reason ? ` (${event.reason})` : ""
+      fail(new Error(`Websocket closed during auth probe: code ${event.code}${reason}`))
+    }
+
+    websocket.onmessage = async (event) => {
+      try {
+        const bytes = await websocketDataToBytes(event.data)
+        const message = decodeConnectMessage(bytes)
+
+        if (stage === "await-hello") {
+          if (message.kind !== CONNECT_MESSAGE_KIND.GATEWAY_HELLO) {
+            fail(new Error(
+              `Expected GATEWAY_HELLO, received ${connectMessageKindName(message.kind)}`
+            ))
+            return
+          }
+
+          stage = "await-ready"
+          const workerConnectPayload = buildWorkerConnectPayload(start, options.instanceId)
+          const workerConnectMessage = encodeConnectMessage(
+            CONNECT_MESSAGE_KIND.WORKER_CONNECT,
+            workerConnectPayload,
+          )
+          websocket.send(workerConnectMessage)
+          return
+        }
+
+        if (stage === "await-ready") {
+          if (message.kind !== CONNECT_MESSAGE_KIND.GATEWAY_CONNECTION_READY) {
+            fail(new Error(
+              `Expected GATEWAY_CONNECTION_READY, received ${connectMessageKindName(message.kind)}`
+            ))
+            return
+          }
+
+          succeed({
+            endpoint: start.gatewayEndpoint,
+            subprotocol: CONNECT_GATEWAY_SUBPROTOCOL,
+            negotiatedSubprotocol: websocket.protocol || null,
+            helloKind: connectMessageKindName(CONNECT_MESSAGE_KIND.GATEWAY_HELLO),
+            postAuthKind: connectMessageKindName(message.kind),
+            authenticated: true,
+          })
+        }
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error(String(error)))
+      }
+    }
+  })
+}
+
 type WorkerExpectedBinding = {
   program: string
   workingDirectory: string
@@ -1523,6 +1997,219 @@ const inngestStatusCmd = Command.make(
             }
           : null,
       }, buildInngestStatusNextActions(after, heal), ok))
+    })
+)
+
+const inngestConnectAuthCmd = Command.make(
+  "connect-auth",
+  {
+    timeoutMs: Options.integer("timeout-ms").pipe(
+      Options.withDefault(CONNECT_AUTH_TIMEOUT_DEFAULT_MS),
+      Options.withDescription(`Probe timeout in milliseconds (default: ${CONNECT_AUTH_TIMEOUT_DEFAULT_MS})`),
+    ),
+    startOnly: Options.boolean("start-only").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Only verify /v0/connect/start auth (skip websocket handshake)"),
+    ),
+    instanceId: Options.text("instance-id").pipe(
+      Options.withDefault("joelclaw-cli-probe"),
+      Options.withDescription("Instance ID to send in WORKER_CONNECT during websocket probe"),
+    ),
+    url: Options.text("url").pipe(
+      Options.withDefault(""),
+      Options.withDescription("Override Inngest API base URL (default: INNGEST_URL from config)"),
+    ),
+  },
+  ({ timeoutMs, startOnly, instanceId, url }) =>
+    Effect.gen(function* () {
+      const signingKey = cfg.signingKey.trim()
+      if (!signingKey) {
+        yield* Console.log(respondError(
+          "inngest connect-auth",
+          "INNGEST_SIGNING_KEY is not configured",
+          "INNGEST_SIGNING_KEY_MISSING",
+          "Set INNGEST_SIGNING_KEY in ~/.config/system-bus.env or environment and retry",
+          [
+            { command: "joelclaw inngest status", description: "Confirm Inngest server health" },
+            { command: "joelclaw status", description: "Check global system health" },
+          ],
+        ))
+        return
+      }
+
+      const resolvedBaseUrl = normalizeInngestBaseUrl((url.trim() || cfg.inngestUrl).trim())
+      if (!resolvedBaseUrl) {
+        yield* Console.log(respondError(
+          "inngest connect-auth",
+          "Inngest base URL is empty",
+          "INNGEST_URL_MISSING",
+          "Set INNGEST_URL or pass --url <base-url>",
+          [
+            { command: "joelclaw inngest status", description: "Check status with current config" },
+            { command: "joelclaw inngest connect-auth --url http://localhost:8288", description: "Probe explicit local Inngest endpoint" },
+          ],
+        ))
+        return
+      }
+
+      const safeTimeoutMs = Math.max(1_000, Math.min(CONNECT_AUTH_TIMEOUT_MAX_MS, Math.floor(timeoutMs)))
+      const probeInstanceId = instanceId.trim().length > 0 ? instanceId.trim() : "joelclaw-cli-probe"
+      const startUrl = `${resolvedBaseUrl}${CONNECT_START_PATH}`
+
+      const startHttp = yield* Effect.tryPromise({
+        try: () => fetch(startUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${signingKey}`,
+          },
+        }),
+        catch: (error) => new Error(
+          `Unable to reach connect start endpoint: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      }).pipe(Effect.either)
+
+      if (startHttp._tag === "Left") {
+        yield* Console.log(respondError(
+          "inngest connect-auth",
+          startHttp.left.message,
+          "CONNECT_START_UNREACHABLE",
+          "Verify Inngest API endpoint and network reachability, then retry",
+          [
+            { command: "joelclaw inngest status", description: "Check server and worker health" },
+            { command: `curl -i -X POST ${startUrl}`, description: "Confirm endpoint responds at all" },
+          ],
+        ))
+        return
+      }
+
+      const startResponse = startHttp.right
+      if (!startResponse.ok) {
+        const body = yield* Effect.tryPromise({
+          try: () => startResponse.text(),
+          catch: () => new Error("Unable to read connect start error body"),
+        }).pipe(Effect.orElseSucceed(() => ""))
+
+        const detail = body.trim().length > 0
+          ? body.trim().slice(0, 300)
+          : `HTTP ${startResponse.status}`
+
+        yield* Console.log(respondError(
+          "inngest connect-auth",
+          `Connect start auth failed: ${detail}`,
+          "CONNECT_START_AUTH_FAILED",
+          "Ensure INNGEST_SIGNING_KEY matches the active server signing key",
+          [
+            { command: "joelclaw inngest status", description: "Check Inngest server health before retry" },
+            { command: "joelclaw inngest connect-auth --start-only", description: "Retry only the /v0/connect/start auth step" },
+          ],
+        ))
+        return
+      }
+
+      const startPayload = yield* Effect.tryPromise({
+        try: async () => new Uint8Array(await startResponse.arrayBuffer()),
+        catch: (error) => new Error(
+          `Unable to read connect start payload: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      }).pipe(Effect.either)
+
+      if (startPayload._tag === "Left") {
+        yield* Console.log(respondError(
+          "inngest connect-auth",
+          startPayload.left.message,
+          "CONNECT_START_READ_FAILED",
+          "Retry the probe; if this repeats, inspect Inngest server logs",
+          [
+            { command: "joelclaw logs server --lines 80 --grep connect", description: "Inspect server connect logs" },
+            { command: "joelclaw inngest status", description: "Check service health" },
+          ],
+        ))
+        return
+      }
+
+      const parsedStart = yield* Effect.try({
+        try: () => decodeConnectStartResponse(startPayload.right),
+        catch: (error) => new Error(
+          `Unable to decode connect start protobuf payload: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      }).pipe(Effect.either)
+
+      if (parsedStart._tag === "Left") {
+        yield* Console.log(respondError(
+          "inngest connect-auth",
+          parsedStart.left.message,
+          "CONNECT_START_PARSE_FAILED",
+          "Server responded with an unexpected payload; verify Inngest version and endpoint",
+          [
+            { command: "joelclaw inngest status", description: "Check server version and health" },
+            { command: "joelclaw logs server --lines 80 --grep connect", description: "Inspect connect start server logs" },
+          ],
+        ))
+        return
+      }
+
+      const start = parsedStart.right
+      const startSummary = {
+        endpoint: startUrl,
+        status: startResponse.status,
+        connectionId: start.connectionId,
+        gatewayEndpoint: start.gatewayEndpoint,
+        gatewayGroup: start.gatewayGroup,
+        sessionToken: summarizeConnectSessionToken(start.sessionToken),
+        syncToken: summarizeConnectSyncToken(start.syncToken),
+      }
+
+      if (startOnly) {
+        yield* Console.log(respond("inngest connect-auth", {
+          mode: "start-only",
+          timeoutMs: safeTimeoutMs,
+          start: startSummary,
+          websocket: {
+            skipped: true,
+            reason: "start-only",
+          },
+        }, [
+          { command: "joelclaw inngest connect-auth", description: "Run full websocket auth handshake probe" },
+          { command: "joelclaw inngest status", description: "Check worker/server status" },
+        ], true))
+        return
+      }
+
+      const websocketProbe = yield* Effect.tryPromise({
+        try: () => probeConnectGatewayWebsocket(start, {
+          timeoutMs: safeTimeoutMs,
+          instanceId: probeInstanceId,
+        }),
+        catch: (error) => new Error(
+          `Connect websocket auth handshake failed: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      }).pipe(Effect.either)
+
+      if (websocketProbe._tag === "Left") {
+        yield* Console.log(respondError(
+          "inngest connect-auth",
+          websocketProbe.left.message,
+          "CONNECT_WS_AUTH_FAILED",
+          "Verify gateway endpoint reachability and connect auth token flow (/v0/connect/start -> WORKER_CONNECT)",
+          [
+            { command: "joelclaw inngest connect-auth --start-only", description: "Confirm start auth still works" },
+            { command: "joelclaw inngest status", description: "Check Inngest and worker health" },
+            { command: "joelclaw logs server --lines 120 --grep connect", description: "Inspect server logs for websocket auth failures" },
+          ],
+        ))
+        return
+      }
+
+      yield* Console.log(respond("inngest connect-auth", {
+        mode: "full",
+        timeoutMs: safeTimeoutMs,
+        start: startSummary,
+        websocket: websocketProbe.right,
+      }, [
+        { command: "joelclaw inngest status", description: "Check worker/server/k8s truth snapshot" },
+        { command: "joelclaw inngest workers", description: "Inspect worker role + duplicate-id diagnostics" },
+        { command: "joelclaw inngest connect-auth --start-only", description: "Probe only connect/start auth path" },
+      ], true))
     })
 )
 
@@ -3728,6 +4415,7 @@ export const inngestCmd = Command.make("inngest", {}, () =>
     description: "Inngest operational shortcuts",
     subcommands: {
       status: "joelclaw inngest status [--heal] [--wait-ms 1500]",
+      "connect-auth": "joelclaw inngest connect-auth [--start-only] [--timeout-ms 8000] [--instance-id joelclaw-cli-probe]",
       workers: "joelclaw inngest workers",
       source: "joelclaw inngest source [--repair]",
       invoke: "joelclaw inngest invoke <function-slug> [--mode auto|event|invoke] [--data '{}'] [--wait-ms 30000]",
@@ -3745,6 +4433,7 @@ export const inngestCmd = Command.make("inngest", {}, () =>
     },
   }, [
     { command: "joelclaw inngest status", description: "Check worker/server/k8s truth snapshot" },
+    { command: "joelclaw inngest connect-auth", description: "Probe /v0/connect/start + websocket auth handshake" },
     { command: "joelclaw inngest workers", description: "Worker role + duplicate-id diagnostics" },
     { command: "joelclaw inngest source", description: "Verify ADR-0089 single-source launchd binding" },
     { command: "joelclaw inngest invoke <function-slug> --data '{}'", description: "Invoke one function and wait for terminal status" },
@@ -3762,6 +4451,7 @@ export const inngestCmd = Command.make("inngest", {}, () =>
 ).pipe(
   Command.withSubcommands([
     inngestStatusCmd,
+    inngestConnectAuthCmd,
     inngestWorkersCmd,
     inngestSourceCmd,
     inngestInvokeCmd,
@@ -3784,4 +4474,9 @@ export const __inngestTestUtils = {
   parseSqliteJsonRows,
   runIdHexToUlid,
   mapSweepCandidates,
+  decodeConnectStartResponse,
+  encodeConnectStartResponseForTest,
+  encodeConnectMessage,
+  decodeConnectMessage,
+  connectMessageKindName,
 }

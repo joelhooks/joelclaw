@@ -78,6 +78,24 @@ Semantics:
 3. kickstart Talon + run `talon --check` when server/k8s checks fail
 4. re-collect status and return before/after snapshots
 
+## Inngest Connect WebSocket auth probe
+
+```bash
+joelclaw inngest connect-auth [--start-only] [--timeout-ms 8000] [--instance-id joelclaw-cli-probe] [--url http://localhost:8288]
+```
+
+Semantics:
+
+- uses `INNGEST_SIGNING_KEY` as Bearer auth against `/v0/connect/start`.
+- decodes the protobuf `StartResponse` (`connection_id`, `gateway_endpoint`, `gateway_group`, session/sync token presence).
+- full mode runs the websocket handshake on the returned gateway endpoint:
+  1. connects with subprotocol `v0.connect.inngest.com`
+  2. expects `GATEWAY_HELLO`
+  3. sends `WORKER_CONNECT` with `session_token` + `sync_token`
+  4. expects `GATEWAY_CONNECTION_READY`
+- output never includes raw tokens (metadata only: length/format/JWT timestamps).
+- `--start-only` validates HTTP auth path without websocket handshake.
+
 ## Command roots
 
 - `joelclaw status`

@@ -7,6 +7,11 @@ const {
   parseSqliteJsonRows,
   runIdHexToUlid,
   mapSweepCandidates,
+  decodeConnectStartResponse,
+  encodeConnectStartResponseForTest,
+  encodeConnectMessage,
+  decodeConnectMessage,
+  connectMessageKindName,
 } = __inngestTestUtils
 
 describe("inngest sweep-stale-runs helpers", () => {
@@ -71,5 +76,31 @@ describe("inngest sweep-stale-runs helpers", () => {
     expect(candidate?.hasFinish).toBe(false)
     expect(candidate?.hasTerminalHistory).toBe(true)
     expect(candidate?.startedAtIso).toMatch(/^2026-03-02T/) // deterministic enough for fixture
+  })
+})
+
+describe("inngest connect-auth protobuf helpers", () => {
+  test("decodeConnectStartResponse round-trips encoded fixture", () => {
+    const fixture = {
+      connectionId: "01KJS3DYBNS2FHXFC02KXNZFE3",
+      gatewayEndpoint: "ws://localhost:8289/v0/connect",
+      gatewayGroup: "gw-dev",
+      sessionToken: "eyJ.test.session",
+      syncToken: "d51bc9e432e7b6f694a4b496b2b3f7595db1e0852d031887cfb19ebcd0d139b5",
+    }
+
+    const encoded = encodeConnectStartResponseForTest(fixture)
+    expect(decodeConnectStartResponse(encoded)).toEqual(fixture)
+  })
+
+  test("connect message encode/decode preserves kind and payload", () => {
+    const payload = new Uint8Array([1, 2, 3, 4])
+    const encoded = encodeConnectMessage(2, payload)
+    const decoded = decodeConnectMessage(encoded)
+
+    expect(decoded.kind).toBe(2)
+    expect([...decoded.payload]).toEqual([1, 2, 3, 4])
+    expect(connectMessageKindName(decoded.kind)).toBe("GATEWAY_CONNECTION_READY")
+    expect(connectMessageKindName(999)).toBe("UNKNOWN(999)")
   })
 })
