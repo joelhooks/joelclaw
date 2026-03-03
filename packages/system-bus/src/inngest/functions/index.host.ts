@@ -88,6 +88,7 @@ import { telegramCallbackReceived } from "./telegram-callback";
 import { telnyxNotify } from "./telnyx-notify";
 import { transcriptIndexWeb } from "./transcript-index-web";
 import { transcriptProcess } from "./transcript-process";
+import { knowledgeWatchdog } from "./knowledge-watchdog";
 import {
   typesenseBlogSync,
   typesenseFullSync,
@@ -199,6 +200,7 @@ export const hostFunctionDefinitions = [
   typesenseVaultSync,
   typesenseBlogSync,
   typesenseFullSync,
+  knowledgeWatchdog,
   nasSoakSample,
   nasSoakReview,
   backupTypesense,
