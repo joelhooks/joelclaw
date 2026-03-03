@@ -84,16 +84,20 @@ function parseFrontmatter(content: string, adrNumber: string): AdrFrontmatter | 
 }
 
 async function updatePitchHistoryResponse(
-  adrNumber: string,
+  adrNumber: string | number,
   response: "approved" | "rejected",
 ): Promise<boolean> {
   const redis = getRedis();
   const historyRaw = await redis.get(PITCH_HISTORY_KEY);
   const history: PitchRecord[] = historyRaw ? (JSON.parse(historyRaw) as PitchRecord[]) : [];
 
+  // Normalize: "0186", "186", 186 all match "0186"
+  const needle = String(adrNumber).padStart(4, "0");
+
   for (let i = history.length - 1; i >= 0; i--) {
     const entry = history[i];
-    if (entry && entry.adr_number === adrNumber && entry.response === "pending") {
+    const entryNorm = String(entry?.adr_number ?? "").padStart(4, "0");
+    if (entry && entryNorm === needle && entry.response === "pending") {
       entry.response = response;
       await redis.set(PITCH_HISTORY_KEY, JSON.stringify(history));
       return true;
@@ -287,12 +291,14 @@ export const adrPitchApproved = inngest.createFunction(
   },
   { event: "adr/pitch.approved" },
   async ({ event }) => {
-    const adr_number = event.data.adr_number;
+    const adr_number = event.data.adr_number as string | number;
+    console.log(`[adr-pitch-approved] received: adr_number=${adr_number} (type=${typeof adr_number})`);
     const updated = await updatePitchHistoryResponse(adr_number, "approved");
+    console.log(`[adr-pitch-approved] redis updated=${updated}`);
 
     return {
       updated,
-      adr_number,
+      adr_number: String(adr_number).padStart(4, "0"),
     };
   },
 );
@@ -305,12 +311,14 @@ export const adrPitchRejected = inngest.createFunction(
   },
   { event: "adr/pitch.rejected" },
   async ({ event }) => {
-    const adr_number = event.data.adr_number;
+    const adr_number = event.data.adr_number as string | number;
+    console.log(`[adr-pitch-rejected] received: adr_number=${adr_number} (type=${typeof adr_number})`);
     const updated = await updatePitchHistoryResponse(adr_number, "rejected");
+    console.log(`[adr-pitch-rejected] redis updated=${updated}`);
 
     return {
       updated,
-      adr_number,
+      adr_number: String(adr_number).padStart(4, "0"),
     };
   },
 );
