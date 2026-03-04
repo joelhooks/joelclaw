@@ -167,12 +167,52 @@ async function readPreview(path: string): Promise<string> {
   }
 }
 
+/** ADR-0204: Typesense fallback for semantic vault search when filename matching fails. */
+async function searchKnowledgeTypesense(query: string, limit = 3): Promise<string[]> {
+  const { spawnSync } = await import("node:child_process");
+  try {
+    const result = spawnSync(
+      "joelclaw",
+      ["knowledge", "search", query, "--limit", String(limit), "--json"],
+      { encoding: "utf-8", timeout: 5_000, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    if (result.status !== 0) return [];
+    const parsed = JSON.parse(result.stdout?.trim() || "{}") as Record<string, unknown>;
+    const res = parsed.result as Record<string, unknown> | undefined;
+    const hits = Array.isArray(res?.hits) ? res.hits : [];
+    if (hits.length === 0) return [];
+
+    return hits.slice(0, limit).map((hit) => {
+      const h = hit as Record<string, unknown>;
+      const type = typeof h.type === "string" ? h.type : "doc";
+      const title = typeof h.title === "string" ? h.title.trim() : "";
+      const snippet = typeof h.snippet === "string" ? h.snippet.trim().slice(0, 500) : "";
+      return `[${type}] **${title}**\n${snippet}`;
+    });
+  } catch {
+    return [];
+  }
+}
+
 export async function enrichPromptWithVaultContext(prompt: string): Promise<string> {
   const intent = extractVaultIntent(prompt);
   if (!intent) return prompt;
 
   const matches = await findMatches(intent);
   if (matches.length === 0) {
+    // ADR-0204: fall back to Typesense semantic search before giving up
+    const knowledgeHits = await searchKnowledgeTypesense(intent.value);
+    if (knowledgeHits.length > 0) {
+      return [
+        prompt,
+        "",
+        "[Vault Resolver — Semantic Search]",
+        `No exact file match for "${intent.value}", but found relevant knowledge:`,
+        "",
+        ...knowledgeHits,
+      ].join("\n");
+    }
+
     return [
       prompt,
       "",
