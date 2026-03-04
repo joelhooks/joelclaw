@@ -959,7 +959,85 @@ export default function (pi: ExtensionAPI) {
     }
   }, 60_000); // Check every minute, refresh every 30
 
+  // ── ADR-0209 V3: Thread fade lifecycle ──────────────────────────
+  const THREAD_SNAPSHOT_PATH = join(process.env.HOME || "/Users/joel", ".joelclaw", "state", "thread-snapshot.json");
+
+  /** Read thread snapshot from disk (daemon writes it) */
+  function readThreadSnapshot(): Array<{
+    id: string;
+    label: string;
+    lastTouchedAt: number;
+    lastSummary: string;
+    messageCount: number;
+    lifecycle: string;
+    createdAt: number;
+  }> | null {
+    try {
+      const data = JSON.parse(readFileSync(THREAD_SNAPSHOT_PATH, "utf-8")) as {
+        threads?: Array<{
+          id: string; label: string; lastTouchedAt: number;
+          lastSummary: string; messageCount: number;
+          lifecycle: string; createdAt: number;
+        }>;
+      };
+      return data.threads ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** ADR-0209 V3: Archive old threads to memory observations */
+  let lastFadeCycleTs = 0;
+  const FADE_CYCLE_INTERVAL_MS = 5 * 60_000; // every 5 min
+
+  function runFadeCycle(): void {
+    const now = Date.now();
+    if (now - lastFadeCycleTs < FADE_CYCLE_INTERVAL_MS) return;
+    lastFadeCycleTs = now;
+
+    const snapshot = readThreadSnapshot();
+    if (!snapshot || snapshot.length === 0) return;
+
+    // Find threads that should be archived (>72h old)
+    const COOL_THRESHOLD_MS = 72 * 60 * 60 * 1000;
+    const newlyArchived = snapshot.filter(
+      (t) => t.lifecycle !== "archived" && (now - t.lastTouchedAt) > COOL_THRESHOLD_MS,
+    );
+
+    for (const t of newlyArchived) {
+      const durationMins = Math.round((t.lastTouchedAt - t.createdAt) / 60000);
+      const observation = `Gateway thread archived: "${t.label}" — ${t.messageCount} messages over ${durationMins}min. ${t.lastSummary || "(no summary)"}`;
+      const child = spawn("joelclaw", [
+        "memory", "write", observation,
+        "--category", "ops",
+        "--tags", "adr-0209,thread-archived," + t.label,
+      ], { stdio: "ignore", detached: true });
+      child.unref();
+
+      emitGatewayOtel({
+        level: "info",
+        component: "thread-tracker",
+        action: "thread.archived",
+        success: true,
+        metadata: {
+          threadId: t.id,
+          label: t.label,
+          messageCount: t.messageCount,
+          durationMins,
+        },
+      });
+    }
+  }
+
+  // ADR-0209 V4: Per-turn thread index injection is handled at the daemon level
+  // in enqueueToGateway() — it injects formatThreadIndexForPrompt() + current
+  // threadId directly into the prompt text. No extension-level injection needed
+  // (would duplicate and accumulate in context).
+
   pi.on("turn_end", async (_event, _ctx) => {
+    // ADR-0209 V3: Run fade cycle on every turn (debounced to 5min)
+    try { runFadeCycle(); } catch {}
+
     try {
       ctx = _ctx;
       const usage = _ctx.getContextUsage();

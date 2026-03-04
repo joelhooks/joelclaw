@@ -1867,8 +1867,22 @@ const enqueueToGateway = async (source: string, prompt: string, metadata?: Recor
     source,
     threadName: typeof metadata?.discordThreadName === "string" ? metadata.discordThreadName : undefined,
   });
-  const withThreadContext = threadIndex
-    ? `${withChannelContext}\n\n${threadIndex}\n\n[You are responding to thread: ${threadCtx.threadId}]`
+  // ADR-0209 V4: Budget-efficient thread injection
+  // Active thread: full context (label + summary + messages)
+  // Other threads: abbreviated (label + age)
+  // Current thread tag: tells model which thread to continue
+  let threadTag = "";
+  if (threadCtx.threadId) {
+    const allThreads = getActiveThreads();
+    const current = allThreads.find((t) => t.id === threadCtx.threadId);
+    if (current) {
+      threadTag = `[Thread: "${current.label}"${current.lastSummary ? ` — ${current.lastSummary}` : ""} | ${current.messageCount} msgs]`;
+    } else {
+      threadTag = `[Thread: ${threadCtx.threadId}]`;
+    }
+  }
+  const withThreadContext = threadIndex || threadTag
+    ? `${withChannelContext}${threadIndex ? `\n\n${threadIndex}` : ""}${threadTag ? `\n\n${threadTag}` : ""}`
     : withChannelContext;
 
   await enqueue(source, withThreadContext, metadata, {
