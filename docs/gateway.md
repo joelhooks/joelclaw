@@ -46,8 +46,6 @@ If either derivation fails, startup logs explicit warnings in `/tmp/joelclaw/gat
 
 Slack channel-name resolution now classifies `channel_not_found` as a permanent resolve error and applies long cooldown (`slack.channel.resolve_unavailable`) instead of spamming transient `resolve_failed` warnings.
 
-Slack Socket Mode ping timeout is tuned to 20s (`clientPingTimeout`) in the gateway Slack adapter to reduce false disconnect churn on transient network jitter.
-
 Restart race hardening: daemon shutdown now removes PID/WS/session files only when the file still belongs to that process. This prevents old-process cleanup from deleting newly written marker files during fast restarts.
 
 Gateway process diagnostics now use exact launchd state inspection (`launchctl print-disabled` + `launchctl print gui/<uid>/com.joel.gateway`) so disabled launch agents are reported explicitly. `joelclaw gateway restart` now re-enables `com.joel.gateway` before bootstrap/kickstart, so a disabled service can recover via the normal restart command.
