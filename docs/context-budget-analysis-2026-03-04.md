@@ -185,11 +185,37 @@ is identical. Or remove the git/ one. Only need one.
 It's already in AGENTS.md. The extension duplication adds ~160 tokens and
 confusing near-duplicate instructions.
 
-### 5. MEDIUM-TERM: Implement ADR-0165 taxonomy-based skill retrieval
+### 5. MEDIUM-TERM: Dynamic skill retrieval — assessment
 
-Replace static `<available_skills>` injection with Typesense-backed retrieval.
-Only inject 5-10 relevant skills per turn based on the user's message, not all 141.
-This would reduce the skills block from ~21K tokens to ~1-2K tokens.
+**ADR-0165 proposed** replacing static `<available_skills>` with Typesense-backed
+per-turn retrieval. After reviewing pi's architecture, this is **compatible with
+pi's design** but NOT how pi is designed to work natively.
+
+**Pi's design philosophy** (from pi docs):
+> "This is progressive disclosure: only descriptions are always in context, full
+> instructions load on-demand."
+
+Pi's model: list ALL skill descriptions in the prompt → agent uses `read` to load
+the full SKILL.md when needed. The descriptions ARE the retrieval index — the LLM
+does the matching. This is intentional: it's reliable, deterministic, and the model
+can cross-reference multiple skill descriptions before choosing.
+
+**Why we shouldn't fight this:**
+- Pi rebuilds the system prompt via `buildSystemPrompt()` which takes `skills` array
+  and calls `formatSkillsForPrompt()`. There's no hook to intercept/filter per-turn.
+- `before_agent_start` can replace the systemPrompt, but you'd have to rebuild the
+  ENTIRE prompt including tool descriptions, context files, everything — fragile.
+- The `disable-model-invocation` frontmatter field IS pi's blessed mechanism for
+  hiding skills from the prompt. This is the correct lever.
+
+**Correct approach (working WITH pi):**
+1. Use `disable-model-invocation: true` for specialist-only skills (**this session**)
+2. Use specialist sub-agents that load domain skills explicitly
+3. If we still have too many skills in the main prompt, prune further — not filter dynamically
+
+**If we ever outgrow this:** Pi's `skills` setting accepts paths. We could write
+a pre-session script that symlinks only relevant skills based on the working directory
+or project context. Static, deterministic, no per-turn overhead.
 
 ### 6. MEDIUM-TERM: Optimize identity file injection
 
