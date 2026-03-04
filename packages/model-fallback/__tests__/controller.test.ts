@@ -64,7 +64,6 @@ describe("ModelFallbackController", () => {
 
   test("activates fallback on prompt timeout (mock timers)", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
     const { session, setModel, currentModel } = createSession();
     const fallbackController = new ModelFallbackController(
@@ -87,7 +86,6 @@ describe("ModelFallbackController", () => {
 
   test("cancelTimeoutWatch stops pending timeout activation", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
     const { session, setModel, currentModel } = createSession();
     const fallbackController = new ModelFallbackController(
@@ -110,7 +108,6 @@ describe("ModelFallbackController", () => {
 
   test("onPromptDispatched is idempotent and restarts timeout from latest dispatch", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
     const { session, setModel, currentModel } = createSession();
     const fallbackController = new ModelFallbackController(
@@ -244,7 +241,6 @@ describe("ModelFallbackController", () => {
       },
     };
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
 
     const { session, currentModel } = createSession();
     const fallbackController = new ModelFallbackController(
