@@ -33,7 +33,8 @@ const GRANOLA_RANGES = (process.env.JOELCLAW_VIP_GRANOLA_RANGES ?? "year")
   .split(",")
   .map((range) => range.trim())
   .filter(Boolean);
-const AUTO_ARCHIVE_NEWSLETTER_SENDERS = new Set(["alex@indyhall.org"]);
+// WARNING: Think twice before adding real collaborators here. This auto-archives without review.
+const AUTO_ARCHIVE_NEWSLETTER_SENDERS = new Set([]);
 
 const VIP_SYSTEM_PROMPT = `You are a relationship intelligence analyst for Joel Hooks.
 
