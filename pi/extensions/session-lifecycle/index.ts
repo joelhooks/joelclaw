@@ -615,80 +615,59 @@ async function collectAgentMailSteeringSnapshot(promptTemplate: string): Promise
   };
 }
 
-// ── Compaction Recovery: Signal Extraction (ADR-0203) ───────────
+// ── Compaction Recovery: Typesense Recall (ADR-0203) ────────────
 //
-// Regex-based extraction of high-signal patterns from assistant messages.
-// Conservative patterns — matches are genuine signal. The async Inngest
-// observe pipeline handles deeper semantic extraction on the full transcript.
+// Uses joelclaw recall (Typesense hybrid search: keyword + vector) to
+// find relevant memories for the current task. Local Typesense is fast
+// (~370ms with lean budget), so we run recall queries asynchronously
+// during the warm/hot zones and cache results for post-compaction injection.
+//
+// No regex extraction — the async Inngest observe pipeline handles
+// semantic extraction from session transcripts via LLM. This pipeline
+// focuses on RETRIEVAL of existing knowledge, not extraction of new signal.
 
-/** Decision/correction markers — 🔴 high priority */
-const DECISION_SIGNAL_PATTERNS: RegExp[] = [
-  /(?:decided to|going with|chose|choosing)\s+(.{10,200})/i,
-  /(?:the (?:fix|issue|bug|problem|root cause) was)\s+(.{10,200})/i,
-  /(?:turns out|it turns out)\s+(.{10,200})/i,
-  /(?:the correct (?:type|approach|pattern|way) is)\s+(.{5,200})/i,
-  /(?:not .{2,40}(?:—|--) use)\s+(.{5,150})/i,
-  /(?:switched to|replaced .{2,40} with)\s+(.{10,150})/i,
-];
+interface RecallHit {
+  observation: string;
+  score: number;
+  categoryId: string;
+}
 
-/** Failure markers — 🔴 high priority */
-const FAILURE_SIGNAL_PATTERNS: RegExp[] = [
-  /(?:doesn't work because|won't (?:work|load|compile|build) because)\s+(.{10,200})/i,
-  /(?:type error|wrong type)[:.]?\s+(.{10,200})/i,
-  /(?:broke because|failed because|crashed because)\s+(.{10,200})/i,
-  /(?:can't|cannot|couldn't) (?:find|resolve|import|load|build)\s+(.{10,200})/i,
-];
+interface RecallResult {
+  query: string;
+  hits: RecallHit[];
+  found: number;
+}
 
-function matchSignalPatterns(text: string, patterns: RegExp[], max = 3): string[] {
-  const results: string[] = [];
-  for (const pattern of patterns) {
-    if (results.length >= max) break;
-    const match = text.match(pattern);
-    if (match?.[1]) {
-      const trimmed = match[1].replace(/\n.*/s, "").trim();
-      if (trimmed.length >= 10) results.push(trimmed.slice(0, 200));
+/** Run a recall query via joelclaw CLI. Uses lean budget for speed (~370ms). */
+async function runRecall(query: string, limit = 3): Promise<RecallResult | null> {
+  if (!query || query.length < 5) return null;
+  const result = await runJoelclawJsonCommand(
+    ["recall", query, "--limit", String(limit), "--budget", "lean"],
+    5000, // tighter timeout for hot-path recall
+  );
+  if (!result.ok) return null;
+  const data = asRecord(result.envelope.result);
+  if (!data) return null;
+  const rawHits = Array.isArray(data.hits) ? data.hits : [];
+  const hits: RecallHit[] = [];
+  for (const h of rawHits) {
+    const rec = asRecord(h);
+    if (!rec) continue;
+    const obs = asString(rec.observation);
+    const score = asNumber(rec.score);
+    if (obs && obs.length > 0 && score !== null) {
+      hits.push({
+        observation: obs,
+        score,
+        categoryId: asString(rec.categoryId) ?? "unknown",
+      });
     }
   }
-  return results;
-}
-
-function extractDecisionSignals(text: string): string[] {
-  return matchSignalPatterns(text, DECISION_SIGNAL_PATTERNS);
-}
-
-function extractFailureSignals(text: string): string[] {
-  return matchSignalPatterns(text, FAILURE_SIGNAL_PATTERNS);
-}
-
-/** Derive 2-3 recall queries from task description and recent decisions. */
-function deriveRecallQueries(task: string, decisions: string[]): string[] {
-  const queries: string[] = [];
-  if (task.length > 10) {
-    const t = task.slice(0, 100).replace(/[^\w\s.-]/g, " ").replace(/\s+/g, " ").trim();
-    if (t.length > 5) queries.push(t);
-  }
-  if (decisions.length > 0) {
-    const d = decisions[decisions.length - 1].slice(0, 80).replace(/[^\w\s.-]/g, " ").replace(/\s+/g, " ").trim();
-    if (d.length > 5 && !queries.includes(d)) queries.push(d);
-  }
-  if (task.length > 10 && decisions.length > 1) {
-    const c = `${task.slice(0, 50)} ${decisions[0].slice(0, 50)}`.replace(/[^\w\s.-]/g, " ").replace(/\s+/g, " ").trim();
-    if (c.length > 10 && !queries.includes(c)) queries.push(c);
-  }
-  return queries.slice(0, 3);
-}
-
-/** Extract text content from an AgentMessage (handles content block arrays). */
-function extractAssistantText(message: unknown): string {
-  if (!message || typeof message !== "object") return "";
-  const msg = message as Record<string, unknown>;
-  if (!msg.content) return "";
-  if (typeof msg.content === "string") return msg.content;
-  if (!Array.isArray(msg.content)) return "";
-  return (msg.content as Array<Record<string, unknown>>)
-    .filter((b) => b.type === "text" && typeof b.text === "string")
-    .map((b) => b.text as string)
-    .join("\n");
+  return {
+    query: asString(data.query) ?? query,
+    hits,
+    found: asNumber(data.found) ?? 0,
+  };
 }
 
 // ── Compaction Recovery: CLI Helpers (ADR-0203) ─────────────────
@@ -726,11 +705,10 @@ function writeMemoryObs(observation: string, extraTags: string[]): void {
 interface TaskCheckpoint {
   currentTask: string;           // last 3 user msgs joined, ≤500 chars
   filesModified: string[];       // most recent 10
-  decisions: string[];           // max 10
-  failures: string[];            // max 5
+  recallHits: string[];          // actual observations from Typesense
+  recallQueries: string[];       // validated queries that returned results
   compactionCount: number;
   contextPercentAtCapture: number;
-  recallQueries: string[];       // 2-3 suggested queries
 }
 
 // ── Static system prompt awareness (same every turn → cacheable) ──
@@ -781,40 +759,73 @@ export default function (pi: ExtensionAPI) {
   let compactionCount = 0;
   let recentUserMessages: string[] = [];
   let trackedFilesModified = new Set<string>();
-  let extractedDecisions: string[] = [];
-  let extractedFailures: string[] = [];
   let warmZoneEntered = false;
   let hotZoneEntered = false;
-  let writtenObservations = new Set<string>();
+  // Recall cache: validated queries + hits from Typesense
+  let recallCache: RecallResult[] = [];
+  let lastRecallTaskHash = "";
+  let recallInFlight = false;
+  let taskContextWritten = false;
 
-  /** Build checkpoint from in-memory state and return it. */
+  /** Build checkpoint from in-memory state (recall cache + tracked files). */
   function buildCheckpoint(contextPercent: number): TaskCheckpoint {
     const task = recentUserMessages.slice(-3).join(" → ").slice(0, 500);
+
+    // Collect validated recall hits and queries from cache
+    const recallHits: string[] = [];
+    const recallQueries: string[] = [];
+    for (const r of recallCache) {
+      if (!recallQueries.includes(r.query)) recallQueries.push(r.query);
+      for (const h of r.hits) {
+        if (!recallHits.includes(h.observation)) recallHits.push(h.observation);
+      }
+    }
+
+    // Fallback: derive a simple query from task if recall cache is empty
+    if (recallQueries.length === 0 && task.length > 10) {
+      const fallback = task.slice(0, 100).replace(/[^\w\s.-]/g, " ").replace(/\s+/g, " ").trim();
+      if (fallback.length > 5) recallQueries.push(fallback);
+    }
+
     return {
       currentTask: task,
       filesModified: [...trackedFilesModified].slice(-10),
-      decisions: extractedDecisions.slice(-10),
-      failures: extractedFailures.slice(-5),
+      recallHits: recallHits.slice(0, 5),
+      recallQueries: recallQueries.slice(0, 3),
       compactionCount,
       contextPercentAtCapture: contextPercent,
-      recallQueries: deriveRecallQueries(task, extractedDecisions),
     };
   }
 
-  /** Flush new observations to durable memory via joelclaw CLI. */
-  function flushObservationsToMemory(): void {
-    for (const d of extractedDecisions) {
-      if (!writtenObservations.has(d)) {
-        writtenObservations.add(d);
-        writeMemoryObs(d, ["decision"]);
+  /** Kick off an async recall query against Typesense. Results cached for pointer injection. */
+  function triggerRecall(): void {
+    const taskHash = recentUserMessages.join("|").slice(0, 200);
+    if (taskHash === lastRecallTaskHash || recallInFlight || recentUserMessages.length === 0) return;
+
+    recallInFlight = true;
+    lastRecallTaskHash = taskHash;
+    const query = recentUserMessages.slice(-2).join(" ").slice(0, 120);
+
+    runRecall(query, 5).then((result) => {
+      recallInFlight = false;
+      if (result && result.hits.length > 0) {
+        recallCache.push(result);
+        if (recallCache.length > 3) recallCache.shift();
       }
-    }
-    for (const f of extractedFailures) {
-      if (!writtenObservations.has(f)) {
-        writtenObservations.add(f);
-        writeMemoryObs(f, ["failure"]);
-      }
-    }
+    }).catch(() => { recallInFlight = false; });
+  }
+
+  /** Write task context to durable memory so future sessions can find it. */
+  function writeTaskContextToMemory(): void {
+    if (taskContextWritten) return;
+    const parts: string[] = [];
+    const task = recentUserMessages.slice(-3).join(" → ").slice(0, 200);
+    if (task.length > 10) parts.push(`Task: ${task}`);
+    const files = [...trackedFilesModified].slice(-5);
+    if (files.length > 0) parts.push(`Files: ${files.join(", ")}`);
+    if (parts.length === 0) return;
+    taskContextWritten = true;
+    writeMemoryObs(parts.join(". "), ["session-task"]);
   }
 
   async function ensureDailySteeringSnapshot(): Promise<AgentMailSteeringSnapshot | null> {
@@ -953,11 +964,12 @@ export default function (pi: ExtensionAPI) {
     compactionCount = 0;
     recentUserMessages = [];
     trackedFilesModified = new Set();
-    extractedDecisions = [];
-    extractedFailures = [];
     warmZoneEntered = false;
     hotZoneEntered = false;
-    writtenObservations = new Set();
+    recallCache = [];
+    lastRecallTaskHash = "";
+    recallInFlight = false;
+    taskContextWritten = false;
   });
 
   // ── before_agent_start: briefing + awareness ────────────────
@@ -1088,44 +1100,32 @@ export default function (pi: ExtensionAPI) {
 
   // ── turn_end: compaction recovery extraction + checkpoint (ADR-0203) ──
 
-  pi.on("turn_end", async (event, ctx) => {
+  pi.on("turn_end", async (_event, ctx) => {
     try {
       const usage = ctx.getContextUsage();
       if (!usage?.percent) return;
       const pct = usage.percent;
 
-      // Stage 1: Warm zone (40%+) — start extracting signals from assistant messages
+      // Stage 1: Warm zone (40%+) — query Typesense for relevant memories
       if (pct >= 40) {
         if (!warmZoneEntered) {
           warmZoneEntered = true;
           emitOtel("compaction.extract.warm", { percent: pct });
         }
-
-        const text = extractAssistantText(event.message);
-        if (text.length > 20) {
-          const decisions = extractDecisionSignals(text);
-          const failures = extractFailureSignals(text);
-          for (const d of decisions) {
-            extractedDecisions.push(d);
-            if (extractedDecisions.length > 10) extractedDecisions.shift();
-          }
-          for (const f of failures) {
-            extractedFailures.push(f);
-            if (extractedFailures.length > 5) extractedFailures.shift();
-          }
-        }
+        // Fire async recall against Typesense (lean budget, ~370ms)
+        triggerRecall();
       }
 
-      // Stage 2: Hot zone (60%+) — flush checkpoint + memory writes
+      // Stage 2: Hot zone (60%+) — write task context to memory, re-query if stale
       if (pct >= 60) {
         if (!hotZoneEntered) {
           hotZoneEntered = true;
         }
-        flushObservationsToMemory();
+        writeTaskContextToMemory();
+        triggerRecall(); // re-query if user messages changed since last recall
         emitOtel("compaction.extract.hot", {
           percent: pct,
-          decisionsCount: extractedDecisions.length,
-          failuresCount: extractedFailures.length,
+          recallHits: recallCache.reduce((n, r) => n + r.hits.length, 0),
           filesCount: trackedFilesModified.size,
         });
       }
@@ -1137,14 +1137,14 @@ export default function (pi: ExtensionAPI) {
   // ── session_before_compact: flush to daily log ──────────────
 
   pi.on("session_before_compact", async (event, ctx) => {
-    // ADR-0203: final observation flush before compaction
+    // ADR-0203: final task context write + OTEL checkpoint
     try {
       const usage = ctx.getContextUsage();
-      flushObservationsToMemory();
+      writeTaskContextToMemory();
       emitOtel("compaction.checkpoint", {
         contextPercent: usage?.percent ?? null,
-        decisionsCount: extractedDecisions.length,
-        failuresCount: extractedFailures.length,
+        recallCacheSize: recallCache.length,
+        recallHits: recallCache.reduce((n, r) => n + r.hits.length, 0),
         filesCount: trackedFilesModified.size,
       });
     } catch {
@@ -1221,7 +1221,7 @@ export default function (pi: ExtensionAPI) {
     try {
       const checkpoint = buildCheckpoint(0); // percent irrelevant post-compaction
 
-      // Build pointer message — ~100 tokens, signposts not content dumps
+      // Build pointer message — signposts + real memories from Typesense
       const lines: string[] = ["## Session Recovery"];
 
       if (checkpoint.currentTask) {
@@ -1230,17 +1230,17 @@ export default function (pi: ExtensionAPI) {
       if (checkpoint.filesModified.length > 0) {
         lines.push(`**Modified:** ${checkpoint.filesModified.slice(0, 5).join(", ")}`);
       }
-      if (checkpoint.decisions.length > 0) {
-        lines.push(`**Key decisions:**\n${checkpoint.decisions.slice(0, 3).map((d) => `- ${d}`).join("\n")}`);
+      if (checkpoint.recallHits.length > 0) {
+        const hitLines = checkpoint.recallHits.slice(0, 3).map((h) => `- ${h.slice(0, 150)}`);
+        lines.push(`**Related memories:**\n${hitLines.join("\n")}`);
       }
       if (checkpoint.recallQueries.length > 0) {
         const qs = checkpoint.recallQueries.map((q) => `\`recall "${q}"\``).join(" or ");
-        lines.push(`**If you need more context:** ${qs}`);
+        lines.push(`**Deeper context:** ${qs}`);
       }
 
       const content = lines.join("\n");
 
-      // Inject as hidden message — passive context, no trigger
       pi.sendMessage(
         { customType: "compaction-recovery", content, display: false },
       );
@@ -1248,7 +1248,7 @@ export default function (pi: ExtensionAPI) {
       emitOtel("compaction.inject", {
         compactionCount,
         filesCount: checkpoint.filesModified.length,
-        decisionsCount: checkpoint.decisions.length,
+        recallHitsCount: checkpoint.recallHits.length,
         queriesCount: checkpoint.recallQueries.length,
       });
 
