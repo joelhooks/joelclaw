@@ -1,0 +1,22 @@
+{
+  "title": "Knowledge Write Proof Loop",
+  "description": "Controlled loop to prove lesson/pattern/failed_target write paths end-to-end.",
+  "stories": [
+    {
+      "id": "intentional-failure-story",
+      "title": "Intentional failure to exercise failed_target tracking",
+      "description": "Create a change that both modifies and does not modify the same file in one commit while keeping git clean and with zero diffs. This story is intentionally contradictory and should fail review/judge so retro can capture failure.",
+      "acceptance": "All contradictory constraints are simultaneously satisfied.",
+      "files": ["tmp/knowledge-proof-contradiction.txt"],
+      "priority": 1
+    },
+    {
+      "id": "simple-success-story",
+      "title": "Create a simple proof artifact",
+      "description": "Create tmp/knowledge-proof-success.md with a short note containing the words 'lesson', 'pattern', and 'verification'. Keep it minimal and valid markdown.",
+      "acceptance": "File exists with requested words and markdown heading.",
+      "files": ["tmp/knowledge-proof-success.md"],
+      "priority": 2
+    }
+  ]
+}
