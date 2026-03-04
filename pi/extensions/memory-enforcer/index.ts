@@ -222,8 +222,11 @@ async function seedSystemKnowledge(
       latency_ms: Date.now() - startedAt,
     });
 
-    // ADR-0204: inject system knowledge into session context
-    if (result.length > 0) {
+    // ADR-0204: inject system knowledge ONCE per session (not every turn!)
+    // before_agent_start fires every turn — without this guard, each turn
+    // adds a new hidden message that accumulates and causes compaction cascades.
+    if (result.length > 0 && !knowledgeInjected) {
+      knowledgeInjected = true;
       pi.sendMessage(
         { customType: "system-knowledge", content: `## System Knowledge (auto-retrieved)\n${result}`, display: false },
       );
@@ -321,8 +324,9 @@ function seedRecall(sessionId: string | null, pi: ExtensionAPI): void {
         latency_ms: Date.now() - startedAt,
       });
 
-      // ADR-0204: ACTUALLY INJECT the recall results into session context
-      if (hitLines.length > 0) {
+      // ADR-0204: inject recall results ONCE per session (not every turn)
+      if (hitLines.length > 0 && !recallInjected) {
+        recallInjected = true;
         const content = [
           "## Relevant Memory (auto-retrieved)",
           ...hitLines,
@@ -415,6 +419,8 @@ const MEMORY_NUDGE =
 
 export default function memoryEnforcer(pi: ExtensionAPI): void {
   let currentSessionId: string | null = null;
+  let recallInjected = false;
+  let knowledgeInjected = false;
 
   // ── Per-turn: inject memory-write pressure into system prompt ──
   pi.on("before_agent_start", async (event: { systemPrompt?: string }) => {
@@ -430,6 +436,8 @@ export default function memoryEnforcer(pi: ExtensionAPI): void {
       currentSessionId = null;
     }
 
+    recallInjected = false;
+    knowledgeInjected = false;
     const sessionId = currentSessionId;
     setTimeout(() => seedRecall(sessionId, pi), 0);
   });
