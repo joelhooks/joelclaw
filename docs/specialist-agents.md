@@ -101,8 +101,53 @@ SKILL.md frontmatter. This means:
 - Still loadable via `/skill:name` if explicitly requested
 - Fully available when the specialist agent runs (specialists use `skills:` config)
 
+## Skill Usage Auditing
+
+The `skill-tracker` extension (`pi/extensions/skill-tracker/`) emits OTEL events
+every time a SKILL.md is read during a pi session. This replaces vibes-based
+pruning with data-driven decisions.
+
+### Query skill usage
+
+```bash
+# Last 7 days of skill reads
+joelclaw otel search "skill.read" --hours 168
+
+# Aggregate stats (which skills are hot)
+joelclaw otel stats --hours 720
+
+# Find zero-usage skills (candidates for sidelining)
+# Compare visible skills list against otel search results
+```
+
+### Audit cadence
+
+Run a skill usage audit monthly. The process:
+1. Query OTEL for `skill.read` events over the past 30 days
+2. Compare against the visible skills list (skills without `disable-model-invocation`)
+3. Skills with 0 reads → candidates for `disable-model-invocation: true`
+4. Skills with high reads that are hidden → candidates for promotion back to visible
+5. Update specialist agent skill lists accordingly
+
+### Moving skills between visible and specialist
+
+To sideline a skill:
+```yaml
+# Add to SKILL.md frontmatter
+disable-model-invocation: true
+```
+
+To promote a specialist skill back to visible:
+```yaml
+# Remove from SKILL.md frontmatter
+# disable-model-invocation: true
+```
+
+The skill remains loadable via `/skill:name` regardless of visibility.
+
 ## Files
 
 Agent definitions: `~/.pi/agents/<name>.md`
 Skill inventory: `~/Code/joelhooks/joelclaw/skills/`
+Skill tracker: `pi/extensions/skill-tracker/index.ts`
 Analysis: `docs/context-budget-analysis-2026-03-04.md`
