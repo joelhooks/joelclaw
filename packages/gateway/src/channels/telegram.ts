@@ -14,6 +14,7 @@ import type {
   ChannelPlatform,
   InboundMessage,
   MessageHandler,
+  SendMediaPayload,
   SendOptions,
 } from "./types";
 
@@ -167,6 +168,14 @@ function mediaKindFromExt(ext: string): "photo" | "video" | "audio" | "document"
   if ([".jpg", ".jpeg", ".png", ".gif", ".webp"].includes(ext)) return "photo";
   if ([".mp4", ".mov", ".avi", ".webm", ".mkv"].includes(ext)) return "video";
   if ([".mp3", ".ogg", ".opus", ".wav", ".m4a", ".flac", ".oga"].includes(ext)) return "audio";
+  return "document";
+}
+
+function mediaKindFromMimeType(mimeType: string, path?: string): "photo" | "video" | "audio" | "document" {
+  if (mimeType.startsWith("image/")) return "photo";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (path) return mediaKindFromExt(extname(path));
   return "document";
 }
 
@@ -490,12 +499,18 @@ export class TelegramChannel implements Channel {
     await sendTelegramMessage(chatId, payload, resolved.options);
   }
 
-  async sendMedia(
-    chatId: number,
-    filePath: string,
-    options?: { caption?: string; replyTo?: number; asVoice?: boolean },
-  ): Promise<void> {
-    await sendTelegramMedia(chatId, filePath, options);
+  async sendMedia(target: string, media: SendMediaPayload, options?: SendOptions): Promise<void> {
+    const chatId = resolveTargetChatId(target);
+    if (chatId === undefined) {
+      console.error("[gateway:telegram] cannot send telegram media: invalid target", { target });
+      return;
+    }
+
+    const replyTo = options?.replyTo && /^-?\d+$/.test(options.replyTo.trim())
+      ? Number.parseInt(options.replyTo, 10)
+      : undefined;
+
+    await sendTelegramMedia(chatId, media, { replyTo });
   }
 }
 
@@ -1086,11 +1101,11 @@ async function sendTelegramMessage(
 
 /**
  * Send a media file to a Telegram chat.
- * Detects kind from extension and dispatches to appropriate Bot API method.
+ * Detects kind from MIME type and dispatches to appropriate Bot API method.
  */
 async function sendTelegramMedia(
   chatId: number,
-  filePath: string,
+  media: SendMediaPayload,
   options?: { caption?: string; replyTo?: number; asVoice?: boolean },
 ): Promise<void> {
   if (!bot) {
@@ -1105,8 +1120,15 @@ async function sendTelegramMedia(
     return;
   }
 
-  const ext = (extname(filePath) || ".bin").toLowerCase();
-  const kind = mediaKindFromExt(ext);
+  const source = media.path ?? media.url;
+  if (!source) {
+    console.error("[gateway:telegram] sendMedia requires media.path or media.url", { chatId });
+    return;
+  }
+
+  const mimeType = media.mimeType || (media.path ? mimeFromExt(extname(media.path) || ".bin") : "application/octet-stream");
+  const kind = mediaKindFromMimeType(mimeType, media.path);
+  const sendAsVoice = options?.asVoice ?? mimeType === "audio/ogg";
 
   // Show appropriate typing indicator
   const action = kind === "photo" ? "upload_photo"
@@ -1115,9 +1137,10 @@ async function sendTelegramMedia(
     : "upload_document";
   try { await bot.api.sendChatAction(chatId, action); } catch {}
 
-  const file = new InputFile(filePath);
+  const file = media.path ? new InputFile(media.path) : media.url!;
+  const caption = media.caption ?? options?.caption;
   const params = {
-    ...(options?.caption ? { caption: options.caption, parse_mode: "HTML" as const } : {}),
+    ...(caption ? { caption, parse_mode: "HTML" as const } : {}),
     ...(options?.replyTo ? { reply_parameters: { message_id: options.replyTo } } : {}),
   };
 
@@ -1130,7 +1153,7 @@ async function sendTelegramMedia(
         await bot.api.sendVideo(chatId, file, params);
         break;
       case "audio":
-        if (options?.asVoice) {
+        if (sendAsVoice) {
           try {
             await bot.api.sendVoice(chatId, file, params);
           } catch (err) {
@@ -1145,13 +1168,13 @@ async function sendTelegramMedia(
       default:
         await bot.api.sendDocument(chatId, file, params);
     }
-    console.log("[gateway:telegram] media sent", { chatId, kind, filePath });
+    console.log("[gateway:telegram] media sent", { chatId, kind, mimeType, source });
     void emitGatewayOtel({
       level: "info",
       component: "telegram-channel",
       action: "telegram.send_media.completed",
       success: true,
-      metadata: { chatId, kind },
+      metadata: { chatId, kind, mimeType },
     });
   } catch (error) {
     console.error("[gateway:telegram] sendMedia failed, trying as document", { kind, error });
@@ -1211,8 +1234,12 @@ export async function sendMedia(
   filePath: string,
   options?: { caption?: string; replyTo?: number; asVoice?: boolean },
 ): Promise<void> {
-  const instance = getDefaultTelegramChannel();
-  await instance.sendMedia(chatId, filePath, options);
+  const mimeType = mimeFromExt(extname(filePath) || ".bin");
+  await sendTelegramMedia(chatId, {
+    path: filePath,
+    mimeType,
+    caption: options?.caption,
+  }, options);
 }
 
 export async function shutdown(): Promise<void> {

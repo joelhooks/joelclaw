@@ -1,6 +1,13 @@
 /** Consumer channels — bidirectional messaging platforms */
 export type ChannelPlatform = "telegram" | "slack" | "discord" | "imessage";
 
+export interface SendMediaPayload {
+  url?: string;      // remote URL
+  path?: string;     // local file path
+  mimeType: string;  // e.g. "image/png", "video/mp4", "audio/ogg", "application/pdf"
+  caption?: string;  // optional caption (used instead of text)
+}
+
 export interface SendOptions {
   format?: "html" | "markdown" | "plain";
   silent?: boolean;
@@ -8,6 +15,7 @@ export interface SendOptions {
   replyTo?: string;
   threadId?: string;
   noPreview?: boolean;
+  media?: SendMediaPayload;
 }
 
 export interface InboundMessage {
@@ -25,6 +33,7 @@ export interface Channel {
   start(..._args: unknown[]): Promise<void>;
   stop(): Promise<void>;
   send(target: string, text: string, options?: SendOptions): Promise<void>;
+  sendMedia?(target: string, media: SendMediaPayload, options?: SendOptions): Promise<void>;
   onMessage?: (handler: MessageHandler) => void;
 }
 

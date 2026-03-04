@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { extname, join } from "node:path";
 import { initTracing, getCatalogModel as resolveModelFromCatalog } from "@joelclaw/inference-router";
 import { init as initMessageStore, trimOld } from "@joelclaw/message-store";
 import { ModelFallbackController, type TelemetryEmitter } from "@joelclaw/model-fallback";
@@ -12,7 +12,8 @@ import { fetchChannel as fetchDiscordChannel, getClient as getDiscordClient, mar
 import { send as sendIMessage, shutdown as shutdownIMessage, start as startIMessage } from "./channels/imessage";
 import { getRedisClient, isHealthy as isRedisHealthy, shutdown as shutdownRedisChannel, start as startRedisChannel } from "./channels/redis";
 import { isStarted as isSlackStarted, send as sendSlack, shutdown as shutdownSlack, start as startSlack } from "./channels/slack";
-import { getBot, parseChatId, send as sendTelegram, sendMedia as sendTelegramMedia, shutdown as shutdownTelegram, start as startTelegram } from "./channels/telegram";
+import { getBot, parseChatId, send as sendTelegram, sendMedia as sendTelegramMedia, shutdown as shutdownTelegram, start as startTelegram, TelegramChannel } from "./channels/telegram";
+import type { SendMediaPayload } from "./channels/types";
 import {
   drain,
   enqueue,
@@ -242,6 +243,30 @@ function describeModel(model: unknown): string {
 
 function normalizeOutboundMessage(message: OutboundEnvelope | string): OutboundEnvelope {
   return typeof message === "string" ? createEnvelope(message) : message;
+}
+
+function inferMimeTypeFromMediaPathOrUrl(value?: string): string | undefined {
+  if (!value) return undefined;
+  const normalized = value.split("?")[0] ?? value;
+  const ext = extname(normalized).toLowerCase();
+  const map: Record<string, string> = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".webm": "video/webm",
+    ".mp3": "audio/mpeg",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".opus": "audio/opus",
+    ".wav": "audio/wav",
+    ".m4a": "audio/mp4",
+    ".pdf": "application/pdf",
+  };
+  return map[ext];
 }
 
 function shouldForwardToTelegram(text: string): boolean {
@@ -2002,6 +2027,62 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
     await msgSub.connect();
     await msgCmd.connect();
     await msgSub.subscribe("joelclaw:notify:outbound");
+    const telegramMessageOutboundChannel = new TelegramChannel();
+    type MessageChannelAdapter = {
+      send: (target: string, text: string) => Promise<void>;
+      sendMedia?: (target: string, media: SendMediaPayload) => Promise<void>;
+    };
+
+    const resolveMessageChannel = (channelRef: string): {
+      adapter: MessageChannelAdapter;
+      target: string;
+      telegramChatId?: number;
+    } | undefined => {
+      if (channelRef === "telegram" || channelRef.startsWith("telegram:")) {
+        const chatId = parseChatId(channelRef) ?? TELEGRAM_USER_ID;
+        if (!chatId) return undefined;
+
+        return {
+          adapter: {
+            send: (target, text) => telegramMessageOutboundChannel.send(target, text),
+            sendMedia: telegramMessageOutboundChannel.sendMedia
+              ? (target, media) => telegramMessageOutboundChannel.sendMedia!(target, media)
+              : undefined,
+          },
+          target: `telegram:${chatId}`,
+          telegramChatId: chatId,
+        };
+      }
+
+      if (channelRef === "slack" || channelRef.startsWith("slack:")) {
+        return {
+          adapter: {
+            send: (target, text) => sendSlack(target, text),
+          },
+          target: channelRef,
+        };
+      }
+
+      if (channelRef === "discord" || channelRef.startsWith("discord:")) {
+        return {
+          adapter: {
+            send: (target, text) => sendDiscord(target, text),
+          },
+          target: parseDiscordChannelId(channelRef) ?? channelRef,
+        };
+      }
+
+      if (channelRef === "imessage" || channelRef.startsWith("imessage:")) {
+        return {
+          adapter: {
+            send: (target, text) => sendIMessage(target, text),
+          },
+          target: channelRef.startsWith("imessage:") ? channelRef.slice("imessage:".length) : channelRef,
+        };
+      }
+
+      return undefined;
+    };
 
     const drainMessageOutbound = async () => {
       try {
@@ -2017,32 +2098,74 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
               inline_keyboard?: Array<Array<{ text: string; callback_data: string }>>;
               edit_message_id?: number;
               remove_keyboard?: boolean;
+              media_url?: string;
+              media_path?: string;
+              mime_type?: string;
+              caption?: string;
             };
 
-            console.log("[gateway] message outbound →", { channel: msg.channel, hasKeyboard: !!msg.inline_keyboard, edit: msg.edit_message_id });
+            const resolvedChannel = resolveMessageChannel(msg.channel);
+            const hasMedia = Boolean(msg.media_url || msg.media_path);
 
-            if (msg.channel === "telegram") {
+            console.log("[gateway] message outbound →", {
+              channel: msg.channel,
+              hasKeyboard: !!msg.inline_keyboard,
+              edit: msg.edit_message_id,
+              hasMedia,
+            });
+
+            if (!resolvedChannel) {
+              console.warn("[gateway] message outbound: unsupported channel", { channel: msg.channel });
+              continue;
+            }
+
+            const { adapter, target, telegramChatId } = resolvedChannel;
+
+            if (hasMedia) {
+              const media: SendMediaPayload = {
+                ...(msg.media_url ? { url: msg.media_url } : {}),
+                ...(msg.media_path ? { path: msg.media_path } : {}),
+                mimeType: msg.mime_type
+                  ?? inferMimeTypeFromMediaPathOrUrl(msg.media_path ?? msg.media_url)
+                  ?? "application/octet-stream",
+                ...(msg.caption || msg.text ? { caption: msg.caption ?? msg.text } : {}),
+              };
+
+              if (adapter.sendMedia) {
+                await adapter.sendMedia(target, media);
+              } else {
+                const mediaLink = msg.media_url ?? msg.media_path ?? "";
+                const fallbackText = [msg.caption ?? msg.text, mediaLink]
+                  .filter((part): part is string => Boolean(part && part.trim()))
+                  .join("\n");
+                await adapter.send(target, fallbackText || mediaLink);
+              }
+              continue;
+            }
+
+            if (msg.channel === "telegram" || msg.channel.startsWith("telegram:")) {
               const tgBot = getBot();
               if (!tgBot) {
                 console.error("[gateway] message outbound: telegram bot not available");
                 continue;
               }
-              const chatId = TELEGRAM_USER_ID;
-              if (!chatId) continue;
+              if (!telegramChatId) continue;
 
               if (msg.edit_message_id) {
                 // Edit existing message
-                await tgBot.api.editMessageText(chatId, msg.edit_message_id, msg.text, {
+                await tgBot.api.editMessageText(telegramChatId, msg.edit_message_id, msg.text, {
                   parse_mode: "HTML",
                   reply_markup: msg.remove_keyboard ? { inline_keyboard: [] } : undefined,
                 }).catch((err) => console.warn("[gateway] edit message failed", err));
               } else {
                 // Send new message
-                await tgBot.api.sendMessage(chatId, msg.text, {
+                await tgBot.api.sendMessage(telegramChatId, msg.text, {
                   parse_mode: "HTML",
                   reply_markup: msg.inline_keyboard ? { inline_keyboard: msg.inline_keyboard } : undefined,
                 });
               }
+            } else {
+              await adapter.send(target, msg.text);
             }
           } catch (err) {
             console.error("[gateway] message outbound item failed", { error: err });

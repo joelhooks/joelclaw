@@ -39,6 +39,17 @@ Gateway process diagnostics now use exact launchd state inspection (`launchctl p
 
 `joelclaw gateway enable` is a direct launch-agent recovery command: enable service, bootstrap plist, kickstart daemon, then report pid/state.
 
+## Outbound media payload support
+
+`gateway/send.message` now supports optional media fields in addition to text/keyboard:
+
+- `media_url` (remote URL)
+- `media_path` (local file path)
+- `mime_type` (routing hint, e.g. `image/png`, `video/mp4`, `audio/ogg`)
+- `caption` (optional media caption)
+
+Gateway daemon outbound drain now checks media payloads and calls `channel.sendMedia()` when available. Channels without `sendMedia()` fall back to text delivery with the media link/path. Telegram routes media by MIME type (`image/*` → photo, `video/*` → video, `audio/*` → audio/voice for `audio/ogg`, else document).
+
 Watchdog hardening: when a turn is stuck for >10 minutes, the daemon now aborts once and starts a recovery grace timer (90s). If no recovery signal (`turn_end` or next prompt dispatch) arrives before the deadline, the daemon self-restarts via launchd. This prevents the "process alive but session wedged" state where queues stop draining indefinitely.
 
 Stuck detection now only runs while the queue is actively waiting for `turn_end` (`idleWaiter` pending). If the idle waiter itself times out (5 minutes safety valve), the daemon emits `daemon.watchdog:watchdog.idle_waiter.timeout`, releases the drain lock, marks the turn as ended, and clears pending stuck-recovery state. This prevents stale prompt markers from causing repeated false `watchdog.session_stuck` restart loops.

@@ -922,6 +922,10 @@ export type Events = {
       inline_keyboard?: Array<Array<{ text: string; callback_data: string }>>;
       edit_message_id?: number;
       remove_keyboard?: boolean;
+      media_url?: string;
+      media_path?: string;
+      mime_type?: string;
+      caption?: string;
     };
   };
   "gateway/message.processing": {

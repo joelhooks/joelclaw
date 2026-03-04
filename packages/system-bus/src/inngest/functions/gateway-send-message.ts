@@ -30,7 +30,17 @@ export const gatewaySendMessage = inngest.createFunction(
   },
   { event: "gateway/send.message" },
   async ({ event, step }) => {
-    const { channel, text, inline_keyboard, edit_message_id, remove_keyboard } = event.data;
+    const {
+      channel,
+      text,
+      inline_keyboard,
+      edit_message_id,
+      remove_keyboard,
+      media_url,
+      media_path,
+      mime_type,
+      caption,
+    } = event.data;
 
     await step.run("push-to-outbound-queue", async () => {
       const redis = getRedis();
@@ -40,6 +50,10 @@ export const gatewaySendMessage = inngest.createFunction(
         inline_keyboard,
         edit_message_id,
         remove_keyboard,
+        media_url,
+        media_path,
+        mime_type,
+        caption,
         ts: new Date().toISOString(),
       });
 
