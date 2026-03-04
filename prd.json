@@ -55,7 +55,7 @@
       "title": "ADR-0193: Fix hash-before-classification bug in task-triage",
       "description": "Bug: task-triage.ts sets the task hash in Redis (TRIAGE_HASH_KEY) in step 2 (check-hash) BEFORE the LLM classification in step 4 (sonnet-triage). If classification fails (degraded), the hash is already cached, so the next heartbeat's check-hash step sees 'task list unchanged' and skips \u2014 meaning failed classifications are never retried until task content changes.\n\nFix: Move hash persistence to AFTER successful classification. Restructure:\n1. check-hash step: compute current hash and compare to stored hash. Return { changed: boolean, currentHash: string } but do NOT persist yet.\n2. If !changed, return noop.\n3. Run classification.\n4. If classification is valid (classificationValid=true): persist hash in a new step 'persist-hash'. Set TRIAGE_HASH_KEY with the current hash + TTL.\n5. If classification is degraded: do NOT persist hash. Next heartbeat will retry.\n\nAlso add circuitState to the OTEL metadata on both success and degraded paths.\n\nFile: packages/system-bus/src/inngest/functions/task-triage.ts",
       "priority": 3,
-      "status": "pending",
+      "status": "done",
       "acceptance": [
         "Hash is NOT persisted to Redis until classification succeeds",
         "Failed/degraded classification allows next heartbeat to retry",
@@ -73,7 +73,7 @@
       "title": "ADR-0193 V4: Wire circuit breaker into task-triage",
       "description": "Integrate the inference circuit breaker (from 0191-v1) into task-triage so that repeated classification failures stop wasting tokens.\n\nWiring:\n1. Import checkCircuit, recordSuccess, recordFailure from inference-circuit.ts\n2. Before the sonnet-triage step, check circuit for (component='task-triage', action='tasks.triage.classify')\n3. If circuit is open: skip classification entirely, return { status: 'degraded', reason: 'circuit_open', circuitState: 'open' } with OTEL event. Do NOT set cooldown.\n4. On successful classification: recordSuccess\n5. On failed/degraded classification: recordFailure\n6. Add circuitState to ALL OTEL metadata in the function\n\nNote: This is separate from the infer()-level circuit (0191-v2) because task-triage has function-level logic (hash check, cooldown, notification) that should be skipped when the circuit is open. The infer()-level circuit handles the pi spawn; this handles the triage workflow.\n\nFile: packages/system-bus/src/inngest/functions/task-triage.ts",
       "priority": 4,
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "0191-v1-circuit-module",
         "0193-fix-hash-bug"
@@ -169,7 +169,7 @@
       "title": "Update ADR statuses and verification checklists",
       "description": "After all stories are complete, update the four ADRs:\n\n1. ADR-0190 (~/Vault/docs/decisions/0190-memory-yield-contract.md):\n   - Add V3 section for observe skip tracking\n   - Update verification checklist\n\n2. ADR-0191 (~/Vault/docs/decisions/0191-no-op-inference-circuit-breakers.md):\n   - Add Implementation Progress section with V1-V5\n   - Check off verification items\n\n3. ADR-0192 (~/Vault/docs/decisions/0192-recall-rewrite-reliability-contract.md):\n   - Add V5 test section\n   - Check off remaining verification items\n\n4. ADR-0193 (~/Vault/docs/decisions/0193-task-triage-output-contract.md):\n   - Add Implementation Progress section\n   - Document hash-before-classification bug fix\n   - Document circuit integration\n   - Check off verification items",
       "priority": 8,
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "deploy-worker"
       ],
