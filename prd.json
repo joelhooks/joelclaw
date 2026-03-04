@@ -96,7 +96,7 @@
       "title": "ADR-0192 V5: Regression tests for recall rewrite reliability",
       "description": "Add tests for the circuit breaker, cache, and skip heuristics in packages/sdk/src/capabilities/adapters/typesense-recall.ts.\n\nUse the exported __recallTestUtils which include: detectRewriteSkipReason, rewriteCircuit (getter), resetCircuit, circuitShouldSkip, circuitRecordSuccess, circuitRecordFailure, cacheGet, cacheSet, rewriteCache (getter).\n\nTest cases:\n1. detectRewriteSkipReason: short query \u2192 skip.short_query, quoted literal \u2192 skip.literal_query, path-like \u2192 skip.direct_identifier, command-like \u2192 skip.command_like, normal long query \u2192 null\n2. Circuit breaker: 3 consecutive recordFailure() \u2192 circuitShouldSkip returns skip=true, after cooldown \u2192 half-open, recordSuccess \u2192 closes circuit, recordFailure in half-open \u2192 re-opens\n3. Cache: cacheSet + cacheGet returns entry, expired entry returns null, max size eviction works\n4. runRewriteQueryWith with spawn mock: successful rewrite populates cache, failed rewrite records failure, circuit open skips rewrite\n\nNote: File I/O for circuit/cache persistence \u2014 tests should call resetCircuit() in beforeEach to avoid cross-test pollution. Tests may need to mock the filesystem or use temp paths.\n\nFile: packages/sdk/src/capabilities/adapters/typesense-recall.test.ts",
       "priority": 5,
-      "status": "pending",
+      "status": "done",
       "acceptance": [
         "All skip heuristic cases tested",
         "Circuit open/half-open/close lifecycle tested",
@@ -114,7 +114,7 @@
       "title": "ADR-0191 V5: Tests for inference circuit breaker module",
       "description": "Add tests for the inference circuit breaker module.\n\nTest cases:\n1. Default state is closed, checkCircuit returns skip=false\n2. After THRESHOLD consecutive recordFailure(), checkCircuit returns skip=true (open)\n3. Failures in different (component, action) pairs are independent\n4. After COOLDOWN_MS, circuit transitions to half-open, allows one probe\n5. recordSuccess in half-open closes circuit\n6. recordFailure in half-open immediately re-opens\n7. Failures outside the window don't accumulate (window expiry)\n8. resetCircuit clears state for a specific key\n9. getAllCircuits returns all tracked circuits\n\nUse the exported __circuitTestUtils. Mock Date.now() for time-dependent tests.\n\nFile: packages/system-bus/src/lib/inference-circuit.test.ts",
       "priority": 5,
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "0191-v1-circuit-module"
       ],
