@@ -150,7 +150,7 @@
       "title": "Deploy system-bus worker with all changes",
       "description": "After all system-bus changes are committed, deploy the worker to k8s.\n\n1. Run: bash ~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh\n2. Wait for rollout: kubectl -n joelclaw rollout status deployment/system-bus-worker --timeout=180s\n3. Verify pod running: kubectl get pods -n joelclaw | grep system-bus\n4. Verify Inngest sync: curl -X PUT http://127.0.0.1:3111/api/inngest\n5. Run scorecard: joelclaw memory scorecard --hours 1\n6. Check circuit state is clean: joelclaw otel search 'inference.circuit' --hours 1",
       "priority": 7,
-      "status": "pending",
+      "status": "done",
       "depends_on": [
         "0191-v2-wire-infer",
         "0193-v4-circuit-integration",
