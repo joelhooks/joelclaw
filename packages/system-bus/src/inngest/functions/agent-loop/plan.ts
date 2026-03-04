@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { realpathSync } from "node:fs";
 import { $ } from "bun";
 import { NonRetriableError } from "inngest";
 import { querySystemKnowledge, SYSTEM_KNOWLEDGE_COLLECTION } from "../../../lib/typesense";
@@ -19,6 +20,12 @@ import {
 } from "./utils";
 
 const DEFAULT_RETRY_LADDER = ["codex", "claude", "codex"] as const;
+
+function shellText(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (value instanceof Uint8Array) return new TextDecoder().decode(value).trim();
+  return String(value ?? "").trim();
+}
 
 /**
  * Generate a PRD from a goal description + context files.
@@ -246,11 +253,46 @@ export const agentLoopPlan = inngest.createFunction(
     if (isStartEvent) {
       await step.run("create-worktree", async () => {
         await $`mkdir -p ${worktreeBase}`.quiet();
+        const normalizedWorktreePath = (() => {
+          try {
+            return join(realpathSync(worktreeBase), loopId);
+          } catch {
+            return worktreePath;
+          }
+        })();
         // Compute relative path from git root to project (e.g. "packages/system-bus")
         const gitRoot = (await $`cd ${project} && git rev-parse --show-toplevel`.quiet()).text().trim();
         const relPath = project.startsWith(gitRoot) ? project.slice(gitRoot.length + 1) : "";
+        // Inngest retries can re-run this step after partial failure, leaving stale branch/worktree state behind.
+        const existingBranch = await $`cd ${gitRoot} && git branch --list ${branchName}`.quiet().nothrow();
+        if (shellText(existingBranch.stdout)) {
+          await $`cd ${gitRoot} && git branch -D ${branchName}`.quiet().nothrow();
+        }
+
+        const worktreeList = await $`cd ${gitRoot} && git worktree list --porcelain`.quiet().nothrow();
+        const existingWorktreePath = shellText(worktreeList.stdout)
+          .split("\n")
+          .filter((line) => line.startsWith("worktree "))
+          .map((line) => line.replace(/^worktree\s+/, "").trim())
+          .find((path) => path === worktreePath || path === normalizedWorktreePath);
+        if (existingWorktreePath) {
+          await $`cd ${gitRoot} && git worktree remove --force ${existingWorktreePath}`.quiet().nothrow();
+        }
+        await $`cd ${gitRoot} && git worktree prune`.quiet().nothrow();
+        const existingBranchAfterCleanup = await $`cd ${gitRoot} && git branch --list ${branchName}`.quiet().nothrow();
+        if (shellText(existingBranchAfterCleanup.stdout)) {
+          await $`cd ${gitRoot} && git branch -D ${branchName}`.quiet().nothrow();
+        }
+
         // Create worktree on a new branch from current HEAD
-        await $`cd ${project} && git worktree add ${worktreePath} -b ${branchName}`.quiet();
+        const addWorktree = await $`cd ${gitRoot} && git worktree add ${worktreePath} -b ${branchName}`.quiet().nothrow();
+        if (addWorktree.exitCode !== 0) {
+          const stderr = shellText(addWorktree.stderr);
+          const stdout = shellText(addWorktree.stdout);
+          throw new Error(
+            `git worktree add failed for ${worktreePath} (branch ${branchName}, exit ${addWorktree.exitCode}): ${stderr || stdout || "no stderr"}`,
+          );
+        }
         // Copy PRD into the subpath where the project lives
         const worktreeProject = relPath ? join(worktreePath, relPath) : worktreePath;
         const prdFile = join(project, prdPath ?? "prd.json");
