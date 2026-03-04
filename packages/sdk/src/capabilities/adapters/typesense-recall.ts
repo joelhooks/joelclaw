@@ -13,7 +13,10 @@ const MAX_INJECT = 10
 const DECAY_CONSTANT = 0.01
 const STALENESS_DAYS = 90
 const MIN_OBSERVATION_CHARS = 12
-const REWRITE_TIMEOUT_MS = 2_000
+// ADR-0192: Bumped default from 2s to 6s. Pi cold-start on M4 Pro is ~3-4s,
+// so 2s guaranteed timeout on every first invocation. 6s gives enough headroom
+// for cold start + Haiku inference while the circuit breaker catches persistent failures.
+const REWRITE_TIMEOUT_MS = Number(process.env.JOELCLAW_RECALL_REWRITE_TIMEOUT) || 6_000
 const RECALL_REWRITE_MODEL = process.env.JOELCLAW_RECALL_REWRITE_MODEL?.trim() || "anthropic/claude-haiku-4-5"
 const RECALL_OTEL_ENABLED = (process.env.JOELCLAW_RECALL_OTEL ?? "1") !== "0"
 const RECALL_REWRITE_ENABLED = (process.env.JOELCLAW_RECALL_REWRITE ?? "1") !== "0"
@@ -124,6 +127,174 @@ async function runInference(prompt: string, options: Record<string, unknown>): P
     model: parsed?.model ?? (model || undefined),
     usage: parsed?.usage,
   }
+}
+
+// ── ADR-0192 V2: Rewrite circuit breaker ────────────────────────
+// Track consecutive rewrite failures. After CIRCUIT_OPEN_THRESHOLD
+// consecutive failures, open the circuit and skip rewrite entirely.
+// After CIRCUIT_COOLDOWN_MS, allow one probe (half-open). If it
+// succeeds, close circuit; if it fails, re-open.
+//
+// State persisted to a temp file so it survives across CLI invocations
+// (each `joelclaw` run is a fresh process).
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+
+const CIRCUIT_OPEN_THRESHOLD = 3
+const CIRCUIT_COOLDOWN_MS = 5 * 60 * 1000 // 5 minutes
+
+type CircuitState = "closed" | "open" | "half-open"
+
+type CircuitData = {
+  state: CircuitState
+  consecutiveFailures: number
+  lastFailureTs: number
+  lastOpenTs: number
+  totalOpens: number
+}
+
+const CIRCUIT_STATE_DIR = join(process.env.HOME || "/tmp", ".joelclaw", "state")
+const CIRCUIT_STATE_FILE = join(CIRCUIT_STATE_DIR, "recall-rewrite-circuit.json")
+
+function loadCircuitState(): CircuitData {
+  try {
+    if (!existsSync(CIRCUIT_STATE_FILE)) {
+      return { state: "closed", consecutiveFailures: 0, lastFailureTs: 0, lastOpenTs: 0, totalOpens: 0 }
+    }
+    const raw = readFileSync(CIRCUIT_STATE_FILE, "utf-8")
+    const parsed = JSON.parse(raw) as Partial<CircuitData>
+    return {
+      state: (parsed.state === "open" || parsed.state === "half-open") ? parsed.state : "closed",
+      consecutiveFailures: typeof parsed.consecutiveFailures === "number" ? parsed.consecutiveFailures : 0,
+      lastFailureTs: typeof parsed.lastFailureTs === "number" ? parsed.lastFailureTs : 0,
+      lastOpenTs: typeof parsed.lastOpenTs === "number" ? parsed.lastOpenTs : 0,
+      totalOpens: typeof parsed.totalOpens === "number" ? parsed.totalOpens : 0,
+    }
+  } catch {
+    return { state: "closed", consecutiveFailures: 0, lastFailureTs: 0, lastOpenTs: 0, totalOpens: 0 }
+  }
+}
+
+function saveCircuitState(data: CircuitData): void {
+  try {
+    mkdirSync(CIRCUIT_STATE_DIR, { recursive: true })
+    writeFileSync(CIRCUIT_STATE_FILE, JSON.stringify(data), "utf-8")
+  } catch {
+    // Best-effort persistence — don't crash recall on write failure
+  }
+}
+
+let rewriteCircuit: CircuitData = loadCircuitState()
+
+function circuitShouldSkip(): { skip: boolean; reason: string } {
+  // Reload from disk on each check (cross-process coordination)
+  rewriteCircuit = loadCircuitState()
+
+  if (rewriteCircuit.state === "closed") return { skip: false, reason: "" }
+
+  const elapsed = Date.now() - rewriteCircuit.lastOpenTs
+  if (rewriteCircuit.state === "open" && elapsed >= CIRCUIT_COOLDOWN_MS) {
+    rewriteCircuit.state = "half-open"
+    saveCircuitState(rewriteCircuit)
+    return { skip: false, reason: "half-open probe" }
+  }
+
+  if (rewriteCircuit.state === "open") {
+    return { skip: true, reason: `circuit_open (${rewriteCircuit.consecutiveFailures} consecutive failures, ${Math.round(elapsed / 1000)}s/${Math.round(CIRCUIT_COOLDOWN_MS / 1000)}s cooldown)` }
+  }
+
+  // half-open: let one through
+  return { skip: false, reason: "" }
+}
+
+function circuitRecordSuccess(): void {
+  rewriteCircuit.state = "closed"
+  rewriteCircuit.consecutiveFailures = 0
+  saveCircuitState(rewriteCircuit)
+}
+
+function circuitRecordFailure(): void {
+  rewriteCircuit.consecutiveFailures++
+  rewriteCircuit.lastFailureTs = Date.now()
+  if (rewriteCircuit.consecutiveFailures >= CIRCUIT_OPEN_THRESHOLD) {
+    rewriteCircuit.state = "open"
+    rewriteCircuit.lastOpenTs = Date.now()
+    rewriteCircuit.totalOpens++
+  }
+  saveCircuitState(rewriteCircuit)
+}
+
+// ── ADR-0192 V3: Rewrite result cache ──────────────────────────
+// File-persisted cache keyed on normalized query.
+// Avoids redundant LLM calls for identical queries across CLI invocations.
+const REWRITE_CACHE_TTL_MS = 3 * 60 * 1000 // 3 minutes
+const REWRITE_CACHE_MAX_SIZE = 50
+const REWRITE_CACHE_FILE = join(CIRCUIT_STATE_DIR, "recall-rewrite-cache.json")
+
+type RewriteCacheEntry = {
+  rewrittenQuery: string
+  strategy: RewriteStrategy
+  model?: string
+  provider?: string
+  cachedAt: number
+}
+
+type CacheStore = Record<string, RewriteCacheEntry>
+
+const rewriteCache = new Map<string, RewriteCacheEntry>()
+
+function loadCache(): void {
+  try {
+    if (!existsSync(REWRITE_CACHE_FILE)) return
+    const raw = readFileSync(REWRITE_CACHE_FILE, "utf-8")
+    const parsed = JSON.parse(raw) as CacheStore
+    const now = Date.now()
+    rewriteCache.clear()
+    for (const [key, entry] of Object.entries(parsed)) {
+      if (entry && typeof entry.cachedAt === "number" && now - entry.cachedAt <= REWRITE_CACHE_TTL_MS) {
+        rewriteCache.set(key, entry)
+      }
+    }
+  } catch {
+    // Best-effort — don't crash on corrupt cache
+  }
+}
+
+function saveCache(): void {
+  try {
+    mkdirSync(CIRCUIT_STATE_DIR, { recursive: true })
+    const obj: CacheStore = {}
+    for (const [key, entry] of rewriteCache) {
+      obj[key] = entry
+    }
+    writeFileSync(REWRITE_CACHE_FILE, JSON.stringify(obj), "utf-8")
+  } catch {
+    // Best-effort persistence
+  }
+}
+
+// Load cache on module init
+loadCache()
+
+function cacheGet(normalizedQuery: string): RewriteCacheEntry | null {
+  const entry = rewriteCache.get(normalizedQuery)
+  if (!entry) return null
+  if (Date.now() - entry.cachedAt > REWRITE_CACHE_TTL_MS) {
+    rewriteCache.delete(normalizedQuery)
+    saveCache()
+    return null
+  }
+  return entry
+}
+
+function cacheSet(normalizedQuery: string, entry: Omit<RewriteCacheEntry, "cachedAt">): void {
+  // Evict oldest if at capacity
+  if (rewriteCache.size >= REWRITE_CACHE_MAX_SIZE) {
+    const oldest = rewriteCache.keys().next().value
+    if (oldest) rewriteCache.delete(oldest)
+  }
+  rewriteCache.set(normalizedQuery, { ...entry, cachedAt: Date.now() })
+  saveCache()
 }
 
 type RewriteStrategy = "haiku" | "openai" | "fallback" | "disabled" | "skipped"
@@ -611,6 +782,36 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
     }
   }
 
+  // ADR-0192 V2: Circuit breaker check
+  const circuitCheck = circuitShouldSkip()
+  if (circuitCheck.skip) {
+    return {
+      inputQuery: normalized,
+      rewritePrompt: normalized,
+      rewrittenQuery: normalized,
+      rewritten: false,
+      strategy: "skipped",
+      rewriteReason: `circuit_open`,
+      error: circuitCheck.reason,
+    }
+  }
+
+  // ADR-0192 V3: Cache lookup
+  const cached = cacheGet(normalized)
+  if (cached) {
+    return {
+      inputQuery: normalized,
+      rewritePrompt: normalized,
+      rewrittenQuery: cached.rewrittenQuery,
+      rewritten: cached.rewrittenQuery.toLowerCase() !== normalized.toLowerCase(),
+      strategy: cached.strategy,
+      rewriteReason: "cache_hit",
+      model: cached.model,
+      provider: cached.provider,
+      durationMs: 0,
+    }
+  }
+
   const context = options.context ?? process.env.JOELCLAW_RECALL_CONTEXT?.trim()
   const rewritePrompt = [
     "Rewrite the memory recall query for semantic retrieval.",
@@ -707,13 +908,32 @@ async function runRewriteQueryWith(query: string, options: RewriteRunnerOptions 
   }
 
   try {
+    let result: RewrittenQuery
     if (options.spawn) {
-      return await runSpawnRewrite()
+      result = await runSpawnRewrite()
+    } else {
+      result = await runRouterRewrite()
     }
 
-    return await runRouterRewrite()
+    // ADR-0192 V2: Record success → close circuit
+    circuitRecordSuccess()
+
+    // ADR-0192 V3: Cache successful rewrite
+    if (result.rewritten && result.rewrittenQuery.length > 0) {
+      cacheSet(normalized, {
+        rewrittenQuery: result.rewrittenQuery,
+        strategy: result.strategy,
+        model: result.model,
+        provider: result.provider,
+      })
+    }
+
+    return result
   } catch (error) {
     attemptErrors.push(formatRewriteError(error, rewriteTimeoutMs))
+
+    // ADR-0192 V2: Record failure → may open circuit
+    circuitRecordFailure()
   }
 
   const lastError = attemptErrors[attemptErrors.length - 1] ?? "rewrite_failed"
@@ -1108,4 +1328,23 @@ export const __recallTestUtils = {
   rankHits,
   trustPassFilter,
   runRewriteQueryWith,
+  // ADR-0192 testing exports
+  detectRewriteSkipReason,
+  get rewriteCircuit() { return rewriteCircuit },
+  resetCircuit() {
+    rewriteCircuit = {
+      state: "closed",
+      consecutiveFailures: 0,
+      lastFailureTs: 0,
+      lastOpenTs: 0,
+      totalOpens: 0,
+    }
+    rewriteCache.clear()
+  },
+  circuitShouldSkip,
+  circuitRecordSuccess,
+  circuitRecordFailure,
+  cacheGet,
+  cacheSet,
+  get rewriteCache() { return rewriteCache },
 }
