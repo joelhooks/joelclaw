@@ -843,8 +843,171 @@ export default function (pi: ExtensionAPI) {
     if (pendingDrain) void drain();
   });
 
+  // ── ADR-0204: Rolling context refresh + compaction recovery ──────
+
+  let lastRefreshTs = Date.now();
+  let gwWarmZoneEntered = false;
+  let gwHotZoneEntered = false;
+  let gwRecentTopics: string[] = [];
+  let gwRecallCache: Array<{ query: string; hits: string[] }> = [];
+  let gwRecallInFlight = false;
+  const REFRESH_INTERVAL_MS = 30 * 60_000; // 30 minutes
+
+  /** Run a recall query via joelclaw CLI (fire-and-forget, async). */
+  function gwRunRecall(query: string, limit = 5): Promise<{ hits: string[] } | null> {
+    return new Promise((resolve) => {
+      const child = spawn("joelclaw", ["recall", query, "--limit", String(limit), "--budget", "lean", "--json"], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, TERM: "dumb" },
+      });
+      let stdout = "";
+      child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+      const timer = setTimeout(() => { child.kill(); resolve(null); }, 5000);
+      child.on("close", () => {
+        clearTimeout(timer);
+        try {
+          const parsed = JSON.parse(stdout) as Record<string, unknown>;
+          const result = parsed.result as Record<string, unknown> | undefined;
+          const rawHits = Array.isArray(result?.hits) ? result.hits : [];
+          const hits = rawHits
+            .slice(0, limit)
+            .map((h: unknown) => {
+              const r = h as Record<string, unknown>;
+              return typeof r?.observation === "string" ? r.observation.trim().slice(0, 250) : "";
+            })
+            .filter((s: string) => s.length > 0);
+          resolve({ hits });
+        } catch { resolve(null); }
+      });
+      child.on("error", () => { clearTimeout(timer); resolve(null); });
+    });
+  }
+
+  /** Inject a rolling context refresh into the gateway session. */
+  async function refreshGatewayContext(): Promise<void> {
+    if (gwRecallInFlight) return;
+    gwRecallInFlight = true;
+
+    try {
+      const query = gwRecentTopics.length > 0
+        ? gwRecentTopics.slice(-3).join(" ").slice(0, 120)
+        : "recent decisions, active work, system state";
+
+      const result = await gwRunRecall(query, 5);
+      gwRecallInFlight = false;
+      if (!result || result.hits.length === 0) return;
+
+      gwRecallCache.push({ query, hits: result.hits });
+      if (gwRecallCache.length > 3) gwRecallCache.shift();
+
+      const lines = result.hits.slice(0, 5).map((h) => `- ${h}`);
+      pi.sendMessage({
+        customType: "context-refresh",
+        content: `## Context Refresh\n${lines.join("\n")}`,
+        display: false,
+      });
+
+      lastRefreshTs = Date.now();
+
+      emitGatewayOtel({
+        level: "info",
+        component: "gateway-context",
+        action: "context.refresh.injected",
+        success: true,
+        metadata: { hitCount: result.hits.length, query: query.slice(0, 80) },
+      });
+    } catch {
+      gwRecallInFlight = false;
+    }
+  }
+
+  // Periodic refresh timer
+  const refreshTimer = setInterval(() => {
+    if (Date.now() - lastRefreshTs >= REFRESH_INTERVAL_MS) {
+      void refreshGatewayContext();
+    }
+  }, 60_000); // Check every minute, refresh every 30
+
+  pi.on("turn_end", async (_event, _ctx) => {
+    try {
+      ctx = _ctx;
+      const usage = _ctx.getContextUsage();
+      if (!usage?.percent) return;
+      const pct = usage.percent;
+
+      // Track conversation topics from the turn
+      if (_event.message?.content) {
+        const content = Array.isArray(_event.message.content)
+          ? (_event.message.content as Array<Record<string, unknown>>)
+              .filter((b) => b.type === "text" && typeof b.text === "string")
+              .map((b) => b.text as string)
+              .join(" ")
+          : typeof _event.message.content === "string" ? _event.message.content : "";
+        if (content.length > 20) {
+          gwRecentTopics.push(content.slice(0, 100));
+          if (gwRecentTopics.length > 5) gwRecentTopics.shift();
+        }
+      }
+
+      // Warm zone: start caching recall
+      if (pct >= 40 && !gwWarmZoneEntered) {
+        gwWarmZoneEntered = true;
+        void refreshGatewayContext();
+      }
+
+      // Hot zone: force refresh if stale
+      if (pct >= 60 && !gwHotZoneEntered) {
+        gwHotZoneEntered = true;
+        void refreshGatewayContext();
+      }
+    } catch {}
+  });
+
+  pi.on("session_compact", async () => {
+    try {
+      // Build pointer from cached recall
+      const lines: string[] = ["## Gateway Recovery"];
+      if (gwRecentTopics.length > 0) {
+        lines.push(`**Recent topics:** ${gwRecentTopics.slice(-3).join(" → ").slice(0, 200)}`);
+      }
+      const allHits: string[] = [];
+      const allQueries: string[] = [];
+      for (const r of gwRecallCache) {
+        allQueries.push(r.query);
+        for (const h of r.hits) {
+          if (!allHits.includes(h)) allHits.push(h);
+        }
+      }
+      if (allHits.length > 0) {
+        lines.push(`**Related memories:**\n${allHits.slice(0, 3).map((h) => `- ${h.slice(0, 150)}`).join("\n")}`);
+      }
+      if (allQueries.length > 0) {
+        lines.push(`**Deeper context:** ${allQueries.slice(0, 2).map((q) => `\`recall "${q}"\``).join(" or ")}`);
+      }
+
+      pi.sendMessage({
+        customType: "gateway-recovery",
+        content: lines.join("\n"),
+        display: false,
+      });
+
+      // Reset zone flags
+      gwWarmZoneEntered = false;
+      gwHotZoneEntered = false;
+
+      emitGatewayOtel({
+        level: "info",
+        component: "gateway-context",
+        action: "gateway.compaction.inject",
+        success: true,
+        metadata: { hitsCount: allHits.length, queriesCount: allQueries.length },
+      });
+    } catch {}
+  });
+
   pi.on("session_shutdown", async () => {
     stopWatchdog();
+    clearInterval(refreshTimer);
     if (drainDebounceTimer) {
       clearTimeout(drainDebounceTimer);
       drainDebounceTimer = null;
