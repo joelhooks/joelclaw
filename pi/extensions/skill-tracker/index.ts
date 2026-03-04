@@ -9,7 +9,7 @@
  * Metadata: { skill, path, session_source }
  */
 
-import type { PiExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
 import { spawn } from "node:child_process";
 import { basename, dirname } from "node:path";
@@ -21,10 +21,7 @@ const SOURCE = process.env.GATEWAY_ROLE || "interactive";
 const recentReads = new Map<string, number>();
 const DEBOUNCE_MS = 30_000;
 
-function emitOtel(
-  skillName: string,
-  skillPath: string,
-): void {
+function emitOtel(skillName: string, skillPath: string): void {
   const args = [
     "otel", "emit", "skill.read",
     "--source", SOURCE,
@@ -47,16 +44,9 @@ function emitOtel(
 }
 
 function extractSkillName(filePath: string): string | null {
-  // Match paths like:
-  //   ~/.pi/agent/skills/gateway/SKILL.md
-  //   ~/Code/joelhooks/joelclaw/skills/adr-skill/SKILL.md
-  //   ~/.agents/skills/pdf/SKILL.md
-  //   /any/path/skills/name/SKILL.md
   const normalized = filePath.replace(/\/+/g, "/");
 
-  if (!normalized.endsWith("/SKILL.md") && !normalized.endsWith("/SKILL.md".toLowerCase())) {
-    return null;
-  }
+  if (!normalized.endsWith("/SKILL.md")) return null;
 
   // Skill name is the parent directory of SKILL.md
   const parent = basename(dirname(normalized));
@@ -65,7 +55,7 @@ function extractSkillName(filePath: string): string | null {
   return parent;
 }
 
-export default function skillTracker(pi: PiExtensionContext) {
+export default function skillTracker(pi: ExtensionAPI) {
   pi.on("tool_call", async (event) => {
     if (!isToolCallEventType("read", event)) return;
 
