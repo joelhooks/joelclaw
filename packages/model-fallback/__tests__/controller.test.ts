@@ -85,6 +85,56 @@ describe("ModelFallbackController", () => {
     expect(fallbackController.state.active).toBe(true);
   });
 
+  test("cancelTimeoutWatch stops pending timeout activation", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+    const { session, setModel, currentModel } = createSession();
+    const fallbackController = new ModelFallbackController(
+      { ...BASE_CONFIG, fallbackTimeoutMs: 500, fallbackAfterFailures: 99 },
+      "anthropic",
+      currentModel.id,
+    );
+    fallbackController.init(session, () => {});
+    fallbackController.onPromptDispatched();
+
+    vi.advanceTimersByTime(250);
+    fallbackController.cancelTimeoutWatch();
+    await Promise.resolve();
+
+    vi.advanceTimersByTime(1_000);
+    await Promise.resolve();
+    expect(setModel).not.toHaveBeenCalled();
+    expect(fallbackController.state.active).toBe(false);
+  });
+
+  test("onPromptDispatched is idempotent and restarts timeout from latest dispatch", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2024-01-01T00:00:00Z"));
+
+    const { session, setModel, currentModel } = createSession();
+    const fallbackController = new ModelFallbackController(
+      { ...BASE_CONFIG, fallbackTimeoutMs: 500, fallbackAfterFailures: 99 },
+      "anthropic",
+      currentModel.id,
+    );
+    fallbackController.init(session, () => {});
+    fallbackController.onPromptDispatched();
+
+    vi.advanceTimersByTime(400);
+    fallbackController.onPromptDispatched();
+    await Promise.resolve();
+
+    vi.advanceTimersByTime(250);
+    await Promise.resolve();
+    expect(setModel).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(251);
+    await Promise.resolve();
+    expect(setModel).toHaveBeenCalledTimes(1);
+    expect(fallbackController.state.active).toBe(true);
+  });
+
   test("does not activate fallback when primary and fallback are identical", async () => {
     vi.useFakeTimers();
 

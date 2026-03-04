@@ -141,6 +141,8 @@ export class ModelFallbackController {
   onPromptDispatched(): void {
     if (!this._fallbackDistinct) return;
 
+    // Idempotent: if dispatch is signaled repeatedly, restart from a clean slate.
+    this.cancelTimeoutWatch();
     this._promptDispatchedAt = Date.now();
     this._firstTokenAt = 0;
     console.log("[gateway:fallback] prompt dispatched, starting timeout watch", {
@@ -234,6 +236,16 @@ export class ModelFallbackController {
     if (consecutiveFailures < this.config.fallbackAfterFailures) return false;
 
     return this._activateFallback(`${consecutiveFailures} consecutive prompt failures`, consecutiveFailures);
+  }
+
+  /**
+   * Cancel any in-flight timeout watch and clear prompt dispatch markers.
+   * Use when a queued prompt is dropped/superseded before it actually runs.
+   */
+  cancelTimeoutWatch(): void {
+    this._clearTimeoutWatch();
+    this._promptDispatchedAt = 0;
+    this._firstTokenAt = 0;
   }
 
   // ── Internals ───────────────────────────────────────────

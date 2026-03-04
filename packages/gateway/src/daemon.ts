@@ -762,7 +762,7 @@ const fallbackController = new ModelFallbackController(
 
 // Track prompt dispatch timing for stuck-session detection.
 // If a turn is stuck for >10m, abort once, then restart daemon if no recovery
-// signal (turn_end or next prompt) arrives within grace window.
+// signal (turn_end or next model turn start) arrives within grace window.
 let _lastTurnEndAt = Date.now();
 let _lastPromptAt = 0;
 const STUCK_THRESHOLD_MS = 10 * 60 * 1000;
@@ -773,20 +773,20 @@ type StuckRecoveryState = {
   deadlineAt: number;
 };
 let stuckRecovery: StuckRecoveryState | undefined;
+type PendingPromptDispatch = {
+  queuedAt: number;
+  source?: string;
+};
+const pendingPromptDispatches: PendingPromptDispatch[] = [];
+let turnInProgress = false;
 
-// Some SDK event sequences can emit a late assistant segment after the active
-// source has already been cleared. Keep a short-lived channel-source hint so
-// those trailing segments still route back to the correct user channel.
-let lastPromptSource: string | undefined;
-let lastPromptSourceAt = 0;
-const RESPONSE_SOURCE_RECOVERY_WINDOW_MS = 30_000;
-onPrompt(() => {
+function onModelTurnStart(trigger: "turn_start" | "message_start"): void {
+  const pendingDispatch = pendingPromptDispatches.shift();
+  if (!pendingDispatch) return;
+
   const now = Date.now();
   _lastPromptAt = now;
-  turnKnowledgeCounter += 1;
-  turnKnowledgeText = "";
-  turnKnowledgeToolCalls = [];
-  turnKnowledgeToolErrors = 0;
+  fallbackController.onPromptDispatched();
 
   if (stuckRecovery) {
     const recoveredAfterMs = now - stuckRecovery.startedAt;
@@ -800,16 +800,29 @@ onPrompt(() => {
       success: true,
       metadata: {
         recoveredAfterMs,
-        recoverySignal: "next_prompt",
+        recoverySignal: trigger,
       },
     });
     stuckRecovery = undefined;
   }
+}
 
-  fallbackController.onPromptDispatched();
+// Some SDK event sequences can emit a late assistant segment after the active
+// source has already been cleared. Keep a short-lived channel-source hint so
+// those trailing segments still route back to the correct user channel.
+let lastPromptSource: string | undefined;
+let lastPromptSourceAt = 0;
+const RESPONSE_SOURCE_RECOVERY_WINDOW_MS = 30_000;
+onPrompt(() => {
+  const now = Date.now();
+  turnKnowledgeCounter += 1;
+  turnKnowledgeText = "";
+  turnKnowledgeToolCalls = [];
+  turnKnowledgeToolErrors = 0;
 
   // Start Telegram typing indicator + streaming if this prompt came from Telegram
   const source = getActiveSource();
+  pendingPromptDispatches.push({ queuedAt: now, source });
   if (source) {
     // Pre-seed response source for turns where message_start arrives late.
     responseSource = source;
@@ -922,6 +935,11 @@ async function pingModelFailure(event: QueueErrorEvent): Promise<void> {
 }
 
 onQueueError((event) => {
+  // Busy rejections mean the prompt did not start a model turn yet.
+  // If no turn is currently active, clear any stale timeout watch.
+  if (event.error.toLowerCase().includes("already processing") && !turnInProgress) {
+    fallbackController.cancelTimeoutWatch();
+  }
   void fallbackController.onPromptError(event.consecutiveFailures);
   void pingModelFailure(event);
 });
@@ -1347,6 +1365,17 @@ const wsServer = Bun.serve({
 await writeFile(WS_PORT_FILE, `${wsServer.port}\n`);
 
 session.subscribe((event: any) => {
+  if (event.type === "turn_start") {
+    turnInProgress = true;
+    onModelTurnStart("turn_start");
+  }
+
+  if (event.type === "message_start") {
+    turnInProgress = true;
+    // Fallback path for SDKs that may emit message_start without turn_start.
+    onModelTurnStart("message_start");
+  }
+
   // Any model activity resets the fallback timeout (tool calls take time)
   if (event.type === "message_start" || event.type === "message_update") {
     fallbackController.onActivity();
@@ -1593,6 +1622,7 @@ session.subscribe((event: any) => {
   }
 
   if (event.type === "turn_end") {
+    turnInProgress = false;
     const turnEndAt = Date.now();
     _lastTurnEndAt = turnEndAt;
 
