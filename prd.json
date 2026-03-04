@@ -1,22 +1,171 @@
 {
-  "title": "ADR-0194: Stale Run Sweep CLI",
-  "description": "Add a stale-run sweep command to the joelclaw CLI that identifies and reports stale Inngest runs using kubectl + SQLite forensics.",
+  "title": "Memory Yield Omnibus — ADR-0190/0191/0192/0193 Completion",
+  "description": "Complete the memory yield contract family. V1+V2 of 0190 and V1-V4 of 0192 are shipped. This PRD covers: ADR-0191 (inference circuit breakers for system-bus), ADR-0193 task-triage bug fix + circuit integration, ADR-0192 V5 regression tests, and ADR-0190 remaining verification items. All stories target packages/system-bus/ and packages/sdk/.",
+  "repo": "~/Code/joelhooks/joelclaw",
+  "branch": "main",
   "stories": [
     {
-      "id": "stale-run-detect",
-      "title": "Add joelclaw runs stale command to detect stale runs",
-      "description": "Add a 'stale' subcommand to the existing 'runs' command in packages/cli/src/commands/runs.ts. It should: (1) Run `joelclaw runs --status RUNNING --hours 24` to get currently-running runs, (2) For each run, call `joelclaw run <run-id>` to get the trace, (3) If the trace shows a terminal state (completed/failed/cancelled) but the list still shows RUNNING, flag it as stale, (4) Output a HATEOAS JSON envelope with the stale runs list and next_actions suggesting backup + sweep. Use the existing run/runs command patterns in the file. Register the subcommand properly.",
-      "acceptance": "Command `joelclaw runs stale` returns JSON envelope with stale run IDs. Compiles clean: `bunx tsc --noEmit`. Follow existing command patterns.",
-      "files": ["packages/cli/src/commands/runs.ts"],
-      "priority": 1
+      "id": "0191-v1-circuit-module",
+      "title": "ADR-0191 V1: Reusable inference circuit breaker module",
+      "description": "Create packages/system-bus/src/lib/inference-circuit.ts — an in-memory per-(component, action) circuit breaker for the long-running system-bus worker process.\n\nDesign:\n- Module-scoped Map<string, CircuitData> keyed on `${component}:${action}`\n- CircuitData: { state: closed|open|half-open, consecutiveFailures: number, lastFailureTs: number, lastOpenTs: number, totalOpens: number }\n- Configurable thresholds via env vars: JOELCLAW_INFER_NOOP_THRESHOLD (default 3), JOELCLAW_INFER_NOOP_WINDOW_MS (default 900000 / 15min), JOELCLAW_INFER_NOOP_COOLDOWN_MS (default 1800000 / 30min), JOELCLAW_INFER_HALF_OPEN_PROBES (default 1)\n- Exports: checkCircuit(component, action) → { skip: boolean, state: CircuitState, reason: string }, recordSuccess(component, action), recordFailure(component, action), getCircuitState(component, action), resetCircuit(component, action), getAllCircuits()\n- No-op failure signatures to count: empty/null output after normalization, JSON parse failure when requireJson, inference_rewrite_empty, inference_text_output_empty, inference_json_parse_empty\n- In-memory only (worker is long-running single pod). No Redis needed for V1.\n- Include OTEL emission for state transitions only: inference.circuit.opened, inference.circuit.half_open, inference.circuit.closed (NOT on every skip — that's noise)\n- Export __circuitTestUtils for testing\n\nFile: packages/system-bus/src/lib/inference-circuit.ts\nTest: packages/system-bus/src/lib/inference-circuit.test.ts",
+      "priority": 1,
+      "status": "pending",
+      "acceptance": [
+        "Module exports checkCircuit, recordSuccess, recordFailure, getCircuitState, resetCircuit, getAllCircuits",
+        "After JOELCLAW_INFER_NOOP_THRESHOLD consecutive failures, circuit opens",
+        "Open circuit returns skip=true from checkCircuit()",
+        "After JOELCLAW_INFER_NOOP_COOLDOWN_MS, circuit transitions to half-open",
+        "Half-open allows one probe; success closes, failure re-opens",
+        "OTEL events emitted on state transitions (opened, half_open, closed) via emitOtelEvent",
+        "All thresholds configurable via env vars",
+        "Test file covers: open on threshold, cooldown to half-open, probe success closes, probe failure re-opens, independent circuits per (component, action), window expiry resets counter",
+        "bunx tsc --noEmit passes"
+      ],
+      "files": [
+        "packages/system-bus/src/lib/inference-circuit.ts",
+        "packages/system-bus/src/lib/inference-circuit.test.ts"
+      ]
     },
     {
-      "id": "stale-run-backup",
-      "title": "Add joelclaw runs backup command for pre-sweep safety",
-      "description": "Add a 'backup' subcommand to runs command that executes: kubectl -n joelclaw exec inngest-0 -- sqlite3 /data/main.db '.backup /data/main.db.pre-sweep-<timestamp>.sqlite'. Return the backup filename in a HATEOAS envelope. This is the mandatory pre-mutation step from ADR-0194.",
-      "acceptance": "Command `joelclaw runs backup` creates a timestamped SQLite backup inside the inngest-0 pod. Returns backup path in JSON envelope. Compiles clean.",
-      "files": ["packages/cli/src/commands/runs.ts"],
-      "priority": 2
+      "id": "0191-v2-wire-infer",
+      "title": "ADR-0191 V2: Wire circuit breaker into infer()",
+      "description": "Integrate the circuit breaker module into packages/system-bus/src/lib/inference.ts so that every infer() call automatically checks and updates circuit state.\n\nWiring points:\n1. After route building but before the attempt loop: call checkCircuit(component, action). If skip=true, throw a descriptive error OR return a deterministic fallback (prefer throwing so existing retry/fallback logic handles it — the circuit prevents the expensive pi spawn, not the function-level retry).\n2. Actually — better approach: check circuit INSIDE the attempt loop, before runPiAttempt(). If circuit is open, skip that attempt and continue to next fallback model. This way the inference router's own fallback chain still works, but the expensive pi spawn is skipped for the circuit-opened (component, action).\n3. On successful infer() return: call recordSuccess(component, action)\n4. On no-op failure signatures (inference_text_output_empty, inference_json_parse_empty, pi exit with empty output): call recordFailure(component, action)\n5. Add circuitState to the OTEL metadata on both success and failure events\n6. When circuit is open AND all attempts are skipped: emit inference.circuit.skipped_call OTEL event with component, action, circuitState\n\nIMPORTANT: Do NOT break existing behavior. Circuit is additive — when closed, infer() works exactly as before. Only when open does it skip the expensive pi spawn.\n\nFile: packages/system-bus/src/lib/inference.ts",
+      "priority": 2,
+      "status": "pending",
+      "depends_on": ["0191-v1-circuit-module"],
+      "acceptance": [
+        "infer() checks circuit state before each pi spawn attempt",
+        "Open circuit skips pi spawn and moves to next fallback attempt",
+        "If all attempts skipped due to circuit, throws with descriptive error including circuit state",
+        "recordSuccess() called on successful inference",
+        "recordFailure() called on no-op failure signatures (empty output, json parse empty, text output empty)",
+        "circuitState included in OTEL metadata for all inference events",
+        "inference.circuit.skipped_call OTEL event emitted when circuit blocks all attempts",
+        "Existing tests still pass — circuit is closed by default so behavior is unchanged",
+        "bunx tsc --noEmit passes"
+      ],
+      "files": [
+        "packages/system-bus/src/lib/inference.ts"
+      ]
+    },
+    {
+      "id": "0193-fix-hash-bug",
+      "title": "ADR-0193: Fix hash-before-classification bug in task-triage",
+      "description": "Bug: task-triage.ts sets the task hash in Redis (TRIAGE_HASH_KEY) in step 2 (check-hash) BEFORE the LLM classification in step 4 (sonnet-triage). If classification fails (degraded), the hash is already cached, so the next heartbeat's check-hash step sees 'task list unchanged' and skips — meaning failed classifications are never retried until task content changes.\n\nFix: Move hash persistence to AFTER successful classification. Restructure:\n1. check-hash step: compute current hash and compare to stored hash. Return { changed: boolean, currentHash: string } but do NOT persist yet.\n2. If !changed, return noop.\n3. Run classification.\n4. If classification is valid (classificationValid=true): persist hash in a new step 'persist-hash'. Set TRIAGE_HASH_KEY with the current hash + TTL.\n5. If classification is degraded: do NOT persist hash. Next heartbeat will retry.\n\nAlso add circuitState to the OTEL metadata on both success and degraded paths.\n\nFile: packages/system-bus/src/inngest/functions/task-triage.ts",
+      "priority": 3,
+      "status": "pending",
+      "acceptance": [
+        "Hash is NOT persisted to Redis until classification succeeds",
+        "Failed/degraded classification allows next heartbeat to retry",
+        "Successful classification persists hash as before",
+        "Existing test suite passes",
+        "OTEL events include classificationValid, outputFailureReason, fallbackUsed on all paths",
+        "bunx tsc --noEmit passes"
+      ],
+      "files": [
+        "packages/system-bus/src/inngest/functions/task-triage.ts"
+      ]
+    },
+    {
+      "id": "0193-v4-circuit-integration",
+      "title": "ADR-0193 V4: Wire circuit breaker into task-triage",
+      "description": "Integrate the inference circuit breaker (from 0191-v1) into task-triage so that repeated classification failures stop wasting tokens.\n\nWiring:\n1. Import checkCircuit, recordSuccess, recordFailure from inference-circuit.ts\n2. Before the sonnet-triage step, check circuit for (component='task-triage', action='tasks.triage.classify')\n3. If circuit is open: skip classification entirely, return { status: 'degraded', reason: 'circuit_open', circuitState: 'open' } with OTEL event. Do NOT set cooldown.\n4. On successful classification: recordSuccess\n5. On failed/degraded classification: recordFailure\n6. Add circuitState to ALL OTEL metadata in the function\n\nNote: This is separate from the infer()-level circuit (0191-v2) because task-triage has function-level logic (hash check, cooldown, notification) that should be skipped when the circuit is open. The infer()-level circuit handles the pi spawn; this handles the triage workflow.\n\nFile: packages/system-bus/src/inngest/functions/task-triage.ts",
+      "priority": 4,
+      "status": "pending",
+      "depends_on": ["0191-v1-circuit-module", "0193-fix-hash-bug"],
+      "acceptance": [
+        "task-triage checks circuit before LLM classification",
+        "Open circuit skips classification and returns degraded with circuit_open reason",
+        "Open circuit does NOT set cooldown key",
+        "Successful classification records success",
+        "Failed classification records failure",
+        "circuitState present in all OTEL events",
+        "bunx tsc --noEmit passes"
+      ],
+      "files": [
+        "packages/system-bus/src/inngest/functions/task-triage.ts"
+      ]
+    },
+    {
+      "id": "0192-v5-tests",
+      "title": "ADR-0192 V5: Regression tests for recall rewrite reliability",
+      "description": "Add tests for the circuit breaker, cache, and skip heuristics in packages/sdk/src/capabilities/adapters/typesense-recall.ts.\n\nUse the exported __recallTestUtils which include: detectRewriteSkipReason, rewriteCircuit (getter), resetCircuit, circuitShouldSkip, circuitRecordSuccess, circuitRecordFailure, cacheGet, cacheSet, rewriteCache (getter).\n\nTest cases:\n1. detectRewriteSkipReason: short query → skip.short_query, quoted literal → skip.literal_query, path-like → skip.direct_identifier, command-like → skip.command_like, normal long query → null\n2. Circuit breaker: 3 consecutive recordFailure() → circuitShouldSkip returns skip=true, after cooldown → half-open, recordSuccess → closes circuit, recordFailure in half-open → re-opens\n3. Cache: cacheSet + cacheGet returns entry, expired entry returns null, max size eviction works\n4. runRewriteQueryWith with spawn mock: successful rewrite populates cache, failed rewrite records failure, circuit open skips rewrite\n\nNote: File I/O for circuit/cache persistence — tests should call resetCircuit() in beforeEach to avoid cross-test pollution. Tests may need to mock the filesystem or use temp paths.\n\nFile: packages/sdk/src/capabilities/adapters/typesense-recall.test.ts",
+      "priority": 5,
+      "status": "pending",
+      "acceptance": [
+        "All skip heuristic cases tested",
+        "Circuit open/half-open/close lifecycle tested",
+        "Cache hit/miss/expiry/eviction tested",
+        "runRewriteQueryWith integration tested with spawn mock",
+        "All tests pass with bun test",
+        "No test pollution (resetCircuit in beforeEach)"
+      ],
+      "files": [
+        "packages/sdk/src/capabilities/adapters/typesense-recall.test.ts"
+      ]
+    },
+    {
+      "id": "0191-v5-tests",
+      "title": "ADR-0191 V5: Tests for inference circuit breaker module",
+      "description": "Add tests for the inference circuit breaker module.\n\nTest cases:\n1. Default state is closed, checkCircuit returns skip=false\n2. After THRESHOLD consecutive recordFailure(), checkCircuit returns skip=true (open)\n3. Failures in different (component, action) pairs are independent\n4. After COOLDOWN_MS, circuit transitions to half-open, allows one probe\n5. recordSuccess in half-open closes circuit\n6. recordFailure in half-open immediately re-opens\n7. Failures outside the window don't accumulate (window expiry)\n8. resetCircuit clears state for a specific key\n9. getAllCircuits returns all tracked circuits\n\nUse the exported __circuitTestUtils. Mock Date.now() for time-dependent tests.\n\nFile: packages/system-bus/src/lib/inference-circuit.test.ts",
+      "priority": 5,
+      "status": "pending",
+      "depends_on": ["0191-v1-circuit-module"],
+      "acceptance": [
+        "All 9 test cases pass",
+        "Time-dependent tests use mocked Date.now()",
+        "No global state pollution between tests",
+        "bun test passes"
+      ],
+      "files": [
+        "packages/system-bus/src/lib/inference-circuit.test.ts"
+      ]
+    },
+    {
+      "id": "0190-scorecard-observe-fix",
+      "title": "ADR-0190: Add observe.skipped tracking to scorecard",
+      "description": "Now that observe.ts has the empty-transcript circuit breaker (V2), the scorecard should track skipped observations separately from stored observations.\n\nUpdate the observe_volume metric in packages/cli/src/commands/memory.ts:\n1. Query for action=observe.skipped.empty_transcript separately\n2. Report both: observe_stored (action=observe.store.completed) and observe_skipped (action=observe.skipped.*)\n3. Replace the single observe_volume metric with two: observe_stored_volume and observe_skipped_volume\n4. Add a derived metric: observe_skip_rate = skipped / (stored + skipped)\n5. Green threshold: skip_rate < 30%, Yellow < 50%, Red >= 50%\n\nFile: packages/cli/src/commands/memory.ts",
+      "priority": 6,
+      "status": "pending",
+      "acceptance": [
+        "Scorecard shows observe_stored_volume and observe_skipped_volume as separate metrics",
+        "observe_skip_rate computed and displayed with green/yellow/red thresholds",
+        "joelclaw memory scorecard --hours 24 runs without error",
+        "CLI builds successfully",
+        "bunx tsc --noEmit passes"
+      ],
+      "files": [
+        "packages/cli/src/commands/memory.ts"
+      ]
+    },
+    {
+      "id": "deploy-worker",
+      "title": "Deploy system-bus worker with all changes",
+      "description": "After all system-bus changes are committed, deploy the worker to k8s.\n\n1. Run: bash ~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh\n2. Wait for rollout: kubectl -n joelclaw rollout status deployment/system-bus-worker --timeout=180s\n3. Verify pod running: kubectl get pods -n joelclaw | grep system-bus\n4. Verify Inngest sync: curl -X PUT http://127.0.0.1:3111/api/inngest\n5. Run scorecard: joelclaw memory scorecard --hours 1\n6. Check circuit state is clean: joelclaw otel search 'inference.circuit' --hours 1",
+      "priority": 7,
+      "status": "pending",
+      "depends_on": ["0191-v2-wire-infer", "0193-v4-circuit-integration", "0190-scorecard-observe-fix"],
+      "acceptance": [
+        "New worker pod running in k8s",
+        "Inngest functions registered (modified=true or false)",
+        "joelclaw memory scorecard --hours 1 runs successfully",
+        "No inference.circuit.opened events in first hour (circuits start closed)"
+      ],
+      "files": []
+    },
+    {
+      "id": "update-adrs",
+      "title": "Update ADR statuses and verification checklists",
+      "description": "After all stories are complete, update the four ADRs:\n\n1. ADR-0190 (~/Vault/docs/decisions/0190-memory-yield-contract.md):\n   - Add V3 section for observe skip tracking\n   - Update verification checklist\n\n2. ADR-0191 (~/Vault/docs/decisions/0191-no-op-inference-circuit-breakers.md):\n   - Add Implementation Progress section with V1-V5\n   - Check off verification items\n\n3. ADR-0192 (~/Vault/docs/decisions/0192-recall-rewrite-reliability-contract.md):\n   - Add V5 test section\n   - Check off remaining verification items\n\n4. ADR-0193 (~/Vault/docs/decisions/0193-task-triage-output-contract.md):\n   - Add Implementation Progress section\n   - Document hash-before-classification bug fix\n   - Document circuit integration\n   - Check off verification items",
+      "priority": 8,
+      "status": "pending",
+      "depends_on": ["deploy-worker"],
+      "acceptance": [
+        "All four ADRs have Implementation Progress sections",
+        "All shipped verification items are checked off",
+        "Remaining items are clearly marked with what's left"
+      ],
+      "files": []
     }
   ]
 }
