@@ -91,6 +91,8 @@ await pushGatewayEvent({
 | Status shows healthy but messages don't arrive | Session stuck mid-stream on hung tool call | `joelclaw gateway restart` |
 | Pending events growing on a session | Agent processing or blocked | Wait 1min, then `joelclaw gateway restart` |
 | Telegram messages not delivered | HTML parsing error in response | Check `joelclaw gateway status`, restart |
+| Slack passive firehose looks dead (mentions still work) | `SLACK_ALLOWED_USER_ID` not derived at startup | Ensure `slack_user_token` lease works; `gateway-start.sh` derives user id via `auth.test`, then `joelclaw gateway restart` |
+| Slack replies have no default target | `SLACK_DEFAULT_CHANNEL_ID` not derived at startup | Ensure `slack_bot_token` lease works; `gateway-start.sh` derives DM channel via `conversations.open`, then restart |
 | Gateway restarts every few seconds | Crash loop — bad secret lease or code error | Check `/tmp/joelclaw/gateway.err`, fix cause |
 | Redis connection failed | Redis pod down | `joelclaw status` to check k8s health |
 

@@ -318,9 +318,6 @@ function readSlackErrorCode(error: unknown): string | undefined {
   if (!error || typeof error !== "object") return undefined;
 
   const value = error as Record<string, unknown>;
-  if (typeof value.code === "string" && value.code.trim().length > 0) {
-    return value.code.trim();
-  }
 
   const data = value.data;
   if (data && typeof data === "object") {
@@ -332,7 +329,15 @@ function readSlackErrorCode(error: unknown): string | undefined {
 
   const message = typeof value.message === "string" ? value.message : String(error);
   const match = message.match(/:\s*([a-z_]+)\s*$/i);
-  return match?.[1]?.toLowerCase();
+  if (match?.[1]) {
+    return match[1].toLowerCase();
+  }
+
+  if (typeof value.code === "string" && value.code.trim().length > 0) {
+    return value.code.trim();
+  }
+
+  return undefined;
 }
 
 function isPermanentChannelResolveError(code: string | undefined): boolean {

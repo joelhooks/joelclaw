@@ -33,6 +33,19 @@ joelclaw gateway unmute imessage
 
 Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 
+### Slack passive firehose prerequisites
+
+The launchd start script now derives Slack routing env vars at boot from existing Slack secrets:
+
+- `slack_user_token` → `auth.test` → `SLACK_ALLOWED_USER_ID`
+- `slack_bot_token` + resolved user ID → `conversations.open` → `SLACK_DEFAULT_CHANNEL_ID`
+
+This removes dependency on non-existent `slack_allowed_user_id` / `slack_default_channel_id` secrets and restores passive firehose routing after restarts.
+
+If either derivation fails, startup logs explicit warnings in `/tmp/joelclaw/gateway.log` so degraded Slack behavior is visible immediately.
+
+Slack channel-name resolution now classifies `channel_not_found` as a permanent resolve error and applies long cooldown (`slack.channel.resolve_unavailable`) instead of spamming transient `resolve_failed` warnings.
+
 Restart race hardening: daemon shutdown now removes PID/WS/session files only when the file still belongs to that process. This prevents old-process cleanup from deleting newly written marker files during fast restarts.
 
 Gateway process diagnostics now use exact launchd state inspection (`launchctl print-disabled` + `launchctl print gui/<uid>/com.joel.gateway`) so disabled launch agents are reported explicitly. `joelclaw gateway restart` now re-enables `com.joel.gateway` before bootstrap/kickstart, so a disabled service can recover via the normal restart command.
