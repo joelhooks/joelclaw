@@ -114,11 +114,24 @@ Semantics:
 - `joelclaw notify`
 - `joelclaw otel`
 - `joelclaw recall`
+- `joelclaw memory`
 - `joelclaw subscribe`
 - `joelclaw webhook`
 - `joelclaw inngest`
 - `joelclaw knowledge`
 - `joelclaw capabilities`
+
+## Memory command group
+
+```bash
+joelclaw memory write "<observation text>" [--type observation|lesson|pattern|failed_target] [--source cli]
+joelclaw memory search "<query>"
+```
+
+Semantics:
+
+- `memory write` sends `memory/observation.submitted` to Inngest with `{ text, type, source, ts }`.
+- `memory search` is an alias surface for recall so read/write memory workflows live in one command group.
 
 ## Knowledge turn-write command
 

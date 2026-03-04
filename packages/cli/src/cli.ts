@@ -24,6 +24,7 @@ import { logCmd } from "./commands/log"
 import { logsCmd } from "./commands/logs"
 import { loopCmd } from "./commands/loop"
 import { mailCmd } from "./commands/mail"
+import { memoryCmd } from "./commands/memory"
 import { nasCmd } from "./commands/nas"
 import { noteCmd } from "./commands/note"
 import { notifyCmd } from "./commands/notify"
@@ -146,6 +147,7 @@ const root = Command.make("joelclaw", {}, () =>
           approvals: "joelclaw approvals {list|approve|deny|categories|history|reset}",
           call: "joelclaw call <message> [--to <phone>]",
           recall: "joelclaw recall <query> [--limit N] [--min-score F] [--raw]",
+          memory: "joelclaw memory {write <text> [--type observation|lesson|pattern|failed_target] [--source <source>]|search <query>}",
           search: "joelclaw search <query> [-c collection] [-n limit] [-f filter] [--semantic]",
           docs: "joelclaw docs {add|search|context|list|show|status|enrich|reindex}",
           vault: "joelclaw vault {read|search|ls|tree|adr}",
@@ -183,7 +185,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([agentCmd, contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, deployCmd, healCmd, logsCmd, logCmd, secretsCmd, notifyCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, vaultCmd, skillsCmd, docsCmd, emailCmd, mailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd, webhookCmd, knowledgeCmd])
+  Command.withSubcommands([agentCmd, contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, deployCmd, healCmd, logsCmd, logCmd, secretsCmd, notifyCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, memoryCmd, vaultCmd, skillsCmd, docsCmd, emailCmd, mailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd, webhookCmd, knowledgeCmd])
 )
 
 const cli = Command.run(root, {
