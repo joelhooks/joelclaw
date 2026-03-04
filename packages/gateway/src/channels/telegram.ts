@@ -41,6 +41,13 @@ const INNGEST_EVENT_KEY = process.env.INNGEST_EVENT_KEY ?? "";
 
 let _botToken: string | undefined;
 
+// ADR-0209: Callback to record outbound message IDs for thread tracking
+let _onOutboundMessageId: ((messageId: number) => void) | undefined;
+
+export function setOutboundMessageIdCallback(cb: (messageId: number) => void): void {
+  _onOutboundMessageId = cb;
+}
+
 // ── Inline keyboard types (ADR-0070) ───────────────────
 export interface InlineButton {
   text: string;
@@ -68,8 +75,13 @@ function resolveSendInput(
     return { text: message, options };
   }
 
+  // ADR-0209: Coerce string anchor to number for Telegram API
+  const resolvedReplyTo = message.replyTo !== undefined
+    ? (typeof message.replyTo === "string" ? Number.parseInt(message.replyTo, 10) : message.replyTo)
+    : undefined;
+
   const mergedOptions: RichSendOptions = {
-    ...(message.replyTo !== undefined ? { replyTo: message.replyTo } : {}),
+    ...(resolvedReplyTo !== undefined && !Number.isNaN(resolvedReplyTo) ? { replyTo: resolvedReplyTo } : {}),
     ...(message.buttons ? { buttons: message.buttons } : {}),
     ...(message.silent !== undefined ? { silent: message.silent } : {}),
     ...(options ?? {}),
@@ -1033,7 +1045,7 @@ async function sendTelegramMessage(
     const isLast = i === chunks.length - 1;
 
     try {
-      await bot.api.sendMessage(chatId, chunk, {
+      const sent = await bot.api.sendMessage(chatId, chunk, {
         ...(parseAsHtml ? { parse_mode: "HTML" as const } : {}),
         // Only attach buttons to the last chunk
         ...(isLast && replyMarkup ? { reply_markup: replyMarkup } : {}),
@@ -1041,6 +1053,10 @@ async function sendTelegramMessage(
         ...(mergedOptions?.silent ? { disable_notification: true } : {}),
         ...(mergedOptions?.noPreview ? { link_preview_options: { is_disabled: true } } : {}),
       });
+      // ADR-0209: Record outbound message ID for thread reply-to tracking
+      if (isLast && sent?.message_id && _onOutboundMessageId) {
+        _onOutboundMessageId(sent.message_id);
+      }
     } catch (error) {
       if (!parseAsHtml) {
         console.error("[gateway:telegram] plain send failed", { error });

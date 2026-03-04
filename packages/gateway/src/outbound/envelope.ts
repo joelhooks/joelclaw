@@ -4,7 +4,7 @@ export type OutboundEnvelope = {
   text: string;
   buttons?: InlineButton[][];
   silent?: boolean;
-  replyTo?: number;
+  replyTo?: number | string;
   format?: "html" | "markdown" | "plain";
 };
 

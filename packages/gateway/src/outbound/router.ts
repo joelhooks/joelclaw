@@ -4,7 +4,10 @@ import { applyFormatRules } from "./format";
 
 // Lazy reference to avoid static import binding pollution across test files.
 // Updated at wireSession() call time via re-import so mock.module() takes effect.
-let _commandQueueModule: { getActiveSource?: () => string | undefined } = {};
+let _commandQueueModule: {
+  getActiveSource?: () => string | undefined;
+  getActiveThreadContext?: () => { threadId?: string; replyToAnchor?: string } | undefined;
+} = {};
 
 const HEARTBEAT_SOURCE = "heartbeat";
 const HEARTBEAT_OK = "HEARTBEAT_OK";
@@ -179,6 +182,14 @@ export function routeResponse(
   if (!normalized.text.trim()) return;
   if (filterHeartbeatResponse(normalized.text, { source })) return;
 
+  // ADR-0209: Inject reply-to from thread context if not already set
+  if (!normalized.replyTo) {
+    const threadCtx = _commandQueueModule.getActiveThreadContext?.();
+    if (threadCtx?.replyToAnchor) {
+      normalized.replyTo = threadCtx.replyToAnchor;
+    }
+  }
+
   ensureDefaultChannels();
 
   let target: OutboundChannelHandler | undefined;
@@ -236,7 +247,10 @@ export async function wireSession(session: SessionLike): Promise<unknown> {
 
   for (const specifier of moduleCandidates) {
     try {
-      const mod = await import(specifier) as { getActiveSource?: () => string | undefined };
+      const mod = await import(specifier) as {
+        getActiveSource?: () => string | undefined;
+        getActiveThreadContext?: () => { threadId?: string; replyToAnchor?: string } | undefined;
+      };
       if (typeof mod.getActiveSource === "function") {
         _commandQueueModule = mod;
         break;

@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -12,12 +13,13 @@ import { fetchChannel as fetchDiscordChannel, getClient as getDiscordClient, mar
 import { send as sendIMessage, shutdown as shutdownIMessage, start as startIMessage } from "./channels/imessage";
 import { getRedisClient, isHealthy as isRedisHealthy, shutdown as shutdownRedisChannel, start as startRedisChannel } from "./channels/redis";
 import { isStarted as isSlackStarted, send as sendSlack, shutdown as shutdownSlack, start as startSlack } from "./channels/slack";
-import { getBot, parseChatId, send as sendTelegram, sendMedia as sendTelegramMedia, shutdown as shutdownTelegram, start as startTelegram, TelegramChannel } from "./channels/telegram";
+import { getBot, parseChatId, send as sendTelegram, sendMedia as sendTelegramMedia, setOutboundMessageIdCallback, shutdown as shutdownTelegram, start as startTelegram, TelegramChannel } from "./channels/telegram";
 import type { SendMediaPayload } from "./channels/types";
 import {
   drain,
   enqueue,
   getActiveSource,
+  getActiveThreadContext,
   getConsecutiveFailures,
   getQueueDepth,
   onContextOverflowRecovery,
@@ -1120,7 +1122,7 @@ registerChannel("console", {
       await sendTelegram(TELEGRAM_USER_ID, envelope.text, {
         buttons: envelope.buttons,
         silent: envelope.silent,
-        replyTo: envelope.replyTo,
+        replyTo: typeof envelope.replyTo === "string" ? Number.parseInt(envelope.replyTo, 10) : envelope.replyTo,
       });
       void emitGatewayOtel({
         level: "info",
@@ -1169,7 +1171,7 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
         await sendTelegram(chatId, envelope.text, {
           buttons: envelope.buttons,
           silent: envelope.silent,
-          replyTo: envelope.replyTo,
+          replyTo: typeof envelope.replyTo === "string" ? Number.parseInt(envelope.replyTo, 10) : envelope.replyTo,
         });
         console.log("[gateway:telegram] message sent successfully", { chatId });
       } catch (error) {
@@ -1735,12 +1737,128 @@ session.subscribe((event: any) => {
   }
 });
 
+// ── ADR-0209: Thread classification on inbound messages ──────
+import {
+  buildClassifierPrompt,
+  classifyByHaikuResult,
+  classifyByReplyTo,
+  formatThreadIndexForPrompt,
+  getActiveThreads,
+  parseClassifierResponse,
+  recordOutboundAnchor,
+  resolveClassification,
+  type ThreadClassification,
+} from "./lib/thread-tracker";
+/** Cheap haiku call for thread classification (~200ms) */
+async function classifyThread(
+  userMessage: string,
+  channel: string,
+  replyToAnchor?: string,
+  inboundAnchor?: string,
+): Promise<{ threadId: string; replyToAnchor: string | null }> {
+  // 1. Reply-to hard signal
+  if (replyToAnchor) {
+    const replyClassification = classifyByReplyTo(channel, replyToAnchor);
+    if (replyClassification) {
+      const resolved = resolveClassification(replyClassification, channel, inboundAnchor);
+      return { threadId: resolved.thread.id, replyToAnchor: resolved.replyToAnchor };
+    }
+  }
+
+  // 2. Haiku classifier
+  const active = getActiveThreads();
+  const classifierPrompt = buildClassifierPrompt(userMessage, active);
+
+  try {
+    const raw = execSync(
+      `pi -p --no-session --no-extensions --model anthropic/claude-haiku-4-5`,
+      {
+        input: classifierPrompt,
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    ).trim();
+
+    const result = parseClassifierResponse(raw);
+    if (result) {
+      const classification = classifyByHaikuResult(result);
+      const resolved = resolveClassification(classification, channel, inboundAnchor);
+
+      void emitGatewayOtel({
+        level: "debug",
+        component: "thread-tracker",
+        action: "thread.classified",
+        success: true,
+        metadata: {
+          threadId: resolved.thread.id,
+          threadLabel: resolved.thread.label,
+          isNew: classification.isNew,
+          confidence: result.confidence,
+          source: classification.source,
+          activeThreads: active.length,
+        },
+      });
+
+      return { threadId: resolved.thread.id, replyToAnchor: resolved.replyToAnchor };
+    }
+  } catch (err) {
+    void emitGatewayOtel({
+      level: "warn",
+      component: "thread-tracker",
+      action: "thread.classify.failed",
+      success: false,
+      error: String(err),
+      metadata: { activeThreads: active.length },
+    });
+  }
+
+  // 3. Fallback: if only 1 active thread, continue it
+  if (active.length === 1 && active[0]) {
+    const resolved = resolveClassification(
+      { threadId: active[0].id, threadLabel: active[0].label, isNew: false, confidence: 0.5, source: "continuation" },
+      channel,
+      inboundAnchor,
+    );
+    return { threadId: resolved.thread.id, replyToAnchor: resolved.replyToAnchor };
+  }
+
+  // 4. No threads / can't classify → create new with generic label
+  const resolved = resolveClassification(
+    { threadId: "new", threadLabel: "conversation", isNew: true, confidence: 0.3, source: "continuation" },
+    channel,
+    inboundAnchor,
+  );
+  return { threadId: resolved.thread.id, replyToAnchor: null };
+}
+
 const enqueueToGateway = async (source: string, prompt: string, metadata?: Record<string, unknown>) => {
+  // ADR-0209: Extract channel + anchors from source/metadata
+  const channel = source.split(":")[0] ?? "unknown";
+  const replyToAnchor = typeof metadata?.replyTo === "string" ? metadata.replyTo : undefined;
+  const inboundAnchor = typeof metadata?.telegramMessageId === "number"
+    ? String(metadata.telegramMessageId)
+    : typeof metadata?.discordMessageId === "string"
+      ? metadata.discordMessageId
+      : undefined;
+
+  // ADR-0209: Classify thread (haiku ~200ms, reply-to ~0ms)
+  const threadCtx = await classifyThread(prompt, channel, replyToAnchor, inboundAnchor);
+
+  // Inject thread index into channel context
+  const threadIndex = formatThreadIndexForPrompt();
   const withChannelContext = injectChannelContext(prompt, {
     source,
     threadName: typeof metadata?.discordThreadName === "string" ? metadata.discordThreadName : undefined,
   });
-  await enqueue(source, withChannelContext, metadata);
+  const withThreadContext = threadIndex
+    ? `${withChannelContext}\n\n${threadIndex}\n\n[You are responding to thread: ${threadCtx.threadId}]`
+    : withChannelContext;
+
+  await enqueue(source, withThreadContext, metadata, {
+    threadId: threadCtx.threadId,
+    replyToAnchor: threadCtx.replyToAnchor ?? undefined,
+  });
   void drain();
 };
 
@@ -1886,6 +2004,14 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
     abortCurrentTurn: async () => {
       await session.abort();
     },
+  });
+
+  // ADR-0209: Record outbound Telegram message IDs for thread reply-to
+  setOutboundMessageIdCallback((messageId: number) => {
+    const threadCtx = getActiveThreadContext();
+    if (threadCtx?.threadId) {
+      recordOutboundAnchor(threadCtx.threadId, "telegram", String(messageId));
+    }
   });
 
   try {

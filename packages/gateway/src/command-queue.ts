@@ -9,6 +9,10 @@ export type QueueEntry = {
   metadata?: Record<string, unknown>;
   streamId?: string;
   priority?: Priority;
+  /** ADR-0209: Thread ID for this message */
+  threadId?: string;
+  /** ADR-0209: Channel anchor to reply-to on outbound */
+  replyToAnchor?: string;
 };
 
 export interface ActiveRequest {
@@ -16,6 +20,10 @@ export interface ActiveRequest {
   source: string;
   enqueuedAt: number;
   prompt: string;
+  /** ADR-0209: Thread ID for this turn */
+  threadId?: string;
+  /** ADR-0209: Channel anchor for outbound reply-to */
+  replyToAnchor?: string;
 }
 
 type PromptSession = {
@@ -115,7 +123,7 @@ export async function enqueue(
   source: string,
   prompt: string,
   metadata?: Record<string, unknown>,
-  options?: { streamId?: string },
+  options?: { streamId?: string; threadId?: string; replyToAnchor?: string },
 ): Promise<void> {
   let streamId = options?.streamId;
   let priority: Priority | undefined;
@@ -178,7 +186,7 @@ export async function enqueue(
     return;
   }
 
-  queue.push({ source, prompt, metadata, streamId, priority });
+  queue.push({ source, prompt, metadata, streamId, priority, threadId: options?.threadId, replyToAnchor: options?.replyToAnchor });
   void emitGatewayOtel({
     level: "debug",
     component: "command-queue",
@@ -206,6 +214,15 @@ export async function enqueue(
 
 export function getActiveSource(): string | undefined {
   return activeRequest?.source;
+}
+
+/** ADR-0209: Get active thread context for outbound routing */
+export function getActiveThreadContext(): { threadId?: string; replyToAnchor?: string } | undefined {
+  if (!activeRequest) return undefined;
+  return {
+    threadId: activeRequest.threadId,
+    replyToAnchor: activeRequest.replyToAnchor,
+  };
 }
 
 /** @deprecated Use getActiveSource() instead. */
@@ -352,6 +369,8 @@ export async function drain(): Promise<void> {
         source: entry.source,
         enqueuedAt: Date.now(),
         prompt: entry.prompt,
+        threadId: entry.threadId,
+        replyToAnchor: entry.replyToAnchor,
       };
       const startedAt = Date.now();
 
