@@ -1019,6 +1019,37 @@ export default function (pi: ExtensionAPI) {
     try {
       // Build pointer from cached recall
       const lines: string[] = ["## Gateway Recovery"];
+
+      // ADR-0209: Inject thread state from snapshot
+      try {
+        const threadSnapshotPath = join(process.env.HOME || "/Users/joel", ".joelclaw", "state", "thread-snapshot.json");
+        const threadData = JSON.parse(readFileSync(threadSnapshotPath, "utf-8")) as {
+          threads?: Array<{
+            id: string;
+            label: string;
+            lastTouchedAt: number;
+            lastSummary: string;
+            messageCount: number;
+            lifecycle: string;
+          }>;
+        };
+        const activeThreads = (threadData.threads ?? []).filter(
+          (t) => t.lifecycle === "active" || t.lifecycle === "warm",
+        );
+        if (activeThreads.length > 0) {
+          const emoji: Record<string, string> = { active: "🔵", warm: "🟡" };
+          lines.push("**Active threads:**");
+          for (const t of activeThreads) {
+            const age = Math.round((Date.now() - t.lastTouchedAt) / 60000);
+            const ageStr = age < 60 ? `${age}m` : `${Math.round(age / 60)}h`;
+            const e = emoji[t.lifecycle] ?? "⚪";
+            const summary = t.lastSummary ? ` — ${t.lastSummary}` : "";
+            lines.push(`- ${e} **${t.label}**${summary} (${ageStr} ago, ${t.messageCount} msgs)`);
+          }
+        }
+      } catch {
+        // No thread snapshot available — that's fine
+      }
       if (gwRecentTopics.length > 0) {
         lines.push(`**Recent topics:** ${gwRecentTopics.slice(-3).join(" → ").slice(0, 200)}`);
       }

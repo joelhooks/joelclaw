@@ -1744,11 +1744,24 @@ import {
   classifyByReplyTo,
   formatThreadIndexForPrompt,
   getActiveThreads,
+  getThreadsSnapshot,
   parseClassifierResponse,
   recordOutboundAnchor,
   resolveClassification,
   type ThreadClassification,
 } from "./lib/thread-tracker";
+
+const THREAD_SNAPSHOT_PATH = join(homedir(), ".joelclaw", "state", "thread-snapshot.json");
+
+/** Persist thread state so gateway extension can read it on compaction */
+function persistThreadSnapshot(): void {
+  try {
+    const dir = join(homedir(), ".joelclaw", "state");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    const snapshot = getThreadsSnapshot();
+    writeFile(THREAD_SNAPSHOT_PATH, JSON.stringify({ threads: snapshot, ts: Date.now() }, null, 2)).catch(() => {});
+  } catch {}
+}
 /** Cheap haiku call for thread classification (~200ms) */
 async function classifyThread(
   userMessage: string,
@@ -1800,6 +1813,7 @@ async function classifyThread(
         },
       });
 
+      persistThreadSnapshot();
       return { threadId: resolved.thread.id, replyToAnchor: resolved.replyToAnchor };
     }
   } catch (err) {
@@ -1820,6 +1834,7 @@ async function classifyThread(
       channel,
       inboundAnchor,
     );
+    persistThreadSnapshot();
     return { threadId: resolved.thread.id, replyToAnchor: resolved.replyToAnchor };
   }
 
@@ -1829,6 +1844,7 @@ async function classifyThread(
     channel,
     inboundAnchor,
   );
+  persistThreadSnapshot();
   return { threadId: resolved.thread.id, replyToAnchor: null };
 }
 
