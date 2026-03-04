@@ -708,7 +708,7 @@ function emitOtel(action: string, metadata: Record<string, unknown>): void {
     "otel", "emit", action,
     "--source", "interactive",
     "--component", "session-lifecycle",
-    "--success",
+    "--success", "true",
     "--metadata", JSON.stringify(metadata),
   ]);
 }
