@@ -407,11 +407,6 @@ function normalizeQuery(text: string): string {
 function detectRewriteSkipReason(query: string): string | null {
   if (!query) return "skip.empty_query"
 
-  const tokenCount = query.split(/\s+/gu).filter(Boolean).length
-  if (query.length <= 24 && tokenCount <= 3) {
-    return "skip.short_query"
-  }
-
   if ((query.startsWith('"') && query.endsWith('"')) || (query.startsWith("'") && query.endsWith("'"))) {
     return "skip.literal_query"
   }
@@ -422,6 +417,11 @@ function detectRewriteSkipReason(query: string): string | null {
 
   if (/^(show|find|list|get|open)\b/iu.test(query)) {
     return "skip.command_like"
+  }
+
+  const tokenCount = query.split(/\s+/gu).filter(Boolean).length
+  if (query.length <= 24 && tokenCount <= 3) {
+    return "skip.short_query"
   }
 
   return null
