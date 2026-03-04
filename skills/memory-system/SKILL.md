@@ -108,7 +108,47 @@ Run idempotent maintenance to keep recall quality high:
 - **ADR-0082** — Typesense as memory backend (Qdrant replaced).
 - **ADR-0094 → ADR-0100** — proposed evolution (write gate governance, taxonomy/budgets, forward triggers, graph/dual-search roadmap).
 
-## 8) Operations commands (slog + recall)
+## 8) Writing observations (mandatory at session end)
+
+**Every session that produces a durable pattern, operational fix, or architectural insight MUST write observations before closing.**
+
+```bash
+joelclaw send "memory/observation.submitted" -d '{
+  "observation": "<what was learned — concrete, reusable, future-tense useful>",
+  "category": "jc:operations",
+  "source": "pi-session",
+  "tags": ["stripe", "payout"]
+}'
+```
+
+Use one `send` call per distinct observation. Batch is fine — fire them in a loop.
+
+### Category cheatsheet
+
+| Category | Use for |
+|---|---|
+| `jc:operations` | How things work, API quirks, CLI patterns, operational fixes |
+| `jc:rules-conventions` | Conventions, SOPs, team/project rules |
+| `jc:system-architecture` | Topology, wiring, how components connect |
+| `jc:projects` | Per-project facts, payout rates, product catalogs |
+| `jc:preferences` | Joel's explicit preferences |
+| `jc:people-relationships` | People, contacts, roles |
+| `jc:memory-system` | Memory system itself |
+
+### What makes a good observation
+
+- **Concrete**: "Stripe Report Run requires explicit `payment_metadata[product]` column in `columns` param or it returns blank" — not "Stripe has metadata"
+- **Reusable**: will this still be true next month?
+- **Actionable**: an agent reading this cold should know what to do differently
+- Not a transcript: no "the user asked me to", no raw tool output, no "I discovered that"
+
+### What to skip
+
+- Instruction artifacts, tool traces, ephemeral command outputs
+- Facts already in skills or ADRs (skills are the durable home; observations are for recall/search)
+- Anything under 12 chars — the write gate discards it
+
+## 9) Operations commands (slog + recall)
 
 ```bash
 # Record memory-system changes

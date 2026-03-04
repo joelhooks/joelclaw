@@ -198,6 +198,28 @@ joelclaw otel stats --hours 24          # Aggregate stats
 
 Storage: Typesense `otel_events` collection.
 
+## Memory — Writing Observations
+
+**Every session that produces a durable pattern, operational fix, or architectural insight MUST write observations before closing.**
+
+```bash
+joelclaw send "memory/observation.submitted" -d '{
+  "observation": "<concrete, reusable, future-tense useful fact>",
+  "category": "jc:operations",
+  "source": "pi-session",
+  "tags": ["relevant", "tags"]
+}'
+```
+
+One call per distinct observation. Fire multiple in a loop.
+
+Categories: `jc:operations` · `jc:rules-conventions` · `jc:system-architecture` · `jc:projects` · `jc:preferences` · `jc:people-relationships` · `jc:memory-system`
+
+Good observations: concrete API behaviour, CLI quirks, operational SOPs, per-project facts (rates, catalogs, account IDs), architectural constraints.  
+Skip: transcript noise, raw tool output, anything already captured verbatim in a skill or ADR.
+
+Full write/read protocol: `memory-system` skill.
+
 ## Skills
 
 52 skills in `skills/` — **canonical source, fully tracked in git**.
