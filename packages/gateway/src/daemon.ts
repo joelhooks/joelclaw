@@ -1788,7 +1788,7 @@ async function classifyThread(
       {
         input: classifierPrompt,
         encoding: "utf-8",
-        timeout: 5000,
+        timeout: 8000, // pi cold-start can take 3-4s; 5s was timing out 40%
         stdio: ["pipe", "pipe", "pipe"],
       },
     ).trim();
