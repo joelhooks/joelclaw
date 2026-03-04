@@ -19,6 +19,7 @@ import {
   resolveProfile,
 } from "@joelclaw/inference-router";
 import { emitOtelEvent } from "../observability/emit";
+import { checkCircuit, isNoOpFailure, recordFailure, recordSuccess } from "./inference-circuit";
 import { loadAgentDefinition } from "./agent-roster";
 import { type LlmUsage, parsePiJsonAssistant, traceLlmGeneration } from "./langfuse";
 
@@ -369,10 +370,40 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
 
     let lastError: Error | null = null;
     let attemptsLeft = attempts.length;
+    let allSkippedByCircuit = true;
 
     for (const attempt of attempts) {
       attemptsLeft -= 1;
       const attemptStartedAt = Date.now();
+
+      // ADR-0191: Check circuit before expensive pi spawn
+      const circuitCheck = checkCircuit(component, action);
+      if (circuitCheck.skip) {
+        // Circuit is open — skip this attempt
+        await emitOtelEvent({
+          level: "info",
+          source: "system-bus",
+          component,
+          action: "inference.circuit.skipped_call",
+          success: false,
+          metadata: {
+            requestId,
+            circuitState: circuitCheck.state,
+            circuitReason: circuitCheck.reason,
+            attemptIndex: attempt.attempt,
+            model: attempt.model,
+            provider: attempt.provider,
+            ...baseAgentMetadata,
+            ...(resolvedOpts.metadata ?? {}),
+          },
+        }).catch(() => {});
+
+        lastError = new Error(`inference circuit open for ${component}:${action} — ${circuitCheck.reason}`);
+        if (attemptsLeft > 0) continue;
+        break;
+      }
+      allSkippedByCircuit = false;
+
       try {
         const piResult = await runPiAttempt(promptPath, attempt.model, timeoutMs, {
           appendSystemPrompt: resolvedOpts.appendSystemPrompt,
@@ -432,6 +463,7 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
           outputChars: outputText.length,
           jsonRequested: Boolean(resolvedOpts.json),
           jsonParsed: resolvedOpts.json ? parsedData !== null : undefined,
+          circuitState: circuitCheck.state, // ADR-0191
           ...(resolvedOpts.metadata ?? {}),
           ...(profile
             ? {
@@ -513,6 +545,9 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
           },
         });
 
+        // ADR-0191: Record success → close circuit
+        recordSuccess(component, action);
+
         return {
           text: outputText,
           data: parsedData,
@@ -524,6 +559,11 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         const hasFallback = attemptsLeft > 0;
+
+        // ADR-0191: Record no-op failures to circuit
+        if (isNoOpFailure(lastError)) {
+          recordFailure(component, action);
+        }
         const failureDurationMs = Date.now() - attemptStartedAt;
 
         await traceLlmGeneration({
