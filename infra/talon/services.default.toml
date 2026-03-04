@@ -8,6 +8,11 @@ label = "com.joel.gateway"
 critical = true
 timeout_secs = 5
 
+[http.gateway_slack]
+url = "http://127.0.0.1:3018/health/slack"
+critical = true
+timeout_secs = 5
+
 [launchd.voice_agent]
 label = "com.joel.voice-agent"
 critical = false

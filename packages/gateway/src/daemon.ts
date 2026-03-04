@@ -1318,6 +1318,21 @@ await mkdir(PID_DIR, { recursive: true });
 const wsServer = Bun.serve({
   port: WS_PORT,
   fetch(req, server) {
+    const url = new URL(req.url);
+
+    if (req.method === "GET" && url.pathname === "/health/slack") {
+      const healthy = isSlackStarted();
+      return Response.json(
+        {
+          ok: healthy,
+          channel: "slack",
+          started: healthy,
+          checkedAt: new Date().toISOString(),
+        },
+        { status: healthy ? 200 : 503 },
+      );
+    }
+
     if (server.upgrade(req)) return;
     return new Response("WebSocket upgrade required", { status: 426 });
   },

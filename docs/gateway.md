@@ -44,6 +44,12 @@ This removes dependency on non-existent `slack_allowed_user_id` / `slack_default
 
 If either derivation fails, startup logs explicit warnings in `/tmp/joelclaw/gateway.log` so degraded Slack behavior is visible immediately.
 
+Gateway now exposes `GET /health/slack` on port `3018` (same Bun server as the WS bridge). It returns:
+- `200` when Slack channel is started
+- `503` when Slack channel is not started
+
+Talon dynamic services now probe this endpoint via `http.gateway_slack` in `~/.joelclaw/talon/services.toml` with `critical = true`.
+
 Slack channel-name resolution now classifies `channel_not_found` as a permanent resolve error and applies long cooldown (`slack.channel.resolve_unavailable`) instead of spamming transient `resolve_failed` warnings.
 
 Restart race hardening: daemon shutdown now removes PID/WS/session files only when the file still belongs to that process. This prevents old-process cleanup from deleting newly written marker files during fast restarts.
