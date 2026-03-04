@@ -1,14 +1,23 @@
-// Session Lifecycle - auto-briefing, pre-compaction flush, shutdown handoff, session naming.
+// Session Lifecycle - auto-briefing, pre-compaction flush, shutdown handoff, session naming,
+// and compaction recovery pipeline (ADR-0203).
 //
 // Eliminates manual continuation prompts by automatically injecting
 // system context at session start, preserving key context before
 // compaction, and writing handoff notes on session end.
 //
+// ADR-0203 adds three-stage compaction recovery:
+//   Stage 1 (turn_end)            - continuous signal extraction at warm/hot context thresholds
+//   Stage 2 (turn_end)            - in-memory task checkpoint updated incrementally
+//   Stage 3 (session_compact)     - pointer injection after compaction (~100 tokens)
+//
 // Hooks:
-//   session_start          - initialize session tracking state
-//   before_agent_start     - inject briefing (first turn) + system prompt awareness (every turn)
-//   session_before_compact - flush metadata to daily log before summarization
-//   session_shutdown       - auto-name session, write handoff to daily log
+//   session_start              - initialize session tracking state
+//   before_agent_start         - inject briefing (first turn) + system prompt awareness (every turn)
+//   tool_execution_start       - track file modifications for checkpoint (ADR-0203)
+//   turn_end                   - signal extraction + checkpoint update (ADR-0203)
+//   session_before_compact     - flush metadata to daily log + final checkpoint (ADR-0203)
+//   session_compact            - read checkpoint, inject recovery pointers (ADR-0203)
+//   session_shutdown           - auto-name session, write handoff to daily log
 //
 // Tools:
 //   name_session           - LLM-callable tool to set session name mid-conversation
@@ -21,6 +30,10 @@
 //
 // Writes:
 //   ~/.joelclaw/workspace/memory/YYYY-MM-DD.md   - compaction flush + session handoff
+//
+// External interactions (all via joelclaw CLI):
+//   joelclaw otel emit       - telemetry at each threshold crossing
+//   joelclaw memory write    - durable observations extracted pre-compaction
 
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
@@ -602,6 +615,124 @@ async function collectAgentMailSteeringSnapshot(promptTemplate: string): Promise
   };
 }
 
+// ── Compaction Recovery: Signal Extraction (ADR-0203) ───────────
+//
+// Regex-based extraction of high-signal patterns from assistant messages.
+// Conservative patterns — matches are genuine signal. The async Inngest
+// observe pipeline handles deeper semantic extraction on the full transcript.
+
+/** Decision/correction markers — 🔴 high priority */
+const DECISION_SIGNAL_PATTERNS: RegExp[] = [
+  /(?:decided to|going with|chose|choosing)\s+(.{10,200})/i,
+  /(?:the (?:fix|issue|bug|problem|root cause) was)\s+(.{10,200})/i,
+  /(?:turns out|it turns out)\s+(.{10,200})/i,
+  /(?:the correct (?:type|approach|pattern|way) is)\s+(.{5,200})/i,
+  /(?:not .{2,40}(?:—|--) use)\s+(.{5,150})/i,
+  /(?:switched to|replaced .{2,40} with)\s+(.{10,150})/i,
+];
+
+/** Failure markers — 🔴 high priority */
+const FAILURE_SIGNAL_PATTERNS: RegExp[] = [
+  /(?:doesn't work because|won't (?:work|load|compile|build) because)\s+(.{10,200})/i,
+  /(?:type error|wrong type)[:.]?\s+(.{10,200})/i,
+  /(?:broke because|failed because|crashed because)\s+(.{10,200})/i,
+  /(?:can't|cannot|couldn't) (?:find|resolve|import|load|build)\s+(.{10,200})/i,
+];
+
+function matchSignalPatterns(text: string, patterns: RegExp[], max = 3): string[] {
+  const results: string[] = [];
+  for (const pattern of patterns) {
+    if (results.length >= max) break;
+    const match = text.match(pattern);
+    if (match?.[1]) {
+      const trimmed = match[1].replace(/\n.*/s, "").trim();
+      if (trimmed.length >= 10) results.push(trimmed.slice(0, 200));
+    }
+  }
+  return results;
+}
+
+function extractDecisionSignals(text: string): string[] {
+  return matchSignalPatterns(text, DECISION_SIGNAL_PATTERNS);
+}
+
+function extractFailureSignals(text: string): string[] {
+  return matchSignalPatterns(text, FAILURE_SIGNAL_PATTERNS);
+}
+
+/** Derive 2-3 recall queries from task description and recent decisions. */
+function deriveRecallQueries(task: string, decisions: string[]): string[] {
+  const queries: string[] = [];
+  if (task.length > 10) {
+    const t = task.slice(0, 100).replace(/[^\w\s.-]/g, " ").replace(/\s+/g, " ").trim();
+    if (t.length > 5) queries.push(t);
+  }
+  if (decisions.length > 0) {
+    const d = decisions[decisions.length - 1].slice(0, 80).replace(/[^\w\s.-]/g, " ").replace(/\s+/g, " ").trim();
+    if (d.length > 5 && !queries.includes(d)) queries.push(d);
+  }
+  if (task.length > 10 && decisions.length > 1) {
+    const c = `${task.slice(0, 50)} ${decisions[0].slice(0, 50)}`.replace(/[^\w\s.-]/g, " ").replace(/\s+/g, " ").trim();
+    if (c.length > 10 && !queries.includes(c)) queries.push(c);
+  }
+  return queries.slice(0, 3);
+}
+
+/** Extract text content from an AgentMessage (handles content block arrays). */
+function extractAssistantText(message: unknown): string {
+  if (!message || typeof message !== "object") return "";
+  const msg = message as Record<string, unknown>;
+  if (!msg.content) return "";
+  if (typeof msg.content === "string") return msg.content;
+  if (!Array.isArray(msg.content)) return "";
+  return (msg.content as Array<Record<string, unknown>>)
+    .filter((b) => b.type === "text" && typeof b.text === "string")
+    .map((b) => b.text as string)
+    .join("\n");
+}
+
+// ── Compaction Recovery: CLI Helpers (ADR-0203) ─────────────────
+// All external interactions go through joelclaw CLI — no direct service calls.
+
+function spawnJoelclaw(args: string[]): void {
+  const child = spawn("joelclaw", args, {
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, TERM: "dumb" },
+  });
+  child.unref();
+}
+
+function emitOtel(action: string, metadata: Record<string, unknown>): void {
+  spawnJoelclaw([
+    "otel", "emit", action,
+    "--source", "interactive",
+    "--component", "session-lifecycle",
+    "--success",
+    "--metadata", JSON.stringify(metadata),
+  ]);
+}
+
+function writeMemoryObs(observation: string, extraTags: string[]): void {
+  spawnJoelclaw([
+    "memory", "write", observation,
+    "--category", "ops",
+    "--tags", ["compaction-extract", ...extraTags].join(","),
+  ]);
+}
+
+// ── Compaction Recovery: Checkpoint Type (ADR-0203) ─────────────
+
+interface TaskCheckpoint {
+  currentTask: string;           // last 3 user msgs joined, ≤500 chars
+  filesModified: string[];       // most recent 10
+  decisions: string[];           // max 10
+  failures: string[];            // max 5
+  compactionCount: number;
+  contextPercentAtCapture: number;
+  recallQueries: string[];       // 2-3 suggested queries
+}
+
 // ── Static system prompt awareness (same every turn → cacheable) ──
 
 function currentTimestamp(): string {
@@ -645,6 +776,46 @@ export default function (pi: ExtensionAPI) {
   let firstUserMessage = "";
   let steeringSnapshotCache: AgentMailSteeringSnapshot | null = null;
   let steeringSnapshotPromise: Promise<AgentMailSteeringSnapshot | null> | null = null;
+
+  // ── Compaction Recovery State (ADR-0203) ──────────────────────
+  let compactionCount = 0;
+  let recentUserMessages: string[] = [];
+  let trackedFilesModified = new Set<string>();
+  let extractedDecisions: string[] = [];
+  let extractedFailures: string[] = [];
+  let warmZoneEntered = false;
+  let hotZoneEntered = false;
+  let writtenObservations = new Set<string>();
+
+  /** Build checkpoint from in-memory state and return it. */
+  function buildCheckpoint(contextPercent: number): TaskCheckpoint {
+    const task = recentUserMessages.slice(-3).join(" → ").slice(0, 500);
+    return {
+      currentTask: task,
+      filesModified: [...trackedFilesModified].slice(-10),
+      decisions: extractedDecisions.slice(-10),
+      failures: extractedFailures.slice(-5),
+      compactionCount,
+      contextPercentAtCapture: contextPercent,
+      recallQueries: deriveRecallQueries(task, extractedDecisions),
+    };
+  }
+
+  /** Flush new observations to durable memory via joelclaw CLI. */
+  function flushObservationsToMemory(): void {
+    for (const d of extractedDecisions) {
+      if (!writtenObservations.has(d)) {
+        writtenObservations.add(d);
+        writeMemoryObs(d, ["decision"]);
+      }
+    }
+    for (const f of extractedFailures) {
+      if (!writtenObservations.has(f)) {
+        writtenObservations.add(f);
+        writeMemoryObs(f, ["failure"]);
+      }
+    }
+  }
 
   async function ensureDailySteeringSnapshot(): Promise<AgentMailSteeringSnapshot | null> {
     const date = todayStr();
@@ -777,6 +948,16 @@ export default function (pi: ExtensionAPI) {
     if (steeringSnapshotCache && steeringSnapshotCache.date !== todayStr()) {
       steeringSnapshotCache = null;
     }
+
+    // ADR-0203: reset compaction recovery state
+    compactionCount = 0;
+    recentUserMessages = [];
+    trackedFilesModified = new Set();
+    extractedDecisions = [];
+    extractedFailures = [];
+    warmZoneEntered = false;
+    hotZoneEntered = false;
+    writtenObservations = new Set();
   });
 
   // ── before_agent_start: briefing + awareness ────────────────
@@ -790,6 +971,12 @@ export default function (pi: ExtensionAPI) {
         typeof event.prompt === "string"
           ? event.prompt.slice(0, 200)
           : "";
+    }
+
+    // ADR-0203: track last 3 user messages for task checkpoint
+    if (event.prompt && typeof event.prompt === "string") {
+      recentUserMessages.push(event.prompt.slice(0, 200));
+      if (recentUserMessages.length > 3) recentUserMessages.shift();
     }
 
     // Every turn: lifecycle awareness + timestamp.
@@ -891,9 +1078,78 @@ export default function (pi: ExtensionAPI) {
     };
   });
 
+  // ── tool_execution_start: track file modifications (ADR-0203) ──
+
+  pi.on("tool_execution_start", async (event) => {
+    if ((event.toolName === "edit" || event.toolName === "write") && event.args?.path) {
+      trackedFilesModified.add(String(event.args.path));
+    }
+  });
+
+  // ── turn_end: compaction recovery extraction + checkpoint (ADR-0203) ──
+
+  pi.on("turn_end", async (event, ctx) => {
+    try {
+      const usage = ctx.getContextUsage();
+      if (!usage?.percent) return;
+      const pct = usage.percent;
+
+      // Stage 1: Warm zone (40%+) — start extracting signals from assistant messages
+      if (pct >= 40) {
+        if (!warmZoneEntered) {
+          warmZoneEntered = true;
+          emitOtel("compaction.extract.warm", { percent: pct });
+        }
+
+        const text = extractAssistantText(event.message);
+        if (text.length > 20) {
+          const decisions = extractDecisionSignals(text);
+          const failures = extractFailureSignals(text);
+          for (const d of decisions) {
+            extractedDecisions.push(d);
+            if (extractedDecisions.length > 10) extractedDecisions.shift();
+          }
+          for (const f of failures) {
+            extractedFailures.push(f);
+            if (extractedFailures.length > 5) extractedFailures.shift();
+          }
+        }
+      }
+
+      // Stage 2: Hot zone (60%+) — flush checkpoint + memory writes
+      if (pct >= 60) {
+        if (!hotZoneEntered) {
+          hotZoneEntered = true;
+        }
+        flushObservationsToMemory();
+        emitOtel("compaction.extract.hot", {
+          percent: pct,
+          decisionsCount: extractedDecisions.length,
+          failuresCount: extractedFailures.length,
+          filesCount: trackedFilesModified.size,
+        });
+      }
+    } catch {
+      // Recovery pipeline is best-effort — never crash the session
+    }
+  });
+
   // ── session_before_compact: flush to daily log ──────────────
 
-  pi.on("session_before_compact", async (event) => {
+  pi.on("session_before_compact", async (event, ctx) => {
+    // ADR-0203: final observation flush before compaction
+    try {
+      const usage = ctx.getContextUsage();
+      flushObservationsToMemory();
+      emitOtel("compaction.checkpoint", {
+        contextPercent: usage?.percent ?? null,
+        decisionsCount: extractedDecisions.length,
+        failuresCount: extractedFailures.length,
+        filesCount: trackedFilesModified.size,
+      });
+    } catch {
+      // Best-effort — don't block compaction
+    }
     const { preparation } = event;
 
     const msgCount = preparation.messagesToSummarize?.length || 0;
@@ -956,6 +1212,52 @@ export default function (pi: ExtensionAPI) {
     });
 
     // Return nothing — let default compaction proceed
+  });
+
+  // ── session_compact: pointer injection (ADR-0203 Stage 3) ─────
+
+  pi.on("session_compact", async () => {
+    compactionCount++;
+    try {
+      const checkpoint = buildCheckpoint(0); // percent irrelevant post-compaction
+
+      // Build pointer message — ~100 tokens, signposts not content dumps
+      const lines: string[] = ["## Session Recovery"];
+
+      if (checkpoint.currentTask) {
+        lines.push(`**Task:** ${checkpoint.currentTask.slice(0, 200)}`);
+      }
+      if (checkpoint.filesModified.length > 0) {
+        lines.push(`**Modified:** ${checkpoint.filesModified.slice(0, 5).join(", ")}`);
+      }
+      if (checkpoint.decisions.length > 0) {
+        lines.push(`**Key decisions:**\n${checkpoint.decisions.slice(0, 3).map((d) => `- ${d}`).join("\n")}`);
+      }
+      if (checkpoint.recallQueries.length > 0) {
+        const qs = checkpoint.recallQueries.map((q) => `\`recall "${q}"\``).join(" or ");
+        lines.push(`**If you need more context:** ${qs}`);
+      }
+
+      const content = lines.join("\n");
+
+      // Inject as hidden message — passive context, no trigger
+      pi.sendMessage(
+        { customType: "compaction-recovery", content, display: false },
+      );
+
+      emitOtel("compaction.inject", {
+        compactionCount,
+        filesCount: checkpoint.filesModified.length,
+        decisionsCount: checkpoint.decisions.length,
+        queriesCount: checkpoint.recallQueries.length,
+      });
+
+      // Reset zone flags for next compaction cycle (context drops back down)
+      warmZoneEntered = false;
+      hotZoneEntered = false;
+    } catch {
+      // Best-effort — never crash the session
+    }
   });
 
   // ── session_shutdown: auto-name + handoff ───────────────────
