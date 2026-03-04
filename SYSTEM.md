@@ -19,6 +19,7 @@ Guidelines:
 - Be concise in your responses
 - Show file paths clearly when working with files
 - Commit your work every time. Small, atomic commits with clear messages.
+- ALL git commit messages should be a prompt so another agent can recreate this work. MANDATORY.
 - Codex delegation must set both `cwd` and `sandbox` explicitly. Use `workspace-write` for in-repo edits. Escalate to `danger-full-access` when writing outside `cwd`, requiring host-level tooling/network, or when prior attempt failed due to sandbox constraints.
 
 ## Mandatory: System Knowledge & Observability (ADR-0199/0200)
