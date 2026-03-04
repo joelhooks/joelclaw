@@ -208,6 +208,75 @@ Options:
 
 ---
 
+## Specialist Sub-Agents (created 2026-03-04)
+
+Skills that don't belong in the main interactive prompt are routed to specialist
+sub-agents. These agents load ONLY their domain skills, keeping the main prompt lean.
+
+| Agent | Skills | Purpose |
+|-------|--------|---------|
+| `support-triage` | 45 support ticket skills | Customer support classification & response drafting |
+| `frontend-specialist` | 29 Next.js/React/animation/component skills | Frontend implementation & audits |
+| `document-processor` | 4 document format skills (pdf, xlsx, pptx, docx) | File format creation/conversion |
+| `content-specialist` | 8 writing/publishing skills | joelclaw.com content in Joel's voice |
+| `sdk-specialist` | 8 AI SDK/Convex/TanStack skills | SDK integration work |
+| `incident-responder` | 6 diagnostic skills | Production incident triage |
+
+### Skill routing after specialists
+
+**Remain in main prompt (~54 skills, ~8.8K tokens):**
+Core operational skills that the System Architect role uses regularly:
+- adr-skill, add-skill, agent-loop, agent-mail, clawmail, cli-design
+- codex-prompting, discovery, docker-sandbox, gateway, gateway-diagnose, gateway-setup
+- github-bot, gogcli, granola, gremlin, imsg, imsg-rpc
+- inngest, inngest-durable-functions, inngest-events, inngest-flow-control,
+  inngest-local, inngest-middleware, inngest-setup, inngest-steps
+- joelclaw, joelclaw-system-check, joelclaw-web, k8s, koko, langfuse
+- loop-nanny, memory-system, monitor, mux-video, o11y-logging
+- pds, pdf-brain, pdf-brain-ingest, recall, skill-review
+- sync-system-bus, system-architecture, system-bus, system-prompt
+- talon, task-management, telegram, typesense, vault
+- vercel-debug, video-ingest, webhooks, x-api
+- email-triage, egghead-slack, contacts, person-dossier, roam-research
+
+**Moved to specialists (`disable-model-invocation: true`):**
+~87 skills across 6 specialist agents. Still discoverable via `/skill:name`
+and loadable by the main agent if explicitly requested, but NOT listed in the
+`<available_skills>` prompt block.
+
+### Token budget after changes
+
+```
+Before:  141 skills in prompt → ~14,900 tokens
+After:    54 skills in prompt →  ~8,800 tokens
+Saved:                           ~6,100 tokens (41%)
+```
+
+Combined with other fixes (extension dedup, MEMORY_NUDGE cleanup):
+```
+Before: ~35,000 token system prompt
+After:  ~28,500 token system prompt
+Saved:  ~6,500 tokens → ~119K available for conversation (was ~105K)
+```
+
+## Action Items
+
+### Done
+- [x] Created 6 specialist sub-agents in `~/.pi/agents/`
+- [x] Categorized all 141 skills into main-prompt vs specialist
+
+### TODO
+- [ ] Set `disable-model-invocation: true` on ~87 specialist-only skills
+- [ ] Remove duplicate `memory-enforcer` from `~/.pi/agent/git/.../pi-tools/`
+- [ ] Remove duplicate `identity-inject` from one of the two discovery paths
+- [ ] Remove MEMORY_NUDGE section from AGENTS.md (keep in extension only)
+- [ ] Symlink missing skills from `~/.agents/skills/` into `~/.pi/agent/skills/`
+  for specialist discoverability (nextjs-*, shadcn-*, ai-sdk-*, etc.)
+- [ ] Move pi-tools from git-install to symlink from joelclaw repo
+- [ ] Move memory-enforcer canonical source to joelclaw repo, symlink to extensions/
+
+---
+
 ## Files Referenced
 
 - `~/.pi/agent/SYSTEM.md` — base system prompt (14.8KB)
