@@ -455,15 +455,27 @@ const scorecardCmd = Command.make(
         const coverageTotal = successCount + failCount
         const usageCoverageRate = coverageTotal > 0 ? successCount / coverageTotal : 0
 
-        // 5. Observe volume (action varies: observe.store.completed OR observe.skipped.*)
-        const observeAll = yield* Effect.tryPromise({
+        // 5. Observe volume — stored vs skipped (ADR-0190 V3)
+        const observeStored = yield* Effect.tryPromise({
           try: () => queryOtelEvents({
-            query: "observe",
-            filterBy: `${filterBase} && component:=observe`,
+            query: "observe.store.completed",
+            filterBy: `${filterBase} && action:=observe.store.completed`,
           }),
-          catch: (e) => new Error(`observe query: ${e}`),
+          catch: (e) => new Error(`observe stored query: ${e}`),
         })
-        const observeTotal = observeAll.found
+        const observeSkipped = yield* Effect.tryPromise({
+          try: () => queryOtelEvents({
+            query: "observe.skipped",
+            filterBy: `${filterBase} && component:=observe`,
+            perPage: 1,
+          }),
+          catch: (e) => new Error(`observe skipped query: ${e}`),
+        })
+        // Count skipped by searching for any observe.skipped.* action
+        const storedCount = observeStored.found
+        const skippedCount = observeSkipped.found
+        const observeTotal = storedCount + skippedCount
+        const observeSkipRate = observeTotal > 0 ? skippedCount / observeTotal : 0
 
         // Build metrics
         const metrics: ScorecardMetric[] = [
@@ -496,11 +508,25 @@ const scorecardCmd = Command.make(
             detail: `${successCount} success, ${failCount} failed out of ${coverageTotal} total`,
           },
           {
-            name: "observe_volume",
-            value: observeTotal,
-            description: "Observation store events in window",
-            status: observeTotal > 0 ? "green" : "yellow",
-            detail: `${observeTotal} observation batches stored in ${hours}h`,
+            name: "observe_stored",
+            value: storedCount,
+            description: "Observations stored (LLM extracted)",
+            status: storedCount > 0 ? "green" : "yellow",
+            detail: `${storedCount} observation batches stored in ${hours}h`,
+          },
+          {
+            name: "observe_skipped",
+            value: skippedCount,
+            description: "Observations skipped (empty transcript circuit breaker)",
+            status: skippedCount === 0 ? "green" : "yellow",
+            detail: `${skippedCount} skipped (empty transcript) in ${hours}h`,
+          },
+          {
+            name: "observe_skip_rate",
+            value: Math.round(observeSkipRate * 1000) / 1000,
+            description: "Fraction of observations skipped vs total",
+            status: metricStatus(observeSkipRate, 0.3, 0.5),
+            detail: `${skippedCount}/${observeTotal} observations skipped in ${hours}h`,
           },
           {
             name: "reflect_volume",
