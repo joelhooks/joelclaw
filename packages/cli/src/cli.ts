@@ -42,6 +42,7 @@ import { skillsCmd } from "./commands/skills"
 import { sleepCmd, wakeCmd } from "./commands/sleep"
 import { functionsCmd, statusCmd } from "./commands/status"
 import { subscribeCmd } from "./commands/subscribe"
+import { summaryCmd } from "./commands/summary"
 import { tuiCmd } from "./commands/tui"
 import { vaultCmd } from "./commands/vault"
 import { watchCmd } from "./commands/watch"
@@ -127,6 +128,7 @@ const root = Command.make("joelclaw", {}, () =>
           events: "joelclaw events [--prefix P] [--hours H] [--count N]",
           functions: "joelclaw functions",
           status: "joelclaw status",
+          summary: "joelclaw summary [--hours N] [--format json|text]",
           capabilities: "joelclaw capabilities",
           recover: "joelclaw recover <error-code> [--phase fix] [--execute]",
           deploy: "joelclaw deploy worker [--restart] [--execute] [--wait-ms 1500] [--force]",
@@ -185,7 +187,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([agentCmd, contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, capabilitiesCmd, recoverCmd, deployCmd, healCmd, logsCmd, logCmd, secretsCmd, notifyCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, memoryCmd, vaultCmd, skillsCmd, docsCmd, emailCmd, mailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd, webhookCmd, knowledgeCmd])
+  Command.withSubcommands([agentCmd, contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, summaryCmd, capabilitiesCmd, recoverCmd, deployCmd, healCmd, logsCmd, logCmd, secretsCmd, notifyCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, memoryCmd, vaultCmd, skillsCmd, docsCmd, emailCmd, mailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd, webhookCmd, knowledgeCmd])
 )
 
 const cli = Command.run(root, {

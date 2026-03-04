@@ -99,6 +99,7 @@ Semantics:
 ## Command roots
 
 - `joelclaw status`
+- `joelclaw summary [--hours N] [--format json|text]`
 - `joelclaw runs`
 - `joelclaw run`
 - `joelclaw agent`
@@ -120,6 +121,17 @@ Semantics:
 - `joelclaw inngest`
 - `joelclaw knowledge`
 - `joelclaw capabilities`
+
+## Daily summary command
+
+```bash
+joelclaw summary [--hours 24] [--format json|text]
+```
+
+Semantics:
+
+- aggregates recent git activity (joelclaw + Vault), Inngest run rollups, k8s pod health, OTEL stats, slog deploy/config events, and ADR churn into one response envelope.
+- default output is JSON summary payload; `--format text` adds a compact text rendition under `result.text` for downstream chat/mobile surfaces.
 
 ## Memory command group
 
