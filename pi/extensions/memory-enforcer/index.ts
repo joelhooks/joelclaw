@@ -405,6 +405,11 @@ function requestObserve(sessionId: string | null): void {
   })();
 }
 
+// Module-level injection guards — reset per session in session_start.
+// These must be module-scope so seedRecall() and seedSystemKnowledge() can access them.
+let recallInjected = false;
+let knowledgeInjected = false;
+
 const MEMORY_NUDGE =
   "\n\n## Memory — Write Observations (NON-OPTIONAL)\n" +
   "When you learn something non-obvious, discover a pattern, hit a gotcha, or solve a hard problem — " +
@@ -419,8 +424,6 @@ const MEMORY_NUDGE =
 
 export default function memoryEnforcer(pi: ExtensionAPI): void {
   let currentSessionId: string | null = null;
-  let recallInjected = false;
-  let knowledgeInjected = false;
 
   // ── Per-turn: inject memory-write pressure into system prompt ──
   pi.on("before_agent_start", async (event: { systemPrompt?: string }) => {
