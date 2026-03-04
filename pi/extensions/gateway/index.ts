@@ -16,10 +16,38 @@
  * inject a "missed heartbeat" alarm. Independent of Inngest — catches Inngest outages.
  */
 
+import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import Redis from "ioredis";
+
+// Lightweight OTEL emitter for gateway context — avoid pulling full @joelclaw/telemetry
+// which may not be resolvable in the pi extension runtime.
+function emitGatewayOtel(opts: {
+  level: string;
+  component: string;
+  action: string;
+  success: boolean;
+  metadata?: Record<string, unknown>;
+}): void {
+  const args = [
+    "otel", "emit", opts.action,
+    "--source", "gateway",
+    "--component", opts.component,
+    "--level", opts.level,
+    "--success", opts.success ? "true" : "false",
+    "--json",
+  ];
+  if (opts.metadata && Object.keys(opts.metadata).length > 0) {
+    args.push("--metadata", JSON.stringify(opts.metadata));
+  }
+  const child = spawn("joelclaw", args, {
+    stdio: ["ignore", "ignore", "ignore"],
+    shell: false,
+  });
+  child.on("error", () => {});
+}
 
 // ── Config ──────────────────────────────────────────────────────────
 // Default: disabled. Only activates when GATEWAY_ROLE is explicitly set.
