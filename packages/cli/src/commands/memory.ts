@@ -455,11 +455,11 @@ const scorecardCmd = Command.make(
         const coverageTotal = successCount + failCount
         const usageCoverageRate = coverageTotal > 0 ? successCount / coverageTotal : 0
 
-        // 5. Observe volume
+        // 5. Observe volume (action varies: observe.store.completed OR observe.skipped.*)
         const observeAll = yield* Effect.tryPromise({
           try: () => queryOtelEvents({
-            query: "observations.stored",
-            filterBy: `${filterBase} && component:=observe-session-noted`,
+            query: "observe",
+            filterBy: `${filterBase} && component:=observe`,
           }),
           catch: (e) => new Error(`observe query: ${e}`),
         })
