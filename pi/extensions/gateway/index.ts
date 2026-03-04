@@ -879,6 +879,9 @@ export default function (pi: ExtensionAPI) {
   let gwRecentTopics: string[] = [];
   let gwRecallCache: Array<{ query: string; hits: string[] }> = [];
   let gwRecallInFlight = false;
+  let gwCompactionCount = 0;
+  let gwLastCompactionTs = 0;
+  const GW_COMPACTION_COOLDOWN_MS = 60_000; // skip recovery injection if re-compacting within 60s
   const REFRESH_INTERVAL_MS = 30 * 60_000; // 30 minutes
 
   /** Run a recall query via joelclaw CLI (fire-and-forget, async). */
@@ -992,6 +995,27 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_compact", async () => {
+    gwCompactionCount++;
+    const now = Date.now();
+    const isRapidRecompaction = gwLastCompactionTs > 0 && (now - gwLastCompactionTs) < GW_COMPACTION_COOLDOWN_MS;
+    gwLastCompactionTs = now;
+
+    // Skip recovery injection on rapid re-compaction — the first compaction's
+    // recovery pointers are still in context. Injecting again via sendMessage()
+    // queues messages → continue() → model response → _checkCompaction → cascade.
+    if (isRapidRecompaction) {
+      gwWarmZoneEntered = false;
+      gwHotZoneEntered = false;
+      emitGatewayOtel({
+        level: "info",
+        component: "gateway-context",
+        action: "gateway.compaction.inject.skipped",
+        success: true,
+        metadata: { gwCompactionCount, reason: "rapid-recompaction", cooldownMs: GW_COMPACTION_COOLDOWN_MS },
+      });
+      return;
+    }
+
     try {
       // Build pointer from cached recall
       const lines: string[] = ["## Gateway Recovery"];
@@ -1013,9 +1037,11 @@ export default function (pi: ExtensionAPI) {
         lines.push(`**Deeper context:** ${allQueries.slice(0, 2).map((q) => `\`recall "${q}"\``).join(" or ")}`);
       }
 
+      const content = lines.join("\n");
+
       pi.sendMessage({
         customType: "gateway-recovery",
-        content: lines.join("\n"),
+        content,
         display: false,
       });
 
@@ -1028,7 +1054,13 @@ export default function (pi: ExtensionAPI) {
         component: "gateway-context",
         action: "gateway.compaction.inject",
         success: true,
-        metadata: { hitsCount: allHits.length, queriesCount: allQueries.length },
+        metadata: {
+          gwCompactionCount,
+          hitsCount: allHits.length,
+          queriesCount: allQueries.length,
+          contentChars: content.length,
+          estimatedTokens: Math.ceil(content.length / 4),
+        },
       });
     } catch {}
   });

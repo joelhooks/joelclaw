@@ -757,6 +757,8 @@ export default function (pi: ExtensionAPI) {
 
   // ── Compaction Recovery State (ADR-0203) ──────────────────────
   let compactionCount = 0;
+  let lastCompactionTs = 0;
+  const COMPACTION_COOLDOWN_MS = 60_000; // skip recovery injection if re-compacting within 60s
   let recentUserMessages: string[] = [];
   let trackedFilesModified = new Set<string>();
   let warmZoneEntered = false;
@@ -962,6 +964,7 @@ export default function (pi: ExtensionAPI) {
 
     // ADR-0203: reset compaction recovery state
     compactionCount = 0;
+    lastCompactionTs = 0;
     recentUserMessages = [];
     trackedFilesModified = new Set();
     warmZoneEntered = false;
@@ -1181,11 +1184,17 @@ export default function (pi: ExtensionAPI) {
     try {
       const usage = ctx.getContextUsage();
       writeTaskContextToMemory();
-      emitOtel("compaction.checkpoint", {
+      emitOtel("compaction.before", {
+        compactionCount,
         contextPercent: usage?.percent ?? null,
+        contextTokens: usage?.tokens ?? null,
+        contextLimit: usage?.limit ?? null,
         recallCacheSize: recallCache.length,
         recallHits: recallCache.reduce((n, r) => n + r.hits.length, 0),
         filesCount: trackedFilesModified.size,
+        userMessageCount,
+        timeSinceLastCompactionMs: lastCompactionTs > 0 ? Date.now() - lastCompactionTs : null,
+        timeSinceSessionStartMs: Date.now() - sessionStartTime,
       });
     } catch {
       // Best-effort — don't block compaction
@@ -1258,6 +1267,20 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_compact", async () => {
     compactionCount++;
+    const now = Date.now();
+    const isRapidRecompaction = lastCompactionTs > 0 && (now - lastCompactionTs) < COMPACTION_COOLDOWN_MS;
+    lastCompactionTs = now;
+
+    // Skip recovery injection on rapid re-compaction — the first compaction's
+    // recovery pointers are still in context. Injecting again via sendMessage()
+    // queues messages → continue() → model response → _checkCompaction → cascade.
+    if (isRapidRecompaction) {
+      warmZoneEntered = false;
+      hotZoneEntered = false;
+      emitOtel("compaction.inject.skipped", { compactionCount, reason: "rapid-recompaction" });
+      return;
+    }
+
     try {
       const checkpoint = buildCheckpoint(0); // percent irrelevant post-compaction
 
@@ -1290,6 +1313,9 @@ export default function (pi: ExtensionAPI) {
         filesCount: checkpoint.filesModified.length,
         recallHitsCount: checkpoint.recallHits.length,
         queriesCount: checkpoint.recallQueries.length,
+        contentChars: content.length,
+        estimatedTokens: Math.ceil(content.length / 4),
+        timeSinceSessionStartMs: Date.now() - sessionStartTime,
       });
 
       // Reset zone flags for next compaction cycle (context drops back down)
