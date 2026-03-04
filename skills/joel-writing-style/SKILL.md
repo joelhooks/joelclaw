@@ -5,6 +5,7 @@ description: "Joel's writing voice and style guide for joelclaw.com content. Use
 version: 1.0.0
 author: Joel Hooks
 tags: [joelclaw, writing, style, content, editorial]
+disable-model-invocation: true
 ---
 
 # Joel's Writing Style Guide

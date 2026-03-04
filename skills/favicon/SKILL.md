@@ -9,6 +9,7 @@ tags:
   - seo
   - branding
   - emojico
+disable-model-invocation: true
 ---
 
 # Favicon Generation with emojico

@@ -1,6 +1,7 @@
 ---
 name: ui-animation
 description: Guidelines and examples for UI motion and animation. Use when designing, implementing, or reviewing motion, easing, timing, reduced-motion behaviour, CSS transitions, keyframes, framer-motion, or spring animations.
+disable-model-invocation: true
 ---
 
 # UI Animation

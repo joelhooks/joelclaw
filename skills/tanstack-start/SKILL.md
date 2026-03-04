@@ -10,6 +10,7 @@ tags:
   - react
   - fullstack
   - gremlin
+disable-model-invocation: true
 ---
 
 # TanStack Start
