@@ -429,14 +429,43 @@ export const observeSessionFunction = inngest.createFunction(
       };
     }
 
+    // ADR-0190 V2: Circuit breaker — skip LLM call for empty transcripts.
+    // sanitizeObservationTranscript() strips tool calls, leaving only user-facing
+    // text. If nothing remains, the LLM has zero signal and produces empty/generic
+    // observations that waste tokens. Short-circuit with OTEL and return early.
+    const sanitizedMessages = sanitizeObservationTranscript(validatedInput.messages);
+
+    if (sanitizedMessages.length === 0) {
+      await step.run("otel-observe-empty-transcript", async () => {
+        await emitOtelEvent({
+          level: "info",
+          source: "worker",
+          component: "observe",
+          action: "observe.skipped.empty_transcript",
+          success: true,
+          metadata: {
+            sessionId: validatedInput.sessionId,
+            trigger: validatedInput.trigger,
+            messageCount: validatedInput.messageCount,
+            dedupeKey: validatedInput.dedupeKey,
+            reason: "empty_transcript_after_sanitization",
+          },
+        });
+      });
+
+      return {
+        status: "skipped",
+        reason: "empty_transcript_after_sanitization",
+        sessionId: validatedInput.sessionId,
+        dedupeKey: validatedInput.dedupeKey,
+        trigger: validatedInput.trigger,
+      };
+    }
+
     const llmOutput = await step.run("call-observer-llm", async () => {
       const sessionName =
         "sessionName" in validatedInput ? validatedInput.sessionName : undefined;
-      const sanitizedMessages = sanitizeObservationTranscript(validatedInput.messages);
-      const transcriptForPrompt =
-        sanitizedMessages.length > 0
-          ? sanitizedMessages
-          : "No user-facing transcript content available after tool-call sanitization.";
+      const transcriptForPrompt = sanitizedMessages;
       const userPrompt = OBSERVER_USER_PROMPT(
         transcriptForPrompt,
         validatedInput.trigger,
