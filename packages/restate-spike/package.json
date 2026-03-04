@@ -1,0 +1,9 @@
+{
+  "name": "@joelclaw/restate-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@restatedev/restate-sdk": "^1.6.2"
+  }
+}
