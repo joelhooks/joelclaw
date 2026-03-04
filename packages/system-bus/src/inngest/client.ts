@@ -504,6 +504,38 @@ export type Events = {
     };
   };
 
+  // --- Swarm DAG orchestration spike ---
+  "swarm/started": {
+    data: {
+      yaml: string;
+      name: string;
+      workspace: string;
+    };
+  };
+  "swarm/agent.started": {
+    data: {
+      swarmName: string;
+      agentName: string;
+      wave: number;
+    };
+  };
+  "swarm/agent.completed": {
+    data: {
+      swarmName: string;
+      agentName: string;
+      wave: number;
+      success: boolean;
+      error?: string;
+    };
+  };
+  "swarm/completed": {
+    data: {
+      name: string;
+      status: "completed" | "failed";
+      errors: string[];
+    };
+  };
+
   // --- Agent approvals (ADR-0067) ---
   "agent/approval.requested": {
     data: {

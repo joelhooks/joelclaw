@@ -180,6 +180,25 @@ Kubernetes note:
   5. publish match payloads to subscription NDJSON channels
   6. push `webhook.subscription.matched` to gateway with `originSession` for immediate follow-up turns
 
+## Swarm DAG spike (ADR-0060 follow-up)
+
+- function: `swarm-orchestrator`
+- file: `packages/system-bus/src/inngest/functions/swarm-orchestrator.ts`
+- trigger: `swarm/started`
+- behavior:
+  1. parse + validate swarm YAML (`packages/system-bus/src/swarm/schema.ts`)
+  2. build dependency graph + detect cycles + compute execution waves (`packages/system-bus/src/swarm/dag.ts`)
+  3. execute each wave in parallel via `step.invoke()` of `swarm-agent-exec`
+  4. emit `swarm/completed` with `completed|failed` status
+
+- function: `swarm-agent-exec`
+- file: `packages/system-bus/src/inngest/functions/swarm-agent-exec.ts`
+- invocation: `step.invoke()` from orchestrator (spike wiring)
+- behavior:
+  1. receive agent config + workspace + wave
+  2. spawn agent tool (codex/claude/pi) with codex using `codex exec --full-auto -m <model>` pattern
+  3. return structured success/failure summary
+
 ## Verification
 
 ```bash

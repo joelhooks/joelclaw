@@ -8,6 +8,8 @@ import {
   githubPackagePublished,
   githubWorkflowRunCompleted,
 } from "./github-notify";
+import { swarmAgentExec } from "./swarm-agent-exec";
+import { swarmOrchestrator } from "./swarm-orchestrator";
 import { todoistMemoryReviewBridge } from "./todoist-memory-review-bridge";
 import {
   todoistCommentAdded,
@@ -34,6 +36,8 @@ export const clusterFunctionDefinitions = [
   githubWorkflowRunCompleted,
   githubPackagePublished,
   webhookSubscriptionDispatchGithubWorkflowRunCompleted,
+  swarmOrchestrator,
+  swarmAgentExec,
 ];
 
 export const clusterFunctionIds = clusterFunctionDefinitions.map(getFunctionId);

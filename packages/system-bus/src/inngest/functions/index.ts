@@ -85,6 +85,8 @@ export { sleepModeRequested, wakeModeRequested } from "./sleep-mode";
 export { storyPipeline } from "./story-pipeline";
 export { subscriptionCheckFeeds, subscriptionCheckSingle } from "./subscriptions";
 export { summarize } from "./summarize";
+export { swarmAgentExec } from "./swarm-agent-exec";
+export { swarmOrchestrator } from "./swarm-orchestrator";
 export { systemLogger } from "./system-logger";
 export { taskTriage } from "./task-triage";
 export { telegramCallbackReceived } from "./telegram-callback";
