@@ -29,6 +29,7 @@ const RESTART_COOLDOWN_SECONDS = 15 * 60;
 
 const TYPESENSE_QUERY_BY = "action,component,source,error,metadata_json,search_text";
 const CRITICAL_GENERAL_LAYERS = new Set(["process", "cli-status", "e2e-test", "redis-state"]);
+const AUTO_RESTART_GENERAL_LAYERS = new Set(["process", "cli-status", "redis-state"]);
 
 function asPositiveInt(raw: string | undefined, fallback: number, min = 1): number {
   if (!raw) return fallback;
@@ -86,7 +87,7 @@ type JoelclawEnvelope<T> = {
 
 type CliResult<T> =
   | { ok: true; result: T }
-  | { ok: false; error: string; stderr?: string };
+  | { ok: false; error: string; stderr?: string; result?: T };
 
 type ChannelProbeConfig = {
   id: "telegram" | "discord" | "imessage" | "slack";
@@ -250,7 +251,12 @@ function runJoelclawEnvelope<T>(args: string[], timeoutMs: number): CliResult<T>
 
     if (!parsed.ok || parsed.result == null) {
       const err = parsed.error?.message ?? "command returned ok=false";
-      return { ok: false, error: truncate(err), stderr: stderr || undefined };
+      return {
+        ok: false,
+        error: truncate(err),
+        stderr: stderr || undefined,
+        result: parsed.result,
+      };
     }
 
     return { ok: true, result: parsed.result };
@@ -529,14 +535,30 @@ export const checkGatewayHealth = inngest.createFunction(
     let diagnoseError: string | undefined;
     let diagnoseSummary: string | undefined;
     let criticalFailures: GatewayDiagnoseLayer[] = [];
+    let restartEligibleFailures: GatewayDiagnoseLayer[] = [];
     let generalFailure = false;
 
     if (diagnose.ok) {
       diagnoseSummary = diagnose.result.summary;
       criticalFailures = parseCriticalFailures(diagnose.result);
+      restartEligibleFailures = criticalFailures.filter((layer) =>
+        AUTO_RESTART_GENERAL_LAYERS.has(layer.layer)
+      );
       generalFailure = criticalFailures.length > 0;
     } else {
       diagnoseError = diagnose.error;
+
+      if (diagnose.result) {
+        diagnoseSummary = diagnose.result.summary;
+        criticalFailures = parseCriticalFailures(diagnose.result);
+        restartEligibleFailures = criticalFailures.filter((layer) =>
+          AUTO_RESTART_GENERAL_LAYERS.has(layer.layer)
+        );
+      }
+
+      // Treat diagnose command failure as degraded, but only auto-restart
+      // when failures include restart-eligible layers (process/cli/redis)
+      // or when layer details are unavailable.
       generalFailure = true;
     }
 
@@ -544,9 +566,13 @@ export const checkGatewayHealth = inngest.createFunction(
       setFailureStreak(GENERAL_STREAK_KEY, generalFailure)
     );
 
+    const shouldAutoRestart = generalFailure
+      && generalStreak >= GENERAL_RESTART_STREAK_THRESHOLD
+      && (restartEligibleFailures.length > 0 || criticalFailures.length === 0);
+
     let restartAttempt: RestartAttemptSummary | undefined;
 
-    if (generalFailure && generalStreak >= GENERAL_RESTART_STREAK_THRESHOLD) {
+    if (shouldAutoRestart) {
       restartAttempt = await step.run("maybe-auto-restart-gateway", async () => {
         const cooldownClaimed = await claimCooldown(GENERAL_RESTART_COOLDOWN_KEY, RESTART_COOLDOWN_SECONDS);
         if (!cooldownClaimed) {
@@ -575,7 +601,7 @@ export const checkGatewayHealth = inngest.createFunction(
           60_000,
         );
 
-        if (!postDiagnose.ok) {
+        if (!postDiagnose.ok || !postDiagnose.result) {
           return {
             attempted: true,
             restartError: `post-check failed: ${postDiagnose.error}`,
@@ -598,6 +624,7 @@ export const checkGatewayHealth = inngest.createFunction(
         generalFailure = false;
         diagnoseError = undefined;
         criticalFailures = [];
+        restartEligibleFailures = [];
         generalStreak = await step.run("clear-general-streak-after-recovery", async () =>
           setFailureStreak(GENERAL_STREAK_KEY, false)
         );
@@ -746,6 +773,11 @@ export const checkGatewayHealth = inngest.createFunction(
             status: layer.status,
             detail: layer.detail,
           })),
+          restartEligibleFailures: restartEligibleFailures.map((layer) => ({
+            layer: layer.layer,
+            status: layer.status,
+            detail: layer.detail,
+          })),
           channelHealth: channelHealth.map((channel) => ({
             channel: channel.channel,
             status: channel.status,
@@ -769,6 +801,10 @@ export const checkGatewayHealth = inngest.createFunction(
         failed: generalFailure,
         streak: generalStreak,
         criticalFailures: criticalFailures.map((layer) => ({
+          layer: layer.layer,
+          detail: layer.detail,
+        })),
+        restartEligibleFailures: restartEligibleFailures.map((layer) => ({
           layer: layer.layer,
           detail: layer.detail,
         })),

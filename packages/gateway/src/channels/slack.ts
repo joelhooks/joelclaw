@@ -13,6 +13,7 @@ const DEDUPE_MAX = 500;
 const MEDIA_FETCH_TIMEOUT_MS = 15_000;
 const CHANNEL_RESOLVE_TRANSIENT_COOLDOWN_MS = 10 * 60_000;
 const CHANNEL_RESOLVE_PERMANENT_COOLDOWN_MS = 6 * 60 * 60_000;
+const SOCKET_MODE_CLIENT_PING_TIMEOUT_MS = 20_000;
 const PERMANENT_CHANNEL_RESOLVE_ERRORS = new Set([
   "channel_not_found",
   "not_in_channel",
@@ -709,6 +710,7 @@ function startSlackChannel(
       token: botToken,
       appToken,
       socketMode: true,
+      clientPingTimeout: SOCKET_MODE_CLIENT_PING_TIMEOUT_MS,
     });
 
     if (typeof app.error === "function") {
