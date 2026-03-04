@@ -1339,6 +1339,22 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       errorLogLayer.findings = [...(errorLogLayer.findings ?? []), note]
     }
 
+    // ── Reconciliation: recovered errors — e2e passing means gateway recovered ──
+    if (
+      e2eLayer?.status === "ok" &&
+      errorLogLayer?.status === "failed" &&
+      !errorLogHasOnlyWatchdogFindings
+    ) {
+      const processOk = layers.find((l) => l.layer === "process")?.status === "ok"
+      const redisOk = layers.find((l) => l.layer === "redis-state")?.status === "ok"
+      if (processOk && redisOk) {
+        const note = "error patterns found but gateway recovered — e2e/process/redis all passing"
+        errorLogLayer.status = "degraded"
+        errorLogLayer.detail = `${errorLogLayer.detail}; ${note}`
+        errorLogLayer.findings = [...(errorLogLayer.findings ?? []), note]
+      }
+    }
+
     // ── Summary ──
     const failed = layers.filter((l) => l.status === "failed")
     const degraded = layers.filter((l) => l.status === "degraded")
