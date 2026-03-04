@@ -147,7 +147,7 @@ const root = Command.make("joelclaw", {}, () =>
           approvals: "joelclaw approvals {list|approve|deny|categories|history|reset}",
           call: "joelclaw call <message> [--to <phone>]",
           recall: "joelclaw recall <query> [--limit N] [--min-score F] [--raw]",
-          memory: "joelclaw memory {write <text> [--type observation|lesson|pattern|failed_target] [--source <source>]|search <query>}",
+          memory: "joelclaw memory {write <text> [--category ops|rules|arch|projects|prefs|people|memory] [--tags a,b]|search <query>|recent}",
           search: "joelclaw search <query> [-c collection] [-n limit] [-f filter] [--semantic]",
           docs: "joelclaw docs {add|search|context|list|show|status|enrich|reindex}",
           vault: "joelclaw vault {read|search|ls|tree|adr}",

@@ -198,22 +198,19 @@ joelclaw otel stats --hours 24          # Aggregate stats
 
 Storage: Typesense `otel_events` collection.
 
-## Memory — Writing Observations
+## Memory — Writing Observations (NON-OPTIONAL)
 
-**Every session that produces a durable pattern, operational fix, or architectural insight MUST write observations before closing.**
+**Every session that produces a durable pattern, operational fix, or architectural insight MUST write observations before closing. This is not aspirational — it is a hard requirement.**
 
 ```bash
-joelclaw send "memory/observation.submitted" -d '{
-  "observation": "<concrete, reusable, future-tense useful fact>",
-  "category": "jc:operations",
-  "source": "pi-session",
-  "tags": ["relevant", "tags"]
-}'
+joelclaw memory write "Stripe API requires idempotency keys for all POST requests" --category ops --tags stripe,api
+joelclaw memory write "XLSX pivot tables need shared strings table rebuilt after cell mutations" --category rules --tags xlsx
+joelclaw memory write "k8s worker restarts lose in-flight Inngest steps; use step.sendEvent for fan-out" --category arch --tags k8s,inngest
 ```
 
-One call per distinct observation. Fire multiple in a loop.
+Category shortcuts: `ops` · `rules` · `arch` · `projects` · `prefs` · `people` · `memory`
 
-Categories: `jc:operations` · `jc:rules-conventions` · `jc:system-architecture` · `jc:projects` · `jc:preferences` · `jc:people-relationships` · `jc:memory-system`
+Write observations **as you learn them**, not just at session end. If you discovered something non-obvious, write it immediately. One call per distinct observation.
 
 Good observations: concrete API behaviour, CLI quirks, operational SOPs, per-project facts (rates, catalogs, account IDs), architectural constraints.  
 Skip: transcript noise, raw tool output, anything already captured verbatim in a skill or ADR.

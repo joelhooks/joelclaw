@@ -1,3 +1,18 @@
+/**
+ * `joelclaw memory` — human-friendly memory interface.
+ *
+ * Subcommands:
+ *   write <text>  — submit an observation to the memory pipeline
+ *   search <query> — semantic search across observations (alias for recall)
+ *   recent         — list recently written observations
+ *
+ * The write subcommand fires `memory/observation.submitted` to Inngest,
+ * which runs the write-gate pipeline (observe → proposal-triage → promote).
+ *
+ * Categories use short names that map to `jc:` prefixed SKOS concepts:
+ *   ops, rules, arch, projects, prefs, people, memory
+ */
+
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import type { CapabilityError } from "../capabilities/contract"
@@ -5,7 +20,29 @@ import { executeCapabilityCommand } from "../capabilities/runtime"
 import { Inngest } from "../inngest"
 import { respond, respondError } from "../response"
 
-const MEMORY_TYPES = ["observation", "lesson", "pattern", "failed_target"] as const
+// ── Category mapping ────────────────────────────────────────────
+const CATEGORY_MAP: Record<string, string> = {
+  operations: "jc:operations",
+  ops: "jc:operations",
+  rules: "jc:rules-conventions",
+  conventions: "jc:rules-conventions",
+  architecture: "jc:system-architecture",
+  arch: "jc:system-architecture",
+  projects: "jc:projects",
+  preferences: "jc:preferences",
+  prefs: "jc:preferences",
+  people: "jc:people-relationships",
+  relationships: "jc:people-relationships",
+  memory: "jc:memory-system",
+}
+
+const VALID_CATEGORIES = ["ops", "rules", "arch", "projects", "prefs", "people", "memory"]
+
+function resolveCategory(input: string): string {
+  const lower = input.toLowerCase().trim()
+  if (lower.startsWith("jc:")) return lower
+  return CATEGORY_MAP[lower] ?? `jc:${lower}`
+}
 
 type RecallCapabilityResult = {
   raw: boolean
@@ -21,150 +58,139 @@ function fixOrFallback(error: CapabilityError, fallback: string): string {
   return error.fix ?? fallback
 }
 
-const memoryWriteCmd = Command.make(
+// ── Write subcommand ────────────────────────────────────────────
+const writeCmd = Command.make(
   "write",
   {
-    text: Args.text({ name: "text" }).pipe(
-      Args.withDescription("Observation text to capture")
+    observation: Args.text({ name: "observation" }).pipe(
+      Args.withDescription("The observation to remember (concrete, reusable, future-tense useful)")
     ),
-    type: Options.choice("type", MEMORY_TYPES).pipe(
-      Options.withDescription("Memory type"),
-      Options.withDefault("observation")
+    category: Options.text("category").pipe(
+      Options.withAlias("c"),
+      Options.withDefault("ops"),
+      Options.withDescription(`Category: ${VALID_CATEGORIES.join(", ")}`)
+    ),
+    tags: Options.text("tags").pipe(
+      Options.withAlias("t"),
+      Options.withDefault(""),
+      Options.withDescription("Comma-separated tags")
     ),
     source: Options.text("source").pipe(
-      Options.withDescription("Source label for this memory"),
-      Options.withDefault("cli")
+      Options.withAlias("s"),
+      Options.withDefault("cli"),
+      Options.withDescription("Source identifier (default: cli)")
     ),
   },
-  ({ text, type, source }) =>
+  ({ observation, category, tags, source }) =>
     Effect.gen(function* () {
-      const normalizedText = text.trim()
-      if (normalizedText.length === 0) {
+      const trimmed = observation.trim()
+      if (trimmed.length === 0) {
         yield* Console.log(
           respondError(
             "memory write",
             "Observation text cannot be empty",
-            "INVALID_TEXT",
-            "Provide a non-empty observation text argument.",
-            [
-              {
-                command: "joelclaw memory write <text> [--type <type>] [--source <source>]",
-                description: "Retry with observation text",
-                params: {
-                  text: { description: "Observation text", required: true },
-                  type: { description: "Memory type", enum: MEMORY_TYPES, default: "observation" },
-                  source: { description: "Source label", default: "cli" },
-                },
-              },
-            ]
+            "EMPTY_TEXT",
+            'Provide observation text: joelclaw memory write "your observation"',
+            [{ command: 'joelclaw memory write "your observation" --category ops', description: "Write an observation" }]
           )
         )
         return
       }
 
       const inngestClient = yield* Inngest
-      const eventPayload = {
-        text: normalizedText,
-        type,
+      const resolvedCategory = resolveCategory(category)
+      const tagList = tags
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean)
+
+      const payload = {
+        observation: trimmed,
+        category: resolvedCategory,
         source,
-        ts: new Date().toISOString(),
+        tags: tagList,
       }
 
-      const sendResult = yield* inngestClient
-        .send("memory/observation.submitted", eventPayload)
+      const result = yield* inngestClient
+        .send("memory/observation.submitted", payload)
         .pipe(Effect.either)
 
-      if (sendResult._tag === "Left") {
+      if (result._tag === "Left") {
         yield* Console.log(
           respondError(
             "memory write",
-            "Failed to submit memory observation event",
-            "INGGEST_SEND_FAILED",
-            `Ensure Inngest is reachable at http://localhost:8288 and retry. ${String(sendResult.left?.message ?? "")}`,
+            `Failed to send: ${String(result.left)}`,
+            "SEND_FAILED",
+            "Check Inngest: joelclaw inngest status",
             [
-              { command: "joelclaw status", description: "Check system health" },
-              { command: "joelclaw inngest status", description: "Check Inngest server/worker health" },
-              {
-                command: "joelclaw memory write <text> [--type <type>] [--source <source>]",
-                description: "Retry memory event submission",
-                params: {
-                  text: { description: "Observation text", value: normalizedText, required: true },
-                  type: { description: "Memory type", value: type, enum: MEMORY_TYPES, default: "observation" },
-                  source: { description: "Source label", value: source, default: "cli" },
-                },
-              },
+              { command: "joelclaw inngest status", description: "Check Inngest health" },
+              { command: "joelclaw status", description: "Full system health" },
             ]
           )
         )
         return
       }
 
-      const responseData = sendResult.right as Record<string, unknown>
-      const ids = Array.isArray(responseData.ids) ? responseData.ids : []
-      const firstId = ids[0]
-      const eventId = typeof firstId === "string"
-        ? firstId
-        : (typeof responseData.id === "string" ? responseData.id : null)
+      const runIds = (result.right as any)?.ids ?? []
 
       yield* Console.log(
         respond(
           "memory write",
           {
-            eventId,
-            type,
-            text: normalizedText,
+            observation: trimmed,
+            category: resolvedCategory,
+            source,
+            tags: tagList,
+            run_id: runIds[0] ?? null,
           },
           [
             {
-              command: "joelclaw memory search <query>",
-              description: "Search memory observations",
-              params: {
-                query: { description: "Recall query text", value: normalizedText, required: true },
-              },
+              command: `joelclaw run ${runIds[0] ?? "<run-id>"}`,
+              description: "Track the write-gate pipeline",
             },
             {
-              command: "joelclaw runs [--count <count>]",
-              description: "Inspect recent Inngest runs",
-              params: {
-                count: { description: "Number of runs", value: 3, default: 10 },
-              },
+              command: `joelclaw memory search "${trimmed.slice(0, 40)}"`,
+              description: "Verify it landed (after pipeline completes)",
             },
             {
-              command: "joelclaw events [--prefix <prefix>] [--hours <hours>] [--count <count>]",
-              description: "Verify emitted memory events",
-              params: {
-                prefix: { description: "Event prefix filter", value: "memory/observation.submitted" },
-                hours: { description: "Lookback window in hours", value: 1, default: 4 },
-                count: { description: "Number of events", value: 10, default: 20 },
-              },
+              command: "joelclaw memory recent",
+              description: "See recent observations",
             },
           ]
         )
       )
     })
-).pipe(Command.withDescription("Write a memory observation to the pipeline"))
+).pipe(Command.withDescription("Write an observation to agent memory"))
 
-const memorySearchCmd = Command.make(
+// ── Search subcommand ───────────────────────────────────────────
+const searchCmd = Command.make(
   "search",
   {
-    query: Args.text({ name: "query" }).pipe(
-      Args.withDescription("Memory recall query")
+    query: Args.text({ name: "query" }),
+    limit: Options.integer("limit").pipe(Options.withDefault(5)),
+    category: Options.text("category").pipe(
+      Options.withAlias("c"),
+      Options.withDefault(""),
+      Options.withDescription("Filter by category")
     ),
+    raw: Options.boolean("raw").pipe(Options.withDefault(false)),
   },
-  ({ query }) =>
+  ({ query, limit, category, raw }) =>
     Effect.gen(function* () {
+      const resolvedCategory = category ? resolveCategory(category) : ""
+
       const result = yield* executeCapabilityCommand<RecallCapabilityResult>({
         capability: "recall",
         subcommand: "query",
         args: {
           query,
-          limit: 5,
+          limit,
           minScore: 0,
-          raw: false,
+          raw,
           includeHold: false,
           includeDiscard: false,
           budget: "auto",
-          category: "",
+          category: resolvedCategory,
         },
       }).pipe(Effect.either)
 
@@ -172,74 +198,111 @@ const memorySearchCmd = Command.make(
         const error = result.left
         const code = codeOrFallback(error, "UNKNOWN")
 
-        if (code.startsWith("TYPESENSE_API_KEY_")) {
-          yield* Console.log(
-            respondError(
-              "memory search",
-              error.message,
-              code,
-              fixOrFallback(error, "Configure Typesense API key and retry."),
-              [
-                { command: "joelclaw status", description: "Check system health" },
-                { command: "joelclaw inngest status", description: "Check worker/server status" },
-              ],
-            )
-          )
-          return
-        }
-
-        if (code === "TYPESENSE_UNREACHABLE") {
-          yield* Console.log(
-            respondError(
-              "memory search",
-              error.message,
-              code,
-              fixOrFallback(error, "kubectl port-forward -n joelclaw svc/typesense 8108:8108 &"),
-              [{ command: "joelclaw status", description: "Check all services" }],
-            )
-          )
-          return
-        }
-
         yield* Console.log(
           respondError(
             "memory search",
             error.message,
             code,
-            fixOrFallback(error, "Check Typesense (localhost:8108)"),
-            [{ command: "joelclaw status", description: "Check all services" }],
+            fixOrFallback(error, "Check Typesense: joelclaw status"),
+            [{ command: "joelclaw status", description: "Check system health" }]
           )
         )
         return
       }
 
-      const payload = result.right.payload ?? {}
+      if (result.right.raw) {
+        yield* Console.log(result.right.text ?? "")
+        return
+      }
 
       yield* Console.log(
-        respond("memory search", payload, [
+        respond("memory search", result.right.payload ?? {}, [
           {
-            command: `joelclaw memory search "${query}"`,
-            description: "Search memory again",
+            command: `joelclaw memory search "${query}" --limit 10`,
+            description: "More results",
           },
           {
-            command: `joelclaw recall "${query}" --raw`,
-            description: "Get raw observations for injection",
-          },
-          {
-            command: "joelclaw memory write <text> [--type <type>] [--source <source>]",
-            description: "Capture a new memory observation",
-            params: {
-              text: { description: "Observation text", required: true },
-              type: { description: "Memory type", enum: MEMORY_TYPES, default: "observation" },
-              source: { description: "Source label", default: "cli" },
-            },
+            command: `joelclaw memory write "<observation>" --category ops`,
+            description: "Write a new observation",
           },
         ])
       )
     })
-).pipe(Command.withDescription("Alias for joelclaw recall <query>"))
+).pipe(Command.withDescription("Search agent memory (semantic recall)"))
 
-export const memoryCmd = Command.make("memory").pipe(
-  Command.withDescription("Memory operations (write + search)"),
-  Command.withSubcommands([memoryWriteCmd, memorySearchCmd]),
+// ── Recent subcommand ───────────────────────────────────────────
+const recentCmd = Command.make(
+  "recent",
+  {
+    count: Options.integer("count").pipe(
+      Options.withAlias("n"),
+      Options.withDefault(10)
+    ),
+    hours: Options.integer("hours").pipe(Options.withDefault(24)),
+  },
+  ({ count, hours }) =>
+    Effect.gen(function* () {
+      const inngestClient = yield* Inngest
+      const result = yield* inngestClient.events({
+        prefix: "memory/observation",
+        hours,
+        count,
+      })
+
+      const observations = (result as any[]).map((e: any) => ({
+        id: e.id,
+        at: e.occurredAt,
+        observation: e.data?.observation?.slice(0, 120) ?? "(no text)",
+        category: e.data?.category ?? "unknown",
+        source: e.data?.source ?? "unknown",
+      }))
+
+      yield* Console.log(
+        respond("memory recent", { count: observations.length, hours, observations }, [
+          {
+            command: "joelclaw memory recent --hours 48 --count 20",
+            description: "Look further back",
+          },
+          {
+            command: 'joelclaw memory write "<observation>"',
+            description: "Write a new observation",
+          },
+        ])
+      )
+    })
+).pipe(Command.withDescription("List recently submitted observations"))
+
+// ── Root memory command ─────────────────────────────────────────
+export const memoryCmd = Command.make("memory", {}, () =>
+  Console.log(
+    respond(
+      "memory",
+      {
+        description: "Agent memory — write, search, and inspect observations",
+        categories: VALID_CATEGORIES,
+        usage: [
+          'joelclaw memory write "Stripe requires idempotency keys" --category ops --tags stripe,api',
+          'joelclaw memory search "stripe patterns"',
+          "joelclaw memory recent --hours 24",
+        ],
+      },
+      [
+        {
+          command: 'joelclaw memory write "<text>" [--category ops] [--tags a,b]',
+          description: "Write an observation",
+        },
+        {
+          command: 'joelclaw memory search "<query>" [--limit 5]',
+          description: "Semantic search",
+        },
+        {
+          command: "joelclaw memory recent [--hours 24]",
+          description: "Recent observations",
+        },
+      ]
+    )
+  )
+).pipe(
+  Command.withDescription("Agent memory — write, search, and inspect observations"),
+  Command.withSubcommands([writeCmd, searchCmd, recentCmd])
 )
