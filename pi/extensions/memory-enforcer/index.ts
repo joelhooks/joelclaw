@@ -200,6 +200,7 @@ async function querySystemKnowledge(query: string): Promise<string> {
 
 async function seedSystemKnowledge(
   sessionId: string | null,
+  pi: ExtensionAPI,
   trigger: "before_agent_start" | "session_start" = "before_agent_start",
 ): Promise<void> {
   const startedAt = Date.now();
@@ -220,6 +221,19 @@ async function seedSystemKnowledge(
       has_results: result.length > 0,
       latency_ms: Date.now() - startedAt,
     });
+
+    // ADR-0204: inject system knowledge into session context
+    if (result.length > 0) {
+      pi.sendMessage(
+        { customType: "system-knowledge", content: `## System Knowledge (auto-retrieved)\n${result}`, display: false },
+      );
+
+      emitOtel("system_knowledge.injected", {
+        session_id: sessionId,
+        channel: CHANNEL,
+        result_length: result.length,
+      });
+    }
   } catch (error) {
     emitOtel(
       "system_knowledge.retrieval.failed",
@@ -235,7 +249,55 @@ async function seedSystemKnowledge(
   }
 }
 
-function seedRecall(sessionId: string | null): void {
+/** Parse recall JSON output into formatted observation lines. */
+function formatRecallHits(rawOutput: string, maxHits = 5): string[] {
+  try {
+    const parsed = JSON.parse(rawOutput) as Record<string, unknown>;
+    const result = parsed.result as Record<string, unknown> | undefined;
+    const hits = Array.isArray(result?.hits) ? result.hits : [];
+    if (hits.length === 0) return [];
+
+    const lines: string[] = [];
+    for (const hit of hits.slice(0, maxHits)) {
+      if (!hit || typeof hit !== "object") continue;
+      const h = hit as Record<string, unknown>;
+      const obs = typeof h.observation === "string" ? h.observation.trim() : "";
+      if (!obs) continue;
+      const catId = typeof h.categoryId === "string" ? h.categoryId.replace("jc:", "") : "memory";
+      const cat = catId.split(":").pop() ?? "memory";
+      lines.push(`- [${cat}] ${obs.slice(0, 250)}`);
+    }
+    return lines;
+  } catch {
+    return [];
+  }
+}
+
+/** Parse system knowledge JSON output into formatted lines. */
+function formatKnowledgeHits(rawOutput: string, maxHits = 3): string[] {
+  try {
+    const parsed = JSON.parse(rawOutput) as Record<string, unknown>;
+    const result = parsed.result as Record<string, unknown> | undefined;
+    const hits = Array.isArray(result?.hits) ? result.hits : [];
+    if (hits.length === 0) return [];
+
+    const lines: string[] = [];
+    for (const hit of hits.slice(0, maxHits)) {
+      if (!hit || typeof hit !== "object") continue;
+      const h = hit as Record<string, unknown>;
+      const title = typeof h.title === "string" ? h.title.trim() : "";
+      const type = typeof h.type === "string" ? h.type : "doc";
+      const snippet = typeof h.snippet === "string" ? h.snippet.trim().slice(0, 200) : "";
+      if (!title && !snippet) continue;
+      lines.push(`- [${type}] ${title}${snippet ? `: ${snippet}` : ""}`);
+    }
+    return lines;
+  } catch {
+    return [];
+  }
+}
+
+function seedRecall(sessionId: string | null, pi: ExtensionAPI): void {
   const startedAt = Date.now();
 
   emitOtel("memory.recall.started", {
@@ -247,13 +309,35 @@ function seedRecall(sessionId: string | null): void {
 
   void runRecallCommand()
     .then((output) => {
+      const resultCount = extractResultCount(output);
+      const hitLines = formatRecallHits(output, RECALL_LIMIT);
+
       emitOtel("memory.recall.completed", {
         session_id: sessionId,
         channel: CHANNEL,
         query: RECALL_QUERY,
-        result_count: extractResultCount(output),
+        result_count: resultCount,
+        injected_count: hitLines.length,
         latency_ms: Date.now() - startedAt,
       });
+
+      // ADR-0204: ACTUALLY INJECT the recall results into session context
+      if (hitLines.length > 0) {
+        const content = [
+          "## Relevant Memory (auto-retrieved)",
+          ...hitLines,
+        ].join("\n");
+
+        pi.sendMessage(
+          { customType: "memory-recall", content, display: false },
+        );
+
+        emitOtel("memory.recall.injected", {
+          session_id: sessionId,
+          channel: CHANNEL,
+          hit_count: hitLines.length,
+        });
+      }
     })
     .catch((error) => {
       emitOtel(
@@ -347,7 +431,7 @@ export default function memoryEnforcer(pi: ExtensionAPI): void {
     }
 
     const sessionId = currentSessionId;
-    setTimeout(() => seedRecall(sessionId), 0);
+    setTimeout(() => seedRecall(sessionId, pi), 0);
   });
 
   pi.on(
@@ -361,7 +445,7 @@ export default function memoryEnforcer(pi: ExtensionAPI): void {
       }
 
       currentSessionId = sessionId;
-      await seedSystemKnowledge(sessionId, "before_agent_start");
+      await seedSystemKnowledge(sessionId, pi, "before_agent_start");
     },
   );
 
