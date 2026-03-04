@@ -12,6 +12,7 @@ import { getRedisPort } from "../../lib/redis";
 
 import Redis from "ioredis";
 import { infer } from "../../lib/inference";
+import { checkCircuit, recordFailure, recordSuccess } from "../../lib/inference-circuit";
 import { emitOtelEvent } from "../../observability/emit";
 import { TodoistTaskAdapter } from "../../tasks/adapters/todoist";
 import type { Task } from "../../tasks/port";
@@ -21,6 +22,7 @@ import { parseClaudeOutput, pushGatewayEvent } from "./agent-loop/utils";
 const TRIAGE_NOTIFIED_KEY = "tasks:triage:last-notified";
 const TRIAGE_HASH_KEY = "tasks:triage:last-hash";
 const TRIAGE_TTL_SECONDS = 2 * 60 * 60; // 2 hours
+const TRIAGE_HASH_TTL_SECONDS = 4 * 60 * 60; // 4 hours
 
 const TRIAGE_SYSTEM_PROMPT = `You review Todoist tasks for Joel Hooks' personal AI system (joelclaw).
 
@@ -186,12 +188,10 @@ export const taskTriage = inngest.createFunction(
       const redis = getRedis();
       const currentHash = hashTasks(tasks);
       const previousHash = await redis.get(TRIAGE_HASH_KEY);
-      if (previousHash === currentHash) return false;
-      await redis.set(TRIAGE_HASH_KEY, currentHash, "EX", 4 * 60 * 60);
-      return true;
+      return { changed: previousHash !== currentHash, currentHash };
     });
 
-    if (!shouldTriage) {
+    if (!shouldTriage.changed) {
       return { status: "noop", reason: "task list unchanged", taskCount: tasks.length };
     }
 
@@ -205,7 +205,29 @@ export const taskTriage = inngest.createFunction(
       return { status: "noop", reason: "cooldown active (2h)", taskCount: tasks.length };
     }
 
-    // Step 4: Sonnet reviews ALL tasks with strict output contract
+    // Step 4: Check inference circuit before Sonnet classification
+    const circuitState = await step.run("check-circuit", async () =>
+      checkCircuit("task-triage", "tasks.triage.classify")
+    );
+
+    if (circuitState.skip) {
+      await emitOtelEvent({
+        level: "warn",
+        source: "system-bus",
+        component: "task-triage",
+        action: "tasks.triage.circuit_skip",
+        success: false,
+        metadata: {
+          taskCount: tasks.length,
+          circuitState: circuitState.state,
+          circuitReason: circuitState.reason,
+        },
+      });
+
+      return { status: "degraded", reason: "circuit_open", circuitState };
+    }
+
+    // Step 5: Sonnet reviews ALL tasks with strict output contract
     const triageResult = await step.run("sonnet-triage", async () => {
       const taskBlocks = tasks.map(formatTaskForLLM);
       const expectedTaskIds = new Set(tasks.map((task) => task.id));
@@ -244,11 +266,13 @@ export const taskTriage = inngest.createFunction(
 
       const primary = await attemptClassify(basePrompt, "primary");
       if (primary.ok) {
+        recordSuccess("task-triage", "tasks.triage.classify");
         return {
           classificationValid: true,
           triage: primary.triage,
           insights: primary.insights,
           fallbackUsed: false,
+          failureReason: null,
         };
       }
 
@@ -263,13 +287,17 @@ export const taskTriage = inngest.createFunction(
 
       const repair = await attemptClassify(repairPrompt, "repair");
       if (repair.ok) {
+        recordSuccess("task-triage", "tasks.triage.classify");
         return {
           classificationValid: true,
           triage: repair.triage,
           insights: repair.insights,
           fallbackUsed: true,
+          failureReason: null,
         };
       }
+
+      recordFailure("task-triage", "tasks.triage.classify");
 
       return {
         classificationValid: false,
@@ -292,6 +320,7 @@ export const taskTriage = inngest.createFunction(
           classificationValid: false,
           outputFailureReason: triageResult.failureReason,
           fallbackUsed: triageResult.fallbackUsed,
+          circuitState: circuitState.state,
         },
       });
 
@@ -306,7 +335,14 @@ export const taskTriage = inngest.createFunction(
       };
     }
 
-    // Step 5: Build gateway notification — only if actionable
+    // Step 6: Persist hash only after successful classification
+    await step.run("persist-hash", async () => {
+      const redis = getRedis();
+      await redis.set(TRIAGE_HASH_KEY, shouldTriage.currentHash, "EX", TRIAGE_HASH_TTL_SECONDS);
+      return { persisted: true };
+    });
+
+    // Step 7: Build gateway notification — only if actionable
     const result = await step.run("notify-gateway", async () => {
       const triageById = new Map(triageResult.triage.map((t) => [t.id, t]));
 
@@ -402,6 +438,7 @@ export const taskTriage = inngest.createFunction(
         actionableCount: result.actionableCount,
         staleCount: result.staleCount,
         pushed: result.pushed,
+        circuitState: circuitState.state,
       },
     });
 
