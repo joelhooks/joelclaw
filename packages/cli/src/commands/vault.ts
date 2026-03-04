@@ -1582,6 +1582,108 @@ const adrRankCmd = Command.make(
     })
 )
 
+const adrNextCmd = Command.make(
+  "next",
+  {
+    count: Options.integer("count").pipe(Options.withDefault(3)),
+  },
+  ({ count }) =>
+    Effect.gen(function* () {
+      const startedAt = Date.now()
+      const safeCount = Math.max(1, Math.min(count, 20))
+
+      yield* Effect.promise(() => emitVaultOtel({
+        level: "debug",
+        action: "vault.adr.next.started",
+        success: true,
+        metadata: { count: safeCount },
+      }))
+
+      try {
+        const catalog = yield* Effect.tryPromise(() => loadAdrCatalog())
+        const actionableStatuses = new Set(["proposed", "accepted"])
+        const filtered = catalog.filter((item) =>
+          item.status !== null && actionableStatuses.has(item.status)
+        )
+
+        const assessments = filtered
+          .map((item) => assessAdrPriority(item))
+          .filter((item) => item.expectedScore !== null)
+          .sort(comparePriorityAssessments)
+
+        const candidates = assessments.slice(0, safeCount).map((item, idx) => ({
+          rank: idx + 1,
+          number: item.number,
+          title: item.title,
+          status: item.status,
+          score: item.expectedScore,
+          band: item.expectedBand,
+          need: item.need,
+          readiness: item.readiness,
+          confidence: item.confidence,
+          novelty: item.novelty,
+          rationale: item.rationale,
+          issues: item.requiredIssues.length + item.consistencyIssues.length,
+        }))
+
+        const top = candidates[0]
+        const recommendation = top
+          ? `ADR-${top.number} (${top.title}) — score ${top.score}, ${top.band}, readiness ${top.readiness}/5`
+          : null
+
+        yield* Effect.promise(() => emitVaultOtel({
+          level: "info",
+          action: "vault.adr.next.completed",
+          success: true,
+          durationMs: Date.now() - startedAt,
+          metadata: {
+            total_actionable: filtered.length,
+            total_scored: assessments.length,
+            returned: candidates.length,
+            top_number: top?.number ?? null,
+            top_score: top?.score ?? null,
+          },
+        }))
+
+        yield* Console.log(respond("vault adr next", {
+          recommendation,
+          actionable_count: filtered.length,
+          scored_count: assessments.length,
+          candidates,
+        }, [
+          {
+            command: `joelclaw vault read ADR-${top?.number ?? "XXXX"}`,
+            description: "Read the top candidate",
+          },
+          {
+            command: "joelclaw vault adr rank --status accepted,proposed",
+            description: "Full rubric diagnostics for all open ADRs",
+          },
+          {
+            command: "joelclaw vault adr next --count 10",
+            description: "Show more candidates",
+          },
+        ]))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        yield* Effect.promise(() => emitVaultOtel({
+          level: "error",
+          action: "vault.adr.next.failed",
+          success: false,
+          durationMs: Date.now() - startedAt,
+          error: message,
+        }))
+        yield* Console.log(respondError(
+          "vault adr next",
+          message,
+          "ADR_NEXT_FAILED",
+          "Check Vault accessibility and ADR frontmatter.",
+          [{ command: "joelclaw vault adr list", description: "List all ADRs" }]
+        ))
+      }
+    })
+)
+
 const adrCmd = Command.make("adr", {}, () =>
   Console.log(respond("vault adr", {
     description: "ADR-focused command tree for inventory, collisions, ranking, and index integrity",
@@ -1592,15 +1694,17 @@ const adrCmd = Command.make("adr", {}, () =>
       collisions: "joelclaw vault adr collisions",
       audit: "joelclaw vault adr audit",
       rank: "joelclaw vault adr rank [--status <status,status>] [--limit <limit>] [--strict]",
+      next: "joelclaw vault adr next [--count <count>]",
     },
   }, [
     { command: "joelclaw vault adr list", description: "List ADR metadata" },
     { command: "joelclaw vault adr collisions", description: "Show duplicate ADR numbers" },
     { command: "joelclaw vault adr audit", description: "Run full ADR health audit" },
     { command: "joelclaw vault adr rank --status accepted,proposed", description: "Rank open ADRs by NRC+novelty rubric" },
+    { command: "joelclaw vault adr next", description: "Show top candidates to work on next" },
   ]))
 ).pipe(
-  Command.withSubcommands([adrListCmd, adrCollisionsCmd, adrAuditCmd, adrRankCmd])
+  Command.withSubcommands([adrListCmd, adrCollisionsCmd, adrAuditCmd, adrRankCmd, adrNextCmd])
 )
 
 const treeCmd = Command.make("tree", {}, () =>
@@ -1648,7 +1752,7 @@ export const vaultCmd = Command.make("vault", {}, () =>
         search: "joelclaw vault search <query> [--semantic] [--limit <limit>]",
         ls: "joelclaw vault ls [section]",
         tree: "joelclaw vault tree",
-        adr: "joelclaw vault adr {list|collisions|audit|rank}",
+        adr: "joelclaw vault adr {list|collisions|audit|rank|next}",
       },
     }, [
       {

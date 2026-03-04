@@ -254,6 +254,47 @@ Include a `## Visual Artifacts` section (or use `## More Information`) with stab
 
 Name visual files with ADR IDs/slugs where possible (for example `0007-auth-flow.html`) so future agents can map pages back to the decision quickly.
 
+## ADR Hunting — Finding the Next One to Work On
+
+When the current task is done and it's time to pick the next ADR, use the rubric-based ranking.
+
+### Quick Path
+
+```bash
+joelclaw vault adr next
+```
+
+Returns the top 3 candidates from proposed/accepted ADRs, sorted by the NRC+Novelty rubric (Need × 0.5 + Readiness × 0.3 + Confidence × 0.2, adjusted by Novelty). Each candidate shows score, band, axis breakdown, and rationale.
+
+### Decision Criteria
+
+When choosing between candidates:
+
+1. **Readiness 5/5 trumps higher score** — if two ADRs are close in score but one has readiness 5/5, pick that one. It means the implementation path is clear and you can ship in one session.
+2. **Accepted > Proposed** — accepted means Joel already approved the decision. Proposed may need design discussion first.
+3. **Check if already shipped** — some ADRs are implemented but not marked shipped. Before starting work, grep the codebase for evidence the ADR is already done (like ADR-0104 was).
+4. **Compound value** — prefer ADRs that build on recently shipped work. If you just shipped memory injection, the next gateway improvement compounds on that.
+
+### Full Diagnostics
+
+```bash
+# See all open ADRs with rubric drift detection
+joelclaw vault adr rank --status accepted,proposed
+
+# Show 10 candidates
+joelclaw vault adr next --count 10
+
+# Read a specific candidate
+joelclaw vault read ADR-0194
+```
+
+### After Picking
+
+1. Read the full ADR: `joelclaw vault read ADR-XXXX`
+2. Accept it if still proposed: update `status: accepted` in frontmatter
+3. Check if it's already (partially) implemented — grep codebase before building
+4. Update status to `shipped` when done, with a verification section
+
 ## Other Operations
 
 ### Update an Existing ADR
