@@ -1090,11 +1090,51 @@ export default function (pi: ExtensionAPI) {
     };
   });
 
-  // ── tool_execution_start: track file modifications (ADR-0203) ──
+  // ── tool_execution_start: track files + project-scoped recall (ADR-0203 + ADR-0204) ──
+
+  const injectedScopes = new Set<string>();
+
+  /** Map a file path to a project scope + recall query. */
+  function detectProjectScope(filePath: string): { scope: string; query: string } | null {
+    const p = filePath.replace(/^\/Users\/joel\/Code\/joelhooks\/joelclaw\//, "");
+    if (p.startsWith("packages/system-bus/")) return { scope: "system-bus", query: "system-bus inngest worker functions deployment" };
+    if (p.startsWith("packages/gateway/")) return { scope: "gateway", query: "gateway daemon telegram redis event bridge" };
+    if (p.startsWith("packages/cli/")) return { scope: "cli", query: "joelclaw CLI effect commands HATEOAS" };
+    if (p.startsWith("packages/vault-reader/")) return { scope: "vault-reader", query: "vault reader enrichment context" };
+    if (p.startsWith("packages/inference-router/")) return { scope: "inference-router", query: "inference router model selection catalog" };
+    if (p.startsWith("apps/web/")) return { scope: "web", query: "joelclaw.com next.js web RSC content" };
+    if (p.startsWith("pi/extensions/")) return { scope: "pi-extensions", query: "pi extension hooks lifecycle session" };
+    if (p.startsWith("k8s/")) return { scope: "k8s", query: "kubernetes talos colima deploy pods" };
+    if (p.startsWith("skills/")) return { scope: "skills", query: "agent skills SKOS taxonomy" };
+    return null;
+  }
 
   pi.on("tool_execution_start", async (event) => {
     if ((event.toolName === "edit" || event.toolName === "write") && event.args?.path) {
-      trackedFilesModified.add(String(event.args.path));
+      const filePath = String(event.args.path);
+      trackedFilesModified.add(filePath);
+
+      // ADR-0204: project-scoped recall on first edit in a new scope
+      const scope = detectProjectScope(filePath);
+      if (scope && !injectedScopes.has(scope.scope)) {
+        injectedScopes.add(scope.scope);
+        runRecall(scope.query, 5).then((result) => {
+          if (!result || result.hits.length === 0) return;
+          const lines = result.hits.slice(0, 3).map((h) => `- ${h.observation.slice(0, 200)}`);
+          pi.sendMessage(
+            {
+              customType: "project-context",
+              content: `## Project Context: ${scope.scope}\n${lines.join("\n")}`,
+              display: false,
+            },
+          );
+          emitOtel("project.context.injected", {
+            scope: scope.scope,
+            query: scope.query,
+            hitCount: result.hits.length,
+          });
+        }).catch(() => {});
+      }
     }
   });
 
