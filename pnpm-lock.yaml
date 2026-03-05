@@ -497,6 +497,12 @@ importers:
         specifier: 5.9.2
         version: 5.9.2
 
+  packages/restate-pilot:
+    dependencies:
+      '@restatedev/restate-sdk':
+        specifier: ^1.10.4
+        version: 1.10.4
+
   packages/restate-spike:
     dependencies:
       '@restatedev/restate-sdk':
