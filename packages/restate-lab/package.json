@@ -1,0 +1,14 @@
+{
+  "name": "@joelclaw/restate-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lab": "bun run src/index.ts",
+    "send": "bun run src/send.ts"
+  },
+  "dependencies": {
+    "@restatedev/restate-sdk": "^1.10.4",
+    "@restatedev/restate-sdk-clients": "^1.10.4"
+  }
+}
