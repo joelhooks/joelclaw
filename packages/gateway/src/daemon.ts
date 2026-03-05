@@ -1785,14 +1785,16 @@ session.subscribe((event: any) => {
 
           const summary = buildCompressionSummary();
           fallbackController.pauseTimeoutWatch();
+          // Reset clocks BEFORE prompt — prompt triggers turn_end which
+          // re-enters doHealthCheck(). Without pre-reset, the inner call
+          // sees stale sessionCreatedAt and loops forever.
+          sessionCreatedAt = now;
+          lastCompactionAt = now;
           try {
             await session.newSession();
             if (summary) {
               await session.prompt(summary, { streamingBehavior: "followUp" });
             }
-            // Reset both clocks — fresh session starts clean
-            sessionCreatedAt = now;
-            lastCompactionAt = now;
           } catch (err) {
             console.error("[gateway:health] session recycle failed", { err });
           }
