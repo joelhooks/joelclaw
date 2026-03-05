@@ -26,13 +26,22 @@ wait_for_url() {
   local url="$1"
   local label="$2"
   local attempts="${3:-30}"
+  local insecure="${4:-false}"
 
   local i=1
   while [[ $i -le $attempts ]]; do
-    if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
-      echo "ready: $label"
-      return 0
+    if [[ "$insecure" == "true" ]]; then
+      if curl --insecure -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+        echo "ready: $label"
+        return 0
+      fi
+    else
+      if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+        echo "ready: $label"
+        return 0
+      fi
     fi
+
     sleep 1
     i=$((i + 1))
   done
@@ -71,11 +80,24 @@ kubectl -n "$MINIO_NAMESPACE" port-forward "svc/${MINIO_SERVICE_NAME}" "${MINIO_
 PF_MINIO_PID=$!
 
 wait_for_url "http://localhost:${RESTATE_ADMIN_LOCAL_PORT}/health" "restate admin"
-wait_for_url "http://localhost:${MINIO_LOCAL_PORT}/minio/health/ready" "minio"
+
+MINIO_SCHEME="http"
+MINIO_HEALTH_INSECURE="false"
+if [[ "$MINIO_USE_SSL" == "true" ]]; then
+  MINIO_SCHEME="https"
+  MINIO_HEALTH_INSECURE="true"
+fi
+
+wait_for_url "${MINIO_SCHEME}://localhost:${MINIO_LOCAL_PORT}/minio/health/ready" "minio" 30 "$MINIO_HEALTH_INSECURE"
 
 echo "[3/6] start local Restate deployment endpoint"
 (
   cd "$ROOT_DIR"
+
+  if [[ "$MINIO_USE_SSL" == "true" ]]; then
+    export NODE_TLS_REJECT_UNAUTHORIZED=0
+  fi
+
   MINIO_ENDPOINT=localhost \
   MINIO_PORT="$MINIO_LOCAL_PORT" \
   MINIO_USE_SSL="$MINIO_USE_SSL" \
@@ -100,9 +122,13 @@ for i in {1..20}; do
 done
 
 echo "[4/6] register deployment endpoint"
-RESTATE_ENVIRONMENT=local \
-RESTATE_HOSTPORT="127.0.0.1:${RESTATE_ADMIN_LOCAL_PORT}" \
-"$RESTATE_CLI_BIN" deployments register "$RESTATE_DEPLOYMENT_ENDPOINT" --force --yes >/tmp/restate-smoke-register.log 2>&1
+(
+  cd "$ROOT_DIR"
+  RESTATE_CLI_BIN="$RESTATE_CLI_BIN" \
+  RESTATE_ADMIN_URL="http://localhost:${RESTATE_ADMIN_LOCAL_PORT}" \
+  RESTATE_DEPLOYMENT_ENDPOINT="$RESTATE_DEPLOYMENT_ENDPOINT" \
+  scripts/restate/register-deployment.sh
+) >/tmp/restate-smoke-register.log 2>&1
 
 echo "[5/6] invoke orchestrator workflow"
 NONCE="$(date +%s%N)"

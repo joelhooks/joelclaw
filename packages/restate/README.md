@@ -38,24 +38,27 @@ Environment variables:
 scripts/restate/test-workflow.sh
 # or
 joelclaw restate smoke
+
+# against AIStor
+MINIO_NAMESPACE=aistor MINIO_SERVICE_NAME=aistor-s3-api MINIO_USE_SSL=true scripts/restate/test-workflow.sh
 ```
 
 Smoke test behavior:
 
-- port-forwards Restate ingress/admin + selected S3 service (`minio` by default, `aistor-s3` supported)
+- port-forwards Restate ingress/admin + selected object-store service (`joelclaw/minio` by default, `aistor/aistor-s3-api` supported)
 - starts `packages/restate` deployment endpoint locally
 - registers endpoint with Restate admin API
 - invokes `orchestratorService.runBatch`
 - validates result includes S3 artifact write/read round-trip
 
-S3 environment variables used by smoke script:
+Object-store environment variables used by smoke script:
 
-- `S3_NAMESPACE` (default `joelclaw`; set `aistor` for AIStor)
-- `S3_SERVICE_NAME` (default `minio`; set `aistor-s3-api` for AIStor)
-- `S3_LOCAL_PORT` (default `9000`)
-- `S3_USE_SSL` (default `false`)
-- `S3_ACCESS_KEY` (default `minioadmin`)
-- `S3_SECRET_KEY` (default `minioadmin`)
-- `S3_BUCKET` (default `restate-smoke-tests`)
+- `MINIO_NAMESPACE` (default `joelclaw`; set `aistor` for AIStor)
+- `MINIO_SERVICE_NAME` (default `minio`; set `aistor-s3-api` for AIStor)
+- `MINIO_LOCAL_PORT` (default `9000`)
+- `MINIO_USE_SSL` (default `false`; set `true` for AIStor)
+- `MINIO_ACCESS_KEY` (default `minioadmin`)
+- `MINIO_SECRET_KEY` (default `minioadmin`)
+- `MINIO_BUCKET` (default `restate-smoke-tests`)
 
-The package itself still reads `MINIO_*` variables; the smoke script maps `S3_*` into that runtime contract.
+When `MINIO_USE_SSL=true`, the script uses insecure TLS for health checks and sets `NODE_TLS_REJECT_UNAUTHORIZED=0` for the local smoke-run process.
