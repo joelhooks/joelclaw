@@ -156,6 +156,21 @@ The gateway role prompt (`roles/gateway.md`) requires proactive steering check-i
 
 Keep updates concise for mobile Telegram reading.
 
+## Session lifecycle guards (ADR-0213)
+
+Three guards prevent context bloat and overnight fallback thrash:
+
+### Compaction circuit breaker (4h max gap)
+After every `turn_end`, if >4 hours since last compaction, force `session.compact()` regardless of token count. Prevents the scenario where context grows unchecked when pi's auto-compaction misses (e.g. model_change entries disrupting threshold calculation).
+
+### Session age limit (24h max)
+After every `turn_end`, if session is >24 hours old, create a fresh session with compression summary. Prevents multi-day JSONL growth. Alerts via Telegram (silent).
+
+### Quiet hours auto-batching (11 PM – 7 AM PST)
+During quiet hours, all non-interactive events are batched (not immediate). Batch digest flush is deferred until wake hours. Human messages (telegram, imessage, etc.) and error events always process immediately.
+
+**Incident context (2026-03-05):** Without these guards, the gateway entered a thrash loop: 92 fallback activations, 83 timeouts, 128 model swaps over 11 hours. Root cause: 12h without compaction → context bloat → Opus first-token > 120s → positive feedback loop.
+
 ## Availability-first posture (ADR-0189 related)
 
 Gateway operation is orchestration-first, not execution-first:

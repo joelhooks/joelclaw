@@ -603,6 +603,38 @@ void emitGatewayOtel({
   },
 });
 
+// ── Session lifecycle guards (ADR-0211) ────────────────
+// Track compaction freshness and session age to prevent context bloat.
+// The overnight thrash of 2026-03-05 was caused by 12h without compaction:
+// context grew → Opus first-token latency exceeded 120s → fallback thrash loop.
+const MAX_COMPACTION_GAP_MS = 4 * 60 * 60 * 1000; // 4 hours — force compact if overdue
+const MAX_SESSION_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours — fresh session if exceeded
+const sessionCreatedAt = Date.now();
+let lastCompactionAt = Date.now();
+
+// Initialize lastCompactionAt from session history (resumed sessions)
+{
+  const initEntries = sessionManager.getEntries();
+  for (let i = initEntries.length - 1; i >= 0; i--) {
+    const entry = initEntries[i];
+    if (entry?.type === "compaction") {
+      const ts = (entry as any).timestamp;
+      if (typeof ts === "string") {
+        const parsed = new Date(ts).getTime();
+        if (!Number.isNaN(parsed)) {
+          lastCompactionAt = parsed;
+          break;
+        }
+      }
+    }
+  }
+  const compactionAge = Date.now() - lastCompactionAt;
+  console.log("[gateway] session lifecycle init", {
+    lastCompactionAge: `${Math.round(compactionAge / 60_000)}m`,
+    sessionEntries: initEntries.length,
+  });
+}
+
 setSession({
   // Use follow-up queueing to absorb brief streaming races safely.
   // Without this, pi throws "Agent is already processing" and watchdog can false-trigger.
@@ -1691,11 +1723,102 @@ session.subscribe((event: any) => {
 
     responseSource = undefined;
 
-    // ── Proactive context health check (ADR-0141) ───────────
-    // After each turn, estimate context usage. If critical, compact BEFORE
-    // releasing the drain loop — compaction must complete before the next prompt.
+    // ── Proactive context health check (ADR-0141 + ADR-0211) ────
+    // After each turn: check context usage, compaction freshness, and session age.
+    // Compact or create fresh session BEFORE releasing the drain loop.
     const doHealthCheck = async () => {
       try {
+        const now = Date.now();
+
+        // ── ADR-0211: Session age guard ──────────────────────────
+        // Sessions older than 24h accumulate too much context history.
+        // Even with compaction, the JSONL grows and pi's summarization
+        // degrades. Fresh session with compression summary is better.
+        const sessionAgeMs = now - sessionCreatedAt;
+        if (sessionAgeMs > MAX_SESSION_AGE_MS) {
+          console.warn("[gateway:health] session age limit reached — creating fresh session", {
+            ageHours: Math.round(sessionAgeMs / 3_600_000),
+            maxHours: MAX_SESSION_AGE_MS / 3_600_000,
+            entries: sessionManager.getEntries().length,
+          });
+          void emitGatewayOtel({
+            level: "warn",
+            component: "daemon",
+            action: "daemon.session.age_limit",
+            success: true,
+            metadata: {
+              ageMs: sessionAgeMs,
+              maxMs: MAX_SESSION_AGE_MS,
+              entries: sessionManager.getEntries().length,
+            },
+          });
+
+          // Alert via Telegram
+          if (TELEGRAM_USER_ID) {
+            sendTelegram(TELEGRAM_USER_ID, [
+              "🔄 <b>Gateway session recycled</b>",
+              "",
+              `Session was ${Math.round(sessionAgeMs / 3_600_000)}h old.`,
+              "Created fresh session with context summary.",
+            ].join("\n"), { silent: true }).catch(() => {});
+          }
+
+          const summary = buildCompressionSummary();
+          fallbackController.pauseTimeoutWatch();
+          try {
+            await session.newSession();
+            if (summary) {
+              await session.prompt(summary, { streamingBehavior: "followUp" });
+            }
+            lastCompactionAt = now;
+          } catch (err) {
+            console.error("[gateway:health] session recycle failed", { err });
+          }
+          fallbackController.resumeTimeoutWatch();
+          // Skip remaining checks — fresh session is clean
+          return;
+        }
+
+        // ── ADR-0211: Compaction circuit breaker ─────────────────
+        // If compaction hasn't fired in MAX_COMPACTION_GAP_MS, force it
+        // regardless of token count. This prevents the context bloat that
+        // caused the overnight thrash of 2026-03-05 (12h without compaction,
+        // 92 fallback activations, 83 timeouts).
+        const compactionGapMs = now - lastCompactionAt;
+        if (compactionGapMs > MAX_COMPACTION_GAP_MS && !session.isCompacting) {
+          const gapHours = Math.round(compactionGapMs / 3_600_000 * 10) / 10;
+          console.warn("[gateway:health] compaction overdue — forcing compact", {
+            lastCompactionAt: new Date(lastCompactionAt).toISOString(),
+            gapHours,
+            entries: sessionManager.getEntries().length,
+          });
+          void emitGatewayOtel({
+            level: "warn",
+            component: "daemon",
+            action: "daemon.compaction.circuit_breaker",
+            success: true,
+            metadata: {
+              gapMs: compactionGapMs,
+              gapHours,
+              entries: sessionManager.getEntries().length,
+            },
+          });
+          try {
+            fallbackController.pauseTimeoutWatch();
+            await session.compact(
+              `Compaction overdue (${gapHours}h since last). Aggressively summarize. `
+              + "Keep only essential recent context and active thread state.",
+            );
+            lastCompactionAt = Date.now();
+            fallbackController.resumeTimeoutWatch();
+            console.log("[gateway:health] circuit-breaker compaction complete");
+          } catch (err) {
+            fallbackController.resumeTimeoutWatch();
+            console.error("[gateway:health] circuit-breaker compaction failed", { err });
+          }
+          // Continue to token check — compaction may not have reduced enough
+        }
+
         const lastUsage = getLastAssistantUsage(sessionManager.getEntries());
         if (!lastUsage) return;
 
@@ -1724,6 +1847,7 @@ session.subscribe((event: any) => {
             console.log("[gateway:health] triggering proactive compaction (blocking drain)");
             fallbackController.pauseTimeoutWatch();
             await session.compact("Context is at " + Math.round(usageRatio * 100) + "% capacity. Aggressively summarize to prevent overflow. Keep only essential recent context.");
+            lastCompactionAt = Date.now();
             fallbackController.resumeTimeoutWatch();
             console.log("[gateway:health] proactive compaction complete");
           } catch (err) {

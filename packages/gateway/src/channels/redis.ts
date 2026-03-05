@@ -344,6 +344,19 @@ function isAutomationEvent(event: SystemEvent): boolean {
   return event.source.startsWith("inngest/");
 }
 
+/**
+ * ADR-0211: Quiet hours (11 PM – 7 AM PST).
+ * During quiet hours, batch ALL non-interactive events to prevent
+ * token burn and fallback thrash while nobody is watching.
+ * Only human-originated messages (telegram, imessage, slack, discord)
+ * get immediate processing.
+ */
+function isQuietHours(): boolean {
+  const pstString = new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" });
+  const pstHour = new Date(pstString).getHours();
+  return pstHour >= 23 || pstHour < 7;
+}
+
 function isHumanInboundMessageEvent(event: SystemEvent): boolean {
   return event.type.endsWith(".message.received");
 }
@@ -529,6 +542,16 @@ async function drainEvents(): Promise<void> {
 
       if (isAutomationEvent(e)) {
         assign("batched", e, "batched.automation-source");
+        continue;
+      }
+
+      // ADR-0211: During quiet hours (11PM-7AM PST), batch everything
+      // that isn't interactive or degradation. Prevents token burn and
+      // fallback thrash overnight — the 2026-03-05 incident had 92
+      // fallback activations from non-interactive events hitting a
+      // bloated context window.
+      if (isQuietHours() && !isInteractiveEvent(e) && !isDegradationOrErrorEvent(e)) {
+        assign("batched", e, "batched.quiet-hours");
         continue;
       }
 
@@ -857,6 +880,14 @@ export async function flushBatchDigest(): Promise<number> {
   const mode = await getGatewayMode();
   if (mode === "sleep") {
     console.log("[redis] batch digest skipped (sleep mode)");
+    return 0;
+  }
+
+  // ADR-0211: Skip digest flush during quiet hours to prevent
+  // unnecessary prompts that cause fallback thrash on bloated sessions.
+  // Batched events accumulate and flush on next wake-hours digest.
+  if (isQuietHours()) {
+    console.log("[redis] batch digest deferred (quiet hours)");
     return 0;
   }
 
