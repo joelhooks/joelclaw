@@ -1,0 +1,22 @@
+#!/bin/bash
+# Pre-push hook: verify pnpm-lock.yaml is in sync
+# Prevents the "frozen-lockfile" failure on Vercel that has broken production twice today.
+
+echo "[pre-push] Checking pnpm-lock.yaml sync..."
+
+# Run pnpm install in dry-run/check mode
+pnpm install --lockfile-only 2>/dev/null
+
+# Check if lockfile changed
+if ! git diff --quiet pnpm-lock.yaml 2>/dev/null; then
+  echo ""
+  echo "❌ pnpm-lock.yaml is out of sync with package.json files!"
+  echo ""
+  echo "Run 'pnpm install' and commit pnpm-lock.yaml before pushing."
+  echo ""
+  # Restore the lockfile to pre-check state
+  git checkout pnpm-lock.yaml 2>/dev/null
+  exit 1
+fi
+
+echo "[pre-push] ✓ Lockfile in sync"
