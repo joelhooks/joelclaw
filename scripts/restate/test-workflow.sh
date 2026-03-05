@@ -4,18 +4,18 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 
 RESTATE_CLI_BIN="${RESTATE_CLI_BIN:-restate}"
-RESTATE_ADMIN_LOCAL_PORT="${RESTATE_ADMIN_LOCAL_PORT:-9070}"
-RESTATE_INGRESS_LOCAL_PORT="${RESTATE_INGRESS_LOCAL_PORT:-8080}"
-RESTATE_SERVICE_PORT="${RESTATE_SERVICE_PORT:-9080}"
-RESTATE_DEPLOYMENT_ENDPOINT="${RESTATE_DEPLOYMENT_ENDPOINT:-http://host.lima.internal:${RESTATE_SERVICE_PORT}}"
+RESTATE_ADMIN_LOCAL_PORT="${SMOKE_RESTATE_ADMIN_LOCAL_PORT:-${RESTATE_ADMIN_LOCAL_PORT:-9070}}"
+RESTATE_INGRESS_LOCAL_PORT="${SMOKE_RESTATE_INGRESS_LOCAL_PORT:-${RESTATE_INGRESS_LOCAL_PORT:-8080}}"
+RESTATE_SERVICE_PORT="${SMOKE_RESTATE_SERVICE_PORT:-${RESTATE_SERVICE_PORT:-9080}}"
+RESTATE_DEPLOYMENT_ENDPOINT="${SMOKE_RESTATE_DEPLOYMENT_ENDPOINT:-${RESTATE_DEPLOYMENT_ENDPOINT:-http://host.lima.internal:${RESTATE_SERVICE_PORT}}}"
 
-MINIO_NAMESPACE="${MINIO_NAMESPACE:-joelclaw}"
-MINIO_SERVICE_NAME="${MINIO_SERVICE_NAME:-minio}"
-MINIO_LOCAL_PORT="${MINIO_LOCAL_PORT:-9000}"
-MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:-minioadmin}"
-MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-minioadmin}"
-MINIO_USE_SSL="${MINIO_USE_SSL:-false}"
-MINIO_BUCKET="${MINIO_BUCKET:-restate-smoke-tests}"
+MINIO_NAMESPACE="${SMOKE_MINIO_NAMESPACE:-${MINIO_NAMESPACE:-joelclaw}}"
+MINIO_SERVICE_NAME="${SMOKE_MINIO_SERVICE_NAME:-${MINIO_SERVICE_NAME:-minio}}"
+MINIO_LOCAL_PORT="${SMOKE_MINIO_LOCAL_PORT:-${MINIO_LOCAL_PORT:-9000}}"
+MINIO_ACCESS_KEY="${SMOKE_MINIO_ACCESS_KEY:-${MINIO_ACCESS_KEY:-minioadmin}}"
+MINIO_SECRET_KEY="${SMOKE_MINIO_SECRET_KEY:-${MINIO_SECRET_KEY:-minioadmin}}"
+MINIO_USE_SSL="${SMOKE_MINIO_USE_SSL:-${MINIO_USE_SSL:-false}}"
+MINIO_BUCKET="${SMOKE_MINIO_BUCKET:-${MINIO_BUCKET:-restate-smoke-tests}}"
 
 if ! command -v "$RESTATE_CLI_BIN" >/dev/null 2>&1; then
   echo "error: $RESTATE_CLI_BIN not found in PATH"
@@ -26,12 +26,10 @@ wait_for_url() {
   local url="$1"
   local label="$2"
   local attempts="${3:-30}"
-  shift 3 || true
-  local -a curl_args=("$@")
 
   local i=1
   while [[ $i -le $attempts ]]; do
-    if curl "${curl_args[@]}" -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+    if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
       echo "ready: $label"
       return 0
     fi
@@ -73,23 +71,11 @@ kubectl -n "$MINIO_NAMESPACE" port-forward "svc/${MINIO_SERVICE_NAME}" "${MINIO_
 PF_MINIO_PID=$!
 
 wait_for_url "http://localhost:${RESTATE_ADMIN_LOCAL_PORT}/health" "restate admin"
-
-MINIO_SCHEME="http"
-MINIO_HEALTH_CURL_ARGS=()
-if [[ "$MINIO_USE_SSL" == "true" ]]; then
-  MINIO_SCHEME="https"
-  MINIO_HEALTH_CURL_ARGS=("--insecure")
-fi
-
-wait_for_url "${MINIO_SCHEME}://localhost:${MINIO_LOCAL_PORT}/minio/health/ready" "minio" 30 "${MINIO_HEALTH_CURL_ARGS[@]}"
+wait_for_url "http://localhost:${MINIO_LOCAL_PORT}/minio/health/ready" "minio"
 
 echo "[3/6] start local Restate deployment endpoint"
 (
   cd "$ROOT_DIR"
-  if [[ "$MINIO_USE_SSL" == "true" ]]; then
-    export NODE_TLS_REJECT_UNAUTHORIZED=0
-  fi
-
   MINIO_ENDPOINT=localhost \
   MINIO_PORT="$MINIO_LOCAL_PORT" \
   MINIO_USE_SSL="$MINIO_USE_SSL" \
@@ -115,13 +101,15 @@ done
 
 echo "[4/6] register deployment endpoint"
 RESTATE_ENVIRONMENT=local \
-RESTATE_ADMIN_URL="http://localhost:${RESTATE_ADMIN_LOCAL_PORT}" \
-"$RESTATE_CLI_BIN" deployments register "$RESTATE_DEPLOYMENT_ENDPOINT" --yes >/tmp/restate-smoke-register.log 2>&1
+RESTATE_HOSTPORT="127.0.0.1:${RESTATE_ADMIN_LOCAL_PORT}" \
+"$RESTATE_CLI_BIN" deployments register "$RESTATE_DEPLOYMENT_ENDPOINT" --force --yes >/tmp/restate-smoke-register.log 2>&1
 
 echo "[5/6] invoke orchestrator workflow"
+NONCE="$(date +%s%N)"
+REQUEST_PAYLOAD="[\"alpha-${NONCE}\",\"beta-${NONCE}\",\"gamma-${NONCE}\"]"
 RESPONSE="$(curl -fsS --max-time 45 "http://localhost:${RESTATE_INGRESS_LOCAL_PORT}/orchestratorService/runBatch" \
   -H 'content-type: application/json' \
-  -d '["alpha","beta","gamma"]')"
+  -d "$REQUEST_PAYLOAD")"
 
 echo "$RESPONSE"
 
