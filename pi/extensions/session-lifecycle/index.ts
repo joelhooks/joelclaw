@@ -126,17 +126,20 @@ export function emitEvent(name: string, data: Record<string, unknown>): void {
   if (!eventKey) return; // No key = no Inngest = skip silently
 
   const payload = JSON.stringify({ name, data });
+  // Pipe payload via stdin to avoid E2BIG when sessions are large.
+  // `-d @-` tells curl to read the POST body from stdin.
   const child = spawn(
     "curl",
     [
       "-sf", "-X", "POST",
       `${baseUrl}/e/${eventKey}`,
       "-H", "Content-Type: application/json",
-      "-d", payload,
+      "-d", "@-",
       "--max-time", "5",
     ],
-    { detached: true, stdio: "ignore" }
+    { detached: true, stdio: ["pipe", "ignore", "ignore"] }
   );
+  child.stdin!.end(payload);
   child.unref();
 }
 
