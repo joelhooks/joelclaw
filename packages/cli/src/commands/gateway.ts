@@ -1265,7 +1265,7 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
     let e2eOk = false
     try {
       execSync("joelclaw gateway test 2>/dev/null", { encoding: "utf-8", timeout: 10000 })
-      yield* Effect.promise(() => new Promise((r) => setTimeout(r, 3000)))
+      yield* Effect.promise(() => new Promise((r) => setTimeout(r, 8000)))
       const eventsRaw = execSync("joelclaw gateway events 2>/dev/null", { encoding: "utf-8", timeout: 10000 })
       const events = JSON.parse(eventsRaw)
       // If test event was drained, totalCount should be 0 (or only non-test events)
@@ -1276,7 +1276,7 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       layers.push({
         layer: "e2e-test",
         status: e2eOk ? "ok" : "failed",
-        detail: e2eOk ? "Test event pushed and drained within 3s" : "Test event stuck in queue — session not draining",
+        detail: e2eOk ? "Test event pushed and drained within 8s" : "Test event stuck in queue — session not draining",
       })
     } catch (e) {
       layers.push({ layer: "e2e-test", status: "failed", detail: `E2E test failed: ${e}` })

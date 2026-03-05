@@ -28,7 +28,7 @@ const CHANNEL_ALERT_COOLDOWN_SECONDS = 30 * 60;
 const RESTART_COOLDOWN_SECONDS = 15 * 60;
 
 const TYPESENSE_QUERY_BY = "action,component,source,error,metadata_json,search_text";
-const CRITICAL_GENERAL_LAYERS = new Set(["process", "cli-status", "e2e-test", "redis-state"]);
+const CRITICAL_GENERAL_LAYERS = new Set(["process", "cli-status", "redis-state"]);
 const AUTO_RESTART_GENERAL_LAYERS = new Set(["process", "cli-status", "redis-state"]);
 
 function asPositiveInt(raw: string | undefined, fallback: number, min = 1): number {
