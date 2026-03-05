@@ -1668,13 +1668,6 @@ export type Events = {
   "email/triage.requested": {
     data: Record<string, never>;
   };
-  "email/inbox.cleanup": {
-    data: {
-      query?: string;
-      maxPages?: number;
-      dryRun?: boolean;
-    };
-  };
   "calendar/daily.check": {
     data: Record<string, never>;
   };

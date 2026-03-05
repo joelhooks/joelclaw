@@ -42,7 +42,6 @@ import {
   docsIngestJanitor,
   docsReindex,
 } from "./docs-maintenance";
-import { emailInboxCleanup } from "./email-cleanup";
 import { emailNag } from "./email-nag";
 import { embedText } from "./embed";
 import { friction } from "./friction";
@@ -162,7 +161,6 @@ export const hostFunctionDefinitions = [
   vercelDeployError,
   vercelDeployCreated,
   vercelDeployCanceled,
-  emailInboxCleanup,
   meetingAnalyze,
   meetingTranscriptIndex,
   granolaBackfill,

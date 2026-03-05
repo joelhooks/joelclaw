@@ -152,7 +152,6 @@ app.get("/", (c) =>
       "vip/email.received": "VIP email deep-dive workflow (Opus + meetings + memory + GitHub + todos)",
       "vercel/*": "Vercel webhook events (deploy.succeeded, deploy.error, deploy.created, deploy.canceled)",
       "github/*": "GitHub webhook events (workflow_run.completed, package.published)",
-      "email/inbox.cleanup": "AI-powered inbox triage — classify + archive noise",
       "meeting/noted": "Analyze meeting → extract action items, decisions, people (ADR-0055)",
       "granola/backfill.requested": "Backfill all historical Granola meetings (ADR-0055)",
       "memory/digest.created": "Structured daily digest generated from raw daily memory log",
