@@ -1790,6 +1790,8 @@ session.subscribe((event: any) => {
             if (summary) {
               await session.prompt(summary, { streamingBehavior: "followUp" });
             }
+            // Reset both clocks — fresh session starts clean
+            sessionCreatedAt = now;
             lastCompactionAt = now;
           } catch (err) {
             console.error("[gateway:health] session recycle failed", { err });
