@@ -191,12 +191,69 @@ const restateDeploymentsCmd = Command.make(
     })
 )
 
+const restateSmokeCmd = Command.make(
+  "smoke",
+  {
+    script: Options.text("script").pipe(
+      Options.withDefault("scripts/restate/test-workflow.sh"),
+      Options.withDescription("Smoke test script path")
+    ),
+  },
+  ({ script }) =>
+    Effect.gen(function* () {
+      const proc = Bun.spawnSync(["bash", script], {
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+      })
+
+      const stdout = decode(proc.stdout).trim()
+      const stderr = decode(proc.stderr).trim()
+
+      if (proc.exitCode !== 0) {
+        yield* Console.log(respondError(
+          "restate smoke",
+          stderr || stdout || `smoke script exited with ${proc.exitCode}`,
+          "RESTATE_SMOKE_FAILED",
+          "Ensure k8s Restate + MinIO are running and the script path is valid.",
+          [
+            {
+              command: "joelclaw restate status",
+              description: "Check Restate runtime health",
+            },
+            {
+              command: "joelclaw restate deployments",
+              description: "Inspect deployment registration",
+            },
+            {
+              command: "joelclaw logs errors --lines 120",
+              description: "Check worker/cluster errors",
+            },
+          ]
+        ))
+        return
+      }
+
+      yield* Console.log(respond("restate smoke", {
+        script,
+        passed: true,
+        output: stdout,
+      }, [
+        {
+          command: "joelclaw restate deployments",
+          description: "Inspect deployment list after smoke run",
+        },
+      ]))
+    })
+)
+
 export const restateCmd = Command.make("restate", {}, () =>
   Console.log(respond("restate", {
     description: "Restate runtime and deployment visibility",
     subcommands: {
       status: "joelclaw restate status [--namespace joelclaw] [--admin-url http://localhost:9070]",
       deployments: "joelclaw restate deployments [--admin-url http://localhost:9070] [--cli-bin restate]",
+      smoke: "joelclaw restate smoke [--script scripts/restate/test-workflow.sh]",
     },
   }, [
     {
@@ -207,5 +264,9 @@ export const restateCmd = Command.make("restate", {}, () =>
       command: "joelclaw restate deployments",
       description: "List Restate deployments via CLI",
     },
+    {
+      command: "joelclaw restate smoke",
+      description: "Run end-to-end Restate smoke test with MinIO artifact verification",
+    },
   ]))
-).pipe(Command.withSubcommands([restateStatusCmd, restateDeploymentsCmd]))
+).pipe(Command.withSubcommands([restateStatusCmd, restateDeploymentsCmd, restateSmokeCmd]))

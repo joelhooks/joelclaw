@@ -1,4 +1,5 @@
 import * as restate from "@restatedev/restate-sdk";
+import { readArtifact, writeArtifact } from "./minio";
 
 export const workerService = restate.service({
   name: "workerService",
@@ -31,10 +32,28 @@ export const orchestratorService = restate.service({
         ),
       );
 
+      const artifactPayload = {
+        tasks,
+        results,
+      };
+
+      const artifactRef = await ctx.run("persist-summary-artifact", async () => {
+        return await writeArtifact("orchestrator", artifactPayload);
+      });
+
+      const artifactReadBack = await ctx.run("read-summary-artifact", async () => {
+        return await readArtifact(artifactRef);
+      });
+
       return await ctx.run("summarize-results", () => ({
         taskCount: tasks.length,
         completedCount: results.length,
         results,
+        artifact: {
+          ...artifactRef,
+          roundTripMatches:
+            JSON.stringify(artifactReadBack) === JSON.stringify(artifactPayload),
+        },
       }));
     },
   },

@@ -26,13 +26,17 @@ Implemented Phase-1 surfaces:
   - ClusterIP service exposing ingress/admin/metrics ports (`8080/9070/9071`)
   - startup/readiness/liveness probes configured
 - Restate service package: `packages/restate/`
-  - demonstrates step chain (`ctx.run`), fan-out/fan-in (`ctx.serviceClient`), and approval signal workflow (`ctx.promise`)
+  - demonstrates step chain (`ctx.run`), fan-out/fan-in (`ctx.serviceClient`), approval signal workflow (`ctx.promise`), and MinIO artifact persistence
 - deployment registration script: `scripts/restate/register-deployment.sh`
   - registers service endpoint via `restate deployments register`
   - lists deployments post-registration
+- smoke test script: `scripts/restate/test-workflow.sh`
+  - runs end-to-end Restate workflow invocation against k8s runtime
+  - verifies MinIO object write/read round-trip from workflow output
 - CLI visibility: `joelclaw restate`
   - `joelclaw restate status` checks runtime/statefulset/service/admin probe
   - `joelclaw restate deployments` shells to Restate CLI listing
+  - `joelclaw restate smoke` runs end-to-end workflow+MinIO smoke test
 
 Operational boundary for Phase 1:
 

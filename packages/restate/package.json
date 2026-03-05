@@ -9,6 +9,7 @@
     "dev": "bun run src/index.ts"
   },
   "dependencies": {
-    "@restatedev/restate-sdk": "^1.10.4"
+    "@restatedev/restate-sdk": "^1.10.4",
+    "minio": "^8.0.6"
   }
 }

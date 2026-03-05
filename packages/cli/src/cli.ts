@@ -159,7 +159,7 @@ const root = Command.make("joelclaw", {}, () =>
           mail: "joelclaw mail {status|register|send|inbox|read|reserve|release|locks|search}",
           models: "joelclaw models --list [--plain]",
           nas: "joelclaw nas {status|runs|review}",
-          restate: "joelclaw restate {status|deployments}",
+          restate: "joelclaw restate {status|deployments|smoke}",
           otel: "joelclaw otel {list|search|stats}",
           langfuse: "joelclaw langfuse {aggregate}",
           subscribe: "joelclaw subscribe {list|add|remove|check|summary}",
