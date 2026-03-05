@@ -1,3 +1,4 @@
+// execSync kept for non-pool fallback paths if needed
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -1766,7 +1767,28 @@ import {
   type ThreadClassification,
 } from "./lib/thread-tracker";
 
+import { createPiProcessPool, type PiProcessPool } from "./lib/pi-process-pool";
+
 const THREAD_SNAPSHOT_PATH = join(homedir(), ".joelclaw", "state", "thread-snapshot.json");
+
+/** ADR-0209: Warm pi process pool for sub-second thread classification */
+const classifierPool: PiProcessPool = createPiProcessPool({
+  model: "anthropic/claude-haiku-4-5",
+  timeoutMs: 6000,
+  maxIdleMs: 5 * 60 * 1000, // recycle every 5min
+  onEvent: (event, detail) => {
+    // Log pool events at debug level (warm.used, cold.start, timeout, etc.)
+    if (event === "timeout" || event === "spawn.failed" || event === "cold.start") {
+      void emitGatewayOtel({
+        level: event === "cold.start" ? "debug" : "warn",
+        component: "pi-process-pool",
+        action: `pool.${event}`,
+        success: event === "cold.start",
+        metadata: detail,
+      });
+    }
+  },
+});
 
 /** Persist thread state so gateway extension can read it on compaction */
 function persistThreadSnapshot(): void {
@@ -1798,20 +1820,15 @@ async function classifyThread(
   const classifierPrompt = buildClassifierPrompt(userMessage, active);
 
   try {
-    const raw = execSync(
-      `pi -p --no-session --no-extensions --model anthropic/claude-haiku-4-5`,
-      {
-        input: classifierPrompt,
-        encoding: "utf-8",
-        timeout: 8000, // pi cold-start can take 3-4s; 5s was timing out 40%
-        stdio: ["pipe", "pipe", "pipe"],
-      },
-    ).trim();
+    const startMs = Date.now();
+    const raw = await classifierPool.infer(classifierPrompt);
 
     const result = parseClassifierResponse(raw);
     if (result) {
       const classification = classifyByHaikuResult(result);
       const resolved = resolveClassification(classification, channel, inboundAnchor);
+      const elapsed = Date.now() - startMs;
+      const poolStats = classifierPool.stats();
 
       void emitGatewayOtel({
         level: "debug",
@@ -1825,6 +1842,9 @@ async function classifyThread(
           confidence: result.confidence,
           source: classification.source,
           activeThreads: active.length,
+          classifyMs: elapsed,
+          poolWarm: poolStats.warm,
+          poolAvgMs: poolStats.avgMs,
         },
       });
 
@@ -1838,7 +1858,7 @@ async function classifyThread(
       action: "thread.classify.failed",
       success: false,
       error: String(err),
-      metadata: { activeThreads: active.length },
+      metadata: { activeThreads: active.length, poolStats: classifierPool.stats() },
     });
   }
 
