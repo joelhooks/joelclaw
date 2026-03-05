@@ -117,7 +117,7 @@ type ReadMessage = {
   }
   date: string
   is_inbound: boolean
-  body_preview: string
+  body: string
   attachments: ReadAttachment[]
 }
 
@@ -366,7 +366,7 @@ async function fetchConversationReadPayload(
       },
       date: new Date((m?.created_at ?? 0) * 1000).toISOString(),
       is_inbound: Boolean(m?.is_inbound),
-      body_preview: String(m?.text ?? m?.body ?? "").slice(0, 500),
+      body: String(m?.text ?? m?.body ?? "").slice(0, 500),
       attachments,
     })
   }
