@@ -32,6 +32,13 @@ export async function resolveCallback(data: CallbackData): Promise<void> {
     body: JSON.stringify(`${data.action} via ${data.serviceName}`),
   });
 
+  if (response.status === 409) {
+    // Promise already resolved — another button press or CLI resolve beat us.
+    // This is expected when multiple messages have buttons for the same workflow.
+    console.log(`⚡ Already resolved: ${data.action} on ${data.workflowId} (409 — duplicate callback, safe to ignore)`);
+    return;
+  }
+
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(`Restate resolve failed: ${response.status} ${errorText}`);

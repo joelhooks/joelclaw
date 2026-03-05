@@ -21,14 +21,19 @@ const title = process.argv.includes("--title")
 
 const workflowId = `approval-${Date.now().toString(36)}`;
 
+// Lab mode: short intervals for testing (15s, 30s, 45s, 60s)
+// Production would use: 4h, 12h, 24h, 48h
+const labMode = !process.argv.includes("--prod");
+
 const request = {
   title,
   description: "This will roll out the latest Inngest functions to the k8s cluster. Includes 3 new functions and 2 breaking changes to event schemas.",
   requestedBy: "restate-lab",
   metadata: {
-    environment: "production",
+    environment: labMode ? "lab" : "production",
     changes: "3 new functions, 2 schema changes",
   },
+  ...(labMode ? { reminderIntervals: [15_000, 30_000, 45_000, 60_000] } : {}),
 };
 
 console.log(`📤 Sending approval request — workflowId: ${workflowId}`);

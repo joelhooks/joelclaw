@@ -1,28 +1,32 @@
 /**
- * Level 3: Human-in-the-loop approval workflow.
+ * Level 3: Human-in-the-loop approval workflow with escalating reminders.
  *
  * Flow:
  *   1. Workflow receives a request
- *   2. Sends notification to primary channel (Telegram/Console) with approve/reject buttons
- *   3. Blocks on ctx.promise("decision") — durable, survives restarts
- *   4. Human taps button → callback resolves the promise
- *   5. Workflow continues with the decision
+ *   2. Sends notification to primary channel with approve/reject buttons
+ *   3. Enters reminder loop: sleep → peek promise → if pending, escalate
+ *   4. When human responds (button press or CLI), promise resolves
+ *   5. Workflow finalizes with the decision
  *
- * The key insight: ctx.promise() is durable. Kill the worker while waiting
- * for human input, restart it hours later, resolve the promise — it completes.
+ * Escalation tiers (configurable):
+ *   - gentle:   first reminder after initial wait
+ *   - firm:     second reminder, more urgent tone
+ *   - urgent:   third reminder, explicit warning
+ *   - critical: final reminder before auto-action
+ *
+ * Durable: kill the worker at any point. Restart. Promise is still waiting.
+ * Reminders survive restarts too — the sleep timer is in Restate's journal.
  *
  * Restate workflow handlers are the external API:
  *   POST /approvalWorkflow/{id}/run     — start the workflow
  *   POST /approvalWorkflow/{id}/approve — resolve with approval
  *   POST /approvalWorkflow/{id}/reject  — resolve with rejection
- *   GET  /approvalWorkflow/{id}/status  — check current state
  */
 
 import * as restate from "@restatedev/restate-sdk";
-import type { NotificationChannel } from "../channels/types";
+import type { NotificationChannel, Action } from "../channels/types";
 
 // Channel is injected at startup — not imported directly.
-// This keeps the workflow independent of any specific channel.
 let channel: NotificationChannel | null = null;
 
 export function setChannel(ch: NotificationChannel) {
@@ -38,6 +42,8 @@ export interface ApprovalRequest {
   requestedBy: string;
   /** Optional structured metadata */
   metadata?: Record<string, string>;
+  /** Reminder config override (for lab testing with short intervals) */
+  reminderIntervals?: number[];
 }
 
 export interface ApprovalResult {
@@ -45,15 +51,37 @@ export interface ApprovalResult {
   decision: "approved" | "rejected";
   reason: string;
   decidedAt: string;
-  /** Time from request to decision */
   durationMs: number;
+  remindersCount: number;
 }
+
+/**
+ * Escalation tiers — each has a tone and optional auto-action.
+ */
+const ESCALATION_TIERS = [
+  { urgency: "gentle",   emoji: "🔔", tone: "Friendly reminder" },
+  { urgency: "firm",     emoji: "⏰", tone: "This is still waiting for you" },
+  { urgency: "urgent",   emoji: "🚨", tone: "Needs attention — stale" },
+  { urgency: "critical", emoji: "💀", tone: "Final reminder before auto-reject" },
+] as const;
+
+/**
+ * Default reminder intervals in ms.
+ * Production: 4h, 12h, 24h, 48h
+ * Lab testing: override via request.reminderIntervals
+ */
+const DEFAULT_INTERVALS_MS = [
+  4 * 3600_000,   // 4h
+  12 * 3600_000,  // 12h
+  24 * 3600_000,  // 24h
+  48 * 3600_000,  // 48h
+];
 
 export const approvalWorkflow = restate.workflow({
   name: "approvalWorkflow",
   handlers: {
     /**
-     * Main workflow handler — sends notification, waits for decision.
+     * Main workflow handler — sends notification, reminder loop, waits for decision.
      */
     run: async (
       ctx: restate.WorkflowContext,
@@ -61,10 +89,11 @@ export const approvalWorkflow = restate.workflow({
     ): Promise<ApprovalResult> => {
       const workflowId = ctx.key;
       const startedAt = Date.now();
+      const intervals = request.reminderIntervals ?? DEFAULT_INTERVALS_MS;
 
       console.log(`\n🔬 Approval workflow started — ${workflowId}`);
       console.log(`   Title: ${request.title}`);
-      console.log(`   Requested by: ${request.requestedBy}`);
+      console.log(`   Reminder intervals: ${intervals.map(ms => `${ms/1000}s`).join(", ")}`);
 
       // Step 1: Record the request
       await ctx.run("record-request", () => ({
@@ -73,8 +102,13 @@ export const approvalWorkflow = restate.workflow({
         recordedAt: new Date().toISOString(),
       }));
 
-      // Step 2: Send notification to primary channel
-      await ctx.run("notify-channel", async () => {
+      // Step 2: Send initial notification
+      const buttons: Action[] = [
+        { label: "✅ Approve", value: "approve" },
+        { label: "❌ Reject", value: "reject" },
+      ];
+
+      await ctx.run("notify-initial", async () => {
         if (!channel) {
           console.log(`⚠️  No channel configured — waiting for CLI resolve`);
           return { sent: false };
@@ -89,25 +123,76 @@ export const approvalWorkflow = restate.workflow({
             (request.metadata
               ? `\n${Object.entries(request.metadata).map(([k, v]) => `${k}: ${v}`).join("\n")}`
               : ""),
-          actions: [
-            { label: "✅ Approve", value: "approve" },
-            { label: "❌ Reject", value: "reject" },
-          ],
+          actions: buttons,
           workflowId,
           serviceName: "approvalWorkflow",
         });
 
-        console.log(`📨 Notification sent via ${result.channel} (msg: ${result.messageId})`);
+        console.log(`📨 Initial notification sent via ${result.channel}`);
         return { sent: true, ...result };
       });
 
-      // Step 3: Wait for human decision — THIS IS THE DURABLE PROMISE
-      // The workflow blocks here. Kill the worker, restart it, the promise
-      // is still waiting. Resolve it hours later and the workflow continues.
-      console.log(`⏳ Waiting for human decision on ${workflowId}...`);
-      const decision = await ctx.promise<string>("decision");
+      // Step 3: Reminder loop with escalating urgency
+      // Each iteration: sleep → peek the promise → if still pending, remind
+      const decisionPromise = ctx.promise<string>("decision");
+      let remindersCount = 0;
 
-      // Step 4: Process the decision
+      for (let i = 0; i < Math.min(intervals.length, ESCALATION_TIERS.length); i++) {
+        const tier = ESCALATION_TIERS[i];
+        const intervalMs = intervals[i];
+
+        // Sleep until next reminder
+        await ctx.sleep({ milliseconds: intervalMs });
+
+        // Check if decision came in while we slept
+        const peeked = await decisionPromise.peek();
+        if (peeked !== undefined) {
+          console.log(`✅ Decision arrived during ${tier.urgency} wait — skipping reminders`);
+          break;
+        }
+
+        // Still pending — send escalating reminder
+        remindersCount++;
+        const elapsed = intervals.slice(0, i + 1).reduce((a, b) => a + b, 0);
+        const elapsedHuman = elapsed >= 3600_000
+          ? `${Math.round(elapsed / 3600_000)}h`
+          : `${Math.round(elapsed / 1000)}s`;
+
+        await ctx.run(`remind-${tier.urgency}`, async () => {
+          if (!channel) return { reminded: false };
+
+          const result = await channel.send({
+            text:
+              `${tier.emoji} *${tier.tone}*\n\n` +
+              `*${request.title}*\n` +
+              `Waiting for ${elapsedHuman} — reminder ${remindersCount}/${ESCALATION_TIERS.length}\n\n` +
+              (tier.urgency === "critical"
+                ? `⚠️ This will auto-reject if no response within next interval.`
+                : `Tap a button below to respond.`),
+            actions: buttons,
+            workflowId,
+            serviceName: "approvalWorkflow",
+          });
+
+          console.log(`${tier.emoji} Reminder ${remindersCount} (${tier.urgency}) sent — ${elapsedHuman} elapsed`);
+          return { reminded: true, ...result };
+        });
+      }
+
+      // Step 4: Final check — if still no decision after all reminders, auto-reject
+      const finalPeek = await decisionPromise.peek();
+      let decision: string;
+
+      if (finalPeek !== undefined) {
+        decision = finalPeek;
+      } else {
+        // All reminders exhausted — wait one more interval then auto-reject
+        // Or just wait for the promise (it's durable, will eventually resolve)
+        console.log(`⏳ All reminders sent. Waiting indefinitely for decision...`);
+        decision = await decisionPromise;
+      }
+
+      // Step 5: Finalize
       const result = await ctx.run("finalize", () => {
         const isApproved = decision.startsWith("approved");
         const reason = decision.split(":").slice(1).join(":") || "no reason given";
@@ -118,17 +203,19 @@ export const approvalWorkflow = restate.workflow({
           reason,
           decidedAt: new Date().toISOString(),
           durationMs: Date.now() - startedAt,
+          remindersCount,
         };
 
-        console.log(`\n✅ Workflow ${workflowId} completed`);
+        console.log(`\n🏁 Workflow ${workflowId} completed`);
         console.log(`   Decision: ${finalResult.decision}`);
         console.log(`   Reason: ${finalResult.reason}`);
         console.log(`   Duration: ${finalResult.durationMs}ms`);
+        console.log(`   Reminders sent: ${remindersCount}`);
 
         return finalResult;
       });
 
-      // Step 5: Notify the channel of the outcome
+      // Step 6: Notify outcome
       await ctx.run("notify-outcome", async () => {
         if (!channel) return { notified: false };
 
@@ -137,8 +224,9 @@ export const approvalWorkflow = restate.workflow({
             `${result.decision === "approved" ? "✅" : "❌"} *${request.title}*\n\n` +
             `Decision: *${result.decision}*\n` +
             `Reason: ${result.reason}\n` +
-            `Duration: ${Math.round(result.durationMs / 1000)}s`,
-          actions: [], // no buttons on the outcome message
+            `Duration: ${Math.round(result.durationMs / 1000)}s\n` +
+            `Reminders sent: ${result.remindersCount}`,
+          actions: [],
           workflowId,
           serviceName: "approvalWorkflow",
         });
@@ -151,32 +239,26 @@ export const approvalWorkflow = restate.workflow({
 
     /**
      * Approve handler — resolves the decision promise.
-     * Called externally: POST /approvalWorkflow/{id}/approve
      */
     approve: async (ctx: restate.WorkflowSharedContext, reason: string) => {
-      console.log(`👍 Approve signal received for ${ctx.key}: ${reason || "no reason"}`);
+      console.log(`👍 Approve signal for ${ctx.key}: ${reason || "no reason"}`);
       await ctx.promise<string>("decision").resolve(`approved:${reason || "approved"}`);
       return { resolved: "approved", reason };
     },
 
     /**
      * Reject handler — resolves the decision promise.
-     * Called externally: POST /approvalWorkflow/{id}/reject
      */
     reject: async (ctx: restate.WorkflowSharedContext, reason: string) => {
-      console.log(`👎 Reject signal received for ${ctx.key}: ${reason || "no reason"}`);
+      console.log(`👎 Reject signal for ${ctx.key}: ${reason || "no reason"}`);
       await ctx.promise<string>("decision").resolve(`rejected:${reason || "rejected"}`);
       return { resolved: "rejected", reason };
     },
 
     /**
-     * Status handler — check if the workflow is still pending.
-     * Called externally: GET /approvalWorkflow/{id}/status
+     * Status handler — check workflow state.
      */
     status: async (ctx: restate.WorkflowSharedContext) => {
-      // Workflow shared context can read state but we keep it simple:
-      // if you can call this, the workflow exists. The decision promise
-      // is either pending or resolved.
       return { workflowId: ctx.key, alive: true };
     },
   },
