@@ -25,6 +25,7 @@ pub struct Config {
     pub health: HealthConfig,
     pub http_service_probes: Vec<HttpServiceProbe>,
     pub launchd_service_probes: Vec<LaunchdServiceProbe>,
+    pub script_service_probes: Vec<ScriptServiceProbe>,
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +97,15 @@ pub struct LaunchdServiceProbe {
 }
 
 #[derive(Debug, Clone)]
+pub struct ScriptServiceProbe {
+    pub name: String,
+    pub command: String,
+    pub timeout_secs: u64,
+    pub critical: bool,
+    pub critical_after_consecutive_failures: u32,
+}
+
+#[derive(Debug, Clone)]
 pub struct ServiceProbeTracker {
     pub services_path: PathBuf,
     pub last_modified: Option<SystemTime>,
@@ -108,6 +118,7 @@ pub struct ValidationSummary {
     pub check_interval_secs: u64,
     pub http_probe_count: usize,
     pub launchd_probe_count: usize,
+    pub script_probe_count: usize,
 }
 
 impl Default for Config {
@@ -124,6 +135,7 @@ impl Default for Config {
             health: HealthConfig::default(),
             http_service_probes: builtin_http_service_probes(),
             launchd_service_probes: Vec::new(),
+            script_service_probes: Vec::new(),
         }
     }
 }
@@ -232,6 +244,15 @@ impl Config {
                 .unwrap_or(false);
         }
 
+        if let Some(service_name) = name.strip_prefix("script:") {
+            return self
+                .script_service_probes
+                .iter()
+                .find(|probe| probe.name == service_name)
+                .map(|probe| probe.critical)
+                .unwrap_or(false);
+        }
+
         false
     }
 
@@ -248,6 +269,15 @@ impl Config {
         if let Some(service_name) = name.strip_prefix("launchd:") {
             return self
                 .launchd_service_probes
+                .iter()
+                .find(|probe| probe.name == service_name)
+                .map(|probe| probe.critical_after_consecutive_failures.max(1))
+                .unwrap_or(1);
+        }
+
+        if let Some(service_name) = name.strip_prefix("script:") {
+            return self
+                .script_service_probes
                 .iter()
                 .find(|probe| probe.name == service_name)
                 .map(|probe| probe.critical_after_consecutive_failures.max(1))
@@ -340,17 +370,19 @@ pub fn validate_config_files(path: &Path) -> Result<ValidationSummary, DynError>
         check_interval_secs: config.check_interval_secs,
         http_probe_count: config.http_service_probes.len(),
         launchd_probe_count: config.launchd_service_probes.len(),
+        script_probe_count: config.script_service_probes.len(),
     })
 }
 
 pub fn validation_summary_to_json(summary: &ValidationSummary) -> String {
     format!(
-        "{{\n  \"ok\": true,\n  \"config_path\": \"{}\",\n  \"services_path\": \"{}\",\n  \"check_interval_secs\": {},\n  \"http_probe_count\": {},\n  \"launchd_probe_count\": {}\n}}\n",
+        "{{\n  \"ok\": true,\n  \"config_path\": \"{}\",\n  \"services_path\": \"{}\",\n  \"check_interval_secs\": {},\n  \"http_probe_count\": {},\n  \"launchd_probe_count\": {},\n  \"script_probe_count\": {}\n}}\n",
         json_escape(&summary.config_path.display().to_string()),
         json_escape(&summary.services_path.display().to_string()),
         summary.check_interval_secs,
         summary.http_probe_count,
-        summary.launchd_probe_count
+        summary.launchd_probe_count,
+        summary.script_probe_count
     )
 }
 
@@ -548,6 +580,7 @@ fn builtin_http_service_probes() -> Vec<HttpServiceProbe> {
 fn reload_service_probes(config: &mut Config) -> Result<(), DynError> {
     config.http_service_probes = builtin_http_service_probes();
     config.launchd_service_probes.clear();
+    config.script_service_probes.clear();
     load_service_probes(config)
 }
 
@@ -556,11 +589,12 @@ fn load_service_probes(config: &mut Config) -> Result<(), DynError> {
     ensure_services_file(&services_path)?;
 
     let raw = fs::read_to_string(&services_path)?;
-    let (http_probes, launchd_probes) =
+    let (http_probes, launchd_probes, script_probes) =
         parse_services_toml(&raw, config.probes.service_timeout_secs)?;
 
     config.http_service_probes.extend(http_probes);
     config.launchd_service_probes.extend(launchd_probes);
+    config.script_service_probes.extend(script_probes);
 
     Ok(())
 }
@@ -605,10 +639,11 @@ timeout_secs = 5
 fn parse_services_toml(
     raw: &str,
     default_timeout_secs: u64,
-) -> Result<(Vec<HttpServiceProbe>, Vec<LaunchdServiceProbe>), DynError> {
+) -> Result<(Vec<HttpServiceProbe>, Vec<LaunchdServiceProbe>, Vec<ScriptServiceProbe>), DynError> {
     let mut section = String::new();
     let mut http_sections: BTreeMap<String, HttpServiceProbe> = BTreeMap::new();
     let mut launchd_sections: BTreeMap<String, LaunchdServiceProbe> = BTreeMap::new();
+    let mut script_sections: BTreeMap<String, ScriptServiceProbe> = BTreeMap::new();
 
     for (line_number, original_line) in raw.lines().enumerate() {
         let line = strip_comment(original_line).trim();
@@ -683,6 +718,35 @@ fn parse_services_toml(
                 }
                 _ => {}
             }
+            continue;
+        }
+
+        if let Some(name) = section.strip_prefix("script.") {
+            let section_name = name.trim();
+            if section_name.is_empty() {
+                continue;
+            }
+
+            let probe = script_sections
+                .entry(section_name.to_string())
+                .or_insert_with(|| ScriptServiceProbe {
+                    name: section_name.to_string(),
+                    command: String::new(),
+                    timeout_secs: default_timeout_secs,
+                    critical: false,
+                    critical_after_consecutive_failures: 1,
+                });
+
+            match key {
+                "command" => probe.command = parse_toml_string(value)?,
+                "timeout_secs" => probe.timeout_secs = parse_toml_int(value, line_number + 1)?,
+                "critical" => probe.critical = parse_toml_bool(value, line_number + 1)?,
+                "critical_after_consecutive_failures" => {
+                    probe.critical_after_consecutive_failures =
+                        parse_toml_int(value, line_number + 1)? as u32
+                }
+                _ => {}
+            }
         }
     }
 
@@ -710,7 +774,19 @@ fn parse_services_toml(
         launchd_probes.push(probe);
     }
 
-    Ok((http_probes, launchd_probes))
+    let mut script_probes = Vec::new();
+    for (_, probe) in script_sections.into_iter() {
+        if probe.command.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("script.{} is missing required key: command", probe.name),
+            )
+            .into());
+        }
+        script_probes.push(probe);
+    }
+
+    Ok((http_probes, launchd_probes, script_probes))
 }
 
 fn strip_comment(line: &str) -> &str {
@@ -924,7 +1000,7 @@ critical = true
 url = "http://127.0.0.1:8081/"
 "#;
 
-        let (http, launchd) = parse_services_toml(raw, 7).expect("services TOML should parse");
+        let (http, launchd, _script) = parse_services_toml(raw, 7).expect("services TOML should parse");
 
         assert_eq!(http.len(), 1);
         assert_eq!(launchd.len(), 1);
@@ -1029,7 +1105,7 @@ critical = true
 critical_after_consecutive_failures = 3
 "#;
 
-        let (http, _) = parse_services_toml(raw, 5).expect("services TOML should parse");
+        let (http, _, _) = parse_services_toml(raw, 5).expect("services TOML should parse");
         assert_eq!(http[0].critical_after_consecutive_failures, 3);
     }
 

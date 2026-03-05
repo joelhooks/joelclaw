@@ -251,6 +251,20 @@ pub fn run_all_probes(config: &Config) -> Vec<ProbeResult> {
         });
     }
 
+    for monitor in &config.script_service_probes {
+        probes.push(Probe {
+            name: format!("script:{}", monitor.name),
+            args: vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                monitor.command.clone(),
+            ],
+            timeout: Duration::from_secs(monitor.timeout_secs),
+            critical: monitor.critical,
+            env: vec![],
+        });
+    }
+
     let mut results = Vec::with_capacity(probes.len());
 
     for probe in probes {

@@ -226,6 +226,10 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
                             "launchd_probes",
                             config.launchd_service_probes.len().to_string(),
                         ),
+                        (
+                            "script_probes",
+                            config.script_service_probes.len().to_string(),
+                        ),
                     ],
                 );
             }
