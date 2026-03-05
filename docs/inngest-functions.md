@@ -139,6 +139,18 @@ Do **not** mutate `main.db` without a point-in-time backup.
   4. `email-nag` runs on cron `0 17,22 * * *` (9am/2pm PST), leases `front_api_token`, and only nags for inbound-last conversations waiting `>4h`
   5. nag digests are sorted oldest-first and delivered through `pushGatewayEvent`
 
+### Channel intelligence triage to Todoist
+
+- function: `channel-intelligence-todoist`
+- file: `packages/system-bus/src/inngest/functions/channels/channel-intelligence-todoist.ts`
+- trigger: `channel/intelligence.triage.requested`
+- behavior:
+  1. scans Front unreplied inbox via `joelclaw email inbox -q "is:open is:unreplied" -n 50`
+  2. leases `slack_user_token` and searches VIP channels + Joel mentions over configurable lookback window
+  3. extracts concrete verb-first action items using `infer()` with strict JSON output
+  4. creates Todoist tasks via `todoist-cli add` with priority map `p2→3`, `p3→2`, `p4→1`
+  5. returns summary payload with `tasksCreated`, per-source scan counts, and task outcomes
+
 ### Memory proposal triage review-task contract
 
 - function: `memory/proposal-triage`

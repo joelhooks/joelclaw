@@ -1062,6 +1062,12 @@ export type Events = {
       reason?: string;
     };
   };
+  "channel/intelligence.triage.requested": {
+    data: {
+      scope?: "all" | "email" | "slack";
+      hours?: number;
+    };
+  };
   "channel/message.received": {
     data: {
       channelType: "slack" | "discord" | "telegram";

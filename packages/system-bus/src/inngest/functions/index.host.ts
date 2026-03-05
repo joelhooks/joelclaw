@@ -16,6 +16,7 @@ import { backfillObserve } from "./backfill-observe";
 import { bookDownload } from "./book-download";
 import { channelMessageClassify } from "./channel-message-classify";
 import { channelMessageIngest } from "./channel-message-ingest";
+import { channelIntelligenceTodoist } from "./channels/channel-intelligence-todoist";
 import { checkCalendar } from "./check-calendar";
 import { checkEmail } from "./check-email";
 import { checkGatewayHealth } from "./check-gateway-health";
@@ -221,6 +222,7 @@ export const hostFunctionDefinitions = [
   docsBacklogDriver,
   docsIngest,
   docsEnrich,
+  channelIntelligenceTodoist,
   channelMessageIngest,
   channelMessageClassify,
   docsIngestJanitor,
