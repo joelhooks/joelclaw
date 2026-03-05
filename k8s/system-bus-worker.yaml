@@ -15,11 +15,15 @@ spec:
       labels:
         app: system-bus-worker
     spec:
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
       imagePullSecrets:
         - name: ghcr-pull
       containers:
         - name: system-bus-worker
-          image: ghcr.io/joelhooks/system-bus-worker:20260304-165417
+          image: ghcr.io/joelhooks/system-bus-worker:20260305-071621
           imagePullPolicy: Always
           securityContext:
             runAsNonRoot: true
