@@ -1,9 +1,65 @@
+/**
+ * Restate Worker — joelclaw production durable workflows.
+ *
+ * Serves all Restate services and starts channel callback listeners.
+ *
+ * Environment:
+ *   RESTATE_PORT        — Worker port (default: 9080)
+ *   CHANNEL             — "telegram" or "console" (default: telegram if tokens present)
+ *   TELEGRAM_BOT_TOKEN  — Telegram bot token
+ *   TELEGRAM_USER_ID    — Telegram chat ID
+ *   RESTATE_INGRESS_URL — Restate ingress (default: http://localhost:8080)
+ */
+
 import * as restate from "@restatedev/restate-sdk";
-import { services } from "./services";
+
+import { deployGate, setDeployChannel } from "./workflows/deploy-gate";
+import { TelegramChannel } from "./channels/telegram";
+import { ConsoleChannel } from "./channels/console";
+import { resolveCallback } from "./resolver";
+import type { NotificationChannel } from "./channels/types";
+
+// --- Channel setup ---
+
+function createChannel(): NotificationChannel {
+  const explicit = process.env.CHANNEL;
+
+  if (explicit === "console") {
+    return new ConsoleChannel();
+  }
+
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_USER_ID;
+
+  if (botToken && chatId) {
+    return new TelegramChannel({ botToken, chatId });
+  }
+
+  console.log(`⚠️  No TELEGRAM_BOT_TOKEN/TELEGRAM_USER_ID — falling back to console channel`);
+  return new ConsoleChannel();
+}
+
+const channel = createChannel();
+setDeployChannel(channel);
+
+// --- Callback listener ---
+
+const stopListener = await channel.startCallbackListener(resolveCallback);
+
+process.on("SIGINT", () => { stopListener(); process.exit(0); });
+process.on("SIGTERM", () => { stopListener(); process.exit(0); });
+
+// --- Serve ---
 
 const port = Number(process.env.RESTATE_PORT ?? 9080);
 
 restate.serve({
-  services,
+  services: [deployGate],
   port,
 });
+
+console.log(`\n⚡ Restate Worker — joelclaw`);
+console.log(`   Port: ${port}`);
+console.log(`   Channel: ${channel.id}`);
+console.log(`   Workflows: deployGate`);
+console.log(``);

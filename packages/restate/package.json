@@ -1,15 +1,16 @@
 {
   "name": "@joelclaw/restate",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
-    "dev": "bun run src/index.ts"
+    "dev": "bun run src/index.ts",
+    "deploy": "bun run src/trigger-deploy.ts"
   },
   "dependencies": {
     "@restatedev/restate-sdk": "^1.10.4",
-    "minio": "^8.0.6"
+    "@restatedev/restate-sdk-clients": "^1.10.4"
   }
 }
