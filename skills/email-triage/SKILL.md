@@ -2,7 +2,7 @@
 name: email-triage
 displayName: Email Triage
 description: "Triage Joel's email inboxes via the joelclaw email CLI. Scan, categorize, archive noise, surface actionable items, and draft replies. Use when: 'check my email', 'scan inbox', 'triage email', 'what needs a reply', 'clean up inbox', 'archive junk', 'email summary', 'anything important in email', or any request involving email inbox review or cleanup."
-version: 2.0.0
+version: 2.1.0
 author: Joel Hooks
 tags: [joelclaw, email, triage, inbox, front]
 ---
@@ -10,6 +10,12 @@ tags: [joelclaw, email, triage, inbox, front]
 # Email Triage
 
 Scan Joel's email inboxes (Front), triage conversations by importance, archive noise, and surface items needing attention. All operations use the `joelclaw email` CLI.
+
+## Canonical Email Interface
+
+- **Front is canonical** for all email triage in joelclaw.
+- **Never use `gog gmail` for triage** — `bricks@aihero.dev`, VIP threads, and all inboxes are in Front.
+- Use `gog` for Google Workspace operations (Calendar, Drive, Docs, etc.), not email triage.
 
 ## Front Search API Reference
 
@@ -96,6 +102,32 @@ joelclaw email archive-bulk -q "is:open from:notifications@github.com" --limit 1
 ### Read a conversation
 ```bash
 joelclaw email read --id cnv_xxx
+joelclaw email read --id cnv_xxx --refresh   # bypass local cache
+```
+
+`joelclaw email read` uses a local thread + attachment cache (default TTL: 60 minutes). Cache path: `~/.cache/joelclaw/email/`. Use `--refresh` to bypass cache and force a fresh fetch from Front.
+
+### Read output shape + jq patterns
+
+`joelclaw email read` returns:
+
+```text
+result.conversation: {id, subject, status, from: {name, email}, date, tags}
+result.messages[]: {id, from: {name, email}, date, is_inbound, body_preview (or body), attachments[]}
+result.attachment_summary: {total, cached, metadata_only, cache_errors}
+result.cache: {hit, source, cache_path, age_seconds, ttl_seconds}
+```
+
+Message content is currently in `body_preview`, with a migration to `body` underway. Treat both as valid for backwards compatibility.
+
+Correct extraction pattern (current field):
+```bash
+joelclaw email read --id cnv_xxx 2>&1 | jq '.result.messages[] | {from: .from.email, date: .date, body: .body_preview}'
+```
+
+Backwards/forwards-compatible extraction pattern:
+```bash
+joelclaw email read --id cnv_xxx 2>&1 | jq '.result.messages[] | {from: .from.email, date: .date, body: (.body // .body_preview)}'
 ```
 
 ### List inboxes
@@ -175,13 +207,14 @@ joelclaw email read --id cnv_xxx
 - Draft-then-approve for replies — never send directly
 - Front search results are eventually consistent — recently archived items may still appear in search for a few minutes
 - Pagination: responses include `next_page_token` when more results exist; pass via `--page-token`
+- `[aih]` subject prefix indicates AI Hero project threads via `bricks@aihero.dev` Google Group. Key participants: Alex Hillman (`alex@indyhall.org`), Matt Pocock (`mattpocockvoice@gmail.com`), Amy Hoy (`team@stackingthebricks.com`). Treat as VIP: always surface, never archive.
 
 ## Signals for "Reply Needed"
 
 These are heuristics, not rules. Use judgment for each:
 
 - `Re:` prefix + real person sender (not a bot/noreply)
-- `[aih]` prefix — AI Hero collaboration (Matt Pocock, Alex Hillman)
+- `[aih]` prefix — AI Hero collaboration via `bricks@aihero.dev` (Alex Hillman, Matt Pocock, Amy Hoy). VIP: always surface, never archive.
 - Direct questions in subject line
 - Meeting invitations from known contacts
 - Threads where Joel was the last sender and someone replied
