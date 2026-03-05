@@ -1252,9 +1252,14 @@ async function startTelegramChannel(
           });
         }
       },
-    }).catch((error) => {
+    }).catch(async (error) => {
       pollingStarting = false;
       pollingActive = false;
+
+      // grammy may leave an in-flight getUpdates request after error.
+      // Stop the bot to cancel it before we retry, otherwise the next
+      // bot.start() races with the stale request → perpetual 409.
+      try { await bot?.stop(); } catch { /* ignore */ }
 
       const errorText = String(error);
       const conflict = isGetUpdatesConflict(errorText);
