@@ -1068,6 +1068,12 @@ export type Events = {
       hours?: number;
     };
   };
+  "channel/intelligence.garden.requested": {
+    data: {
+      reason?: string;
+      dryRun?: boolean;
+    };
+  };
   "channel/message.received": {
     data: {
       channelType: "slack" | "discord" | "telegram";

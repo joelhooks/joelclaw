@@ -19,6 +19,7 @@ export { backfillObserve } from "./backfill-observe";
 export { bookDownload } from "./book-download";
 export { channelMessageClassify } from "./channel-message-classify";
 export { channelMessageIngest } from "./channel-message-ingest";
+export { channelIntelligenceGarden } from "./channels/channel-intelligence-garden";
 export { channelIntelligenceTodoist } from "./channels/channel-intelligence-todoist";
 export { checkCalendar } from "./check-calendar";
 export { checkEmail } from "./check-email";

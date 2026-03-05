@@ -151,6 +151,20 @@ Do **not** mutate `main.db` without a point-in-time backup.
   4. creates Todoist tasks via `todoist-cli add` with priority map `p2→3`, `p3→2`, `p4→1`
   5. returns summary payload with `tasksCreated`, per-source scan counts, and task outcomes
 
+### Channel intelligence garden
+
+- function: `channel-intelligence-garden`
+- file: `packages/system-bus/src/inngest/functions/channels/channel-intelligence-garden.ts`
+- triggers:
+  - cron: `0 */6 * * *`
+  - `channel/intelligence.garden.requested`
+- behavior:
+  1. pulls active Todoist tasks (`todoist-cli list --json`) plus inbox snapshot (`todoist-cli inbox --json`)
+  2. scopes to channel-intelligence tasks (email/slack source markers) and computes duplicate/consolidation plans
+  3. checks email-linked tasks against Front (`joelclaw email read --id <conversationId>`) and auto-completes archived/replied threads
+  4. evaluates stale low-priority tasks (>3 days, no progress) via `infer()` for keep/escalate/complete/delete decisions
+  5. applies actions (complete/delete/priority update/description consolidation) and returns `{ reviewed, completed, deleted, escalated, duplicatesRemoved }`
+
 ### Memory proposal triage review-task contract
 
 - function: `memory/proposal-triage`
