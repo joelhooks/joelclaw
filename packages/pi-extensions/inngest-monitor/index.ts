@@ -33,6 +33,7 @@ interface TrackedRun {
 
 // Serializable subset for tool results (no timer handles)
 interface RunSnapshot {
+  [key: string]: JsonValue;
   runId: string;
   eventName: string;
   functionName: string;

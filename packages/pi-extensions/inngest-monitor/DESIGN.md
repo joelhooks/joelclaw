@@ -160,3 +160,7 @@ export default function (pi: ExtensionAPI) {
   // Cleanup in session_shutdown
 }
 ```
+
+## Dependency contract
+
+`@mariozechner/pi-coding-agent` and `@mariozechner/pi-tui` are **runtime dependencies** of this package (not peer deps). The loader imports this extension by absolute file path, so missing local runtime deps causes extension startup failure (`Cannot find module '@mariozechner/pi-tui'`).
