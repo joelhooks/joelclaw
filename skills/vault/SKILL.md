@@ -33,7 +33,7 @@ joelclaw vault
     ├── list [--status <status>] [--limit <limit>]
     ├── collisions
     ├── audit
-    └── rank [--status <status,status>] [--limit <limit>] [--strict]
+    └── rank [--band <band>] [--unscored] [--all]
 ```
 
 ## Core Workflows
@@ -59,7 +59,9 @@ joelclaw vault search "content lifecycle" --semantic --limit 5
 joelclaw vault adr list --status proposed --limit 50
 joelclaw vault adr collisions
 joelclaw vault adr audit
-joelclaw vault adr rank --status accepted,proposed --limit 50
+joelclaw vault adr rank
+joelclaw vault adr rank --band do-now
+joelclaw vault adr rank --unscored
 ```
 
 `vault adr audit` is the canonical pre-flight for ADR grooming. It reports:

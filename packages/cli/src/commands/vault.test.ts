@@ -100,14 +100,15 @@ describe("vault ADR rank rubric helpers", () => {
 
   test("maps score to rubric band", () => {
     expect(derivePriorityBand(81)).toBe("do-now")
-    expect(derivePriorityBand(70)).toBe("next")
+    expect(derivePriorityBand(70)).toBe("do-next")
     expect(derivePriorityBand(50)).toBe("de-risk")
     expect(derivePriorityBand(20)).toBe("park")
   })
 
   test("accepts only canonical priority bands", () => {
     expect(parsePriorityBand("do-now")).toBe("do-now")
-    expect(parsePriorityBand("NEXT")).toBe("next")
+    expect(parsePriorityBand("do-next")).toBe("do-next")
+    expect(parsePriorityBand("NEXT")).toBe("do-next")
     expect(parsePriorityBand("wild")).toBeNull()
   })
 

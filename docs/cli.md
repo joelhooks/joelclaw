@@ -351,7 +351,7 @@ joelclaw vault
     ├── list [--status <status>] [--limit <limit>]
     ├── collisions
     ├── audit
-    └── rank [--status <status,status>] [--limit <limit>] [--strict]
+    └── rank [--band <band>] [--unscored] [--all]
 ```
 
 ### `joelclaw vault adr` purpose
@@ -364,10 +364,14 @@ joelclaw vault
   - missing `superseded-by` targets
   - README index alignment against ADR files
 - `rank` — score + rank ADRs by NRC+novelty rubric for daily prioritization:
+  - default scope: open ADRs (`accepted` + `proposed`)
+  - `--all` includes shipped/superseded/deprecated/rejected ADRs
+  - `--band <band>` filters ranked rows (`do-now|do-next|de-risk|park`; alias `next` → `do-next`)
+  - `--unscored` returns ADRs missing `priority-score`
   - required axes: `priority-need`, `priority-readiness`, `priority-confidence`
   - novelty facet: `priority-novelty` (or alias `priority-interest`), defaults to neutral `3` when missing
   - score formula: `clamp(round(20*(0.5*Need + 0.3*Readiness + 0.2*Confidence)) + round((Novelty-3)*5), 0, 100)`
-  - bands: `do-now` (80-100), `next` (60-79), `de-risk` (40-59), `park` (0-39)
+  - bands: `do-now` (80-100), `do-next` (60-79), `de-risk` (40-59), `park` (0-39)
   - emits CLI OTEL via `component=vault-cli`:
     - `vault.adr.rank.started`
     - `vault.adr.rank.completed`

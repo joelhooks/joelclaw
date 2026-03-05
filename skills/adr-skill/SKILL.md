@@ -278,8 +278,8 @@ When choosing between candidates:
 ### Full Diagnostics
 
 ```bash
-# See all open ADRs with rubric drift detection
-joelclaw vault adr rank --status accepted,proposed
+# See all open ADRs with rubric ranking
+joelclaw vault adr rank
 
 # Show 10 candidates
 joelclaw vault adr next --count 10
