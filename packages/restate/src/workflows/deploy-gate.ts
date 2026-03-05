@@ -109,16 +109,25 @@ export const deployGate = restate.workflow({
     ): Promise<DeployResult> => {
       const workflowId = ctx.key;
       const startedAt = Date.now();
-      const tag = request.tag ?? new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-      const image = `${REGISTRY}/${OWNER}/${IMAGE_NAME}:${tag}`;
-      const latestImage = `${REGISTRY}/${OWNER}/${IMAGE_NAME}:latest`;
       const intervals = request.reminderIntervals ?? REMINDER_INTERVALS_MS;
+
+      // CRITICAL: Compute non-deterministic values inside ctx.run() so they
+      // survive replay. Date/random outside run() will differ on each replay,
+      // causing tag mismatch between build and push steps.
+      const { tag, image, latestImage } = await ctx.run("init-deploy", () => {
+        const t = request.tag ?? new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        return {
+          tag: t,
+          image: `${REGISTRY}/${OWNER}/${IMAGE_NAME}:${t}`,
+          latestImage: `${REGISTRY}/${OWNER}/${IMAGE_NAME}:latest`,
+        };
+      });
 
       console.log(`\n🚀 Deploy gate started — ${workflowId}`);
       console.log(`   Image: ${image}`);
       console.log(`   Reason: ${request.reason ?? "manual deploy"}`);
 
-      // Step 1: Authenticate to GHCR
+      // Step 2: Authenticate to GHCR
       const authResult = await ctx.run("authenticate-ghcr", () => {
         console.log(`🔑 Authenticating to GHCR...`);
 
