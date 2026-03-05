@@ -34,6 +34,8 @@ type TelegramFormattedOutput = {
 const MEDIA_DIR = "/tmp/joelclaw-media";
 const MAX_DOWNLOAD_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
+const TELEGRAM_POLL_RETRY_BASE_MS = 5_000;
+const TELEGRAM_POLL_RETRY_MAX_MS = 60_000;
 
 // Inngest event API — same config as joelclaw CLI
 const INNGEST_URL = process.env.INNGEST_URL ?? "http://localhost:8288";
@@ -400,6 +402,9 @@ let bot: Bot | undefined;
 let allowedUserId: number | undefined;
 let enqueuePrompt: EnqueueFn | undefined;
 let started = false;
+let pollRetryTimer: ReturnType<typeof setTimeout> | undefined;
+let pollRetryAttempts = 0;
+let pollConflictStreak = 0;
 
 /** Expose the raw grammy Bot instance for streaming (telegram-stream.ts). */
 export function getBot(): Bot | undefined {
@@ -524,6 +529,23 @@ export class TelegramChannel implements Channel {
 
     await sendTelegramMedia(chatId, media, { replyTo });
   }
+}
+
+function clearPollRetryTimer(): void {
+  if (pollRetryTimer) {
+    clearTimeout(pollRetryTimer);
+    pollRetryTimer = undefined;
+  }
+}
+
+function isGetUpdatesConflict(errorText: string): boolean {
+  const normalized = errorText.toLowerCase();
+  return normalized.includes("getupdates") && normalized.includes("409");
+}
+
+function nextPollRetryDelayMs(attempt: number): number {
+  const exp = Math.max(0, Math.min(attempt, 8));
+  return Math.min(TELEGRAM_POLL_RETRY_BASE_MS * 2 ** exp, TELEGRAM_POLL_RETRY_MAX_MS);
 }
 
 async function startTelegramChannel(
@@ -943,38 +965,108 @@ async function startTelegramChannel(
     }
   });
 
-  // Start long polling (non-blocking). Startup failures should not crash gateway.
-  void bot.start({
-    onStart: (botInfo) => {
-      console.log("[gateway:telegram] started", {
-        botId: botInfo.id,
-        botUsername: botInfo.username,
-        allowedUserId,
-      });
-      void emitGatewayOtel({
-        level: "info",
-        component: "telegram-channel",
-        action: "telegram.channel.started",
-        success: true,
-        metadata: {
+  const startPolling = (): void => {
+    if (!bot) return;
+
+    // Long polling is single-consumer per bot token. If another process currently
+    // owns getUpdates, Telegram returns 409. Retry with backoff instead of
+    // permanently disabling the channel on first conflict.
+    void bot.start({
+      onStart: (botInfo) => {
+        const recovered = pollRetryAttempts > 0 || pollConflictStreak > 0;
+        pollRetryAttempts = 0;
+        pollConflictStreak = 0;
+        clearPollRetryTimer();
+
+        console.log("[gateway:telegram] started", {
           botId: botInfo.id,
           botUsername: botInfo.username,
+          allowedUserId,
+          recovered,
+        });
+        void emitGatewayOtel({
+          level: "info",
+          component: "telegram-channel",
+          action: "telegram.channel.started",
+          success: true,
+          metadata: {
+            botId: botInfo.id,
+            botUsername: botInfo.username,
+            recovered,
+          },
+        });
+
+        if (recovered) {
+          void emitGatewayOtel({
+            level: "info",
+            component: "telegram-channel",
+            action: "telegram.channel.polling_recovered",
+            success: true,
+          });
+        }
+      },
+    }).catch((error) => {
+      const errorText = String(error);
+      const conflict = isGetUpdatesConflict(errorText);
+      if (conflict) {
+        pollConflictStreak += 1;
+      } else {
+        pollConflictStreak = 0;
+      }
+
+      const delayMs = nextPollRetryDelayMs(pollRetryAttempts);
+      const attempt = pollRetryAttempts + 1;
+      pollRetryAttempts = attempt;
+
+      const level: "warn" | "error" = conflict ? "warn" : "error";
+      console[conflict ? "warn" : "error"](
+        "[gateway:telegram] polling start failed; retry scheduled",
+        {
+          error: errorText,
+          conflict,
+          attempt,
+          delayMs,
+        },
+      );
+
+      void emitGatewayOtel({
+        level,
+        component: "telegram-channel",
+        action: "telegram.channel.start_failed",
+        success: false,
+        error: errorText,
+        metadata: {
+          conflict,
+          attempt,
+          retryDelayMs: delayMs,
         },
       });
-    },
-  }).catch((error) => {
-    started = false;
-    console.error("[gateway:telegram] failed to start polling; telegram channel disabled", { error: String(error) });
-    void emitGatewayOtel({
-      level: "error",
-      component: "telegram-channel",
-      action: "telegram.channel.start_failed",
-      success: false,
-      error: String(error),
+
+      void emitGatewayOtel({
+        level: "warn",
+        component: "telegram-channel",
+        action: "telegram.channel.retry_scheduled",
+        success: true,
+        metadata: {
+          conflict,
+          attempt,
+          retryDelayMs: delayMs,
+        },
+      });
+
+      clearPollRetryTimer();
+      pollRetryTimer = setTimeout(() => {
+        pollRetryTimer = undefined;
+        startPolling();
+      }, delayMs);
+      if (pollRetryTimer && typeof pollRetryTimer === "object" && "unref" in pollRetryTimer) {
+        (pollRetryTimer as NodeJS.Timeout).unref();
+      }
     });
-  });
+  };
 
   started = true;
+  startPolling();
 }
 
 /**
@@ -1264,6 +1356,10 @@ export async function shutdown(): Promise<void> {
 }
 
 async function shutdownTelegramChannel(): Promise<void> {
+  clearPollRetryTimer();
+  pollRetryAttempts = 0;
+  pollConflictStreak = 0;
+
   if (bot) {
     bot.stop();
     bot = undefined;

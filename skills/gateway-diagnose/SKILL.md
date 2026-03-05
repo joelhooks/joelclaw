@@ -2,7 +2,7 @@
 name: gateway-diagnose
 displayName: Gateway Diagnose
 description: "Diagnose gateway failures by reading daemon logs, session transcripts, Redis state, and OTEL telemetry. Full Telegram path triage: daemon process → Redis channel → command queue → pi session → model API → Telegram delivery. Use when: 'gateway broken', 'telegram not working', 'why is gateway down', 'gateway not responding', 'check gateway logs', 'what happened to gateway', 'gateway diagnose', 'gateway errors', 'review gateway logs', 'fallback activated', 'gateway stuck', or any request to understand why the gateway failed. Distinct from the gateway skill (operations) — this skill is diagnostic."
-version: 1.1.2
+version: 1.1.3
 author: Joel Hooks
 tags: [joelclaw, gateway, diagnosis, logs, telegram, reliability]
 ---
@@ -118,6 +118,7 @@ tail -100 /tmp/joelclaw/gateway.err
 | `dropped consecutive duplicate` | Inbound prompt was suppressed before model dispatch | Dedup collision (often from hashing channel preamble instead of message body) |
 | `fallback activated` | Model timeout or consecutive failures triggered model swap | Primary model API down or slow |
 | `Authentication failed for "anthropic"` | Prompt rejected before model stream starts | Anthropic OAuth expired/missing (`/login anthropic` required) |
+| `getUpdates ... 409: Conflict` / `telegram.channel.start_failed` with `conflict=true` | Telegram long-poll owner contention | Another process is polling the same bot token; gateway now retries with backoff but inbound may still noop while contention persists |
 | `no streaming tokens after Ns` | Timeout — prompt dispatched but no response | Model API latency/outage, or session not ready |
 | `session still streaming, retrying` | Drain loop retry (3 attempts, 2s each) | Turn taking longer than expected |
 | `watchdog: session appears stuck` | No turn_end for 10+ minutes while idle waiter is pending | Hung tool call or model hang |
@@ -276,6 +277,15 @@ kubectl exec -n joelclaw redis-0 -- redis-cli XRANGE gateway:messages - + COUNT 
 **Symptoms:** `gateway.err` repeats `langfuse-cost: cannot load optional dependency 'langfuse'; telemetry disabled.`
 **Cause:** `langfuse` package unavailable to the gateway pi extension runtime (often cache or install drift).
 **Fix:** Treat as observability degradation, not message-path outage. Clear pi SDK cache/reload extension when tracing is needed, but prioritize substrate/model/Redis checks first.
+
+### 4c. Telegram polling ownership conflict
+
+**Symptoms:** Telegram inbound appears noop; `gateway.err` shows `getUpdates ... 409: Conflict`; OTEL shows `telegram.channel.start_failed` and `telegram.channel.retry_scheduled`.
+**Cause:** Another process is polling the same bot token at the same time.
+**Fix:**
+- Confirm with `joelclaw otel search "telegram.channel.start_failed" --hours 1`.
+- Check whether retries recover (`telegram.channel.polling_recovered`).
+- If conflicts persist, use a dedicated bot token or single designated poll owner.
 
 ### 5. Compaction During Message Delivery
 

@@ -33,6 +33,16 @@ joelclaw gateway unmute imessage
 
 Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 
+## Telegram polling conflict recovery (2026-03-05)
+
+Gateway Telegram ingress no longer hard-disables on a single `getUpdates` 409 conflict.
+
+- If Bot API returns `409: Conflict: terminated by other getUpdates request`, gateway now schedules exponential backoff retries (`telegram.channel.retry_scheduled`) instead of permanent shutdown.
+- Successful reconnect after retries emits `telegram.channel.polling_recovered`.
+- `telegram.channel.start_failed` now includes retry metadata (`attempt`, `retryDelayMs`, `conflict`) so operators can distinguish transient poll contention from hard failures.
+
+Why: during fast gateway restarts (or when another process briefly holds polling), a one-shot disable caused long noop windows for inbound Telegram messages.
+
 ## Redis reconnect hardening (2026-03-05)
 
 Gateway lockups during Redis link flaps were caused by `MaxRetriesPerRequestError` storms from ioredis command clients. Hardening now in place:
