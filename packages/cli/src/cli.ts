@@ -32,6 +32,7 @@ import { otelCmd } from "./commands/otel"
 import { recallCmd } from "./commands/recall"
 import { recoverCmd } from "./commands/recover"
 import { refresh } from "./commands/refresh"
+import { restateCmd } from "./commands/restate"
 import { reviewCmd } from "./commands/review"
 import { runCmd, runsCmd } from "./commands/runs"
 import { schemaCmd } from "./commands/schema"
@@ -158,6 +159,7 @@ const root = Command.make("joelclaw", {}, () =>
           mail: "joelclaw mail {status|register|send|inbox|read|reserve|release|locks|search}",
           models: "joelclaw models --list [--plain]",
           nas: "joelclaw nas {status|runs|review}",
+          restate: "joelclaw restate {status|deployments}",
           otel: "joelclaw otel {list|search|stats}",
           langfuse: "joelclaw langfuse {aggregate}",
           subscribe: "joelclaw subscribe {list|add|remove|check|summary}",
@@ -187,7 +189,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([agentCmd, contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, summaryCmd, capabilitiesCmd, recoverCmd, deployCmd, healCmd, logsCmd, logCmd, secretsCmd, notifyCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, memoryCmd, vaultCmd, skillsCmd, docsCmd, emailCmd, mailCmd, callCmd, search, modelsCmd, nasCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd, webhookCmd, knowledgeCmd])
+  Command.withSubcommands([agentCmd, contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, summaryCmd, capabilitiesCmd, recoverCmd, deployCmd, healCmd, logsCmd, logCmd, secretsCmd, notifyCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, memoryCmd, vaultCmd, skillsCmd, docsCmd, emailCmd, mailCmd, callCmd, search, modelsCmd, nasCmd, restateCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd, webhookCmd, knowledgeCmd])
 )
 
 const cli = Command.run(root, {

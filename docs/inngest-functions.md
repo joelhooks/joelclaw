@@ -15,6 +15,31 @@ Canonical notes for `packages/system-bus/src/inngest/functions/`.
 
 ## Key reliability flows
 
+### Restate dual-run pilot (ADR-0207)
+
+Restate is introduced as a **new-workload durable runtime pilot** while Inngest remains primary for existing workflows.
+
+Implemented pilot surfaces:
+
+- k8s runtime manifest: `k8s/restate.yaml`
+  - StatefulSet `restate` with pinned image `restatedev/restate:1.6.2`
+  - ClusterIP service exposing ingress/admin/metrics ports (`8080/9070/9071`)
+  - startup/readiness/liveness probes configured
+- pilot service package: `packages/restate-pilot/`
+  - demonstrates step chain (`ctx.run`), fan-out/fan-in (`ctx.serviceClient`), and approval signal workflow (`ctx.promise`)
+- deployment registration script: `scripts/restate/register-deployment.sh`
+  - registers service endpoint via `restate deployments register`
+  - lists deployments post-registration
+- CLI visibility: `joelclaw restate`
+  - `joelclaw restate status` checks runtime/statefulset/service/admin probe
+  - `joelclaw restate deployments` shells to Restate CLI listing
+
+Operational boundary for Phase 1:
+
+- Keep existing Inngest functions as-is.
+- Route **new pilot orchestration workflows** to Restate only.
+- Do not migrate event-native fan-out workflows until pilot reliability and recovery behavior are verified.
+
 ### System health
 
 - function: `system/check-system-health`

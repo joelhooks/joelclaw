@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: restate
+  namespace: joelclaw
+  labels:
+    app: restate
+spec:
+  serviceName: restate
+  replicas: 1
+  selector:
+    matchLabels:
+      app: restate
+  template:
+    metadata:
+      labels:
+        app: restate
+    spec:
+      terminationGracePeriodSeconds: 60
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: restate
+          image: restatedev/restate:1.6.2
+          ports:
+            - containerPort: 8080
+              name: ingress
+            - containerPort: 9070
+              name: admin
+            - containerPort: 9071
+              name: metrics
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          startupProbe:
+            tcpSocket:
+              port: admin
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket:
+              port: ingress
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: ingress
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          volumeMounts:
+            - name: restate-data
+              mountPath: /restate-data
+  volumeClaimTemplates:
+    - metadata:
+        name: restate-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: restate
+  namespace: joelclaw
+  labels:
+    app: restate
+spec:
+  type: ClusterIP
+  selector:
+    app: restate
+  ports:
+    - name: ingress
+      port: 8080
+      targetPort: ingress
+    - name: admin
+      port: 9070
+      targetPort: admin
+    - name: metrics
+      port: 9071
+      targetPort: metrics
