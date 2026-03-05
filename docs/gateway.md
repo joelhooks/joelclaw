@@ -33,15 +33,29 @@ joelclaw gateway unmute imessage
 
 Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 
-## Telegram polling conflict recovery (2026-03-05)
+## Telegram multi-instance polling ownership (2026-03-05)
 
-Gateway Telegram ingress no longer hard-disables on a single `getUpdates` 409 conflict.
+Gateway Telegram ingress now uses a Redis lease so multiple gateway instances can coexist without all trying to long-poll the same bot token.
 
-- If Bot API returns `409: Conflict: terminated by other getUpdates request`, gateway now schedules exponential backoff retries (`telegram.channel.retry_scheduled`) instead of permanent shutdown.
-- Successful reconnect after retries emits `telegram.channel.polling_recovered`.
-- `telegram.channel.start_failed` now includes retry metadata (`attempt`, `retryDelayMs`, `conflict`) so operators can distinguish transient poll contention from hard failures.
+- Poll owner lease key: `joelclaw:gateway:telegram:poll-owner:<tokenHash>`
+- Only the lease owner starts `getUpdates` polling.
+- Non-owners stay in passive/send-only mode and retry lease acquisition with backoff.
+- Lease owner renews periodically; on lease loss it stops polling and re-enters passive mode.
+- Poll status key: `joelclaw:gateway:telegram:poll-status:<tokenHash>` (owner/passive/fallback/stopped snapshots)
 
-Why: during fast gateway restarts (or when another process briefly holds polling), a one-shot disable caused long noop windows for inbound Telegram messages.
+Telemetry:
+- `telegram.channel.poll_owner.acquired`
+- `telegram.channel.poll_owner.passive`
+- `telegram.channel.poll_owner.retry_scheduled`
+- `telegram.channel.poll_owner.lost`
+- `telegram.channel.poll_owner.fallback`
+
+Conflict guard remains in place:
+- If Bot API returns `409: Conflict: terminated by other getUpdates request`, gateway retries with exponential backoff (`telegram.channel.retry_scheduled`) instead of one-shot disable.
+- `telegram.channel.start_failed` carries retry metadata (`attempt`, `retryDelayMs`, `conflict`, `pollLeaseOwned`).
+- Recovery after transient conflicts emits `telegram.channel.polling_recovered`.
+
+Important: Telegram phone/desktop clients are **not** Bot API pollers. `getUpdates` contention only happens between bot processes using the same token.
 
 ## Redis reconnect hardening (2026-03-05)
 

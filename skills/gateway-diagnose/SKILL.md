@@ -2,7 +2,7 @@
 name: gateway-diagnose
 displayName: Gateway Diagnose
 description: "Diagnose gateway failures by reading daemon logs, session transcripts, Redis state, and OTEL telemetry. Full Telegram path triage: daemon process → Redis channel → command queue → pi session → model API → Telegram delivery. Use when: 'gateway broken', 'telegram not working', 'why is gateway down', 'gateway not responding', 'check gateway logs', 'what happened to gateway', 'gateway diagnose', 'gateway errors', 'review gateway logs', 'fallback activated', 'gateway stuck', or any request to understand why the gateway failed. Distinct from the gateway skill (operations) — this skill is diagnostic."
-version: 1.1.3
+version: 1.1.4
 author: Joel Hooks
 tags: [joelclaw, gateway, diagnosis, logs, telegram, reliability]
 ---
@@ -118,7 +118,7 @@ tail -100 /tmp/joelclaw/gateway.err
 | `dropped consecutive duplicate` | Inbound prompt was suppressed before model dispatch | Dedup collision (often from hashing channel preamble instead of message body) |
 | `fallback activated` | Model timeout or consecutive failures triggered model swap | Primary model API down or slow |
 | `Authentication failed for "anthropic"` | Prompt rejected before model stream starts | Anthropic OAuth expired/missing (`/login anthropic` required) |
-| `getUpdates ... 409: Conflict` / `telegram.channel.start_failed` with `conflict=true` | Telegram long-poll owner contention | Another process is polling the same bot token; gateway now retries with backoff but inbound may still noop while contention persists |
+| `getUpdates ... 409: Conflict` / `telegram.channel.start_failed` with `conflict=true` | Telegram long-poll contention | Another bot process is polling the same token. Gateway retries with backoff; with lease enabled, check `telegram.channel.poll_owner.*` to confirm owner/passive transitions |
 | `no streaming tokens after Ns` | Timeout — prompt dispatched but no response | Model API latency/outage, or session not ready |
 | `session still streaming, retrying` | Drain loop retry (3 attempts, 2s each) | Turn taking longer than expected |
 | `watchdog: session appears stuck` | No turn_end for 10+ minutes while idle waiter is pending | Hung tool call or model hang |
@@ -281,11 +281,12 @@ kubectl exec -n joelclaw redis-0 -- redis-cli XRANGE gateway:messages - + COUNT 
 ### 4c. Telegram polling ownership conflict
 
 **Symptoms:** Telegram inbound appears noop; `gateway.err` shows `getUpdates ... 409: Conflict`; OTEL shows `telegram.channel.start_failed` and `telegram.channel.retry_scheduled`.
-**Cause:** Another process is polling the same bot token at the same time.
+**Cause:** Another bot process is polling the same token at the same time (phone/desktop Telegram clients are not Bot API pollers).
 **Fix:**
-- Confirm with `joelclaw otel search "telegram.channel.start_failed" --hours 1`.
-- Check whether retries recover (`telegram.channel.polling_recovered`).
-- If conflicts persist, use a dedicated bot token or single designated poll owner.
+- Check ownership lifecycle: `joelclaw otel search "telegram.channel.poll_owner" --hours 1`.
+- Confirm one instance acquires owner lease (`telegram.channel.poll_owner.acquired`) while others go passive (`telegram.channel.poll_owner.passive`).
+- If contention still persists with lease enabled, there is a non-cooperative external poller using the same token.
+- Verify recovery signals (`telegram.channel.polling_recovered`) once external contention stops.
 
 ### 5. Compaction During Message Delivery
 

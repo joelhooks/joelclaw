@@ -26,7 +26,13 @@ Joel (Telegram app)
 
 **SDK:** `grammy@1.40.0` — Bot instance at module scope, exposed via `getBot()`.
 
-Polling conflict guard (2026-03-05): Telegram `getUpdates` 409 conflicts now trigger exponential backoff retry instead of one-shot channel disable. Relevant telemetry: `telegram.channel.start_failed` (with `conflict` metadata), `telegram.channel.retry_scheduled`, `telegram.channel.polling_recovered`.
+Multi-instance poll ownership (2026-03-05): Telegram long polling now uses a Redis lease per bot token hash.
+
+- Owner key: `joelclaw:gateway:telegram:poll-owner:<tokenHash>`
+- Status key: `joelclaw:gateway:telegram:poll-status:<tokenHash>`
+- Only owner polls `getUpdates`; non-owners stay passive/send-only and retry lease acquisition with backoff.
+
+Conflict guard still applies for non-cooperative pollers: `telegram.channel.start_failed` (with `conflict` metadata) + `telegram.channel.retry_scheduled` + `telegram.channel.polling_recovered`.
 
 ## Capabilities
 
@@ -153,9 +159,11 @@ Currently via environment variables (migrating to `~/.joelclaw/channels.toml` pe
 2. Check Telegram polling started: `grep "telegram.*started" /tmp/joelclaw/gateway.log`
 3. Verify token: `curl https://api.telegram.org/bot<TOKEN>/getMe`
 4. Check polling errors in stderr: `rg "telegram.channel.start_failed|failed to start polling|getUpdates" /tmp/joelclaw/gateway.err`
-5. Check retry telemetry: `joelclaw otel search "telegram.channel.retry_scheduled" --hours 1`
+5. Check ownership lifecycle telemetry:
+   - `joelclaw otel search "telegram.channel.poll_owner" --hours 1`
+   - `joelclaw otel search "telegram.channel.retry_scheduled" --hours 1`
 
-If you see repeated 409 conflicts, another process is polling the same bot token. Gateway now retries automatically, but sustained contention still means inbound ownership is bouncing between pollers.
+If you see repeated 409 conflicts, another **bot process** is polling the same token. Telegram phone/desktop apps are not Bot API pollers and do not cause `getUpdates` contention.
 
 ### Messages arriving but no response
 1. Check command queue: `grep "command-queue\|enqueue" /tmp/joelclaw/gateway.log | tail -10`

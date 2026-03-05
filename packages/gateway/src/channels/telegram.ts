@@ -7,6 +7,7 @@ import { escapeText, TelegramConverter } from "@joelclaw/markdown-formatter";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import { Bot, InputFile } from "grammy";
+import Redis from "ioredis";
 import type { OutboundEnvelope } from "../outbound/envelope";
 import type { EnqueueFn } from "./redis";
 import type {
@@ -36,6 +37,12 @@ const MAX_DOWNLOAD_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
 const TELEGRAM_POLL_RETRY_BASE_MS = 5_000;
 const TELEGRAM_POLL_RETRY_MAX_MS = 60_000;
+const TELEGRAM_POLL_LEASE_ENABLED = process.env.TELEGRAM_POLL_LEASE_ENABLED !== "0";
+const TELEGRAM_POLL_LEASE_TTL_MS = 30_000;
+const TELEGRAM_POLL_LEASE_RENEW_MS = 10_000;
+const TELEGRAM_POLL_LEASE_RETRY_BASE_MS = 5_000;
+const TELEGRAM_POLL_LEASE_RETRY_MAX_MS = 60_000;
+const TELEGRAM_POLL_STATUS_TTL_MS = 2 * 60_000;
 
 // Inngest event API — same config as joelclaw CLI
 const INNGEST_URL = process.env.INNGEST_URL ?? "http://localhost:8288";
@@ -68,6 +75,19 @@ export type TelegramStartOptions = {
   configureBot?: (bot: Bot) => void | Promise<void>;
   abortCurrentTurn?: () => Promise<void>;
 }
+
+type PollLeaseState = "owner" | "passive" | "fallback" | "stopped";
+
+type PollLeaseStatus = {
+  state: PollLeaseState;
+  instanceId: string;
+  ownerId?: string;
+  tokenHash?: string;
+  updatedAt: string;
+  reason?: string;
+  attempt?: number;
+  retryDelayMs?: number;
+};
 
 function resolveSendInput(
   message: string | OutboundEnvelope,
@@ -402,9 +422,21 @@ let bot: Bot | undefined;
 let allowedUserId: number | undefined;
 let enqueuePrompt: EnqueueFn | undefined;
 let started = false;
+let pollingActive = false;
+let pollingStarting = false;
 let pollRetryTimer: ReturnType<typeof setTimeout> | undefined;
 let pollRetryAttempts = 0;
 let pollConflictStreak = 0;
+
+const pollLeaseInstanceId = crypto.randomUUID();
+let pollLeaseClient: Redis | undefined;
+let pollLeaseOwned = false;
+let pollLeaseOwnerKey: string | undefined;
+let pollLeaseStatusKey: string | undefined;
+let pollLeaseTokenHash: string | undefined;
+let pollLeaseRenewTimer: ReturnType<typeof setInterval> | undefined;
+let pollLeaseRetryTimer: ReturnType<typeof setTimeout> | undefined;
+let pollLeaseRetryAttempts = 0;
 
 /** Expose the raw grammy Bot instance for streaming (telegram-stream.ts). */
 export function getBot(): Bot | undefined {
@@ -538,6 +570,25 @@ function clearPollRetryTimer(): void {
   }
 }
 
+function clearPollLeaseRetryTimer(): void {
+  if (pollLeaseRetryTimer) {
+    clearTimeout(pollLeaseRetryTimer);
+    pollLeaseRetryTimer = undefined;
+  }
+}
+
+function clearPollLeaseRenewTimer(): void {
+  if (pollLeaseRenewTimer) {
+    clearInterval(pollLeaseRenewTimer);
+    pollLeaseRenewTimer = undefined;
+  }
+}
+
+function unrefTimer(timer: unknown): void {
+  if (!timer || typeof timer !== "object" || !("unref" in timer)) return;
+  (timer as NodeJS.Timeout).unref();
+}
+
 function isGetUpdatesConflict(errorText: string): boolean {
   const normalized = errorText.toLowerCase();
   return normalized.includes("getupdates") && normalized.includes("409");
@@ -546,6 +597,195 @@ function isGetUpdatesConflict(errorText: string): boolean {
 function nextPollRetryDelayMs(attempt: number): number {
   const exp = Math.max(0, Math.min(attempt, 8));
   return Math.min(TELEGRAM_POLL_RETRY_BASE_MS * 2 ** exp, TELEGRAM_POLL_RETRY_MAX_MS);
+}
+
+function nextPollLeaseRetryDelayMs(attempt: number): number {
+  const exp = Math.max(0, Math.min(attempt, 8));
+  return Math.min(TELEGRAM_POLL_LEASE_RETRY_BASE_MS * 2 ** exp, TELEGRAM_POLL_LEASE_RETRY_MAX_MS);
+}
+
+function stableTokenHash(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex").slice(0, 12);
+}
+
+function stopPolling(): void {
+  clearPollRetryTimer();
+  pollRetryAttempts = 0;
+  pollConflictStreak = 0;
+
+  if (bot && (pollingActive || pollingStarting)) {
+    try {
+      bot.stop();
+    } catch {
+      // best-effort
+    }
+  }
+
+  pollingStarting = false;
+  pollingActive = false;
+}
+
+async function ensurePollLeaseClient(): Promise<Redis | undefined> {
+  if (!TELEGRAM_POLL_LEASE_ENABLED) return undefined;
+  if (pollLeaseClient && pollLeaseClient.status !== "end") {
+    return pollLeaseClient;
+  }
+
+  const client = new Redis({
+    host: process.env.REDIS_HOST ?? "localhost",
+    port: Number.parseInt(process.env.REDIS_PORT ?? "6379", 10),
+    lazyConnect: true,
+    maxRetriesPerRequest: null,
+    retryStrategy: (times: number) => Math.min(times * 500, 30_000),
+  });
+
+  client.on("error", (error) => {
+    console.warn("[gateway:telegram] poll lease redis error", { error: String(error) });
+  });
+
+  try {
+    await client.connect();
+    pollLeaseClient = client;
+    return pollLeaseClient;
+  } catch (error) {
+    client.disconnect();
+    console.warn("[gateway:telegram] poll lease redis unavailable", { error: String(error) });
+    void emitGatewayOtel({
+      level: "warn",
+      component: "telegram-channel",
+      action: "telegram.channel.poll_owner.redis_unavailable",
+      success: false,
+      error: String(error),
+    });
+    return undefined;
+  }
+}
+
+async function closePollLeaseClient(): Promise<void> {
+  if (!pollLeaseClient) return;
+  try {
+    await pollLeaseClient.quit();
+  } catch {
+    pollLeaseClient.disconnect();
+  } finally {
+    pollLeaseClient = undefined;
+  }
+}
+
+async function writePollLeaseStatus(
+  state: PollLeaseState,
+  detail?: Partial<Omit<PollLeaseStatus, "state" | "instanceId" | "updatedAt">>,
+): Promise<void> {
+  const status: PollLeaseStatus = {
+    state,
+    instanceId: pollLeaseInstanceId,
+    updatedAt: new Date().toISOString(),
+    ...(pollLeaseTokenHash ? { tokenHash: pollLeaseTokenHash } : {}),
+    ...(detail ?? {}),
+  };
+
+  const client = await ensurePollLeaseClient();
+  if (!client || !pollLeaseStatusKey) return;
+
+  try {
+    await client.set(pollLeaseStatusKey, JSON.stringify(status), "PX", TELEGRAM_POLL_STATUS_TTL_MS);
+  } catch (error) {
+    console.warn("[gateway:telegram] failed to write poll lease status", { error: String(error), state });
+  }
+}
+
+async function acquirePollLease(): Promise<{ acquired: boolean; ownerId?: string; fallback: boolean }> {
+  if (!TELEGRAM_POLL_LEASE_ENABLED) {
+    return { acquired: true, ownerId: pollLeaseInstanceId, fallback: true };
+  }
+
+  const client = await ensurePollLeaseClient();
+  if (!client || !pollLeaseOwnerKey) {
+    return { acquired: true, ownerId: pollLeaseInstanceId, fallback: true };
+  }
+
+  try {
+    const setResult = await client.set(
+      pollLeaseOwnerKey,
+      pollLeaseInstanceId,
+      "PX",
+      TELEGRAM_POLL_LEASE_TTL_MS,
+      "NX",
+    );
+
+    if (setResult === "OK") {
+      pollLeaseOwned = true;
+      return { acquired: true, ownerId: pollLeaseInstanceId, fallback: false };
+    }
+
+    const ownerId = await client.get(pollLeaseOwnerKey) ?? undefined;
+    if (ownerId === pollLeaseInstanceId) {
+      pollLeaseOwned = true;
+      await client.pexpire(pollLeaseOwnerKey, TELEGRAM_POLL_LEASE_TTL_MS);
+      return { acquired: true, ownerId, fallback: false };
+    }
+
+    pollLeaseOwned = false;
+    return { acquired: false, ownerId, fallback: false };
+  } catch (error) {
+    console.warn("[gateway:telegram] poll lease acquisition failed; falling back to direct polling", {
+      error: String(error),
+    });
+    void emitGatewayOtel({
+      level: "warn",
+      component: "telegram-channel",
+      action: "telegram.channel.poll_owner.acquire_failed",
+      success: false,
+      error: String(error),
+    });
+    return { acquired: true, ownerId: pollLeaseInstanceId, fallback: true };
+  }
+}
+
+async function renewPollLease(): Promise<boolean> {
+  if (!TELEGRAM_POLL_LEASE_ENABLED || !pollLeaseOwned) return true;
+  const client = await ensurePollLeaseClient();
+  if (!client || !pollLeaseOwnerKey) return false;
+
+  try {
+    const renewed = await client.eval(
+      "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end",
+      1,
+      pollLeaseOwnerKey,
+      pollLeaseInstanceId,
+      String(TELEGRAM_POLL_LEASE_TTL_MS),
+    );
+    return Number(renewed) === 1;
+  } catch (error) {
+    console.warn("[gateway:telegram] poll lease renewal failed", { error: String(error) });
+    void emitGatewayOtel({
+      level: "warn",
+      component: "telegram-channel",
+      action: "telegram.channel.poll_owner.renew_failed",
+      success: false,
+      error: String(error),
+    });
+    return false;
+  }
+}
+
+async function releasePollLease(): Promise<void> {
+  if (!TELEGRAM_POLL_LEASE_ENABLED || !pollLeaseOwned) return;
+  const client = await ensurePollLeaseClient();
+  if (!client || !pollLeaseOwnerKey) return;
+
+  try {
+    await client.eval(
+      "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+      1,
+      pollLeaseOwnerKey,
+      pollLeaseInstanceId,
+    );
+  } catch (error) {
+    console.warn("[gateway:telegram] poll lease release failed", { error: String(error) });
+  } finally {
+    pollLeaseOwned = false;
+  }
 }
 
 async function startTelegramChannel(
@@ -966,23 +1206,29 @@ async function startTelegramChannel(
   });
 
   const startPolling = (): void => {
-    if (!bot) return;
+    if (!bot || !started) return;
+    if (pollingActive || pollingStarting) return;
+    if (TELEGRAM_POLL_LEASE_ENABLED && !pollLeaseOwned) return;
 
     // Long polling is single-consumer per bot token. If another process currently
     // owns getUpdates, Telegram returns 409. Retry with backoff instead of
     // permanently disabling the channel on first conflict.
+    pollingStarting = true;
     void bot.start({
       onStart: (botInfo) => {
         const recovered = pollRetryAttempts > 0 || pollConflictStreak > 0;
         pollRetryAttempts = 0;
         pollConflictStreak = 0;
         clearPollRetryTimer();
+        pollingStarting = false;
+        pollingActive = true;
 
         console.log("[gateway:telegram] started", {
           botId: botInfo.id,
           botUsername: botInfo.username,
           allowedUserId,
           recovered,
+          pollLeaseOwned,
         });
         void emitGatewayOtel({
           level: "info",
@@ -993,6 +1239,7 @@ async function startTelegramChannel(
             botId: botInfo.id,
             botUsername: botInfo.username,
             recovered,
+            pollLeaseOwned,
           },
         });
 
@@ -1006,6 +1253,9 @@ async function startTelegramChannel(
         }
       },
     }).catch((error) => {
+      pollingStarting = false;
+      pollingActive = false;
+
       const errorText = String(error);
       const conflict = isGetUpdatesConflict(errorText);
       if (conflict) {
@@ -1026,6 +1276,7 @@ async function startTelegramChannel(
           conflict,
           attempt,
           delayMs,
+          pollLeaseOwned,
         },
       );
 
@@ -1039,6 +1290,7 @@ async function startTelegramChannel(
           conflict,
           attempt,
           retryDelayMs: delayMs,
+          pollLeaseOwned,
         },
       });
 
@@ -1051,22 +1303,175 @@ async function startTelegramChannel(
           conflict,
           attempt,
           retryDelayMs: delayMs,
+          pollLeaseOwned,
         },
       });
 
       clearPollRetryTimer();
       pollRetryTimer = setTimeout(() => {
         pollRetryTimer = undefined;
+        if (!started) return;
+        if (TELEGRAM_POLL_LEASE_ENABLED && !pollLeaseOwned) return;
         startPolling();
       }, delayMs);
-      if (pollRetryTimer && typeof pollRetryTimer === "object" && "unref" in pollRetryTimer) {
-        (pollRetryTimer as NodeJS.Timeout).unref();
-      }
+      unrefTimer(pollRetryTimer);
     });
   };
 
+  const schedulePollLeaseRetry = (reason: string): void => {
+    if (!started || !TELEGRAM_POLL_LEASE_ENABLED) return;
+    if (pollLeaseRetryTimer) return;
+
+    const delayMs = nextPollLeaseRetryDelayMs(pollLeaseRetryAttempts);
+    const attempt = pollLeaseRetryAttempts + 1;
+    pollLeaseRetryAttempts = attempt;
+
+    void emitGatewayOtel({
+      level: "info",
+      component: "telegram-channel",
+      action: "telegram.channel.poll_owner.retry_scheduled",
+      success: true,
+      metadata: {
+        attempt,
+        retryDelayMs: delayMs,
+        reason,
+      },
+    });
+
+    pollLeaseRetryTimer = setTimeout(() => {
+      pollLeaseRetryTimer = undefined;
+      void attemptPollOwnership("retry");
+    }, delayMs);
+    unrefTimer(pollLeaseRetryTimer);
+  };
+
+  const startPollLeaseRenewLoop = (): void => {
+    clearPollLeaseRenewTimer();
+    if (!started || !TELEGRAM_POLL_LEASE_ENABLED || !pollLeaseOwned) return;
+
+    pollLeaseRenewTimer = setInterval(() => {
+      if (!started || !pollLeaseOwned) return;
+
+      void renewPollLease().then((renewed) => {
+        if (renewed) return;
+
+        pollLeaseOwned = false;
+        stopPolling();
+        clearPollLeaseRenewTimer();
+
+        void emitGatewayOtel({
+          level: "warn",
+          component: "telegram-channel",
+          action: "telegram.channel.poll_owner.lost",
+          success: false,
+        });
+        void writePollLeaseStatus("passive", {
+          reason: "lease_lost",
+        });
+
+        schedulePollLeaseRetry("lease_lost");
+      });
+    }, TELEGRAM_POLL_LEASE_RENEW_MS);
+    unrefTimer(pollLeaseRenewTimer);
+  };
+
+  const attemptPollOwnership = async (reason: string): Promise<void> => {
+    if (!started || !bot) return;
+
+    const previouslyOwned = pollLeaseOwned;
+    const { acquired, ownerId, fallback } = await acquirePollLease();
+    if (!started || !bot) return;
+
+    if (acquired) {
+      clearPollLeaseRetryTimer();
+      pollLeaseRetryAttempts = 0;
+
+      if (fallback) {
+        pollLeaseOwned = true;
+        clearPollLeaseRenewTimer();
+        const fallbackReason = TELEGRAM_POLL_LEASE_ENABLED ? "lease_unavailable" : "lease_disabled";
+        console.warn("[gateway:telegram] poll lease unavailable; running direct polling", {
+          reason: fallbackReason,
+        });
+        void emitGatewayOtel({
+          level: "warn",
+          component: "telegram-channel",
+          action: "telegram.channel.poll_owner.fallback",
+          success: true,
+          metadata: { reason: fallbackReason },
+        });
+        void writePollLeaseStatus("fallback", {
+          reason: fallbackReason,
+        });
+      } else {
+        const fromPassive = !previouslyOwned;
+        pollLeaseOwned = true;
+        startPollLeaseRenewLoop();
+
+        console.log("[gateway:telegram] poll owner acquired", {
+          instanceId: pollLeaseInstanceId,
+          tokenHash: pollLeaseTokenHash,
+          ownerId,
+          fromPassive,
+          reason,
+        });
+        void emitGatewayOtel({
+          level: "info",
+          component: "telegram-channel",
+          action: "telegram.channel.poll_owner.acquired",
+          success: true,
+          metadata: {
+            instanceId: pollLeaseInstanceId,
+            ownerId,
+            tokenHash: pollLeaseTokenHash,
+            fromPassive,
+            reason,
+          },
+        });
+        void writePollLeaseStatus("owner", {
+          ownerId: pollLeaseInstanceId,
+        });
+      }
+
+      startPolling();
+      return;
+    }
+
+    pollLeaseOwned = false;
+    clearPollLeaseRenewTimer();
+    stopPolling();
+
+    console.log("[gateway:telegram] passive mode (another poll owner active)", {
+      ownerId,
+      tokenHash: pollLeaseTokenHash,
+      reason,
+    });
+    void emitGatewayOtel({
+      level: "info",
+      component: "telegram-channel",
+      action: "telegram.channel.poll_owner.passive",
+      success: true,
+      metadata: {
+        ownerId,
+        tokenHash: pollLeaseTokenHash,
+        reason,
+      },
+    });
+    void writePollLeaseStatus("passive", {
+      ownerId,
+      reason,
+      attempt: pollLeaseRetryAttempts + 1,
+    });
+
+    schedulePollLeaseRetry(reason);
+  };
+
   started = true;
-  startPolling();
+  pollLeaseTokenHash = stableTokenHash(token);
+  pollLeaseOwnerKey = `joelclaw:gateway:telegram:poll-owner:${pollLeaseTokenHash}`;
+  pollLeaseStatusKey = `joelclaw:gateway:telegram:poll-status:${pollLeaseTokenHash}`;
+
+  void attemptPollOwnership("startup");
 }
 
 /**
@@ -1356,15 +1761,28 @@ export async function shutdown(): Promise<void> {
 }
 
 async function shutdownTelegramChannel(): Promise<void> {
-  clearPollRetryTimer();
-  pollRetryAttempts = 0;
-  pollConflictStreak = 0;
+  started = false;
+  clearPollLeaseRetryTimer();
+  clearPollLeaseRenewTimer();
+  stopPolling();
+
+  await writePollLeaseStatus("stopped", {
+    reason: "shutdown",
+  });
+  await releasePollLease();
+  await closePollLeaseClient();
+
+  pollLeaseOwned = false;
+  pollLeaseRetryAttempts = 0;
+  pollLeaseOwnerKey = undefined;
+  pollLeaseStatusKey = undefined;
+  pollLeaseTokenHash = undefined;
 
   if (bot) {
     bot.stop();
     bot = undefined;
   }
-  started = false;
+
   console.log("[gateway:telegram] stopped");
   void emitGatewayOtel({
     level: "info",
