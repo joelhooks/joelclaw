@@ -83,6 +83,7 @@ pub struct HttpServiceProbe {
     pub url: String,
     pub timeout_secs: u64,
     pub critical: bool,
+    pub critical_after_consecutive_failures: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +92,7 @@ pub struct LaunchdServiceProbe {
     pub label: String,
     pub timeout_secs: u64,
     pub critical: bool,
+    pub critical_after_consecutive_failures: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -231,6 +233,28 @@ impl Config {
         }
 
         false
+    }
+
+    pub fn critical_failure_threshold(&self, name: &str) -> u32 {
+        if let Some(service_name) = name.strip_prefix("http:") {
+            return self
+                .http_service_probes
+                .iter()
+                .find(|probe| probe.name == service_name)
+                .map(|probe| probe.critical_after_consecutive_failures.max(1))
+                .unwrap_or(1);
+        }
+
+        if let Some(service_name) = name.strip_prefix("launchd:") {
+            return self
+                .launchd_service_probes
+                .iter()
+                .find(|probe| probe.name == service_name)
+                .map(|probe| probe.critical_after_consecutive_failures.max(1))
+                .unwrap_or(1);
+        }
+
+        1
     }
 
     pub fn services_path(&self) -> PathBuf {
@@ -502,18 +526,21 @@ fn builtin_http_service_probes() -> Vec<HttpServiceProbe> {
             url: "http://localhost:8288/health".to_string(),
             timeout_secs: 5,
             critical: false,
+            critical_after_consecutive_failures: 1,
         },
         HttpServiceProbe {
             name: "typesense".to_string(),
             url: "http://localhost:8108/health".to_string(),
             timeout_secs: 5,
             critical: false,
+            critical_after_consecutive_failures: 1,
         },
         HttpServiceProbe {
             name: "worker".to_string(),
             url: "http://localhost:3111/api/inngest".to_string(),
             timeout_secs: 5,
             critical: false,
+            critical_after_consecutive_failures: 1,
         },
     ]
 }
@@ -614,12 +641,17 @@ fn parse_services_toml(
                     url: String::new(),
                     timeout_secs: default_timeout_secs,
                     critical: false,
+                    critical_after_consecutive_failures: 1,
                 });
 
             match key {
                 "url" => probe.url = parse_toml_string(value)?,
                 "timeout_secs" => probe.timeout_secs = parse_toml_int(value, line_number + 1)?,
                 "critical" => probe.critical = parse_toml_bool(value, line_number + 1)?,
+                "critical_after_consecutive_failures" => {
+                    probe.critical_after_consecutive_failures =
+                        parse_toml_int(value, line_number + 1)? as u32
+                }
                 _ => {}
             }
             continue;
@@ -638,12 +670,17 @@ fn parse_services_toml(
                     label: String::new(),
                     timeout_secs: default_timeout_secs,
                     critical: false,
+                    critical_after_consecutive_failures: 1,
                 });
 
             match key {
                 "label" => probe.label = parse_toml_string(value)?,
                 "timeout_secs" => probe.timeout_secs = parse_toml_int(value, line_number + 1)?,
                 "critical" => probe.critical = parse_toml_bool(value, line_number + 1)?,
+                "critical_after_consecutive_failures" => {
+                    probe.critical_after_consecutive_failures =
+                        parse_toml_int(value, line_number + 1)? as u32
+                }
                 _ => {}
             }
         }
@@ -896,11 +933,13 @@ url = "http://127.0.0.1:8081/"
         assert_eq!(http[0].url, "http://127.0.0.1:8081/");
         assert_eq!(http[0].timeout_secs, 7);
         assert!(!http[0].critical);
+        assert_eq!(http[0].critical_after_consecutive_failures, 1);
 
         assert_eq!(launchd[0].name, "voice_agent");
         assert_eq!(launchd[0].label, "com.joel.voice-agent");
         assert_eq!(launchd[0].timeout_secs, 7);
         assert!(launchd[0].critical);
+        assert_eq!(launchd[0].critical_after_consecutive_failures, 1);
     }
 
     #[test]
@@ -960,12 +999,14 @@ external_launchd_label = "com.joel.custom-worker"
             url: "http://127.0.0.1:8081/".to_string(),
             timeout_secs: 5,
             critical: true,
+            critical_after_consecutive_failures: 1,
         });
         config.launchd_service_probes.push(LaunchdServiceProbe {
             name: "voice_agent".to_string(),
             label: "com.joel.voice-agent".to_string(),
             timeout_secs: 5,
             critical: true,
+            critical_after_consecutive_failures: 1,
         });
 
         assert!(config.is_critical_probe("redis"));
@@ -977,5 +1018,25 @@ external_launchd_label = "com.joel.custom-worker"
         assert!(!config.is_critical_probe("http:voice_agent_extra"));
         assert!(!config.is_critical_probe("launchd:voice"));
         assert!(!config.is_critical_probe("launchd:voice_agent_extra"));
+    }
+
+    #[test]
+    fn parse_services_toml_parses_critical_failure_debounce() {
+        let raw = r#"
+[http.gateway_slack]
+url = "http://127.0.0.1:3018/health/slack"
+critical = true
+critical_after_consecutive_failures = 3
+"#;
+
+        let (http, _) = parse_services_toml(raw, 5).expect("services TOML should parse");
+        assert_eq!(http[0].critical_after_consecutive_failures, 3);
+    }
+
+    #[test]
+    fn critical_failure_threshold_defaults_to_one_for_unknown_probe() {
+        let config = Config::default();
+        assert_eq!(config.critical_failure_threshold("http:missing"), 1);
+        assert_eq!(config.critical_failure_threshold("redis"), 1);
     }
 }

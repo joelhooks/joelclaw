@@ -6,6 +6,7 @@ mod probes;
 mod state;
 mod worker;
 
+use std::collections::HashMap;
 use std::env;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -197,6 +198,7 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
         None
     };
     let mut service_tracker = config.service_probe_tracker()?;
+    let mut probe_failure_streaks: HashMap<String, u32> = HashMap::new();
     health::publish_state(&current_state);
 
     loop {
@@ -241,8 +243,11 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
         current_state.worker_restarts = worker::worker_restart_count();
         state::write_last_probe(&results)?;
 
+        update_probe_failure_streaks(&results, &mut probe_failure_streaks);
+
         let mut failed_probes = collect_failed_probes(&results);
-        let critical_failures = collect_critical_failures(&failed_probes, &config);
+        let critical_failures =
+            collect_critical_failures(&failed_probes, &config, &probe_failure_streaks);
         let service_only_failures = should_use_service_heal(&failed_probes, &config);
 
         if failed_probes.is_empty() {
@@ -297,6 +302,7 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
                 current_state.last_probe_results = post_heal.clone();
                 current_state.worker_restarts = worker::worker_restart_count();
                 state::write_last_probe(&post_heal)?;
+                update_probe_failure_streaks(&post_heal, &mut probe_failure_streaks);
 
                 failed_probes = collect_failed_probes(&post_heal);
 
@@ -326,6 +332,7 @@ fn run_watchdog_loop(mut config: Config) -> Result<(), DynError> {
                     current_state.last_probe_results = post_agent.clone();
                     current_state.worker_restarts = worker::worker_restart_count();
                     state::write_last_probe(&post_agent)?;
+                    update_probe_failure_streaks(&post_agent, &mut probe_failure_streaks);
                     let remaining_failures = collect_failed_probes(&post_agent);
 
                     if remaining_failures.is_empty() {
@@ -380,12 +387,39 @@ fn collect_failed_probes(results: &[ProbeResult]) -> Vec<ProbeResult> {
         .collect()
 }
 
-fn collect_critical_failures(results: &[ProbeResult], config: &Config) -> Vec<ProbeResult> {
+fn collect_critical_failures(
+    results: &[ProbeResult],
+    config: &Config,
+    failure_streaks: &HashMap<String, u32>,
+) -> Vec<ProbeResult> {
     results
         .iter()
-        .filter(|result| config.is_critical_probe(&result.name))
+        .filter(|result| {
+            if !config.is_critical_probe(&result.name) {
+                return false;
+            }
+
+            let threshold = config.critical_failure_threshold(&result.name).max(1);
+            let streak = failure_streaks.get(&result.name).copied().unwrap_or(1);
+            streak >= threshold
+        })
         .cloned()
         .collect()
+}
+
+fn update_probe_failure_streaks(
+    results: &[ProbeResult],
+    failure_streaks: &mut HashMap<String, u32>,
+) {
+    for result in results {
+        if result.passed {
+            failure_streaks.remove(&result.name);
+            continue;
+        }
+
+        let entry = failure_streaks.entry(result.name.clone()).or_insert(0);
+        *entry = entry.saturating_add(1);
+    }
 }
 
 fn should_escalate_failures(
@@ -430,11 +464,15 @@ fn should_use_bridge_heal(failures: &[ProbeResult], all_results: &[ProbeResult])
 }
 
 fn probe_passed(results: &[ProbeResult], name: &str) -> bool {
-    results.iter().any(|probe| probe.name == name && probe.passed)
+    results
+        .iter()
+        .any(|probe| probe.name == name && probe.passed)
 }
 
 fn probe_failed(results: &[ProbeResult], name: &str) -> bool {
-    results.iter().any(|probe| probe.name == name && !probe.passed)
+    results
+        .iter()
+        .any(|probe| probe.name == name && !probe.passed)
 }
 
 fn is_dynamic_service_probe(name: &str, config: &Config) -> bool {
@@ -541,6 +579,8 @@ fn parse_args() -> Result<Cli, DynError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
     use crate::config::{HttpServiceProbe, LaunchdServiceProbe};
 
     #[test]
@@ -558,6 +598,35 @@ mod tests {
     }
 
     #[test]
+    fn critical_failures_respect_dynamic_probe_debounce_threshold() {
+        let mut config = Config::default();
+        config.http_service_probes.push(HttpServiceProbe {
+            name: "gateway_slack".to_string(),
+            url: "http://127.0.0.1:3018/health/slack".to_string(),
+            timeout_secs: 5,
+            critical: true,
+            critical_after_consecutive_failures: 3,
+        });
+
+        let failures = vec![ProbeResult {
+            name: "http:gateway_slack".to_string(),
+            passed: false,
+            output: "503".to_string(),
+            duration_ms: 12,
+        }];
+
+        let mut streaks = HashMap::new();
+        streaks.insert("http:gateway_slack".to_string(), 2);
+        assert!(collect_critical_failures(&failures, &config, &streaks).is_empty());
+
+        streaks.insert("http:gateway_slack".to_string(), 3);
+        assert_eq!(
+            collect_critical_failures(&failures, &config, &streaks).len(),
+            1
+        );
+    }
+
+    #[test]
     fn service_heal_selection_uses_only_dynamic_service_failures() {
         let mut config = Config::default();
         config.http_service_probes.push(HttpServiceProbe {
@@ -565,12 +634,14 @@ mod tests {
             url: "http://127.0.0.1:8081/".to_string(),
             timeout_secs: 5,
             critical: true,
+            critical_after_consecutive_failures: 1,
         });
         config.launchd_service_probes.push(LaunchdServiceProbe {
             name: "voice_agent".to_string(),
             label: "com.joel.voice-agent".to_string(),
             timeout_secs: 5,
             critical: true,
+            critical_after_consecutive_failures: 1,
         });
 
         let only_dynamic = vec![ProbeResult {

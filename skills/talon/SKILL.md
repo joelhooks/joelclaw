@@ -130,6 +130,7 @@ timeout_secs = 5
 [http.gateway_slack]
 url = "http://127.0.0.1:3018/health/slack"
 critical = true
+critical_after_consecutive_failures = 3
 timeout_secs = 5
 
 [launchd.voice_agent]
@@ -140,8 +141,9 @@ timeout_secs = 5
 
 - `launchd.<name>` passes when `launchctl list <label>` reports a non-zero PID
 - `http.<name>` passes on HTTP `200`
-- `critical = true` escalates immediately when the probe fails
-- `http.gateway_slack` uses gateway endpoint `GET /health/slack` and fails (503) when Slack channel is not started
+- `critical = true` escalates when the probe is marked critical (or after debounce if configured)
+- `critical_after_consecutive_failures = N` debounces critical alerts for dynamic probes (default `1` = immediate)
+- `http.gateway_slack` uses gateway endpoint `GET /health/slack`, fails (503) when Slack channel is not started, and should be debounced (recommended `3` cycles)
 - **Do not probe `http://127.0.0.1:8081/` for `voice_agent` by default** — root returns `503` when idle and causes false SOS noise
 - Service-heal pre-cleanup for `voice_agent` now clears stale `uv/main.py` listeners on `:8081` before `launchctl kickstart` to avoid bind conflicts after force-cycles
 - Talon hot-reloads service probes when `services.toml` mtime changes (no restart required)

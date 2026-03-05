@@ -48,7 +48,7 @@ Gateway now exposes `GET /health/slack` on port `3018` (same Bun server as the W
 - `200` when Slack channel is started
 - `503` when Slack channel is not started
 
-Talon dynamic services now probe this endpoint via `http.gateway_slack` in `~/.joelclaw/talon/services.toml` with `critical = true`.
+Talon dynamic services now probe this endpoint via `http.gateway_slack` in `~/.joelclaw/talon/services.toml` with `critical = true` and `critical_after_consecutive_failures = 3` (debounced alerting for brief reconnect churn).
 
 Slack channel-name resolution now classifies `channel_not_found` as a permanent resolve error and applies long cooldown (`slack.channel.resolve_unavailable`) instead of spamming transient `resolve_failed` warnings.
 

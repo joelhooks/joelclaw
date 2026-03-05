@@ -923,12 +923,14 @@ mod tests {
             url: "http://127.0.0.1:8081/".to_string(),
             timeout_secs: 5,
             critical: true,
+            critical_after_consecutive_failures: 1,
         });
         config.launchd_service_probes.push(LaunchdServiceProbe {
             name: "voice_agent".to_string(),
             label: "com.joel.voice-agent".to_string(),
             timeout_secs: 5,
             critical: true,
+            critical_after_consecutive_failures: 1,
         });
 
         let failed = vec![
