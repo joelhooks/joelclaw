@@ -10,7 +10,7 @@
       "description": "Add Kubernetes manifests for Restate runtime in the joelclaw namespace using a StatefulSet + PVC and a Service exposing ingress/admin/metrics ports. Include sensible probes and resource requests. Keep storage local PVC per current resilience posture.",
       "priority": 1,
       "status": "pending",
-      "acceptance": [
+      "acceptance_criteria": [
         "k8s manifests exist for Restate runtime (StatefulSet + Service + PVC template)",
         "Namespace is joelclaw and image is pinned to a concrete restatedev/restate tag",
         "Ports are exposed for ingress (8080), admin (9070), and metrics (9071)",
@@ -28,7 +28,7 @@
       "description": "Create a small @joelclaw/restate-pilot package with one durable workflow demonstrating step chain + fan-out/fan-in semantics matching ADR-0207 mapping. Keep this isolated from system-bus production paths.",
       "priority": 2,
       "status": "pending",
-      "acceptance": [
+      "acceptance_criteria": [
         "New package created under packages/restate-pilot",
         "Package exports one workflow and one service entrypoint",
         "Workflow includes durable steps and at least one service-to-service call",
@@ -48,7 +48,7 @@
       "description": "Add script(s) to register Restate deployments from local/cluster and verify connectivity. Include an idempotent path for re-registration and a smoke command.",
       "priority": 3,
       "status": "pending",
-      "acceptance": [
+      "acceptance_criteria": [
         "Script exists for restate deployment registration",
         "Script documents required env and target endpoint",
         "Script is idempotent and safe to rerun",
@@ -66,7 +66,7 @@
       "description": "Extend CLI with restate status/list commands (or inngest namespace extension if preferred) to inspect Restate health and recent invocations without leaving joelclaw CLI surface.",
       "priority": 4,
       "status": "pending",
-      "acceptance": [
+      "acceptance_criteria": [
         "CLI command added for Restate status/invocation visibility",
         "Output follows existing JSON envelope style with next_actions",
         "Command handles Restate unavailable state gracefully",
@@ -84,7 +84,7 @@
       "description": "Update ADR-0207 verification checklist from planned to implemented evidence where completed, and add docs for dual-run boundaries: what stays on Inngest vs what runs on Restate in Phase 1.",
       "priority": 5,
       "status": "pending",
-      "acceptance": [
+      "acceptance_criteria": [
         "ADR-0207 updated with implementation progress notes",
         "docs/inngest-functions.md updated with dual-run boundary and pilot routing",
         "Verification checklist items clearly marked done/pending with evidence",

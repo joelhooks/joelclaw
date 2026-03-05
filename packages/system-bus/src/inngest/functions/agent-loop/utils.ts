@@ -580,6 +580,7 @@ export interface Story {
   priority: number;
   passes: boolean;
   tool?: string;
+  skipped?: boolean;
 }
 
 export interface Prd {
@@ -597,6 +598,137 @@ type PrdMetadata = {
   workDir: string;
 };
 
+type StoryInput = {
+  id?: unknown;
+  title?: unknown;
+  description?: unknown;
+  acceptance_criteria?: unknown;
+  acceptance?: unknown;
+  acceptanceCriteria?: unknown;
+  priority?: unknown;
+  passes?: unknown;
+  tool?: unknown;
+  skipped?: unknown;
+};
+
+type PrdInput = {
+  title?: unknown;
+  description?: unknown;
+  adr?: unknown;
+  context?: unknown;
+  project?: unknown;
+  workDir?: unknown;
+  stories?: unknown;
+};
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+export function normalizePrdOrThrow(
+  input: unknown,
+  source: string
+): { prd: Prd; fixes: string[] } {
+  if (!input || typeof input !== "object") {
+    throw new Error(`Invalid PRD (${source}): expected JSON object`);
+  }
+
+  const raw = input as PrdInput;
+  const title = typeof raw.title === "string" && raw.title.trim().length > 0
+    ? raw.title.trim()
+    : "Untitled PRD";
+
+  if (!Array.isArray(raw.stories) || raw.stories.length === 0) {
+    throw new Error(`Invalid PRD (${source}): stories must be a non-empty array`);
+  }
+
+  const fixes: string[] = [];
+  const stories: Story[] = raw.stories.map((storyRaw, index) => {
+    if (!storyRaw || typeof storyRaw !== "object") {
+      throw new Error(`Invalid PRD (${source}): story[${index}] must be an object`);
+    }
+
+    const story = storyRaw as StoryInput;
+    const id = typeof story.id === "string" && story.id.trim().length > 0
+      ? story.id.trim()
+      : (() => {
+        throw new Error(`Invalid PRD (${source}): story[${index}] missing id`);
+      })();
+
+    const storyTitle = typeof story.title === "string" && story.title.trim().length > 0
+      ? story.title.trim()
+      : (() => {
+        throw new Error(`Invalid PRD (${source}): story ${id} missing title`);
+      })();
+
+    const description = typeof story.description === "string" && story.description.trim().length > 0
+      ? story.description.trim()
+      : (() => {
+        throw new Error(`Invalid PRD (${source}): story ${id} missing description`);
+      })();
+
+    const canonicalCriteria = normalizeStringArray(story.acceptance_criteria);
+    const legacyAcceptance = normalizeStringArray(story.acceptance);
+    const camelAcceptance = normalizeStringArray(story.acceptanceCriteria);
+
+    let acceptanceCriteria = canonicalCriteria;
+    if (acceptanceCriteria.length === 0 && legacyAcceptance.length > 0) {
+      acceptanceCriteria = legacyAcceptance;
+      fixes.push(`story ${id}: acceptance -> acceptance_criteria`);
+    }
+    if (acceptanceCriteria.length === 0 && camelAcceptance.length > 0) {
+      acceptanceCriteria = camelAcceptance;
+      fixes.push(`story ${id}: acceptanceCriteria -> acceptance_criteria`);
+    }
+
+    if (acceptanceCriteria.length === 0) {
+      throw new Error(
+        `Invalid PRD (${source}): story ${id} is missing acceptance_criteria (accepted aliases: acceptance, acceptanceCriteria)`
+      );
+    }
+
+    const priority = typeof story.priority === "number" && Number.isFinite(story.priority)
+      ? story.priority
+      : index + 1;
+    if (!(typeof story.priority === "number" && Number.isFinite(story.priority))) {
+      fixes.push(`story ${id}: default priority=${index + 1}`);
+    }
+
+    const passes = story.passes === true;
+    if (story.passes !== true && story.passes !== false) {
+      fixes.push(`story ${id}: default passes=false`);
+    }
+
+    return {
+      id,
+      title: storyTitle,
+      description,
+      acceptance_criteria: acceptanceCriteria,
+      priority,
+      passes,
+      ...(typeof story.tool === "string" && story.tool.length > 0 ? { tool: story.tool } : {}),
+      ...(story.skipped === true ? { skipped: true } : {}),
+    };
+  });
+
+  return {
+    prd: {
+      title,
+      ...(typeof raw.description === "string" && raw.description.length > 0 ? { description: raw.description } : {}),
+      ...(typeof raw.adr === "string" && raw.adr.length > 0 ? { adr: raw.adr } : {}),
+      ...(Array.isArray(raw.context) ? { context: normalizeStringArray(raw.context) } : {}),
+      ...(typeof raw.project === "string" && raw.project.length > 0 ? { project: raw.project } : {}),
+      ...(typeof raw.workDir === "string" && raw.workDir.length > 0 ? { workDir: raw.workDir } : {}),
+      stories,
+    },
+    fixes,
+  };
+}
+
 // ── PRD storage (Redis-backed, seeded from disk) ─────────────────────
 
 /**
@@ -610,10 +742,29 @@ export async function seedPrd(
   metadata?: PrdMetadata
 ): Promise<Prd> {
   const fullPath = join(project, prdPath);
-  const prd = JSON.parse(await Bun.file(fullPath).text()) as Prd;
+  const rawPrd = JSON.parse(await Bun.file(fullPath).text()) as unknown;
+  const normalized = normalizePrdOrThrow(rawPrd, fullPath);
+
+  if (normalized.fixes.length > 0) {
+    await Bun.write(fullPath, JSON.stringify(normalized.prd, null, 2) + "\n");
+    void emitOtelEvent({
+      action: "agent_loop.prd.preflight.normalized",
+      component: "agent-loop",
+      source: "planner",
+      level: "info",
+      success: true,
+      metadata: {
+        loop_id: loopId,
+        source: fullPath,
+        fixes: normalized.fixes,
+        fix_count: normalized.fixes.length,
+      },
+    });
+  }
+
   const prdWithMetadata = metadata
-    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
-    : prd;
+    ? { ...normalized.prd, project: metadata.project, workDir: metadata.workDir }
+    : normalized.prd;
   const redis = getRedis();
   const key = prdKey(loopId);
   const value = JSON.stringify(prdWithMetadata);
@@ -624,7 +775,8 @@ export async function seedPrd(
   if (setResult === null) {
     const existing = await redis.get(key);
     if (existing) {
-      return JSON.parse(existing) as Prd;
+      const existingNormalized = normalizePrdOrThrow(JSON.parse(existing) as unknown, `redis:${key}`);
+      return existingNormalized.prd;
     }
   }
 
@@ -640,9 +792,27 @@ export async function seedPrdFromData(
   prd: Prd,
   metadata?: PrdMetadata
 ): Promise<Prd> {
+  const normalized = normalizePrdOrThrow(prd, `event:agent/loop.started:${loopId}`);
   const prdWithMetadata = metadata
-    ? { ...prd, project: metadata.project, workDir: metadata.workDir }
-    : prd;
+    ? { ...normalized.prd, project: metadata.project, workDir: metadata.workDir }
+    : normalized.prd;
+
+  if (normalized.fixes.length > 0) {
+    void emitOtelEvent({
+      action: "agent_loop.prd.preflight.normalized",
+      component: "agent-loop",
+      source: "planner",
+      level: "info",
+      success: true,
+      metadata: {
+        loop_id: loopId,
+        source: "event",
+        fixes: normalized.fixes,
+        fix_count: normalized.fixes.length,
+      },
+    });
+  }
+
   const redis = getRedis();
   await redis.set(prdKey(loopId), JSON.stringify(prdWithMetadata));
   await redis.expire(prdKey(loopId), 7 * 24 * 60 * 60);
@@ -662,12 +832,12 @@ export async function readPrd(
     const redis = getRedis();
     const data = await redis.get(prdKey(loopId));
     if (data) {
-      return JSON.parse(data) as Prd;
+      return normalizePrdOrThrow(JSON.parse(data) as unknown, `redis:${prdKey(loopId)}`).prd;
     }
   }
   // Fallback: read from disk (backward compat for loops started before Redis migration)
   const fullPath = join(project, prdPath);
-  return JSON.parse(await Bun.file(fullPath).text()) as Prd;
+  return normalizePrdOrThrow(JSON.parse(await Bun.file(fullPath).text()) as unknown, fullPath).prd;
 }
 
 /**

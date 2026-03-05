@@ -54,6 +54,7 @@ Create a `prd.json` in the project root:
 - Keep stories small and atomic — one concern per story
 - Include file paths in descriptions when possible
 - `passes` flips to `true` when JUDGE approves; `skipped: true` added on max retry exhaustion
+- Runtime preflight normalizes legacy aliases (`acceptance`, `acceptanceCriteria`) to `acceptance_criteria`, but malformed stories still fail fast with explicit schema errors — keep PRDs canonical.
 
 ## Pipeline Flow
 

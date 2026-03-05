@@ -16,7 +16,7 @@ async function buildTestWriterPrompt(story: {
   id: string;
   title: string;
   description: string;
-  acceptance_criteria: string[];
+  acceptance_criteria?: string[];
 }): Promise<string> {
   let systemContext = "";
   const skStarted = Date.now();
@@ -56,6 +56,10 @@ async function buildTestWriterPrompt(story: {
     });
   }
 
+  const acceptanceCriteria = Array.isArray(story.acceptance_criteria)
+    ? story.acceptance_criteria
+    : [];
+
   return [
     `## Write Acceptance Tests: ${story.title} (${story.id})`,
     "",
@@ -70,7 +74,9 @@ async function buildTestWriterPrompt(story: {
     story.description,
     "",
     "## Acceptance Criteria",
-    ...story.acceptance_criteria.map((criterion, index) => `${index + 1}. ${criterion}`),
+    ...(acceptanceCriteria.length > 0
+      ? acceptanceCriteria.map((criterion, index) => `${index + 1}. ${criterion}`)
+      : ["1. [MISSING] acceptance_criteria"]),
     "",
     "## Instructions",
     "1. Write tests that directly validate each acceptance criterion through public behavior.",
