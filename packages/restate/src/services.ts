@@ -1,7 +1,7 @@
 import * as restate from "@restatedev/restate-sdk";
 
-export const pilotWorker = restate.service({
-  name: "pilotWorker",
+export const workerService = restate.service({
+  name: "workerService",
   handlers: {
     runTask: async (
       ctx: restate.Context,
@@ -18,13 +18,13 @@ export const pilotWorker = restate.service({
   },
 });
 
-export const pilotOrchestrator = restate.service({
-  name: "pilotOrchestrator",
+export const orchestratorService = restate.service({
+  name: "orchestratorService",
   handlers: {
     runBatch: async (ctx: restate.Context, tasks: string[]) => {
       const results = await Promise.all(
         tasks.map((task, index) =>
-          ctx.serviceClient(pilotWorker).runTask({
+          ctx.serviceClient(workerService).runTask({
             taskId: `task-${index + 1}`,
             payload: task,
           }),
@@ -40,8 +40,8 @@ export const pilotOrchestrator = restate.service({
   },
 });
 
-export const pilotApprovalWorkflow = restate.workflow({
-  name: "pilotApprovalWorkflow",
+export const approvalWorkflow = restate.workflow({
+  name: "approvalWorkflow",
   handlers: {
     run: async (ctx: restate.WorkflowContext, request: string) => {
       await ctx.run("capture-request", () => ({
@@ -67,4 +67,4 @@ export const pilotApprovalWorkflow = restate.workflow({
   },
 });
 
-export const services = [pilotWorker, pilotOrchestrator, pilotApprovalWorkflow];
+export const services = [workerService, orchestratorService, approvalWorkflow];

@@ -15,17 +15,17 @@ Canonical notes for `packages/system-bus/src/inngest/functions/`.
 
 ## Key reliability flows
 
-### Restate dual-run pilot (ADR-0207)
+### Restate dual-run Phase-1 (ADR-0207)
 
-Restate is introduced as a **new-workload durable runtime pilot** while Inngest remains primary for existing workflows.
+Restate is introduced as a **new-workload durable runtime** while Inngest remains primary for existing workflows.
 
-Implemented pilot surfaces:
+Implemented Phase-1 surfaces:
 
 - k8s runtime manifest: `k8s/restate.yaml`
   - StatefulSet `restate` with pinned image `restatedev/restate:1.6.2`
   - ClusterIP service exposing ingress/admin/metrics ports (`8080/9070/9071`)
   - startup/readiness/liveness probes configured
-- pilot service package: `packages/restate-pilot/`
+- Restate service package: `packages/restate/`
   - demonstrates step chain (`ctx.run`), fan-out/fan-in (`ctx.serviceClient`), and approval signal workflow (`ctx.promise`)
 - deployment registration script: `scripts/restate/register-deployment.sh`
   - registers service endpoint via `restate deployments register`
@@ -37,8 +37,8 @@ Implemented pilot surfaces:
 Operational boundary for Phase 1:
 
 - Keep existing Inngest functions as-is.
-- Route **new pilot orchestration workflows** to Restate only.
-- Do not migrate event-native fan-out workflows until pilot reliability and recovery behavior are verified.
+- Route **new Restate orchestration workflows** to Restate only.
+- Do not migrate event-native fan-out workflows until Phase-1 reliability and recovery behavior are verified.
 
 ### System health
 

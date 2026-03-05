@@ -1,6 +1,6 @@
-# @joelclaw/restate-pilot
+# @joelclaw/restate
 
-ADR-0207 pilot package for Restate durable execution patterns.
+ADR-0207 Restate package for durable execution patterns.
 
 ## What this package proves
 
@@ -10,14 +10,14 @@ ADR-0207 pilot package for Restate durable execution patterns.
 
 ## Services
 
-- `pilotWorker.runTask` — durable unit-of-work handler
-- `pilotOrchestrator.runBatch` — fan-out/fan-in orchestrator
-- `pilotApprovalWorkflow.run/approve/reject` — approval signal workflow
+- `workerService.runTask` — durable unit-of-work handler
+- `orchestratorService.runBatch` — fan-out/fan-in orchestrator
+- `approvalWorkflow.run/approve/reject` — approval signal workflow
 
 ## Run locally
 
 ```bash
-bun run packages/restate-pilot/src/index.ts
+bun run packages/restate/src/index.ts
 ```
 
 ## Register deployment with Restate runtime

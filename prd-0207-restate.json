@@ -1,5 +1,5 @@
 {
-  "title": "ADR-0207: Restate Dual-Run Pilot",
+  "title": "ADR-0207: Restate Dual-Run Phase-1",
   "description": "Execute Phase 1 of ADR-0207 by standing up Restate in k8s, wiring a minimal execution path, adding CLI visibility, and documenting operational runbooks for dual-run with Inngest.",
   "repo": "~/Code/joelhooks/joelclaw",
   "branch": "main",
@@ -24,12 +24,12 @@
     },
     {
       "id": "R207-2",
-      "title": "Add Restate pilot workflow package scaffold",
-      "description": "Create a small @joelclaw/restate-pilot package with one durable workflow demonstrating step chain + fan-out/fan-in semantics matching ADR-0207 mapping. Keep this isolated from system-bus production paths.",
+      "title": "Add Restate workflow package scaffold",
+      "description": "Create a small @joelclaw/restate package with one durable workflow demonstrating step chain + fan-out/fan-in semantics matching ADR-0207 mapping. Keep this isolated from system-bus production paths.",
       "priority": 2,
       "status": "pending",
       "acceptance_criteria": [
-        "New package created under packages/restate-pilot",
+        "New package created under packages/restate",
         "Package exports one workflow and one service entrypoint",
         "Workflow includes durable steps and at least one service-to-service call",
         "No cross-package relative imports; use @joelclaw/* boundaries",
@@ -37,14 +37,14 @@
         "bunx tsc --noEmit passes"
       ],
       "files": [
-        "packages/restate-pilot/package.json",
-        "packages/restate-pilot/src/index.ts",
-        "packages/restate-pilot/README.md"
+        "packages/restate/package.json",
+        "packages/restate/src/index.ts",
+        "packages/restate/README.md"
       ]
     },
     {
       "id": "R207-3",
-      "title": "Wire pilot deployment registration and ops script",
+      "title": "Wire deployment registration and ops script",
       "description": "Add script(s) to register Restate deployments from local/cluster and verify connectivity. Include an idempotent path for re-registration and a smoke command.",
       "priority": 3,
       "status": "pending",
@@ -62,7 +62,7 @@
     },
     {
       "id": "R207-4",
-      "title": "Add joelclaw CLI visibility for Restate pilot",
+      "title": "Add joelclaw CLI visibility for Restate",
       "description": "Extend CLI with restate status/list commands (or inngest namespace extension if preferred) to inspect Restate health and recent invocations without leaving joelclaw CLI surface.",
       "priority": 4,
       "status": "pending",
@@ -80,13 +80,13 @@
     },
     {
       "id": "R207-5",
-      "title": "Document dual-run pilot contract and verification",
+      "title": "Document dual-run Phase-1 contract and verification",
       "description": "Update ADR-0207 verification checklist from planned to implemented evidence where completed, and add docs for dual-run boundaries: what stays on Inngest vs what runs on Restate in Phase 1.",
       "priority": 5,
       "status": "pending",
       "acceptance_criteria": [
         "ADR-0207 updated with implementation progress notes",
-        "docs/inngest-functions.md updated with dual-run boundary and pilot routing",
+        "docs/inngest-functions.md updated with dual-run boundary and Restate routing",
         "Verification checklist items clearly marked done/pending with evidence",
         "No contradictions between ADR and docs"
       ],
