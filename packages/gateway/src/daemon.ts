@@ -609,12 +609,28 @@ void emitGatewayOtel({
 // context grew → Opus first-token latency exceeded 120s → fallback thrash loop.
 const MAX_COMPACTION_GAP_MS = 4 * 60 * 60 * 1000; // 4 hours — force compact if overdue
 const MAX_SESSION_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours — fresh session if exceeded
-const sessionCreatedAt = Date.now();
 let lastCompactionAt = Date.now();
 
-// Initialize lastCompactionAt from session history (resumed sessions)
+// Initialize sessionCreatedAt and lastCompactionAt from session history.
+// For resumed sessions, session age = earliest entry timestamp (not daemon restart time).
+// This ensures the 24h guard fires correctly for sessions that span daemon restarts.
+let sessionCreatedAt = Date.now();
 {
   const initEntries = sessionManager.getEntries();
+
+  // Session creation time = first entry's timestamp
+  if (initEntries.length > 0) {
+    const firstEntry = initEntries[0];
+    const firstTs = (firstEntry as any)?.timestamp;
+    if (typeof firstTs === "string") {
+      const parsed = new Date(firstTs).getTime();
+      if (!Number.isNaN(parsed)) {
+        sessionCreatedAt = parsed;
+      }
+    }
+  }
+
+  // Last compaction time = most recent compaction entry
   for (let i = initEntries.length - 1; i >= 0; i--) {
     const entry = initEntries[i];
     if (entry?.type === "compaction") {
@@ -628,10 +644,14 @@ let lastCompactionAt = Date.now();
       }
     }
   }
+
   const compactionAge = Date.now() - lastCompactionAt;
+  const sessionAge = Date.now() - sessionCreatedAt;
   console.log("[gateway] session lifecycle init", {
+    sessionAge: `${Math.round(sessionAge / 3_600_000 * 10) / 10}h`,
     lastCompactionAge: `${Math.round(compactionAge / 60_000)}m`,
     sessionEntries: initEntries.length,
+    resumed: hasExistingSession,
   });
 }
 
