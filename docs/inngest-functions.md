@@ -33,6 +33,7 @@ Implemented Phase-1 surfaces:
 - smoke test script: `scripts/restate/test-workflow.sh`
   - runs end-to-end Restate workflow invocation against k8s runtime
   - verifies MinIO object write/read round-trip from workflow output
+  - defaults to `joelclaw/minio`; auto-falls back to `aistor/aistor-s3-api` when MinIO is unavailable
 - CLI visibility: `joelclaw restate`
   - `joelclaw restate status` checks runtime/statefulset/service/admin probe
   - `joelclaw restate deployments` shells to Restate CLI listing
