@@ -396,7 +396,7 @@ export const xPost = inngest.createFunction(
   {
     id: "x-post",
     name: "X Post",
-    retries: 0,
+    retries: 2,
     concurrency: { limit: 1, key: "x-post" },
   },
   { event: "x/post.requested" },

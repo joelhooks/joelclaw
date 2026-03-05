@@ -1,15 +1,15 @@
 import { getRedisPort } from "../../lib/redis";
 
 /**
- * Email inbox triage — autonomous agent that processes email silently.
+ * Email inbox triage — autonomous agent that favors escalation over silent archiving.
  * ADR-0052: Uses EmailPort (Front + Gmail adapters).
  * ADR-0053: Agency triage principle — act, don't narrate.
  *
  * This function DOES the work:
- *   - Archives noise (newsletters, notifications, automated)
+ *   - Archives obvious automated noise
  *   - Unsubscribes from junk
  *   - Tags/labels for organization
- *   - Only escalates to gateway when a reply or decision is needed
+ *   - Escalates real-human and interesting conversations to gateway
  *
  * 2h cooldown between runs. Daytime only.
  */
@@ -35,27 +35,32 @@ const TRIAGE_MODEL = "anthropic/claude-sonnet-4-6";
 
 const TRIAGE_SYSTEM_PROMPT = `You triage emails for Joel Hooks. Categorize each email into exactly one action:
 
-- archive: newsletters, notifications, automated alerts, marketing, receipts, shipping updates — anything that doesn't need a response
-- unsubscribe: persistent junk, spam-like newsletters Joel never reads, marketing he'd want to stop
-- label: useful reference (tag with a label name) but no reply needed. Use labels: "receipts", "shipping", "github", "billing", "reading"
-- reply-needed: someone is waiting for Joel's response. A real human wrote to him.
+- reply-needed: someone is waiting for Joel's response. A real human wrote to him expecting a reply. THIS IS THE DEFAULT for any email from a real person.
 - decision-needed: requires Joel to make a choice (approve something, accept/decline invite, sign off)
+- interesting: relates to active/potential projects, genuinely interesting opportunities, industry intel Joel would want to see
+- archive: ONLY for obvious automated noise — newsletters he didn't subscribe to, marketing blasts, shipping notifications, receipts, automated CI/deploy alerts, password resets
+- unsubscribe: persistent junk, spam-like newsletters Joel never reads
+- label: useful reference (tag with a label name) but no reply needed. Use labels: "receipts", "shipping", "github", "billing", "reading"
 
-Be aggressive about archiving. Joel's inbox should only contain things that need his attention.
+CRITICAL RULES:
+- If a real person wrote the email, it is NEVER "archive". Default to "reply-needed".
+- If you're unsure, choose "reply-needed" — false positives are cheap, false negatives lose relationships.
+- "interesting" emails should also be surfaced to Joel, not archived.
+- Legal threats, contract issues, financial matters = always "decision-needed".
 
 Respond ONLY with valid JSON:
 {
   "triage": [
     {
       "id": "conversation-id",
-      "action": "archive|unsubscribe|label|reply-needed|decision-needed",
+      "action": "archive|unsubscribe|label|reply-needed|decision-needed|interesting",
       "label": "optional-label-name",
       "reason": "1 sentence why"
     }
   ]
 }`;
 
-type TriageAction = "archive" | "unsubscribe" | "label" | "reply-needed" | "decision-needed";
+type TriageAction = "archive" | "unsubscribe" | "label" | "reply-needed" | "decision-needed" | "interesting";
 
 type TriageItem = {
   id: string;
@@ -68,7 +73,7 @@ type ActionSummary = {
   archived: number;
   unsubscribed: number;
   labeled: number;
-  escalated: { subject: string; from: string; reason: string }[];
+  escalated: { id: string; subject: string; from: string; reason: string }[];
 };
 
 let redisClient: Redis | null = null;
@@ -96,8 +101,19 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return Boolean(v) && typeof v === "object";
 }
 
+function isValidAction(v: unknown): v is TriageAction {
+  return (
+    v === "archive"
+    || v === "unsubscribe"
+    || v === "label"
+    || v === "reply-needed"
+    || v === "decision-needed"
+    || v === "interesting"
+  );
+}
+
 function normalizeAction(v: unknown): TriageAction | null {
-  if (v === "archive" || v === "unsubscribe" || v === "label" || v === "reply-needed" || v === "decision-needed") return v;
+  if (isValidAction(v)) return v;
   return null;
 }
 
@@ -282,7 +298,9 @@ export const checkEmail = inngest.createFunction(
 
             case "reply-needed":
             case "decision-needed":
+            case "interesting":
               result.escalated.push({
+                id: convo.id,
                 subject: convo.subject,
                 from: convo.from,
                 reason: triage.reason,
@@ -320,7 +338,7 @@ export const checkEmail = inngest.createFunction(
     // Step 6: Only notify gateway for emails that need Joel AND don't have tasks
     await step.run("notify-gateway", async () => {
       const lines = filteredEscalations.map((e) =>
-        `- **${e.subject}** from ${e.from}\n  _${e.reason}_`
+        `- **${e.subject}** from ${e.from}\n  _${e.reason}_\n  [Open in Front](https://app.frontapp.com/open/${e.id})`
       );
 
       const silentSummary = [

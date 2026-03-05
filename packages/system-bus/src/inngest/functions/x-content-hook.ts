@@ -67,7 +67,7 @@ export const xContentHook = inngest.createFunction(
   {
     id: "x-content-hook",
     name: "X Content Hook",
-    retries: 0,
+    retries: 2,
   },
   { event: "content/published" },
   async ({ event, step }) => {

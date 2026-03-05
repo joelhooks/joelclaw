@@ -46,6 +46,7 @@ export {
   docsReindex,
 } from "./docs-maintenance";
 export { emailInboxCleanup } from "./email-cleanup";
+export { emailNag } from "./email-nag";
 export { embedText } from "./embed";
 export { friction } from "./friction";
 export { frictionFix } from "./friction-fix";

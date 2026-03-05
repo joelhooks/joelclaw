@@ -81,7 +81,7 @@ export const embedText = inngest.createFunction(
     id: "embedding-generate",
     name: "Generate Embeddings",
     concurrency: { limit: 1, key: EMBED_CONCURRENCY_KEY },
-    retries: 0,
+    retries: 2,
   },
   { event: "embedding/text.requested" },
   async ({ event, step }) => {

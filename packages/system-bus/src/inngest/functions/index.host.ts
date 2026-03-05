@@ -43,6 +43,7 @@ import {
   docsReindex,
 } from "./docs-maintenance";
 import { emailInboxCleanup } from "./email-cleanup";
+import { emailNag } from "./email-nag";
 import { embedText } from "./embed";
 import { friction } from "./friction";
 import { frictionFix } from "./friction-fix";
@@ -185,6 +186,7 @@ export const hostFunctionDefinitions = [
   checkGranola,
   granolaCheckCron,
   checkEmail,
+  emailNag,
   checkGatewayHealth,
   vipEmailReceived,
   checkCalendar,

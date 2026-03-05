@@ -96,6 +96,18 @@ Do **not** mutate `main.db` without a point-in-time backup.
   4. sets cooldown only when a gateway notification is actually pushed
   5. emits telemetry with `classificationValid`, `triageItemsCount`, `actionableCount`, and `outputFailureReason`
 
+### Email triage + nag contract
+
+- functions:
+  - `check/email-triage` (`packages/system-bus/src/inngest/functions/check-email.ts`)
+  - `email-nag` (`packages/system-bus/src/inngest/functions/email-nag.ts`)
+- behavior:
+  1. triage is **nag-first** for human senders (`reply-needed` default for real-person emails)
+  2. `interesting` is a first-class escalation action (never silently archived)
+  3. escalation notifications include direct Front deep links (`https://app.frontapp.com/open/<conversationId>`)
+  4. `email-nag` runs on cron `0 17,22 * * *` (9am/2pm PST), leases `front_api_token`, and only nags for inbound-last conversations waiting `>4h`
+  5. nag digests are sorted oldest-first and delivered through `pushGatewayEvent`
+
 ### Memory proposal triage review-task contract
 
 - function: `memory/proposal-triage`

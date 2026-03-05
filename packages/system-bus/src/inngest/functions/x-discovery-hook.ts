@@ -46,7 +46,7 @@ export const xDiscoveryHook = inngest.createFunction(
   {
     id: "x-discovery-hook",
     name: "X Discovery Hook",
-    retries: 0,
+    retries: 2,
   },
   { event: "discovery/captured" },
   async ({ event, step }) => {
