@@ -62,14 +62,18 @@ Mac Mini "Panda" (host macOS)
 ├─ launchd services (gateway, worker supervisor, caddy, talon, agent-mail, etc.)
 ├─ Colima VM (driver: VZ, arch: aarch64, runtime: docker, VM IP: 192.168.64.2)
 │  └─ Talos node: joelclaw-controlplane-1 (k8s v1.35.0, internal IP 10.5.0.2)
-│     └─ namespace: joelclaw
-│        ├─ inngest (StatefulSet + NodePort 8288/8289)
-│        ├─ redis (StatefulSet + NodePort 6379)
-│        ├─ typesense (StatefulSet + ClusterIP 8108)
-│        ├─ system-bus-worker (Deployment + ClusterIP 3111)
-│        ├─ docs-api (Deployment + NodePort 3838)
-│        ├─ livekit-server (Deployment + NodePort 7880/7881)
-│        └─ bluesky-pds (Deployment + NodePort 3000)
+│     ├─ namespace: joelclaw
+│     │  ├─ inngest (StatefulSet + NodePort 8288/8289)
+│     │  ├─ redis (StatefulSet + NodePort 6379)
+│     │  ├─ typesense (StatefulSet + ClusterIP 8108)
+│     │  ├─ system-bus-worker (Deployment + ClusterIP 3111)
+│     │  ├─ docs-api (Deployment + NodePort 3838)
+│     │  ├─ livekit-server (Deployment + NodePort 7880/7881)
+│     │  ├─ bluesky-pds (Deployment + NodePort 3000)
+│     │  └─ minio (StatefulSet + NodePort 30900/30901)
+│     └─ namespace: aistor
+│        ├─ aistor operator (Deployments: adminjob-operator, object-store-operator)
+│        └─ aistor-s3 object store (StatefulSet + NodePort 31000/31001)
 ├─ Caddy reverse proxy (tailnet HTTPS fan-in)
 ├─ Gateway daemon (embedded pi session)
 └─ NAS "three-body" (NFS tiers per ADR-0088)
@@ -157,6 +161,9 @@ Source: `infra/worker-supervisor/src/main.rs`
 | docs-api | Deployment | NodePort | 3838 | 3838 | PDF/docs API |
 | livekit-server | Deployment (Helm) | NodePort | 80, 7881 | 7880 (for svc port 80), 7881 | LiveKit signaling + rtc tcp |
 | bluesky-pds | Deployment (Helm-managed) | NodePort | 3000 | 3000 | AT Proto PDS |
+| minio | StatefulSet | ClusterIP + NodePort | 9000, 9001 | 30900, 30901 | Legacy local S3-compatible runtime |
+| aistor-s3-api (`aistor` ns) | NodePort service (operator-managed) | NodePort | 443, 9000 | 31000 (+ dynamic management NodePort) | AIStor S3 API (TLS + management) |
+| aistor-s3-console (`aistor` ns) | NodePort service (operator-managed) | NodePort | 9443 | 31001 | AIStor web console |
 
 ### Control-plane access
 - kube API exposed locally at `127.0.0.1:64784` (forwarded)
@@ -270,6 +277,10 @@ From index comments + function lists:
 | 7880 | ssh forward (Colima) -> livekit-server | LiveKit signaling | NodePort 7880; proxied via Caddy 7443 |
 | 7881 | ssh forward (Colima) -> livekit-server | LiveKit RTC TCP | NodePort 7881 |
 | 3000 | k8s bluesky-pds NodePort | Bluesky PDS HTTP | NodePort 3000 |
+| 30900 | k8s minio-nodeport | Legacy MinIO S3 API (HTTP) | NodePort 30900 |
+| 30901 | k8s minio-nodeport | Legacy MinIO console (HTTP) | NodePort 30901 |
+| 31000 | k8s aistor-s3-api (`aistor` ns) | AIStor S3 API (TLS) | NodePort 31000 |
+| 31001 | k8s aistor-s3-console (`aistor` ns) | AIStor console (TLS) | NodePort 31001 |
 | 3443 | Caddy | HTTPS reverse proxy to `localhost:3111` | tailnet HTTPS |
 | 5443 | Caddy | HTTPS reverse proxy to `localhost:3838` | tailnet HTTPS |
 | 7443 | Caddy | HTTPS reverse proxy to `localhost:7880` | tailnet HTTPS |
@@ -422,6 +433,7 @@ Config source:
 | ADR-0158 | worker-supervisor binary | superseded | Legacy supervisor ADR now superseded, but binary remains in active launchd path |
 | ADR-0182 | node-0 localhost resilience | shipped | endpoint class fallback (`localhost -> vm -> svc_dns`) |
 | ADR-0187 | NAS degradation fallback contract | accepted | mandatory local/remote/queued write fallback |
+| ADR-0212 | AIStor as local S3 runtime | accepted | maintained local S3 runtime in `aistor` namespace; legacy MinIO retained for rollback |
 
 ---
 

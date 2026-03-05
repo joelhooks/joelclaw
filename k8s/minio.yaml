@@ -45,6 +45,8 @@ spec:
     spec:
       containers:
       - name: minio
+        # Legacy rollback runtime only.
+        # Source-only policy removed reliable tagged images, keep `latest` for now.
         image: minio/minio:latest
         command:
         - minio

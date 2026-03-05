@@ -55,6 +55,8 @@ kubectl exec -n joelclaw redis-0 -- redis-cli ping     # → PONG
 | system-bus-worker | Deployment | system-bus-worker-* | 3111→3111 | No |
 | LiveKit | Deployment | livekit-server-* | 7880→7880, 7881→7881 | Yes (livekit/livekit-server 1.9.0) |
 | PDS | Deployment | bluesky-pds-* | 9627→**3000** | Yes (nerkho/bluesky-pds 0.4.2) |
+| AIStor Operator (`aistor` ns) | Deployments | adminjob-operator, object-store-operator | n/a | Yes (`minio/aistor-operator`) |
+| AIStor ObjectStore (`aistor` ns) | StatefulSet | aistor-s3-pool-0-0 | 31000 (S3 TLS), 31001 (console) | Yes (`minio/aistor-objectstore`) |
 
 **⚠️ PDS port trap**: Docker maps `9627→3000` (host→container). NodePort must be **3000** to match the container-side port. If set to 9627, traffic won't route.
 
@@ -71,6 +73,11 @@ kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/
 
 # LiveKit (Helm + reconcile patches)
 ~/Code/joelhooks/joelclaw/k8s/reconcile-livekit.sh joelclaw
+
+# AIStor (Helm operator + objectstore)
+# Defaults to isolated `aistor` namespace to avoid service-name collisions with legacy `joelclaw/minio`.
+# Cutover override (explicit only): AISTOR_OBJECTSTORE_NAMESPACE=joelclaw AISTOR_ALLOW_JOELCLAW_NAMESPACE=true
+~/Code/joelhooks/joelclaw/k8s/reconcile-aistor.sh
 
 # PDS (Helm) — always patch NodePort to 3000
 # (export current values first if the release already exists)
@@ -133,6 +140,9 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 3. **Inngest legacy host alias in manifests** — old container-host alias may still appear in legacy configs. Worker uses connect mode, so it usually still works, but prefer explicit Talos/Colima hostnames.
 4. **Colima zombie state** — `colima status` reports "Running" but docker socket / SSH tunnels are dead. All k8s ports unresponsive. `colima start` is a no-op. Only `colima restart` recovers. Detect with: `ssh -F ~/.colima/_lima/colima/ssh.config lima-colima "docker info"` — if that fails while `colima status` passes, it's a zombie. The heal script handles this automatically.
 5. **Talos container has NO shell** — No bash, no /bin/sh. Cannot `docker exec` into it. Kernel modules like `br_netfilter` must be loaded at the Colima VM level: `ssh lima-colima "sudo modprobe br_netfilter"`.
+6. **AIStor service-name collision** — if AIStor objectstore is deployed in `joelclaw`, it can claim `svc/minio` and break legacy MinIO assumptions. Keep AIStor objectstore in isolated namespace (`aistor`) unless intentionally cutting over.
+7. **AIStor operator webhook SSA conflict** — repeated `helm upgrade` can fail on `MutatingWebhookConfiguration` `caBundle` ownership conflict. Current mitigation in this cluster: set `operators.object-store.webhook.enabled=false` in `k8s/aistor-operator-values.yaml`.
+8. **MinIO pinned tag trap** — `minio/minio:RELEASE.2025-10-15T17-29-55Z` is not available on Docker Hub in this environment (ErrImagePull). Legacy fallback currently relies on `minio/minio:latest`.
 
 ## Key Files
 
@@ -141,6 +151,9 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 | `~/Code/joelhooks/joelclaw/k8s/*.yaml` | Service manifests |
 | `~/Code/joelhooks/joelclaw/k8s/livekit-values.yaml` | LiveKit Helm values (source controlled) |
 | `~/Code/joelhooks/joelclaw/k8s/reconcile-livekit.sh` | LiveKit Helm deploy + post-upgrade reconcile |
+| `~/Code/joelhooks/joelclaw/k8s/aistor-operator-values.yaml` | AIStor operator Helm values |
+| `~/Code/joelhooks/joelclaw/k8s/aistor-objectstore-values.yaml` | AIStor objectstore Helm values |
+| `~/Code/joelhooks/joelclaw/k8s/reconcile-aistor.sh` | AIStor deploy + upgrade reconcile script |
 | `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh` | Build/push/deploy system-bus worker to k8s |
 | `~/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh` | Reboot auto-heal script for Colima/Talos/taint/flannel |
 | `~/Code/joelhooks/joelclaw/infra/launchd/com.joel.k8s-reboot-heal.plist` | launchd timer for reboot auto-heal |

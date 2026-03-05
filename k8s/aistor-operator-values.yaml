@@ -1,0 +1,22 @@
+# AIStor operator settings for joelclaw cluster
+# License is provided at deploy time via --set license=... from secrets.
+
+global:
+  operator:
+    replicas: 1
+
+operators:
+  adminjob:
+    disabled: false
+  object-store:
+    disabled: false
+    webhook:
+      # webhook CA bundle drift causes server-side-apply conflicts on repeat upgrades
+      # in this single-node setup; disable until we need spread-zone mutation hooks.
+      enabled: false
+  aihub:
+    disabled: true
+  prompt:
+    disabled: true
+  warp:
+    disabled: true
