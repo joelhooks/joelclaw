@@ -4,10 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 
 RESTATE_CLI_BIN="${RESTATE_CLI_BIN:-restate}"
-RESTATE_ADMIN_LOCAL_PORT="${SMOKE_RESTATE_ADMIN_LOCAL_PORT:-${RESTATE_ADMIN_LOCAL_PORT:-9070}}"
-RESTATE_INGRESS_LOCAL_PORT="${SMOKE_RESTATE_INGRESS_LOCAL_PORT:-${RESTATE_INGRESS_LOCAL_PORT:-8080}}"
-RESTATE_SERVICE_PORT="${SMOKE_RESTATE_SERVICE_PORT:-${RESTATE_SERVICE_PORT:-9080}}"
-RESTATE_DEPLOYMENT_ENDPOINT="${SMOKE_RESTATE_DEPLOYMENT_ENDPOINT:-${RESTATE_DEPLOYMENT_ENDPOINT:-http://host.lima.internal:${RESTATE_SERVICE_PORT}}}"
+RESTATE_ADMIN_LOCAL_PORT="${SMOKE_RESTATE_ADMIN_LOCAL_PORT:-9070}"
+RESTATE_INGRESS_LOCAL_PORT="${SMOKE_RESTATE_INGRESS_LOCAL_PORT:-8080}"
+RESTATE_SERVICE_PORT="${SMOKE_RESTATE_SERVICE_PORT:-9080}"
+RESTATE_DEPLOYMENT_ENDPOINT="${SMOKE_RESTATE_DEPLOYMENT_ENDPOINT:-http://host.lima.internal:${RESTATE_SERVICE_PORT}}"
 
 MINIO_NAMESPACE="${SMOKE_MINIO_NAMESPACE:-${MINIO_NAMESPACE:-joelclaw}}"
 MINIO_SERVICE_NAME="${SMOKE_MINIO_SERVICE_NAME:-${MINIO_SERVICE_NAME:-minio}}"
@@ -88,9 +88,35 @@ if [[ "$MINIO_USE_SSL" == "true" ]]; then
   MINIO_HEALTH_INSECURE="true"
 fi
 
-wait_for_url "${MINIO_SCHEME}://localhost:${MINIO_LOCAL_PORT}/minio/health/ready" "minio" 30 "$MINIO_HEALTH_INSECURE"
+if ! wait_for_url "${MINIO_SCHEME}://localhost:${MINIO_LOCAL_PORT}/minio/health/ready" "minio" 30 "$MINIO_HEALTH_INSECURE"; then
+  if [[ "$MINIO_NAMESPACE" == "joelclaw" && "$MINIO_SERVICE_NAME" == "minio" ]]; then
+    echo "default MinIO unavailable; falling back to aistor/aistor-s3-api"
+
+    kill "$PF_MINIO_PID" 2>/dev/null || true
+    MINIO_NAMESPACE="aistor"
+    MINIO_SERVICE_NAME="aistor-s3-api"
+    MINIO_LOCAL_PORT="39000"
+    MINIO_USE_SSL="true"
+    MINIO_SCHEME="https"
+    MINIO_HEALTH_INSECURE="true"
+
+    kubectl -n "$MINIO_NAMESPACE" port-forward "svc/${MINIO_SERVICE_NAME}" "${MINIO_LOCAL_PORT}:9000" >/tmp/restate-smoke-minio-port-forward.log 2>&1 &
+    PF_MINIO_PID=$!
+
+    wait_for_url "${MINIO_SCHEME}://localhost:${MINIO_LOCAL_PORT}/minio/health/ready" "aistor" 30 "$MINIO_HEALTH_INSECURE"
+  else
+    exit 1
+  fi
+fi
 
 echo "[3/6] start local Restate deployment endpoint"
+STALE_PIDS="$(lsof -tiTCP:"${RESTATE_SERVICE_PORT}" -sTCP:LISTEN 2>/dev/null || true)"
+if [[ -n "$STALE_PIDS" ]]; then
+  echo "clearing stale listeners on ${RESTATE_SERVICE_PORT}: $STALE_PIDS"
+  kill $STALE_PIDS 2>/dev/null || true
+  sleep 1
+fi
+
 (
   cd "$ROOT_DIR"
 
@@ -110,10 +136,16 @@ echo "[3/6] start local Restate deployment endpoint"
 SVC_PID=$!
 
 for i in {1..20}; do
+  if ! kill -0 "$SVC_PID" 2>/dev/null; then
+    echo "error: local deployment endpoint process exited early"
+    exit 1
+  fi
+
   if lsof -nP -iTCP:"${RESTATE_SERVICE_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "ready: local deployment endpoint"
     break
   fi
+
   sleep 1
   if [[ "$i" == "20" ]]; then
     echo "error: local deployment endpoint did not start on ${RESTATE_SERVICE_PORT}"
@@ -127,6 +159,7 @@ echo "[4/6] register deployment endpoint"
   RESTATE_CLI_BIN="$RESTATE_CLI_BIN" \
   RESTATE_ADMIN_URL="http://localhost:${RESTATE_ADMIN_LOCAL_PORT}" \
   RESTATE_DEPLOYMENT_ENDPOINT="$RESTATE_DEPLOYMENT_ENDPOINT" \
+  RESTATE_REGISTER_FORCE=true \
   scripts/restate/register-deployment.sh
 ) >/tmp/restate-smoke-register.log 2>&1
 
