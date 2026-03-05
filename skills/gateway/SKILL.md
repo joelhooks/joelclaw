@@ -2,7 +2,7 @@
 name: gateway
 displayName: Gateway
 description: "Operate the joelclaw gateway daemon — the always-on pi session that receives events, notifications, and messages. Use the joelclaw CLI for ALL gateway operations. Use when: 'restart gateway', 'gateway status', 'is gateway healthy', 'push to gateway', 'gateway not responding', 'telegram not working', 'messages not going through', 'gateway stuck', 'gateway debug', 'check gateway', 'drain queue', 'test gateway', 'stream events', or any task involving the gateway daemon."
-version: 1.0.2
+version: 1.0.3
 author: Joel Hooks
 tags: [joelclaw, gateway, daemon, redis, telegram]
 ---
@@ -30,6 +30,16 @@ joelclaw gateway behavior {add|list|promote|remove|apply|stats}  # ADR-0211 beha
 `joelclaw gateway restart` is the canonical restart. It kills the process, cleans Redis state, re-enables `com.joel.gateway` if launchd disabled it, waits for launchd to respawn, and verifies the new session. `joelclaw gateway enable` is the direct recovery path when launchd drift disabled the service. Never use `launchctl bootout/bootstrap` directly.
 
 ## Quick Triage
+
+Substrate precheck first (avoid chasing secondary gateway symptoms):
+
+```bash
+colima status --json
+kubectl get nodes -o wide
+kubectl get pods -n joelclaw redis-0 inngest-0
+```
+
+If Colima is down or node/core pods are not healthy, recover substrate before gateway operations.
 
 Run in order, stop at first failure:
 
@@ -116,7 +126,8 @@ await pushGatewayEvent({
 | Slack passive firehose looks dead (mentions still work) | `SLACK_ALLOWED_USER_ID` not derived at startup | Ensure `slack_user_token` lease works; `gateway-start.sh` derives user id via `auth.test`, then `joelclaw gateway restart` |
 | Slack replies have no default target | `SLACK_DEFAULT_CHANNEL_ID` not derived at startup | Ensure `slack_bot_token` lease works; `gateway-start.sh` derives DM channel via `conversations.open`, then restart |
 | Gateway restarts every few seconds | Crash loop — bad secret lease or code error | Check `/tmp/joelclaw/gateway.err`, fix cause |
-| Redis connection failed | Redis pod down | `joelclaw status` to check k8s health |
+| Redis connection failed | Redis pod down or Colima/k8s substrate down | Check `colima status --json`, then `joelclaw status`/`kubectl` for cluster health |
+| `langfuse-cost` optional dependency warning | Langfuse tracing dependency missing for pi extension runtime | Observability degradation only; do not treat as message-path blocker |
 
 ## Architecture
 
@@ -155,6 +166,11 @@ This keeps gateway automation hooks out of normal interactive pi sessions.
 | `packages/cli/src/commands/gateway.ts` | CLI subcommands |
 | `~/.joelclaw/scripts/gateway-start.sh` | launchd start script |
 | `/tmp/joelclaw/gateway.{log,err,pid}` | Runtime logs and PID |
+
+## ADR anchors
+
+- **ADR-0213** — session lifecycle guards and anti-thrash behavior
+- **ADR-0146** — Langfuse observability integration (must fail open when optional dependency is missing)
 
 ## Related
 

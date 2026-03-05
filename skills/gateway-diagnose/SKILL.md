@@ -2,7 +2,7 @@
 name: gateway-diagnose
 displayName: Gateway Diagnose
 description: "Diagnose gateway failures by reading daemon logs, session transcripts, Redis state, and OTEL telemetry. Full Telegram path triage: daemon process → Redis channel → command queue → pi session → model API → Telegram delivery. Use when: 'gateway broken', 'telegram not working', 'why is gateway down', 'gateway not responding', 'check gateway logs', 'what happened to gateway', 'gateway diagnose', 'gateway errors', 'review gateway logs', 'fallback activated', 'gateway stuck', or any request to understand why the gateway failed. Distinct from the gateway skill (operations) — this skill is diagnostic."
-version: 1.1.1
+version: 1.1.2
 author: Joel Hooks
 tags: [joelclaw, gateway, diagnosis, logs, telegram, reliability]
 ---
@@ -57,6 +57,18 @@ What it does:
 ## Diagnostic Procedure
 
 Run these steps in order. Stop and report at the first failure.
+
+### Layer -1: Substrate health (Colima + k8s)
+
+```bash
+colima status --json
+kubectl get nodes -o wide
+kubectl get pods -n joelclaw redis-0 inngest-0
+```
+
+**Failure patterns:**
+- `colima is not running` or kubectl EOF/refused → gateway/Redis symptoms are secondary. Bring Colima back first.
+- Node not `Ready` or core pods not `Running` → fix cluster substrate before touching gateway.
 
 ### Layer 0: Process Health
 
@@ -113,6 +125,7 @@ tail -100 /tmp/joelclaw/gateway.err
 | `watchdog: stuck recovery timed out` | Abort did not recover session within 90s grace | Triggers self-restart via graceful shutdown |
 | `watchdog: session appears dead` | 3+ consecutive prompt failures | Triggers self-restart via graceful shutdown |
 | `Reached the max retries per request limit` / `MaxRetriesPerRequestError` | Redis command queue flushed after reconnect churn | Transport flap between gateway and Redis (localhost:6379 forward), unhandled promise path in mode/tick calls |
+| `langfuse-cost: cannot load optional dependency 'langfuse'; telemetry disabled.` | Pi extension optional dependency unavailable | Observability degraded only — not a gateway delivery blocker; treat as secondary unless tracing is required |
 | `OTEL emit request failed: TimeoutError` | Typesense unreachable | k8s port-forward or Typesense pod issue (secondary) |
 | `prompt failed` with `consecutiveFailures: N` | Nth failure in a row | Check model API, session state |
 
@@ -210,6 +223,12 @@ kubectl exec -n joelclaw redis-0 -- redis-cli XRANGE gateway:messages - + COUNT 
 
 ## Known Failure Scenarios
 
+### 0. Substrate outage (Colima/k8s down)
+
+**Symptoms:** `joelclaw gateway status` fails with Redis connection closed, kubectl refuses/EOF, Redis listener may still exist locally.
+**Cause:** Colima VM stopped or cluster not ready; gateway failure is downstream, not root.
+**Fix:** Start Colima, wait for node `Ready`, verify `redis-0`/`inngest-0`, then retest gateway.
+
 ### 1. Streaming race / replay overlap
 
 **Symptoms:** `Agent is already processing`, repeated `queue.prompt.failed`, watchdog self-restarts (`watchdog:dead-session`).
@@ -251,6 +270,12 @@ kubectl exec -n joelclaw redis-0 -- redis-cli XRANGE gateway:messages - + COUNT 
 - Verify transport first (`lsof -iTCP:6379`, `kubectl get pods -n joelclaw redis-0`).
 - Confirm reconnect stabilization in `gateway.log` (`[gateway:redis] started`).
 - If flood persists after reconnect, restart gateway once and check for fresh `mode.read.failed` / `mode.write.failed` OTEL before escalating.
+
+### 4b. Langfuse extension optional dependency warning
+
+**Symptoms:** `gateway.err` repeats `langfuse-cost: cannot load optional dependency 'langfuse'; telemetry disabled.`
+**Cause:** `langfuse` package unavailable to the gateway pi extension runtime (often cache or install drift).
+**Fix:** Treat as observability degradation, not message-path outage. Clear pi SDK cache/reload extension when tracing is needed, but prioritize substrate/model/Redis checks first.
 
 ### 5. Compaction During Message Delivery
 
@@ -320,6 +345,11 @@ The command queue processes ONE prompt at a time. `idleWaiter` blocks until `tur
 | `packages/gateway/src/channels/redis.ts` | Event batching, prompt building, sleep mode |
 | `packages/gateway/src/channels/telegram.ts` | Bot polling, message routing |
 | `packages/gateway/src/heartbeat.ts` | Tripwire writer only (ADR-0103: no prompt injection) |
+
+## ADR anchors
+
+- **ADR-0213** — gateway session lifecycle guards and anti-thrash constraints
+- **ADR-0146** — Langfuse cost/observability integration (optional tracing should not break runtime path)
 
 ## Related Skills
 
