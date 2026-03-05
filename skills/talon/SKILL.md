@@ -137,10 +137,29 @@ timeout_secs = 5
 label = "com.joel.voice-agent"
 critical = false
 timeout_secs = 5
+
+[script.gateway_telegram_409]
+command = "test $(tail -20 /tmp/joelclaw/gateway.err 2>/dev/null | grep -c '409: Conflict') -lt 5"
+critical = true
+critical_after_consecutive_failures = 3
+timeout_secs = 5
+
+[script.colima_orphan_usernet]
+command = "test $(pgrep -f 'limactl usernet' | wc -l) -le 2"
+critical = true
+critical_after_consecutive_failures = 2
+timeout_secs = 5
+
+[script.k8s_disk_pressure]
+command = "! kubectl get nodes -o jsonpath='{.items[0].spec.taints}' 2>/dev/null | grep -q disk-pressure"
+critical = true
+critical_after_consecutive_failures = 1
+timeout_secs = 10
 ```
 
 - `launchd.<name>` passes when `launchctl list <label>` reports a non-zero PID
 - `http.<name>` passes on HTTP `200`
+- `script.<name>` passes on exit code 0, fails on non-zero (runs via `sh -c`)
 - `critical = true` escalates when the probe is marked critical (or after debounce if configured)
 - `critical_after_consecutive_failures = N` debounces critical alerts for dynamic probes (default `1` = immediate)
 - `http.gateway_slack` uses gateway endpoint `GET /health/slack`, fails (503) when Slack channel is not started, and should be debounced (recommended `3` cycles)
