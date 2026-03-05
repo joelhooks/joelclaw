@@ -33,6 +33,54 @@ joelclaw gateway unmute imessage
 
 Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 
+## Behavior control plane (ADR-0211)
+
+Gateway behavior preservation is now deterministic and operator-controlled.
+
+### Control lane (runtime-authoritative)
+
+```bash
+joelclaw gateway behavior add --type keep|more|less|stop|start --text "..."
+joelclaw gateway behavior list
+joelclaw gateway behavior remove --id <directive-id>
+joelclaw gateway behavior apply
+joelclaw gateway behavior stats
+```
+
+- Active contract is stored in Redis (`joelclaw:gateway:behavior:contract`).
+- Runtime injection reads Redis on each turn and injects:
+
+```text
+<GATEWAY_BEHAVIOR_CONTRACT version="..." hash="...">
+- KEEP: ...
+- LESS: ...
+</GATEWAY_BEHAVIOR_CONTRACT>
+```
+
+- Injection placement is deterministic: before `# Role` in prompt assembly (below identity, above role).
+- Injection telemetry emits `behavior.contract.injected` with `behavior_contract_hash`.
+
+### Capture lane (extension -> CLI only)
+
+Gateway extension passively scans operator prompts for:
+
+- `KEEP: ...`
+- `MORE: ...`
+- `LESS: ...`
+- `STOP: ...`
+- `START: ...`
+
+On match it shells to `joelclaw gateway behavior add ...`.
+It does **not** write Redis/Typesense directly.
+
+### Learning lane (advisory only)
+
+A daily Inngest cron (`gateway/behavior.daily-review`) analyzes last 24h gateway sessions + OTEL and writes `good_patterns` / `bad_patterns` candidates to Typesense (`gateway_behavior_history`, `kind=candidate`, `status=pending`).
+
+- No auto-activation.
+- Operators must promote manually: `joelclaw gateway behavior promote --id <candidate-id>`.
+- Stale pending candidates expire automatically via TTL governance.
+
 ### Slack passive firehose prerequisites
 
 The launchd start script now derives Slack routing env vars at boot from existing Slack secrets:

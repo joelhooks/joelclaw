@@ -54,6 +54,7 @@ export {
   frontMessageReceived,
   frontMessageSent,
 } from "./front-notify";
+export { gatewayBehaviorDailyReview } from "./gateway-behavior-review";
 export {
   githubPackagePublished,
   githubWorkflowRunCompleted,

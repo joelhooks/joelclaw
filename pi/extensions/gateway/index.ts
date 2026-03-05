@@ -16,11 +16,16 @@
  * inject a "missed heartbeat" alarm. Independent of Inngest — catches Inngest outages.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import Redis from "ioredis";
+import {
+  injectGatewayBehaviorContract,
+  parseBehaviorDirectivesFromPrompt,
+  renderGatewayBehaviorContractBlock,
+} from "./behavior-contract";
 
 // Lightweight OTEL emitter for gateway context — avoid pulling full @joelclaw/telemetry
 // which may not be resolvable in the pi extension runtime.
@@ -62,6 +67,7 @@ const NOTIFY_CHANNEL = `joelclaw:notify:${SESSION_ID}`;
 const VAULT_PATH = process.env.VAULT_PATH ?? join(process.env.HOME ?? "/Users/joel", "Vault");
 const HEARTBEAT_PATH = join(VAULT_PATH, "HEARTBEAT.md");
 const BOOT_PATH = join(VAULT_PATH, "BOOT.md");
+const BEHAVIOR_CONTRACT_KEY = "joelclaw:gateway:behavior:contract";
 
 // Watchdog: 2x the 15-min heartbeat interval = 30 min
 const HEARTBEAT_INTERVAL_MS = 15 * 60 * 1000;
@@ -109,6 +115,15 @@ interface SystemEvent {
 
 interface DrainOptions {
   forceFull?: boolean;
+}
+
+interface ActiveBehaviorContract {
+  version: number;
+  hash: string;
+  directives: Array<{
+    type?: string;
+    text?: string;
+  }>;
 }
 
 // ── Stale Session Cleanup ────────────────────────────────────────────
@@ -240,6 +255,95 @@ function buildPrompt(events: SystemEvent[]): string {
     "",
     "Acknowledge briefly. Only flag if something looks wrong.",
   ].join("\n");
+}
+
+function captureBehaviorDirectiveViaCli(type: string, text: string): { ok: boolean; error?: string } {
+  const result = spawnSync(
+    "joelclaw",
+    ["gateway", "behavior", "add", "--type", type, "--text", text],
+    {
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, TERM: "dumb" },
+    },
+  );
+
+  if (result.error) {
+    return { ok: false, error: String(result.error) };
+  }
+
+  if (result.status !== 0) {
+    const stderr = typeof result.stderr === "string" ? result.stderr.trim() : "";
+    const stdout = typeof result.stdout === "string" ? result.stdout.trim() : "";
+    return { ok: false, error: stderr || stdout || `exit ${result.status ?? "unknown"}` };
+  }
+
+  return { ok: true };
+}
+
+function captureBehaviorDirectivesFromPrompt(prompt: string): {
+  captured: number;
+  failed: number;
+  directives: Array<{ type: string; text: string }>;
+  errors: string[];
+} {
+  const directives = parseBehaviorDirectivesFromPrompt(prompt);
+  if (directives.length === 0) {
+    return { captured: 0, failed: 0, directives: [], errors: [] };
+  }
+
+  let captured = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const directive of directives) {
+    const result = captureBehaviorDirectiveViaCli(directive.type, directive.text);
+    if (result.ok) {
+      captured++;
+      continue;
+    }
+
+    failed++;
+    const detail = result.error ?? "unknown error";
+    errors.push(`${directive.type}:${detail}`);
+    console.warn("[gateway] behavior directive capture failed", {
+      type: directive.type,
+      text: directive.text,
+      detail,
+    });
+  }
+
+  return { captured, failed, directives, errors };
+}
+
+async function readActiveBehaviorContract(): Promise<ActiveBehaviorContract | null> {
+  if (!cmd) return null;
+
+  try {
+    const raw = await cmd.get(BEHAVIOR_CONTRACT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ActiveBehaviorContract>;
+    const directives = Array.isArray(parsed.directives) ? parsed.directives : [];
+    if (directives.length === 0) return null;
+
+    return {
+      version: Number.isFinite(parsed.version) ? Number(parsed.version) : 0,
+      hash: typeof parsed.hash === "string" ? parsed.hash : "",
+      directives,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function applyBehaviorContractInjection(systemPrompt: string, contract: ActiveBehaviorContract | null): {
+  systemPrompt: string;
+  inserted: boolean;
+  placement: "before-role" | "prepend" | "none";
+} {
+  const block = contract ? renderGatewayBehaviorContractBlock(contract) : "";
+  return injectGatewayBehaviorContract(systemPrompt, block);
 }
 
 // ── Gateway Mode ─────────────────────────────────────────────
@@ -864,6 +968,51 @@ export default function (pi: ExtensionAPI) {
       console.log(`[gateway] ${pending} events waiting at startup, draining...`);
       await drain();
     }
+  });
+
+  pi.on("before_agent_start", async (event) => {
+    const prompt = typeof event.prompt === "string" ? event.prompt : "";
+    const capture = captureBehaviorDirectivesFromPrompt(prompt);
+
+    if (capture.directives.length > 0) {
+      emitGatewayOtel({
+        level: capture.failed > 0 ? "warn" : "info",
+        component: "gateway-behavior",
+        action: "behavior.directive.capture",
+        success: capture.failed === 0,
+        metadata: {
+          captured: capture.captured,
+          failed: capture.failed,
+          directives: capture.directives.map((directive) => ({
+            type: directive.type,
+            text: directive.text.slice(0, 180),
+          })),
+          errors: capture.errors,
+        },
+      });
+    }
+
+    const contract = await readActiveBehaviorContract();
+    const injected = applyBehaviorContractInjection(event.systemPrompt ?? "", contract);
+
+    if (contract && injected.inserted) {
+      emitGatewayOtel({
+        level: "info",
+        component: "gateway-behavior",
+        action: "behavior.contract.injected",
+        success: true,
+        metadata: {
+          behavior_contract_hash: contract.hash,
+          behavior_contract_version: contract.version,
+          behavior_contract_directives: contract.directives.length,
+          placement: injected.placement,
+        },
+      });
+    }
+
+    return {
+      systemPrompt: injected.systemPrompt,
+    };
   });
 
   pi.on("agent_end", async (_event, _ctx) => {

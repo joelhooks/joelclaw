@@ -1,6 +1,7 @@
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { respond, respondError } from "../response"
+import { gatewayBehaviorCmd } from "./gateway-behavior"
 
 const SESSIONS_SET = "joelclaw:gateway:sessions"
 const GATEWAY_HEALTH_MUTED_CHANNELS_KEY = "gateway:health:muted-channels"
@@ -1630,6 +1631,7 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
         stream: "joelclaw gateway stream — NDJSON stream of all gateway events (ADR-0058)",
         diagnose: "joelclaw gateway diagnose [--hours N] — Full diagnostic across all layers",
         review: "joelclaw gateway review [--hours N] — Recent session context (exchanges, tools, errors)",
+        behavior: "joelclaw gateway behavior {add|list|promote|remove|apply|stats} — Control runtime behavior contract (ADR-0211)",
         "known-issues": "joelclaw gateway known-issues — List muted channels + reasons for health alert suppression",
         mute: "joelclaw gateway mute <channel> [--reason \"...\"] — Suppress alerting for a known channel issue",
         unmute: "joelclaw gateway unmute <channel> — Re-enable alerting for a muted channel",
@@ -1639,6 +1641,7 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
       { command: "joelclaw gateway status", description: "Check gateway health" },
       { command: "joelclaw gateway diagnose", description: "Full diagnostic (process → redis → model → delivery)" },
       { command: "joelclaw gateway review", description: "Recent session context (what happened?)" },
+      { command: "joelclaw gateway behavior list", description: "Inspect active behavior contract + pending candidates" },
       { command: "joelclaw gateway known-issues", description: "List muted channels that won't trigger alerts" },
       { command: "joelclaw gateway stream", description: "Stream all gateway events (NDJSON)" },
       { command: "joelclaw gateway test", description: "Push test event + verify" },
@@ -1662,5 +1665,6 @@ export const gatewayCmd = Command.make("gateway", {}, () =>
     gatewayStream,
     gatewayDiagnose,
     gatewayReview,
+    gatewayBehaviorCmd,
   ])
 )

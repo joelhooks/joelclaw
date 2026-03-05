@@ -176,6 +176,27 @@ Gateway process-layer diagnostics (`joelclaw gateway diagnose`) now inspect exac
 
 Use `joelclaw gateway enable` for direct launch-agent recovery (enable + bootstrap + kickstart) without manual `launchctl` usage.
 
+## Gateway behavior control plane (ADR-0211)
+
+```bash
+joelclaw gateway behavior add --type keep|more|less|stop|start --text "..."
+joelclaw gateway behavior list
+joelclaw gateway behavior promote --id <candidate-id>
+joelclaw gateway behavior remove --id <directive-id>
+joelclaw gateway behavior apply
+joelclaw gateway behavior stats
+```
+
+Semantics:
+
+- **Single write authority** is CLI. Extensions must call these commands; no direct Redis/Typesense writes.
+- Active runtime contract lives in Redis key `joelclaw:gateway:behavior:contract`.
+- Directive/candidate history lives in Typesense collection `gateway_behavior_history`.
+- `add` normalizes directives, enforces conflict + dedupe + cap rules, and updates Redis + Typesense.
+- `promote` moves a pending daily-review candidate into the active contract (manual gate; no auto-activation).
+- `apply` re-runs governance over the active contract (dedupe, conflict cleanup, cap enforcement) and expires stale candidates.
+- `stats` reports contract hash/version, candidate lifecycle counts, and governance settings.
+
 ## Run listing semantics
 
 ```bash

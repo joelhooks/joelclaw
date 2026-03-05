@@ -46,6 +46,7 @@ import { emailNag } from "./email-nag";
 import { embedText } from "./embed";
 import { friction } from "./friction";
 import { frictionFix } from "./friction-fix";
+import { gatewayBehaviorDailyReview } from "./gateway-behavior-review";
 import { gatewayHandleMessage } from "./gateway-handle-message";
 import { gatewaySendMessage } from "./gateway-send-message";
 import { granolaBackfill } from "./granola-backfill";
@@ -122,6 +123,7 @@ export const hostFunctionDefinitions = [
   adrPitchRejected,
   gatewaySendMessage,
   gatewayHandleMessage,
+  gatewayBehaviorDailyReview,
   videoDownload,
   transcriptProcess,
   transcriptIndexWeb,
