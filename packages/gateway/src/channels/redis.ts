@@ -40,6 +40,9 @@ const redisOpts = {
   host: process.env.REDIS_HOST ?? "localhost",
   port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
   lazyConnect: true,
+  // Long-lived daemon clients should not flush command queues into
+  // MaxRetriesPerRequestError floods during transient reconnect churn.
+  maxRetriesPerRequest: null as const,
   retryStrategy: (times: number) => Math.min(times * 500, 30_000),
 };
 
@@ -70,13 +73,40 @@ function normalizeMode(mode: string | null | undefined): GatewayMode {
 
 export async function getGatewayMode(): Promise<GatewayMode> {
   if (!cmd) return "active";
-  const mode = await cmd.get(MODE_KEY);
-  return normalizeMode(mode);
+  try {
+    const mode = await cmd.get(MODE_KEY);
+    return normalizeMode(mode);
+  } catch (error) {
+    console.warn("[redis] mode read failed — defaulting to active", { error: String(error) });
+    void emitGatewayOtel({
+      level: "warn",
+      component: "redis-channel",
+      action: "mode.read.failed",
+      success: false,
+      error: String(error),
+    });
+    return "active";
+  }
 }
 
 async function setGatewayMode(mode: GatewayMode): Promise<void> {
   if (!cmd) return;
-  await cmd.set(MODE_KEY, mode);
+  try {
+    await cmd.set(MODE_KEY, mode);
+  } catch (error) {
+    console.warn("[redis] mode write failed", {
+      mode,
+      error: String(error),
+    });
+    void emitGatewayOtel({
+      level: "warn",
+      component: "redis-channel",
+      action: "mode.write.failed",
+      success: false,
+      error: String(error),
+      metadata: { mode },
+    });
+  }
 }
 
 async function appendToBatch(events: SystemEvent[], reason: string): Promise<void> {

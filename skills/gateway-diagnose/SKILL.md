@@ -2,7 +2,7 @@
 name: gateway-diagnose
 displayName: Gateway Diagnose
 description: "Diagnose gateway failures by reading daemon logs, session transcripts, Redis state, and OTEL telemetry. Full Telegram path triage: daemon process → Redis channel → command queue → pi session → model API → Telegram delivery. Use when: 'gateway broken', 'telegram not working', 'why is gateway down', 'gateway not responding', 'check gateway logs', 'what happened to gateway', 'gateway diagnose', 'gateway errors', 'review gateway logs', 'fallback activated', 'gateway stuck', or any request to understand why the gateway failed. Distinct from the gateway skill (operations) — this skill is diagnostic."
-version: 1.1.0
+version: 1.1.1
 author: Joel Hooks
 tags: [joelclaw, gateway, diagnosis, logs, telegram, reliability]
 ---
@@ -112,6 +112,7 @@ tail -100 /tmp/joelclaw/gateway.err
 | `watchdog.idle_waiter.timeout` | `turn_end` never arrived within 5-minute idle safety valve | Drain lock released and stale stuck state cleared |
 | `watchdog: stuck recovery timed out` | Abort did not recover session within 90s grace | Triggers self-restart via graceful shutdown |
 | `watchdog: session appears dead` | 3+ consecutive prompt failures | Triggers self-restart via graceful shutdown |
+| `Reached the max retries per request limit` / `MaxRetriesPerRequestError` | Redis command queue flushed after reconnect churn | Transport flap between gateway and Redis (localhost:6379 forward), unhandled promise path in mode/tick calls |
 | `OTEL emit request failed: TimeoutError` | Typesense unreachable | k8s port-forward or Typesense pod issue (secondary) |
 | `prompt failed` with `consecutiveFailures: N` | Nth failure in a row | Check model API, session state |
 
@@ -241,6 +242,15 @@ kubectl exec -n joelclaw redis-0 -- redis-cli XRANGE gateway:messages - + COUNT 
 **Symptoms:** Status shows redis disconnected, no events flowing.
 **Cause:** Redis pod restart or port-forward dropped.
 **Fix:** `kubectl get pods -n joelclaw` to verify, ioredis auto-reconnects.
+
+### 4a. Redis retry-rejection storm
+
+**Symptoms:** `gateway.err` floods with `Reached the max retries per request limit`, `daemon.unhandled_rejection`, and repeated OTEL emit warnings.
+**Cause:** Redis reconnect churn caused pending command promises to flush as `MaxRetriesPerRequestError` (historically mode reads + heartbeat tick paths).
+**Fix:**
+- Verify transport first (`lsof -iTCP:6379`, `kubectl get pods -n joelclaw redis-0`).
+- Confirm reconnect stabilization in `gateway.log` (`[gateway:redis] started`).
+- If flood persists after reconnect, restart gateway once and check for fresh `mode.read.failed` / `mode.write.failed` OTEL before escalating.
 
 ### 5. Compaction During Message Delivery
 

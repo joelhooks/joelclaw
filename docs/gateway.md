@@ -33,6 +33,17 @@ joelclaw gateway unmute imessage
 
 Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 
+## Redis reconnect hardening (2026-03-05)
+
+Gateway lockups during Redis link flaps were caused by `MaxRetriesPerRequestError` storms from ioredis command clients. Hardening now in place:
+
+- Redis channel clients use `maxRetriesPerRequest: null` to avoid command-queue flush storms during reconnect churn.
+- Gateway mode reads/writes fail open (`active`) with warn-level OTEL (`mode.read.failed`, `mode.write.failed`) instead of throwing.
+- Heartbeat interval wraps `tickHeartbeat()` in a local try/catch so transient Redis failures cannot leak as unhandled promise rejections.
+- Duplicate daemon-level `unhandledRejection` handlers were collapsed to one. It now suppresses known TUI-only noise (`Theme not initialized`) and rate-limits repeated Redis max-retry rejections into `daemon.redis.max_retries_rejection` telemetry.
+
+Result: Redis transport blips may degrade event throughput briefly, but should no longer wedge the process or spam unbounded unhandled-rejection logs.
+
 ## Behavior control plane (ADR-0211)
 
 Gateway behavior preservation is now deterministic and operator-controlled.

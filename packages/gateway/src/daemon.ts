@@ -583,15 +583,6 @@ await session.bindExtensions({}).catch((err) => {
   console.error("[gateway] bindExtensions error (non-fatal):", err?.message ?? err);
 });
 
-// Catch unhandled rejections from async extension handlers (e.g. auto-update theme access)
-process.on("unhandledRejection", (reason) => {
-  const msg = reason instanceof Error ? reason.message : String(reason);
-  if (msg.includes("Theme not initialized")) {
-    console.error("[gateway] suppressed TUI extension error:", msg);
-    return;
-  }
-  console.error("[gateway] unhandled rejection:", reason);
-});
 void emitGatewayOtel({
   level: "info",
   component: "daemon",
@@ -2883,14 +2874,58 @@ process.on("uncaughtException", (error) => {
   broadcastWs({ type: "error", message: error.message });
 });
 
+const REDIS_RETRY_REJECTION_WINDOW_MS = 30_000;
+let lastRedisRetryRejectionAt = 0;
+let suppressedRedisRetryRejections = 0;
+
 process.on("unhandledRejection", (reason) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+
+  if (message.includes("Theme not initialized")) {
+    console.error("[gateway] suppressed TUI extension error:", message);
+    return;
+  }
+
+  const normalizedMessage = message.toLowerCase();
+  const isRedisRetryRejection = normalizedMessage.includes("max retries per request limit")
+    || message.includes("MaxRetriesPerRequestError");
+
+  if (isRedisRetryRejection) {
+    const now = Date.now();
+    if (now - lastRedisRetryRejectionAt < REDIS_RETRY_REJECTION_WINDOW_MS) {
+      suppressedRedisRetryRejections += 1;
+      return;
+    }
+
+    const suppressedCount = suppressedRedisRetryRejections;
+    suppressedRedisRetryRejections = 0;
+    lastRedisRetryRejectionAt = now;
+
+    console.warn("[gateway] redis command retries exhausted", {
+      suppressedInWindow: suppressedCount,
+      message,
+    });
+
+    void emitGatewayOtel({
+      level: "warn",
+      component: "daemon",
+      action: "daemon.redis.max_retries_rejection",
+      success: false,
+      error: message,
+      metadata: {
+        suppressedInWindow: suppressedCount,
+      },
+    });
+    return;
+  }
+
   console.error("[gateway] unhandled rejection", { reason });
   void emitGatewayOtel({
     level: "error",
     component: "daemon",
     action: "daemon.unhandled_rejection",
     success: false,
-    error: String(reason),
+    error: message,
   });
-  broadcastWs({ type: "error", message: `Unhandled rejection: ${String(reason)}` });
+  broadcastWs({ type: "error", message: `Unhandled rejection: ${message}` });
 });

@@ -221,7 +221,11 @@ export function startHeartbeatRunner(): HeartbeatRunner {
 
   // Tripwire tick — lightweight, no pi session involvement
   const heartbeatTimer: TimerHandle = setInterval(async () => {
-    await tickHeartbeat();
+    try {
+      await tickHeartbeat();
+    } catch (error) {
+      console.error("[heartbeat] tick failed", { error });
+    }
   }, FIFTEEN_MINUTES_MS);
 
   const watchdogTimer: TimerHandle = setInterval(() => {
