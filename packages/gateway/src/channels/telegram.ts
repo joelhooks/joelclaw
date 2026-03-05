@@ -428,6 +428,32 @@ let pollRetryTimer: ReturnType<typeof setTimeout> | undefined;
 let pollRetryAttempts = 0;
 let pollConflictStreak = 0;
 
+// ── Callback routing (ADR-0215) ──────────────────────────────────
+// External services register prefixes in Redis hash. Matching callbacks
+// are published to a Redis channel instead of firing Inngest events.
+const CALLBACK_ROUTES_KEY = "joelclaw:telegram:callback-routes";
+
+/**
+ * Load registered callback routes from Redis.
+ * Hash: prefix → Redis pub/sub channel name.
+ * Returns an array sorted longest-prefix-first for greedy matching.
+ */
+async function loadCallbackRoutes(
+  redis: Redis | undefined,
+): Promise<Array<{ prefix: string; channel: string }>> {
+  if (!redis) return [];
+  try {
+    const hash = await redis.hgetall(CALLBACK_ROUTES_KEY);
+    return Object.entries(hash)
+      .map(([prefix, channel]) => ({ prefix, channel }))
+      .sort((a, b) => b.prefix.length - a.prefix.length);
+  } catch {
+    return [];
+  }
+}
+
+let callbackRoutes: Array<{ prefix: string; channel: string }> = [];
+
 const pollLeaseInstanceId = crypto.randomUUID();
 let pollLeaseClient: Redis | undefined;
 let pollLeaseOwned = false;
@@ -1128,12 +1154,13 @@ async function startTelegramChannel(
 
     console.log("[gateway:telegram] callback_query", { data, chatId, messageId });
 
-    // Let dedicated handlers process their own prefixes
+    // Let dedicated grammy middleware handlers process their own prefixes
     if (data.startsWith("pitch:") || data.startsWith("mcq:")) {
       console.log(`[gateway:telegram] delegating ${data.split(":")[0]}: callback to dedicated handler`);
       await next();
       return;
     }
+
     void emitGatewayOtel({
       level: "info",
       component: "telegram-channel",
@@ -1144,6 +1171,53 @@ async function startTelegramChannel(
         chatId,
       },
     });
+
+    // ── ADR-0215: Check registered callback routes ──
+    // External services (Restate, etc.) register prefix→channel mappings in Redis.
+    // If a callback matches, publish to their channel and let THEM handle UX.
+    const matchedRoute = callbackRoutes.find((r) => data.startsWith(r.prefix));
+    if (matchedRoute) {
+      console.log("[gateway:telegram] routing callback to external consumer", {
+        prefix: matchedRoute.prefix,
+        channel: matchedRoute.channel,
+        data,
+      });
+
+      // Answer the callback query immediately (remove spinner)
+      try {
+        await ctx.answerCallbackQuery({ text: "Processing..." });
+      } catch { /* non-critical */ }
+
+      // Publish the full callback payload to the consumer's Redis channel
+      try {
+        const { getRedisClient } = await import("./redis");
+        const redis = getRedisClient();
+        if (redis) {
+          await redis.publish(
+            matchedRoute.channel,
+            JSON.stringify({ data, chatId, messageId }),
+          );
+          void emitGatewayOtel({
+            level: "info",
+            component: "telegram-channel",
+            action: "telegram.callback.routed",
+            success: true,
+            metadata: {
+              prefix: matchedRoute.prefix,
+              channel: matchedRoute.channel,
+            },
+          });
+        }
+      } catch (err) {
+        console.error("[gateway:telegram] callback route publish failed", {
+          error: String(err),
+          channel: matchedRoute.channel,
+        });
+      }
+      return; // Don't fall through to Inngest
+    }
+
+    // ── Default path: fire Inngest event ──
 
     // Always answer within 10s or button shows loading spinner
     try {
@@ -1475,6 +1549,15 @@ async function startTelegramChannel(
   pollLeaseTokenHash = stableTokenHash(token);
   pollLeaseOwnerKey = `joelclaw:gateway:telegram:poll-owner:${pollLeaseTokenHash}`;
   pollLeaseStatusKey = `joelclaw:gateway:telegram:poll-status:${pollLeaseTokenHash}`;
+
+  // Load callback routes for external consumers (ADR-0215)
+  const { getRedisClient } = await import("./redis");
+  callbackRoutes = await loadCallbackRoutes(getRedisClient());
+  if (callbackRoutes.length > 0) {
+    console.log("[gateway:telegram] callback routes loaded", {
+      routes: callbackRoutes.map((r) => `${r.prefix} → ${r.channel}`),
+    });
+  }
 
   void attemptPollOwnership("startup");
 }

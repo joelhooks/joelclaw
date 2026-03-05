@@ -502,6 +502,9 @@ importers:
       '@restatedev/restate-sdk-clients':
         specifier: ^1.10.4
         version: 1.10.4
+      ioredis:
+        specifier: ^5.6.1
+        version: 5.9.3
 
   packages/restate-lab:
     dependencies:
