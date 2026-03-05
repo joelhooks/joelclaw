@@ -1842,8 +1842,8 @@ async function classifyThread(
     });
   }
 
-  // 3. Fallback: if only 1 active thread, continue it
-  if (active.length === 1 && active[0]) {
+  // 3. Fallback: continue most recent active thread (never create junk "conversation" threads)
+  if (active.length > 0 && active[0]) {
     const resolved = resolveClassification(
       { threadId: active[0].id, threadLabel: active[0].label, isNew: false, confidence: 0.5, source: "continuation" },
       channel,
@@ -1853,9 +1853,9 @@ async function classifyThread(
     return { threadId: resolved.thread.id, replyToAnchor: resolved.replyToAnchor };
   }
 
-  // 4. No threads / can't classify → create new with generic label
+  // 4. No threads at all → create first thread (only path that creates without haiku)
   const resolved = resolveClassification(
-    { threadId: "new", threadLabel: "conversation", isNew: true, confidence: 0.3, source: "continuation" },
+    { threadId: "new", threadLabel: "general", isNew: true, confidence: 0.3, source: "continuation" },
     channel,
     inboundAnchor,
   );
@@ -1876,28 +1876,22 @@ const enqueueToGateway = async (source: string, prompt: string, metadata?: Recor
   // ADR-0209: Classify thread (haiku ~200ms, reply-to ~0ms)
   const threadCtx = await classifyThread(prompt, channel, replyToAnchor, inboundAnchor);
 
-  // Inject thread index into channel context
-  const threadIndex = formatThreadIndexForPrompt();
   const withChannelContext = injectChannelContext(prompt, {
     source,
     threadName: typeof metadata?.discordThreadName === "string" ? metadata.discordThreadName : undefined,
   });
-  // ADR-0209 V4: Budget-efficient thread injection
-  // Active thread: full context (label + summary + messages)
-  // Other threads: abbreviated (label + age)
-  // Current thread tag: tells model which thread to continue
+  // ADR-0209 V4: Minimal thread tag only — full index is injected via
+  // compaction recovery (V2), NOT per-prompt (causes context bloat).
   let threadTag = "";
   if (threadCtx.threadId) {
     const allThreads = getActiveThreads();
     const current = allThreads.find((t) => t.id === threadCtx.threadId);
-    if (current) {
-      threadTag = `[Thread: "${current.label}"${current.lastSummary ? ` — ${current.lastSummary}` : ""} | ${current.messageCount} msgs]`;
-    } else {
-      threadTag = `[Thread: ${threadCtx.threadId}]`;
+    if (current && current.label !== "general") {
+      threadTag = `[thread: ${current.label}]`;
     }
   }
-  const withThreadContext = threadIndex || threadTag
-    ? `${withChannelContext}${threadIndex ? `\n\n${threadIndex}` : ""}${threadTag ? `\n\n${threadTag}` : ""}`
+  const withThreadContext = threadTag
+    ? `${withChannelContext}\n${threadTag}`
     : withChannelContext;
 
   await enqueue(source, withThreadContext, metadata, {

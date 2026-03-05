@@ -50,6 +50,7 @@ export interface ThreadIndex {
 const ACTIVE_THRESHOLD_MS = 2 * 60 * 60 * 1000;   // 2h
 const WARM_THRESHOLD_MS = 24 * 60 * 60 * 1000;     // 24h
 const COOL_THRESHOLD_MS = 72 * 60 * 60 * 1000;     // 72h
+const MAX_ACTIVE_THREADS = 8;
 
 // ── State ───────────────────────────────────────────────
 const threads = new Map<string, Thread>();
@@ -94,11 +95,31 @@ export function updateLifecycles(): Thread[] {
 }
 
 // ── Thread operations ───────────────────────────────────
+/** Evict oldest threads when at capacity */
+function evictIfNeeded(): void {
+  const active = [...threads.values()]
+    .filter((t) => t.lifecycle !== "archived")
+    .sort((a, b) => a.lastTouchedAt - b.lastTouchedAt); // oldest first
+
+  while (active.length >= MAX_ACTIVE_THREADS) {
+    const victim = active.shift();
+    if (!victim) break;
+    victim.lifecycle = "archived";
+    threads.delete(victim.id);
+    // Clean up anchor references
+    for (const [key, tid] of anchorThreadMap.entries()) {
+      if (tid === victim.id) anchorThreadMap.delete(key);
+    }
+  }
+}
+
 export function createThread(
   label: string,
   channel?: string,
   messageAnchor?: MessageAnchor,
 ): Thread {
+  evictIfNeeded();
+
   const id = generateThreadId();
   const now = Date.now();
   const lastAnchors: Record<string, MessageAnchor> = {};
