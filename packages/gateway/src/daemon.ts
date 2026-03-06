@@ -599,7 +599,7 @@ void emitGatewayOtel({
 // The overnight thrash of 2026-03-05 was caused by 12h without compaction:
 // context grew → Opus first-token latency exceeded 120s → fallback thrash loop.
 const MAX_COMPACTION_GAP_MS = 4 * 60 * 60 * 1000; // 4 hours — force compact if overdue
-const MAX_SESSION_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours — fresh session if exceeded
+const MAX_SESSION_AGE_MS = 8 * 60 * 60 * 1000; // 8 hours — fresh session if exceeded (was 24h, hit 85% at 7h)
 let lastCompactionAt = Date.now();
 
 // Initialize sessionCreatedAt and lastCompactionAt from session history.
@@ -1842,26 +1842,72 @@ session.subscribe((event: any) => {
         const MODEL_CONTEXT_WINDOW = 200_000;
         const usageRatio = contextTokens / MODEL_CONTEXT_WINDOW;
 
-        if (usageRatio > 0.85 && !session.isCompacting) {
-          console.warn("[gateway:health] context usage CRITICAL — compacting before next prompt", {
+        // ── Two-tier context management (ADR-0211 amendment, 2026-03-05) ──
+        // Tier 2: 75% → session rotation (compaction can't recover enough).
+        // System prompt (~40K) + compacted summary + 10K recent = ~60% floor.
+        // Once past 75%, compaction just delays the inevitable thrash.
+        if (usageRatio > 0.75 && !session.isCompacting) {
+          const pct = Math.round(usageRatio * 100);
+          console.warn("[gateway:health] context ceiling — rotating session", {
             contextTokens,
-            maxTokens: MODEL_CONTEXT_WINDOW,
+            usagePercent: pct,
+            entries: sessionManager.getEntries().length,
+          });
+          void emitGatewayOtel({
+            level: "warn",
+            component: "daemon",
+            action: "daemon.context.ceiling_rotation",
+            success: true,
+            metadata: { contextTokens, usageRatio: pct, entries: sessionManager.getEntries().length },
+          });
+
+          if (TELEGRAM_USER_ID) {
+            sendTelegram(TELEGRAM_USER_ID, [
+              "🔄 <b>Gateway session rotated</b>",
+              "",
+              `Context at ${pct}% (${contextTokens} tokens).`,
+              "Fresh session with context summary.",
+            ].join("\n"), { silent: true }).catch(() => {});
+          }
+
+          const summary = buildCompressionSummary();
+          fallbackController.pauseTimeoutWatch();
+          sessionCreatedAt = Date.now();
+          lastCompactionAt = Date.now();
+          try {
+            await session.newSession();
+            if (summary) {
+              await session.prompt(summary, { streamingBehavior: "followUp" });
+            }
+            console.log("[gateway:health] context-ceiling rotation complete");
+          } catch (err) {
+            console.error("[gateway:health] context-ceiling rotation failed", { err });
+          }
+          fallbackController.resumeTimeoutWatch();
+          return;
+        }
+
+        // Tier 1: 65% → proactive compaction (buys time before we hit 75%).
+        if (usageRatio > 0.65 && !session.isCompacting) {
+          console.warn("[gateway:health] context elevated — proactive compaction", {
+            contextTokens,
             usagePercent: Math.round(usageRatio * 100),
             entries: sessionManager.getEntries().length,
           });
           void emitGatewayOtel({
             level: "warn",
             component: "daemon",
-            action: "daemon.context.critical",
+            action: "daemon.context.proactive_compact",
             success: true,
             metadata: { contextTokens, usageRatio: Math.round(usageRatio * 100), entries: sessionManager.getEntries().length },
           });
-          // Compact synchronously — hold the drain loop until done
-          // This prevents the next prompt from racing with compaction
           try {
-            console.log("[gateway:health] triggering proactive compaction (blocking drain)");
             fallbackController.pauseTimeoutWatch();
-            await session.compact("Context is at " + Math.round(usageRatio * 100) + "% capacity. Aggressively summarize to prevent overflow. Keep only essential recent context.");
+            await session.compact(
+              "Context is at " + Math.round(usageRatio * 100)
+              + "% capacity. Aggressively summarize to prevent overflow. "
+              + "Keep only essential recent context and active thread state.",
+            );
             lastCompactionAt = Date.now();
             fallbackController.resumeTimeoutWatch();
             console.log("[gateway:health] proactive compaction complete");
@@ -1869,17 +1915,11 @@ session.subscribe((event: any) => {
             fallbackController.resumeTimeoutWatch();
             console.error("[gateway:health] proactive compaction failed", { err });
           }
-        } else if (usageRatio > 0.7) {
-          console.log("[gateway:health] context usage elevated", {
+        } else if (usageRatio > 0.5) {
+          // Early warning — just log
+          console.log("[gateway:health] context usage moderate", {
             contextTokens,
             usagePercent: Math.round(usageRatio * 100),
-          });
-          void emitGatewayOtel({
-            level: "info",
-            component: "daemon",
-            action: "daemon.context.elevated",
-            success: true,
-            metadata: { contextTokens, usageRatio: Math.round(usageRatio * 100) },
           });
         }
       } catch (healthErr) {
