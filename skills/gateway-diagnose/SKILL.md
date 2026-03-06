@@ -101,13 +101,14 @@ joelclaw gateway status
 **Check:**
 - `mode` — `normal` vs `redis_degraded`
 - `degradedCapabilities` — explicit list of what Redis loss is breaking
-- `sessionPressure` — context %, compaction age, session age, next action
+- `sessionPressure` — context %, compaction age, session age, next action, next threshold summary, thread counts, fallback state/activations/failures, pressure reasons, alert state
 - `activeSessions` — should have `gateway` with `alive: true`
 - `pending: 0` — if >0, messages are backing up (session busy or stuck)
 
 Interpretation:
 - `mode: redis_degraded` means the daemon/session can still be usable while the Redis bridge is sick.
 - Do not call that a full outage unless process/session layers are also failing.
+- `joelclaw gateway diagnose` now emits a dedicated `session-pressure` layer so pressure risk is inspectable even when Redis/process layers are healthy.
 
 ### Layer 2: Error Log (the money log)
 

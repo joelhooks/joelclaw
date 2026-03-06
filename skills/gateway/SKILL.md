@@ -68,13 +68,27 @@ When `mode=redis_degraded`:
 
 Do not report `redis_degraded` as “gateway down” unless process/session health is also failing.
 
+## Session pressure visibility (ADR-0218 rank 3 slice)
+
+`joelclaw gateway status` / `joelclaw gateway diagnose` now expose session-pressure specifics instead of just a coarse health word:
+
+- context usage % + next action
+- next threshold summary (`compact at 65% ...` / `rotate at 75% ...` / `rotate immediately`)
+- last compaction age + session age
+- thread counts (`active` / `warm` / `total`)
+- fallback state + activation count + consecutive prompt failures
+- pressure reasons (`context_usage`, `context_ceiling`, `compaction_gap`, `session_age`)
+- last alert health/time + cooldown state
+
+The daemon also pushes direct Telegram alerts when session pressure escalates or recovers, and emits OTEL under `daemon.session-pressure` (`session_pressure.alert.sent|failed`).
+
 ## Runtime guardrail enforcement (ADR-0189)
 
 Gateway runtime now enforces two operator-visible guardrails:
 
 1. **Tool-budget checkpoint tripwire**
-   - channel turns: forced checkpoint after the 3rd tool action
-   - internal/background turns: forced checkpoint after the 5th tool action
+   - channel turns: forced checkpoint after the 2-tool budget is exceeded
+   - internal/background turns: forced checkpoint after the 4-tool budget is exceeded
    - telemetry: `daemon.guardrails:guardrail.checkpoint.*`
 2. **Automatic post-push deploy verification**
    - after successful `git push` where `HEAD` touched `apps/web/` or root config (`turbo.json`, `package.json`, `pnpm-lock.yaml`)

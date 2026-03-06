@@ -292,6 +292,9 @@ const gatewayStatus = Command.make("status", {}, () =>
     const daemonQueueDepth = typeof daemonHealth?.status?.queueDepth === "number"
       ? daemonHealth.status.queueDepth
       : 0
+    const sessionPressureHealth = typeof daemonHealth?.status?.sessionPressure?.health === "string"
+      ? daemonHealth.status.sessionPressure.health
+      : undefined
 
     const activeSessions = redisStatus.activeSessions.length > 0
       ? redisStatus.activeSessions
@@ -319,6 +322,13 @@ const gatewayStatus = Command.make("status", {}, () =>
       nextActions.unshift(
         { command: "joelclaw gateway diagnose", description: "See which capabilities are degraded and why" },
         { command: "joelclaw gateway review", description: "Inspect recent gateway session behavior while Redis is degraded" },
+      )
+    }
+
+    if (sessionPressureHealth && sessionPressureHealth !== "ok") {
+      nextActions.unshift(
+        { command: "joelclaw gateway diagnose", description: "Inspect session-pressure diagnostics and alert state" },
+        { command: "joelclaw gateway review", description: "Review recent gateway turns if pressure stays elevated" },
       )
     }
 
@@ -1353,11 +1363,26 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
     let totalPending = 0
     let degradedCapabilityCount = 0
     let sessionPressureHealth: string | undefined
+    let sessionPressureUsagePercent: number | undefined
+    let sessionPressureNextAction: string | undefined
+    let sessionPressureNextThresholdSummary: string | undefined
+    let sessionPressureLastCompactionAgeMs: number | undefined
+    let sessionPressureSessionAgeMs: number | undefined
+    let sessionPressureActiveThreads: number | undefined
+    let sessionPressureWarmThreads: number | undefined
+    let sessionPressureTotalThreads: number | undefined
+    let sessionPressureFallbackActive: boolean | undefined
+    let sessionPressureFallbackActivationCount: number | undefined
+    let sessionPressureConsecutiveFailures: number | undefined
+    let sessionPressureReasons: string[] = []
+    let sessionPressureLastNotifiedHealth: string | undefined
+    let sessionPressureLastNotifiedAt: string | undefined
     let checkpointSentThisTurn = false
     let pendingDeployVerificationCount = 0
     try {
       const raw = execSync("joelclaw gateway status 2>/dev/null", { encoding: "utf-8", timeout: 10000 })
       const parsed = JSON.parse(raw)
+      const pressure = parsed.result?.sessionPressure ?? {}
       redisOk = parsed.result?.redis === "connected"
       gatewayMode = parsed.result?.mode === "redis_degraded" ? "redis_degraded" : "normal"
       const sessions = parsed.result?.activeSessions ?? []
@@ -1366,8 +1391,34 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       degradedCapabilityCount = Array.isArray(parsed.result?.degradedCapabilities)
         ? parsed.result.degradedCapabilities.length
         : 0
-      sessionPressureHealth = typeof parsed.result?.sessionPressure?.health === "string"
-        ? parsed.result.sessionPressure.health
+      sessionPressureHealth = typeof pressure.health === "string"
+        ? pressure.health
+        : undefined
+      sessionPressureUsagePercent = typeof pressure.usagePercent === "number" ? pressure.usagePercent : undefined
+      sessionPressureNextAction = typeof pressure.nextAction === "string" ? pressure.nextAction : undefined
+      sessionPressureNextThresholdSummary = typeof pressure.nextThresholdSummary === "string"
+        ? pressure.nextThresholdSummary
+        : undefined
+      sessionPressureLastCompactionAgeMs = typeof pressure.lastCompactionAgeMs === "number" ? pressure.lastCompactionAgeMs : undefined
+      sessionPressureSessionAgeMs = typeof pressure.sessionAgeMs === "number" ? pressure.sessionAgeMs : undefined
+      sessionPressureActiveThreads = typeof pressure.activeThreads === "number" ? pressure.activeThreads : undefined
+      sessionPressureWarmThreads = typeof pressure.warmThreads === "number" ? pressure.warmThreads : undefined
+      sessionPressureTotalThreads = typeof pressure.totalThreads === "number" ? pressure.totalThreads : undefined
+      sessionPressureFallbackActive = typeof pressure.fallbackActive === "boolean" ? pressure.fallbackActive : undefined
+      sessionPressureFallbackActivationCount = typeof pressure.fallbackActivationCount === "number"
+        ? pressure.fallbackActivationCount
+        : undefined
+      sessionPressureConsecutiveFailures = typeof pressure.consecutivePromptFailures === "number"
+        ? pressure.consecutivePromptFailures
+        : undefined
+      sessionPressureReasons = Array.isArray(pressure.reasons)
+        ? pressure.reasons.filter((reason: unknown): reason is string => typeof reason === "string")
+        : []
+      sessionPressureLastNotifiedHealth = typeof pressure.alerting?.lastNotifiedHealth === "string"
+        ? pressure.alerting.lastNotifiedHealth
+        : undefined
+      sessionPressureLastNotifiedAt = typeof pressure.alerting?.lastNotifiedAt === "string"
+        ? pressure.alerting.lastNotifiedAt
         : undefined
       checkpointSentThisTurn = parsed.result?.guardrails?.checkpointSentThisTurn === true
       pendingDeployVerificationCount = Array.isArray(parsed.result?.guardrails?.pendingDeployVerifications)
@@ -1406,6 +1457,54 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       }
     } catch (e) {
       layers.push({ layer: "cli-status", status: "failed", detail: `CLI status failed: ${e}` })
+    }
+
+    const sessionPressureFindings: string[] = []
+    if (typeof sessionPressureUsagePercent === "number") {
+      sessionPressureFindings.push(`context: ${sessionPressureUsagePercent}% used`)
+    }
+    if (typeof sessionPressureLastCompactionAgeMs === "number") {
+      sessionPressureFindings.push(`last compaction: ${Math.round(sessionPressureLastCompactionAgeMs / 60_000)}m ago`)
+    }
+    if (typeof sessionPressureSessionAgeMs === "number") {
+      sessionPressureFindings.push(`session age: ${Math.round((sessionPressureSessionAgeMs / 3_600_000) * 10) / 10}h`)
+    }
+    if (sessionPressureNextAction) {
+      sessionPressureFindings.push(`next action: ${sessionPressureNextAction}`)
+    }
+    if (sessionPressureNextThresholdSummary) {
+      sessionPressureFindings.push(`next threshold: ${sessionPressureNextThresholdSummary}`)
+    }
+    if (typeof sessionPressureTotalThreads === "number") {
+      sessionPressureFindings.push(
+        `threads: ${sessionPressureActiveThreads ?? 0} active / ${sessionPressureWarmThreads ?? 0} warm / ${sessionPressureTotalThreads} total`,
+      )
+    }
+    if (
+      typeof sessionPressureFallbackActivationCount === "number"
+      || typeof sessionPressureConsecutiveFailures === "number"
+      || typeof sessionPressureFallbackActive === "boolean"
+    ) {
+      sessionPressureFindings.push(
+        `fallback: ${sessionPressureFallbackActive === true ? "active" : "inactive"}; activations: ${sessionPressureFallbackActivationCount ?? 0}; consecutive failures: ${sessionPressureConsecutiveFailures ?? 0}`,
+      )
+    }
+    if (sessionPressureReasons.length > 0) {
+      sessionPressureFindings.push(`signals: ${sessionPressureReasons.join(", ")}`)
+    }
+    if (sessionPressureLastNotifiedHealth && sessionPressureLastNotifiedAt) {
+      sessionPressureFindings.push(`last alert: ${sessionPressureLastNotifiedHealth} at ${sessionPressureLastNotifiedAt}`)
+    }
+
+    if (sessionPressureHealth) {
+      layers.push({
+        layer: "session-pressure",
+        status: sessionPressureHealth === "ok" ? "ok" : "degraded",
+        detail: sessionPressureHealth === "ok"
+          ? "Session pressure within guardrails"
+          : `Session pressure ${sessionPressureHealth} — gateway should ${sessionPressureNextAction ?? "observe"}${sessionPressureNextThresholdSummary ? `; next threshold ${sessionPressureNextThresholdSummary}` : ""}`,
+        ...(sessionPressureFindings.length > 0 ? { findings: sessionPressureFindings } : {}),
+      })
     }
 
     // ── Layer 2: Error Log ──

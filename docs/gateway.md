@@ -56,6 +56,15 @@ Session pressure is now surfaced in status payloads as first-class data:
 - last compaction age
 - session age
 - next action (`observe` / `compact` / `rotate`)
+- next threshold summary (`compact at 65% ...` / `rotate at 75% ...` / `rotate immediately`)
+- thread counts (`active` / `warm` / `total`)
+- fallback state + activation count + consecutive prompt failures
+- pressure signals (`context_usage`, `context_ceiling`, `compaction_gap`, `session_age`)
+- alert state (`lastNotifiedHealth`, `lastNotifiedAt`, cooldown)
+
+`joelclaw gateway diagnose` now includes a dedicated `session-pressure` layer instead of burying pressure state inside generic status findings.
+
+The daemon also sends direct Telegram pressure alerts on escalation/recovery and emits OTEL under `daemon.session-pressure` (`session_pressure.alert.sent|failed`). That makes compaction/rotation risk visible before fallback thrash becomes the first obvious symptom.
 
 Operator rule: if status says `redis_degraded`, do **not** treat that as a full gateway outage. Diagnose substrate/Redis separately while using direct conversation paths if needed.
 
@@ -243,8 +252,8 @@ Three guards prevent context bloat and overnight fallback thrash:
 ### Compaction circuit breaker (4h max gap)
 After every `turn_end`, if >4 hours since last compaction, force `session.compact()` regardless of token count. Prevents the scenario where context grows unchecked when pi's auto-compaction misses (e.g. model_change entries disrupting threshold calculation).
 
-### Session age limit (24h max)
-After every `turn_end`, if session is >24 hours old, create a fresh session with compression summary. Prevents multi-day JSONL growth. Alerts via Telegram (silent).
+### Session age limit (8h max)
+After every `turn_end`, if session is >8 hours old, create a fresh session with compression summary. Prevents multi-day JSONL growth before fallback thrash starts. Alerts via Telegram (silent).
 
 ### Quiet hours auto-batching (11 PM – 7 AM PST)
 During quiet hours, all non-interactive events are batched (not immediate). Batch digest flush is deferred until wake hours. Human messages (telegram, imessage, etc.) and error events always process immediately.

@@ -50,6 +50,11 @@ import { startHeartbeatRunner, TRIPWIRE_PATH } from "./heartbeat";
 import { buildGatewayTurnKnowledgeWrite, sendGatewayTurnKnowledgeWrite } from "./knowledge-turn";
 import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
 import { type OutboundAttribution, registerChannel, routeResponse } from "./outbound/router";
+import {
+  buildSessionPressureSnapshot,
+  evaluateSessionPressureAlert,
+  getInitialSessionPressureAlertState,
+} from "./session-pressure";
 import * as telegramStream from "./telegram-stream";
 
 // Initialize Langfuse tracing for inference routing (reads from env vars):
@@ -901,7 +906,9 @@ void emitGatewayOtel({
 // context grew → Opus first-token latency exceeded 120s → fallback thrash loop.
 const MAX_COMPACTION_GAP_MS = 4 * 60 * 60 * 1000; // 4 hours — force compact if overdue
 const MAX_SESSION_AGE_MS = 8 * 60 * 60 * 1000; // 8 hours — fresh session if exceeded (was 24h, hit 85% at 7h)
+const SESSION_PRESSURE_ALERT_COOLDOWN_MS = 30 * 60 * 1000;
 let lastCompactionAt = Date.now();
+let sessionPressureAlertState = getInitialSessionPressureAlertState();
 
 // Initialize sessionCreatedAt and lastCompactionAt from session history.
 // For resumed sessions, session age = earliest entry timestamp (not daemon restart time).
@@ -1598,55 +1605,163 @@ function getDegradedCapabilities(): Array<{ key: string; reason: string }> {
   return capabilities;
 }
 
-function getSessionPressure(): {
-  entries: number;
-  estimatedTokens: number;
-  usagePercent: number;
-  maxTokens: number;
-  lastCompactionAt: string;
-  lastCompactionAgeMs: number;
-  sessionAgeMs: number;
-  compactAtPercent: number;
-  rotateAtPercent: number;
-  maxCompactionGapMs: number;
-  maxSessionAgeMs: number;
-  health: "ok" | "elevated" | "critical";
-  nextAction: "observe" | "compact" | "rotate";
+function getSessionPressure(): ReturnType<typeof buildSessionPressureSnapshot> & {
+  alerting: {
+    lastNotifiedHealth: string;
+    lastNotifiedAt: string | null;
+    lastRecoveredAt: string | null;
+    cooldownMs: number;
+  };
 } {
   const entries = sessionManager.getEntries();
   const lastUsage = getLastAssistantUsage(entries);
   const contextTokens = lastUsage ? calculateContextTokens(lastUsage) : 0;
-  const usagePercent = contextTokens > 0 ? Math.round((contextTokens / MODEL_CONTEXT_WINDOW) * 100) : 0;
-  const lastCompactionAgeMs = Math.max(0, Date.now() - lastCompactionAt);
-  const sessionAgeMs = Math.max(0, Date.now() - sessionCreatedAt);
-
-  const nextAction = usagePercent >= CONTEXT_ROTATE_THRESHOLD_PERCENT || sessionAgeMs > MAX_SESSION_AGE_MS
-    ? "rotate"
-    : usagePercent >= CONTEXT_COMPACT_THRESHOLD_PERCENT || lastCompactionAgeMs > MAX_COMPACTION_GAP_MS
-      ? "compact"
-      : "observe";
-
-  const health = nextAction === "rotate"
-    ? "critical"
-    : nextAction === "compact"
-      ? "elevated"
-      : "ok";
+  const threadIndex = buildThreadIndex();
 
   return {
-    entries: entries.length,
-    estimatedTokens: contextTokens,
-    usagePercent,
-    maxTokens: MODEL_CONTEXT_WINDOW,
-    lastCompactionAt: new Date(lastCompactionAt).toISOString(),
-    lastCompactionAgeMs,
-    sessionAgeMs,
-    compactAtPercent: CONTEXT_COMPACT_THRESHOLD_PERCENT,
-    rotateAtPercent: CONTEXT_ROTATE_THRESHOLD_PERCENT,
-    maxCompactionGapMs: MAX_COMPACTION_GAP_MS,
-    maxSessionAgeMs: MAX_SESSION_AGE_MS,
-    health,
-    nextAction,
+    ...buildSessionPressureSnapshot({
+      entries: entries.length,
+      estimatedTokens: contextTokens,
+      maxTokens: MODEL_CONTEXT_WINDOW,
+      lastCompactionAtMs: lastCompactionAt,
+      sessionCreatedAtMs: sessionCreatedAt,
+      compactAtPercent: CONTEXT_COMPACT_THRESHOLD_PERCENT,
+      rotateAtPercent: CONTEXT_ROTATE_THRESHOLD_PERCENT,
+      maxCompactionGapMs: MAX_COMPACTION_GAP_MS,
+      maxSessionAgeMs: MAX_SESSION_AGE_MS,
+      queueDepth: getQueueDepth(),
+      activeThreads: threadIndex.activeCount,
+      warmThreads: threadIndex.warmCount,
+      totalThreads: threadIndex.threads.length,
+      consecutivePromptFailures: getConsecutiveFailures(),
+      fallbackActive: fallbackController.state.active,
+      fallbackActivationCount: fallbackController.state.activationCount,
+    }),
+    alerting: {
+      lastNotifiedHealth: sessionPressureAlertState.lastNotifiedHealth,
+      lastNotifiedAt: sessionPressureAlertState.lastNotifiedAt > 0
+        ? new Date(sessionPressureAlertState.lastNotifiedAt).toISOString()
+        : null,
+      lastRecoveredAt: sessionPressureAlertState.lastRecoveredAt > 0
+        ? new Date(sessionPressureAlertState.lastRecoveredAt).toISOString()
+        : null,
+      cooldownMs: SESSION_PRESSURE_ALERT_COOLDOWN_MS,
+    },
   };
+}
+
+function formatPressureReason(reason: string): string {
+  switch (reason) {
+    case "context_usage":
+      return "context crossed compaction threshold";
+    case "context_ceiling":
+      return "context crossed rotation threshold";
+    case "compaction_gap":
+      return "compaction overdue";
+    case "session_age":
+      return "session age over rotation threshold";
+    default:
+      return reason;
+  }
+}
+
+function formatPressureDuration(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / 60_000));
+  if (minutes < 120) return `${minutes}m`;
+  return `${Math.round((minutes / 60) * 10) / 10}h`;
+}
+
+function buildSessionPressureAlertMessage(
+  kind: "elevated" | "critical" | "recovered",
+  snapshot: ReturnType<typeof getSessionPressure>,
+): string {
+  if (kind === "recovered") {
+    return [
+      "✅ <b>Gateway session pressure recovered</b>",
+      "",
+      `Context back to <code>${snapshot.usagePercent}%</code> and next action is <code>${escapeHtml(snapshot.nextAction)}</code>.`,
+      `Next threshold: <code>${escapeHtml(snapshot.nextThresholdSummary)}</code>.`,
+      `Threads: <code>${snapshot.activeThreads}</code> active / <code>${snapshot.warmThreads}</code> warm / <code>${snapshot.totalThreads}</code> total.`,
+    ].join("\n");
+  }
+
+  const icon = kind === "critical" ? "🚨" : "⚠️";
+  const signals = snapshot.reasons.length > 0
+    ? snapshot.reasons.map((reason) => escapeHtml(formatPressureReason(reason))).join(", ")
+    : "context pressure rising";
+  const fallbackState = snapshot.fallbackActive ? "active" : "inactive";
+
+  return [
+    `${icon} <b>Gateway session pressure ${kind}</b>`,
+    "",
+    `Context: <code>${snapshot.usagePercent}%</code> (${snapshot.estimatedTokens}/${snapshot.maxTokens} tokens)`,
+    `Compaction age: <code>${formatPressureDuration(snapshot.lastCompactionAgeMs)}</code> · Session age: <code>${formatPressureDuration(snapshot.sessionAgeMs)}</code>`,
+    `Threads: <code>${snapshot.activeThreads}</code> active / <code>${snapshot.warmThreads}</code> warm / <code>${snapshot.totalThreads}</code> total`,
+    `Fallback: <code>${fallbackState}</code> · Activations: <code>${snapshot.fallbackActivationCount}</code> · Consecutive failures: <code>${snapshot.consecutivePromptFailures}</code>`,
+    `Action now: <code>${escapeHtml(snapshot.nextAction)}</code> · Next threshold: <code>${escapeHtml(snapshot.nextThresholdSummary)}</code>`,
+    `Signals: <code>${signals}</code>`,
+  ].join("\n");
+}
+
+async function maybeNotifySessionPressure(snapshot: ReturnType<typeof getSessionPressure>): Promise<void> {
+  const decision = evaluateSessionPressureAlert(
+    { health: snapshot.health },
+    sessionPressureAlertState,
+    Date.now(),
+    SESSION_PRESSURE_ALERT_COOLDOWN_MS,
+  );
+
+  sessionPressureAlertState = decision.nextState;
+  if (!decision.shouldNotify || decision.kind === "none") return;
+
+  const kind = decision.kind;
+  const metadata = {
+    kind,
+    usagePercent: snapshot.usagePercent,
+    estimatedTokens: snapshot.estimatedTokens,
+    maxTokens: snapshot.maxTokens,
+    lastCompactionAgeMs: snapshot.lastCompactionAgeMs,
+    sessionAgeMs: snapshot.sessionAgeMs,
+    nextAction: snapshot.nextAction,
+    nextThresholdAction: snapshot.nextThresholdAction,
+    nextThresholdSummary: snapshot.nextThresholdSummary,
+    reasons: snapshot.reasons,
+    queueDepth: snapshot.queueDepth,
+    activeThreads: snapshot.activeThreads,
+    warmThreads: snapshot.warmThreads,
+    totalThreads: snapshot.totalThreads,
+    fallbackActive: snapshot.fallbackActive,
+    fallbackActivationCount: snapshot.fallbackActivationCount,
+    consecutivePromptFailures: snapshot.consecutivePromptFailures,
+  };
+
+  const alertKind = kind === "recovered" ? "recovered" : kind;
+  const message = buildSessionPressureAlertMessage(alertKind, snapshot);
+  const silent = alertKind !== "critical";
+
+  void emitGatewayOtel({
+    level: kind === "critical" ? "warn" : "info",
+    component: "daemon.session-pressure",
+    action: "session_pressure.alert.sent",
+    success: true,
+    metadata,
+  });
+
+  if (!TELEGRAM_USER_ID) return;
+
+  try {
+    await sendTelegram(TELEGRAM_USER_ID, message, { silent });
+  } catch (error) {
+    console.error("[gateway:session-pressure] alert send failed", { error: String(error), kind });
+    void emitGatewayOtel({
+      level: "error",
+      component: "daemon.session-pressure",
+      action: "session_pressure.alert.failed",
+      success: false,
+      error: String(error),
+      metadata,
+    });
+  }
 }
 
 function getStatusPayload(): Record<string, unknown> {
@@ -2189,6 +2304,8 @@ session.subscribe((event: any) => {
     const doHealthCheck = async () => {
       try {
         const now = Date.now();
+        const sessionPressure = getSessionPressure();
+        await maybeNotifySessionPressure(sessionPressure);
 
         // ── ADR-0211: Session age guard ──────────────────────────
         // Sessions older than 24h accumulate too much context history.
@@ -2386,6 +2503,7 @@ import { createPiProcessPool, type PiProcessPool } from "./lib/pi-process-pool";
 // ── ADR-0209: Thread classification on inbound messages ──────
 import {
   buildClassifierPrompt,
+  buildThreadIndex,
   classifyByHaikuResult,
   classifyByReplyTo,
   formatThreadIndexForPrompt,
