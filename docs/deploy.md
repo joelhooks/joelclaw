@@ -36,15 +36,25 @@ kubectl get pods -n joelclaw -l app=dkron
 joelclaw restate cron status
 ```
 
-### Seed the first proof job
+### Seed the tier-1 migration set
 
 ```bash
-joelclaw restate cron enable-health --run-now
+joelclaw restate cron sync-tier1 --run-now
 joelclaw restate cron list
-joelclaw otel search "dag.workflow" --hours 1
+joelclaw otel search "dag.workflow.completed OR skill-garden.findings OR subscription.check_feeds.completed OR memory.digest.generate" --hours 24
 ```
 
-This seeds `restate-health-check` in Dkron, which uses the shell executor plus `wget` to call the existing Restate `health` DAG. The wrapper appends epoch seconds to the workflow ID prefix so each scheduled run is a fresh Restate workflow.
+This seeds the full ADR-0216 tier-1 set in Dkron:
+
+- `restate-health-check`
+- `restate-skill-garden`
+- `restate-typesense-full-sync`
+- `restate-daily-digest`
+- `restate-subscription-check-feeds`
+
+Each job uses Dkron's shell executor plus `wget` to call the Restate DAG ingress. The wrapper appends epoch seconds to the workflow ID prefix so each scheduled run is a fresh Restate workflow.
+
+For the tier-1 migrations, the Restate shell nodes run host-side direct task runners at `scripts/restate/run-tier1-task.ts` so the scheduled job outcome reflects real work, not just event dispatch.
 
 ### Current trade-off
 

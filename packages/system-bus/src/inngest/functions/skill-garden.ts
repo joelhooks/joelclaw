@@ -294,104 +294,94 @@ If a skill is current, do NOT include it. Only flag actual problems.`;
   return findings;
 }
 
+export type SkillGardenReport = {
+  timestamp: string;
+  isDeepReview: boolean;
+  findings: {
+    total: number;
+    brokenSymlinks: number;
+    nonCanonical: number;
+    missingFrontmatter: number;
+    stalePatterns: number;
+    orphans: number;
+    llmStaleness: number;
+  };
+  details: Finding[];
+};
+
+export async function runSkillGardenAudit(options?: {
+  deep?: boolean;
+  now?: Date;
+}): Promise<SkillGardenReport> {
+  const now = options?.now ?? new Date();
+  const isDeepReview = options?.deep === true || now.getDate() === 1;
+
+  const broken = checkBrokenSymlinks();
+  const nonCanonical = checkNonCanonical();
+  const frontmatter = checkFrontmatter();
+  const stale = checkStalePatterns();
+  const orphans = checkOrphans();
+  const llmFindings = isDeepReview ? await llmDeepReview() : [];
+  const allFindings = [
+    ...broken,
+    ...nonCanonical,
+    ...frontmatter,
+    ...stale,
+    ...orphans,
+    ...llmFindings,
+  ];
+
+  return {
+    timestamp: now.toISOString(),
+    isDeepReview,
+    findings: {
+      total: allFindings.length,
+      brokenSymlinks: broken.length,
+      nonCanonical: nonCanonical.length,
+      missingFrontmatter: frontmatter.length,
+      stalePatterns: stale.length,
+      orphans: orphans.length,
+      llmStaleness: llmFindings.length,
+    },
+    details: allFindings,
+  };
+}
+
 export const skillGarden = inngest.createFunction(
   {
     id: "skill-garden",
     name: "Skill Garden — Automated Skill Health Check",
     retries: 1,
   },
-  [
-    { cron: "0 6 * * *" }, // Daily at 6am PT
-    { event: "skill-garden/check" }, // On-demand
-  ],
+  [{ event: "skill-garden/check" }],
   async ({ step, event }) => {
-    const isDeepReview =
-      event?.data?.deep === true ||
-      new Date().getDate() === 1; // 1st of month
+    const report = await step.run("run-skill-garden-audit", () =>
+      runSkillGardenAudit({
+        deep: event?.data?.deep === true,
+      })
+    );
 
-    // Step 1: Structural checks (fast, no LLM)
-    const structural = await step.run("structural-checks", () => {
-      const broken = checkBrokenSymlinks();
-      const nonCanonical = checkNonCanonical();
-      const frontmatter = checkFrontmatter();
-      const stale = checkStalePatterns();
-      const orphans = checkOrphans();
-
-      return {
-        broken,
-        nonCanonical,
-        frontmatter,
-        stale,
-        orphans,
-        total:
-          broken.length +
-          nonCanonical.length +
-          frontmatter.length +
-          stale.length +
-          orphans.length,
-      };
-    });
-
-    // Step 2: LLM deep review (monthly or on-demand)
-    let llmFindings: Finding[] = [];
-    if (isDeepReview) {
-      llmFindings = await step.run("llm-deep-review", async () => {
-        return await llmDeepReview();
-      });
-    }
-
-    // Step 3: Emit OTEL + notify if findings
-    const allFindings = [
-      ...structural.broken,
-      ...structural.nonCanonical,
-      ...structural.frontmatter,
-      ...structural.stale,
-      ...structural.orphans,
-      ...llmFindings,
-    ];
-
-    const report = await step.run("report", () => {
-      const summary = {
-        timestamp: new Date().toISOString(),
-        isDeepReview,
-        findings: {
-          total: allFindings.length,
-          brokenSymlinks: structural.broken.length,
-          nonCanonical: structural.nonCanonical.length,
-          missingFrontmatter: structural.frontmatter.length,
-          stalePatterns: structural.stale.length,
-          orphans: structural.orphans.length,
-          llmStaleness: llmFindings.length,
-        },
-        details: allFindings,
-      };
-
-      return summary;
-    });
-
-    // Step 4: Gateway notification if issues found
-    if (allFindings.length > 0) {
+    if (report.details.length > 0) {
       await step.run("notify", () => {
-        const byType = allFindings.reduce(
-          (acc, f) => {
-            acc[f.type] = (acc[f.type] || 0) + 1;
+        const byType = report.details.reduce(
+          (acc, finding) => {
+            acc[finding.type] = (acc[finding.type] || 0) + 1;
             return acc;
           },
           {} as Record<string, number>
         );
 
         const typeStr = Object.entries(byType)
-          .map(([k, v]) => `${v} ${k}`)
+          .map(([key, count]) => `${count} ${key}`)
           .join(", ");
 
-        const topIssues = allFindings
+        const topIssues = report.details
           .slice(0, 5)
-          .map((f) => `• ${f.skill}: ${f.detail}`)
+          .map((finding) => `• ${finding.skill}: ${finding.detail}`)
           .join("\n");
 
-        const message = `🌿 Skill Garden: ${allFindings.length} issue${allFindings.length === 1 ? "" : "s"} found\n\n${typeStr}\n\n${topIssues}${allFindings.length > 5 ? `\n\n... and ${allFindings.length - 5} more. Run \`joelclaw skills audit\` for full report.` : ""}`;
+        const message = `🌿 Skill Garden: ${report.details.length} issue${report.details.length === 1 ? "" : "s"} found\n\n${typeStr}\n\n${topIssues}${report.details.length > 5 ? `\n\n... and ${report.details.length - 5} more. Run \`joelclaw skills audit\` for full report.` : ""}`;
 
-        // Log to stdout for OTEL pickup
         console.log(
           JSON.stringify({
             event: "skill-garden.findings",

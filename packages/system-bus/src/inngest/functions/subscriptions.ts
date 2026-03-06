@@ -202,13 +202,292 @@ function checkpointFrom(result: FeedCheckResult, fallback: Subscription): {
   };
 }
 
+export async function runSubscriptionCheckSingleDirect(
+  subscriptionId: string,
+  options?: {
+    forced?: boolean;
+    source?: string;
+  },
+) {
+  await emitOtelEvent({
+    level: "info",
+    source: "worker",
+    component: "subscription-check",
+    action: "subscription.check_single.started",
+    success: true,
+    metadata: {
+      subscriptionId,
+      forced: options?.forced ?? false,
+      source: options?.source ?? "restate/dkron",
+    },
+  });
+
+  const subscription = await getSubscription(subscriptionId);
+
+  if (!subscription || !subscription.active) {
+    await emitOtelEvent({
+      level: "info",
+      source: "worker",
+      component: "subscription-check",
+      action: "subscription.check_single.skipped",
+      success: true,
+      metadata: {
+        subscriptionId,
+        reason: "missing_or_inactive",
+      },
+    });
+
+    return {
+      status: "noop",
+      reason: "missing_or_inactive",
+      subscriptionId,
+    };
+  }
+
+  try {
+    const checkResult = await runSubscriptionCheck(subscription);
+    const checkpoint = checkpointFrom(checkResult, subscription);
+    const isFirstCheck = !subscription.lastChecked || subscription.lastChecked <= 0;
+
+    if (isFirstCheck) {
+      await updateSubscription(subscription.id, {
+        lastChecked: Date.now(),
+        lastEntryId: checkpoint.lastEntryId,
+        lastContentHash: checkpoint.lastContentHash,
+      });
+
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "subscription-check",
+        action: "subscription.check_single.initialized",
+        success: true,
+        metadata: {
+          subscriptionId: subscription.id,
+          entryCount: checkResult.newEntries.length,
+          baselineEntryId: checkpoint.lastEntryId,
+        },
+      });
+
+      return {
+        status: "initialized",
+        subscriptionId: subscription.id,
+        baselineEntryId: checkpoint.lastEntryId,
+      };
+    }
+
+    if (!checkResult.hasChanges || checkResult.newEntries.length === 0) {
+      await updateSubscription(subscription.id, {
+        lastChecked: Date.now(),
+        lastEntryId: checkpoint.lastEntryId,
+        lastContentHash: checkpoint.lastContentHash,
+      });
+
+      await emitOtelEvent({
+        level: "info",
+        source: "worker",
+        component: "subscription-check",
+        action: "subscription.check_single.no_changes",
+        success: true,
+        metadata: {
+          subscriptionId: subscription.id,
+        },
+      });
+
+      return {
+        status: "noop",
+        reason: "no_changes",
+        subscriptionId: subscription.id,
+      };
+    }
+
+    const summaryResult = !subscription.summarize
+      ? {
+          summary: summarizeEntriesFallback(checkResult.newEntries),
+          publishEntryIds: checkResult.newEntries.slice(0, 3).map((entry) => entry.id),
+          model: "none",
+        } satisfies SummaryResult
+      : await summarizeUpdates(subscription, checkResult.newEntries);
+
+    const entriesToPublish = selectPublishEntries(checkResult.newEntries, summaryResult.publishEntryIds);
+    let publishError: string | null = null;
+    const publishedCount = subscription.publishToCool
+      ? entriesToPublish.length > 0
+        ? await (async () => {
+            const events = entriesToPublish.map((entry) => ({
+              name: "discovery/noted" as const,
+              data: {
+                url: entry.url ?? subscription.feedUrl,
+                context: [
+                  `Subscription: ${subscription.name}`,
+                  `Title: ${entry.title}`,
+                  entry.summary ? `Summary: ${entry.summary}` : undefined,
+                  entry.publishedAt ? `Published: ${entry.publishedAt}` : undefined,
+                ]
+                  .filter((line): line is string => Boolean(line))
+                  .join("\n"),
+              },
+            }));
+
+            try {
+              await inngest.send(events);
+              return events.length;
+            } catch (error) {
+              publishError = error instanceof Error ? error.message : String(error);
+              return 0;
+            }
+          })()
+        : 0
+      : 0;
+
+    await updateSubscription(subscription.id, {
+      lastChecked: Date.now(),
+      lastEntryId: checkpoint.lastEntryId,
+      lastContentHash: checkpoint.lastContentHash,
+    });
+
+    await emitOtelEvent({
+      level: publishError ? "warn" : "info",
+      source: "worker",
+      component: "subscription-check",
+      action: "subscription.check_single.completed",
+      success: true,
+      metadata: {
+        subscriptionId: subscription.id,
+        model: summaryResult.model,
+        newEntries: checkResult.newEntries.length,
+        published: publishedCount,
+        notified: false,
+        publishError,
+      },
+    });
+
+    return {
+      status: "updated",
+      subscriptionId: subscription.id,
+      newEntries: checkResult.newEntries.length,
+      published: publishedCount,
+      notified: false,
+      publishError,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    await emitOtelEvent({
+      level: "error",
+      source: "worker",
+      component: "subscription-check",
+      action: "subscription.check_single.failed",
+      success: false,
+      error: message,
+      metadata: {
+        subscriptionId,
+      },
+    });
+
+    throw error;
+  }
+}
+
+export async function runSubscriptionCheckFeeds(options?: {
+  forceAll?: boolean;
+  source?: string;
+}) {
+  const now = Date.now();
+  const forced = options?.forceAll === true;
+  const source = options?.source ?? "restate/dkron";
+
+  await emitOtelEvent({
+    level: "info",
+    source: "worker",
+    component: "subscription-check",
+    action: "subscription.check_feeds.started",
+    success: true,
+    metadata: {
+      trigger: source,
+      forced,
+    },
+  });
+
+  const activeSubscriptions = (await listSubscriptions()).filter((subscription) => subscription.active);
+  const dueSubscriptions = activeSubscriptions.filter((subscription) => isDueForCheck(subscription, now, forced));
+
+  if (dueSubscriptions.length === 0) {
+    await emitOtelEvent({
+      level: "info",
+      source: "worker",
+      component: "subscription-check",
+      action: "subscription.check_feeds.noop",
+      success: true,
+      metadata: {
+        trigger: source,
+        activeCount: activeSubscriptions.length,
+        dueCount: 0,
+      },
+    });
+
+    return {
+      status: "noop",
+      activeCount: activeSubscriptions.length,
+      dueCount: 0,
+    };
+  }
+
+  const settled = await Promise.allSettled(
+    dueSubscriptions.map((subscription) =>
+      runSubscriptionCheckSingleDirect(subscription.id, {
+        forced,
+        source,
+      }),
+    ),
+  );
+
+  const results = settled.map((entry, index) => ({
+    subscriptionId: dueSubscriptions[index]?.id ?? `unknown-${index}`,
+    ok: entry.status === "fulfilled",
+    result: entry.status === "fulfilled" ? entry.value : null,
+    error: entry.status === "rejected"
+      ? (entry.reason instanceof Error ? entry.reason.message : String(entry.reason))
+      : null,
+  }));
+
+  const failedIds = results.filter((entry) => !entry.ok).map((entry) => entry.subscriptionId);
+
+  await emitOtelEvent({
+    level: failedIds.length > 0 ? "warn" : "info",
+    source: "worker",
+    component: "subscription-check",
+    action: "subscription.check_feeds.completed",
+    success: failedIds.length === 0,
+    ...(failedIds.length > 0 ? { error: `subscription checks failed: ${failedIds.join(", ")}` } : {}),
+    metadata: {
+      trigger: source,
+      activeCount: activeSubscriptions.length,
+      dueCount: dueSubscriptions.length,
+      failedCount: failedIds.length,
+      failedIds,
+    },
+  });
+
+  if (failedIds.length > 0) {
+    throw new Error(`subscription checks failed for: ${failedIds.join(", ")}`);
+  }
+
+  return {
+    status: "completed",
+    activeCount: activeSubscriptions.length,
+    dueCount: dueSubscriptions.length,
+    results,
+  };
+}
+
 export const subscriptionCheckFeeds = inngest.createFunction(
   {
     id: "subscription/check-feeds",
     retries: 1,
     concurrency: { limit: 1, key: "subscription-check-feeds" },
   },
-  [{ cron: "0 * * * *" }, { event: "subscription/check-feeds.requested" }],
+  [{ event: "subscription/check-feeds.requested" }],
   async ({ event, step }) => {
     const now = Date.now();
     const forced = event.name === "subscription/check-feeds.requested"

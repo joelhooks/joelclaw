@@ -41,9 +41,15 @@ Implemented Phase-1 surfaces:
 
 Operational boundary for Phase 1:
 
-- Keep existing Inngest functions as-is.
-- Route **new Restate orchestration workflows** to Restate only.
-- Do not migrate event-native fan-out workflows until Phase-1 reliability and recovery behavior are verified.
+- Selected ADR-0216 tier-1 cron ownership has now moved off Inngest and onto Dkron → Restate:
+  - `check/system-health-signals-schedule`
+  - `skill-garden`
+  - `typesense/full-sync`
+  - `memory/digest-daily`
+  - `subscription/check-feeds`
+- Those Inngest functions keep manual/on-demand event triggers where useful, but they no longer own the recurring cron schedule.
+- The tier-1 Restate jobs run host-side direct task runners via `scripts/restate/run-tier1-task.ts` so soak results reflect actual work execution.
+- Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 
 ### System health
 
@@ -73,6 +79,19 @@ Operational boundary for Phase 1:
   1. probe runtime health (`joelclaw inngest status`)
   2. if degraded and not dry run, run `joelclaw inngest restart-worker --register --wait-ms 1500`
   3. re-probe and emit before/after OTEL evidence
+
+### Host worker rollout reality
+
+The running host worker is sourced from the separate checkout at `~/Code/system-bus-worker/`, launched by `com.joel.system-bus-worker` via `~/Code/system-bus-worker/packages/system-bus/start.sh`.
+
+After changing host-role functions in the monorepo:
+
+1. push to `origin`
+2. `cd ~/Code/system-bus-worker && git pull --ff-only`
+3. `launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker`
+4. `curl -X PUT http://127.0.0.1:3111/api/inngest`
+
+Do not assume the live host worker reloads directly from `~/Code/joelhooks/joelclaw/`.
 
 ### Host worker startup preflight + supervisor OTEL
 

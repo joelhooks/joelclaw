@@ -234,13 +234,17 @@ async function executeShell(
   const exitCode = await proc.exited;
   clearTimeout(timer);
 
-  return truncate(
-    JSON.stringify({
-      exitCode,
-      stdout: stdout.trimEnd(),
-      stderr: stderr.trimEnd(),
-    }),
-  );
+  const result = {
+    exitCode,
+    stdout: stdout.trimEnd(),
+    stderr: stderr.trimEnd(),
+  };
+
+  if (exitCode !== 0) {
+    throw new Error(`shell handler failed: ${truncate(JSON.stringify(result))}`);
+  }
+
+  return truncate(JSON.stringify(result));
 }
 
 async function executeHttp(config: Record<string, unknown>): Promise<string> {

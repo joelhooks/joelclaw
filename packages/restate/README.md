@@ -77,15 +77,25 @@ bun run packages/restate/src/trigger-dag.ts -- --pipeline research --topic "Rest
 
 ## Dkron scheduler proof (ADR-0216 phase 1)
 
-The first scheduled Restate workload now runs through Dkron:
+The tier-1 scheduled Restate workloads now run through Dkron:
 
 ```bash
 joelclaw restate cron status
-joelclaw restate cron enable-health --run-now
+joelclaw restate cron sync-tier1 --run-now
 joelclaw restate cron list
 ```
 
-This seeds `restate-health-check` in Dkron and has Dkron's shell executor use `wget` against `http://restate:8080/...` from inside the cluster. The shell wrapper appends epoch seconds to the workflow ID prefix so each scheduled run gets a unique Restate workflow ID.
+This seeds the ADR-0216 tier-1 set in Dkron:
+
+- `restate-health-check`
+- `restate-skill-garden`
+- `restate-typesense-full-sync`
+- `restate-daily-digest`
+- `restate-subscription-check-feeds`
+
+Each job uses Dkron's shell executor plus `wget` against `http://restate:8080/...` from inside the cluster. The shell wrapper appends epoch seconds to the workflow ID prefix so each scheduled run gets a unique Restate workflow ID.
+
+For the tier-1 migrations, Restate shell nodes call `scripts/restate/run-tier1-task.ts` on the host so a green scheduled run means the underlying task actually ran. Non-zero shell exits now fail the Restate node instead of returning fake success.
 
 Dkron uses **six-field** cron expressions. Hourly-at-minute-7 is:
 

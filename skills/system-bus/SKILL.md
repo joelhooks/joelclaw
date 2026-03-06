@@ -68,10 +68,22 @@ Functions are split between `index.host.ts` and `index.cluster.ts`. The combined
 ## Deployment Model
 
 - **Source of truth**: `~/Code/joelhooks/joelclaw/packages/system-bus/`
-- **Primary runtime**: `system-bus-worker` Deployment in the Talos/Colima k8s cluster
-- **Deploy path**: `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh`
+- **Running host worker**: launchd service `com.joel.system-bus-worker`
+  - launch script: `~/Code/system-bus-worker/packages/system-bus/start.sh`
+  - checkout used by the running host worker: `~/Code/system-bus-worker/`
+- **Cluster runtime**: `system-bus-worker` Deployment in the Talos/Colima k8s cluster for cluster-role workloads
+- **Cluster deploy path**: `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh`
 
-No standalone worker clone is used for deploys. Edit in monorepo, then publish to k8s.
+### Host function rollout reality
+
+After changing `packages/system-bus/src/inngest/functions/*` that run on the host worker:
+
+1. commit + push the monorepo change to `origin`
+2. `cd ~/Code/system-bus-worker && git pull --ff-only`
+3. `launchctl kickstart -k gui/$(id -u)/com.joel.system-bus-worker`
+4. `curl -X PUT http://127.0.0.1:3111/api/inngest`
+
+Do not trust stale monorepo docs that imply the host worker runs directly from `~/Code/joelhooks/joelclaw`.
 
 ## Adding a New Inngest Function
 

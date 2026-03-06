@@ -1492,8 +1492,8 @@ export const __checkSystemHealthTestUtils = {
 
 export const checkSystemHealthSignalsSchedule = inngest.createFunction(
   { id: "check/system-health-signals-schedule" },
-  [{ cron: "7 * * * *" }],
-  async ({ step }) => {
+  [{ event: "system/health.signals.requested" }],
+  async ({ step, event }) => {
     const gate = await step.run("check-gate", async () => {
       const redis = getRedisClient();
       const now = Date.now();
@@ -1541,7 +1541,7 @@ export const checkSystemHealthSignalsSchedule = inngest.createFunction(
       name: "system/health.requested",
       data: {
         mode: "signals",
-        source: "system-health-signals-hourly",
+        source: event.name,
       },
     });
 
@@ -1555,7 +1555,7 @@ export const checkSystemHealthSignalsSchedule = inngest.createFunction(
         metadata: {
           mode: "signals",
           slicePolicy: HEALTH_SLICE_POLICIES.signals,
-          cron: "7 * * * *",
+          trigger: event.name,
         },
       });
     });

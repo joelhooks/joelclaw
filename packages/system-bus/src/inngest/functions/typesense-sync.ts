@@ -129,7 +129,7 @@ function buildVaultDoc(file: string): Record<string, unknown> | null {
   }
 }
 
-async function indexVaultNotes(targetPaths?: string[]): Promise<{
+export async function indexVaultNotes(targetPaths?: string[]): Promise<{
   count: number;
   errors: number;
   mode: "targeted" | "full";
@@ -279,7 +279,7 @@ async function syncVaultToConvex(targetPaths?: string[]): Promise<{
 
 // ── Blog indexing ───────────────────────────────────────────────────
 
-async function indexBlogPosts(): Promise<{ success: number; errors: number }> {
+export async function indexBlogPosts(): Promise<{ success: number; errors: number }> {
   const files = walkDir(BLOG_PATH, ".mdx").filter(
     (f) => !f.includes("/adrs/") && !f.includes("/discoveries/")
   );
@@ -309,7 +309,7 @@ async function indexBlogPosts(): Promise<{ success: number; errors: number }> {
 
 // ── Slog indexing ───────────────────────────────────────────────────
 
-async function indexSystemLog(): Promise<{ success: number; errors: number }> {
+export async function indexSystemLog(): Promise<{ success: number; errors: number }> {
   const docs: Record<string, unknown>[] = [];
   try {
     const lines = readFileSync(SLOG_PATH, "utf-8").trim().split("\n");
@@ -362,7 +362,7 @@ async function indexSystemLog(): Promise<{ success: number; errors: number }> {
 
 const SKILLS_DIR = join(process.env.HOME || "/Users/joel", "Code/joelhooks/joelclaw/skills");
 
-async function syncSystemKnowledge(): Promise<{ adrs: number; skills: number; errors: number }> {
+export async function syncSystemKnowledge(): Promise<{ adrs: number; skills: number; errors: number }> {
   const now = Math.floor(Date.now() / 1000);
   const docs: Record<string, unknown>[] = [];
 
@@ -453,6 +453,15 @@ async function syncSystemKnowledge(): Promise<{ adrs: number; skills: number; er
 }
 
 /** Queue vault re-index requests from noisy upstream events */
+export async function runTypesenseFullSync() {
+  const vault = await indexVaultNotes();
+  const blog = await indexBlogPosts();
+  const slog = await indexSystemLog();
+  const knowledge = await syncSystemKnowledge();
+
+  return { vault, blog, slog, knowledge };
+}
+
 export const typesenseVaultSyncQueue = inngest.createFunction(
   {
     id: "typesense/vault-sync-queue",
@@ -559,14 +568,13 @@ export const typesenseFullSync = inngest.createFunction(
     name: "Typesense: Full Re-index (Daily)",
     concurrency: { limit: 1, key: "typesense-full-sync" },
   },
-  [{ cron: "0 11 * * *" }], // 3am PST = 11:00 UTC
-  async ({ step }) => {
-    const vault = await step.run("index-vault", indexVaultNotes);
-    const blog = await step.run("index-blog", indexBlogPosts);
-    const slog = await step.run("index-slog", indexSystemLog);
-    const knowledge = await step.run("sync-system-knowledge", syncSystemKnowledge);
+  [{ event: "typesense/full-sync.requested" }],
+  async ({ step, event }) => {
+    const result = await step.run("run-typesense-full-sync", runTypesenseFullSync);
 
-    console.log(`[typesense-full-sync] vault=${vault.count} blog=${blog.success} slog=${slog.success} knowledge=${knowledge.adrs}+${knowledge.skills}`);
-    return { vault, blog, slog, knowledge };
+    console.log(
+      `[typesense-full-sync] trigger=${event.name} vault=${result.vault.count} blog=${result.blog.success} slog=${result.slog.success} knowledge=${result.knowledge.adrs}+${result.knowledge.skills}`,
+    );
+    return { ...result, trigger: event.name };
   }
 );

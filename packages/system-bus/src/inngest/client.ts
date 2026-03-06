@@ -708,6 +708,12 @@ export type Events = {
       source?: string;
     };
   };
+  "system/health.signals.requested": {
+    data: {
+      requestedBy?: string;
+      source?: string;
+    };
+  };
   "system/network.update": {
     data: {
       source?: string;
@@ -1697,6 +1703,12 @@ export type Events = {
       subscriptionId: string;
       forced?: boolean;
       source?: string;
+    };
+  };
+  "typesense/full-sync.requested": {
+    data: {
+      source?: string;
+      requestedBy?: string;
     };
   };
   "check/o11y-triage.requested": {

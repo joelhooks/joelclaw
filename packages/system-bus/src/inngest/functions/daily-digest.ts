@@ -44,65 +44,49 @@ function buildDigestFileContent(date: string, sourcePath: string, digestBody: st
   ].join("\n");
 }
 
-export const dailyDigest = inngest.createFunction(
-  {
-    id: "memory/digest-daily",
-    name: "Generate Daily Digest",
-    retries: 1,
-    concurrency: { limit: 1 },
-  },
-  [{ cron: "55 7 * * *" }, { event: "memory/digest.requested" }],
-  async ({ step }) => {
-    const date = losAngelesIsoDate();
-    const home = getHomeDirectory();
-    const sourcePath = join(home, ".joelclaw", "workspace", "memory", `${date}.md`);
-    const sourceFrontmatterPath = `~/.joelclaw/workspace/memory/${date}.md`;
-    const digestPath = join(home, "Vault", "Daily", "digests", `${date}-digest.md`);
+export async function runDailyDigest(now = new Date()) {
+  const date = losAngelesIsoDate(now);
+  const home = getHomeDirectory();
+  const sourcePath = join(home, ".joelclaw", "workspace", "memory", `${date}.md`);
+  const sourceFrontmatterPath = `~/.joelclaw/workspace/memory/${date}.md`;
+  const digestPath = join(home, "Vault", "Daily", "digests", `${date}-digest.md`);
 
-    const alreadyExists = await step.run("check-digest-exists", async () => existsSync(digestPath));
-    if (alreadyExists) {
-      return { status: "noop", reason: "digest already exists", date, digestPath };
-    }
+  if (existsSync(digestPath)) {
+    return { status: "noop", reason: "digest already exists", date, digestPath };
+  }
 
-    const rawLog = await step.run("read-daily-log", async () => {
-      const file = Bun.file(sourcePath);
-      if (!(await file.exists())) return "";
-      return (await file.text()).trim();
-    });
+  const file = Bun.file(sourcePath);
+  const rawLog = (await file.exists()) ? (await file.text()).trim() : "";
 
-    if (!rawLog) {
-      return { status: "noop", reason: "daily log missing or empty", date, sourcePath };
-    }
+  if (!rawLog) {
+    return { status: "noop", reason: "daily log missing or empty", date, sourcePath };
+  }
 
-    const digestPrompt = DIGEST_USER_PROMPT(date, rawLog);
+  const digestPrompt = DIGEST_USER_PROMPT(date, rawLog);
 
-    const digestText = await step.run("generate-digest", async () => {
-      const result = await infer(digestPrompt, {
-        task: "digest",
-        component: "daily-digest",
-        action: "memory.digest.generate",
-        system: DIGEST_SYSTEM_PROMPT,
-        metadata: {
-          date,
-        },
-        timeout: 120_000,
-      });
+  const result = await infer(digestPrompt, {
+    task: "digest",
+    component: "daily-digest",
+    action: "memory.digest.generate",
+    system: DIGEST_SYSTEM_PROMPT,
+    metadata: {
+      date,
+    },
+    timeout: 120_000,
+  });
 
-      const text = stripMarkdownFences(result.text.trim());
-      if (!text) {
-        throw new Error("Digest generation returned empty output");
-      }
+  const digestText = stripMarkdownFences(result.text.trim());
+  if (!digestText) {
+    throw new Error("Digest generation returned empty output");
+  }
 
-      return text;
-    });
+  mkdirSync(dirname(digestPath), { recursive: true });
+  const content = buildDigestFileContent(date, sourceFrontmatterPath, digestText);
+  await Bun.write(digestPath, content);
 
-    await step.run("write-digest-file", async () => {
-      mkdirSync(dirname(digestPath), { recursive: true });
-      const content = buildDigestFileContent(date, sourceFrontmatterPath, digestText);
-      await Bun.write(digestPath, content);
-    });
-
-    await step.sendEvent("emit-digest-created", {
+  let eventDispatched = true;
+  try {
+    await inngest.send({
       name: "memory/digest.created",
       data: {
         date,
@@ -110,7 +94,22 @@ export const dailyDigest = inngest.createFunction(
         digestPath,
       },
     });
+  } catch {
+    eventDispatched = false;
+  }
 
-    return { status: "created", date, sourcePath, digestPath };
+  return { status: "created", date, sourcePath, digestPath, eventDispatched };
+}
+
+export const dailyDigest = inngest.createFunction(
+  {
+    id: "memory/digest-daily",
+    name: "Generate Daily Digest",
+    retries: 1,
+    concurrency: { limit: 1 },
+  },
+  [{ event: "memory/digest.requested" }],
+  async ({ step }) => {
+    return step.run("run-daily-digest", async () => runDailyDigest());
   }
 );

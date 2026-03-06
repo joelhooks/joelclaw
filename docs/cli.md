@@ -154,8 +154,15 @@ joelclaw restate
 - manages Dkron scheduler jobs for Restate pipelines.
 - default access path is a **short-lived CLI-managed `kubectl port-forward`** to `svc/dkron-svc`.
 - pass `--base-url` only when you already have a direct Dkron API endpoint.
-- `enable-health` seeds the first proof job: `restate-health-check`.
-- the health job uses Dkron's shell executor plus `wget`; it appends epoch seconds to the workflow ID prefix so each scheduled run is a fresh Restate workflow.
+- `enable-health` seeds the health proof job: `restate-health-check`.
+- `sync-tier1` upserts the full ADR-0216 tier-1 set:
+  - `restate-health-check`
+  - `restate-skill-garden`
+  - `restate-typesense-full-sync`
+  - `restate-daily-digest`
+  - `restate-subscription-check-feeds`
+- `list` includes `migratedFrom`, `successCount`, `errorCount`, `lastSuccess`, and `lastError` so the soak is visible from the CLI without spelunking Dkron by hand.
+- the jobs use Dkron's shell executor plus `wget`; it appends epoch seconds to each workflow ID prefix so every scheduled run is a fresh Restate workflow.
 - Dkron cron expressions are **six-field** by default (`sec min hour dom month dow`), so hourly-at-minute-7 is `0 7 * * * *`, not `7 * * * *`.
 
 ## Daily summary command

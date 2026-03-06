@@ -2,7 +2,11 @@ import { existsSync } from "node:fs"
 import { createServer } from "node:net"
 import path from "node:path"
 import { Args, Command, Options } from "@effect/cli"
-import { buildHealthDagRequest } from "@joelclaw/restate/pipelines"
+import {
+  RESTATE_CRON_PIPELINES,
+  RESTATE_TIER1_PIPELINE_KEYS,
+  type RestateCronPipelineDefinition,
+} from "@joelclaw/restate/pipelines"
 import { Console, Effect } from "effect"
 import { respond, respondError } from "../response"
 
@@ -196,22 +200,73 @@ const fetchJson = async (
   }
 }
 
-const buildHealthJob = (
-  schedule: string,
-  timezone: string,
-  restateUrl: string,
-  workflowIdPrefix: string,
+const upsertDkronJob = async (
+  session: DkronSession,
+  job: DkronJobPayload,
+  runNow = false,
 ) => {
-  const normalizedRestateUrl = stripTrailingSlash(restateUrl)
-  const payload = JSON.stringify(buildHealthDagRequest())
+  const upsert = await fetchJson(session.baseUrl, `/v1/jobs/${job.name}`, {
+    method: "PUT",
+    body: JSON.stringify(job),
+  })
+  if (!upsert.ok) {
+    throw new Error(upsert.text || `Dkron returned ${upsert.status}`)
+  }
+
+  let runResult: JsonHttpResult | null = null
+  if (runNow) {
+    runResult = await fetchJson(session.baseUrl, `/v1/jobs/${job.name}/run`, { method: "POST" })
+    if (!runResult.ok) {
+      throw new Error(runResult.text || `Dkron returned ${runResult.status} when starting ${job.name}`)
+    }
+  }
+
+  return {
+    job: upsert.json ?? job,
+    runTriggered: runNow,
+    runResponse: runResult?.json ?? runResult?.text ?? null,
+  }
+}
+
+type DkronJobPayload = {
+  name: string
+  displayname: string
+  schedule: string
+  timezone: string
+  retries: number
+  disabled: boolean
+  concurrency: string
+  executor: string
+  executor_config: {
+    shell: string
+    command: string
+    timeout: string
+  }
+  metadata: Record<string, string>
+}
+
+const buildDagJob = (
+  definition: RestateCronPipelineDefinition,
+  options: {
+    schedule?: string
+    timezone?: string
+    restateUrl: string
+    workflowIdPrefix?: string
+  }
+): DkronJobPayload => {
+  const schedule = options.schedule ?? definition.schedule
+  const timezone = options.timezone ?? definition.timezone
+  const workflowIdPrefix = options.workflowIdPrefix ?? definition.workflowIdPrefix
+  const normalizedRestateUrl = stripTrailingSlash(options.restateUrl)
+  const payload = JSON.stringify(definition.buildRequest())
   const command = [
     `WORKFLOW_ID=\"${workflowIdPrefix}-$(date +%s)\"`,
     `wget -qO- --header='Content-Type: application/json' --post-data=${shellEscape(payload)} \"${normalizedRestateUrl}/dagOrchestrator/$WORKFLOW_ID/run/send\"`,
   ].join(" && ")
 
   return {
-    name: "restate-health-check",
-    displayname: "Restate health check",
+    name: definition.jobName,
+    displayname: definition.displayName,
     schedule,
     timezone,
     retries: 3,
@@ -221,18 +276,31 @@ const buildHealthJob = (
     executor_config: {
       shell: "true",
       command,
-      timeout: "30s",
+      timeout: "120s",
     },
     metadata: {
       runtime: "restate",
       scheduler: "dkron",
-      pipeline: "health",
+      pipeline: definition.pipeline,
       adr: "0216",
       phase: "phase-1",
+      migrated_from: definition.migratedFrom,
       workflow_id_prefix: workflowIdPrefix,
     },
   }
 }
+
+const buildHealthJob = (
+  schedule: string,
+  timezone: string,
+  restateUrl: string,
+  workflowIdPrefix: string,
+) => buildDagJob(RESTATE_CRON_PIPELINES.health, {
+  schedule,
+  timezone,
+  restateUrl,
+  workflowIdPrefix,
+})
 
 const restateStatusCmd = Command.make(
   "status",
@@ -680,7 +748,7 @@ const restateCronStatusCmd = Command.make(
         api,
       }, [
         { command: "joelclaw restate cron list", description: "List scheduler jobs" },
-        { command: "joelclaw restate cron enable-health --schedule '0 7 * * * *'", description: "Create the Restate health proof job" },
+        { command: "joelclaw restate cron sync-tier1", description: "Create or update all ADR-0216 tier-1 jobs" },
       ], allOk))
     })
 ).pipe(Command.withDescription("Check Dkron scheduler health for Restate cron jobs"))
@@ -723,8 +791,13 @@ const restateCronListCmd = Command.make(
                 disabled: job.disabled,
                 executor: job.executor,
                 pipeline: job.metadata?.pipeline ?? null,
+                migratedFrom: job.metadata?.migrated_from ?? null,
                 next: job.next ?? null,
                 retries: job.retries ?? null,
+                successCount: job.success_count ?? null,
+                errorCount: job.error_count ?? null,
+                lastSuccess: job.last_success ?? null,
+                lastError: job.last_error ?? null,
               })),
               counts: {
                 restate: restateJobs.length,
@@ -757,7 +830,7 @@ const restateCronListCmd = Command.make(
       }
 
       yield* Console.log(respond("restate cron list", result, [
-        { command: "joelclaw restate cron enable-health --schedule '0 7 * * * *'", description: "Ensure the health proof job exists" },
+        { command: "joelclaw restate cron sync-tier1", description: "Ensure all tier-1 jobs exist" },
         { command: "joelclaw restate cron status", description: "Check scheduler health" },
       ]))
     })
@@ -867,6 +940,93 @@ const restateCronEnableHealthCmd = Command.make(
     })
 ).pipe(Command.withDescription("Create or update the Dkron proof job that schedules the existing Restate health pipeline"))
 
+const restateCronSyncTier1Cmd = Command.make(
+  "sync-tier1",
+  {
+    runNow: Options.boolean("run-now").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Trigger each tier-1 job immediately after upsert")
+    ),
+    restateUrl: Options.text("restate-url").pipe(
+      Options.withDefault("http://restate:8080"),
+      Options.withDescription("In-cluster Restate ingress URL Dkron should call")
+    ),
+    namespace: Options.text("namespace").pipe(
+      Options.withDefault("joelclaw"),
+      Options.withDescription("Kubernetes namespace for the Dkron scheduler")
+    ),
+    serviceName: Options.text("service-name").pipe(
+      Options.withDefault("dkron-svc"),
+      Options.withDescription("Kubernetes service name for the Dkron HTTP API")
+    ),
+    baseUrl: Options.text("base-url").pipe(
+      Options.withDefault(process.env.DKRON_URL?.trim() || ""),
+      Options.withDescription("Optional direct Dkron API base URL (skips temporary kubectl tunnel)")
+    ),
+  },
+  ({ runNow, restateUrl, namespace, serviceName, baseUrl }) =>
+    Effect.gen(function* () {
+      const result = yield* Effect.tryPromise({
+        try: async () => {
+          const session = await openDkronSession(namespace, serviceName, baseUrl || undefined)
+          try {
+            const jobs = [] as Array<Record<string, unknown>>
+
+            for (const key of RESTATE_TIER1_PIPELINE_KEYS) {
+              const definition = RESTATE_CRON_PIPELINES[key]
+              const job = buildDagJob(definition, { restateUrl })
+              const upserted = await upsertDkronJob(session, job, runNow)
+              jobs.push({
+                key,
+                jobName: definition.jobName,
+                pipeline: definition.pipeline,
+                schedule: job.schedule,
+                timezone: job.timezone,
+                migratedFrom: definition.migratedFrom,
+                runTriggered: upserted.runTriggered,
+                runResponse: upserted.runResponse,
+              })
+            }
+
+            return {
+              accessMode: session.accessMode,
+              baseUrl: session.baseUrl,
+              runTriggered: runNow,
+              jobs,
+              operatorVerification: {
+                dkron: "joelclaw restate cron list",
+                otel: "joelclaw otel search \"dag.workflow.completed OR skill-garden.findings OR subscription.check_feeds.completed OR memory.digest.generate\" --hours 24",
+              },
+            }
+          } finally {
+            await session.dispose()
+          }
+        },
+        catch: (error) => new Error(error instanceof Error ? error.message : String(error)),
+      }).pipe(Effect.catchAll((error) => Effect.succeed({ error: error.message })))
+
+      if ("error" in result) {
+        yield* Console.log(respondError(
+          "restate cron sync-tier1",
+          result.error,
+          "RESTATE_CRON_SYNC_TIER1_FAILED",
+          "Ensure Dkron is reachable, Restate is healthy, and the tier-1 runners compile before retrying.",
+          [
+            { command: "joelclaw restate cron status", description: "Check scheduler health" },
+            { command: "joelclaw restate status", description: "Check Restate runtime health" },
+          ]
+        ))
+        return
+      }
+
+      yield* Console.log(respond("restate cron sync-tier1", result, [
+        { command: "joelclaw restate cron list", description: "Confirm the tier-1 scheduler jobs are registered" },
+        { command: "joelclaw restate cron status", description: "Check scheduler health after seeding tier-1" },
+        { command: "joelclaw otel search \"dag.workflow.completed OR skill-garden.findings OR subscription.check_feeds.completed OR memory.digest.generate\" --hours 24", description: "Monitor tier-1 execution evidence" },
+      ]))
+    })
+).pipe(Command.withDescription("Create or update all ADR-0216 tier-1 Dkron jobs for Restate pipelines"))
+
 const restateCronDeleteCmd = Command.make(
   "delete",
   {
@@ -935,14 +1095,15 @@ const restateCronCmd = Command.make("cron", {}, () =>
       status: "joelclaw restate cron status [--namespace joelclaw] [--service-name dkron-svc] [--base-url http://127.0.0.1:8080]",
       list: "joelclaw restate cron list [--namespace joelclaw] [--service-name dkron-svc]",
       enableHealth: "joelclaw restate cron enable-health [--schedule '0 7 * * * *'] [--run-now] [--restate-url http://restate:8080]",
+      syncTier1: "joelclaw restate cron sync-tier1 [--run-now] [--restate-url http://restate:8080]",
       delete: "joelclaw restate cron delete <job>",
     },
   }, [
     { command: "joelclaw restate cron status", description: "Check Dkron scheduler health" },
     { command: "joelclaw restate cron list", description: "List current scheduler jobs" },
-    { command: "joelclaw restate cron enable-health --run-now", description: "Seed and immediately trigger the Restate health proof job" },
+    { command: "joelclaw restate cron sync-tier1 --run-now", description: "Seed and immediately trigger the ADR-0216 tier-1 jobs" },
   ]))
-).pipe(Command.withSubcommands([restateCronStatusCmd, restateCronListCmd, restateCronEnableHealthCmd, restateCronDeleteCmd]))
+).pipe(Command.withSubcommands([restateCronStatusCmd, restateCronListCmd, restateCronEnableHealthCmd, restateCronSyncTier1Cmd, restateCronDeleteCmd]))
 
 export const restateCmd = Command.make("restate", {}, () =>
   Console.log(respond("restate", {
@@ -952,7 +1113,7 @@ export const restateCmd = Command.make("restate", {}, () =>
       deployments: "joelclaw restate deployments [--admin-url http://localhost:9070] [--cli-bin restate]",
       smoke: "joelclaw restate smoke [--script scripts/restate/test-workflow.sh]",
       enrich: "joelclaw restate enrich \"Name\" [--github user] [--twitter user] [--depth full|quick] [--sync]",
-      cron: "joelclaw restate cron <status|list|enable-health|delete>",
+      cron: "joelclaw restate cron <status|list|enable-health|sync-tier1|delete>",
     },
   }, [
     {
@@ -972,8 +1133,8 @@ export const restateCmd = Command.make("restate", {}, () =>
       description: "Enrich a contact through the Restate DAG pipeline",
     },
     {
-      command: "joelclaw restate cron enable-health --run-now",
-      description: "Seed Dkron with the Restate health proof job and trigger it now",
+      command: "joelclaw restate cron sync-tier1 --run-now",
+      description: "Seed Dkron with the ADR-0216 tier-1 Restate jobs and trigger them now",
     },
   ]))
 ).pipe(Command.withSubcommands([restateStatusCmd, restateDeploymentsCmd, restateSmokeCmd, restateEnrichCmd, restateCronCmd]))

@@ -74,6 +74,7 @@ kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/
 kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/dkron.yaml
 kubectl rollout status statefulset/dkron -n joelclaw
 joelclaw restate cron status
+joelclaw restate cron sync-tier1        # seed/update ADR-0216 tier-1 jobs
 
 # system-bus worker (build + push GHCR + apply + rollout wait)
 ~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh
