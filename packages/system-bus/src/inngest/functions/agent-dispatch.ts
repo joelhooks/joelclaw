@@ -172,7 +172,7 @@ export const agentDispatch = inngest.createFunction(
 
     const startedAt = new Date().toISOString();
 
-    await step.run("write-running-inbox", async () => {
+    const runningSnapshot = await step.run("write-running-inbox", async () => {
       const runningResult: InboxResult = {
         requestId,
         sessionId,
@@ -185,7 +185,7 @@ export const agentDispatch = inngest.createFunction(
       };
 
       const filePath = writeInboxSnapshot(runningResult);
-      return { filePath, status: runningResult.status };
+      return { filePath, status: runningResult.status, startedAt: runningResult.startedAt };
     });
 
     // Execute the agent
@@ -279,8 +279,9 @@ export const agentDispatch = inngest.createFunction(
     // Write to inbox
     const inboxResult = await step.run("write-inbox", async () => {
       const completedAt = new Date().toISOString();
+      const effectiveStartedAt = runningSnapshot.startedAt ?? startedAt;
       const durationMs =
-        new Date(completedAt).getTime() - new Date(startedAt).getTime();
+        new Date(completedAt).getTime() - new Date(effectiveStartedAt).getTime();
 
       const result: InboxResult = {
         requestId,
@@ -292,7 +293,7 @@ export const agentDispatch = inngest.createFunction(
         ...(execution.status === "completed"
           ? { result: execution.output }
           : { error: execution.error }),
-        startedAt,
+        startedAt: effectiveStartedAt,
         updatedAt: completedAt,
         completedAt,
         durationMs,
