@@ -157,6 +157,8 @@ type GatewayHealthSnapshot = {
     context?: Record<string, unknown>
     sessionPressure?: Record<string, unknown>
     supersession?: Record<string, unknown>
+    channels?: Record<string, unknown>
+    operatorTracing?: Record<string, unknown>
     callbackTracing?: Record<string, unknown>
     guardrails?: Record<string, unknown>
   }
@@ -361,6 +363,8 @@ const gatewayStatus = Command.make("status", {}, () =>
         ...(daemonHealth?.status?.context ? { context: daemonHealth.status.context } : {}),
         ...(daemonHealth?.status?.sessionPressure ? { sessionPressure: daemonHealth.status.sessionPressure } : {}),
         ...(daemonHealth?.status?.supersession ? { supersession: daemonHealth.status.supersession } : {}),
+        ...(daemonHealth?.status?.channels ? { channels: daemonHealth.status.channels } : {}),
+        ...(daemonHealth?.status?.operatorTracing ? { operatorTracing: daemonHealth.status.operatorTracing } : {}),
         ...(daemonHealth?.status?.callbackTracing ? { callbackTracing: daemonHealth.status.callbackTracing } : {}),
         ...(daemonHealth?.status?.guardrails ? { guardrails: daemonHealth.status.guardrails } : {}),
         ...(redisStatus.error ? { redisError: redisStatus.error } : {}),
@@ -1396,17 +1400,22 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
     let callbackTimeoutMs: number | undefined
     let callbackActiveCount = 0
     let callbackActiveRoutes: string[] = []
+    let callbackActiveKinds: string[] = []
+    let callbackLastCompletedKind: string | undefined
     let callbackLastCompletedRoute: string | undefined
     let callbackLastCompletedAt: string | undefined
     let callbackLastCompletedTraceId: string | undefined
+    let callbackLastFailedKind: string | undefined
     let callbackLastFailedRoute: string | undefined
     let callbackLastFailedAt: string | undefined
     let callbackLastFailedTraceId: string | undefined
     let callbackLastFailedError: string | undefined
+    let callbackLastTimedOutKind: string | undefined
     let callbackLastTimedOutRoute: string | undefined
     let callbackLastTimedOutAt: string | undefined
     let callbackLastTimedOutTraceId: string | undefined
     let callbackLastTimedOutError: string | undefined
+    let channelSnapshots: Record<string, unknown> = {}
     let checkpointSentThisTurn = false
     let pendingDeployVerificationCount = 0
     try {
@@ -1414,7 +1423,10 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       const parsed = JSON.parse(raw)
       const pressure = parsed.result?.sessionPressure ?? {}
       const supersession = parsed.result?.supersession ?? {}
-      const callbackTracing = parsed.result?.callbackTracing ?? {}
+      channelSnapshots = typeof parsed.result?.channels === "object" && parsed.result.channels !== null
+        ? parsed.result.channels as Record<string, unknown>
+        : {}
+      const callbackTracing = parsed.result?.operatorTracing ?? parsed.result?.callbackTracing ?? {}
       redisOk = parsed.result?.redis === "connected"
       gatewayMode = parsed.result?.mode === "redis_degraded" ? "redis_degraded" : "normal"
       const sessions = parsed.result?.activeSessions ?? []
@@ -1495,6 +1507,12 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       callbackActiveRoutes = Array.isArray(callbackTracing.activeRoutes)
         ? callbackTracing.activeRoutes.filter((route: unknown): route is string => typeof route === "string")
         : []
+      callbackActiveKinds = Array.isArray(callbackTracing.activeKinds)
+        ? callbackTracing.activeKinds.filter((kind: unknown): kind is string => typeof kind === "string")
+        : []
+      callbackLastCompletedKind = typeof callbackTracing.lastCompleted?.kind === "string"
+        ? callbackTracing.lastCompleted.kind
+        : undefined
       callbackLastCompletedRoute = typeof callbackTracing.lastCompleted?.route === "string"
         ? callbackTracing.lastCompleted.route
         : undefined
@@ -1503,6 +1521,9 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
         : undefined
       callbackLastCompletedTraceId = typeof callbackTracing.lastCompleted?.traceId === "string"
         ? callbackTracing.lastCompleted.traceId
+        : undefined
+      callbackLastFailedKind = typeof callbackTracing.lastFailed?.kind === "string"
+        ? callbackTracing.lastFailed.kind
         : undefined
       callbackLastFailedRoute = typeof callbackTracing.lastFailed?.route === "string"
         ? callbackTracing.lastFailed.route
@@ -1515,6 +1536,9 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
         : undefined
       callbackLastFailedError = typeof callbackTracing.lastFailed?.error === "string"
         ? callbackTracing.lastFailed.error
+        : undefined
+      callbackLastTimedOutKind = typeof callbackTracing.lastTimedOut?.kind === "string"
+        ? callbackTracing.lastTimedOut.kind
         : undefined
       callbackLastTimedOutRoute = typeof callbackTracing.lastTimedOut?.route === "string"
         ? callbackTracing.lastTimedOut.route
@@ -1661,6 +1685,72 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       ...(supersessionFindings.length > 0 ? { findings: supersessionFindings } : {}),
     })
 
+    const channelFindings: string[] = []
+    const degradedChannels: string[] = []
+    const channels = channelSnapshots as Record<string, Record<string, unknown>>
+
+    const telegramChannel = channels.telegram ?? {}
+    const telegramConfigured = telegramChannel.configured === true
+    const telegramHealthy = telegramChannel.healthy === true
+    const telegramLeaseEnabled = telegramChannel.leaseEnabled === true
+    const telegramOwnerState = typeof telegramChannel.ownerState === "string" ? telegramChannel.ownerState : undefined
+    if (telegramConfigured) {
+      const telegramLabel = telegramOwnerState === "fallback" && !telegramLeaseEnabled
+        ? "fallback (lease disabled)"
+        : telegramOwnerState ?? (telegramHealthy ? "healthy" : "degraded")
+      channelFindings.push(`telegram: ${telegramLabel}`)
+      const telegramRetryAttempts = typeof telegramChannel.retryAttempts === "number" ? telegramChannel.retryAttempts : 0
+      const telegramConflictStreak = typeof telegramChannel.conflictStreak === "number" ? telegramChannel.conflictStreak : 0
+      if (telegramRetryAttempts > 0 || telegramConflictStreak > 0) {
+        channelFindings.push(`telegram retries/conflicts: ${telegramRetryAttempts}/${telegramConflictStreak}`)
+      }
+      const telegramContractDegraded = !telegramHealthy
+        || telegramOwnerState === "passive"
+        || (telegramOwnerState === "fallback" && telegramLeaseEnabled)
+        || telegramOwnerState === "stopped"
+      if (telegramContractDegraded) {
+        degradedChannels.push(`telegram:${telegramOwnerState ?? "degraded"}`)
+      }
+    }
+
+    const discordChannel = channels.discord ?? {}
+    if (discordChannel.configured === true) {
+      const discordReady = discordChannel.ready === true
+      channelFindings.push(`discord: ${discordReady ? "ready" : "not ready"}`)
+      if (!discordReady) degradedChannels.push("discord")
+    }
+
+    const imessageChannel = channels.imessage ?? {}
+    if (imessageChannel.configured === true) {
+      const imessageConnected = imessageChannel.connected === true
+      channelFindings.push(`imessage: ${imessageConnected ? "connected" : "disconnected"}`)
+      const imessageReconnectAttempts = typeof imessageChannel.reconnectAttempts === "number"
+        ? imessageChannel.reconnectAttempts
+        : 0
+      if (imessageReconnectAttempts > 0) {
+        channelFindings.push(`imessage reconnect attempts: ${imessageReconnectAttempts}`)
+      }
+      if (!imessageConnected) degradedChannels.push("imessage")
+    }
+
+    const slackChannel = channels.slack ?? {}
+    if (slackChannel.configured === true) {
+      const slackConnected = slackChannel.connected === true
+      channelFindings.push(`slack: ${slackConnected ? "connected" : "not connected"}`)
+      if (!slackConnected) degradedChannels.push("slack")
+    }
+
+    if (channelFindings.length > 0) {
+      layers.push({
+        layer: "channel-health",
+        status: degradedChannels.length > 0 ? "degraded" : "ok",
+        detail: degradedChannels.length > 0
+          ? `Channel contract degraded: ${degradedChannels.join(", ")}`
+          : "Channel runtime contracts healthy",
+        findings: channelFindings,
+      })
+    }
+
     const callbackFindings: string[] = []
     if (typeof callbackTimeoutMs === "number") {
       callbackFindings.push(`timeout: ${callbackTimeoutMs}ms`)
@@ -1668,35 +1758,38 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
     if (callbackActiveCount > 0) {
       callbackFindings.push(`active traces: ${callbackActiveCount}`)
     }
+    if (callbackActiveKinds.length > 0) {
+      callbackFindings.push(`active kinds: ${callbackActiveKinds.join(", ")}`)
+    }
     if (callbackActiveRoutes.length > 0) {
       callbackFindings.push(`active routes: ${callbackActiveRoutes.join(", ")}`)
     }
     if (callbackLastCompletedRoute && callbackLastCompletedAt) {
-      callbackFindings.push(`last completed: ${callbackLastCompletedRoute} at ${callbackLastCompletedAt}${callbackLastCompletedTraceId ? ` (${callbackLastCompletedTraceId})` : ""}`)
+      callbackFindings.push(`last completed: ${callbackLastCompletedKind ?? "trace"} ${callbackLastCompletedRoute} at ${callbackLastCompletedAt}${callbackLastCompletedTraceId ? ` (${callbackLastCompletedTraceId})` : ""}`)
     }
     if (callbackLastFailedRoute && callbackLastFailedAt) {
-      callbackFindings.push(`last failed: ${callbackLastFailedRoute} at ${callbackLastFailedAt}${callbackLastFailedTraceId ? ` (${callbackLastFailedTraceId})` : ""}`)
+      callbackFindings.push(`last failed: ${callbackLastFailedKind ?? "trace"} ${callbackLastFailedRoute} at ${callbackLastFailedAt}${callbackLastFailedTraceId ? ` (${callbackLastFailedTraceId})` : ""}`)
     }
     if (callbackLastFailedError) {
       callbackFindings.push(`failure error: ${callbackLastFailedError}`)
     }
     if (callbackLastTimedOutRoute && callbackLastTimedOutAt) {
-      callbackFindings.push(`last timed out: ${callbackLastTimedOutRoute} at ${callbackLastTimedOutAt}${callbackLastTimedOutTraceId ? ` (${callbackLastTimedOutTraceId})` : ""}`)
+      callbackFindings.push(`last timed out: ${callbackLastTimedOutKind ?? "trace"} ${callbackLastTimedOutRoute} at ${callbackLastTimedOutAt}${callbackLastTimedOutTraceId ? ` (${callbackLastTimedOutTraceId})` : ""}`)
     }
     if (callbackLastTimedOutError) {
       callbackFindings.push(`timeout error: ${callbackLastTimedOutError}`)
     }
 
     layers.push({
-      layer: "callback-tracing",
+      layer: "operator-tracing",
       status: callbackLastTimedOutAt || callbackLastFailedAt ? "degraded" : callbackActiveCount > 0 ? "degraded" : "ok",
       detail: callbackLastTimedOutAt
-        ? "Recent callback action timed out"
+        ? `Recent ${callbackLastTimedOutKind ?? "operator"} action timed out`
         : callbackLastFailedAt
-          ? "Recent callback action failed"
+          ? `Recent ${callbackLastFailedKind ?? "operator"} action failed`
           : callbackActiveCount > 0
-            ? `Tracking ${callbackActiveCount} active callback trace${callbackActiveCount === 1 ? "" : "s"}`
-            : "Callback ack/timeout tracing healthy",
+            ? `Tracking ${callbackActiveCount} active operator trace${callbackActiveCount === 1 ? "" : "s"}`
+            : "Operator command/callback ack tracing healthy",
       ...(callbackFindings.length > 0 ? { findings: callbackFindings } : {}),
     })
 

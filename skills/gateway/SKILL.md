@@ -99,19 +99,27 @@ Runtime contract:
 
 Passive intel / background event routes are excluded from this path.
 
-## Callback ack/timeout tracing (ADR-0218 rank 5 slice)
+## Operator ack/timeout tracing (ADR-0218 rank 5 slice)
 
-Telegram operator callbacks now get trace ids and explicit lifecycle tracking.
+Telegram operator actions now get trace ids and explicit lifecycle tracking.
 
 Current covered paths:
 - `cmd:*` command-menu callbacks
 - `worktree:*` callbacks
 - `pitch:*` ADR pitch callbacks
 - default Telegram callback actions and external callback-route handoffs
+- direct Telegram slash commands registered through the command handler
+- native Telegram `/stop`, `/esc`, and `/kill` commands
 
-Gateway now tracks ack/dispatched/completed/failed/timed_out state for those paths, exposes `callbackTracing` in `joelclaw gateway status`, and adds a `callback-tracing` layer in `joelclaw gateway diagnose`.
+Gateway now tracks `kind=callback|command` plus ack/dispatched/completed/failed/timed_out state for those paths, exposes canonical `operatorTracing` in `joelclaw gateway status` (with `callbackTracing` kept as a compatibility alias), and adds an `operator-tracing` layer in `joelclaw gateway diagnose`.
 
-Timeout/failure paths send an explicit Telegram follow-up with route + trace id instead of silently trusting the button spinner. Still open: broader command tracing beyond callback-driven actions, richer downstream completion acks for external callback routes, and richer interruptibility coverage for non-message operator actions.
+Timeout/failure paths send an explicit Telegram follow-up with route + trace id instead of silently trusting the button spinner or dropped command reply. Still open: richer downstream completion acks for external callback routes and queued agent-command completion beyond the initial accept/enqueue step.
+
+## Channel runtime contracts (ADR-0218 rank 6 slice)
+
+`joelclaw gateway status` now exposes a canonical `channels` surface with reusable runtime snapshots for Telegram, Discord, iMessage, and Slack. `joelclaw gateway diagnose` adds a `channel-health` layer so owner/passive/fallback and half-dead channel states are visible before a full outage.
+
+This is the first rank-6 slice: operator visibility and reusable health/ownership contracts, not the full restart/heal policy layer yet.
 
 ## Runtime guardrail enforcement (ADR-0189)
 

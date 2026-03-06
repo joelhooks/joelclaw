@@ -97,9 +97,9 @@ Current boundary of the slice:
 - shipped: cross-channel human latest-wins supersession + batching window + stale-response suppression
 - still open: richer interruptibility coverage for non-message operator actions
 
-## Callback ack/timeout tracing (ADR-0218 rank 5)
+## Operator ack/timeout tracing (ADR-0218 rank 5)
 
-Telegram operator callbacks now get trace ids and an explicit lifecycle instead of a blind button toast.
+Telegram operator actions now get trace ids and an explicit lifecycle instead of blind button toasts or silent slash-command hangs.
 
 Current runtime slice covers:
 
@@ -107,10 +107,13 @@ Current runtime slice covers:
 - worktree callbacks (`worktree:*`)
 - ADR pitch callbacks (`pitch:*`)
 - default Telegram callback actions and external callback-route handoffs
+- direct Telegram slash commands registered through the command handler
+- native Telegram `/stop`, `/esc`, and `/kill` operator commands
 
 For those paths, the gateway now tracks:
 
 - `traceId`
+- `kind` (`callback` / `command`)
 - ack state (`pending` / `succeeded` / `failed`)
 - dispatch/completion/failure timestamps
 - timeout state (`15s` default)
@@ -118,14 +121,38 @@ For those paths, the gateway now tracks:
 
 Operator surfaces:
 
-- `joelclaw gateway status` exposes `callbackTracing`
-- `joelclaw gateway diagnose` adds a `callback-tracing` layer
-- timeout/failure paths send an explicit Telegram follow-up with route + trace id instead of silently relying on the button spinner
+- `joelclaw gateway status` exposes canonical `operatorTracing`
+- `callbackTracing` remains as a compatibility alias for the same snapshot
+- `joelclaw gateway diagnose` adds an `operator-tracing` layer
+- timeout/failure paths send an explicit Telegram follow-up with route + trace id instead of silently relying on spinners or missing command replies
 
 Current boundary of this rank-5 slice:
 
-- shipped: Telegram operator callback tracing and failure/timeout surfacing
-- still open: broader command tracing beyond callback-driven actions, plus richer downstream completion acks for externally routed callback chains
+- shipped: Telegram operator callback tracing, Telegram non-callback command tracing, and timeout/failure surfacing
+- still open: richer downstream completion acks for externally routed callback chains and for queued agent-command completion beyond the initial enqueue/accept step
+
+## Channel runtime contracts (ADR-0218 rank 6)
+
+Gateway status now exposes a canonical `channels` surface so Telegram ownership semantics stop being a bespoke one-off.
+
+Current runtime slice exposes per-channel runtime snapshots for:
+
+- `telegram` — configured/started/healthy, owner state, polling state, retry attempts, conflict streak, last lease status
+- `discord` — configured/started/healthy, ready state, bot user id
+- `imessage` — configured/started/healthy, connected state, reconnect attempts/delay, healing state
+- `slack` — configured/started/healthy, connected state, bot/allowed user ids
+
+Operator surfaces:
+
+- `joelclaw gateway status` exposes `channels`
+- `joelclaw gateway diagnose` adds a `channel-health` layer
+- `/health` components now reflect per-channel contract state instead of just a Telegram boolean
+- Telegram `fallback` with `leaseEnabled=false` is expected local mode, not a degraded owner contract
+
+Current boundary of this rank-6 slice:
+
+- shipped: reusable channel runtime health/ownership snapshots and operator visibility
+- still open: active restart/heal policies and stricter single-owner semantics beyond Telegram
 
 ## Telegram multi-instance polling ownership (2026-03-05)
 
