@@ -13,11 +13,12 @@
 
 import * as restate from "@restatedev/restate-sdk";
 
-import { deployGate, setDeployChannel } from "./workflows/deploy-gate";
-import { TelegramChannel } from "./channels/telegram";
 import { ConsoleChannel } from "./channels/console";
-import { resolveCallback } from "./resolver";
+import { TelegramChannel } from "./channels/telegram";
 import type { NotificationChannel } from "./channels/types";
+import { resolveCallback } from "./resolver";
+import { dagOrchestrator, dagWorker } from "./workflows/dag-orchestrator";
+import { deployGate, setDeployChannel } from "./workflows/deploy-gate";
 
 // --- Channel setup ---
 
@@ -54,12 +55,13 @@ process.on("SIGTERM", () => { stopListener(); process.exit(0); });
 const port = Number(process.env.RESTATE_PORT ?? 9080);
 
 restate.serve({
-  services: [deployGate],
+  services: [deployGate, dagOrchestrator, dagWorker],
   port,
 });
 
 console.log(`\n⚡ Restate Worker — joelclaw`);
 console.log(`   Port: ${port}`);
 console.log(`   Channel: ${channel.id}`);
-console.log(`   Workflows: deployGate`);
+console.log(`   Workflows: deployGate, dagOrchestrator`);
+console.log(`   Services: dagWorker`);
 console.log(``);

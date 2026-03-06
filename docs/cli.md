@@ -139,7 +139,9 @@ joelclaw restate
   3. relative to `JOELCLAW_ROOT`
   4. relative to `~/Code/joelhooks/joelclaw`
 - runs `scripts/restate/test-workflow.sh` by default.
-- current smoke workflow validates `deployGate` end-to-end (not legacy `orchestratorService/runBatch`).
+- default smoke validates `deployGate` end-to-end.
+- DAG smoke is available via script override:
+  - `joelclaw restate smoke --script scripts/restate/test-dag-workflow.sh`
 
 ## Daily summary command
 

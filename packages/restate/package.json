@@ -7,7 +7,8 @@
   "types": "src/index.ts",
   "scripts": {
     "dev": "bun run src/index.ts",
-    "deploy": "bun run src/trigger-deploy.ts"
+    "deploy": "bun run src/trigger-deploy.ts",
+    "dag": "bun run src/trigger-dag.ts"
   },
   "dependencies": {
     "@restatedev/restate-sdk": "^1.10.4",
