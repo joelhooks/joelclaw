@@ -222,8 +222,8 @@ Use `joelclaw gateway enable` for direct launch-agent recovery (enable + bootstr
 Gateway status/diagnose now separate **daemon availability** from **Redis bridge health**:
 
 - `joelclaw gateway status` prefers daemon `/health` when available, so Redis loss no longer makes the gateway look fully dead.
-- status now returns `mode` (`normal` or `redis_degraded`), `degradedCapabilities`, `sessionPressure` (context %, compaction age, session age, next action), and `guardrails` (current turn tool budget state + pending deploy verifications).
-- `joelclaw gateway diagnose` treats `redis_degraded` as a degraded runtime, not a process failure, skips Redis-dependent E2E checks in that mode, and surfaces runtime guardrail findings when a checkpoint/deploy verification is active.
+- status now returns `mode` (`normal` or `redis_degraded`), `degradedCapabilities`, `sessionPressure` (context %, compaction age, session age, next action, thread counts, fallback activations/failures, pressure reasons, and alert state), and `guardrails` (current turn tool budget state + pending deploy verifications).
+- `joelclaw gateway diagnose` treats `redis_degraded` as a degraded runtime, not a process failure, skips Redis-dependent E2E checks in that mode, surfaces runtime guardrail findings when a checkpoint/deploy verification is active, and adds a dedicated `session-pressure` layer with the current risk signals.
 
 ## Gateway behavior control plane (ADR-0211)
 

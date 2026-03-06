@@ -1,6 +1,5 @@
 export {
   ack,
-  classifyPriority,
   drainByPriority,
   getUnacked,
   indexMessagesByPriority,
@@ -11,9 +10,9 @@ export {
 export type {
   CandidateMessage,
   DrainByPriorityOptions,
-  InboundMessage,
+  InitOptions,
   PersistResult,
-  QueuedMessage,
+  QueueConfig,
   StoredMessage,
   TelemetryEmitter,
 } from "./types";

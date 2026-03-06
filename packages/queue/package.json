@@ -1,16 +1,15 @@
 {
-  "name": "@joelclaw/message-store",
+  "name": "@joelclaw/queue",
   "version": "0.1.0",
   "type": "module",
   "private": true,
   "main": "src/index.ts",
   "types": "src/index.ts",
-  "description": "Gateway-specific message queue adapter on top of @joelclaw/queue",
+  "description": "Generic Redis stream + priority index queue primitives",
   "peerDependencies": {
     "ioredis": "^5.9.3"
   },
   "dependencies": {
-    "@joelclaw/queue": "workspace:*",
     "@joelclaw/telemetry": "workspace:*"
   },
   "devDependencies": {
