@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs"
 import path from "node:path"
-import { Command, Options } from "@effect/cli"
+import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { respond, respondError } from "../response"
 
@@ -290,13 +290,148 @@ const restateSmokeCmd = Command.make(
     })
 )
 
+const resolveRepoFile = (relPath: string): string | null => {
+  const candidates = [
+    process.env.JOELCLAW_ROOT?.trim(),
+    process.env.HOME ? path.join(process.env.HOME, "Code", "joelhooks", "joelclaw") : undefined,
+  ].filter((value): value is string => Boolean(value))
+
+  for (const root of candidates) {
+    const candidate = path.join(root, relPath)
+    if (existsSync(candidate)) return candidate
+  }
+  return null
+}
+
+const restateEnrichCmd = Command.make(
+  "enrich",
+  {
+    name: Args.text({ name: "name" }).pipe(
+      Args.withDescription("Contact name to enrich (e.g. \"Kent C. Dodds\")")
+    ),
+    github: Options.text("github").pipe(
+      Options.withDescription("GitHub username hint"),
+      Options.optional,
+    ),
+    twitter: Options.text("twitter").pipe(
+      Options.withDescription("Twitter/X username hint"),
+      Options.optional,
+    ),
+    email: Options.text("email").pipe(
+      Options.withDescription("Email address hint"),
+      Options.optional,
+    ),
+    website: Options.text("website").pipe(
+      Options.withDescription("Website URL hint"),
+      Options.optional,
+    ),
+    depth: Options.choice("depth", ["quick", "full"]).pipe(
+      Options.withDefault("full"),
+      Options.withDescription("Enrichment depth: quick (3 sources) or full (7+ sources)"),
+    ),
+    sync: Options.boolean("sync").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Wait for result instead of async fire-and-forget"),
+    ),
+    ingressUrl: Options.text("ingress-url").pipe(
+      Options.withDefault(process.env.RESTATE_INGRESS_URL?.trim() || "http://localhost:8080"),
+      Options.withDescription("Restate ingress URL"),
+    ),
+  },
+  ({ name, github, twitter, email, website, depth, sync, ingressUrl }) =>
+    Effect.gen(function* () {
+      const triggerScript = resolveRepoFile("packages/restate/src/trigger-dag.ts")
+      if (!triggerScript) {
+        yield* Console.log(respondError(
+          "restate enrich",
+          "Cannot find packages/restate/src/trigger-dag.ts — set JOELCLAW_ROOT or run from repo.",
+          "RESTATE_TRIGGER_NOT_FOUND",
+          "Set JOELCLAW_ROOT to the joelclaw repo root, or run from within the repo.",
+          [{
+            command: "joelclaw restate enrich \"Name\" --help",
+            description: "Show enrich usage",
+          }]
+        ))
+        return
+      }
+
+      const workflowId = `enrich-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now().toString(36)}`
+
+      const args: string[] = [
+        "bun", "run", triggerScript, "--",
+        "--pipeline", "enrich-contact",
+        "--name", name,
+        "--depth", depth,
+        "--id", workflowId,
+      ]
+
+      if (!sync) args.push("--async")
+
+      const optVal = (opt: { _tag: string; value?: string }): string | undefined =>
+        opt._tag === "Some" ? (opt as { value: string }).value : undefined
+
+      const gh = optVal(github as any)
+      const tw = optVal(twitter as any)
+      const em = optVal(email as any)
+      const ws = optVal(website as any)
+
+      if (gh) args.push("--github", gh)
+      if (tw) args.push("--twitter", tw)
+      if (em) args.push("--email", em)
+      if (ws) args.push("--website", ws)
+
+      const proc = Bun.spawnSync(args, {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          RESTATE_INGRESS_URL: ingressUrl,
+        },
+      })
+
+      const stdout = decode(proc.stdout).trim()
+      const stderr = decode(proc.stderr).trim()
+
+      if (proc.exitCode !== 0) {
+        yield* Console.log(respondError(
+          "restate enrich",
+          stderr || stdout || `trigger exited with ${proc.exitCode}`,
+          "RESTATE_ENRICH_FAILED",
+          "Check Restate runtime health: joelclaw restate status",
+          [
+            { command: "joelclaw restate status", description: "Check Restate runtime health" },
+            { command: "joelclaw restate deployments", description: "Verify DAG services registered" },
+          ]
+        ))
+        return
+      }
+
+      yield* Console.log(respond("restate enrich", {
+        name,
+        depth,
+        workflowId,
+        mode: sync ? "sync" : "async",
+        output: stdout,
+        hints: { github: gh, twitter: tw, email: em, website: ws },
+      }, sync ? [
+        { command: `cat ~/Vault/Contacts/${name}.md`, description: "Read generated dossier" },
+        { command: "joelclaw otel search \"dag.workflow\" --hours 1", description: "Check OTEL events" },
+      ] : [
+        { command: `curl ${ingressUrl}/dagOrchestrator/${workflowId}/output`, description: "Poll for result" },
+        { command: "joelclaw otel search \"dag.workflow\" --hours 1", description: "Check OTEL events" },
+        { command: `cat ~/Vault/Contacts/${name}.md`, description: "Read dossier once complete" },
+      ]))
+    })
+).pipe(Command.withDescription("Enrich a contact via Restate DAG — 7+ parallel source probes → LLM synthesis → Vault dossier"))
+
 export const restateCmd = Command.make("restate", {}, () =>
   Console.log(respond("restate", {
-    description: "Restate runtime and deployment visibility",
+    description: "Restate runtime, deployments, and DAG pipelines",
     subcommands: {
       status: "joelclaw restate status [--namespace joelclaw] [--admin-url http://localhost:9070]",
       deployments: "joelclaw restate deployments [--admin-url http://localhost:9070] [--cli-bin restate]",
       smoke: "joelclaw restate smoke [--script scripts/restate/test-workflow.sh]",
+      enrich: "joelclaw restate enrich \"Name\" [--github user] [--twitter user] [--depth full|quick] [--sync]",
     },
   }, [
     {
@@ -311,5 +446,9 @@ export const restateCmd = Command.make("restate", {}, () =>
       command: "joelclaw restate smoke",
       description: "Run end-to-end Restate deployGate smoke test",
     },
+    {
+      command: "joelclaw restate enrich \"Kent C. Dodds\" --github kentcdodds --depth full",
+      description: "Enrich a contact through the Restate DAG pipeline",
+    },
   ]))
-).pipe(Command.withSubcommands([restateStatusCmd, restateDeploymentsCmd, restateSmokeCmd]))
+).pipe(Command.withSubcommands([restateStatusCmd, restateDeploymentsCmd, restateSmokeCmd, restateEnrichCmd]))
