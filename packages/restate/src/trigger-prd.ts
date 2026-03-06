@@ -111,8 +111,6 @@ async function compilePrdPlan(prdContent: string): Promise<PrdExecutionPlan> {
       "-p",
       "--no-session",
       "--no-extensions",
-      "--mode",
-      "json",
       "--models",
       PRD_PLANNER_MODEL,
       "--system-prompt",
@@ -181,7 +179,11 @@ function withCoordinationContract(story: PrdStoryPlan): string {
   ].join("\n");
 }
 
-function buildAgentStoryNode(story: PrdStoryPlan, token: string, inheritedDependsOn: string[]): DagNodeInput {
+function buildAgentStoryNode(
+  story: PrdStoryPlan,
+  token: string | undefined,
+  inheritedDependsOn: string[]
+): DagNodeInput {
   const requestId = `${workflowId}-${story.id}-${randomUUID().slice(0, 8)}`;
   const timeoutSeconds = Number.isFinite(story.timeoutSeconds)
     ? Math.max(300, Math.min(story.timeoutSeconds!, DEFAULT_TIMEOUT_SECONDS))
@@ -200,14 +202,17 @@ function buildAgentStoryNode(story: PrdStoryPlan, token: string, inheritedDepend
 
   const dispatchUrl = `${PRD_AGENT_WORKER_URL}/internal/agent-dispatch`;
   const awaitUrl = `${PRD_AGENT_WORKER_URL}/internal/agent-await/${requestId}?timeoutMs=${timeoutMs}`;
+  const authHeader = token ? `  -H 'x-otel-emit-token: ${token}'` : undefined;
   const command = [
     `curl -fsS -X POST ${shellEscape(dispatchUrl)}`,
     `  -H 'Content-Type: application/json'`,
-    `  -H 'x-otel-emit-token: ${token}'`,
+    authHeader,
     `  --data ${shellEscape(JSON.stringify(payload))}`,
     `&& curl -fsS ${shellEscape(awaitUrl)}`,
-    `  -H 'x-otel-emit-token: ${token}'`,
-  ].join(" \\\n");
+    authHeader,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(" \\\n");
 
   return {
     id: story.id,
@@ -221,7 +226,7 @@ function buildAgentStoryNode(story: PrdStoryPlan, token: string, inheritedDepend
   };
 }
 
-function buildDagNodes(plan: PrdExecutionPlan, token: string): DagNodeInput[] {
+function buildDagNodes(plan: PrdExecutionPlan, token: string | undefined): DagNodeInput[] {
   const nodes: DagNodeInput[] = [];
   const priorWaveIds: string[] = [];
 
@@ -239,10 +244,10 @@ function buildDagNodes(plan: PrdExecutionPlan, token: string): DagNodeInput[] {
 
 const prdContent = await readFile(prdPath, "utf8");
 const internalToken = await readEnvValue("OTEL_EMIT_TOKEN");
-if (!internalToken) {
-  console.error("❌ OTEL_EMIT_TOKEN is required to bridge Restate → host worker internal endpoints");
-  process.exit(1);
-}
+
+console.log(`🧠 Compiling PRD with ${PRD_PLANNER_MODEL}`);
+console.log(`   prd: ${prdPath}`);
+console.log(`   cwd: ${cwd}`);
 
 const plan = await compilePrdPlan(prdContent);
 const nodes = buildDagNodes(plan, internalToken);
@@ -258,6 +263,7 @@ console.log(`   summary: ${plan.summary}`);
 console.log(`   waves: ${plan.waves.length}`);
 console.log(`   nodes: ${nodes.length}`);
 console.log(`   worker bridge: ${PRD_AGENT_WORKER_URL}`);
+console.log(`   bridge auth: ${internalToken ? "OTEL_EMIT_TOKEN" : "none"}`);
 console.log("");
 
 const endpoint = asyncMode

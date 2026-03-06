@@ -170,6 +170,7 @@ await gateway?.progress("Step 3/5 complete");
 - **ADR content sync must degrade on frontmatter parse failures.** `upsertAdr` falls back to body-only parsing (empty frontmatter + stripped frontmatter block) and logs a warning, instead of dropping the ADR from Convex.
 - **Non-authoritative side effects must degrade, not crash the workflow.** Example: `memory/proposal-triage` keeps triage authoritative, retries review-task creation across primary/fallback Todoist projects (`MEMORY_REVIEW_TODOIST_PROJECT` → `MEMORY_REVIEW_TODOIST_FALLBACK_PROJECT`), and only records degraded state if both fail.
 - **Never call `joelclaw` CLI with `Bun.spawnSync` from inside a running Inngest function.** `joelclaw inngest status` probes the worker endpoint; sync subprocesses can deadlock the worker event loop. Use async subprocess execution (`Bun.spawn`/`Bun.$`) with explicit timeouts, or direct internal health probes.
+- **Background agent runs must be non-blocking.** `system/agent-dispatch` cannot use `execSync`/other blocking subprocess APIs for long codex or claude runs on the host worker; blocking the Bun event loop causes Talon/worker-supervisor health checks to fail, the worker to restart, `/internal/agent-await` to drop, and Inngest runs to go stale.
 - **Do not import `packages/cli/src/*` from system-bus via relative paths.** Keep runbook resolution local in `packages/system-bus` (or extract to a dedicated leaf package) and avoid creating `@joelclaw/system-bus` ↔ `@joelclaw/sdk` dependency cycles that break Turbo/Vercel.
 
 ## Deploy: system-bus-worker (k8s)

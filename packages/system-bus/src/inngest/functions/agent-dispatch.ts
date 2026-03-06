@@ -75,6 +75,45 @@ function resolveCodexModel(model?: string): string {
   return CODEX_DEFAULT_MODEL;
 }
 
+async function runAgentCommand(
+  command: string,
+  options: {
+    cwd: string;
+    timeoutSeconds: number;
+    env: Record<string, string | undefined>;
+  }
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const proc = Bun.spawn(["bash", "-lc", `exec ${command}`], {
+    cwd: options.cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: Object.fromEntries(
+      Object.entries(options.env).filter((entry): entry is [string, string] => typeof entry[1] === "string")
+    ),
+  });
+
+  const timer = setTimeout(() => {
+    try {
+      proc.kill();
+    } catch {
+      // ignore
+    }
+  }, Math.max(1, options.timeoutSeconds) * 1000);
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  clearTimeout(timer);
+
+  return {
+    exitCode,
+    stdout: stdout.trim(),
+    stderr: stderr.trim(),
+  };
+}
+
 /**
  * ADR-0026: Background agent dispatch via Inngest.
  *
@@ -152,8 +191,12 @@ export const agentDispatch = inngest.createFunction(
         }
       }
 
-      const dispatchStartedAt = Date.now();
       const piNeedsTools = tool === "pi" && taskRequiresFileAccess(task);
+      const sharedEnv = {
+        ...process.env,
+        CI: "true",
+        TERM: "dumb",
+      };
 
       try {
         if (tool === "pi") {
@@ -167,11 +210,7 @@ export const agentDispatch = inngest.createFunction(
             noTools: !piNeedsTools,
             timeout: timeout * 1000,
             json: false,
-            env: {
-              ...process.env,
-              CI: "true",
-              TERM: "dumb",
-            },
+            env: sharedEnv,
           });
 
           const textOutput = result.text.trim();
@@ -187,44 +226,31 @@ export const agentDispatch = inngest.createFunction(
           timeout,
           allowPiTools: piNeedsTools,
         });
-        const outputRaw = execSync(cmd, {
+        const commandResult = await runAgentCommand(cmd, {
           cwd: workDir,
-          encoding: "utf-8",
-          timeout: timeout * 1000,
-          maxBuffer: 10 * 1024 * 1024, // 10MB
-          env: {
-            ...process.env,
-            // Ensure non-interactive
-            CI: "true",
-            TERM: "dumb",
-          },
-        }).trim();
+          timeoutSeconds: timeout,
+          env: sharedEnv,
+        });
 
-        return {
-          status: "completed" as const,
-          output: outputRaw.slice(-50_000), // last 50k chars
-        };
-      } catch (error: any) {
-        const stderr = error.stderr?.toString().trim() || "";
-        const stdoutRaw = error.stdout?.toString().trim() || "";
-        const message = error.message || String(error);
-        const code = error.status ?? error.code ?? "unknown";
-
-        if (tool === "pi") {
-          const inferError = `Exit ${code}: ${stderr.slice(-5_000) || message.slice(-5_000)}`;
-          const textOutput = stdoutRaw.trim() || error.message;
-
+        if (commandResult.exitCode !== 0) {
           return {
             status: "failed" as const,
-            output: textOutput.slice(-10_000),
-            error: inferError,
+            output: commandResult.stdout.slice(-10_000),
+            error: `Exit ${commandResult.exitCode}: ${commandResult.stderr.slice(-5_000) || commandResult.stdout.slice(-5_000) || "command failed"}`,
           };
         }
 
         return {
+          status: "completed" as const,
+          output: commandResult.stdout.slice(-50_000),
+        };
+      } catch (error: any) {
+        const message = error instanceof Error ? error.message : String(error);
+
+        return {
           status: "failed" as const,
-          output: stdoutRaw.slice(-10_000),
-          error: `Exit ${code}: ${stderr.slice(-5_000) || message.slice(-5_000)}`,
+          output: "",
+          error: `agent dispatch crashed: ${message.slice(-5_000)}`,
         };
       }
     });
