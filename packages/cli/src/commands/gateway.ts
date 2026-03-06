@@ -156,6 +156,7 @@ type GatewayHealthSnapshot = {
     queueDepth?: number
     context?: Record<string, unknown>
     sessionPressure?: Record<string, unknown>
+    guardrails?: Record<string, unknown>
   }
 }
 
@@ -347,6 +348,7 @@ const gatewayStatus = Command.make("status", {}, () =>
         ...(daemonHealth?.components ? { components: daemonHealth.components } : {}),
         ...(daemonHealth?.status?.context ? { context: daemonHealth.status.context } : {}),
         ...(daemonHealth?.status?.sessionPressure ? { sessionPressure: daemonHealth.status.sessionPressure } : {}),
+        ...(daemonHealth?.status?.guardrails ? { guardrails: daemonHealth.status.guardrails } : {}),
         ...(redisStatus.error ? { redisError: redisStatus.error } : {}),
       },
       nextActions,
@@ -1351,6 +1353,8 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
     let totalPending = 0
     let degradedCapabilityCount = 0
     let sessionPressureHealth: string | undefined
+    let checkpointSentThisTurn = false
+    let pendingDeployVerificationCount = 0
     try {
       const raw = execSync("joelclaw gateway status 2>/dev/null", { encoding: "utf-8", timeout: 10000 })
       const parsed = JSON.parse(raw)
@@ -1365,11 +1369,17 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       sessionPressureHealth = typeof parsed.result?.sessionPressure?.health === "string"
         ? parsed.result.sessionPressure.health
         : undefined
+      checkpointSentThisTurn = parsed.result?.guardrails?.checkpointSentThisTurn === true
+      pendingDeployVerificationCount = Array.isArray(parsed.result?.guardrails?.pendingDeployVerifications)
+        ? parsed.result.guardrails.pendingDeployVerifications.length
+        : 0
 
       if (gatewayMode === "redis_degraded" && parsed.result?.available !== false) {
         const findings = [
           `${degradedCapabilityCount} degraded capability${degradedCapabilityCount === 1 ? "" : "ies"}`,
           ...(sessionPressureHealth ? [`session pressure: ${sessionPressureHealth}`] : []),
+          ...(checkpointSentThisTurn ? ["runtime checkpoint already sent this turn"] : []),
+          ...(pendingDeployVerificationCount > 0 ? [`${pendingDeployVerificationCount} deploy verification pending`] : []),
         ]
         layers.push({
           layer: "cli-status",
@@ -1380,12 +1390,16 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       } else if (redisOk && sessionCount > 0 && totalPending === 0) {
         layers.push({ layer: "cli-status", status: "ok", detail: `Redis connected, ${sessionCount} session(s), 0 pending` })
       } else if (redisOk) {
-        const findings = sessionPressureHealth ? [`session pressure: ${sessionPressureHealth}`] : undefined
+        const findings = [
+          ...(sessionPressureHealth ? [`session pressure: ${sessionPressureHealth}`] : []),
+          ...(checkpointSentThisTurn ? ["runtime checkpoint already sent this turn"] : []),
+          ...(pendingDeployVerificationCount > 0 ? [`${pendingDeployVerificationCount} deploy verification pending`] : []),
+        ]
         layers.push({
           layer: "cli-status",
-          status: totalPending > 3 ? "degraded" : "ok",
+          status: totalPending > 3 || checkpointSentThisTurn || pendingDeployVerificationCount > 0 ? "degraded" : "ok",
           detail: `Redis connected, ${sessionCount} session(s), ${totalPending} pending`,
-          ...(findings ? { findings } : {}),
+          ...(findings.length > 0 ? { findings } : {}),
         })
       } else {
         layers.push({ layer: "cli-status", status: "failed", detail: "Redis not connected or no sessions" })

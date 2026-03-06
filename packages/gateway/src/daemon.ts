@@ -36,6 +36,16 @@ import { getActiveDiscordMcqAdapter, registerDiscordMcqAdapter } from "./command
 import { getActiveMcqAdapter, type McqParams } from "./commands/mcq-adapter";
 import { initializeTelegramCommandHandler, updatePinnedStatus } from "./commands/telegram-handler";
 import { injectChannelContext } from "./formatting";
+import {
+  buildDeployVerificationPlan,
+  DEPLOY_VERIFICATION_DELAY_MS,
+  extractBashCommand,
+  extractRepoPathFromCommand,
+  type GuardrailSourceKind,
+  isGitPushCommand,
+  shouldTriggerToolBudgetCheckpoint,
+  summarizeToolNames,
+} from "./guardrails";
 import { startHeartbeatRunner, TRIPWIRE_PATH } from "./heartbeat";
 import { buildGatewayTurnKnowledgeWrite, sendGatewayTurnKnowledgeWrite } from "./knowledge-turn";
 import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
@@ -305,6 +315,297 @@ function shouldSuppressConsoleForwardByPolicy(
   if (attribution.hasCapturedSource) return false;
   if (attribution.recoveredFromRecentPrompt) return false;
   return true;
+}
+
+type PendingToolCall = {
+  toolName: string;
+  input: unknown;
+  startedAt: number;
+};
+
+type DeployVerificationState = {
+  repoPath: string;
+  commitSha: string;
+  changedFiles: string[];
+  scheduledAt: number;
+};
+
+const pendingToolCalls = new Map<string, PendingToolCall>();
+const pendingDeployVerifications = new Map<string, DeployVerificationState>();
+let currentTurnToolCallCount = 0;
+let currentTurnCheckpointSent = false;
+let currentTurnToolHistory: string[] = [];
+let lastCheckpointAt = 0;
+let lastCheckpointReason: string | undefined;
+
+function rememberToolName(toolName: string | undefined): void {
+  if (!toolName) return;
+  currentTurnToolHistory.push(toolName);
+  if (currentTurnToolHistory.length > 8) {
+    currentTurnToolHistory = currentTurnToolHistory.slice(-8);
+  }
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function markTurnCheckpoint(reason: string): void {
+  currentTurnCheckpointSent = true;
+  lastCheckpointAt = Date.now();
+  lastCheckpointReason = reason;
+}
+
+function getCurrentGuardrailSource(): string | undefined {
+  return getActiveSource() ?? responseSource ?? lastPromptSource;
+}
+
+async function sendGuardrailCheckpoint(message: string, metadata: Record<string, unknown>): Promise<void> {
+  const source = getCurrentGuardrailSource();
+  const chatId = source?.startsWith("telegram:")
+    ? parseChatId(source) ?? TELEGRAM_USER_ID
+    : TELEGRAM_USER_ID;
+
+  void emitGatewayOtel({
+    level: "warn",
+    component: "daemon.guardrails",
+    action: "guardrail.checkpoint.attempt",
+    success: true,
+    metadata: {
+      source,
+      chatId,
+      ...metadata,
+    },
+  });
+
+  if (!chatId) return;
+
+  try {
+    await sendTelegram(chatId, message);
+    void emitGatewayOtel({
+      level: "warn",
+      component: "daemon.guardrails",
+      action: "guardrail.checkpoint.sent",
+      success: true,
+      metadata: {
+        source,
+        chatId,
+        ...metadata,
+      },
+    });
+  } catch (error) {
+    console.error("[gateway:guardrails] checkpoint send failed", { error: String(error) });
+    void emitGatewayOtel({
+      level: "error",
+      component: "daemon.guardrails",
+      action: "guardrail.checkpoint.failed",
+      success: false,
+      error: String(error),
+      metadata: {
+        source,
+        chatId,
+        ...metadata,
+      },
+    });
+  }
+}
+
+async function maybeSendToolBudgetCheckpoint(): Promise<void> {
+  if (currentTurnCheckpointSent) return;
+
+  const source = getCurrentGuardrailSource();
+  const sourceKind = getSourceKind(source) as GuardrailSourceKind;
+  if (!shouldTriggerToolBudgetCheckpoint(currentTurnToolCallCount, sourceKind)) return;
+
+  markTurnCheckpoint("tool-budget");
+  const toolSummary = summarizeToolNames(currentTurnToolHistory);
+  const budget = sourceKind === "channel" ? 2 : 4;
+
+  const message = [
+    "🧭 <b>Status checkpoint</b>",
+    "",
+    `This turn has already used <code>${currentTurnToolCallCount}</code> tool actions (<code>${escapeHtml(toolSummary)}</code>).`,
+    `Guardrail budget for this source is <code>${budget}</code> before a check-in.`,
+    "Continuing unless you steer me somewhere else.",
+  ].join("\n");
+
+  await sendGuardrailCheckpoint(message, {
+    reason: "tool_budget_exceeded",
+    toolCalls: currentTurnToolCallCount,
+    sourceKind,
+    toolSummary,
+    budget,
+  });
+}
+
+async function maybeScheduleDeployVerification(command: string): Promise<void> {
+  if (!isGitPushCommand(command)) return;
+
+  const repoPath = extractRepoPathFromCommand(command, HOME);
+  if (!repoPath) {
+    void emitGatewayOtel({
+      level: "warn",
+      component: "daemon.guardrails",
+      action: "guardrail.deploy_verification.unresolved_repo",
+      success: false,
+      error: "repo_path_not_detected",
+      metadata: {
+        command: command.slice(0, 240),
+      },
+    });
+    return;
+  }
+
+  try {
+    const commitSha = execSync("git rev-parse HEAD", {
+      cwd: repoPath,
+      encoding: "utf-8",
+      timeout: 5_000,
+    }).trim();
+    const changedFiles = execSync("git diff-tree --no-commit-id --name-only -r HEAD", {
+      cwd: repoPath,
+      encoding: "utf-8",
+      timeout: 5_000,
+    })
+      .split("\n")
+      .map((file) => file.trim())
+      .filter(Boolean);
+
+    const plan = buildDeployVerificationPlan(repoPath, changedFiles);
+    if (!plan) return;
+
+    const key = `${plan.repoPath}:${commitSha}`;
+    if (pendingDeployVerifications.has(key)) return;
+
+    pendingDeployVerifications.set(key, {
+      repoPath: plan.repoPath,
+      commitSha,
+      changedFiles: plan.changedFiles,
+      scheduledAt: Date.now(),
+    });
+
+    void emitGatewayOtel({
+      level: "warn",
+      component: "daemon.guardrails",
+      action: "guardrail.deploy_verification.scheduled",
+      success: true,
+      metadata: {
+        repoPath: plan.repoPath,
+        commitSha,
+        changedFiles: plan.changedFiles,
+        delayMs: DEPLOY_VERIFICATION_DELAY_MS,
+      },
+    });
+
+    setTimeout(() => {
+      const pending = pendingDeployVerifications.get(key);
+      if (!pending) return;
+      void runDeployVerification(key, pending);
+    }, DEPLOY_VERIFICATION_DELAY_MS);
+  } catch (error) {
+    console.error("[gateway:guardrails] deploy verification schedule failed", { error: String(error), repoPath });
+    void emitGatewayOtel({
+      level: "error",
+      component: "daemon.guardrails",
+      action: "guardrail.deploy_verification.schedule_failed",
+      success: false,
+      error: String(error),
+      metadata: {
+        repoPath,
+      },
+    });
+  }
+}
+
+async function runDeployVerification(key: string, pending: DeployVerificationState): Promise<void> {
+  try {
+    const output = execSync("vercel ls --yes 2>&1 | head -10", {
+      cwd: pending.repoPath,
+      encoding: "utf-8",
+      timeout: 30_000,
+      shell: "/bin/bash",
+    }).trim();
+
+    const hasError = /(^|\b)(error|failed)(\b|:)/i.test(output) || /● Error/i.test(output);
+    const ready = /\bready\b/i.test(output) || /● Ready/i.test(output);
+
+    if (hasError || !ready) {
+      const message = [
+        "🛑 <b>Deploy verification failed</b>",
+        "",
+        `<code>${escapeHtml(pending.repoPath)}</code>`,
+        `Commit <code>${escapeHtml(pending.commitSha.slice(0, 8))}</code> needs attention.`,
+        `<pre>${escapeHtml(output.slice(0, 700))}</pre>`,
+      ].join("\n");
+
+      void emitGatewayOtel({
+        level: "error",
+        component: "daemon.guardrails",
+        action: "guardrail.deploy_verification.failed",
+        success: false,
+        error: hasError ? "vercel_error" : "ready_not_found",
+        metadata: {
+          repoPath: pending.repoPath,
+          commitSha: pending.commitSha,
+          changedFiles: pending.changedFiles,
+          output: output.slice(0, 700),
+        },
+      });
+      await sendGuardrailCheckpoint(message, {
+        reason: "deploy_verification_failed",
+        repoPath: pending.repoPath,
+        commitSha: pending.commitSha,
+      });
+      return;
+    }
+
+    void emitGatewayOtel({
+      level: "info",
+      component: "daemon.guardrails",
+      action: "guardrail.deploy_verification.passed",
+      success: true,
+      metadata: {
+        repoPath: pending.repoPath,
+        commitSha: pending.commitSha,
+        changedFiles: pending.changedFiles,
+        output: output.slice(0, 240),
+      },
+    });
+  } catch (error) {
+    console.error("[gateway:guardrails] deploy verification execution failed", {
+      error: String(error),
+      repoPath: pending.repoPath,
+    });
+    void emitGatewayOtel({
+      level: "error",
+      component: "daemon.guardrails",
+      action: "guardrail.deploy_verification.failed",
+      success: false,
+      error: String(error),
+      metadata: {
+        repoPath: pending.repoPath,
+        commitSha: pending.commitSha,
+        changedFiles: pending.changedFiles,
+      },
+    });
+    await sendGuardrailCheckpoint([
+      "🛑 <b>Deploy verification execution failed</b>",
+      "",
+      `<code>${escapeHtml(pending.repoPath)}</code>`,
+      `Commit <code>${escapeHtml(pending.commitSha.slice(0, 8))}</code> could not be checked automatically.`,
+      `<code>${escapeHtml(String(error).slice(0, 500))}</code>`,
+    ].join("\n"), {
+      reason: "deploy_verification_execution_failed",
+      repoPath: pending.repoPath,
+      commitSha: pending.commitSha,
+    });
+  } finally {
+    pendingDeployVerifications.delete(key);
+  }
 }
 
 function isMcqQuestion(value: unknown): value is McqParams["questions"][number] {
@@ -865,6 +1166,10 @@ onPrompt(() => {
   turnKnowledgeText = "";
   turnKnowledgeToolCalls = [];
   turnKnowledgeToolErrors = 0;
+  currentTurnToolCallCount = 0;
+  currentTurnCheckpointSent = false;
+  currentTurnToolHistory = [];
+  pendingToolCalls.clear();
 
   // Start Telegram typing indicator + streaming if this prompt came from Telegram
   const source = getActiveSource();
@@ -1384,6 +1689,19 @@ function getStatusPayload(): Record<string, unknown> {
       },
     },
     queueDepth: getQueueDepth(),
+    guardrails: {
+      currentTurnToolCalls: currentTurnToolCallCount,
+      currentTurnToolSummary: summarizeToolNames(currentTurnToolHistory),
+      checkpointSentThisTurn: currentTurnCheckpointSent,
+      lastCheckpointAt: lastCheckpointAt > 0 ? new Date(lastCheckpointAt).toISOString() : null,
+      lastCheckpointReason: lastCheckpointReason ?? null,
+      pendingDeployVerifications: [...pendingDeployVerifications.values()].map((pending) => ({
+        repoPath: pending.repoPath,
+        commitSha: pending.commitSha,
+        changedFiles: pending.changedFiles,
+        scheduledAt: new Date(pending.scheduledAt).toISOString(),
+      })),
+    },
     fallback: fb.active ? {
       active: true,
       model: `${fb.fallbackProvider}/${fb.fallbackModel}`,
@@ -1720,6 +2038,10 @@ session.subscribe((event: any) => {
         });
       }
     }
+    if (sourceKind === "channel") {
+      markTurnCheckpoint("response");
+    }
+
     console.log("[gateway] response ready", { source, length: fullText.length });
 
     // If Telegram streaming is active, finalize the current message segment.
@@ -1743,9 +2065,24 @@ session.subscribe((event: any) => {
 
   if (event.type === "tool_call") {
     fallbackController.onActivity(); // model is alive, restart timeout
-    if (typeof event.toolName === "string" && event.toolName.trim()) {
-      turnKnowledgeToolCalls.push(event.toolName.trim());
+    const toolName = typeof event.toolName === "string" ? event.toolName.trim() : "";
+    if (toolName) {
+      turnKnowledgeToolCalls.push(toolName);
+      rememberToolName(toolName);
     }
+    currentTurnToolCallCount += 1;
+    pendingToolCalls.set(event.toolCallId, {
+      toolName: toolName || "unknown",
+      input: event.input,
+      startedAt: Date.now(),
+    });
+
+    if (toolName === "mcq") {
+      markTurnCheckpoint("mcq");
+    } else {
+      void maybeSendToolBudgetCheckpoint();
+    }
+
     broadcastWs({
       type: "tool_call",
       id: event.toolCallId,
@@ -1761,6 +2098,9 @@ session.subscribe((event: any) => {
 
   if (event.type === "tool_result") {
     fallbackController.onActivity(); // model is alive, restart timeout
+    const pendingTool = pendingToolCalls.get(event.toolCallId);
+    pendingToolCalls.delete(event.toolCallId);
+
     if (event.isError) {
       turnKnowledgeToolErrors += 1;
     }
@@ -1771,6 +2111,13 @@ session.subscribe((event: any) => {
       content: event.content,
       isError: event.isError,
     });
+
+    if (!event.isError && pendingTool?.toolName === "bash") {
+      const command = extractBashCommand(pendingTool.input);
+      if (command) {
+        void maybeScheduleDeployVerification(command);
+      }
+    }
 
     if (event.isError) {
       broadcastWs({
@@ -1828,6 +2175,10 @@ session.subscribe((event: any) => {
     turnKnowledgeText = "";
     turnKnowledgeToolCalls = [];
     turnKnowledgeToolErrors = 0;
+    currentTurnToolCallCount = 0;
+    currentTurnToolHistory = [];
+    currentTurnCheckpointSent = false;
+    pendingToolCalls.clear();
     void sendGatewayTurnKnowledgeWrite(payload);
 
     responseSource = undefined;

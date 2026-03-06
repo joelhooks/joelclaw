@@ -2,7 +2,7 @@
 name: gateway
 displayName: Gateway
 description: "Operate the joelclaw gateway daemon — the always-on pi session that receives events, notifications, and messages. Use the joelclaw CLI for ALL gateway operations. Use when: 'restart gateway', 'gateway status', 'is gateway healthy', 'push to gateway', 'gateway not responding', 'telegram not working', 'messages not going through', 'gateway stuck', 'gateway debug', 'check gateway', 'drain queue', 'test gateway', 'stream events', or any task involving the gateway daemon."
-version: 1.0.4
+version: 1.0.5
 author: Joel Hooks
 tags: [joelclaw, gateway, daemon, redis, telegram]
 ---
@@ -67,6 +67,21 @@ When `mode=redis_degraded`:
 - use `joelclaw gateway diagnose` to see the degraded capability list and session pressure fields
 
 Do not report `redis_degraded` as “gateway down” unless process/session health is also failing.
+
+## Runtime guardrail enforcement (ADR-0189)
+
+Gateway runtime now enforces two operator-visible guardrails:
+
+1. **Tool-budget checkpoint tripwire**
+   - channel turns: forced checkpoint after the 3rd tool action
+   - internal/background turns: forced checkpoint after the 5th tool action
+   - telemetry: `daemon.guardrails:guardrail.checkpoint.*`
+2. **Automatic post-push deploy verification**
+   - after successful `git push` where `HEAD` touched `apps/web/` or root config (`turbo.json`, `package.json`, `pnpm-lock.yaml`)
+   - daemon schedules `vercel ls --yes 2>&1 | head -10` after ~75s
+   - failures alert Telegram and emit `daemon.guardrails:guardrail.deploy_verification.failed`
+
+Use `joelclaw gateway status` to inspect live `guardrails` state, and `joelclaw gateway diagnose` when a checkpoint or deploy verification is active.
 
 ## Behavior Control Plane (ADR-0211)
 

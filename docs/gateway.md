@@ -217,6 +217,23 @@ The gateway role prompt (`roles/gateway.md`) requires proactive steering check-i
 
 Keep updates concise for mobile Telegram reading.
 
+## Runtime guardrail enforcement (ADR-0189, 2026-03-06)
+
+Prompt guidance is no longer the only line of defense.
+
+Runtime guardrails now add two daemon-level tripwires:
+
+1. **Tool-budget checkpoint tripwire**
+   - channel turns get a budget of 2 tool actions before a forced status checkpoint
+   - background/internal turns get a budget of 4 tool actions before a forced checkpoint
+   - the daemon sends the checkpoint directly to Telegram and emits OTEL under `daemon.guardrails`
+2. **Post-push deploy verification**
+   - after a successful `git push` whose latest commit touched `apps/web/` or root config (`turbo.json`, `package.json`, `pnpm-lock.yaml`)
+   - the daemon schedules `vercel ls --yes 2>&1 | head -10` after ~75 seconds
+   - failures page the operator and emit `guardrail.deploy_verification.failed`
+
+`joelclaw gateway status` exposes the live guardrail state under `guardrails`, including whether a checkpoint already fired this turn and any pending deploy verifications.
+
 ## Session lifecycle guards (ADR-0213)
 
 Three guards prevent context bloat and overnight fallback thrash:
