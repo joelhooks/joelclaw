@@ -55,6 +55,83 @@ let lastUserVisibleHeartbeatAt = 0;
 const seenIds = new Set<string>();
 
 type GatewayMode = "active" | "sleep";
+export type GatewayRuntimeMode = "normal" | "redis_degraded";
+
+export type RedisRuntimeState = {
+  mode: GatewayRuntimeMode;
+  healthy: boolean;
+  reason: string;
+  lastTransitionAt: number;
+  reconnectAttempts: number;
+  lastError?: string;
+  subscriberStatus: string;
+  commandStatus: string;
+};
+
+let runtimeState: RedisRuntimeState = {
+  mode: "redis_degraded",
+  healthy: false,
+  reason: "startup_pending",
+  lastTransitionAt: Date.now(),
+  reconnectAttempts: 0,
+  subscriberStatus: "idle",
+  commandStatus: "idle",
+};
+
+function currentRedisClientStatus(client: Redis | undefined): string {
+  return client?.status ?? "idle";
+}
+
+function updateRuntimeState(
+  mode: GatewayRuntimeMode,
+  reason: string,
+  options?: { lastError?: string; reconnectAttempts?: number },
+): void {
+  const previous = runtimeState;
+  const next: RedisRuntimeState = {
+    mode,
+    healthy: mode === "normal" && isHealthy(),
+    reason,
+    lastTransitionAt: previous.mode === mode && previous.reason === reason
+      ? previous.lastTransitionAt
+      : Date.now(),
+    reconnectAttempts: options?.reconnectAttempts ?? previous.reconnectAttempts,
+    subscriberStatus: currentRedisClientStatus(sub),
+    commandStatus: currentRedisClientStatus(cmd),
+    ...(options?.lastError ? { lastError: options.lastError } : previous.lastError ? { lastError: previous.lastError } : {}),
+  };
+
+  const changed = previous.mode !== next.mode || previous.reason !== next.reason;
+  runtimeState = next;
+
+  if (!changed) return;
+
+  void emitGatewayOtel({
+    level: mode === "normal" ? "info" : "warn",
+    component: "redis-channel",
+    action: "runtime.mode.changed",
+    success: mode === "normal",
+    ...(options?.lastError ? { error: options.lastError } : {}),
+    metadata: {
+      from: previous.mode,
+      to: next.mode,
+      reason,
+      reconnectAttempts: next.reconnectAttempts,
+      subscriberStatus: next.subscriberStatus,
+      commandStatus: next.commandStatus,
+      transitionedAt: new Date(next.lastTransitionAt).toISOString(),
+    },
+  });
+}
+
+export function getRuntimeState(): RedisRuntimeState {
+  return {
+    ...runtimeState,
+    healthy: isHealthy(),
+    subscriberStatus: currentRedisClientStatus(sub),
+    commandStatus: currentRedisClientStatus(cmd),
+  };
+}
 
 function pruneSeenIds(): void {
   if (seenIds.size <= DEDUP_MAX) return;
@@ -796,6 +873,9 @@ function scheduleRetry(): void {
   if (_retryTimer || !_startEnqueue) return;
   const delay = Math.min(RETRY_DELAY_MS * Math.pow(2, _retryCount), MAX_RETRY_DELAY_MS);
   _retryCount++;
+  updateRuntimeState("redis_degraded", "reconnect_scheduled", {
+    reconnectAttempts: _retryCount,
+  });
   console.log(`[gateway:redis] scheduling reconnect in ${delay}ms (attempt ${_retryCount})`);
   _retryTimer = setTimeout(async () => {
     _retryTimer = undefined;
@@ -872,6 +952,9 @@ async function doStart(enqueue: EnqueueFn): Promise<void> {
   await drainEvents();
 
   started = true;
+  updateRuntimeState("normal", "redis_connected", {
+    reconnectAttempts: _retryCount,
+  });
   console.log("[gateway:redis] started", {
     sessionId: SESSION_ID,
     channels: [NOTIFY_CHANNEL, LEGACY_NOTIFY_CHANNEL],
@@ -894,7 +977,12 @@ export async function start(enqueue: EnqueueFn): Promise<void> {
   try {
     await doStart(enqueue);
   } catch (error) {
+    const lastError = String(error);
     console.error("[gateway:redis] initial connect failed — will retry", { error });
+    updateRuntimeState("redis_degraded", "initial_connect_failed", {
+      lastError,
+      reconnectAttempts: _retryCount,
+    });
     scheduleRetry();
   }
 }
@@ -1014,5 +1102,8 @@ export async function shutdown(): Promise<void> {
     }
 
     started = false;
+    updateRuntimeState("redis_degraded", "shutdown", {
+      reconnectAttempts: 0,
+    });
   }
 }

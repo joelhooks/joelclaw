@@ -1,6 +1,7 @@
+import { existsSync, readFileSync } from "node:fs"
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
-import { respond, respondError } from "../response"
+import { type NextAction, respond, respondError } from "../response"
 import { gatewayBehaviorCmd } from "./gateway-behavior"
 
 const SESSIONS_SET = "joelclaw:gateway:sessions"
@@ -130,86 +131,229 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-const gatewayStatus = Command.make("status", {}, () =>
-  Effect.gen(function* () {
-    const redis = yield* makeRedis()
-    const pong = yield* Effect.tryPromise({
-      try: () => redis.ping(),
-      catch: (e) => new Error(`${e}`),
-    })
-    const sessions = yield* Effect.tryPromise({
-      try: () => redis.smembers(SESSIONS_SET),
-      catch: (e) => new Error(`${e}`),
-    })
+const GATEWAY_WS_PORT_FILE = "/tmp/joelclaw/gateway.ws.port"
 
-    // Check PIDs and auto-prune dead ones
+type GatewayHealthCapability = {
+  key?: string
+  reason?: string
+}
+
+type GatewayHealthSnapshot = {
+  ok?: boolean
+  available?: boolean
+  healthy?: boolean
+  checkedAt?: string
+  mode?: "normal" | "redis_degraded"
+  degradedCapabilities?: GatewayHealthCapability[]
+  reason?: string
+  since?: string
+  reconnectAttempts?: number
+  components?: Record<string, unknown>
+  status?: {
+    sessionId?: string
+    uptimeMs?: number
+    pid?: number
+    queueDepth?: number
+    context?: Record<string, unknown>
+    sessionPressure?: Record<string, unknown>
+  }
+}
+
+function readGatewayWsPort(): number | null {
+  if (!existsSync(GATEWAY_WS_PORT_FILE)) return null
+  try {
+    const raw = readFileSync(GATEWAY_WS_PORT_FILE, "utf-8").trim()
+    const port = Number.parseInt(raw, 10)
+    return Number.isFinite(port) && port > 0 ? port : null
+  } catch {
+    return null
+  }
+}
+
+async function readGatewayHealthSnapshot(): Promise<(GatewayHealthSnapshot & { wsPort: number }) | null> {
+  const wsPort = readGatewayWsPort()
+  if (!wsPort) return null
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${wsPort}/health`, {
+      signal: AbortSignal.timeout(2500),
+    })
+    const raw = await response.text()
+    if (!raw.trim()) return null
+    const parsed = JSON.parse(raw) as GatewayHealthSnapshot
+    return { ...parsed, wsPort }
+  } catch {
+    return null
+  }
+}
+
+async function inspectGatewayRedisStatus(): Promise<{
+  connected: boolean
+  activeSessions: Array<{ id: string; pending: number; alive: boolean }>
+  pruned: string[]
+  legacyQueuePending: number | null
+  error?: string
+}> {
+  let redis:
+    | {
+        connect: () => Promise<unknown>
+        ping: () => Promise<string>
+        smembers: (key: string) => Promise<string[]>
+        srem: (key: string, member: string) => Promise<unknown>
+        del: (key: string) => Promise<unknown>
+        llen: (key: string) => Promise<number>
+        quit: () => Promise<unknown>
+      }
+    | undefined
+
+  try {
+    const Redis = (await import("ioredis")).default
+    redis = new Redis({
+      host: process.env.REDIS_HOST ?? "localhost",
+      port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+      lazyConnect: true,
+      connectTimeout: 3000,
+      commandTimeout: 5000,
+    })
+    await redis.connect()
+
+    const pong = await redis.ping()
+    const sessions = await redis.smembers(SESSIONS_SET)
+
     const deadSessions: string[] = []
     const aliveSessions: string[] = []
-    for (const s of sessions) {
-      const pidMatch = s.match(/^pid-(\d+)$/)
-      if (pidMatch) {
-        const pid = parseInt(pidMatch[1], 10)
-        if (isPidAlive(pid)) {
-          aliveSessions.push(s)
-        } else {
-          deadSessions.push(s)
-        }
+    for (const session of sessions) {
+      const pidMatch = session.match(/^pid-(\d+)$/)
+      if (!pidMatch) {
+        aliveSessions.push(session)
+        continue
+      }
+
+      const pid = parseInt(pidMatch[1], 10)
+      if (isPidAlive(pid)) {
+        aliveSessions.push(session)
       } else {
-        // Non-PID sessions (e.g. "gateway") — keep
-        aliveSessions.push(s)
+        deadSessions.push(session)
       }
     }
 
-    // Auto-prune dead PIDs from Redis
     if (deadSessions.length > 0) {
-      yield* Effect.tryPromise({
-        try: async () => {
-          for (const s of deadSessions) {
-            await redis.srem(SESSIONS_SET, s)
-            await redis.del(`joelclaw:events:${s}`)
-          }
-        },
-        catch: () => {},
-      })
+      for (const session of deadSessions) {
+        await redis.srem(SESSIONS_SET, session)
+        await redis.del(`joelclaw:events:${session}`)
+      }
     }
 
-    const { sessionInfo, legacyLen } = yield* Effect.tryPromise({
-      try: async () => {
-        const info: Array<{ id: string; pending: number; alive: boolean }> = []
-        for (const s of aliveSessions) {
-          const len = await redis.llen(`joelclaw:events:${s}`)
-          info.push({ id: s, pending: len, alive: true })
-        }
-        const legacy = await redis.llen("joelclaw:events:main")
-        return { sessionInfo: info, legacyLen: legacy }
+    const activeSessions: Array<{ id: string; pending: number; alive: boolean }> = []
+    for (const session of aliveSessions) {
+      const pending = await redis.llen(`joelclaw:events:${session}`)
+      activeSessions.push({ id: session, pending, alive: true })
+    }
+
+    const legacyQueuePending = await redis.llen("joelclaw:events:main")
+
+    return {
+      connected: pong === "PONG",
+      activeSessions,
+      pruned: deadSessions,
+      legacyQueuePending,
+    }
+  } catch (error) {
+    return {
+      connected: false,
+      activeSessions: [],
+      pruned: [],
+      legacyQueuePending: null,
+      error: String(error),
+    }
+  } finally {
+    try {
+      await redis?.quit()
+    } catch {
+      // swallow
+    }
+  }
+}
+
+const gatewayStatus = Command.make("status", {}, () =>
+  Effect.gen(function* () {
+    const daemonHealth = yield* Effect.promise(() => readGatewayHealthSnapshot())
+    const redisStatus = yield* Effect.promise(() => inspectGatewayRedisStatus())
+
+    const mode = daemonHealth?.mode ?? (redisStatus.connected ? "normal" : "redis_degraded")
+    const degradedCapabilities = (daemonHealth?.degradedCapabilities ?? [])
+      .filter((cap): cap is { key: string; reason?: string } => typeof cap?.key === "string")
+      .map((cap) => ({ key: cap.key, reason: cap.reason ?? null }))
+
+    const daemonSessionId = typeof daemonHealth?.status?.sessionId === "string"
+      ? daemonHealth.status.sessionId
+      : "gateway"
+    const daemonQueueDepth = typeof daemonHealth?.status?.queueDepth === "number"
+      ? daemonHealth.status.queueDepth
+      : 0
+
+    const activeSessions = redisStatus.activeSessions.length > 0
+      ? redisStatus.activeSessions
+      : daemonHealth
+        ? [{ id: daemonSessionId, pending: daemonQueueDepth, alive: daemonHealth.available !== false }]
+        : []
+
+    const totalPending = activeSessions.reduce((sum, session) => sum + (session.pending ?? 0), 0)
+    const available = daemonHealth?.available ?? (redisStatus.connected || activeSessions.length > 0)
+    const healthy = daemonHealth?.healthy ?? redisStatus.connected
+
+    const nextActions: NextAction[] = [
+      { command: "joelclaw gateway events", description: "Peek at pending events" },
+      {
+        command: "joelclaw gateway push --type <type>",
+        description: "Push an event to all sessions",
+        params: {
+          type: { description: "Event type", default: "test", enum: ["test", "cron.heartbeat", "test.gateway-e2e"] },
+        },
       },
-      catch: (e) => new Error(`${e}`),
-    })
-    yield* Effect.tryPromise({ try: () => redis.quit(), catch: () => {} })
+      { command: "joelclaw gateway drain", description: "Clear all event queues" },
+    ]
+
+    if (mode === "redis_degraded") {
+      nextActions.unshift(
+        { command: "joelclaw gateway diagnose", description: "See which capabilities are degraded and why" },
+        { command: "joelclaw gateway review", description: "Inspect recent gateway session behavior while Redis is degraded" },
+      )
+    }
 
     yield* Console.log(respond(
       "gateway status",
       {
-        redis: pong === "PONG" ? "connected" : "error",
-        activeSessions: sessionInfo,
-        ...(deadSessions.length > 0 ? { pruned: deadSessions } : {}),
-        legacyQueuePending: legacyLen,
-      },
-      [
-        { command: "joelclaw gateway events", description: "Peek at pending events" },
-        {
-          command: "joelclaw gateway push --type <type>",
-          description: "Push an event to all sessions",
-          params: {
-            type: { description: "Event type", default: "test", enum: ["test", "cron.heartbeat", "test.gateway-e2e"] },
-          },
+        available,
+        healthy,
+        mode,
+        redis: redisStatus.connected ? "connected" : "degraded",
+        degradedCapabilities,
+        reason: daemonHealth?.reason ?? (redisStatus.connected ? "redis_connected" : "redis_unreachable"),
+        since: daemonHealth?.since ?? null,
+        reconnectAttempts: daemonHealth?.reconnectAttempts ?? null,
+        activeSessions,
+        totalPending,
+        ...(redisStatus.pruned.length > 0 ? { pruned: redisStatus.pruned } : {}),
+        legacyQueuePending: redisStatus.legacyQueuePending,
+        daemon: {
+          reachable: Boolean(daemonHealth),
+          wsPort: daemonHealth?.wsPort ?? readGatewayWsPort(),
+          checkedAt: daemonHealth?.checkedAt ?? null,
+          pid: daemonHealth?.status?.pid ?? null,
+          sessionId: daemonHealth?.status?.sessionId ?? null,
+          uptimeMs: daemonHealth?.status?.uptimeMs ?? null,
         },
-        { command: "joelclaw gateway drain", description: "Clear all event queues" },
-      ],
-      pong === "PONG"
+        ...(daemonHealth?.components ? { components: daemonHealth.components } : {}),
+        ...(daemonHealth?.status?.context ? { context: daemonHealth.status.context } : {}),
+        ...(daemonHealth?.status?.sessionPressure ? { sessionPressure: daemonHealth.status.sessionPressure } : {}),
+        ...(redisStatus.error ? { redisError: redisStatus.error } : {}),
+      },
+      nextActions,
+      available,
     ))
   })
-).pipe(Command.withDescription("Active sessions, queue depths, Redis health"))
+).pipe(Command.withDescription("Daemon availability, runtime mode, session pressure, and Redis health"))
 
 // ── gateway events ──────────────────────────────────────────────────
 
@@ -1202,20 +1346,47 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
 
     // ── Layer 1: CLI Status ──
     let redisOk = false
+    let gatewayMode: "normal" | "redis_degraded" = "normal"
     let sessionCount = 0
     let totalPending = 0
+    let degradedCapabilityCount = 0
+    let sessionPressureHealth: string | undefined
     try {
       const raw = execSync("joelclaw gateway status 2>/dev/null", { encoding: "utf-8", timeout: 10000 })
       const parsed = JSON.parse(raw)
       redisOk = parsed.result?.redis === "connected"
+      gatewayMode = parsed.result?.mode === "redis_degraded" ? "redis_degraded" : "normal"
       const sessions = parsed.result?.activeSessions ?? []
       sessionCount = sessions.length
       totalPending = sessions.reduce((s: number, sess: any) => s + (sess.pending ?? 0), 0)
+      degradedCapabilityCount = Array.isArray(parsed.result?.degradedCapabilities)
+        ? parsed.result.degradedCapabilities.length
+        : 0
+      sessionPressureHealth = typeof parsed.result?.sessionPressure?.health === "string"
+        ? parsed.result.sessionPressure.health
+        : undefined
 
-      if (redisOk && sessionCount > 0 && totalPending === 0) {
+      if (gatewayMode === "redis_degraded" && parsed.result?.available !== false) {
+        const findings = [
+          `${degradedCapabilityCount} degraded capability${degradedCapabilityCount === 1 ? "" : "ies"}`,
+          ...(sessionPressureHealth ? [`session pressure: ${sessionPressureHealth}`] : []),
+        ]
+        layers.push({
+          layer: "cli-status",
+          status: "degraded",
+          detail: `Gateway available in redis_degraded mode, ${sessionCount} session(s), ${totalPending} pending`,
+          findings,
+        })
+      } else if (redisOk && sessionCount > 0 && totalPending === 0) {
         layers.push({ layer: "cli-status", status: "ok", detail: `Redis connected, ${sessionCount} session(s), 0 pending` })
       } else if (redisOk) {
-        layers.push({ layer: "cli-status", status: totalPending > 3 ? "degraded" : "ok", detail: `Redis connected, ${sessionCount} session(s), ${totalPending} pending` })
+        const findings = sessionPressureHealth ? [`session pressure: ${sessionPressureHealth}`] : undefined
+        layers.push({
+          layer: "cli-status",
+          status: totalPending > 3 ? "degraded" : "ok",
+          detail: `Redis connected, ${sessionCount} session(s), ${totalPending} pending`,
+          ...(findings ? { findings } : {}),
+        })
       } else {
         layers.push({ layer: "cli-status", status: "failed", detail: "Redis not connected or no sessions" })
       }
@@ -1263,23 +1434,31 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
 
     // ── Layer 4: E2E Test ──
     let e2eOk = false
-    try {
-      execSync("joelclaw gateway test 2>/dev/null", { encoding: "utf-8", timeout: 10000 })
-      yield* Effect.promise(() => new Promise((r) => setTimeout(r, 8000)))
-      const eventsRaw = execSync("joelclaw gateway events 2>/dev/null", { encoding: "utf-8", timeout: 10000 })
-      const events = JSON.parse(eventsRaw)
-      // If test event was drained, totalCount should be 0 (or only non-test events)
-      const testStuck = (events.result?.sessions ?? []).some((s: any) =>
-        s.events?.some((e: any) => e.type === "test.gateway-e2e")
-      )
-      e2eOk = !testStuck
+    if (gatewayMode === "redis_degraded") {
       layers.push({
         layer: "e2e-test",
-        status: e2eOk ? "ok" : "failed",
-        detail: e2eOk ? "Test event pushed and drained within 8s" : "Test event stuck in queue — session not draining",
+        status: "skipped",
+        detail: "Skipped: Redis event bridge is intentionally degraded in redis_degraded mode",
       })
-    } catch (e) {
-      layers.push({ layer: "e2e-test", status: "failed", detail: `E2E test failed: ${e}` })
+    } else {
+      try {
+        execSync("joelclaw gateway test 2>/dev/null", { encoding: "utf-8", timeout: 10000 })
+        yield* Effect.promise(() => new Promise((r) => setTimeout(r, 8000)))
+        const eventsRaw = execSync("joelclaw gateway events 2>/dev/null", { encoding: "utf-8", timeout: 10000 })
+        const events = JSON.parse(eventsRaw)
+        // If test event was drained, totalCount should be 0 (or only non-test events)
+        const testStuck = (events.result?.sessions ?? []).some((s: any) =>
+          s.events?.some((e: any) => e.type === "test.gateway-e2e")
+        )
+        e2eOk = !testStuck
+        layers.push({
+          layer: "e2e-test",
+          status: e2eOk ? "ok" : "failed",
+          detail: e2eOk ? "Test event pushed and drained within 8s" : "Test event stuck in queue — session not draining",
+        })
+      } catch (e) {
+        layers.push({ layer: "e2e-test", status: "failed", detail: `E2E test failed: ${e}` })
+      }
     }
 
     // ── Layer 5: Model API ──
@@ -1314,11 +1493,17 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
 
       layers.push({
         layer: "redis-state",
-        status: "ok",
+        status: gatewayMode === "redis_degraded" ? "degraded" : "ok",
         detail: `event queue: ${queueLen}, message stream: ${streamLen}`,
       })
     } catch (e) {
-      layers.push({ layer: "redis-state", status: "failed", detail: `Redis query failed: ${e}` })
+      layers.push({
+        layer: "redis-state",
+        status: gatewayMode === "redis_degraded" ? "degraded" : "failed",
+        detail: gatewayMode === "redis_degraded"
+          ? `Redis query failed while daemon remained available in redis_degraded mode: ${e}`
+          : `Redis query failed: ${e}`,
+      })
     }
 
     // ── Reconciliation: stale watchdog entries vs current e2e health ──

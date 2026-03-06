@@ -2,7 +2,7 @@
 name: gateway-diagnose
 displayName: Gateway Diagnose
 description: "Diagnose gateway failures by reading daemon logs, session transcripts, Redis state, and OTEL telemetry. Full Telegram path triage: daemon process → Redis channel → command queue → pi session → model API → Telegram delivery. Use when: 'gateway broken', 'telegram not working', 'why is gateway down', 'gateway not responding', 'check gateway logs', 'what happened to gateway', 'gateway diagnose', 'gateway errors', 'review gateway logs', 'fallback activated', 'gateway stuck', or any request to understand why the gateway failed. Distinct from the gateway skill (operations) — this skill is diagnostic."
-version: 1.1.4
+version: 1.1.5
 author: Joel Hooks
 tags: [joelclaw, gateway, diagnosis, logs, telegram, reliability]
 ---
@@ -23,7 +23,7 @@ joelclaw gateway diagnose [--hours 1] [--lines 100]
 joelclaw gateway review [--hours 1] [--max 20]
 ```
 
-Start with `diagnose` to find the failure layer. It now reports disabled launchd state for `com.joel.gateway` explicitly (instead of a generic process failure). Use `review` to understand what the gateway was doing when it broke. Only drop to manual log reading (below) when the CLI output isn't enough.
+Start with `diagnose` to find the failure layer. It now reports disabled launchd state for `com.joel.gateway` explicitly (instead of a generic process failure), and distinguishes `redis_degraded` from a truly dead gateway. Use `review` to understand what the gateway was doing when it broke. Only drop to manual log reading (below) when the CLI output isn't enough.
 
 ## Autonomous Monitor (cross-channel)
 
@@ -99,9 +99,15 @@ joelclaw gateway status
 ```
 
 **Check:**
-- `redis: "connected"` — if not, Redis pod is down
+- `mode` — `normal` vs `redis_degraded`
+- `degradedCapabilities` — explicit list of what Redis loss is breaking
+- `sessionPressure` — context %, compaction age, session age, next action
 - `activeSessions` — should have `gateway` with `alive: true`
 - `pending: 0` — if >0, messages are backing up (session busy or stuck)
+
+Interpretation:
+- `mode: redis_degraded` means the daemon/session can still be usable while the Redis bridge is sick.
+- Do not call that a full outage unless process/session layers are also failing.
 
 ### Layer 2: Error Log (the money log)
 
@@ -156,6 +162,7 @@ joelclaw gateway events
 
 **Expected:** Test event pushed and drained (totalCount: 0 after drain).
 **Failure:** Event stuck in queue → session not draining → check Layer 2 errors.
+**Exception:** if `gateway status` reports `mode: redis_degraded`, `diagnose` should skip this layer on purpose because the Redis bridge path is the degraded surface.
 
 ### Layer 5: Session Transcript
 
@@ -257,11 +264,15 @@ kubectl exec -n joelclaw redis-0 -- redis-cli XRANGE gateway:messages - + COUNT 
 **Cause:** A tool call (bash, read, etc.) hanging indefinitely while the queue is still waiting for `turn_end`.
 **Fix:** Watchdog auto-aborts once, then self-restarts after a 90s recovery grace if no `turn_end`/next-prompt signal arrives. If `turn_end` never arrives but idle waiter releases at 5 minutes, expect `watchdog.idle_waiter.timeout` instead (no restart). If restarts still loop, run `joelclaw gateway diagnose --hours 2 --lines 240` and inspect `watchdog.session_stuck.recovery_timeout` telemetry.
 
-### 4. Redis Disconnection
+### 4. Redis Disconnection / redis_degraded mode
 
-**Symptoms:** Status shows redis disconnected, no events flowing.
-**Cause:** Redis pod restart or port-forward dropped.
-**Fix:** `kubectl get pods -n joelclaw` to verify, ioredis auto-reconnects.
+**Symptoms:** `gateway status` reports `mode: redis_degraded`, degraded capabilities are listed, Redis-dependent commands/E2E are degraded or skipped, but direct conversation may still work.
+**Cause:** Redis pod restart, port-forward drop, localhost wiring drift, or reconnect churn.
+**Fix:**
+- Treat daemon availability and Redis health separately.
+- Keep using direct channel interaction if process/session layers are healthy.
+- Check `kubectl get pods -n joelclaw`, port listeners, and OTEL for `redis-channel.runtime.mode.changed` / reconnect signals.
+- Confirm recovery back to `mode: normal` without requiring a daemon restart.
 
 ### 4a. Redis retry-rejection storm
 

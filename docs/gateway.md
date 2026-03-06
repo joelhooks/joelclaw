@@ -33,6 +33,32 @@ joelclaw gateway unmute imessage
 
 Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 
+## Redis-degraded mode (ADR-0214, 2026-03-06)
+
+Gateway runtime now distinguishes **availability** from **Redis health**.
+
+`joelclaw gateway status` reports:
+
+- `mode: normal` — Redis bridge healthy
+- `mode: redis_degraded` — daemon/session/channels still available, but Redis-backed capabilities are degraded
+
+In `redis_degraded` mode:
+
+- direct channel conversation stays online
+- `gateway status` falls back to daemon health instead of pretending the gateway is dead
+- `gateway diagnose` marks the Redis bridge as degraded and skips Redis-dependent E2E testing
+- degraded capabilities are listed explicitly (event bridge, replay, Redis-backed operational commands, Telegram poll-owner lease durability)
+
+Session pressure is now surfaced in status payloads as first-class data:
+
+- context usage %
+- queue depth
+- last compaction age
+- session age
+- next action (`observe` / `compact` / `rotate`)
+
+Operator rule: if status says `redis_degraded`, do **not** treat that as a full gateway outage. Diagnose substrate/Redis separately while using direct conversation paths if needed.
+
 ## Telegram multi-instance polling ownership (2026-03-05)
 
 Gateway Telegram ingress now uses a Redis lease so multiple gateway instances can coexist without all trying to long-poll the same bot token.

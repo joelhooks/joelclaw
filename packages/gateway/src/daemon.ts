@@ -12,7 +12,7 @@ import { getModel } from "@mariozechner/pi-ai";
 import { calculateContextTokens, createAgentSession, DefaultResourceLoader, getLastAssistantUsage, type LoadExtensionsResult, SessionManager } from "@mariozechner/pi-coding-agent";
 import { fetchChannel as fetchDiscordChannel, getClient as getDiscordClient, markError as markDiscordError, parseChannelId as parseDiscordChannelId, send as sendDiscord, shutdown as shutdownDiscord, start as startDiscord } from "./channels/discord";
 import { send as sendIMessage, shutdown as shutdownIMessage, start as startIMessage } from "./channels/imessage";
-import { getRedisClient, isHealthy as isRedisHealthy, shutdown as shutdownRedisChannel, start as startRedisChannel } from "./channels/redis";
+import { getRedisClient, getRuntimeState as getRedisRuntimeState, isHealthy as isRedisHealthy, shutdown as shutdownRedisChannel, start as startRedisChannel } from "./channels/redis";
 import { isStarted as isSlackStarted, send as sendSlack, shutdown as shutdownSlack, start as startSlack } from "./channels/slack";
 import { getBot, parseChatId, send as sendTelegram, sendMedia as sendTelegramMedia, setOutboundMessageIdCallback, shutdown as shutdownTelegram, start as startTelegram, TelegramChannel } from "./channels/telegram";
 import type { SendMediaPayload } from "./channels/types";
@@ -1260,14 +1260,95 @@ function captureResponseSource(): string | undefined {
   return responseSource;
 }
 
-function getStatusPayload(): Record<string, unknown> {
-  const fb = fallbackController.state;
-  // Session context health
+const MODEL_CONTEXT_WINDOW = 200_000;
+const CONTEXT_COMPACT_THRESHOLD_PERCENT = 65;
+const CONTEXT_ROTATE_THRESHOLD_PERCENT = 75;
+
+function getDegradedCapabilities(): Array<{ key: string; reason: string }> {
+  const redisState = getRedisRuntimeState();
+  if (redisState.mode === "normal") return [];
+
+  const capabilities = [
+    {
+      key: "redis_event_bridge",
+      reason: "Redis pub/sub ingress is unavailable; direct channel conversation stays online.",
+    },
+    {
+      key: "message_replay",
+      reason: "Redis-backed replay and durable stream recovery are unavailable until Redis reconnects.",
+    },
+    {
+      key: "redis_operational_commands",
+      reason: "Queue inspection and mutation commands that depend on Redis return degraded data only.",
+    },
+  ];
+
+  if (channelInfo.telegram) {
+    capabilities.push({
+      key: "telegram_poll_owner_lease",
+      reason: "Telegram poll-owner durability falls back to direct polling/backoff without Redis lease coordination.",
+    });
+  }
+
+  return capabilities;
+}
+
+function getSessionPressure(): {
+  entries: number;
+  estimatedTokens: number;
+  usagePercent: number;
+  maxTokens: number;
+  lastCompactionAt: string;
+  lastCompactionAgeMs: number;
+  sessionAgeMs: number;
+  compactAtPercent: number;
+  rotateAtPercent: number;
+  maxCompactionGapMs: number;
+  maxSessionAgeMs: number;
+  health: "ok" | "elevated" | "critical";
+  nextAction: "observe" | "compact" | "rotate";
+} {
   const entries = sessionManager.getEntries();
   const lastUsage = getLastAssistantUsage(entries);
   const contextTokens = lastUsage ? calculateContextTokens(lastUsage) : 0;
-  const MODEL_CONTEXT_WINDOW = 200_000;
-  const contextUsagePercent = contextTokens > 0 ? Math.round((contextTokens / MODEL_CONTEXT_WINDOW) * 100) : 0;
+  const usagePercent = contextTokens > 0 ? Math.round((contextTokens / MODEL_CONTEXT_WINDOW) * 100) : 0;
+  const lastCompactionAgeMs = Math.max(0, Date.now() - lastCompactionAt);
+  const sessionAgeMs = Math.max(0, Date.now() - sessionCreatedAt);
+
+  const nextAction = usagePercent >= CONTEXT_ROTATE_THRESHOLD_PERCENT || sessionAgeMs > MAX_SESSION_AGE_MS
+    ? "rotate"
+    : usagePercent >= CONTEXT_COMPACT_THRESHOLD_PERCENT || lastCompactionAgeMs > MAX_COMPACTION_GAP_MS
+      ? "compact"
+      : "observe";
+
+  const health = nextAction === "rotate"
+    ? "critical"
+    : nextAction === "compact"
+      ? "elevated"
+      : "ok";
+
+  return {
+    entries: entries.length,
+    estimatedTokens: contextTokens,
+    usagePercent,
+    maxTokens: MODEL_CONTEXT_WINDOW,
+    lastCompactionAt: new Date(lastCompactionAt).toISOString(),
+    lastCompactionAgeMs,
+    sessionAgeMs,
+    compactAtPercent: CONTEXT_COMPACT_THRESHOLD_PERCENT,
+    rotateAtPercent: CONTEXT_ROTATE_THRESHOLD_PERCENT,
+    maxCompactionGapMs: MAX_COMPACTION_GAP_MS,
+    maxSessionAgeMs: MAX_SESSION_AGE_MS,
+    health,
+    nextAction,
+  };
+}
+
+function getStatusPayload(): Record<string, unknown> {
+  const fb = fallbackController.state;
+  const redisState = getRedisRuntimeState();
+  const sessionPressure = getSessionPressure();
+  const degradedCapabilities = getDegradedCapabilities();
 
   return {
     sessionId: session.sessionId,
@@ -1275,13 +1356,25 @@ function getStatusPayload(): Record<string, unknown> {
     model: describeModel(session.model),
     uptimeMs: Date.now() - startedAt,
     pid: process.pid,
-    context: {
-      entries: entries.length,
-      estimatedTokens: contextTokens,
-      usagePercent: contextUsagePercent,
-      maxTokens: MODEL_CONTEXT_WINDOW,
-      health: contextUsagePercent > 85 ? "critical" : contextUsagePercent > 70 ? "elevated" : "ok",
+    mode: redisState.mode,
+    degradedCapabilities,
+    runtime: {
+      reason: redisState.reason,
+      since: new Date(redisState.lastTransitionAt).toISOString(),
+      reconnectAttempts: redisState.reconnectAttempts,
+      lastError: redisState.lastError ?? null,
+      redisHealthy: redisState.healthy,
+      subscriberStatus: redisState.subscriberStatus,
+      commandStatus: redisState.commandStatus,
     },
+    context: {
+      entries: sessionPressure.entries,
+      estimatedTokens: sessionPressure.estimatedTokens,
+      usagePercent: sessionPressure.usagePercent,
+      maxTokens: sessionPressure.maxTokens,
+      health: sessionPressure.health,
+    },
+    sessionPressure,
     channelInfo: {
       ...channelInfo,
       redis: isRedisHealthy() ? "ok" : "degraded",
@@ -1363,6 +1456,11 @@ const wsServer = Bun.serve({
   port: WS_PORT,
   fetch(req, server) {
     const url = new URL(req.url);
+
+    if (req.method === "GET" && url.pathname === "/health") {
+      const health = getHealthStatus();
+      return Response.json(health, { status: health.available ? 200 : 503 });
+    }
 
     if (req.method === "GET" && url.pathname === "/health/slack") {
       const healthy = isSlackStarted();
@@ -1932,6 +2030,8 @@ session.subscribe((event: any) => {
   }
 });
 
+
+import { createPiProcessPool, type PiProcessPool } from "./lib/pi-process-pool";
 // ── ADR-0209: Thread classification on inbound messages ──────
 import {
   buildClassifierPrompt,
@@ -1945,8 +2045,6 @@ import {
   resolveClassification,
   type ThreadClassification,
 } from "./lib/thread-tracker";
-
-import { createPiProcessPool, type PiProcessPool } from "./lib/pi-process-pool";
 
 const THREAD_SNAPSHOT_PATH = join(homedir(), ".joelclaw", "state", "thread-snapshot.json");
 
@@ -2707,9 +2805,22 @@ const watchdogTimer = setInterval(() => {
 }, 30_000);
 
 // Expose health for CLI / external checks
-function getHealthStatus(): { healthy: boolean; components: Record<string, string | number | boolean> } {
+function getHealthStatus(): {
+  ok: boolean;
+  available: boolean;
+  healthy: boolean;
+  checkedAt: string;
+  mode: string;
+  degradedCapabilities: Array<{ key: string; reason: string }>;
+  reason: string;
+  since: string;
+  reconnectAttempts: number;
+  components: Record<string, string | number | boolean>;
+  status: Record<string, unknown>;
+} {
   const now = Date.now();
   const redisOk = isRedisHealthy();
+  const redisState = getRedisRuntimeState();
   const waitingForTurnEnd = Boolean(_idleResolve);
   const stuckMs = waitingForTurnEnd && _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
   const failures = getConsecutiveFailures();
@@ -2718,9 +2829,21 @@ function getHealthStatus(): { healthy: boolean; components: Record<string, strin
   const recoveryDeadlineInMs = stuckRecovery
     ? Math.max(0, stuckRecovery.deadlineAt - now)
     : 0;
+  const available = stuckMs < STUCK_THRESHOLD_MS && !isDead;
+  const healthy = redisOk && available;
+  const degradedCapabilities = getDegradedCapabilities();
+  const status = getStatusPayload();
 
   return {
-    healthy: redisOk && stuckMs < STUCK_THRESHOLD_MS && !isDead,
+    ok: available,
+    available,
+    healthy,
+    checkedAt: new Date(now).toISOString(),
+    mode: redisState.mode,
+    degradedCapabilities,
+    reason: redisState.reason,
+    since: new Date(redisState.lastTransitionAt).toISOString(),
+    reconnectAttempts: redisState.reconnectAttempts,
     components: {
       redis: redisOk ? "ok" : "degraded",
       telegram: channelInfo.telegram ? "ok" : "disabled",
@@ -2737,6 +2860,7 @@ function getHealthStatus(): { healthy: boolean; components: Record<string, strin
       stuckRecoveryPending: recoveryPending,
       stuckRecoveryDeadlineMs: recoveryDeadlineInMs,
     },
+    status,
   };
 }
 

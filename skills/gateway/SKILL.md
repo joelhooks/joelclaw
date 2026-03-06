@@ -2,7 +2,7 @@
 name: gateway
 displayName: Gateway
 description: "Operate the joelclaw gateway daemon — the always-on pi session that receives events, notifications, and messages. Use the joelclaw CLI for ALL gateway operations. Use when: 'restart gateway', 'gateway status', 'is gateway healthy', 'push to gateway', 'gateway not responding', 'telegram not working', 'messages not going through', 'gateway stuck', 'gateway debug', 'check gateway', 'drain queue', 'test gateway', 'stream events', or any task involving the gateway daemon."
-version: 1.0.3
+version: 1.0.4
 author: Joel Hooks
 tags: [joelclaw, gateway, daemon, redis, telegram]
 ---
@@ -16,11 +16,11 @@ The gateway daemon is the always-on pi session that receives events from Inngest
 ## CLI Commands
 
 ```bash
-joelclaw gateway status    # Sessions, queue depths, Redis health
+joelclaw gateway status    # Daemon availability, runtime mode, session pressure, Redis health
 joelclaw gateway restart   # Roll daemon, clean Redis, fresh session
 joelclaw gateway enable    # Re-enable launch agent + start daemon
-joelclaw gateway test      # Push test event, verify delivery
-joelclaw gateway push --type <type> [--payload JSON]  # Push to all sessions
+joelclaw gateway test      # Push test event, verify delivery (Redis bridge path)
+joelclaw gateway push --type <type> [--payload JSON]  # Push an event to all sessions
 joelclaw gateway events    # Peek at pending events per session
 joelclaw gateway drain     # Clear all event queues
 joelclaw gateway stream    # NDJSON stream of all gateway events (ADR-0058)
@@ -51,6 +51,22 @@ joelclaw gateway restart   # 4. If stuck, restart
 ```
 
 If `joelclaw gateway status` shows pending > 0 on sessions, the agent is mid-stream or stuck. If it persists after a minute, restart.
+
+## Redis-degraded mode (ADR-0214)
+
+`joelclaw gateway status` now distinguishes:
+
+- `mode: normal` — Redis bridge healthy
+- `mode: redis_degraded` — daemon/channels/session available, but Redis-backed capabilities are degraded
+
+When `mode=redis_degraded`:
+
+- direct human conversation can still work
+- Redis-backed commands/inspections are only partially trustworthy
+- `joelclaw gateway test` validates the Redis bridge path, so expect `joelclaw gateway diagnose` to skip that layer intentionally
+- use `joelclaw gateway diagnose` to see the degraded capability list and session pressure fields
+
+Do not report `redis_degraded` as “gateway down” unless process/session health is also failing.
 
 ## Behavior Control Plane (ADR-0211)
 

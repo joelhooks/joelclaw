@@ -219,6 +219,12 @@ Gateway process-layer diagnostics (`joelclaw gateway diagnose`) now inspect exac
 
 Use `joelclaw gateway enable` for direct launch-agent recovery (enable + bootstrap + kickstart) without manual `launchctl` usage.
 
+Gateway status/diagnose now separate **daemon availability** from **Redis bridge health**:
+
+- `joelclaw gateway status` prefers daemon `/health` when available, so Redis loss no longer makes the gateway look fully dead.
+- status now returns `mode` (`normal` or `redis_degraded`), `degradedCapabilities`, and `sessionPressure` (context %, compaction age, session age, next action).
+- `joelclaw gateway diagnose` treats `redis_degraded` as a degraded runtime, not a process failure, and skips Redis-dependent E2E checks in that mode.
+
 ## Gateway behavior control plane (ADR-0211)
 
 ```bash
