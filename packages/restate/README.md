@@ -89,7 +89,7 @@ The Restate pod does **not** have `pi`, `codex`, `bun`, or a repo checkout. PRD 
    - compiles markdown PRD → DAG using `pi` with `openai-codex/gpt-5.4`, or
    - loads a deterministic JSON execution plan via `--plan`
 2. Restate executes the DAG in-cluster
-3. Story nodes call host worker internal endpoints on `host.docker.internal:3111` (sending `x-otel-emit-token` only when `OTEL_EMIT_TOKEN` is configured)
+3. Story nodes call host worker internal endpoints on `127.0.0.1:3111` by default (override `PRD_AGENT_WORKER_URL` when the DAG worker runs somewhere else, such as an in-cluster runtime that needs `host.docker.internal:3111`). `x-otel-emit-token` is sent only when `OTEL_EMIT_TOKEN` is configured.
 4. Host worker dispatches **`pi`** agent work from the requested `cwd` and short-polls `/internal/agent-result/:requestId` until completion
 
 Every generated story prompt prepends the joelclaw mail contract: announce work, reserve exact paths, send status updates, release locks, and commit atomically.

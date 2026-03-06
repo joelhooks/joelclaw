@@ -8,7 +8,7 @@ import type { DagNodeInput } from "./workflows/dag-orchestrator";
 const RESTATE_INGRESS = process.env.RESTATE_INGRESS_URL ?? "http://localhost:8080";
 const PRD_PLANNER_MODEL = process.env.PRD_PLANNER_MODEL ?? "openai-codex/gpt-5.4";
 const PRD_EXEC_MODEL = process.env.PRD_EXEC_MODEL ?? "openai-codex/gpt-5.4";
-const PRD_AGENT_WORKER_URL = process.env.PRD_AGENT_WORKER_URL ?? "http://host.docker.internal:3111";
+const PRD_AGENT_WORKER_URL = process.env.PRD_AGENT_WORKER_URL ?? "http://127.0.0.1:3111";
 const PI_PATH_DIRS = [
   `${process.env.HOME}/.local/bin`,
   `${process.env.HOME}/.bun/bin`,
