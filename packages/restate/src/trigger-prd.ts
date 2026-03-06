@@ -6,8 +6,9 @@ import type { PrdExecutionPlan, PrdStoryPlan } from "./prd-types";
 import type { DagNodeInput } from "./workflows/dag-orchestrator";
 
 const RESTATE_INGRESS = process.env.RESTATE_INGRESS_URL ?? "http://localhost:8080";
-const PRD_PLANNER_MODEL = process.env.PRD_PLANNER_MODEL ?? "openai-codex/gpt-5.4";
-const PRD_EXEC_MODEL = process.env.PRD_EXEC_MODEL ?? "openai-codex/gpt-5.4";
+const PRD_PLANNER_MODEL = process.env.PRD_PLANNER_MODEL ?? "gpt-5.4";
+const PRD_EXEC_AGENT = process.env.PRD_EXEC_AGENT ?? "story-executor";
+const PRD_EXEC_MODEL = process.env.PRD_EXEC_MODEL?.trim() || undefined;
 const PRD_AGENT_WORKER_URL = process.env.PRD_AGENT_WORKER_URL ?? "http://127.0.0.1:3111";
 const PI_PATH_DIRS = [
   `${process.env.HOME}/.local/bin`,
@@ -179,6 +180,8 @@ function withCoordinationContract(story: PrdStoryPlan): string {
     "- Reserve exact file paths before editing and release them after commit/handoff.",
     "- Include touched file paths in status and done messages.",
     "- Work only inside the reserved file set plus directly adjacent tests/docs required by the story.",
+    "- Before committing, run `git status --short` and verify every changed path is in scope.",
+    "- If unrelated dirty paths exist, do not scoop them into the commit; report the conflict and fail closed.",
     "- Commit atomically with a prompt-style commit message.",
     `- Preferred files for this story: ${files}`,
     `- Working directory: ${cwd}`,
@@ -204,9 +207,10 @@ function buildAgentStoryNode(
     requestId,
     task: withCoordinationContract(story),
     tool: "pi",
+    agent: PRD_EXEC_AGENT,
     cwd,
     timeout: timeoutSeconds,
-    model: PRD_EXEC_MODEL,
+    ...(PRD_EXEC_MODEL ? { model: PRD_EXEC_MODEL } : {}),
     sandbox: story.sandbox ?? "workspace-write",
     readFiles: true,
   };
@@ -302,7 +306,8 @@ console.log(`   nodes: ${nodes.length}`);
 console.log(`   worker bridge: ${PRD_AGENT_WORKER_URL}`);
 console.log(`   bridge auth: ${internalToken ? "OTEL_EMIT_TOKEN" : "none"}`);
 console.log(`   agent tool: pi`);
-console.log(`   agent model: ${PRD_EXEC_MODEL}`);
+console.log(`   agent role: ${PRD_EXEC_AGENT}`);
+console.log(`   agent model override: ${PRD_EXEC_MODEL ?? "from agent role"}`);
 console.log("");
 
 const endpoint = asyncMode

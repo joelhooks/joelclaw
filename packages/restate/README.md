@@ -86,14 +86,14 @@ bun run packages/restate/src/trigger-prd.ts -- --plan ~/Vault/Projects/09-joelcl
 The Restate pod does **not** have `pi`, `codex`, `bun`, or a repo checkout. PRD execution therefore uses a host bridge:
 
 1. `trigger-prd.ts` runs on the host and either:
-   - compiles markdown PRD → DAG using `pi` with `openai-codex/gpt-5.4`, or
+   - compiles markdown PRD → DAG using `pi` with `gpt-5.4`, or
    - loads a deterministic JSON execution plan via `--plan`
 2. Restate executes the DAG in-cluster
 3. Story nodes call host worker internal endpoints on `127.0.0.1:3111` by default (override `PRD_AGENT_WORKER_URL` when the DAG worker runs somewhere else, such as an in-cluster runtime that needs `host.docker.internal:3111`). `x-otel-emit-token` is sent only when `OTEL_EMIT_TOKEN` is configured.
 4. Headless host runs should start the Restate worker with `CHANNEL=noop`; `CHANNEL=console` binds stdin and exits immediately under `nohup`/background launch.
-5. Host worker dispatches **`pi`** agent work from the requested `cwd` and short-polls `/internal/agent-result/:requestId` until completion
+5. Host worker dispatches **`pi`** agent work from the requested `cwd` and short-polls `/internal/agent-result/:requestId` until completion. Story execution now defaults to the dedicated roster agent `agents/story-executor.md` so Restate PRD runs use a tight system prompt instead of the generic background-agent path.
 
-Every generated story prompt prepends the joelclaw mail contract: announce work, reserve exact paths, send status updates, release locks, and commit atomically.
+Every generated story prompt prepends the joelclaw mail contract: announce work, reserve exact paths, send status updates, release locks, commit atomically, and fail closed if unrelated dirty paths would be scooped into the commit.
 
 ## Dkron scheduler proof (ADR-0216 phase 1)
 

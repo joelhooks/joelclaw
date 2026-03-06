@@ -18,6 +18,7 @@ type InboxResult = {
   status: "completed" | "failed";
   task: string;
   tool: string;
+  agent?: string;
   result?: string;
   error?: string;
   startedAt: string;
@@ -139,6 +140,7 @@ export const agentDispatch = inngest.createFunction(
       sessionId,
       task,
       tool,
+      agent,
       cwd,
       timeout = 600,
       model,
@@ -190,10 +192,12 @@ export const agentDispatch = inngest.createFunction(
 
       try {
         if (tool === "pi") {
+          const resolvedAgent = typeof agent === "string" ? agent.trim() : "";
           const result = await infer(task, {
             task: "complex",
+            ...(resolvedAgent ? { agent: resolvedAgent } : {}),
             model,
-            system: "Analyze and respond.",
+            ...(resolvedAgent ? {} : { system: "Analyze and respond." }),
             component: "agent-dispatch",
             action: "agent-dispatch.pi",
             print: true,
@@ -258,6 +262,7 @@ export const agentDispatch = inngest.createFunction(
         status: execution.status,
         task,
         tool,
+        ...(typeof agent === "string" && agent.trim() ? { agent: agent.trim() } : {}),
         ...(execution.status === "completed"
           ? { result: execution.output }
           : { error: execution.error }),
@@ -282,6 +287,7 @@ export const agentDispatch = inngest.createFunction(
         status: inboxResult.status,
         task,
         tool,
+        ...(typeof agent === "string" && agent.trim() ? { agent: agent.trim() } : {}),
         durationMs: inboxResult.durationMs,
       },
     });

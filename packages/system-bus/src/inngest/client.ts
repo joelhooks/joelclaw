@@ -1140,6 +1140,7 @@ export type Events = {
       sessionId?: string;
       task: string;
       tool: "codex" | "claude" | "pi";
+      agent?: string;
       cwd?: string;
       timeout?: number; // seconds, default 600 (10min)
       model?: string;
@@ -1160,6 +1161,7 @@ export type Events = {
       status: "completed" | "failed";
       task: string;
       tool: string;
+      agent?: string;
       durationMs: number;
     };
   };
