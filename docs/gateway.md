@@ -204,6 +204,8 @@ After every `turn_end`, if session is >24 hours old, create a fresh session with
 ### Quiet hours auto-batching (11 PM – 7 AM PST)
 During quiet hours, all non-interactive events are batched (not immediate). Batch digest flush is deferred until wake hours. Human messages (telegram, imessage, etc.) and error events always process immediately.
 
+`subscription.updated` events are rendered as dedicated "📡 Feed Update" automated messages instead of being folded into batch digests, so feed changes stay visible even when digest-only pressure controls are active.
+
 **Incident context (2026-03-05):** Without these guards, the gateway entered a thrash loop: 92 fallback activations, 83 timeouts, 128 model swaps over 11 hours. Root cause: 12h without compaction → context bloat → Opus first-token > 120s → positive feedback loop.
 
 ## Availability-first posture (ADR-0189 related)

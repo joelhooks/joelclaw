@@ -514,6 +514,43 @@ function buildQuietDigestSummary(events: SystemEvent[]): string {
   ].join("\n");
 }
 
+function buildSubscriptionMessage(events: SystemEvent[]): string {
+  return events
+    .map((event) => {
+      const payload = asRecord(event.payload);
+      const name = asString(payload.name) || "Unnamed feed";
+      const source = asString(payload.source);
+      const newEntries = asNumber(payload.newEntries);
+      const summary = asString(payload.summary)
+        || `${newEntries ?? 0} new entr${newEntries === 1 ? "y" : "ies"}${source ? ` from ${source}` : ""}.`;
+      const links = Array.isArray(payload.links)
+        ? payload.links
+            .map((value) => {
+              const link = asRecord(value);
+              const title = asString(link.title) || asString(link.url) || "Open";
+              const url = asString(link.url);
+              return url ? { title, url } : null;
+            })
+            .filter((value): value is { title: string; url: string } => Boolean(value))
+        : [];
+
+      const lines = [
+        `## 📡 Feed Update — ${name}`,
+        "",
+        summary,
+      ];
+
+      if (links.length > 0) {
+        lines.push("", ...links.map((link) => `- [${link.title}](${link.url})`));
+      } else if (source) {
+        lines.push("", `- [Source](${source})`);
+      }
+
+      return lines.join("\n");
+    })
+    .join("\n\n");
+}
+
 function isDigestOnlyMode(): boolean {
   return automatedInjectedCount > AUTO_MESSAGE_DIGEST_ONLY_THRESHOLD;
 }
@@ -774,17 +811,19 @@ async function drain(options: DrainOptions = {}): Promise<void> {
 
     // Session pressure control: after N automated injections, only pass critical events.
     const digestOnlyMode = isDigestOnlyMode();
-    const criticalEvents = regularEvents.filter((e) => eventLooksCritical(e));
-    const nonCriticalEvents = regularEvents.filter((e) => !eventLooksCritical(e));
+    const subscriptionEvents = regularEvents.filter((e) => e.type === "subscription.updated");
+    const nonSubscriptionEvents = regularEvents.filter((e) => e.type !== "subscription.updated");
+    const criticalEvents = nonSubscriptionEvents.filter((e) => eventLooksCritical(e));
+    const nonCriticalEvents = nonSubscriptionEvents.filter((e) => !eventLooksCritical(e));
     if (digestOnlyMode && nonCriticalEvents.length > 0) {
       console.log(`[gateway] digest-only mode suppressed ${nonCriticalEvents.length} non-critical event(s)`);
     }
 
-    const finalRegularEvents = digestOnlyMode ? criticalEvents : regularEvents;
+    const finalRegularEvents = digestOnlyMode ? criticalEvents : nonSubscriptionEvents;
     const finalEvents = [...finalRegularEvents, ...injectableHeartbeats];
     const shouldInjectDigestSummary = injectDigestSummary && (!digestOnlyMode || digestEvents.some(eventLooksCritical));
 
-    if (finalEvents.length === 0 && !shouldInjectDigestSummary) {
+    if (finalEvents.length === 0 && !shouldInjectDigestSummary && subscriptionEvents.length === 0) {
       await markProcessed(events);
       await cmd.del(EVENT_LIST);
       lastDrainTs = Date.now();
@@ -796,6 +835,9 @@ async function drain(options: DrainOptions = {}): Promise<void> {
     }
     if (shouldInjectDigestSummary) {
       sendAutomatedMessage(buildQuietDigestSummary(digestEvents), "anomalous-digest");
+    }
+    if (subscriptionEvents.length > 0) {
+      sendAutomatedMessage(buildSubscriptionMessage(subscriptionEvents), "subscription-update");
     }
 
     await markProcessed(events);
