@@ -250,6 +250,6 @@ slog write --action configure --tool <tool> --detail "<what changed>" --reason "
 
 ## Model Policy
 
-- Codex tasks MUST use `gpt-5.3-codex`.
+- Codex tasks MUST use `gpt-5.4`.
 - All model selection goes through `@joelclaw/inference-router` catalog.
 - Never hardcode model→provider mappings.

@@ -55,8 +55,8 @@ const SYSTEM_BUS_CONFIG_PATH = `${HOME_DIR}/.joelclaw/system-bus.config.json`
 const DEFAULT_SELF_HEALING_CONFIG = {
   selfHealing: {
     router: {
-      model: "gpt-5.2-codex-spark",
-      fallbackModel: "gpt-5.3-codex",
+      model: "gpt-5.4",
+      fallbackModel: "gpt-5.4",
       maxRetries: 5,
       sleepMinMs: 5 * 60_000,
       sleepMaxMs: 4 * 60 * 60_000,
@@ -74,8 +74,8 @@ const DEFAULT_SELF_HEALING_CONFIG = {
     },
   },
   backupFailureRouter: {
-    model: "gpt-5.2-codex-spark",
-    fallbackModel: "gpt-5.3-codex",
+    model: "gpt-5.4",
+    fallbackModel: "gpt-5.4",
     maxRetries: 5,
     sleepMinMs: 5 * 60_000,
     sleepMaxMs: 4 * 60 * 60_000,
@@ -94,8 +94,8 @@ const DEFAULT_SELF_HEALING_CONFIG = {
 }
 const DEFAULT_BACKUP_CONFIG = {
   backupFailureRouter: {
-    model: "gpt-5.2-codex-spark",
-    fallbackModel: "gpt-5.3-codex",
+    model: "gpt-5.4",
+    fallbackModel: "gpt-5.4",
     maxRetries: 5,
     sleepMinMs: 5 * 60_000,
     sleepMaxMs: 4 * 60 * 60_000,

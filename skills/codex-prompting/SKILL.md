@@ -28,7 +28,7 @@ The job is to produce a high-signal Codex request that gets directly executed wi
 
 ## Required model default
 
-- Codex tasks must set model to `gpt-5.3-codex` when unspecified.
+- Codex tasks must set model to `gpt-5.4` when unspecified.
 - Use an explicit model override only when user explicitly requests another.
 
 ## Local runtime defaults (Panda)

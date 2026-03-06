@@ -8,7 +8,8 @@ import { emitOtel, notifyGateway, previewOutput } from "../otel";
 
 const MAX_SIMULATED_MS = 30_000;
 const MAX_OUTPUT_BYTES = 16_384;
-const HANDLER_TIMEOUT_MS = 120_000;
+const DEFAULT_HANDLER_TIMEOUT_MS = 120_000;
+const MAX_HANDLER_TIMEOUT_MS = 60 * 60_000;
 
 const PI_PATH_DIRS = [
   `${process.env.HOME}/.local/bin`,
@@ -211,11 +212,20 @@ const buildDepEnv = (outputs: Record<string, string>): Record<string, string> =>
   return env;
 };
 
+const resolveHandlerTimeoutMs = (config: Record<string, unknown>): number => {
+  const raw = config.timeoutMs;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    return DEFAULT_HANDLER_TIMEOUT_MS;
+  }
+  return Math.max(1_000, Math.min(raw, MAX_HANDLER_TIMEOUT_MS));
+};
+
 // --- Handler implementations ---
 
 async function executeShell(
   config: Record<string, unknown>,
   depEnv: Record<string, string>,
+  timeoutMs: number,
 ): Promise<string> {
   const command = config.command as string | undefined;
   if (!command) throw new Error("shell handler requires config.command");
@@ -226,7 +236,7 @@ async function executeShell(
     env: { ...process.env, ...depEnv },
   });
 
-  const timer = setTimeout(() => proc.kill(), HANDLER_TIMEOUT_MS);
+  const timer = setTimeout(() => proc.kill(), timeoutMs);
   const [stdout, stderr] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -247,7 +257,7 @@ async function executeShell(
   return truncate(JSON.stringify(result));
 }
 
-async function executeHttp(config: Record<string, unknown>): Promise<string> {
+async function executeHttp(config: Record<string, unknown>, timeoutMs: number): Promise<string> {
   const url = config.url as string | undefined;
   if (!url) throw new Error("http handler requires config.url");
 
@@ -256,7 +266,7 @@ async function executeHttp(config: Record<string, unknown>): Promise<string> {
   const body = config.body as string | undefined;
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HANDLER_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   const response = await fetch(url, {
     method,
@@ -279,6 +289,7 @@ async function executeHttp(config: Record<string, unknown>): Promise<string> {
 async function executeInfer(
   config: Record<string, unknown>,
   dependencyOutputs: Record<string, string>,
+  timeoutMs: number,
 ): Promise<string> {
   const promptTemplate = config.prompt as string | undefined;
   if (!promptTemplate) throw new Error("infer handler requires config.prompt");
@@ -307,7 +318,7 @@ async function executeInfer(
       },
     });
 
-    const timer = setTimeout(() => proc.kill(), HANDLER_TIMEOUT_MS);
+    const timer = setTimeout(() => proc.kill(), timeoutMs);
     const [stdout, stderr] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
@@ -380,6 +391,7 @@ export const dagWorker = restate.service({
       // Interpolate config templates with dependency outputs
       const resolvedConfig = interpolateConfig(input.config, input.dependencyOutputs);
       const depEnv = buildDepEnv(input.dependencyOutputs);
+      const handlerTimeoutMs = resolveHandlerTimeoutMs(resolvedConfig);
 
       // Execute the handler inside ctx.run for durability
       let output: string;
@@ -390,11 +402,11 @@ export const dagWorker = restate.service({
         output = await ctx.run("execute-task", async () => {
           switch (input.handler) {
             case "shell":
-              return executeShell(resolvedConfig, depEnv);
+              return executeShell(resolvedConfig, depEnv, handlerTimeoutMs);
             case "http":
-              return executeHttp(resolvedConfig);
+              return executeHttp(resolvedConfig, handlerTimeoutMs);
             case "infer":
-              return executeInfer(resolvedConfig, input.dependencyOutputs);
+              return executeInfer(resolvedConfig, input.dependencyOutputs, handlerTimeoutMs);
             case "noop":
             default:
               return `completed:${input.nodeId}:${input.task}`;

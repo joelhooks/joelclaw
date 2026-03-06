@@ -45,17 +45,17 @@ describe("normalizeModelAttribution", () => {
     });
 
     expect(
-      normalizeModelAttribution({ provider: "openai", id: "openai-codex/gpt-5.3-codex-spark" }),
+      normalizeModelAttribution({ provider: "openai", id: "openai-codex/gpt-5.4" }),
     ).toEqual({
       provider: "openai-codex",
-      modelId: "openai-codex/gpt-5.3-codex-spark",
+      modelId: "openai-codex/gpt-5.4",
     });
 
     expect(
-      normalizeModelAttribution({ provider: "openai-codex", id: "gpt-5.3-codex" }),
+      normalizeModelAttribution({ provider: "openai-codex", id: "gpt-5.4" }),
     ).toEqual({
       provider: "openai-codex",
-      modelId: "openai-codex/gpt-5.3-codex",
+      modelId: "openai-codex/gpt-5.4",
     });
   });
 });

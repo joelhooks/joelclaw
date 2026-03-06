@@ -6,7 +6,7 @@ describe("catalog helpers", () => {
     expect(normalizeModel("anthropic/claude-opus-4-6")).toBe("anthropic/claude-opus-4-6");
     expect(normalizeModel("claude-opus-4-6")).toBe("anthropic/claude-opus-4-6");
     expect(normalizeModel("  CLAUDE-HAIKU-4-5 ")).toBe("anthropic/claude-haiku-4-5");
-    expect(normalizeModel("OPENAI-CODEX/GPT-5.3-CODEX")).toBe("openai-codex/gpt-5.3-codex");
+    expect(normalizeModel("OPENAI-CODEX/GPT-5.3-CODEX")).toBe("openai-codex/gpt-5.4");
   });
 
   test("normalizeModel resolves legacy gateway names", () => {
@@ -24,7 +24,7 @@ describe("catalog helpers", () => {
   test("inferProviderFromModel resolves all providers and fallback behavior", () => {
     expect(inferProviderFromModel("anthropic/claude-opus-4-6")).toBe("anthropic");
     expect(inferProviderFromModel("openai/gpt-5.2")).toBe("openai");
-    expect(inferProviderFromModel("openai-codex/gpt-5.3-codex-spark")).toBe("openai-codex");
+    expect(inferProviderFromModel("openai-codex/gpt-5.4")).toBe("openai-codex");
     expect(inferProviderFromModel("claude-opus-4-6")).toBe("anthropic");
     expect(inferProviderFromModel("codex-spark")).toBe("openai-codex");
     expect(inferProviderFromModel("openai-ish")).toBe("openai");

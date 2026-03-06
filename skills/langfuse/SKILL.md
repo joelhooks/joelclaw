@@ -141,7 +141,7 @@ Behavior:
 Both the pi-session extension and system-bus Langfuse bridge normalize provider/model before writing tags, trace metadata, and generation model fields. This keeps `provider:*` + `model:*` tags aligned with metadata after model switches and for provider-prefixed IDs such as:
 
 - `anthropic/claude-opus-4-6`
-- `openai-codex/gpt-5.3-codex-spark`
+- `openai-codex/gpt-5.4`
 
 Normalization is fail-open: tracing continues even if normalization cannot resolve a value.
 

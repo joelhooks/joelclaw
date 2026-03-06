@@ -245,7 +245,7 @@ Safe reconciliation sequence:
 
 | File | Purpose |
 |------|---------|
-| `src/serve.ts` | HTTP server, Inngest registration, health endpoint |
+| `src/serve.ts` | HTTP server, Inngest registration, health endpoint, and host-only internal agent bridge endpoints (`/internal/agent-dispatch`, `/internal/agent-result/:id`, `/internal/agent-await/:id`) |
 | `src/inngest/client.ts` | Event type definitions, Inngest client |
 | `src/inngest/middleware/gateway.ts` | Gateway context injection |
 | `src/inngest/functions/index.host.ts` | Host-role function list |

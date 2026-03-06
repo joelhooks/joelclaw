@@ -257,7 +257,7 @@ async function runCodex<T = unknown>({
     : undefined;
   const schemaFlag = schemaPath ? ` --output-schema '${escapeShellArg(schemaPath)}'` : "";
   const sandboxFlag = sandbox ? ` --sandbox ${sandbox}` : "";
-  const cmd = `codex exec --full-auto -m gpt-5.3-codex${sandboxFlag}${schemaFlag} '${escapedPrompt}'`;
+  const cmd = `codex exec --full-auto -m gpt-5.4${sandboxFlag}${schemaFlag} '${escapedPrompt}'`;
 
   try {
     const output = (await new Promise<string>((resolve, reject) => {

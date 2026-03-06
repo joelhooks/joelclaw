@@ -327,7 +327,7 @@ kubectl exec -n joelclaw redis-0 -- redis-cli XRANGE gateway:messages - + COUNT 
 The gateway has a model fallback controller (ADR-0091) that swaps models when the primary fails:
 
 - **Threshold:** 120s timeout for first token, or 3 consecutive prompt failures (configurable)
-- **Fallback model:** `openai-codex/gpt-5.3-codex` (daemon remaps legacy Anthropic fallback configs to codex at startup)
+- **Fallback model:** `openai-codex/gpt-5.4` (daemon remaps legacy Anthropic fallback configs to codex at startup)
 - **No-op guard:** if primary and fallback resolve to the same provider/model, fallback swapping is disabled for that session to avoid fake swap/recover noise
 - **Recovery:** Probes primary model every 10 minutes
 - **OTEL events:** `model_fallback.swapped`, `model_fallback.primary_restored`, `model_fallback.probe_failed`, `fallback.model.remapped`, `fallback.disabled.same_model`

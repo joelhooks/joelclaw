@@ -115,7 +115,7 @@ export const frictionFix = inngest.createFunction(
         "codex",
         "exec",
         "--model",
-        MODEL.CODEX, // ADR-0084 — gpt-5.3-codex, never o3/o4-mini
+        MODEL.CODEX, // ADR-0084 — gpt-5.4, never o3/o4-mini
         "--full-auto",
         shellEscapeSingleQuoted(prompt),
       ];

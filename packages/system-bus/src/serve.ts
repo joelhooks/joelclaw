@@ -1,4 +1,6 @@
 import { execSync } from "node:child_process";
+import { access, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { Hono } from "hono";
 import { serve as inngestServe } from "inngest/hono";
 import { inngest } from "./inngest/client";
@@ -57,6 +59,10 @@ const WORKER_STARTED_AT = new Date().toISOString();
 const WORKER_CWD = process.cwd();
 const LEGACY_WORKER_CLONE_FRAGMENT = "/Code/system-bus-worker/";
 const LEGACY_WORKER_CLONE_DETECTED = WORKER_CWD.includes(LEGACY_WORKER_CLONE_FRAGMENT);
+const INTERNAL_AGENT_INBOX_DIR = join(process.env.HOME ?? "/Users/joel", ".joelclaw", "workspace", "inbox");
+const INTERNAL_AGENT_ACK_DIR = join(INTERNAL_AGENT_INBOX_DIR, "ack");
+const INTERNAL_AGENT_POLL_MS = 2_000;
+const INTERNAL_AGENT_MAX_TIMEOUT_MS = 60 * 60_000;
 
 type WorkerRole = "host" | "cluster";
 type FunctionDefinition = { opts?: { id?: string } };
@@ -109,6 +115,37 @@ const functionNames = registeredFunctions.map(
 void emitInngestRegistryLoaded(functionNames).catch((error) => {
   console.warn("[otel] failed to emit registry snapshot", error);
 });
+
+function verifyInternalToken(c: any) {
+  if (!OTEL_EMIT_TOKEN) return null;
+  const token = c.req.header("x-otel-emit-token") ?? c.req.header("x-internal-token");
+  if (!token || token !== OTEL_EMIT_TOKEN) {
+    return c.json({ error: "Unauthorized" }, 401);
+  }
+  return null;
+}
+
+async function readAgentResult(requestId: string): Promise<Record<string, unknown> | null> {
+  const candidates = [
+    join(INTERNAL_AGENT_INBOX_DIR, `${requestId}.json`),
+    join(INTERNAL_AGENT_ACK_DIR, `${requestId}.json`),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      await access(candidate);
+      const raw = await readFile(candidate, "utf8");
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+
+  return null;
+}
 
 app.get("/", (c) =>
   c.json({
@@ -166,12 +203,8 @@ app.get("/", (c) =>
 
 // Internal ingest endpoint so gateway can emit events through the single worker write path.
 app.post("/observability/emit", async (c) => {
-  if (OTEL_EMIT_TOKEN) {
-    const token = c.req.header("x-otel-emit-token");
-    if (!token || token !== OTEL_EMIT_TOKEN) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
-  }
+  const authError = verifyInternalToken(c);
+  if (authError) return authError;
 
   const payload = await c.req.json().catch(() => null);
   if (!payload || typeof payload !== "object") {
@@ -186,6 +219,90 @@ app.post("/observability/emit", async (c) => {
     );
   }
   return c.json({ ok: true, result });
+});
+
+app.post("/internal/agent-dispatch", async (c) => {
+  const authError = verifyInternalToken(c);
+  if (authError) return authError;
+
+  const payload = await c.req.json().catch(() => null);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return c.json({ ok: false, error: "Invalid payload" }, 400);
+  }
+
+  const requestId = typeof (payload as any).requestId === "string" ? (payload as any).requestId.trim() : "";
+  const task = typeof (payload as any).task === "string" ? (payload as any).task.trim() : "";
+  const tool = typeof (payload as any).tool === "string" ? (payload as any).tool.trim() : "";
+
+  if (!requestId || !task || !tool) {
+    return c.json({ ok: false, error: "Missing required fields: requestId, task, tool" }, 400);
+  }
+
+  const sendResult = await inngest.send({
+    name: "system/agent.requested",
+    data: payload as Record<string, unknown>,
+  });
+
+  await emitOtelEvent({
+    action: "internal.agent_dispatch.requested",
+    component: "system-bus-internal",
+    metadata: {
+      requestId,
+      tool,
+      cwd: (payload as any).cwd,
+      model: (payload as any).model,
+      sandbox: (payload as any).sandbox,
+    },
+  }).catch(() => {});
+
+  return c.json({ ok: true, requestId, sendResult });
+});
+
+app.get("/internal/agent-result/:requestId", async (c) => {
+  const authError = verifyInternalToken(c);
+  if (authError) return authError;
+
+  const requestId = c.req.param("requestId")?.trim();
+  if (!requestId) {
+    return c.json({ ok: false, error: "requestId required" }, 400);
+  }
+
+  const result = await readAgentResult(requestId);
+  if (!result) {
+    return c.json({ ok: true, status: "pending", requestId });
+  }
+
+  return c.json({ ok: true, requestId, status: result.status ?? "unknown", result });
+});
+
+app.get("/internal/agent-await/:requestId", async (c) => {
+  const authError = verifyInternalToken(c);
+  if (authError) return authError;
+
+  const requestId = c.req.param("requestId")?.trim();
+  if (!requestId) {
+    return c.json({ ok: false, error: "requestId required" }, 400);
+  }
+
+  const timeoutMsRaw = Number.parseInt(c.req.query("timeoutMs") ?? "3600000", 10);
+  const timeoutMs = Number.isFinite(timeoutMsRaw)
+    ? Math.max(5_000, Math.min(timeoutMsRaw, INTERNAL_AGENT_MAX_TIMEOUT_MS))
+    : INTERNAL_AGENT_MAX_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const result = await readAgentResult(requestId);
+    if (result) {
+      const status = typeof result.status === "string" ? result.status : "unknown";
+      if (status === "failed") {
+        return c.json({ ok: false, requestId, status, result }, 500);
+      }
+      return c.json({ ok: true, requestId, status, result });
+    }
+    await new Promise((resolve) => setTimeout(resolve, INTERNAL_AGENT_POLL_MS));
+  }
+
+  return c.json({ ok: false, requestId, status: "timeout", timeoutMs }, 504);
 });
 
 // Webhook gateway — external services POST here

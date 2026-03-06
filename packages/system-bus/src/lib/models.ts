@@ -23,10 +23,8 @@ export const ALLOWED_MODELS = [
   "anthropic/claude-sonnet-4-6",
   "anthropic/claude-sonnet-4-5",
   "anthropic/claude-haiku-4-5",
-  // OpenAI (codex exec, agent loops, friction-fix)
-  "gpt-5.3-codex",
-  "gpt-5.3-codex-spark",
-  "gpt-5.2-codex-spark",
+  // OpenAI / Codex
+  "gpt-5.4",
   "o4-mini",
   "o3",
 ] as const;
@@ -41,12 +39,12 @@ export const MODEL = {
   SONNET: "anthropic/claude-sonnet-4-6" as const,
   /** Cheap and fast. Use for triage, formatting, simple extraction — $1/$5 per MTok. */
   HAIKU: "anthropic/claude-haiku-4-5" as const,
-  /** Codex agent loops — OpenAI's coding model. */
-  CODEX: "gpt-5.3-codex" as const,
-  /** Codex spark fallback for structured router reasoning. */
-  CODEX_SPARK: "gpt-5.3-codex-spark" as const,
-  /** Legacy codex spark id kept for compatibility with older configs. */
-  CODEX_SPARK_LEGACY: "gpt-5.2-codex-spark" as const,
+  /** Canonical Codex/OpenAI model for coding and fallback work. */
+  CODEX: "gpt-5.4" as const,
+  /** Legacy spark paths are collapsed into GPT-5.4. */
+  CODEX_SPARK: "gpt-5.4" as const,
+  /** Legacy codex spark id kept as a semantic alias, but resolves to GPT-5.4. */
+  CODEX_SPARK_LEGACY: "gpt-5.4" as const,
   /** Fast OpenAI reasoning — friction fixes, quick tasks. */
   O4_MINI: "o4-mini" as const,
   /** OpenAI reasoning — heavier tasks. */

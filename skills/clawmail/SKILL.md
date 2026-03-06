@@ -76,7 +76,7 @@ Daily steering uses these signals to detect protocol drift.
 joelclaw mail status
 
 # register / refresh identity metadata
-joelclaw mail register --agent MaroonReef --program pi --model gpt-5.3-codex --task "interactive"
+joelclaw mail register --agent MaroonReef --program pi --model gpt-5.4 --task "interactive"
 
 # send a coordination message
 joelclaw mail send --from MaroonReef --to BlueFox --subject "Task: update prompt docs" "Please edit SYSTEM.md and roles/*.md"

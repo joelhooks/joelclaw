@@ -35,10 +35,9 @@ const FILE_READ_OPERATION_PATTERN =
   /\b(read|open|inspect|review|scan|grep|search|find|cat|ls|sed|rg)\b/;
 const PI_FILE_ANALYSIS_PATH_PATTERN = /\/[A-Za-z0-9_.~-]+\.[a-z]{1,5}(?=$|[\s"'`])/;
 const PI_FILE_ANALYSIS_PREFIX_PATTERN = /^\s*(read|analyze|review)\b/i;
-const CODEX_DEFAULT_MODEL = "gpt-5.3-codex";
+const CODEX_DEFAULT_MODEL = "gpt-5.4";
 const CODEX_ALLOWED_MODELS = new Set([
-  "gpt-5.3-codex",
-  "gpt-5.3-codex-spark",
+  "gpt-5.4",
 ]);
 
 function taskRequiresFileAccess(task: string): boolean {

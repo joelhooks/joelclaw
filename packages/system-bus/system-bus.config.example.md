@@ -7,8 +7,8 @@ Environment variables always override file values at runtime.
 {
   "selfHealing": {
     "router": {
-      "model": "gpt-5.2-codex-spark",
-      "fallbackModel": "gpt-5.3-codex",
+      "model": "gpt-5.4",
+      "fallbackModel": "gpt-5.4",
       "maxRetries": 5,
       "sleepMinMs": 300000,
       "sleepMaxMs": 14400000,
@@ -26,8 +26,8 @@ Environment variables always override file values at runtime.
     }
   },
   "backupFailureRouter": {
-    "model": "gpt-5.2-codex-spark",
-    "fallbackModel": "gpt-5.3-codex",
+    "model": "gpt-5.4",
+    "fallbackModel": "gpt-5.4",
     "maxRetries": 5,
     "sleepMinMs": 300000,
     "sleepMaxMs": 14400000,

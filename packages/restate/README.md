@@ -73,7 +73,21 @@ bun run packages/restate/src/trigger-dag.ts -- --pipeline health
 
 # DAG research (real work — web search + vault + memory → LLM synthesis)
 bun run packages/restate/src/trigger-dag.ts -- --pipeline research --topic "Restate vs Temporal"
+
+# PRD → DAG compilation (host pi planning + Restate orchestration + host agent bridge)
+bun run packages/restate/src/trigger-prd.ts -- --prd ~/Vault/Projects/09-joelclaw/0217-phase-1-queue-execution-plan.md --cwd ~/Code/joelhooks/joelclaw
 ```
+
+### PRD execution bridge
+
+The Restate pod does **not** have `pi`, `codex`, `bun`, or a repo checkout. PRD execution therefore uses a host bridge:
+
+1. `trigger-prd.ts` runs on the host and compiles markdown PRD → DAG using `pi` with `openai-codex/gpt-5.4`
+2. Restate executes the DAG in-cluster
+3. Story nodes call host worker internal endpoints on `host.docker.internal:3111`
+4. Host worker dispatches coding agents and waits for their results
+
+Every generated story prompt prepends the joelclaw mail contract: announce work, reserve exact paths, send status updates, release locks, and commit atomically.
 
 ## Dkron scheduler proof (ADR-0216 phase 1)
 

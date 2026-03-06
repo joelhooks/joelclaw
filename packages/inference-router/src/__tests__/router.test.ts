@@ -6,16 +6,16 @@ describe("buildInferenceRoute", () => {
   test("builds route for explicit model", () => {
     const plan = buildInferenceRoute(
       {
-        model: "openai-codex/gpt-5.3-codex",
+        model: "openai-codex/gpt-5.4",
         task: "reasoning",
       },
       buildPolicy(),
     );
 
-    expect(plan.requestedModel).toBe("openai-codex/gpt-5.3-codex");
+    expect(plan.requestedModel).toBe("openai-codex/gpt-5.4");
     expect(plan.normalizedTask).toBe("reasoning");
     expect(plan.attempts[0]).toMatchObject({
-      model: "openai-codex/gpt-5.3-codex",
+      model: "openai-codex/gpt-5.4",
       provider: "openai-codex",
       reason: "requested",
       attempt: 0,
@@ -33,7 +33,7 @@ describe("buildInferenceRoute", () => {
       { model: "anthropic/claude-sonnet-4-6", provider: "anthropic", reason: "policy", attempt: 0 },
       { model: "anthropic/claude-opus-4-6", provider: "anthropic", reason: "policy", attempt: 1 },
       { model: "anthropic/claude-haiku-4-5", provider: "anthropic", reason: "policy", attempt: 2 },
-      { model: "openai-codex/gpt-5.3-codex-spark", provider: "openai-codex", reason: "fallback", attempt: 3 },
+      { model: "openai-codex/gpt-5.4", provider: "openai-codex", reason: "fallback", attempt: 3 },
     ]);
   });
 
@@ -41,7 +41,7 @@ describe("buildInferenceRoute", () => {
     const plan = buildInferenceRoute({ task: "classification", provider: "openai-codex" }, buildPolicy({ maxFallbackAttempts: 10 }));
 
     expect(plan.attempts[0]!).toMatchObject({
-      model: "openai-codex/gpt-5.3-codex-spark",
+      model: "openai-codex/gpt-5.4",
       provider: "openai-codex",
       reason: "policy",
       attempt: 0,
@@ -63,13 +63,13 @@ describe("buildInferenceRoute", () => {
 
   test("deduplicates fallback attempts and respects max attempts", () => {
     const plan = buildInferenceRoute(
-      { model: "openai-codex/gpt-5.3-codex-spark" },
+      { model: "openai-codex/gpt-5.4" },
       buildPolicy({ maxFallbackAttempts: 2 }),
     );
 
     expect(plan.attempts).toHaveLength(2);
     expect(new Set(plan.attempts.map((entry) => entry.model)).size).toBe(plan.attempts.length);
-    expect(plan.attempts[0]!).toMatchObject({ model: "openai-codex/gpt-5.3-codex-spark", reason: "requested" });
+    expect(plan.attempts[0]!).toMatchObject({ model: "openai-codex/gpt-5.4", reason: "requested" });
     expect(plan.attempts[1]!).toMatchObject({ model: "anthropic/claude-haiku-4-5", reason: "fallback" });
   });
 
@@ -117,7 +117,7 @@ describe("buildInferenceRoute", () => {
     expect(plan.normalizedTask).toBe("default");
     expect(plan.attempts.length).toBeGreaterThan(0);
     expect(plan.attempts[0]!.reason).toBe("policy");
-    expect(plan.policyVersion).toBe("2026-02-25-router-v2");
+    expect(plan.policyVersion).toBe("2026-03-06-router-v3");
   });
 
   test("handles no candidates available by throwing", () => {

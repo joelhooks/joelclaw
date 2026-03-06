@@ -158,7 +158,7 @@ const startupGatewayConfig = await (async () => {
 
 const preferredFallback = {
   provider: "openai-codex",
-  model: "gpt-5.3-codex",
+  model: "gpt-5.4",
 } as const;
 const hasPreferredFallback = Boolean(getModel(preferredFallback.provider as any, preferredFallback.model as any));
 
@@ -174,7 +174,7 @@ if (isLegacyAnthropicFallback && hasPreferredFallback) {
   console.warn("[gateway:fallback] remapped fallback model", {
     from,
     to: `${preferredFallback.provider}/${preferredFallback.model}`,
-    reason: "gateway fallback standard is now gpt-5.3-codex",
+    reason: "gateway fallback standard is now gpt-5.4",
   });
 
   void emitGatewayOtel({
