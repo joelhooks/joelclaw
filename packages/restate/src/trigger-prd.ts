@@ -212,9 +212,13 @@ function buildAgentStoryNode(
     `  if [ "$status" = "failed" ]; then printf '%s\\n' "$response" >&2; exit 1; fi`,
     `  sleep 5`,
     `done`,
+    `response=$(curl -fsS${authHeader} ${shellEscape(resultUrl)}) || exit 1`,
+    `status=$(printf '%s' "$response" | python -c 'import json,sys; print(json.load(sys.stdin).get("status", ""))')`,
+    `if [ "$status" = "completed" ]; then printf '%s\\n' "$response"; exit 0; fi`,
+    `if [ "$status" = "failed" ]; then printf '%s\\n' "$response" >&2; exit 1; fi`,
     `echo '{"ok":false,"status":"timeout","requestId":"${requestId}"}' >&2`,
     `exit 1`,
-  ].join("; ");
+  ].join("\n");
   const command = [
     `curl -fsS -X POST ${shellEscape(dispatchUrl)}`,
     `  -H 'Content-Type: application/json'`,
