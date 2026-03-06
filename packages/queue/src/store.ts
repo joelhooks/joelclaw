@@ -262,12 +262,6 @@ function candidateComparator(a: CandidateMessage, b: CandidateMessage): number {
   return a.message.id.localeCompare(b.message.id);
 }
 
-function chooseCandidate(candidates: CandidateMessage[]): CandidateMessage | undefined {
-  if (candidates.length === 0) return undefined;
-  const sorted = [...candidates].sort(candidateComparator);
-  return sorted[0];
-}
-
 async function loadPriorityCandidates(
   excludeIds: Set<string>,
   now: number,
@@ -326,10 +320,11 @@ export async function drainByPriority(
 
   const now = Date.now();
   const candidates = await loadPriorityCandidates(excludeIds, now, agingPromotionMs);
+  const orderedCandidates = [...candidates].sort(candidateComparator);
   const drained: CandidateMessage[] = [];
 
-  for (let i = 0; i < Math.min(limit, candidates.length); i++) {
-    const selected = candidates[i];
+  for (let i = 0; i < Math.min(limit, orderedCandidates.length); i++) {
+    const selected = orderedCandidates[i];
     if (!selected) break;
     drained.push(selected);
   }

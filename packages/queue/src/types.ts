@@ -105,7 +105,11 @@ export type QueueConfig = {
   streamKey: string;
 
   /**
-   * Sorted set key for priority index (e.g., "myapp:queue:priority")
+   * Sorted set key for the derived priority index (e.g., "myapp:queue:priority").
+   *
+   * The Redis stream remains the source of truth for payload + replay state; this
+   * sorted set exists to make priority drains cheap and can be rebuilt from the
+   * stream via `indexMessagesByPriority()` during recovery.
    */
   priorityKey: string;
 
@@ -121,7 +125,11 @@ export type QueueConfig = {
 
   /**
    * How far back to replay messages on reconnect (milliseconds).
-   * Messages older than this are auto-acked and discarded.
+   *
+   * On startup/reconnect the queue claims pending + never-delivered entries from
+   * the stream. Messages older than this replay horizon are auto-acked, removed
+   * from the stream, and dropped from the priority index so a stale backlog does
+   * not flood the consumer after downtime.
    * Default: 10 minutes.
    */
   maxUnackedAge?: number;
