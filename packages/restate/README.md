@@ -75,6 +75,24 @@ bun run packages/restate/src/trigger-dag.ts -- --pipeline health
 bun run packages/restate/src/trigger-dag.ts -- --pipeline research --topic "Restate vs Temporal"
 ```
 
+## Dkron scheduler proof (ADR-0216 phase 1)
+
+The first scheduled Restate workload now runs through Dkron:
+
+```bash
+joelclaw restate cron status
+joelclaw restate cron enable-health --run-now
+joelclaw restate cron list
+```
+
+This seeds `restate-health-check` in Dkron and has Dkron's shell executor use `wget` against `http://restate:8080/...` from inside the cluster. The shell wrapper appends epoch seconds to the workflow ID prefix so each scheduled run gets a unique Restate workflow ID.
+
+Dkron uses **six-field** cron expressions. Hourly-at-minute-7 is:
+
+```bash
+0 7 * * * *
+```
+
 ## Smoke tests
 
 ### Deploy gate smoke

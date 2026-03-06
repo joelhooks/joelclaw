@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs"
+import { createServer } from "node:net"
 import path from "node:path"
 import { Args, Command, Options } from "@effect/cli"
+import { buildHealthDagRequest } from "@joelclaw/restate/pipelines"
 import { Console, Effect } from "effect"
 import { respond, respondError } from "../response"
 
@@ -57,6 +59,179 @@ const resolveSmokeScriptPath = (script: string): string => {
   }
 
   return cwdCandidate
+}
+
+const stripTrailingSlash = (value: string): string => value.replace(/\/$/, "")
+
+const shellEscape = (value: string): string => `'${value.replace(/'/g, `'"'"'`)}'`
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+const findFreePort = (): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const server = createServer()
+    server.once("error", reject)
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address()
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to allocate a local port")))
+        return
+      }
+      const { port } = address
+      server.close((error) => {
+        if (error) reject(error)
+        else resolve(port)
+      })
+    })
+  })
+
+type DkronAccessMode = "direct" | "tunnel"
+
+type DkronSession = {
+  baseUrl: string
+  accessMode: DkronAccessMode
+  localPort?: number
+  logPath?: string
+  dispose: () => Promise<void>
+}
+
+const startDkronTunnel = async (
+  namespace: string,
+  serviceName: string,
+  remotePort = 8080,
+): Promise<DkronSession> => {
+  const localPort = await findFreePort()
+  const logPath = `/tmp/joelclaw-dkron-port-forward-${Date.now()}-${localPort}.log`
+
+  const launch = Bun.spawnSync([
+    "bash",
+    "-lc",
+    `kubectl -n ${shellEscape(namespace)} port-forward svc/${serviceName} ${localPort}:${remotePort} > ${shellEscape(logPath)} 2>&1 & echo $!`,
+  ], { stdout: "pipe", stderr: "pipe" })
+
+  const pid = Number.parseInt(decode(launch.stdout).trim(), 10)
+  if (launch.exitCode !== 0 || !Number.isFinite(pid)) {
+    const detail = decode(launch.stderr).trim() || decode(launch.stdout).trim()
+    throw new Error(detail || "Failed to start temporary Dkron tunnel")
+  }
+
+  const baseUrl = `http://127.0.0.1:${localPort}`
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      const response = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(500) })
+      if (response.ok) {
+        return {
+          baseUrl,
+          accessMode: "tunnel",
+          localPort,
+          logPath,
+          dispose: async () => {
+            Bun.spawnSync(["bash", "-lc", `kill ${pid} >/dev/null 2>&1 || true`], { stdout: "ignore", stderr: "ignore" })
+            await sleep(50)
+            Bun.spawnSync(["bash", "-lc", `rm -f ${shellEscape(logPath)}`], { stdout: "ignore", stderr: "ignore" })
+          },
+        }
+      }
+    } catch {
+      // tunnel not ready yet
+    }
+    await sleep(250)
+  }
+
+  const logDetail = decode(Bun.spawnSync(["bash", "-lc", `cat ${shellEscape(logPath)} 2>/dev/null || true`], {
+    stdout: "pipe",
+    stderr: "pipe",
+  }).stdout).trim()
+
+  Bun.spawnSync(["bash", "-lc", `kill ${pid} >/dev/null 2>&1 || true`], { stdout: "ignore", stderr: "ignore" })
+  Bun.spawnSync(["bash", "-lc", `rm -f ${shellEscape(logPath)}`], { stdout: "ignore", stderr: "ignore" })
+
+  throw new Error(logDetail || "Temporary Dkron tunnel never became ready")
+}
+
+const openDkronSession = async (
+  namespace: string,
+  serviceName: string,
+  baseUrl?: string,
+): Promise<DkronSession> => {
+  if (baseUrl?.trim()) {
+    return {
+      baseUrl: stripTrailingSlash(baseUrl.trim()),
+      accessMode: "direct",
+      dispose: async () => {},
+    }
+  }
+
+  return startDkronTunnel(namespace, serviceName)
+}
+
+type JsonHttpResult = {
+  ok: boolean
+  status: number
+  text: string
+  json: any
+}
+
+const fetchJson = async (
+  baseUrl: string,
+  pathname: string,
+  init?: RequestInit,
+): Promise<JsonHttpResult> => {
+  const response = await fetch(`${stripTrailingSlash(baseUrl)}${pathname}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    signal: AbortSignal.timeout(5_000),
+  })
+
+  const text = await response.text()
+  return {
+    ok: response.ok,
+    status: response.status,
+    text,
+    json: parseJson(text),
+  }
+}
+
+const buildHealthJob = (
+  schedule: string,
+  timezone: string,
+  restateUrl: string,
+  workflowIdPrefix: string,
+) => {
+  const normalizedRestateUrl = stripTrailingSlash(restateUrl)
+  const payload = JSON.stringify(buildHealthDagRequest())
+  const command = [
+    `WORKFLOW_ID=\"${workflowIdPrefix}-$(date +%s)\"`,
+    `wget -qO- --header='Content-Type: application/json' --post-data=${shellEscape(payload)} \"${normalizedRestateUrl}/dagOrchestrator/$WORKFLOW_ID/run/send\"`,
+  ].join(" && ")
+
+  return {
+    name: "restate-health-check",
+    displayname: "Restate health check",
+    schedule,
+    timezone,
+    retries: 3,
+    disabled: false,
+    concurrency: "forbid",
+    executor: "shell",
+    executor_config: {
+      shell: "true",
+      command,
+      timeout: "30s",
+    },
+    metadata: {
+      runtime: "restate",
+      scheduler: "dkron",
+      pipeline: "health",
+      adr: "0216",
+      phase: "phase-1",
+      workflow_id_prefix: workflowIdPrefix,
+    },
+  }
 }
 
 const restateStatusCmd = Command.make(
@@ -424,6 +599,351 @@ const restateEnrichCmd = Command.make(
     })
 ).pipe(Command.withDescription("Enrich a contact via Restate DAG — 7+ parallel source probes → LLM synthesis → Vault dossier"))
 
+const restateCronStatusCmd = Command.make(
+  "status",
+  {
+    namespace: Options.text("namespace").pipe(
+      Options.withDefault("joelclaw"),
+      Options.withDescription("Kubernetes namespace for the Dkron scheduler")
+    ),
+    serviceName: Options.text("service-name").pipe(
+      Options.withDefault("dkron-svc"),
+      Options.withDescription("Kubernetes service name for the Dkron HTTP API")
+    ),
+    baseUrl: Options.text("base-url").pipe(
+      Options.withDefault(process.env.DKRON_URL?.trim() || ""),
+      Options.withDescription("Optional direct Dkron API base URL (skips temporary kubectl tunnel)")
+    ),
+  },
+  ({ namespace, serviceName, baseUrl }) =>
+    Effect.gen(function* () {
+      const stsRes = runKubectl(["-n", namespace, "get", "statefulset", "dkron", "-o", "json"])
+      const svcRes = runKubectl(["-n", namespace, "get", "service", serviceName, "-o", "json"])
+
+      const sts = parseJson<Record<string, any>>(stsRes.stdout)
+      const svc = parseJson<Record<string, any>>(svcRes.stdout)
+      const desired = Number(sts?.spec?.replicas ?? 0)
+      const ready = Number(sts?.status?.readyReplicas ?? 0)
+
+      const api = yield* Effect.tryPromise({
+        try: async () => {
+          const session = await openDkronSession(namespace, serviceName, baseUrl || undefined)
+          try {
+            const health = await fetchJson(session.baseUrl, "/health", { method: "GET" })
+            return {
+              accessible: health.ok,
+              status: health.status,
+              response: health.json ?? health.text,
+              accessMode: session.accessMode,
+              baseUrl: session.baseUrl,
+              localPort: session.localPort ?? null,
+              error: health.ok ? null : health.text,
+            }
+          } finally {
+            await session.dispose()
+          }
+        },
+        catch: (error) => new Error(error instanceof Error ? error.message : String(error)),
+      }).pipe(
+        Effect.catchAll((error) =>
+          Effect.succeed({
+            accessible: false,
+            status: 0,
+            response: null,
+            accessMode: baseUrl ? "direct" : "tunnel",
+            baseUrl: baseUrl || null,
+            localPort: null,
+            error: error.message,
+          })
+        )
+      )
+
+      const allOk = stsRes.ok && svcRes.ok && desired > 0 && ready >= desired && api.accessible
+
+      yield* Console.log(respond("restate cron status", {
+        namespace,
+        statefulset: {
+          exists: stsRes.ok,
+          desiredReplicas: desired,
+          readyReplicas: ready,
+          phase: ready >= desired && desired > 0 ? "ready" : "degraded",
+          error: stsRes.ok ? null : stsRes.stderr || stsRes.stdout,
+        },
+        service: {
+          exists: svcRes.ok,
+          type: svc?.spec?.type ?? null,
+          ports: Array.isArray(svc?.spec?.ports)
+            ? svc.spec.ports.map((port: any) => ({ name: port?.name, port: port?.port, targetPort: port?.targetPort }))
+            : [],
+          error: svcRes.ok ? null : svcRes.stderr || svcRes.stdout,
+        },
+        api,
+      }, [
+        { command: "joelclaw restate cron list", description: "List scheduler jobs" },
+        { command: "joelclaw restate cron enable-health --schedule '0 7 * * * *'", description: "Create the Restate health proof job" },
+      ], allOk))
+    })
+).pipe(Command.withDescription("Check Dkron scheduler health for Restate cron jobs"))
+
+const restateCronListCmd = Command.make(
+  "list",
+  {
+    namespace: Options.text("namespace").pipe(
+      Options.withDefault("joelclaw"),
+      Options.withDescription("Kubernetes namespace for the Dkron scheduler")
+    ),
+    serviceName: Options.text("service-name").pipe(
+      Options.withDefault("dkron-svc"),
+      Options.withDescription("Kubernetes service name for the Dkron HTTP API")
+    ),
+    baseUrl: Options.text("base-url").pipe(
+      Options.withDefault(process.env.DKRON_URL?.trim() || ""),
+      Options.withDescription("Optional direct Dkron API base URL (skips temporary kubectl tunnel)")
+    ),
+  },
+  ({ namespace, serviceName, baseUrl }) =>
+    Effect.gen(function* () {
+      const result = yield* Effect.tryPromise({
+        try: async () => {
+          const session = await openDkronSession(namespace, serviceName, baseUrl || undefined)
+          try {
+            const jobsRes = await fetchJson(session.baseUrl, "/v1/jobs", { method: "GET" })
+            if (!jobsRes.ok) {
+              throw new Error(jobsRes.text || `Dkron returned ${jobsRes.status}`)
+            }
+            const jobs = Array.isArray(jobsRes.json) ? jobsRes.json : []
+            const restateJobs = jobs.filter((job: any) => job?.metadata?.runtime === "restate")
+            return {
+              accessMode: session.accessMode,
+              baseUrl: session.baseUrl,
+              jobs: restateJobs.map((job: any) => ({
+                name: job.name,
+                schedule: job.schedule,
+                timezone: job.timezone,
+                disabled: job.disabled,
+                executor: job.executor,
+                pipeline: job.metadata?.pipeline ?? null,
+                next: job.next ?? null,
+                retries: job.retries ?? null,
+              })),
+              counts: {
+                restate: restateJobs.length,
+                total: jobs.length,
+              },
+            }
+          } finally {
+            await session.dispose()
+          }
+        },
+        catch: (error) => new Error(error instanceof Error ? error.message : String(error)),
+      }).pipe(
+        Effect.catchAll((error) =>
+          Effect.succeed({ error: error.message })
+        )
+      )
+
+      if ("error" in result) {
+        yield* Console.log(respondError(
+          "restate cron list",
+          result.error,
+          "RESTATE_CRON_LIST_FAILED",
+          "Ensure Dkron is deployed and healthy: joelclaw restate cron status",
+          [
+            { command: "joelclaw restate cron status", description: "Check Dkron scheduler health" },
+            { command: "kubectl get pods -n joelclaw -l app=dkron", description: "Inspect Dkron pod state" },
+          ]
+        ))
+        return
+      }
+
+      yield* Console.log(respond("restate cron list", result, [
+        { command: "joelclaw restate cron enable-health --schedule '0 7 * * * *'", description: "Ensure the health proof job exists" },
+        { command: "joelclaw restate cron status", description: "Check scheduler health" },
+      ]))
+    })
+).pipe(Command.withDescription("List Restate-related Dkron scheduler jobs"))
+
+const restateCronEnableHealthCmd = Command.make(
+  "enable-health",
+  {
+    schedule: Options.text("schedule").pipe(
+      Options.withDefault("0 7 * * * *"),
+      Options.withDescription("Dkron cron expression for the Restate health job (six fields: sec min hour dom month dow)")
+    ),
+    timezone: Options.text("timezone").pipe(
+      Options.withDefault("America/Los_Angeles"),
+      Options.withDescription("Timezone used to evaluate the cron expression")
+    ),
+    workflowId: Options.text("workflow-id").pipe(
+      Options.withDefault("restate-health-scheduled"),
+      Options.withDescription("Workflow ID prefix; Dkron appends epoch seconds so each scheduled run gets a unique Restate workflow ID")
+    ),
+    restateUrl: Options.text("restate-url").pipe(
+      Options.withDefault("http://restate:8080"),
+      Options.withDescription("In-cluster Restate ingress URL Dkron should call")
+    ),
+    runNow: Options.boolean("run-now").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Trigger the job immediately after upsert")
+    ),
+    namespace: Options.text("namespace").pipe(
+      Options.withDefault("joelclaw"),
+      Options.withDescription("Kubernetes namespace for the Dkron scheduler")
+    ),
+    serviceName: Options.text("service-name").pipe(
+      Options.withDefault("dkron-svc"),
+      Options.withDescription("Kubernetes service name for the Dkron HTTP API")
+    ),
+    baseUrl: Options.text("base-url").pipe(
+      Options.withDefault(process.env.DKRON_URL?.trim() || ""),
+      Options.withDescription("Optional direct Dkron API base URL (skips temporary kubectl tunnel)")
+    ),
+  },
+  ({ schedule, timezone, workflowId, restateUrl, runNow, namespace, serviceName, baseUrl }) =>
+    Effect.gen(function* () {
+      const job = buildHealthJob(schedule, timezone, restateUrl, workflowId)
+
+      const result = yield* Effect.tryPromise({
+        try: async () => {
+          const session = await openDkronSession(namespace, serviceName, baseUrl || undefined)
+          try {
+            const upsert = await fetchJson(session.baseUrl, "/v1/jobs/restate-health-check", {
+              method: "PUT",
+              body: JSON.stringify(job),
+            })
+            if (!upsert.ok) {
+              throw new Error(upsert.text || `Dkron returned ${upsert.status}`)
+            }
+
+            let runResult: JsonHttpResult | null = null
+            if (runNow) {
+              runResult = await fetchJson(session.baseUrl, "/v1/jobs/restate-health-check/run", { method: "POST" })
+              if (!runResult.ok) {
+                throw new Error(runResult.text || `Dkron returned ${runResult.status} when starting the job`)
+              }
+            }
+
+            return {
+              accessMode: session.accessMode,
+              baseUrl: session.baseUrl,
+              job: upsert.json ?? job,
+              runTriggered: runNow,
+              runResponse: runResult?.json ?? runResult?.text ?? null,
+              operatorVerification: {
+                otelQuery: 'joelclaw otel search "dag.workflow" --hours 1',
+                workflowIdPrefix: workflowId,
+              },
+            }
+          } finally {
+            await session.dispose()
+          }
+        },
+        catch: (error) => new Error(error instanceof Error ? error.message : String(error)),
+      }).pipe(
+        Effect.catchAll((error) =>
+          Effect.succeed({ error: error.message })
+        )
+      )
+
+      if ("error" in result) {
+        yield* Console.log(respondError(
+          "restate cron enable-health",
+          result.error,
+          "RESTATE_CRON_ENABLE_HEALTH_FAILED",
+          "Ensure Dkron is reachable and Restate is healthy before retrying.",
+          [
+            { command: "joelclaw restate cron status", description: "Check scheduler health" },
+            { command: "joelclaw restate status", description: "Check Restate runtime health" },
+          ]
+        ))
+        return
+      }
+
+      yield* Console.log(respond("restate cron enable-health", result, [
+        { command: "joelclaw restate cron list", description: "Confirm the scheduler job is registered" },
+        { command: "joelclaw restate cron status", description: "Check scheduler health after seeding the job" },
+        { command: "joelclaw otel search \"dag.workflow\" --hours 1", description: "Correlate OTEL events for the scheduled run" },
+      ]))
+    })
+).pipe(Command.withDescription("Create or update the Dkron proof job that schedules the existing Restate health pipeline"))
+
+const restateCronDeleteCmd = Command.make(
+  "delete",
+  {
+    job: Args.text({ name: "job" }).pipe(Args.withDescription("Dkron job name to delete")),
+    namespace: Options.text("namespace").pipe(
+      Options.withDefault("joelclaw"),
+      Options.withDescription("Kubernetes namespace for the Dkron scheduler")
+    ),
+    serviceName: Options.text("service-name").pipe(
+      Options.withDefault("dkron-svc"),
+      Options.withDescription("Kubernetes service name for the Dkron HTTP API")
+    ),
+    baseUrl: Options.text("base-url").pipe(
+      Options.withDefault(process.env.DKRON_URL?.trim() || ""),
+      Options.withDescription("Optional direct Dkron API base URL (skips temporary kubectl tunnel)")
+    ),
+  },
+  ({ job, namespace, serviceName, baseUrl }) =>
+    Effect.gen(function* () {
+      const result = yield* Effect.tryPromise({
+        try: async () => {
+          const session = await openDkronSession(namespace, serviceName, baseUrl || undefined)
+          try {
+            const deleted = await fetchJson(session.baseUrl, `/v1/jobs/${job}`, { method: "DELETE" })
+            if (!deleted.ok) {
+              throw new Error(deleted.text || `Dkron returned ${deleted.status}`)
+            }
+            return {
+              accessMode: session.accessMode,
+              baseUrl: session.baseUrl,
+              deleted: deleted.json ?? deleted.text,
+            }
+          } finally {
+            await session.dispose()
+          }
+        },
+        catch: (error) => new Error(error instanceof Error ? error.message : String(error)),
+      }).pipe(
+        Effect.catchAll((error) => Effect.succeed({ error: error.message }))
+      )
+
+      if ("error" in result) {
+        yield* Console.log(respondError(
+          "restate cron delete",
+          result.error,
+          "RESTATE_CRON_DELETE_FAILED",
+          "Check the job name and Dkron connectivity, then retry.",
+          [
+            { command: "joelclaw restate cron list", description: "List scheduler jobs" },
+            { command: "joelclaw restate cron status", description: "Check scheduler health" },
+          ]
+        ))
+        return
+      }
+
+      yield* Console.log(respond("restate cron delete", result, [
+        { command: "joelclaw restate cron list", description: "Confirm remaining scheduler jobs" },
+      ]))
+    })
+).pipe(Command.withDescription("Delete a Restate-related Dkron scheduler job"))
+
+const restateCronCmd = Command.make("cron", {}, () =>
+  Console.log(respond("restate cron", {
+    description: "Dkron scheduler controls for Restate pipelines",
+    subcommands: {
+      status: "joelclaw restate cron status [--namespace joelclaw] [--service-name dkron-svc] [--base-url http://127.0.0.1:8080]",
+      list: "joelclaw restate cron list [--namespace joelclaw] [--service-name dkron-svc]",
+      enableHealth: "joelclaw restate cron enable-health [--schedule '0 7 * * * *'] [--run-now] [--restate-url http://restate:8080]",
+      delete: "joelclaw restate cron delete <job>",
+    },
+  }, [
+    { command: "joelclaw restate cron status", description: "Check Dkron scheduler health" },
+    { command: "joelclaw restate cron list", description: "List current scheduler jobs" },
+    { command: "joelclaw restate cron enable-health --run-now", description: "Seed and immediately trigger the Restate health proof job" },
+  ]))
+).pipe(Command.withSubcommands([restateCronStatusCmd, restateCronListCmd, restateCronEnableHealthCmd, restateCronDeleteCmd]))
+
 export const restateCmd = Command.make("restate", {}, () =>
   Console.log(respond("restate", {
     description: "Restate runtime, deployments, and DAG pipelines",
@@ -432,6 +952,7 @@ export const restateCmd = Command.make("restate", {}, () =>
       deployments: "joelclaw restate deployments [--admin-url http://localhost:9070] [--cli-bin restate]",
       smoke: "joelclaw restate smoke [--script scripts/restate/test-workflow.sh]",
       enrich: "joelclaw restate enrich \"Name\" [--github user] [--twitter user] [--depth full|quick] [--sync]",
+      cron: "joelclaw restate cron <status|list|enable-health|delete>",
     },
   }, [
     {
@@ -450,5 +971,9 @@ export const restateCmd = Command.make("restate", {}, () =>
       command: "joelclaw restate enrich \"Kent C. Dodds\" --github kentcdodds --depth full",
       description: "Enrich a contact through the Restate DAG pipeline",
     },
+    {
+      command: "joelclaw restate cron enable-health --run-now",
+      description: "Seed Dkron with the Restate health proof job and trigger it now",
+    },
   ]))
-).pipe(Command.withSubcommands([restateStatusCmd, restateDeploymentsCmd, restateSmokeCmd, restateEnrichCmd]))
+).pipe(Command.withSubcommands([restateStatusCmd, restateDeploymentsCmd, restateSmokeCmd, restateEnrichCmd, restateCronCmd]))

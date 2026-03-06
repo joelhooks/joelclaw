@@ -1,0 +1,121 @@
+# Dkron phase-1 scheduler for Restate DAG pipelines (ADR-0216)
+# Service names avoid bare `dkron` so Kubernetes does not inject `DKRON_*` env vars
+# that collide with Dkron's own env/config parsing.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dkron-peer
+  namespace: joelclaw
+  labels:
+    app: dkron
+spec:
+  clusterIP: None
+  selector:
+    app: dkron
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: serf
+      port: 8946
+      targetPort: serf
+    - name: rpc
+      port: 6868
+      targetPort: rpc
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: dkron
+  namespace: joelclaw
+  labels:
+    app: dkron
+spec:
+  serviceName: dkron-peer
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dkron
+  template:
+    metadata:
+      labels:
+        app: dkron
+    spec:
+      terminationGracePeriodSeconds: 30
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: dkron
+          image: dkron/dkron:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - agent
+            - --server
+            - --bootstrap-expect=1
+            - --data-dir=/data
+            - --enable-prometheus=true
+            - --log-level=info
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 8946
+              name: serf
+            - containerPort: 6868
+              name: rpc
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 24
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dkron-svc
+  namespace: joelclaw
+  labels:
+    app: dkron
+spec:
+  type: ClusterIP
+  selector:
+    app: dkron
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

@@ -50,7 +50,7 @@ This document is grounded in direct reads of:
 
 ### Missing requested docs (at capture time)
 - `docs/architecture.md` — **UNKNOWN — needs manual verification**
-- `docs/deploy.md` — **UNKNOWN — needs manual verification**
+- `docs/deploy.md` — present; includes Dkron phase-1 deployment and verification notes
 - `docs/observability.md` — **UNKNOWN — needs manual verification**
 
 ---
@@ -67,6 +67,7 @@ Mac Mini "Panda" (host macOS)
 │     │  ├─ redis (StatefulSet + NodePort 6379)
 │     │  ├─ typesense (StatefulSet + ClusterIP 8108)
 │     │  ├─ system-bus-worker (Deployment + ClusterIP 3111)
+│     │  ├─ dkron (StatefulSet + ClusterIP 8080)
 │     │  ├─ docs-api (Deployment + NodePort 3838)
 │     │  ├─ livekit-server (Deployment + NodePort 7880/7881)
 │     │  ├─ bluesky-pds (Deployment + NodePort 3000)
@@ -159,6 +160,7 @@ Source: `infra/worker-supervisor/src/main.rs`
 | Typesense | StatefulSet `typesense` | ClusterIP | 8108 | host via launchd port-forward 8108 | Search + telemetry store |
 | system-bus-worker | Deployment | ClusterIP | 3111 | in-cluster only | Cluster-role worker (12 functions) |
 | docs-api | Deployment | NodePort | 3838 | 3838 | PDF/docs API |
+| dkron | StatefulSet | ClusterIP (`dkron-svc`) + headless peer svc (`dkron-peer`) | 8080, 8946, 6868 | in-cluster only; operator access via short-lived CLI-managed tunnel | Distributed cron scheduler for Restate pipelines |
 | livekit-server | Deployment (Helm) | NodePort | 80, 7881 | 7880 (for svc port 80), 7881 | LiveKit signaling + rtc tcp |
 | bluesky-pds | Deployment (Helm-managed) | NodePort | 3000 | 3000 | AT Proto PDS |
 | minio | StatefulSet | ClusterIP + NodePort | 9000, 9001 | 30900, 30901 | Legacy local S3-compatible runtime |
@@ -273,6 +275,7 @@ From index comments + function lists:
 | 8289 | ssh forward (Colima) -> Inngest ws | Inngest connect websocket | NodePort + host forward; proxied via Caddy 8290 |
 | 6379 | ssh forward (Colima) -> Redis | Redis | NodePort + host forward |
 | 8108 | ssh forward / kubectl port-forward | Typesense API | ClusterIP; exposed locally by port-forward |
+| random high local port | transient `kubectl port-forward` (CLI-managed) -> `svc/dkron-svc:8080` | Dkron HTTP API | ClusterIP only; short-lived operator tunnel |
 | 3838 | ssh forward (Colima) -> docs-api | docs-api HTTP | NodePort + host forward; proxied via Caddy 5443 |
 | 7880 | ssh forward (Colima) -> livekit-server | LiveKit signaling | NodePort 7880; proxied via Caddy 7443 |
 | 7881 | ssh forward (Colima) -> livekit-server | LiveKit RTC TCP | NodePort 7881 |
@@ -378,6 +381,7 @@ Primary command tree root: `packages/cli/src/cli.ts`.
 | `runs`, `run`, `functions`, `event`, `events` | Inngest GraphQL `POST /v0/gql` |
 | `status` | Inngest/worker health probes + k8s checks + agent-mail liveness |
 | `gateway *` | Redis keys/channels + launchd/system ops |
+| `restate cron *` | Dkron REST API via direct `--base-url` or short-lived `kubectl port-forward` to `svc/dkron-svc` |
 | `otel *` | Typesense `otel_events` via capability adapter |
 | `recall *` | Typesense recall adapter |
 | `mail *` | Agent-mail MCP HTTP (`127.0.0.1:8765`) via CLI adapter wrappers |

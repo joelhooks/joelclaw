@@ -43,6 +43,7 @@ curl -s localhost:8108/health                          # Typesense → {"ok":tru
 curl -s localhost:8288/health                          # Inngest → {"status":200}
 curl -s localhost:9627/xrpc/_health                    # PDS → {"version":"..."}
 kubectl exec -n joelclaw redis-0 -- redis-cli ping     # → PONG
+joelclaw restate cron status                           # Dkron scheduler → healthy via temporary CLI tunnel
 ```
 
 ## Services
@@ -55,6 +56,7 @@ kubectl exec -n joelclaw redis-0 -- redis-cli ping     # → PONG
 | system-bus-worker | Deployment | system-bus-worker-* | 3111→3111 | No |
 | LiveKit | Deployment | livekit-server-* | 7880→7880, 7881→7881 | Yes (livekit/livekit-server 1.9.0) |
 | PDS | Deployment | bluesky-pds-* | 9627→**3000** | Yes (nerkho/bluesky-pds 0.4.2) |
+| Dkron | StatefulSet | dkron-0 | in-cluster only (`dkron-svc:8080`) | No |
 | AIStor Operator (`aistor` ns) | Deployments | adminjob-operator, object-store-operator | n/a | Yes (`minio/aistor-operator`) |
 | AIStor ObjectStore (`aistor` ns) | StatefulSet | aistor-s3-pool-0-0 | 31000 (S3 TLS), 31001 (console) | Yes (`minio/aistor-objectstore`) |
 
@@ -65,8 +67,13 @@ kubectl exec -n joelclaw redis-0 -- redis-cli ping     # → PONG
 ## Deploy Commands
 
 ```bash
-# Manifests (redis, typesense, inngest)
+# Manifests (redis, typesense, inngest, dkron)
 kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/
+
+# Dkron phase-1 scheduler (ClusterIP API + CLI-managed short-lived tunnel access)
+kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/dkron.yaml
+kubectl rollout status statefulset/dkron -n joelclaw
+joelclaw restate cron status
 
 # system-bus worker (build + push GHCR + apply + rollout wait)
 ~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh
@@ -120,7 +127,7 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 
 ## Resilience Rules (ADR-0148)
 
-1. **NEVER use `kubectl port-forward` for persistent services.** All services MUST use NodePort + Docker port mappings. Port-forwards silently die on idle/restart/pod changes.
+1. **NEVER use `kubectl port-forward` for persistent service exposure.** All long-lived operator surfaces MUST use NodePort + Docker port mappings. The narrow exception is a CLI-managed, short-lived tunnel for an otherwise in-cluster-only control surface (for example `joelclaw restate cron *` tunneling to `dkron-svc`). Port-forwards silently die on idle/restart/pod changes, so do not leave them running.
 2. **All workloads MUST have liveness + readiness + startup probes.** Missing probes = silent hangs that never recover.
 3. **After any Docker/Colima/node restart**: remove control-plane taint, **uncordon node**, verify flannel, check all pods reach Running.
 4. **PVC reclaimPolicy is Delete** — deleting a PVC = permanent data loss. Never delete PVCs without backup.
@@ -143,6 +150,8 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 6. **AIStor service-name collision** — if AIStor objectstore is deployed in `joelclaw`, it can claim `svc/minio` and break legacy MinIO assumptions. Keep AIStor objectstore in isolated namespace (`aistor`) unless intentionally cutting over.
 7. **AIStor operator webhook SSA conflict** — repeated `helm upgrade` can fail on `MutatingWebhookConfiguration` `caBundle` ownership conflict. Current mitigation in this cluster: set `operators.object-store.webhook.enabled=false` in `k8s/aistor-operator-values.yaml`.
 8. **MinIO pinned tag trap** — `minio/minio:RELEASE.2025-10-15T17-29-55Z` is not available on Docker Hub in this environment (ErrImagePull). Legacy fallback currently relies on `minio/minio:latest`.
+9. **Dkron service-name collision** — never create a bare `svc/dkron`. Kubernetes injects `DKRON_*` env vars into pods, which collides with Dkron's own config parsing. Use `dkron-peer` and `dkron-svc`.
+10. **Dkron PVC permissions** — upstream `dkron/dkron:latest` currently needs root on the local-path PVC. Non-root hardening caused `permission denied` under `/data/raft/snapshots/permTest` and CrashLoopBackOff.
 
 ## Key Files
 
@@ -154,6 +163,7 @@ Note: `publish-system-bus-worker.sh` uses `gh auth token` internally — if `gh 
 | `~/Code/joelhooks/joelclaw/k8s/aistor-operator-values.yaml` | AIStor operator Helm values |
 | `~/Code/joelhooks/joelclaw/k8s/aistor-objectstore-values.yaml` | AIStor objectstore Helm values |
 | `~/Code/joelhooks/joelclaw/k8s/reconcile-aistor.sh` | AIStor deploy + upgrade reconcile script |
+| `~/Code/joelhooks/joelclaw/k8s/dkron.yaml` | Dkron scheduler StatefulSet + services |
 | `~/Code/joelhooks/joelclaw/k8s/publish-system-bus-worker.sh` | Build/push/deploy system-bus worker to k8s |
 | `~/Code/joelhooks/joelclaw/infra/k8s-reboot-heal.sh` | Reboot auto-heal script for Colima/Talos/taint/flannel |
 | `~/Code/joelhooks/joelclaw/infra/launchd/com.joel.k8s-reboot-heal.plist` | launchd timer for reboot auto-heal |

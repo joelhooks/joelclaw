@@ -128,7 +128,13 @@ Semantics:
 joelclaw restate
 ├── status [--namespace <namespace>] [--admin-url <url>]
 ├── deployments [--admin-url <url>] [--cli-bin <bin>]
-└── smoke [--script <path>]
+├── smoke [--script <path>]
+├── enrich "<name>" [--github <user>] [--twitter <user>] [--depth quick|full] [--sync]
+└── cron
+    ├── status [--namespace <namespace>] [--service-name <service>] [--base-url <url>]
+    ├── list [--namespace <namespace>] [--service-name <service>] [--base-url <url>]
+    ├── enable-health [--schedule "0 7 * * * *"] [--run-now] [--restate-url <url>]
+    └── delete <job>
 ```
 
 `joelclaw restate smoke` semantics:
@@ -142,6 +148,15 @@ joelclaw restate
 - default smoke validates `deployGate` end-to-end.
 - DAG smoke is available via script override:
   - `joelclaw restate smoke --script scripts/restate/test-dag-workflow.sh`
+
+`joelclaw restate cron` semantics:
+
+- manages Dkron scheduler jobs for Restate pipelines.
+- default access path is a **short-lived CLI-managed `kubectl port-forward`** to `svc/dkron-svc`.
+- pass `--base-url` only when you already have a direct Dkron API endpoint.
+- `enable-health` seeds the first proof job: `restate-health-check`.
+- the health job uses Dkron's shell executor plus `wget`; it appends epoch seconds to the workflow ID prefix so each scheduled run is a fresh Restate workflow.
+- Dkron cron expressions are **six-field** by default (`sec min hour dom month dow`), so hourly-at-minute-7 is `0 7 * * * *`, not `7 * * * *`.
 
 ## Daily summary command
 
