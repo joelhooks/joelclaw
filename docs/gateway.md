@@ -176,6 +176,7 @@ The deeper rank-6 slice now adds active heal policy state:
 - `joelclaw gateway diagnose` adds a `channel-healing` layer and now spells out manual repair steps instead of vague `armed` wording
 - watchdog attempts guarded restarts for restart-eligible degraded channels after `2` consecutive degraded checks with a `10m` cooldown
 - ownership/lease problems (for example Telegram passive poll ownership or retrying `getUpdates` conflicts) stay visible as `manual` instead of triggering dumb restart churn
+- degraded channels that are muted as known issues now also flip to `manual` instead of quietly advertising a restart policy that the watchdog will never actually execute while muted
 - Telegram retry/conflict states no longer read as healthy local fallback: `/health`, `gateway status`, and `gateway diagnose` now degrade the contract when polling is down and only retrying
 
 Current boundary of this rank-6 slice:

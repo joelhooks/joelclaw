@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  applyMutedChannelRepairPolicy,
   buildChannelHealthSnapshot,
   evaluateChannelHealPolicy,
   evaluateChannelHealthAlert,
@@ -266,5 +267,58 @@ describe("channel health", () => {
     });
     expect(failed.channels.discord.lastAttemptStatus).toBe("failed");
     expect(failed.channels.discord.lastAttemptError).toBe("restart exploded");
+  });
+
+  test("converts muted degraded guidance into manual repair with deduped commands", () => {
+    const guidance = applyMutedChannelRepairPolicy(
+      {
+        policy: "restart",
+        reason: "socket disconnected",
+        manualRepairSummary: null,
+        manualRepairCommands: ["joelclaw gateway restart"],
+      },
+      {
+        degraded: true,
+        muted: true,
+        muteReason: "FDA re-grant needed for imsg-rpc.app",
+        manualRepairCommands: [
+          "joelclaw gateway known-issues",
+          "joelclaw gateway restart",
+          "joelclaw gateway unmute imessage",
+        ],
+      },
+    );
+
+    expect(guidance.policy).toBe("manual");
+    expect(guidance.reason).toBe("FDA re-grant needed for imsg-rpc.app");
+    expect(guidance.manualRepairSummary).toBe("FDA re-grant needed for imsg-rpc.app");
+    expect(guidance.manualRepairCommands).toEqual([
+      "joelclaw gateway known-issues",
+      "joelclaw gateway restart",
+      "joelclaw gateway unmute imessage",
+    ]);
+  });
+
+  test("leaves healthy or unmuted guidance unchanged", () => {
+    const guidance = {
+      policy: "restart" as const,
+      reason: "client not ready",
+      manualRepairSummary: null,
+      manualRepairCommands: ["joelclaw gateway restart"],
+    };
+
+    expect(applyMutedChannelRepairPolicy(guidance, {
+      degraded: false,
+      muted: true,
+      muteReason: "known issue",
+      manualRepairCommands: ["joelclaw gateway known-issues"],
+    })).toEqual(guidance);
+
+    expect(applyMutedChannelRepairPolicy(guidance, {
+      degraded: true,
+      muted: false,
+      muteReason: "known issue",
+      manualRepairCommands: ["joelclaw gateway known-issues"],
+    })).toEqual(guidance);
   });
 });

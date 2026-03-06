@@ -16,6 +16,7 @@ import {
   getOperatorTraceSnapshot,
 } from "./callback-trace";
 import {
+  applyMutedChannelRepairPolicy,
   buildChannelHealthSnapshot,
   type ChannelHealState,
   type ChannelHealthEvent,
@@ -2106,6 +2107,21 @@ function getTelegramManualRepairCommands(): string[] {
   ];
 }
 
+function getKnownIssueManualRepairCommands(channel: GatewayChannelId): string[] {
+  const commands = [
+    "joelclaw gateway diagnose --hours 1 --lines 50",
+    "joelclaw gateway known-issues",
+    "joelclaw gateway restart",
+    `joelclaw gateway unmute ${channel}`,
+  ];
+
+  if (channel === "imessage") {
+    return ["open /Applications/imsg-rpc.app", ...commands];
+  }
+
+  return commands;
+}
+
 function describeTelegramChannelHealth(channel: Record<string, unknown>): string {
   const ownerState = typeof channel.ownerState === "string" ? channel.ownerState : undefined;
   const leaseEnabled = channel.leaseEnabled === true;
@@ -2265,7 +2281,53 @@ function getChannelHealthSummary(
   const imessage = channels.imessage ?? {};
   const slack = channels.slack ?? {};
   const telegramHealthy = telegram.healthy === true;
-  const telegramHeal = getTelegramHealPolicy(telegram);
+  const telegramMuted = mutedSet.has("telegram");
+  const discordHealthy = discord.healthy === true;
+  const discordMuted = mutedSet.has("discord");
+  const imessageHealthy = imessage.healthy === true;
+  const imessageMuted = mutedSet.has("imessage");
+  const slackHealthy = slack.healthy === true;
+  const slackMuted = mutedSet.has("slack");
+
+  const telegramHeal = applyMutedChannelRepairPolicy(getTelegramHealPolicy(telegram), {
+    degraded: !telegramHealthy,
+    muted: telegramMuted,
+    muteReason: muteReasons.telegram ?? null,
+    manualRepairCommands: getKnownIssueManualRepairCommands("telegram"),
+  });
+  const discordHeal = applyMutedChannelRepairPolicy({
+    policy: discordHealthy ? "none" : "restart",
+    reason: discordHealthy ? null : "Discord client is not ready.",
+    manualRepairSummary: null,
+    manualRepairCommands: [],
+  }, {
+    degraded: !discordHealthy,
+    muted: discordMuted,
+    muteReason: muteReasons.discord ?? null,
+    manualRepairCommands: getKnownIssueManualRepairCommands("discord"),
+  });
+  const imessageHeal = applyMutedChannelRepairPolicy({
+    policy: imessageHealthy ? "none" : "restart",
+    reason: imessageHealthy ? null : "iMessage socket is disconnected.",
+    manualRepairSummary: null,
+    manualRepairCommands: [],
+  }, {
+    degraded: !imessageHealthy,
+    muted: imessageMuted,
+    muteReason: muteReasons.imessage ?? null,
+    manualRepairCommands: getKnownIssueManualRepairCommands("imessage"),
+  });
+  const slackHeal = applyMutedChannelRepairPolicy({
+    policy: slackHealthy ? "none" : "restart",
+    reason: slackHealthy ? null : "Slack channel is not connected.",
+    manualRepairSummary: null,
+    manualRepairCommands: [],
+  }, {
+    degraded: !slackHealthy,
+    muted: slackMuted,
+    muteReason: muteReasons.slack ?? null,
+    manualRepairCommands: getKnownIssueManualRepairCommands("slack"),
+  });
 
   const snapshot = buildChannelHealthSnapshot({
     entries: {
@@ -2273,7 +2335,7 @@ function getChannelHealthSummary(
         configured: channelInfo.telegram,
         healthy: telegramHealthy,
         detail: describeTelegramChannelHealth(telegram),
-        muted: mutedSet.has("telegram"),
+        muted: telegramMuted,
         muteReason: muteReasons.telegram ?? null,
         healPolicy: telegramHeal.policy,
         healReason: telegramHeal.reason,
@@ -2282,30 +2344,36 @@ function getChannelHealthSummary(
       },
       discord: {
         configured: channelInfo.discord,
-        healthy: discord.healthy === true,
+        healthy: discordHealthy,
         detail: describeDiscordChannelHealth(discord),
-        muted: mutedSet.has("discord"),
+        muted: discordMuted,
         muteReason: muteReasons.discord ?? null,
-        healPolicy: discord.healthy === true ? "none" : "restart",
-        healReason: discord.healthy === true ? null : "Discord client is not ready.",
+        healPolicy: discordHeal.policy,
+        healReason: discordHeal.reason,
+        manualRepairSummary: discordHeal.manualRepairSummary,
+        manualRepairCommands: discordHeal.manualRepairCommands,
       },
       imessage: {
         configured: channelInfo.imessage,
-        healthy: imessage.healthy === true,
+        healthy: imessageHealthy,
         detail: describeIMessageChannelHealth(imessage),
-        muted: mutedSet.has("imessage"),
+        muted: imessageMuted,
         muteReason: muteReasons.imessage ?? null,
-        healPolicy: imessage.healthy === true ? "none" : "restart",
-        healReason: imessage.healthy === true ? null : "iMessage socket is disconnected.",
+        healPolicy: imessageHeal.policy,
+        healReason: imessageHeal.reason,
+        manualRepairSummary: imessageHeal.manualRepairSummary,
+        manualRepairCommands: imessageHeal.manualRepairCommands,
       },
       slack: {
         configured: Boolean(SLACK_ALLOWED_USER_ID),
-        healthy: slack.healthy === true,
+        healthy: slackHealthy,
         detail: describeSlackChannelHealth(slack),
-        muted: mutedSet.has("slack"),
+        muted: slackMuted,
         muteReason: muteReasons.slack ?? null,
-        healPolicy: slack.healthy === true ? "none" : "restart",
-        healReason: slack.healthy === true ? null : "Slack channel is not connected.",
+        healPolicy: slackHeal.policy,
+        healReason: slackHeal.reason,
+        manualRepairSummary: slackHeal.manualRepairSummary,
+        manualRepairCommands: slackHeal.manualRepairCommands,
       },
     },
   });

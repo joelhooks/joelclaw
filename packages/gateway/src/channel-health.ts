@@ -12,6 +12,8 @@ export type ChannelHealthEntryInput = {
   muteReason?: string | null;
   healPolicy?: ChannelHealPolicy;
   healReason?: string | null;
+  manualRepairSummary?: string | null;
+  manualRepairCommands?: string[];
 };
 
 export type ChannelHealthEntry = {
@@ -24,6 +26,8 @@ export type ChannelHealthEntry = {
   muteReason: string | null;
   healPolicy: ChannelHealPolicy;
   healReason: string | null;
+  manualRepairSummary: string | null;
+  manualRepairCommands: string[];
 };
 
 export type ChannelHealthSnapshot = {
@@ -67,11 +71,20 @@ export type ChannelHealChannelState = {
   status: ChannelHealthStatus;
   policy: ChannelHealPolicy;
   policyReason: string | null;
+  manualRepairSummary: string | null;
+  manualRepairCommands: string[];
   consecutiveDegradedCount: number;
   lastAttemptAt: number;
   lastAttemptStatus: ChannelHealAttemptStatus;
   lastAttemptError: string | null;
   attempts: number;
+};
+
+export type ChannelRepairGuidance = {
+  policy: ChannelHealPolicy;
+  reason: string | null;
+  manualRepairSummary: string | null;
+  manualRepairCommands: string[];
 };
 
 export type ChannelHealState = {
@@ -104,11 +117,51 @@ function defaultHealState(): ChannelHealChannelState {
     status: "disabled",
     policy: "none",
     policyReason: null,
+    manualRepairSummary: null,
+    manualRepairCommands: [],
     consecutiveDegradedCount: 0,
     lastAttemptAt: 0,
     lastAttemptStatus: "idle",
     lastAttemptError: null,
     attempts: 0,
+  };
+}
+
+function dedupeCommands(commands: string[]): string[] {
+  const seen = new Set<string>();
+  const values: string[] = [];
+  for (const command of commands) {
+    const normalized = command.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    values.push(normalized);
+  }
+  return values;
+}
+
+export function applyMutedChannelRepairPolicy(
+  guidance: ChannelRepairGuidance,
+  input: {
+    degraded: boolean;
+    muted: boolean;
+    muteReason?: string | null;
+    manualRepairCommands?: string[];
+  },
+): ChannelRepairGuidance {
+  if (!input.degraded || !input.muted) {
+    return guidance;
+  }
+
+  const summary = input.muteReason?.trim() || guidance.manualRepairSummary || guidance.reason;
+
+  return {
+    policy: "manual",
+    reason: summary ?? guidance.reason,
+    manualRepairSummary: summary ?? null,
+    manualRepairCommands: dedupeCommands([
+      ...(input.manualRepairCommands ?? []),
+      ...guidance.manualRepairCommands,
+    ]),
   };
 }
 

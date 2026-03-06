@@ -129,6 +129,8 @@ Current rank-6 behavior also sends immediate degrade/recover alerts from the dae
 
 Telegram retrying `getUpdates` conflicts no longer read as healthy fallback: when polling is down and only retrying, the ownership contract degrades visibly in `/health`, `gateway status`, and `gateway diagnose`.
 
+Muted degraded channels now also flip to `manual` with the known-issue reason surfaced as repair guidance, instead of falsely advertising a restart policy that the watchdog will skip while muted.
+
 Still not done: stricter cross-channel ownership enforcement and richer/native repair automation beyond CLI-guided manual steps.
 
 ## Runtime guardrail enforcement (ADR-0189)
