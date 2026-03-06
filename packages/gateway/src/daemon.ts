@@ -10,12 +10,12 @@ import { ModelFallbackController, type TelemetryEmitter } from "@joelclaw/model-
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { getModel } from "@mariozechner/pi-ai";
 import { calculateContextTokens, createAgentSession, DefaultResourceLoader, getLastAssistantUsage, type LoadExtensionsResult, SessionManager } from "@mariozechner/pi-coding-agent";
-import { getCallbackTraceSnapshot } from "./callback-trace";
-import { fetchChannel as fetchDiscordChannel, getClient as getDiscordClient, markError as markDiscordError, parseChannelId as parseDiscordChannelId, send as sendDiscord, shutdown as shutdownDiscord, start as startDiscord } from "./channels/discord";
-import { send as sendIMessage, shutdown as shutdownIMessage, start as startIMessage } from "./channels/imessage";
+import { getOperatorTraceSnapshot } from "./callback-trace";
+import { fetchChannel as fetchDiscordChannel, getClient as getDiscordClient, getRuntimeState as getDiscordRuntimeState, markError as markDiscordError, parseChannelId as parseDiscordChannelId, send as sendDiscord, shutdown as shutdownDiscord, start as startDiscord } from "./channels/discord";
+import { getRuntimeState as getIMessageRuntimeState, send as sendIMessage, shutdown as shutdownIMessage, start as startIMessage } from "./channels/imessage";
 import { getRedisClient, getRuntimeState as getRedisRuntimeState, isHealthy as isRedisHealthy, shutdown as shutdownRedisChannel, start as startRedisChannel } from "./channels/redis";
-import { isStarted as isSlackStarted, send as sendSlack, shutdown as shutdownSlack, start as startSlack } from "./channels/slack";
-import { getBot, parseChatId, send as sendTelegram, sendMedia as sendTelegramMedia, setOutboundMessageIdCallback, shutdown as shutdownTelegram, start as startTelegram, TelegramChannel } from "./channels/telegram";
+import { getRuntimeState as getSlackRuntimeState, isStarted as isSlackStarted, send as sendSlack, shutdown as shutdownSlack, start as startSlack } from "./channels/slack";
+import { getBot, getRuntimeState as getTelegramRuntimeState, parseChatId, send as sendTelegram, sendMedia as sendTelegramMedia, setOutboundMessageIdCallback, shutdown as shutdownTelegram, start as startTelegram, TelegramChannel } from "./channels/telegram";
 import type { SendMediaPayload } from "./channels/types";
 import {
   drain,
@@ -1913,6 +1913,57 @@ async function maybeNotifySessionPressure(snapshot: ReturnType<typeof getSession
   }
 }
 
+function getChannelRuntimeSnapshots(): Record<string, Record<string, unknown>> {
+  const telegram = getTelegramRuntimeState();
+  const discord = getDiscordRuntimeState();
+  const imessage = getIMessageRuntimeState();
+  const slack = getSlackRuntimeState();
+
+  return {
+    telegram: {
+      configured: channelInfo.telegram,
+      started: telegram.started,
+      healthy: channelInfo.telegram
+        ? telegram.started && ["owner", "passive", "fallback"].includes(telegram.pollLeaseState)
+        : false,
+      ownerState: telegram.pollLeaseState,
+      pollingActive: telegram.pollingActive,
+      pollingStarting: telegram.pollingStarting,
+      leaseEnabled: telegram.pollLeaseEnabled,
+      leaseOwned: telegram.pollLeaseOwned,
+      retryAttempts: telegram.pollRetryAttempts,
+      conflictStreak: telegram.pollConflictStreak,
+      lastLeaseStatusAt: telegram.pollLeaseStatus?.updatedAt ?? null,
+      lastLeaseReason: telegram.pollLeaseStatus?.reason ?? null,
+    },
+    discord: {
+      configured: channelInfo.discord,
+      started: discord.started,
+      healthy: channelInfo.discord ? discord.ready : false,
+      ready: discord.ready,
+      botUserId: discord.botUserId,
+    },
+    imessage: {
+      configured: channelInfo.imessage,
+      started: imessage.running,
+      healthy: channelInfo.imessage ? imessage.connected : false,
+      connected: imessage.connected,
+      reconnectAttempts: imessage.reconnectAttempts,
+      reconnectDelayMs: imessage.reconnectDelayMs,
+      healing: imessage.healing,
+      lastHealAt: imessage.lastHealAt ? new Date(imessage.lastHealAt).toISOString() : null,
+    },
+    slack: {
+      configured: Boolean(SLACK_ALLOWED_USER_ID),
+      started: slack.started,
+      healthy: Boolean(SLACK_ALLOWED_USER_ID) ? slack.connected : false,
+      connected: slack.connected,
+      botUserId: slack.botUserId,
+      allowedUserId: slack.allowedUserId,
+    },
+  };
+}
+
 function getStatusPayload(): Record<string, unknown> {
   const fb = fallbackController.state;
   const redisState = getRedisRuntimeState();
@@ -1925,7 +1976,8 @@ function getStatusPayload(): Record<string, unknown> {
       windowMs: HUMAN_TURN_BATCH_WINDOW_MS,
     },
   };
-  const callbackTracing = getCallbackTraceSnapshot();
+  const operatorTracing = getOperatorTraceSnapshot();
+  const channels = getChannelRuntimeSnapshots();
   const degradedCapabilities = getDegradedCapabilities();
 
   return {
@@ -1954,7 +2006,9 @@ function getStatusPayload(): Record<string, unknown> {
     },
     sessionPressure,
     supersession,
-    callbackTracing,
+    operatorTracing,
+    callbackTracing: operatorTracing,
+    channels,
     channelInfo: {
       ...channelInfo,
       redis: isRedisHealthy() ? "ok" : "degraded",
@@ -3481,6 +3535,7 @@ function getHealthStatus(): {
   const available = stuckMs < STUCK_THRESHOLD_MS && !isDead;
   const healthy = redisOk && available;
   const degradedCapabilities = getDegradedCapabilities();
+  const channels = getChannelRuntimeSnapshots();
   const status = getStatusPayload();
 
   return {
@@ -3495,7 +3550,18 @@ function getHealthStatus(): {
     reconnectAttempts: redisState.reconnectAttempts,
     components: {
       redis: redisOk ? "ok" : "degraded",
-      telegram: channelInfo.telegram ? "ok" : "disabled",
+      telegram: channelInfo.telegram
+        ? String(channels.telegram?.ownerState ?? (channels.telegram?.healthy === true ? "ok" : "degraded"))
+        : "disabled",
+      discord: channelInfo.discord
+        ? (channels.discord?.healthy === true ? "ok" : "degraded")
+        : "disabled",
+      imessage: channelInfo.imessage
+        ? (channels.imessage?.healthy === true ? "ok" : "degraded")
+        : "disabled",
+      slack: Boolean(SLACK_ALLOWED_USER_ID)
+        ? (channels.slack?.healthy === true ? "ok" : "degraded")
+        : "disabled",
       ws: `ok (${wsClients.size} clients)`,
       session: isDead
         ? `dead (${failures} consecutive failures)`

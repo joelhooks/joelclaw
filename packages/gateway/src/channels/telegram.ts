@@ -497,10 +497,44 @@ let pollLeaseTokenHash: string | undefined;
 let pollLeaseRenewTimer: ReturnType<typeof setInterval> | undefined;
 let pollLeaseRetryTimer: ReturnType<typeof setTimeout> | undefined;
 let pollLeaseRetryAttempts = 0;
+let lastPollLeaseStatus: PollLeaseStatus | null = null;
+
+export type TelegramRuntimeState = {
+  configured: boolean;
+  started: boolean;
+  pollingActive: boolean;
+  pollingStarting: boolean;
+  pollRetryAttempts: number;
+  pollConflictStreak: number;
+  pollLeaseEnabled: boolean;
+  pollLeaseOwned: boolean;
+  pollLeaseState: PollLeaseState;
+  pollLeaseStatus: PollLeaseStatus | null;
+};
 
 /** Expose the raw grammy Bot instance for streaming (telegram-stream.ts). */
 export function getBot(): Bot | undefined {
   return bot;
+}
+
+export function getRuntimeState(): TelegramRuntimeState {
+  const pollLeaseState = lastPollLeaseStatus?.state
+    ?? (started
+      ? (pollLeaseOwned ? "owner" : TELEGRAM_POLL_LEASE_ENABLED ? "passive" : "fallback")
+      : "stopped");
+
+  return {
+    configured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_USER_ID),
+    started,
+    pollingActive,
+    pollingStarting,
+    pollRetryAttempts,
+    pollConflictStreak,
+    pollLeaseEnabled: TELEGRAM_POLL_LEASE_ENABLED,
+    pollLeaseOwned,
+    pollLeaseState,
+    pollLeaseStatus: lastPollLeaseStatus,
+  };
 }
 let defaultInstance: TelegramChannel | undefined;
 let inboundMessageHandler: MessageHandler | undefined;
@@ -743,6 +777,7 @@ async function writePollLeaseStatus(
     ...(pollLeaseTokenHash ? { tokenHash: pollLeaseTokenHash } : {}),
     ...(detail ?? {}),
   };
+  lastPollLeaseStatus = status;
 
   const client = await ensurePollLeaseClient();
   if (!client || !pollLeaseStatusKey) return;
