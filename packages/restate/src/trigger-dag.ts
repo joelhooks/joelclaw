@@ -2,11 +2,12 @@
  * Trigger a DAG workload through Restate.
  *
  * Usage:
- *   bun run dag                           # demo pipeline (noop nodes)
- *   bun run dag -- --pipeline health      # real system health check
- *   bun run dag -- --pipeline research --topic "Restate vs Temporal"
+ *   bun run dag                                              # demo pipeline (noop)
+ *   bun run dag -- --pipeline health                         # system health check
+ *   bun run dag -- --pipeline research --topic "Restate"     # multi-source research
+ *   bun run dag -- --pipeline enrich-contact --name "Alex Hillman"
+ *   bun run dag -- --pipeline enrich-contact --name "John Lindquist" --github joelhooks --depth quick
  *   bun run dag -- --id my-run-1
- *   bun run dag -- --sleep-ms 750         # noop node delay (demo only)
  */
 
 import type { DagNodeInput } from "./workflows/dag-orchestrator";
@@ -24,12 +25,18 @@ const pipeline = getArg("--pipeline") ?? "demo";
 const workflowId = getArg("--id") ?? `dag-${Date.now().toString(36)}`;
 const sleepMs = Number.parseInt(getArg("--sleep-ms") ?? "500", 10);
 const topic = getArg("--topic") ?? "Restate durable execution";
+const contactName = getArg("--name") ?? "";
+const contactDepth = (getArg("--depth") ?? "full") as "quick" | "full";
+const githubHint = getArg("--github");
+const twitterHint = getArg("--twitter");
+const emailHint = getArg("--email");
+const websiteHint = getArg("--website");
 
 const nodeDelay = Number.isFinite(sleepMs)
   ? Math.max(0, Math.min(sleepMs, 5_000))
   : 500;
 
-// --- Pipeline definitions ---
+// ━━━ Pipeline definitions ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function demoPipeline(): DagNodeInput[] {
   return [
@@ -58,7 +65,7 @@ function healthPipeline(): DagNodeInput[] {
       handler: "shell",
       config: {
         command:
-          "kubectl get pods -n joelclaw -o json 2>&1 | jq -r '.items[] | \"\\(.metadata.name) \\(.status.phase) \\(.status.containerStatuses[0].restartCount // 0) restarts\"' 2>/dev/null || echo 'kubectl unavailable'",
+          'kubectl get pods -n joelclaw -o json 2>&1 | jq -r \'.items[] | "\\(.metadata.name) \\(.status.phase) \\(.status.containerStatuses[0].restartCount // 0) restarts"\' 2>/dev/null || echo "kubectl unavailable"',
       },
     },
     {
@@ -79,7 +86,7 @@ function healthPipeline(): DagNodeInput[] {
       handler: "shell",
       config: {
         command:
-          "kubectl exec -n joelclaw redis-0 -- redis-cli ping 2>&1 || echo 'redis unreachable'",
+          'kubectl exec -n joelclaw redis-0 -- redis-cli ping 2>&1 || echo "redis unreachable"',
       },
     },
     {
@@ -127,7 +134,7 @@ function researchPipeline(researchTopic: string): DagNodeInput[] {
       task: `search local vault for: ${researchTopic}`,
       handler: "shell",
       config: {
-        command: `grep -ril "${researchTopic.replace(/"/g, '\\"').slice(0, 60)}" ~/Vault/docs/decisions/ 2>/dev/null | head -10 | while read f; do echo "--- $f ---"; head -30 "$f"; echo; done || echo 'no vault matches'`,
+        command: `grep -ril "${researchTopic.replace(/"/g, '\\"').slice(0, 60)}" ~/Vault/docs/decisions/ 2>/dev/null | head -10 | while read f; do echo "--- $f ---"; head -30 "$f"; echo; done || echo "no vault matches"`,
       },
     },
     {
@@ -135,7 +142,7 @@ function researchPipeline(researchTopic: string): DagNodeInput[] {
       task: `search agent memory for: ${researchTopic}`,
       handler: "shell",
       config: {
-        command: `joelclaw recall "${researchTopic.replace(/"/g, '\\"').slice(0, 80)}" 2>/dev/null | head -40 || echo 'recall unavailable'`,
+        command: `joelclaw recall "${researchTopic.replace(/"/g, '\\"').slice(0, 80)}" 2>/dev/null | head -40 || echo "recall unavailable"`,
       },
     },
     {
@@ -166,9 +173,252 @@ function researchPipeline(researchTopic: string): DagNodeInput[] {
   ];
 }
 
-// --- Select pipeline ---
+// ━━━ Contact Enrichment Pipeline (ADR-0133) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const CONTACT_SYNTH_SYSTEM = `You maintain Vault contact dossiers.
+Return ONLY markdown with YAML frontmatter and no code fences.
+
+Required output format:
+---
+name: <full name>
+aliases: [<optional aliases>]
+role: <best current role summary>
+organizations: [<orgs>]
+vip: <true|false>
+slack_user_id: <optional>
+github: <optional>
+twitter: <optional>
+email: <optional>
+website: <optional>
+tags: [<tags>]
+---
+
+# <Name>
+## Contact Channels
+- include discovered channels/handles
+
+## Projects
+- summarize relevant projects
+
+## Key Context
+- concise relationship and working context
+
+## Recent Activity
+- bullet timeline in YYYY-MM-DD format when possible
+
+Rules:
+- Merge with existing file when present.
+- Keep factual claims grounded in provided evidence; do not invent.
+- If uncertain, mark as "Unverified".
+- Preserve useful existing facts unless contradicted by newer evidence.`;
+
+const ROAM_ARCHIVE =
+  process.env.ROAM_ARCHIVE_PATH ??
+  `${process.env.HOME}/Code/joelhooks/egghead-roam-research/egghead-2026-01-19-13-09-38.edn`;
+
+const TYPESENSE_FALLBACK_KEY =
+  "391a65d92ff0b1d63af0e0d6cca04fdff292b765d833a65a25fb928b8a0fb065";
+
+function shellSafe(s: string): string {
+  return s.replace(/'/g, "'\\''");
+}
+
+function enrichContactPipeline(
+  name: string,
+  depth: "quick" | "full",
+  hints: { github?: string; twitter?: string; email?: string; website?: string },
+): DagNodeInput[] {
+  const safe = shellSafe(name);
+  const nodes: DagNodeInput[] = [];
+
+  // --- Wave 0: parallel source probes ---
+
+  nodes.push({
+    id: "vault-existing",
+    task: `load existing contact file for ${name}`,
+    handler: "shell",
+    config: {
+      command: `cat ~/Vault/Contacts/'${safe}'.md 2>/dev/null || echo '(no existing contact file)'`,
+    },
+  });
+
+  nodes.push({
+    id: "memory-recall",
+    task: `search agent memory for ${name}`,
+    handler: "shell",
+    config: {
+      command: `joelclaw recall '${safe}' 2>/dev/null | head -80 || echo 'recall unavailable'`,
+    },
+  });
+
+  nodes.push({
+    id: "typesense-search",
+    task: `search indexed content for ${name}`,
+    handler: "shell",
+    config: {
+      command: [
+        `API_KEY=$(secrets lease typesense_api_key --ttl 5m 2>/dev/null || echo '${TYPESENSE_FALLBACK_KEY}')`,
+        `curl -sS --max-time 10 "http://localhost:8108/multi_search" \\`,
+        `  -H "X-TYPESENSE-API-KEY: $API_KEY" \\`,
+        `  -H "Content-Type: application/json" \\`,
+        `  -d '{"searches":[`,
+        `    {"collection":"vault_notes","q":"${safe}","query_by":"title,content","per_page":"8"},`,
+        `    {"collection":"slack_messages","q":"${safe}","query_by":"text,user_name","per_page":"8"}`,
+        `  ]}' 2>/dev/null | jq '.results[]? | {collection: .request_params.collection_name, found: .found, hits: [.hits[]?.document | {title, path, text: ((.text // .content // "")[:200])}]}' 2>/dev/null || echo 'typesense unavailable'`,
+      ].join("\n"),
+    },
+  });
+
+  if (depth === "full") {
+    nodes.push({
+      id: "roam-search",
+      task: `search Roam archive for ${name}`,
+      handler: "shell",
+      config: {
+        command: [
+          `python3 -c '`,
+          `import json, re, sys`,
+          `path, query = sys.argv[1], sys.argv[2].lower()`,
+          `matches = []`,
+          `with open(path, errors="ignore") as f:`,
+          `    for i, line in enumerate(f, 1):`,
+          `        if query in line.lower():`,
+          `            matches.append({"line": i, "text": line.strip()[:200]})`,
+          `            if len(matches) >= 20: break`,
+          `print(json.dumps({"matches": matches, "count": len(matches)}))`,
+          `' '${ROAM_ARCHIVE}' '${safe}' 2>/dev/null || echo 'roam search unavailable'`,
+        ].join("\n"),
+      },
+    });
+
+    nodes.push({
+      id: "granola-search",
+      task: `search Granola meetings for ${name}`,
+      handler: "shell",
+      config: {
+        command: `granola search '${safe}' 2>/dev/null | head -50 || echo 'granola unavailable'`,
+      },
+    });
+
+    nodes.push({
+      id: "slack-search",
+      task: `search egghead Slack for ${name}`,
+      handler: "shell",
+      config: {
+        command: [
+          `TOKEN=$(secrets lease slack_user_token --ttl 5m 2>/dev/null || echo '')`,
+          `[ -z "$TOKEN" ] && echo '{"error":"no_slack_token"}' && exit 0`,
+          `curl -sS --max-time 15 "https://slack.com/api/users.list?limit=200" -H "Authorization: Bearer $TOKEN" | \\`,
+          `  jq '[.members[]? | select(.deleted != true and .is_bot != true) | select((.real_name // .name // "") | test("${safe}"; "i")) | {id, name: .real_name, display_name: .profile.display_name, email: .profile.email}] | .[:3]' 2>/dev/null || echo '{"error":"slack_api_failed"}'`,
+        ].join("\n"),
+      },
+    });
+
+    if (hints.github) {
+      nodes.push({
+        id: "github-profile",
+        task: `fetch GitHub profile for ${hints.github}`,
+        handler: "http",
+        config: {
+          url: `https://api.github.com/users/${encodeURIComponent(hints.github)}`,
+          headers: {
+            Accept: "application/vnd.github+json",
+            "User-Agent": "joelclaw-contact-enrich",
+          },
+        },
+      });
+    }
+
+    if (hints.website) {
+      nodes.push({
+        id: "website-fetch",
+        task: `fetch website for ${hints.website}`,
+        handler: "http",
+        config: { url: hints.website },
+      });
+    }
+  }
+
+  // --- Wave 1: synthesis ---
+
+  const sourceIds = nodes.map((n) => n.id);
+
+  // Build synthesis prompt referencing all source node IDs
+  const sourceBlocks = sourceIds
+    .map((id) => `## ${id}\n{{${id}}}`)
+    .join("\n\n");
+
+  const hintsBlock = Object.entries(hints)
+    .filter(([, v]) => v)
+    .map(([k, v]) => `  ${k}: ${v}`)
+    .join("\n");
+
+  nodes.push({
+    id: "synthesize",
+    task: `synthesize contact dossier for ${name}`,
+    handler: "infer",
+    dependsOn: sourceIds,
+    config: {
+      system: CONTACT_SYNTH_SYSTEM,
+      prompt: [
+        `Contact name: ${name}`,
+        `Enrichment depth: ${depth}`,
+        hintsBlock ? `Known hints:\n${hintsBlock}` : "",
+        "",
+        "Source data follows. Some sources may have returned errors — skip those.",
+        "",
+        sourceBlocks,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    },
+  });
+
+  // --- Wave 2: write + notify + otel ---
+
+  nodes.push({
+    id: "write-vault",
+    task: `write contact dossier to Vault`,
+    handler: "shell",
+    dependsOn: ["synthesize"],
+    config: {
+      // $DEP_synthesize env var avoids shell escaping issues with markdown content
+      command: [
+        `mkdir -p ~/Vault/Contacts`,
+        `printf '%s\\n' "$DEP_synthesize" > ~/Vault/Contacts/'${safe}'.md`,
+        `BYTES=$(wc -c < ~/Vault/Contacts/'${safe}'.md | tr -d ' ')`,
+        `echo "wrote $BYTES bytes to ~/Vault/Contacts/${safe}.md"`,
+      ].join(" && "),
+    },
+  });
+
+  nodes.push({
+    id: "notify",
+    task: `notify Joel about enrichment result`,
+    handler: "shell",
+    dependsOn: ["write-vault"],
+    config: {
+      command: `joelclaw notify "✅ Contact enrichment complete for ${safe}. Dossier at ~/Vault/Contacts/${safe}.md" 2>/dev/null || echo 'notify: delivery attempted'`,
+    },
+  });
+
+  nodes.push({
+    id: "otel-enrich-complete",
+    task: "emit contact enrichment OTEL summary",
+    handler: "shell",
+    dependsOn: ["write-vault"],
+    config: {
+      command: `joelclaw otel emit "contact.enrich.completed" --source restate --component contact-enrich --success true 2>/dev/null || echo 'otel emit done'`,
+    },
+  });
+
+  return nodes;
+}
+
+// ━━━ Select pipeline ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 let nodes: DagNodeInput[];
+let pipelineName = pipeline;
 
 switch (pipeline) {
   case "health":
@@ -177,20 +427,37 @@ switch (pipeline) {
   case "research":
     nodes = researchPipeline(topic);
     break;
+  case "enrich-contact": {
+    if (!contactName) {
+      console.error("❌ --name is required for enrich-contact pipeline");
+      process.exit(1);
+    }
+    nodes = enrichContactPipeline(contactName, contactDepth, {
+      github: githubHint,
+      twitter: twitterHint,
+      email: emailHint,
+      website: websiteHint,
+    });
+    pipelineName = `enrich-contact:${contactName}`;
+    break;
+  }
   case "demo":
   default:
     nodes = demoPipeline();
     break;
 }
 
-// --- Send to Restate ---
+// ━━━ Send to Restate ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-const request = { requestId: workflowId, nodes };
+const request = { requestId: workflowId, pipeline: pipelineName, nodes };
 
 console.log(`🕸️  Triggering DAG workload — ${workflowId}`);
-console.log(`   Pipeline: ${pipeline}`);
+console.log(`   Pipeline: ${pipelineName}`);
 console.log(`   Restate: ${RESTATE_INGRESS}`);
-console.log(`   Nodes: ${nodes.map((n) => `${n.id}(${n.handler ?? "noop"})`).join(", ")}\n`);
+console.log(
+  `   Nodes: ${nodes.map((n) => `${n.id}(${n.handler ?? "noop"})`).join(", ")}`,
+);
+console.log(``);
 
 const response = await fetch(
   `${RESTATE_INGRESS}/dagOrchestrator/${workflowId}/run`,
@@ -211,19 +478,23 @@ const result = await response.json();
 
 console.log(`✅ DAG run complete:`);
 console.log(`   workflowId: ${result.workflowId}`);
+console.log(`   pipeline: ${result.pipeline}`);
 console.log(`   nodeCount: ${result.nodeCount}`);
 console.log(`   waveCount: ${result.waveCount}`);
+console.log(`   duration: ${result.durationMs}ms`);
 console.log(
   `   completionOrder: ${(result.completionOrder ?? []).join(" → ")}`,
 );
 console.log(``);
 
 // For real pipelines, print the synthesizer output nicely
-const lastWave = result.waves?.[result.waves.length - 1];
-const synthResult = lastWave?.results?.find(
-  (r: { nodeId: string }) => r.nodeId === "synthesize",
+const lastSynthWave = result.waves?.find((w: { results: Array<{ handler: string }> }) =>
+  w.results?.some((r: { handler: string }) => r.handler === "infer"),
 );
-if (synthResult?.handler === "infer" && synthResult.output) {
+const synthResult = lastSynthWave?.results?.find(
+  (r: { handler: string }) => r.handler === "infer",
+);
+if (synthResult?.output) {
   console.log("━".repeat(60));
   console.log(synthResult.output);
   console.log("━".repeat(60));

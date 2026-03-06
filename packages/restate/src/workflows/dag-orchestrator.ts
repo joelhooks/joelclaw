@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as restate from "@restatedev/restate-sdk";
+import { emitOtel, previewOutput } from "../otel";
 
 // --- Constants ---
 
@@ -30,6 +31,7 @@ export interface DagNodeInput {
 
 export interface DagRunRequest {
   requestId?: string;
+  pipeline?: string;
   nodes: DagNodeInput[];
 }
 
@@ -42,6 +44,8 @@ export interface DagWorkerRequest {
   config: Record<string, unknown>;
   dependencyOutputs: Record<string, string>;
   simulatedMs?: number;
+  workflowId?: string;
+  pipeline?: string;
 }
 
 export interface DagWorkerResult {
@@ -53,6 +57,7 @@ export interface DagWorkerResult {
   output: string;
   startedAt: string;
   completedAt: string;
+  durationMs: number;
 }
 
 export interface DagWaveResult {
@@ -64,10 +69,12 @@ export interface DagWaveResult {
 export interface DagRunResult {
   workflowId: string;
   requestId: string;
+  pipeline: string;
   nodeCount: number;
   waveCount: number;
   startedAt: string;
   completedAt: string;
+  durationMs: number;
   completionOrder: string[];
   waves: DagWaveResult[];
 }
@@ -178,16 +185,45 @@ const interpolateOutputs = (
   return result;
 };
 
+/** Interpolate {{nodeId}} templates in all string-valued config fields. */
+const interpolateConfig = (
+  config: Record<string, unknown>,
+  outputs: Record<string, string>,
+): Record<string, unknown> => {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(config)) {
+    if (typeof value === "string") {
+      result[key] = interpolateOutputs(value, outputs);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+};
+
+/** Convert dependency outputs to DEP_* env vars for shell handlers. */
+const buildDepEnv = (outputs: Record<string, string>): Record<string, string> => {
+  const env: Record<string, string> = {};
+  for (const [nodeId, output] of Object.entries(outputs)) {
+    const envKey = `DEP_${nodeId.replace(/[^a-zA-Z0-9_]/g, "_")}`;
+    env[envKey] = output;
+  }
+  return env;
+};
+
 // --- Handler implementations ---
 
-async function executeShell(config: Record<string, unknown>): Promise<string> {
+async function executeShell(
+  config: Record<string, unknown>,
+  depEnv: Record<string, string>,
+): Promise<string> {
   const command = config.command as string | undefined;
   if (!command) throw new Error("shell handler requires config.command");
 
   const proc = Bun.spawn(["bash", "-c", command], {
     stdout: "pipe",
     stderr: "pipe",
-    env: process.env,
+    env: { ...process.env, ...depEnv },
   });
 
   const timer = setTimeout(() => proc.kill(), HANDLER_TIMEOUT_MS);
@@ -281,7 +317,6 @@ async function executeInfer(
       );
     }
 
-    // pi -p outputs JSON with { text, model, usage } — extract text
     try {
       const parsed = JSON.parse(stdout);
       if (parsed?.text) return truncate(parsed.text);
@@ -295,7 +330,7 @@ async function executeInfer(
   }
 }
 
-// --- dagWorker service ---
+// --- dagWorker service (with OTEL instrumentation) ---
 
 export const dagWorker = restate.service({
   name: "dagWorker",
@@ -305,6 +340,7 @@ export const dagWorker = restate.service({
       input: DagWorkerRequest,
     ): Promise<DagWorkerResult> => {
       const startedAt = await ctx.run("mark-start", () => new Date().toISOString());
+      const startMs = Date.now();
 
       await ctx.run("record-input", () => ({
         nodeId: input.nodeId,
@@ -313,27 +349,103 @@ export const dagWorker = restate.service({
         dependsOn: input.dependsOn,
       }));
 
-      // noop sleep (outside ctx.run — Restate timer primitive)
+      // OTEL: node started
+      await ctx.run("otel-node-started", async () => {
+        await emitOtel({
+          action: "dag.node.started",
+          component: "dag-worker",
+          metadata: {
+            workflowId: input.workflowId,
+            pipeline: input.pipeline,
+            nodeId: input.nodeId,
+            handler: input.handler,
+            wave: input.wave,
+            task: input.task,
+            dependsOn: input.dependsOn,
+            depCount: Object.keys(input.dependencyOutputs).length,
+          },
+        });
+        return true;
+      });
+
+      // noop sleep (Restate timer primitive, outside ctx.run)
       if (input.handler === "noop" && input.simulatedMs && input.simulatedMs > 0) {
         await ctx.sleep({ milliseconds: input.simulatedMs });
       }
 
+      // Interpolate config templates with dependency outputs
+      const resolvedConfig = interpolateConfig(input.config, input.dependencyOutputs);
+      const depEnv = buildDepEnv(input.dependencyOutputs);
+
       // Execute the handler inside ctx.run for durability
-      const output = await ctx.run("execute-task", async () => {
-        switch (input.handler) {
-          case "shell":
-            return executeShell(input.config);
-          case "http":
-            return executeHttp(input.config);
-          case "infer":
-            return executeInfer(input.config, input.dependencyOutputs);
-          case "noop":
-          default:
-            return `completed:${input.nodeId}:${input.task}`;
-        }
-      });
+      let output: string;
+      let failed = false;
+      let errorMsg: string | undefined;
+
+      try {
+        output = await ctx.run("execute-task", async () => {
+          switch (input.handler) {
+            case "shell":
+              return executeShell(resolvedConfig, depEnv);
+            case "http":
+              return executeHttp(resolvedConfig);
+            case "infer":
+              return executeInfer(resolvedConfig, input.dependencyOutputs);
+            case "noop":
+            default:
+              return `completed:${input.nodeId}:${input.task}`;
+          }
+        });
+      } catch (err) {
+        failed = true;
+        errorMsg = err instanceof Error ? err.message : String(err);
+
+        // OTEL: node failed
+        await ctx.run("otel-node-failed", async () => {
+          await emitOtel({
+            level: "error",
+            action: "dag.node.failed",
+            component: "dag-worker",
+            success: false,
+            error: errorMsg,
+            metadata: {
+              workflowId: input.workflowId,
+              pipeline: input.pipeline,
+              nodeId: input.nodeId,
+              handler: input.handler,
+              wave: input.wave,
+              task: input.task,
+              durationMs: Date.now() - startMs,
+            },
+          });
+          return true;
+        });
+
+        throw err;
+      }
 
       const completedAt = await ctx.run("mark-complete", () => new Date().toISOString());
+      const durationMs = Date.now() - startMs;
+
+      // OTEL: node completed
+      await ctx.run("otel-node-completed", async () => {
+        await emitOtel({
+          action: "dag.node.completed",
+          component: "dag-worker",
+          metadata: {
+            workflowId: input.workflowId,
+            pipeline: input.pipeline,
+            nodeId: input.nodeId,
+            handler: input.handler,
+            wave: input.wave,
+            task: input.task,
+            durationMs,
+            outputPreview: previewOutput(output),
+            outputBytes: output.length,
+          },
+        });
+        return true;
+      });
 
       return {
         nodeId: input.nodeId,
@@ -344,12 +456,13 @@ export const dagWorker = restate.service({
         output,
         startedAt,
         completedAt,
+        durationMs,
       };
     },
   },
 });
 
-// --- dagOrchestrator workflow ---
+// --- dagOrchestrator workflow (with OTEL instrumentation) ---
 
 export const dagOrchestrator = restate.workflow({
   name: "dagOrchestrator",
@@ -358,6 +471,9 @@ export const dagOrchestrator = restate.workflow({
       ctx: restate.WorkflowContext,
       request: DagRunRequest,
     ): Promise<DagRunResult> => {
+      const pipelineName = request.pipeline ?? "unknown";
+      const workflowStartMs = Date.now();
+
       const initialized = await ctx.run("init-run", () => ({
         requestId: request.requestId?.trim() || ctx.key,
         startedAt: new Date().toISOString(),
@@ -369,12 +485,49 @@ export const dagOrchestrator = restate.workflow({
       const waves = await ctx.run("build-waves", () => buildExecutionWaves(nodes));
       const nodeById = new Map(nodes.map((node) => [node.id, node] as const));
 
+      // OTEL: workflow started
+      await ctx.run("otel-workflow-started", async () => {
+        await emitOtel({
+          action: "dag.workflow.started",
+          metadata: {
+            workflowId: ctx.key,
+            requestId: initialized.requestId,
+            pipeline: pipelineName,
+            nodeCount: nodes.length,
+            waveCount: waves.length,
+            handlers: Object.fromEntries(nodes.map((n) => [n.id, n.handler])),
+            waveTopology: waves,
+          },
+        });
+        return true;
+      });
+
       // Accumulate outputs for dependency passing
       const outputsByNodeId: Record<string, string> = {};
       const waveResults: DagWaveResult[] = [];
       const completionOrder: string[] = [];
 
       for (const [waveIndex, nodeIds] of waves.entries()) {
+        const waveStartMs = Date.now();
+
+        // OTEL: wave dispatched
+        await ctx.run(`otel-wave-${waveIndex}-dispatched`, async () => {
+          await emitOtel({
+            action: "dag.wave.dispatched",
+            metadata: {
+              workflowId: ctx.key,
+              pipeline: pipelineName,
+              waveIndex,
+              nodeIds,
+              nodeHandlers: nodeIds.map((id) => ({
+                id,
+                handler: nodeById.get(id)?.handler,
+              })),
+            },
+          });
+          return true;
+        });
+
         await ctx.run(`wave-${waveIndex}-dispatch`, () => ({ waveIndex, nodeIds }));
 
         const results = await Promise.all(
@@ -399,6 +552,8 @@ export const dagOrchestrator = restate.workflow({
               config: node.config,
               dependencyOutputs,
               simulatedMs: node.simulatedMs,
+              workflowId: ctx.key,
+              pipeline: pipelineName,
             });
           }),
         );
@@ -418,19 +573,67 @@ export const dagOrchestrator = restate.workflow({
         completionOrder.push(
           ...collected.results.map((result) => result.nodeId),
         );
+
+        // OTEL: wave completed
+        await ctx.run(`otel-wave-${waveIndex}-completed`, async () => {
+          await emitOtel({
+            action: "dag.wave.completed",
+            metadata: {
+              workflowId: ctx.key,
+              pipeline: pipelineName,
+              waveIndex,
+              nodeIds,
+              durationMs: Date.now() - waveStartMs,
+              resultCount: results.length,
+              handlerDurations: results.map((r) => ({
+                nodeId: r.nodeId,
+                handler: r.handler,
+                durationMs: r.durationMs,
+              })),
+            },
+          });
+          return true;
+        });
       }
 
       const completedAt = await ctx.run("complete-run", () =>
         new Date().toISOString(),
       );
+      const totalDurationMs = Date.now() - workflowStartMs;
+
+      // OTEL: workflow completed
+      await ctx.run("otel-workflow-completed", async () => {
+        await emitOtel({
+          action: "dag.workflow.completed",
+          metadata: {
+            workflowId: ctx.key,
+            requestId: initialized.requestId,
+            pipeline: pipelineName,
+            nodeCount: nodes.length,
+            waveCount: waves.length,
+            durationMs: totalDurationMs,
+            completionOrder,
+            handlerBreakdown: Object.fromEntries(
+              nodes.map((n) => [n.id, n.handler]),
+            ),
+            waveDurations: waveResults.map((w) => ({
+              wave: w.waveIndex,
+              nodes: w.nodeIds.length,
+            })),
+          },
+        });
+        return true;
+      });
 
       return {
         workflowId: ctx.key,
         requestId: initialized.requestId,
+        pipeline: pipelineName,
         nodeCount: nodes.length,
         waveCount: waves.length,
         startedAt: initialized.startedAt,
         completedAt,
+        durationMs: totalDurationMs,
         completionOrder,
         waves: waveResults,
       };
