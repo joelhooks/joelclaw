@@ -5,7 +5,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -166,43 +166,54 @@ async function runPiAttempt(
     args.push("--append-system-prompt", opts.appendSystemPrompt);
   }
 
-  const proc = Bun.spawn(args, {
-    cwd: opts.cwd,
-    stdin: Bun.file(promptPath),
-    stdout: "pipe",
-    stderr: "pipe",
-    env: {
-      ...process.env,
-      PATH: `${process.env.HOME}/.local/bin:${process.env.HOME}/.bun/bin:${process.env.HOME}/.local/share/fnm/aliases/default/bin:${process.env.PATH}`,
-      ...(opts.env ?? {}),
-    },
-  });
+  const captureDir = await mkdtemp(join(tmpdir(), "joelclaw-pi-attempt-"));
+  const stdoutPath = join(captureDir, "stdout.txt");
+  const stderrPath = join(captureDir, "stderr.txt");
 
-  const timeoutId = setTimeout(() => proc.kill(), timeoutMs);
-  const startMs = Date.now();
+  try {
+    const proc = Bun.spawn(args, {
+      cwd: opts.cwd,
+      stdin: Bun.file(promptPath),
+      stdout: Bun.file(stdoutPath),
+      stderr: Bun.file(stderrPath),
+      env: {
+        ...process.env,
+        PATH: `${process.env.HOME}/.local/bin:${process.env.HOME}/.bun/bin:${process.env.HOME}/.local/share/fnm/aliases/default/bin:${process.env.PATH}`,
+        ...(opts.env ?? {}),
+      },
+    });
 
-  const [stdoutRaw, stderrRaw] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
+    const timeoutId = setTimeout(() => proc.kill(), timeoutMs);
+    const startMs = Date.now();
 
-  const exitCode = await proc.exited;
-  const durationMs = Date.now() - startMs;
-  clearTimeout(timeoutId);
+    const exitCode = await proc.exited;
+    const durationMs = Date.now() - startMs;
+    clearTimeout(timeoutId);
 
-  const parsed = parsePiJsonAssistant(stdoutRaw);
-  const parsedText = normalizeText(parsed?.text);
-  const rawText = parsed ? parsedText : stdoutRaw.trim();
+    // Pipe capture can hang forever when tool subprocesses inherit stdout/stderr.
+    // Redirect to temp files instead so we can read whatever pi wrote once the
+    // parent process exits, even if a descendant still holds the descriptors open.
+    const [stdoutRaw, stderrRaw] = await Promise.all([
+      readFile(stdoutPath, "utf8").catch(() => ""),
+      readFile(stderrPath, "utf8").catch(() => ""),
+    ]);
 
-  return {
-    rawText,
-    stderr: normalizeText(stderrRaw),
-    exitCode,
-    usage: parsed?.usage,
-    model: parsed?.model,
-    provider: parsed?.provider,
-    durationMs,
-  };
+    const parsed = parsePiJsonAssistant(stdoutRaw);
+    const parsedText = normalizeText(parsed?.text);
+    const rawText = parsed ? parsedText : stdoutRaw.trim();
+
+    return {
+      rawText,
+      stderr: normalizeText(stderrRaw),
+      exitCode,
+      usage: parsed?.usage,
+      model: parsed?.model,
+      provider: parsed?.provider,
+      durationMs,
+    };
+  } finally {
+    await rm(captureDir, { recursive: true, force: true });
+  }
 }
 
 function wrapError(error: unknown, attemptIndex: number, metadata?: string): PiAttemptError {
