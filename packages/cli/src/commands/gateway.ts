@@ -1437,6 +1437,11 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
     let channelHealthLastEventDetail: string | undefined
     let channelHealthLastEventMuted: boolean | undefined
     let channelHealthLastEventMuteReason: string | undefined
+    let channelHealRestartThreshold: number | undefined
+    let channelHealCooldownMs: number | undefined
+    let channelHealPolicies: string[] = []
+    let channelHealScheduled: string[] = []
+    let channelHealFailures: string[] = []
     let checkpointSentThisTurn = false
     let pendingDeployVerificationCount = 0
     try {
@@ -1601,6 +1606,27 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       channelHealthLastEventMuteReason = typeof channelHealth.alerting?.lastEvent?.muteReason === "string"
         ? channelHealth.alerting.lastEvent.muteReason
         : undefined
+      channelHealRestartThreshold = typeof channelHealth.healing?.restartAfterConsecutiveDegraded === "number"
+        ? channelHealth.healing.restartAfterConsecutiveDegraded
+        : undefined
+      channelHealCooldownMs = typeof channelHealth.healing?.cooldownMs === "number"
+        ? channelHealth.healing.cooldownMs
+        : undefined
+      const healingChannels = typeof channelHealth.healing?.channels === "object" && channelHealth.healing.channels !== null
+        ? channelHealth.healing.channels as Record<string, Record<string, unknown>>
+        : {}
+      channelHealPolicies = Object.entries(healingChannels)
+        .filter(([, value]) => typeof value.policy === "string" && value.policy !== "none")
+        .map(([channel, value]) => `${channel}:${value.policy}`)
+      channelHealScheduled = Object.entries(healingChannels)
+        .filter(([, value]) => value.lastAttemptStatus === "scheduled")
+        .map(([channel, value]) => `${channel}${typeof value.consecutiveDegradedCount === "number" ? `(${value.consecutiveDegradedCount})` : ""}`)
+      channelHealFailures = Object.entries(healingChannels)
+        .filter(([, value]) => value.lastAttemptStatus === "failed")
+        .map(([channel, value]) => {
+          const error = typeof value.lastAttemptError === "string" ? value.lastAttemptError : "heal failed"
+          return `${channel}: ${error}`
+        })
       checkpointSentThisTurn = parsed.result?.guardrails?.checkpointSentThisTurn === true
       pendingDeployVerificationCount = Array.isArray(parsed.result?.guardrails?.pendingDeployVerifications)
         ? parsed.result.guardrails.pendingDeployVerifications.length
@@ -1816,6 +1842,37 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
           ? `Channel contract degraded: ${channelHealthDegradedChannels.length > 0 ? channelHealthDegradedChannels.join(", ") : degradedChannels.join(", ")}`
           : "Channel runtime contracts healthy",
         findings: channelFindings,
+      })
+    }
+
+    const channelHealFindings: string[] = []
+    if (typeof channelHealRestartThreshold === "number") {
+      channelHealFindings.push(`restart threshold: ${channelHealRestartThreshold} degraded checks`)
+    }
+    if (typeof channelHealCooldownMs === "number") {
+      channelHealFindings.push(`restart cooldown: ${channelHealCooldownMs}ms`)
+    }
+    if (channelHealPolicies.length > 0) {
+      channelHealFindings.push(`active heal policies: ${channelHealPolicies.join(", ")}`)
+    }
+    if (channelHealScheduled.length > 0) {
+      channelHealFindings.push(`scheduled restarts: ${channelHealScheduled.join(", ")}`)
+    }
+    if (channelHealFailures.length > 0) {
+      channelHealFindings.push(`last heal failures: ${channelHealFailures.join(" | ")}`)
+    }
+    if (channelHealFindings.length > 0) {
+      layers.push({
+        layer: "channel-healing",
+        status: channelHealScheduled.length > 0 || channelHealFailures.length > 0 ? "degraded" : "ok",
+        detail: channelHealFailures.length > 0
+          ? "Active channel heal policy has recent failures"
+          : channelHealScheduled.length > 0
+            ? "Channel heal policy has restart attempts queued/in flight"
+            : channelHealPolicies.length > 0
+              ? "Channel heal policy armed"
+              : "Channel heal policy idle",
+        findings: channelHealFindings,
       })
     }
 

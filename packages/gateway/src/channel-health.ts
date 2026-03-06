@@ -1,6 +1,8 @@
 export type GatewayChannelId = "telegram" | "discord" | "imessage" | "slack";
 export type ChannelHealthStatus = "healthy" | "degraded" | "disabled";
 export type ChannelHealthEventKind = "degraded" | "recovered";
+export type ChannelHealPolicy = "restart" | "manual" | "none";
+export type ChannelHealAttemptStatus = "idle" | "scheduled" | "succeeded" | "failed";
 
 export type ChannelHealthEntryInput = {
   configured: boolean;
@@ -8,6 +10,8 @@ export type ChannelHealthEntryInput = {
   detail: string;
   muted?: boolean;
   muteReason?: string | null;
+  healPolicy?: ChannelHealPolicy;
+  healReason?: string | null;
 };
 
 export type ChannelHealthEntry = {
@@ -18,6 +22,8 @@ export type ChannelHealthEntry = {
   detail: string;
   muted: boolean;
   muteReason: string | null;
+  healPolicy: ChannelHealPolicy;
+  healReason: string | null;
 };
 
 export type ChannelHealthSnapshot = {
@@ -57,12 +63,52 @@ export type ChannelHealthAlertDecision = {
   nextState: ChannelHealthAlertState;
 };
 
+export type ChannelHealChannelState = {
+  status: ChannelHealthStatus;
+  policy: ChannelHealPolicy;
+  policyReason: string | null;
+  consecutiveDegradedCount: number;
+  lastAttemptAt: number;
+  lastAttemptStatus: ChannelHealAttemptStatus;
+  lastAttemptError: string | null;
+  attempts: number;
+};
+
+export type ChannelHealState = {
+  channels: Record<GatewayChannelId, ChannelHealChannelState>;
+};
+
+export type ChannelHealDecision = {
+  actions: Array<{
+    channel: GatewayChannelId;
+    policy: "restart";
+    detail: string;
+    reason: string | null;
+    muted: boolean;
+    at: number;
+  }>;
+  nextState: ChannelHealState;
+};
+
 function defaultChannelState(): ChannelHealthChannelState {
   return {
     status: "disabled",
     lastChangedAt: 0,
     lastEventAt: 0,
     lastRecoveredAt: 0,
+  };
+}
+
+function defaultHealState(): ChannelHealChannelState {
+  return {
+    status: "disabled",
+    policy: "none",
+    policyReason: null,
+    consecutiveDegradedCount: 0,
+    lastAttemptAt: 0,
+    lastAttemptStatus: "idle",
+    lastAttemptError: null,
+    attempts: 0,
   };
 }
 
@@ -75,6 +121,17 @@ export function getInitialChannelHealthAlertState(): ChannelHealthAlertState {
       slack: defaultChannelState(),
     },
     lastEvent: null,
+  };
+}
+
+export function getInitialChannelHealState(): ChannelHealState {
+  return {
+    channels: {
+      telegram: defaultHealState(),
+      discord: defaultHealState(),
+      imessage: defaultHealState(),
+      slack: defaultHealState(),
+    },
   };
 }
 
@@ -109,6 +166,8 @@ export function buildChannelHealthSnapshot(input: {
           detail: value.detail,
           muted: value.muted === true,
           muteReason: value.muteReason ?? null,
+          healPolicy: value.healPolicy ?? "none",
+          healReason: value.healReason ?? null,
         } satisfies ChannelHealthEntry,
       ];
     }),
@@ -196,5 +255,102 @@ export function evaluateChannelHealthAlert(
   return {
     events,
     nextState,
+  };
+}
+
+export function evaluateChannelHealPolicy(
+  snapshot: ChannelHealthSnapshot,
+  state: ChannelHealState,
+  nowMs: number,
+  options: {
+    restartAfterConsecutiveDegraded: number;
+    cooldownMs: number;
+  },
+): ChannelHealDecision {
+  const nextState: ChannelHealState = {
+    channels: {
+      telegram: { ...state.channels.telegram },
+      discord: { ...state.channels.discord },
+      imessage: { ...state.channels.imessage },
+      slack: { ...state.channels.slack },
+    },
+  };
+
+  const actions: ChannelHealDecision["actions"] = [];
+
+  for (const [channel, entry] of Object.entries(snapshot.entries) as Array<[GatewayChannelId, ChannelHealthEntry]>) {
+    const previous = nextState.channels[channel] ?? defaultHealState();
+    const nextChannelState: ChannelHealChannelState = {
+      ...previous,
+      status: entry.status,
+      policy: entry.healPolicy,
+      policyReason: entry.healReason,
+    };
+
+    if (!entry.configured || entry.status !== "degraded") {
+      nextChannelState.consecutiveDegradedCount = 0;
+      if (entry.status !== "degraded") {
+        nextChannelState.lastAttemptStatus = previous.lastAttemptStatus === "scheduled"
+          ? "idle"
+          : previous.lastAttemptStatus;
+      }
+      nextState.channels[channel] = nextChannelState;
+      continue;
+    }
+
+    nextChannelState.consecutiveDegradedCount = previous.status === "degraded"
+      ? previous.consecutiveDegradedCount + 1
+      : 1;
+
+    if (entry.muted || entry.healPolicy !== "restart") {
+      nextState.channels[channel] = nextChannelState;
+      continue;
+    }
+
+    const cooledDown = previous.lastAttemptAt === 0 || nowMs - previous.lastAttemptAt >= options.cooldownMs;
+    if (nextChannelState.consecutiveDegradedCount < options.restartAfterConsecutiveDegraded || !cooledDown) {
+      nextState.channels[channel] = nextChannelState;
+      continue;
+    }
+
+    nextChannelState.lastAttemptAt = nowMs;
+    nextChannelState.lastAttemptStatus = "scheduled";
+    nextChannelState.lastAttemptError = null;
+    nextChannelState.attempts = previous.attempts + 1;
+    nextState.channels[channel] = nextChannelState;
+
+    actions.push({
+      channel,
+      policy: "restart",
+      detail: entry.detail,
+      reason: entry.healReason,
+      muted: entry.muted,
+      at: nowMs,
+    });
+  }
+
+  return {
+    actions,
+    nextState,
+  };
+}
+
+export function recordChannelHealAttemptResult(
+  state: ChannelHealState,
+  input: {
+    channel: GatewayChannelId;
+    succeeded: boolean;
+    error?: string | null;
+  },
+): ChannelHealState {
+  return {
+    channels: {
+      ...state.channels,
+      [input.channel]: {
+        ...(state.channels[input.channel] ?? defaultHealState()),
+        lastAttemptStatus: input.succeeded ? "succeeded" : "failed",
+        lastAttemptError: input.succeeded ? null : input.error ?? null,
+      },
+    },
   };
 }

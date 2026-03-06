@@ -113,15 +113,19 @@ Current covered paths:
 
 Gateway now tracks `kind=callback|command` plus ack/dispatched/completed/failed/timed_out state for those paths, exposes canonical `operatorTracing` in `joelclaw gateway status` (with `callbackTracing` kept as a compatibility alias), and adds an `operator-tracing` layer in `joelclaw gateway diagnose`.
 
-Timeout/failure paths send an explicit Telegram follow-up with route + trace id instead of silently trusting the button spinner or dropped command reply. Still open: richer downstream completion acks for external callback routes and queued agent-command completion beyond the initial accept/enqueue step.
+Queued Telegram agent commands now keep their trace id through downstream gateway execution, complete on the real turn completion path, and fail on prompt error / assistant error / supersession instead of lying at enqueue time. Agent-backed command traces use a longer timeout window than simple callback ack paths.
+
+Still open: richer downstream completion acks for external callback routes that execute outside the gateway's own turn lifecycle.
 
 ## Channel runtime contracts (ADR-0218 rank 6 slice)
 
 `joelclaw gateway status` now exposes a canonical `channels` surface plus summarized `channelHealth` for Telegram, Discord, iMessage, and Slack. `joelclaw gateway diagnose` adds a `channel-health` layer so owner/passive/fallback and half-dead channel states are visible before a full outage.
 
-Current rank-6 behavior also sends immediate degrade/recover alerts from the daemon, emits OTEL under `daemon.channel-health`, and respects `joelclaw gateway known-issues` mute state so known flaky channels stop crying wolf.
+Current rank-6 behavior also sends immediate degrade/recover alerts from the daemon, emits OTEL under `daemon.channel-health`, respects `joelclaw gateway known-issues` mute state so known flaky channels stop crying wolf, and now tracks guarded heal policy state per channel.
 
-This is still not the full restart/heal policy layer yet.
+`channelHealth.healing` now shows restart/manual policy, degraded streaks, cooldown, attempt counts, and last result. `gateway diagnose` adds `channel-healing`, and the watchdog can attempt guarded restarts for restart-eligible degraded channels while leaving ownership/lease conflicts as manual/operator work.
+
+Still not done: stricter cross-channel ownership enforcement and the human-required repair paths that process restart cannot fix.
 
 ## Runtime guardrail enforcement (ADR-0189)
 

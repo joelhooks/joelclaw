@@ -276,9 +276,14 @@ export function getOperatorTraceSnapshot(): OperatorTraceSnapshot {
   const lastCompleted = [...traces].reverse().find((trace) => trace.status === "completed") ?? null;
   const lastFailed = [...traces].reverse().find((trace) => trace.status === "failed") ?? null;
   const lastTimedOut = [...traces].reverse().find((trace) => trace.status === "timed_out") ?? null;
+  const timeoutMs = Math.max(
+    DEFAULT_OPERATOR_TRACE_TIMEOUT_MS,
+    ...Array.from(activeTraces.values()).map((trace) => trace.timeoutMs),
+    ...traces.slice(-5).map((trace) => trace.timeoutMs),
+  );
 
   return {
-    timeoutMs: DEFAULT_OPERATOR_TRACE_TIMEOUT_MS,
+    timeoutMs,
     activeCount: activeTraces.size,
     activeRoutes: Array.from(new Set(Array.from(activeTraces.values()).map((trace) => trace.route))).sort(),
     activeKinds: Array.from(new Set(Array.from(activeTraces.values()).map((trace) => trace.kind))).sort(),

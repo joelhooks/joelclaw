@@ -3,6 +3,7 @@ import {
   __commandQueueTestUtils,
   drain,
   enqueue,
+  getActiveRequestMetadata,
   getSupersessionState,
   onSupersession,
   setIdleWaiter,
@@ -117,6 +118,43 @@ describe("command queue supersession", () => {
     expect(second.batching?.messageCount).toBe(2);
     expect(getSupersessionState().batching.pendingCount).toBe(0);
     expect(getSupersessionState().batching.lastFlush?.messageCount).toBe(2);
+  });
+
+  test("preserves active request metadata during downstream execution", async () => {
+    let releasePrompt: (() => void) | undefined;
+    let markPromptEntered: (() => void) | undefined;
+    const promptEntered = new Promise<void>((resolve) => {
+      markPromptEntered = resolve;
+    });
+    const promptGate = new Promise<void>((resolve) => {
+      releasePrompt = resolve;
+    });
+
+    setSession({
+      prompt: async () => {
+        expect(getActiveRequestMetadata()).toMatchObject({
+          operatorTraceId: "cmd_trace_demo",
+          command: "status",
+        });
+        markPromptEntered?.();
+        await promptGate;
+      },
+      reload: async () => {},
+      compact: async () => {},
+      newSession: async () => {},
+    });
+    setIdleWaiter(async () => {});
+
+    await enqueue("telegram:1", "status", {
+      operatorTraceId: "cmd_trace_demo",
+      command: "status",
+    });
+    const draining = drain();
+    await promptEntered;
+    releasePrompt?.();
+    await draining;
+
+    expect(getActiveRequestMetadata()).toBeUndefined();
   });
 
   test("requests abort immediately when a newer batched message arrives during the active turn", async () => {

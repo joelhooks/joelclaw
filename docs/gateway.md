@@ -126,10 +126,14 @@ Operator surfaces:
 - `joelclaw gateway diagnose` adds an `operator-tracing` layer
 - timeout/failure paths send an explicit Telegram follow-up with route + trace id instead of silently relying on spinners or missing command replies
 
-Current boundary of this rank-5 slice:
+Current deeper rank-5 slice now also carries queued Telegram agent-command trace ids through downstream gateway execution:
 
-- shipped: Telegram operator callback tracing, Telegram non-callback command tracing, and timeout/failure surfacing
-- still open: richer downstream completion acks for externally routed callback chains and for queued agent-command completion beyond the initial enqueue/accept step
+- queued `/command` and `cmd:*` agent executions keep the same trace id through queue dispatch
+- traces complete on downstream turn completion instead of lying at enqueue time
+- prompt failure, assistant error, and supersession paths fail the trace explicitly
+- agent-backed command traces use a longer timeout window (`120s`) because downstream execution is real work, not just callback ack latency
+
+Still open: richer downstream completion acks for externally routed callback chains that execute outside the gateway's own turn lifecycle.
 
 ## Channel runtime contracts (ADR-0218 rank 6)
 
@@ -157,10 +161,18 @@ Daemon behavior now includes immediate channel-health transition handling:
 - send direct Telegram degrade/recover alerts unless that channel is muted as a known issue
 - reuse the same known-issues keys as the autonomous monitor (`gateway:health:muted-channels`, `gateway:health:mute-reasons`)
 
+The deeper rank-6 slice now adds active heal policy state:
+
+- each channel carries `healPolicy` (`restart` / `manual` / `none`) and `healReason`
+- `channelHealth.healing` exposes degraded streak count, cooldown, attempts, and last heal result per channel
+- `joelclaw gateway diagnose` adds a `channel-healing` layer
+- watchdog attempts guarded restarts for restart-eligible degraded channels after `2` consecutive degraded checks with a `10m` cooldown
+- ownership/lease problems (for example Telegram passive poll ownership) stay visible as `manual` instead of triggering dumb restart churn
+
 Current boundary of this rank-6 slice:
 
-- shipped: reusable channel runtime health/ownership snapshots, operator visibility, and immediate degrade/recover alerting with known-issue suppression
-- still open: active restart/heal policies and stricter single-owner semantics beyond Telegram
+- shipped: reusable channel runtime health/ownership snapshots, immediate degrade/recover alerting with known-issue suppression, and guarded per-channel heal policy state with restart attempts for restart-eligible channels
+- still open: stricter single-owner semantics beyond Telegram and downstream policies for channels that require human/environment repair instead of process restart
 
 ## Telegram multi-instance polling ownership (2026-03-05)
 

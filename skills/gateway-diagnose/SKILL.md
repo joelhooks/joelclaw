@@ -115,8 +115,9 @@ Interpretation:
 - Do not call that a full outage unless process/session layers are also failing.
 - `joelclaw gateway diagnose` now emits a dedicated `session-pressure` layer so pressure risk is inspectable even when Redis/process layers are healthy.
 - `interruptibility` tells you whether a newer human message already superseded the stale turn, and whether direct human channels are currently sitting inside the short batching window before dispatch, so a brief pause can be intentional instead of another silent failure.
-- `operator-tracing` tells you whether Telegram operator callbacks and direct commands are acking, completing, failing, or timing out honestly, with route + trace id surfaces for the last completed/failed/timed-out action.
+- `operator-tracing` tells you whether Telegram operator callbacks and direct commands are acking, completing, failing, or timing out honestly, with route + trace id surfaces for the last completed/failed/timed-out action. Queued Telegram agent commands now stay open until the downstream gateway turn really finishes.
 - `channel-health` tells you whether a channel is intentionally owner/passive/fallback, truly connected, or quietly half-dead. It now also shows muted known issues and the last degrade/recover event. Telegram `fallback` with `leaseEnabled=false` is expected when poll leasing is disabled locally; do not call that degraded by itself.
+- `channel-healing` tells you whether the watchdog currently has a restart policy armed, what the degraded streak/cooldown is, and whether the last heal attempt succeeded or blew up.
 
 ### Layer 2: Error Log (the money log)
 

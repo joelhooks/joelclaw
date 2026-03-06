@@ -58,6 +58,7 @@ type CommandHandlerInit = {
 const PINNED_STATUS_KEY = "joelclaw:gateway:pinned_message_id";
 const CALLBACK_PREFIX = "cmd:";
 const MAX_LIGHT_RESPONSE_CHARS = 3900;
+const DOWNSTREAM_AGENT_TRACE_TIMEOUT_MS = 120_000;
 
 const LIGHT_MODEL_MAP: Record<string, { provider: string; id: string }> = {
   haiku: { provider: "anthropic", id: "claude-haiku-4-5" },
@@ -439,7 +440,7 @@ async function executeCommand(
   command: CommandDefinition,
   rawArgs: string,
   init: CommandHandlerInit,
-  options?: { fromArgsMenu?: boolean; telegramMessageId?: number; callbackTraceId?: string },
+  options?: { fromArgsMenu?: boolean; telegramMessageId?: number; operatorTraceId?: string },
 ): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
@@ -512,7 +513,7 @@ async function executeCommand(
     command: command.nativeName,
     execution: command.execution,
     fromArgsMenu: options?.fromArgsMenu ?? false,
-    ...(options?.callbackTraceId ? { callbackTraceId: options.callbackTraceId } : {}),
+    ...(options?.operatorTraceId ? { operatorTraceId: options.operatorTraceId } : {}),
   });
 }
 
@@ -540,6 +541,7 @@ async function runTextCommandWithTrace(
       messageId: ctx.message?.message_id,
     },
     {
+      timeoutMs: command.execution === "agent" ? DOWNSTREAM_AGENT_TRACE_TIMEOUT_MS : undefined,
       onTimeout: async (trace) => {
         await sendTraceTimeoutMessage(init.bot, chatId, "Command", trace.route, trace.traceId).catch(() => {});
       },
@@ -556,11 +558,12 @@ async function runTextCommandWithTrace(
 
   try {
     markOperatorTraceDispatched(traceId, `handling ${command.execution} command ${command.nativeName}`);
-    await executeCommand(ctx, command, rawArgs, init);
-    const detail = command.execution === "agent"
-      ? `agent command /${command.nativeName} queued; downstream assistant completion untracked`
-      : `command /${command.nativeName} handled`;
-    completeOperatorTrace(traceId, detail);
+    await executeCommand(ctx, command, rawArgs, init, {
+      operatorTraceId: command.execution === "agent" ? traceId : undefined,
+    });
+    if (command.execution !== "agent") {
+      completeOperatorTrace(traceId, `command /${command.nativeName} handled`);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     failOperatorTrace(traceId, message, `command failed for /${command.nativeName}`);
@@ -596,6 +599,7 @@ function registerCallbackHandler(init: CommandHandlerInit): void {
         messageId: ctx.callbackQuery.message?.message_id,
       },
       {
+        timeoutMs: command.execution === "agent" ? DOWNSTREAM_AGENT_TRACE_TIMEOUT_MS : undefined,
         onTimeout: async (trace) => {
           if (!chatId) return;
           await sendTraceTimeoutMessage(init.bot, chatId, "Callback", trace.route, trace.traceId).catch(() => {});
@@ -615,10 +619,12 @@ function registerCallbackHandler(init: CommandHandlerInit): void {
       await executeCommand(ctx, command, rawValue, init, {
         fromArgsMenu: true,
         telegramMessageId: ctx.callbackQuery.message?.message_id,
-        callbackTraceId: traceId,
+        operatorTraceId: command.execution === "agent" ? traceId : undefined,
       });
       markOperatorTraceDispatched(traceId, `executed ${command.execution} command ${command.nativeName}`);
-      completeOperatorTrace(traceId, `callback handled for /${command.nativeName}`);
+      if (command.execution !== "agent") {
+        completeOperatorTrace(traceId, `callback handled for /${command.nativeName}`);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       failOperatorTrace(traceId, message, `callback failed for /${command.nativeName}`);

@@ -10,14 +10,22 @@ import { ModelFallbackController, type TelemetryEmitter } from "@joelclaw/model-
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { getModel } from "@mariozechner/pi-ai";
 import { calculateContextTokens, createAgentSession, DefaultResourceLoader, getLastAssistantUsage, type LoadExtensionsResult, SessionManager } from "@mariozechner/pi-coding-agent";
-import { getOperatorTraceSnapshot } from "./callback-trace";
+import {
+  completeOperatorTrace,
+  failOperatorTrace,
+  getOperatorTraceSnapshot,
+} from "./callback-trace";
 import {
   buildChannelHealthSnapshot,
+  type ChannelHealState,
   type ChannelHealthEvent,
   type ChannelHealthSnapshot,
+  evaluateChannelHealPolicy,
   evaluateChannelHealthAlert,
   type GatewayChannelId,
+  getInitialChannelHealState,
   getInitialChannelHealthAlertState,
+  recordChannelHealAttemptResult,
 } from "./channel-health";
 import { fetchChannel as fetchDiscordChannel, getClient as getDiscordClient, getRuntimeState as getDiscordRuntimeState, markError as markDiscordError, parseChannelId as parseDiscordChannelId, send as sendDiscord, shutdown as shutdownDiscord, start as startDiscord } from "./channels/discord";
 import { getRuntimeState as getIMessageRuntimeState, send as sendIMessage, shutdown as shutdownIMessage, start as startIMessage } from "./channels/imessage";
@@ -28,6 +36,7 @@ import type { SendMediaPayload } from "./channels/types";
 import {
   drain,
   enqueue,
+  getActiveRequestMetadata,
   getActiveSource,
   getActiveThreadContext,
   getConsecutiveFailures,
@@ -1008,9 +1017,12 @@ const GATEWAY_HEALTH_MUTED_CHANNELS_KEY = "gateway:health:muted-channels";
 const GATEWAY_HEALTH_MUTE_REASONS_KEY = "gateway:health:mute-reasons";
 const CHANNEL_HEALTH_IDS: GatewayChannelId[] = ["telegram", "discord", "imessage", "slack"];
 const CHANNEL_HEALTH_MUTE_REFRESH_MS = 60 * 1000;
+const CHANNEL_HEAL_RESTART_THRESHOLD = 2;
+const CHANNEL_HEAL_COOLDOWN_MS = 10 * 60 * 1000;
 let lastCompactionAt = Date.now();
 let sessionPressureAlertState = getInitialSessionPressureAlertState();
 let channelHealthAlertState = getInitialChannelHealthAlertState();
+let channelHealState: ChannelHealState = getInitialChannelHealState();
 let channelHealthMuteState: {
   mutedChannels: GatewayChannelId[];
   muteReasons: Partial<Record<GatewayChannelId, string>>;
@@ -1022,6 +1034,7 @@ let channelHealthMuteState: {
 };
 let channelHealthRefreshPromise: Promise<void> | null = null;
 let channelHealthEvaluatePromise: Promise<void> | null = null;
+let channelHealEvaluatePromise: Promise<void> | null = null;
 
 // Initialize sessionCreatedAt and lastCompactionAt from session history.
 // For resumed sessions, session age = earliest entry timestamp (not daemon restart time).
@@ -1340,6 +1353,33 @@ function compactErrorForAlert(errorText: string, maxLength = 220): string {
   return `${compacted.slice(0, maxLength - 1)}…`;
 }
 
+function getOperatorTraceIdFromMetadata(metadata: Record<string, unknown> | undefined): string | undefined {
+  const traceId = metadata?.operatorTraceId;
+  return typeof traceId === "string" && traceId.length > 0 ? traceId : undefined;
+}
+
+function getOperatorCommandLabel(metadata: Record<string, unknown> | undefined): string {
+  const command = metadata?.command;
+  return typeof command === "string" && command.length > 0 ? `/${command}` : "operator command";
+}
+
+function buildOperatorTraceCompletionDetail(
+  metadata: Record<string, unknown> | undefined,
+  assistantText: string,
+  toolCalls: string[],
+): string {
+  const commandLabel = getOperatorCommandLabel(metadata);
+  const normalized = assistantText.replace(/\s+/g, " ").trim();
+  if (normalized) {
+    const preview = normalized.length > 120 ? `${normalized.slice(0, 119)}…` : normalized;
+    return `${commandLabel} completed — ${preview}`;
+  }
+  if (toolCalls.length > 0) {
+    return `${commandLabel} completed after ${toolCalls.length} tool call${toolCalls.length === 1 ? "" : "s"}`;
+  }
+  return `${commandLabel} turn completed`;
+}
+
 async function pingModelFailure(event: QueueErrorEvent): Promise<void> {
   const reason = classifyModelFailure(event.error);
   if (!reason && event.consecutiveFailures < 3) return;
@@ -1411,6 +1451,16 @@ onQueueError((event) => {
   if (event.error.toLowerCase().includes("already processing") && !turnInProgress) {
     fallbackController.cancelTimeoutWatch();
   }
+
+  const operatorTraceId = getOperatorTraceIdFromMetadata(event.metadata);
+  if (operatorTraceId) {
+    failOperatorTrace(
+      operatorTraceId,
+      event.error,
+      `${getOperatorCommandLabel(event.metadata)} failed before downstream completion`,
+    );
+  }
+
   void fallbackController.onPromptError(event.consecutiveFailures);
   void pingModelFailure(event);
 });
@@ -1422,6 +1472,16 @@ onSupersession(async (event) => {
     droppedQueued: event.droppedQueued,
     activeRequestId: event.activeRequestId,
   });
+
+  const activeMetadata = getActiveRequestMetadata();
+  const operatorTraceId = getOperatorTraceIdFromMetadata(activeMetadata);
+  if (operatorTraceId) {
+    failOperatorTrace(
+      operatorTraceId,
+      "superseded_by_newer_human_turn",
+      `${getOperatorCommandLabel(activeMetadata)} superseded by a newer human turn`,
+    );
+  }
 
   fallbackController.cancelTimeoutWatch();
   responseChunks = [];
@@ -2068,6 +2128,40 @@ function describeSlackChannelHealth(channel: Record<string, unknown>): string {
   return channel.connected === true ? "socket connected" : "socket not connected";
 }
 
+function getTelegramHealPolicy(channel: Record<string, unknown>): { policy: "restart" | "manual" | "none"; reason: string | null } {
+  const ownerState = typeof channel.ownerState === "string" ? channel.ownerState : undefined;
+  const leaseEnabled = channel.leaseEnabled === true;
+  const started = channel.started === true;
+  const healthy = channel.healthy === true;
+
+  if (!channelInfo.telegram) {
+    return { policy: "none", reason: null };
+  }
+
+  if (ownerState === "passive") {
+    return {
+      policy: "manual",
+      reason: "Telegram poll ownership is passive; investigate competing bot instances or lease coordination.",
+    };
+  }
+
+  if (ownerState === "fallback" && leaseEnabled) {
+    return {
+      policy: "manual",
+      reason: "Telegram fell back while lease coordination is enabled; check Redis lease ownership and competing pollers.",
+    };
+  }
+
+  if (!started || ownerState === "stopped" || !healthy) {
+    return {
+      policy: "restart",
+      reason: "Telegram channel stopped or lost healthy polling state.",
+    };
+  }
+
+  return { policy: "none", reason: null };
+}
+
 function getChannelHealthSummary(
   channels = getChannelRuntimeSnapshots(),
 ): ChannelHealthSnapshot & {
@@ -2090,6 +2184,20 @@ function getChannelHealthSummary(
       lastRecoveredAt: string | null;
     }>;
   };
+  healing: {
+    restartAfterConsecutiveDegraded: number;
+    cooldownMs: number;
+    channels: Record<GatewayChannelId, {
+      status: string;
+      policy: string;
+      policyReason: string | null;
+      consecutiveDegradedCount: number;
+      attempts: number;
+      lastAttemptAt: string | null;
+      lastAttemptStatus: string;
+      lastAttemptError: string | null;
+    }>;
+  };
 } {
   const mutedSet = new Set(channelHealthMuteState.mutedChannels);
   const muteReasons = channelHealthMuteState.muteReasons;
@@ -2097,15 +2205,20 @@ function getChannelHealthSummary(
   const discord = channels.discord ?? {};
   const imessage = channels.imessage ?? {};
   const slack = channels.slack ?? {};
+  const telegramHealthy = telegram.healthy === true
+    && !(telegram.ownerState === "passive" || (telegram.ownerState === "fallback" && telegram.leaseEnabled === true) || telegram.ownerState === "stopped");
+  const telegramHeal = getTelegramHealPolicy(telegram);
 
   const snapshot = buildChannelHealthSnapshot({
     entries: {
       telegram: {
         configured: channelInfo.telegram,
-        healthy: telegram.healthy === true && !(telegram.ownerState === "passive" || (telegram.ownerState === "fallback" && telegram.leaseEnabled === true) || telegram.ownerState === "stopped"),
+        healthy: telegramHealthy,
         detail: describeTelegramChannelHealth(telegram),
         muted: mutedSet.has("telegram"),
         muteReason: muteReasons.telegram ?? null,
+        healPolicy: telegramHeal.policy,
+        healReason: telegramHeal.reason,
       },
       discord: {
         configured: channelInfo.discord,
@@ -2113,6 +2226,8 @@ function getChannelHealthSummary(
         detail: describeDiscordChannelHealth(discord),
         muted: mutedSet.has("discord"),
         muteReason: muteReasons.discord ?? null,
+        healPolicy: discord.healthy === true ? "none" : "restart",
+        healReason: discord.healthy === true ? null : "Discord client is not ready.",
       },
       imessage: {
         configured: channelInfo.imessage,
@@ -2120,6 +2235,8 @@ function getChannelHealthSummary(
         detail: describeIMessageChannelHealth(imessage),
         muted: mutedSet.has("imessage"),
         muteReason: muteReasons.imessage ?? null,
+        healPolicy: imessage.healthy === true ? "none" : "restart",
+        healReason: imessage.healthy === true ? null : "iMessage socket is disconnected.",
       },
       slack: {
         configured: Boolean(SLACK_ALLOWED_USER_ID),
@@ -2127,6 +2244,8 @@ function getChannelHealthSummary(
         detail: describeSlackChannelHealth(slack),
         muted: mutedSet.has("slack"),
         muteReason: muteReasons.slack ?? null,
+        healPolicy: slack.healthy === true ? "none" : "restart",
+        healReason: slack.healthy === true ? null : "Slack channel is not connected.",
       },
     },
   });
@@ -2167,6 +2286,37 @@ function getChannelHealthSummary(
         lastRecoveredAt: string | null;
       }>,
     },
+    healing: {
+      restartAfterConsecutiveDegraded: CHANNEL_HEAL_RESTART_THRESHOLD,
+      cooldownMs: CHANNEL_HEAL_COOLDOWN_MS,
+      channels: Object.fromEntries(
+        CHANNEL_HEALTH_IDS.map((channel) => {
+          const state = channelHealState.channels[channel];
+          return [
+            channel,
+            {
+              status: state.status,
+              policy: state.policy,
+              policyReason: state.policyReason,
+              consecutiveDegradedCount: state.consecutiveDegradedCount,
+              attempts: state.attempts,
+              lastAttemptAt: state.lastAttemptAt > 0 ? new Date(state.lastAttemptAt).toISOString() : null,
+              lastAttemptStatus: state.lastAttemptStatus,
+              lastAttemptError: state.lastAttemptError,
+            },
+          ];
+        }),
+      ) as Record<GatewayChannelId, {
+        status: string;
+        policy: string;
+        policyReason: string | null;
+        consecutiveDegradedCount: number;
+        attempts: number;
+        lastAttemptAt: string | null;
+        lastAttemptStatus: string;
+        lastAttemptError: string | null;
+      }>,
+    },
   };
 }
 
@@ -2181,6 +2331,25 @@ function syncChannelHealthAlertState(snapshot: ChannelHealthSnapshot, at = Date.
       lastChangedAt: previous.lastChangedAt > 0 ? previous.lastChangedAt : at,
       lastEventAt: previous.lastEventAt,
       lastRecoveredAt: previous.lastRecoveredAt,
+    };
+  }
+}
+
+function syncChannelHealState(snapshot: ChannelHealthSnapshot): void {
+  for (const channel of CHANNEL_HEALTH_IDS) {
+    const current = snapshot.entries[channel];
+    const previous = channelHealState.channels[channel];
+    if (!current) continue;
+
+    channelHealState.channels[channel] = {
+      ...previous,
+      status: current.status,
+      policy: current.healPolicy,
+      policyReason: current.healReason,
+      consecutiveDegradedCount: current.status === "degraded" ? previous.consecutiveDegradedCount : 0,
+      lastAttemptStatus: current.status === "degraded" && previous.lastAttemptStatus === "scheduled"
+        ? "scheduled"
+        : previous.lastAttemptStatus,
     };
   }
 }
@@ -2275,6 +2444,150 @@ async function maybeNotifyChannelHealth(): Promise<void> {
     await channelHealthEvaluatePromise;
   } finally {
     channelHealthEvaluatePromise = null;
+  }
+}
+
+async function restartGatewayChannel(channel: GatewayChannelId, reason: string): Promise<void> {
+  switch (channel) {
+    case "telegram": {
+      if (!TELEGRAM_TOKEN || !TELEGRAM_USER_ID) {
+        throw new Error("telegram not configured");
+      }
+      await shutdownTelegram();
+      await startTelegram(TELEGRAM_TOKEN, TELEGRAM_USER_ID, enqueueToGateway, {
+        configureBot: async (bot) => {
+          await initializeTelegramCommandHandler({
+            bot,
+            enqueue: enqueueToGateway,
+            redis: redisClient,
+            chatId: TELEGRAM_USER_ID,
+            getStatusSnapshot: getGatewayStatusSnapshot,
+          });
+        },
+        abortCurrentTurn: async () => {
+          await session.abort();
+        },
+      });
+      setOutboundMessageIdCallback((messageId: number) => {
+        const threadCtx = getActiveThreadContext();
+        if (threadCtx?.threadId) {
+          recordOutboundAnchor(threadCtx.threadId, "telegram", String(messageId));
+        }
+      });
+      await updatePinnedStatus().catch(() => {});
+      return;
+    }
+    case "discord": {
+      if (!DISCORD_TOKEN || !DISCORD_ALLOWED_USER_ID) {
+        throw new Error("discord not configured");
+      }
+      await shutdownDiscord();
+      await startDiscord(DISCORD_TOKEN, DISCORD_ALLOWED_USER_ID, enqueueToGateway, {
+        redis: redisClient,
+        abortCurrentTurn: async () => {
+          await session.abort();
+        },
+      });
+      registerDiscordMcqAdapter(fetchDiscordChannel, getDiscordClient as () => any);
+      return;
+    }
+    case "imessage": {
+      if (!IMESSAGE_ALLOWED_SENDER) {
+        throw new Error("imessage not configured");
+      }
+      await shutdownIMessage();
+      await startIMessage(IMESSAGE_ALLOWED_SENDER, enqueueToGateway, {
+        abortCurrentTurn: async () => {
+          await session.abort();
+        },
+      });
+      return;
+    }
+    case "slack": {
+      await shutdownSlack();
+      await startSlack(enqueueToGateway, {
+        allowedUserId: SLACK_ALLOWED_USER_ID,
+      });
+      channelInfo.slack = isSlackStarted();
+      return;
+    }
+  }
+}
+
+async function maybeHealChannels(): Promise<void> {
+  if (channelHealEvaluatePromise) {
+    return channelHealEvaluatePromise;
+  }
+
+  channelHealEvaluatePromise = (async () => {
+    await maybeRefreshChannelHealthMuteState();
+    const summary = getChannelHealthSummary();
+    const decision = evaluateChannelHealPolicy(summary, channelHealState, Date.now(), {
+      restartAfterConsecutiveDegraded: CHANNEL_HEAL_RESTART_THRESHOLD,
+      cooldownMs: CHANNEL_HEAL_COOLDOWN_MS,
+    });
+    channelHealState = decision.nextState;
+
+    for (const action of decision.actions) {
+      const metadata = {
+        channel: action.channel,
+        policy: action.policy,
+        detail: action.detail,
+        reason: action.reason,
+        attempts: channelHealState.channels[action.channel]?.attempts ?? 0,
+        consecutiveDegradedCount: channelHealState.channels[action.channel]?.consecutiveDegradedCount ?? 0,
+      };
+
+      void emitGatewayOtel({
+        level: "warn",
+        component: "daemon.channel-health",
+        action: "channel_health.heal.attempted",
+        success: true,
+        metadata,
+      });
+
+      try {
+        await restartGatewayChannel(action.channel, action.reason ?? action.detail);
+        channelHealState = recordChannelHealAttemptResult(channelHealState, {
+          channel: action.channel,
+          succeeded: true,
+        });
+        const refreshed = getChannelHealthSummary();
+        syncChannelHealthAlertState(refreshed);
+        syncChannelHealState(refreshed);
+        void emitGatewayOtel({
+          level: "info",
+          component: "daemon.channel-health",
+          action: "channel_health.heal.succeeded",
+          success: true,
+          metadata,
+        });
+      } catch (error) {
+        channelHealState = recordChannelHealAttemptResult(channelHealState, {
+          channel: action.channel,
+          succeeded: false,
+          error: String(error),
+        });
+        console.error("[gateway:channel-health] channel heal failed", {
+          channel: action.channel,
+          error: String(error),
+        });
+        void emitGatewayOtel({
+          level: "error",
+          component: "daemon.channel-health",
+          action: "channel_health.heal.failed",
+          success: false,
+          error: String(error),
+          metadata,
+        });
+      }
+    }
+  })();
+
+  try {
+    await channelHealEvaluatePromise;
+  } finally {
+    channelHealEvaluatePromise = null;
   }
 }
 
@@ -2605,10 +2918,19 @@ session.subscribe((event: any) => {
       const isOverload = errorMsg.includes("overloaded") || errorMsg.includes("529");
       if (is429 || isOverload) {
         const reason = is429 ? "Anthropic rate limit (429)" : "Anthropic overloaded (529)";
+        const activeMetadata = getActiveRequestMetadata();
+        const operatorTraceId = getOperatorTraceIdFromMetadata(activeMetadata);
         console.warn("[gateway:fallback] API error detected via message_end", {
           reason,
           errorMsg: errorMsg.slice(0, 120),
         });
+        if (operatorTraceId) {
+          failOperatorTrace(
+            operatorTraceId,
+            errorMsg,
+            `${getOperatorCommandLabel(activeMetadata)} failed while waiting for downstream completion`,
+          );
+        }
         void emitGatewayOtel({
           level: "error",
           component: "daemon",
@@ -2629,7 +2951,16 @@ session.subscribe((event: any) => {
         return;
       }
       // Other errors — log but don't route
+      const activeMetadata = getActiveRequestMetadata();
+      const operatorTraceId = getOperatorTraceIdFromMetadata(activeMetadata);
       console.error("[gateway] message_end with error", { errorMsg: errorMsg.slice(0, 200) });
+      if (operatorTraceId) {
+        failOperatorTrace(
+          operatorTraceId,
+          errorMsg,
+          `${getOperatorCommandLabel(activeMetadata)} ended with an assistant error`,
+        );
+      }
       telegramStream.abort();
       return;
     }
@@ -2874,6 +3205,15 @@ session.subscribe((event: any) => {
       const resolve = _idleResolve;
       _idleResolve = undefined;
       resolve();
+    }
+
+    const activeMetadata = getActiveRequestMetadata();
+    const operatorTraceId = getOperatorTraceIdFromMetadata(activeMetadata);
+    if (operatorTraceId) {
+      completeOperatorTrace(
+        operatorTraceId,
+        buildOperatorTraceCompletionDetail(activeMetadata, turnKnowledgeText, turnKnowledgeToolCalls),
+      );
     }
 
     const turnSource = getActiveSource() ?? responseSource ?? lastPromptSource ?? "gateway";
@@ -3480,7 +3820,9 @@ try {
 }
 
 await maybeRefreshChannelHealthMuteState(true);
-syncChannelHealthAlertState(getChannelHealthSummary());
+const initialChannelHealth = getChannelHealthSummary();
+syncChannelHealthAlertState(initialChannelHealth);
+syncChannelHealState(initialChannelHealth);
 
 // ── Init fallback controller (ADR-0091) ──────────────────
 // Must happen after Telegram starts so notify can send alerts.
@@ -3763,6 +4105,7 @@ const queueDrainTimer = setInterval(() => {
 // _lastTurnEndAt and _lastPromptAt declared near session init (line ~85) to avoid TDZ
 const watchdogTimer = setInterval(() => {
   void maybeNotifyChannelHealth();
+  void maybeHealChannels();
 
   const now = Date.now();
   const uptimeMs = now - startedAt;

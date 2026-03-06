@@ -73,6 +73,24 @@ describe("operator trace", () => {
     expect(snapshot.lastFailed?.detail).toBe("worktree merge failed");
   });
 
+  test("surfaces the longest active/recent timeout in the snapshot", () => {
+    const traceId = startOperatorTrace(
+      {
+        kind: "command",
+        handler: "telegram.commands",
+        route: "command:long-running",
+        rawData: "/long-running",
+      },
+      { timeoutMs: 120_000 },
+    );
+
+    const snapshot = getOperatorTraceSnapshot();
+    expect(snapshot.timeoutMs).toBe(120_000);
+
+    completeOperatorTrace(traceId, "done");
+    expect(getOperatorTraceSnapshot().timeoutMs).toBe(120_000);
+  });
+
   test("records timeout and removes active trace", async () => {
     const timedOut: string[] = [];
 

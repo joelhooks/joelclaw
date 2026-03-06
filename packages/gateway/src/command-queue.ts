@@ -24,6 +24,7 @@ export interface ActiveRequest {
   enqueuedAt: number;
   enqueueOrder: number;
   prompt: string;
+  metadata?: Record<string, unknown>;
   supersessionKey?: string;
   supersededAt?: number;
   supersededBySource?: string;
@@ -101,6 +102,7 @@ export type QueueErrorEvent = {
   consecutiveFailures: number;
   source: string;
   error: string;
+  metadata?: Record<string, unknown>;
 };
 export type EnqueueResult = {
   streamId?: string;
@@ -687,6 +689,10 @@ export function getActiveThreadContext(): { threadId?: string; replyToAnchor?: s
   };
 }
 
+export function getActiveRequestMetadata(): Record<string, unknown> | undefined {
+  return activeRequest?.metadata;
+}
+
 export function isActiveRequestSuperseded(): boolean {
   return Boolean(activeRequest?.supersededAt);
 }
@@ -924,6 +930,7 @@ export async function drain(): Promise<void> {
         enqueuedAt: entry.enqueuedAt,
         enqueueOrder: entry.enqueueOrder,
         prompt: entry.prompt,
+        metadata: entry.metadata,
         supersessionKey: entry.supersessionKey,
         threadId: entry.threadId,
         replyToAnchor: entry.replyToAnchor,
@@ -1099,6 +1106,7 @@ export async function drain(): Promise<void> {
             consecutiveFailures,
             source: entry.source,
             error: errorText,
+            metadata: entry.metadata,
           });
         } catch {
           /* swallow */
