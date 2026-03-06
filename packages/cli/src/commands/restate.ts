@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs"
+import path from "node:path"
 import { Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { respond, respondError } from "../response"
@@ -36,6 +38,25 @@ const parseJson = <T = Record<string, unknown>>(raw: string): T | null => {
 const normalizeHostport = (urlOrHostport: string): string => {
   const trimmed = urlOrHostport.trim()
   return trimmed.replace(/^https?:\/\//, "")
+}
+
+const resolveSmokeScriptPath = (script: string): string => {
+  if (path.isAbsolute(script)) return script
+
+  const cwdCandidate = path.resolve(process.cwd(), script)
+  if (existsSync(cwdCandidate)) return cwdCandidate
+
+  const repoCandidates = [
+    process.env.JOELCLAW_ROOT?.trim(),
+    process.env.HOME ? path.join(process.env.HOME, "Code", "joelhooks", "joelclaw") : undefined,
+  ].filter((value): value is string => Boolean(value))
+
+  for (const repoRoot of repoCandidates) {
+    const candidate = path.join(repoRoot, script)
+    if (existsSync(candidate)) return candidate
+  }
+
+  return cwdCandidate
 }
 
 const restateStatusCmd = Command.make(
@@ -201,7 +222,29 @@ const restateSmokeCmd = Command.make(
   },
   ({ script }) =>
     Effect.gen(function* () {
-      const proc = Bun.spawnSync(["bash", script], {
+      const resolvedScript = resolveSmokeScriptPath(script)
+
+      if (!existsSync(resolvedScript)) {
+        yield* Console.log(respondError(
+          "restate smoke",
+          `Smoke script not found: ${resolvedScript}`,
+          "RESTATE_SMOKE_SCRIPT_NOT_FOUND",
+          "Run from the joelclaw repo root, pass --script with an absolute path, or set JOELCLAW_ROOT.",
+          [
+            {
+              command: "joelclaw restate smoke --script <path>",
+              description: "Retry with explicit script path",
+            },
+            {
+              command: "joelclaw restate status",
+              description: "Check Restate runtime health",
+            },
+          ]
+        ))
+        return
+      }
+
+      const proc = Bun.spawnSync(["bash", resolvedScript], {
         env: process.env,
         stdout: "pipe",
         stderr: "pipe",
@@ -215,7 +258,7 @@ const restateSmokeCmd = Command.make(
           "restate smoke",
           stderr || stdout || `smoke script exited with ${proc.exitCode}`,
           "RESTATE_SMOKE_FAILED",
-          "Ensure k8s Restate + MinIO are running and the script path is valid.",
+          "Ensure Restate runtime/deployment endpoint are reachable and deployGate smoke prerequisites are available.",
           [
             {
               command: "joelclaw restate status",
@@ -235,7 +278,7 @@ const restateSmokeCmd = Command.make(
       }
 
       yield* Console.log(respond("restate smoke", {
-        script,
+        script: resolvedScript,
         passed: true,
         output: stdout,
       }, [
@@ -266,7 +309,7 @@ export const restateCmd = Command.make("restate", {}, () =>
     },
     {
       command: "joelclaw restate smoke",
-      description: "Run end-to-end Restate smoke test with MinIO artifact verification",
+      description: "Run end-to-end Restate deployGate smoke test",
     },
   ]))
 ).pipe(Command.withSubcommands([restateStatusCmd, restateDeploymentsCmd, restateSmokeCmd]))

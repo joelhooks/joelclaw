@@ -122,6 +122,25 @@ Semantics:
 - `joelclaw knowledge`
 - `joelclaw capabilities`
 
+## Restate command tree
+
+```bash
+joelclaw restate
+├── status [--namespace <namespace>] [--admin-url <url>]
+├── deployments [--admin-url <url>] [--cli-bin <bin>]
+└── smoke [--script <path>]
+```
+
+`joelclaw restate smoke` semantics:
+
+- resolves the smoke script path in this order:
+  1. exact absolute path
+  2. relative to current working directory
+  3. relative to `JOELCLAW_ROOT`
+  4. relative to `~/Code/joelhooks/joelclaw`
+- runs `scripts/restate/test-workflow.sh` by default.
+- current smoke workflow validates `deployGate` end-to-end (not legacy `orchestratorService/runBatch`).
+
 ## Daily summary command
 
 ```bash

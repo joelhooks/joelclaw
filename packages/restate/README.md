@@ -1,18 +1,12 @@
 # @joelclaw/restate
 
-ADR-0207 Restate package for durable execution patterns.
+ADR-0207 Restate package for production durable workflow execution.
 
-## What this package proves
+## Current workflow surface
 
-- Durable step execution (`ctx.run`)
-- Fan-out/fan-in orchestration (`ctx.serviceClient`)
-- Human-in-the-loop signaling (`ctx.promise` + resolve)
-
-## Services
-
-- `workerService.runTask` — durable unit-of-work handler
-- `orchestratorService.runBatch` — fan-out/fan-in orchestrator
-- `approvalWorkflow.run/approve/reject` — approval signal workflow
+- `deployGate.run` — durable deploy pipeline for `system-bus-worker`
+- `deployGate.approve` — resolve approval promise as approved
+- `deployGate.reject` — resolve approval promise as rejected
 
 ## Run locally
 
@@ -32,33 +26,35 @@ Environment variables:
 - `RESTATE_ADMIN_URL` (default `http://localhost:9070`)
 - `RESTATE_CLI_BIN` (default `restate`)
 
-## Run end-to-end smoke test (includes MinIO/AIStor)
+## Run end-to-end smoke test (deployGate)
 
 ```bash
 scripts/restate/test-workflow.sh
 # or
 joelclaw restate smoke
-
-# against AIStor
-MINIO_NAMESPACE=aistor MINIO_SERVICE_NAME=aistor-s3-api MINIO_USE_SSL=true scripts/restate/test-workflow.sh
 ```
 
-Smoke test behavior:
+Smoke behavior:
 
-- port-forwards Restate ingress/admin + selected object-store service (`joelclaw/minio` by default, `aistor/aistor-s3-api` supported)
-- starts `packages/restate` deployment endpoint locally
-- registers endpoint with Restate admin API
-- invokes `orchestratorService.runBatch`
-- validates result includes S3 artifact write/read round-trip
+- port-forwards Restate ingress/admin (`svc/restate`)
+- starts local `packages/restate` endpoint on `:9080` in console channel mode
+- force-registers deployment endpoint
+- triggers `POST /deployGate/{id}/run` with:
+  - `skipApproval=true` (default)
+  - `tag` defaulting to the current tag in `k8s/system-bus-worker.yaml`
+- validates:
+  - response image tag matches requested tag
+  - decision is `skipped` when skip-approval is enabled
+  - `rolloutVerified=true`
 
-Object-store environment variables used by smoke script:
+Smoke environment variables:
 
-- `MINIO_NAMESPACE` (default `joelclaw`; set `aistor` for AIStor)
-- `MINIO_SERVICE_NAME` (default `minio`; set `aistor-s3-api` for AIStor)
-- `MINIO_LOCAL_PORT` (default `9000`)
-- `MINIO_USE_SSL` (default `false`; set `true` for AIStor)
-- `MINIO_ACCESS_KEY` (default `minioadmin`)
-- `MINIO_SECRET_KEY` (default `minioadmin`)
-- `MINIO_BUCKET` (default `restate-smoke-tests`)
-
-When `MINIO_USE_SSL=true`, the script uses insecure TLS for health checks and sets `NODE_TLS_REJECT_UNAUTHORIZED=0` for the local smoke-run process.
+- `SMOKE_TAG` — override image tag (defaults to current `k8s/system-bus-worker.yaml` tag)
+- `SMOKE_REASON` — reason string attached to deploy gate request
+- `SMOKE_SKIP_APPROVAL` — `true|false` (default `true`)
+- `SMOKE_DEPLOY_ID` — override workflow key
+- `SMOKE_TIMEOUT_SECONDS` — curl timeout for workflow completion (default `900`)
+- `SMOKE_RESTATE_ADMIN_LOCAL_PORT` — local admin forward port (default `9070`)
+- `SMOKE_RESTATE_INGRESS_LOCAL_PORT` — local ingress forward port (default `8080`)
+- `SMOKE_RESTATE_SERVICE_PORT` — local worker port (default `9080`)
+- `SMOKE_RESTATE_DEPLOYMENT_ENDPOINT` — endpoint registered with Restate
