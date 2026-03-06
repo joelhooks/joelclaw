@@ -82,6 +82,19 @@ Do not report `redis_degraded` as “gateway down” unless process/session heal
 
 The daemon also pushes direct Telegram alerts when session pressure escalates or recovers, and emits OTEL under `daemon.session-pressure` (`session_pressure.alert.sent|failed`).
 
+## Interruptibility and supersession (ADR-0196 / ADR-0218 rank 4 slice)
+
+For Telegram human turns, the latest message now wins:
+
+- newer message from the same chat supersedes the active stale turn
+- stale queued prompts from that chat are dropped
+- daemon requests `session.abort()` on the stale turn
+- stale response text is suppressed instead of being delivered late
+- `joelclaw gateway status` exposes `supersession`
+- `joelclaw gateway diagnose` adds an `interruptibility` layer with the latest supersession details
+
+This is the first slice, not the whole story. Batching windows and broader channel generalization are still open.
+
 ## Runtime guardrail enforcement (ADR-0189)
 
 Gateway runtime now enforces two operator-visible guardrails:

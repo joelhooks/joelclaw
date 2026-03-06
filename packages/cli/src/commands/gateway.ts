@@ -156,6 +156,7 @@ type GatewayHealthSnapshot = {
     queueDepth?: number
     context?: Record<string, unknown>
     sessionPressure?: Record<string, unknown>
+    supersession?: Record<string, unknown>
     guardrails?: Record<string, unknown>
   }
 }
@@ -358,6 +359,7 @@ const gatewayStatus = Command.make("status", {}, () =>
         ...(daemonHealth?.components ? { components: daemonHealth.components } : {}),
         ...(daemonHealth?.status?.context ? { context: daemonHealth.status.context } : {}),
         ...(daemonHealth?.status?.sessionPressure ? { sessionPressure: daemonHealth.status.sessionPressure } : {}),
+        ...(daemonHealth?.status?.supersession ? { supersession: daemonHealth.status.supersession } : {}),
         ...(daemonHealth?.status?.guardrails ? { guardrails: daemonHealth.status.guardrails } : {}),
         ...(redisStatus.error ? { redisError: redisStatus.error } : {}),
       },
@@ -1377,12 +1379,19 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
     let sessionPressureReasons: string[] = []
     let sessionPressureLastNotifiedHealth: string | undefined
     let sessionPressureLastNotifiedAt: string | undefined
+    let supersessionActive = false
+    let supersessionActiveSource: string | undefined
+    let supersessionLastSource: string | undefined
+    let supersessionLastAt: string | undefined
+    let supersessionLastDroppedQueued: number | undefined
+    let supersessionLastAbortRequested: boolean | undefined
     let checkpointSentThisTurn = false
     let pendingDeployVerificationCount = 0
     try {
       const raw = execSync("joelclaw gateway status 2>/dev/null", { encoding: "utf-8", timeout: 10000 })
       const parsed = JSON.parse(raw)
       const pressure = parsed.result?.sessionPressure ?? {}
+      const supersession = parsed.result?.supersession ?? {}
       redisOk = parsed.result?.redis === "connected"
       gatewayMode = parsed.result?.mode === "redis_degraded" ? "redis_degraded" : "normal"
       const sessions = parsed.result?.activeSessions ?? []
@@ -1419,6 +1428,22 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
         : undefined
       sessionPressureLastNotifiedAt = typeof pressure.alerting?.lastNotifiedAt === "string"
         ? pressure.alerting.lastNotifiedAt
+        : undefined
+      supersessionActive = supersession.activeRequest?.superseded === true
+      supersessionActiveSource = typeof supersession.activeRequest?.source === "string"
+        ? supersession.activeRequest.source
+        : undefined
+      supersessionLastSource = typeof supersession.lastEvent?.source === "string"
+        ? supersession.lastEvent.source
+        : undefined
+      supersessionLastAt = typeof supersession.lastEvent?.enqueuedAt === "string"
+        ? supersession.lastEvent.enqueuedAt
+        : undefined
+      supersessionLastDroppedQueued = typeof supersession.lastEvent?.droppedQueued === "number"
+        ? supersession.lastEvent.droppedQueued
+        : undefined
+      supersessionLastAbortRequested = typeof supersession.lastEvent?.abortRequested === "boolean"
+        ? supersession.lastEvent.abortRequested
         : undefined
       checkpointSentThisTurn = parsed.result?.guardrails?.checkpointSentThisTurn === true
       pendingDeployVerificationCount = Array.isArray(parsed.result?.guardrails?.pendingDeployVerifications)
@@ -1506,6 +1531,32 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
         ...(sessionPressureFindings.length > 0 ? { findings: sessionPressureFindings } : {}),
       })
     }
+
+    const supersessionFindings: string[] = []
+    if (supersessionActiveSource) {
+      supersessionFindings.push(`active superseded source: ${supersessionActiveSource}`)
+    }
+    if (supersessionLastSource) {
+      supersessionFindings.push(`last supersession source: ${supersessionLastSource}`)
+    }
+    if (supersessionLastAt) {
+      supersessionFindings.push(`last supersession at: ${supersessionLastAt}`)
+    }
+    if (typeof supersessionLastDroppedQueued === "number") {
+      supersessionFindings.push(`queued entries dropped: ${supersessionLastDroppedQueued}`)
+    }
+    if (typeof supersessionLastAbortRequested === "boolean") {
+      supersessionFindings.push(`abort requested: ${supersessionLastAbortRequested ? "yes" : "no"}`)
+    }
+
+    layers.push({
+      layer: "interruptibility",
+      status: supersessionActive ? "degraded" : "ok",
+      detail: supersessionActive
+        ? "Newer human turn superseded the active request"
+        : "Latest human turn wins; no supersession active",
+      ...(supersessionFindings.length > 0 ? { findings: supersessionFindings } : {}),
+    })
 
     // ── Layer 2: Error Log ──
     const errLines = tailFile(ERR_FILE, maxLines)

@@ -68,6 +68,25 @@ The daemon also sends direct Telegram pressure alerts on escalation/recovery and
 
 Operator rule: if status says `redis_degraded`, do **not** treat that as a full gateway outage. Diagnose substrate/Redis separately while using direct conversation paths if needed.
 
+## Interruptibility and supersession (ADR-0196 / ADR-0218 rank 4)
+
+Latest human Telegram turns now win by contract.
+
+When a new Telegram message arrives while an older turn from the same chat is still active:
+
+- the queue marks older same-chat work as superseded
+- queued stale prompts for that chat are dropped
+- the daemon requests `session.abort()` on the stale active turn
+- stale response output is suppressed instead of being delivered after the newer ask
+- Telegram gets a short acknowledgement: `Latest message received. Superseding the previous turn.`
+
+`joelclaw gateway status` now exposes `supersession`, and `joelclaw gateway diagnose` adds an `interruptibility` layer that shows whether a supersession is active plus the last supersession source/time/drop count.
+
+Current boundary of the slice:
+
+- shipped: Telegram latest-wins supersession + stale-response suppression
+- still open: batching window, callback ack/timeout tracing, wider channel generalization
+
 ## Telegram multi-instance polling ownership (2026-03-05)
 
 Gateway Telegram ingress now uses a Redis lease so multiple gateway instances can coexist without all trying to long-poll the same bot token.

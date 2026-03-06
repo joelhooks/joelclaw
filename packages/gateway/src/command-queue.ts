@@ -5,10 +5,13 @@ import { emitGatewayOtel } from "@joelclaw/telemetry";
 export type QueueEntry = {
   source: string;
   prompt: string;
+  enqueuedAt: number;
+  enqueueOrder: number;
   replyTo?: string;
   metadata?: Record<string, unknown>;
   streamId?: string;
   priority?: Priority;
+  supersessionKey?: string;
   /** ADR-0209: Thread ID for this message */
   threadId?: string;
   /** ADR-0209: Channel anchor to reply-to on outbound */
@@ -19,12 +22,46 @@ export interface ActiveRequest {
   id: string;
   source: string;
   enqueuedAt: number;
+  enqueueOrder: number;
   prompt: string;
+  supersessionKey?: string;
+  supersededAt?: number;
+  supersededBySource?: string;
   /** ADR-0209: Thread ID for this turn */
   threadId?: string;
   /** ADR-0209: Channel anchor for outbound reply-to */
   replyToAnchor?: string;
 }
+
+export type SupersessionEvent = {
+  source: string;
+  supersessionKey: string;
+  enqueuedAt: number;
+  enqueueOrder: number;
+  droppedQueued: number;
+  abortRequested: boolean;
+  activeRequestId?: string;
+};
+
+export type SupersessionState = {
+  activeRequest: {
+    id: string;
+    source: string;
+    enqueuedAt: string;
+    supersessionKey: string | null;
+    superseded: boolean;
+    supersededAt: string | null;
+    supersededBySource: string | null;
+  } | null;
+  lastEvent: {
+    source: string;
+    supersessionKey: string;
+    enqueuedAt: string;
+    droppedQueued: number;
+    abortRequested: boolean;
+    activeRequestId: string | null;
+  } | null;
+};
 
 type PromptSession = {
   prompt: (text: string) => unknown | Promise<unknown>;
@@ -41,7 +78,13 @@ export type QueueErrorEvent = {
   source: string;
   error: string;
 };
+export type EnqueueResult = {
+  streamId?: string;
+  priority?: Priority;
+  supersession?: SupersessionEvent;
+};
 type ErrorCallback = (event: QueueErrorEvent) => void | Promise<void> | Promise<boolean>;
+type SupersessionCallback = (event: SupersessionEvent) => void | Promise<void>;
 /** Called before new session creation. Returns a compression summary to seed the fresh session. */
 type ContextOverflowCallback = () => Promise<string>;
 
@@ -50,11 +93,15 @@ let sessionRef: PromptSession | undefined;
 let drainPromise: Promise<void> | undefined;
 let onPromptSent: PromptCallback | undefined;
 let onPromptError: ErrorCallback | undefined;
+let onSupersessionRequested: SupersessionCallback | undefined;
 let onContextOverflow: ContextOverflowCallback | undefined;
 let idleWaiter: IdleWaiter | undefined;
 let consecutiveFailures = 0;
 let contextOverflowCount = 0;
 let activeRequest: ActiveRequest | undefined;
+let lastSupersessionEvent: SupersessionEvent | undefined;
+const latestSupersessionByKey = new Map<string, { enqueuedAt: number; enqueueOrder: number }>();
+let enqueueOrderCounter = 0;
 
 /**
  * Detect "prompt is too long" errors from the API.
@@ -66,6 +113,59 @@ function isContextOverflowError(error: unknown): boolean {
     ? String((error as any).message)
     : String(error);
   return msg.includes("prompt is too long") || msg.includes("maximum context length");
+}
+
+function streamIdToTimestamp(streamId: string | undefined, fallbackTs: number): number {
+  if (!streamId) return fallbackTs;
+  const first = streamId.split("-")[0];
+  const parsed = Number.parseInt(first ?? "", 10);
+  return Number.isFinite(parsed) ? parsed : fallbackTs;
+}
+
+function nextEnqueueOrder(): number {
+  enqueueOrderCounter += 1;
+  return enqueueOrderCounter;
+}
+
+function getSupersessionKey(source: string, metadata?: Record<string, unknown>): string | undefined {
+  if (!metadata) return undefined;
+
+  const explicit = metadata.gatewaySupersessionKey;
+  if (typeof explicit === "string") {
+    const normalized = explicit.trim();
+    if (normalized.length > 0) return normalized;
+  }
+
+  return metadata.gatewayHumanLatestWins === true ? source : undefined;
+}
+
+function getPersistedEnqueueOrder(metadata: Record<string, unknown> | undefined, fallbackOrder: number): number {
+  const value = metadata?.gatewayEnqueueOrder;
+  return typeof value === "number" && Number.isFinite(value) ? value : fallbackOrder;
+}
+
+async function dropQueuedEntriesForSupersession(
+  supersessionKey: string,
+  enqueueOrder: number,
+): Promise<number> {
+  const dropped = queue.filter((entry) =>
+    entry.supersessionKey === supersessionKey && entry.enqueueOrder < enqueueOrder,
+  );
+  if (dropped.length === 0) return 0;
+
+  const kept = queue.filter((entry) =>
+    !(entry.supersessionKey === supersessionKey && entry.enqueueOrder < enqueueOrder),
+  );
+  queue.length = 0;
+  queue.push(...kept);
+
+  await Promise.all(dropped.map(async (entry) => {
+    if (entry.streamId) {
+      await ack(entry.streamId);
+    }
+  }));
+
+  return dropped.length;
 }
 
 export function setSession(session: PromptSession): void {
@@ -97,6 +197,11 @@ export function onError(cb: ErrorCallback): void {
   onPromptError = cb;
 }
 
+/** Register a callback fired when a newer human message supersedes the active turn. */
+export function onSupersession(cb: SupersessionCallback): void {
+  onSupersessionRequested = cb;
+}
+
 /** Register a callback fired on context overflow (prompt too long). Called AFTER auto-recovery attempts. */
 export function onContextOverflowRecovery(cb: ContextOverflowCallback): void {
   onContextOverflow = cb;
@@ -124,13 +229,19 @@ export async function enqueue(
   prompt: string,
   metadata?: Record<string, unknown>,
   options?: { streamId?: string; threadId?: string; replyToAnchor?: string },
-): Promise<void> {
+): Promise<EnqueueResult> {
   let streamId = options?.streamId;
   let priority: Priority | undefined;
+  const supersessionKey = getSupersessionKey(source, metadata);
+  const enqueueOrder = nextEnqueueOrder();
+  const queueMetadata = supersessionKey
+    ? { ...(metadata ?? {}), gatewayEnqueueOrder: enqueueOrder }
+    : metadata;
+  let supersession: SupersessionEvent | undefined;
 
   if (!streamId) {
     try {
-      const persisted = await persist({ source, prompt, metadata });
+      const persisted = await persist({ source, prompt, metadata: queueMetadata });
       if (!persisted) {
         const { normalizedBody, strippedInjectedContext } = normalizePromptForDedup(prompt);
         const dedupDigest = createHash("sha256").update(normalizedBody).digest("hex");
@@ -148,7 +259,7 @@ export async function enqueue(
             strippedInjectedContext,
           },
         });
-        return;
+        return {};
       }
       streamId = persisted.streamId;
       priority = persisted.priority;
@@ -168,6 +279,68 @@ export async function enqueue(
     }
   }
 
+  const enqueuedAt = streamIdToTimestamp(streamId, Date.now());
+
+  if (supersessionKey) {
+    const droppedQueued = await dropQueuedEntriesForSupersession(supersessionKey, enqueueOrder);
+    latestSupersessionByKey.set(supersessionKey, { enqueuedAt, enqueueOrder });
+
+    const activeMatches = activeRequest?.supersessionKey === supersessionKey
+      && activeRequest.enqueueOrder < enqueueOrder;
+    if (activeMatches && activeRequest) {
+      activeRequest.supersededAt = enqueuedAt;
+      activeRequest.supersededBySource = source;
+    }
+
+    supersession = {
+      source,
+      supersessionKey,
+      enqueuedAt,
+      enqueueOrder,
+      droppedQueued,
+      abortRequested: Boolean(activeMatches),
+      activeRequestId: activeMatches ? activeRequest?.id : undefined,
+    };
+    lastSupersessionEvent = supersession;
+
+    void emitGatewayOtel({
+      level: "info",
+      component: "command-queue",
+      action: "queue.supersession.requested",
+      success: true,
+      metadata: {
+        source,
+        supersessionKey,
+        droppedQueued,
+        abortRequested: Boolean(activeMatches),
+      },
+    });
+
+    if (activeMatches) {
+      try {
+        await onSupersessionRequested?.(supersession);
+      } catch (error) {
+        console.error("command-queue: supersession callback failed", {
+          source,
+          supersessionKey,
+          error,
+        });
+        void emitGatewayOtel({
+          level: "error",
+          component: "command-queue",
+          action: "queue.supersession.callback_failed",
+          success: false,
+          error: String(error),
+          metadata: {
+            source,
+            supersessionKey,
+            activeRequestId: activeRequest?.id,
+          },
+        });
+      }
+    }
+  }
+
   // Durable messages are drained from the Redis priority layer. Keep local queue
   // only for fallback messages when persistence is unavailable.
   if (!options?.streamId && streamId) {
@@ -181,12 +354,24 @@ export async function enqueue(
         depth: queue.length,
         hasStreamId: true,
         ...(priority !== undefined ? { priority } : {}),
+        ...(supersessionKey ? { supersessionKey } : {}),
       },
     });
-    return;
+    return { streamId, priority, supersession };
   }
 
-  queue.push({ source, prompt, metadata, streamId, priority, threadId: options?.threadId, replyToAnchor: options?.replyToAnchor });
+  queue.push({
+    source,
+    prompt,
+    enqueuedAt,
+    enqueueOrder,
+    metadata: queueMetadata,
+    streamId,
+    priority,
+    supersessionKey,
+    threadId: options?.threadId,
+    replyToAnchor: options?.replyToAnchor,
+  });
   void emitGatewayOtel({
     level: "debug",
     component: "command-queue",
@@ -197,6 +382,7 @@ export async function enqueue(
       depth: queue.length,
       hasStreamId: Boolean(streamId),
       ...(priority !== undefined ? { priority } : {}),
+      ...(supersessionKey ? { supersessionKey } : {}),
     },
   });
   if (queue.length >= 20) {
@@ -210,6 +396,8 @@ export async function enqueue(
       },
     });
   }
+
+  return { streamId, priority, supersession };
 }
 
 export function getActiveSource(): string | undefined {
@@ -222,6 +410,36 @@ export function getActiveThreadContext(): { threadId?: string; replyToAnchor?: s
   return {
     threadId: activeRequest.threadId,
     replyToAnchor: activeRequest.replyToAnchor,
+  };
+}
+
+export function isActiveRequestSuperseded(): boolean {
+  return Boolean(activeRequest?.supersededAt);
+}
+
+export function getSupersessionState(): SupersessionState {
+  return {
+    activeRequest: activeRequest
+      ? {
+          id: activeRequest.id,
+          source: activeRequest.source,
+          enqueuedAt: new Date(activeRequest.enqueuedAt).toISOString(),
+          supersessionKey: activeRequest.supersessionKey ?? null,
+          superseded: Boolean(activeRequest.supersededAt),
+          supersededAt: activeRequest.supersededAt ? new Date(activeRequest.supersededAt).toISOString() : null,
+          supersededBySource: activeRequest.supersededBySource ?? null,
+        }
+      : null,
+    lastEvent: lastSupersessionEvent
+      ? {
+          source: lastSupersessionEvent.source,
+          supersessionKey: lastSupersessionEvent.supersessionKey,
+          enqueuedAt: new Date(lastSupersessionEvent.enqueuedAt).toISOString(),
+          droppedQueued: lastSupersessionEvent.droppedQueued,
+          abortRequested: lastSupersessionEvent.abortRequested,
+          activeRequestId: lastSupersessionEvent.activeRequestId ?? null,
+        }
+      : null,
   };
 }
 
@@ -312,16 +530,29 @@ async function dequeue(failedStreamIds: Set<string>): Promise<QueueEntry | null>
   const localEntry = queue.shift();
   if (localEntry) return localEntry;
 
-  const next = await drainByPriority({ limit: 1, excludeIds: failedStreamIds });
+  let next: Awaited<ReturnType<typeof drainByPriority>>;
+  try {
+    next = await drainByPriority({ limit: 1, excludeIds: failedStreamIds });
+  } catch (error) {
+    const message = String(error);
+    if (message.includes("redis client not initialized")) {
+      return null;
+    }
+    throw error;
+  }
+
   const message = next[0];
   if (!message) return null;
 
   return {
     source: message.source,
     prompt: message.prompt,
+    enqueuedAt: message.timestamp,
+    enqueueOrder: getPersistedEnqueueOrder(message.metadata, nextEnqueueOrder()),
     metadata: message.metadata,
     streamId: message.id,
     priority: message.priority,
+    supersessionKey: getSupersessionKey(message.source, message.metadata),
   };
 }
 
@@ -334,6 +565,39 @@ export async function drain(): Promise<void> {
     while (true) {
       const entry = await dequeue(failedStreamIds);
       if (!entry) break;
+
+      if (entry.supersessionKey) {
+        const latestSupersession = latestSupersessionByKey.get(entry.supersessionKey);
+        const superseded = latestSupersession && (
+          entry.enqueuedAt < latestSupersession.enqueuedAt
+          || (entry.enqueuedAt === latestSupersession.enqueuedAt && entry.enqueueOrder < latestSupersession.enqueueOrder)
+        );
+        if (superseded && latestSupersession) {
+          console.log("[command-queue] dropped superseded entry", {
+            source: entry.source,
+            supersessionKey: entry.supersessionKey,
+            streamId: entry.streamId,
+          });
+          void emitGatewayOtel({
+            level: "info",
+            component: "command-queue",
+            action: "queue.superseded_dropped",
+            success: true,
+            metadata: {
+              source: entry.source,
+              supersessionKey: entry.supersessionKey,
+              streamId: entry.streamId,
+              enqueuedAt: new Date(entry.enqueuedAt).toISOString(),
+              supersededByAt: new Date(latestSupersession.enqueuedAt).toISOString(),
+              supersededByOrder: latestSupersession.enqueueOrder,
+            },
+          });
+          if (entry.streamId) {
+            await ack(entry.streamId);
+          }
+          continue;
+        }
+      }
 
       // Drop consecutive duplicates — same source + same content within 2min window
       if (isDuplicateConsecutive(entry.source, entry.prompt)) {
@@ -367,8 +631,10 @@ export async function drain(): Promise<void> {
       activeRequest = {
         id: crypto.randomUUID(),
         source: entry.source,
-        enqueuedAt: Date.now(),
+        enqueuedAt: entry.enqueuedAt,
+        enqueueOrder: entry.enqueueOrder,
         prompt: entry.prompt,
+        supersessionKey: entry.supersessionKey,
         threadId: entry.threadId,
         replyToAnchor: entry.replyToAnchor,
       };
@@ -628,4 +894,21 @@ export async function replayUnacked(): Promise<void> {
 export const __commandQueueTestUtils = {
   stripInjectedChannelContext,
   contentHash,
+  resetState(): void {
+    queue.length = 0;
+    sessionRef = undefined;
+    drainPromise = undefined;
+    onPromptSent = undefined;
+    onPromptError = undefined;
+    onSupersessionRequested = undefined;
+    onContextOverflow = undefined;
+    idleWaiter = undefined;
+    consecutiveFailures = 0;
+    contextOverflowCount = 0;
+    activeRequest = undefined;
+    lastSupersessionEvent = undefined;
+    latestSupersessionByKey.clear();
+    enqueueOrderCounter = 0;
+    dedupRing.length = 0;
+  },
 };

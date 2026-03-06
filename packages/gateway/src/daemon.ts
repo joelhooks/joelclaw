@@ -23,9 +23,12 @@ import {
   getActiveThreadContext,
   getConsecutiveFailures,
   getQueueDepth,
+  getSupersessionState,
+  isActiveRequestSuperseded,
   onContextOverflowRecovery,
   onPrompt,
   onError as onQueueError,
+  onSupersession,
   type QueueErrorEvent,
   replayUnacked,
   setIdleWaiter,
@@ -1302,6 +1305,73 @@ onQueueError((event) => {
   void pingModelFailure(event);
 });
 
+onSupersession(async (event) => {
+  console.warn("[gateway:supersession] newer human turn superseded active work", {
+    source: event.source,
+    supersessionKey: event.supersessionKey,
+    droppedQueued: event.droppedQueued,
+    activeRequestId: event.activeRequestId,
+  });
+
+  fallbackController.cancelTimeoutWatch();
+  responseChunks = [];
+  telegramStream.abort();
+
+  void emitGatewayOtel({
+    level: "info",
+    component: "daemon.supersession",
+    action: "supersession.requested",
+    success: true,
+    metadata: {
+      source: event.source,
+      supersessionKey: event.supersessionKey,
+      droppedQueued: event.droppedQueued,
+      activeRequestId: event.activeRequestId ?? null,
+    },
+  });
+
+  const telegramChatId = event.source.startsWith("telegram:") ? parseChatId(event.source) : undefined;
+  if (telegramChatId) {
+    void sendTelegram(
+      telegramChatId,
+      "↪️ <b>Latest message received</b>\nSuperseding the previous turn.",
+      { silent: true },
+    ).catch(() => {});
+  }
+
+  try {
+    await session.abort();
+    void emitGatewayOtel({
+      level: "info",
+      component: "daemon.supersession",
+      action: "supersession.abort_requested",
+      success: true,
+      metadata: {
+        source: event.source,
+        supersessionKey: event.supersessionKey,
+        activeRequestId: event.activeRequestId ?? null,
+      },
+    });
+  } catch (error) {
+    console.error("[gateway:supersession] abort failed", {
+      source: event.source,
+      error: String(error),
+    });
+    void emitGatewayOtel({
+      level: "error",
+      component: "daemon.supersession",
+      action: "supersession.abort_failed",
+      success: false,
+      error: String(error),
+      metadata: {
+        source: event.source,
+        supersessionKey: event.supersessionKey,
+        activeRequestId: event.activeRequestId ?? null,
+      },
+    });
+  }
+});
+
 // ── Idle waiter: gate drain loop on turn_end ───────────
 // session.prompt() resolves when the message is queued, not when the
 // full turn finishes. The drain loop needs to wait for turn_end before
@@ -1768,6 +1838,7 @@ function getStatusPayload(): Record<string, unknown> {
   const fb = fallbackController.state;
   const redisState = getRedisRuntimeState();
   const sessionPressure = getSessionPressure();
+  const supersession = getSupersessionState();
   const degradedCapabilities = getDegradedCapabilities();
 
   return {
@@ -1795,6 +1866,7 @@ function getStatusPayload(): Record<string, unknown> {
       health: sessionPressure.health,
     },
     sessionPressure,
+    supersession,
     channelInfo: {
       ...channelInfo,
       redis: isRedisHealthy() ? "ok" : "degraded",
@@ -1996,6 +2068,25 @@ session.subscribe((event: any) => {
   if (event.type === "message_end") {
     const fullText = responseChunks.join("");
     responseChunks = [];
+
+    if (isActiveRequestSuperseded()) {
+      console.log("[gateway:supersession] dropped stale response after newer human turn", {
+        source: getActiveSource(),
+        textLength: fullText.length,
+      });
+      void emitGatewayOtel({
+        level: "info",
+        component: "daemon.supersession",
+        action: "supersession.response_dropped",
+        success: true,
+        metadata: {
+          source: getActiveSource() ?? "unknown",
+          textLength: fullText.length,
+        },
+      });
+      telegramStream.abort();
+      return;
+    }
 
     // Detect API errors (429, 529, overload) surfaced via errorMessage —
     // pi resolves (doesn't throw), so these bypass the throw-based fallback path.
@@ -2638,9 +2729,18 @@ const enqueueToGateway = async (source: string, prompt: string, metadata?: Recor
     : typeof metadata?.discordMessageId === "string"
       ? metadata.discordMessageId
       : undefined;
+  const enableLatestWinsSupersession = source.startsWith("telegram:");
 
   // ADR-0209: Classify thread (haiku ~200ms, reply-to ~0ms)
   const threadCtx = await classifyThread(prompt, channel, replyToAnchor, inboundAnchor);
+
+  const queueMetadata = enableLatestWinsSupersession
+    ? {
+        ...(metadata ?? {}),
+        gatewayHumanLatestWins: true,
+        gatewaySupersessionKey: source,
+      }
+    : metadata;
 
   const withChannelContext = injectChannelContext(prompt, {
     source,
@@ -2660,7 +2760,7 @@ const enqueueToGateway = async (source: string, prompt: string, metadata?: Recor
     ? `${withChannelContext}\n${threadTag}`
     : withChannelContext;
 
-  await enqueue(source, withThreadContext, metadata, {
+  await enqueue(source, withThreadContext, queueMetadata, {
     threadId: threadCtx.threadId,
     replyToAnchor: threadCtx.replyToAnchor ?? undefined,
   });
