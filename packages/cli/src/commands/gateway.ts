@@ -157,6 +157,7 @@ type GatewayHealthSnapshot = {
     context?: Record<string, unknown>
     sessionPressure?: Record<string, unknown>
     supersession?: Record<string, unknown>
+    callbackTracing?: Record<string, unknown>
     guardrails?: Record<string, unknown>
   }
 }
@@ -360,6 +361,7 @@ const gatewayStatus = Command.make("status", {}, () =>
         ...(daemonHealth?.status?.context ? { context: daemonHealth.status.context } : {}),
         ...(daemonHealth?.status?.sessionPressure ? { sessionPressure: daemonHealth.status.sessionPressure } : {}),
         ...(daemonHealth?.status?.supersession ? { supersession: daemonHealth.status.supersession } : {}),
+        ...(daemonHealth?.status?.callbackTracing ? { callbackTracing: daemonHealth.status.callbackTracing } : {}),
         ...(daemonHealth?.status?.guardrails ? { guardrails: daemonHealth.status.guardrails } : {}),
         ...(redisStatus.error ? { redisError: redisStatus.error } : {}),
       },
@@ -1391,6 +1393,20 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
     let batchingLastSource: string | undefined
     let batchingLastFlushedAt: string | undefined
     let batchingLastMessageCount: number | undefined
+    let callbackTimeoutMs: number | undefined
+    let callbackActiveCount = 0
+    let callbackActiveRoutes: string[] = []
+    let callbackLastCompletedRoute: string | undefined
+    let callbackLastCompletedAt: string | undefined
+    let callbackLastCompletedTraceId: string | undefined
+    let callbackLastFailedRoute: string | undefined
+    let callbackLastFailedAt: string | undefined
+    let callbackLastFailedTraceId: string | undefined
+    let callbackLastFailedError: string | undefined
+    let callbackLastTimedOutRoute: string | undefined
+    let callbackLastTimedOutAt: string | undefined
+    let callbackLastTimedOutTraceId: string | undefined
+    let callbackLastTimedOutError: string | undefined
     let checkpointSentThisTurn = false
     let pendingDeployVerificationCount = 0
     try {
@@ -1398,6 +1414,7 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       const parsed = JSON.parse(raw)
       const pressure = parsed.result?.sessionPressure ?? {}
       const supersession = parsed.result?.supersession ?? {}
+      const callbackTracing = parsed.result?.callbackTracing ?? {}
       redisOk = parsed.result?.redis === "connected"
       gatewayMode = parsed.result?.mode === "redis_degraded" ? "redis_degraded" : "normal"
       const sessions = parsed.result?.activeSessions ?? []
@@ -1468,6 +1485,48 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
         : undefined
       batchingLastMessageCount = typeof supersession.batching?.lastFlush?.messageCount === "number"
         ? supersession.batching.lastFlush.messageCount
+        : undefined
+      callbackTimeoutMs = typeof callbackTracing.timeoutMs === "number"
+        ? callbackTracing.timeoutMs
+        : undefined
+      callbackActiveCount = typeof callbackTracing.activeCount === "number"
+        ? callbackTracing.activeCount
+        : 0
+      callbackActiveRoutes = Array.isArray(callbackTracing.activeRoutes)
+        ? callbackTracing.activeRoutes.filter((route: unknown): route is string => typeof route === "string")
+        : []
+      callbackLastCompletedRoute = typeof callbackTracing.lastCompleted?.route === "string"
+        ? callbackTracing.lastCompleted.route
+        : undefined
+      callbackLastCompletedAt = typeof callbackTracing.lastCompleted?.completedAt === "string"
+        ? callbackTracing.lastCompleted.completedAt
+        : undefined
+      callbackLastCompletedTraceId = typeof callbackTracing.lastCompleted?.traceId === "string"
+        ? callbackTracing.lastCompleted.traceId
+        : undefined
+      callbackLastFailedRoute = typeof callbackTracing.lastFailed?.route === "string"
+        ? callbackTracing.lastFailed.route
+        : undefined
+      callbackLastFailedAt = typeof callbackTracing.lastFailed?.failedAt === "string"
+        ? callbackTracing.lastFailed.failedAt
+        : undefined
+      callbackLastFailedTraceId = typeof callbackTracing.lastFailed?.traceId === "string"
+        ? callbackTracing.lastFailed.traceId
+        : undefined
+      callbackLastFailedError = typeof callbackTracing.lastFailed?.error === "string"
+        ? callbackTracing.lastFailed.error
+        : undefined
+      callbackLastTimedOutRoute = typeof callbackTracing.lastTimedOut?.route === "string"
+        ? callbackTracing.lastTimedOut.route
+        : undefined
+      callbackLastTimedOutAt = typeof callbackTracing.lastTimedOut?.timedOutAt === "string"
+        ? callbackTracing.lastTimedOut.timedOutAt
+        : undefined
+      callbackLastTimedOutTraceId = typeof callbackTracing.lastTimedOut?.traceId === "string"
+        ? callbackTracing.lastTimedOut.traceId
+        : undefined
+      callbackLastTimedOutError = typeof callbackTracing.lastTimedOut?.error === "string"
+        ? callbackTracing.lastTimedOut.error
         : undefined
       checkpointSentThisTurn = parsed.result?.guardrails?.checkpointSentThisTurn === true
       pendingDeployVerificationCount = Array.isArray(parsed.result?.guardrails?.pendingDeployVerifications)
@@ -1600,6 +1659,45 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
           ? `Batching ${batchingPendingCount} human source${batchingPendingCount === 1 ? "" : "s"} before dispatch`
           : "Latest human turn wins; no supersession active",
       ...(supersessionFindings.length > 0 ? { findings: supersessionFindings } : {}),
+    })
+
+    const callbackFindings: string[] = []
+    if (typeof callbackTimeoutMs === "number") {
+      callbackFindings.push(`timeout: ${callbackTimeoutMs}ms`)
+    }
+    if (callbackActiveCount > 0) {
+      callbackFindings.push(`active traces: ${callbackActiveCount}`)
+    }
+    if (callbackActiveRoutes.length > 0) {
+      callbackFindings.push(`active routes: ${callbackActiveRoutes.join(", ")}`)
+    }
+    if (callbackLastCompletedRoute && callbackLastCompletedAt) {
+      callbackFindings.push(`last completed: ${callbackLastCompletedRoute} at ${callbackLastCompletedAt}${callbackLastCompletedTraceId ? ` (${callbackLastCompletedTraceId})` : ""}`)
+    }
+    if (callbackLastFailedRoute && callbackLastFailedAt) {
+      callbackFindings.push(`last failed: ${callbackLastFailedRoute} at ${callbackLastFailedAt}${callbackLastFailedTraceId ? ` (${callbackLastFailedTraceId})` : ""}`)
+    }
+    if (callbackLastFailedError) {
+      callbackFindings.push(`failure error: ${callbackLastFailedError}`)
+    }
+    if (callbackLastTimedOutRoute && callbackLastTimedOutAt) {
+      callbackFindings.push(`last timed out: ${callbackLastTimedOutRoute} at ${callbackLastTimedOutAt}${callbackLastTimedOutTraceId ? ` (${callbackLastTimedOutTraceId})` : ""}`)
+    }
+    if (callbackLastTimedOutError) {
+      callbackFindings.push(`timeout error: ${callbackLastTimedOutError}`)
+    }
+
+    layers.push({
+      layer: "callback-tracing",
+      status: callbackLastTimedOutAt || callbackLastFailedAt ? "degraded" : callbackActiveCount > 0 ? "degraded" : "ok",
+      detail: callbackLastTimedOutAt
+        ? "Recent callback action timed out"
+        : callbackLastFailedAt
+          ? "Recent callback action failed"
+          : callbackActiveCount > 0
+            ? `Tracking ${callbackActiveCount} active callback trace${callbackActiveCount === 1 ? "" : "s"}`
+            : "Callback ack/timeout tracing healthy",
+      ...(callbackFindings.length > 0 ? { findings: callbackFindings } : {}),
     })
 
     // ── Layer 2: Error Log ──

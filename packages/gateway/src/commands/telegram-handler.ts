@@ -2,6 +2,13 @@ import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import { completeSimple, getModel } from "@mariozechner/pi-ai";
 import type { Bot, Context } from "grammy";
 import type Redis from "ioredis";
+import {
+  acknowledgeCallbackTrace,
+  completeCallbackTrace,
+  failCallbackTrace,
+  markCallbackTraceDispatched,
+  startCallbackTrace,
+} from "../callback-trace";
 import { injectChannelContext } from "../formatting";
 import { BUILTIN_COMMANDS } from "./builtins";
 import {
@@ -136,6 +143,37 @@ function pickMenuArg(command: CommandDefinition): CommandArgDefinition | undefin
 
 async function sendHtml(bot: Bot, chatId: number, html: string): Promise<void> {
   await bot.api.sendMessage(chatId, html, { parse_mode: "HTML" });
+}
+
+async function sendCallbackTimeoutMessage(bot: Bot, chatId: number, route: string, traceId: string): Promise<void> {
+  await sendHtml(
+    bot,
+    chatId,
+    [
+      "⚠️ <b>Callback timed out</b>",
+      `Route: <code>${escapeHtml(route)}</code>`,
+      `Trace: <code>${escapeHtml(traceId)}</code>`,
+    ].join("\n"),
+  );
+}
+
+async function sendCallbackFailureMessage(bot: Bot, chatId: number, route: string, traceId: string, error: string): Promise<void> {
+  await sendHtml(
+    bot,
+    chatId,
+    [
+      "❌ <b>Callback failed</b>",
+      `Route: <code>${escapeHtml(route)}</code>`,
+      `Trace: <code>${escapeHtml(traceId)}</code>`,
+      `Error: <code>${escapeHtml(error)}</code>`,
+    ].join("\n"),
+  );
+}
+
+function callbackAckLabel(command: CommandDefinition): string {
+  return command.execution === "agent"
+    ? `Queued /${command.nativeName}`
+    : `Running /${command.nativeName}`;
 }
 
 async function renderArgsMenu(bot: Bot, chatId: number, command: CommandDefinition): Promise<boolean> {
@@ -384,7 +422,7 @@ async function executeCommand(
   command: CommandDefinition,
   rawArgs: string,
   init: CommandHandlerInit,
-  options?: { fromArgsMenu?: boolean; telegramMessageId?: number },
+  options?: { fromArgsMenu?: boolean; telegramMessageId?: number; callbackTraceId?: string },
 ): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
@@ -457,6 +495,7 @@ async function executeCommand(
     command: command.nativeName,
     execution: command.execution,
     fromArgsMenu: options?.fromArgsMenu ?? false,
+    ...(options?.callbackTraceId ? { callbackTraceId: options.callbackTraceId } : {}),
   });
 }
 
@@ -469,8 +508,6 @@ function registerCallbackHandler(init: CommandHandlerInit): void {
       return;
     }
 
-    await ctx.answerCallbackQuery();
-
     const payload = data.slice(CALLBACK_PREFIX.length);
     const [nativeName, ...rawValueParts] = payload.split(":");
     const rawValue = rawValueParts.join(":").trim();
@@ -479,10 +516,46 @@ function registerCallbackHandler(init: CommandHandlerInit): void {
     const command = getCommand(nativeName);
     if (!command) return;
 
-    await executeCommand(ctx, command, rawValue, init, {
-      fromArgsMenu: true,
-      telegramMessageId: ctx.callbackQuery.message?.message_id,
-    });
+    const chatId = ctx.chat?.id;
+    const traceId = startCallbackTrace(
+      {
+        handler: "telegram.commands",
+        route: `cmd:${command.nativeName}`,
+        rawData: data,
+        chatId,
+        messageId: ctx.callbackQuery.message?.message_id,
+      },
+      {
+        onTimeout: async (trace) => {
+          if (!chatId) return;
+          await sendCallbackTimeoutMessage(init.bot, chatId, trace.route, trace.traceId).catch(() => {});
+        },
+      },
+    );
+
+    try {
+      const ackText = callbackAckLabel(command);
+      await ctx.answerCallbackQuery({ text: ackText });
+      acknowledgeCallbackTrace(traceId, { text: ackText });
+    } catch (error) {
+      acknowledgeCallbackTrace(traceId, { text: callbackAckLabel(command), error: String(error) });
+    }
+
+    try {
+      await executeCommand(ctx, command, rawValue, init, {
+        fromArgsMenu: true,
+        telegramMessageId: ctx.callbackQuery.message?.message_id,
+        callbackTraceId: traceId,
+      });
+      markCallbackTraceDispatched(traceId, `executed ${command.execution} command ${command.nativeName}`);
+      completeCallbackTrace(traceId, `callback handled for /${command.nativeName}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failCallbackTrace(traceId, message, `callback failed for /${command.nativeName}`);
+      if (chatId) {
+        await sendCallbackFailureMessage(init.bot, chatId, `cmd:${command.nativeName}`, traceId, message).catch(() => {});
+      }
+    }
   });
 }
 
@@ -490,9 +563,10 @@ async function sendPitchDecisionEvent(
   eventName: "adr/pitch.approved" | "adr/pitch.rejected",
   adrNumber: number,
   messageId?: number,
+  traceId?: string,
 ): Promise<void> {
   const { execSync } = await import("node:child_process");
-  const data = JSON.stringify({ adr_number: adrNumber, telegram_message_id: messageId });
+  const data = JSON.stringify({ adr_number: adrNumber, telegram_message_id: messageId, callback_trace_id: traceId });
   try {
     execSync(`/Users/joel/.bun/bin/joelclaw send '${eventName}' -d '${data}'`, {
       timeout: 10_000,
@@ -520,22 +594,60 @@ function registerPitchCallbackHandler(bot: Bot, chatId: string): void {
     const [, action, rawAdrNumber] = data.split(":");
     const adrNumber = Number.parseInt(rawAdrNumber ?? "", 10);
     const messageId = ctx.callbackQuery.message?.message_id;
+    const numericChatId = ctx.chat?.id;
+    const traceId = startCallbackTrace(
+      {
+        handler: "telegram.pitch",
+        route: `pitch:${action || "unknown"}`,
+        rawData: data,
+        chatId: numericChatId,
+        messageId,
+      },
+      {
+        onTimeout: async (trace) => {
+          if (!numericChatId) return;
+          await sendCallbackTimeoutMessage(bot, numericChatId, trace.route, trace.traceId).catch(() => {});
+        },
+      },
+    );
 
-    console.log("[gateway:pitch] callback received", { data, action, adrNumber, messageId, chat: ctx.chat?.id });
+    console.log("[gateway:pitch] callback received", { data, action, adrNumber, messageId, chat: ctx.chat?.id, traceId });
 
     if ((action !== "approve" && action !== "reject") || Number.isNaN(adrNumber)) {
-      console.warn("[gateway:pitch] invalid callback data", { data });
-      await ctx.answerCallbackQuery({ text: "⚠️ Invalid" });
+      console.warn("[gateway:pitch] invalid callback data", { data, traceId });
+      try {
+        await ctx.answerCallbackQuery({ text: "⚠️ Invalid" });
+        acknowledgeCallbackTrace(traceId, { text: "⚠️ Invalid" });
+      } catch (error) {
+        acknowledgeCallbackTrace(traceId, { text: "⚠️ Invalid", error: String(error) });
+      }
+      failCallbackTrace(traceId, "invalid pitch callback data", "callback payload rejected");
       return;
     }
 
     const approved = action === "approve";
-    await ctx.answerCallbackQuery({ text: approved ? "✅" : "❌" });
+    const ackText = approved ? "✅" : "❌";
+    try {
+      await ctx.answerCallbackQuery({ text: ackText });
+      acknowledgeCallbackTrace(traceId, { text: ackText });
+    } catch (error) {
+      acknowledgeCallbackTrace(traceId, { text: ackText, error: String(error) });
+    }
 
     const eventName = approved ? "adr/pitch.approved" : "adr/pitch.rejected";
-    console.log("[gateway:pitch] firing event", { eventName, adrNumber, messageId });
-    await sendPitchDecisionEvent(eventName, adrNumber, messageId);
-    console.log("[gateway:pitch] event dispatched", { eventName, adrNumber });
+    try {
+      console.log("[gateway:pitch] firing event", { eventName, adrNumber, messageId, traceId });
+      markCallbackTraceDispatched(traceId, `dispatching ${eventName}`);
+      await sendPitchDecisionEvent(eventName, adrNumber, messageId, traceId);
+      completeCallbackTrace(traceId, `${eventName} dispatched`);
+      console.log("[gateway:pitch] event dispatched", { eventName, adrNumber, traceId });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failCallbackTrace(traceId, message, `${eventName} dispatch failed`);
+      if (numericChatId) {
+        await sendCallbackFailureMessage(bot, numericChatId, `pitch:${action}`, traceId, message).catch(() => {});
+      }
+    }
   });
 }
 

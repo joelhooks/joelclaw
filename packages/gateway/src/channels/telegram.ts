@@ -8,6 +8,13 @@ import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import { Bot, InputFile } from "grammy";
 import Redis from "ioredis";
+import {
+  acknowledgeCallbackTrace,
+  completeCallbackTrace,
+  failCallbackTrace,
+  markCallbackTraceDispatched,
+  startCallbackTrace,
+} from "../callback-trace";
 import type { OutboundEnvelope } from "../outbound/envelope";
 import type { EnqueueFn } from "./redis";
 import type {
@@ -186,6 +193,33 @@ const ACTION_LABELS: Record<string, string> = {
   ack: "👍 <b>Acknowledged</b>",
   investigate: "🔍 <b>Investigating...</b>",
   s4h: "⏰ <b>Snoozed for 4h</b>",
+}
+
+async function sendCallbackTimeoutMessage(chatId: number, route: string, traceId: string): Promise<void> {
+  if (!bot) return;
+  await bot.api.sendMessage(
+    chatId,
+    [
+      "⚠️ <b>Callback timed out</b>",
+      `Route: <code>${escapeText(route)}</code>`,
+      `Trace: <code>${escapeText(traceId)}</code>`,
+    ].join("\n"),
+    { parse_mode: "HTML" },
+  );
+}
+
+async function sendCallbackFailureMessage(chatId: number, route: string, traceId: string, error: string): Promise<void> {
+  if (!bot) return;
+  await bot.api.sendMessage(
+    chatId,
+    [
+      "❌ <b>Callback failed</b>",
+      `Route: <code>${escapeText(route)}</code>`,
+      `Trace: <code>${escapeText(traceId)}</code>`,
+      `Error: <code>${escapeText(error)}</code>`,
+    ].join("\n"),
+    { parse_mode: "HTML" },
+  );
 }
 
 function mimeFromExt(ext: string): string {
@@ -1145,8 +1179,7 @@ async function startTelegramChannel(
   });
 
   // Callback query handler — inline keyboard button presses (ADR-0070)
-  // NOTE: pitch: and mcq: prefixed callbacks are handled by dedicated handlers
-  // registered in telegram-handler.ts via configureBot(). Pass them through.
+  // NOTE: pitch:, mcq:, worktree:, and cmd: prefixed callbacks are handled by dedicated handlers.
   bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery.data;
     const chatId = ctx.callbackQuery.message?.chat.id;
@@ -1154,12 +1187,33 @@ async function startTelegramChannel(
 
     console.log("[gateway:telegram] callback_query", { data, chatId, messageId });
 
-    // Let dedicated grammy middleware handlers process their own prefixes
-    if (data.startsWith("pitch:") || data.startsWith("mcq:")) {
+    // Let dedicated grammy middleware handlers process their own prefixes.
+    if (data.startsWith("pitch:") || data.startsWith("mcq:") || data.startsWith("worktree:") || data.startsWith("cmd:")) {
       console.log(`[gateway:telegram] delegating ${data.split(":")[0]}: callback to dedicated handler`);
       await next();
       return;
     }
+
+    const colonIdx = data.indexOf(":");
+    const action = colonIdx > 0 ? data.slice(0, colonIdx) : data;
+    const context = colonIdx > 0 ? data.slice(colonIdx + 1) : "";
+    const matchedRoute = callbackRoutes.find((r) => data.startsWith(r.prefix));
+    const route = matchedRoute ? `external:${matchedRoute.prefix}` : `event:${action}`;
+    const traceId = startCallbackTrace(
+      {
+        handler: "telegram.callback",
+        route,
+        rawData: data,
+        chatId,
+        messageId,
+      },
+      {
+        onTimeout: async (trace) => {
+          if (!chatId) return;
+          await sendCallbackTimeoutMessage(chatId, trace.route, trace.traceId).catch(() => {});
+        },
+      },
+    );
 
     void emitGatewayOtel({
       level: "info",
@@ -1169,69 +1223,69 @@ async function startTelegramChannel(
       metadata: {
         action: data,
         chatId,
+        traceId,
+        route,
       },
     });
 
-    // ── ADR-0215: Check registered callback routes ──
-    // External services (Restate, etc.) register prefix→channel mappings in Redis.
-    // If a callback matches, publish to their channel and let THEM handle UX.
-    const matchedRoute = callbackRoutes.find((r) => data.startsWith(r.prefix));
+    const answerWithTrace = async (text: string): Promise<void> => {
+      try {
+        await ctx.answerCallbackQuery({ text });
+        acknowledgeCallbackTrace(traceId, { text });
+      } catch (error) {
+        acknowledgeCallbackTrace(traceId, { text, error: String(error) });
+      }
+    };
+
     if (matchedRoute) {
       console.log("[gateway:telegram] routing callback to external consumer", {
         prefix: matchedRoute.prefix,
         channel: matchedRoute.channel,
         data,
+        traceId,
       });
 
-      // Answer the callback query immediately (remove spinner)
-      try {
-        await ctx.answerCallbackQuery({ text: "Processing..." });
-      } catch { /* non-critical */ }
-
-      // Publish the full callback payload to the consumer's Redis channel
       try {
         const { getRedisClient } = await import("./redis");
         const redis = getRedisClient();
-        if (redis) {
-          await redis.publish(
-            matchedRoute.channel,
-            JSON.stringify({ data, chatId, messageId }),
-          );
-          void emitGatewayOtel({
-            level: "info",
-            component: "telegram-channel",
-            action: "telegram.callback.routed",
-            success: true,
-            metadata: {
-              prefix: matchedRoute.prefix,
-              channel: matchedRoute.channel,
-            },
-          });
+        if (!redis) {
+          throw new Error("redis client unavailable for callback route publish");
         }
-      } catch (err) {
-        console.error("[gateway:telegram] callback route publish failed", {
-          error: String(err),
-          channel: matchedRoute.channel,
+
+        await redis.publish(
+          matchedRoute.channel,
+          JSON.stringify({ data, chatId, messageId, traceId }),
+        );
+        await answerWithTrace("Routed");
+        markCallbackTraceDispatched(traceId, `published to ${matchedRoute.channel}`);
+        completeCallbackTrace(traceId, `routed to ${matchedRoute.channel}; downstream completion untracked`);
+        void emitGatewayOtel({
+          level: "info",
+          component: "telegram-channel",
+          action: "telegram.callback.routed",
+          success: true,
+          metadata: {
+            prefix: matchedRoute.prefix,
+            channel: matchedRoute.channel,
+            traceId,
+          },
         });
+      } catch (err) {
+        const message = String(err);
+        console.error("[gateway:telegram] callback route publish failed", {
+          error: message,
+          channel: matchedRoute.channel,
+          traceId,
+        });
+        await answerWithTrace("Route failed");
+        failCallbackTrace(traceId, message, `route publish failed for ${matchedRoute.channel}`);
+        if (chatId) {
+          await sendCallbackFailureMessage(chatId, route, traceId, message).catch(() => {});
+        }
       }
-      return; // Don't fall through to Inngest
+      return;
     }
 
-    // ── Default path: fire Inngest event ──
-
-    // Always answer within 10s or button shows loading spinner
-    try {
-      await ctx.answerCallbackQuery({ text: "Processing..." });
-    } catch {
-      // non-critical
-    }
-
-    // Parse callback_data — format: "action:context" (max 64 bytes)
-    const colonIdx = data.indexOf(":");
-    const action = colonIdx > 0 ? data.slice(0, colonIdx) : data;
-    const context = colonIdx > 0 ? data.slice(colonIdx + 1) : "";
-
-    // Fire Inngest event for the callback action
     try {
       const eventKey = INNGEST_EVENT_KEY || "37aa349b89692d657d276a40e0e47a15";
       const res = await fetch(`${INNGEST_URL}/e/${eventKey}`, {
@@ -1245,24 +1299,22 @@ async function startTelegramChannel(
             rawData: data,
             chatId,
             messageId,
+            traceId,
           },
         }),
       });
       if (!res.ok) {
-        console.error("[gateway:telegram] callback inngest event failed", { status: res.status });
+        throw new Error(`callback event dispatch failed with ${res.status}`);
       }
-    } catch (err) {
-      console.error("[gateway:telegram] callback inngest error", { error: String(err) });
-    }
 
-    // Edit the original message to show action taken
-    if (chatId && messageId) {
-      const actionLabel = ACTION_LABELS[action] ?? `✅ ${action}`;
-      try {
+      await answerWithTrace("Queued");
+      markCallbackTraceDispatched(traceId, `accepted telegram/callback.received for ${action}`);
+
+      if (chatId && messageId) {
+        const actionLabel = ACTION_LABELS[action] ?? `✅ ${action}`;
         await bot!.api.editMessageReplyMarkup(chatId, messageId, {
-          reply_markup: { inline_keyboard: [] }, // remove buttons
+          reply_markup: { inline_keyboard: [] },
         });
-        // Append action indicator to message
         const original = ctx.callbackQuery.message && "text" in ctx.callbackQuery.message
           ? (ctx.callbackQuery.message as any).text ?? ""
           : "";
@@ -1273,8 +1325,16 @@ async function startTelegramChannel(
             // editMessageText can fail if content unchanged — ignore
           });
         }
-      } catch (err) {
-        console.error("[gateway:telegram] edit after callback failed", { error: String(err) });
+      }
+
+      completeCallbackTrace(traceId, `accepted callback event and updated message for ${action}`);
+    } catch (err) {
+      const message = String(err);
+      console.error("[gateway:telegram] callback handling failed", { error: message, traceId });
+      await answerWithTrace("Action failed");
+      failCallbackTrace(traceId, message, `callback handling failed for ${action}`);
+      if (chatId) {
+        await sendCallbackFailureMessage(chatId, route, traceId, message).catch(() => {});
       }
     }
   });

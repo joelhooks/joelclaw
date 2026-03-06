@@ -10,6 +10,7 @@ import { ModelFallbackController, type TelemetryEmitter } from "@joelclaw/model-
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { getModel } from "@mariozechner/pi-ai";
 import { calculateContextTokens, createAgentSession, DefaultResourceLoader, getLastAssistantUsage, type LoadExtensionsResult, SessionManager } from "@mariozechner/pi-coding-agent";
+import { getCallbackTraceSnapshot } from "./callback-trace";
 import { fetchChannel as fetchDiscordChannel, getClient as getDiscordClient, markError as markDiscordError, parseChannelId as parseDiscordChannelId, send as sendDiscord, shutdown as shutdownDiscord, start as startDiscord } from "./channels/discord";
 import { send as sendIMessage, shutdown as shutdownIMessage, start as startIMessage } from "./channels/imessage";
 import { getRedisClient, getRuntimeState as getRedisRuntimeState, isHealthy as isRedisHealthy, shutdown as shutdownRedisChannel, start as startRedisChannel } from "./channels/redis";
@@ -1924,6 +1925,7 @@ function getStatusPayload(): Record<string, unknown> {
       windowMs: HUMAN_TURN_BATCH_WINDOW_MS,
     },
   };
+  const callbackTracing = getCallbackTraceSnapshot();
   const degradedCapabilities = getDegradedCapabilities();
 
   return {
@@ -1952,6 +1954,7 @@ function getStatusPayload(): Record<string, unknown> {
     },
     sessionPressure,
     supersession,
+    callbackTracing,
     channelInfo: {
       ...channelInfo,
       redis: isRedisHealthy() ? "ok" : "degraded",

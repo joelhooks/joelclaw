@@ -97,7 +97,21 @@ Runtime contract:
 - `joelclaw gateway status` exposes `supersession` plus `supersession.batching`
 - `joelclaw gateway diagnose` adds an `interruptibility` layer with supersession and batching details
 
-Passive intel / background event routes are excluded from this path. Still open: callback ack/timeout tracing and richer interruptibility coverage for non-message operator actions.
+Passive intel / background event routes are excluded from this path.
+
+## Callback ack/timeout tracing (ADR-0218 rank 5 slice)
+
+Telegram operator callbacks now get trace ids and explicit lifecycle tracking.
+
+Current covered paths:
+- `cmd:*` command-menu callbacks
+- `worktree:*` callbacks
+- `pitch:*` ADR pitch callbacks
+- default Telegram callback actions and external callback-route handoffs
+
+Gateway now tracks ack/dispatched/completed/failed/timed_out state for those paths, exposes `callbackTracing` in `joelclaw gateway status`, and adds a `callback-tracing` layer in `joelclaw gateway diagnose`.
+
+Timeout/failure paths send an explicit Telegram follow-up with route + trace id instead of silently trusting the button spinner. Still open: broader command tracing beyond callback-driven actions, richer downstream completion acks for external callback routes, and richer interruptibility coverage for non-message operator actions.
 
 ## Runtime guardrail enforcement (ADR-0189)
 

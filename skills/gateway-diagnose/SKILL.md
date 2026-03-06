@@ -103,6 +103,7 @@ joelclaw gateway status
 - `degradedCapabilities` — explicit list of what Redis loss is breaking
 - `sessionPressure` — context %, compaction age, session age, next action, next threshold summary, thread counts, fallback state/activations/failures, pressure reasons, alert state
 - `supersession` — latest-wins interruptibility state for human turns (active superseded request, last source/time/drop count, batching window, pending sources, last batch flush)
+- `callbackTracing` — Telegram operator callback ack/dispatch/completion/timeout summary (active traces, last completed, last failed, last timed out)
 - `activeSessions` — should have `gateway` with `alive: true`
 - `pending: 0` — if >0, messages are backing up (session busy or stuck)
 
@@ -111,6 +112,7 @@ Interpretation:
 - Do not call that a full outage unless process/session layers are also failing.
 - `joelclaw gateway diagnose` now emits a dedicated `session-pressure` layer so pressure risk is inspectable even when Redis/process layers are healthy.
 - `interruptibility` tells you whether a newer human message already superseded the stale turn, and whether direct human channels are currently sitting inside the short batching window before dispatch, so a brief pause can be intentional instead of another silent failure.
+- `callback-tracing` tells you whether Telegram operator callbacks are acking, completing, failing, or timing out honestly, with route + trace id surfaces for the last completed/failed/timed-out callback.
 
 ### Layer 2: Error Log (the money log)
 

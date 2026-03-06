@@ -2,6 +2,13 @@ import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Bot } from "grammy";
+import {
+  acknowledgeCallbackTrace,
+  completeCallbackTrace,
+  failCallbackTrace,
+  markCallbackTraceDispatched,
+  startCallbackTrace,
+} from "../callback-trace";
 import type { InlineButton } from "../channels/telegram";
 import {
   type CommandDefinition,
@@ -23,6 +30,31 @@ function escapeHtml(text: string): string {
 function truncate(text: string, maxChars = MAX_DIFF_CHARS): string {
   if (text.length <= maxChars) return text;
   return `${text.slice(0, maxChars - 1)}…`;
+}
+
+async function sendCallbackTimeoutMessage(bot: Bot, chatId: number, route: string, traceId: string): Promise<void> {
+  await bot.api.sendMessage(
+    chatId,
+    [
+      "⚠️ <b>Callback timed out</b>",
+      `Route: <code>${escapeHtml(route)}</code>`,
+      `Trace: <code>${escapeHtml(traceId)}</code>`,
+    ].join("\n"),
+    { parse_mode: "HTML" },
+  );
+}
+
+async function sendCallbackFailureMessage(bot: Bot, chatId: number, route: string, traceId: string, error: string): Promise<void> {
+  await bot.api.sendMessage(
+    chatId,
+    [
+      "❌ <b>Callback failed</b>",
+      `Route: <code>${escapeHtml(route)}</code>`,
+      `Trace: <code>${escapeHtml(traceId)}</code>`,
+      `Error: <code>${escapeHtml(error)}</code>`,
+    ].join("\n"),
+    { parse_mode: "HTML" },
+  );
 }
 
 function normalizeTaskId(taskId: string): string {
@@ -228,15 +260,31 @@ export function registerWorktreeCallbackHandler(bot: Bot, fallbackChatId: number
     const action = parts[1] ?? "";
     const taskId = parts.slice(2).join(":").trim();
     const chatId = ctx.callbackQuery.message?.chat.id ?? fallbackChatId;
+    const traceId = startCallbackTrace(
+      {
+        handler: "telegram.worktree",
+        route: `worktree:${action || "unknown"}`,
+        rawData: data,
+        chatId,
+        messageId: ctx.callbackQuery.message?.message_id,
+      },
+      {
+        onTimeout: async (trace) => {
+          await sendCallbackTimeoutMessage(bot, chatId, trace.route, trace.traceId).catch(() => {});
+        },
+      },
+    );
 
     try {
       await ctx.answerCallbackQuery({ text: "Processing..." });
-    } catch {
-      // non-critical
+      acknowledgeCallbackTrace(traceId, { text: "Processing..." });
+    } catch (error) {
+      acknowledgeCallbackTrace(traceId, { text: "Processing...", error: String(error) });
     }
 
     try {
       if (action === "view") {
+        markCallbackTraceDispatched(traceId, `loading diff for ${taskId}`);
         const diff = await getWorktreeDiff(taskId);
         const body = diff.trim() || "(no diff)";
         const truncated = truncate(body);
@@ -247,38 +295,52 @@ export function registerWorktreeCallbackHandler(bot: Bot, fallbackChatId: number
           `<b>Diff: ${escapeHtml(taskId)}</b>\n<pre>${escapeHtml(truncated)}</pre>${suffix}`,
           { parse_mode: "HTML" },
         );
+        completeCallbackTrace(traceId, `diff delivered for ${taskId}`);
         return;
       }
 
       if (action === "merge") {
+        markCallbackTraceDispatched(traceId, `merging ${taskId}`);
         const result = await mergeWorktree(taskId);
         const status = result.success ? "✅" : "❌";
         await bot.api.sendMessage(chatId, `${status} ${escapeHtml(result.message)}`, {
           parse_mode: "HTML",
         });
+        if (result.success) {
+          completeCallbackTrace(traceId, result.message);
+        } else {
+          failCallbackTrace(traceId, result.message, `merge failed for ${taskId}`);
+        }
         return;
       }
 
       if (action === "discard") {
+        markCallbackTraceDispatched(traceId, `discarding ${taskId}`);
         await discardWorktree(taskId);
         await bot.api.sendMessage(chatId, `🗑️ Discarded <code>${escapeHtml(taskId)}</code>`, {
           parse_mode: "HTML",
         });
+        completeCallbackTrace(traceId, `discarded ${taskId}`);
         return;
       }
 
       await bot.api.sendMessage(chatId, `<b>Unknown worktree action</b>: <code>${escapeHtml(action)}</code>`, {
         parse_mode: "HTML",
       });
+      failCallbackTrace(traceId, `unknown worktree action: ${action}`, "callback action rejected");
     } catch (error) {
+      const message = String(error);
       console.error("[gateway:worktree] callback action failed", {
         action,
         taskId,
-        error: String(error),
+        error: message,
+        traceId,
       });
-      await bot.api.sendMessage(chatId, `<b>Worktree action failed</b>\n<code>${escapeHtml(String(error))}</code>`, {
+      failCallbackTrace(traceId, message, `worktree ${action} failed for ${taskId}`);
+      await bot.api.sendMessage(chatId, `<b>Worktree action failed</b>\n<code>${escapeHtml(message)}</code>`, {
         parse_mode: "HTML",
       });
+      await sendCallbackFailureMessage(bot, chatId, `worktree:${action}`, traceId, message).catch(() => {});
     }
   });
 }
