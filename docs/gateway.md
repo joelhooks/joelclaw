@@ -205,6 +205,8 @@ Tune thresholds with environment variables on the gateway process:
 
 Restart the gateway after changing threshold env vars.
 
+Runtime dependency note: `pi/extensions/langfuse-cost` resolves the optional `langfuse` package from the repo root, not from a workspace package. If root install drift drops `langfuse` from `package.json` / `node_modules`, the gateway will log `langfuse-cost: cannot load optional dependency 'langfuse'; telemetry disabled.` until the root dependency is restored.
+
 ## Gateway operator steering cadence
 
 The gateway role prompt (`roles/gateway.md`) requires proactive steering check-ins during active work:

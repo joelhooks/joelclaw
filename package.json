@@ -30,6 +30,7 @@
     "packages/*"
   ],
   "dependencies": {
-    "ioredis": "^5.9.3"
+    "ioredis": "^5.9.3",
+    "langfuse": "^3.38.6"
   }
 }
