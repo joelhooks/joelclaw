@@ -9,6 +9,7 @@ Canonical notes for `packages/system-bus/src/inngest/functions/`.
 - Every critical branch emits OTEL evidence.
 - Health checks should route remediation via `system/self.healing.requested` and carry playbook context.
 - Never use `Bun.spawnSync` for `joelclaw` CLI calls inside handlers that also depend on worker/HTTP probes; use async subprocesses with explicit timeouts to avoid worker event-loop deadlocks.
+- `system/agent-dispatch` now supports `tool: "pi"` for real repo work. Pi dispatch must run from the requested `cwd` and enable tools when file work is requested; otherwise Restate PRD story runs inspect the wrong checkout or fail on file-access prompts.
 - For inference calls that must return machine-readable output, set `json: true` plus `requireJson: true` (and `requireTextOutput: true` where needed) so null/empty outputs are treated as failures, not successes.
 - Worker code must not import `packages/cli/src/*` via relative paths. Keep recovery-runbook helpers local to `packages/system-bus` (or move them to a leaf package) and avoid introducing `@joelclaw/system-bus` ↔ `@joelclaw/sdk` dependency cycles that break Turbo/Vercel builds.
 - Agent-loop PRDs are preflight-normalized at runtime (`normalizePrdOrThrow`): accepts `acceptance_criteria` plus aliases (`acceptance`, `acceptanceCriteria`), defaults missing `passes`/`priority`, and fails fast with explicit errors when story shape is invalid.

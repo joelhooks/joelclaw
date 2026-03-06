@@ -7,7 +7,7 @@ import type { DagNodeInput } from "./workflows/dag-orchestrator";
 
 const RESTATE_INGRESS = process.env.RESTATE_INGRESS_URL ?? "http://localhost:8080";
 const PRD_PLANNER_MODEL = process.env.PRD_PLANNER_MODEL ?? "openai-codex/gpt-5.4";
-const PRD_EXEC_MODEL = process.env.PRD_EXEC_MODEL ?? "gpt-5.4";
+const PRD_EXEC_MODEL = process.env.PRD_EXEC_MODEL ?? "openai-codex/gpt-5.4";
 const PRD_AGENT_WORKER_URL = process.env.PRD_AGENT_WORKER_URL ?? "http://host.docker.internal:3111";
 const PI_PATH_DIRS = [
   `${process.env.HOME}/.local/bin`,
@@ -24,16 +24,18 @@ const getArg = (flag: string) => {
 };
 
 const prdPathArg = getArg("--prd");
+const planPathArg = getArg("--plan");
 const workflowId = getArg("--id") ?? `prd-${Date.now().toString(36)}`;
 const cwd = resolve(getArg("--cwd") ?? `${process.env.HOME}/Code/joelhooks/joelclaw`);
 const asyncMode = !args.includes("--sync");
 
-if (!prdPathArg) {
-  console.error("❌ --prd <path> is required");
+if (!prdPathArg && !planPathArg) {
+  console.error("❌ --prd <path> or --plan <path> is required");
   process.exit(1);
 }
 
-const prdPath = resolve(prdPathArg);
+const prdPath = prdPathArg ? resolve(prdPathArg) : undefined;
+const planPath = planPathArg ? resolve(planPathArg) : undefined;
 
 function shellEscape(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
@@ -62,7 +64,7 @@ async function readEnvValue(name: string): Promise<string | undefined> {
   return undefined;
 }
 
-async function compilePrdPlan(prdContent: string): Promise<PrdExecutionPlan> {
+async function compilePrdPlan(prdContent: string, sourcePrdPath: string): Promise<PrdExecutionPlan> {
   const prompt = [
     "Compile this PRD into a safe execution DAG for coding agents.",
     "Return JSON only.",
@@ -95,7 +97,7 @@ async function compilePrdPlan(prdContent: string): Promise<PrdExecutionPlan> {
     }, null, 2),
     "",
     `Repo cwd: ${cwd}`,
-    `PRD path: ${prdPath}`,
+    `PRD path: ${sourcePrdPath}`,
     "",
     "PRD markdown:",
     prdContent,
@@ -155,6 +157,15 @@ async function compilePrdPlan(prdContent: string): Promise<PrdExecutionPlan> {
   }
 }
 
+async function loadPlanFromFile(path: string): Promise<PrdExecutionPlan> {
+  const raw = await readFile(path, "utf8");
+  const plan = JSON.parse(raw) as PrdExecutionPlan;
+  if (!plan || typeof plan !== "object" || !Array.isArray(plan.waves)) {
+    throw new Error(`plan file ${path} is missing waves[]`);
+  }
+  return plan;
+}
+
 function withCoordinationContract(story: PrdStoryPlan): string {
   const files = Array.isArray(story.files) && story.files.length > 0
     ? story.files.join(", ")
@@ -192,7 +203,7 @@ function buildAgentStoryNode(
   const payload = {
     requestId,
     task: withCoordinationContract(story),
-    tool: "codex",
+    tool: "pi",
     cwd,
     timeout: timeoutSeconds,
     model: PRD_EXEC_MODEL,
@@ -257,28 +268,41 @@ function buildDagNodes(plan: PrdExecutionPlan, token: string | undefined): DagNo
   return nodes;
 }
 
-const prdContent = await readFile(prdPath, "utf8");
 const internalToken = await readEnvValue("OTEL_EMIT_TOKEN");
 
-console.log(`🧠 Compiling PRD with ${PRD_PLANNER_MODEL}`);
-console.log(`   prd: ${prdPath}`);
-console.log(`   cwd: ${cwd}`);
+let plan: PrdExecutionPlan;
+let planSourceLabel: string;
+if (planPath) {
+  console.log(`📦 Loading PRD execution plan from ${planPath}`);
+  console.log(`   cwd: ${cwd}`);
+  plan = await loadPlanFromFile(planPath);
+  planSourceLabel = planPath;
+} else {
+  const prdContent = await readFile(prdPath!, "utf8");
+  console.log(`🧠 Compiling PRD with ${PRD_PLANNER_MODEL}`);
+  console.log(`   prd: ${prdPath}`);
+  console.log(`   cwd: ${cwd}`);
+  plan = await compilePrdPlan(prdContent, prdPath!);
+  planSourceLabel = prdPath!;
+}
 
-const plan = await compilePrdPlan(prdContent);
 const nodes = buildDagNodes(plan, internalToken);
 const request = {
   requestId: workflowId,
-  pipeline: `prd:${prdPath.split("/").at(-1) ?? "unknown"}`,
+  pipeline: `prd:${planSourceLabel.split("/").at(-1) ?? "unknown"}`,
   nodes,
 };
 
-console.log(`🧠 Compiled PRD with ${PRD_PLANNER_MODEL}`);
+console.log(`🧠 Prepared PRD execution plan`);
 console.log(`   workflowId: ${workflowId}`);
+console.log(`   source: ${planSourceLabel}`);
 console.log(`   summary: ${plan.summary}`);
 console.log(`   waves: ${plan.waves.length}`);
 console.log(`   nodes: ${nodes.length}`);
 console.log(`   worker bridge: ${PRD_AGENT_WORKER_URL}`);
 console.log(`   bridge auth: ${internalToken ? "OTEL_EMIT_TOKEN" : "none"}`);
+console.log(`   agent tool: pi`);
+console.log(`   agent model: ${PRD_EXEC_MODEL}`);
 console.log("");
 
 const endpoint = asyncMode

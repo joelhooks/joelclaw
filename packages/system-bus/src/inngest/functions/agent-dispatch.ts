@@ -158,20 +158,6 @@ export const agentDispatch = inngest.createFunction(
       );
     }
 
-    // NOTE: pi background dispatch defaults to --no-tools. For file access,
-    // dispatch with tool=codex or tool=claude instead.
-    if (tool === "pi" && readFiles) {
-      throw new NonRetriableError(
-        "tool:pi with readFiles:true is unsupported — use tool:codex or tool:claude"
-      );
-    }
-
-    if (tool === "pi" && taskIsIncompatibleWithPiNoTools(task)) {
-      throw new NonRetriableError(
-        "tool:pi cannot read files — use tool:codex or tool:claude"
-      );
-    }
-
     const startedAt = new Date().toISOString();
 
     // Execute the agent
@@ -191,7 +177,11 @@ export const agentDispatch = inngest.createFunction(
         }
       }
 
-      const piNeedsTools = tool === "pi" && taskRequiresFileAccess(task);
+      const piNeedsTools = tool === "pi" && (
+        readFiles ||
+        taskRequiresFileAccess(task) ||
+        taskIsIncompatibleWithPiNoTools(task)
+      );
       const sharedEnv = {
         ...process.env,
         CI: "true",
@@ -211,6 +201,7 @@ export const agentDispatch = inngest.createFunction(
             timeout: timeout * 1000,
             json: false,
             env: sharedEnv,
+            cwd: workDir,
           });
 
           const textOutput = result.text.trim();

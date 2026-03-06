@@ -76,16 +76,21 @@ bun run packages/restate/src/trigger-dag.ts -- --pipeline research --topic "Rest
 
 # PRD → DAG compilation (host pi planning + Restate orchestration + host agent bridge)
 bun run packages/restate/src/trigger-prd.ts -- --prd ~/Vault/Projects/09-joelclaw/0217-phase-1-queue-execution-plan.md --cwd ~/Code/joelhooks/joelclaw
+
+# Deterministic PRD execution (skip markdown planning; load a prebuilt JSON plan)
+bun run packages/restate/src/trigger-prd.ts -- --plan ~/Vault/Projects/09-joelclaw/0217-phase-1-story-1-plan.json --cwd ~/Code/joelhooks/joelclaw
 ```
 
 ### PRD execution bridge
 
 The Restate pod does **not** have `pi`, `codex`, `bun`, or a repo checkout. PRD execution therefore uses a host bridge:
 
-1. `trigger-prd.ts` runs on the host and compiles markdown PRD → DAG using `pi` with `openai-codex/gpt-5.4`
+1. `trigger-prd.ts` runs on the host and either:
+   - compiles markdown PRD → DAG using `pi` with `openai-codex/gpt-5.4`, or
+   - loads a deterministic JSON execution plan via `--plan`
 2. Restate executes the DAG in-cluster
 3. Story nodes call host worker internal endpoints on `host.docker.internal:3111` (sending `x-otel-emit-token` only when `OTEL_EMIT_TOKEN` is configured)
-4. Host worker dispatches coding agents and waits for their results
+4. Host worker dispatches **`pi`** agent work from the requested `cwd` and short-polls `/internal/agent-result/:requestId` until completion
 
 Every generated story prompt prepends the joelclaw mail contract: announce work, reserve exact paths, send status updates, release locks, and commit atomically.
 

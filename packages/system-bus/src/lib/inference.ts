@@ -19,8 +19,8 @@ import {
   resolveProfile,
 } from "@joelclaw/inference-router";
 import { emitOtelEvent } from "../observability/emit";
-import { checkCircuit, isNoOpFailure, recordFailure, recordSuccess } from "./inference-circuit";
 import { loadAgentDefinition } from "./agent-roster";
+import { checkCircuit, isNoOpFailure, recordFailure, recordSuccess } from "./inference-circuit";
 import { type LlmUsage, parsePiJsonAssistant, traceLlmGeneration } from "./langfuse";
 
 type InferenceMetadata = Record<string, unknown>;
@@ -46,6 +46,7 @@ export type InferOptions = BuildRouteInput & {
   noTools?: boolean;
   noExtensions?: boolean;
   env?: Record<string, string | undefined>;
+  cwd?: string;
   requestId?: string;
   policy?: Partial<InferencePolicy>;
   metadata?: InferenceMetadata;
@@ -138,7 +139,7 @@ async function runPiAttempt(
   timeoutMs: number,
   opts: Pick<
     InferOptions,
-    "appendSystemPrompt" | "env" | "noExtensions" | "noTools" | "print" | "system" | "thinking" | "tools"
+    "appendSystemPrompt" | "cwd" | "env" | "noExtensions" | "noTools" | "print" | "system" | "thinking" | "tools"
   >,
 ): Promise<PiAttemptResult> {
   const args: string[] = ["pi", "-p", "--no-session"];
@@ -166,6 +167,7 @@ async function runPiAttempt(
   }
 
   const proc = Bun.spawn(args, {
+    cwd: opts.cwd,
     stdin: Bun.file(promptPath),
     stdout: "pipe",
     stderr: "pipe",
@@ -416,6 +418,7 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
           thinking: resolvedOpts.thinking,
           tools: resolvedOpts.tools,
           env: resolvedOpts.env,
+          cwd: resolvedOpts.cwd,
         });
 
         if (piResult.exitCode !== 0) {
