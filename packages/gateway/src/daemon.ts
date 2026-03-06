@@ -11,6 +11,14 @@ import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { getModel } from "@mariozechner/pi-ai";
 import { calculateContextTokens, createAgentSession, DefaultResourceLoader, getLastAssistantUsage, type LoadExtensionsResult, SessionManager } from "@mariozechner/pi-coding-agent";
 import { getOperatorTraceSnapshot } from "./callback-trace";
+import {
+  buildChannelHealthSnapshot,
+  type ChannelHealthEvent,
+  type ChannelHealthSnapshot,
+  evaluateChannelHealthAlert,
+  type GatewayChannelId,
+  getInitialChannelHealthAlertState,
+} from "./channel-health";
 import { fetchChannel as fetchDiscordChannel, getClient as getDiscordClient, getRuntimeState as getDiscordRuntimeState, markError as markDiscordError, parseChannelId as parseDiscordChannelId, send as sendDiscord, shutdown as shutdownDiscord, start as startDiscord } from "./channels/discord";
 import { getRuntimeState as getIMessageRuntimeState, send as sendIMessage, shutdown as shutdownIMessage, start as startIMessage } from "./channels/imessage";
 import { getRedisClient, getRuntimeState as getRedisRuntimeState, isHealthy as isRedisHealthy, shutdown as shutdownRedisChannel, start as startRedisChannel } from "./channels/redis";
@@ -996,8 +1004,24 @@ void emitGatewayOtel({
 const MAX_COMPACTION_GAP_MS = 4 * 60 * 60 * 1000; // 4 hours — force compact if overdue
 const MAX_SESSION_AGE_MS = 8 * 60 * 60 * 1000; // 8 hours — fresh session if exceeded (was 24h, hit 85% at 7h)
 const SESSION_PRESSURE_ALERT_COOLDOWN_MS = 30 * 60 * 1000;
+const GATEWAY_HEALTH_MUTED_CHANNELS_KEY = "gateway:health:muted-channels";
+const GATEWAY_HEALTH_MUTE_REASONS_KEY = "gateway:health:mute-reasons";
+const CHANNEL_HEALTH_IDS: GatewayChannelId[] = ["telegram", "discord", "imessage", "slack"];
+const CHANNEL_HEALTH_MUTE_REFRESH_MS = 60 * 1000;
 let lastCompactionAt = Date.now();
 let sessionPressureAlertState = getInitialSessionPressureAlertState();
+let channelHealthAlertState = getInitialChannelHealthAlertState();
+let channelHealthMuteState: {
+  mutedChannels: GatewayChannelId[];
+  muteReasons: Partial<Record<GatewayChannelId, string>>;
+  lastCheckedAt: number;
+} = {
+  mutedChannels: [],
+  muteReasons: {},
+  lastCheckedAt: 0,
+};
+let channelHealthRefreshPromise: Promise<void> | null = null;
+let channelHealthEvaluatePromise: Promise<void> | null = null;
 
 // Initialize sessionCreatedAt and lastCompactionAt from session history.
 // For resumed sessions, session age = earliest entry timestamp (not daemon restart time).
@@ -1913,6 +1937,347 @@ async function maybeNotifySessionPressure(snapshot: ReturnType<typeof getSession
   }
 }
 
+function normalizeGatewayChannelId(value: unknown): GatewayChannelId | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return CHANNEL_HEALTH_IDS.includes(normalized as GatewayChannelId)
+    ? normalized as GatewayChannelId
+    : null;
+}
+
+function parseMutedChannelIds(raw: string | null): GatewayChannelId[] {
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const seen = new Set<GatewayChannelId>();
+    for (const value of parsed) {
+      const channel = normalizeGatewayChannelId(value);
+      if (channel) seen.add(channel);
+    }
+    return CHANNEL_HEALTH_IDS.filter((channel) => seen.has(channel));
+  } catch {
+    return [];
+  }
+}
+
+function parseMutedChannelReasons(raw: string | null): Partial<Record<GatewayChannelId, string>> {
+  if (!raw) return {};
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const reasons: Partial<Record<GatewayChannelId, string>> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      const channel = normalizeGatewayChannelId(key);
+      if (!channel || typeof value !== "string") continue;
+      const reason = value.trim();
+      if (!reason) continue;
+      reasons[channel] = reason;
+    }
+    return reasons;
+  } catch {
+    return {};
+  }
+}
+
+async function maybeRefreshChannelHealthMuteState(force = false): Promise<void> {
+  const now = Date.now();
+  if (!force && now - channelHealthMuteState.lastCheckedAt < CHANNEL_HEALTH_MUTE_REFRESH_MS) {
+    return;
+  }
+  if (channelHealthRefreshPromise) {
+    return channelHealthRefreshPromise;
+  }
+
+  channelHealthRefreshPromise = (async () => {
+    channelHealthMuteState = {
+      ...channelHealthMuteState,
+      lastCheckedAt: now,
+    };
+
+    const redis = getRedisClient();
+    if (!redis) return;
+
+    try {
+      const [mutedRaw, reasonsRaw] = await redis.mget(
+        GATEWAY_HEALTH_MUTED_CHANNELS_KEY,
+        GATEWAY_HEALTH_MUTE_REASONS_KEY,
+      );
+
+      channelHealthMuteState = {
+        mutedChannels: parseMutedChannelIds(mutedRaw),
+        muteReasons: parseMutedChannelReasons(reasonsRaw),
+        lastCheckedAt: now,
+      };
+    } catch (error) {
+      console.warn("[gateway:channel-health] failed to refresh muted channel state", {
+        error: String(error),
+      });
+    }
+  })();
+
+  try {
+    await channelHealthRefreshPromise;
+  } finally {
+    channelHealthRefreshPromise = null;
+  }
+}
+
+function describeTelegramChannelHealth(channel: Record<string, unknown>): string {
+  const ownerState = typeof channel.ownerState === "string" ? channel.ownerState : undefined;
+  const leaseEnabled = channel.leaseEnabled === true;
+  const retryAttempts = typeof channel.retryAttempts === "number" ? channel.retryAttempts : 0;
+  const conflictStreak = typeof channel.conflictStreak === "number" ? channel.conflictStreak : 0;
+
+  const suffix = retryAttempts > 0 || conflictStreak > 0
+    ? ` (retries ${retryAttempts}, conflicts ${conflictStreak})`
+    : "";
+
+  switch (ownerState) {
+    case "owner":
+      return `poll owner active${suffix}`;
+    case "passive":
+      return `passive poll follower${suffix}`;
+    case "fallback":
+      return leaseEnabled
+        ? `fallback polling with lease enabled${suffix}`
+        : `fallback polling (lease disabled)${suffix}`;
+    case "stopped":
+      return `polling stopped${suffix}`;
+    default:
+      return channel.healthy === true ? `healthy${suffix}` : `degraded${suffix}`;
+  }
+}
+
+function describeDiscordChannelHealth(channel: Record<string, unknown>): string {
+  return channel.ready === true ? "gateway client ready" : "gateway client not ready";
+}
+
+function describeIMessageChannelHealth(channel: Record<string, unknown>): string {
+  const reconnectAttempts = typeof channel.reconnectAttempts === "number" ? channel.reconnectAttempts : 0;
+  const healing = channel.healing === true;
+  const suffix = reconnectAttempts > 0 || healing
+    ? ` (reconnect attempts ${reconnectAttempts}${healing ? ", healing" : ""})`
+    : "";
+  return channel.connected === true ? `socket connected${suffix}` : `socket disconnected${suffix}`;
+}
+
+function describeSlackChannelHealth(channel: Record<string, unknown>): string {
+  return channel.connected === true ? "socket connected" : "socket not connected";
+}
+
+function getChannelHealthSummary(
+  channels = getChannelRuntimeSnapshots(),
+): ChannelHealthSnapshot & {
+  alerting: {
+    mutedChannels: GatewayChannelId[];
+    muteReasons: Partial<Record<GatewayChannelId, string>>;
+    lastEvent: {
+      channel: GatewayChannelId;
+      kind: ChannelHealthEvent["kind"];
+      status: ChannelHealthEvent["status"];
+      detail: string;
+      muted: boolean;
+      muteReason: string | null;
+      at: string;
+    } | null;
+    channels: Record<GatewayChannelId, {
+      status: string;
+      lastChangedAt: string | null;
+      lastEventAt: string | null;
+      lastRecoveredAt: string | null;
+    }>;
+  };
+} {
+  const mutedSet = new Set(channelHealthMuteState.mutedChannels);
+  const muteReasons = channelHealthMuteState.muteReasons;
+  const telegram = channels.telegram ?? {};
+  const discord = channels.discord ?? {};
+  const imessage = channels.imessage ?? {};
+  const slack = channels.slack ?? {};
+
+  const snapshot = buildChannelHealthSnapshot({
+    entries: {
+      telegram: {
+        configured: channelInfo.telegram,
+        healthy: telegram.healthy === true && !(telegram.ownerState === "passive" || (telegram.ownerState === "fallback" && telegram.leaseEnabled === true) || telegram.ownerState === "stopped"),
+        detail: describeTelegramChannelHealth(telegram),
+        muted: mutedSet.has("telegram"),
+        muteReason: muteReasons.telegram ?? null,
+      },
+      discord: {
+        configured: channelInfo.discord,
+        healthy: discord.healthy === true,
+        detail: describeDiscordChannelHealth(discord),
+        muted: mutedSet.has("discord"),
+        muteReason: muteReasons.discord ?? null,
+      },
+      imessage: {
+        configured: channelInfo.imessage,
+        healthy: imessage.healthy === true,
+        detail: describeIMessageChannelHealth(imessage),
+        muted: mutedSet.has("imessage"),
+        muteReason: muteReasons.imessage ?? null,
+      },
+      slack: {
+        configured: Boolean(SLACK_ALLOWED_USER_ID),
+        healthy: slack.healthy === true,
+        detail: describeSlackChannelHealth(slack),
+        muted: mutedSet.has("slack"),
+        muteReason: muteReasons.slack ?? null,
+      },
+    },
+  });
+
+  return {
+    ...snapshot,
+    alerting: {
+      mutedChannels: channelHealthMuteState.mutedChannels,
+      muteReasons,
+      lastEvent: channelHealthAlertState.lastEvent
+        ? {
+            channel: channelHealthAlertState.lastEvent.channel,
+            kind: channelHealthAlertState.lastEvent.kind,
+            status: channelHealthAlertState.lastEvent.status,
+            detail: channelHealthAlertState.lastEvent.detail,
+            muted: channelHealthAlertState.lastEvent.muted,
+            muteReason: channelHealthAlertState.lastEvent.muteReason,
+            at: new Date(channelHealthAlertState.lastEvent.at).toISOString(),
+          }
+        : null,
+      channels: Object.fromEntries(
+        CHANNEL_HEALTH_IDS.map((channel) => {
+          const state = channelHealthAlertState.channels[channel];
+          return [
+            channel,
+            {
+              status: state.status,
+              lastChangedAt: state.lastChangedAt > 0 ? new Date(state.lastChangedAt).toISOString() : null,
+              lastEventAt: state.lastEventAt > 0 ? new Date(state.lastEventAt).toISOString() : null,
+              lastRecoveredAt: state.lastRecoveredAt > 0 ? new Date(state.lastRecoveredAt).toISOString() : null,
+            },
+          ];
+        }),
+      ) as Record<GatewayChannelId, {
+        status: string;
+        lastChangedAt: string | null;
+        lastEventAt: string | null;
+        lastRecoveredAt: string | null;
+      }>,
+    },
+  };
+}
+
+function syncChannelHealthAlertState(snapshot: ChannelHealthSnapshot, at = Date.now()): void {
+  for (const channel of CHANNEL_HEALTH_IDS) {
+    const current = snapshot.entries[channel];
+    const previous = channelHealthAlertState.channels[channel];
+    if (!current || (previous.status === current.status && previous.lastChangedAt > 0)) continue;
+
+    channelHealthAlertState.channels[channel] = {
+      status: current.status,
+      lastChangedAt: previous.lastChangedAt > 0 ? previous.lastChangedAt : at,
+      lastEventAt: previous.lastEventAt,
+      lastRecoveredAt: previous.lastRecoveredAt,
+    };
+  }
+}
+
+function buildChannelHealthAlertMessage(event: ChannelHealthEvent): string {
+  const icon = event.kind === "degraded" ? "⚠️" : "✅";
+  const title = event.kind === "degraded"
+    ? `Gateway channel degraded: ${event.channel}`
+    : `Gateway channel recovered: ${event.channel}`;
+
+  return [
+    `${icon} <b>${escapeHtml(title)}</b>`,
+    "",
+    `State: <code>${escapeHtml(event.status)}</code>`,
+    `Detail: <code>${escapeHtml(event.detail)}</code>`,
+    ...(event.muted ? [`Known issue: <code>${escapeHtml(event.muteReason ?? "muted")}</code>`] : []),
+  ].join("\n");
+}
+
+async function maybeNotifyChannelHealth(): Promise<void> {
+  if (channelHealthEvaluatePromise) {
+    return channelHealthEvaluatePromise;
+  }
+
+  channelHealthEvaluatePromise = (async () => {
+    await maybeRefreshChannelHealthMuteState();
+    const snapshot = getChannelHealthSummary();
+    const now = Date.now();
+    const decision = evaluateChannelHealthAlert(snapshot, channelHealthAlertState, now);
+    channelHealthAlertState = decision.nextState;
+
+    for (const event of decision.events) {
+      const metadata = {
+        channel: event.channel,
+        kind: event.kind,
+        status: event.status,
+        detail: event.detail,
+        muted: event.muted,
+        muteReason: event.muteReason,
+      };
+
+      void emitGatewayOtel({
+        level: event.kind === "degraded" ? "warn" : "info",
+        component: "daemon.channel-health",
+        action: "channel_health.state.changed",
+        success: event.kind === "recovered",
+        metadata,
+      });
+
+      if (event.muted) {
+        void emitGatewayOtel({
+          level: "info",
+          component: "daemon.channel-health",
+          action: "channel_health.alert.suppressed",
+          success: true,
+          metadata,
+        });
+        continue;
+      }
+
+      if (!TELEGRAM_USER_ID) continue;
+
+      try {
+        await sendTelegram(TELEGRAM_USER_ID, buildChannelHealthAlertMessage(event), {
+          silent: event.kind !== "degraded",
+        });
+        void emitGatewayOtel({
+          level: event.kind === "degraded" ? "warn" : "info",
+          component: "daemon.channel-health",
+          action: "channel_health.alert.sent",
+          success: true,
+          metadata,
+        });
+      } catch (error) {
+        console.error("[gateway:channel-health] alert send failed", {
+          channel: event.channel,
+          error: String(error),
+        });
+        void emitGatewayOtel({
+          level: "error",
+          component: "daemon.channel-health",
+          action: "channel_health.alert.failed",
+          success: false,
+          error: String(error),
+          metadata,
+        });
+      }
+    }
+  })();
+
+  try {
+    await channelHealthEvaluatePromise;
+  } finally {
+    channelHealthEvaluatePromise = null;
+  }
+}
+
 function getChannelRuntimeSnapshots(): Record<string, Record<string, unknown>> {
   const telegram = getTelegramRuntimeState();
   const discord = getDiscordRuntimeState();
@@ -1978,6 +2343,7 @@ function getStatusPayload(): Record<string, unknown> {
   };
   const operatorTracing = getOperatorTraceSnapshot();
   const channels = getChannelRuntimeSnapshots();
+  const channelHealth = getChannelHealthSummary(channels);
   const degradedCapabilities = getDegradedCapabilities();
 
   return {
@@ -2009,6 +2375,7 @@ function getStatusPayload(): Record<string, unknown> {
     operatorTracing,
     callbackTracing: operatorTracing,
     channels,
+    channelHealth,
     channelInfo: {
       ...channelInfo,
       redis: isRedisHealthy() ? "ok" : "degraded",
@@ -2905,6 +3272,7 @@ const enqueueToGateway = async (source: string, prompt: string, metadata?: Recor
 await startRedisChannel(enqueueToGateway);
 
 const redisClient = getRedisClient();
+await maybeRefreshChannelHealthMuteState(true);
 if (redisClient) {
   await initMessageStore(
     redisClient,
@@ -3110,6 +3478,9 @@ try {
     error: String(error),
   });
 }
+
+await maybeRefreshChannelHealthMuteState(true);
+syncChannelHealthAlertState(getChannelHealthSummary());
 
 // ── Init fallback controller (ADR-0091) ──────────────────
 // Must happen after Telegram starts so notify can send alerts.
@@ -3391,6 +3762,8 @@ const queueDrainTimer = setInterval(() => {
 // Detects stuck sessions (no turn_end for 10min after a prompt).
 // _lastTurnEndAt and _lastPromptAt declared near session init (line ~85) to avoid TDZ
 const watchdogTimer = setInterval(() => {
+  void maybeNotifyChannelHealth();
+
   const now = Date.now();
   const uptimeMs = now - startedAt;
   const redisOk = isRedisHealthy();

@@ -144,14 +144,22 @@ Current runtime slice exposes per-channel runtime snapshots for:
 
 Operator surfaces:
 
-- `joelclaw gateway status` exposes `channels`
-- `joelclaw gateway diagnose` adds a `channel-health` layer
+- `joelclaw gateway status` exposes raw `channels` plus summarized `channelHealth`
+- `channelHealth` carries degraded/muted channel lists plus last degrade/recover event and per-channel transition timestamps
+- `joelclaw gateway diagnose` adds a `channel-health` layer with current contract state, muted known issues, and last alert event
 - `/health` components now reflect per-channel contract state instead of just a Telegram boolean
 - Telegram `fallback` with `leaseEnabled=false` is expected local mode, not a degraded owner contract
 
+Daemon behavior now includes immediate channel-health transition handling:
+
+- detect configured channel `healthy ↔ degraded` transitions
+- emit OTEL under `daemon.channel-health` (`channel_health.state.changed`, `channel_health.alert.sent|suppressed|failed`)
+- send direct Telegram degrade/recover alerts unless that channel is muted as a known issue
+- reuse the same known-issues keys as the autonomous monitor (`gateway:health:muted-channels`, `gateway:health:mute-reasons`)
+
 Current boundary of this rank-6 slice:
 
-- shipped: reusable channel runtime health/ownership snapshots and operator visibility
+- shipped: reusable channel runtime health/ownership snapshots, operator visibility, and immediate degrade/recover alerting with known-issue suppression
 - still open: active restart/heal policies and stricter single-owner semantics beyond Telegram
 
 ## Telegram multi-instance polling ownership (2026-03-05)
@@ -504,7 +512,7 @@ Heartbeat fan-out now includes:
 - Auto-restarts gateway on sustained **restart-eligible** general failures (`process`, `cli-status`, `redis-state`) with cooldown protection
 - `e2e-test` failures still mark health degraded and alert, but no longer trigger auto-restart by themselves
 - Alerts on sustained unresolved failure/degradation
-- Supports muted channel known-issues list; muted channels are still probed + logged, but excluded from channel alert notifications
+- Supports muted channel known-issues list; muted channels are still probed + logged, excluded from autonomous monitor channel alert notifications, and also suppress the daemon's immediate rank-6 degrade/recover Telegram alerts
 - Emits OTEL event:
   - component: `check-gateway-health`
   - action: `gateway.health.checked`

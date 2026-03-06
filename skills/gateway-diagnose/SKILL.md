@@ -106,6 +106,7 @@ joelclaw gateway status
 - `operatorTracing` — canonical Telegram operator action ack/dispatch/completion/timeout summary across callbacks + direct commands
 - `callbackTracing` — compatibility alias for the same snapshot while older surfaces catch up
 - `channels` — reusable runtime health/ownership snapshots for Telegram, Discord, iMessage, and Slack
+- `channelHealth` — summarized degraded/muted channel state plus last degrade/recover event
 - `activeSessions` — should have `gateway` with `alive: true`
 - `pending: 0` — if >0, messages are backing up (session busy or stuck)
 
@@ -115,7 +116,7 @@ Interpretation:
 - `joelclaw gateway diagnose` now emits a dedicated `session-pressure` layer so pressure risk is inspectable even when Redis/process layers are healthy.
 - `interruptibility` tells you whether a newer human message already superseded the stale turn, and whether direct human channels are currently sitting inside the short batching window before dispatch, so a brief pause can be intentional instead of another silent failure.
 - `operator-tracing` tells you whether Telegram operator callbacks and direct commands are acking, completing, failing, or timing out honestly, with route + trace id surfaces for the last completed/failed/timed-out action.
-- `channel-health` tells you whether a channel is intentionally owner/passive/fallback, truly connected, or quietly half-dead. Telegram `fallback` with `leaseEnabled=false` is expected when poll leasing is disabled locally; do not call that degraded by itself.
+- `channel-health` tells you whether a channel is intentionally owner/passive/fallback, truly connected, or quietly half-dead. It now also shows muted known issues and the last degrade/recover event. Telegram `fallback` with `leaseEnabled=false` is expected when poll leasing is disabled locally; do not call that degraded by itself.
 
 ### Layer 2: Error Log (the money log)
 

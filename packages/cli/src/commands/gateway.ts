@@ -158,6 +158,7 @@ type GatewayHealthSnapshot = {
     sessionPressure?: Record<string, unknown>
     supersession?: Record<string, unknown>
     channels?: Record<string, unknown>
+    channelHealth?: Record<string, unknown>
     operatorTracing?: Record<string, unknown>
     callbackTracing?: Record<string, unknown>
     guardrails?: Record<string, unknown>
@@ -299,6 +300,9 @@ const gatewayStatus = Command.make("status", {}, () =>
     const sessionPressureHealth = typeof daemonHealth?.status?.sessionPressure?.health === "string"
       ? daemonHealth.status.sessionPressure.health
       : undefined
+    const channelHealthOverall = typeof daemonHealth?.status?.channelHealth?.overall === "string"
+      ? daemonHealth.status.channelHealth.overall
+      : undefined
 
     const activeSessions = redisStatus.activeSessions.length > 0
       ? redisStatus.activeSessions
@@ -336,6 +340,13 @@ const gatewayStatus = Command.make("status", {}, () =>
       )
     }
 
+    if (channelHealthOverall === "degraded") {
+      nextActions.unshift(
+        { command: "joelclaw gateway diagnose", description: "Inspect channel-health transitions, muted known issues, and last alert state" },
+        { command: "joelclaw gateway known-issues", description: "Check whether a degraded channel is intentionally muted" },
+      )
+    }
+
     yield* Console.log(respond(
       "gateway status",
       {
@@ -364,6 +375,7 @@ const gatewayStatus = Command.make("status", {}, () =>
         ...(daemonHealth?.status?.sessionPressure ? { sessionPressure: daemonHealth.status.sessionPressure } : {}),
         ...(daemonHealth?.status?.supersession ? { supersession: daemonHealth.status.supersession } : {}),
         ...(daemonHealth?.status?.channels ? { channels: daemonHealth.status.channels } : {}),
+        ...(daemonHealth?.status?.channelHealth ? { channelHealth: daemonHealth.status.channelHealth } : {}),
         ...(daemonHealth?.status?.operatorTracing ? { operatorTracing: daemonHealth.status.operatorTracing } : {}),
         ...(daemonHealth?.status?.callbackTracing ? { callbackTracing: daemonHealth.status.callbackTracing } : {}),
         ...(daemonHealth?.status?.guardrails ? { guardrails: daemonHealth.status.guardrails } : {}),
@@ -1416,6 +1428,15 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
     let callbackLastTimedOutTraceId: string | undefined
     let callbackLastTimedOutError: string | undefined
     let channelSnapshots: Record<string, unknown> = {}
+    let channelHealthOverall: string | undefined
+    let channelHealthDegradedChannels: string[] = []
+    let channelHealthMutedChannels: string[] = []
+    let channelHealthLastEventChannel: string | undefined
+    let channelHealthLastEventKind: string | undefined
+    let channelHealthLastEventAt: string | undefined
+    let channelHealthLastEventDetail: string | undefined
+    let channelHealthLastEventMuted: boolean | undefined
+    let channelHealthLastEventMuteReason: string | undefined
     let checkpointSentThisTurn = false
     let pendingDeployVerificationCount = 0
     try {
@@ -1423,6 +1444,7 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       const parsed = JSON.parse(raw)
       const pressure = parsed.result?.sessionPressure ?? {}
       const supersession = parsed.result?.supersession ?? {}
+      const channelHealth = parsed.result?.channelHealth ?? {}
       channelSnapshots = typeof parsed.result?.channels === "object" && parsed.result.channels !== null
         ? parsed.result.channels as Record<string, unknown>
         : {}
@@ -1551,6 +1573,33 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
         : undefined
       callbackLastTimedOutError = typeof callbackTracing.lastTimedOut?.error === "string"
         ? callbackTracing.lastTimedOut.error
+        : undefined
+      channelHealthOverall = typeof channelHealth.overall === "string"
+        ? channelHealth.overall
+        : undefined
+      channelHealthDegradedChannels = Array.isArray(channelHealth.degradedChannels)
+        ? channelHealth.degradedChannels.filter((channel: unknown): channel is string => typeof channel === "string")
+        : []
+      channelHealthMutedChannels = Array.isArray(channelHealth.alerting?.mutedChannels)
+        ? channelHealth.alerting.mutedChannels.filter((channel: unknown): channel is string => typeof channel === "string")
+        : []
+      channelHealthLastEventChannel = typeof channelHealth.alerting?.lastEvent?.channel === "string"
+        ? channelHealth.alerting.lastEvent.channel
+        : undefined
+      channelHealthLastEventKind = typeof channelHealth.alerting?.lastEvent?.kind === "string"
+        ? channelHealth.alerting.lastEvent.kind
+        : undefined
+      channelHealthLastEventAt = typeof channelHealth.alerting?.lastEvent?.at === "string"
+        ? channelHealth.alerting.lastEvent.at
+        : undefined
+      channelHealthLastEventDetail = typeof channelHealth.alerting?.lastEvent?.detail === "string"
+        ? channelHealth.alerting.lastEvent.detail
+        : undefined
+      channelHealthLastEventMuted = typeof channelHealth.alerting?.lastEvent?.muted === "boolean"
+        ? channelHealth.alerting.lastEvent.muted
+        : undefined
+      channelHealthLastEventMuteReason = typeof channelHealth.alerting?.lastEvent?.muteReason === "string"
+        ? channelHealth.alerting.lastEvent.muteReason
         : undefined
       checkpointSentThisTurn = parsed.result?.guardrails?.checkpointSentThisTurn === true
       pendingDeployVerificationCount = Array.isArray(parsed.result?.guardrails?.pendingDeployVerifications)
@@ -1740,12 +1789,31 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       if (!slackConnected) degradedChannels.push("slack")
     }
 
+    if (channelHealthDegradedChannels.length > 0) {
+      channelFindings.push(`alerting degraded channels: ${channelHealthDegradedChannels.join(", ")}`)
+    }
+    if (channelHealthMutedChannels.length > 0) {
+      channelFindings.push(`muted known issues: ${channelHealthMutedChannels.join(", ")}`)
+    }
+    if (channelHealthLastEventChannel && channelHealthLastEventKind && channelHealthLastEventAt) {
+      channelFindings.push(
+        `last alert event: ${channelHealthLastEventChannel} ${channelHealthLastEventKind} at ${channelHealthLastEventAt}${channelHealthLastEventMuted ? " (muted)" : ""}`,
+      )
+    }
+    if (channelHealthLastEventDetail) {
+      channelFindings.push(`last alert detail: ${channelHealthLastEventDetail}`)
+    }
+    if (channelHealthLastEventMuted && channelHealthLastEventMuteReason) {
+      channelFindings.push(`mute reason: ${channelHealthLastEventMuteReason}`)
+    }
+
     if (channelFindings.length > 0) {
+      const channelHealthDegraded = channelHealthOverall === "degraded" || degradedChannels.length > 0
       layers.push({
         layer: "channel-health",
-        status: degradedChannels.length > 0 ? "degraded" : "ok",
-        detail: degradedChannels.length > 0
-          ? `Channel contract degraded: ${degradedChannels.join(", ")}`
+        status: channelHealthDegraded ? "degraded" : "ok",
+        detail: channelHealthDegraded
+          ? `Channel contract degraded: ${channelHealthDegradedChannels.length > 0 ? channelHealthDegradedChannels.join(", ") : degradedChannels.join(", ")}`
           : "Channel runtime contracts healthy",
         findings: channelFindings,
       })

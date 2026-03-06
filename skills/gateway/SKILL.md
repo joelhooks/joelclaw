@@ -117,9 +117,11 @@ Timeout/failure paths send an explicit Telegram follow-up with route + trace id 
 
 ## Channel runtime contracts (ADR-0218 rank 6 slice)
 
-`joelclaw gateway status` now exposes a canonical `channels` surface with reusable runtime snapshots for Telegram, Discord, iMessage, and Slack. `joelclaw gateway diagnose` adds a `channel-health` layer so owner/passive/fallback and half-dead channel states are visible before a full outage.
+`joelclaw gateway status` now exposes a canonical `channels` surface plus summarized `channelHealth` for Telegram, Discord, iMessage, and Slack. `joelclaw gateway diagnose` adds a `channel-health` layer so owner/passive/fallback and half-dead channel states are visible before a full outage.
 
-This is the first rank-6 slice: operator visibility and reusable health/ownership contracts, not the full restart/heal policy layer yet.
+Current rank-6 behavior also sends immediate degrade/recover alerts from the daemon, emits OTEL under `daemon.channel-health`, and respects `joelclaw gateway known-issues` mute state so known flaky channels stop crying wolf.
+
+This is still not the full restart/heal policy layer yet.
 
 ## Runtime guardrail enforcement (ADR-0189)
 
