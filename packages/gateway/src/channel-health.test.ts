@@ -12,7 +12,12 @@ describe("channel health", () => {
   test("builds per-channel snapshot with degraded, muted, and heal-policy summaries", () => {
     const snapshot = buildChannelHealthSnapshot({
       entries: {
-        telegram: { configured: true, healthy: true, detail: "owner" },
+        telegram: {
+          configured: true,
+          healthy: true,
+          detail: "owner",
+          manualRepairCommands: ["joelclaw gateway diagnose --hours 1 --lines 50"],
+        },
         discord: {
           configured: true,
           healthy: false,
@@ -28,6 +33,8 @@ describe("channel health", () => {
           muteReason: "known flaky transport",
           healPolicy: "manual",
           healReason: "FDA re-grant needed",
+          manualRepairSummary: "Re-grant Full Disk Access to imsg-rpc.app.",
+          manualRepairCommands: ["open /Applications/imsg-rpc.app"],
         },
         slack: { configured: false, healthy: false, detail: "disabled" },
       },
@@ -41,6 +48,9 @@ describe("channel health", () => {
     expect(snapshot.entries.discord.healPolicy).toBe("restart");
     expect(snapshot.entries.imessage.muteReason).toBe("known flaky transport");
     expect(snapshot.entries.imessage.healPolicy).toBe("manual");
+    expect(snapshot.entries.imessage.manualRepairSummary).toBe("Re-grant Full Disk Access to imsg-rpc.app.");
+    expect(snapshot.entries.imessage.manualRepairCommands).toEqual(["open /Applications/imsg-rpc.app"]);
+    expect(snapshot.entries.telegram.manualRepairCommands).toEqual(["joelclaw gateway diagnose --hours 1 --lines 50"]);
     expect(snapshot.entries.slack.status).toBe("disabled");
   });
 
@@ -186,6 +196,11 @@ describe("channel health", () => {
           detail: "passive poll follower",
           healPolicy: "manual",
           healReason: "ownership conflict",
+          manualRepairSummary: "Stop the competing poller and retry the gateway.",
+          manualRepairCommands: [
+            "joelclaw gateway diagnose --hours 1 --lines 50",
+            "joelclaw gateway restart",
+          ],
         },
         discord: { configured: false, healthy: false, detail: "disabled" },
         imessage: {
@@ -208,6 +223,11 @@ describe("channel health", () => {
 
     expect(decision.actions).toHaveLength(0);
     expect(decision.nextState.channels.telegram.policy).toBe("manual");
+    expect(decision.nextState.channels.telegram.manualRepairSummary).toBe("Stop the competing poller and retry the gateway.");
+    expect(decision.nextState.channels.telegram.manualRepairCommands).toEqual([
+      "joelclaw gateway diagnose --hours 1 --lines 50",
+      "joelclaw gateway restart",
+    ]);
     expect(decision.nextState.channels.imessage.consecutiveDegradedCount).toBe(1);
     expect(decision.nextState.channels.imessage.lastAttemptStatus).toBe("idle");
   });

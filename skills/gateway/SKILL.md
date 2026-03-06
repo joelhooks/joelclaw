@@ -125,9 +125,11 @@ Still open: any out-of-tree external callback consumer that doesn't adopt the ha
 
 Current rank-6 behavior also sends immediate degrade/recover alerts from the daemon, emits OTEL under `daemon.channel-health`, respects `joelclaw gateway known-issues` mute state so known flaky channels stop crying wolf, and now tracks guarded heal policy state per channel.
 
-`channelHealth.healing` now shows restart/manual policy, degraded streaks, cooldown, attempt counts, and last result. `gateway diagnose` adds `channel-healing`, and the watchdog can attempt guarded restarts for restart-eligible degraded channels while leaving ownership/lease conflicts as manual/operator work.
+`channelHealth.healing` now shows restart/manual policy, degraded streaks, cooldown, attempt counts, last result, plus `manualRepairRequired`, `manualRepairSummary`, and `manualRepairCommands` when the watchdog cannot fix the channel itself. `gateway diagnose` adds `channel-healing`, spells out manual operator repair steps, and the watchdog can attempt guarded restarts for restart-eligible degraded channels while leaving ownership/lease conflicts as manual/operator work.
 
-Still not done: stricter cross-channel ownership enforcement and the human-required repair paths that process restart cannot fix.
+Telegram retrying `getUpdates` conflicts no longer read as healthy fallback: when polling is down and only retrying, the ownership contract degrades visibly in `/health`, `gateway status`, and `gateway diagnose`.
+
+Still not done: stricter cross-channel ownership enforcement and richer/native repair automation beyond CLI-guided manual steps.
 
 ## Runtime guardrail enforcement (ADR-0189)
 

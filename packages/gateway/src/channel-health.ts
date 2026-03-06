@@ -168,6 +168,10 @@ export function buildChannelHealthSnapshot(input: {
           muteReason: value.muteReason ?? null,
           healPolicy: value.healPolicy ?? "none",
           healReason: value.healReason ?? null,
+          manualRepairSummary: value.manualRepairSummary ?? null,
+          manualRepairCommands: Array.isArray(value.manualRepairCommands)
+            ? value.manualRepairCommands.filter((command): command is string => typeof command === "string" && command.trim().length > 0)
+            : [],
         } satisfies ChannelHealthEntry,
       ];
     }),
@@ -285,6 +289,8 @@ export function evaluateChannelHealPolicy(
       status: entry.status,
       policy: entry.healPolicy,
       policyReason: entry.healReason,
+      manualRepairSummary: entry.manualRepairSummary,
+      manualRepairCommands: entry.manualRepairCommands,
     };
 
     if (!entry.configured || entry.status !== "degraded") {

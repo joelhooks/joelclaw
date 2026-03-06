@@ -2085,15 +2085,45 @@ async function maybeRefreshChannelHealthMuteState(force = false): Promise<void> 
   }
 }
 
+type TelegramHealPolicy = {
+  policy: "restart" | "manual" | "none";
+  reason: string | null;
+  manualRepairSummary: string | null;
+  manualRepairCommands: string[];
+};
+
+function isTelegramPollRetrying(channel: Record<string, unknown>): boolean {
+  const pollingActive = channel.pollingActive === true;
+  const pollingStarting = channel.pollingStarting === true;
+  const retryAttempts = typeof channel.retryAttempts === "number" ? channel.retryAttempts : 0;
+  return !pollingActive && !pollingStarting && retryAttempts > 0;
+}
+
+function getTelegramManualRepairCommands(): string[] {
+  return [
+    "joelclaw gateway diagnose --hours 1 --lines 50",
+    "joelclaw gateway restart",
+  ];
+}
+
 function describeTelegramChannelHealth(channel: Record<string, unknown>): string {
   const ownerState = typeof channel.ownerState === "string" ? channel.ownerState : undefined;
   const leaseEnabled = channel.leaseEnabled === true;
   const retryAttempts = typeof channel.retryAttempts === "number" ? channel.retryAttempts : 0;
   const conflictStreak = typeof channel.conflictStreak === "number" ? channel.conflictStreak : 0;
+  const retrying = isTelegramPollRetrying(channel);
 
   const suffix = retryAttempts > 0 || conflictStreak > 0
     ? ` (retries ${retryAttempts}, conflicts ${conflictStreak})`
     : "";
+
+  if (retrying && conflictStreak > 0) {
+    return `polling blocked by Bot API conflicts${suffix}`;
+  }
+
+  if (retrying) {
+    return `polling retry scheduled${suffix}`;
+  }
 
   switch (ownerState) {
     case "owner":
@@ -2128,20 +2158,24 @@ function describeSlackChannelHealth(channel: Record<string, unknown>): string {
   return channel.connected === true ? "socket connected" : "socket not connected";
 }
 
-function getTelegramHealPolicy(channel: Record<string, unknown>): { policy: "restart" | "manual" | "none"; reason: string | null } {
+function getTelegramHealPolicy(channel: Record<string, unknown>): TelegramHealPolicy {
   const ownerState = typeof channel.ownerState === "string" ? channel.ownerState : undefined;
   const leaseEnabled = channel.leaseEnabled === true;
   const started = channel.started === true;
   const healthy = channel.healthy === true;
+  const conflictStreak = typeof channel.conflictStreak === "number" ? channel.conflictStreak : 0;
+  const retrying = isTelegramPollRetrying(channel);
 
   if (!channelInfo.telegram) {
-    return { policy: "none", reason: null };
+    return { policy: "none", reason: null, manualRepairSummary: null, manualRepairCommands: [] };
   }
 
   if (ownerState === "passive") {
     return {
       policy: "manual",
       reason: "Telegram poll ownership is passive; investigate competing bot instances or lease coordination.",
+      manualRepairSummary: "Leave only one long-polling gateway instance active, or restore Redis poll lease coordination before relying on Telegram ingress.",
+      manualRepairCommands: getTelegramManualRepairCommands(),
     };
   }
 
@@ -2149,6 +2183,26 @@ function getTelegramHealPolicy(channel: Record<string, unknown>): { policy: "res
     return {
       policy: "manual",
       reason: "Telegram fell back while lease coordination is enabled; check Redis lease ownership and competing pollers.",
+      manualRepairSummary: "Restore Redis poll lease coordination or stop the competing poller so one gateway instance can regain Telegram poll ownership.",
+      manualRepairCommands: getTelegramManualRepairCommands(),
+    };
+  }
+
+  if (retrying && conflictStreak > 0) {
+    return {
+      policy: "manual",
+      reason: "Telegram polling is retrying after Bot API conflicts; another bot process is probably polling the same token.",
+      manualRepairSummary: "Stop the competing Bot API poller or switch back to coordinated poll leasing before trusting Telegram ingress again.",
+      manualRepairCommands: getTelegramManualRepairCommands(),
+    };
+  }
+
+  if (retrying) {
+    return {
+      policy: "restart",
+      reason: "Telegram polling is down and retrying to re-establish long polling.",
+      manualRepairSummary: null,
+      manualRepairCommands: [],
     };
   }
 
@@ -2156,10 +2210,12 @@ function getTelegramHealPolicy(channel: Record<string, unknown>): { policy: "res
     return {
       policy: "restart",
       reason: "Telegram channel stopped or lost healthy polling state.",
+      manualRepairSummary: null,
+      manualRepairCommands: [],
     };
   }
 
-  return { policy: "none", reason: null };
+  return { policy: "none", reason: null, manualRepairSummary: null, manualRepairCommands: [] };
 }
 
 function getChannelHealthSummary(
@@ -2191,6 +2247,9 @@ function getChannelHealthSummary(
       status: string;
       policy: string;
       policyReason: string | null;
+      manualRepairRequired: boolean;
+      manualRepairSummary: string | null;
+      manualRepairCommands: string[];
       consecutiveDegradedCount: number;
       attempts: number;
       lastAttemptAt: string | null;
@@ -2205,8 +2264,7 @@ function getChannelHealthSummary(
   const discord = channels.discord ?? {};
   const imessage = channels.imessage ?? {};
   const slack = channels.slack ?? {};
-  const telegramHealthy = telegram.healthy === true
-    && !(telegram.ownerState === "passive" || (telegram.ownerState === "fallback" && telegram.leaseEnabled === true) || telegram.ownerState === "stopped");
+  const telegramHealthy = telegram.healthy === true;
   const telegramHeal = getTelegramHealPolicy(telegram);
 
   const snapshot = buildChannelHealthSnapshot({
@@ -2219,6 +2277,8 @@ function getChannelHealthSummary(
         muteReason: muteReasons.telegram ?? null,
         healPolicy: telegramHeal.policy,
         healReason: telegramHeal.reason,
+        manualRepairSummary: telegramHeal.manualRepairSummary,
+        manualRepairCommands: telegramHeal.manualRepairCommands,
       },
       discord: {
         configured: channelInfo.discord,
@@ -2298,6 +2358,9 @@ function getChannelHealthSummary(
               status: state.status,
               policy: state.policy,
               policyReason: state.policyReason,
+              manualRepairRequired: state.status === "degraded" && state.policy === "manual",
+              manualRepairSummary: state.manualRepairSummary,
+              manualRepairCommands: state.manualRepairCommands,
               consecutiveDegradedCount: state.consecutiveDegradedCount,
               attempts: state.attempts,
               lastAttemptAt: state.lastAttemptAt > 0 ? new Date(state.lastAttemptAt).toISOString() : null,
@@ -2310,6 +2373,9 @@ function getChannelHealthSummary(
         status: string;
         policy: string;
         policyReason: string | null;
+        manualRepairRequired: boolean;
+        manualRepairSummary: string | null;
+        manualRepairCommands: string[];
         consecutiveDegradedCount: number;
         attempts: number;
         lastAttemptAt: string | null;
@@ -2346,6 +2412,8 @@ function syncChannelHealState(snapshot: ChannelHealthSnapshot): void {
       status: current.status,
       policy: current.healPolicy,
       policyReason: current.healReason,
+      manualRepairSummary: current.manualRepairSummary,
+      manualRepairCommands: current.manualRepairCommands,
       consecutiveDegradedCount: current.status === "degraded" ? previous.consecutiveDegradedCount : 0,
       lastAttemptStatus: current.status === "degraded" && previous.lastAttemptStatus === "scheduled"
         ? "scheduled"
@@ -2354,17 +2422,28 @@ function syncChannelHealState(snapshot: ChannelHealthSnapshot): void {
   }
 }
 
-function buildChannelHealthAlertMessage(event: ChannelHealthEvent): string {
+function buildChannelHealthAlertMessage(event: ChannelHealthEvent, entry?: ChannelHealthSnapshot["entries"][GatewayChannelId]): string {
   const icon = event.kind === "degraded" ? "⚠️" : "✅";
   const title = event.kind === "degraded"
     ? `Gateway channel degraded: ${event.channel}`
     : `Gateway channel recovered: ${event.channel}`;
+
+  const manualCommands = entry?.manualRepairCommands ?? [];
 
   return [
     `${icon} <b>${escapeHtml(title)}</b>`,
     "",
     `State: <code>${escapeHtml(event.status)}</code>`,
     `Detail: <code>${escapeHtml(event.detail)}</code>`,
+    ...(entry?.healPolicy && entry.healPolicy !== "none" ? [`Heal policy: <code>${escapeHtml(entry.healPolicy)}</code>`] : []),
+    ...(entry?.healReason ? [`Heal reason: <code>${escapeHtml(entry.healReason)}</code>`] : []),
+    ...(entry?.manualRepairSummary ? [`Manual repair: <code>${escapeHtml(entry.manualRepairSummary)}</code>`] : []),
+    ...(manualCommands.length > 0
+      ? [
+          "Commands:",
+          ...manualCommands.map((command) => `- <code>${escapeHtml(command)}</code>`),
+        ]
+      : []),
     ...(event.muted ? [`Known issue: <code>${escapeHtml(event.muteReason ?? "muted")}</code>`] : []),
   ].join("\n");
 }
@@ -2382,6 +2461,7 @@ async function maybeNotifyChannelHealth(): Promise<void> {
     channelHealthAlertState = decision.nextState;
 
     for (const event of decision.events) {
+      const entry = snapshot.entries[event.channel];
       const metadata = {
         channel: event.channel,
         kind: event.kind,
@@ -2389,6 +2469,10 @@ async function maybeNotifyChannelHealth(): Promise<void> {
         detail: event.detail,
         muted: event.muted,
         muteReason: event.muteReason,
+        healPolicy: entry?.healPolicy ?? null,
+        healReason: entry?.healReason ?? null,
+        manualRepairSummary: entry?.manualRepairSummary ?? null,
+        manualRepairCommands: entry?.manualRepairCommands ?? [],
       };
 
       void emitGatewayOtel({
@@ -2413,7 +2497,7 @@ async function maybeNotifyChannelHealth(): Promise<void> {
       if (!TELEGRAM_USER_ID) continue;
 
       try {
-        await sendTelegram(TELEGRAM_USER_ID, buildChannelHealthAlertMessage(event), {
+        await sendTelegram(TELEGRAM_USER_ID, buildChannelHealthAlertMessage(event, entry), {
           silent: event.kind !== "degraded",
         });
         void emitGatewayOtel({
@@ -2596,15 +2680,30 @@ function getChannelRuntimeSnapshots(): Record<string, Record<string, unknown>> {
   const discord = getDiscordRuntimeState();
   const imessage = getIMessageRuntimeState();
   const slack = getSlackRuntimeState();
+  const telegramPollingState = !telegram.started
+    ? "stopped"
+    : telegram.pollingActive
+      ? "active"
+      : telegram.pollingStarting
+        ? "starting"
+        : telegram.pollConflictStreak > 0 && telegram.pollRetryAttempts > 0
+          ? "retrying_conflict"
+          : telegram.pollRetryAttempts > 0
+            ? "retrying"
+            : "idle";
+  const telegramIngressHealthy = channelInfo.telegram
+    ? telegram.started
+      && !(telegram.pollLeaseState === "passive" || (telegram.pollLeaseState === "fallback" && telegram.pollLeaseEnabled) || telegram.pollLeaseState === "stopped")
+      && (telegram.pollingActive || telegram.pollingStarting)
+    : false;
 
   return {
     telegram: {
       configured: channelInfo.telegram,
       started: telegram.started,
-      healthy: channelInfo.telegram
-        ? telegram.started && ["owner", "passive", "fallback"].includes(telegram.pollLeaseState)
-        : false,
+      healthy: telegramIngressHealthy,
       ownerState: telegram.pollLeaseState,
+      pollingState: telegramPollingState,
       pollingActive: telegram.pollingActive,
       pollingStarting: telegram.pollingStarting,
       leaseEnabled: telegram.pollLeaseEnabled,
@@ -4267,7 +4366,11 @@ function getHealthStatus(): {
     components: {
       redis: redisOk ? "ok" : "degraded",
       telegram: channelInfo.telegram
-        ? String(channels.telegram?.ownerState ?? (channels.telegram?.healthy === true ? "ok" : "degraded"))
+        ? channels.telegram?.healthy === true
+          ? String(channels.telegram?.ownerState ?? "ok")
+          : typeof channels.telegram?.pollingState === "string" && channels.telegram.pollingState !== "idle"
+            ? String(channels.telegram.pollingState)
+            : String(channels.telegram?.ownerState ?? "degraded")
         : "disabled",
       discord: channelInfo.discord
         ? (channels.discord?.healthy === true ? "ok" : "degraded")

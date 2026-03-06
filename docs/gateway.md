@@ -172,15 +172,16 @@ Daemon behavior now includes immediate channel-health transition handling:
 The deeper rank-6 slice now adds active heal policy state:
 
 - each channel carries `healPolicy` (`restart` / `manual` / `none`) and `healReason`
-- `channelHealth.healing` exposes degraded streak count, cooldown, attempts, and last heal result per channel
-- `joelclaw gateway diagnose` adds a `channel-healing` layer
+- `channelHealth.healing` exposes degraded streak count, cooldown, attempts, last heal result, plus `manualRepairRequired`, `manualRepairSummary`, and `manualRepairCommands` when the watchdog cannot fix the channel itself
+- `joelclaw gateway diagnose` adds a `channel-healing` layer and now spells out manual repair steps instead of vague `armed` wording
 - watchdog attempts guarded restarts for restart-eligible degraded channels after `2` consecutive degraded checks with a `10m` cooldown
-- ownership/lease problems (for example Telegram passive poll ownership) stay visible as `manual` instead of triggering dumb restart churn
+- ownership/lease problems (for example Telegram passive poll ownership or retrying `getUpdates` conflicts) stay visible as `manual` instead of triggering dumb restart churn
+- Telegram retry/conflict states no longer read as healthy local fallback: `/health`, `gateway status`, and `gateway diagnose` now degrade the contract when polling is down and only retrying
 
 Current boundary of this rank-6 slice:
 
-- shipped: reusable channel runtime health/ownership snapshots, immediate degrade/recover alerting with known-issue suppression, and guarded per-channel heal policy state with restart attempts for restart-eligible channels
-- still open: stricter single-owner semantics beyond Telegram and downstream policies for channels that require human/environment repair instead of process restart
+- shipped: reusable channel runtime health/ownership snapshots, immediate degrade/recover alerting with known-issue suppression, guarded per-channel heal policy state with restart attempts for restart-eligible channels, and explicit manual repair guidance for manual-policy degradations
+- still open: stricter single-owner semantics beyond Telegram and any richer/native repair automation beyond CLI-guided operator steps
 
 ## Telegram multi-instance polling ownership (2026-03-05)
 

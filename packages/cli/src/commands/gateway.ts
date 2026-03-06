@@ -303,6 +303,27 @@ const gatewayStatus = Command.make("status", {}, () =>
     const channelHealthOverall = typeof daemonHealth?.status?.channelHealth?.overall === "string"
       ? daemonHealth.status.channelHealth.overall
       : undefined
+    const manualRepairNextActions = (() => {
+      const healingChannels = typeof daemonHealth?.status?.channelHealth?.healing?.channels === "object"
+        && daemonHealth.status.channelHealth.healing.channels !== null
+        ? daemonHealth.status.channelHealth.healing.channels as Record<string, Record<string, unknown>>
+        : {}
+
+      return Object.entries(healingChannels)
+        .flatMap(([channel, value]) => {
+          const required = value.manualRepairRequired === true
+            || (value.policy === "manual" && value.status === "degraded")
+          if (!required || !Array.isArray(value.manualRepairCommands)) return []
+          return value.manualRepairCommands
+            .filter((command): command is string => typeof command === "string" && command.trim().length > 0)
+            .map((command) => ({
+              command,
+              description: `Manual repair step for ${channel}`,
+            }))
+        })
+        .filter((action, index, all) => all.findIndex((candidate) => candidate.command === action.command) === index)
+        .slice(0, 3)
+    })()
 
     const activeSessions = redisStatus.activeSessions.length > 0
       ? redisStatus.activeSessions
@@ -344,6 +365,7 @@ const gatewayStatus = Command.make("status", {}, () =>
       nextActions.unshift(
         { command: "joelclaw gateway diagnose", description: "Inspect channel-health transitions, muted known issues, and last alert state" },
         { command: "joelclaw gateway known-issues", description: "Check whether a degraded channel is intentionally muted" },
+        ...manualRepairNextActions,
       )
     }
 
@@ -1442,6 +1464,8 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
     let channelHealPolicies: string[] = []
     let channelHealScheduled: string[] = []
     let channelHealFailures: string[] = []
+    let channelHealManualRequired: string[] = []
+    let channelHealManualCommands: string[] = []
     let checkpointSentThisTurn = false
     let pendingDeployVerificationCount = 0
     try {
@@ -1627,6 +1651,25 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
           const error = typeof value.lastAttemptError === "string" ? value.lastAttemptError : "heal failed"
           return `${channel}: ${error}`
         })
+      channelHealManualRequired = Object.entries(healingChannels)
+        .filter(([, value]) => value.manualRepairRequired === true || (value.policy === "manual" && value.status === "degraded"))
+        .map(([channel, value]) => {
+          const summary = typeof value.manualRepairSummary === "string" && value.manualRepairSummary.length > 0
+            ? value.manualRepairSummary
+            : (typeof value.policyReason === "string" && value.policyReason.length > 0 ? value.policyReason : "manual operator repair required")
+          return `${channel}: ${summary}`
+        })
+      channelHealManualCommands = Array.from(
+        new Set(
+          Object.entries(healingChannels)
+            .flatMap(([channel, value]) => {
+              if (!Array.isArray(value.manualRepairCommands)) return []
+              return value.manualRepairCommands
+                .filter((command): command is string => typeof command === "string" && command.trim().length > 0)
+                .map((command) => `${channel} -> ${command}`)
+            }),
+        ),
+      )
       checkpointSentThisTurn = parsed.result?.guardrails?.checkpointSentThisTurn === true
       pendingDeployVerificationCount = Array.isArray(parsed.result?.guardrails?.pendingDeployVerifications)
         ? parsed.result.guardrails.pendingDeployVerifications.length
@@ -1769,6 +1812,7 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
     const telegramHealthy = telegramChannel.healthy === true
     const telegramLeaseEnabled = telegramChannel.leaseEnabled === true
     const telegramOwnerState = typeof telegramChannel.ownerState === "string" ? telegramChannel.ownerState : undefined
+    const telegramPollingState = typeof telegramChannel.pollingState === "string" ? telegramChannel.pollingState : undefined
     if (telegramConfigured) {
       const telegramLabel = telegramOwnerState === "fallback" && !telegramLeaseEnabled
         ? "fallback (lease disabled)"
@@ -1779,12 +1823,19 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
       if (telegramRetryAttempts > 0 || telegramConflictStreak > 0) {
         channelFindings.push(`telegram retries/conflicts: ${telegramRetryAttempts}/${telegramConflictStreak}`)
       }
+      if (telegramPollingState === "retrying_conflict") {
+        channelFindings.push("telegram ingress is down and retrying after Bot API conflicts")
+      } else if (telegramPollingState === "retrying") {
+        channelFindings.push("telegram ingress is down and retrying")
+      }
       const telegramContractDegraded = !telegramHealthy
         || telegramOwnerState === "passive"
         || (telegramOwnerState === "fallback" && telegramLeaseEnabled)
         || telegramOwnerState === "stopped"
+        || telegramPollingState === "retrying"
+        || telegramPollingState === "retrying_conflict"
       if (telegramContractDegraded) {
-        degradedChannels.push(`telegram:${telegramOwnerState ?? "degraded"}`)
+        degradedChannels.push(`telegram:${telegramPollingState === "retrying_conflict" ? "retrying_conflict" : (telegramOwnerState ?? "degraded")}`)
       }
     }
 
@@ -1861,17 +1912,25 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
     if (channelHealFailures.length > 0) {
       channelHealFindings.push(`last heal failures: ${channelHealFailures.join(" | ")}`)
     }
+    if (channelHealManualRequired.length > 0) {
+      channelHealFindings.push(`manual repair required: ${channelHealManualRequired.join(" | ")}`)
+    }
+    if (channelHealManualCommands.length > 0) {
+      channelHealFindings.push(`manual repair commands: ${channelHealManualCommands.join(" | ")}`)
+    }
     if (channelHealFindings.length > 0) {
       layers.push({
         layer: "channel-healing",
-        status: channelHealScheduled.length > 0 || channelHealFailures.length > 0 ? "degraded" : "ok",
+        status: channelHealScheduled.length > 0 || channelHealFailures.length > 0 || channelHealManualRequired.length > 0 ? "degraded" : "ok",
         detail: channelHealFailures.length > 0
           ? "Active channel heal policy has recent failures"
           : channelHealScheduled.length > 0
             ? "Channel heal policy has restart attempts queued/in flight"
-            : channelHealPolicies.length > 0
-              ? "Channel heal policy armed"
-              : "Channel heal policy idle",
+            : channelHealManualRequired.length > 0
+              ? "Channel heal policy requires manual operator repair"
+              : channelHealPolicies.length > 0
+                ? "Channel heal policy armed"
+                : "Channel heal policy idle",
         findings: channelHealFindings,
       })
     }
