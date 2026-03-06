@@ -57,3 +57,77 @@ export function previewOutput(output: string): string {
   if (output.length <= OUTPUT_PREVIEW_CHARS) return output;
   return `${output.slice(0, OUTPUT_PREVIEW_CHARS)}…[${output.length} chars]`;
 }
+
+// --- Gateway notification ---
+
+const GATEWAY_NOTIFY_TIMEOUT_MS = 5_000;
+const REDIS_HOST = process.env.REDIS_HOST ?? "127.0.0.1";
+const REDIS_PORT = Number.parseInt(process.env.REDIS_PORT ?? "6379", 10);
+const GATEWAY_CHANNEL = "gateway";
+
+export interface GatewayNotification {
+  message: string;
+  priority?: "low" | "normal" | "high" | "urgent";
+  source?: string;
+  context?: Record<string, unknown>;
+}
+
+/**
+ * Push a notification to the gateway via Redis.
+ * Same protocol as `joelclaw notify send` — LPUSH event to
+ * `joelclaw:events:{channel}`, PUBLISH on `joelclaw:notify:{channel}`.
+ *
+ * Fire-and-forget: returns false on failure, never throws.
+ */
+export async function notifyGateway(notification: GatewayNotification): Promise<boolean> {
+  let redis: InstanceType<typeof import("ioredis").default> | null = null;
+  try {
+    const Redis = (await import("ioredis")).default;
+    const host = REDIS_HOST === "localhost" ? "127.0.0.1" : REDIS_HOST;
+    redis = new Redis({
+      host,
+      port: REDIS_PORT,
+      lazyConnect: true,
+      enableOfflineQueue: false,
+      maxRetriesPerRequest: 1,
+      connectTimeout: 3_000,
+      commandTimeout: GATEWAY_NOTIFY_TIMEOUT_MS,
+      retryStrategy: () => null, // no retries — fire and forget
+    });
+    redis.on("error", () => {}); // suppress unhandled
+
+    await redis.connect();
+
+    const priority = notification.priority ?? "normal";
+    const event = {
+      id: randomUUID(),
+      type: "notify.message",
+      source: notification.source ?? "restate/dag",
+      payload: {
+        prompt: notification.message,
+        message: notification.message,
+        priority,
+        level: priority === "urgent" ? "fatal" : priority === "high" ? "warn" : "info",
+        context: notification.context ?? {},
+        immediateTelegram: priority === "high" || priority === "urgent",
+      },
+      ts: Date.now(),
+    };
+
+    const queueKey = `joelclaw:events:${GATEWAY_CHANNEL}`;
+    const notifyKey = `joelclaw:notify:${GATEWAY_CHANNEL}`;
+    const serialized = JSON.stringify(event);
+
+    await redis.lpush(queueKey, serialized);
+    await redis.publish(
+      notifyKey,
+      JSON.stringify({ eventId: event.id, type: event.type, priority }),
+    );
+
+    await redis.quit().catch(() => {});
+    return true;
+  } catch {
+    if (redis) redis.disconnect(false);
+    return false;
+  }
+}

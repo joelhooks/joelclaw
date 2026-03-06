@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as restate from "@restatedev/restate-sdk";
-import { emitOtel, previewOutput } from "../otel";
+import { emitOtel, notifyGateway, previewOutput } from "../otel";
 
 // --- Constants ---
 
@@ -479,10 +479,29 @@ export const dagOrchestrator = restate.workflow({
         startedAt: new Date().toISOString(),
       }));
 
-      const nodes = await ctx.run("validate-request", () =>
-        validateAndNormalize(request.nodes),
-      );
-      const waves = await ctx.run("build-waves", () => buildExecutionWaves(nodes));
+      let nodes: DagNodeNormalized[];
+      let waves: string[][];
+
+      try {
+        nodes = await ctx.run("validate-request", () =>
+          validateAndNormalize(request.nodes),
+        );
+        waves = await ctx.run("build-waves", () => buildExecutionWaves(nodes));
+      } catch (err) {
+        // Gateway: notify on validation/planning failure
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        await ctx.run("gateway-notify-error", async () => {
+          await notifyGateway({
+            message: `❌ DAG "${pipelineName}" failed during planning: ${errorMsg}`,
+            priority: "high",
+            source: "restate/dag",
+            context: { workflowId: ctx.key, pipeline: pipelineName, phase: "planning" },
+          });
+          return true;
+        });
+        throw err;
+      }
+
       const nodeById = new Map(nodes.map((node) => [node.id, node] as const));
 
       // OTEL: workflow started
@@ -507,93 +526,139 @@ export const dagOrchestrator = restate.workflow({
       const waveResults: DagWaveResult[] = [];
       const completionOrder: string[] = [];
 
-      for (const [waveIndex, nodeIds] of waves.entries()) {
-        const waveStartMs = Date.now();
+      try {
+        for (const [waveIndex, nodeIds] of waves.entries()) {
+          const waveStartMs = Date.now();
 
-        // OTEL: wave dispatched
-        await ctx.run(`otel-wave-${waveIndex}-dispatched`, async () => {
-          await emitOtel({
-            action: "dag.wave.dispatched",
-            metadata: {
-              workflowId: ctx.key,
-              pipeline: pipelineName,
-              waveIndex,
-              nodeIds,
-              nodeHandlers: nodeIds.map((id) => ({
-                id,
-                handler: nodeById.get(id)?.handler,
-              })),
-            },
-          });
-          return true;
-        });
-
-        await ctx.run(`wave-${waveIndex}-dispatch`, () => ({ waveIndex, nodeIds }));
-
-        const results = await Promise.all(
-          nodeIds.map((nodeId) => {
-            const node = nodeById.get(nodeId);
-            if (!node) throw new Error(`Missing node definition for ${nodeId}`);
-
-            // Collect outputs from this node's dependencies
-            const dependencyOutputs: Record<string, string> = {};
-            for (const depId of node.dependsOn) {
-              if (outputsByNodeId[depId] !== undefined) {
-                dependencyOutputs[depId] = outputsByNodeId[depId];
-              }
-            }
-
-            return ctx.serviceClient(dagWorker).execute({
-              nodeId: node.id,
-              task: node.task,
-              wave: waveIndex,
-              dependsOn: node.dependsOn,
-              handler: node.handler,
-              config: node.config,
-              dependencyOutputs,
-              simulatedMs: node.simulatedMs,
-              workflowId: ctx.key,
-              pipeline: pipelineName,
+          // OTEL: wave dispatched
+          await ctx.run(`otel-wave-${waveIndex}-dispatched`, async () => {
+            await emitOtel({
+              action: "dag.wave.dispatched",
+              metadata: {
+                workflowId: ctx.key,
+                pipeline: pipelineName,
+                waveIndex,
+                nodeIds,
+                nodeHandlers: nodeIds.map((id) => ({
+                  id,
+                  handler: nodeById.get(id)?.handler,
+                })),
+              },
             });
-          }),
-        );
+            return true;
+          });
 
-        // Store outputs for downstream consumption
-        for (const result of results) {
-          outputsByNodeId[result.nodeId] = result.output;
+          await ctx.run(`wave-${waveIndex}-dispatch`, () => ({ waveIndex, nodeIds }));
+
+          const results = await Promise.all(
+            nodeIds.map((nodeId) => {
+              const node = nodeById.get(nodeId);
+              if (!node) throw new Error(`Missing node definition for ${nodeId}`);
+
+              // Collect outputs from this node's dependencies
+              const dependencyOutputs: Record<string, string> = {};
+              for (const depId of node.dependsOn) {
+                if (outputsByNodeId[depId] !== undefined) {
+                  dependencyOutputs[depId] = outputsByNodeId[depId];
+                }
+              }
+
+              return ctx.serviceClient(dagWorker).execute({
+                nodeId: node.id,
+                task: node.task,
+                wave: waveIndex,
+                dependsOn: node.dependsOn,
+                handler: node.handler,
+                config: node.config,
+                dependencyOutputs,
+                simulatedMs: node.simulatedMs,
+                workflowId: ctx.key,
+                pipeline: pipelineName,
+              });
+            }),
+          );
+
+          // Store outputs for downstream consumption
+          for (const result of results) {
+            outputsByNodeId[result.nodeId] = result.output;
+          }
+
+          const collected = await ctx.run(`wave-${waveIndex}-collect`, () => ({
+            waveIndex,
+            nodeIds,
+            results: [...results].sort((a, b) => a.nodeId.localeCompare(b.nodeId)),
+          }));
+
+          waveResults.push(collected);
+          completionOrder.push(
+            ...collected.results.map((result) => result.nodeId),
+          );
+
+          // OTEL: wave completed
+          await ctx.run(`otel-wave-${waveIndex}-completed`, async () => {
+            await emitOtel({
+              action: "dag.wave.completed",
+              metadata: {
+                workflowId: ctx.key,
+                pipeline: pipelineName,
+                waveIndex,
+                nodeIds,
+                durationMs: Date.now() - waveStartMs,
+                resultCount: results.length,
+                handlerDurations: results.map((r) => ({
+                  nodeId: r.nodeId,
+                  handler: r.handler,
+                  durationMs: r.durationMs,
+                })),
+              },
+            });
+            return true;
+          });
         }
-
-        const collected = await ctx.run(`wave-${waveIndex}-collect`, () => ({
-          waveIndex,
-          nodeIds,
-          results: [...results].sort((a, b) => a.nodeId.localeCompare(b.nodeId)),
-        }));
-
-        waveResults.push(collected);
-        completionOrder.push(
-          ...collected.results.map((result) => result.nodeId),
-        );
-
-        // OTEL: wave completed
-        await ctx.run(`otel-wave-${waveIndex}-completed`, async () => {
-          await emitOtel({
-            action: "dag.wave.completed",
-            metadata: {
+      } catch (err) {
+        // Gateway: notify on execution failure
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        const durationMs = Date.now() - workflowStartMs;
+        await ctx.run("gateway-notify-error", async () => {
+          await notifyGateway({
+            message: [
+              `❌ DAG "${pipelineName}" failed after ${Math.round(durationMs / 1000)}s`,
+              `   Completed ${completionOrder.length}/${nodes.length} nodes`,
+              `   Error: ${errorMsg.slice(0, 300)}`,
+            ].join("\n"),
+            priority: "high",
+            source: "restate/dag",
+            context: {
               workflowId: ctx.key,
               pipeline: pipelineName,
-              waveIndex,
-              nodeIds,
-              durationMs: Date.now() - waveStartMs,
-              resultCount: results.length,
-              handlerDurations: results.map((r) => ({
-                nodeId: r.nodeId,
-                handler: r.handler,
-                durationMs: r.durationMs,
-              })),
+              phase: "execution",
+              completedNodes: completionOrder,
+              failedAtWave: waveResults.length,
+              durationMs,
             },
           });
           return true;
         });
+
+        // OTEL: workflow failed
+        await ctx.run("otel-workflow-failed", async () => {
+          await emitOtel({
+            level: "error",
+            action: "dag.workflow.failed",
+            success: false,
+            error: errorMsg,
+            metadata: {
+              workflowId: ctx.key,
+              pipeline: pipelineName,
+              completedNodes: completionOrder.length,
+              totalNodes: nodes.length,
+              durationMs,
+            },
+          });
+          return true;
+        });
+
+        throw err;
       }
 
       const completedAt = await ctx.run("complete-run", () =>
@@ -620,6 +685,38 @@ export const dagOrchestrator = restate.workflow({
               wave: w.waveIndex,
               nodes: w.nodeIds.length,
             })),
+          },
+        });
+        return true;
+      });
+
+      // Gateway: notify on success
+      await ctx.run("gateway-notify-complete", async () => {
+        // Find the synthesis/infer output for a meaningful summary
+        const synthOutput = waveResults
+          .flatMap((w) => w.results)
+          .find((r) => r.handler === "infer");
+        const summary = synthOutput
+          ? previewOutput(synthOutput.output)
+          : `${nodes.length} nodes in ${waves.length} waves`;
+
+        await notifyGateway({
+          message: [
+            `✅ DAG "${pipelineName}" completed in ${Math.round(totalDurationMs / 1000)}s`,
+            `   ${nodes.length} nodes, ${waves.length} waves`,
+            synthOutput ? `\n${summary.slice(0, 500)}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          priority: "normal",
+          source: "restate/dag",
+          context: {
+            workflowId: ctx.key,
+            pipeline: pipelineName,
+            nodeCount: nodes.length,
+            waveCount: waves.length,
+            durationMs: totalDurationMs,
+            completionOrder,
           },
         });
         return true;

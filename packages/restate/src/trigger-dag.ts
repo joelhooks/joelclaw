@@ -31,6 +31,7 @@ const githubHint = getArg("--github");
 const twitterHint = getArg("--twitter");
 const emailHint = getArg("--email");
 const websiteHint = getArg("--website");
+const asyncMode = args.includes("--async");
 
 const nodeDelay = Number.isFinite(sleepMs)
   ? Math.max(0, Math.min(sleepMs, 5_000))
@@ -398,7 +399,7 @@ function enrichContactPipeline(
     handler: "shell",
     dependsOn: ["write-vault"],
     config: {
-      command: `joelclaw notify "✅ Contact enrichment complete for ${safe}. Dossier at ~/Vault/Contacts/${safe}.md" 2>/dev/null || echo 'notify: delivery attempted'`,
+      command: `joelclaw notify send "✅ Contact enrichment complete for ${safe}. Dossier at ~/Vault/Contacts/${safe}.md" 2>/dev/null || echo 'notify: delivery attempted'`,
     },
   });
 
@@ -454,50 +455,80 @@ const request = { requestId: workflowId, pipeline: pipelineName, nodes };
 console.log(`🕸️  Triggering DAG workload — ${workflowId}`);
 console.log(`   Pipeline: ${pipelineName}`);
 console.log(`   Restate: ${RESTATE_INGRESS}`);
+console.log(`   Mode: ${asyncMode ? "async (fire-and-forget → gateway notification)" : "sync (wait for result)"}`);
 console.log(
   `   Nodes: ${nodes.map((n) => `${n.id}(${n.handler ?? "noop"})`).join(", ")}`,
 );
 console.log(``);
 
-const response = await fetch(
-  `${RESTATE_INGRESS}/dagOrchestrator/${workflowId}/run`,
-  {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-  },
-);
+if (asyncMode) {
+  // Fire-and-forget: use Restate's /send endpoint, returns invocation ID immediately
+  const response = await fetch(
+    `${RESTATE_INGRESS}/dagOrchestrator/${workflowId}/run/send`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    },
+  );
 
-if (!response.ok) {
-  const error = await response.text();
-  console.error(`❌ ${response.status}: ${error}`);
-  process.exit(1);
+  if (!response.ok) {
+    const error = await response.text();
+    console.error(`❌ ${response.status}: ${error}`);
+    process.exit(1);
+  }
+
+  const sendResult = await response.json();
+  console.log(`🚀 DAG submitted (async):`);
+  console.log(`   workflowId: ${workflowId}`);
+  console.log(`   invocationId: ${sendResult.invocationId ?? sendResult.id ?? "pending"}`);
+  console.log(`   status: ${sendResult.status ?? "Accepted"}`);
+  console.log(``);
+  console.log(`   Results will be pushed to gateway when complete.`);
+  console.log(`   Check OTEL:  joelclaw otel search "dag.workflow" --hours 1`);
+  console.log(`   Check state: curl ${RESTATE_INGRESS}/dagOrchestrator/${workflowId}/output`);
+} else {
+  // Synchronous: wait for full result
+  const response = await fetch(
+    `${RESTATE_INGRESS}/dagOrchestrator/${workflowId}/run`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    },
+  );
+
+  if (!response.ok) {
+    const error = await response.text();
+    console.error(`❌ ${response.status}: ${error}`);
+    process.exit(1);
+  }
+
+  const result = await response.json();
+
+  console.log(`✅ DAG run complete:`);
+  console.log(`   workflowId: ${result.workflowId}`);
+  console.log(`   pipeline: ${result.pipeline}`);
+  console.log(`   nodeCount: ${result.nodeCount}`);
+  console.log(`   waveCount: ${result.waveCount}`);
+  console.log(`   duration: ${result.durationMs}ms`);
+  console.log(
+    `   completionOrder: ${(result.completionOrder ?? []).join(" → ")}`,
+  );
+  console.log(``);
+
+  // For real pipelines, print the synthesizer output nicely
+  const lastSynthWave = result.waves?.find((w: { results: Array<{ handler: string }> }) =>
+    w.results?.some((r: { handler: string }) => r.handler === "infer"),
+  );
+  const synthResult = lastSynthWave?.results?.find(
+    (r: { handler: string }) => r.handler === "infer",
+  );
+  if (synthResult?.output) {
+    console.log("━".repeat(60));
+    console.log(synthResult.output);
+    console.log("━".repeat(60));
+  }
+
+  console.log(`\nFull result:\n${JSON.stringify(result, null, 2)}`);
 }
-
-const result = await response.json();
-
-console.log(`✅ DAG run complete:`);
-console.log(`   workflowId: ${result.workflowId}`);
-console.log(`   pipeline: ${result.pipeline}`);
-console.log(`   nodeCount: ${result.nodeCount}`);
-console.log(`   waveCount: ${result.waveCount}`);
-console.log(`   duration: ${result.durationMs}ms`);
-console.log(
-  `   completionOrder: ${(result.completionOrder ?? []).join(" → ")}`,
-);
-console.log(``);
-
-// For real pipelines, print the synthesizer output nicely
-const lastSynthWave = result.waves?.find((w: { results: Array<{ handler: string }> }) =>
-  w.results?.some((r: { handler: string }) => r.handler === "infer"),
-);
-const synthResult = lastSynthWave?.results?.find(
-  (r: { handler: string }) => r.handler === "infer",
-);
-if (synthResult?.output) {
-  console.log("━".repeat(60));
-  console.log(synthResult.output);
-  console.log("━".repeat(60));
-}
-
-console.log(`\nFull result:\n${JSON.stringify(result, null, 2)}`);
