@@ -456,6 +456,22 @@ function countActiveLocksFromApi(locks: unknown): number {
   return directCount ?? 0
 }
 
+function buildReleaseReservationPayload(args: {
+  project: string
+  agent: string
+  all: boolean
+  paths: string[]
+}): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    project_key: args.project,
+    agent_name: args.agent,
+  }
+
+  if (!args.all && args.paths.length > 0) payload.paths = args.paths
+
+  return payload
+}
+
 function messageProjectCandidates(message: Record<string, unknown>): string[] {
   const candidates = [
     projectFromMessage(message),
@@ -849,12 +865,7 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
             )
           }
 
-          const payload: Record<string, unknown> = {
-            project_key: args.project,
-            agent_name: args.agent,
-          }
-          if (args.all) payload.all = true
-          if (args.paths.length > 0) payload.paths = args.paths
+          const payload = buildReleaseReservationPayload(args)
 
           const result = yield* Effect.tryPromise(() =>
             callMcpTool("release_file_reservations", payload)
@@ -1009,6 +1020,7 @@ export const __mailAdapterTestUtils = {
   summarizeUnifiedInbox,
   normalizeProjectSlug,
   summarizeArtifactLocks,
+  buildReleaseReservationPayload,
   messageMatchesProject,
   messageMatchesQuery,
   filterProjectMessagesByQuery,

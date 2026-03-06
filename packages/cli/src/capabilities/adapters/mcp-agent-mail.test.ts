@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { __mailAdapterTestUtils } from "./mcp-agent-mail"
 
 const {
+  buildReleaseReservationPayload,
   filterProjectMessagesByQuery,
   messageIdOf,
   normalizeProjectSlug,
@@ -62,6 +63,20 @@ describe("mcp-agent-mail search fallback helpers", () => {
   test("supports numeric message ids", () => {
     expect(messageIdOf({ id: 42 })).toBe("42")
     expect(messageIdOf({ message_id: 101 })).toBe("101")
+  })
+
+  test("omits unsupported all=true when building release-all reservation payloads", () => {
+    expect(
+      buildReleaseReservationPayload({
+        project: "/Users/joel/Code/joelhooks/joelclaw",
+        agent: "MaroonReef",
+        all: true,
+        paths: [],
+      }),
+    ).toEqual({
+      project_key: "/Users/joel/Code/joelhooks/joelclaw",
+      agent_name: "MaroonReef",
+    })
   })
 
   test("summarizes artifact-backed file reservations when locks API under-reports", () => {
