@@ -15,16 +15,34 @@ ADR-0207 Restate package for production durable workflow execution.
 - `dagOrchestrator.run` — dependency-aware DAG execution with wave fan-out/fan-in
 - `dagWorker.execute` — per-node durable execution service called by orchestrator
 
-Default DAG payload shape:
+#### Handler types
+
+Each DAG node specifies a `handler` that determines what real work it does:
+
+| Handler | What it does | Config fields |
+|---------|-------------|---------------|
+| `noop` | Simulated delay (default) | `simulatedMs` |
+| `shell` | Runs a bash command | `config.command` |
+| `http` | Makes an HTTP request | `config.url`, `config.method`, `config.headers`, `config.body` |
+| `infer` | LLM inference via pi | `config.prompt`, `config.model`, `config.system` |
+
+#### Dependency output passing
+
+Nodes receive outputs from their upstream dependencies via `{{nodeId}}` template interpolation. The `infer` handler replaces `{{dep-name}}` in the prompt with that dependency's output.
+
+#### Example: real health check pipeline
 
 ```json
 {
-  "requestId": "dag-demo",
+  "requestId": "health-1",
   "nodes": [
-    { "id": "discover", "task": "discover inputs" },
-    { "id": "analyze", "task": "analyze inputs" },
-    { "id": "synthesize", "task": "synthesize outputs", "dependsOn": ["discover", "analyze"] },
-    { "id": "publish", "task": "publish artifact", "dependsOn": ["synthesize"] }
+    { "id": "k8s", "task": "check pods", "handler": "shell",
+      "config": { "command": "kubectl get pods -n joelclaw" } },
+    { "id": "redis", "task": "ping redis", "handler": "shell",
+      "config": { "command": "kubectl exec -n joelclaw redis-0 -- redis-cli ping" } },
+    { "id": "report", "task": "synthesize", "handler": "infer",
+      "dependsOn": ["k8s", "redis"],
+      "config": { "prompt": "Health results:\n{{k8s}}\n{{redis}}\nSummarize." } }
   ]
 }
 ```
@@ -41,20 +59,20 @@ bun run packages/restate/src/index.ts
 scripts/restate/register-deployment.sh
 ```
 
-Environment variables:
-
-- `RESTATE_DEPLOYMENT_ENDPOINT` (default `http://host.lima.internal:9080`)
-- `RESTATE_ADMIN_URL` (default `http://localhost:9070`)
-- `RESTATE_CLI_BIN` (default `restate`)
-
 ## Trigger workloads
 
 ```bash
 # deploy gate
 bun run packages/restate/src/trigger-deploy.ts -- --skip-approval
 
-# DAG fan-out/fan-in demo
+# DAG demo (noop nodes)
 bun run packages/restate/src/trigger-dag.ts
+
+# DAG system health check (real work)
+bun run packages/restate/src/trigger-dag.ts -- --pipeline health
+
+# DAG research (real work — web search + vault + memory → LLM synthesis)
+bun run packages/restate/src/trigger-dag.ts -- --pipeline research --topic "Restate vs Temporal"
 ```
 
 ## Smoke tests
@@ -67,27 +85,6 @@ scripts/restate/test-workflow.sh
 joelclaw restate smoke
 ```
 
-Behavior:
-
-- port-forwards Restate ingress/admin (`svc/restate`)
-- starts local `packages/restate` endpoint on `:9080` in console channel mode
-- force-registers deployment endpoint
-- triggers `POST /deployGate/{id}/run` with:
-  - `skipApproval=true` (default)
-  - `tag` defaulting to the current tag in `k8s/system-bus-worker.yaml`
-- validates:
-  - response image tag matches requested tag
-  - decision is `skipped` when skip-approval is enabled
-  - `rolloutVerified=true`
-
-Key env vars:
-
-- `SMOKE_TAG`
-- `SMOKE_REASON`
-- `SMOKE_SKIP_APPROVAL`
-- `SMOKE_DEPLOY_ID`
-- `SMOKE_TIMEOUT_SECONDS`
-
 ### DAG smoke
 
 ```bash
@@ -95,15 +92,3 @@ scripts/restate/test-dag-workflow.sh
 # or
 joelclaw restate smoke --script scripts/restate/test-dag-workflow.sh
 ```
-
-Behavior:
-
-- force-registers deployment endpoint
-- triggers `POST /dagOrchestrator/{id}/run`
-- validates:
-  - `nodeCount=4`
-  - `waveCount=3`
-  - expected wave topology:
-    - wave 0: `discover`, `analyze`
-    - wave 1: `synthesize`
-    - wave 2: `publish`
