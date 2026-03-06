@@ -1,13 +1,10 @@
 import crypto from "node:crypto";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 
-export const DEFAULT_OPERATOR_TRACE_TIMEOUT_MS = 15_000;
-export const DEFAULT_CALLBACK_TRACE_TIMEOUT_MS = DEFAULT_OPERATOR_TRACE_TIMEOUT_MS;
+export const DEFAULT_CALLBACK_TRACE_TIMEOUT_MS = 15_000;
 const MAX_RECENT_TRACES = 20;
 
-export type OperatorTraceKind = "callback" | "command";
-
-export type OperatorTraceStatus =
+export type CallbackTraceStatus =
   | "started"
   | "acknowledged"
   | "dispatched"
@@ -15,15 +12,14 @@ export type OperatorTraceStatus =
   | "failed"
   | "timed_out";
 
-export type OperatorTraceSummary = {
+export type CallbackTraceSummary = {
   traceId: string;
-  kind: OperatorTraceKind;
   handler: string;
   route: string;
   rawData: string;
   chatId: number | null;
   messageId: number | null;
-  status: OperatorTraceStatus;
+  status: CallbackTraceStatus;
   startedAt: string;
   ack: {
     state: "pending" | "succeeded" | "failed";
@@ -40,59 +36,51 @@ export type OperatorTraceSummary = {
   error: string | null;
 };
 
-export type CallbackTraceStatus = OperatorTraceStatus;
-export type CallbackTraceSummary = OperatorTraceSummary;
-
-export type OperatorTraceSnapshot = {
+export type CallbackTraceSnapshot = {
   timeoutMs: number;
   activeCount: number;
   activeRoutes: string[];
-  activeKinds: OperatorTraceKind[];
-  lastCompleted: OperatorTraceSummary | null;
-  lastFailed: OperatorTraceSummary | null;
-  lastTimedOut: OperatorTraceSummary | null;
-  recent: OperatorTraceSummary[];
+  lastCompleted: CallbackTraceSummary | null;
+  lastFailed: CallbackTraceSummary | null;
+  lastTimedOut: CallbackTraceSummary | null;
+  recent: CallbackTraceSummary[];
 };
 
-export type CallbackTraceSnapshot = OperatorTraceSnapshot;
-
-type OperatorTraceInternal = OperatorTraceSummary & {
+type CallbackTraceInternal = CallbackTraceSummary & {
   timeoutTimer: NodeJS.Timeout | null;
-  onTimeout?: (trace: OperatorTraceSummary) => void | Promise<void>;
+  onTimeout?: (trace: CallbackTraceSummary) => void | Promise<void>;
 };
 
-const traces: OperatorTraceInternal[] = [];
-const activeTraces = new Map<string, OperatorTraceInternal>();
+const traces: CallbackTraceInternal[] = [];
+const activeTraces = new Map<string, CallbackTraceInternal>();
 
 function nowIso(): string {
   return new Date().toISOString();
 }
 
-function buildTraceId(kind: OperatorTraceKind): string {
-  const prefix = kind === "command" ? "cmd" : "cb";
-  return `${prefix}_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
+function buildTraceId(): string {
+  return `cb_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
 }
 
-function publicTrace(trace: OperatorTraceInternal): OperatorTraceSummary {
+function publicTrace(trace: CallbackTraceInternal): CallbackTraceSummary {
   const { timeoutTimer: _timeoutTimer, onTimeout: _onTimeout, ...rest } = trace;
   return rest;
 }
 
 function emitTraceOtel(
   action: string,
-  trace: OperatorTraceInternal,
+  trace: CallbackTraceInternal,
   success: boolean,
   extra?: { error?: string; metadata?: Record<string, unknown>; level?: "info" | "warn" | "error" },
 ): void {
   void emitGatewayOtel({
     level: extra?.level ?? (success ? "info" : "warn"),
-    component: "operator-trace",
+    component: "callback-trace",
     action,
     success,
     ...(extra?.error ? { error: extra.error } : {}),
     metadata: {
       traceId: trace.traceId,
-      kind: trace.kind,
       handler: trace.handler,
       route: trace.route,
       chatId: trace.chatId,
@@ -104,7 +92,7 @@ function emitTraceOtel(
   });
 }
 
-function finalizeTrace(trace: OperatorTraceInternal): void {
+function finalizeTrace(trace: CallbackTraceInternal): void {
   if (trace.timeoutTimer) {
     clearTimeout(trace.timeoutTimer);
     trace.timeoutTimer = null;
@@ -112,20 +100,19 @@ function finalizeTrace(trace: OperatorTraceInternal): void {
   activeTraces.delete(trace.traceId);
 }
 
-function rememberTrace(trace: OperatorTraceInternal): void {
+function rememberTrace(trace: CallbackTraceInternal): void {
   traces.push(trace);
   if (traces.length > MAX_RECENT_TRACES) {
     traces.splice(0, traces.length - MAX_RECENT_TRACES);
   }
 }
 
-function findActiveTrace(traceId: string): OperatorTraceInternal | undefined {
-  return activeTraces.get(traceId);
+function findTrace(traceId: string): CallbackTraceInternal | undefined {
+  return activeTraces.get(traceId) ?? traces.find((trace) => trace.traceId === traceId);
 }
 
-export function startOperatorTrace(
+export function startCallbackTrace(
   input: {
-    kind?: OperatorTraceKind;
     handler: string;
     route: string;
     rawData: string;
@@ -134,16 +121,14 @@ export function startOperatorTrace(
   },
   options?: {
     timeoutMs?: number;
-    onTimeout?: (trace: OperatorTraceSummary) => void | Promise<void>;
+    onTimeout?: (trace: CallbackTraceSummary) => void | Promise<void>;
   },
 ): string {
-  const kind = input.kind ?? "callback";
-  const traceId = buildTraceId(kind);
-  const timeoutMs = options?.timeoutMs ?? DEFAULT_OPERATOR_TRACE_TIMEOUT_MS;
+  const traceId = buildTraceId();
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_CALLBACK_TRACE_TIMEOUT_MS;
 
-  const trace: OperatorTraceInternal = {
+  const trace: CallbackTraceInternal = {
     traceId,
-    kind,
     handler: input.handler,
     route: input.route,
     rawData: input.rawData,
@@ -174,9 +159,9 @@ export function startOperatorTrace(
 
     active.status = "timed_out";
     active.timedOutAt = nowIso();
-    active.error = active.error ?? `${active.kind} timed out after ${active.timeoutMs}ms`;
+    active.error = active.error ?? `callback timed out after ${active.timeoutMs}ms`;
     finalizeTrace(active);
-    emitTraceOtel("operator.trace.timed_out", active, false, {
+    emitTraceOtel("callback.trace.timed_out", active, false, {
       error: active.error,
       level: "error",
       metadata: { timeoutMs: active.timeoutMs },
@@ -191,17 +176,17 @@ export function startOperatorTrace(
   trace.timeoutTimer = timeoutTimer;
   activeTraces.set(traceId, trace);
   rememberTrace(trace);
-  emitTraceOtel("operator.trace.started", trace, true, {
+  emitTraceOtel("callback.trace.started", trace, true, {
     metadata: { timeoutMs },
   });
   return traceId;
 }
 
-export function acknowledgeOperatorTrace(
+export function acknowledgeCallbackTrace(
   traceId: string,
   result: { text?: string; error?: string },
 ): void {
-  const trace = findActiveTrace(traceId);
+  const trace = findTrace(traceId);
   if (!trace) return;
 
   trace.ack.text = result.text ?? trace.ack.text;
@@ -210,7 +195,7 @@ export function acknowledgeOperatorTrace(
   if (result.error) {
     trace.ack.state = "failed";
     trace.ack.error = result.error;
-    emitTraceOtel("operator.trace.ack_failed", trace, false, {
+    emitTraceOtel("callback.trace.ack_failed", trace, false, {
       error: result.error,
       level: "warn",
       metadata: { ackText: trace.ack.text },
@@ -220,38 +205,38 @@ export function acknowledgeOperatorTrace(
 
   trace.ack.state = "succeeded";
   trace.status = trace.status === "started" ? "acknowledged" : trace.status;
-  emitTraceOtel("operator.trace.acknowledged", trace, true, {
+  emitTraceOtel("callback.trace.acknowledged", trace, true, {
     metadata: { ackText: trace.ack.text },
   });
 }
 
-export function markOperatorTraceDispatched(traceId: string, detail?: string): void {
-  const trace = findActiveTrace(traceId);
+export function markCallbackTraceDispatched(traceId: string, detail?: string): void {
+  const trace = findTrace(traceId);
   if (!trace) return;
 
   trace.status = "dispatched";
   trace.dispatchedAt = nowIso();
   trace.detail = detail ?? trace.detail;
-  emitTraceOtel("operator.trace.dispatched", trace, true, {
+  emitTraceOtel("callback.trace.dispatched", trace, true, {
     metadata: { detail: trace.detail },
   });
 }
 
-export function completeOperatorTrace(traceId: string, detail?: string): void {
-  const trace = findActiveTrace(traceId);
+export function completeCallbackTrace(traceId: string, detail?: string): void {
+  const trace = findTrace(traceId);
   if (!trace) return;
 
   trace.status = "completed";
   trace.completedAt = nowIso();
   trace.detail = detail ?? trace.detail;
   finalizeTrace(trace);
-  emitTraceOtel("operator.trace.completed", trace, true, {
+  emitTraceOtel("callback.trace.completed", trace, true, {
     metadata: { detail: trace.detail },
   });
 }
 
-export function failOperatorTrace(traceId: string, error: string, detail?: string): void {
-  const trace = findActiveTrace(traceId);
+export function failCallbackTrace(traceId: string, error: string, detail?: string): void {
+  const trace = findTrace(traceId);
   if (!trace) return;
 
   trace.status = "failed";
@@ -259,37 +244,28 @@ export function failOperatorTrace(traceId: string, error: string, detail?: strin
   trace.error = error;
   trace.detail = detail ?? trace.detail;
   finalizeTrace(trace);
-  emitTraceOtel("operator.trace.failed", trace, false, {
+  emitTraceOtel("callback.trace.failed", trace, false, {
     error,
     level: "error",
     metadata: { detail: trace.detail },
   });
 }
 
-export const startCallbackTrace = startOperatorTrace;
-export const acknowledgeCallbackTrace = acknowledgeOperatorTrace;
-export const markCallbackTraceDispatched = markOperatorTraceDispatched;
-export const completeCallbackTrace = completeOperatorTrace;
-export const failCallbackTrace = failOperatorTrace;
-
-export function getOperatorTraceSnapshot(): OperatorTraceSnapshot {
+export function getCallbackTraceSnapshot(): CallbackTraceSnapshot {
   const lastCompleted = [...traces].reverse().find((trace) => trace.status === "completed") ?? null;
   const lastFailed = [...traces].reverse().find((trace) => trace.status === "failed") ?? null;
   const lastTimedOut = [...traces].reverse().find((trace) => trace.status === "timed_out") ?? null;
 
   return {
-    timeoutMs: DEFAULT_OPERATOR_TRACE_TIMEOUT_MS,
+    timeoutMs: DEFAULT_CALLBACK_TRACE_TIMEOUT_MS,
     activeCount: activeTraces.size,
     activeRoutes: Array.from(new Set(Array.from(activeTraces.values()).map((trace) => trace.route))).sort(),
-    activeKinds: Array.from(new Set(Array.from(activeTraces.values()).map((trace) => trace.kind))).sort(),
     lastCompleted: lastCompleted ? publicTrace(lastCompleted) : null,
     lastFailed: lastFailed ? publicTrace(lastFailed) : null,
     lastTimedOut: lastTimedOut ? publicTrace(lastTimedOut) : null,
     recent: traces.slice(-5).map(publicTrace),
   };
 }
-
-export const getCallbackTraceSnapshot = getOperatorTraceSnapshot;
 
 export const __callbackTraceTestUtils = {
   reset(): void {

@@ -1066,24 +1066,6 @@ export async function shutdown(): Promise<void> {
   await instance.stop();
 }
 
-export type SlackRuntimeState = {
-  configured: boolean;
-  started: boolean;
-  connected: boolean;
-  botUserId: string | null;
-  allowedUserId: string | null;
-};
-
 export function isStarted(): boolean {
   return started;
-}
-
-export function getRuntimeState(): SlackRuntimeState {
-  return {
-    configured: Boolean(allowedUserId),
-    started,
-    connected: Boolean(started && app && botUserId),
-    botUserId: botUserId ?? null,
-    allowedUserId: allowedUserId ?? null,
-  };
 }

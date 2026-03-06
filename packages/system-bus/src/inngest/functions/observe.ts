@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
 import { NonRetriableError } from "inngest";
 import Redis from "ioredis";
 // Observability is centralized in packages/system-bus/src/lib/inference.ts (inference router).
@@ -19,29 +18,32 @@ import { sanitizeObservationText, sanitizeObservationTranscript } from "./observ
 import { parseObserverOutput } from "./observe-parser";
 import { OBSERVER_SYSTEM_PROMPT, OBSERVER_USER_PROMPT } from "./observe-prompt";
 
-type ObserveBaseInput = {
+type ObserveCompactionInput = {
   sessionId: string;
   dedupeKey: string;
+  trigger: "compaction";
   messages: string;
-  transcriptRedisKey?: string;
   messageCount: number;
-  channel?: string;
+  tokensBefore: number;
   filesRead: string[];
   filesModified: string[];
   capturedAt: string;
-  schemaVersion: number;
+  schemaVersion: 1;
 };
 
-type ObserveCompactionInput = ObserveBaseInput & {
-  trigger: "compaction";
-  tokensBefore: number;
-};
-
-type ObserveEndedInput = ObserveBaseInput & {
+type ObserveEndedInput = {
+  sessionId: string;
+  dedupeKey: string;
   trigger: "shutdown" | "backfill";
+  messages: string;
+  messageCount: number;
   userMessageCount: number;
   duration: number;
   sessionName?: string;
+  filesRead: string[];
+  filesModified: string[];
+  capturedAt: string;
+  schemaVersion: 1;
 };
 
 type ObserveInput = ObserveCompactionInput | ObserveEndedInput;
@@ -206,26 +208,6 @@ function asFiniteNumber(value: unknown, fallback = 0): number {
   return fallback;
 }
 
-function asNonNegativeInteger(value: unknown, fallback = 0): number {
-  const parsed = asFiniteNumber(value, fallback);
-  if (!Number.isFinite(parsed)) return Math.max(0, fallback);
-  return Math.max(0, Math.round(parsed));
-}
-
-function optionalTrimmedString(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-}
-
 function normalizeTokens(text: string): Set<string> {
   return new Set(
     text
@@ -337,28 +319,11 @@ function buildObserverFallback(input: ObserveInput, sanitizedTranscript: string,
 
 function assertRequiredStringField(
   payload: Record<string, unknown>,
-  fieldName: "sessionId" | "dedupeKey" | "trigger"
+  fieldName: "sessionId" | "dedupeKey" | "trigger" | "messages"
 ) {
   const value = payload[fieldName];
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new NonRetriableError(`Missing required session field: ${fieldName}`);
-  }
-}
-
-const TRANSCRIPT_ENCODING_PREFIX = "gzip+base64:";
-
-function decodeTranscriptBlob(rawBlob: string, transcriptRedisKey: string): string {
-  if (!rawBlob.startsWith(TRANSCRIPT_ENCODING_PREFIX)) {
-    return rawBlob;
-  }
-
-  const encoded = rawBlob.slice(TRANSCRIPT_ENCODING_PREFIX.length);
-  try {
-    const compressed = Buffer.from(encoded, "base64");
-    return gunzipSync(compressed).toString("utf-8");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new NonRetriableError(`Failed to decode transcript blob (${transcriptRedisKey}): ${message}`);
   }
 }
 
@@ -371,108 +336,29 @@ function validateObserveInput(eventName: string, data: unknown): ObserveInput {
   assertRequiredStringField(payload, "sessionId");
   assertRequiredStringField(payload, "dedupeKey");
   assertRequiredStringField(payload, "trigger");
+  assertRequiredStringField(payload, "messages");
 
-  const sessionId = (payload.sessionId as string).trim();
-  const dedupeKey = (payload.dedupeKey as string).trim();
-  const triggerRaw = (payload.trigger as string).trim();
-  const messages = typeof payload.messages === "string" ? payload.messages : "";
-  const transcriptRedisKey = optionalTrimmedString(payload.transcriptRedisKey);
-  const messageCount = asNonNegativeInteger(payload.messageCount, 0);
-  const filesRead = asStringArray(payload.filesRead);
-  const filesModified = asStringArray(payload.filesModified);
-  const capturedAt = optionalTrimmedString(payload.capturedAt) ?? new Date().toISOString();
-  const schemaVersion = asNonNegativeInteger(payload.schemaVersion, 1) || 1;
-  const channel = optionalTrimmedString(payload.channel);
-
-  if (messages.trim().length === 0 && !transcriptRedisKey) {
-    throw new NonRetriableError("Missing required session field: messages or transcriptRedisKey");
-  }
-
-  if (eventName === "memory/session.compaction.pending" && triggerRaw !== "compaction") {
+  if (eventName === "memory/session.compaction.pending" && payload.trigger !== "compaction") {
     throw new Error("Invalid trigger for compaction event; expected 'compaction'");
   }
 
   if (
     eventName === "memory/session.ended" &&
-    triggerRaw !== "shutdown" &&
-    triggerRaw !== "backfill"
+    payload.trigger !== "shutdown" &&
+    payload.trigger !== "backfill"
   ) {
     throw new Error("Invalid trigger for ended event; expected 'shutdown' or 'backfill'");
   }
 
   if (
-    triggerRaw !== "compaction" &&
-    triggerRaw !== "shutdown" &&
-    triggerRaw !== "backfill"
+    payload.trigger !== "compaction" &&
+    payload.trigger !== "shutdown" &&
+    payload.trigger !== "backfill"
   ) {
-    throw new Error(`Invalid trigger value: ${triggerRaw}`);
+    throw new Error(`Invalid trigger value: ${payload.trigger}`);
   }
 
-  if (triggerRaw === "compaction") {
-    return {
-      sessionId,
-      dedupeKey,
-      trigger: "compaction",
-      messages,
-      transcriptRedisKey,
-      messageCount,
-      tokensBefore: asNonNegativeInteger(payload.tokensBefore, messageCount),
-      filesRead,
-      filesModified,
-      capturedAt,
-      schemaVersion,
-      channel,
-    };
-  }
-
-  return {
-    sessionId,
-    dedupeKey,
-    trigger: triggerRaw as "shutdown" | "backfill",
-    messages,
-    transcriptRedisKey,
-    messageCount,
-    userMessageCount: asNonNegativeInteger(payload.userMessageCount, 0),
-    duration: asNonNegativeInteger(payload.duration, 0),
-    sessionName: optionalTrimmedString(payload.sessionName),
-    filesRead,
-    filesModified,
-    capturedAt,
-    schemaVersion,
-    channel,
-  };
-}
-
-async function hydrateObserveInputFromRedis(input: ObserveInput): Promise<ObserveInput> {
-  if (input.messages.trim().length > 0) {
-    return input;
-  }
-
-  const transcriptRedisKey = optionalTrimmedString(input.transcriptRedisKey);
-  if (!transcriptRedisKey) {
-    throw new NonRetriableError("Missing required session field: messages or transcriptRedisKey");
-  }
-
-  const redis = getRedisClient();
-  const transcriptBlob = await redis.get(transcriptRedisKey);
-  if (typeof transcriptBlob !== "string") {
-    throw new NonRetriableError(`Transcript blob missing in Redis: ${transcriptRedisKey}`);
-  }
-
-  try {
-    const decoded = decodeTranscriptBlob(transcriptBlob, transcriptRedisKey);
-    return {
-      ...input,
-      messages: decoded,
-    };
-  } finally {
-    try {
-      await redis.del(transcriptRedisKey);
-    } catch (error) {
-      const deleteError = error instanceof Error ? error.message : String(error);
-      console.warn(`[observe] failed to delete transcript blob ${transcriptRedisKey}: ${deleteError}`);
-    }
-  }
+  return payload as ObserveInput;
 }
 
 export const observeSessionFunction = inngest.createFunction(
@@ -487,12 +373,9 @@ export const observeSessionFunction = inngest.createFunction(
   ],
   async ({ event, step, ...rest }) => {
     const gateway = (rest as any).gateway as import("../middleware/gateway").GatewayContext | undefined;
-    const rawInput = (await step.run("validate-input", async () =>
+    const validatedInput = await step.run("validate-input", async () =>
       validateObserveInput(event.name, event.data)
-    )) as ObserveInput;
-    const validatedInput = (await step.run("hydrate-transcript", async () =>
-      hydrateObserveInputFromRedis(rawInput)
-    )) as ObserveInput;
+    );
     await step.run("otel-observe-start", async () => {
       await emitOtelEvent({
         level: "debug",
@@ -505,7 +388,6 @@ export const observeSessionFunction = inngest.createFunction(
           trigger: validatedInput.trigger,
           messageCount: validatedInput.messageCount,
           dedupeKey: validatedInput.dedupeKey,
-          transcriptRedisKey: validatedInput.transcriptRedisKey,
         },
       });
     });

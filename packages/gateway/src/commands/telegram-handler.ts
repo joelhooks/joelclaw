@@ -3,11 +3,11 @@ import { completeSimple, getModel } from "@mariozechner/pi-ai";
 import type { Bot, Context } from "grammy";
 import type Redis from "ioredis";
 import {
-  acknowledgeOperatorTrace,
-  completeOperatorTrace,
-  failOperatorTrace,
-  markOperatorTraceDispatched,
-  startOperatorTrace,
+  acknowledgeCallbackTrace,
+  completeCallbackTrace,
+  failCallbackTrace,
+  markCallbackTraceDispatched,
+  startCallbackTrace,
 } from "../callback-trace";
 import { injectChannelContext } from "../formatting";
 import { BUILTIN_COMMANDS } from "./builtins";
@@ -145,37 +145,24 @@ async function sendHtml(bot: Bot, chatId: number, html: string): Promise<void> {
   await bot.api.sendMessage(chatId, html, { parse_mode: "HTML" });
 }
 
-async function sendTraceTimeoutMessage(
-  bot: Bot,
-  chatId: number,
-  label: "Callback" | "Command",
-  route: string,
-  traceId: string,
-): Promise<void> {
+async function sendCallbackTimeoutMessage(bot: Bot, chatId: number, route: string, traceId: string): Promise<void> {
   await sendHtml(
     bot,
     chatId,
     [
-      `⚠️ <b>${label} timed out</b>`,
+      "⚠️ <b>Callback timed out</b>",
       `Route: <code>${escapeHtml(route)}</code>`,
       `Trace: <code>${escapeHtml(traceId)}</code>`,
     ].join("\n"),
   );
 }
 
-async function sendTraceFailureMessage(
-  bot: Bot,
-  chatId: number,
-  label: "Callback" | "Command",
-  route: string,
-  traceId: string,
-  error: string,
-): Promise<void> {
+async function sendCallbackFailureMessage(bot: Bot, chatId: number, route: string, traceId: string, error: string): Promise<void> {
   await sendHtml(
     bot,
     chatId,
     [
-      `❌ <b>${label} failed</b>`,
+      "❌ <b>Callback failed</b>",
       `Route: <code>${escapeHtml(route)}</code>`,
       `Trace: <code>${escapeHtml(traceId)}</code>`,
       `Error: <code>${escapeHtml(error)}</code>`,
@@ -183,14 +170,10 @@ async function sendTraceFailureMessage(
   );
 }
 
-function operatorAckLabel(command: CommandDefinition): string {
+function callbackAckLabel(command: CommandDefinition): string {
   return command.execution === "agent"
     ? `Queued /${command.nativeName}`
     : `Running /${command.nativeName}`;
-}
-
-function commandTraceRoute(command: CommandDefinition): string {
-  return `command:${command.nativeName}`;
 }
 
 async function renderArgsMenu(bot: Bot, chatId: number, command: CommandDefinition): Promise<boolean> {
@@ -516,58 +499,6 @@ async function executeCommand(
   });
 }
 
-async function runTextCommandWithTrace(
-  ctx: Context,
-  command: CommandDefinition,
-  rawArgs: string,
-  init: CommandHandlerInit,
-): Promise<void> {
-  const chatId = ctx.chat?.id;
-  if (!chatId) {
-    await executeCommand(ctx, command, rawArgs, init);
-    return;
-  }
-
-  const rawData = ctx.message?.text ?? `/${command.nativeName}${rawArgs.trim() ? ` ${rawArgs.trim()}` : ""}`;
-  const route = commandTraceRoute(command);
-  const traceId = startOperatorTrace(
-    {
-      kind: "command",
-      handler: "telegram.commands",
-      route,
-      rawData,
-      chatId,
-      messageId: ctx.message?.message_id,
-    },
-    {
-      onTimeout: async (trace) => {
-        await sendTraceTimeoutMessage(init.bot, chatId, "Command", trace.route, trace.traceId).catch(() => {});
-      },
-    },
-  );
-
-  const ackText = operatorAckLabel(command);
-  try {
-    await sendHtml(init.bot, chatId, `<b>${escapeHtml(ackText)}</b>`);
-    acknowledgeOperatorTrace(traceId, { text: ackText });
-  } catch (error) {
-    acknowledgeOperatorTrace(traceId, { text: ackText, error: String(error) });
-  }
-
-  try {
-    markOperatorTraceDispatched(traceId, `handling ${command.execution} command ${command.nativeName}`);
-    await executeCommand(ctx, command, rawArgs, init);
-    const detail = command.execution === "agent"
-      ? `agent command /${command.nativeName} queued; downstream assistant completion untracked`
-      : `command /${command.nativeName} handled`;
-    completeOperatorTrace(traceId, detail);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    failOperatorTrace(traceId, message, `command failed for /${command.nativeName}`);
-    await sendTraceFailureMessage(init.bot, chatId, "Command", route, traceId, message).catch(() => {});
-  }
-}
-
 function registerCallbackHandler(init: CommandHandlerInit): void {
   init.bot.on("callback_query:data", async (ctx, next) => {
     const data = ctx.callbackQuery.data;
@@ -586,9 +517,8 @@ function registerCallbackHandler(init: CommandHandlerInit): void {
     if (!command) return;
 
     const chatId = ctx.chat?.id;
-    const traceId = startOperatorTrace(
+    const traceId = startCallbackTrace(
       {
-        kind: "callback",
         handler: "telegram.commands",
         route: `cmd:${command.nativeName}`,
         rawData: data,
@@ -598,17 +528,17 @@ function registerCallbackHandler(init: CommandHandlerInit): void {
       {
         onTimeout: async (trace) => {
           if (!chatId) return;
-          await sendTraceTimeoutMessage(init.bot, chatId, "Callback", trace.route, trace.traceId).catch(() => {});
+          await sendCallbackTimeoutMessage(init.bot, chatId, trace.route, trace.traceId).catch(() => {});
         },
       },
     );
 
     try {
-      const ackText = operatorAckLabel(command);
+      const ackText = callbackAckLabel(command);
       await ctx.answerCallbackQuery({ text: ackText });
-      acknowledgeOperatorTrace(traceId, { text: ackText });
+      acknowledgeCallbackTrace(traceId, { text: ackText });
     } catch (error) {
-      acknowledgeOperatorTrace(traceId, { text: operatorAckLabel(command), error: String(error) });
+      acknowledgeCallbackTrace(traceId, { text: callbackAckLabel(command), error: String(error) });
     }
 
     try {
@@ -617,13 +547,13 @@ function registerCallbackHandler(init: CommandHandlerInit): void {
         telegramMessageId: ctx.callbackQuery.message?.message_id,
         callbackTraceId: traceId,
       });
-      markOperatorTraceDispatched(traceId, `executed ${command.execution} command ${command.nativeName}`);
-      completeOperatorTrace(traceId, `callback handled for /${command.nativeName}`);
+      markCallbackTraceDispatched(traceId, `executed ${command.execution} command ${command.nativeName}`);
+      completeCallbackTrace(traceId, `callback handled for /${command.nativeName}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      failOperatorTrace(traceId, message, `callback failed for /${command.nativeName}`);
+      failCallbackTrace(traceId, message, `callback failed for /${command.nativeName}`);
       if (chatId) {
-        await sendTraceFailureMessage(init.bot, chatId, "Callback", `cmd:${command.nativeName}`, traceId, message).catch(() => {});
+        await sendCallbackFailureMessage(init.bot, chatId, `cmd:${command.nativeName}`, traceId, message).catch(() => {});
       }
     }
   });
@@ -665,9 +595,8 @@ function registerPitchCallbackHandler(bot: Bot, chatId: string): void {
     const adrNumber = Number.parseInt(rawAdrNumber ?? "", 10);
     const messageId = ctx.callbackQuery.message?.message_id;
     const numericChatId = ctx.chat?.id;
-    const traceId = startOperatorTrace(
+    const traceId = startCallbackTrace(
       {
-        kind: "callback",
         handler: "telegram.pitch",
         route: `pitch:${action || "unknown"}`,
         rawData: data,
@@ -677,7 +606,7 @@ function registerPitchCallbackHandler(bot: Bot, chatId: string): void {
       {
         onTimeout: async (trace) => {
           if (!numericChatId) return;
-          await sendTraceTimeoutMessage(bot, numericChatId, "Callback", trace.route, trace.traceId).catch(() => {});
+          await sendCallbackTimeoutMessage(bot, numericChatId, trace.route, trace.traceId).catch(() => {});
         },
       },
     );
@@ -688,11 +617,11 @@ function registerPitchCallbackHandler(bot: Bot, chatId: string): void {
       console.warn("[gateway:pitch] invalid callback data", { data, traceId });
       try {
         await ctx.answerCallbackQuery({ text: "⚠️ Invalid" });
-        acknowledgeOperatorTrace(traceId, { text: "⚠️ Invalid" });
+        acknowledgeCallbackTrace(traceId, { text: "⚠️ Invalid" });
       } catch (error) {
-        acknowledgeOperatorTrace(traceId, { text: "⚠️ Invalid", error: String(error) });
+        acknowledgeCallbackTrace(traceId, { text: "⚠️ Invalid", error: String(error) });
       }
-      failOperatorTrace(traceId, "invalid pitch callback data", "callback payload rejected");
+      failCallbackTrace(traceId, "invalid pitch callback data", "callback payload rejected");
       return;
     }
 
@@ -700,23 +629,23 @@ function registerPitchCallbackHandler(bot: Bot, chatId: string): void {
     const ackText = approved ? "✅" : "❌";
     try {
       await ctx.answerCallbackQuery({ text: ackText });
-      acknowledgeOperatorTrace(traceId, { text: ackText });
+      acknowledgeCallbackTrace(traceId, { text: ackText });
     } catch (error) {
-      acknowledgeOperatorTrace(traceId, { text: ackText, error: String(error) });
+      acknowledgeCallbackTrace(traceId, { text: ackText, error: String(error) });
     }
 
     const eventName = approved ? "adr/pitch.approved" : "adr/pitch.rejected";
     try {
       console.log("[gateway:pitch] firing event", { eventName, adrNumber, messageId, traceId });
-      markOperatorTraceDispatched(traceId, `dispatching ${eventName}`);
+      markCallbackTraceDispatched(traceId, `dispatching ${eventName}`);
       await sendPitchDecisionEvent(eventName, adrNumber, messageId, traceId);
-      completeOperatorTrace(traceId, `${eventName} dispatched`);
+      completeCallbackTrace(traceId, `${eventName} dispatched`);
       console.log("[gateway:pitch] event dispatched", { eventName, adrNumber, traceId });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      failOperatorTrace(traceId, message, `${eventName} dispatch failed`);
+      failCallbackTrace(traceId, message, `${eventName} dispatch failed`);
       if (numericChatId) {
-        await sendTraceFailureMessage(bot, numericChatId, "Callback", `pitch:${action}`, traceId, message).catch(() => {});
+        await sendCallbackFailureMessage(bot, numericChatId, `pitch:${action}`, traceId, message).catch(() => {});
       }
     }
   });
@@ -762,7 +691,7 @@ export async function initializeTelegramCommandHandler(init: CommandHandlerInit)
     init.bot.command(command.nativeName, async (ctx) => {
       const text = ctx.message?.text ?? "";
       const rawArgs = commandTextFromMessage(text, command.nativeName);
-      await runTextCommandWithTrace(ctx, command, rawArgs, init);
+      await executeCommand(ctx, command, rawArgs, init);
     });
   }
 

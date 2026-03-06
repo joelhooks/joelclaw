@@ -734,27 +734,11 @@ export function parseChannelId(source: string): string | undefined {
   return match?.[1];
 }
 
-export type DiscordRuntimeState = {
-  configured: boolean;
-  started: boolean;
-  ready: boolean;
-  botUserId: string | null;
-};
-
 /**
  * Get the Discord.js client instance (for adapters and diagnostics).
  */
 export function getClient(): Client | undefined {
   return client;
-}
-
-export function getRuntimeState(): DiscordRuntimeState {
-  return {
-    configured: Boolean(process.env.DISCORD_BOT_TOKEN && process.env.DISCORD_ALLOWED_USER_ID),
-    started,
-    ready: client?.isReady() ?? false,
-    botUserId: client?.user?.id ?? null,
-  };
 }
 
 /**

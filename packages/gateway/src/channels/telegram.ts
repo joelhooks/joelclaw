@@ -9,11 +9,11 @@ import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import { Bot, InputFile } from "grammy";
 import Redis from "ioredis";
 import {
-  acknowledgeOperatorTrace,
-  completeOperatorTrace,
-  failOperatorTrace,
-  markOperatorTraceDispatched,
-  startOperatorTrace,
+  acknowledgeCallbackTrace,
+  completeCallbackTrace,
+  failCallbackTrace,
+  markCallbackTraceDispatched,
+  startCallbackTrace,
 } from "../callback-trace";
 import type { OutboundEnvelope } from "../outbound/envelope";
 import type { EnqueueFn } from "./redis";
@@ -195,17 +195,12 @@ const ACTION_LABELS: Record<string, string> = {
   s4h: "⏰ <b>Snoozed for 4h</b>",
 }
 
-async function sendTraceTimeoutMessage(
-  chatId: number,
-  label: "Callback" | "Command",
-  route: string,
-  traceId: string,
-): Promise<void> {
+async function sendCallbackTimeoutMessage(chatId: number, route: string, traceId: string): Promise<void> {
   if (!bot) return;
   await bot.api.sendMessage(
     chatId,
     [
-      `⚠️ <b>${label} timed out</b>`,
+      "⚠️ <b>Callback timed out</b>",
       `Route: <code>${escapeText(route)}</code>`,
       `Trace: <code>${escapeText(traceId)}</code>`,
     ].join("\n"),
@@ -213,18 +208,12 @@ async function sendTraceTimeoutMessage(
   );
 }
 
-async function sendTraceFailureMessage(
-  chatId: number,
-  label: "Callback" | "Command",
-  route: string,
-  traceId: string,
-  error: string,
-): Promise<void> {
+async function sendCallbackFailureMessage(chatId: number, route: string, traceId: string, error: string): Promise<void> {
   if (!bot) return;
   await bot.api.sendMessage(
     chatId,
     [
-      `❌ <b>${label} failed</b>`,
+      "❌ <b>Callback failed</b>",
       `Route: <code>${escapeText(route)}</code>`,
       `Trace: <code>${escapeText(traceId)}</code>`,
       `Error: <code>${escapeText(error)}</code>`,
@@ -508,46 +497,11 @@ let pollLeaseTokenHash: string | undefined;
 let pollLeaseRenewTimer: ReturnType<typeof setInterval> | undefined;
 let pollLeaseRetryTimer: ReturnType<typeof setTimeout> | undefined;
 let pollLeaseRetryAttempts = 0;
-let lastPollLeaseStatus: PollLeaseStatus | null = null;
 
 /** Expose the raw grammy Bot instance for streaming (telegram-stream.ts). */
-export type TelegramRuntimeState = {
-  configured: boolean;
-  started: boolean;
-  pollingActive: boolean;
-  pollingStarting: boolean;
-  pollRetryAttempts: number;
-  pollConflictStreak: number;
-  pollLeaseEnabled: boolean;
-  pollLeaseOwned: boolean;
-  pollLeaseState: PollLeaseState;
-  pollLeaseStatus: PollLeaseStatus | null;
-};
-
 export function getBot(): Bot | undefined {
   return bot;
 }
-
-export function getRuntimeState(): TelegramRuntimeState {
-  const pollLeaseState = lastPollLeaseStatus?.state
-    ?? (started
-      ? (pollLeaseOwned ? "owner" : TELEGRAM_POLL_LEASE_ENABLED ? "passive" : "fallback")
-      : "stopped");
-
-  return {
-    configured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_USER_ID),
-    started,
-    pollingActive,
-    pollingStarting,
-    pollRetryAttempts,
-    pollConflictStreak,
-    pollLeaseEnabled: TELEGRAM_POLL_LEASE_ENABLED,
-    pollLeaseOwned,
-    pollLeaseState,
-    pollLeaseStatus: lastPollLeaseStatus,
-  };
-}
-
 let defaultInstance: TelegramChannel | undefined;
 let inboundMessageHandler: MessageHandler | undefined;
 
@@ -789,7 +743,6 @@ async function writePollLeaseStatus(
     ...(pollLeaseTokenHash ? { tokenHash: pollLeaseTokenHash } : {}),
     ...(detail ?? {}),
   };
-  lastPollLeaseStatus = status;
 
   const client = await ensurePollLeaseClient();
   if (!client || !pollLeaseStatusKey) return;
@@ -932,29 +885,6 @@ async function startTelegramChannel(
   // /stop|/esc — abort current turn without killing the daemon
   const handleAbortCommand = async (ctx: any, command: "stop" | "esc") => {
     const chatId = ctx.chat.id;
-    const route = `command:${command}`;
-    const traceId = startOperatorTrace(
-      {
-        kind: "command",
-        handler: "telegram.native",
-        route,
-        rawData: `/${command}`,
-        chatId,
-        messageId: ctx.message?.message_id,
-      },
-      {
-        onTimeout: async (trace) => {
-          await sendTraceTimeoutMessage(chatId, "Command", trace.route, trace.traceId).catch(() => {});
-        },
-      },
-    );
-
-    try {
-      await ctx.reply(`⏳ Handling /${command}…`);
-      acknowledgeOperatorTrace(traceId, { text: `Handling /${command}` });
-    } catch (error) {
-      acknowledgeOperatorTrace(traceId, { text: `Handling /${command}`, error: String(error) });
-    }
 
     if (!options?.abortCurrentTurn) {
       void emitGatewayOtel({
@@ -962,39 +892,34 @@ async function startTelegramChannel(
         component: "telegram-channel",
         action: "telegram.command.stop_unavailable",
         success: false,
-        metadata: { chatId, command, traceId },
+        metadata: { chatId, command },
       });
-      failOperatorTrace(traceId, "stop unavailable in this gateway build", `/${command} unavailable`);
       await ctx.reply("⚠️ Stop is unavailable in this gateway build.");
       return;
     }
 
     try {
-      markOperatorTraceDispatched(traceId, `aborting current turn via /${command}`);
       await options.abortCurrentTurn();
       void emitGatewayOtel({
         level: "info",
         component: "telegram-channel",
         action: "telegram.command.stop",
         success: true,
-        metadata: { chatId, command, traceId },
+        metadata: { chatId, command },
       });
       await ctx.reply("🛑 Stopped current operation.");
-      completeOperatorTrace(traceId, `current turn aborted via /${command}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`[gateway:telegram] /${command} failed`, { error: message, traceId });
+      console.error(`[gateway:telegram] /${command} failed`, { error: message });
       void emitGatewayOtel({
         level: "error",
         component: "telegram-channel",
         action: "telegram.command.stop_failed",
         success: false,
         error: message,
-        metadata: { chatId, command, traceId },
+        metadata: { chatId, command },
       });
-      failOperatorTrace(traceId, message, `/${command} failed`);
       await ctx.reply(`❌ Stop failed: ${message}`);
-      await sendTraceFailureMessage(chatId, "Command", route, traceId, message).catch(() => {});
     }
   };
 
@@ -1009,51 +934,23 @@ async function startTelegramChannel(
   // /kill — hard stop: disable launchd + kill process
   bot.command("kill", async (ctx) => {
     const chatId = ctx.chat.id;
-    const route = "command:kill";
-    const traceId = startOperatorTrace(
-      {
-        kind: "command",
-        handler: "telegram.native",
-        route,
-        rawData: "/kill",
-        chatId,
-        messageId: ctx.message?.message_id,
-      },
-      {
-        onTimeout: async (trace) => {
-          await sendTraceTimeoutMessage(chatId, "Command", trace.route, trace.traceId).catch(() => {});
-        },
-      },
-    );
-
-    console.warn("[gateway:telegram] /kill command received — hard stopping", { traceId });
+    console.warn("[gateway:telegram] /kill command received — hard stopping");
     void emitGatewayOtel({
       level: "warn",
       component: "telegram-channel",
       action: "telegram.command.kill",
       success: true,
-      metadata: { chatId, traceId },
+      metadata: { chatId },
     });
-
     try {
       await ctx.reply("🛑 Gateway hard stopping. launchd disabled — won't restart.");
-      acknowledgeOperatorTrace(traceId, { text: "Gateway hard stopping" });
-    } catch (error) {
-      acknowledgeOperatorTrace(traceId, { text: "Gateway hard stopping", error: String(error) });
-    }
-
+    } catch { /* best-effort */ }
     try {
-      markOperatorTraceDispatched(traceId, "disabling launchd and terminating gateway process");
       const uid = process.getuid?.() ?? 501;
       execSync(`launchctl disable gui/${uid}/com.joel.gateway`, { timeout: 3000 });
-      completeOperatorTrace(traceId, "launchd disabled; gateway exiting via SIGKILL");
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[gateway:telegram] launchctl disable failed", { err, traceId });
-      failOperatorTrace(traceId, message, "launchctl disable failed before hard stop");
-      await sendTraceFailureMessage(chatId, "Command", route, traceId, message).catch(() => {});
+      console.error("[gateway:telegram] launchctl disable failed", { err });
     }
-
     process.kill(process.pid, "SIGKILL");
   });
 
@@ -1302,9 +1199,8 @@ async function startTelegramChannel(
     const context = colonIdx > 0 ? data.slice(colonIdx + 1) : "";
     const matchedRoute = callbackRoutes.find((r) => data.startsWith(r.prefix));
     const route = matchedRoute ? `external:${matchedRoute.prefix}` : `event:${action}`;
-    const traceId = startOperatorTrace(
+    const traceId = startCallbackTrace(
       {
-        kind: "callback",
         handler: "telegram.callback",
         route,
         rawData: data,
@@ -1314,7 +1210,7 @@ async function startTelegramChannel(
       {
         onTimeout: async (trace) => {
           if (!chatId) return;
-          await sendTraceTimeoutMessage(chatId, "Callback", trace.route, trace.traceId).catch(() => {});
+          await sendCallbackTimeoutMessage(chatId, trace.route, trace.traceId).catch(() => {});
         },
       },
     );
@@ -1335,9 +1231,9 @@ async function startTelegramChannel(
     const answerWithTrace = async (text: string): Promise<void> => {
       try {
         await ctx.answerCallbackQuery({ text });
-        acknowledgeOperatorTrace(traceId, { text });
+        acknowledgeCallbackTrace(traceId, { text });
       } catch (error) {
-        acknowledgeOperatorTrace(traceId, { text, error: String(error) });
+        acknowledgeCallbackTrace(traceId, { text, error: String(error) });
       }
     };
 
@@ -1361,8 +1257,8 @@ async function startTelegramChannel(
           JSON.stringify({ data, chatId, messageId, traceId }),
         );
         await answerWithTrace("Routed");
-        markOperatorTraceDispatched(traceId, `published to ${matchedRoute.channel}`);
-        completeOperatorTrace(traceId, `routed to ${matchedRoute.channel}; downstream completion untracked`);
+        markCallbackTraceDispatched(traceId, `published to ${matchedRoute.channel}`);
+        completeCallbackTrace(traceId, `routed to ${matchedRoute.channel}; downstream completion untracked`);
         void emitGatewayOtel({
           level: "info",
           component: "telegram-channel",
@@ -1382,9 +1278,9 @@ async function startTelegramChannel(
           traceId,
         });
         await answerWithTrace("Route failed");
-        failOperatorTrace(traceId, message, `route publish failed for ${matchedRoute.channel}`);
+        failCallbackTrace(traceId, message, `route publish failed for ${matchedRoute.channel}`);
         if (chatId) {
-          await sendTraceFailureMessage(chatId, "Callback", route, traceId, message).catch(() => {});
+          await sendCallbackFailureMessage(chatId, route, traceId, message).catch(() => {});
         }
       }
       return;
@@ -1412,7 +1308,7 @@ async function startTelegramChannel(
       }
 
       await answerWithTrace("Queued");
-      markOperatorTraceDispatched(traceId, `accepted telegram/callback.received for ${action}`);
+      markCallbackTraceDispatched(traceId, `accepted telegram/callback.received for ${action}`);
 
       if (chatId && messageId) {
         const actionLabel = ACTION_LABELS[action] ?? `✅ ${action}`;
@@ -1431,14 +1327,14 @@ async function startTelegramChannel(
         }
       }
 
-      completeOperatorTrace(traceId, `accepted callback event and updated message for ${action}`);
+      completeCallbackTrace(traceId, `accepted callback event and updated message for ${action}`);
     } catch (err) {
       const message = String(err);
       console.error("[gateway:telegram] callback handling failed", { error: message, traceId });
       await answerWithTrace("Action failed");
-      failOperatorTrace(traceId, message, `callback handling failed for ${action}`);
+      failCallbackTrace(traceId, message, `callback handling failed for ${action}`);
       if (chatId) {
-        await sendTraceFailureMessage(chatId, "Callback", route, traceId, message).catch(() => {});
+        await sendCallbackFailureMessage(chatId, route, traceId, message).catch(() => {});
       }
     }
   });

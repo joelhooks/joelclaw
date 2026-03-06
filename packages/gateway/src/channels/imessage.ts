@@ -27,16 +27,6 @@ export type IMessageStartOptions = {
   abortCurrentTurn?: () => Promise<void>;
 };
 
-export type IMessageRuntimeState = {
-  configured: boolean;
-  running: boolean;
-  connected: boolean;
-  reconnectAttempts: number;
-  reconnectDelayMs: number;
-  healing: boolean;
-  lastHealAt: number | null;
-};
-
 const execFileAsync = (command: string, args: string[]): Promise<void> =>
   new Promise((resolve, reject) => {
     execFile(command, args, (error) => {
@@ -196,18 +186,6 @@ export class IMessageChannel implements Channel {
 
   get isRunning(): boolean {
     return this.running;
-  }
-
-  getRuntimeState(): IMessageRuntimeState {
-    return {
-      configured: Boolean(process.env.IMESSAGE_ALLOWED_SENDER),
-      running: this.running,
-      connected: Boolean(this.socket && !this.socket.destroyed),
-      reconnectAttempts: this.reconnectAttempts,
-      reconnectDelayMs: this.reconnectDelay,
-      healing: this.healing,
-      lastHealAt: this.lastHealAt > 0 ? this.lastHealAt : null,
-    };
   }
 
   private async connectAndRun(): Promise<void> {
@@ -573,20 +551,4 @@ export async function shutdown(): Promise<void> {
   if (!defaultInstance) return;
   await defaultInstance.stop();
   defaultInstance = undefined;
-}
-
-export function getRuntimeState(): IMessageRuntimeState {
-  if (!defaultInstance) {
-    return {
-      configured: Boolean(process.env.IMESSAGE_ALLOWED_SENDER),
-      running: false,
-      connected: false,
-      reconnectAttempts: 0,
-      reconnectDelayMs: RECONNECT_BASE_MS,
-      healing: false,
-      lastHealAt: null,
-    };
-  }
-
-  return defaultInstance.getRuntimeState();
 }
