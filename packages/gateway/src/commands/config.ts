@@ -22,13 +22,13 @@ export type GatewayConfig = {
   verbose: boolean;
 } & FallbackConfig;
 
-const DEFAULT_MODEL: GatewayModel = "claude-opus-4-6";
+const DEFAULT_MODEL: GatewayModel = "gpt-5.4";
 const DEFAULT_THINKING_LEVEL: GatewayThinkingLevel = "low";
 const DEFAULT_VERBOSE = false;
 
 const DEFAULT_FALLBACK: FallbackConfig = {
-  fallbackProvider: "openai-codex",
-  fallbackModel: "gpt-5.3-codex",
+  fallbackProvider: "anthropic",
+  fallbackModel: "claude-opus-4-6",
   fallbackTimeoutMs: 120_000,
   fallbackAfterFailures: 3,
   recoveryProbeIntervalMs: 10 * 60 * 1000,
