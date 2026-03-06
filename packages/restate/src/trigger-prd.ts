@@ -201,15 +201,26 @@ function buildAgentStoryNode(
   };
 
   const dispatchUrl = `${PRD_AGENT_WORKER_URL}/internal/agent-dispatch`;
-  const awaitUrl = `${PRD_AGENT_WORKER_URL}/internal/agent-await/${requestId}?timeoutMs=${timeoutMs}`;
-  const authHeader = token ? `  -H 'x-otel-emit-token: ${token}'` : undefined;
+  const resultUrl = `${PRD_AGENT_WORKER_URL}/internal/agent-result/${requestId}`;
+  const authHeader = token ? ` -H 'x-otel-emit-token: ${token}'` : "";
+  const pollScript = [
+    `deadline=$(( $(date +%s) + ${Math.ceil(timeoutMs / 1000)} ))`,
+    `while [ $(date +%s) -lt $deadline ]; do`,
+    `  response=$(curl -fsS${authHeader} ${shellEscape(resultUrl)}) || exit 1`,
+    `  status=$(printf '%s' "$response" | python -c 'import json,sys; print(json.load(sys.stdin).get("status", ""))')`,
+    `  if [ "$status" = "completed" ]; then printf '%s\\n' "$response"; exit 0; fi`,
+    `  if [ "$status" = "failed" ]; then printf '%s\\n' "$response" >&2; exit 1; fi`,
+    `  sleep 5`,
+    `done`,
+    `echo '{"ok":false,"status":"timeout","requestId":"${requestId}"}' >&2`,
+    `exit 1`,
+  ].join("; ");
   const command = [
     `curl -fsS -X POST ${shellEscape(dispatchUrl)}`,
     `  -H 'Content-Type: application/json'`,
-    authHeader,
+    authHeader ? authHeader.trimStart() : undefined,
     `  --data ${shellEscape(JSON.stringify(payload))}`,
-    `&& curl -fsS ${shellEscape(awaitUrl)}`,
-    authHeader,
+    `&& bash -lc ${shellEscape(pollScript)}`,
   ]
     .filter((part): part is string => Boolean(part))
     .join(" \\\n");
