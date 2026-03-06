@@ -1,3 +1,6 @@
+import { readdir, readFile } from "node:fs/promises"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { Effect, Schema } from "effect"
 import { callMcpTool, fetchMailApi, getAgentMailUrl } from "../../lib/agent-mail"
 import { type CapabilityPort, capabilityError } from "../contract"
@@ -5,6 +8,7 @@ import { type CapabilityPort, capabilityError } from "../contract"
 const DEFAULT_MAIL_RESERVE_TTL_SECONDS = 900
 const MIN_MAIL_RESERVE_TTL_SECONDS = 60
 const DEFAULT_MAIL_RENEW_EXTEND_SECONDS = 900
+const DEFAULT_AGENT_MAIL_GIT_MAILBOX_REPO = join(homedir(), ".mcp_agent_mail_git_mailbox_repo")
 
 const MailStatusArgsSchema = Schema.Struct({})
 const MailStatusResultSchema = Schema.Unknown
@@ -276,6 +280,180 @@ function normalizeProjectSlug(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
+}
+
+function getAgentMailGitMailboxRepo(): string {
+  const configured =
+    process.env.AGENT_MAIL_GIT_MAILBOX_REPO?.trim()
+    ?? process.env.MCP_AGENT_MAIL_GIT_MAILBOX_REPO?.trim()
+
+  return configured && configured.length > 0
+    ? configured
+    : DEFAULT_AGENT_MAIL_GIT_MAILBOX_REPO
+}
+
+type ArtifactLockState = "active" | "stale" | "metadata_missing"
+
+type ArtifactLockSummary = {
+  total: number
+  active: number
+  stale: number
+  metadata_missing: number
+}
+
+type ArtifactLockRow = {
+  id?: number
+  path_pattern?: string
+  agent?: string
+  exclusive?: boolean
+  reason?: string
+  project?: string
+  branch?: string
+  worktree?: string
+  created_ts?: string
+  expires_ts?: string
+  released_ts?: string
+  artifact_path: string
+  state: ArtifactLockState
+}
+
+function readTimestampMs(value: unknown): number | undefined {
+  const text = asString(value)
+  if (!text) return undefined
+  const parsed = Date.parse(text)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function summarizeArtifactLocks(
+  records: Record<string, unknown>[],
+  options?: { nowMs?: number; directory?: string },
+): { locks: ArtifactLockRow[]; summary: ArtifactLockSummary; directory?: string; source: "artifact-fallback" } {
+  const nowMs = options?.nowMs ?? Date.now()
+  const locks: ArtifactLockRow[] = []
+  const summary: ArtifactLockSummary = {
+    total: 0,
+    active: 0,
+    stale: 0,
+    metadata_missing: 0,
+  }
+  const seen = new Set<string>()
+
+  for (const record of records) {
+    const id = asNumber(record.id)
+    const pathPattern = asString(record.path_pattern)
+    const dedupeKey = id !== undefined
+      ? `id:${String(id)}`
+      : pathPattern
+        ? `path:${pathPattern}`
+        : `artifact:${asString(record.__artifact_path) ?? "unknown"}`
+
+    if (seen.has(dedupeKey)) continue
+    seen.add(dedupeKey)
+
+    const expiresTs = asString(record.expires_ts)
+    const releasedTs = asString(record.released_ts)
+    const expiresMs = readTimestampMs(expiresTs)
+
+    if (releasedTs) continue
+
+    let state: ArtifactLockState
+    if (!pathPattern || id === undefined || expiresMs === undefined) {
+      state = "metadata_missing"
+      summary.metadata_missing += 1
+    } else if (expiresMs <= nowMs) {
+      state = "stale"
+      summary.stale += 1
+    } else {
+      state = "active"
+      summary.active += 1
+    }
+
+    summary.total += 1
+
+    locks.push({
+      id,
+      path_pattern: pathPattern,
+      agent: asString(record.agent),
+      exclusive: typeof record.exclusive === "boolean" ? record.exclusive : undefined,
+      reason: asString(record.reason),
+      project: asString(record.project),
+      branch: asString(record.branch),
+      worktree: asString(record.worktree),
+      created_ts: asString(record.created_ts),
+      expires_ts: expiresTs,
+      released_ts: releasedTs,
+      artifact_path: asString(record.__artifact_path) ?? "",
+      state,
+    })
+  }
+
+  return {
+    locks,
+    summary,
+    ...(options?.directory ? { directory: options.directory } : {}),
+    source: "artifact-fallback",
+  }
+}
+
+async function readArtifactLocks(project: string): Promise<{
+  locks: ArtifactLockRow[]
+  summary: ArtifactLockSummary
+  directory: string
+  source: "artifact-fallback"
+}> {
+  const directory = join(
+    getAgentMailGitMailboxRepo(),
+    "projects",
+    normalizeProjectSlug(project),
+    "file_reservations",
+  )
+
+  let entries: string[]
+  try {
+    entries = await readdir(directory)
+  } catch (error: any) {
+    if (error && typeof error === "object" && (error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {
+        locks: [],
+        summary: { total: 0, active: 0, stale: 0, metadata_missing: 0 },
+        directory,
+        source: "artifact-fallback",
+      }
+    }
+    throw error
+  }
+
+  const records = (
+    await Promise.all(
+      entries
+        .filter((entry) => entry.endsWith(".json"))
+        .map(async (entry) => {
+          const artifactPath = join(directory, entry)
+          const raw = await readFile(artifactPath, "utf8")
+          const parsed = JSON.parse(raw) as unknown
+          const record = asRecord(parsed)
+          if (!record) return null
+          return { ...record, __artifact_path: artifactPath }
+        }),
+    )
+  ).filter((record): record is Record<string, unknown> => Boolean(record))
+
+  return summarizeArtifactLocks(records, { directory })
+}
+
+function countActiveLocksFromApi(locks: unknown): number {
+  const record = asRecord(locks)
+  if (!record) return toRecordArray(locks).length
+
+  const summary = asRecord(record.summary)
+  const summaryActive = asNumber(summary?.active)
+  if (summaryActive !== undefined) return summaryActive
+
+  const directLocks = toRecordArray(record.locks)
+  if (directLocks.length > 0) return directLocks.length
+
+  const directCount = asNumber(record.count)
+  return directCount ?? 0
 }
 
 function messageProjectCandidates(message: Record<string, unknown>): string[] {
@@ -695,18 +873,39 @@ export const mcpAgentMailAdapter: CapabilityPort<typeof commands> = {
         }
         case "locks": {
           const args = yield* decodeArgs("locks", rawArgs)
-          const locks = yield* Effect.tryPromise(() => fetchMailApi("/mail/api/locks")).pipe(
+          const apiLocks = yield* Effect.tryPromise(() => fetchMailApi("/mail/api/locks")).pipe(
             Effect.mapError(mapMailError("MAIL_LOCKS_FAILED", "Verify project and server availability"))
           )
-          const lockRows = toRecordArray(locks)
-          const count = lockRows.length > 0
-            ? lockRows.length
-            : asNumber(asRecord(locks)?.count) ?? 0
+
+          const artifactLocks = yield* Effect.tryPromise(() => readArtifactLocks(args.project)).pipe(
+            Effect.either,
+          )
+
+          if (artifactLocks._tag === "Right") {
+            const apiActive = countActiveLocksFromApi(apiLocks)
+            const artifactActive = artifactLocks.right.summary.active
+            const fallbackReason = apiActive !== artifactActive
+              ? "mail/api/locks does not match the local file_reservations artifact store"
+              : undefined
+
+            return {
+              project: args.project,
+              count: artifactActive,
+              locks: artifactLocks.right,
+              source: artifactLocks.right.source,
+              ...(fallbackReason ? { fallback_reason: fallbackReason, api: apiLocks } : {}),
+            }
+          }
+
+          const lockRows = toRecordArray(apiLocks)
+          const count = countActiveLocksFromApi(apiLocks)
 
           return {
             project: args.project,
             count,
-            locks,
+            locks: lockRows.length > 0 ? lockRows : apiLocks,
+            source: "api",
+            fallback_error: summarizeSearchFallbackError(artifactLocks.left),
           }
         }
         case "search": {
@@ -809,6 +1008,7 @@ export const __mailAdapterTestUtils = {
   extractMessages,
   summarizeUnifiedInbox,
   normalizeProjectSlug,
+  summarizeArtifactLocks,
   messageMatchesProject,
   messageMatchesQuery,
   filterProjectMessagesByQuery,

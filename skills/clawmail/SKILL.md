@@ -106,6 +106,8 @@ joelclaw mail search --query "Starting:"
 joelclaw mail search --query "Status:"
 ```
 
+`joelclaw mail locks` should reflect active advisory file reservations from the local git-mailbox `file_reservations/` artifacts when that repo is available. This matters because the raw `/mail/api/locks` endpoint can under-report file reservations while still showing mailbox-internal archive/commit locks.
+
 ### If search is degraded (DB/tool errors)
 - Treat signal counts as unreliable.
 - Continue using protocol anyway (announce/reserve/release).
