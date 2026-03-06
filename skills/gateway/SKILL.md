@@ -84,16 +84,20 @@ The daemon also pushes direct Telegram alerts when session pressure escalates or
 
 ## Interruptibility and supersession (ADR-0196 / ADR-0218 rank 4 slice)
 
-For Telegram human turns, the latest message now wins:
+For direct human turns across Telegram, Discord, iMessage, and Slack invoke paths, the latest message now wins.
 
-- newer message from the same chat supersedes the active stale turn
-- stale queued prompts from that chat are dropped
+Runtime contract:
+
+- new human turns get a short `1.5s` batching window before dispatch
+- batching is per source, so rapid follow-ups collapse into one queued prompt
+- if that source is already active, gateway supersedes immediately instead of waiting on the timer
+- stale queued prompts from that source are dropped
 - daemon requests `session.abort()` on the stale turn
 - stale response text is suppressed instead of being delivered late
-- `joelclaw gateway status` exposes `supersession`
-- `joelclaw gateway diagnose` adds an `interruptibility` layer with the latest supersession details
+- `joelclaw gateway status` exposes `supersession` plus `supersession.batching`
+- `joelclaw gateway diagnose` adds an `interruptibility` layer with supersession and batching details
 
-This is the first slice, not the whole story. Batching windows and broader channel generalization are still open.
+Passive intel / background event routes are excluded from this path. Still open: callback ack/timeout tracing and richer interruptibility coverage for non-message operator actions.
 
 ## Runtime guardrail enforcement (ADR-0189)
 

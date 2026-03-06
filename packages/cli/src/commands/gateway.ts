@@ -1385,6 +1385,12 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
     let supersessionLastAt: string | undefined
     let supersessionLastDroppedQueued: number | undefined
     let supersessionLastAbortRequested: boolean | undefined
+    let batchingWindowMs: number | undefined
+    let batchingPendingCount = 0
+    let batchingPendingSources: string[] = []
+    let batchingLastSource: string | undefined
+    let batchingLastFlushedAt: string | undefined
+    let batchingLastMessageCount: number | undefined
     let checkpointSentThisTurn = false
     let pendingDeployVerificationCount = 0
     try {
@@ -1444,6 +1450,24 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
         : undefined
       supersessionLastAbortRequested = typeof supersession.lastEvent?.abortRequested === "boolean"
         ? supersession.lastEvent.abortRequested
+        : undefined
+      batchingWindowMs = typeof supersession.batching?.windowMs === "number"
+        ? supersession.batching.windowMs
+        : undefined
+      batchingPendingCount = typeof supersession.batching?.pendingCount === "number"
+        ? supersession.batching.pendingCount
+        : 0
+      batchingPendingSources = Array.isArray(supersession.batching?.pendingSources)
+        ? supersession.batching.pendingSources.filter((source: unknown): source is string => typeof source === "string")
+        : []
+      batchingLastSource = typeof supersession.batching?.lastFlush?.source === "string"
+        ? supersession.batching.lastFlush.source
+        : undefined
+      batchingLastFlushedAt = typeof supersession.batching?.lastFlush?.flushedAt === "string"
+        ? supersession.batching.lastFlush.flushedAt
+        : undefined
+      batchingLastMessageCount = typeof supersession.batching?.lastFlush?.messageCount === "number"
+        ? supersession.batching.lastFlush.messageCount
         : undefined
       checkpointSentThisTurn = parsed.result?.guardrails?.checkpointSentThisTurn === true
       pendingDeployVerificationCount = Array.isArray(parsed.result?.guardrails?.pendingDeployVerifications)
@@ -1548,13 +1572,33 @@ const gatewayDiagnose = Command.make("diagnose", { hours: diagnoseHours, lines: 
     if (typeof supersessionLastAbortRequested === "boolean") {
       supersessionFindings.push(`abort requested: ${supersessionLastAbortRequested ? "yes" : "no"}`)
     }
+    if (typeof batchingWindowMs === "number") {
+      supersessionFindings.push(`batch window: ${batchingWindowMs}ms`)
+    }
+    if (batchingPendingCount > 0) {
+      supersessionFindings.push(`pending batches: ${batchingPendingCount}`)
+    }
+    if (batchingPendingSources.length > 0) {
+      supersessionFindings.push(`pending batch sources: ${batchingPendingSources.join(", ")}`)
+    }
+    if (batchingLastSource) {
+      supersessionFindings.push(`last batch source: ${batchingLastSource}`)
+    }
+    if (batchingLastFlushedAt) {
+      supersessionFindings.push(`last batch flushed at: ${batchingLastFlushedAt}`)
+    }
+    if (typeof batchingLastMessageCount === "number") {
+      supersessionFindings.push(`last batch message count: ${batchingLastMessageCount}`)
+    }
 
     layers.push({
       layer: "interruptibility",
       status: supersessionActive ? "degraded" : "ok",
       detail: supersessionActive
         ? "Newer human turn superseded the active request"
-        : "Latest human turn wins; no supersession active",
+        : batchingPendingCount > 0
+          ? `Batching ${batchingPendingCount} human source${batchingPendingCount === 1 ? "" : "s"} before dispatch`
+          : "Latest human turn wins; no supersession active",
       ...(supersessionFindings.length > 0 ? { findings: supersessionFindings } : {}),
     })
 

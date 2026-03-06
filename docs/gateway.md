@@ -70,22 +70,32 @@ Operator rule: if status says `redis_degraded`, do **not** treat that as a full 
 
 ## Interruptibility and supersession (ADR-0196 / ADR-0218 rank 4)
 
-Latest human Telegram turns now win by contract.
+Latest direct human turns now win by contract across Telegram, Discord, iMessage, and Slack invoke paths.
 
-When a new Telegram message arrives while an older turn from the same chat is still active:
+Current runtime contract:
 
-- the queue marks older same-chat work as superseded
-- queued stale prompts for that chat are dropped
+- direct human turns get a short `1.5s` batching window before dispatch so rapid follow-ups land as one prompt
+- batching is keyed per source (`telegram:<chat>`, `discord:<thread|dm>`, `imessage:<chat>`, `slack:<channel[:thread]>`)
+- if the source is already active, the gateway does **not** wait on the batch timer — it supersedes immediately
+- queued stale prompts for that source are dropped
 - the daemon requests `session.abort()` on the stale active turn
 - stale response output is suppressed instead of being delivered after the newer ask
-- Telegram gets a short acknowledgement: `Latest message received. Superseding the previous turn.`
+- Telegram, Discord, Slack, and iMessage get a short supersession acknowledgement when possible
+- passive intel / background event routes are excluded from the human batching path
 
-`joelclaw gateway status` now exposes `supersession`, and `joelclaw gateway diagnose` adds an `interruptibility` layer that shows whether a supersession is active plus the last supersession source/time/drop count.
+`joelclaw gateway status` now exposes `supersession` with both latest-wins state and `batching` state:
+
+- `activeRequest` / `lastEvent` — supersession details for the stale active turn
+- `batching.windowMs` — current batch window
+- `batching.pendingCount` / `batching.pendingSources` — human sources currently being held before dispatch
+- `batching.lastFlush` — most recent batched flush source/time/message count
+
+`joelclaw gateway diagnose` adds an `interruptibility` layer that shows whether a supersession is active plus current/last batching details.
 
 Current boundary of the slice:
 
-- shipped: Telegram latest-wins supersession + stale-response suppression
-- still open: batching window, callback ack/timeout tracing, wider channel generalization
+- shipped: cross-channel human latest-wins supersession + batching window + stale-response suppression
+- still open: callback ack/timeout tracing and richer interruptibility coverage for non-message operator actions
 
 ## Telegram multi-instance polling ownership (2026-03-05)
 

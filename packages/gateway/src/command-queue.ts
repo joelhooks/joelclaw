@@ -43,6 +43,16 @@ export type SupersessionEvent = {
   activeRequestId?: string;
 };
 
+export type BatchFlushEvent = {
+  source: string;
+  batchKey: string;
+  startedAt: number;
+  lastUpdatedAt: number;
+  flushedAt: number;
+  messageCount: number;
+  windowMs: number;
+};
+
 export type SupersessionState = {
   activeRequest: {
     id: string;
@@ -61,6 +71,20 @@ export type SupersessionState = {
     abortRequested: boolean;
     activeRequestId: string | null;
   } | null;
+  batching: {
+    windowMs: number | null;
+    pendingCount: number;
+    pendingSources: string[];
+    lastFlush: {
+      source: string;
+      batchKey: string;
+      startedAt: string;
+      lastUpdatedAt: string;
+      flushedAt: string;
+      messageCount: number;
+      windowMs: number;
+    } | null;
+  };
 };
 
 type PromptSession = {
@@ -82,11 +106,31 @@ export type EnqueueResult = {
   streamId?: string;
   priority?: Priority;
   supersession?: SupersessionEvent;
+  batching?: {
+    batchKey: string;
+    pending: boolean;
+    messageCount: number;
+    windowMs: number;
+  };
 };
 type ErrorCallback = (event: QueueErrorEvent) => void | Promise<void> | Promise<boolean>;
 type SupersessionCallback = (event: SupersessionEvent) => void | Promise<void>;
 /** Called before new session creation. Returns a compression summary to seed the fresh session. */
 type ContextOverflowCallback = () => Promise<string>;
+type EnqueueOptions = { streamId?: string; threadId?: string; replyToAnchor?: string };
+type PendingBatch = {
+  batchKey: string;
+  source: string;
+  prompt: string;
+  metadata?: Record<string, unknown>;
+  options?: EnqueueOptions;
+  startedAt: number;
+  lastUpdatedAt: number;
+  messageCount: number;
+  windowMs: number;
+  supersessionKey?: string;
+  timer: NodeJS.Timeout;
+};
 
 const queue: QueueEntry[] = [];
 let sessionRef: PromptSession | undefined;
@@ -100,7 +144,9 @@ let consecutiveFailures = 0;
 let contextOverflowCount = 0;
 let activeRequest: ActiveRequest | undefined;
 let lastSupersessionEvent: SupersessionEvent | undefined;
+let lastBatchFlushEvent: BatchFlushEvent | undefined;
 const latestSupersessionByKey = new Map<string, { enqueuedAt: number; enqueueOrder: number }>();
+const pendingBatches = new Map<string, PendingBatch>();
 let enqueueOrderCounter = 0;
 
 /**
@@ -142,6 +188,67 @@ function getSupersessionKey(source: string, metadata?: Record<string, unknown>):
 function getPersistedEnqueueOrder(metadata: Record<string, unknown> | undefined, fallbackOrder: number): number {
   const value = metadata?.gatewayEnqueueOrder;
   return typeof value === "number" && Number.isFinite(value) ? value : fallbackOrder;
+}
+
+function getBatchWindowMs(metadata?: Record<string, unknown>): number | undefined {
+  const value = metadata?.gatewayBatchWindowMs;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
+  return value;
+}
+
+function getBatchKey(
+  source: string,
+  metadata: Record<string, unknown> | undefined,
+  supersessionKey: string | undefined,
+): string | undefined {
+  const explicit = metadata?.gatewayBatchKey;
+  if (typeof explicit === "string") {
+    const normalized = explicit.trim();
+    if (normalized.length > 0) return normalized;
+  }
+
+  return supersessionKey ?? source;
+}
+
+function currentBatchWindowMs(): number | null {
+  const pending = pendingBatches.values().next().value;
+  if (pending?.windowMs) return pending.windowMs;
+  return lastBatchFlushEvent?.windowMs ?? null;
+}
+
+function stripInjectedContinuationContext(prompt: string): string {
+  const stripped = stripInjectedChannelContext(prompt);
+  return stripped.replace(/\n\[thread: [^\]]+\]\s*$/u, "").trim();
+}
+
+function mergeBatchPrompt(existingPrompt: string, nextPrompt: string): string {
+  const continuation = stripInjectedContinuationContext(nextPrompt);
+  if (!continuation) return existingPrompt;
+  return `${existingPrompt.trimEnd()}
+
+--- Follow-up ---
+${continuation}`;
+}
+
+function schedulePendingBatchFlush(batchKey: string, windowMs: number): NodeJS.Timeout {
+  const timer = setTimeout(() => {
+    void flushPendingBatch(batchKey);
+  }, windowMs);
+  if (timer && typeof timer === "object" && "unref" in timer) {
+    timer.unref();
+  }
+  return timer;
+}
+
+function buildPendingBatchMetadata(batch: PendingBatch): Record<string, unknown> {
+  return {
+    ...(batch.metadata ?? {}),
+    gatewayBatchKey: batch.batchKey,
+    gatewayBatchWindowMs: batch.windowMs,
+    gatewayBatchMessageCount: batch.messageCount,
+    gatewayBatchStartedAt: new Date(batch.startedAt).toISOString(),
+    gatewayBatchLastUpdatedAt: new Date(batch.lastUpdatedAt).toISOString(),
+  };
 }
 
 async function dropQueuedEntriesForSupersession(
@@ -224,11 +331,160 @@ export function setIdleWaiter(fn: IdleWaiter): void {
   idleWaiter = fn;
 }
 
-export async function enqueue(
+async function stagePendingBatch(
+  source: string,
+  prompt: string,
+  metadata: Record<string, unknown> | undefined,
+  options: EnqueueOptions | undefined,
+  supersessionKey: string | undefined,
+  batchKey: string,
+  windowMs: number,
+): Promise<EnqueueResult> {
+  const now = Date.now();
+  const existing = pendingBatches.get(batchKey);
+
+  if (existing) {
+    clearTimeout(existing.timer);
+    existing.prompt = mergeBatchPrompt(existing.prompt, prompt);
+    existing.metadata = {
+      ...buildPendingBatchMetadata(existing),
+      ...(metadata ?? {}),
+    };
+    existing.options = options ?? existing.options;
+    existing.lastUpdatedAt = now;
+    existing.messageCount += 1;
+    existing.timer = schedulePendingBatchFlush(batchKey, windowMs);
+
+    void emitGatewayOtel({
+      level: "info",
+      component: "command-queue",
+      action: "queue.batch.updated",
+      success: true,
+      metadata: {
+        source,
+        batchKey,
+        messageCount: existing.messageCount,
+        windowMs,
+      },
+    });
+
+    return {
+      batching: {
+        batchKey,
+        pending: true,
+        messageCount: existing.messageCount,
+        windowMs,
+      },
+    };
+  }
+
+  const batch: PendingBatch = {
+    batchKey,
+    source,
+    prompt,
+    metadata: metadata
+      ? {
+          ...metadata,
+          gatewayBatchKey: batchKey,
+          gatewayBatchWindowMs: windowMs,
+        }
+      : {
+          gatewayBatchKey: batchKey,
+          gatewayBatchWindowMs: windowMs,
+        },
+    options,
+    startedAt: now,
+    lastUpdatedAt: now,
+    messageCount: 1,
+    windowMs,
+    supersessionKey,
+    timer: undefined as unknown as NodeJS.Timeout,
+  };
+  batch.timer = schedulePendingBatchFlush(batchKey, windowMs);
+  pendingBatches.set(batchKey, batch);
+
+  void emitGatewayOtel({
+    level: "info",
+    component: "command-queue",
+    action: "queue.batch.started",
+    success: true,
+    metadata: {
+      source,
+      batchKey,
+      windowMs,
+    },
+  });
+
+  return {
+    batching: {
+      batchKey,
+      pending: true,
+      messageCount: 1,
+      windowMs,
+    },
+  };
+}
+
+async function flushPendingBatch(batchKey: string): Promise<void> {
+  const batch = pendingBatches.get(batchKey);
+  if (!batch) return;
+
+  pendingBatches.delete(batchKey);
+  clearTimeout(batch.timer);
+
+  const flushedAt = Date.now();
+  lastBatchFlushEvent = {
+    source: batch.source,
+    batchKey,
+    startedAt: batch.startedAt,
+    lastUpdatedAt: batch.lastUpdatedAt,
+    flushedAt,
+    messageCount: batch.messageCount,
+    windowMs: batch.windowMs,
+  };
+
+  void emitGatewayOtel({
+    level: "info",
+    component: "command-queue",
+    action: "queue.batch.flushed",
+    success: true,
+    metadata: {
+      source: batch.source,
+      batchKey,
+      messageCount: batch.messageCount,
+      windowMs: batch.windowMs,
+    },
+  });
+
+  try {
+    await enqueueResolved(batch.source, batch.prompt, buildPendingBatchMetadata(batch), batch.options);
+    await drain();
+  } catch (error) {
+    console.error("command-queue: batch flush failed", {
+      source: batch.source,
+      batchKey,
+      error,
+    });
+    void emitGatewayOtel({
+      level: "error",
+      component: "command-queue",
+      action: "queue.batch.flush_failed",
+      success: false,
+      error: String(error),
+      metadata: {
+        source: batch.source,
+        batchKey,
+        messageCount: batch.messageCount,
+      },
+    });
+  }
+}
+
+async function enqueueResolved(
   source: string,
   prompt: string,
   metadata?: Record<string, unknown>,
-  options?: { streamId?: string; threadId?: string; replyToAnchor?: string },
+  options?: EnqueueOptions,
 ): Promise<EnqueueResult> {
   let streamId = options?.streamId;
   let priority: Priority | undefined;
@@ -400,6 +656,24 @@ export async function enqueue(
   return { streamId, priority, supersession };
 }
 
+export async function enqueue(
+  source: string,
+  prompt: string,
+  metadata?: Record<string, unknown>,
+  options?: EnqueueOptions,
+): Promise<EnqueueResult> {
+  const supersessionKey = getSupersessionKey(source, metadata);
+  const batchWindowMs = getBatchWindowMs(metadata);
+  const batchKey = getBatchKey(source, metadata, supersessionKey);
+  const activeMatchesBatch = Boolean(batchKey && activeRequest?.supersessionKey === (supersessionKey ?? batchKey));
+
+  if (!options?.streamId && batchWindowMs !== undefined && batchKey && !activeMatchesBatch) {
+    return stagePendingBatch(source, prompt, metadata, options, supersessionKey, batchKey, batchWindowMs);
+  }
+
+  return enqueueResolved(source, prompt, metadata, options);
+}
+
 export function getActiveSource(): string | undefined {
   return activeRequest?.source;
 }
@@ -440,6 +714,22 @@ export function getSupersessionState(): SupersessionState {
           activeRequestId: lastSupersessionEvent.activeRequestId ?? null,
         }
       : null,
+    batching: {
+      windowMs: currentBatchWindowMs(),
+      pendingCount: pendingBatches.size,
+      pendingSources: Array.from(new Set(Array.from(pendingBatches.values()).map((batch) => batch.source))).sort(),
+      lastFlush: lastBatchFlushEvent
+        ? {
+            source: lastBatchFlushEvent.source,
+            batchKey: lastBatchFlushEvent.batchKey,
+            startedAt: new Date(lastBatchFlushEvent.startedAt).toISOString(),
+            lastUpdatedAt: new Date(lastBatchFlushEvent.lastUpdatedAt).toISOString(),
+            flushedAt: new Date(lastBatchFlushEvent.flushedAt).toISOString(),
+            messageCount: lastBatchFlushEvent.messageCount,
+            windowMs: lastBatchFlushEvent.windowMs,
+          }
+        : null,
+    },
   };
 }
 
@@ -907,7 +1197,12 @@ export const __commandQueueTestUtils = {
     contextOverflowCount = 0;
     activeRequest = undefined;
     lastSupersessionEvent = undefined;
+    lastBatchFlushEvent = undefined;
     latestSupersessionByKey.clear();
+    for (const batch of pendingBatches.values()) {
+      clearTimeout(batch.timer);
+    }
+    pendingBatches.clear();
     enqueueOrderCounter = 0;
     dedupRing.length = 0;
   },

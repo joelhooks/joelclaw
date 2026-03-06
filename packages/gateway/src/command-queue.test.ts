@@ -3,6 +3,7 @@ import {
   __commandQueueTestUtils,
   drain,
   enqueue,
+  getSupersessionState,
   onSupersession,
   setIdleWaiter,
   setSession,
@@ -79,7 +80,46 @@ describe("command queue supersession", () => {
     expect(second.supersession?.abortRequested).toBe(false);
   });
 
-  test("requests abort when a newer message supersedes the active turn", async () => {
+  test("batches rapid follow-ups from the same human source before dispatch", async () => {
+    const prompts: string[] = [];
+
+    setSession({
+      prompt: async (text: string) => {
+        prompts.push(text);
+      },
+      reload: async () => {},
+      compact: async () => {},
+      newSession: async () => {},
+    });
+    setIdleWaiter(async () => {});
+
+    await enqueue("discord:1", `${telegramHeader}\nfirst`, {
+      gatewayHumanLatestWins: true,
+      gatewaySupersessionKey: "discord:1",
+      gatewayBatchKey: "discord:1",
+      gatewayBatchWindowMs: 25,
+    });
+    const second = await enqueue("discord:1", `${telegramHeader.replace("3:49 PM PST", "3:50 PM PST")}\nsecond`, {
+      gatewayHumanLatestWins: true,
+      gatewaySupersessionKey: "discord:1",
+      gatewayBatchKey: "discord:1",
+      gatewayBatchWindowMs: 25,
+    });
+
+    expect(getSupersessionState().batching.pendingCount).toBe(1);
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("first");
+    expect(prompts[0]).toContain("--- Follow-up ---\nsecond");
+    expect(prompts[0].match(/Channel: telegram/g)?.length ?? 0).toBe(1);
+    expect(second.batching?.messageCount).toBe(2);
+    expect(getSupersessionState().batching.pendingCount).toBe(0);
+    expect(getSupersessionState().batching.lastFlush?.messageCount).toBe(2);
+  });
+
+  test("requests abort immediately when a newer batched message arrives during the active turn", async () => {
     let releaseFirstPrompt: (() => void) | undefined;
     let markFirstPromptEntered: (() => void) | undefined;
     const firstPromptEntered = new Promise<void>((resolve) => {
@@ -118,12 +158,15 @@ describe("command queue supersession", () => {
     const second = await enqueue("telegram:1", "second", {
       gatewayHumanLatestWins: true,
       gatewaySupersessionKey: "telegram:1",
+      gatewayBatchKey: "telegram:1",
+      gatewayBatchWindowMs: 25,
     });
 
     await draining;
     await drain();
 
     expect(second.supersession?.abortRequested).toBe(true);
+    expect(second.batching).toBeUndefined();
     expect(supersessionEvents).toEqual([{ source: "telegram:1", abortRequested: true }]);
   });
 });

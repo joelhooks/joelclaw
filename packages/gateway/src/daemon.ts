@@ -303,9 +303,94 @@ function shouldForwardToTelegram(text: string): boolean {
   return !isHeartbeatOk && !isTrivial && !isEcho;
 }
 
+const HUMAN_TURN_BATCH_WINDOW_MS = 1_500;
+
 function getSourceKind(source: string | undefined): "channel" | "internal" | "unknown" {
   if (!source) return "unknown";
   return source.includes(":") ? "channel" : "internal";
+}
+
+function isHumanChannelTurn(source: string, metadata?: Record<string, unknown>): boolean {
+  if (source.startsWith("slack-intel:")) return false;
+
+  if (source.startsWith("telegram:")) {
+    return typeof metadata?.telegramMessageId === "number";
+  }
+
+  if (source.startsWith("discord:")) {
+    return typeof metadata?.discordMessageId === "string";
+  }
+
+  if (source.startsWith("imessage:")) {
+    return typeof metadata?.imessageMessageId === "number";
+  }
+
+  if (source.startsWith("slack:")) {
+    const eventKind = metadata?.slackEventKind;
+    return (eventKind === "message" || eventKind === "mention")
+      && typeof metadata?.slackTs === "string";
+  }
+
+  return false;
+}
+
+function buildHumanTurnQueueMetadata(
+  source: string,
+  metadata?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (!isHumanChannelTurn(source, metadata)) return metadata;
+
+  return {
+    ...(metadata ?? {}),
+    gatewayHumanLatestWins: true,
+    gatewaySupersessionKey: source,
+    gatewayBatchKey: source,
+    gatewayBatchWindowMs: HUMAN_TURN_BATCH_WINDOW_MS,
+  };
+}
+
+async function maybeNotifySupersessionSource(source: string): Promise<void> {
+  try {
+    if (source.startsWith("telegram:")) {
+      const chatId = parseChatId(source);
+      if (!chatId) return;
+      await sendTelegram(
+        chatId,
+        "↪️ <b>Latest message received</b>\nSuperseding the previous turn.",
+        { silent: true },
+      );
+      return;
+    }
+
+    if (source.startsWith("discord:")) {
+      const channelId = parseDiscordChannelId(source);
+      if (!channelId) return;
+      await sendDiscord(channelId, "↪️ Latest message received.\nSuperseding the previous turn.");
+      return;
+    }
+
+    if (source.startsWith("slack:")) {
+      await sendSlack(source, "↪️ Latest message received.\nSuperseding the previous turn.");
+      return;
+    }
+
+    if (source.startsWith("imessage:") && IMESSAGE_ALLOWED_SENDER) {
+      await sendIMessage(IMESSAGE_ALLOWED_SENDER, "Latest message received. Superseding the previous turn.");
+    }
+  } catch (error) {
+    console.warn("[gateway:supersession] notification failed", {
+      source,
+      error: String(error),
+    });
+    void emitGatewayOtel({
+      level: "warn",
+      component: "daemon.supersession",
+      action: "supersession.notify_failed",
+      success: false,
+      error: String(error),
+      metadata: { source },
+    });
+  }
 }
 
 function isBackgroundSource(source: string | undefined): boolean {
@@ -1330,14 +1415,7 @@ onSupersession(async (event) => {
     },
   });
 
-  const telegramChatId = event.source.startsWith("telegram:") ? parseChatId(event.source) : undefined;
-  if (telegramChatId) {
-    void sendTelegram(
-      telegramChatId,
-      "↪️ <b>Latest message received</b>\nSuperseding the previous turn.",
-      { silent: true },
-    ).catch(() => {});
-  }
+  void maybeNotifySupersessionSource(event.source);
 
   try {
     await session.abort();
@@ -1838,7 +1916,14 @@ function getStatusPayload(): Record<string, unknown> {
   const fb = fallbackController.state;
   const redisState = getRedisRuntimeState();
   const sessionPressure = getSessionPressure();
-  const supersession = getSupersessionState();
+  const supersessionSnapshot = getSupersessionState();
+  const supersession = {
+    ...supersessionSnapshot,
+    batching: {
+      ...supersessionSnapshot.batching,
+      windowMs: HUMAN_TURN_BATCH_WINDOW_MS,
+    },
+  };
   const degradedCapabilities = getDegradedCapabilities();
 
   return {
@@ -2729,18 +2814,10 @@ const enqueueToGateway = async (source: string, prompt: string, metadata?: Recor
     : typeof metadata?.discordMessageId === "string"
       ? metadata.discordMessageId
       : undefined;
-  const enableLatestWinsSupersession = source.startsWith("telegram:");
-
   // ADR-0209: Classify thread (haiku ~200ms, reply-to ~0ms)
   const threadCtx = await classifyThread(prompt, channel, replyToAnchor, inboundAnchor);
 
-  const queueMetadata = enableLatestWinsSupersession
-    ? {
-        ...(metadata ?? {}),
-        gatewayHumanLatestWins: true,
-        gatewaySupersessionKey: source,
-      }
-    : metadata;
+  const queueMetadata = buildHumanTurnQueueMetadata(source, metadata);
 
   const withChannelContext = injectChannelContext(prompt, {
     source,
