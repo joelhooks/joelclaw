@@ -12,18 +12,21 @@ const INBOX_DIR = join(
   "inbox"
 );
 
+type InboxStatus = "running" | "completed" | "failed";
+
 type InboxResult = {
   requestId: string;
   sessionId?: string;
-  status: "completed" | "failed";
+  status: InboxStatus;
   task: string;
   tool: string;
   agent?: string;
   result?: string;
   error?: string;
   startedAt: string;
-  completedAt: string;
-  durationMs: number;
+  updatedAt: string;
+  completedAt?: string;
+  durationMs?: number;
 };
 
 const PI_FILE_HINT_PATTERN =
@@ -74,6 +77,13 @@ function resolveCodexModel(model?: string): string {
       `overriding to "${CODEX_DEFAULT_MODEL}" for ChatGPT account compatibility.`
   );
   return CODEX_DEFAULT_MODEL;
+}
+
+function writeInboxSnapshot(result: InboxResult): string {
+  mkdirSync(INBOX_DIR, { recursive: true });
+  const filePath = join(INBOX_DIR, `${result.requestId}.json`);
+  writeFileSync(filePath, JSON.stringify(result, null, 2));
+  return filePath;
 }
 
 async function runAgentCommand(
@@ -161,6 +171,22 @@ export const agentDispatch = inngest.createFunction(
     }
 
     const startedAt = new Date().toISOString();
+
+    await step.run("write-running-inbox", async () => {
+      const runningResult: InboxResult = {
+        requestId,
+        sessionId,
+        status: "running",
+        task,
+        tool,
+        ...(typeof agent === "string" && agent.trim() ? { agent: agent.trim() } : {}),
+        startedAt,
+        updatedAt: startedAt,
+      };
+
+      const filePath = writeInboxSnapshot(runningResult);
+      return { filePath, status: runningResult.status };
+    });
 
     // Execute the agent
     const execution = await step.run("execute-agent", async () => {
@@ -267,13 +293,12 @@ export const agentDispatch = inngest.createFunction(
           ? { result: execution.output }
           : { error: execution.error }),
         startedAt,
+        updatedAt: completedAt,
         completedAt,
         durationMs,
       };
 
-      mkdirSync(INBOX_DIR, { recursive: true });
-      const filePath = join(INBOX_DIR, `${requestId}.json`);
-      writeFileSync(filePath, JSON.stringify(result, null, 2));
+      const filePath = writeInboxSnapshot(result);
 
       return { filePath, status: result.status, durationMs };
     });

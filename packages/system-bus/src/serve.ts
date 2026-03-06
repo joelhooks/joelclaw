@@ -147,6 +147,42 @@ async function readAgentResult(requestId: string): Promise<Record<string, unknow
   return null;
 }
 
+function readAgentResultStatus(result: Record<string, unknown> | null): string | undefined {
+  const status = result?.status;
+  return typeof status === "string" && status.trim().length > 0 ? status.trim() : undefined;
+}
+
+function readAgentTimestampMs(result: Record<string, unknown> | null): number | undefined {
+  const value = result?.updatedAt ?? result?.startedAt;
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function isFreshRunningResult(
+  result: Record<string, unknown> | null,
+  timeoutSeconds: number,
+): boolean {
+  if (readAgentResultStatus(result) !== "running") {
+    return false;
+  }
+
+  const startedAtMs = readAgentTimestampMs(result);
+  if (!startedAtMs) {
+    return true;
+  }
+
+  const allowedAgeMs = Math.min(
+    INTERNAL_AGENT_MAX_TIMEOUT_MS + 60_000,
+    Math.max(60_000, timeoutSeconds * 1000 + 60_000),
+  );
+
+  return Date.now() - startedAtMs <= allowedAgeMs;
+}
+
 app.get("/", (c) =>
   c.json({
     service: "system-bus",
@@ -233,9 +269,42 @@ app.post("/internal/agent-dispatch", async (c) => {
   const requestId = typeof (payload as any).requestId === "string" ? (payload as any).requestId.trim() : "";
   const task = typeof (payload as any).task === "string" ? (payload as any).task.trim() : "";
   const tool = typeof (payload as any).tool === "string" ? (payload as any).tool.trim() : "";
+  const timeoutSecondsRaw = (payload as any).timeout;
+  const timeoutSeconds = typeof timeoutSecondsRaw === "number" && Number.isFinite(timeoutSecondsRaw)
+    ? Math.max(60, Math.min(timeoutSecondsRaw, INTERNAL_AGENT_MAX_TIMEOUT_MS / 1000))
+    : 600;
 
   if (!requestId || !task || !tool) {
     return c.json({ ok: false, error: "Missing required fields: requestId, task, tool" }, 400);
+  }
+
+  const existingResult = await readAgentResult(requestId);
+  const existingStatus = readAgentResultStatus(existingResult);
+  const shouldDedupe = existingStatus === "completed"
+    || existingStatus === "failed"
+    || isFreshRunningResult(existingResult, timeoutSeconds);
+
+  if (shouldDedupe) {
+    await emitOtelEvent({
+      action: "internal.agent_dispatch.deduped",
+      component: "system-bus-internal",
+      metadata: {
+        requestId,
+        tool,
+        status: existingStatus,
+        cwd: (payload as any).cwd,
+        model: (payload as any).model,
+        sandbox: (payload as any).sandbox,
+      },
+    }).catch(() => {});
+
+    return c.json({
+      ok: true,
+      requestId,
+      status: existingStatus,
+      duplicate: true,
+      result: existingResult,
+    });
   }
 
   const sendResult = await inngest.send({
