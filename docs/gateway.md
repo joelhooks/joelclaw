@@ -116,7 +116,7 @@ For those paths, the gateway now tracks:
 - `kind` (`callback` / `command`)
 - ack state (`pending` / `succeeded` / `failed`)
 - dispatch/completion/failure timestamps
-- timeout state (`15s` default)
+- timeout state (`15s` default, longer for downstream agent/external callback paths)
 - route + chat/message metadata
 
 Operator surfaces:
@@ -133,7 +133,15 @@ Current deeper rank-5 slice now also carries queued Telegram agent-command trace
 - prompt failure, assistant error, and supersession paths fail the trace explicitly
 - agent-backed command traces use a longer timeout window (`120s`) because downstream execution is real work, not just callback ack latency
 
-Still open: richer downstream completion acks for externally routed callback chains that execute outside the gateway's own turn lifecycle.
+External callback-route consumers now also have a real completion handoff path:
+
+- routed external callbacks stay active after the gateway publishes them instead of being marked complete immediately
+- the gateway advertises a Redis trace-result channel with the routed callback payload
+- downstream consumers can publish `completed` / `failed` back with the same `traceId`
+- the in-tree Restate Telegram route now uses that handoff, so external callback traces close on real downstream resolution instead of publish-time fiction
+- timeout stays terminal if the external consumer never reports back
+
+Still open: any out-of-tree external callback consumer has to adopt the same trace-result handoff or it will still timeout as untracked work.
 
 ## Channel runtime contracts (ADR-0218 rank 6)
 

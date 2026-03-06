@@ -115,7 +115,9 @@ Gateway now tracks `kind=callback|command` plus ack/dispatched/completed/failed/
 
 Queued Telegram agent commands now keep their trace id through downstream gateway execution, complete on the real turn completion path, and fail on prompt error / assistant error / supersession instead of lying at enqueue time. Agent-backed command traces use a longer timeout window than simple callback ack paths.
 
-Still open: richer downstream completion acks for external callback routes that execute outside the gateway's own turn lifecycle.
+External callback routes now have a Redis trace-result handoff too: the gateway leaves routed callbacks active, downstream consumers can publish `completed` / `failed` back with the same `traceId`, and the in-tree Restate Telegram route is wired to close traces on real downstream resolution.
+
+Still open: any out-of-tree external callback consumer that doesn't adopt the handoff will still timeout as untracked work.
 
 ## Channel runtime contracts (ADR-0218 rank 6 slice)
 

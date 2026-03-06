@@ -56,6 +56,13 @@ export type OperatorTraceSnapshot = {
 
 export type CallbackTraceSnapshot = OperatorTraceSnapshot;
 
+export type ExternalOperatorTraceResult = {
+  traceId: string;
+  status: "completed" | "failed";
+  detail?: string | null;
+  error?: string | null;
+};
+
 type OperatorTraceInternal = OperatorTraceSummary & {
   timeoutTimer: NodeJS.Timeout | null;
   onTimeout?: (trace: OperatorTraceSummary) => void | Promise<void>;
@@ -264,6 +271,23 @@ export function failOperatorTrace(traceId: string, error: string, detail?: strin
     level: "error",
     metadata: { detail: trace.detail },
   });
+}
+
+export function applyExternalOperatorTraceResult(result: ExternalOperatorTraceResult): boolean {
+  const trace = findActiveTrace(result.traceId);
+  if (!trace) return false;
+
+  if (result.status === "completed") {
+    completeOperatorTrace(result.traceId, result.detail ?? "external callback completed");
+    return true;
+  }
+
+  failOperatorTrace(
+    result.traceId,
+    result.error ?? "external callback failed",
+    result.detail ?? "external callback failed",
+  );
+  return true;
 }
 
 export const startCallbackTrace = startOperatorTrace;

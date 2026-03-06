@@ -14,16 +14,25 @@
 
 import Redis from "ioredis";
 import type {
+  CallbackData,
   NotificationChannel,
   NotificationMessage,
   SendResult,
-  CallbackData,
 } from "./types";
-import { encodeCallbackData, decodeCallbackData } from "./types";
+import { decodeCallbackData, encodeCallbackData } from "./types";
 
 const CALLBACK_ROUTES_KEY = "joelclaw:telegram:callback-routes";
 const CALLBACK_PREFIX = "restate:";
 const CALLBACK_CHANNEL = "joelclaw:telegram:callbacks:restate";
+const DEFAULT_TRACE_RESULT_CHANNEL = "joelclaw:telegram:callback-trace-events";
+
+type RoutedTelegramCallback = {
+  data: string;
+  chatId: number;
+  messageId: number;
+  traceId?: string;
+  traceResultChannel?: string;
+};
 
 interface TelegramConfig {
   botToken: string;
@@ -36,6 +45,28 @@ export class TelegramChannel implements NotificationChannel {
   private readonly baseUrl: string;
   private readonly chatId: string;
   private readonly redisUrl: string;
+
+  private async publishTraceResult(
+    cmdClient: Redis,
+    payload: RoutedTelegramCallback,
+    result: {
+      status: "completed" | "failed";
+      detail: string;
+      error?: string;
+    },
+  ): Promise<void> {
+    if (!payload.traceId) return;
+
+    const channel = payload.traceResultChannel || DEFAULT_TRACE_RESULT_CHANNEL;
+    await cmdClient.publish(channel, JSON.stringify({
+      traceId: payload.traceId,
+      status: result.status,
+      detail: result.detail,
+      ...(result.error ? { error: result.error } : {}),
+      source: CALLBACK_CHANNEL,
+      route: payload.data,
+    }));
+  }
 
   constructor(private config: TelegramConfig) {
     this.baseUrl = `https://api.telegram.org/bot${config.botToken}`;
@@ -111,18 +142,20 @@ export class TelegramChannel implements NotificationChannel {
     console.log(`📡 Telegram: listening on Redis channel ${CALLBACK_CHANNEL}`);
 
     subClient.on("message", async (_channel: string, message: string) => {
+      let payload: RoutedTelegramCallback | undefined;
       try {
-        const payload = JSON.parse(message) as {
-          data: string;
-          chatId: number;
-          messageId: number;
-        };
+        payload = JSON.parse(message) as RoutedTelegramCallback;
 
         const decoded = decodeCallbackData(payload.data);
         if (!decoded) {
           console.warn("[restate:telegram] undecodable callback data", {
             data: payload.data,
           });
+          await this.publishTraceResult(cmdClient, payload, {
+            status: "failed",
+            detail: "restate callback payload rejected",
+            error: "undecodable_callback_data",
+          }).catch(() => {});
           return;
         }
 
@@ -149,10 +182,21 @@ export class TelegramChannel implements NotificationChannel {
 
         // Resolve via Restate
         await resolver(decoded);
+        await this.publishTraceResult(cmdClient, payload, {
+          status: "completed",
+          detail: `restate resolved ${decoded.action} for ${decoded.serviceName}/${decoded.workflowId}`,
+        }).catch(() => {});
       } catch (err) {
         console.error("[restate:telegram] callback processing error", {
           error: String(err),
         });
+        if (payload) {
+          await this.publishTraceResult(cmdClient, payload, {
+            status: "failed",
+            detail: "restate callback processing failed",
+            error: String(err),
+          }).catch(() => {});
+        }
       }
     });
 

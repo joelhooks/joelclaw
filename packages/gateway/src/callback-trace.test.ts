@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   __callbackTraceTestUtils,
   acknowledgeOperatorTrace,
+  applyExternalOperatorTraceResult,
   completeOperatorTrace,
   failOperatorTrace,
   getOperatorTraceSnapshot,
@@ -73,6 +74,26 @@ describe("operator trace", () => {
     expect(snapshot.lastFailed?.detail).toBe("worktree merge failed");
   });
 
+  test("applies external completion results to active traces", () => {
+    const traceId = startOperatorTrace({
+      kind: "callback",
+      handler: "telegram.callback",
+      route: "external:restate",
+      rawData: "restate:deploy:123:approve",
+    });
+
+    markOperatorTraceDispatched(traceId, "published to joelclaw:telegram:callbacks:restate");
+    expect(applyExternalOperatorTraceResult({
+      traceId,
+      status: "completed",
+      detail: "restate approval resolved",
+    })).toBe(true);
+
+    const snapshot = getOperatorTraceSnapshot();
+    expect(snapshot.lastCompleted?.traceId).toBe(traceId);
+    expect(snapshot.lastCompleted?.detail).toBe("restate approval resolved");
+  });
+
   test("surfaces the longest active/recent timeout in the snapshot", () => {
     const traceId = startOperatorTrace(
       {
@@ -135,6 +156,30 @@ describe("operator trace", () => {
     const snapshot = getOperatorTraceSnapshot();
     expect(snapshot.lastTimedOut?.traceId).toBe(traceId);
     expect(snapshot.lastTimedOut?.detail).not.toBe("late completion should be ignored");
+    expect(snapshot.lastCompleted?.traceId).not.toBe(traceId);
+  });
+
+  test("ignores late external results after timeout", async () => {
+    const traceId = startOperatorTrace(
+      {
+        kind: "callback",
+        handler: "telegram.callback",
+        route: "external:restate",
+        rawData: "restate:deploy:123:approve",
+      },
+      { timeoutMs: 10 },
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(applyExternalOperatorTraceResult({
+      traceId,
+      status: "completed",
+      detail: "late restate resolution",
+    })).toBe(false);
+
+    const snapshot = getOperatorTraceSnapshot();
+    expect(snapshot.lastTimedOut?.traceId).toBe(traceId);
     expect(snapshot.lastCompleted?.traceId).not.toBe(traceId);
   });
 });

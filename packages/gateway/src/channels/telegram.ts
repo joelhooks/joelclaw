@@ -10,6 +10,7 @@ import { Bot, InputFile } from "grammy";
 import Redis from "ioredis";
 import {
   acknowledgeCallbackTrace,
+  applyExternalOperatorTraceResult,
   completeCallbackTrace,
   failCallbackTrace,
   markCallbackTraceDispatched,
@@ -466,6 +467,17 @@ let pollConflictStreak = 0;
 // External services register prefixes in Redis hash. Matching callbacks
 // are published to a Redis channel instead of firing Inngest events.
 const CALLBACK_ROUTES_KEY = "joelclaw:telegram:callback-routes";
+const CALLBACK_TRACE_EVENTS_CHANNEL = "joelclaw:telegram:callback-trace-events";
+const EXTERNAL_CALLBACK_TRACE_TIMEOUT_MS = 120_000;
+
+type CallbackTraceResultEvent = {
+  traceId: string;
+  status: "completed" | "failed";
+  detail?: string | null;
+  error?: string | null;
+  source?: string | null;
+  route?: string | null;
+};
 
 /**
  * Load registered callback routes from Redis.
@@ -486,7 +498,100 @@ async function loadCallbackRoutes(
   }
 }
 
+function createCallbackTraceSubscriber(): Redis {
+  return new Redis({
+    host: process.env.REDIS_HOST ?? "localhost",
+    port: parseInt(process.env.REDIS_PORT ?? "6379", 10),
+    lazyConnect: true,
+    maxRetriesPerRequest: null,
+    retryStrategy: (times: number) => Math.min(times * 500, 30_000),
+  });
+}
+
+async function handleCallbackTraceResult(message: string): Promise<void> {
+  let parsed: CallbackTraceResultEvent;
+  try {
+    parsed = JSON.parse(message) as CallbackTraceResultEvent;
+  } catch (error) {
+    console.warn("[gateway:telegram] invalid callback trace result payload", { error: String(error) });
+    void emitGatewayOtel({
+      level: "warn",
+      component: "telegram-channel",
+      action: "telegram.callback.trace_result.invalid",
+      success: false,
+      error: String(error),
+    });
+    return;
+  }
+
+  if (!parsed || typeof parsed.traceId !== "string" || (parsed.status !== "completed" && parsed.status !== "failed")) {
+    console.warn("[gateway:telegram] callback trace result missing required fields", { parsed });
+    void emitGatewayOtel({
+      level: "warn",
+      component: "telegram-channel",
+      action: "telegram.callback.trace_result.invalid",
+      success: false,
+      error: "missing_required_fields",
+      metadata: {
+        hasTraceId: typeof parsed?.traceId === "string",
+        status: parsed?.status ?? null,
+      },
+    });
+    return;
+  }
+
+  const applied = applyExternalOperatorTraceResult({
+    traceId: parsed.traceId,
+    status: parsed.status,
+    detail: typeof parsed.detail === "string" ? parsed.detail : undefined,
+    error: typeof parsed.error === "string" ? parsed.error : undefined,
+  });
+
+  void emitGatewayOtel({
+    level: applied ? (parsed.status === "failed" ? "warn" : "info") : "info",
+    component: "telegram-channel",
+    action: applied ? "telegram.callback.trace_result.applied" : "telegram.callback.trace_result.ignored",
+    success: applied && parsed.status === "completed",
+    ...(parsed.status === "failed" && typeof parsed.error === "string" ? { error: parsed.error } : {}),
+    metadata: {
+      traceId: parsed.traceId,
+      status: parsed.status,
+      route: parsed.route ?? null,
+      source: parsed.source ?? null,
+      applied,
+    },
+  });
+}
+
+async function ensureCallbackTraceSubscriber(): Promise<void> {
+  if (callbackTraceSubscriber && callbackTraceSubscriber.status !== "end") {
+    return;
+  }
+
+  const subscriber = createCallbackTraceSubscriber();
+  subscriber.on("error", () => {});
+  await subscriber.connect();
+  await subscriber.subscribe(CALLBACK_TRACE_EVENTS_CHANNEL);
+  subscriber.on("message", (_channel, message) => {
+    void handleCallbackTraceResult(message);
+  });
+  callbackTraceSubscriber = subscriber;
+}
+
+async function closeCallbackTraceSubscriber(): Promise<void> {
+  if (!callbackTraceSubscriber) return;
+  try {
+    await callbackTraceSubscriber.unsubscribe(CALLBACK_TRACE_EVENTS_CHANNEL);
+    await callbackTraceSubscriber.quit();
+  } catch {
+    callbackTraceSubscriber.disconnect();
+  } finally {
+    callbackTraceSubscriber = undefined;
+  }
+}
+
 let callbackRoutes: Array<{ prefix: string; channel: string }> = [];
+let callbackTraceSubscriber: Redis | undefined;
 
 const pollLeaseInstanceId = crypto.randomUUID();
 let pollLeaseClient: Redis | undefined;
@@ -1243,6 +1348,7 @@ async function startTelegramChannel(
         messageId,
       },
       {
+        timeoutMs: matchedRoute ? EXTERNAL_CALLBACK_TRACE_TIMEOUT_MS : undefined,
         onTimeout: async (trace) => {
           if (!chatId) return;
           await sendCallbackTimeoutMessage(chatId, trace.route, trace.traceId).catch(() => {});
@@ -1289,11 +1395,16 @@ async function startTelegramChannel(
 
         await redis.publish(
           matchedRoute.channel,
-          JSON.stringify({ data, chatId, messageId, traceId }),
+          JSON.stringify({
+            data,
+            chatId,
+            messageId,
+            traceId,
+            traceResultChannel: CALLBACK_TRACE_EVENTS_CHANNEL,
+          }),
         );
         await answerWithTrace("Routed");
-        markCallbackTraceDispatched(traceId, `published to ${matchedRoute.channel}`);
-        completeCallbackTrace(traceId, `routed to ${matchedRoute.channel}; downstream completion untracked`);
+        markCallbackTraceDispatched(traceId, `published to ${matchedRoute.channel}; waiting for downstream completion`);
         void emitGatewayOtel({
           level: "info",
           component: "telegram-channel",
@@ -1303,6 +1414,8 @@ async function startTelegramChannel(
             prefix: matchedRoute.prefix,
             channel: matchedRoute.channel,
             traceId,
+            traceResultChannel: CALLBACK_TRACE_EVENTS_CHANNEL,
+            waitingForDownstreamCompletion: true,
           },
         });
       } catch (err) {
@@ -1654,6 +1767,19 @@ async function startTelegramChannel(
     });
   }
 
+  try {
+    await ensureCallbackTraceSubscriber();
+  } catch (error) {
+    console.warn("[gateway:telegram] callback trace subscriber failed to start", { error: String(error) });
+    void emitGatewayOtel({
+      level: "warn",
+      component: "telegram-channel",
+      action: "telegram.callback.trace_result.subscriber_failed",
+      success: false,
+      error: String(error),
+    });
+  }
+
   void attemptPollOwnership("startup");
 }
 
@@ -1954,6 +2080,7 @@ async function shutdownTelegramChannel(): Promise<void> {
   });
   await releasePollLease();
   await closePollLeaseClient();
+  await closeCallbackTraceSubscriber();
 
   pollLeaseOwned = false;
   pollLeaseRetryAttempts = 0;
