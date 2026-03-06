@@ -5,7 +5,7 @@
  *
  * Environment:
  *   RESTATE_PORT        — Worker port (default: 9080)
- *   CHANNEL             — "telegram" or "console" (default: telegram if tokens present)
+ *   CHANNEL             — "telegram", "console", or "noop" (default: telegram if tokens present)
  *   TELEGRAM_BOT_TOKEN  — Telegram bot token
  *   TELEGRAM_USER_ID    — Telegram chat ID
  *   RESTATE_INGRESS_URL — Restate ingress (default: http://localhost:8080)
@@ -14,6 +14,7 @@
 import * as restate from "@restatedev/restate-sdk";
 
 import { ConsoleChannel } from "./channels/console";
+import { NoopChannel } from "./channels/noop";
 import { TelegramChannel } from "./channels/telegram";
 import type { NotificationChannel } from "./channels/types";
 import { resolveCallback } from "./resolver";
@@ -27,6 +28,10 @@ function createChannel(): NotificationChannel {
 
   if (explicit === "console") {
     return new ConsoleChannel();
+  }
+
+  if (explicit === "noop") {
+    return new NoopChannel();
   }
 
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
