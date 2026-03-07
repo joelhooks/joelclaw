@@ -254,8 +254,9 @@ From index comments + function lists:
 4. Each drain tick selects the next priority candidate from the sorted set, resolves its static registry target from `packages/queue/src/registry.ts`, and POSTs a one-node DAG request to Restate `/dagOrchestrator/{workflowId}/run/send`.
 5. When backlog remains and a dispatch slot frees, the drainer self-pulses immediately instead of waiting for the next `QUEUE_DRAIN_INTERVAL_MS` heartbeat. That interval is now the idle poll / retry cadence, not a mandatory 2-second tax between successful sends.
 6. The current Story-3 bridge re-emits the queue item to its registered Inngest event target inside that one-node DAG request. This is deliberate: the deterministic queue/drainer is proven first; per-family Restate cutovers remain Story 4 work.
-6. On accepted Restate dispatch, the drainer acks the queue message; on failure it leaves the message in Redis, applies retry cooldown, and emits `queue.dispatch.failed` OTEL evidence.
-7. Crash recovery comes from the Redis stream + consumer-group replay path, not from vibes: restart the Restate worker, let `getUnacked()` reclaim the inflight entries, then drain resumes.
+7. On accepted Restate dispatch, the drainer acks the queue message; on failure it leaves the message in Redis, applies retry cooldown, and emits `queue.dispatch.failed` OTEL evidence.
+8. If backlog remains in Redis but the drainer stops making progress past `QUEUE_DRAIN_STALL_AFTER_MS`, it emits `queue.drainer.stalled` and exits non-zero so launchd can restart `com.joel.restate-worker`. That is the self-heal path for a wedged drainer inside an otherwise-running Bun process.
+9. Crash recovery comes from the Redis stream + consumer-group replay path, not from vibes: restart the Restate worker, let `getUnacked()` reclaim the inflight entries, then drain resumes.
 
 ## Webhook flow
 

@@ -28,7 +28,7 @@ launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.joel.restate-worker.pl
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.joel.restate-worker.plist
 ```
 
-The canonical Restate host runtime is `scripts/restate/start.sh` behind `com.joel.restate-worker`, not an ad-hoc `nohup bun run ...` shell. The wrapper loads `~/.config/system-bus.env`, forces a headless-safe channel (`console` is downgraded to `noop` under launchd), forwards SIGTERM to Bun, and opportunistically re-registers the deployment when the Restate admin API is reachable.
+The canonical Restate host runtime is `scripts/restate/start.sh` behind `com.joel.restate-worker`, not an ad-hoc `nohup bun run ...` shell. The wrapper loads `~/.config/system-bus.env`, forces a headless-safe channel (`console` is downgraded to `noop` under launchd), forwards SIGTERM to Bun, and opportunistically re-registers the deployment when the Restate admin API is reachable. The queue drainer now also self-heals by emitting `queue.drainer.stalled` and exiting non-zero when backlog remains but progress stops past `QUEUE_DRAIN_STALL_AFTER_MS`; launchd is the recovery path for that class of stall.
 
 Example for the content watcher:
 

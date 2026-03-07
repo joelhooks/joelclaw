@@ -7,6 +7,7 @@ const {
   buildHttpDispatchNode,
   buildInngestDispatchNode,
   createImmediateTickScheduler,
+  detectQueueDrainerStall,
   normalizeEnvelope,
 } = __queueDrainerTestUtils;
 
@@ -105,6 +106,70 @@ describe("queue drainer helpers", () => {
 
     expect(node.config?.url).toBe("https://example.com/hook");
     expect(JSON.parse(String(node.config?.body))).toEqual({ hello: "world" });
+  });
+
+  test("detectQueueDrainerStall ignores empty queues and active backoff windows", () => {
+    expect(detectQueueDrainerStall({
+      now: 100_000,
+      queueDepth: 0,
+      draining: false,
+      stopping: false,
+      activeDispatchAgesMs: [],
+      lastTickStartedAt: null,
+      lastTickFinishedAt: 99_000,
+      nextRetryAt: null,
+      stallAfterMs: 10_000,
+    })).toBeNull();
+
+    expect(detectQueueDrainerStall({
+      now: 100_000,
+      queueDepth: 3,
+      draining: false,
+      stopping: false,
+      activeDispatchAgesMs: [],
+      lastTickStartedAt: null,
+      lastTickFinishedAt: 80_000,
+      nextRetryAt: 105_000,
+      stallAfterMs: 10_000,
+    })).toBeNull();
+  });
+
+  test("detectQueueDrainerStall flags hung ticks, hung dispatches, and idle backlog", () => {
+    expect(detectQueueDrainerStall({
+      now: 100_000,
+      queueDepth: 2,
+      draining: true,
+      stopping: false,
+      activeDispatchAgesMs: [],
+      lastTickStartedAt: 80_000,
+      lastTickFinishedAt: 79_000,
+      nextRetryAt: null,
+      stallAfterMs: 10_000,
+    })).toEqual({ reason: "tick_hung", ageMs: 20_000 });
+
+    expect(detectQueueDrainerStall({
+      now: 100_000,
+      queueDepth: 2,
+      draining: false,
+      stopping: false,
+      activeDispatchAgesMs: [2_000, 14_000],
+      lastTickStartedAt: 98_000,
+      lastTickFinishedAt: 98_500,
+      nextRetryAt: null,
+      stallAfterMs: 10_000,
+    })).toEqual({ reason: "dispatch_hung", ageMs: 14_000 });
+
+    expect(detectQueueDrainerStall({
+      now: 100_000,
+      queueDepth: 4,
+      draining: false,
+      stopping: false,
+      activeDispatchAgesMs: [],
+      lastTickStartedAt: 70_000,
+      lastTickFinishedAt: 85_000,
+      nextRetryAt: null,
+      stallAfterMs: 10_000,
+    })).toEqual({ reason: "backlog_idle", ageMs: 15_000 });
   });
 
   test("createImmediateTickScheduler coalesces same-turn follow-up drain requests", async () => {

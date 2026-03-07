@@ -26,6 +26,11 @@ const QUEUE_DRAIN_INTERVAL_MS = parseNumberEnv(process.env.QUEUE_DRAIN_INTERVAL_
 const QUEUE_DRAINER_CONCURRENCY = parseNumberEnv(process.env.QUEUE_DRAINER_CONCURRENCY, 1);
 const QUEUE_DRAIN_FAILURE_BACKOFF_MS = parseNumberEnv(process.env.QUEUE_DRAIN_FAILURE_BACKOFF_MS, 30_000);
 const DISPATCH_SEND_TIMEOUT_MS = parseNumberEnv(process.env.QUEUE_DRAIN_SEND_TIMEOUT_MS, 10_000);
+const QUEUE_DRAIN_STALL_AFTER_MS = parseNumberEnv(process.env.QUEUE_DRAIN_STALL_AFTER_MS, 45_000);
+const QUEUE_DRAIN_WATCHDOG_INTERVAL_MS = Math.min(
+  QUEUE_DRAIN_STALL_AFTER_MS,
+  Math.max(5_000, QUEUE_DRAIN_INTERVAL_MS),
+);
 const QUEUE_CONFIG: QueueConfig = {
   streamKey: "joelclaw:queue:events",
   priorityKey: "joelclaw:queue:priority",
@@ -58,6 +63,55 @@ function createImmediateTickScheduler(run: () => void): () => void {
       run();
     });
   };
+}
+
+type QueueDrainerStallReason = "tick_hung" | "dispatch_hung" | "backlog_idle";
+
+type QueueDrainerWatchdogSnapshot = {
+  now: number;
+  queueDepth: number;
+  draining: boolean;
+  stopping: boolean;
+  activeDispatchAgesMs: number[];
+  lastTickStartedAt: number | null;
+  lastTickFinishedAt: number | null;
+  nextRetryAt: number | null;
+  stallAfterMs: number;
+};
+
+type QueueDrainerStall = {
+  reason: QueueDrainerStallReason;
+  ageMs: number;
+};
+
+function detectQueueDrainerStall(snapshot: QueueDrainerWatchdogSnapshot): QueueDrainerStall | null {
+  if (snapshot.stopping || snapshot.queueDepth <= 0) return null;
+
+  if (snapshot.draining && snapshot.lastTickStartedAt != null) {
+    const ageMs = snapshot.now - snapshot.lastTickStartedAt;
+    if (ageMs >= snapshot.stallAfterMs) {
+      return { reason: "tick_hung", ageMs };
+    }
+  }
+
+  if (snapshot.activeDispatchAgesMs.length > 0) {
+    const oldestDispatchAgeMs = Math.max(...snapshot.activeDispatchAgesMs);
+    if (oldestDispatchAgeMs >= snapshot.stallAfterMs) {
+      return { reason: "dispatch_hung", ageMs: oldestDispatchAgeMs };
+    }
+    return null;
+  }
+
+  if (snapshot.draining) return null;
+  if (snapshot.nextRetryAt != null && snapshot.nextRetryAt > snapshot.now) return null;
+  if (snapshot.lastTickFinishedAt == null) return null;
+
+  const idleAgeMs = snapshot.now - snapshot.lastTickFinishedAt;
+  if (idleAgeMs >= snapshot.stallAfterMs) {
+    return { reason: "backlog_idle", ageMs: idleAgeMs };
+  }
+
+  return null;
 }
 
 async function readEnvValue(name: string): Promise<string | undefined> {
@@ -299,21 +353,65 @@ export async function startQueueDrainer(): Promise<() => Promise<void>> {
       consumerName: QUEUE_CONFIG.consumerName,
       intervalMs: QUEUE_DRAIN_INTERVAL_MS,
       concurrency: QUEUE_DRAINER_CONCURRENCY,
+      stallAfterMs: QUEUE_DRAIN_STALL_AFTER_MS,
       replayable: replayable.length,
       replayIndexed,
     },
   });
 
   console.log(
-    `[queue-drainer] started consumer=${QUEUE_CONFIG.consumerName} interval=${QUEUE_DRAIN_INTERVAL_MS}ms replayable=${replayable.length}`,
+    `[queue-drainer] started consumer=${QUEUE_CONFIG.consumerName} interval=${QUEUE_DRAIN_INTERVAL_MS}ms stallAfter=${QUEUE_DRAIN_STALL_AFTER_MS}ms replayable=${replayable.length}`,
   );
 
   let stopping = false;
   let draining = false;
-  const activeStreamIds = new Set<string>();
+  const activeDispatches = new Map<string, number>();
   const retryNotBefore = new Map<string, number>();
   const inflight = new Set<Promise<void>>();
   let scheduleTickSoon: () => void = () => {};
+  let lastTickStartedAt: number | null = null;
+  let lastTickFinishedAt: number | null = Date.now();
+  let watchdogTripped = false;
+  let watchdog: ReturnType<typeof setInterval> | null = null;
+
+  const tripWatchdog = async (reason: QueueDrainerStallReason, ageMs: number, queueDepth: number): Promise<void> => {
+    if (watchdogTripped || stopping) return;
+    watchdogTripped = true;
+    stopping = true;
+
+    const active = [...activeDispatches.entries()].map(([streamId, startedAt]) => ({
+      streamId,
+      ageMs: Math.max(0, Date.now() - startedAt),
+    }));
+
+    if (watchdog) {
+      clearInterval(watchdog);
+      watchdog = null;
+    }
+
+    await emitOtel({
+      level: "error",
+      action: "queue.drainer.stalled",
+      component: "queue-drainer",
+      success: false,
+      error: `queue drainer stalled: ${reason}`,
+      metadata: {
+        reason,
+        ageMs,
+        queueDepth,
+        stallAfterMs: QUEUE_DRAIN_STALL_AFTER_MS,
+        lastTickStartedAt,
+        lastTickFinishedAt,
+        activeDispatchCount: activeDispatches.size,
+        activeDispatches: active,
+      },
+    });
+
+    console.error(`[queue-drainer] stalled (${reason}, age=${ageMs}ms, depth=${queueDepth}); exiting for supervisor recovery`);
+    setTimeout(() => {
+      process.exit(1);
+    }, 0);
+  };
 
   const dispatchCandidate = async (candidate: CandidateMessage): Promise<void> => {
     const streamId = candidate.message.id;
@@ -376,25 +474,26 @@ export async function startQueueDrainer(): Promise<() => Promise<void>> {
 
       console.error(`[queue-drainer] dispatch failed for ${streamId}: ${message}`);
     } finally {
-      activeStreamIds.delete(streamId);
+      activeDispatches.delete(streamId);
       scheduleTickSoon();
     }
   };
 
   const tick = async (): Promise<void> => {
-    if (stopping || draining || activeStreamIds.size >= QUEUE_DRAINER_CONCURRENCY) {
+    if (stopping || draining || activeDispatches.size >= QUEUE_DRAINER_CONCURRENCY) {
       return;
     }
 
     draining = true;
+    lastTickStartedAt = Date.now();
 
     try {
-      const availableSlots = Math.max(0, QUEUE_DRAINER_CONCURRENCY - activeStreamIds.size);
+      const availableSlots = Math.max(0, QUEUE_DRAINER_CONCURRENCY - activeDispatches.size);
       if (availableSlots === 0) return;
 
       const candidates = await drainByPriority({
         limit: Math.max(availableSlots * 4, 4),
-        excludeIds: activeStreamIds,
+        excludeIds: activeDispatches.keys(),
       });
 
       const now = Date.now();
@@ -403,7 +502,7 @@ export async function startQueueDrainer(): Promise<() => Promise<void>> {
         .slice(0, availableSlots);
 
       for (const candidate of ready) {
-        activeStreamIds.add(candidate.message.id);
+        activeDispatches.set(candidate.message.id, Date.now());
         let task: Promise<void> | undefined;
         task = dispatchCandidate(candidate).finally(() => {
           if (task) inflight.delete(task);
@@ -422,6 +521,7 @@ export async function startQueueDrainer(): Promise<() => Promise<void>> {
       console.error(`[queue-drainer] loop failed: ${message}`);
     } finally {
       draining = false;
+      lastTickFinishedAt = Date.now();
     }
   };
 
@@ -429,6 +529,32 @@ export async function startQueueDrainer(): Promise<() => Promise<void>> {
     if (stopping) return;
     void tick();
   });
+
+  watchdog = setInterval(() => {
+    if (stopping) return;
+
+    void (async () => {
+      const depth = await getQueueStats();
+      const nextRetryAt = retryNotBefore.size > 0 ? Math.min(...retryNotBefore.values()) : null;
+      const stall = detectQueueDrainerStall({
+        now: Date.now(),
+        queueDepth: depth.total,
+        draining,
+        stopping,
+        activeDispatchAgesMs: [...activeDispatches.values()].map((startedAt) => Math.max(0, Date.now() - startedAt)),
+        lastTickStartedAt,
+        lastTickFinishedAt,
+        nextRetryAt,
+        stallAfterMs: QUEUE_DRAIN_STALL_AFTER_MS,
+      });
+
+      if (stall) {
+        await tripWatchdog(stall.reason, stall.ageMs, depth.total);
+      }
+    })().catch((error) => {
+      console.error(`[queue-drainer] watchdog check failed: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, QUEUE_DRAIN_WATCHDOG_INTERVAL_MS);
 
   const interval = setInterval(() => {
     void tick();
@@ -439,6 +565,10 @@ export async function startQueueDrainer(): Promise<() => Promise<void>> {
     if (stopping) return;
     stopping = true;
     clearInterval(interval);
+    if (watchdog) {
+      clearInterval(watchdog);
+      watchdog = null;
+    }
     await Promise.allSettled([...inflight]);
 
     try {
@@ -451,7 +581,7 @@ export async function startQueueDrainer(): Promise<() => Promise<void>> {
       action: "queue.drainer.stopped",
       component: "queue-drainer",
       metadata: {
-        activeDispatches: activeStreamIds.size,
+        activeDispatches: activeDispatches.size,
       },
     });
     console.log("[queue-drainer] stopped");
@@ -463,6 +593,7 @@ export const __queueDrainerTestUtils = {
   buildHttpDispatchNode,
   buildInngestDispatchNode,
   createImmediateTickScheduler,
+  detectQueueDrainerStall,
   normalizeEnvelope,
   sanitizeWorkflowKey,
 };

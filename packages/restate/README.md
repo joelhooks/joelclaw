@@ -13,6 +13,7 @@ ADR-0207 Restate package for production durable workflow execution.
 - dispatch path: queue registry target → Restate `dagOrchestrator/{workflowId}/run/send`
 - current pilot handler bridge: queue events are re-emitted to their registered Inngest targets through a one-node Restate DAG request so the queue loop can prove deterministic drain/replay before full per-family Restate cutover
 - OTEL: startup, replay, `queue.dispatch.started|completed|failed`, plus queue package `queue.lease|ack|replay`
+- watchdog: if backlog remains in Redis but the drainer stops making progress for `QUEUE_DRAIN_STALL_AFTER_MS`, it emits `queue.drainer.stalled` and exits non-zero so launchd can restart the worker and replay the backlog instead of silently wedging
 
 Tuning env:
 
@@ -20,6 +21,7 @@ Tuning env:
 - `QUEUE_DRAIN_INTERVAL_MS` — idle polling cadence / retry heartbeat (default `2000`)
 - `QUEUE_DRAINER_CONCURRENCY` — max in-flight queue dispatches (default `1`)
 - `QUEUE_DRAIN_FAILURE_BACKOFF_MS` — per-message retry cooldown after failed dispatch (default `30000`)
+- `QUEUE_DRAIN_STALL_AFTER_MS` — watchdog threshold before the drainer self-terminates for supervisor recovery (default `45000`)
 
 Throughput note:
 
@@ -80,7 +82,7 @@ Repo-managed launchd is now the canonical long-running host runtime for the Rest
 - start wrapper: `scripts/restate/start.sh`
 - logs: `/tmp/joelclaw/restate.log`, `/tmp/joelclaw/restate.err`
 
-The wrapper loads `~/.config/system-bus.env`, refuses headless `CHANNEL=console` by forcing `noop`, forwards SIGTERM to the Bun child so port `9080` is not orphaned, and opportunistically runs `scripts/restate/register-deployment.sh` when the Restate admin API is reachable.
+The wrapper loads `~/.config/system-bus.env`, refuses headless `CHANNEL=console` by forcing `noop`, forwards SIGTERM to the Bun child so port `9080` is not orphaned, and opportunistically runs `scripts/restate/register-deployment.sh` when the Restate admin API is reachable. The queue drainer now also self-heals by exiting non-zero on a `queue.drainer.stalled` watchdog event so launchd can restart the worker and replay the Redis backlog instead of leaving queued pilot traffic stuck behind a superficially healthy Bun process.
 
 Install it with a repo symlink instead of hand-rolled `nohup` shells:
 
