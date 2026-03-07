@@ -15,6 +15,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@joelclaw/agent-execution": "workspace:*",
     "@joelclaw/email": "workspace:^",
     "@joelclaw/endpoint-resolver": "workspace:*",
     "@joelclaw/inference-router": "workspace:*",

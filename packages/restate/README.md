@@ -110,15 +110,15 @@ Set the mode before triggering a PRD:
 # Host mode (default, stable)
 bun run packages/restate/src/trigger-prd.ts -- --prd path/to/prd.md
 
-# Sandbox mode (pilot — not yet operational)
+# Sandbox mode (local sandbox runner on the host worker)
 PRD_EXECUTION_MODE=sandbox bun run packages/restate/src/trigger-prd.ts -- --prd path/to/prd.md
 ```
 
 The execution mode flag routes at the `agent-dispatch` boundary:
-- Host mode: uses the existing Inngest function to spawn agents on the host
-- Sandbox mode: will launch isolated k8s Jobs (implementation in progress)
+- Host mode: uses the existing Inngest function to spawn agents on the shared host checkout
+- Sandbox mode: uses the proved local sandbox runner on the host worker — materialize a clean temp repo at `baseSha`, run the agent inside that isolated checkout, export patch/touched-file artifacts, then clean up the temp workspace
 
-Both modes preserve stable `requestId`, `workflowId`, `storyId`, and agent identity end-to-end. The result polling contract (`/internal/agent-result/:requestId`) works for both paths.
+Both modes preserve stable `requestId`, `workflowId`, `storyId`, and agent identity end-to-end. Sandbox requests should also carry `baseSha` so the isolated checkout is deterministic. The result polling contract (`/internal/agent-result/:requestId`) works for both paths.
 
 #### Sandbox runtime implementation gates
 

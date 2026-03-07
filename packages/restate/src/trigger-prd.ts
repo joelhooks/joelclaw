@@ -168,6 +168,15 @@ async function loadPlanFromFile(path: string): Promise<PrdExecutionPlan> {
   return plan;
 }
 
+async function readRepoBaseSha(repoCwd: string): Promise<string> {
+  const result = await Bun.$`git -C ${repoCwd} rev-parse HEAD`.text();
+  const baseSha = result.trim();
+  if (!baseSha) {
+    throw new Error(`failed to resolve base git SHA for ${repoCwd}`);
+  }
+  return baseSha;
+}
+
 function withCoordinationContract(story: PrdStoryPlan): string {
   const files = Array.isArray(story.files) && story.files.length > 0
     ? story.files.join(", ")
@@ -197,7 +206,8 @@ function withCoordinationContract(story: PrdStoryPlan): string {
 function buildAgentStoryNode(
   story: PrdStoryPlan,
   token: string | undefined,
-  inheritedDependsOn: string[]
+  inheritedDependsOn: string[],
+  baseSha: string,
 ): DagNodeInput {
   const requestId = `${workflowId}-${story.id}-${randomUUID().slice(0, 8)}`;
   const timeoutSeconds = Number.isFinite(story.timeoutSeconds)
@@ -206,6 +216,9 @@ function buildAgentStoryNode(
   const timeoutMs = Math.max(5_000, Math.min(timeoutSeconds * 1000, MAX_TIMEOUT_MS));
   const payload = {
     requestId,
+    workflowId,
+    storyId: story.id,
+    baseSha,
     task: withCoordinationContract(story),
     tool: "pi",
     agent: PRD_EXEC_AGENT,
@@ -258,14 +271,18 @@ function buildAgentStoryNode(
   };
 }
 
-function buildDagNodes(plan: PrdExecutionPlan, token: string | undefined): DagNodeInput[] {
+function buildDagNodes(
+  plan: PrdExecutionPlan,
+  token: string | undefined,
+  baseSha: string,
+): DagNodeInput[] {
   const nodes: DagNodeInput[] = [];
   const priorWaveIds: string[] = [];
 
   for (const wave of plan.waves) {
     const waveIds: string[] = [];
     for (const story of wave.stories ?? []) {
-      nodes.push(buildAgentStoryNode(story, token, priorWaveIds));
+      nodes.push(buildAgentStoryNode(story, token, priorWaveIds, baseSha));
       waveIds.push(story.id);
     }
     priorWaveIds.push(...waveIds);
@@ -275,6 +292,7 @@ function buildDagNodes(plan: PrdExecutionPlan, token: string | undefined): DagNo
 }
 
 const internalToken = await readEnvValue("OTEL_EMIT_TOKEN");
+const baseSha = await readRepoBaseSha(cwd);
 
 let plan: PrdExecutionPlan;
 let planSourceLabel: string;
@@ -292,7 +310,7 @@ if (planPath) {
   planSourceLabel = prdPath!;
 }
 
-const nodes = buildDagNodes(plan, internalToken);
+const nodes = buildDagNodes(plan, internalToken, baseSha);
 const request = {
   requestId: workflowId,
   pipeline: `prd:${planSourceLabel.split("/").at(-1) ?? "unknown"}`,
@@ -307,6 +325,7 @@ console.log(`   waves: ${plan.waves.length}`);
 console.log(`   nodes: ${nodes.length}`);
 console.log(`   worker bridge: ${PRD_AGENT_WORKER_URL}`);
 console.log(`   bridge auth: ${internalToken ? "OTEL_EMIT_TOKEN" : "none"}`);
+console.log(`   base sha: ${baseSha}`);
 console.log(`   execution mode: ${PRD_EXECUTION_MODE}`);
 console.log(`   agent tool: pi`);
 console.log(`   agent role: ${PRD_EXEC_AGENT}`);

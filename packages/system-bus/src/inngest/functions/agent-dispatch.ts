@@ -1,7 +1,15 @@
 import { execSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { InboxResult } from "@joelclaw/agent-execution";
+import {
+  type ExecutionArtifacts,
+  generatePatchArtifact,
+  getTouchedFiles,
+  type InboxResult,
+  materializeRepo,
+} from "@joelclaw/agent-execution";
 import { NonRetriableError } from "inngest";
 import { infer } from "../../lib/inference";
 import { inngest } from "../client";
@@ -15,12 +23,6 @@ const INBOX_DIR = join(
   "workspace",
   "inbox"
 );
-
-/**
- * Legacy inbox status type.
- * @deprecated Import from @joelclaw/agent-execution instead
- */
-type InboxStatus = "running" | "completed" | "failed";
 
 const PI_FILE_HINT_PATTERN =
   /(?:\/Users\/|~\/|(?:^|[\s"'`])[^\s"'`]+\.(?:ts|md)(?=$|[\s"'`]))/i;
@@ -113,7 +115,7 @@ async function runAgentCommand(
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
-  
+
   clearTimeout(timer);
   activeProcesses.delete(options.requestId);
 
@@ -122,6 +124,293 @@ async function runAgentCommand(
     stdout: stdout.trim(),
     stderr: stderr.trim(),
   };
+}
+
+type AgentExecutionResult = {
+  status: "completed" | "failed";
+  output: string;
+  stdout: string;
+  stderr: string;
+  error?: string;
+  artifacts?: ExecutionArtifacts;
+};
+
+type AgentExecutionInput = {
+  requestId: string;
+  task: string;
+  tool: "codex" | "claude" | "pi";
+  agent?: string;
+  workDir: string;
+  timeoutSeconds: number;
+  model?: string;
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  readFiles?: boolean;
+};
+
+function toSandboxProfile(
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access",
+): "workspace-write" | "danger-full-access" {
+  return sandbox === "danger-full-access" ? "danger-full-access" : "workspace-write";
+}
+
+async function resolveSandboxRepoContext(workDir: string, providedBaseSha?: string): Promise<{
+  repoRoot: string;
+  baseSha: string;
+  branch: string;
+}> {
+  const repoRoot = (await Bun.$`git -C ${workDir} rev-parse --show-toplevel`.text()).trim();
+  if (!repoRoot) {
+    throw new Error(`failed to resolve repo root from ${workDir}`);
+  }
+
+  const baseSha = (providedBaseSha?.trim() || (await Bun.$`git -C ${repoRoot} rev-parse HEAD`.text()).trim());
+  if (!baseSha) {
+    throw new Error(`failed to resolve base SHA from ${repoRoot}`);
+  }
+
+  const branchRaw = (await Bun.$`git -C ${repoRoot} rev-parse --abbrev-ref HEAD`.text()).trim();
+  const branch = branchRaw && branchRaw !== "HEAD" ? branchRaw : "main";
+
+  return { repoRoot, baseSha, branch };
+}
+
+function buildSandboxTask(
+  task: string,
+  options: {
+    repoPath: string;
+    requestedCwd: string;
+    baseSha: string;
+    workflowId?: string;
+    storyId?: string;
+  },
+): string {
+  const lines = [
+    "You are executing inside an isolated sandbox checkout.",
+    `Sandbox checkout path: ${options.repoPath}`,
+    `Original requested cwd: ${options.requestedCwd}`,
+    `Sandbox base SHA: ${options.baseSha}`,
+    "Do not reference or mutate the host checkout path directly. Work only inside the sandbox checkout path above.",
+  ];
+
+  if (options.workflowId) {
+    lines.push(`Workflow ID: ${options.workflowId}`);
+  }
+  if (options.storyId) {
+    lines.push(`Story ID: ${options.storyId}`);
+  }
+
+  lines.push("", task);
+  return lines.join("\n");
+}
+
+async function getSandboxTouchedFiles(repoPath: string, baseSha: string): Promise<string[]> {
+  try {
+    const headSha = (await Bun.$`git -C ${repoPath} rev-parse HEAD`.text()).trim();
+    if (headSha && headSha !== baseSha) {
+      const committed = (await Bun.$`git -C ${repoPath} diff --name-only ${baseSha}..${headSha}`.text())
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      if (committed.length > 0) {
+        return [...new Set(committed)].sort();
+      }
+    }
+  } catch {
+    // fall back to working tree status below
+  }
+
+  return getTouchedFiles(repoPath);
+}
+
+async function executeAgentTask(input: AgentExecutionInput): Promise<AgentExecutionResult> {
+  const {
+    requestId,
+    task,
+    tool,
+    agent,
+    workDir,
+    timeoutSeconds,
+    model,
+    sandbox,
+    readFiles = false,
+  } = input;
+
+  if (tool === "claude") {
+    try {
+      const lease = execSync("secrets lease claude_oauth_token --ttl 1h", {
+        encoding: "utf-8",
+        timeout: 5000,
+      }).trim();
+      if (lease) process.env.CLAUDE_CODE_OAUTH_TOKEN = lease;
+    } catch {
+      // Fall through to existing env var
+    }
+  }
+
+  const piNeedsTools = tool === "pi" && (
+    readFiles ||
+    taskRequiresFileAccess(task) ||
+    taskIsIncompatibleWithPiNoTools(task)
+  );
+  const sharedEnv = {
+    ...process.env,
+    CI: "true",
+    TERM: "dumb",
+    JOELCLAW_SANDBOX_EXECUTION: workDir.includes(`${tmpdir()}/`) ? "true" : "false",
+  };
+
+  try {
+    if (tool === "pi") {
+      const resolvedAgent = typeof agent === "string" ? agent.trim() : "";
+      const result = await infer(task, {
+        task: "complex",
+        ...(resolvedAgent ? { agent: resolvedAgent } : {}),
+        model,
+        ...(resolvedAgent ? {} : { system: "Analyze and respond." }),
+        component: "agent-dispatch",
+        action: "agent-dispatch.pi",
+        print: true,
+        noTools: !piNeedsTools,
+        timeout: timeoutSeconds * 1000,
+        json: false,
+        env: sharedEnv,
+        cwd: workDir,
+        requestId,
+        metadata: {
+          executionPath: workDir,
+        },
+      });
+
+      const textOutput = result.text.trim();
+      return {
+        status: "completed",
+        output: textOutput.slice(-50_000),
+        stdout: textOutput.slice(-10_000),
+        stderr: "",
+      };
+    }
+
+    const cmd = buildCommand(tool, task, {
+      model,
+      sandbox,
+      timeout: timeoutSeconds,
+      allowPiTools: piNeedsTools,
+    });
+    const commandResult = await runAgentCommand(cmd, {
+      cwd: workDir,
+      timeoutSeconds,
+      env: sharedEnv,
+      requestId,
+    });
+
+    if (commandResult.exitCode !== 0) {
+      return {
+        status: "failed",
+        output: commandResult.stdout.slice(-10_000),
+        stdout: commandResult.stdout.slice(-10_000),
+        stderr: commandResult.stderr.slice(-10_000),
+        error: `Exit ${commandResult.exitCode}: ${commandResult.stderr.slice(-5_000) || commandResult.stdout.slice(-5_000) || "command failed"}`,
+      };
+    }
+
+    return {
+      status: "completed",
+      output: commandResult.stdout.slice(-50_000),
+      stdout: commandResult.stdout.slice(-10_000),
+      stderr: commandResult.stderr.slice(-10_000),
+    };
+  } catch (error: any) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    return {
+      status: "failed",
+      output: "",
+      stdout: "",
+      stderr: message.slice(-5_000),
+      error: `agent dispatch crashed: ${message.slice(-5_000)}`,
+    };
+  }
+}
+
+async function executeSandboxAgent(input: AgentExecutionInput & {
+  requestedCwd: string;
+  baseSha?: string;
+  workflowId?: string;
+  storyId?: string;
+}): Promise<AgentExecutionResult> {
+  const workspaceDir = await mkdtemp(join(tmpdir(), `joelclaw-sandbox-${input.requestId}-`));
+  const repoPath = join(workspaceDir, "repo");
+
+  try {
+    const { repoRoot, baseSha, branch } = await resolveSandboxRepoContext(
+      input.requestedCwd,
+      input.baseSha,
+    );
+
+    await materializeRepo(repoPath, baseSha, {
+      remoteUrl: repoRoot,
+      branch,
+      depth: 50,
+      timeoutSeconds: Math.max(60, Math.min(input.timeoutSeconds, 300)),
+    });
+
+    const execution = await executeAgentTask({
+      ...input,
+      sandbox: toSandboxProfile(input.sandbox),
+      task: buildSandboxTask(input.task, {
+        repoPath,
+        requestedCwd: input.requestedCwd,
+        baseSha,
+        workflowId: input.workflowId,
+        storyId: input.storyId,
+      }),
+      workDir: repoPath,
+    });
+
+    try {
+      const artifacts = await generatePatchArtifact({
+        repoPath,
+        baseSha,
+        includeUntracked: true,
+        timeoutSeconds: Math.max(30, Math.min(input.timeoutSeconds, 120)),
+      });
+      const touchedFiles = await getSandboxTouchedFiles(repoPath, baseSha);
+      const logs = execution.stdout || execution.stderr
+        ? {
+            ...(artifacts.logs ?? {}),
+            stdout: execution.stdout || "",
+            stderr: execution.stderr || "",
+          }
+        : artifacts.logs;
+
+      return {
+        ...execution,
+        artifacts: {
+          ...artifacts,
+          touchedFiles,
+          ...(logs ? { logs } : {}),
+        },
+      };
+    } catch (artifactError) {
+      if (execution.status === "failed") {
+        return execution;
+      }
+
+      const message = artifactError instanceof Error ? artifactError.message : String(artifactError);
+      return {
+        status: "failed",
+        output: execution.output,
+        stdout: execution.stdout,
+        stderr: [execution.stderr, `sandbox artifact generation failed: ${message}`]
+          .filter(Boolean)
+          .join("\n"),
+        error: `sandbox artifact generation failed: ${message}`,
+      };
+    }
+  } finally {
+    await rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /**
@@ -177,7 +466,7 @@ export const agentDispatch = inngest.createFunction(
           const result: InboxResult = {
             requestId,
             sessionId,
-            status: "failed", // Use failed as cancelled is not in InboxResult
+            status: "cancelled",
             task,
             tool,
             ...(typeof agent === "string" && agent.trim() ? { agent: agent.trim() } : {}),
@@ -189,9 +478,6 @@ export const agentDispatch = inngest.createFunction(
             executionMode,
           };
 
-          // Mark as cancelled in extended contract
-          (result as any).status = "cancelled";
-
           writeInboxSnapshot(result);
         });
       }
@@ -201,6 +487,9 @@ export const agentDispatch = inngest.createFunction(
   async ({ event, step }) => {
     const {
       requestId,
+      workflowId,
+      storyId,
+      baseSha,
       sessionId,
       task,
       tool,
@@ -277,135 +566,31 @@ export const agentDispatch = inngest.createFunction(
       return { filePath, status: runningResult.status, startedAt: runningResult.startedAt };
     });
 
-    // Route to sandbox or host execution based on executionMode
-    if (executionMode === "sandbox") {
-      return await step.run("route-to-sandbox", async () => {
-        // TODO: Implement k8s Job launcher for sandbox execution
-        // For now, return a stub that indicates sandbox mode is not yet fully implemented
-        const completedAt = new Date().toISOString();
-        const durationMs = new Date(completedAt).getTime() - new Date(startedAt).getTime();
-        
-        const result: InboxResult = {
-          requestId,
-          sessionId,
-          status: "failed",
-          task,
-          tool,
-          ...(typeof agent === "string" && agent.trim() ? { agent: agent.trim() } : {}),
-          error: "Sandbox execution mode is not yet fully implemented. Use PRD_EXECUTION_MODE=host for now.",
-          startedAt,
-          updatedAt: completedAt,
-          completedAt,
-          durationMs,
-          executionMode,
-        };
-
-        const filePath = writeInboxSnapshot(result);
-
-        return {
-          requestId,
-          status: result.status,
-          inboxFile: filePath,
-          durationMs,
-        };
-      });
-    }
-
-    // Execute the agent
     const execution = await step.run("execute-agent", async () => {
-      const workDir = cwd || process.env.HOME || "/Users/joel";
+      const requestedCwd = cwd || process.env.HOME || "/Users/joel";
+      const executionInput = {
+        requestId,
+        task,
+        tool,
+        agent,
+        workDir: requestedCwd,
+        timeoutSeconds: timeout,
+        model,
+        sandbox,
+        readFiles,
+      } as const;
 
-      // Lease fresh Claude token at runtime (not stale boot-time env var)
-      if (tool === "claude") {
-        try {
-          const lease = execSync("secrets lease claude_oauth_token --ttl 1h", {
-            encoding: "utf-8",
-            timeout: 5000,
-          }).trim();
-          if (lease) process.env.CLAUDE_CODE_OAUTH_TOKEN = lease;
-        } catch {
-          // Fall through to existing env var
-        }
+      if (executionMode === "sandbox") {
+        return executeSandboxAgent({
+          ...executionInput,
+          requestedCwd,
+          baseSha,
+          workflowId,
+          storyId,
+        });
       }
 
-      const piNeedsTools = tool === "pi" && (
-        readFiles ||
-        taskRequiresFileAccess(task) ||
-        taskIsIncompatibleWithPiNoTools(task)
-      );
-      const sharedEnv = {
-        ...process.env,
-        CI: "true",
-        TERM: "dumb",
-      };
-
-      try {
-        if (tool === "pi") {
-          const resolvedAgent = typeof agent === "string" ? agent.trim() : "";
-          const result = await infer(task, {
-            task: "complex",
-            ...(resolvedAgent ? { agent: resolvedAgent } : {}),
-            model,
-            ...(resolvedAgent ? {} : { system: "Analyze and respond." }),
-            component: "agent-dispatch",
-            action: "agent-dispatch.pi",
-            print: true,
-            noTools: !piNeedsTools,
-            timeout: timeout * 1000,
-            json: false,
-            env: sharedEnv,
-            cwd: workDir,
-          });
-
-          const textOutput = result.text.trim();
-          return {
-            status: "completed" as const,
-            output: textOutput.slice(-50_000),
-            stdout: textOutput.slice(-10_000),
-            stderr: "",
-          };
-        }
-
-        const cmd = buildCommand(tool, task, {
-          model,
-          sandbox,
-          timeout,
-          allowPiTools: piNeedsTools,
-        });
-        const commandResult = await runAgentCommand(cmd, {
-          cwd: workDir,
-          timeoutSeconds: timeout,
-          env: sharedEnv,
-          requestId,
-        });
-
-        if (commandResult.exitCode !== 0) {
-          return {
-            status: "failed" as const,
-            output: commandResult.stdout.slice(-10_000),
-            stdout: commandResult.stdout.slice(-10_000),
-            stderr: commandResult.stderr.slice(-10_000),
-            error: `Exit ${commandResult.exitCode}: ${commandResult.stderr.slice(-5_000) || commandResult.stdout.slice(-5_000) || "command failed"}`,
-          };
-        }
-
-        return {
-          status: "completed" as const,
-          output: commandResult.stdout.slice(-50_000),
-          stdout: commandResult.stdout.slice(-10_000),
-          stderr: commandResult.stderr.slice(-10_000),
-        };
-      } catch (error: any) {
-        const message = error instanceof Error ? error.message : String(error);
-
-        return {
-          status: "failed" as const,
-          output: "",
-          stdout: "",
-          stderr: message.slice(-5_000),
-          error: `agent dispatch crashed: ${message.slice(-5_000)}`,
-        };
-      }
+      return executeAgentTask(executionInput);
     });
 
     // Write to inbox
@@ -430,19 +615,24 @@ export const agentDispatch = inngest.createFunction(
         completedAt,
         durationMs,
         executionMode,
+        ...(execution.artifacts ? { artifacts: execution.artifacts } : {}),
+        ...(execution.stdout || execution.stderr
+          ? {
+              logs: {
+                ...(execution.artifacts?.logs ?? {}),
+                stdout: execution.stdout || execution.artifacts?.logs?.stdout || "",
+                stderr: execution.stderr || execution.artifacts?.logs?.stderr || "",
+              },
+            }
+          : execution.artifacts?.logs
+            ? { logs: execution.artifacts.logs }
+            : {}),
       };
 
-      // Attach stdout/stderr if available (extended contract)
-      if (execution.stdout || execution.stderr) {
-        (result as any).logs = {
-          stdout: execution.stdout || "",
-          stderr: execution.stderr || "",
-        };
-      }
-
       const filePath = writeInboxSnapshot(result);
+      const completionStatus = execution.status;
 
-      return { filePath, status: result.status, durationMs };
+      return { filePath, status: completionStatus, durationMs };
     });
 
     // Emit completion event for chaining

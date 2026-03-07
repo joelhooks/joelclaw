@@ -3,7 +3,7 @@ import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { serve as inngestServe } from "inngest/hono";
-import { inngest } from "./inngest/client";
+import { type Events, inngest } from "./inngest/client";
 import { webhookApp } from "./webhooks/server";
 
 // Canonical execution contract types live in @joelclaw/agent-execution.
@@ -289,6 +289,7 @@ app.post("/internal/agent-dispatch", async (c) => {
     return c.json({ ok: false, error: "Missing required fields: requestId, task, tool" }, 400);
   }
 
+  const requestPayload = payload as Events["system/agent.requested"]["data"];
   const existingResult = await readAgentResult(requestId);
   const existingStatus = readAgentResultStatus(existingResult);
   const shouldDedupe = isTerminalState(existingStatus)
@@ -298,14 +299,21 @@ app.post("/internal/agent-dispatch", async (c) => {
     await emitOtelEvent({
       action: "internal.agent_dispatch.deduped",
       component: "system-bus-internal",
+      source: "system-bus",
+      level: "info",
+      success: true,
       metadata: {
         requestId,
         tool,
         status: existingStatus,
         terminal: isTerminalState(existingStatus),
-        cwd: (payload as any).cwd,
-        model: (payload as any).model,
-        sandbox: (payload as any).sandbox,
+        cwd: requestPayload.cwd,
+        model: requestPayload.model,
+        sandbox: requestPayload.sandbox,
+        executionMode: requestPayload.executionMode,
+        workflowId: requestPayload.workflowId,
+        storyId: requestPayload.storyId,
+        baseSha: requestPayload.baseSha,
       },
     }).catch(() => {});
 
@@ -320,18 +328,25 @@ app.post("/internal/agent-dispatch", async (c) => {
 
   const sendResult = await inngest.send({
     name: "system/agent.requested",
-    data: payload as Record<string, unknown>,
+    data: requestPayload,
   });
 
   await emitOtelEvent({
     action: "internal.agent_dispatch.requested",
     component: "system-bus-internal",
+    source: "system-bus",
+    level: "info",
+    success: true,
     metadata: {
       requestId,
       tool,
-      cwd: (payload as any).cwd,
-      model: (payload as any).model,
-      sandbox: (payload as any).sandbox,
+      cwd: requestPayload.cwd,
+      model: requestPayload.model,
+      sandbox: requestPayload.sandbox,
+      executionMode: requestPayload.executionMode,
+      workflowId: requestPayload.workflowId,
+      storyId: requestPayload.storyId,
+      baseSha: requestPayload.baseSha,
     },
   }).catch(() => {});
 

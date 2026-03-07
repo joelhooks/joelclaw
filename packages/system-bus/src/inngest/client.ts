@@ -1137,6 +1137,9 @@ export type Events = {
   "system/agent.requested": {
     data: {
       requestId: string;
+      workflowId?: string;
+      storyId?: string;
+      baseSha?: string;
       sessionId?: string;
       task: string;
       tool: "codex" | "claude" | "pi";
@@ -1145,6 +1148,7 @@ export type Events = {
       timeout?: number; // seconds, default 600 (10min)
       model?: string;
       sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+      executionMode?: "host" | "sandbox";
       readFiles?: boolean;
     };
   };

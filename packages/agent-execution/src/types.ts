@@ -178,7 +178,7 @@ export interface PrdExecutionPlan {
 export interface InboxResult {
   requestId: string;
   sessionId?: string;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "cancelled";
   task: string;
   tool: string;
   agent?: string;
@@ -190,4 +190,8 @@ export interface InboxResult {
   durationMs?: number;
   /** Execution mode used (host or sandbox) */
   executionMode?: ExecutionMode;
+  /** Optional artifact bundle for sandboxed runs */
+  artifacts?: ExecutionArtifacts;
+  /** Optional execution and verification logs */
+  logs?: ExecutionArtifacts["logs"];
 }
