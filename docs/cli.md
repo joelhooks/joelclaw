@@ -218,6 +218,7 @@ Semantics:
 - `depth` reports queue depth, priority distribution (P0/P1/P2/P3 counts), oldest/newest message timestamps
 - `list` lists recent messages in priority order (highest priority first), does not ack/remove
 - `inspect` loads a message by Redis stream ID and returns full payload + metadata
+  - if the message is already acked/expired, it now returns a structured `QUEUE_MESSAGE_MISSING` error envelope with queue-state next actions instead of crashing the CLI
 
 Queue configuration:
 - Stream key: `joelclaw:queue:events`

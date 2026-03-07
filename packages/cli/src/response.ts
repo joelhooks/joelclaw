@@ -69,8 +69,8 @@ const normalizeNextActions = (nextActions: readonly NextAction[]): readonly Next
     command: normalizeCommand(action.command),
   }))
 
-function hasRecoverAction(nextActions: readonly NextAction[]): boolean {
-  return nextActions.some((action) => normalizeCommand(action.command).startsWith("joelclaw recover"))
+function hasRecoverAction(nextActions: readonly NextAction[] | undefined): boolean {
+  return (nextActions ?? []).some((action) => normalizeCommand(action.command).startsWith("joelclaw recover"))
 }
 
 function recoverActionForCode(code: string): NextAction | null {
@@ -103,7 +103,7 @@ function recoverActionForCode(code: string): NextAction | null {
 
 export function withRecoverNextActions(
   code: string,
-  nextActions: readonly NextAction[]
+  nextActions: readonly NextAction[] = []
 ): readonly NextAction[] {
   if (hasRecoverAction(nextActions)) return nextActions
   const recoverAction = recoverActionForCode(code)
@@ -114,7 +114,7 @@ export function withRecoverNextActions(
 export const buildSuccessEnvelope = (
   command: string,
   result: unknown,
-  nextActions: readonly NextAction[],
+  nextActions: readonly NextAction[] = [],
   ok = true
 ): JoelclawEnvelope => ({
   ok,
@@ -126,9 +126,9 @@ export const buildSuccessEnvelope = (
 export const buildErrorEnvelope = (
   command: string,
   message: string,
-  code: string,
-  fix: string,
-  nextActions: readonly NextAction[],
+  code = "UNKNOWN_ERROR",
+  fix = "Inspect the error and retry.",
+  nextActions: readonly NextAction[] = [],
 ): JoelclawEnvelope => ({
   ok: false,
   command: normalizeCommand(command),
@@ -200,7 +200,7 @@ export const validateJoelclawEnvelope = (value: unknown): EnvelopeValidationResu
 export const respond = (
   command: string,
   result: unknown,
-  nextActions: readonly NextAction[],
+  nextActions: readonly NextAction[] = [],
   ok = true
 ): string => {
   const envelope = buildSuccessEnvelope(command, result, nextActions, ok)
@@ -210,9 +210,9 @@ export const respond = (
 export const respondError = (
   command: string,
   message: string,
-  code: string,
-  fix: string,
-  nextActions: readonly NextAction[],
+  code = "UNKNOWN_ERROR",
+  fix = "Inspect the error and retry.",
+  nextActions: readonly NextAction[] = [],
 ): string =>
   JSON.stringify(
     buildErrorEnvelope(command, message, code, fix, nextActions) satisfies JoelclawEnvelope,

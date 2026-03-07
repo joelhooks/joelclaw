@@ -368,8 +368,27 @@ const inspectCmd = Command.make(
       });
 
       if (!message) {
+        const next: NextAction[] = [
+          {
+            command: "joelclaw queue list",
+            description: "List current queued messages",
+            params: {},
+          },
+          {
+            command: "joelclaw queue depth",
+            description: "Check current queue depth",
+            params: {},
+          },
+        ];
+
         yield* Console.log(
-          respondError("queue inspect", `Message not found: ${streamId}`)
+          respondError(
+            "queue inspect",
+            `Message not found: ${streamId}`,
+            "QUEUE_MESSAGE_MISSING",
+            "The message may already be acked or expired; inspect current queue state and retry with a fresh stream ID.",
+            next,
+          )
         );
         return;
       }

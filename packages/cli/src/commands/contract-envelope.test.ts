@@ -57,6 +57,18 @@ describe("CLI contract envelope", () => {
     expect(validation.errors).toHaveLength(0)
   })
 
+  test("error envelope defaults stay valid when optional error metadata is omitted", () => {
+    const envelope = buildErrorEnvelope("queue inspect", "Message not found")
+
+    expect(envelope.ok).toBe(false)
+    expect(envelope.error?.code).toBe("UNKNOWN_ERROR")
+    expect(envelope.fix).toBe("Inspect the error and retry.")
+
+    const validation = validateJoelclawEnvelope(envelope)
+    expect(validation.valid).toBe(true)
+    expect(validation.errors).toHaveLength(0)
+  })
+
   test("validator reports missing required fields", () => {
     const invalid = {
       ok: true,
