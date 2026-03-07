@@ -5,8 +5,7 @@ const PROTOCOL_VERSION = 1 as const;
 const SERVICE = "pi-mono-corpus";
 const VERSION = "0.1.0";
 const ORIGIN = "https://joelclaw.com";
-const SKILL_REPO = "https://github.com/joelhooks/joelclaw";
-const EXTENSION_REPO = "https://github.com/joelhooks/contributing-to-pi-mono";
+const DISTRIBUTION_REPO = "https://github.com/joelhooks/contributing-to-pi-mono";
 
 async function getPayload() {
   "use cache";
@@ -52,20 +51,26 @@ async function getPayload() {
       install: {
         skill: {
           status: "available",
-          repo: SKILL_REPO,
-          path: "skills/contributing-to-pi/SKILL.md",
+          repo: DISTRIBUTION_REPO,
+          path: "skills/contributing-to-pi-mono/SKILL.md",
           steps: [
-            `git clone ${SKILL_REPO} ~/Code/joelhooks/joelclaw`,
+            `git clone ${DISTRIBUTION_REPO} ~/Code/joelhooks/contributing-to-pi-mono`,
             "mkdir -p ~/.pi/agent/skills",
-            "ln -sfn ~/Code/joelhooks/joelclaw/skills/contributing-to-pi ~/.pi/agent/skills/contributing-to-pi",
+            "ln -sfn ~/Code/joelhooks/contributing-to-pi-mono/skills/contributing-to-pi-mono ~/.pi/agent/skills/contributing-to-pi-mono",
             "Restart pi or start a new session so the skill inventory refreshes",
           ],
         },
         extension: {
-          status: "planned",
-          repo: EXTENSION_REPO,
-          note:
-            "The public extension repo does not exist yet. This endpoint will publish real install steps once `joelhooks/contributing-to-pi-mono` is created.",
+          status: "available",
+          repo: DISTRIBUTION_REPO,
+          path: "extensions/pi-mono-search/index.ts",
+          steps: [
+            `git clone ${DISTRIBUTION_REPO} ~/Code/joelhooks/contributing-to-pi-mono`,
+            "cd ~/Code/joelhooks/contributing-to-pi-mono && npm install",
+            "mkdir -p ~/.pi/agent/extensions",
+            "ln -sfn ~/Code/joelhooks/contributing-to-pi-mono ~/.pi/agent/extensions/contributing-to-pi-mono",
+            "Start a fresh pi session so the extension loader picks it up",
+          ],
         },
       },
     },
@@ -81,6 +86,10 @@ async function getPayload() {
       {
         command: `curl -sS \"${ORIGIN}/api/search?q=getAgentDir&collection=pi_mono_artifacts\"`,
         description: "Find a concrete accepted-direction example",
+      },
+      {
+        command: `git clone ${DISTRIBUTION_REPO} ~/Code/joelhooks/contributing-to-pi-mono`,
+        description: "Clone the public extension + skill repo",
       },
     ],
     meta: {

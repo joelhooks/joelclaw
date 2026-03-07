@@ -14,8 +14,8 @@ Next.js 16 App Router site for `joelclaw.com`.
 - `apps/web/app/api/search/route.ts` now accepts `collection=pi_mono_artifacts` on the public, Upstash-rate-limited search surface.
 - The discovery payload at `/api/pi-mono` includes:
   - corpus/search usage examples for `pi_mono_artifacts`
-  - current install steps for the `contributing-to-pi` skill
-  - honest status for the planned public extension repo `joelhooks/contributing-to-pi-mono`
+  - current install steps for the public `contributing-to-pi-mono` skill
+  - current install steps for the public extension repo `joelhooks/contributing-to-pi-mono`
 - Public search returns external GitHub URLs directly for pi-mono artifacts, so top-result next actions can point straight at the source issue/PR/comment/commit/release.
 
 ## `/cool` content routing
