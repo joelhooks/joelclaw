@@ -1,10 +1,46 @@
 import { $ } from "bun";
 import { infer } from "../../lib/inference";
+import { enqueueRegisteredQueueEvent, isQueuePilotEnabled } from "../../lib/queue";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 import { DISCOVERY_PROMPT } from "../prompts/discovery";
 
 const VAULT_DISCOVERIES = `${process.env.HOME}/Vault/Resources/discoveries`;
+
+type DiscoveryCapturedEventData = {
+  vaultPath: string;
+  topic: string;
+  slug: string;
+  url?: string;
+  title?: string;
+};
+
+function shouldQueueDiscoveryCaptured(): boolean {
+  return isQueuePilotEnabled("discovery-captured");
+}
+
+function buildDiscoveryCapturedEventData(input: DiscoveryCapturedEventData): DiscoveryCapturedEventData {
+  const data: DiscoveryCapturedEventData = {
+    vaultPath: input.vaultPath,
+    topic: input.topic,
+    slug: input.slug,
+  };
+
+  if (input.url?.trim()) {
+    data.url = input.url.trim();
+  }
+
+  if (input.title?.trim()) {
+    data.title = input.title.trim();
+  }
+
+  return data;
+}
+
+export const __discoveryCaptureTestUtils = {
+  buildDiscoveryCapturedEventData,
+  shouldQueueDiscoveryCaptured,
+};
 
 /**
  * Discovery Capture — investigates interesting finds and writes vault notes.
@@ -162,14 +198,48 @@ export const discoveryCapture = inngest.createFunction(
             });
           } catch { /* graceful */ }
 
-          // Trigger sync to website
-          await step.sendEvent("slog-result", {
-            name: "discovery/captured",
-            data: {
-              vaultPath: result.vaultPath,
-              topic: result.noteName,
-              slug: result.noteName,
-            },
+          const discoveryCapturedData = buildDiscoveryCapturedEventData({
+            vaultPath: result.vaultPath,
+            topic: result.noteName,
+            slug: result.noteName,
+            url,
+            title,
+          });
+
+          const discoveryCapturedMode = shouldQueueDiscoveryCaptured() ? "queue" : "inngest";
+          const queueResult = discoveryCapturedMode === "queue"
+            ? await step.run("queue-discovery-captured", async () => enqueueRegisteredQueueEvent({
+                name: "discovery/captured",
+                data: discoveryCapturedData as Record<string, unknown>,
+                source: "inngest:discovery-capture",
+                metadata: {
+                  trigger: event.name,
+                },
+              }))
+            : null;
+
+          if (discoveryCapturedMode === "inngest") {
+            await step.sendEvent("emit-discovery-captured", {
+              name: "discovery/captured",
+              data: discoveryCapturedData,
+            });
+          }
+
+          await step.run("otel-discovery-captured-forwarded", async () => {
+            await emitOtelEvent({
+              level: "info",
+              source: "worker",
+              component: "discovery-capture",
+              action: "discovery.capture.forwarded",
+              success: true,
+              metadata: {
+                mode: discoveryCapturedMode,
+                slug: result.noteName,
+                url: url ?? null,
+                queueStreamId: queueResult?.streamId ?? null,
+                eventId: queueResult?.eventId ?? null,
+              },
+            });
           });
 
           // Notify gateway
