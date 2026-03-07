@@ -29,6 +29,11 @@ const nextConfig: NextConfig = {
         destination: "/observation-pipeline-persistent-ai-memory",
         permanent: true,
       },
+      {
+        source: "/cool/ai-job-scheduling-mac-local-first-video",
+        destination: "/ai-job-scheduling-macos-launchd",
+        permanent: true,
+      },
     ];
   },
 };

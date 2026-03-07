@@ -86,3 +86,4 @@ skills/.DS_Store
 infra/talon/target/
 .env.vercel
 .env.vercel-prod
+.env*.local
