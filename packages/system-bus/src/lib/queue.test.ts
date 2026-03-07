@@ -13,6 +13,7 @@ describe("queue admission helper", () => {
   beforeEach(() => {
     delete process.env.QUEUE_TRIAGE_MODE;
     delete process.env.QUEUE_TRIAGE_FAMILIES;
+    delete process.env.QUEUE_TRIAGE_ENFORCE_FAMILIES;
     persisted.length = 0;
     triageCalls.length = 0;
     triageDecision = undefined;
@@ -79,6 +80,30 @@ describe("queue admission helper", () => {
       "discovery/captured",
       "github/workflow_run.completed",
     ]);
+    expect([...__queueTestUtils.expandQueueTriageEnforceFamilies("discovery,github,content")]).toEqual([
+      "discovery/noted",
+      "github/workflow_run.completed",
+    ]);
+  });
+
+  test("can toggle discovery and github independently between shadow and enforce", () => {
+    process.env.QUEUE_TRIAGE_MODE = "shadow";
+    process.env.QUEUE_TRIAGE_FAMILIES = "discovery,github";
+    process.env.QUEUE_TRIAGE_ENFORCE_FAMILIES = "github";
+
+    expect(__queueTestUtils.resolveQueueTriageMode("discovery/noted")).toBe("shadow");
+    expect(__queueTestUtils.resolveQueueTriageMode("discovery/captured")).toBe("shadow");
+    expect(__queueTestUtils.resolveQueueTriageMode("github/workflow_run.completed")).toBe("enforce");
+  });
+
+  test("clamps non-eligible families back to shadow when global enforce is set", () => {
+    process.env.QUEUE_TRIAGE_MODE = "enforce";
+    process.env.QUEUE_TRIAGE_FAMILIES = "discovery,content,github";
+
+    expect(__queueTestUtils.resolveQueueTriageMode("discovery/noted")).toBe("enforce");
+    expect(__queueTestUtils.resolveQueueTriageMode("github/workflow_run.completed")).toBe("enforce");
+    expect(__queueTestUtils.resolveQueueTriageMode("discovery/captured")).toBe("shadow");
+    expect(__queueTestUtils.resolveQueueTriageMode("content/updated")).toBe("shadow");
   });
 
   test("persists triage metadata for eligible shadow families through the canonical helper", async () => {
@@ -119,6 +144,85 @@ describe("queue admission helper", () => {
       triageMode: "shadow",
       triageFallbackReason: "timeout",
       triageFinalPriority: "P2",
+    });
+  });
+
+  test("enforce mode applies bounded priority changes only for eligible families", async () => {
+    process.env.QUEUE_TRIAGE_MODE = "shadow";
+    process.env.QUEUE_TRIAGE_FAMILIES = "discovery,github";
+    process.env.QUEUE_TRIAGE_ENFORCE_FAMILIES = "discovery";
+    triageDecision = {
+      mode: "enforce",
+      family: "discovery/noted",
+      suggested: { priority: "P1", routeCheck: "confirm", dedupKey: "discovery:https://example.com/enforce" },
+      final: { priority: "P1", routeCheck: "confirm", dedupKey: "discovery:https://example.com/enforce" },
+      applied: true,
+      latencyMs: 9,
+    };
+
+    const result = await enqueueRegisteredQueueEvent({
+      name: "discovery/noted",
+      data: { url: "https://example.com/enforce" },
+      source: "cli/discover",
+    });
+
+    expect(result.triageMode).toBe("enforce");
+    expect(result.priority).toBe(1);
+    expect(triageCalls[0]?.mode).toBe("enforce");
+
+    const persistedEntry = persisted[0] as {
+      priority: number;
+      payload: { priority?: number; triage?: { applied?: boolean } };
+      metadata?: Record<string, unknown>;
+    };
+
+    expect(persistedEntry.priority).toBe(1);
+    expect(persistedEntry.payload.priority).toBe(1);
+    expect(persistedEntry.payload.triage?.applied).toBe(true);
+    expect(persistedEntry.metadata).toMatchObject({
+      triageMode: "enforce",
+      triageApplied: true,
+      triageFinalPriority: "P1",
+    });
+  });
+
+  test("enforce-mode fallback keeps registry priority and does not block enqueue", async () => {
+    process.env.QUEUE_TRIAGE_MODE = "shadow";
+    process.env.QUEUE_TRIAGE_FAMILIES = "github";
+    process.env.QUEUE_TRIAGE_ENFORCE_FAMILIES = "github";
+    triageDecision = {
+      mode: "enforce",
+      family: "github/workflow_run.completed",
+      suggested: { priority: "P1", routeCheck: "confirm" },
+      final: { priority: "P1", routeCheck: "confirm" },
+      applied: false,
+      fallbackReason: "timeout",
+      latencyMs: 44,
+    };
+
+    const result = await enqueueRegisteredQueueEvent({
+      name: "github/workflow_run.completed",
+      data: { workflowRunId: 123 },
+      source: "webhook/github",
+    });
+
+    expect(result.triageMode).toBe("enforce");
+    expect(result.priority).toBe(1);
+    expect(result.triage?.fallbackReason).toBe("timeout");
+
+    const persistedEntry = persisted[0] as {
+      priority: number;
+      payload: { priority?: number };
+      metadata?: Record<string, unknown>;
+    };
+
+    expect(persistedEntry.priority).toBe(1);
+    expect(persistedEntry.payload.priority).toBe(1);
+    expect(persistedEntry.metadata).toMatchObject({
+      triageMode: "enforce",
+      triageApplied: false,
+      triageFallbackReason: "timeout",
+      triageFinalPriority: "P1",
     });
   });
 

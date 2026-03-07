@@ -193,6 +193,7 @@ Sandbox runs produce patch bundles, not direct commits to main. This keeps runs 
 - edge clients hit `POST /internal/queue/enqueue`; worker-local ingress paths call the helper directly
 - canonical model is Haiku via the shared `infer()` path
 - the model may only shape priority, dedup suggestion, and route confirmation/mismatch signal
+- `QUEUE_TRIAGE_MODE` sets the base triage mode; `QUEUE_TRIAGE_ENFORCE_FAMILIES` is the narrow Story 4 override for the two earned families
 - static registry routing remains authoritative in this phase; no dynamic handler invention
 - canonical OTEL vocabulary for this layer is `queue.triage.started|completed|failed|fallback`
 - canonical operator view for this layer is the `triage` block inside `joelclaw queue stats`

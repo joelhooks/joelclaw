@@ -117,6 +117,37 @@ describe("queue triage contract", () => {
     });
   });
 
+  test("enforce mode applies the bounded suggested decision when the model output is valid", async () => {
+    inferResponse = {
+      text: JSON.stringify({
+        priority: "P0",
+        dedupKey: "discovery:https://example.com/triage",
+        routeCheck: "mismatch",
+        reasoning: "Critical discovery should jump the queue.",
+      }),
+    };
+
+    const { triageQueueEvent } = await import("./queue-triage");
+    const decision = await triageQueueEvent({
+      mode: "enforce",
+      envelope: buildEnvelope(),
+    });
+
+    expect(decision.fallbackReason).toBeUndefined();
+    expect(decision.applied).toBe(true);
+    expect(decision.final.priority).toBe("P0");
+    expect(decision.final.dedupKey).toBe("discovery:https://example.com/triage");
+    expect(decision.final.routeCheck).toBe("mismatch");
+
+    const completed = emittedEvents.find((event) => event.action === "queue.triage.completed");
+    expect(completed?.metadata).toMatchObject({
+      suggestedPriority: "P0",
+      finalPriority: "P0",
+      applied: true,
+      routeCheck: "mismatch",
+    });
+  });
+
   test("returns schema_error fallback and emits failed + fallback OTEL when the model shape is wrong", async () => {
     inferResponse = {
       text: JSON.stringify({

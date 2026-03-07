@@ -188,9 +188,9 @@ Semantics:
 
 - default path still emits `discovery/noted` directly to Inngest.
 - when `QUEUE_PILOTS=discovery`, `joelclaw discover` now posts raw event intent to the worker admission endpoint (`POST /internal/queue/enqueue`) instead of writing Redis directly:
-  - the worker owns queue admission, static registry lookup, and optional shadow triage
+  - the worker owns queue admission, static registry lookup, and bounded triage mode resolution
   - returns queue metadata (`streamId`, `eventId`, `priority`) instead of Inngest run ids
-  - includes `triageMode` + `triage` metadata when `QUEUE_TRIAGE_MODE=shadow` enables the family
+  - includes `triageMode` + `triage` metadata whenever the family is enabled for shadow or enforce
   - relies on the Restate queue drainer to forward the event onward
 - this keeps discovery pilot clients thin while the server remains the only queue policy surface.
 
@@ -206,7 +206,7 @@ Semantics:
 - all-subscription checks keep the legacy Inngest path by default.
 - when `QUEUE_PILOTS=subscriptions`, `joelclaw subscribe check` without `--id` posts `subscription/check-feeds.requested` to the worker admission endpoint instead of writing Redis directly:
   - returns queue metadata (`streamId`, `eventId`, `priority`)
-  - includes `triageMode` + `triage` metadata when `QUEUE_TRIAGE_MODE=shadow` enables the family
+  - includes `triageMode` + `triage` metadata whenever the family is enabled for shadow or enforce
   - points next actions at `joelclaw queue inspect` / `joelclaw queue depth`
   - relies on the Restate queue drainer to forward the **actual** `subscription/check-feeds.requested` event name onward
 
@@ -228,7 +228,7 @@ Semantics:
   - accepts event name (e.g., `discovery/noted`, `content/updated`)
   - accepts optional JSON payload via `-d`
   - optional priority override via `-p` is normalized client-side, but static registry routing and bounded triage stay server-side
-  - the worker generates the canonical `QueueEventEnvelope`, adds trace metadata, evaluates optional shadow triage, and persists the queue record
+  - the worker generates the canonical `QueueEventEnvelope`, adds trace metadata, resolves shadow/enforce mode for the event family, evaluates bounded triage, and persists the queue record
   - returns the Redis stream ID, priority, and any `triageMode` / `triage` metadata from admission
 - `depth` reports queue depth, priority distribution (P0/P1/P2/P3 counts), oldest/newest message timestamps
 - `stats` summarizes recent Restate queue-drainer behavior plus Phase 2 triage behavior from OTEL over a lookback window.

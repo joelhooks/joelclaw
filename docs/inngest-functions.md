@@ -89,8 +89,9 @@ Operational boundary for Phase 1:
 - Phase 2 Story 2 now routes queue admission through one canonical server-side surface in `packages/system-bus/src/lib/queue.ts`:
   - worker-local ingress paths (`discovery-capture`, direct subscription discovery publish, GitHub webhook queueing) call `enqueueRegisteredQueueEvent()` directly.
   - edge clients (`joelclaw queue emit`, `joelclaw discover`, queue-mode `joelclaw subscribe check`) post raw event intent to `POST /internal/queue/enqueue` so they stay thin and stop writing Redis directly.
-  - shadow triage is opt-in via `QUEUE_TRIAGE_MODE=shadow` and `QUEUE_TRIAGE_FAMILIES=discovery,content,subscriptions,github` (or exact event names).
-  - Story 2 still clamps admission to static registry routing and shadow-mode final decisions; enforcement has not earned a runtime path yet.
+  - base triage remains opt-in via `QUEUE_TRIAGE_MODE=shadow|enforce` plus `QUEUE_TRIAGE_FAMILIES=discovery,content,subscriptions,github` (or exact event names).
+  - `QUEUE_TRIAGE_ENFORCE_FAMILIES=discovery,github` is the narrow Story 4 override that upgrades only `discovery/noted` and `github/workflow_run.completed` into enforce while leaving other enabled families in shadow.
+  - handler routing stays registry-derived even in enforce mode; triage only shapes bounded admission fields.
 - Phase 2 Story 3 extends `joelclaw queue stats` into the triage operator surface:
   - the command now reads both Restate drainer OTEL and `queue.triage.*` OTEL in one window.
   - the triage block summarizes attempts, fallback counts by reason, disagreement counts, applied-vs-suggested deltas, route mismatches, latency percentiles, per-family rollups, and recent mismatch/fallback samples.

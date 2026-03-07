@@ -30,10 +30,20 @@ const DEFAULT_QUEUE_TRIAGE_FAMILIES = [
   "github/workflow_run.completed",
 ] as const;
 
+const ENFORCE_ELIGIBLE_QUEUE_TRIAGE_FAMILIES = [
+  "discovery/noted",
+  "github/workflow_run.completed",
+] as const;
+
 const QUEUE_TRIAGE_FAMILY_ALIASES = {
   discovery: ["discovery/noted", "discovery/captured"],
   content: ["content/updated"],
   subscriptions: ["subscription/check-feeds.requested"],
+  github: ["github/workflow_run.completed"],
+} as const satisfies Record<string, readonly string[]>;
+
+const QUEUE_TRIAGE_ENFORCE_FAMILY_ALIASES = {
+  discovery: ["discovery/noted"],
   github: ["github/workflow_run.completed"],
 } as const satisfies Record<string, readonly string[]>;
 
@@ -136,6 +146,38 @@ function expandQueueTriageFamilies(raw: string | undefined): Set<string> {
   return expanded;
 }
 
+function expandQueueTriageEnforceFamilies(raw: string | undefined): Set<string> {
+  const configured = parsePilotSet(raw);
+  if (configured.size === 0) {
+    return new Set<string>();
+  }
+
+  const expanded = new Set<string>();
+  for (const value of configured) {
+    const aliasTargets = QUEUE_TRIAGE_ENFORCE_FAMILY_ALIASES[value as keyof typeof QUEUE_TRIAGE_ENFORCE_FAMILY_ALIASES];
+    if (aliasTargets) {
+      for (const target of aliasTargets) {
+        expanded.add(target);
+      }
+      continue;
+    }
+
+    expanded.add(value);
+  }
+
+  return new Set(
+    [...expanded].filter((family) => ENFORCE_ELIGIBLE_QUEUE_TRIAGE_FAMILIES.includes(
+      family as (typeof ENFORCE_ELIGIBLE_QUEUE_TRIAGE_FAMILIES)[number],
+    )),
+  );
+}
+
+function isEnforceEligibleQueueTriageFamily(family: string): boolean {
+  return ENFORCE_ELIGIBLE_QUEUE_TRIAGE_FAMILIES.includes(
+    family as (typeof ENFORCE_ELIGIBLE_QUEUE_TRIAGE_FAMILIES)[number],
+  );
+}
+
 function resolveQueueTriageMode(eventName: string): QueueTriageMode {
   const requestedMode = parseQueueTriageMode(process.env.QUEUE_TRIAGE_MODE);
   if (requestedMode === "off") return "off";
@@ -146,8 +188,16 @@ function resolveQueueTriageMode(eventName: string): QueueTriageMode {
     return "off";
   }
 
-  // Story 2 is shadow-only even if an eager operator sets `enforce` early.
-  return requestedMode === "enforce" ? "shadow" : requestedMode;
+  const enforcedFamilies = expandQueueTriageEnforceFamilies(process.env.QUEUE_TRIAGE_ENFORCE_FAMILIES);
+  if (enforcedFamilies.has(family)) {
+    return "enforce";
+  }
+
+  if (requestedMode === "enforce") {
+    return isEnforceEligibleQueueTriageFamily(family) ? "enforce" : "shadow";
+  }
+
+  return requestedMode;
 }
 
 export function isQueuePilotEnabled(name: string): boolean {
@@ -268,6 +318,8 @@ export const __queueTestUtils = {
   buildQueueAdmissionEnvelope,
   deps: queueDeps,
   expandQueueTriageFamilies,
+  expandQueueTriageEnforceFamilies,
+  isEnforceEligibleQueueTriageFamily,
   parsePriorityOverride,
   parseQueueTriageMode,
   resetInitPromise() {
