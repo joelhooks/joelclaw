@@ -6,6 +6,11 @@ import { serve as inngestServe } from "inngest/hono";
 import { inngest } from "./inngest/client";
 import { webhookApp } from "./webhooks/server";
 
+// Canonical execution contract types live in @joelclaw/agent-execution.
+// This file reads InboxResult artifacts from ~/.joelclaw/workspace/inbox/
+// which conform to the legacy InboxResult shape. Future work: migrate to
+// SandboxExecutionResult format for full contract alignment.
+
 // ── Load webhook secrets from agent-secrets at startup ──────────
 // ADR-0048: Webhook providers read from process.env at verification time.
 // Secrets are leased once at startup with a long TTL.

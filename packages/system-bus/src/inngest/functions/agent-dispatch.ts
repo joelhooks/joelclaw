@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { InboxResult } from "@joelclaw/agent-execution";
 import { NonRetriableError } from "inngest";
 import { infer } from "../../lib/inference";
 import { inngest } from "../client";
@@ -12,22 +13,11 @@ const INBOX_DIR = join(
   "inbox"
 );
 
+/**
+ * Legacy inbox status type.
+ * @deprecated Import from @joelclaw/agent-execution instead
+ */
 type InboxStatus = "running" | "completed" | "failed";
-
-type InboxResult = {
-  requestId: string;
-  sessionId?: string;
-  status: InboxStatus;
-  task: string;
-  tool: string;
-  agent?: string;
-  result?: string;
-  error?: string;
-  startedAt: string;
-  updatedAt: string;
-  completedAt?: string;
-  durationMs?: number;
-};
 
 const PI_FILE_HINT_PATTERN =
   /(?:\/Users\/|~\/|(?:^|[\s"'`])[^\s"'`]+\.(?:ts|md)(?=$|[\s"'`]))/i;

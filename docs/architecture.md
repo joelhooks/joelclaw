@@ -1,0 +1,296 @@
+# joelclaw Architecture
+
+## Overview
+
+joelclaw is a personal AI infrastructure monorepo built around event-driven workflows, always-on gateway services, and sandboxed agent execution. The system follows hexagonal architecture principles (ADR-0144), with heavy logic in standalone packages behind interfaces.
+
+## Core Architecture Principles
+
+1. **Hexagonal Architecture (ADR-0144)**: Heavy logic lives in standalone `@joelclaw/*` packages behind interfaces. Consumers (gateway, CLI) are thin composition roots that wire adapters together.
+
+2. **Event-Driven**: All durable work flows through Inngest. Events are the primary integration point between subsystems.
+
+3. **CLI-First**: The `joelclaw` CLI is the primary operator interface. All commands return HATEOAS JSON envelopes for agent consumption.
+
+4. **Single Source of Truth**: Never copy files across boundaries. Symlink. Skills live canonically in `skills/` and are symlinked to agent home directories.
+
+5. **Observable by Default**: Every pipeline step emits structured telemetry via OTEL. Silent failures are bugs.
+
+## System Components
+
+### Infrastructure Layer
+
+```
+┌─ Mac Mini "Panda" (M4 Pro, 64GB, always-on) ──────────────────────┐
+│                                                                     │
+│  Colima VM (VZ framework, aarch64)                                  │
+│    └─ Talos v1.12.4 container → k8s v1.35.0 (single node)         │
+│        └─ namespace: joelclaw                                       │
+│            ├─ inngest-0          (StatefulSet, ports 8288/8289)     │
+│            ├─ redis-0            (StatefulSet, port 6379)          │
+│            ├─ typesense-0        (StatefulSet, port 8108)          │
+│            ├─ system-bus-worker  (Deployment, port 3111)           │
+│            ├─ docs-api           (Deployment, port 3838)           │
+│            ├─ livekit-server     (Deployment, ports 7880/7881)     │
+│            └─ bluesky-pds        (Deployment, port 3000)           │
+│                                                                     │
+│  Gateway daemon (pi session, always-on, Redis event bridge)         │
+│  NAS "three-body" (ASUSTOR, 10GbE NFS, 64TB RAID5 + 1.9TB NVMe)  │
+│  Tailscale mesh (all devices)                                       │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Package Architecture
+
+The monorepo follows pnpm workspaces with strict package boundaries:
+
+#### Core Packages
+
+**@joelclaw/cli**
+- Primary operator interface
+- Built with `@effect/cli`
+- Compiled to binary at `~/.bun/bin/joelclaw`
+- Returns HATEOAS JSON envelopes
+- Must never crash (lazy-load heavy dependencies)
+
+**@joelclaw/sdk**
+- Programmatic wrapper for CLI contracts
+- Type-safe interface to joelclaw operations
+- Used by other packages to invoke CLI commands
+
+**@joelclaw/system-bus**
+- 110+ Inngest durable functions
+- Webhook gateway for external integrations
+- Deployed to k8s as `system-bus-worker`
+- Event processing backbone
+
+**@joelclaw/gateway**
+- Multi-channel message routing (Telegram, Slack, Discord, iMessage)
+- Always-on pi session with Redis event bridge
+- Priority queue management
+- Sleep mode awareness
+
+#### Contract Packages
+
+**@joelclaw/agent-execution** (NEW)
+- **Canonical sandbox execution contract**
+- Shared request/response types for sandboxed story execution
+- Lifecycle states: `pending`, `running`, `completed`, `failed`, `cancelled`
+- Agent identity tracking: name, variant, model, program
+- Sandbox profiles: `workspace-write`, `danger-full-access`
+- Artifact manifests: baseSha, headSha, touched files, verification results
+- Runtime validation schemas and type guards
+- **Consumed by**: Restate workflows, system-bus functions, k8s Job launcher
+
+This package eliminates ad-hoc type duplication between Restate and system-bus. All sandboxed story execution must use these types to ensure contract stability.
+
+**@joelclaw/inference-router**
+- Model selection catalog
+- Provider fallback chains
+- Single source of truth for model→provider mappings
+
+**@joelclaw/model-fallback**
+- Provider fallback implementation
+- Retry logic for failed inference calls
+
+#### Infrastructure Packages
+
+**@joelclaw/message-store**
+- Redis message queue
+- Priority-based draining
+- Gateway message persistence
+
+**@joelclaw/vault-reader**
+- Obsidian Vault context injection
+- ADR reading
+- PARA method navigation
+
+**@joelclaw/telemetry**
+- OTEL emission interface
+- Typesense storage
+- Langfuse integration for LLM tracking
+
+**@joelclaw/markdown-formatter**
+- Per-platform formatting (Telegram, Slack, Discord)
+- Code block handling
+- Link transformations
+
+#### Extensions and Integrations
+
+**@joelclaw/pi-extensions**
+- Pi agent extensions
+- Session lifecycle hooks
+- Langfuse cost tracking
+
+**@joelclaw/email**
+- Email processing
+- Front webhook handling
+- VIP email workflows
+
+**@joelclaw/mdx-pipeline**
+- MDX content processing
+- Blog post transformations
+
+**@joelclaw/lexicons**
+- AT Protocol lexicons
+- PDS record schemas
+
+**@joelclaw/discord-ui**
+- Discord components
+- Interaction handlers
+
+**@joelclaw/things-cloud**
+- Things task integration
+- Task sync workflows
+
+## Deployment Model
+
+### Local Development
+- All packages run locally via `bun`
+- Inngest dev server for function development
+- Local k8s cluster via Colima + Talos
+
+### Production
+
+**Web App** (`apps/web/`)
+- Next.js 16 with App Router, RSC, PPR
+- Deployed to Vercel
+- Post-push verification required (ADR-0144)
+
+**System Bus Worker** (`packages/system-bus/`)
+- Docker image built for ARM64
+- Pushed to GitHub Container Registry
+- Deployed to k8s via `k8s/publish-system-bus-worker.sh`
+- Verifies rollout completion
+
+**CLI Binary** (`packages/cli/`)
+- Compiled to standalone binary
+- Installed at `~/.bun/bin/joelclaw`
+- Rebuild after any CLI changes
+
+## Data Flow
+
+### Event Flow
+
+```
+External Event
+  ↓
+Webhook Gateway (system-bus)
+  ↓
+Inngest Event Emission
+  ↓
+Function Execution (system-bus-worker)
+  ↓
+OTEL Telemetry → Typesense
+  ↓
+Gateway Notification (if needed)
+  ↓
+Channel Delivery (Telegram, etc.)
+```
+
+### Sandboxed Story Execution Flow
+
+```
+PRD Plan (Restate workflow)
+  ↓
+SandboxExecutionRequest (@joelclaw/agent-execution)
+  ↓
+system-bus function OR k8s Job
+  ↓
+Agent execution (codex, claude, pi)
+  ↓
+SandboxExecutionResult (@joelclaw/agent-execution)
+  ↓
+Restate workflow continues
+```
+
+The canonical contract in `@joelclaw/agent-execution` ensures that all participants in sandboxed execution (Restate, system-bus, k8s Jobs) use the same type shapes for requests, results, and lifecycle states.
+
+### Memory Flow
+
+```
+Agent Observation
+  ↓
+Memory Write Gate (quality filter)
+  ↓
+Vector Embedding
+  ↓
+Typesense Storage
+  ↓
+Semantic Recall (`joelclaw recall`)
+```
+
+## Observability
+
+All subsystems emit structured telemetry:
+
+- **OTEL Events** → Typesense `otel_events` collection
+- **Langfuse Traces** → LLM call tracking, cost attribution
+- **Inngest Runs** → Durable function execution history
+- **Gateway Logs** → Pi session transcripts, Redis queue depth
+
+Access via:
+```bash
+joelclaw otel list --hours 24
+joelclaw otel search "error" --hours 24
+joelclaw otel stats --hours 24
+joelclaw runs --count 50
+joelclaw run <run-id>
+```
+
+## Package Import Rules (ADR-0144)
+
+✅ **Correct:**
+```typescript
+import { persist } from "@joelclaw/message-store";
+import type { TelemetryEmitter } from "@joelclaw/telemetry";
+import { SandboxExecutionRequest } from "@joelclaw/agent-execution";
+```
+
+❌ **Wrong:**
+```typescript
+import { persist } from "../../message-store/src/store";
+```
+
+- Import via `@joelclaw/*`, never via relative paths across package boundaries
+- DI via interfaces in library packages
+- Only composition roots do concrete wiring
+- New heavy logic → new package if >100 lines and reusable
+
+## Validation
+
+After any code change:
+```bash
+bunx tsc --noEmit
+pnpm biome check packages/ apps/
+bun test <package>
+```
+
+After `git push` affecting `apps/web/`:
+```bash
+# Wait 60-90s, then:
+vercel ls --yes 2>&1 | head -10
+# If ● Error → STOP and fix before pushing more
+# If ● Ready → Continue
+```
+
+## Related Documentation
+
+- [CLI Commands](./cli.md) — Full command reference
+- [Inngest Functions](./inngest-functions.md) — Function catalog and patterns
+- [Gateway](./gateway.md) — Multi-channel routing architecture
+- [Deployment](./deploy.md) — Deploy procedures and verification
+- [Webhooks](./webhooks.md) — External integration patterns
+- [Skills](../skills/) — Canonical agent skills directory
+
+## Architecture Decision Records
+
+Key ADRs:
+- **ADR-0144**: Hexagonal architecture and package boundaries
+- **ADR-0088**: NAS-backed storage tiering
+- **ADR-0127**: Feed subscriptions and resource monitoring
+- **ADR-0140**: Inference router
+- **ADR-0155**: Three-stage story pipeline (PRD → stories → execution)
+- **ADR-0156**: Graceful worker restart
+
+Full ADR index: `~/Vault/docs/decisions/`

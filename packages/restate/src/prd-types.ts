@@ -1,20 +1,18 @@
-export type PrdStoryPlan = {
-  id: string;
-  title: string;
-  summary: string;
-  prompt: string;
-  files?: string[];
-  dependsOn?: string[];
-  timeoutSeconds?: number;
-  sandbox?: "workspace-write" | "danger-full-access";
-};
+/**
+ * Re-export canonical types from @joelclaw/agent-execution.
+ * 
+ * Restate workflows consume the shared contract package to ensure
+ * compatibility with system-bus and k8s Job launcher.
+ */
 
-export type PrdWavePlan = {
-  id: string;
-  stories: PrdStoryPlan[];
-};
-
-export type PrdExecutionPlan = {
-  summary: string;
-  waves: PrdWavePlan[];
-};
+export type {
+  AgentIdentity,
+  ExecutionArtifacts,
+  ExecutionState,
+  PrdExecutionPlan,
+  SandboxExecutionRequest,
+  SandboxExecutionResult,
+  SandboxProfile,
+  StoryPlan as PrdStoryPlan,
+  WavePlan as PrdWavePlan,
+} from "@joelclaw/agent-execution";
