@@ -95,6 +95,29 @@ The Restate pod does **not** have `pi`, `codex`, `bun`, or a repo checkout. PRD 
 
 Every generated story prompt prepends the joelclaw mail contract: announce work, reserve exact paths, send status updates, release locks, commit atomically, and fail closed if unrelated dirty paths would be scooped into the commit.
 
+### Execution mode: host vs sandbox (ADR-0217 Story 4)
+
+PRD story execution supports two modes controlled by `PRD_EXECUTION_MODE`:
+
+- **`host`** (default): Execute on the shared host checkout. The current stable path.
+- **`sandbox`**: Route to isolated k8s Job runners. **Not yet fully implemented** — stories will fail with a stub error. Use `PRD_EXECUTION_MODE=host` for now.
+
+Set the mode before triggering a PRD:
+
+```bash
+# Host mode (default, stable)
+bun run packages/restate/src/trigger-prd.ts -- --prd path/to/prd.md
+
+# Sandbox mode (pilot — not yet operational)
+PRD_EXECUTION_MODE=sandbox bun run packages/restate/src/trigger-prd.ts -- --prd path/to/prd.md
+```
+
+The execution mode flag routes at the `agent-dispatch` boundary:
+- Host mode: uses the existing Inngest function to spawn agents on the host
+- Sandbox mode: will launch isolated k8s Jobs (implementation in progress)
+
+Both modes preserve stable `requestId`, `workflowId`, `storyId`, and agent identity end-to-end. The result polling contract (`/internal/agent-result/:requestId`) works for both paths.
+
 ## Dkron scheduler proof (ADR-0216 phase 1)
 
 The tier-1 scheduled Restate workloads now run through Dkron:

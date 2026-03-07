@@ -145,6 +145,7 @@ export const agentDispatch = inngest.createFunction(
       timeout = 600,
       model,
       sandbox,
+      executionMode = "host",
       readFiles = false,
     } = event.data;
 
@@ -172,11 +173,46 @@ export const agentDispatch = inngest.createFunction(
         ...(typeof agent === "string" && agent.trim() ? { agent: agent.trim() } : {}),
         startedAt,
         updatedAt: startedAt,
+        executionMode,
       };
 
       const filePath = writeInboxSnapshot(runningResult);
       return { filePath, status: runningResult.status, startedAt: runningResult.startedAt };
     });
+
+    // Route to sandbox or host execution based on executionMode
+    if (executionMode === "sandbox") {
+      return await step.run("route-to-sandbox", async () => {
+        // TODO: Implement k8s Job launcher for sandbox execution
+        // For now, return a stub that indicates sandbox mode is not yet fully implemented
+        const completedAt = new Date().toISOString();
+        const durationMs = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+        
+        const result: InboxResult = {
+          requestId,
+          sessionId,
+          status: "failed",
+          task,
+          tool,
+          ...(typeof agent === "string" && agent.trim() ? { agent: agent.trim() } : {}),
+          error: "Sandbox execution mode is not yet fully implemented. Use PRD_EXECUTION_MODE=host for now.",
+          startedAt,
+          updatedAt: completedAt,
+          completedAt,
+          durationMs,
+          executionMode,
+        };
+
+        const filePath = writeInboxSnapshot(result);
+
+        return {
+          requestId,
+          status: result.status,
+          inboxFile: filePath,
+          durationMs,
+        };
+      });
+    }
 
     // Execute the agent
     const execution = await step.run("execute-agent", async () => {
@@ -287,6 +323,7 @@ export const agentDispatch = inngest.createFunction(
         updatedAt: completedAt,
         completedAt,
         durationMs,
+        executionMode,
       };
 
       const filePath = writeInboxSnapshot(result);

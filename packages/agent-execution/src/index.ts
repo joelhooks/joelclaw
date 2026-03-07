@@ -46,9 +46,11 @@ export {
 
 // Export all schema validators and constants
 export {
+  EXECUTION_MODES,
   EXECUTION_STATES,
   isAgentIdentity,
   isExecutionArtifacts,
+  isExecutionMode,
   isExecutionState,
   isPrdExecutionPlan,
   isSandboxExecutionRequest,
@@ -62,6 +64,7 @@ export {
 export type {
   AgentIdentity,
   ExecutionArtifacts,
+  ExecutionMode,
   ExecutionState,
   InboxResult,
   PrdExecutionPlan,

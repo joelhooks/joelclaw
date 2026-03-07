@@ -7,6 +7,7 @@
 import type {
   AgentIdentity,
   ExecutionArtifacts,
+  ExecutionMode,
   ExecutionState,
   PrdExecutionPlan,
   SandboxExecutionRequest,
@@ -15,6 +16,14 @@ import type {
   StoryPlan,
   WavePlan,
 } from "./types.js";
+
+/**
+ * Valid execution modes.
+ */
+export const EXECUTION_MODES: readonly ExecutionMode[] = [
+  "host",
+  "sandbox",
+] as const;
 
 /**
  * Valid sandbox profiles.
@@ -34,6 +43,16 @@ export const EXECUTION_STATES: readonly ExecutionState[] = [
   "failed",
   "cancelled",
 ] as const;
+
+/**
+ * Type guard for ExecutionMode.
+ */
+export function isExecutionMode(value: unknown): value is ExecutionMode {
+  return (
+    typeof value === "string" &&
+    (EXECUTION_MODES as readonly string[]).includes(value)
+  );
+}
 
 /**
  * Type guard for SandboxProfile.

@@ -6,6 +6,14 @@
  */
 
 /**
+ * Execution mode for story execution.
+ * 
+ * - "host": Execute on shared host checkout (legacy path)
+ * - "sandbox": Execute in isolated k8s Job runners
+ */
+export type ExecutionMode = "host" | "sandbox";
+
+/**
  * Sandbox profile defining isolation level and permissions.
  */
 export type SandboxProfile = "workspace-write" | "danger-full-access";
@@ -176,4 +184,6 @@ export interface InboxResult {
   updatedAt: string;
   completedAt?: string;
   durationMs?: number;
+  /** Execution mode used (host or sandbox) */
+  executionMode?: ExecutionMode;
 }

@@ -10,6 +10,7 @@ const PRD_PLANNER_MODEL = process.env.PRD_PLANNER_MODEL ?? "gpt-5.4";
 const PRD_EXEC_AGENT = process.env.PRD_EXEC_AGENT ?? "story-executor";
 const PRD_EXEC_MODEL = process.env.PRD_EXEC_MODEL?.trim() || undefined;
 const PRD_AGENT_WORKER_URL = process.env.PRD_AGENT_WORKER_URL ?? "http://127.0.0.1:3111";
+const PRD_EXECUTION_MODE = (process.env.PRD_EXECUTION_MODE?.trim() || "host") as "host" | "sandbox";
 const PI_PATH_DIRS = [
   `${process.env.HOME}/.local/bin`,
   `${process.env.HOME}/.bun/bin`,
@@ -212,6 +213,7 @@ function buildAgentStoryNode(
     timeout: timeoutSeconds,
     ...(PRD_EXEC_MODEL ? { model: PRD_EXEC_MODEL } : {}),
     sandbox: story.sandbox ?? "workspace-write",
+    executionMode: PRD_EXECUTION_MODE,
     readFiles: true,
   };
 
@@ -305,6 +307,7 @@ console.log(`   waves: ${plan.waves.length}`);
 console.log(`   nodes: ${nodes.length}`);
 console.log(`   worker bridge: ${PRD_AGENT_WORKER_URL}`);
 console.log(`   bridge auth: ${internalToken ? "OTEL_EMIT_TOKEN" : "none"}`);
+console.log(`   execution mode: ${PRD_EXECUTION_MODE}`);
 console.log(`   agent tool: pi`);
 console.log(`   agent role: ${PRD_EXEC_AGENT}`);
 console.log(`   agent model override: ${PRD_EXEC_MODEL ?? "from agent role"}`);
