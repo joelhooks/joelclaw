@@ -452,6 +452,86 @@ Semantics:
 - `prune` — dry-run report of Convex ADR extras (`status: dry_run`).
 - `prune --apply` — removes ADR extras from Convex (`status: pruned`) and should be followed by `joelclaw content verify`.
 
+## Queue command tree (ADR-0217 Phase 1)
+
+```bash
+joelclaw queue
+├── emit <event> [-d <data>] [--priority <P0|P1|P2|P3>] [--dedup-key <key>]
+├── depth
+├── list
+└── inspect <stream-id>
+```
+
+### Purpose
+
+Priority-aware queue operator surface for ADR-0217 Story 2.
+
+### Semantics
+
+- `emit` — build a canonical `QueueEventEnvelope` and persist it through `@joelclaw/queue`
+  - envelope fields: stable `id`, `event`, `source`, `ts`, typed `data`, `priority`, optional `dedupKey`, trace metadata, optional `meta`
+  - `<event>` — event name in `domain/verb` format (for example `discovery/noted`)
+  - `-d|--data <json>` — JSON object payload for `envelope.data`
+  - `--priority <P0|P1|P2|P3>` — explicit override; otherwise queue registry default or `P3`
+  - `--dedup-key <key>` — optional deduplication key override
+  - returns the persisted stream ID plus the full envelope contract
+- `depth` — report queue lifecycle depth, not raw Redis internals
+  - returns `total`, `ready`, `pending`, per-priority counts, and oldest queued item hint
+  - emits `queue.depth.read`
+- `list` — inspect the static ADR-0217 pilot registry
+  - returns the deterministic registry entries, handler target metadata, and the explicit `queue.dispatch.failed` contract state
+  - this command intentionally lists the operator contract, not queued Redis records
+- `inspect` — inspect one queued record by Redis stream ID
+  - returns queue state hint (`ready` or `leased`), stored metadata, and the decoded `QueueEventEnvelope` when the payload matches the canonical shape
+  - emits `queue.inspect`
+
+### Queue lifecycle OTEL
+
+Queue lifecycle telemetry lives under `queue.*`:
+
+- `queue.enqueue.persisted` — envelope/message persisted (stream ID, priority, metadata)
+- `queue.ack` — message acknowledged and removed
+- `queue.lease.selected` — drainer lease candidate selection
+- `queue.replay.recovery` — startup replay / stale recovery summary
+- `queue.depth.read` — operator depth read
+- `queue.inspect` — operator inspect read
+
+`queue.dispatch.failed` is **documented but not emitted yet** in Story 2. The command surface returns this contract explicitly because no dispatcher exists until ADR-0217 Story 3.
+
+### Pilot registry
+
+Phase 1 ships with five deterministic pilot entries from `packages/queue/src/registry.ts`:
+
+| Event | Priority | Dedup Window | Handler target |
+|-------|----------|--------------|----------------|
+| `discovery/noted` | P2 | 5 min | `inngest-function:discovery-capture` |
+| `discovery/captured` | P3 | 15 min | `inngest-function:discovery-capture` |
+| `content/updated` | P1 | 30 sec | `inngest-function:content-review-apply` |
+| `subscription/check-feeds.requested` | P3 | 1 min | `inngest-function:subscription/check-feeds` |
+| `github/workflow_run.completed` | P2 | 1 min | `webhook-provider:github-webhook` |
+
+### Example usage
+
+```bash
+# Emit an event to the queue
+joelclaw queue emit discovery/noted -d '{"url":"https://example.com","context":"interesting article"}'
+
+# Check queue depth
+joelclaw queue depth
+
+# Inspect the registry contract
+joelclaw queue list
+
+# Inspect a specific queued record
+joelclaw queue inspect 1749990000000-0
+
+# View registered events
+joelclaw queue registry
+
+# Query queue telemetry
+joelclaw otel search "queue." --hours 1
+```
+
 ## Inngest source guard (ADR-0089)
 
 ```bash

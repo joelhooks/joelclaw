@@ -16,6 +16,7 @@
     "@effect/platform-bun": "^0.87.1",
     "@joelclaw/endpoint-resolver": "workspace:*",
     "@joelclaw/inference-router": "workspace:*",
+    "@joelclaw/queue": "workspace:*",
     "@joelclaw/restate": "workspace:*",
     "@joelclaw/sdk": "workspace:*",
     "@joelclaw/system-bus": "workspace:^",
@@ -27,7 +28,8 @@
     "@opentelemetry/sdk-trace-base": "^2.5.1",
     "@toon-format/toon": "^2.1.0",
     "effect": "^3.19.17",
-    "ioredis": "^5.9.3"
+    "ioredis": "^5.9.3",
+    "ulidx": "^2.4.1"
   },
   "devDependencies": {
     "@types/bun": "latest",
