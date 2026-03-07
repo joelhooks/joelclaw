@@ -64,6 +64,104 @@ joelclaw restate cron status                           # Dkron scheduler → hea
 
 **Rule**: NodePort value = Docker's container-side port, not host-side.
 
+## Agent Runner (Cold k8s Jobs)
+
+**Status**: Code and contracts landed (Story 2), no live infrastructure yet.
+
+The agent runner executes sandboxed story runs as isolated k8s Jobs. Jobs are created dynamically via `@joelclaw/agent-execution/job-spec` — no static manifests.
+
+### Runtime Image Contract
+
+See `k8s/agent-runner.yaml` for the full specification.
+
+Required components:
+- Git (checkout, diff, commit)
+- Bun runtime
+- Agent tooling (codex, pi, etc.)
+- `/workspace` working directory
+
+Configuration via environment variables:
+- Request metadata: `WORKFLOW_ID`, `REQUEST_ID`, `STORY_ID`, `SANDBOX_PROFILE`, `BASE_SHA`
+- Agent identity: `AGENT_NAME`, `AGENT_MODEL`, `AGENT_VARIANT`, `AGENT_PROGRAM`
+- Execution config: `WORKING_DIR`, `SESSION_ID`, `TIMEOUT_SECONDS`
+- Task prompt: `TASK_PROMPT_B64` (base64-encoded)
+- Verification: `VERIFICATION_COMMANDS_B64` (base64-encoded JSON array)
+
+Expected behavior:
+1. Decode task from `TASK_PROMPT_B64`
+2. Checkout repo at `BASE_SHA`
+3. Execute agent with task
+4. Run verification commands (if set)
+5. Emit `SandboxExecutionResult` event
+6. Exit 0 (success) or non-zero (failure)
+
+### Job Lifecycle
+
+```typescript
+import { generateJobSpec, generateJobDeletion } from "@joelclaw/agent-execution";
+
+// 1. Generate Job spec
+const spec = generateJobSpec(request, {
+  runtime: {
+    image: "ghcr.io/joelhooks/agent-runner:latest",
+    imagePullPolicy: "Always",
+  },
+  namespace: "joelclaw",
+  imagePullSecret: "ghcr-pull",
+});
+
+// 2. Apply to cluster (via kubectl or k8s client library)
+// 3. Job runs → Pod executes agent
+// 4. Agent emits SandboxExecutionResult event
+// 5. Job auto-deletes after TTL (default: 5 minutes)
+
+// Cancel a running Job
+const deletion = generateJobDeletion("req-xyz");
+// kubectl delete job ${deletion.name} -n ${deletion.namespace}
+```
+
+### Resource Defaults
+
+- CPU: `500m` request, `2` limit
+- Memory: `1Gi` request, `4Gi` limit
+- Active deadline: `1 hour`
+- TTL after completion: `5 minutes`
+- Backoff limit: `0` (no retries)
+
+### Security
+
+- Non-root execution (UID 1000, GID 1000)
+- No privilege escalation
+- All capabilities dropped
+- RuntimeDefault seccomp profile
+- Control plane toleration for single-node cluster
+
+### Verification Commands
+
+```bash
+# List agent runner Jobs
+kubectl get jobs -n joelclaw -l app.kubernetes.io/name=agent-runner
+
+# Check Job status
+kubectl describe job <job-name> -n joelclaw
+
+# View logs
+kubectl logs job/<job-name> -n joelclaw
+
+# Check for stale Jobs (should be auto-deleted by TTL)
+kubectl get jobs -n joelclaw --show-all
+```
+
+### Current State
+
+- ✅ Job spec generator (`packages/agent-execution/src/job-spec.ts`)
+- ✅ Runtime contract (`k8s/agent-runner.yaml`)
+- ✅ Tests (`packages/agent-execution/__tests__/job-spec.test.ts`)
+- ⏳ Runtime image not yet built (Story 3)
+- ⏳ Hot-image CronJob not yet implemented (Story 4)
+- ⏳ Warm-pool scheduler not yet implemented (Story 5)
+- ⏳ Restate integration not yet wired (Story 6)
+
 ## Deploy Commands
 
 ```bash

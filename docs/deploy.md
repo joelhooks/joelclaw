@@ -64,3 +64,116 @@ Dkron's upstream image still runs as root against the local-path PVC. A non-root
 - `open /data/raft/snapshots/permTest: permission denied`
 
 So phase-1 keeps the pod running as-is for reliability. Harden later with either an init-permissions step, image override, or a custom image.
+
+## Agent Runner (Cold k8s Jobs)
+
+The agent runner executes sandboxed story runs as isolated k8s Jobs.
+
+### Runtime Image Contract
+
+See `k8s/agent-runner.yaml` for the full specification. Required:
+
+- Git (checkout, diff, commit)
+- Bun runtime
+- Agent tooling (codex, pi, etc.)
+- `/workspace` working directory
+- Environment-driven configuration
+
+### Job Generation
+
+Jobs are created dynamically via `@joelclaw/agent-execution/job-spec`:
+
+```typescript
+import { generateJobSpec } from "@joelclaw/agent-execution";
+
+const request: SandboxExecutionRequest = {
+  workflowId: "wf-abc",
+  requestId: "req-xyz",
+  storyId: "story-1",
+  task: "Implement feature X with tests",
+  agent: { name: "codex", model: "gpt-5.4" },
+  sandbox: "workspace-write",
+  baseSha: "abc123",
+};
+
+const options: JobSpecOptions = {
+  runtime: {
+    image: "ghcr.io/joelhooks/agent-runner:latest",
+    imagePullPolicy: "Always",
+  },
+  namespace: "joelclaw",
+  imagePullSecret: "ghcr-pull",
+};
+
+const jobManifest = generateJobSpec(request, options);
+// Apply with kubectl or k8s client library
+```
+
+### Job Lifecycle
+
+1. **Creation**: Restate workflow or system-bus function generates Job spec
+2. **Execution**: k8s schedules Pod, runs agent runner image
+3. **Completion**: Agent emits `SandboxExecutionResult` event
+4. **Cleanup**: Job auto-deletes after TTL (default: 5 minutes)
+
+### Resource Defaults
+
+- CPU Request: `500m`
+- CPU Limit: `2`
+- Memory Request: `1Gi`
+- Memory Limit: `4Gi`
+- Active Deadline: `1 hour`
+- TTL After Completion: `5 minutes`
+- Backoff Limit: `0` (no retries)
+
+### Cancellation
+
+To cancel a running Job:
+
+```typescript
+import { generateJobDeletion } from "@joelclaw/agent-execution";
+
+const deletion = generateJobDeletion("req-xyz");
+// kubectl delete job ${deletion.name} -n ${deletion.namespace} --propagation-policy=${deletion.propagationPolicy}
+```
+
+### Security
+
+- Non-root execution (UID 1000, GID 1000)
+- No privilege escalation
+- All capabilities dropped
+- RuntimeDefault seccomp profile
+- Control plane toleration for single-node cluster
+
+### Verification
+
+After Job completion, check:
+
+```bash
+# List recent agent runner Jobs
+kubectl get jobs -n joelclaw -l app.kubernetes.io/name=agent-runner
+
+# Check Job status
+kubectl describe job <job-name> -n joelclaw
+
+# View logs
+kubectl logs job/<job-name> -n joelclaw
+
+# Check for stale Jobs (should be auto-deleted by TTL)
+kubectl get jobs -n joelclaw -l app.kubernetes.io/name=agent-runner --show-all
+```
+
+### Current State
+
+As of Story 2 (sandbox runtime PRD):
+
+- ✅ Job spec generator implemented
+- ✅ Runtime image contract defined
+- ✅ Resource limits and TTL cleanup configured
+- ✅ Cancellation support at Job level
+- ⏳ Runtime image not yet built (Story 3)
+- ⏳ Hot-image CronJob not yet implemented (Story 4)
+- ⏳ Warm-pool scheduler not yet implemented (Story 5)
+- ⏳ Restate integration not yet wired (Story 6)
+
+No live infrastructure deployed in this story — code, manifests, and contracts only.

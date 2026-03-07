@@ -84,6 +84,47 @@ The monorepo follows pnpm workspaces with strict package boundaries:
 
 This package eliminates ad-hoc type duplication between Restate and system-bus. All sandboxed story execution must use these types to ensure contract stability.
 
+### Sandboxed Story Execution
+
+**Cold k8s Jobs** (ADR-0XXX, Story 2)
+- Isolated story execution via k8s Job resources
+- Deterministic Job naming keyed by `requestId`
+- Runtime image contract: Git, Bun, agent tooling, `/workspace` directory
+- Environment-driven config: WORKFLOW_ID, REQUEST_ID, STORY_ID, TASK_PROMPT_B64, etc.
+- Resource limits: 500m-2 CPU, 1-4Gi memory (configurable)
+- TTL cleanup: auto-delete after 5 minutes (default)
+- Active deadline: 1 hour max runtime (default)
+- No automatic retries (`backoffLimit: 0`)
+- Security: non-root (UID 1000), no privilege escalation, capabilities dropped
+- Cancellation: delete Job resource (SIGTERM to container)
+- Job spec generation via `@joelclaw/agent-execution/job-spec`
+
+**Runtime Image Contract**:
+```
+Required tools:
+- Git (checkout, diff, commit)
+- Bun runtime
+- Agent programs (codex, pi, etc.)
+
+Expected paths:
+- /workspace (working directory)
+
+Expected behavior:
+1. Decode TASK_PROMPT_B64 from env
+2. Checkout repo at BASE_SHA
+3. Execute agent with task
+4. Run verification commands (if VERIFICATION_COMMANDS_B64 set)
+5. Emit SandboxExecutionResult event
+6. Exit 0 (success) or non-zero (failure)
+
+Cancellation handling:
+- Gracefully handle SIGTERM
+- Cleanup partial state
+- Exit promptly
+```
+
+See `k8s/agent-runner.yaml` for the full runtime contract specification.
+
 **@joelclaw/inference-router**
 - Model selection catalog
 - Provider fallback chains

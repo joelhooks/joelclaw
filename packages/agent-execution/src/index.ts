@@ -6,6 +6,21 @@
  */
 
 
+export type {
+  JobResourceLimits,
+  JobSpecOptions,
+  RuntimeImageContract,
+} from "./job-spec.js";
+// Export k8s Job spec builder and utilities
+export {
+  DEFAULT_ACTIVE_DEADLINE_SECONDS,
+  DEFAULT_JOB_RESOURCES,
+  DEFAULT_TTL_SECONDS,
+  generateJobDeletion,
+  generateJobName,
+  generateJobSpec,
+  isJobForRequest,
+} from "./job-spec.js";
 // Export all schema validators and constants
 export {
   EXECUTION_STATES,

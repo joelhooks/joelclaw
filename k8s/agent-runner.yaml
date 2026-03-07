@@ -1,0 +1,107 @@
+# Agent Runner — Cold k8s Job Template
+#
+# This file documents the runtime image contract for sandboxed story execution.
+# Actual Jobs are generated dynamically via @joelclaw/agent-execution/job-spec.
+#
+# Runtime Image Contract:
+# 
+# All agent runner images MUST provide:
+# - Git (for checkout, diff generation, commit)
+# - Bun runtime (for script execution)
+# - Required agent tooling (codex, pi, or equivalent)
+# - Workspace directory at /workspace
+# - Ability to read configuration from environment variables
+# - Exit codes: 0 = success, non-zero = failure
+#
+# Environment Variables (injected by Job spec):
+#
+# Request Metadata:
+#   WORKFLOW_ID             - Restate workflow identifier
+#   REQUEST_ID              - Unique request identifier (for idempotency)
+#   STORY_ID                - Story identifier from the PRD
+#   SANDBOX_PROFILE         - Sandbox isolation level (workspace-write | danger-full-access)
+#   BASE_SHA                - Git SHA to start from
+#
+# Agent Identity:
+#   AGENT_NAME              - Agent program name (e.g., "codex", "pi")
+#   AGENT_VARIANT           - Optional agent variant/instance identifier
+#   AGENT_MODEL             - Model identifier (e.g., "gpt-5.4")
+#   AGENT_PROGRAM           - Program/CLI executing the agent
+#
+# Execution Config:
+#   WORKING_DIR             - Working directory for execution (optional)
+#   SESSION_ID              - Session identifier for tracking (optional)
+#   TIMEOUT_SECONDS         - Timeout for execution (optional)
+#   TASK_PROMPT_B64         - Story prompt/task (base64-encoded)
+#   VERIFICATION_COMMANDS_B64 - Verification commands JSON array (base64-encoded, optional)
+#
+# Expected Behavior:
+#
+# 1. Decode TASK_PROMPT_B64 from base64 to get the story task
+# 2. Check out the repo at BASE_SHA
+# 3. Execute the agent with the decoded task prompt
+# 4. Run verification commands if VERIFICATION_COMMANDS_B64 is set
+# 5. Generate execution result with:
+#    - Final git SHA (headSha)
+#    - List of touched files
+#    - Verification status
+#    - Any error messages
+# 6. Emit result event or write to output location
+# 7. Exit 0 for success, non-zero for failure
+#
+# Cancellation:
+# - Jobs can be cancelled by deleting the Job resource
+# - The container MUST handle SIGTERM gracefully
+# - Cleanup partial state before exit
+#
+# Resource Defaults (can be overridden in JobSpecOptions):
+#   CPU Request:    500m
+#   CPU Limit:      2
+#   Memory Request: 1Gi
+#   Memory Limit:   4Gi
+#
+# TTL and Cleanup:
+#   - Jobs auto-delete after ttlSecondsAfterFinished (default: 300s)
+#   - Active deadline enforces max runtime (default: 1 hour)
+#   - No automatic retries (backoffLimit: 0)
+#
+# Security:
+#   - Non-root execution (UID 1000, GID 1000)
+#   - No privilege escalation
+#   - Minimal capabilities (drop ALL)
+#   - RuntimeDefault seccomp profile
+#   - Read-only root filesystem: false (agent needs workspace writes)
+#
+# Example Job Generation (TypeScript):
+#
+# ```typescript
+# import { generateJobSpec } from "@joelclaw/agent-execution";
+#
+# const request: SandboxExecutionRequest = {
+#   workflowId: "wf-abc",
+#   requestId: "req-xyz",
+#   storyId: "story-1",
+#   task: "Implement feature X with tests",
+#   agent: { name: "codex", model: "gpt-5.4" },
+#   sandbox: "workspace-write",
+#   baseSha: "abc123",
+# };
+#
+# const options: JobSpecOptions = {
+#   runtime: {
+#     image: "ghcr.io/joelhooks/agent-runner:latest",
+#     imagePullPolicy: "Always",
+#   },
+#   namespace: "joelclaw",
+#   imagePullSecret: "ghcr-pull",
+# };
+#
+# const jobManifest = generateJobSpec(request, options);
+# // Apply with kubectl or k8s client library
+# ```
+#
+# Related:
+# - packages/agent-execution/src/job-spec.ts (Job spec generator)
+# - packages/agent-execution/src/types.ts (Execution contracts)
+# - docs/architecture.md (System overview)
+# - docs/deploy.md (Deployment procedures)
