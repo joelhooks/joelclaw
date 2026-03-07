@@ -135,12 +135,18 @@ The sandbox runtime is being built incrementally through a series of proof gates
 - What's proven: contract validity, state machine, artifact generation, serialization
 - Known gaps: no k8s, no real git operations, no network isolation, no resource limits, no cancellation
 
-**Gate B: k8s Job launcher** (not yet implemented)
-- Will execute sandboxed tasks in isolated k8s Jobs
-- Real git operations (clone, checkout, commit)
-- Network isolation via Job pod constraints
-- Resource limits (CPU, memory)
-- Artifact extraction from completed pods
+**Gate B: Minimal coding sandbox** ✅ **PROVEN**
+- Proves the sandbox runtime can execute a minimal coding task end-to-end
+- Local executor (not k8s) materializes a repo at baseSha, makes a code change, commits, generates patch
+- Real git operations: clone/fetch, checkout, add, commit, format-patch
+- At least one verification command (bunx tsc --noEmit)
+- Clean patch artifact export with full commit metadata
+- Truthful verification summary (success/failure, commands, output)
+- Touched-file reporting from sandbox-local checkout
+- Zero host dirt (operator checkout remains untouched)
+- Tests: `packages/agent-execution/__tests__/gate-b-smoke.test.ts`
+- What's proven: repo materialization, git operations, patch generation, verification capture, isolation
+- Known gaps: no k8s, no network isolation, no resource limits, no cancellation, no multi-story orchestration
 
 **Gate C: Multi-story orchestration** (not yet implemented)
 - Restate DAG orchestrator calling k8s Job launcher
@@ -152,10 +158,14 @@ The sandbox runtime is being built incrementally through a series of proof gates
 - Graceful shutdown with artifact preservation
 - Timeout enforcement at Job level
 
-To run the Gate A smoke test:
+To run the gate smoke tests:
 
 ```bash
+# Gate A: Non-coding vertical slice
 bun test packages/agent-execution/__tests__/gate-a-smoke.test.ts
+
+# Gate B: Minimal coding sandbox
+bun test packages/agent-execution/__tests__/gate-b-smoke.test.ts
 ```
 
 ## Dkron scheduler proof (ADR-0216 phase 1)
