@@ -202,6 +202,7 @@ Semantics:
 joelclaw queue
 ├── emit <event> [-d <json>] [-p P0|P1|P2|P3]
 ├── depth
+├── stats [--hours <n>] [--limit <n>]
 ├── list [--limit <n>]
 └── inspect <stream-id>
 ```
@@ -216,6 +217,11 @@ Semantics:
   - generates a `QueueEventEnvelope` with stable ID, timestamp, source, and trace metadata
   - returns the Redis stream ID and priority
 - `depth` reports queue depth, priority distribution (P0/P1/P2/P3 counts), oldest/newest message timestamps
+- `stats` summarizes recent Restate queue-drainer behavior from OTEL over a lookback window.
+  - reports sampled/found dispatch events, live queue depth, started/completed/failed counts, success rate, queue wait-time percentiles (`p50`/`p95`), dispatch-duration percentiles, promotion count, top event families, and recent failures
+  - uses `metadata.waitTimeMs` from `queue.dispatch.started` as the Story 5 queue-to-dispatch latency signal
+  - returns whether the current sample meets the Phase-1 soak gate `p95 <= 5000ms`
+  - keeps the operator in CLI-land; no raw Redis keys or manual OTEL spelunking required for the first sanity pass
 - `list` lists recent messages in priority order (highest priority first), does not ack/remove
 - `inspect` loads a message by Redis stream ID and returns full payload + metadata
   - if the message is already acked/expired, it now returns a structured `QUEUE_MESSAGE_MISSING` error envelope with queue-state next actions instead of crashing the CLI

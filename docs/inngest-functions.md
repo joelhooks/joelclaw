@@ -74,6 +74,10 @@ Operational boundary for Phase 1:
   - canonical watcher source now lives in `infra/launchd/com.joel.content-sync-watcher.plist` and `scripts/content-sync-watcher.sh`.
   - the watcher reads `~/.config/system-bus.env` on each trigger and chooses `joelclaw queue emit content/updated` when the `content` pilot is enabled, otherwise it falls back to legacy `joelclaw send content/updated`.
   - this keeps the queue cutover reversible without leaving an untracked plist in `~/Library/LaunchAgents` as the only source of truth.
+- Story 5 operator surface now starts from `joelclaw queue stats` instead of ad-hoc Redis/OTEL spelunking:
+  - the command queries `queue.dispatch.started|completed|failed` OTEL from the Restate drainer and summarizes sample coverage, success/failure counts, queue wait-time percentiles, dispatch durations, promotion count, top event families, and recent failures.
+  - `metadata.waitTimeMs` from `queue.dispatch.started` is the canonical Phase-1 queue-to-dispatch latency signal.
+  - this is the first human sanity-pass tool for the "Joel can inspect queue state from CLI only" Story 5 acceptance gate.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 
 ### System health

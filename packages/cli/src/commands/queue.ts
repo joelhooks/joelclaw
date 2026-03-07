@@ -4,6 +4,7 @@
  * Commands:
  * - joelclaw queue emit <event> [-d <json>] — Emit an event to the queue
  * - joelclaw queue depth — Get queue depth and stats
+ * - joelclaw queue stats [--hours <n>] [--limit <n>] — Summarize recent drainer success/failure + latency
  * - joelclaw queue list [--limit <n>] — List recent messages
  * - joelclaw queue inspect <stream-id> — Inspect a message by ID
  */
@@ -26,6 +27,7 @@ import Redis from "ioredis";
 import { loadConfig } from "../config";
 import { createOtelEventPayload, ingestOtelPayload } from "../lib/otel-ingest";
 import { type NextAction, respond, respondError } from "../response";
+import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth";
 
 const cfg = loadConfig();
 const REDIS_URL = process.env.REDIS_URL ?? cfg.redisUrl ?? "redis://localhost:6379";
@@ -117,6 +119,291 @@ function withRedisCleanup<A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effec
       }),
     ),
   );
+}
+
+const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
+const OTEL_COLLECTION = "otel_events";
+const OTEL_QUERY_BY = "action,error,component,source,metadata_json,search_text";
+const QUEUE_DISPATCH_ACTIONS = [
+  "queue.dispatch.started",
+  "queue.dispatch.completed",
+  "queue.dispatch.failed",
+] as const;
+const QUEUE_LATENCY_TARGET_P95_MS = 5_000;
+const DEFAULT_QUEUE_STATS_LIMIT = 200;
+
+type QueueDispatchAction = (typeof QUEUE_DISPATCH_ACTIONS)[number];
+
+type QueueDepthSnapshot = {
+  total: number;
+  byPriority: Record<string, number>;
+  oldestTimestamp: number | null;
+  newestTimestamp: number | null;
+};
+
+type QueueDispatchEvent = {
+  id: string;
+  timestamp: number;
+  action: QueueDispatchAction;
+  success: boolean;
+  error?: string;
+  metadata: Record<string, unknown>;
+};
+
+type QueueStatsWindow = {
+  hours: number;
+  found: number;
+  sampled: number;
+  truncated: boolean;
+  filterBy: string;
+};
+
+function asNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function asFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function parseMetadataJson(raw: unknown): Record<string, unknown> {
+  if (typeof raw !== "string" || raw.trim().length === 0) return {};
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // ignore malformed metadata JSON and fall back to empty object
+  }
+
+  return {};
+}
+
+function isQueueDispatchAction(value: unknown): value is QueueDispatchAction {
+  return typeof value === "string"
+    && (QUEUE_DISPATCH_ACTIONS as readonly string[]).includes(value);
+}
+
+function percentile(values: readonly number[], ratio: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(sorted.length * ratio) - 1));
+  return sorted[index] ?? null;
+}
+
+function average(values: readonly number[]): number | null {
+  if (values.length === 0) return null;
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+function parseQueueDispatchHit(hit: unknown): QueueDispatchEvent | null {
+  const doc = (hit as { document?: Record<string, unknown> })?.document;
+  if (!doc) return null;
+
+  const action = doc.action;
+  const timestamp = asFiniteNumber(doc.timestamp);
+  if (!isQueueDispatchAction(action) || timestamp == null) return null;
+
+  return {
+    id: asNonEmptyString(doc.id) ?? `${action}-${timestamp}`,
+    timestamp,
+    action,
+    success: doc.success !== false,
+    error: asNonEmptyString(doc.error),
+    metadata: parseMetadataJson(doc.metadata_json),
+  };
+}
+
+async function loadQueueDispatchEvents(hours: number, limit: number): Promise<{
+  found: number;
+  events: QueueDispatchEvent[];
+  filterBy: string;
+}> {
+  const apiKey = resolveTypesenseApiKey();
+  const filterBy = [
+    `timestamp:>=${Math.floor(Date.now() - hours * 60 * 60 * 1000)}`,
+    "source:=restate",
+    "component:=queue-drainer",
+    `action:=[${QUEUE_DISPATCH_ACTIONS.join(",")}]`,
+  ].join(" && ");
+
+  const searchParams = new URLSearchParams({
+    q: "*",
+    query_by: OTEL_QUERY_BY,
+    filter_by: filterBy,
+    per_page: String(limit),
+    page: "1",
+    sort_by: "timestamp:desc",
+    include_fields: "id,timestamp,action,success,error,metadata_json",
+  });
+
+  const response = await fetch(
+    `${TYPESENSE_URL}/collections/${OTEL_COLLECTION}/documents/search?${searchParams}`,
+    {
+      headers: {
+        "X-TYPESENSE-API-KEY": apiKey,
+      },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Typesense query failed (${response.status}): ${await response.text()}`);
+  }
+
+  const payload = await response.json() as {
+    found?: unknown;
+    hits?: unknown[];
+  };
+
+  const hits = Array.isArray(payload.hits) ? payload.hits : [];
+  const events = hits
+    .map(parseQueueDispatchHit)
+    .filter((event): event is QueueDispatchEvent => event !== null);
+
+  return {
+    found: asFiniteNumber(payload.found) ?? events.length,
+    events,
+    filterBy,
+  };
+}
+
+function summarizeQueueStats(
+  events: readonly QueueDispatchEvent[],
+  depth: QueueDepthSnapshot,
+  window: QueueStatsWindow,
+): {
+  window: QueueStatsWindow;
+  currentDepth: {
+    total: number;
+    byPriority: Record<string, number>;
+    oldestTimestamp: number | null;
+    newestTimestamp: number | null;
+    oldestAgeSeconds: number | null;
+  };
+  dispatches: {
+    started: number;
+    completed: number;
+    failed: number;
+    terminal: number;
+    successRate: number | null;
+  };
+  queueLatencyMs: {
+    count: number;
+    average: number | null;
+    p50: number | null;
+    p95: number | null;
+    max: number | null;
+    targetP95: number;
+    withinTarget: boolean | null;
+  };
+  dispatchDurationMs: {
+    count: number;
+    average: number | null;
+    p50: number | null;
+    p95: number | null;
+    max: number | null;
+  };
+  promotions: number;
+  eventFamilies: Array<{ name: string; count: number }>;
+  recentFailures: Array<{
+    at: string;
+    streamId: string | null;
+    eventName: string | null;
+    error: string;
+  }>;
+} {
+  const started = events.filter((event) => event.action === "queue.dispatch.started");
+  const completed = events.filter((event) => event.action === "queue.dispatch.completed");
+  const failed = events.filter((event) => event.action === "queue.dispatch.failed");
+  const terminal = completed.length + failed.length;
+
+  const waitTimes = started
+    .map((event) => asFiniteNumber(event.metadata.waitTimeMs))
+    .filter((value): value is number => value != null && value >= 0);
+
+  const dispatchDurations: number[] = [];
+  const startedByStreamId = new Map<string, QueueDispatchEvent>();
+  for (const event of [...events].sort((a, b) => a.timestamp - b.timestamp)) {
+    const streamId = asNonEmptyString(event.metadata.streamId);
+    if (!streamId) continue;
+
+    if (event.action === "queue.dispatch.started") {
+      startedByStreamId.set(streamId, event);
+      continue;
+    }
+
+    if (event.action === "queue.dispatch.completed" || event.action === "queue.dispatch.failed") {
+      const start = startedByStreamId.get(streamId);
+      if (start) {
+        dispatchDurations.push(Math.max(0, event.timestamp - start.timestamp));
+      }
+    }
+  }
+
+  const eventFamilyCounts = new Map<string, number>();
+  for (const event of started) {
+    const eventName = asNonEmptyString(event.metadata.eventName) ?? "unknown";
+    eventFamilyCounts.set(eventName, (eventFamilyCounts.get(eventName) ?? 0) + 1);
+  }
+
+  const recentFailures = failed.slice(0, 5).map((event) => ({
+    at: new Date(event.timestamp).toISOString(),
+    streamId: asNonEmptyString(event.metadata.streamId) ?? null,
+    eventName: asNonEmptyString(event.metadata.eventName) ?? null,
+    error: event.error ?? "dispatch_failed",
+  }));
+
+  const p95 = percentile(waitTimes, 0.95);
+
+  return {
+    window,
+    currentDepth: {
+      total: depth.total,
+      byPriority: depth.byPriority,
+      oldestTimestamp: depth.oldestTimestamp,
+      newestTimestamp: depth.newestTimestamp,
+      oldestAgeSeconds: depth.oldestTimestamp
+        ? Math.floor((Date.now() - depth.oldestTimestamp) / 1000)
+        : null,
+    },
+    dispatches: {
+      started: started.length,
+      completed: completed.length,
+      failed: failed.length,
+      terminal,
+      successRate: terminal > 0 ? completed.length / terminal : null,
+    },
+    queueLatencyMs: {
+      count: waitTimes.length,
+      average: average(waitTimes),
+      p50: percentile(waitTimes, 0.5),
+      p95,
+      max: waitTimes.length > 0 ? Math.max(...waitTimes) : null,
+      targetP95: QUEUE_LATENCY_TARGET_P95_MS,
+      withinTarget: p95 == null ? null : p95 <= QUEUE_LATENCY_TARGET_P95_MS,
+    },
+    dispatchDurationMs: {
+      count: dispatchDurations.length,
+      average: average(dispatchDurations),
+      p50: percentile(dispatchDurations, 0.5),
+      p95: percentile(dispatchDurations, 0.95),
+      max: dispatchDurations.length > 0 ? Math.max(...dispatchDurations) : null,
+    },
+    promotions: started.filter((event) => asFiniteNumber(event.metadata.promotedFrom) != null).length,
+    eventFamilies: [...eventFamilyCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([name, count]) => ({ name, count })),
+    recentFailures,
+  };
 }
 
 /**
@@ -288,6 +575,120 @@ const depthCmd = Command.make(
 );
 
 /**
+ * joelclaw queue stats [--hours <n>] [--limit <n>] — Summarize recent drainer behavior.
+ */
+const statsCmd = Command.make(
+  "stats",
+  {
+    hours: Options.integer("hours").pipe(
+      Options.withAlias("h"),
+      Options.withDefault(24),
+      Options.withDescription("Lookback window in hours"),
+    ),
+    limit: Options.integer("limit").pipe(
+      Options.withAlias("n"),
+      Options.withDefault(DEFAULT_QUEUE_STATS_LIMIT),
+      Options.withDescription("Max dispatch OTEL events to sample"),
+    ),
+  },
+  ({ hours, limit }) =>
+    withRedisCleanup(Effect.gen(function* () {
+      const statsResult = yield* Effect.tryPromise({
+        try: async () => {
+          await ensureQueueInitialized();
+          const depth = await getQueueStats();
+          const normalizedLimit = Math.min(Math.max(1, limit), DEFAULT_QUEUE_STATS_LIMIT);
+          const dispatchWindow = await loadQueueDispatchEvents(hours, normalizedLimit);
+
+          return summarizeQueueStats(
+            dispatchWindow.events,
+            {
+              total: depth.total,
+              byPriority: depth.byPriority,
+              oldestTimestamp: depth.oldestTimestamp,
+              newestTimestamp: depth.newestTimestamp,
+            },
+            {
+              hours,
+              found: dispatchWindow.found,
+              sampled: dispatchWindow.events.length,
+              truncated: dispatchWindow.found > dispatchWindow.events.length,
+              filterBy: dispatchWindow.filterBy,
+            },
+          );
+        },
+        catch: (error) => error,
+      }).pipe(Effect.either);
+
+      if (statsResult._tag === "Left") {
+        const error = statsResult.left;
+        const next: NextAction[] = [
+          {
+            command: "joelclaw queue depth",
+            description: "Check live queue depth",
+            params: {},
+          },
+          {
+            command: "joelclaw status",
+            description: "Check worker/server health",
+            params: {},
+          },
+        ];
+
+        if (isTypesenseApiKeyError(error)) {
+          yield* Console.log(
+            respondError("queue stats", error.message, error.code, error.fix, next),
+          );
+          return;
+        }
+
+        yield* Console.log(
+          respondError(
+            "queue stats",
+            error instanceof Error ? error.message : String(error),
+            "QUEUE_STATS_FAILED",
+            "Check Typesense reachability plus queue drainer OTEL events, then retry.",
+            next,
+          ),
+        );
+        return;
+      }
+
+      const summary = statsResult.right;
+      const next: NextAction[] = [
+        {
+          command: "joelclaw queue depth",
+          description: "Check live queue depth",
+          params: {},
+        },
+        {
+          command: "joelclaw queue list --limit <n>",
+          description: "Inspect currently queued messages",
+          params: {
+            n: {
+              value: 20,
+              default: 20,
+              description: "Number of messages to list",
+            },
+          },
+        },
+        {
+          command: `joelclaw otel search "queue.dispatch.failed" --hours ${hours}`,
+          description: "Inspect failed drainer dispatch telemetry",
+          params: {},
+        },
+      ];
+
+      yield* Console.log(
+        respond("queue stats", {
+          ok: true,
+          ...summary,
+        }, next),
+      );
+    })),
+);
+
+/**
  * joelclaw queue list [--limit <n>] — List recent messages.
  */
 const listCmd = Command.make(
@@ -428,5 +829,10 @@ const inspectCmd = Command.make(
  */
 export const queueCmd = Command.make("queue", {}).pipe(
   Command.withDescription("Queue operator surface for @joelclaw/queue"),
-  Command.withSubcommands([emitCmd, depthCmd, listCmd, inspectCmd])
+  Command.withSubcommands([emitCmd, depthCmd, statsCmd, listCmd, inspectCmd])
 );
+
+export const __queueTestUtils = {
+  percentile,
+  summarizeQueueStats,
+};
