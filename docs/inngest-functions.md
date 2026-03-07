@@ -65,6 +65,10 @@ Operational boundary for Phase 1:
 - Subscription-request pilot cutover has now started behind `QUEUE_PILOTS=subscriptions`:
   - unscoped `joelclaw subscribe check` enqueues `subscription/check-feeds.requested` into the shared queue instead of posting directly to Inngest.
   - the queue registry now stores the concrete Inngest event name (`subscription/check-feeds.requested`) as the drainer target; using function ids like `subscription/check-feeds` is wrong because the drainer posts events, not function identifiers.
+- GitHub webhook ingress is now the third pilot family behind `QUEUE_PILOTS=github`:
+  - `POST /webhooks/github` keeps direct emission as the default path.
+  - when the flag is enabled, normalized `workflow_run.completed` webhook events are persisted into the shared queue first and the Restate drainer forwards the concrete `github/workflow_run.completed` event onward.
+  - `github/package.published` remains on the legacy direct-to-Inngest path for now.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 
 ### System health

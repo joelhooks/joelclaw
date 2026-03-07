@@ -18,7 +18,8 @@ Contract:
 
 1. Verify provider signature from raw request body.
 2. Normalize payload into typed internal events.
-3. Emit to Inngest as `<provider>/<event>`.
+3. By default, emit to Inngest as `<provider>/<event>`.
+4. Queue pilots may intercept specific normalized events first, persist them into the shared Redis queue, and let the Restate drainer forward the concrete Inngest event name.
 
 ## GitHub workflow path
 
@@ -27,6 +28,10 @@ Contract:
 - payload includes:
   - `deliveryId`
   - workflow + run metadata (`runId`, `workflowName`, `branch`, `conclusion`, etc.)
+- pilot cutover:
+  - default path still emits directly to Inngest
+  - when `QUEUE_PILOTS=github`, `workflow_run.completed` is enqueued into the shared queue first and the Restate drainer forwards the exact Inngest event name `github/workflow_run.completed`
+  - `github/package.published` stays on the legacy direct path for now
 
 ## Session-scoped webhook subscriptions (ADR-0185)
 

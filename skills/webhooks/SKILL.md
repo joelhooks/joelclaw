@@ -15,7 +15,7 @@ Manage the joelclaw webhook gateway — add providers, debug delivery, register 
 
 ```
 External Service → Tailscale Funnel :443 → Worker :3111 → /webhooks/:provider
-  → verifySignature() → normalizePayload() → Inngest event → notify function → gateway
+  → verifySignature() → normalizePayload() → (queue pilot or direct Inngest event) → notify function → gateway
 ```
 
 - **ADR-0048**: Webhook Gateway for External Service Integration
@@ -29,6 +29,8 @@ External Service → Tailscale Funnel :443 → Worker :3111 → /webhooks/:provi
 | front | message.received, message.sent, assignee.changed | HMAC-SHA1 (`x-front-signature`) | `https://panda.tail7af24.ts.net/webhooks/front` |
 | vercel | deploy.succeeded, deploy.error, deploy.created, deploy.canceled | HMAC-SHA1 (`x-vercel-signature`) | `https://panda.tail7af24.ts.net/webhooks/vercel` |
 | github | workflow_run.completed, package.published | HMAC-SHA256 (`x-hub-signature-256`) | `https://panda.tail7af24.ts.net/webhooks/github` |
+
+**Current ADR-0217 pilot note:** when `QUEUE_PILOTS=github`, the webhook gateway enqueues normalized `github/workflow_run.completed` events into the shared Redis queue instead of posting them directly to Inngest. The Restate drainer then forwards the concrete event name `github/workflow_run.completed`. `github/package.published` still goes direct.
 
 ## Adding a New Provider
 

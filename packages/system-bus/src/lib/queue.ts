@@ -57,28 +57,29 @@ async function ensureQueueInitialized(): Promise<void> {
   await initPromise;
 }
 
-export async function enqueueDiscoveryNoted(input: {
-  url: string;
-  context?: string;
+export async function enqueueRegisteredQueueEvent(input: {
+  name: string;
+  data: Record<string, unknown>;
   source: string;
   eventId?: string;
+  metadata?: Record<string, unknown>;
 }): Promise<{ streamId: string; eventId: string; priority: number }> {
   await ensureQueueInitialized();
 
-  const registryEntry = lookupQueueEvent("discovery/noted");
-  const priority = registryEntry?.priority ?? Priority.P2;
-  const eventId = input.eventId?.trim() || randomUUID();
-  const data: Record<string, unknown> = { url: input.url };
-  if (input.context?.trim()) {
-    data.context = input.context.trim();
+  const eventName = input.name.trim();
+  const registryEntry = lookupQueueEvent(eventName);
+  if (!registryEntry) {
+    throw new Error(`queue registry has no entry for ${eventName}`);
   }
 
+  const priority = registryEntry.priority ?? Priority.P2;
+  const eventId = input.eventId?.trim() || randomUUID();
   const envelope: QueueEventEnvelope = {
     id: eventId,
-    name: "discovery/noted",
+    name: eventName,
     source: input.source,
     ts: Date.now(),
-    data,
+    data: input.data,
     priority,
   };
 
@@ -88,11 +89,12 @@ export async function enqueueDiscoveryNoted(input: {
     metadata: {
       envelope_version: "1",
       source: input.source,
+      ...(input.metadata ?? {}),
     },
   });
 
   if (!result) {
-    throw new Error("discovery/noted event was rejected by queue filter");
+    throw new Error(`${eventName} event was rejected by queue filter`);
   }
 
   return {
@@ -100,4 +102,23 @@ export async function enqueueDiscoveryNoted(input: {
     eventId,
     priority: result.priority,
   };
+}
+
+export async function enqueueDiscoveryNoted(input: {
+  url: string;
+  context?: string;
+  source: string;
+  eventId?: string;
+}): Promise<{ streamId: string; eventId: string; priority: number }> {
+  const data: Record<string, unknown> = { url: input.url };
+  if (input.context?.trim()) {
+    data.context = input.context.trim();
+  }
+
+  return enqueueRegisteredQueueEvent({
+    name: "discovery/noted",
+    data,
+    source: input.source,
+    eventId: input.eventId,
+  });
 }

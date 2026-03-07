@@ -6,6 +6,7 @@
 
 import { Hono } from "hono";
 import { inngest } from "../inngest/client";
+import { enqueueRegisteredQueueEvent, isQueuePilotEnabled } from "../lib/queue";
 import { isTodoistTaskAgentClosed } from "../lib/todoist-agent-closed";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../observability/emit";
 import { frontProvider } from "./providers/front";
@@ -81,6 +82,61 @@ async function filterTodoistTaskCompletedEchoes(events: NormalizedEvent[]): Prom
 
   return filtered;
 }
+
+function buildWebhookEventName(provider: WebhookProvider, event: NormalizedEvent): string {
+  return `${provider.eventPrefix}/${event.name}`;
+}
+
+function shouldQueueWebhookEvent(providerId: string, event: NormalizedEvent): boolean {
+  return (
+    providerId === "github" &&
+    event.name === "workflow_run.completed" &&
+    isQueuePilotEnabled("github")
+  );
+}
+
+async function dispatchWebhookEvents(providerId: string, provider: WebhookProvider, events: NormalizedEvent[]) {
+  const queuedEvents = events.filter((event) => shouldQueueWebhookEvent(providerId, event));
+  const directEvents = events.filter((event) => !shouldQueueWebhookEvent(providerId, event));
+
+  const queued = await Promise.all(
+    queuedEvents.map((event) =>
+      enqueueRegisteredQueueEvent({
+        name: buildWebhookEventName(provider, event),
+        data: event.data,
+        source: `webhook/${providerId}`,
+        eventId: event.idempotencyKey,
+        metadata: {
+          provider: providerId,
+          normalizedEvent: event.name,
+        },
+      }),
+    ),
+  );
+
+  if (directEvents.length > 0) {
+    await inngest.send(
+      directEvents.map((event) => ({
+        name: buildWebhookEventName(provider, event) as any,
+        data: event.data as any,
+        id: event.idempotencyKey,
+      })),
+    );
+  }
+
+  return {
+    queuedCount: queued.length,
+    directCount: directEvents.length,
+    queued,
+    queuedEventNames: queuedEvents.map((event) => buildWebhookEventName(provider, event)),
+    directEventNames: directEvents.map((event) => buildWebhookEventName(provider, event)),
+  };
+}
+
+export const __webhookServerTestUtils = {
+  buildWebhookEventName,
+  shouldQueueWebhookEvent,
+};
 
 // ── Hono app ─────────────────────────────────────────────
 export const webhookApp = new Hono();
@@ -235,29 +291,47 @@ webhookApp.post("/:provider", async (c) => {
         }
       }
 
-      // Emit to Inngest
+      // Dispatch to queue pilot and/or direct Inngest path
       try {
-        await inngest.send(
-          events.map((evt) => ({
-            name: `${provider.eventPrefix}/${evt.name}` as any,
-            data: evt.data as any,
-            id: evt.idempotencyKey,
-          }))
-        );
+        const dispatchResult = await dispatchWebhookEvents(providerId, provider, events);
 
-        console.log("[webhooks] events emitted", {
-          provider: providerId,
-          count: events.length,
-          names: events.map((e) => e.name),
+        await emitOtelEvent({
+          level: "info",
+          source: "worker",
+          component: "webhook",
+          action: "webhook.forwarded",
+          success: true,
+          metadata: {
+            provider: providerId,
+            totalEvents: events.length,
+            queuedCount: dispatchResult.queuedCount,
+            directCount: dispatchResult.directCount,
+            queuedEventNames: dispatchResult.queuedEventNames,
+            directEventNames: dispatchResult.directEventNames,
+          },
         });
 
-        return c.json({ ok: true, events: events.length });
+        console.log("[webhooks] events forwarded", {
+          provider: providerId,
+          count: events.length,
+          queued: dispatchResult.queuedCount,
+          direct: dispatchResult.directCount,
+          queuedEventNames: dispatchResult.queuedEventNames,
+          directEventNames: dispatchResult.directEventNames,
+        });
+
+        return c.json({
+          ok: true,
+          events: events.length,
+          queued: dispatchResult.queuedCount,
+          direct: dispatchResult.directCount,
+        });
       } catch (error: any) {
-        console.error("[webhooks] inngest send failed", {
+        console.error("[webhooks] dispatch failed", {
           provider: providerId,
           error: error?.message,
         });
-        return c.json({ ok: false, error: "Failed to emit events" }, 500);
+        return c.json({ ok: false, error: "Failed to dispatch events" }, 500);
       }
     }
   );
