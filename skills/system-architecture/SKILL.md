@@ -245,6 +245,16 @@ From index comments + function lists:
 6. Each `step.run` result is memoized by Inngest; next step executes when prior completes.
 7. Completion/failure is queryable via GraphQL (`/v0/gql`) and CLI commands (`runs`, `run`, `event`, `events`).
 
+## Queue flow: `joelclaw queue emit` → Restate drainer → durable dispatch
+
+1. CLI `joelclaw queue emit <event>` persists a `QueueEventEnvelope` into Redis stream `joelclaw:queue:events` and indexes it in sorted set `joelclaw:queue:priority`.
+2. The host Restate worker (`packages/restate/src/index.ts`) starts a deterministic queue drainer beside the channel callback listener.
+3. On startup, the drainer claims pending + never-delivered entries via `@joelclaw/queue#getUnacked()`, reindexes replayable entries, and emits OTEL replay evidence.
+4. Each drain tick selects the next priority candidate from the sorted set, resolves its static registry target from `packages/queue/src/registry.ts`, and POSTs a one-node DAG request to Restate `/dagOrchestrator/{workflowId}/run/send`.
+5. The current Story-3 bridge re-emits the queue item to its registered Inngest event target inside that one-node DAG request. This is deliberate: the deterministic queue/drainer is proven first; per-family Restate cutovers remain Story 4 work.
+6. On accepted Restate dispatch, the drainer acks the queue message; on failure it leaves the message in Redis, applies retry cooldown, and emits `queue.dispatch.failed` OTEL evidence.
+7. Crash recovery comes from the Redis stream + consumer-group replay path, not from vibes: restart the Restate worker, let `getUnacked()` reclaim the inflight entries, then drain resumes.
+
 ## Webhook flow
 
 1. External service posts to `/webhooks/:provider`.

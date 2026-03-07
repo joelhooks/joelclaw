@@ -70,6 +70,12 @@ The monorepo follows pnpm workspaces with strict package boundaries:
 - Priority queue management
 - Sleep mode awareness
 
+**@joelclaw/restate**
+- Restate worker package for durable DAG/workflow execution
+- Hosts deploy gate, DAG orchestrator, and the deterministic queue drainer
+- Owns the execution-adjacent queue → Restate `/send` bridge for ADR-0217 Story 3
+- Provides the current operator-facing sandbox orchestration surface
+
 #### Contract Packages
 
 **@joelclaw/agent-execution** (NEW)
@@ -90,8 +96,13 @@ This package eliminates ad-hoc type duplication between Restate and system-bus. 
 
 ### Sandboxed Story Execution
 
-**Cold k8s Jobs** (ADR-0XXX, Story 2)
-- Isolated story execution via k8s Job resources
+**Current live path: local sandbox runner on the host worker**
+- `executionMode: "sandbox"` is live in `system/agent-dispatch`
+- Each run materializes a clean temp repo at `baseSha`, executes inside that isolated checkout, exports patch/touched-file artifacts, and tears the workspace down
+- Gate A (non-coding) and Gate B (minimal coding) are proven, and a real ADR-0217 acceptance run completed on this path without dirtying the operator checkout
+- This is the current working isolation surface for autonomous story execution
+
+**Next gate: cold k8s Jobs**
 - Deterministic Job naming keyed by `requestId`
 - Runtime image contract: Git, Bun, agent tooling, `/workspace` directory
 - Environment-driven config: WORKFLOW_ID, REQUEST_ID, STORY_ID, TASK_PROMPT_B64, etc.
@@ -164,6 +175,12 @@ Sandbox runs produce patch bundles, not direct commits to main. This keeps runs 
 - Redis message queue
 - Priority-based draining
 - Gateway message persistence
+
+**@joelclaw/queue**
+- Redis stream + sorted-set queue primitives
+- Shared queue event envelope and static registry
+- Replay, lease, ack, and operator inspection surfaces
+- Used by CLI queue commands and the Restate queue drainer
 
 **@joelclaw/vault-reader**
 - Obsidian Vault context injection

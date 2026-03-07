@@ -17,6 +17,7 @@ import { ConsoleChannel } from "./channels/console";
 import { NoopChannel } from "./channels/noop";
 import { TelegramChannel } from "./channels/telegram";
 import type { NotificationChannel } from "./channels/types";
+import { startQueueDrainer } from "./queue-drainer";
 import { resolveCallback } from "./resolver";
 import { dagOrchestrator, dagWorker } from "./workflows/dag-orchestrator";
 import { deployGate, setDeployChannel } from "./workflows/deploy-gate";
@@ -51,9 +52,29 @@ setDeployChannel(channel);
 // --- Callback listener ---
 
 const stopListener = await channel.startCallbackListener(resolveCallback);
+const stopQueueDrainer = await startQueueDrainer();
 
-process.on("SIGINT", () => { stopListener(); process.exit(0); });
-process.on("SIGTERM", () => { stopListener(); process.exit(0); });
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  console.log(`\n🛑 Restate worker shutting down (${signal})`);
+
+  await Promise.allSettled([
+    Promise.resolve().then(() => stopQueueDrainer()),
+    Promise.resolve().then(() => stopListener()),
+  ]);
+
+  process.exit(0);
+}
+
+process.on("SIGINT", () => {
+  void shutdown("SIGINT");
+});
+process.on("SIGTERM", () => {
+  void shutdown("SIGTERM");
+});
 
 // --- Serve ---
 
@@ -69,4 +90,5 @@ console.log(`   Port: ${port}`);
 console.log(`   Channel: ${channel.id}`);
 console.log(`   Workflows: deployGate, dagOrchestrator`);
 console.log(`   Services: dagWorker`);
+console.log(`   Queue drainer: ${process.env.QUEUE_DRAINER_ENABLED ?? "enabled"}`);
 console.log(``);

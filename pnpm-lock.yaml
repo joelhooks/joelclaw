@@ -531,6 +531,9 @@ importers:
 
   packages/restate:
     dependencies:
+      '@joelclaw/queue':
+        specifier: workspace:*
+        version: link:../queue
       '@restatedev/restate-sdk':
         specifier: ^1.10.4
         version: 1.10.4

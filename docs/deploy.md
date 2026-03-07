@@ -245,19 +245,17 @@ This keeps sandbox runs isolated and reversible.
 
 ### Current State
 
-As of Story 3 (sandbox runtime PRD):
+As of 2026-03-07:
 
-- ✅ Job spec generator implemented
-- ✅ Runtime image contract defined
-- ✅ Resource limits and TTL cleanup configured
-- ✅ Cancellation support at Job level
-- ✅ Repo materialization helpers implemented
-- ✅ Patch artifact export implemented
+- ✅ Local sandbox runner is live on the host worker via `system/agent-dispatch`
+- ✅ Repo materialization helpers implemented and consumed by the live sandbox path
+- ✅ Patch artifact export implemented and consumed by the live sandbox path
 - ✅ Touched-file inventory capture
 - ✅ Verification summary and log references in artifacts
-- ⏳ Runtime image not yet built (Story 3)
-- ⏳ Hot-image CronJob not yet implemented (Story 4)
-- ⏳ Warm-pool scheduler not yet implemented (Story 5)
-- ⏳ Restate integration not yet wired (Story 6)
+- ✅ Gate A (non-coding) and Gate B (minimal coding) proven
+- ✅ Real ADR-0217 Story 2 acceptance run completed on the sandbox path and was promoted after host-truth review
+- ⏳ Cold k8s Job launcher remains the next execution gate
+- ⏳ Job-level cancellation/timeouts still need the k8s runner path
+- ⏳ Runtime image build, hot-image CronJob, and warm-pool scheduler remain follow-on work
 
-No live infrastructure deployed in this story — code, manifests, and contracts only.
+The current live isolation surface is the host-worker local sandbox runner. The k8s Job contract, manifests, and resource model remain the next step rather than shipped runtime reality.

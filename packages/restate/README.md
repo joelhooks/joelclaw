@@ -4,6 +4,23 @@ ADR-0207 Restate package for production durable workflow execution.
 
 ## Current workflow surface
 
+### Queue drainer
+
+- Restate worker now starts a deterministic queue drainer beside the channel listener
+- queue source: Redis stream `joelclaw:queue:events` + priority index `joelclaw:queue:priority`
+- consumer group: `joelclaw:queue:restate`
+- startup replay: claims pending/never-delivered messages via `getUnacked()`, reindexes them, then resumes draining
+- dispatch path: queue registry target → Restate `dagOrchestrator/{workflowId}/run/send`
+- current pilot handler bridge: queue events are re-emitted to their registered Inngest targets through a one-node Restate DAG request so the queue loop can prove deterministic drain/replay before full per-family Restate cutover
+- OTEL: startup, replay, `queue.dispatch.started|completed|failed`, plus queue package `queue.lease|ack|replay`
+
+Tuning env:
+
+- `QUEUE_DRAINER_ENABLED` — default enabled
+- `QUEUE_DRAIN_INTERVAL_MS` — polling cadence (default `2000`)
+- `QUEUE_DRAINER_CONCURRENCY` — max in-flight queue dispatches (default `1`)
+- `QUEUE_DRAIN_FAILURE_BACKOFF_MS` — per-message retry cooldown after failed dispatch (default `30000`)
+
 ### Deploy gate workload
 
 - `deployGate.run` — durable deploy pipeline for `system-bus-worker`
@@ -102,7 +119,7 @@ Every generated story prompt prepends the joelclaw mail contract: announce work,
 PRD story execution supports two modes controlled by `PRD_EXECUTION_MODE`:
 
 - **`host`** (default): Execute on the shared host checkout. The current stable path.
-- **`sandbox`**: Route to isolated k8s Job runners. **Not yet fully implemented** — stories will fail with a stub error. Use `PRD_EXECUTION_MODE=host` for now.
+- **`sandbox`**: Route to the proved local sandbox runner on the host worker. This path now materializes a clean temp checkout at `baseSha`, runs the agent inside that isolated repo, exports patch/touched-file artifacts, and tears the workspace down without dirtying the operator checkout. This is the current working isolation path while the k8s Job runner remains the next gate.
 
 Set the mode before triggering a PRD:
 
@@ -148,8 +165,9 @@ The sandbox runtime is being built incrementally through a series of proof gates
 - What's proven: repo materialization, git operations, patch generation, verification capture, isolation
 - Known gaps: no k8s, no network isolation, no resource limits, no cancellation, no multi-story orchestration
 
-**Gate C: Multi-story orchestration** (not yet implemented)
-- Restate DAG orchestrator calling k8s Job launcher
+**Gate C: k8s Job launcher + multi-story orchestration** (not yet implemented)
+- Keep the current sandbox contract, but swap the local host-worker runner for real isolated k8s Jobs
+- Restate DAG orchestrator launches deterministic Job-backed story runs by request/workflow/story identity
 - Wave-based parallel execution
 - Dependency-aware scheduling
 
