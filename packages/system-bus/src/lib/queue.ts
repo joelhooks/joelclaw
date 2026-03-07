@@ -81,6 +81,9 @@ export async function enqueueRegisteredQueueEvent(input: {
     ts: Date.now(),
     data: input.data,
     priority,
+    trace: {
+      correlationId: eventId,
+    },
   };
 
   const result = await persist({

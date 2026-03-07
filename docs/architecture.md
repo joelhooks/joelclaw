@@ -184,7 +184,15 @@ Sandbox runs produce patch bundles, not direct commits to main. This keeps runs 
 - Redis stream + sorted-set queue primitives
 - Shared queue event envelope and static registry
 - Replay, lease, ack, and operator inspection surfaces
+- Envelope may carry optional trace (`correlationId`, `causationId`) and triage metadata, but the package remains model-free for correctness
 - Used by CLI queue commands and the Restate queue drainer
+
+**Queue admission triage boundary (ADR-0217 Phase 2)**
+- bounded queue-admission triage lives in `packages/system-bus/src/lib/queue-triage.ts`
+- canonical model is Haiku via the shared `infer()` path
+- the model may only shape priority, dedup suggestion, and route confirmation/mismatch signal
+- static registry routing remains authoritative in this phase; no dynamic handler invention
+- canonical OTEL vocabulary for this layer is `queue.triage.started|completed|failed|fallback`
 
 **@joelclaw/vault-reader**
 - Obsidian Vault context injection

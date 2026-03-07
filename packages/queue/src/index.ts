@@ -23,6 +23,13 @@ export type {
   PersistResult,
   QueueConfig,
   QueueEventEnvelope,
+  QueuePriorityLabel,
+  QueueRouteCheck,
+  QueueTraceMetadata,
+  QueueTriageDecision,
+  QueueTriageFallbackReason,
+  QueueTriageMode,
+  QueueTriageOutcome,
   StoredMessage,
   TelemetryEmitter,
 } from "./types";

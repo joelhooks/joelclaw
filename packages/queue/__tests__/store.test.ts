@@ -7,6 +7,8 @@ import {
   listMessages,
   Priority,
   persist,
+  type QueueEventEnvelope,
+  type QueueTriageDecision,
   type StoredMessage,
 } from "../src";
 import { __queueTestUtils } from "../src/store";
@@ -189,6 +191,43 @@ describe("StoredMessage type shape", () => {
     };
 
     expect(sample.metadata).toBeUndefined();
+  });
+
+  test("queue envelope can carry bounded triage metadata without changing core payload shape", () => {
+    const triage: QueueTriageDecision = {
+      mode: "shadow",
+      family: "discovery/noted",
+      suggested: {
+        priority: "P1",
+        dedupKey: "discovery:https://example.com",
+        routeCheck: "confirm",
+      },
+      final: {
+        priority: "P2",
+        dedupKey: undefined,
+        routeCheck: "confirm",
+      },
+      applied: false,
+      latencyMs: 123,
+    };
+
+    const envelope: QueueEventEnvelope = {
+      id: "evt-queue-envelope",
+      name: "discovery/noted",
+      source: "test",
+      ts: 1_749_990_000_000,
+      data: { url: "https://example.com" },
+      priority: Priority.P2,
+      trace: {
+        correlationId: "corr-queue-envelope",
+        causationId: "cause-queue-envelope",
+      },
+      triage,
+    };
+
+    expect(envelope.trace?.correlationId).toBe("corr-queue-envelope");
+    expect(envelope.triage?.family).toBe("discovery/noted");
+    expect(envelope.data).toMatchObject({ url: "https://example.com" });
   });
 });
 

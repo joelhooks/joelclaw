@@ -12,6 +12,70 @@ export enum Priority {
 }
 
 /**
+ * String label counterpart for Priority.
+ */
+export type QueuePriorityLabel = "P0" | "P1" | "P2" | "P3";
+
+/**
+ * Queue triage mode for bounded model-assisted admission.
+ */
+export type QueueTriageMode = "off" | "shadow" | "enforce";
+
+/**
+ * Whether the model agrees with the static registry route.
+ *
+ * Phase 2 only allows route confirmation/mismatch signaling — not dynamic
+ * handler invention or route replacement.
+ */
+export type QueueRouteCheck = "confirm" | "mismatch";
+
+/**
+ * Canonical fallback reasons when queue triage cannot be applied safely.
+ */
+export type QueueTriageFallbackReason =
+  | "disabled"
+  | "timeout"
+  | "model_error"
+  | "invalid_json"
+  | "schema_error"
+  | "unsafe_override";
+
+/**
+ * Bounded queue triage outcome used for suggested and final decisions.
+ */
+export interface QueueTriageOutcome {
+  priority: QueuePriorityLabel;
+  dedupKey?: string;
+  routeCheck: QueueRouteCheck;
+  reasoning?: string;
+}
+
+/**
+ * Canonical queue triage decision contract.
+ */
+export interface QueueTriageDecision {
+  mode: QueueTriageMode;
+  model?: string;
+  family: string;
+  suggested: QueueTriageOutcome;
+  final: QueueTriageOutcome;
+  applied: boolean;
+  fallbackReason?: QueueTriageFallbackReason;
+  latencyMs: number;
+}
+
+/**
+ * Trace metadata carried on queue envelopes.
+ */
+export interface QueueTraceMetadata {
+  correlationId?: string;
+  causationId?: string;
+  traceId?: string;
+  spanId?: string;
+  parentSpanId?: string;
+}
+
+/**
  * Queue event envelope — canonical shape for all enqueued events.
  * 
  * Provides stable identity, routing metadata, and typed payload structure
@@ -56,13 +120,17 @@ export interface QueueEventEnvelope<T = Record<string, unknown>> {
   dedupKey?: string;
 
   /**
-   * Trace metadata for observability (trace ID, span ID, parent span).
+   * Trace metadata for observability and causality.
    */
-  trace?: {
-    traceId?: string;
-    spanId?: string;
-    parentSpanId?: string;
-  };
+  trace?: QueueTraceMetadata;
+
+  /**
+   * Optional triage metadata describing suggested vs applied admission decisions.
+   *
+   * The deterministic queue core may carry this metadata, but must not depend on
+   * the model layer for correctness.
+   */
+  triage?: QueueTriageDecision;
 
   /**
    * Optional metadata for routing, filtering, or custom handling.

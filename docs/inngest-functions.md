@@ -80,6 +80,12 @@ Operational boundary for Phase 1:
   - `metadata.waitTimeMs` from `queue.dispatch.started` is the canonical Phase-1 queue-to-dispatch latency signal.
   - `joelclaw queue stats --since <iso|ms>` can pin the lower bound to a known-clean moment (for example the supervised Restate `queue.drainer.started` after rollout) so Story 5 soak evidence does not mix fresh traffic with a dirty pre-fix window.
   - this is the first human sanity-pass tool for the "Joel can inspect queue state from CLI only" Story 5 acceptance gate.
+- Phase 2 Story 1 now defines the bounded queue-triage contract in `packages/system-bus/src/lib/queue-triage.ts`:
+  - Haiku is the canonical triage model (`MODEL.HAIKU`) for this queue-admission layer.
+  - the model may only shape `priority`, `dedupKey`, and `routeCheck` (`confirm|mismatch`). It may not invent handler targets or override the registry route.
+  - canonical fallback reasons are `disabled|timeout|model_error|invalid_json|schema_error|unsafe_override`.
+  - canonical OTEL vocabulary is `queue.triage.started|completed|failed|fallback` with `eventId`, `correlationId`, `family`, `mode`, and latency metadata.
+  - the queue envelope can now carry optional `trace.correlationId|causationId` plus optional `triage` metadata without making the deterministic queue core depend on model output for correctness.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 
 ### System health
