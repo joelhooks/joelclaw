@@ -80,9 +80,13 @@ The monorepo follows pnpm workspaces with strict package boundaries:
 - Sandbox profiles: `workspace-write`, `danger-full-access`
 - Artifact manifests: baseSha, headSha, touched files, verification results
 - Runtime validation schemas and type guards
-- **Consumed by**: Restate workflows, system-bus functions, k8s Job launcher
+- **Repo materialization**: `materializeRepo()` for clean checkout at exact SHA
+- **Artifact export**: `generatePatchArtifact()` for auditable patch bundles
+- **Touched-file inventory**: `getTouchedFiles()` captures modified/untracked files
+- **Verification helpers**: `verifyRepoState()` for SHA validation
+- **Consumed by**: Restate workflows, system-bus functions, k8s Job launcher, runtime images
 
-This package eliminates ad-hoc type duplication between Restate and system-bus. All sandboxed story execution must use these types to ensure contract stability.
+This package eliminates ad-hoc type duplication between Restate and system-bus. All sandboxed story execution must use these types to ensure contract stability. Story 3 added repo materialization and artifact export helpers for isolated sandbox runs.
 
 ### Sandboxed Story Execution
 
@@ -111,11 +115,12 @@ Expected paths:
 
 Expected behavior:
 1. Decode TASK_PROMPT_B64 from env
-2. Checkout repo at BASE_SHA
+2. Materialize repo at BASE_SHA in sandbox-local workspace
 3. Execute agent with task
 4. Run verification commands (if VERIFICATION_COMMANDS_B64 set)
-5. Emit SandboxExecutionResult event
-6. Exit 0 (success) or non-zero (failure)
+5. Export patch artifact with touched files and verification results
+6. Emit SandboxExecutionResult event with ExecutionArtifacts
+7. Exit 0 (success) or non-zero (failure)
 
 Cancellation handling:
 - Gracefully handle SIGTERM
@@ -124,6 +129,25 @@ Cancellation handling:
 ```
 
 See `k8s/agent-runner.yaml` for the full runtime contract specification.
+
+**Repo Materialization** (Story 3):
+- `materializeRepo()`: Clone or checkout repo at exact SHA in sandbox-local workspace
+- Fresh clone if target path doesn't exist, fetch + checkout otherwise
+- SHA verification after checkout with automatic unshallow if needed
+- Isolated from host worktree — no mutation of operator checkout
+- Returns: `{ path, sha, freshClone, durationMs }`
+
+**Artifact Export** (Story 3):
+- `generatePatchArtifact()`: Export auditable patch from baseSha..headSha
+- Captures touched-file inventory via `git status --porcelain`
+- Generates git patch (format-patch for commits, diff for uncommitted)
+- Includes verification summary: commands, success, output
+- Includes log references: executionLog, verificationLog
+- Serializable to JSON via `writeArtifactBundle()`
+- **Promotion boundary**: Patch artifact is authoritative output; merge/push is operator decision
+
+**Phase 1 Trade-Off**:
+Sandbox runs produce patch bundles, not direct commits to main. This keeps runs isolated and reversible while we validate the story execution quality. Future phases may introduce automatic merge with approval gates.
 
 **@joelclaw/inference-router**
 - Model selection catalog

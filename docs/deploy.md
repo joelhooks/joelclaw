@@ -163,14 +163,98 @@ kubectl logs job/<job-name> -n joelclaw
 kubectl get jobs -n joelclaw -l app.kubernetes.io/name=agent-runner --show-all
 ```
 
+### Repo Materialization and Artifact Export
+
+**Story 3 additions:**
+
+The agent execution package now provides clean repo materialization and auditable patch export:
+
+#### Repo Materialization
+
+```typescript
+import { materializeRepo } from "@joelclaw/agent-execution";
+
+// Clone or checkout repo at exact SHA in sandbox-local workspace
+const result = await materializeRepo(
+  "/sandbox/workspace/joelclaw",
+  "abc123def456",
+  {
+    remoteUrl: "https://github.com/joelhooks/joelclaw.git",
+    branch: "main",
+    depth: 1,
+    timeoutSeconds: 300,
+  }
+);
+
+// result.path: materialized repo path
+// result.sha: verified checkout SHA
+// result.freshClone: true if cloned, false if fetched
+// result.durationMs: timing data
+```
+
+**Key behaviors:**
+- Fresh clone if target path doesn't exist
+- Fetch + checkout if target path exists
+- SHA verification after checkout
+- Automatic unshallow if SHA not in shallow clone
+- Isolated sandbox-local workspace (host checkout untouched)
+
+#### Artifact Export
+
+```typescript
+import { generatePatchArtifact } from "@joelclaw/agent-execution";
+
+// Export auditable patch artifact from sandbox run
+const artifacts = await generatePatchArtifact({
+  repoPath: "/sandbox/workspace/joelclaw",
+  baseSha: "abc123",
+  headSha: "def456", // optional, defaults to HEAD
+  includeUntracked: true,
+  verificationCommands: ["bun test", "bunx tsc --noEmit"],
+  verificationSuccess: true,
+  verificationOutput: "All checks passed",
+  executionLogPath: "/tmp/execution.log",
+  verificationLogPath: "/tmp/verification.log",
+});
+
+// artifacts.headSha: final SHA after execution
+// artifacts.touchedFiles: list of modified/untracked files
+// artifacts.patch: git patch content (format-patch or diff)
+// artifacts.verification: { commands, success, output }
+// artifacts.logs: { executionLog, verificationLog }
+```
+
+**Artifact contract:**
+- Patch generated from baseSha..headSha range
+- Touched-file inventory from `git status --porcelain`
+- Verification summary and log references
+- Optional untracked file inclusion
+- Serializable to JSON via `writeArtifactBundle()`
+
+#### Promotion Boundary (Phase 1)
+
+**Authoritative output is patch bundle + metadata.**
+
+The runtime **does not** merge to main or push to remote. Promotion is a separate decision:
+- Restate workflow receives `ExecutionArtifacts`
+- Operator reviews patch + verification
+- Operator applies patch to host repo (or discards)
+- Operator commits and pushes (if approved)
+
+This keeps sandbox runs isolated and reversible.
+
 ### Current State
 
-As of Story 2 (sandbox runtime PRD):
+As of Story 3 (sandbox runtime PRD):
 
 - ✅ Job spec generator implemented
 - ✅ Runtime image contract defined
 - ✅ Resource limits and TTL cleanup configured
 - ✅ Cancellation support at Job level
+- ✅ Repo materialization helpers implemented
+- ✅ Patch artifact export implemented
+- ✅ Touched-file inventory capture
+- ✅ Verification summary and log references in artifacts
 - ⏳ Runtime image not yet built (Story 3)
 - ⏳ Hot-image CronJob not yet implemented (Story 4)
 - ⏳ Warm-pool scheduler not yet implemented (Story 5)

@@ -441,6 +441,141 @@ Config source:
 
 ---
 
+## 10.1) Sandbox Execution Contract (@joelclaw/agent-execution)
+
+**Package**: `packages/agent-execution/`  
+**Purpose**: Canonical contract for sandboxed story execution shared between Restate workflows, system-bus Inngest functions, and k8s Job launcher.
+
+### Contract Types
+
+**Request**: `SandboxExecutionRequest`
+- `workflowId`, `requestId`, `storyId`: identifiers
+- `task`: story prompt/task to execute
+- `agent`: `{ name, variant?, model?, program? }`
+- `sandbox`: `"workspace-write" | "danger-full-access"`
+- `baseSha`: git SHA before execution
+- `cwd?`: working directory
+- `timeoutSeconds?`: timeout
+- `verificationCommands?`: post-execution verification
+- `sessionId?`: tracking identifier
+
+**Result**: `SandboxExecutionResult`
+- `requestId`: correlation ID
+- `state`: `"pending" | "running" | "completed" | "failed" | "cancelled"`
+- `startedAt`, `completedAt?`, `durationMs?`: timing
+- `artifacts?`: execution artifacts (see below)
+- `error?`: error message (failed state)
+- `output?`: stdout/stderr output
+
+**Artifacts**: `ExecutionArtifacts`
+- `headSha`: git SHA after execution
+- `touchedFiles`: list of modified/untracked files from `git status --porcelain`
+- `patch?`: git patch content (format-patch or diff)
+- `verification?`: `{ commands, success, output }`
+- `logs?`: `{ executionLog?, verificationLog? }`
+
+### Repo Materialization (Story 3)
+
+**Function**: `materializeRepo(targetPath, baseSha, options)`
+
+**Behavior**:
+- Clone repo if target path doesn't exist (requires `remoteUrl`)
+- Fetch + checkout if target path exists
+- SHA verification after checkout
+- Automatic unshallow if SHA not in shallow clone
+- Isolated sandbox-local workspace (host worktree untouched)
+
+**Returns**: `{ path, sha, freshClone, durationMs }`
+
+**Key options**:
+- `remoteUrl?`: remote URL for fresh clone
+- `branch?`: branch/ref to fetch (default: `"main"`)
+- `depth?`: shallow clone depth (default: `1`)
+- `includeSubmodules?`: include submodules
+- `timeoutSeconds?`: timeout (default: `300`)
+
+### Artifact Export (Story 3)
+
+**Function**: `generatePatchArtifact(options)`
+
+**Behavior**:
+- Captures touched-file inventory via `getTouchedFiles()`
+- Generates git patch from `baseSha..headSha`:
+  - Uses `git format-patch` if commits exist in range
+  - Uses `git diff` if only uncommitted changes
+- Optionally includes untracked files as patch content
+- Embeds verification summary and log references
+- Serializable to JSON via `writeArtifactBundle()`
+
+**Key options**:
+- `repoPath`: path to git repo
+- `baseSha`: base SHA (start of diff range)
+- `headSha?`: head SHA (default: HEAD)
+- `includeUntracked?`: include untracked files (default: `true`)
+- `verificationCommands?`, `verificationSuccess?`, `verificationOutput?`: verification data
+- `executionLogPath?`, `verificationLogPath?`: log references
+- `timeoutSeconds?`: timeout (default: `60`)
+
+**Returns**: `ExecutionArtifacts`
+
+### Promotion Boundary (Phase 1)
+
+**Authoritative output is patch bundle + metadata.**
+
+Sandbox runs **do not** merge to main or push to remote. The runtime:
+1. Materializes repo at `baseSha` in sandbox-local workspace
+2. Executes agent task
+3. Runs verification commands
+4. Exports patch artifact with touched files and verification results
+5. Emits `SandboxExecutionResult` event with `ExecutionArtifacts`
+
+Promotion is a separate operator decision:
+- Restate workflow receives `ExecutionArtifacts`
+- Operator reviews patch + verification summary
+- Operator applies patch to host repo (or discards)
+- Operator commits and pushes (if approved)
+
+This keeps sandbox runs isolated and reversible.
+
+### k8s Job Integration
+
+**Job spec generation**: `generateJobSpec(request, options)`
+
+Cold k8s Jobs for isolated story execution:
+- Deterministic Job naming keyed by `requestId`
+- Runtime image contract: Git, Bun, agent tooling, `/workspace` directory
+- Environment-driven config: `WORKFLOW_ID`, `REQUEST_ID`, `STORY_ID`, `TASK_PROMPT_B64`, `BASE_SHA`, etc.
+- Resource limits: `500m-2` CPU, `1-4Gi` memory (configurable)
+- TTL cleanup: auto-delete after 5 minutes (default)
+- Active deadline: 1 hour max runtime (default)
+- No automatic retries (`backoffLimit: 0`)
+- Security: non-root (UID 1000), no privilege escalation, capabilities dropped
+
+**Runtime contract**:
+1. Decode `TASK_PROMPT_B64` from env
+2. Call `materializeRepo()` at `BASE_SHA`
+3. Execute agent with task
+4. Run verification commands (if `VERIFICATION_COMMANDS_B64` set)
+5. Call `generatePatchArtifact()` with results
+6. Emit `SandboxExecutionResult` event with `ExecutionArtifacts`
+7. Exit 0 (success) or non-zero (failure)
+
+**Cancellation**: Delete Job resource (SIGTERM to container)
+
+**Job deletion**: `generateJobDeletion(requestId)` -> `{ name, namespace, propagationPolicy }`
+
+See `k8s/agent-runner.yaml` for full runtime contract specification.
+
+### Topology Impact
+
+- **Story 2**: Added contract types and Job spec generation
+- **Story 3**: Added repo materialization and artifact export helpers
+- **Future**: Runtime image build, hot-image CronJob, warm-pool scheduler, Restate integration
+
+**Current state**: Code and contracts only; no live infrastructure deployed yet.
+
+---
+
 ## 11) Verification Commands (Health + Wiring)
 
 ## Core topology
