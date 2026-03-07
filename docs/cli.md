@@ -187,11 +187,12 @@ joelclaw discover <url> [-c <context>]
 Semantics:
 
 - default path still emits `discovery/noted` directly to Inngest.
-- when `QUEUE_PILOTS=discovery`, `joelclaw discover` switches to the shared Redis queue instead:
-  - enqueues a `QueueEventEnvelope` for `discovery/noted`
+- when `QUEUE_PILOTS=discovery`, `joelclaw discover` now posts raw event intent to the worker admission endpoint (`POST /internal/queue/enqueue`) instead of writing Redis directly:
+  - the worker owns queue admission, static registry lookup, and optional shadow triage
   - returns queue metadata (`streamId`, `eventId`, `priority`) instead of Inngest run ids
+  - includes `triageMode` + `triage` metadata when `QUEUE_TRIAGE_MODE=shadow` enables the family
   - relies on the Restate queue drainer to forward the event onward
-- this is the current operator-facing pilot cutover for the discovery family.
+- this keeps discovery pilot clients thin while the server remains the only queue policy surface.
 
 ## Subscribe check queue pilot
 
@@ -203,8 +204,9 @@ Semantics:
 
 - scoped checks (`--id <id>`) still emit `subscription/check.requested` directly to Inngest.
 - all-subscription checks keep the legacy Inngest path by default.
-- when `QUEUE_PILOTS=subscriptions`, `joelclaw subscribe check` without `--id` enqueues `subscription/check-feeds.requested` into the shared queue instead:
+- when `QUEUE_PILOTS=subscriptions`, `joelclaw subscribe check` without `--id` posts `subscription/check-feeds.requested` to the worker admission endpoint instead of writing Redis directly:
   - returns queue metadata (`streamId`, `eventId`, `priority`)
+  - includes `triageMode` + `triage` metadata when `QUEUE_TRIAGE_MODE=shadow` enables the family
   - points next actions at `joelclaw queue inspect` / `joelclaw queue depth`
   - relies on the Restate queue drainer to forward the **actual** `subscription/check-feeds.requested` event name onward
 
@@ -221,13 +223,13 @@ joelclaw queue
 
 Semantics:
 
-- all queue subcommands return a clean JSON envelope and close their Redis client before exit; no library debug logs are mixed into stdout
-- `emit` enqueues an event to the Redis stream queue (`joelclaw:queue:events`).
+- all queue subcommands return a clean JSON envelope; read-oriented subcommands close their Redis client before exit and `emit` stays a thin worker client instead of writing Redis directly
+- `emit` posts queue admission intent to the worker endpoint (`POST /internal/queue/enqueue`).
   - accepts event name (e.g., `discovery/noted`, `content/updated`)
   - accepts optional JSON payload via `-d`
-  - priority defaults from registry (`packages/queue/src/registry.ts`) or can be overridden via `-p`
-  - generates a `QueueEventEnvelope` with stable ID, timestamp, source, and trace metadata
-  - returns the Redis stream ID and priority
+  - optional priority override via `-p` is normalized client-side, but static registry routing and bounded triage stay server-side
+  - the worker generates the canonical `QueueEventEnvelope`, adds trace metadata, evaluates optional shadow triage, and persists the queue record
+  - returns the Redis stream ID, priority, and any `triageMode` / `triage` metadata from admission
 - `depth` reports queue depth, priority distribution (P0/P1/P2/P3 counts), oldest/newest message timestamps
 - `stats` summarizes recent Restate queue-drainer behavior from OTEL over a lookback window.
   - reports sampled/found dispatch events, live queue depth, started/completed/failed counts, success rate, queue wait-time percentiles (`p50`/`p95`), dispatch-duration percentiles, promotion count, top event families, and recent failures

@@ -86,6 +86,11 @@ Operational boundary for Phase 1:
   - canonical fallback reasons are `disabled|timeout|model_error|invalid_json|schema_error|unsafe_override`.
   - canonical OTEL vocabulary is `queue.triage.started|completed|failed|fallback` with `eventId`, `correlationId`, `family`, `mode`, and latency metadata.
   - the queue envelope can now carry optional `trace.correlationId|causationId` plus optional `triage` metadata without making the deterministic queue core depend on model output for correctness.
+- Phase 2 Story 2 now routes queue admission through one canonical server-side surface in `packages/system-bus/src/lib/queue.ts`:
+  - worker-local ingress paths (`discovery-capture`, direct subscription discovery publish, GitHub webhook queueing) call `enqueueRegisteredQueueEvent()` directly.
+  - edge clients (`joelclaw queue emit`, `joelclaw discover`, queue-mode `joelclaw subscribe check`) post raw event intent to `POST /internal/queue/enqueue` so they stay thin and stop writing Redis directly.
+  - shadow triage is opt-in via `QUEUE_TRIAGE_MODE=shadow` and `QUEUE_TRIAGE_FAMILIES=discovery,content,subscriptions,github` (or exact event names).
+  - Story 2 still clamps admission to static registry routing and shadow-mode final decisions; enforcement has not earned a runtime path yet.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 
 ### System health

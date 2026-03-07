@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { __queueAdmissionTestUtils } from "../lib/queue-admission";
 import { __queueTestUtils, queueCmd } from "./queue";
 
 describe("Queue CLI Command", () => {
@@ -110,6 +111,12 @@ describe("Queue CLI Command", () => {
     expect(__queueTestUtils.parseSinceTimestamp("1772911985000")).toBe(1772911985000);
     expect(__queueTestUtils.parseSinceTimestamp("1772911985")).toBe(1772911985000);
     expect(() => __queueTestUtils.parseSinceTimestamp("not-a-time")).toThrow();
+  });
+
+  it("normalizes manual priority overrides before posting to the worker admission endpoint", () => {
+    expect(__queueAdmissionTestUtils.normalizePriority("p1")).toBe("P1");
+    expect(__queueAdmissionTestUtils.normalizePriority(0)).toBe("P0");
+    expect(__queueAdmissionTestUtils.normalizePriority("bogus")).toBeUndefined();
   });
 
   // Integration tests would require Redis + Typesense and are better suited for E2E.

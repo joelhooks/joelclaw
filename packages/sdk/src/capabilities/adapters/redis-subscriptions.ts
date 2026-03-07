@@ -1,15 +1,6 @@
-import { randomUUID } from "node:crypto"
-import {
-  init,
-  lookupQueueEvent,
-  Priority,
-  persist,
-  type QueueConfig,
-  type QueueEventEnvelope,
-} from "@joelclaw/queue"
 import { Effect, Schema } from "effect"
 import type Redis from "ioredis"
-import { sendInngestEvent } from "../../lib/inngest"
+import { loadInngestEventConfig, sendInngestEvent } from "../../lib/inngest"
 import { type CapabilityPort, capabilityError } from "../contract"
 
 const SUBSCRIPTIONS_KEY = "joelclaw:subscriptions"
@@ -42,13 +33,6 @@ const LEGACY_SUBSCRIPTION_OVERRIDES: Record<string, Pick<Subscription, "feedUrl"
     feedUrl: "https://github.com/badlogic/pi-mono",
     checkInterval: "daily",
   },
-}
-
-const QUEUE_CONFIG: QueueConfig = {
-  streamKey: "joelclaw:queue:events",
-  priorityKey: "joelclaw:queue:priority",
-  consumerGroup: "joelclaw:queue:cli",
-  consumerName: "cli-subscribe",
 }
 
 const ListArgsSchema = Schema.Struct({})
@@ -229,39 +213,51 @@ function isQueuePilotEnabled(name: string): boolean {
 }
 
 async function enqueueSubscriptionCheckFeedsRequested(
-  redis: Redis,
   data: Record<string, unknown>
-): Promise<{ streamId: string; eventId: string; priority: number }> {
-  await init(redis, QUEUE_CONFIG)
-
-  const priority = lookupQueueEvent("subscription/check-feeds.requested")?.priority ?? Priority.P2
-  const eventId = randomUUID()
-  const envelope: QueueEventEnvelope = {
-    id: eventId,
-    name: "subscription/check-feeds.requested",
-    source: "cli/subscribe",
-    ts: Date.now(),
-    data,
-    priority,
-  }
-
-  const result = await persist({
-    payload: envelope as Record<string, unknown>,
-    priority,
-    metadata: {
-      envelope_version: "1",
-      source: "cli/subscribe",
+): Promise<{
+  streamId: string
+  eventId: string
+  priority: number
+  triageMode: string
+  triage?: unknown
+}> {
+  const { workerUrl } = loadInngestEventConfig()
+  const response = await fetch(`${workerUrl}/internal/queue/enqueue`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
+    body: JSON.stringify({
+      name: "subscription/check-feeds.requested",
+      source: "cli/subscribe",
+      data,
+    }),
   })
 
-  if (!result) {
-    throw new Error("subscription/check-feeds.requested event was rejected by queue filter")
+  const bodyText = await response.text()
+  const body = (() => {
+    if (!bodyText.trim()) {
+      return { ok: false, error: `HTTP ${response.status}` }
+    }
+
+    try {
+      return JSON.parse(bodyText) as Record<string, unknown>
+    } catch {
+      return { ok: false, error: bodyText }
+    }
+  })()
+
+  if (!response.ok || !body?.ok || !body.result) {
+    const detail = body && typeof body === "object" ? (body as Record<string, unknown>).error : body
+    throw new Error(`queue admission failed (${response.status}): ${JSON.stringify(detail)}`)
   }
 
-  return {
-    streamId: result.streamId,
-    eventId,
-    priority: result.priority,
+  return body.result as {
+    streamId: string
+    eventId: string
+    priority: number
+    triageMode: string
+    triage?: unknown
   }
 }
 
@@ -435,31 +431,28 @@ export const redisSubscriptionsAdapter: CapabilityPort<typeof commands> = {
           }
 
           if (isQueuePilotEnabled("subscriptions")) {
-            const redis = yield* makeRedis()
-            try {
-              const queued = yield* Effect.tryPromise({
-                try: () => enqueueSubscriptionCheckFeedsRequested(redis, {
-                  forceAll: true,
-                  source: "cli",
-                }),
-                catch: (error) =>
-                  fail(
-                    "SUBSCRIBE_CHECK_FAILED",
-                    `Failed to enqueue subscription/check-feeds.requested: ${String(error)}`,
-                    "Check Redis connectivity and retry."
-                  ),
-              })
+            const queued = yield* Effect.tryPromise({
+              try: () => enqueueSubscriptionCheckFeedsRequested({
+                forceAll: true,
+                source: "cli",
+              }),
+              catch: (error) =>
+                fail(
+                  "SUBSCRIBE_CHECK_FAILED",
+                  `Failed to enqueue subscription/check-feeds.requested: ${String(error)}`,
+                  "Check worker reachability at INNGEST_WORKER_URL and retry."
+                ),
+            })
 
-              return {
-                scope: "all",
-                event: "subscription/check-feeds.requested",
-                mode: "queue",
-                streamId: queued.streamId,
-                eventId: queued.eventId,
-                priority: queued.priority,
-              }
-            } finally {
-              redis.disconnect()
+            return {
+              scope: "all",
+              event: "subscription/check-feeds.requested",
+              mode: "queue",
+              streamId: queued.streamId,
+              eventId: queued.eventId,
+              priority: queued.priority,
+              triageMode: queued.triageMode,
+              triage: queued.triage,
             }
           }
 

@@ -3,12 +3,14 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 const DEFAULT_INNGEST_URL = "http://localhost:8288"
+const DEFAULT_WORKER_URL = "http://localhost:3111"
 const SYSTEM_BUS_ENV_PATH = join(homedir(), ".config", "system-bus.env")
 
 export interface InngestEventConfig {
   readonly eventKey: string
   readonly inngestUrl: string
   readonly eventApi: string
+  readonly workerUrl: string
 }
 
 let cachedConfig: InngestEventConfig | null = null
@@ -78,6 +80,9 @@ export function loadInngestEventConfig(): InngestEventConfig {
     eventKey,
     inngestUrl,
     eventApi: `${inngestUrl}/e/${eventKey}`,
+    workerUrl: normalizeBaseUrl(
+      process.env.INNGEST_WORKER_URL?.trim() || fromFile.INNGEST_WORKER_URL?.trim() || DEFAULT_WORKER_URL,
+    ),
   }
 
   return cachedConfig

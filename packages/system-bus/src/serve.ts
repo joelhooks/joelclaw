@@ -56,6 +56,7 @@ import {
   hostFunctionDefinitions,
   hostFunctionIds,
 } from "./inngest/functions/index.host";
+import { enqueueRegisteredQueueEvent } from "./lib/queue";
 import { emitOtelEvent, emitValidatedOtelEvent } from "./observability/emit";
 
 const app = new Hono();
@@ -245,6 +246,9 @@ app.get("/", (c) =>
     observability: {
       ingestEndpoint: "/observability/emit",
     },
+    queue: {
+      admissionEndpoint: "/internal/queue/enqueue",
+    },
   })
 );
 
@@ -266,6 +270,51 @@ app.post("/observability/emit", async (c) => {
     );
   }
   return c.json({ ok: true, result });
+});
+
+app.post("/internal/queue/enqueue", async (c) => {
+  const authError = verifyInternalToken(c);
+  if (authError) return authError;
+
+  const payload = await c.req.json().catch(() => null);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return c.json({ ok: false, error: "Invalid payload" }, 400);
+  }
+
+  const name = typeof (payload as any).name === "string" ? (payload as any).name.trim() : "";
+  const source = typeof (payload as any).source === "string" ? (payload as any).source.trim() : "";
+  const data = (payload as any).data;
+  const metadata = (payload as any).metadata;
+  const eventId = typeof (payload as any).eventId === "string" ? (payload as any).eventId.trim() : undefined;
+  const priority = (payload as any).priority;
+
+  if (!name || !source) {
+    return c.json({ ok: false, error: "Missing required fields: name, source" }, 400);
+  }
+
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return c.json({ ok: false, error: "data must be a JSON object" }, 400);
+  }
+
+  if (metadata != null && (typeof metadata !== "object" || Array.isArray(metadata))) {
+    return c.json({ ok: false, error: "metadata must be a JSON object when provided" }, 400);
+  }
+
+  try {
+    const result = await enqueueRegisteredQueueEvent({
+      name,
+      source,
+      data: data as Record<string, unknown>,
+      eventId,
+      priority,
+      metadata: metadata as Record<string, unknown> | undefined,
+    });
+
+    return c.json({ ok: true, result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.json({ ok: false, error: message }, 400);
+  }
 });
 
 app.post("/internal/agent-dispatch", async (c) => {

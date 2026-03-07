@@ -15,17 +15,14 @@ import {
   init,
   inspectById,
   listMessages,
-  lookupQueueEvent,
-  Priority,
-  persist,
   type QueueConfig,
-  type QueueEventEnvelope,
   type TelemetryEmitter,
 } from "@joelclaw/queue";
 import { Console, Effect } from "effect";
 import Redis from "ioredis";
 import { loadConfig } from "../config";
 import { createOtelEventPayload, ingestOtelPayload } from "../lib/otel-ingest";
+import { enqueueQueueEventViaWorker } from "../lib/queue-admission";
 import { type NextAction, respond, respondError } from "../response";
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth";
 
@@ -453,16 +450,10 @@ const emitCmd = Command.make(
     ),
   },
   ({ event, data, priority }) =>
-    withRedisCleanup(Effect.gen(function* () {
-      yield* Effect.tryPromise({
-        try: () => ensureQueueInitialized(),
-        catch: (error) => new Error(`Failed to initialize queue: ${error}`),
-      });
-
+    Effect.gen(function* () {
       const dataText = parseOptionalText(data);
       const priorityText = parseOptionalText(priority);
 
-      // Parse data JSON
       let eventData: Record<string, unknown> = {};
       if (dataText) {
         try {
@@ -477,50 +468,19 @@ const emitCmd = Command.make(
         }
       }
 
-      // Determine priority
-      let eventPriority = Priority.P2;
-      if (priorityText) {
-        const priorityUpper = priorityText.toUpperCase();
-        if (priorityUpper === "P0") eventPriority = Priority.P0;
-        else if (priorityUpper === "P1") eventPriority = Priority.P1;
-        else if (priorityUpper === "P2") eventPriority = Priority.P2;
-        else if (priorityUpper === "P3") eventPriority = Priority.P3;
-        else {
-          yield* Effect.fail(new Error(`Invalid priority: ${priorityText}. Must be P0, P1, P2, or P3`));
-        }
-      } else {
-        // Look up default priority from registry
-        const registryEntry = lookupQueueEvent(event);
-        if (registryEntry) {
-          eventPriority = registryEntry.priority;
-        }
+      if (priorityText && !["P0", "P1", "P2", "P3"].includes(priorityText.toUpperCase())) {
+        yield* Effect.fail(new Error(`Invalid priority: ${priorityText}. Must be P0, P1, P2, or P3`));
       }
 
-      // Generate envelope
-      const envelope: QueueEventEnvelope = {
-        id: crypto.randomUUID(),
-        name: event,
-        source: "cli",
-        ts: Date.now(),
-        data: eventData,
-        priority: eventPriority,
-      };
-
-      // Persist to queue
       const result = yield* Effect.tryPromise({
-        try: () => persist({
-          payload: envelope as Record<string, unknown>,
-          priority: eventPriority,
-          metadata: {
-            envelope_version: "1",
-          },
+        try: () => enqueueQueueEventViaWorker({
+          name: event,
+          data: eventData,
+          source: "cli",
+          priority: priorityText?.toUpperCase() as "P0" | "P1" | "P2" | "P3" | undefined,
         }),
-        catch: (error) => new Error(`Failed to persist event: ${error}`),
+        catch: (error) => new Error(`Failed to enqueue event via worker admission surface: ${error}`),
       });
-
-      if (!result) {
-        yield* Effect.fail(new Error("Event was rejected by queue filter"));
-      }
 
       const next: NextAction[] = [
         {
@@ -546,11 +506,13 @@ const emitCmd = Command.make(
           ok: true,
           streamId: result.streamId,
           priority: result.priority,
-          event: envelope.name,
-          eventId: envelope.id,
+          event,
+          eventId: result.eventId,
+          triageMode: result.triageMode,
+          triage: result.triage,
         }, next)
       );
-    }))
+    })
 );
 
 /**

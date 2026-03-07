@@ -189,6 +189,8 @@ Sandbox runs produce patch bundles, not direct commits to main. This keeps runs 
 
 **Queue admission triage boundary (ADR-0217 Phase 2)**
 - bounded queue-admission triage lives in `packages/system-bus/src/lib/queue-triage.ts`
+- canonical server-side admission helper lives in `packages/system-bus/src/lib/queue.ts`
+- edge clients hit `POST /internal/queue/enqueue`; worker-local ingress paths call the helper directly
 - canonical model is Haiku via the shared `infer()` path
 - the model may only shape priority, dedup suggestion, and route confirmation/mismatch signal
 - static registry routing remains authoritative in this phase; no dynamic handler invention

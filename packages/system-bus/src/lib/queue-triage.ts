@@ -336,7 +336,7 @@ export async function triageQueueEvent(input: QueueTriageInput): Promise<QueueTr
   const model = input.model ?? QUEUE_TRIAGE_MODEL;
   const correlationId = input.envelope.trace?.correlationId?.trim() || input.envelope.id;
   const baseline = buildBaselineOutcome(
-    registryEntry.priority ?? input.envelope.priority,
+    input.envelope.priority ?? registryEntry.priority ?? Priority.P2,
     input.dedupKey,
   );
 
