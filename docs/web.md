@@ -24,6 +24,13 @@ Next.js 16 App Router site for `joelclaw.com`.
 - If no tutorial exists for that slug, the route falls back to the legacy `discovery:<slug>` record.
 - This keeps `/cool/...` tutorial URLs working even when an older discovery stub still exists for the same topic.
 
+## Post display rules
+
+- `apps/web/app/[slug]/page.tsx` renders the post title in the page header from Convex metadata.
+- The markdown/MDX body must not render a second top-level H1 below that header.
+- The post renderer strips a markdown H1 before passing content into `MDXRemote`.
+- Regex: `content.replace(/^#\s+.*$/m, "").trim()`
+
 ## CLAWMAIL view-source convention
 
 Regular HTML pages include a deterministic head marker script labeled `CLAWMAIL` from the root shell:

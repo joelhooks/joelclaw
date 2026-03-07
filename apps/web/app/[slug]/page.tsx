@@ -5,8 +5,8 @@ import { MDXRemote } from "next-mdx-remote/rsc";
 import { Suspense } from "react";
 import { ContentDebugPanel } from "@/components/content-debug-panel";
 import { ContentLive } from "@/components/content-live";
-import { CopyAsPrompt } from "@/components/copy-as-prompt";
 import { ConvexReaderProvider } from "@/components/convex-reader-provider";
+import { CopyAsPrompt } from "@/components/copy-as-prompt";
 import { LazyFeedbackStatusIsland } from "@/components/review/lazy-feedback-status-island";
 import { LazyReviewGate } from "@/components/review/lazy-review-gate";
 import { SITE_NAME, SITE_URL } from "@/lib/constants";
@@ -175,10 +175,12 @@ async function CachedArticleContent({ slug }: { slug: string }) {
 
 /** MDX rendering for static post content. */
 function PostContent({ content }: { content: string }) {
+  const source = content.replace(/^#\s+.*$/m, "").trim();
+
   return (
     <div className="prose-joelclaw">
       <MDXRemote
-        source={content}
+        source={source}
         components={mdxComponents}
         options={{ mdxOptions: { remarkPlugins, rehypePlugins } }}
       />
