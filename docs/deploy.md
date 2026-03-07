@@ -14,9 +14,21 @@ Host launchd assets that are part of joelclaw runtime behavior belong in `infra/
 
 Current canonical examples include:
 - `infra/launchd/com.joel.system-bus-worker.plist`
+- `infra/launchd/com.joel.restate-worker.plist`
 - `infra/launchd/com.joel.content-sync-watcher.plist`
 
 When installing or repairing one of these services, prefer a symlink from `~/Library/LaunchAgents/<label>.plist` back to the repo source so launchd follows the git-tracked file.
+
+Example for the Restate worker:
+
+```bash
+ln -sfn ~/Code/joelhooks/joelclaw/infra/launchd/com.joel.restate-worker.plist \
+  ~/Library/LaunchAgents/com.joel.restate-worker.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.joel.restate-worker.plist 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.joel.restate-worker.plist
+```
+
+The canonical Restate host runtime is `scripts/restate/start.sh` behind `com.joel.restate-worker`, not an ad-hoc `nohup bun run ...` shell. The wrapper loads `~/.config/system-bus.env`, forces a headless-safe channel (`console` is downgraded to `noop` under launchd), forwards SIGTERM to Bun, and opportunistically re-registers the deployment when the Restate admin API is reachable.
 
 Example for the content watcher:
 

@@ -8,7 +8,7 @@ joelclaw is a personal AI infrastructure monorepo built around event-driven work
 
 1. **Hexagonal Architecture (ADR-0144)**: Heavy logic lives in standalone `@joelclaw/*` packages behind interfaces. Consumers (gateway, CLI) are thin composition roots that wire adapters together.
 
-2. **Event-Driven**: All durable work flows through Inngest. Events are the primary integration point between subsystems.
+2. **Event-Driven**: Durable work now runs through a dual-runtime phase: Inngest remains the legacy/event-native backbone while Restate owns new DAG-style execution and queue-drainer pilots. Events remain the primary integration point between subsystems.
 
 3. **CLI-First**: The `joelclaw` CLI is the primary operator interface. All commands return HATEOAS JSON envelopes for agent consumption.
 
@@ -75,7 +75,9 @@ The monorepo follows pnpm workspaces with strict package boundaries:
 - Hosts deploy gate, DAG orchestrator, and the deterministic queue drainer
 - Owns the execution-adjacent queue → Restate `/send` bridge for ADR-0217 Story 3
 - The drainer now self-pulses immediately when backlog remains and a dispatch slot frees, so `QUEUE_DRAIN_INTERVAL_MS` is an idle poll heartbeat instead of a fixed per-message tax
+- The canonical long-running host runtime is launchd service `com.joel.restate-worker` via `scripts/restate/start.sh`; ad-hoc `nohup bun run ...` launches are for short debugging only because opaque restarts contaminate queue soak evidence
 - Provides the current operator-facing sandbox orchestration surface
+- Hosts the pi-mono research/indexing sync that materializes GitHub docs/issues/PRs/comments/commits/releases into Typesense collection `pi_mono_artifacts` via a Restate DAG + host runner
 
 #### Contract Packages
 
@@ -309,8 +311,10 @@ All subsystems emit structured telemetry:
 
 - **OTEL Events** → Typesense `otel_events` collection
 - **Langfuse Traces** → LLM call tracking, cost attribution
-- **Inngest Runs** → Durable function execution history
+- **Inngest Runs** → Legacy/event-native durable function execution history
+- **Restate Runs** → DAG/workflow execution history and queue-drainer evidence
 - **Gateway Logs** → Pi session transcripts, Redis queue depth
+- **pi-mono Corpus** → Typesense `pi_mono_artifacts` collection (repo docs, issues, PRs, comments, commits, releases, materialized maintainer profile)
 
 Access via:
 ```bash

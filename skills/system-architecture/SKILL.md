@@ -101,6 +101,7 @@ Mac Mini "Panda" (host macOS)
 | Launchd label | State | PID (snapshot) | Role | Ports / endpoints |
 |---|---:|---:|---|---|
 | `com.joel.system-bus-worker` | running | 75292 | Host worker supervisor (`worker-supervisor`) | supervises child bun on 3111 |
+| `com.joel.restate-worker` | running | 22103 | Host Restate worker (`scripts/restate/start.sh` → `packages/restate/src/index.ts`) | Bun service on 9080; deterministic queue drainer + DAG/deploy workflows |
 | `com.joel.gateway` | running | 81275 | Gateway daemon (`packages/gateway/src/daemon.ts`) | WS `:3018`, Redis bridge |
 | `com.joel.caddy` | running | 9347 | Reverse proxy | 3443, 5443, 6443, 7443, 8290, 8443, 9443 |
 | `com.joel.talon` | running | 96359 | Infra watchdog | health `127.0.0.1:9999` |
@@ -248,7 +249,7 @@ From index comments + function lists:
 ## Queue flow: `joelclaw queue emit` → Restate drainer → durable dispatch
 
 1. CLI `joelclaw queue emit <event>` persists a `QueueEventEnvelope` into Redis stream `joelclaw:queue:events` and indexes it in sorted set `joelclaw:queue:priority`.
-2. The host Restate worker (`packages/restate/src/index.ts`) starts a deterministic queue drainer beside the channel callback listener.
+2. The host Restate worker (`com.joel.restate-worker` → `scripts/restate/start.sh` → `packages/restate/src/index.ts`) starts a deterministic queue drainer beside the channel callback listener.
 3. On startup, the drainer claims pending + never-delivered entries via `@joelclaw/queue#getUnacked()`, reindexes replayable entries, and emits OTEL replay evidence.
 4. Each drain tick selects the next priority candidate from the sorted set, resolves its static registry target from `packages/queue/src/registry.ts`, and POSTs a one-node DAG request to Restate `/dagOrchestrator/{workflowId}/run/send`.
 5. When backlog remains and a dispatch slot frees, the drainer self-pulses immediately instead of waiting for the next `QUEUE_DRAIN_INTERVAL_MS` heartbeat. That interval is now the idle poll / retry cadence, not a mandatory 2-second tax between successful sends.

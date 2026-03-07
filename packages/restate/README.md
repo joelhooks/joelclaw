@@ -38,6 +38,7 @@ Throughput note:
 
 - `dagOrchestrator.run` — dependency-aware DAG execution with wave fan-out/fan-in
 - `dagWorker.execute` — per-node durable execution service called by orchestrator
+- `pi-mono-sync` — Restate DAG pipeline that syncs `badlogic/pi-mono` docs/issues/PRs/comments/commits/releases into Typesense collection `pi_mono_artifacts`
 
 #### Handler types
 
@@ -71,7 +72,28 @@ Nodes receive outputs from their upstream dependencies via `{{nodeId}}` template
 }
 ```
 
+## Canonical headless runtime
+
+Repo-managed launchd is now the canonical long-running host runtime for the Restate worker:
+
+- launch agent: `infra/launchd/com.joel.restate-worker.plist`
+- start wrapper: `scripts/restate/start.sh`
+- logs: `/tmp/joelclaw/restate.log`, `/tmp/joelclaw/restate.err`
+
+The wrapper loads `~/.config/system-bus.env`, refuses headless `CHANNEL=console` by forcing `noop`, forwards SIGTERM to the Bun child so port `9080` is not orphaned, and opportunistically runs `scripts/restate/register-deployment.sh` when the Restate admin API is reachable.
+
+Install it with a repo symlink instead of hand-rolled `nohup` shells:
+
+```bash
+ln -sfn ~/Code/joelhooks/joelclaw/infra/launchd/com.joel.restate-worker.plist \
+  ~/Library/LaunchAgents/com.joel.restate-worker.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.joel.restate-worker.plist 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.joel.restate-worker.plist
+```
+
 ## Run locally
+
+For one-off foreground debugging only:
 
 ```bash
 bun run packages/restate/src/index.ts
@@ -97,6 +119,9 @@ bun run packages/restate/src/trigger-dag.ts -- --pipeline health
 
 # DAG research (real work — web search + vault + memory → LLM synthesis)
 bun run packages/restate/src/trigger-dag.ts -- --pipeline research --topic "Restate vs Temporal"
+
+# pi-mono artifacts sync (Typesense corpus + maintainer profile)
+bun run packages/restate/src/trigger-dag.ts -- --pipeline pi-mono-sync --repo badlogic/pi-mono --full-backfill
 
 # PRD → DAG compilation (host pi planning + Restate orchestration + host agent bridge)
 bun run packages/restate/src/trigger-prd.ts -- --prd ~/Vault/Projects/09-joelclaw/0217-phase-1-queue-execution-plan.md --cwd ~/Code/joelhooks/joelclaw
@@ -214,6 +239,13 @@ This seeds the ADR-0216 tier-1 set in Dkron:
 Each job uses Dkron's shell executor plus `wget` against `http://restate:8080/...` from inside the cluster. The shell wrapper appends epoch seconds to the workflow ID prefix so each scheduled run gets a unique Restate workflow ID.
 
 For the tier-1 migrations, Restate shell nodes call `scripts/restate/run-tier1-task.ts` on the host so a green scheduled run means the underlying task actually ran. Non-zero shell exits now fail the Restate node instead of returning fake success.
+
+The same host-runner path now backs `pi-mono-sync`. The direct task:
+
+- creates/updates Typesense collection `pi_mono_artifacts`
+- ingests repo docs, issues, issue comments, pull requests, pull-request review comments, commits, and releases
+- writes a materialized `maintainer_profile` document (currently for `badlogic`)
+- writes a `sync_state` checkpoint document so later runs can stay incremental unless `--full-backfill` is requested
 
 Dkron uses **six-field** cron expressions. Hourly-at-minute-7 is:
 
