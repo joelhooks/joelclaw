@@ -8,6 +8,7 @@ import {
 } from "../../lib/feed-checker";
 import { infer } from "../../lib/inference";
 import { MODEL } from "../../lib/models";
+import { enqueueDiscoveryNoted, isQueuePilotEnabled } from "../../lib/queue";
 import {
   getSubscription,
   listSubscriptions,
@@ -311,26 +312,46 @@ export async function runSubscriptionCheckSingleDirect(
 
     const entriesToPublish = selectPublishEntries(checkResult.newEntries, summaryResult.publishEntryIds);
     let publishError: string | null = null;
+    const publishMode = subscription.publishToCool && entriesToPublish.length > 0
+      ? (isQueuePilotEnabled("discovery") ? "queue" : "inngest")
+      : "none";
     const publishedCount = subscription.publishToCool
       ? entriesToPublish.length > 0
         ? await (async () => {
             const events = entriesToPublish.map((entry) => ({
-              name: "discovery/noted" as const,
-              data: {
-                url: entry.url ?? subscription.feedUrl,
-                context: [
-                  `Subscription: ${subscription.name}`,
-                  `Title: ${entry.title}`,
-                  entry.summary ? `Summary: ${entry.summary}` : undefined,
-                  entry.publishedAt ? `Published: ${entry.publishedAt}` : undefined,
-                ]
-                  .filter((line): line is string => Boolean(line))
-                  .join("\n"),
-              },
+              url: entry.url ?? subscription.feedUrl,
+              context: [
+                `Subscription: ${subscription.name}`,
+                `Title: ${entry.title}`,
+                entry.summary ? `Summary: ${entry.summary}` : undefined,
+                entry.publishedAt ? `Published: ${entry.publishedAt}` : undefined,
+              ]
+                .filter((line): line is string => Boolean(line))
+                .join("\n"),
+              eventId: `subscription:${subscription.id}:${entry.id}`,
             }));
 
             try {
-              await inngest.send(events);
+              if (isQueuePilotEnabled("discovery")) {
+                await Promise.all(
+                  events.map((event) => enqueueDiscoveryNoted({
+                    url: event.url,
+                    context: event.context,
+                    source: "subscription-check/direct",
+                    eventId: event.eventId,
+                  })),
+                );
+              } else {
+                await inngest.send(
+                  events.map((event) => ({
+                    name: "discovery/noted" as const,
+                    data: {
+                      url: event.url,
+                      context: event.context,
+                    },
+                  })),
+                );
+              }
               return events.length;
             } catch (error) {
               publishError = error instanceof Error ? error.message : String(error);
@@ -357,6 +378,7 @@ export async function runSubscriptionCheckSingleDirect(
         model: summaryResult.model,
         newEntries: checkResult.newEntries.length,
         published: publishedCount,
+        publishMode,
         notified: false,
         publishError,
       },
@@ -367,6 +389,7 @@ export async function runSubscriptionCheckSingleDirect(
       subscriptionId: subscription.id,
       newEntries: checkResult.newEntries.length,
       published: publishedCount,
+      publishMode,
       notified: false,
       publishError,
     };

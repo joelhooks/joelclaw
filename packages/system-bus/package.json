@@ -20,6 +20,7 @@
     "@joelclaw/endpoint-resolver": "workspace:*",
     "@joelclaw/inference-router": "workspace:*",
     "@joelclaw/mdx-pipeline": "workspace:^",
+    "@joelclaw/queue": "workspace:*",
     "@langfuse/otel": "^4.6.1",
     "@langfuse/tracing": "^4.6.1",
     "@opentelemetry/api": "^1.9.0",

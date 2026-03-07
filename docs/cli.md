@@ -166,6 +166,21 @@ joelclaw restate
 - the jobs use Dkron's shell executor plus `wget`; it appends epoch seconds to each workflow ID prefix so every scheduled run is a fresh Restate workflow.
 - Dkron cron expressions are **six-field** by default (`sec min hour dom month dow`), so hourly-at-minute-7 is `0 7 * * * *`, not `7 * * * *`.
 
+## Discover command
+
+```bash
+joelclaw discover <url> [-c <context>]
+```
+
+Semantics:
+
+- default path still emits `discovery/noted` directly to Inngest.
+- when `QUEUE_PILOTS=discovery`, `joelclaw discover` switches to the shared Redis queue instead:
+  - enqueues a `QueueEventEnvelope` for `discovery/noted`
+  - returns queue metadata (`streamId`, `eventId`, `priority`) instead of Inngest run ids
+  - relies on the Restate queue drainer to forward the event onward
+- this is the current operator-facing pilot cutover for the discovery family.
+
 ## Queue command tree (ADR-0217 Phase 1)
 
 ```bash
