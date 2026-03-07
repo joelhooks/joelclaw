@@ -8,6 +8,25 @@ Canonical deployment notes for joelclaw runtime services.
 kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/
 ```
 
+## Canonical launchd sources
+
+Host launchd assets that are part of joelclaw runtime behavior belong in `infra/launchd/`, not as hand-edited one-offs under `~/Library/LaunchAgents`.
+
+Current canonical examples include:
+- `infra/launchd/com.joel.system-bus-worker.plist`
+- `infra/launchd/com.joel.content-sync-watcher.plist`
+
+When installing or repairing one of these services, prefer a symlink from `~/Library/LaunchAgents/<label>.plist` back to the repo source so launchd follows the git-tracked file.
+
+Example for the content watcher:
+
+```bash
+ln -sfn ~/Code/joelhooks/joelclaw/infra/launchd/com.joel.content-sync-watcher.plist \
+  ~/Library/LaunchAgents/com.joel.content-sync-watcher.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.joel.content-sync-watcher.plist 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.joel.content-sync-watcher.plist
+```
+
 ## Dkron phase-1 scheduler (ADR-0216)
 
 Dkron now runs in-cluster as a single-node `StatefulSet` with a `ClusterIP` API service:

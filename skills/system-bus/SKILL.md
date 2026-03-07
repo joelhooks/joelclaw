@@ -2,7 +2,7 @@
 name: system-bus
 displayName: System Bus Worker
 description: Develop, deploy, and debug the system-bus worker — joelclaw's 110+ Inngest durable function engine, webhook gateway, and observability pipeline. Triggers on 'add a function', 'new inngest function', 'system-bus', 'worker', 'add a webhook', 'deploy worker', 'restart worker', 'function failed', 'worker not working', 'register functions', or any task involving Inngest function development, webhook providers, or worker operations.
-version: 0.1.4
+version: 0.1.5
 author: joel
 tags:
   - inngest
@@ -86,6 +86,8 @@ After changing `packages/system-bus/src/inngest/functions/*` that run on the hos
 Do not trust stale monorepo docs that imply the host worker runs directly from `~/Code/joelhooks/joelclaw`.
 
 Queue pilot flags are evaluated inside the live worker process, not your shell. If a host-worker emitter like `discovery-capture` or `/webhooks/github` should switch to queue mode, put the flag in `~/.config/system-bus.env`, then kickstart the worker and PUT-sync `/api/inngest`. Ad-hoc shell env only affects CLI-local emitters.
+
+`content/updated` is the odd one out: its ingress comes from the launchd watcher `com.joel.content-sync-watcher`, not from a worker-local function. The canonical watcher source now belongs in `infra/launchd/com.joel.content-sync-watcher.plist` plus `scripts/content-sync-watcher.sh`, and the script reads `~/.config/system-bus.env` on each trigger so `QUEUE_PILOTS=content` can switch between `joelclaw queue emit` and legacy `joelclaw send` without hand-editing the live plist.
 
 ## Adding a New Inngest Function
 

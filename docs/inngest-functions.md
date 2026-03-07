@@ -70,6 +70,10 @@ Operational boundary for Phase 1:
   - `POST /webhooks/github` keeps direct emission as the default path.
   - when the flag is enabled, normalized `workflow_run.completed` webhook events are persisted into the shared queue first and the Restate drainer forwards the concrete `github/workflow_run.completed` event onward.
   - `github/package.published` remains on the legacy direct-to-Inngest path for now.
+- `content/updated` is the remaining launchd-backed pilot family behind `QUEUE_PILOTS=content`:
+  - canonical watcher source now lives in `infra/launchd/com.joel.content-sync-watcher.plist` and `scripts/content-sync-watcher.sh`.
+  - the watcher reads `~/.config/system-bus.env` on each trigger and chooses `joelclaw queue emit content/updated` when the `content` pilot is enabled, otherwise it falls back to legacy `joelclaw send content/updated`.
+  - this keeps the queue cutover reversible without leaving an untracked plist in `~/Library/LaunchAgents` as the only source of truth.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 
 ### System health
