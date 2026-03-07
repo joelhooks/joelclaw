@@ -24,8 +24,10 @@ export interface QueueEventRegistryEntry {
   dedupWindowMs?: number;
 
   /**
-   * Handler target metadata (function name, route, etc.).
-   * Used by dispatchers to route events to consumers.
+   * Handler target metadata.
+   *
+   * For `type: "inngest"`, `target` must be the concrete Inngest event name
+   * posted by the queue drainer — not a function id or a display label.
    */
   handler?: {
     type: "inngest" | "http" | "local";
@@ -80,7 +82,7 @@ export const QUEUE_EVENT_REGISTRY: QueueEventRegistryEntry[] = [
     dedupWindowMs: 5 * 60_000, // 5 minutes
     handler: {
       type: "inngest",
-      target: "subscription/check-feeds",
+      target: "subscription/check-feeds.requested",
     },
     description: "Feed subscription check requested",
   },
@@ -89,7 +91,7 @@ export const QUEUE_EVENT_REGISTRY: QueueEventRegistryEntry[] = [
     priority: Priority.P1,
     handler: {
       type: "inngest",
-      target: "github/workflow-run-completed",
+      target: "github/workflow_run.completed",
     },
     description: "GitHub workflow run completed webhook",
   },

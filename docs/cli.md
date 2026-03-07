@@ -181,6 +181,21 @@ Semantics:
   - relies on the Restate queue drainer to forward the event onward
 - this is the current operator-facing pilot cutover for the discovery family.
 
+## Subscribe check queue pilot
+
+```bash
+joelclaw subscribe check [--id <id>]
+```
+
+Semantics:
+
+- scoped checks (`--id <id>`) still emit `subscription/check.requested` directly to Inngest.
+- all-subscription checks keep the legacy Inngest path by default.
+- when `QUEUE_PILOTS=subscriptions`, `joelclaw subscribe check` without `--id` enqueues `subscription/check-feeds.requested` into the shared queue instead:
+  - returns queue metadata (`streamId`, `eventId`, `priority`)
+  - points next actions at `joelclaw queue inspect` / `joelclaw queue depth`
+  - relies on the Restate queue drainer to forward the **actual** `subscription/check-feeds.requested` event name onward
+
 ## Queue command tree (ADR-0217 Phase 1)
 
 ```bash
@@ -381,7 +396,8 @@ Semantics:
 - `mail reserve` now sends explicit lease TTL (`--ttl-seconds`, default `900`) and enforces a minimum of 60s.
 - `mail renew` extends active file reservations without releasing/reacquiring (`--extend-seconds`, default `900`, optional `--paths`).
 - `mail locks` now prefers the local git-mailbox `file_reservations/` artifact store when available because `/mail/api/locks` can under-report advisory file reservations while still reporting mailbox internals like archive/commit locks. Responses expose `source` and `fallback_reason` when artifact fallback was required.
-- `subscribe check` emits Inngest request events; `response.ids` are event/request IDs (inspect via `joelclaw event <event-id>`), not run IDs unless explicitly returned as `runIds`.
+- `subscribe check` emits Inngest request events for scoped checks and for all-subscription checks when the queue pilot is off; `response.ids` are event/request IDs (inspect via `joelclaw event <event-id>`), not run IDs unless explicitly returned as `runIds`.
+- when `QUEUE_PILOTS=subscriptions`, unscoped `subscribe check` returns queue metadata instead of Inngest response ids because the request first lands in Redis and is forwarded by the Restate drainer.
 - `recall` rewrite telemetry now exposes `rewrite.strategy` (`disabled|skipped|haiku|openai|fallback`) and `rewrite.reason` so low-ROI rewrite skips/fallbacks are queryable; short/literal/direct-id queries skip LLM rewrite by design.
 
 ## Webhook command tree (ADR-0185)

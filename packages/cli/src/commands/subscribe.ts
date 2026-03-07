@@ -79,7 +79,25 @@ function buildSubscribeCheckNextActions(
   result: Record<string, unknown>,
   hasScopedId: boolean,
 ): NextAction[] {
+  const streamId = typeof result.streamId === "string" ? result.streamId : undefined
+  const mode = typeof result.mode === "string" ? result.mode : undefined
+
   if (!hasScopedId) {
+    if (mode === "queue" && streamId) {
+      return [
+        {
+          command: "joelclaw queue inspect <stream-id>",
+          description: "Inspect the queued subscription check request",
+          params: { "stream-id": { value: streamId, required: true } },
+        },
+        {
+          command: "joelclaw queue depth",
+          description: "Check queue depth",
+        },
+        ...COMMON_NEXT_ACTIONS,
+      ]
+    }
+
     return [
       runsNextAction(),
       ...COMMON_NEXT_ACTIONS,

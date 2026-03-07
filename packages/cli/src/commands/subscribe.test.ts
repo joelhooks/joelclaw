@@ -47,4 +47,19 @@ describe("subscribe check next actions", () => {
     expect(nextActions[0]?.command).toBe("joelclaw runs [--count <count>]")
     expect(nextActions.some((action) => action.command === "joelclaw run <run-id>")).toBe(false)
   })
+
+  test("queue-mode all-subscriptions check suggests queue inspection first", () => {
+    const nextActions = __subscribeTestUtils.buildSubscribeCheckNextActions(
+      {
+        event: "subscription/check-feeds.requested",
+        mode: "queue",
+        streamId: "1772900000000-0",
+      },
+      false,
+    )
+
+    expect(nextActions[0]?.command).toBe("joelclaw queue inspect <stream-id>")
+    expect(nextActions[0]?.params?.["stream-id"]?.value).toBe("1772900000000-0")
+    expect(nextActions[1]?.command).toBe("joelclaw queue depth")
+  })
 })

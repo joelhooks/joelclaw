@@ -44,6 +44,17 @@ describe("Queue Event Registry", () => {
     }
   });
 
+  it("should use concrete Inngest event names for Inngest-backed pilots", () => {
+    const subscriptionChecks = lookupQueueEvent("subscription/check-feeds.requested");
+    const githubWorkflowCompleted = lookupQueueEvent("github/workflow_run.completed");
+
+    expect(subscriptionChecks?.handler?.type).toBe("inngest");
+    expect(subscriptionChecks?.handler?.target).toBe("subscription/check-feeds.requested");
+
+    expect(githubWorkflowCompleted?.handler?.type).toBe("inngest");
+    expect(githubWorkflowCompleted?.handler?.target).toBe("github/workflow_run.completed");
+  });
+
   it("should have unique event names", () => {
     const names = getRegisteredEventNames();
     const uniqueNames = new Set(names);

@@ -60,8 +60,11 @@ Operational boundary for Phase 1:
 - The tier-1 Restate jobs run host-side direct task runners via `scripts/restate/run-tier1-task.ts` so soak results reflect actual work execution.
 - Discovery-family pilot cutover has started behind `QUEUE_PILOTS=discovery`:
   - `joelclaw discover` enqueues `discovery/noted` into the shared queue instead of sending directly to Inngest when the flag is enabled.
-  - `runSubscriptionCheckSingleDirect()` now does the same for feed-published discovery items on the direct Restate/Dkron path.
+  - `runSubscriptionCheckSingleDirect()` now does the same for feed-published discovery items on the direct Restate/Dkron path, and this has been proved live with `publishMode: queue` on a real subscription check.
   - the legacy Inngest `subscription/check-single` path still uses `step.sendEvent` for now, so pilot cutover remains incremental and reversible.
+- Subscription-request pilot cutover has now started behind `QUEUE_PILOTS=subscriptions`:
+  - unscoped `joelclaw subscribe check` enqueues `subscription/check-feeds.requested` into the shared queue instead of posting directly to Inngest.
+  - the queue registry now stores the concrete Inngest event name (`subscription/check-feeds.requested`) as the drainer target; using function ids like `subscription/check-feeds` is wrong because the drainer posts events, not function identifiers.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 
 ### System health

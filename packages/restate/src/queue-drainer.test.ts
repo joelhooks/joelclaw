@@ -50,7 +50,7 @@ describe("queue drainer helpers", () => {
       priority: Priority.P2,
       handler: {
         type: "inngest",
-        target: "subscription/check-feeds",
+        target: "subscription/check-feeds.requested",
       },
     };
 
@@ -70,7 +70,7 @@ describe("queue drainer helpers", () => {
     expect(node.config?.method).toBe("POST");
     expect(JSON.parse(String(node.config?.body))).toEqual({
       id: "evt_123",
-      name: "subscription/check-feeds",
+      name: "subscription/check-feeds.requested",
       ts: 1741390743510,
       data: { forceAll: false },
     });
