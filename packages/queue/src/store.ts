@@ -22,6 +22,7 @@ let telemetryEmitter: TelemetryEmitter = {
 
 function emitQueueTelemetry(action: string, detail: string, extra?: Record<string, unknown>): void {
   telemetryEmitter.emit(action, detail, {
+    component: "queue",
     ...(extra ?? {}),
   });
 }
@@ -138,19 +139,9 @@ export async function init(redis: Redis, queueConfig: QueueConfig, options?: Ini
 
   try {
     await redis.xgroup("CREATE", queueConfig.streamKey, queueConfig.consumerGroup, "$", "MKSTREAM");
-    console.log("[queue] initialized stream + consumer group", {
-      stream: queueConfig.streamKey,
-      group: queueConfig.consumerGroup,
-      consumer: queueConfig.consumerName,
-    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes("BUSYGROUP")) {
-      console.log("[queue] consumer group exists", {
-        stream: queueConfig.streamKey,
-        group: queueConfig.consumerGroup,
-        consumer: queueConfig.consumerName,
-      });
       return;
     }
     throw error;
@@ -197,16 +188,11 @@ export async function persist(msg: {
 
   await redis.zadd(cfg.priorityKey, `${scoreForPriority(msg.priority, timestamp)}`, streamId);
 
-  emitQueueTelemetry("queue.persisted", "debug", {
+  emitQueueTelemetry("queue.enqueue", "Message enqueued", {
     streamId,
     priority: msg.priority,
     priority_label: priorityName(msg.priority),
-    wait_time_ms: 0,
-  });
-
-  console.log("[queue] persisted message", {
-    streamId,
-    priority: priorityName(msg.priority),
+    timestamp,
   });
 
   return { streamId, priority: msg.priority };
@@ -229,7 +215,7 @@ export async function ack(streamId: string): Promise<void> {
   const deleted = await redis.xdel(cfg.streamKey, streamId);
   await redis.zrem(cfg.priorityKey, streamId);
 
-  console.log("[queue] resolved", {
+  emitQueueTelemetry("queue.ack", "Message acknowledged", {
     streamId,
     deleted,
   });
@@ -327,6 +313,14 @@ export async function drainByPriority(
     const selected = orderedCandidates[i];
     if (!selected) break;
     drained.push(selected);
+    
+    emitQueueTelemetry("queue.lease", "Message leased for processing", {
+      streamId: selected.message.id,
+      priority: selected.effectivePriority,
+      priority_label: priorityName(selected.effectivePriority),
+      wait_time_ms: selected.waitTimeMs,
+      promoted_from: selected.promotedFrom ? priorityName(selected.promotedFrom) : undefined,
+    });
   }
 
   return drained;
@@ -493,21 +487,16 @@ export async function getUnacked(maxUnackedAge?: number): Promise<StoredMessage[
       await redis.xdel(cfg.streamKey, msg.id);
       await redis.zrem(cfg.priorityKey, msg.id);
     }
-    console.log("[queue] deleted stale messages on load (won't replay)", {
-      staleCount: stale.length,
-      maxAgeMs,
-      oldestAge: `${Math.round((Date.now() - Math.min(...stale.map((m) => m.timestamp))) / 1000)}s`,
-    });
   }
 
   recent.sort((a, b) => a.timestamp - b.timestamp);
 
-  console.log("[queue] loaded unacked messages", {
+  emitQueueTelemetry("queue.replay", "Unacked messages loaded for replay", {
     replayable: recent.length,
-    staleAcked: stale.length,
+    stale_acked: stale.length,
     pending: pendingMessages.length,
     fresh: newMessages.length,
-    maxAgeMs,
+    max_age_ms: maxAgeMs,
   });
 
   return recent;
@@ -565,18 +554,99 @@ export async function trimOld(maxArchiveAge?: number): Promise<number> {
     minId = `(${lastId}`;
   }
 
-  if (deleted > 0) {
-    console.log("[queue] trimmed old acked messages", {
-      deleted,
-      maxAge,
-    });
-  } else {
-    console.log("[queue] trim found no old acked messages", {
-      maxAge,
-    });
+  return deleted;
+}
+
+/**
+ * Get queue depth and priority distribution statistics.
+ * 
+ * Returns:
+ * - Total count
+ * - Count by priority (P0, P1, P2, P3)
+ * - Oldest message timestamp
+ * - Newest message timestamp
+ */
+export async function getQueueStats(): Promise<{
+  total: number;
+  byPriority: Record<string, number>;
+  oldestTimestamp: number | null;
+  newestTimestamp: number | null;
+}> {
+  const redis = getClient();
+  const cfg = getConfig();
+
+  const total = await redis.zcard(cfg.priorityKey);
+  
+  // Get priority distribution
+  const byPriority: Record<string, number> = {
+    P0: 0,
+    P1: 0,
+    P2: 0,
+    P3: 0,
+  };
+
+  const members = await redis.zrange(cfg.priorityKey, 0, -1, "WITHSCORES");
+  for (let i = 1; i < members.length; i += 2) {
+    const score = Number.parseFloat(members[i] ?? "0");
+    const priority = Math.floor(score / PRIORITY_FACTOR);
+    const priorityLabel = priorityName(toPriority(priority));
+    byPriority[priorityLabel] = (byPriority[priorityLabel] ?? 0) + 1;
   }
 
-  return deleted;
+  // Get oldest and newest timestamps
+  let oldestTimestamp: number | null = null;
+  let newestTimestamp: number | null = null;
+
+  const oldest = await redis.zrange(cfg.priorityKey, 0, 0, "WITHSCORES");
+  if (oldest.length >= 2) {
+    const score = Number.parseFloat(oldest[1] ?? "0");
+    oldestTimestamp = Math.floor(score % PRIORITY_FACTOR);
+  }
+
+  const newest = await redis.zrange(cfg.priorityKey, -1, -1, "WITHSCORES");
+  if (newest.length >= 2) {
+    const score = Number.parseFloat(newest[1] ?? "0");
+    newestTimestamp = Math.floor(score % PRIORITY_FACTOR);
+  }
+
+  return {
+    total,
+    byPriority,
+    oldestTimestamp,
+    newestTimestamp,
+  };
+}
+
+/**
+ * Inspect a message by stream ID.
+ * 
+ * Returns the full message if found, undefined otherwise.
+ */
+export async function inspectById(streamId: string): Promise<StoredMessage | undefined> {
+  return await loadByStreamId(streamId);
+}
+
+/**
+ * List recent messages from the queue.
+ * 
+ * Returns messages in priority order (highest priority first).
+ * Does not acknowledge or remove messages.
+ */
+export async function listMessages(limit = 10): Promise<StoredMessage[]> {
+  const redis = getClient();
+  const cfg = getConfig();
+
+  const ids = await redis.zrange(cfg.priorityKey, 0, limit - 1);
+  const messages: StoredMessage[] = [];
+
+  for (const streamId of ids) {
+    const msg = await loadByStreamId(streamId);
+    if (msg) {
+      messages.push(msg);
+    }
+  }
+
+  return messages;
 }
 
 // Test utilities

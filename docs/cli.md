@@ -121,6 +121,7 @@ Semantics:
 - `joelclaw inngest`
 - `joelclaw knowledge`
 - `joelclaw capabilities`
+- `joelclaw queue`
 
 ## Restate command tree
 
@@ -164,6 +165,42 @@ joelclaw restate
 - `list` includes `migratedFrom`, `successCount`, `errorCount`, `lastSuccess`, and `lastError` so the soak is visible from the CLI without spelunking Dkron by hand.
 - the jobs use Dkron's shell executor plus `wget`; it appends epoch seconds to each workflow ID prefix so every scheduled run is a fresh Restate workflow.
 - Dkron cron expressions are **six-field** by default (`sec min hour dom month dow`), so hourly-at-minute-7 is `0 7 * * * *`, not `7 * * * *`.
+
+## Queue command tree (ADR-0217 Phase 1)
+
+```bash
+joelclaw queue
+├── emit <event> [-d <json>] [-p P0|P1|P2|P3]
+├── depth
+├── list [--limit <n>]
+└── inspect <stream-id>
+```
+
+Semantics:
+
+- all queue subcommands return a clean JSON envelope and close their Redis client before exit; no library debug logs are mixed into stdout
+- `emit` enqueues an event to the Redis stream queue (`joelclaw:queue:events`).
+  - accepts event name (e.g., `discovery/noted`, `content/updated`)
+  - accepts optional JSON payload via `-d`
+  - priority defaults from registry (`packages/queue/src/registry.ts`) or can be overridden via `-p`
+  - generates a `QueueEventEnvelope` with stable ID, timestamp, source, and trace metadata
+  - returns the Redis stream ID and priority
+- `depth` reports queue depth, priority distribution (P0/P1/P2/P3 counts), oldest/newest message timestamps
+- `list` lists recent messages in priority order (highest priority first), does not ack/remove
+- `inspect` loads a message by Redis stream ID and returns full payload + metadata
+
+Queue configuration:
+- Stream key: `joelclaw:queue:events`
+- Priority index: `joelclaw:queue:priority`
+- Consumer group: `joelclaw:queue:cli`
+- Phase 1 pilot events: `discovery/noted`, `discovery/captured`, `content/updated`, `subscription/check-feeds.requested`, `github/workflow_run.completed`
+
+OTEL telemetry under `queue.*` namespace:
+- CLI queue commands forward queue package telemetry to OTEL with `source=cli` and `component=queue`
+- `queue.enqueue` — message enqueued
+- `queue.lease` — message leased for processing (includes wait time, priority, promotion metadata)
+- `queue.ack` — message acknowledged
+- `queue.replay` — unacked messages loaded for replay
 
 ## Daily summary command
 

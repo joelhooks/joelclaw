@@ -234,6 +234,9 @@ importers:
       '@joelclaw/inference-router':
         specifier: workspace:*
         version: link:../inference-router
+      '@joelclaw/queue':
+        specifier: workspace:*
+        version: link:../queue
       '@joelclaw/restate':
         specifier: workspace:*
         version: link:../restate

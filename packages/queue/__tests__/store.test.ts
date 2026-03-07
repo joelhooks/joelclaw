@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   drainByPriority,
+  getQueueStats,
   init,
+  inspectById,
+  listMessages,
   Priority,
   persist,
   type StoredMessage,
@@ -47,14 +50,25 @@ class MockRedis {
     return existed ? 0 : 1;
   }
 
-  async zrange(key: string, start: number, stop: number): Promise<string[]> {
+  async zcard(key: string): Promise<number> {
+    const bucket = this.sortedSets.get(key) ?? new Map<string, number>();
+    return bucket.size;
+  }
+
+  async zrange(key: string, start: number, stop: number, ...args: Array<string>): Promise<string[]> {
     const bucket = this.sortedSets.get(key) ?? new Map<string, number>();
     const ordered = [...bucket.entries()]
-      .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
-      .map(([member]) => member);
+      .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]));
 
-    const end = stop < 0 ? ordered.length - 1 : stop;
-    return ordered.slice(start, end + 1);
+    const end = stop < 0 ? ordered.length + stop : stop;
+    const slice = ordered.slice(start, end + 1);
+
+    const withScores = args.includes("WITHSCORES");
+    if (withScores) {
+      return slice.flatMap(([member, score]) => [member, String(score)]);
+    }
+
+    return slice.map(([member]) => member);
   }
 
   async xrange(
@@ -227,5 +241,168 @@ describe("drainByPriority", () => {
     expect(drained[1]).toMatchObject({
       effectivePriority: Priority.P1,
     });
+  });
+});
+
+describe("getQueueStats", () => {
+  test("returns queue depth and priority distribution", async () => {
+    const redis = new MockRedis();
+
+    await init(redis as never, {
+      streamKey: "test:queue:messages",
+      priorityKey: "test:queue:priority",
+      consumerGroup: "test-group",
+      consumerName: "test-consumer",
+    });
+
+    const nowSpy = vi.spyOn(Date, "now");
+    nowSpy.mockReturnValue(1_000_000);
+
+    await persist({ payload: { id: 1 }, priority: Priority.P0 });
+    await persist({ payload: { id: 2 }, priority: Priority.P1 });
+    await persist({ payload: { id: 3 }, priority: Priority.P1 });
+    await persist({ payload: { id: 4 }, priority: Priority.P2 });
+    await persist({ payload: { id: 5 }, priority: Priority.P3 });
+
+    const stats = await getQueueStats();
+
+    expect(stats.total).toBe(5);
+    expect(stats.byPriority.P0).toBe(1);
+    expect(stats.byPriority.P1).toBe(2);
+    expect(stats.byPriority.P2).toBe(1);
+    expect(stats.byPriority.P3).toBe(1);
+    expect(stats.oldestTimestamp).toBe(1_000_000);
+    expect(stats.newestTimestamp).toBe(1_000_000);
+  });
+
+  test("handles empty queue", async () => {
+    const redis = new MockRedis();
+
+    await init(redis as never, {
+      streamKey: "test:queue:messages",
+      priorityKey: "test:queue:priority",
+      consumerGroup: "test-group",
+      consumerName: "test-consumer",
+    });
+
+    const stats = await getQueueStats();
+
+    expect(stats.total).toBe(0);
+    expect(stats.byPriority.P0).toBe(0);
+    expect(stats.byPriority.P1).toBe(0);
+    expect(stats.byPriority.P2).toBe(0);
+    expect(stats.byPriority.P3).toBe(0);
+    expect(stats.oldestTimestamp).toBeNull();
+    expect(stats.newestTimestamp).toBeNull();
+  });
+});
+
+describe("inspectById", () => {
+  test("loads message by stream ID", async () => {
+    const redis = new MockRedis();
+
+    await init(redis as never, {
+      streamKey: "test:queue:messages",
+      priorityKey: "test:queue:priority",
+      consumerGroup: "test-group",
+      consumerName: "test-consumer",
+    });
+
+    const result = await persist({
+      payload: { message: "test" },
+      priority: Priority.P1,
+      metadata: { source: "test" },
+    });
+
+    expect(result).not.toBeNull();
+    if (!result) throw new Error("persist returned null");
+
+    const message = await inspectById(result.streamId);
+
+    expect(message).toBeDefined();
+    expect(message?.id).toBe(result.streamId);
+    expect(message?.payload.message).toBe("test");
+    expect(message?.priority).toBe(Priority.P1);
+    expect(message?.metadata?.source).toBe("test");
+  });
+
+  test("returns undefined for nonexistent ID", async () => {
+    const redis = new MockRedis();
+
+    await init(redis as never, {
+      streamKey: "test:queue:messages",
+      priorityKey: "test:queue:priority",
+      consumerGroup: "test-group",
+      consumerName: "test-consumer",
+    });
+
+    const message = await inspectById("9999999999999-0");
+
+    expect(message).toBeUndefined();
+  });
+});
+
+describe("listMessages", () => {
+  test("lists messages in priority order", async () => {
+    const redis = new MockRedis();
+
+    await init(redis as never, {
+      streamKey: "test:queue:messages",
+      priorityKey: "test:queue:priority",
+      consumerGroup: "test-group",
+      consumerName: "test-consumer",
+    });
+
+    const nowSpy = vi.spyOn(Date, "now");
+    nowSpy.mockReturnValue(1_000_000);
+
+    const p2Result = await persist({ payload: { priority: "P2" }, priority: Priority.P2 });
+    const p0Result = await persist({ payload: { priority: "P0" }, priority: Priority.P0 });
+    const p1Result = await persist({ payload: { priority: "P1" }, priority: Priority.P1 });
+
+    expect(p2Result).not.toBeNull();
+    expect(p0Result).not.toBeNull();
+    expect(p1Result).not.toBeNull();
+
+    const messages = await listMessages(10);
+
+    expect(messages.length).toBe(3);
+    expect(messages[0]?.priority).toBe(Priority.P0);
+    expect(messages[1]?.priority).toBe(Priority.P1);
+    expect(messages[2]?.priority).toBe(Priority.P2);
+  });
+
+  test("respects limit", async () => {
+    const redis = new MockRedis();
+
+    await init(redis as never, {
+      streamKey: "test:queue:messages",
+      priorityKey: "test:queue:priority",
+      consumerGroup: "test-group",
+      consumerName: "test-consumer",
+    });
+
+    await persist({ payload: { id: 1 }, priority: Priority.P1 });
+    await persist({ payload: { id: 2 }, priority: Priority.P1 });
+    await persist({ payload: { id: 3 }, priority: Priority.P1 });
+
+    const messages = await listMessages(2);
+
+    expect(messages.length).toBe(2);
+  });
+
+  test("returns empty array for empty queue", async () => {
+    const redis = new MockRedis();
+
+    await init(redis as never, {
+      streamKey: "test:queue:messages",
+      priorityKey: "test:queue:priority",
+      consumerGroup: "test-group",
+      consumerName: "test-consumer",
+    });
+
+    const messages = await listMessages(10);
+
+    expect(messages.length).toBe(0);
   });
 });

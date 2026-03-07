@@ -12,6 +12,65 @@ export enum Priority {
 }
 
 /**
+ * Queue event envelope — canonical shape for all enqueued events.
+ * 
+ * Provides stable identity, routing metadata, and typed payload structure
+ * for queue consumers and operators. Distinct from Inngest event format.
+ */
+export interface QueueEventEnvelope<T = Record<string, unknown>> {
+  /**
+   * Stable event ID (ULID or UUID).
+   * Used for idempotency and deduplication.
+   */
+  id: string;
+
+  /**
+   * Event name (namespaced, e.g., "discovery/noted", "content/updated").
+   */
+  name: string;
+
+  /**
+   * Event source (system, user, external service).
+   */
+  source: string;
+
+  /**
+   * Event timestamp (milliseconds since epoch).
+   */
+  ts: number;
+
+  /**
+   * Typed event payload.
+   */
+  data: T;
+
+  /**
+   * Priority level for queue processing.
+   */
+  priority: Priority;
+
+  /**
+   * Optional deduplication key.
+   * If set, only one event with this key will be enqueued within the dedup window.
+   */
+  dedupKey?: string;
+
+  /**
+   * Trace metadata for observability (trace ID, span ID, parent span).
+   */
+  trace?: {
+    traceId?: string;
+    spanId?: string;
+    parentSpanId?: string;
+  };
+
+  /**
+   * Optional metadata for routing, filtering, or custom handling.
+   */
+  meta?: Record<string, unknown>;
+}
+
+/**
  * A message stored in the Redis queue.
  */
 export interface StoredMessage {
