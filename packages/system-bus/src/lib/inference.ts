@@ -25,7 +25,9 @@ import { type LlmUsage, parsePiJsonAssistant, traceLlmGeneration } from "./langf
 
 type InferenceMetadata = Record<string, unknown>;
 
+const MIN_TIMEOUT_MS = 1_000;
 const DEFAULT_TIMEOUT_MS = 120_000;
+const MAX_TIMEOUT_MS = 60 * 60_000;
 const OTL_PROMPT_PREVIEW_CHARS = 6_000;
 const OTL_OUTPUT_PREVIEW_CHARS = 6_000;
 
@@ -70,15 +72,31 @@ type PiAttemptResult = {
   model?: string;
   provider?: string;
   durationMs: number;
+  timedOut: boolean;
+  timeoutMs: number;
 };
 
 type PiAttemptError = Error & { stderr?: string; model?: string; provider?: string; attempt?: number };
 
 function normalizeTimeout(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_TIMEOUT_MS;
-  if (value < 1_000) return 1_000;
-  return Math.min(value, 10 * 60 * 1000);
+  if (value < MIN_TIMEOUT_MS) return MIN_TIMEOUT_MS;
+  return Math.min(value, MAX_TIMEOUT_MS);
 }
+
+function remainingAttemptBudgetMs(deadlineMs: number, nowMs = Date.now()): number | null {
+  const remainingMs = deadlineMs - nowMs;
+  if (!Number.isFinite(remainingMs) || remainingMs < MIN_TIMEOUT_MS) {
+    return null;
+  }
+
+  return Math.min(Math.floor(remainingMs), MAX_TIMEOUT_MS);
+}
+
+export const __testables = {
+  normalizeTimeout,
+  remainingAttemptBudgetMs,
+};
 
 function normalizeText(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -183,7 +201,15 @@ async function runPiAttempt(
       },
     });
 
-    const timeoutId = setTimeout(() => proc.kill(), timeoutMs);
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      try {
+        proc.kill("SIGTERM");
+      } catch {
+        // ignore
+      }
+    }, timeoutMs);
     const startMs = Date.now();
 
     const exitCode = await proc.exited;
@@ -210,6 +236,8 @@ async function runPiAttempt(
       model: parsed?.model,
       provider: parsed?.provider,
       durationMs,
+      timedOut,
+      timeoutMs,
     };
   } finally {
     await rm(captureDir, { recursive: true, force: true });
@@ -384,6 +412,7 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
     let lastError: Error | null = null;
     let attemptsLeft = attempts.length;
     let allSkippedByCircuit = true;
+    const deadlineMs = startedAt + timeoutMs;
 
     for (const attempt of attempts) {
       attemptsLeft -= 1;
@@ -418,7 +447,16 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
       allSkippedByCircuit = false;
 
       try {
-        const piResult = await runPiAttempt(promptPath, attempt.model, timeoutMs, {
+        const attemptTimeoutMs = remainingAttemptBudgetMs(deadlineMs);
+        if (attemptTimeoutMs === null) {
+          throw wrapError(
+            new Error(`pi timed out after ${timeoutMs}ms`),
+            attempt.attempt,
+            "inference timeout budget exhausted",
+          );
+        }
+
+        const piResult = await runPiAttempt(promptPath, attempt.model, attemptTimeoutMs, {
           appendSystemPrompt: resolvedOpts.appendSystemPrompt,
           noExtensions:
             resolvedOpts.noExtensions ??
@@ -434,6 +472,14 @@ export async function infer(prompt: string, opts: InferOptions = {}): Promise<In
 
         if (piResult.exitCode !== 0) {
           const stderr = normalizeText(piResult.stderr);
+          if (piResult.timedOut) {
+            throw wrapError(
+              new Error(`pi timed out after ${piResult.timeoutMs}ms${stderr ? `: ${stderr}` : ""}`),
+              attempt.attempt,
+              stderr || "pi timed out",
+            );
+          }
+
           if (!piResult.rawText && !resolvedOpts.json) {
             throw wrapError(
               new Error(`pi exited ${piResult.exitCode}: ${stderr || "empty output"}`),
