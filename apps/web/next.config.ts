@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 
+// Force rebuild to include new tutorial slug in static paths
 const nextConfig: NextConfig = {
   cacheComponents: true,
   typescript: {
