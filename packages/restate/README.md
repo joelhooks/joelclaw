@@ -120,6 +120,44 @@ The execution mode flag routes at the `agent-dispatch` boundary:
 
 Both modes preserve stable `requestId`, `workflowId`, `storyId`, and agent identity end-to-end. The result polling contract (`/internal/agent-result/:requestId`) works for both paths.
 
+#### Sandbox runtime implementation gates
+
+The sandbox runtime is being built incrementally through a series of proof gates:
+
+**Gate A: Non-coding vertical slice** ✅ **PROVEN**
+- Proves the sandbox runtime can execute a simple task end-to-end
+- Local executor (not k8s) reads one file, writes one temp artifact, exits cleanly
+- Truthful state transitions: `running` → `completed`
+- Zero host dirt (operator checkout stays clean)
+- Observable log capture
+- Failure states handled honestly
+- Tests: `packages/agent-execution/__tests__/gate-a-smoke.test.ts`
+- What's proven: contract validity, state machine, artifact generation, serialization
+- Known gaps: no k8s, no real git operations, no network isolation, no resource limits, no cancellation
+
+**Gate B: k8s Job launcher** (not yet implemented)
+- Will execute sandboxed tasks in isolated k8s Jobs
+- Real git operations (clone, checkout, commit)
+- Network isolation via Job pod constraints
+- Resource limits (CPU, memory)
+- Artifact extraction from completed pods
+
+**Gate C: Multi-story orchestration** (not yet implemented)
+- Restate DAG orchestrator calling k8s Job launcher
+- Wave-based parallel execution
+- Dependency-aware scheduling
+
+**Gate D: Cancellation and timeout** (not yet implemented)
+- Job termination via k8s Job API
+- Graceful shutdown with artifact preservation
+- Timeout enforcement at Job level
+
+To run the Gate A smoke test:
+
+```bash
+bun test packages/agent-execution/__tests__/gate-a-smoke.test.ts
+```
+
 ## Dkron scheduler proof (ADR-0216 phase 1)
 
 The tier-1 scheduled Restate workloads now run through Dkron:
