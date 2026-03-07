@@ -6,6 +6,9 @@ import { NonRetriableError } from "inngest";
 import { infer } from "../../lib/inference";
 import { inngest } from "../client";
 
+// Track active processes for cancellation
+const activeProcesses = new Map<string, { kill: () => void }>();
+
 const INBOX_DIR = join(
   process.env.HOME || "/Users/joel",
   ".joelclaw",
@@ -82,8 +85,9 @@ async function runAgentCommand(
     cwd: string;
     timeoutSeconds: number;
     env: Record<string, string | undefined>;
+    requestId: string;
   }
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+): Promise<{ exitCode: number; stdout: string; stderr: string; cancelled?: boolean }> {
   const proc = Bun.spawn(["bash", "-lc", `exec ${command}`], {
     cwd: options.cwd,
     stdout: "pipe",
@@ -92,6 +96,9 @@ async function runAgentCommand(
       Object.entries(options.env).filter((entry): entry is [string, string] => typeof entry[1] === "string")
     ),
   });
+
+  // Register for cancellation
+  activeProcesses.set(options.requestId, { kill: () => proc.kill() });
 
   const timer = setTimeout(() => {
     try {
@@ -106,7 +113,9 @@ async function runAgentCommand(
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
+  
   clearTimeout(timer);
+  activeProcesses.delete(options.requestId);
 
   return {
     exitCode,
@@ -124,6 +133,9 @@ async function runAgentCommand(
  *
  * Durable (survives restarts), observable (Inngest trace), cross-session
  * (results land in inbox regardless of which session is active).
+ *
+ * Handles deduplication by requestId - if a terminal result already exists,
+ * returns that result instead of spawning a new execution.
  */
 export const agentDispatch = inngest.createFunction(
   {
@@ -132,6 +144,58 @@ export const agentDispatch = inngest.createFunction(
     retries: 1,
     cancelOn: [{ event: "system/agent.cancelled", match: "data.requestId" }],
     throttle: { limit: 3, period: "60s" },
+    onFailure: async ({ event, error, step }) => {
+      const {
+        requestId,
+        sessionId,
+        task,
+        tool,
+        agent,
+        executionMode = "host",
+      } = event.data.event.data;
+
+      // Kill any active process for this requestId
+      const activeProc = activeProcesses.get(requestId);
+      if (activeProc) {
+        try {
+          activeProc.kill();
+          activeProcesses.delete(requestId);
+        } catch {
+          // Process may already be dead
+        }
+      }
+
+      // Check if this is a cancellation
+      const isCancellation = error.message?.includes("cancelled") || error.name === "FunctionCancelledError";
+
+      if (isCancellation) {
+        // Write cancelled snapshot
+        await step.run("write-cancelled-inbox", async () => {
+          const completedAt = new Date().toISOString();
+          const startedAt = new Date(Date.now() - 1000).toISOString(); // Approximate start
+
+          const result: InboxResult = {
+            requestId,
+            sessionId,
+            status: "failed", // Use failed as cancelled is not in InboxResult
+            task,
+            tool,
+            ...(typeof agent === "string" && agent.trim() ? { agent: agent.trim() } : {}),
+            error: "Execution cancelled",
+            startedAt,
+            updatedAt: completedAt,
+            completedAt,
+            durationMs: Date.now() - new Date(startedAt).getTime(),
+            executionMode,
+          };
+
+          // Mark as cancelled in extended contract
+          (result as any).status = "cancelled";
+
+          writeInboxSnapshot(result);
+        });
+      }
+    },
   },
   { event: "system/agent.requested" },
   async ({ event, step }) => {
@@ -162,6 +226,39 @@ export const agentDispatch = inngest.createFunction(
     }
 
     const startedAt = new Date().toISOString();
+
+    // Deduplication: check if we already have a terminal result for this requestId
+    const dedupe = await step.run("check-existing-result", async () => {
+      const existingPath = join(INBOX_DIR, `${requestId}.json`);
+      try {
+        const content = await Bun.file(existingPath).text();
+        const existing = JSON.parse(content) as InboxResult;
+        const status = existing.status;
+        
+        if (status === "completed" || status === "failed") {
+          return { shouldDedupe: true, existing };
+        }
+        
+        // Check for cancelled state (extended type not in InboxResult)
+        if ((existing as any).status === "cancelled") {
+          return { shouldDedupe: true, existing };
+        }
+        
+        return { shouldDedupe: false, existing: null };
+      } catch {
+        return { shouldDedupe: false, existing: null };
+      }
+    });
+
+    if (dedupe.shouldDedupe && dedupe.existing) {
+      return {
+        requestId,
+        status: dedupe.existing.status,
+        inboxFile: join(INBOX_DIR, `${requestId}.json`),
+        durationMs: dedupe.existing.durationMs ?? 0,
+        deduped: true,
+      };
+    }
 
     const runningSnapshot = await step.run("write-running-inbox", async () => {
       const runningResult: InboxResult = {
@@ -264,6 +361,8 @@ export const agentDispatch = inngest.createFunction(
           return {
             status: "completed" as const,
             output: textOutput.slice(-50_000),
+            stdout: textOutput.slice(-10_000),
+            stderr: "",
           };
         }
 
@@ -277,12 +376,15 @@ export const agentDispatch = inngest.createFunction(
           cwd: workDir,
           timeoutSeconds: timeout,
           env: sharedEnv,
+          requestId,
         });
 
         if (commandResult.exitCode !== 0) {
           return {
             status: "failed" as const,
             output: commandResult.stdout.slice(-10_000),
+            stdout: commandResult.stdout.slice(-10_000),
+            stderr: commandResult.stderr.slice(-10_000),
             error: `Exit ${commandResult.exitCode}: ${commandResult.stderr.slice(-5_000) || commandResult.stdout.slice(-5_000) || "command failed"}`,
           };
         }
@@ -290,6 +392,8 @@ export const agentDispatch = inngest.createFunction(
         return {
           status: "completed" as const,
           output: commandResult.stdout.slice(-50_000),
+          stdout: commandResult.stdout.slice(-10_000),
+          stderr: commandResult.stderr.slice(-10_000),
         };
       } catch (error: any) {
         const message = error instanceof Error ? error.message : String(error);
@@ -297,6 +401,8 @@ export const agentDispatch = inngest.createFunction(
         return {
           status: "failed" as const,
           output: "",
+          stdout: "",
+          stderr: message.slice(-5_000),
           error: `agent dispatch crashed: ${message.slice(-5_000)}`,
         };
       }
@@ -325,6 +431,14 @@ export const agentDispatch = inngest.createFunction(
         durationMs,
         executionMode,
       };
+
+      // Attach stdout/stderr if available (extended contract)
+      if (execution.stdout || execution.stderr) {
+        (result as any).logs = {
+          stdout: execution.stdout || "",
+          stderr: execution.stderr || "",
+        };
+      }
 
       const filePath = writeInboxSnapshot(result);
 

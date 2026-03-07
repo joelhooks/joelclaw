@@ -490,6 +490,11 @@ export const dagOrchestrator = restate.workflow({
       const pipelineName = request.pipeline ?? "unknown";
       const workflowStartMs = Date.now();
 
+      // Note: Restate workflows support cancellation via terminate() API.
+      // When terminated, all pending durable executions are cancelled,
+      // and the workflow state becomes "cancelled". The system-bus
+      // agent-dispatch function handles cancellation via cancelOn config.
+
       const initialized = await ctx.run("init-run", () => ({
         requestId: request.requestId?.trim() || ctx.key,
         startedAt: new Date().toISOString(),

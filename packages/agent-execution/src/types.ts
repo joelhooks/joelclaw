@@ -86,12 +86,16 @@ export interface ExecutionArtifacts {
     /** Output from verification commands */
     output?: string;
   };
-  /** Log references */
+  /** Log references and output */
   logs?: {
     /** Path to execution log */
     executionLog?: string;
     /** Path to verification log */
     verificationLog?: string;
+    /** Stdout content (truncated if large) */
+    stdout?: string;
+    /** Stderr content (truncated if large) */
+    stderr?: string;
   };
 }
 

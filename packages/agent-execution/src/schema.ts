@@ -185,6 +185,22 @@ export function isExecutionArtifacts(value: unknown): value is ExecutionArtifact
     }
   }
 
+  if (obj.logs !== undefined) {
+    const logs = obj.logs as Record<string, unknown>;
+    if (logs.executionLog !== undefined && typeof logs.executionLog !== "string") {
+      return false;
+    }
+    if (logs.verificationLog !== undefined && typeof logs.verificationLog !== "string") {
+      return false;
+    }
+    if (logs.stdout !== undefined && typeof logs.stdout !== "string") {
+      return false;
+    }
+    if (logs.stderr !== undefined && typeof logs.stderr !== "string") {
+      return false;
+    }
+  }
+
   return true;
 }
 

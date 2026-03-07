@@ -167,11 +167,17 @@ function readAgentTimestampMs(result: Record<string, unknown> | null): number | 
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function isTerminalState(status: string | undefined): boolean {
+  if (!status) return false;
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
 function isFreshRunningResult(
   result: Record<string, unknown> | null,
   timeoutSeconds: number,
 ): boolean {
-  if (readAgentResultStatus(result) !== "running") {
+  const status = readAgentResultStatus(result);
+  if (!status || status !== "running") {
     return false;
   }
 
@@ -285,8 +291,7 @@ app.post("/internal/agent-dispatch", async (c) => {
 
   const existingResult = await readAgentResult(requestId);
   const existingStatus = readAgentResultStatus(existingResult);
-  const shouldDedupe = existingStatus === "completed"
-    || existingStatus === "failed"
+  const shouldDedupe = isTerminalState(existingStatus)
     || isFreshRunningResult(existingResult, timeoutSeconds);
 
   if (shouldDedupe) {
@@ -297,6 +302,7 @@ app.post("/internal/agent-dispatch", async (c) => {
         requestId,
         tool,
         status: existingStatus,
+        terminal: isTerminalState(existingStatus),
         cwd: (payload as any).cwd,
         model: (payload as any).model,
         sandbox: (payload as any).sandbox,
