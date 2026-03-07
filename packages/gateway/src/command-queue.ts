@@ -2,6 +2,13 @@ import { createHash } from "node:crypto";
 import { ack, drainByPriority, getUnacked, indexMessagesByPriority, type Priority, persist } from "@joelclaw/message-store";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 
+/** Safe Date conversion — guards against corrupted/undefined enqueuedAt values from stale Redis state */
+function safeISOString(value: number | undefined | null): string | null {
+  if (value == null) return null;
+  const d = new Date(value);
+  return Number.isFinite(value) && !Number.isNaN(d.getTime()) ? d.toISOString() : null;
+}
+
 export type QueueEntry = {
   source: string;
   prompt: string;
@@ -703,10 +710,10 @@ export function getSupersessionState(): SupersessionState {
       ? {
           id: activeRequest.id,
           source: activeRequest.source,
-          enqueuedAt: new Date(activeRequest.enqueuedAt).toISOString(),
+          enqueuedAt: safeISOString(activeRequest.enqueuedAt) ?? new Date(0).toISOString(),
           supersessionKey: activeRequest.supersessionKey ?? null,
           superseded: Boolean(activeRequest.supersededAt),
-          supersededAt: activeRequest.supersededAt ? new Date(activeRequest.supersededAt).toISOString() : null,
+          supersededAt: activeRequest.supersededAt ? safeISOString(activeRequest.supersededAt) : null,
           supersededBySource: activeRequest.supersededBySource ?? null,
         }
       : null,
@@ -714,7 +721,7 @@ export function getSupersessionState(): SupersessionState {
       ? {
           source: lastSupersessionEvent.source,
           supersessionKey: lastSupersessionEvent.supersessionKey,
-          enqueuedAt: new Date(lastSupersessionEvent.enqueuedAt).toISOString(),
+          enqueuedAt: safeISOString(lastSupersessionEvent.enqueuedAt) ?? new Date(0).toISOString(),
           droppedQueued: lastSupersessionEvent.droppedQueued,
           abortRequested: lastSupersessionEvent.abortRequested,
           activeRequestId: lastSupersessionEvent.activeRequestId ?? null,
@@ -883,8 +890,8 @@ export async function drain(): Promise<void> {
               source: entry.source,
               supersessionKey: entry.supersessionKey,
               streamId: entry.streamId,
-              enqueuedAt: new Date(entry.enqueuedAt).toISOString(),
-              supersededByAt: new Date(latestSupersession.enqueuedAt).toISOString(),
+              enqueuedAt: safeISOString(entry.enqueuedAt) ?? new Date(0).toISOString(),
+              supersededByAt: safeISOString(latestSupersession.enqueuedAt) ?? new Date(0).toISOString(),
               supersededByOrder: latestSupersession.enqueueOrder,
             },
           });
