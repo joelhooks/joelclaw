@@ -131,6 +131,7 @@ joelclaw restate
 ├── deployments [--admin-url <url>] [--cli-bin <bin>]
 ├── smoke [--script <path>]
 ├── enrich "<name>" [--github <user>] [--twitter <user>] [--depth quick|full] [--sync]
+├── pi-mono-sync [--repo <owner/repo>] [--full-backfill] [--max-pages <n>] [--sync]
 └── cron
     ├── status [--namespace <namespace>] [--service-name <service>] [--base-url <url>]
     ├── list [--namespace <namespace>] [--service-name <service>] [--base-url <url>]
@@ -149,6 +150,17 @@ joelclaw restate
 - default smoke validates `deployGate` end-to-end.
 - DAG smoke is available via script override:
   - `joelclaw restate smoke --script scripts/restate/test-dag-workflow.sh`
+
+`joelclaw restate pi-mono-sync` semantics:
+
+- triggers the `pi-mono-sync` Restate DAG pipeline, which runs the host-side direct task runner `scripts/restate/run-tier1-task.ts --task pi-mono-artifacts-sync`.
+- syncs repo docs, issues, issue comments, pull requests, pull-request review comments, commits, and releases into the Typesense collection `pi_mono_artifacts`.
+- writes two materialized documents into the same collection:
+  - maintainer profile (`kind=maintainer_profile`, currently for `badlogic`)
+  - sync checkpoint (`kind=sync_state`) so later runs can stay incremental unless `--full-backfill` is set.
+- default repo is `badlogic/pi-mono`.
+- `--sync` waits for the DAG result; async mode returns a workflow ID and lets Restate finish in the background.
+- the new collection is queryable through `joelclaw search --collection pi_mono_artifacts`.
 
 `joelclaw restate cron` semantics:
 

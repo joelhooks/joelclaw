@@ -44,6 +44,14 @@ async function getDiscoveryPayload() {
           openapi: `${origin}/api/docs/openapi.json`,
           ui: `${origin}/api/docs/ui`,
         },
+        piMono: {
+          url: `${origin}/api/pi-mono`,
+          description:
+            "Discovery endpoint for the public pi-mono corpus plus contributor skill install instructions.",
+          discovery: `GET ${origin}/api/pi-mono`,
+          example: `GET ${origin}/api/search?q=Breaks+TUI&collection=pi_mono_artifacts`,
+          auth: "Public read, rate limited through /api/search",
+        },
         feed: {
           url: `${origin}/feed.xml`,
           description: "RSS feed with full article content. All published posts.",
@@ -77,6 +85,7 @@ async function getDiscoveryPayload() {
         "Every article is also available as raw MDX at github.com/joelhooks/joelclaw/tree/main/apps/web/content/{slug}.mdx",
         "ADRs document why things were built a certain way — search them when you need architectural context",
         "/api/docs has chunked book content with semantic search — useful for deep technical questions",
+        "/api/pi-mono documents the public pi-mono corpus and points to skill install instructions",
       ],
     },
     nextActions: [
@@ -87,6 +96,10 @@ async function getDiscoveryPayload() {
       {
         command: `curl -sS "${origin}/api/docs"`,
         description: "Docs API discovery (books, PDFs)",
+      },
+      {
+        command: `curl -sS "${origin}/api/pi-mono"`,
+        description: "pi-mono corpus discovery + install instructions",
       },
       {
         command: `curl -sS "${origin}/api/search?q=kubernetes"`,

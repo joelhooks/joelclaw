@@ -1,7 +1,7 @@
 /**
  * Agent-first search API — HATEOAS envelope, markdown snippets, Upstash rate limiting.
  *
- * Public: searches blog_posts, discoveries, ADRs
+ * Public: searches blog_posts, discoveries, pi_mono_artifacts, ADRs
  * Authenticated (Bearer token): adds vault_notes, memory, system_log, transcripts
  *
  * Follows cli-design HATEOAS contract (ADR-0082, cli-design skill).
@@ -59,6 +59,7 @@ type SearchResult = {
   totalFound: number;
   collections: string[];
   authenticated: boolean;
+  requestedCollection?: string;
 };
 
 // --- Envelope helpers ---
@@ -135,6 +136,7 @@ type CollectionConfig = { name: string; queryBy: string };
 const PUBLIC_COLLECTIONS: CollectionConfig[] = [
   { name: "blog_posts", queryBy: "title,content" },
   { name: "discoveries", queryBy: "title,summary" },
+  { name: "pi_mono_artifacts", queryBy: "title,content,author,path,decision_tags" },
 ];
 
 const PRIVATE_COLLECTIONS: CollectionConfig[] = [
@@ -143,6 +145,15 @@ const PRIVATE_COLLECTIONS: CollectionConfig[] = [
   { name: "system_log", queryBy: "detail,tool,action" },
   { name: "transcripts", queryBy: "title,text,speaker,channel" },
 ];
+
+const ALL_COLLECTIONS: CollectionConfig[] = [...PUBLIC_COLLECTIONS, ...PRIVATE_COLLECTIONS];
+const PUBLIC_COLLECTION_NAMES = PUBLIC_COLLECTIONS.map((collection) => collection.name).concat(["adrs"]);
+const PRIVATE_COLLECTION_NAMES = PRIVATE_COLLECTIONS.map((collection) => collection.name);
+
+function findAllowedCollection(name: string, authed: boolean): CollectionConfig | undefined {
+  const allowed = authed ? ALL_COLLECTIONS : PUBLIC_COLLECTIONS;
+  return allowed.find((collection) => collection.name === name);
+}
 
 // --- URL resolution ---
 
@@ -163,6 +174,8 @@ function resolveUrl(collection: string, doc: Record<string, unknown>): string | 
       return `/${slug || slugify(str(doc.title) || "")}`;
     case "discoveries":
       return `/cool/${slug || slugify(str(doc.title) || "")}`;
+    case "pi_mono_artifacts":
+      return str(doc.url) || str(doc.source_url) || "/api/pi-mono";
     case "vault_notes": {
       const isAdr = str(doc.type) === "adr" || (path && (path.includes("/adrs/") || path.includes("docs/decisions/")));
       if (isAdr) return `/adrs/${slug || ""}`;
@@ -247,17 +260,18 @@ function discoveryResponse(request: NextRequest) {
         ],
       },
       usage: {
-        search: `GET ${origin}/api/search?q={query}&limit={1-50}`,
+        search: `GET ${origin}/api/search?q={query}&limit={1-50}&collection={optional}`,
         params: {
           q: "Search query (required for search, omit for this discovery page)",
           limit: "Max results, 1-50, default 10",
+          collection: `Optional collection filter. Public: ${PUBLIC_COLLECTION_NAMES.join(", ")}. Private with bearer token: ${PRIVATE_COLLECTION_NAMES.join(", ")}.`,
         },
         auth: "Optional. Set Authorization: Bearer <token> to unlock private collections (vault, memory, system log, transcripts).",
         rateLimit: `${RATE_LIMIT} requests per ${RATE_WINDOW} (Upstash sliding window)`,
         responseFormat: "HATEOAS JSON envelope with markdown snippets and nextActions",
       },
-      publicCollections: PUBLIC_COLLECTIONS.map(c => c.name).concat(["adrs"]),
-      privateCollections: PRIVATE_COLLECTIONS.map(c => c.name),
+      publicCollections: PUBLIC_COLLECTION_NAMES,
+      privateCollections: PRIVATE_COLLECTION_NAMES,
     }, [
       {
         command: `curl -sS "${origin}/api/search?q=voice+agent"`,
@@ -280,6 +294,14 @@ function discoveryResponse(request: NextRequest) {
         description: "Running services on a personal k8s cluster (Talos + Colima)",
       },
       {
+        command: `curl -sS "${origin}/api/search?q=which+provider%2Fmodel+triggered+this&collection=pi_mono_artifacts"`,
+        description: "Search the public pi-mono maintainer corpus only",
+      },
+      {
+        command: `curl -sS "${origin}/api/pi-mono"`,
+        description: "pi-mono corpus discovery + skill/extension install instructions",
+      },
+      {
         command: `curl -sS "${origin}/api/docs"`,
         description: "Docs API — search books, PDFs, and chunked technical documents",
       },
@@ -299,7 +321,10 @@ export async function GET(request: NextRequest) {
   // No query = discovery
   if (!q) return discoveryResponse(request);
 
-  const command = `GET /api/search?q=${encodeURIComponent(q)}`;
+  const requestedCollection = request.nextUrl.searchParams.get("collection")?.trim() || undefined;
+  const command = requestedCollection
+    ? `GET /api/search?q=${encodeURIComponent(q)}&collection=${encodeURIComponent(requestedCollection)}`
+    : `GET /api/search?q=${encodeURIComponent(q)}`;
 
   // Rate limit
   const rl = getRatelimit();
@@ -323,41 +348,65 @@ export async function GET(request: NextRequest) {
   }
 
   const authed = isAuthed(request);
-  const collections = authed
-    ? [...PUBLIC_COLLECTIONS, ...PRIVATE_COLLECTIONS]
-    : PUBLIC_COLLECTIONS;
+  let collections = authed ? ALL_COLLECTIONS : PUBLIC_COLLECTIONS;
+  let includeAdrs = true;
+
+  if (requestedCollection) {
+    if (requestedCollection === "adrs") {
+      collections = [];
+    } else {
+      const requested = findAllowedCollection(requestedCollection, authed);
+      if (!requested) {
+        const allowed = authed ? [...PUBLIC_COLLECTION_NAMES, ...PRIVATE_COLLECTION_NAMES] : PUBLIC_COLLECTION_NAMES;
+        return NextResponse.json(
+          errorEnvelope(
+            command,
+            "INVALID_COLLECTION",
+            `Unsupported collection '${requestedCollection}'`,
+            { allowedCollections: allowed },
+          ),
+          { status: 400 },
+        );
+      }
+      collections = [requested];
+      includeAdrs = false;
+    }
+  }
 
   const limit = Math.min(Number(request.nextUrl.searchParams.get("limit")) || 10, 50);
-  const perCollection = Math.max(3, Math.ceil(limit / collections.length));
+  const collectionSlots = collections.length + (includeAdrs ? 1 : 0);
+  const perCollection = Math.max(3, Math.ceil(limit / Math.max(collectionSlots, 1)));
 
   // Typesense multi-search
-  const searches = collections.map(c => ({
-    collection: c.name,
+  const searches = collections.map((collection) => ({
+    collection: collection.name,
     q,
-    query_by: c.queryBy,
+    query_by: collection.queryBy,
     per_page: perCollection,
-    highlight_full_fields: c.queryBy,
+    highlight_full_fields: collection.queryBy,
     exclude_fields: "embedding",
   }));
 
   try {
-    const resp = await fetch(`${TYPESENSE_URL}/multi_search`, {
-      method: "POST",
-      headers: {
-        "X-TYPESENSE-API-KEY": TYPESENSE_API_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ searches }),
-    });
+    const data = searches.length > 0
+      ? await (async () => {
+        const resp = await fetch(`${TYPESENSE_URL}/multi_search`, {
+          method: "POST",
+          headers: {
+            "X-TYPESENSE-API-KEY": TYPESENSE_API_KEY,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ searches }),
+        });
 
-    if (!resp.ok) {
-      return NextResponse.json(
-        errorEnvelope(command, "UPSTREAM_ERROR", "Typesense search failed", { status: resp.status }),
-        { status: 502 },
-      );
-    }
+        if (!resp.ok) {
+          throw new Error(`Typesense search failed (${resp.status})`);
+        }
 
-    const data = await resp.json();
+        return resp.json();
+      })()
+      : { results: [] };
+
     const seen = new Map<string, SearchHit>();
 
     for (const [i, result] of (data.results || []).entries()) {
@@ -377,17 +426,18 @@ export async function GET(request: NextRequest) {
           title: str(doc.title) || str(doc.action) || str(doc.observation) || "",
           snippet: extractSnippet(h, doc),
           url,
-          type: str(doc.type) || collName,
+          type: str(doc.kind) || str(doc.type) || collName,
           score,
         });
       }
     }
 
-    // Add ADR results for public searches
-    for (const hit of await searchAdrs(q, perCollection)) {
-      const existing = seen.get(hit.url);
-      if (!existing || existing.score < hit.score) {
-        seen.set(hit.url, hit);
+    if (includeAdrs) {
+      for (const hit of await searchAdrs(q, perCollection)) {
+        const existing = seen.get(hit.url);
+        if (!existing || existing.score < hit.score) {
+          seen.set(hit.url, hit);
+        }
       }
     }
 
@@ -400,33 +450,45 @@ export async function GET(request: NextRequest) {
       query: q,
       hits,
       totalFound: hits.length,
-      collections: [...new Set(hits.map(h => h.collection))],
+      collections: [...new Set(hits.map((hit) => hit.collection))],
       authenticated: authed,
+      requestedCollection,
     };
 
     return NextResponse.json(
       envelope(command, searchResult, [
         ...(hits.length > 0 ? [{
-          command: `curl -sS "${origin}${hits[0].url}"`,
+          command: hits[0].url.startsWith("http")
+            ? `curl -sS "${hits[0].url}"`
+            : `curl -sS "${origin}${hits[0].url}"`,
           description: `Read top result: ${hits[0].title}`,
         }] : []),
         {
-          command: `curl -sS "${origin}/api/search?q=${encodeURIComponent(q)}&limit=${Math.min(limit + 10, 50)}"`,
+          command: `curl -sS "${origin}/api/search?q=${encodeURIComponent(q)}&limit=${Math.min(limit + 10, 50)}${requestedCollection ? `&collection=${encodeURIComponent(requestedCollection)}` : ""}"`,
           description: "Expand search (more results)",
+        },
+        {
+          command: `curl -sS "${origin}/api/pi-mono"`,
+          description: "pi-mono corpus discovery + install instructions",
         },
         {
           command: `curl -sS "${origin}/api/docs/search?q=${encodeURIComponent(q)}&perPage=5"`,
           description: "Search docs/books (chunked documents)",
         },
-        {
-          command: `curl -sS "${origin}/feed.xml"`,
-          description: "RSS feed (all articles, full content)",
-        },
       ]),
     );
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const upstream = message.match(/Typesense search failed \((\d+)\)/);
+    if (upstream) {
+      return NextResponse.json(
+        errorEnvelope(command, "UPSTREAM_ERROR", "Typesense search failed", { status: Number(upstream[1]) }),
+        { status: 502 },
+      );
+    }
+
     return NextResponse.json(
-      errorEnvelope(command, "SEARCH_UNAVAILABLE", "Search service error", String(error)),
+      errorEnvelope(command, "SEARCH_UNAVAILABLE", "Search service error", message),
       { status: 503 },
     );
   }

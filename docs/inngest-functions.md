@@ -58,6 +58,7 @@ Operational boundary for Phase 1:
   - `subscription/check-feeds`
 - Those Inngest functions keep manual/on-demand event triggers where useful, but they no longer own the recurring cron schedule.
 - The tier-1 Restate jobs run host-side direct task runners via `scripts/restate/run-tier1-task.ts` so soak results reflect actual work execution.
+- The same host-runner pattern now powers `pi-mono-sync`: a Restate DAG that calls `--task pi-mono-artifacts-sync` to materialize repo docs/issues/PRs/comments/commits/releases into Typesense collection `pi_mono_artifacts`, plus `maintainer_profile` and `sync_state` documents.
 - Discovery-family pilot cutover has started behind two reversible flags:
   - `QUEUE_PILOTS=discovery` makes `joelclaw discover` enqueue `discovery/noted` into the shared queue instead of sending directly to Inngest.
   - `runSubscriptionCheckSingleDirect()` now does the same for feed-published discovery items on the direct Restate/Dkron path, and this has been proved live with `publishMode: queue` on a real subscription check.

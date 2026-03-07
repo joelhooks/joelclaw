@@ -667,6 +667,119 @@ const restateEnrichCmd = Command.make(
     })
 ).pipe(Command.withDescription("Enrich a contact via Restate DAG — 7+ parallel source probes → LLM synthesis → Vault dossier"))
 
+const restatePiMonoSyncCmd = Command.make(
+  "pi-mono-sync",
+  {
+    repo: Options.text("repo").pipe(
+      Options.withDefault("badlogic/pi-mono"),
+      Options.withDescription("GitHub repo to sync (default: badlogic/pi-mono)")
+    ),
+    localClone: Options.text("local-clone").pipe(
+      Options.withDescription("Optional local clone path for repo docs (defaults to ~/Code/<owner>/<repo>)"),
+      Options.optional,
+    ),
+    fullBackfill: Options.boolean("full-backfill").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Ignore the last sync checkpoint and re-import the full corpus")
+    ),
+    maxPages: Options.integer("max-pages").pipe(
+      Options.withDefault(100),
+      Options.withDescription("Maximum GitHub pages to fetch per artifact kind")
+    ),
+    perPage: Options.integer("per-page").pipe(
+      Options.withDefault(100),
+      Options.withDescription("GitHub page size per request (max 100)")
+    ),
+    sync: Options.boolean("sync").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Wait for the DAG result instead of async fire-and-forget")
+    ),
+    ingressUrl: Options.text("ingress-url").pipe(
+      Options.withDefault(process.env.RESTATE_INGRESS_URL?.trim() || "http://localhost:8080"),
+      Options.withDescription("Restate ingress URL")
+    ),
+  },
+  ({ repo, localClone, fullBackfill, maxPages, perPage, sync, ingressUrl }) =>
+    Effect.gen(function* () {
+      const triggerScript = resolveRepoFile("packages/restate/src/trigger-dag.ts")
+      if (!triggerScript) {
+        yield* Console.log(respondError(
+          "restate pi-mono-sync",
+          "Cannot find packages/restate/src/trigger-dag.ts — set JOELCLAW_ROOT or run from repo.",
+          "RESTATE_TRIGGER_NOT_FOUND",
+          "Set JOELCLAW_ROOT to the joelclaw repo root, or run from within the repo.",
+          [{
+            command: "joelclaw restate pi-mono-sync --help",
+            description: "Show pi-mono sync usage",
+          }]
+        ))
+        return
+      }
+
+      const workflowId = `pi-mono-${repo.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now().toString(36)}`
+      const args: string[] = [
+        "bun", "run", triggerScript, "--",
+        "--pipeline", "pi-mono-sync",
+        "--repo", repo,
+        "--id", workflowId,
+        "--max-pages", String(maxPages),
+        "--per-page", String(perPage),
+      ]
+
+      if (!sync) args.push("--async")
+      if (fullBackfill) args.push("--full-backfill")
+
+      const clonePath = (localClone as { _tag: string; value?: string })._tag === "Some"
+        ? (localClone as { value: string }).value
+        : undefined
+      if (clonePath) args.push("--local-clone", clonePath)
+
+      const proc = Bun.spawnSync(args, {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          RESTATE_INGRESS_URL: ingressUrl,
+        },
+      })
+
+      const stdout = decode(proc.stdout).trim()
+      const stderr = decode(proc.stderr).trim()
+
+      if (proc.exitCode !== 0) {
+        yield* Console.log(respondError(
+          "restate pi-mono-sync",
+          stderr || stdout || `trigger exited with ${proc.exitCode}`,
+          "RESTATE_PI_MONO_SYNC_FAILED",
+          "Check Restate runtime health, GitHub auth, Typesense reachability, and the local clone path before retrying.",
+          [
+            { command: "joelclaw restate status", description: "Check Restate runtime health" },
+            { command: "joelclaw restate deployments", description: "Verify DAG services registered" },
+            { command: "joelclaw status", description: "Check Typesense and worker health" },
+          ]
+        ))
+        return
+      }
+
+      yield* Console.log(respond("restate pi-mono-sync", {
+        repo,
+        workflowId,
+        mode: sync ? "sync" : "async",
+        fullBackfill,
+        maxPages,
+        perPage,
+        output: stdout,
+      }, sync ? [
+        { command: `joelclaw search "Mario" --collection pi_mono_artifacts`, description: "Search the synced pi-mono corpus" },
+        { command: "joelclaw otel search \"dag.workflow\" --hours 1", description: "Check OTEL events" },
+      ] : [
+        { command: `RESTATE_HOSTPORT=localhost:9070 restate invocations list | rg "${workflowId}|dagOrchestrator/${workflowId}/run" -n -C 2`, description: "Inspect the live Restate workflow/invocation state" },
+        { command: `joelclaw search "badlogic" --collection pi_mono_artifacts`, description: "Search the pi-mono corpus once sync completes" },
+        { command: "joelclaw otel search \"dag.workflow\" --hours 1", description: "Check OTEL events" },
+      ]))
+    })
+).pipe(Command.withDescription("Sync pi-mono docs/issues/PRs/comments/commits/releases into the pi_mono_artifacts Typesense collection via a Restate DAG"))
+
 const restateCronStatusCmd = Command.make(
   "status",
   {
@@ -1113,6 +1226,7 @@ export const restateCmd = Command.make("restate", {}, () =>
       deployments: "joelclaw restate deployments [--admin-url http://localhost:9070] [--cli-bin restate]",
       smoke: "joelclaw restate smoke [--script scripts/restate/test-workflow.sh]",
       enrich: "joelclaw restate enrich \"Name\" [--github user] [--twitter user] [--depth full|quick] [--sync]",
+      piMonoSync: "joelclaw restate pi-mono-sync [--repo badlogic/pi-mono] [--full-backfill] [--sync]",
       cron: "joelclaw restate cron <status|list|enable-health|sync-tier1|delete>",
     },
   }, [
@@ -1133,8 +1247,12 @@ export const restateCmd = Command.make("restate", {}, () =>
       description: "Enrich a contact through the Restate DAG pipeline",
     },
     {
+      command: "joelclaw restate pi-mono-sync --repo badlogic/pi-mono --sync",
+      description: "Sync pi-mono docs, issues, PRs, comments, commits, and releases into Typesense",
+    },
+    {
       command: "joelclaw restate cron sync-tier1 --run-now",
       description: "Seed Dkron with the ADR-0216 tier-1 Restate jobs and trigger them now",
     },
   ]))
-).pipe(Command.withSubcommands([restateStatusCmd, restateDeploymentsCmd, restateSmokeCmd, restateEnrichCmd, restateCronCmd]))
+).pipe(Command.withSubcommands([restateStatusCmd, restateDeploymentsCmd, restateSmokeCmd, restateEnrichCmd, restatePiMonoSyncCmd, restateCronCmd]))

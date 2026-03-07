@@ -1,3 +1,4 @@
+import { syncPiMonoArtifacts } from "../../packages/restate/src/pi-mono-artifacts";
 import { runDailyDigest } from "../../packages/system-bus/src/inngest/functions/daily-digest";
 import {
   runSkillGardenAudit,
@@ -62,6 +63,16 @@ async function run() {
       return runSubscriptionCheckFeeds({
         forceAll: parsedArgs.forceAll === true,
         source: typeof parsedArgs.source === "string" ? parsedArgs.source : "restate/dkron",
+      });
+
+    case "pi-mono-artifacts-sync":
+      return syncPiMonoArtifacts({
+        repo: typeof parsedArgs.repo === "string" ? parsedArgs.repo : undefined,
+        localClonePath: typeof parsedArgs.localClonePath === "string" ? parsedArgs.localClonePath : undefined,
+        fullBackfill: parsedArgs.fullBackfill === true,
+        maxPages: typeof parsedArgs.maxPages === "number" ? parsedArgs.maxPages : undefined,
+        perPage: typeof parsedArgs.perPage === "number" ? parsedArgs.perPage : undefined,
+        materializeProfile: parsedArgs.materializeProfile !== false,
       });
 
     default:

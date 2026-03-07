@@ -4,7 +4,8 @@
  *
  * Supports hybrid search (keyword + semantic), typo tolerance, faceting.
  * Searches vault_notes, memory_observations, blog_posts, system_log,
- * discoveries, transcripts, voice_transcripts, docs, docs_chunks, and otel_events.
+ * discoveries, transcripts, voice_transcripts, docs, docs_chunks, otel_events,
+ * system_knowledge, and pi_mono_artifacts.
  */
 import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
@@ -41,6 +42,7 @@ const COLLECTIONS: readonly SearchCollection[] = [
   { name: "docs_chunks", queryBy: "retrieval_text,content", titleField: "title", supportsSemantic: true },
   { name: "otel_events", queryBy: "action,error,component,source,metadata_json,search_text", titleField: "action", supportsSemantic: false },
   { name: "system_knowledge", queryBy: "title,content", titleField: "title", supportsSemantic: true },
+  { name: "pi_mono_artifacts", queryBy: "title,content,author,path,decision_tags", titleField: "title", supportsSemantic: true },
 ]
 
 const COLLECTION_NAMES = COLLECTIONS.map((c) => c.name)

@@ -6,7 +6,23 @@ Next.js 16 App Router site for `joelclaw.com`.
 
 - Human HTML pages: route `page.tsx` trees under `apps/web/app/`
 - Markdown exports: `https://joelclaw.com/{slug}.md` (rewritten to `app/[slug]/md/route.ts`) and `https://joelclaw.com/sitemap.md`
-- API discovery + machine endpoints: `https://joelclaw.com/api`, `https://joelclaw.com/api/search`, `https://joelclaw.com/api/docs`, `https://joelclaw.com/feed.xml`, `https://joelclaw.com/llms.txt`
+- API discovery + machine endpoints: `https://joelclaw.com/api`, `https://joelclaw.com/api/search`, `https://joelclaw.com/api/pi-mono`, `https://joelclaw.com/api/docs`, `https://joelclaw.com/feed.xml`, `https://joelclaw.com/llms.txt`
+
+## Public pi-mono corpus surface
+
+- `apps/web/app/api/pi-mono/route.ts` is the discovery endpoint for the public `pi_mono_artifacts` corpus.
+- `apps/web/app/api/search/route.ts` now accepts `collection=pi_mono_artifacts` on the public, Upstash-rate-limited search surface.
+- The discovery payload at `/api/pi-mono` includes:
+  - corpus/search usage examples for `pi_mono_artifacts`
+  - current install steps for the `contributing-to-pi` skill
+  - honest status for the planned public extension repo `joelhooks/contributing-to-pi-mono`
+- Public search returns external GitHub URLs directly for pi-mono artifacts, so top-result next actions can point straight at the source issue/PR/comment/commit/release.
+
+## `/cool` content routing
+
+- `apps/web/app/cool/[slug]/page.tsx` resolves **tutorial posts first** at Convex slug `cool/<slug>`.
+- If no tutorial exists for that slug, the route falls back to the legacy `discovery:<slug>` record.
+- This keeps `/cool/...` tutorial URLs working even when an older discovery stub still exists for the same topic.
 
 ## CLAWMAIL view-source convention
 

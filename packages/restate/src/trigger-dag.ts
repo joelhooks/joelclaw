@@ -7,10 +7,11 @@
  *   bun run dag -- --pipeline research --topic "Restate"     # multi-source research
  *   bun run dag -- --pipeline enrich-contact --name "Alex Hillman"
  *   bun run dag -- --pipeline enrich-contact --name "John Lindquist" --github joelhooks --depth quick
+ *   bun run dag -- --pipeline pi-mono-sync --repo badlogic/pi-mono --full-backfill
  *   bun run dag -- --id my-run-1
  */
 
-import { buildHealthPipeline } from "./pipelines";
+import { buildHealthPipeline, buildPiMonoArtifactsSyncPipeline } from "./pipelines";
 import type { DagNodeInput } from "./workflows/dag-orchestrator";
 
 const RESTATE_INGRESS =
@@ -32,6 +33,12 @@ const githubHint = getArg("--github");
 const twitterHint = getArg("--twitter");
 const emailHint = getArg("--email");
 const websiteHint = getArg("--website");
+const repo = getArg("--repo") ?? "badlogic/pi-mono";
+const localClonePath = getArg("--local-clone");
+const maxPages = Number.parseInt(getArg("--max-pages") ?? "100", 10);
+const perPage = Number.parseInt(getArg("--per-page") ?? "100", 10);
+const fullBackfill = args.includes("--full-backfill");
+const materializeProfile = !args.includes("--no-profile");
 const asyncMode = args.includes("--async");
 
 const nodeDelay = Number.isFinite(sleepMs)
@@ -383,6 +390,18 @@ switch (pipeline) {
       website: websiteHint,
     });
     pipelineName = `enrich-contact:${contactName}`;
+    break;
+  }
+  case "pi-mono-sync": {
+    nodes = buildPiMonoArtifactsSyncPipeline({
+      repo,
+      ...(localClonePath ? { localClonePath } : {}),
+      ...(Number.isFinite(maxPages) ? { maxPages } : {}),
+      ...(Number.isFinite(perPage) ? { perPage } : {}),
+      fullBackfill,
+      materializeProfile,
+    });
+    pipelineName = `pi-mono-sync:${repo}`;
     break;
   }
   case "demo":

@@ -6,7 +6,7 @@ const buildTier1RunnerCommand = (
   task: string,
   args: Record<string, unknown> = {},
 ): string => {
-  const repoRoot = "$HOME/Code/joelhooks/joelclaw";
+  const repoRoot = process.env.JOELCLAW_ROOT ?? `${process.env.HOME ?? "/Users/joel"}/Code/joelhooks/joelclaw`;
   const argsJson = JSON.stringify(args);
 
   return [
@@ -208,6 +208,67 @@ export const buildSubscriptionCheckFeedsDagRequest = (requestId?: string): DagRu
   ...(requestId ? { requestId } : {}),
   pipeline: "subscription-check-feeds",
   nodes: buildSubscriptionCheckFeedsPipeline(),
+});
+
+export type PiMonoSyncPipelineOptions = {
+  repo?: string;
+  localClonePath?: string;
+  fullBackfill?: boolean;
+  maxPages?: number;
+  perPage?: number;
+  materializeProfile?: boolean;
+};
+
+export const buildPiMonoArtifactsSyncPipeline = (
+  options: PiMonoSyncPipelineOptions = {},
+): DagNodeInput[] => {
+  const repo = options.repo ?? "badlogic/pi-mono";
+  const args = {
+    repo,
+    ...(options.localClonePath ? { localClonePath: options.localClonePath } : {}),
+    ...(options.fullBackfill ? { fullBackfill: true } : {}),
+    ...(typeof options.maxPages === "number" ? { maxPages: options.maxPages } : {}),
+    ...(typeof options.perPage === "number" ? { perPage: options.perPage } : {}),
+    ...(options.materializeProfile === false ? { materializeProfile: false } : { materializeProfile: true }),
+  };
+
+  return [
+    {
+      id: "sync-artifacts",
+      task: `sync ${repo} artifacts into Typesense`,
+      handler: "shell",
+      config: {
+        command: buildTier1RunnerCommand("pi-mono-artifacts-sync", args),
+      },
+    },
+    {
+      id: "summarize-sync",
+      task: `summarize ${repo} sync outcome`,
+      handler: "infer",
+      dependsOn: ["sync-artifacts"],
+      config: {
+        prompt: [
+          `You are summarizing a pi-mono corpus sync for ${repo}.`,
+          "Use the sync JSON below to produce an operator report.",
+          "State whether the run did a full backfill or incremental sync, what artifact kinds were imported, and whether follow-up is needed.",
+          "",
+          "## Sync result",
+          "{{sync-artifacts}}",
+        ].join("\n"),
+        system:
+          "You are a terse ops analyst. Output JSON with keys status, summary, importedKinds, followUp, and operatorCommands.",
+      },
+    },
+  ];
+};
+
+export const buildPiMonoArtifactsSyncDagRequest = (
+  options: PiMonoSyncPipelineOptions = {},
+  requestId?: string,
+): DagRunRequest => ({
+  ...(requestId ? { requestId } : {}),
+  pipeline: `pi-mono-sync:${options.repo ?? "badlogic/pi-mono"}`,
+  nodes: buildPiMonoArtifactsSyncPipeline(options),
 });
 
 export const RESTATE_CRON_PIPELINES: Record<string, RestateCronPipelineDefinition> = {
