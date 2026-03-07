@@ -46,6 +46,20 @@ function parseNumberEnv(value: string | undefined, defaultValue: number): number
   return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
 }
 
+function createImmediateTickScheduler(run: () => void): () => void {
+  let scheduled = false;
+
+  return () => {
+    if (scheduled) return;
+    scheduled = true;
+
+    queueMicrotask(() => {
+      scheduled = false;
+      run();
+    });
+  };
+}
+
 async function readEnvValue(name: string): Promise<string | undefined> {
   const direct = process.env[name]?.trim();
   if (direct) return direct;
@@ -299,6 +313,7 @@ export async function startQueueDrainer(): Promise<() => Promise<void>> {
   const activeStreamIds = new Set<string>();
   const retryNotBefore = new Map<string, number>();
   const inflight = new Set<Promise<void>>();
+  let scheduleTickSoon: () => void = () => {};
 
   const dispatchCandidate = async (candidate: CandidateMessage): Promise<void> => {
     const streamId = candidate.message.id;
@@ -362,6 +377,7 @@ export async function startQueueDrainer(): Promise<() => Promise<void>> {
       console.error(`[queue-drainer] dispatch failed for ${streamId}: ${message}`);
     } finally {
       activeStreamIds.delete(streamId);
+      scheduleTickSoon();
     }
   };
 
@@ -409,6 +425,11 @@ export async function startQueueDrainer(): Promise<() => Promise<void>> {
     }
   };
 
+  scheduleTickSoon = createImmediateTickScheduler(() => {
+    if (stopping) return;
+    void tick();
+  });
+
   const interval = setInterval(() => {
     void tick();
   }, QUEUE_DRAIN_INTERVAL_MS);
@@ -441,6 +462,7 @@ export const __queueDrainerTestUtils = {
   buildDispatchWorkflowId,
   buildHttpDispatchNode,
   buildInngestDispatchNode,
+  createImmediateTickScheduler,
   normalizeEnvelope,
   sanitizeWorkflowKey,
 };

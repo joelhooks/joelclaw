@@ -17,9 +17,16 @@ ADR-0207 Restate package for production durable workflow execution.
 Tuning env:
 
 - `QUEUE_DRAINER_ENABLED` — default enabled
-- `QUEUE_DRAIN_INTERVAL_MS` — polling cadence (default `2000`)
+- `QUEUE_DRAIN_INTERVAL_MS` — idle polling cadence / retry heartbeat (default `2000`)
 - `QUEUE_DRAINER_CONCURRENCY` — max in-flight queue dispatches (default `1`)
 - `QUEUE_DRAIN_FAILURE_BACKOFF_MS` — per-message retry cooldown after failed dispatch (default `30000`)
+
+Throughput note:
+
+- the drainer no longer pays the full `QUEUE_DRAIN_INTERVAL_MS` tax between successful dispatches when backlog exists
+- after a dispatch finishes and a slot frees, it self-pulses immediately to claim the next ready message
+- the interval now acts as the idle poll / retry heartbeat, not the per-message pacing knob
+- this keeps default concurrency conservative while removing the dumb 2-second gap between fast successful sends
 
 ### Deploy gate workload
 

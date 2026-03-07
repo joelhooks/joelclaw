@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { Priority, type QueueEventRegistryEntry, type StoredMessage } from "@joelclaw/queue";
 import { __queueDrainerTestUtils } from "./queue-drainer";
 
-const { buildDispatchWorkflowId, buildHttpDispatchNode, buildInngestDispatchNode, normalizeEnvelope } = __queueDrainerTestUtils;
+const {
+  buildDispatchWorkflowId,
+  buildHttpDispatchNode,
+  buildInngestDispatchNode,
+  createImmediateTickScheduler,
+  normalizeEnvelope,
+} = __queueDrainerTestUtils;
 
 describe("queue drainer helpers", () => {
   test("normalizeEnvelope falls back to queue stream id and defaults", () => {
@@ -99,5 +105,24 @@ describe("queue drainer helpers", () => {
 
     expect(node.config?.url).toBe("https://example.com/hook");
     expect(JSON.parse(String(node.config?.body))).toEqual({ hello: "world" });
+  });
+
+  test("createImmediateTickScheduler coalesces same-turn follow-up drain requests", async () => {
+    let calls = 0;
+    const schedule = createImmediateTickScheduler(() => {
+      calls += 1;
+    });
+
+    schedule();
+    schedule();
+    schedule();
+    expect(calls).toBe(0);
+
+    await Promise.resolve();
+    expect(calls).toBe(1);
+
+    schedule();
+    await Promise.resolve();
+    expect(calls).toBe(2);
   });
 });

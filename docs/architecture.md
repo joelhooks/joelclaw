@@ -74,6 +74,7 @@ The monorepo follows pnpm workspaces with strict package boundaries:
 - Restate worker package for durable DAG/workflow execution
 - Hosts deploy gate, DAG orchestrator, and the deterministic queue drainer
 - Owns the execution-adjacent queue → Restate `/send` bridge for ADR-0217 Story 3
+- The drainer now self-pulses immediately when backlog remains and a dispatch slot frees, so `QUEUE_DRAIN_INTERVAL_MS` is an idle poll heartbeat instead of a fixed per-message tax
 - Provides the current operator-facing sandbox orchestration surface
 
 #### Contract Packages

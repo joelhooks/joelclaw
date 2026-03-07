@@ -251,7 +251,8 @@ From index comments + function lists:
 2. The host Restate worker (`packages/restate/src/index.ts`) starts a deterministic queue drainer beside the channel callback listener.
 3. On startup, the drainer claims pending + never-delivered entries via `@joelclaw/queue#getUnacked()`, reindexes replayable entries, and emits OTEL replay evidence.
 4. Each drain tick selects the next priority candidate from the sorted set, resolves its static registry target from `packages/queue/src/registry.ts`, and POSTs a one-node DAG request to Restate `/dagOrchestrator/{workflowId}/run/send`.
-5. The current Story-3 bridge re-emits the queue item to its registered Inngest event target inside that one-node DAG request. This is deliberate: the deterministic queue/drainer is proven first; per-family Restate cutovers remain Story 4 work.
+5. When backlog remains and a dispatch slot frees, the drainer self-pulses immediately instead of waiting for the next `QUEUE_DRAIN_INTERVAL_MS` heartbeat. That interval is now the idle poll / retry cadence, not a mandatory 2-second tax between successful sends.
+6. The current Story-3 bridge re-emits the queue item to its registered Inngest event target inside that one-node DAG request. This is deliberate: the deterministic queue/drainer is proven first; per-family Restate cutovers remain Story 4 work.
 6. On accepted Restate dispatch, the drainer acks the queue message; on failure it leaves the message in Redis, applies retry cooldown, and emits `queue.dispatch.failed` OTEL evidence.
 7. Crash recovery comes from the Redis stream + consumer-group replay path, not from vibes: restart the Restate worker, let `getUnacked()` reclaim the inflight entries, then drain resumes.
 
