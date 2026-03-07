@@ -195,6 +195,7 @@ Sandbox runs produce patch bundles, not direct commits to main. This keeps runs 
 - the model may only shape priority, dedup suggestion, and route confirmation/mismatch signal
 - static registry routing remains authoritative in this phase; no dynamic handler invention
 - canonical OTEL vocabulary for this layer is `queue.triage.started|completed|failed|fallback`
+- canonical operator view for this layer is the `triage` block inside `joelclaw queue stats`
 
 **@joelclaw/vault-reader**
 - Obsidian Vault context injection

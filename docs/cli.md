@@ -231,10 +231,11 @@ Semantics:
   - the worker generates the canonical `QueueEventEnvelope`, adds trace metadata, evaluates optional shadow triage, and persists the queue record
   - returns the Redis stream ID, priority, and any `triageMode` / `triage` metadata from admission
 - `depth` reports queue depth, priority distribution (P0/P1/P2/P3 counts), oldest/newest message timestamps
-- `stats` summarizes recent Restate queue-drainer behavior from OTEL over a lookback window.
-  - reports sampled/found dispatch events, live queue depth, started/completed/failed counts, success rate, queue wait-time percentiles (`p50`/`p95`), dispatch-duration percentiles, promotion count, top event families, and recent failures
+- `stats` summarizes recent Restate queue-drainer behavior plus Phase 2 triage behavior from OTEL over a lookback window.
+  - dispatch section reports sampled/found dispatch events, live queue depth, started/completed/failed counts, success rate, queue wait-time percentiles (`p50`/`p95`), dispatch-duration percentiles, promotion count, top event families, and recent failures
+  - triage section reports attempts, completed/failed/fallback counts, fallback counts by reason, disagreement count, applied-change count, suggested-not-applied count, route mismatches, latency percentiles, per-family rollups, and recent mismatch/fallback samples
   - uses `metadata.waitTimeMs` from `queue.dispatch.started` as the Story 5 queue-to-dispatch latency signal
-  - returns whether the current sample meets the Phase-1 soak gate `p95 <= 5000ms`
+  - uses `queue.triage.*` OTEL metadata as the Story 3 source of truth for queue-admission disagreements and fallback behavior
   - `--since <iso|ms>` overrides the lower bound so operators can anchor soak evidence to a known clean point (for example the supervised `queue.drainer.started` after a rollout) instead of mixing fresh traffic with a dirty pre-fix window
   - keeps the operator in CLI-land; no raw Redis keys or manual OTEL spelunking required for the first sanity pass
 - `list` lists recent messages in priority order (highest priority first), does not ack/remove

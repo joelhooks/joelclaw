@@ -91,6 +91,10 @@ Operational boundary for Phase 1:
   - edge clients (`joelclaw queue emit`, `joelclaw discover`, queue-mode `joelclaw subscribe check`) post raw event intent to `POST /internal/queue/enqueue` so they stay thin and stop writing Redis directly.
   - shadow triage is opt-in via `QUEUE_TRIAGE_MODE=shadow` and `QUEUE_TRIAGE_FAMILIES=discovery,content,subscriptions,github` (or exact event names).
   - Story 2 still clamps admission to static registry routing and shadow-mode final decisions; enforcement has not earned a runtime path yet.
+- Phase 2 Story 3 extends `joelclaw queue stats` into the triage operator surface:
+  - the command now reads both Restate drainer OTEL and `queue.triage.*` OTEL in one window.
+  - the triage block summarizes attempts, fallback counts by reason, disagreement counts, applied-vs-suggested deltas, route mismatches, latency percentiles, per-family rollups, and recent mismatch/fallback samples.
+  - if Story 3 cannot explain queue-admission behavior from this one command, the operator surface is still unfinished.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 
 ### System health

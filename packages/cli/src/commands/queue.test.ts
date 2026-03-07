@@ -100,6 +100,132 @@ describe("Queue CLI Command", () => {
     ]);
   });
 
+  it("summarizes triage fallbacks, disagreement counts, and mismatch samples for Story 3", () => {
+    const summary = __queueTestUtils.summarizeQueueTriageStats(
+      [
+        {
+          id: "triage-started-1",
+          timestamp: 10_000,
+          action: "queue.triage.started",
+          success: true,
+          metadata: {
+            family: "discovery/noted",
+            mode: "shadow",
+          },
+        },
+        {
+          id: "triage-completed-1",
+          timestamp: 10_030,
+          action: "queue.triage.completed",
+          success: true,
+          metadata: {
+            family: "discovery/noted",
+            mode: "shadow",
+            suggestedPriority: "P1",
+            finalPriority: "P2",
+            suggestedDedupKey: "discovery:https://example.com",
+            finalDedupKey: null,
+            routeCheck: "mismatch",
+            applied: false,
+            latencyMs: 30,
+          },
+        },
+        {
+          id: "triage-started-2",
+          timestamp: 11_000,
+          action: "queue.triage.started",
+          success: true,
+          metadata: {
+            family: "github/workflow_run.completed",
+            mode: "shadow",
+          },
+        },
+        {
+          id: "triage-failed-2",
+          timestamp: 11_020,
+          action: "queue.triage.failed",
+          success: false,
+          error: "schema broke",
+          metadata: {
+            family: "github/workflow_run.completed",
+            mode: "shadow",
+            latencyMs: 20,
+          },
+        },
+        {
+          id: "triage-fallback-2",
+          timestamp: 11_021,
+          action: "queue.triage.fallback",
+          success: false,
+          error: "schema_error",
+          metadata: {
+            family: "github/workflow_run.completed",
+            mode: "shadow",
+            fallbackReason: "schema_error",
+            finalPriority: "P1",
+            routeCheck: "confirm",
+            latencyMs: 21,
+          },
+        },
+      ],
+      {
+        hours: 24,
+        found: 5,
+        sampled: 5,
+        truncated: false,
+        filterBy: "timestamp:>=123 && action:=[queue.triage.started,queue.triage.completed,queue.triage.failed,queue.triage.fallback]",
+      },
+    );
+
+    expect(summary.attempts).toBe(2);
+    expect(summary.completed).toBe(1);
+    expect(summary.failed).toBe(1);
+    expect(summary.fallbacks).toBe(1);
+    expect(summary.disagreements).toBe(1);
+    expect(summary.appliedChanges).toBe(0);
+    expect(summary.suggestedNotApplied).toBe(1);
+    expect(summary.routeMismatches).toBe(1);
+    expect(summary.fallbackByReason).toEqual([{ reason: "schema_error", count: 1 }]);
+    expect(summary.latencyMs.p95).toBe(30);
+    expect(summary.families).toEqual([
+      {
+        name: "discovery/noted",
+        attempts: 1,
+        completed: 1,
+        failed: 0,
+        fallbacks: 0,
+        disagreements: 1,
+        appliedChanges: 0,
+        suggestedNotApplied: 1,
+        routeMismatches: 1,
+      },
+      {
+        name: "github/workflow_run.completed",
+        attempts: 1,
+        completed: 0,
+        failed: 1,
+        fallbacks: 1,
+        disagreements: 0,
+        appliedChanges: 0,
+        suggestedNotApplied: 0,
+        routeMismatches: 0,
+      },
+    ]);
+    expect(summary.recentMismatchSamples).toEqual([
+      {
+        at: new Date(10_030).toISOString(),
+        family: "discovery/noted",
+        mode: "shadow",
+        suggestedPriority: "P1",
+        finalPriority: "P2",
+        suggestedDedupKey: "discovery:https://example.com",
+        finalDedupKey: null,
+        routeCheck: "mismatch",
+        applied: false,
+      },
+    ]);
+  });
+
   it("computes nearest-rank percentiles for queue latency output", () => {
     expect(__queueTestUtils.percentile([100, 200, 300, 400], 0.5)).toBe(200);
     expect(__queueTestUtils.percentile([100, 200, 300, 400], 0.95)).toBe(400);

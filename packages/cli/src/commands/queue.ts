@@ -126,10 +126,17 @@ const QUEUE_DISPATCH_ACTIONS = [
   "queue.dispatch.completed",
   "queue.dispatch.failed",
 ] as const;
+const QUEUE_TRIAGE_ACTIONS = [
+  "queue.triage.started",
+  "queue.triage.completed",
+  "queue.triage.failed",
+  "queue.triage.fallback",
+] as const;
 const QUEUE_LATENCY_TARGET_P95_MS = 5_000;
 const DEFAULT_QUEUE_STATS_LIMIT = 200;
 
 type QueueDispatchAction = (typeof QUEUE_DISPATCH_ACTIONS)[number];
+type QueueTriageAction = (typeof QUEUE_TRIAGE_ACTIONS)[number];
 
 type QueueDepthSnapshot = {
   total: number;
@@ -142,6 +149,15 @@ type QueueDispatchEvent = {
   id: string;
   timestamp: number;
   action: QueueDispatchAction;
+  success: boolean;
+  error?: string;
+  metadata: Record<string, unknown>;
+};
+
+type QueueTriageEvent = {
+  id: string;
+  timestamp: number;
+  action: QueueTriageAction;
   success: boolean;
   error?: string;
   metadata: Record<string, unknown>;
@@ -168,6 +184,15 @@ function asFiniteNumber(value: unknown): number | undefined {
   if (typeof value === "string") {
     const parsed = Number(value);
     if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    if (value === "true") return true;
+    if (value === "false") return false;
   }
   return undefined;
 }
@@ -215,6 +240,11 @@ function isQueueDispatchAction(value: unknown): value is QueueDispatchAction {
     && (QUEUE_DISPATCH_ACTIONS as readonly string[]).includes(value);
 }
 
+function isQueueTriageAction(value: unknown): value is QueueTriageAction {
+  return typeof value === "string"
+    && (QUEUE_TRIAGE_ACTIONS as readonly string[]).includes(value);
+}
+
 function percentile(values: readonly number[], ratio: number): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -234,6 +264,24 @@ function parseQueueDispatchHit(hit: unknown): QueueDispatchEvent | null {
   const action = doc.action;
   const timestamp = asFiniteNumber(doc.timestamp);
   if (!isQueueDispatchAction(action) || timestamp == null) return null;
+
+  return {
+    id: asNonEmptyString(doc.id) ?? `${action}-${timestamp}`,
+    timestamp,
+    action,
+    success: doc.success !== false,
+    error: asNonEmptyString(doc.error),
+    metadata: parseMetadataJson(doc.metadata_json),
+  };
+}
+
+function parseQueueTriageHit(hit: unknown): QueueTriageEvent | null {
+  const doc = (hit as { document?: Record<string, unknown> })?.document;
+  if (!doc) return null;
+
+  const action = doc.action;
+  const timestamp = asFiniteNumber(doc.timestamp);
+  if (!isQueueTriageAction(action) || timestamp == null) return null;
 
   return {
     id: asNonEmptyString(doc.id) ?? `${action}-${timestamp}`,
@@ -291,6 +339,60 @@ async function loadQueueDispatchEvents(hours: number, limit: number, sinceTimest
   const events = hits
     .map(parseQueueDispatchHit)
     .filter((event): event is QueueDispatchEvent => event !== null);
+
+  return {
+    found: asFiniteNumber(payload.found) ?? events.length,
+    events,
+    filterBy,
+  };
+}
+
+async function loadQueueTriageEvents(hours: number, limit: number, sinceTimestamp?: number): Promise<{
+  found: number;
+  events: QueueTriageEvent[];
+  filterBy: string;
+}> {
+  const apiKey = resolveTypesenseApiKey();
+  const lowerBound = sinceTimestamp ?? Math.floor(Date.now() - hours * 60 * 60 * 1000);
+  const filterBy = [
+    `timestamp:>=${lowerBound}`,
+    "source:=worker",
+    "component:=queue-triage",
+    `action:=[${QUEUE_TRIAGE_ACTIONS.join(",")}]`,
+  ].join(" && ");
+
+  const searchParams = new URLSearchParams({
+    q: "*",
+    query_by: OTEL_QUERY_BY,
+    filter_by: filterBy,
+    per_page: String(limit),
+    page: "1",
+    sort_by: "timestamp:desc",
+    include_fields: "id,timestamp,action,success,error,metadata_json",
+  });
+
+  const response = await fetch(
+    `${TYPESENSE_URL}/collections/${OTEL_COLLECTION}/documents/search?${searchParams}`,
+    {
+      headers: {
+        "X-TYPESENSE-API-KEY": apiKey,
+      },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Typesense query failed (${response.status}): ${await response.text()}`);
+  }
+
+  const payload = await response.json() as {
+    found?: unknown;
+    hits?: unknown[];
+  };
+
+  const hits = Array.isArray(payload.hits) ? payload.hits : [];
+  const events = hits
+    .map(parseQueueTriageHit)
+    .filter((event): event is QueueTriageEvent => event !== null);
 
   return {
     found: asFiniteNumber(payload.found) ?? events.length,
@@ -426,6 +528,214 @@ function summarizeQueueStats(
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .map(([name, count]) => ({ name, count })),
     recentFailures,
+  };
+}
+
+function triageFamilyName(event: QueueTriageEvent): string {
+  return asNonEmptyString(event.metadata.family)
+    ?? asNonEmptyString(event.metadata.queueEventName)
+    ?? "unknown";
+}
+
+function isTriageDisagreement(event: QueueTriageEvent): boolean {
+  const suggestedPriority = asNonEmptyString(event.metadata.suggestedPriority);
+  const finalPriority = asNonEmptyString(event.metadata.finalPriority);
+  const suggestedDedupKey = asNonEmptyString(event.metadata.suggestedDedupKey) ?? null;
+  const finalDedupKey = asNonEmptyString(event.metadata.finalDedupKey) ?? null;
+  const routeCheck = asNonEmptyString(event.metadata.routeCheck) ?? "confirm";
+
+  return (suggestedPriority != null && finalPriority != null && suggestedPriority !== finalPriority)
+    || suggestedDedupKey !== finalDedupKey
+    || routeCheck === "mismatch";
+}
+
+function summarizeQueueTriageStats(
+  events: readonly QueueTriageEvent[],
+  window: QueueStatsWindow,
+): {
+  window: QueueStatsWindow;
+  attempts: number;
+  completed: number;
+  failed: number;
+  fallbacks: number;
+  terminal: number;
+  successRate: number | null;
+  disagreements: number;
+  appliedChanges: number;
+  suggestedNotApplied: number;
+  routeMismatches: number;
+  fallbackByReason: Array<{ reason: string; count: number }>;
+  latencyMs: {
+    count: number;
+    average: number | null;
+    p50: number | null;
+    p95: number | null;
+    max: number | null;
+  };
+  families: Array<{
+    name: string;
+    attempts: number;
+    completed: number;
+    failed: number;
+    fallbacks: number;
+    disagreements: number;
+    appliedChanges: number;
+    suggestedNotApplied: number;
+    routeMismatches: number;
+  }>;
+  recentMismatchSamples: Array<{
+    at: string;
+    family: string;
+    mode: string | null;
+    suggestedPriority: string | null;
+    finalPriority: string | null;
+    suggestedDedupKey: string | null;
+    finalDedupKey: string | null;
+    routeCheck: string | null;
+    applied: boolean;
+  }>;
+  recentFallbacks: Array<{
+    at: string;
+    family: string;
+    reason: string;
+    mode: string | null;
+    finalPriority: string | null;
+    routeCheck: string | null;
+    latencyMs: number | null;
+  }>;
+} {
+  const started = events.filter((event) => event.action === "queue.triage.started");
+  const completed = events.filter((event) => event.action === "queue.triage.completed");
+  const failed = events.filter((event) => event.action === "queue.triage.failed");
+  const fallbacks = events.filter((event) => event.action === "queue.triage.fallback");
+  const terminal = completed.length + fallbacks.length;
+
+  const fallbackReasons = new Map<string, number>();
+  const familyCounts = new Map<string, {
+    attempts: number;
+    completed: number;
+    failed: number;
+    fallbacks: number;
+    disagreements: number;
+    appliedChanges: number;
+    suggestedNotApplied: number;
+    routeMismatches: number;
+  }>();
+
+  const ensureFamily = (name: string) => {
+    const existing = familyCounts.get(name);
+    if (existing) return existing;
+
+    const created = {
+      attempts: 0,
+      completed: 0,
+      failed: 0,
+      fallbacks: 0,
+      disagreements: 0,
+      appliedChanges: 0,
+      suggestedNotApplied: 0,
+      routeMismatches: 0,
+    };
+    familyCounts.set(name, created);
+    return created;
+  };
+
+  for (const event of started) {
+    ensureFamily(triageFamilyName(event)).attempts += 1;
+  }
+
+  const disagreementEvents = completed.filter(isTriageDisagreement);
+  for (const event of completed) {
+    const bucket = ensureFamily(triageFamilyName(event));
+    bucket.completed += 1;
+
+    const applied = asBoolean(event.metadata.applied) === true;
+    const routeCheck = asNonEmptyString(event.metadata.routeCheck);
+    const disagreement = isTriageDisagreement(event);
+
+    if (disagreement) {
+      bucket.disagreements += 1;
+      if (!applied) {
+        bucket.suggestedNotApplied += 1;
+      }
+    }
+
+    if (applied) {
+      bucket.appliedChanges += 1;
+    }
+
+    if (routeCheck === "mismatch") {
+      bucket.routeMismatches += 1;
+    }
+  }
+
+  for (const event of failed) {
+    ensureFamily(triageFamilyName(event)).failed += 1;
+  }
+
+  for (const event of fallbacks) {
+    const bucket = ensureFamily(triageFamilyName(event));
+    bucket.fallbacks += 1;
+
+    const reason = asNonEmptyString(event.metadata.fallbackReason) ?? "unknown";
+    fallbackReasons.set(reason, (fallbackReasons.get(reason) ?? 0) + 1);
+  }
+
+  const latencySamples = [...completed, ...fallbacks]
+    .map((event) => asFiniteNumber(event.metadata.latencyMs))
+    .filter((value): value is number => value != null && value >= 0);
+
+  return {
+    window,
+    attempts: started.length,
+    completed: completed.length,
+    failed: failed.length,
+    fallbacks: fallbacks.length,
+    terminal,
+    successRate: terminal > 0 ? completed.length / terminal : null,
+    disagreements: disagreementEvents.length,
+    appliedChanges: completed.filter((event) => asBoolean(event.metadata.applied) === true).length,
+    suggestedNotApplied: disagreementEvents.filter((event) => asBoolean(event.metadata.applied) !== true).length,
+    routeMismatches: completed.filter((event) => asNonEmptyString(event.metadata.routeCheck) === "mismatch").length,
+    fallbackByReason: [...fallbackReasons.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([reason, count]) => ({ reason, count })),
+    latencyMs: {
+      count: latencySamples.length,
+      average: average(latencySamples),
+      p50: percentile(latencySamples, 0.5),
+      p95: percentile(latencySamples, 0.95),
+      max: latencySamples.length > 0 ? Math.max(...latencySamples) : null,
+    },
+    families: [...familyCounts.entries()]
+      .sort((a, b) => {
+        const attemptDelta = b[1].attempts - a[1].attempts;
+        if (attemptDelta !== 0) return attemptDelta;
+        const disagreementDelta = b[1].disagreements - a[1].disagreements;
+        if (disagreementDelta !== 0) return disagreementDelta;
+        return a[0].localeCompare(b[0]);
+      })
+      .map(([name, counts]) => ({ name, ...counts })),
+    recentMismatchSamples: disagreementEvents.slice(0, 5).map((event) => ({
+      at: new Date(event.timestamp).toISOString(),
+      family: triageFamilyName(event),
+      mode: asNonEmptyString(event.metadata.mode) ?? null,
+      suggestedPriority: asNonEmptyString(event.metadata.suggestedPriority) ?? null,
+      finalPriority: asNonEmptyString(event.metadata.finalPriority) ?? null,
+      suggestedDedupKey: asNonEmptyString(event.metadata.suggestedDedupKey) ?? null,
+      finalDedupKey: asNonEmptyString(event.metadata.finalDedupKey) ?? null,
+      routeCheck: asNonEmptyString(event.metadata.routeCheck) ?? null,
+      applied: asBoolean(event.metadata.applied) === true,
+    })),
+    recentFallbacks: fallbacks.slice(0, 5).map((event) => ({
+      at: new Date(event.timestamp).toISOString(),
+      family: triageFamilyName(event),
+      reason: asNonEmptyString(event.metadata.fallbackReason) ?? "unknown",
+      mode: asNonEmptyString(event.metadata.mode) ?? null,
+      finalPriority: asNonEmptyString(event.metadata.finalPriority) ?? null,
+      routeCheck: asNonEmptyString(event.metadata.routeCheck) ?? null,
+      latencyMs: asFiniteNumber(event.metadata.latencyMs) ?? null,
+    })),
   };
 }
 
@@ -594,8 +904,9 @@ const statsCmd = Command.make(
           const sinceText = parseOptionalText(since);
           const parsedSince = sinceText ? parseSinceTimestamp(sinceText) : undefined;
           const dispatchWindow = await loadQueueDispatchEvents(hours, normalizedLimit, parsedSince);
+          const triageWindow = await loadQueueTriageEvents(hours, normalizedLimit, parsedSince);
 
-          return summarizeQueueStats(
+          const dispatchSummary = summarizeQueueStats(
             dispatchWindow.events,
             {
               total: depth.total,
@@ -613,6 +924,22 @@ const statsCmd = Command.make(
               filterBy: dispatchWindow.filterBy,
             },
           );
+
+          return {
+            ...dispatchSummary,
+            triage: summarizeQueueTriageStats(
+              triageWindow.events,
+              {
+                hours,
+                sinceTimestamp: parsedSince ?? null,
+                sinceIso: parsedSince ? new Date(parsedSince).toISOString() : null,
+                found: triageWindow.found,
+                sampled: triageWindow.events.length,
+                truncated: triageWindow.found > triageWindow.events.length,
+                filterBy: triageWindow.filterBy,
+              },
+            ),
+          };
         },
         catch: (error) => error,
       }).pipe(Effect.either);
@@ -670,8 +997,13 @@ const statsCmd = Command.make(
           },
         },
         {
-          command: `joelclaw otel search "queue.dispatch.failed" --hours ${hours}`,
-          description: "Inspect failed drainer dispatch telemetry",
+          command: `joelclaw otel search "queue.triage.fallback" --hours ${hours}`,
+          description: "Inspect triage fallback telemetry",
+          params: {},
+        },
+        {
+          command: `joelclaw otel search "queue.triage.completed" --hours ${hours}`,
+          description: "Inspect successful triage samples",
           params: {},
         },
       ];
@@ -833,4 +1165,5 @@ export const __queueTestUtils = {
   parseSinceTimestamp,
   percentile,
   summarizeQueueStats,
+  summarizeQueueTriageStats,
 };
