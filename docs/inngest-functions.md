@@ -78,6 +78,7 @@ Operational boundary for Phase 1:
 - Story 5 operator surface now starts from `joelclaw queue stats` instead of ad-hoc Redis/OTEL spelunking:
   - the command queries `queue.dispatch.started|completed|failed` OTEL from the Restate drainer and summarizes sample coverage, success/failure counts, queue wait-time percentiles, dispatch durations, promotion count, top event families, and recent failures.
   - `metadata.waitTimeMs` from `queue.dispatch.started` is the canonical Phase-1 queue-to-dispatch latency signal.
+  - `joelclaw queue stats --since <iso|ms>` can pin the lower bound to a known-clean moment (for example the supervised Restate `queue.drainer.started` after rollout) so Story 5 soak evidence does not mix fresh traffic with a dirty pre-fix window.
   - this is the first human sanity-pass tool for the "Joel can inspect queue state from CLI only" Story 5 acceptance gate.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 

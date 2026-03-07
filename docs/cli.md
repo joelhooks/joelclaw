@@ -233,6 +233,7 @@ Semantics:
   - reports sampled/found dispatch events, live queue depth, started/completed/failed counts, success rate, queue wait-time percentiles (`p50`/`p95`), dispatch-duration percentiles, promotion count, top event families, and recent failures
   - uses `metadata.waitTimeMs` from `queue.dispatch.started` as the Story 5 queue-to-dispatch latency signal
   - returns whether the current sample meets the Phase-1 soak gate `p95 <= 5000ms`
+  - `--since <iso|ms>` overrides the lower bound so operators can anchor soak evidence to a known clean point (for example the supervised `queue.drainer.started` after a rollout) instead of mixing fresh traffic with a dirty pre-fix window
   - keeps the operator in CLI-land; no raw Redis keys or manual OTEL spelunking required for the first sanity pass
 - `list` lists recent messages in priority order (highest priority first), does not ack/remove
 - `inspect` loads a message by Redis stream ID and returns full payload + metadata

@@ -89,7 +89,7 @@ Queue pilot flags are evaluated inside the live worker process, not your shell. 
 
 `content/updated` is the odd one out: its ingress comes from the launchd watcher `com.joel.content-sync-watcher`, not from a worker-local function. The canonical watcher source now belongs in `infra/launchd/com.joel.content-sync-watcher.plist` plus `scripts/content-sync-watcher.sh`, and the script reads `~/.config/system-bus.env` on each trigger so `QUEUE_PILOTS=content` can switch between `joelclaw queue emit` and legacy `joelclaw send` without hand-editing the live plist.
 
-For Story 5 soak work, start from `joelclaw queue stats` before spelunking raw OTEL or Redis. That command is now the operator-facing summary for Restate drainer health: it rolls up recent `queue.dispatch.started|completed|failed` telemetry into live depth, terminal success/failure counts, `waitTimeMs` percentiles, dispatch-duration percentiles, promotions, top event families, and recent failures. If that command is broken or misleading, fix it before widening queue cutovers.
+For Story 5 soak work, start from `joelclaw queue stats` before spelunking raw OTEL or Redis. That command is now the operator-facing summary for Restate drainer health: it rolls up recent `queue.dispatch.started|completed|failed` telemetry into live depth, terminal success/failure counts, `waitTimeMs` percentiles, dispatch-duration percentiles, promotions, top event families, and recent failures. Use `joelclaw queue stats --since <iso|ms>` when you need to anchor the sample to a known-clean point such as a supervised `queue.drainer.started` after rollout. If that command is broken or misleading, fix it before widening queue cutovers.
 
 ## Adding a New Inngest Function
 

@@ -105,6 +105,13 @@ describe("Queue CLI Command", () => {
     expect(__queueTestUtils.percentile([], 0.95)).toBeNull();
   });
 
+  it("parses --since values as ISO or epoch timestamps", () => {
+    expect(__queueTestUtils.parseSinceTimestamp("2026-03-07T19:33:05Z")).toBe(1772911985000);
+    expect(__queueTestUtils.parseSinceTimestamp("1772911985000")).toBe(1772911985000);
+    expect(__queueTestUtils.parseSinceTimestamp("1772911985")).toBe(1772911985000);
+    expect(() => __queueTestUtils.parseSinceTimestamp("not-a-time")).toThrow();
+  });
+
   // Integration tests would require Redis + Typesense and are better suited for E2E.
   // These tests verify the command tree and Story 5 summary math.
 });

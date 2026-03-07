@@ -152,6 +152,8 @@ type QueueDispatchEvent = {
 
 type QueueStatsWindow = {
   hours: number;
+  sinceTimestamp: number | null;
+  sinceIso: string | null;
   found: number;
   sampled: number;
   truncated: boolean;
@@ -171,6 +173,29 @@ function asFiniteNumber(value: unknown): number | undefined {
     if (Number.isFinite(parsed)) return parsed;
   }
   return undefined;
+}
+
+function parseSinceTimestamp(value: string): number {
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    throw new Error("--since requires an ISO timestamp or epoch value");
+  }
+
+  if (/^\d+$/u.test(normalized)) {
+    const numeric = Number(normalized);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+      throw new Error(`Invalid --since timestamp: ${value}`);
+    }
+
+    return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+  }
+
+  const parsed = Date.parse(normalized);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid --since value: ${value}. Use ISO-8601 or epoch milliseconds.`);
+  }
+
+  return parsed;
 }
 
 function parseMetadataJson(raw: unknown): Record<string, unknown> {
@@ -223,14 +248,15 @@ function parseQueueDispatchHit(hit: unknown): QueueDispatchEvent | null {
   };
 }
 
-async function loadQueueDispatchEvents(hours: number, limit: number): Promise<{
+async function loadQueueDispatchEvents(hours: number, limit: number, sinceTimestamp?: number): Promise<{
   found: number;
   events: QueueDispatchEvent[];
   filterBy: string;
 }> {
   const apiKey = resolveTypesenseApiKey();
+  const lowerBound = sinceTimestamp ?? Math.floor(Date.now() - hours * 60 * 60 * 1000);
   const filterBy = [
-    `timestamp:>=${Math.floor(Date.now() - hours * 60 * 60 * 1000)}`,
+    `timestamp:>=${lowerBound}`,
     "source:=restate",
     "component:=queue-drainer",
     `action:=[${QUEUE_DISPATCH_ACTIONS.join(",")}]`,
@@ -575,7 +601,7 @@ const depthCmd = Command.make(
 );
 
 /**
- * joelclaw queue stats [--hours <n>] [--limit <n>] — Summarize recent drainer behavior.
+ * joelclaw queue stats [--hours <n>] [--limit <n>] [--since <iso|ms>] — Summarize recent drainer behavior.
  */
 const statsCmd = Command.make(
   "stats",
@@ -590,15 +616,22 @@ const statsCmd = Command.make(
       Options.withDefault(DEFAULT_QUEUE_STATS_LIMIT),
       Options.withDescription("Max dispatch OTEL events to sample"),
     ),
+    since: Options.optional(
+      Options.text("since").pipe(
+        Options.withDescription("Override the lower bound with an ISO timestamp or epoch milliseconds"),
+      ),
+    ),
   },
-  ({ hours, limit }) =>
+  ({ hours, limit, since }) =>
     withRedisCleanup(Effect.gen(function* () {
       const statsResult = yield* Effect.tryPromise({
         try: async () => {
           await ensureQueueInitialized();
           const depth = await getQueueStats();
           const normalizedLimit = Math.min(Math.max(1, limit), DEFAULT_QUEUE_STATS_LIMIT);
-          const dispatchWindow = await loadQueueDispatchEvents(hours, normalizedLimit);
+          const sinceText = parseOptionalText(since);
+          const parsedSince = sinceText ? parseSinceTimestamp(sinceText) : undefined;
+          const dispatchWindow = await loadQueueDispatchEvents(hours, normalizedLimit, parsedSince);
 
           return summarizeQueueStats(
             dispatchWindow.events,
@@ -610,6 +643,8 @@ const statsCmd = Command.make(
             },
             {
               hours,
+              sinceTimestamp: parsedSince ?? null,
+              sinceIso: parsedSince ? new Date(parsedSince).toISOString() : null,
               found: dispatchWindow.found,
               sampled: dispatchWindow.events.length,
               truncated: dispatchWindow.found > dispatchWindow.events.length,
@@ -833,6 +868,7 @@ export const queueCmd = Command.make("queue", {}).pipe(
 );
 
 export const __queueTestUtils = {
+  parseSinceTimestamp,
   percentile,
   summarizeQueueStats,
 };
