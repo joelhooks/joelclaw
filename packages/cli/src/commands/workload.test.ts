@@ -130,6 +130,30 @@ describe("workload CLI command", () => {
     );
   });
 
+  it("treats extend-plus-verify skill work as implementation instead of review", () => {
+    const plan = __workloadTestUtils.planWorkload(
+      {
+        intent:
+          "extend ADR-037 published skill coverage to packages/db and packages/sdk, verify with intent validation, then update README",
+        kind: "auto",
+        shape: "auto",
+        autonomy: "supervised",
+        proof: "none",
+        requestedBy: "Joel",
+        repoText: "/Users/joel/Code/badass-courses/gremlin",
+        pathsText: "packages/db,packages/sdk,README.md",
+      },
+      new Date("2026-03-08T16:42:50Z"),
+    );
+
+    expect(plan.request.kind).toBe("repo.refactor");
+    expect(plan.request.shape).toBe("chained");
+    expect(plan.request.risk).not.toContain("deploy-allowed");
+    expect(plan.request.artifacts).toEqual(
+      expect.arrayContaining(["patch", "verification", "docs", "handoff"]),
+    );
+  });
+
   it("honors explicit shape overrides while preserving the chosen kind", () => {
     const plan = __workloadTestUtils.planWorkload(
       {

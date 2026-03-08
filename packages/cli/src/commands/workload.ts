@@ -263,6 +263,18 @@ const hasExplicitIsolationIntent = (value: string) =>
     "sandboxed execution",
   ]);
 
+const hasExplicitDeployIntent = (value: string) =>
+  hasAny(value, [
+    "deploy",
+    "release this",
+    "cut release",
+    "publish this",
+    "publish package",
+    "publish packages",
+    "ship to prod",
+    "ship to production",
+  ]);
+
 const expandHome = (value: string) =>
   value.startsWith("~/") ? `${homedir()}/${value.slice(2)}` : value;
 
@@ -347,6 +359,7 @@ const inferKind = (
   if (
     hasAny(value, [
       "refactor",
+      "extend",
       "migrate",
       "rename",
       "extract",
@@ -372,7 +385,15 @@ const inferKind = (
       "inspect",
       "check",
     ]) &&
-    !hasAny(value, ["implement", "fix", "refactor", "write", "add", "ship"])
+    !hasAny(value, [
+      "implement",
+      "fix",
+      "refactor",
+      "extend",
+      "write",
+      "add",
+      "ship",
+    ])
   ) {
     return {
       value: "repo.review",
@@ -502,10 +523,7 @@ const inferRisks = (
     values.push("reversible-only");
   }
 
-  if (
-    hasAny(value, ["deploy", "publish", "release"]) &&
-    !values.includes("deploy-allowed")
-  ) {
+  if (hasExplicitDeployIntent(value) && !values.includes("deploy-allowed")) {
     values.push("deploy-allowed");
   }
 

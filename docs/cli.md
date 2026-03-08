@@ -150,9 +150,10 @@ joelclaw workload
 - planner-only surface for ADR-0217 Phase 4.2
 - returns a canonical `request` + `plan` envelope using `docs/workloads.md`
 - infers `kind`, `shape`, `mode`, and `backend` when the caller leaves them open
-- prefers implementation intent over docs follow-through, so mixed intents like `refactor ... then update docs` stay implementation-shaped
+- prefers implementation intent over docs follow-through, so mixed intents like `refactor ... then update docs` or `extend ... then update README` stay implementation-shaped
 - validates known `risk` and `artifacts` values and emits warnings for unknown ones instead of silently inventing vocabulary
 - mentioning sandboxes as the topic of a comparison does **not** force sandbox mode by itself; isolation has to be explicit or implied by AFK autonomy
+- `deploy-allowed` is inferred only from explicit release/deploy intent; nouns like `published skills` do not count as deploy requests
 - defaults `--repo` to the current working directory and infers `branch` / `baseSha` when that target is a local git repo; if the cwd is not a git repo, it warns and points the caller at `--repo`
 - does **not** dispatch or mutate anything
 - `run|status|explain|cancel` remain planned, not shipped

@@ -180,9 +180,10 @@ Semantics:
 
 - returns a canonical `request` + `plan` envelope using the vocabulary below
 - infers `kind`, `shape`, `mode`, and `backend` when the caller leaves them open
-- implementation signals like `refactor` outrank docs follow-through, so `refactor ... then update docs` stays implementation-shaped instead of collapsing into `repo.docs`
+- implementation signals like `refactor` or `extend` outrank docs follow-through, so `refactor ... then update docs` stays implementation-shaped instead of collapsing into `repo.docs`
 - validates known `risk` and `artifacts` values and warns on unknown ones
 - mentions of sandboxes as the _subject_ of research do not by themselves force `sandbox-required`; isolation has to be explicit or implied by AFK autonomy
+- `deploy-allowed` is inferred only from explicit release/deploy intent; nouns like `published skills` do not count as a deploy request
 - treats a missing `--repo` as the current working directory and infers `branch` / `baseSha` when that target is a local git repo; if the cwd is not a git repo, the planner warns and tells the caller to pass `--repo`
 - **does not dispatch anything**
 
