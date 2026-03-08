@@ -51,7 +51,7 @@ First move when possible:
 joelclaw workload plan "<intent>"
 ```
 
-Then inspect the canonical `request` + `plan` output before dispatching anything.
+Then inspect the canonical `request` + `plan` output before dispatching anything. Read the `guidance` block too — that is where the planner now says whether to execute inline, tighten scope, or dispatch, and which skills should be loaded/installed first.
 
 Helpful ergonomics that are now real:
 
@@ -86,6 +86,14 @@ Examples:
 - runtime canary → cleanup → truth update
 - refactor → tests → deploy verification → docs
 
+Few-shot setup/execution pattern:
+
+1. install/repair any missing repo-local skills (`joelclaw skills ensure <name>`)
+2. reserve the scoped files
+3. do the bounded change
+4. run narrow validation
+5. commit the slice cleanly before moving on
+
 ### Parallel
 
 Use parallel when:
@@ -106,6 +114,13 @@ Rules:
 - each branch must have a clear goal
 - each branch must own a non-overlapping file scope or stay read-only
 - there must be one merge/synthesis owner
+
+Few-shot setup/execution pattern:
+
+1. split the work into independent branches before anyone edits
+2. load/install the repo skill once, then dispatch branch-specific work
+3. keep branch artifacts explicit (notes, diffs, comparisons)
+4. run one synthesis pass that chooses the next path
 
 ### Chained
 
@@ -128,6 +143,13 @@ Rules:
 - if the prompt includes a `Goal:` section, keep those milestones visible instead of collapsing everything into `execute primary work`
 - if the prompt includes `Acceptance:`, preserve it unless the caller explicitly overrides with `--acceptance`
 - handoff text must say what changed, what remains, and what must not be re-litigated
+
+Few-shot setup/execution pattern:
+
+1. write the plan artifact up front
+2. dispatch the right stage instead of re-planning from scratch
+3. reserve the scoped files for the executing stage
+4. execute the stage, validate narrowly, then either close out or dispatch the next stage
 
 ## Handoff Contract
 

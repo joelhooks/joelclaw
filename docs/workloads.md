@@ -189,6 +189,13 @@ joelclaw workload dispatch <plan-artifact> \
 Semantics:
 
 - returns a canonical `request` + `plan` envelope using the vocabulary below
+- also returns `guidance` so the CLI can recommend what to do next instead of just listing technical affordances
+- `guidance` includes:
+  - `recommendedExecution` — whether to execute inline now, tighten scope first, or dispatch only after health checks
+  - `operatorSummary` — plain-spoken recommendation for the operator/agent
+  - `adrCoverage` — which ADRs already govern the slice so the planner does not send the agent on a pointless ADR hunt
+  - `recommendedSkills` — skill readiness, including `joelclaw skills ensure <name>` for local repo skills and `npx skills add -y -g <source>` for external skills
+  - `executionExamples` — serial / parallel / chained setup + execution few-shot examples for coding tasks
 - infers `kind`, `shape`, `mode`, and `backend` when the caller leaves them open
 - supports reusable presets via `--preset docs-truth|research-compare|refactor-handoff`
 - preserves explicit acceptance embedded in the intent when the prompt includes an `Acceptance:` section and `--acceptance` is omitted
@@ -255,6 +262,46 @@ This is the canonical request envelope.
       "the current restate-workflows front door makes agents sad and confused"
     ]
   }
+}
+```
+
+## Guidance envelope
+
+`joelclaw workload plan` also returns a guidance block aimed at getting the next step right, not just technically available.
+
+```json
+{
+  "recommendedExecution": "execute-inline-now",
+  "operatorSummary": "This is a bounded local slice with explicit file scope. Execute inline now; dispatch only if you want separate ownership or a clean baton pass.",
+  "adrCoverage": {
+    "records": ["ADR-0217"],
+    "note": "Workload planning and dispatch posture are covered by ADR-0217; only open another ADR if this changes the workload model itself."
+  },
+  "recommendedSkills": [
+    {
+      "name": "agent-workloads",
+      "reason": "Canonical front door for workload planning, dispatch posture, and handoff contracts",
+      "canonicalPath": "/Users/joel/Code/joelhooks/joelclaw/skills/agent-workloads/SKILL.md",
+      "installedConsumers": ["agents", "pi"],
+      "missingConsumers": ["claude"],
+      "ensureCommand": "joelclaw skills ensure agent-workloads",
+      "readPath": "/Users/joel/Code/joelhooks/joelclaw/skills/agent-workloads/SKILL.md"
+    }
+  ],
+  "executionExamples": [
+    {
+      "shape": "serial",
+      "title": "One agent, ordered checkpoints",
+      "setup": ["Pin the repo and path scope before touching code."],
+      "execute": [
+        "Implement the change.",
+        "Run narrow verification.",
+        "Update docs/skills truth immediately after code truth."
+      ],
+      "exampleTask": "Refactor a CLI command, rerun its tests, then update the matching docs.",
+      "exampleCommand": "joelclaw workload plan \"Refactor the CLI surface, verify with narrow tests, then update the matching docs\" --shape serial --repo /Users/joel/Code/joelhooks/joelclaw --paths packages/cli/src/commands/workload.ts,docs/cli.md"
+    }
+  ]
 }
 ```
 

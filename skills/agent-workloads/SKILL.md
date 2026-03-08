@@ -2,7 +2,7 @@
 name: agent-workloads
 displayName: Agent Workloads
 description: "Plan and steer agent-first coding/repo workloads in joelclaw. Use when the task is development work and you need to choose serial, parallel, or chained execution; shape pi-session steering; decide whether work should stay inline, go durable, or run in a sandbox; or define the handoff contract between workers. Triggers on 'plan this workload', 'serial/parallel/chained', 'repo workflow', 'coding workflow', 'pi steering', 'agent-first workload', 'how should an agent run this task', or any request to make coding work legible before dispatching it."
-version: 0.5.0
+version: 0.6.0
 author: Joel Hooks
 tags:
   - agent-first
@@ -169,7 +169,15 @@ joelclaw workload dispatch <plan-artifact> \
   [--write-dispatch ~/.joelclaw/workloads/]
 ```
 
-Use `plan` to get the canonical `request` + `plan` envelope, seed scope from real repo activity, and emit a reusable plan artifact. Use `dispatch` to turn that saved plan into a real handoff contract instead of retyping the whole bloody thing.
+Use `plan` to get the canonical `request` + `plan` envelope, seed scope from real repo activity, and emit a reusable plan artifact. The CLI now also returns `guidance` so the agent gets:
+
+- `recommendedExecution` — execute inline now vs tighten scope first vs dispatch after health check
+- `operatorSummary` — plain-spoken next-step recommendation
+- `adrCoverage` — which ADRs already govern the slice
+- `recommendedSkills` — including `joelclaw skills ensure <name>` for local repo skills or `npx skills add -y -g <source>` for external ones
+- `executionExamples` — serial / parallel / chained coding-task few-shot setup + execution examples
+
+Use `dispatch` to turn a saved plan into a real handoff contract instead of retyping the whole bloody thing.
 
 Still planned:
 
@@ -183,10 +191,12 @@ joelclaw workload cancel <id>
 Until the rest exists:
 
 1. run `joelclaw workload plan`
-2. classify or refine the workload
-3. if another worker should take it, save the plan and run `joelclaw workload dispatch`
-4. deliver the dispatch contract through clawmail when appropriate
-5. keep the handoff explicit
+2. read the returned `guidance` before doing anything cute
+3. if `recommendedExecution=execute-inline-now`, reserve the scoped files and just do the work
+4. if `recommendedExecution=tighten-scope-first`, rerun the planner with explicit `--paths` or `--paths-from ...`
+5. if another worker should take it, save the plan and run `joelclaw workload dispatch`
+6. deliver the dispatch contract through clawmail when appropriate
+7. keep the handoff explicit
 
 ## Reference
 

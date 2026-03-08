@@ -247,9 +247,49 @@ type WorkloadDispatchResult = {
   };
 };
 
+type WorkloadRecommendedExecution =
+  | "execute-inline-now"
+  | "tighten-scope-first"
+  | "dispatch-after-health-check"
+  | "write-plan-then-dispatch"
+  | "blocked-clarify-first";
+
+type WorkloadSkillRecommendation = {
+  name: string;
+  reason: string;
+  sourceRoot?: string;
+  canonicalPath?: string;
+  installedConsumers: Array<"agents" | "pi" | "claude">;
+  missingConsumers: Array<"agents" | "pi" | "claude">;
+  ensureCommand?: string;
+  externalInstallCommand?: string;
+  readPath?: string;
+};
+
+type WorkloadExecutionExample = {
+  shape: WorkloadShape;
+  title: string;
+  setup: string[];
+  execute: string[];
+  exampleTask: string;
+  exampleCommand: string;
+};
+
+type WorkloadGuidance = {
+  recommendedExecution: WorkloadRecommendedExecution;
+  operatorSummary: string;
+  adrCoverage: {
+    records: string[];
+    note: string;
+  };
+  recommendedSkills: WorkloadSkillRecommendation[];
+  executionExamples: WorkloadExecutionExample[];
+};
+
 type WorkloadPlanningResult = {
   request: WorkloadRequest;
   plan: WorkloadPlan;
+  guidance: WorkloadGuidance;
   inference: {
     kind: { value: WorkloadKind; inferred: boolean; reason: string };
     shape: { value: WorkloadShape; inferred: boolean; reason: string };
@@ -711,6 +751,314 @@ const writePlanArtifact = (
 
 const defaultDispatchArtifactPath = (dispatchId: string) =>
   `~/.joelclaw/workloads/${dispatchId}.json`;
+
+const SKILL_CONSUMER_DIRS = {
+  agents: join(homedir(), ".agents", "skills"),
+  pi: join(homedir(), ".pi", "agent", "skills"),
+  claude: join(homedir(), ".claude", "skills"),
+} as const;
+
+const resolveCanonicalSkillPath = (
+  name: string,
+  sourceRoot?: string,
+): string | undefined => {
+  const candidates = [
+    ...(sourceRoot ? [join(resolve(expandHome(sourceRoot)), "skills", name, "SKILL.md")] : []),
+    join(homedir(), "Code", "joelhooks", "joelclaw", "skills", name, "SKILL.md"),
+  ];
+
+  return candidates.find((candidate) => existsSync(candidate));
+};
+
+const detectInstalledSkillConsumers = (
+  name: string,
+): Array<"agents" | "pi" | "claude"> =>
+  (Object.entries(SKILL_CONSUMER_DIRS) as Array<
+    ["agents" | "pi" | "claude", string]
+  >)
+    .filter(([, dir]) => existsSync(join(dir, name, "SKILL.md")))
+    .map(([consumer]) => consumer);
+
+const buildEnsureSkillCommand = (
+  name: string,
+  sourceRoot?: string,
+): string =>
+  `joelclaw skills ensure ${name}${sourceRoot ? ` --source-root ${shellQuote(sourceRoot)}` : ""}`;
+
+const buildExternalSkillInstallCommand = (name: string): string =>
+  `npx skills add -y -g ${name}`;
+
+const buildReadSkillCommand = (path: string): string =>
+  `read ${shellQuote(path)}`;
+
+const inferWorkloadSkillRecommendations = (
+  input: NormalizedPlannerInput,
+  request: WorkloadRequest,
+): WorkloadSkillRecommendation[] => {
+  const repo = request.targets[0]?.repo ?? process.cwd();
+  const paths = request.targets[0]?.paths ?? [];
+  const recommendations = new Map<string, { reason: string; sourceRoot?: string }>();
+
+  const addSkill = (name: string, reason: string, sourceRoot?: string) => {
+    if (!recommendations.has(name)) {
+      recommendations.set(name, { reason, sourceRoot });
+    }
+  };
+
+  addSkill(
+    "agent-workloads",
+    "Canonical front door for workload planning, dispatch posture, and handoff contracts",
+  );
+
+  if (repo.includes("/joelclaw")) {
+    if (
+      paths.some(
+        (path) => path.startsWith("packages/cli") || path === "docs/cli.md",
+      )
+    ) {
+      addSkill("cli-design", "Work touches the CLI contract and next-action UX");
+    }
+
+    if (
+      paths.some(
+        (path) => path.startsWith("skills/") || path === "docs/skills.md",
+      )
+    ) {
+      addSkill(
+        "skill-review",
+        "Work changes skill maintenance reality and should keep the skill garden honest",
+      );
+    }
+
+    if (
+      paths.some(
+        (path) =>
+          path.startsWith("packages/system-bus") || path.startsWith("k8s/"),
+      ) || request.kind === "runtime.proof"
+    ) {
+      addSkill(
+        "system-architecture",
+        "Cross-cutting runtime work should follow the canonical topology map",
+      );
+    }
+  }
+
+  if (repo.includes("/badass-courses/gremlin") || /\bgremlin\b|\bwizardshit\b/iu.test(input.intent)) {
+    addSkill(
+      "gremlin",
+      "Gremlin repo-local truth and active package/runtime context",
+      repo,
+    );
+  }
+
+  return [...recommendations.entries()].map(([name, config]) => {
+    const canonicalPath = resolveCanonicalSkillPath(name, config.sourceRoot);
+    const installedConsumers = detectInstalledSkillConsumers(name);
+    const missingConsumers = (
+      ["agents", "pi", "claude"] as const
+    ).filter((consumer) => !installedConsumers.includes(consumer));
+
+    return {
+      name,
+      reason: config.reason,
+      ...(config.sourceRoot ? { sourceRoot: config.sourceRoot } : {}),
+      ...(canonicalPath ? { canonicalPath } : {}),
+      installedConsumers: [...installedConsumers],
+      missingConsumers: [...missingConsumers],
+      ...(canonicalPath
+        ? { ensureCommand: buildEnsureSkillCommand(name, config.sourceRoot) }
+        : {
+            externalInstallCommand: buildExternalSkillInstallCommand(name),
+          }),
+      readPath:
+        canonicalPath ??
+        (installedConsumers.includes("pi")
+          ? join(SKILL_CONSUMER_DIRS.pi, name, "SKILL.md")
+          : undefined),
+    };
+  });
+};
+
+const inferAdrCoverage = (
+  input: NormalizedPlannerInput,
+  request: WorkloadRequest,
+): WorkloadGuidance["adrCoverage"] => {
+  const repo = request.targets[0]?.repo ?? process.cwd();
+  const paths = request.targets[0]?.paths ?? [];
+
+  if (repo.includes("/badass-courses/gremlin")) {
+    const records = new Set<string>();
+    if (
+      paths.some(
+        (path) =>
+          path.startsWith(".pi/") ||
+          path.startsWith("plugins/") ||
+          path === "README.md" ||
+          path === "docs/dev-log.md",
+      )
+    ) {
+      records.add("ADR-0038");
+      records.add("ADR-0039");
+    }
+
+    if (
+      /\bauth\b|\/api\/gremlin\/session|\/api\/gremlin\/rpc/iu.test(input.intent) ||
+      paths.some(
+        (path) =>
+          path.includes("gremlin-operator-plane") ||
+          path.includes("handler.ts") ||
+          path === "docs/setup-new-project.md",
+      )
+    ) {
+      records.add("ADR-0040");
+    }
+
+    const resolvedRecords = [...records];
+    return {
+      records: resolvedRecords.length > 0 ? resolvedRecords : ["ADR-0038", "ADR-0039"],
+      note:
+        resolvedRecords.length > 0
+          ? "This Gremlin slice is already covered by existing repo ADRs; only add a new ADR if the scope expands into new repo policy."
+          : "This Gremlin slice looks like harness/repo-truth work already covered by the existing repo ADRs.",
+    };
+  }
+
+  return {
+    records: ["ADR-0217"],
+    note:
+      "Workload planning and dispatch posture are covered by ADR-0217; only open another ADR if this changes the workload model itself.",
+  };
+};
+
+const buildExecutionExamples = (
+  input: NormalizedPlannerInput,
+  request: WorkloadRequest,
+): WorkloadExecutionExample[] => {
+  const repo = request.targets[0]?.repo ?? process.cwd();
+  const paths = request.targets[0]?.paths?.join(",") ?? "";
+  const repoArg = `--repo ${shellQuote(repo)}`;
+  const pathsArg = paths ? ` --paths ${shellQuote(paths)}` : "";
+
+  return [
+    {
+      shape: "serial",
+      title: "One agent, ordered checkpoints",
+      setup: [
+        "Pin the repo and path scope before touching code.",
+        "Use serial when stage B depends on stage A being right.",
+        "Load/install any missing repo skills first so the same agent is not guessing mid-flight.",
+      ],
+      execute: [
+        "Reserve the scoped files.",
+        "Implement the change.",
+        "Run narrow verification.",
+        "Update docs/skills truth immediately after code truth.",
+      ],
+      exampleTask:
+        "Refactor a CLI command, rerun its tests, then update the matching docs.",
+      exampleCommand: `joelclaw workload plan ${shellQuote(
+        "Refactor the CLI surface, verify with narrow tests, then update the matching docs",
+      )} --shape serial ${repoArg}${pathsArg}`,
+    },
+    {
+      shape: "parallel",
+      title: "Independent spikes with one synthesis owner",
+      setup: [
+        "Split the work into read-only or non-overlapping branches.",
+        "Name one synthesis owner before any branch starts.",
+        "Do not let two workers mutate the same files without an explicit merge plan.",
+      ],
+      execute: [
+        "Dispatch one branch per approach or codepath.",
+        "Collect findings as artifacts instead of chat residue.",
+        "Run a synthesis pass that chooses the next path.",
+      ],
+      exampleTask:
+        "Compare two implementation strategies or two codepaths before choosing one.",
+      exampleCommand: `joelclaw workload plan ${shellQuote(
+        "Compare two implementation strategies, keep branches independent, then synthesize the recommendation",
+      )} --shape parallel ${repoArg}${pathsArg}`,
+    },
+    {
+      shape: "chained",
+      title: "Stage-specialized handoff with explicit artifacts",
+      setup: [
+        "Use chained when implementation, verification, and closeout want different stages or owners.",
+        "Write the plan artifact up front so later stages do not reconstruct the task from chat.",
+        "Treat dispatch as a contract surface, not code-execution theatre.",
+      ],
+      execute: [
+        "Stage 1 implements.",
+        "Stage 2 verifies independently.",
+        "Stage 3 updates docs/ADR truth and closes out remaining gates.",
+      ],
+      exampleTask:
+        "Implement a change, verify it separately, then groom docs/ADR truth before closeout.",
+      exampleCommand: `joelclaw workload plan ${shellQuote(
+        "Implement the change, verify it independently, then update docs and ADR truth before closeout",
+      )} --shape chained ${repoArg}${pathsArg} --write-plan ${shellQuote(
+        defaultPlanArtifactPath("WL_YYYYMMDD_HHMMSS"),
+      )}`,
+    },
+  ];
+};
+
+const buildWorkloadGuidance = (
+  input: NormalizedPlannerInput,
+  request: WorkloadRequest,
+  plan: WorkloadPlan,
+): WorkloadGuidance => {
+  const recommendedSkills = inferWorkloadSkillRecommendations(input, request);
+  const missingSkills = recommendedSkills.filter(
+    (skill) => skill.missingConsumers.length > 0,
+  );
+
+  let recommendedExecution: WorkloadRecommendedExecution;
+  let operatorSummary: string;
+
+  if (plan.mode === "blocked") {
+    recommendedExecution = "blocked-clarify-first";
+    operatorSummary =
+      "The planner found unresolved blockers. Clarify the missing risk/scope questions before handing this to another agent.";
+  } else if (
+    plan.mode === "inline" &&
+    request.targets[0]?.repo &&
+    request.targets[0]?.paths &&
+    request.targets[0]?.paths!.length > 0
+  ) {
+    recommendedExecution = "execute-inline-now";
+    operatorSummary =
+      "This is a bounded local slice with explicit file scope. Execute inline now; dispatch only if you want separate ownership or a clean baton pass.";
+  } else if (plan.mode === "inline") {
+    recommendedExecution = "tighten-scope-first";
+    operatorSummary =
+      "This plan is still too wide for clean execution. Tighten the path scope before editing so the next agent does not guess.";
+  } else if (
+    plan.mode === "durable" ||
+    plan.mode === "loop" ||
+    plan.mode === "sandbox"
+  ) {
+    recommendedExecution = "dispatch-after-health-check";
+    operatorSummary =
+      "This work wants a managed runtime path. Check system health first, then dispatch instead of pretending inline execution will stay tidy.";
+  } else {
+    recommendedExecution = "write-plan-then-dispatch";
+    operatorSummary =
+      "Write the plan artifact and dispatch it explicitly so the next stage does not have to reconstruct intent from chat.";
+  }
+
+  if (missingSkills.length > 0) {
+    operatorSummary = `${operatorSummary} Install or repair the recommended skills first so the agent is not operating half-blind.`;
+  }
+
+  return {
+    recommendedExecution,
+    operatorSummary,
+    adrCoverage: inferAdrCoverage(input, request),
+    recommendedSkills,
+    executionExamples: buildExecutionExamples(input, request),
+  };
+};
 
 const writeDispatchArtifact = (
   path: string,
@@ -2044,9 +2392,12 @@ const planWorkload = (
     ),
   };
 
+  const guidance = buildWorkloadGuidance(input, request, plan);
+
   return {
     request,
     plan,
+    guidance,
     inference: {
       kind,
       shape,
@@ -2206,87 +2557,61 @@ const buildPlanNextActions = (
   input: NormalizedPlannerInput,
   result: WorkloadPlanningResult,
 ): NextAction[] => {
-  const actions: NextAction[] = [
-    {
-      command:
-        "workload plan <intent> [--preset <preset>] [--kind <kind>] [--shape <shape>] [--autonomy <autonomy>] [--proof <proof>] [--repo <repo>] [--paths <paths>] [--paths-from <paths-from>] [--write-plan <path>]",
-      description: "Refine the plan with explicit overrides",
-      params: {
-        intent: {
-          description: "Natural-language workload intent",
-          value: input.intent,
-          required: true,
+  const actions: NextAction[] = [];
+  const scopedPaths = result.inference.target.value.paths ?? [];
+
+  for (const skill of result.guidance.recommendedSkills) {
+    if (skill.missingConsumers.length > 0) {
+      actions.push({
+        command:
+          "skills ensure <skill> [--source-root <repo>] [--consumer <consumer>]",
+        description: `Install or repair the ${skill.name} skill before continuing`,
+        params: {
+          skill: {
+            description: "Skill name",
+            value: skill.name,
+            required: true,
+          },
+          ...(skill.sourceRoot
+            ? {
+                repo: {
+                  description: "Repo root containing skills/<name>/SKILL.md",
+                  value: skill.sourceRoot,
+                },
+              }
+            : {}),
+          consumer: {
+            description: "Which agent consumer dirs to maintain",
+            value: "all",
+            enum: ["all", "agents", "pi", "claude"],
+          },
         },
-        ...(result.preset
-          ? {
-              preset: {
-                description: "Planning preset",
-                value: result.preset.name,
-                enum: WORKLOAD_PRESETS,
-              },
-            }
-          : {}),
-        kind: {
-          description: "Workload kind override",
-          value: result.plan.kind,
+      });
+    }
+
+    if (skill.readPath) {
+      actions.push({
+        command: "read <path>",
+        description: `Load ${skill.name} before acting on this workload`,
+        params: {
+          path: {
+            description: "Skill file path",
+            value: skill.readPath,
+            required: true,
+          },
         },
-        shape: {
-          description: "Execution shape override",
-          value: result.plan.shape,
-        },
-        autonomy: {
-          description: "Autonomy level",
-          value: result.request.autonomy,
-        },
-        proof: { description: "Proof posture", value: result.request.proof },
-        repo: {
-          description: "Repo path or repo identifier",
-          value: result.inference.target.value.repo,
-        },
-        paths: {
-          description: "Comma-separated path scope",
-          value: result.inference.target.value.paths?.join(",") ?? "",
-        },
-        ...(result.inference.target.scope.source !== "repo-wide"
-          ? {
-              "paths-from": {
-                description: "Path scope helper",
-                value:
-                  result.inference.target.scope.detail ??
-                  (result.inference.target.scope.source === "git-status"
-                    ? "status"
-                    : result.inference.target.scope.source === "git-head"
-                      ? "head"
-                      : "recent:3"),
-              },
-            }
-          : {}),
-        ...(result.artifact
-          ? {
-              "write-plan": {
-                description: "Existing plan artifact path",
-                value: result.artifact.path,
-              },
-            }
-          : {
-              "write-plan": {
-                description: "Where to write the plan JSON",
-                value: defaultPlanArtifactPath(result.plan.workloadId),
-              },
-            }),
-      },
-    },
-  ];
+      });
+    }
+  }
 
   if (
-    result.inference.target.localRepo &&
-    (!result.inference.target.value.paths ||
-      result.inference.target.value.paths.length === 0)
+    result.guidance.recommendedExecution === "tighten-scope-first" &&
+    result.inference.target.localRepo
   ) {
     actions.push({
       command: "workload plan <intent> --repo <repo> --paths-from <paths-from>",
       description:
-        "Seed the path scope from recent repo activity before scheduling repo-wide work",
+        "Tighten the path scope from real repo activity before editing anything",
       params: {
         intent: {
           description: "Natural-language workload intent",
@@ -2308,17 +2633,17 @@ const buildPlanNextActions = (
   }
 
   if (
-    result.inference.target.value.paths &&
-    result.inference.target.value.paths.length > 0
+    result.guidance.recommendedExecution === "execute-inline-now" &&
+    scopedPaths.length > 0
   ) {
     actions.push({
       command: "mail reserve --paths <paths> --agent <agent>",
       description:
-        "Reserve the scoped files before dispatching the planned work",
+        "Reserve the scoped files and execute inline now instead of over-dispatching the slice",
       params: {
         paths: {
           description: "Comma-separated file paths",
-          value: result.inference.target.value.paths.join(","),
+          value: scopedPaths.join(","),
           required: true,
         },
         agent: {
@@ -2330,12 +2655,94 @@ const buildPlanNextActions = (
     });
   }
 
+  if (
+    result.guidance.recommendedExecution === "dispatch-after-health-check"
+  ) {
+    actions.push({
+      command: "status",
+      description:
+        "Check system health before dispatching this beyond planning",
+    });
+  }
+
+  actions.push({
+    command:
+      "workload plan <intent> [--preset <preset>] [--kind <kind>] [--shape <shape>] [--autonomy <autonomy>] [--proof <proof>] [--repo <repo>] [--paths <paths>] [--paths-from <paths-from>] [--write-plan <path>]",
+    description: "Refine the plan with explicit overrides",
+    params: {
+      intent: {
+        description: "Natural-language workload intent",
+        value: input.intent,
+        required: true,
+      },
+      ...(result.preset
+        ? {
+            preset: {
+              description: "Planning preset",
+              value: result.preset.name,
+              enum: WORKLOAD_PRESETS,
+            },
+          }
+        : {}),
+      kind: {
+        description: "Workload kind override",
+        value: result.plan.kind,
+      },
+      shape: {
+        description: "Execution shape override",
+        value: result.plan.shape,
+      },
+      autonomy: {
+        description: "Autonomy level",
+        value: result.request.autonomy,
+      },
+      proof: { description: "Proof posture", value: result.request.proof },
+      repo: {
+        description: "Repo path or repo identifier",
+        value: result.inference.target.value.repo,
+      },
+      paths: {
+        description: "Comma-separated path scope",
+        value: scopedPaths.join(","),
+      },
+      ...(result.inference.target.scope.source !== "repo-wide"
+        ? {
+            "paths-from": {
+              description: "Path scope helper",
+              value:
+                result.inference.target.scope.detail ??
+                (result.inference.target.scope.source === "git-status"
+                  ? "status"
+                  : result.inference.target.scope.source === "git-head"
+                    ? "head"
+                    : "recent:3"),
+            },
+          }
+        : {}),
+      ...(result.artifact
+        ? {
+            "write-plan": {
+              description: "Existing plan artifact path",
+              value: result.artifact.path,
+            },
+          }
+        : {
+            "write-plan": {
+              description: "Where to write the plan JSON",
+              value: defaultPlanArtifactPath(result.plan.workloadId),
+            },
+          }),
+    },
+  });
+
   if (!result.artifact) {
     actions.push({
       command:
         "workload plan <intent> [--repo <repo>] [--paths <paths>] [--paths-from <paths-from>] --write-plan <path>",
       description:
-        "Write the plan to a reusable artifact for handoff instead of retyping it later",
+        result.guidance.recommendedExecution === "execute-inline-now"
+          ? "Write the plan artifact only if you want a reusable handoff instead of keeping the slice inline"
+          : "Write the plan to a reusable artifact for handoff instead of retyping it later",
       params: {
         intent: {
           description: "Natural-language workload intent",
@@ -2348,7 +2755,7 @@ const buildPlanNextActions = (
         },
         paths: {
           description: "Comma-separated path scope",
-          value: result.inference.target.value.paths?.join(",") ?? "",
+          value: scopedPaths.join(","),
         },
         "paths-from": {
           description: "Path scope helper",
@@ -2368,7 +2775,9 @@ const buildPlanNextActions = (
       command:
         "workload dispatch <plan-artifact> [--stage <stage-id>] [--write-dispatch <path>]",
       description:
-        "Turn the saved plan artifact into a reusable dispatch contract",
+        result.guidance.recommendedExecution === "execute-inline-now"
+          ? "Dispatch only if you deliberately want another agent to own the next stage"
+          : "Turn the saved plan artifact into a reusable dispatch contract",
       params: {
         "plan-artifact": {
           description: "Path to the workload plan envelope",
@@ -2386,18 +2795,6 @@ const buildPlanNextActions = (
           ),
         },
       },
-    });
-  }
-
-  if (
-    result.plan.mode === "durable" ||
-    result.plan.mode === "loop" ||
-    result.plan.mode === "sandbox"
-  ) {
-    actions.push({
-      command: "status",
-      description:
-        "Check system health before dispatching work beyond planning",
     });
   }
 
@@ -3004,5 +3401,7 @@ export const __workloadTestUtils = {
   buildDispatchContract,
   resolvePresetDefaults,
   resolveTarget,
+  buildExecutionExamples,
+  buildPlanNextActions,
   planWorkload,
 };

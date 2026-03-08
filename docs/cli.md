@@ -128,6 +128,25 @@ Semantics:
 - `joelclaw workload`
 - `joelclaw jobs`
 
+## Skills command tree
+
+```bash
+joelclaw skills
+├── ensure <skill>
+│   [--source-root <repo>]
+│   [--consumer all|agents|pi|claude]
+└── audit [--deep] [--wait-ms <wait-ms>] [--poll-ms <poll-ms>]
+```
+
+`joelclaw skills ensure` semantics:
+
+- canonical local-repo install/maintenance surface for skills that already live in a repo `skills/` directory
+- resolves `skills/<name>/SKILL.md` from `--source-root`, cwd/ancestor repos, or the joelclaw repo fallback
+- creates missing consumer symlinks and repairs wrong symlinks in `~/.agents/skills/`, `~/.pi/agent/skills/`, and `~/.claude/skills/`
+- fails loudly if a consumer target exists as a real file/dir instead of a symlink
+- returns the installed skill path so agents can `read` it immediately
+- for external third-party skill packages, the CLI points at the upstream installer: `npx skills add -y -g <source>`
+
 ## Workload command tree
 
 ```bash
@@ -158,6 +177,12 @@ joelclaw workload
 
 - planner surface for ADR-0217 Phase 4.3
 - returns a canonical `request` + `plan` envelope using `docs/workloads.md`
+- also returns `guidance` with:
+  - `recommendedExecution` (`execute-inline-now`, `tighten-scope-first`, `dispatch-after-health-check`, etc.)
+  - `operatorSummary` so the CLI says what to do next instead of shrugging
+  - `adrCoverage` to show whether the slice is already covered by existing ADRs
+  - `recommendedSkills` with install/read readiness, including `joelclaw skills ensure <name>` for local repo skills and `npx skills add -y -g <source>` for external skills
+  - `executionExamples` for serial / parallel / chained coding workloads, including setup + execution few-shot patterns
 - infers `kind`, `shape`, `mode`, and `backend` when the caller leaves them open
 - supports reusable planner presets for common docs/research/refactor shapes
 - preserves `Acceptance:` clauses embedded in the prompt when `--acceptance` is omitted

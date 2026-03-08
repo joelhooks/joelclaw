@@ -333,6 +333,82 @@ describe("workload CLI command", () => {
     ]);
   });
 
+  it("returns operator guidance and coding workload examples for bounded inline work", () => {
+    const plan = __workloadTestUtils.planWorkload(
+      {
+        intent:
+          "tighten workload CLI guidance so operators know when to execute inline and when to dispatch",
+        kind: "repo.docs",
+        shape: "serial",
+        autonomy: "supervised",
+        proof: "none",
+        requestedBy: "Joel",
+        repoText: "/Users/joel/Code/joelhooks/joelclaw",
+        pathsText:
+          "packages/cli/src/commands/workload.ts,docs/cli.md,docs/skills.md,skills/agent-workloads/SKILL.md",
+      },
+      new Date("2026-03-08T18:52:00Z"),
+    );
+
+    expect(plan.guidance.recommendedExecution).toBe("execute-inline-now");
+    expect(plan.guidance.operatorSummary).toContain("Execute inline now");
+    expect(plan.guidance.adrCoverage.records).toContain("ADR-0217");
+    expect(plan.guidance.recommendedSkills.map((skill) => skill.name)).toEqual(
+      expect.arrayContaining([
+        "agent-workloads",
+        "cli-design",
+        "skill-review",
+      ]),
+    );
+    expect(plan.guidance.executionExamples.map((example) => example.shape)).toEqual(
+      ["serial", "parallel", "chained"],
+    );
+    expect(plan.guidance.executionExamples[2]?.exampleCommand).toContain(
+      "--shape chained",
+    );
+
+    const nextActions = __workloadTestUtils.buildPlanNextActions(
+      {
+        intent:
+          "tighten workload CLI guidance so operators know when to execute inline and when to dispatch",
+        kind: "repo.docs",
+        shape: "serial",
+        autonomy: "supervised",
+        proof: "none",
+        requestedBy: "Joel",
+        repoText: "/Users/joel/Code/joelhooks/joelclaw",
+        pathsText:
+          "packages/cli/src/commands/workload.ts,docs/cli.md,docs/skills.md,skills/agent-workloads/SKILL.md",
+      },
+      plan,
+    );
+
+    expect(
+      nextActions.some((action) => action.command.includes("skills ensure")),
+    ).toBe(true);
+    expect(
+      nextActions.some((action) => action.command.includes("mail reserve")),
+    ).toBe(true);
+  });
+
+  it("recommends tightening scope before execution when the workload is still repo-wide", () => {
+    const plan = __workloadTestUtils.planWorkload(
+      {
+        intent: "audit the current workload guidance and clean up what is stale",
+        kind: "repo.review",
+        shape: "auto",
+        autonomy: "supervised",
+        proof: "none",
+        requestedBy: "Joel",
+        repoText: "/Users/joel/Code/joelhooks/joelclaw",
+      },
+      new Date("2026-03-08T18:53:00Z"),
+    );
+
+    expect(plan.guidance.recommendedExecution).toBe("tighten-scope-first");
+    expect(plan.guidance.operatorSummary).toContain("Tighten the path scope");
+  });
+
   it("writes a reusable plan artifact when given a directory target", () => {
     const outputDir = rememberTempDir(
       mkdtempSync(join(tmpdir(), "workload-plan-artifact-")),

@@ -65,7 +65,7 @@ After frontmatter, write instructions for another agent, not for Joel. Include:
 
 1. Create the canonical repo directory.
 2. Write `SKILL.md`.
-3. Symlink it into the consumer dirs.
+3. Install/repair the consumer symlinks with `joelclaw skills ensure <name>`.
 4. If the skill changes system reality or closes a doc gap, update `docs/` in the same session.
 5. Slog the change.
 6. Commit it.
@@ -74,11 +74,20 @@ Example:
 
 ```bash
 mkdir -p ~/Code/joelhooks/joelclaw/skills/<name>
-ln -s ~/Code/joelhooks/joelclaw/skills/<name> ~/.agents/skills/<name>
-ln -s ~/Code/joelhooks/joelclaw/skills/<name> ~/.pi/agent/skills/<name>
+joelclaw skills ensure <name>
 ```
 
-If a symlink already exists and is wrong, remove it first. Don't write through symlinks blindly.
+`joelclaw skills ensure` is the canonical local-repo install/maintenance surface for skills that already live in a repo `skills/` directory. It creates missing consumer symlinks and repairs wrong symlinks in:
+
+- `~/.agents/skills/`
+- `~/.pi/agent/skills/`
+- `~/.claude/skills/`
+
+If the skill is **external** and does not live in a local repo `skills/` directory, use the upstream installer instead:
+
+```bash
+npx skills add -y -g <source>
+```
 
 ## Update a Skill
 
@@ -117,6 +126,7 @@ A bad skill is:
 
 Use the existing tooling:
 
+- `joelclaw skills ensure <name> [--source-root <repo>]` — install or repair local repo skills in consumer dirs
 - `joelclaw skills audit` — run the skill garden checks on demand
 - `skills/skill-review/SKILL.md` — maintenance workflow
 - `skills/add-skill/SKILL.md` — canonical add-skill process

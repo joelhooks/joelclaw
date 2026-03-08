@@ -1,10 +1,24 @@
-import { Command, Options } from "@effect/cli"
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  symlinkSync,
+  unlinkSync,
+} from "node:fs"
+import { homedir } from "node:os"
+import { dirname, join, resolve } from "node:path"
+import { Args, Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
 import { Inngest } from "../inngest"
 import { respond, respondError } from "../response"
 
 const SKILL_GARDEN_EVENT = "skill-garden/check"
 const TERMINAL_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED"])
+const SKILL_CONSUMERS = ["all", "agents", "pi", "claude"] as const
+
+type SkillConsumer = Exclude<(typeof SKILL_CONSUMERS)[number], "all">
 
 type SkillGardenFinding = {
   type?: string
@@ -28,6 +42,22 @@ type SkillGardenReport = {
   details?: SkillGardenFinding[]
 }
 
+type ResolvedSkillSource = {
+  name: string
+  sourceRoot: string
+  skillDir: string
+  skillFile: string
+}
+
+type SkillEnsureStatus = "created" | "updated" | "unchanged"
+
+type SkillEnsureLinkResult = {
+  consumer: SkillConsumer
+  target: string
+  source: string
+  status: SkillEnsureStatus
+}
+
 function parseRunOutput(raw: unknown): SkillGardenReport | null {
   if (typeof raw !== "string") return null
   const trimmed = raw.trim()
@@ -40,6 +70,131 @@ function parseRunOutput(raw: unknown): SkillGardenReport | null {
   } catch {
     return null
   }
+}
+
+function collectAncestors(startDir: string, maxDepth = 10): string[] {
+  const dirs: string[] = []
+  let current = resolve(startDir)
+  for (let depth = 0; depth < maxDepth; depth++) {
+    dirs.push(current)
+    const parent = resolve(current, "..")
+    if (parent === current) break
+    current = parent
+  }
+  return dirs
+}
+
+function skillConsumerDirs(homeDir = homedir()): Record<SkillConsumer, string> {
+  return {
+    agents: join(homeDir, ".agents", "skills"),
+    pi: join(homeDir, ".pi", "agent", "skills"),
+    claude: join(homeDir, ".claude", "skills"),
+  }
+}
+
+function pathExistsOrSymlink(path: string): boolean {
+  if (existsSync(path)) return true
+  try {
+    return lstatSync(path).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+function resolveSkillSource(options: {
+  name: string
+  sourceRoot?: string
+  cwd?: string
+  homeDir?: string
+}): ResolvedSkillSource {
+  const cwd = options.cwd ?? process.cwd()
+  const homeDir = options.homeDir ?? homedir()
+  const candidates: string[] = []
+
+  if (options.sourceRoot) {
+    candidates.push(resolve(options.sourceRoot, "skills", options.name))
+  }
+
+  for (const dir of collectAncestors(cwd)) {
+    candidates.push(join(dir, "skills", options.name))
+  }
+
+  candidates.push(
+    join(homeDir, "Code", "joelhooks", "joelclaw", "skills", options.name),
+  )
+
+  for (const skillDir of candidates) {
+    const skillFile = join(skillDir, "SKILL.md")
+    if (!existsSync(skillFile)) continue
+    return {
+      name: options.name,
+      sourceRoot: resolve(skillDir, "..", ".."),
+      skillDir,
+      skillFile,
+    }
+  }
+
+  throw new Error(
+    `Could not resolve canonical skill source for ${options.name}; pass --source-root <repo> when the skill lives in another repo`,
+  )
+}
+
+function targetPathForConsumer(name: string, consumer: SkillConsumer, homeDir = homedir()): string {
+  return join(skillConsumerDirs(homeDir)[consumer], name)
+}
+
+function ensureSkillLink(options: {
+  sourceDir: string
+  name: string
+  consumer: SkillConsumer
+  homeDir?: string
+}): SkillEnsureLinkResult {
+  const homeDir = options.homeDir ?? homedir()
+  const target = targetPathForConsumer(options.name, options.consumer, homeDir)
+  mkdirSync(dirname(target), { recursive: true })
+
+  if (pathExistsOrSymlink(target)) {
+    const stat = lstatSync(target)
+    if (!stat.isSymbolicLink()) {
+      throw new Error(
+        `Cannot ensure ${options.consumer} skill ${options.name}: ${target} exists and is not a symlink`,
+      )
+    }
+
+    const currentTarget = resolve(dirname(target), readlinkSync(target))
+    if (currentTarget === options.sourceDir) {
+      return {
+        consumer: options.consumer,
+        target,
+        source: options.sourceDir,
+        status: "unchanged",
+      }
+    }
+
+    unlinkSync(target)
+    symlinkSync(options.sourceDir, target)
+    return {
+      consumer: options.consumer,
+      target,
+      source: options.sourceDir,
+      status: "updated",
+    }
+  }
+
+  symlinkSync(options.sourceDir, target)
+  return {
+    consumer: options.consumer,
+    target,
+    source: options.sourceDir,
+    status: "created",
+  }
+}
+
+function normalizeConsumers(
+  consumer: (typeof SKILL_CONSUMERS)[number],
+): SkillConsumer[] {
+  if (consumer === "all") return ["agents", "pi", "claude"]
+  return [consumer]
 }
 
 const sleepMs = (ms: number) =>
@@ -62,6 +217,185 @@ const pollMsOption = Options.integer("poll-ms").pipe(
   Options.withDescription("Polling interval while waiting for run state"),
   Options.withDefault(1000),
 )
+
+const ensureSkillArg = Args.text({ name: "skill" }).pipe(
+  Args.withDescription("Skill name to install/maintain in agent consumer directories"),
+)
+
+const sourceRootOption = Options.text("source-root").pipe(
+  Options.withDescription("Repo root containing skills/<name>/SKILL.md (defaults to cwd/ancestors or joelclaw repo)"),
+  Options.optional,
+)
+
+const consumerOption = Options.choice("consumer", SKILL_CONSUMERS).pipe(
+  Options.withDescription("Which consumer directories to maintain"),
+  Options.withDefault("all"),
+)
+
+const skillsEnsureCmd = Command.make(
+  "ensure",
+  {
+    skill: ensureSkillArg,
+    sourceRoot: sourceRootOption,
+    consumer: consumerOption,
+  },
+  ({ skill, sourceRoot, consumer }) =>
+    Effect.gen(function* () {
+      const sourceRootValue = sourceRoot._tag === "Some" ? sourceRoot.value : undefined
+      const sourceEither = yield* Effect.try({
+        try: () =>
+          resolveSkillSource({
+            name: skill.trim(),
+            sourceRoot: sourceRootValue,
+          }),
+        catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+      }).pipe(Effect.either)
+
+      if (sourceEither._tag === "Left") {
+        yield* Console.log(
+          respondError(
+            "skills ensure",
+            sourceEither.left.message,
+            "SKILL_SOURCE_NOT_FOUND",
+            "Pass --source-root <repo> for repo-local skills or install external skills with `npx skills add -y -g <source>`.",
+            [
+              {
+                command: "joelclaw skills ensure <skill> [--source-root <repo>] [--consumer <consumer>]",
+                description: "Retry with an explicit skill source root",
+                params: {
+                  skill: {
+                    description: "Skill name",
+                    value: skill,
+                    required: true,
+                  },
+                  repo: {
+                    description: "Repo root containing skills/<name>/SKILL.md",
+                    value: sourceRootValue ?? process.cwd(),
+                  },
+                  consumer: {
+                    description: "Consumer directories to maintain",
+                    value: consumer,
+                    enum: SKILL_CONSUMERS,
+                  },
+                },
+              },
+              {
+                command: "npx skills add -y -g <source>",
+                description: "Install an external third-party skill package globally",
+                params: {
+                  source: {
+                    description: "Package/repo source understood by the skills CLI",
+                    value: "owner/repo-or-package",
+                    required: true,
+                  },
+                },
+              },
+            ],
+          ),
+        )
+        return
+      }
+
+      const source = sourceEither.right
+      const consumers = normalizeConsumers(consumer)
+      const ensureEither = yield* Effect.try({
+        try: () => consumers.map((targetConsumer) =>
+          ensureSkillLink({
+            sourceDir: source.skillDir,
+            name: source.name,
+            consumer: targetConsumer,
+          }),
+        ),
+        catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+      }).pipe(Effect.either)
+
+      if (ensureEither._tag === "Left") {
+        yield* Console.log(
+          respondError(
+            "skills ensure",
+            ensureEither.left.message,
+            "SKILL_ENSURE_FAILED",
+            "Remove the conflicting target or convert it back to a symlink, then retry.",
+            [
+              {
+                command: "joelclaw skills ensure <skill> [--source-root <repo>] [--consumer <consumer>]",
+                description: "Retry after fixing the conflicting consumer path",
+                params: {
+                  skill: {
+                    description: "Skill name",
+                    value: source.name,
+                    required: true,
+                  },
+                  repo: {
+                    description: "Repo root containing skills/<name>/SKILL.md",
+                    value: source.sourceRoot,
+                  },
+                  consumer: {
+                    description: "Consumer directories to maintain",
+                    value: consumer,
+                    enum: SKILL_CONSUMERS,
+                  },
+                },
+              },
+              {
+                command: "joelclaw skills audit",
+                description: "Inspect broader skill drift after repair",
+              },
+            ],
+          ),
+        )
+        return
+      }
+
+      const results = ensureEither.right
+      const piPath = targetPathForConsumer(source.name, "pi")
+
+      yield* Console.log(
+        respond(
+          "skills ensure",
+          {
+            skill: source.name,
+            sourceRoot: source.sourceRoot,
+            sourceDir: source.skillDir,
+            sourceFile: source.skillFile,
+            ensured: results,
+            installSurface: {
+              localRepoSkill: "joelclaw skills ensure",
+              externalSkill: "npx skills add -y -g <source>",
+            },
+          },
+          [
+            {
+              command: "read <path>",
+              description: "Load the installed skill into the agent context",
+              params: {
+                path: {
+                  description: "Installed skill path",
+                  value: piPath,
+                  required: true,
+                },
+              },
+            },
+            {
+              command: "joelclaw skills audit",
+              description: "Check the wider skill garden for drift",
+            },
+            {
+              command: "npx skills add -y -g <source>",
+              description: "Use the upstream skills CLI when you need an external third-party skill package",
+              params: {
+                source: {
+                  description: "Package/repo source understood by the skills CLI",
+                  value: "owner/repo-or-package",
+                  required: true,
+                },
+              },
+            },
+          ],
+        ),
+      )
+    }),
+).pipe(Command.withDescription("Install or repair canonical skill symlinks for local repo skills"))
 
 const skillsAuditCmd = Command.make(
   "audit",
@@ -262,18 +596,28 @@ export const skillsCmd = Command.make("skills", {}, () =>
         {
           description: "Skill inventory maintenance commands",
           commands: {
+            ensure: "joelclaw skills ensure <skill> [--source-root <repo>] [--consumer all|agents|pi|claude]",
             audit: "joelclaw skills audit [--deep] [--wait-ms <wait-ms>] [--poll-ms <poll-ms>]",
+          },
+          installSurface: {
+            localRepoSkill: "joelclaw skills ensure",
+            externalSkill: "npx skills add -y -g <source>",
           },
         },
         [
+          { command: "joelclaw skills ensure agent-workloads", description: "Install/repair a canonical local skill in agent consumer dirs" },
           { command: "joelclaw skills audit", description: "Run structural skill garden checks" },
           { command: "joelclaw skills audit --deep", description: "Run structural + LLM deep checks" },
         ],
       ),
     )
   }),
-).pipe(Command.withSubcommands([skillsAuditCmd]))
+).pipe(Command.withSubcommands([skillsEnsureCmd, skillsAuditCmd]))
 
 export const __skillsTestUtils = {
   parseRunOutput,
+  collectAncestors,
+  resolveSkillSource,
+  targetPathForConsumer,
+  ensureSkillLink,
 }
