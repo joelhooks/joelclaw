@@ -123,7 +123,7 @@ Operational boundary for Phase 1:
   - manual probes use singleton-skip semantics so repeated operator requests do not pile up stale queued runs.
   - the prompt contract is now hardened for live canaries: `content/updated` explicitly prefers `pause_family`/`resume_family` over `batch_family`, and legacy model output that still sends `escalate.reason` is normalized to the required `{ severity, message }` shape instead of forcing a full schema fallback.
   - operator reports flow through `gateway/send.message`, while real queue mutations still emit `queue.control.applied|rejected`.
-  - current live truth: dry-run is earned on host, and the next enforce canary should use the hardened prompt/parser path rather than the earlier schema-fallback-prone contract.
+  - current live truth: a supervised enforce canary anchored at `since=1772981290859` proved the cron observer can auto-apply a real `pause_family` on `content/updated` (`snapshotId=cca656f7-a9ce-4ca2-9f6d-0ed332f56a4d`), emit `queue.control.applied`, and leave the remaining backlog drainable after a manual resume; the worker was then rolled back to `QUEUE_OBSERVER_MODE=dry-run` as the conservative steady state.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 
 ### System health

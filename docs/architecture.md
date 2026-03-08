@@ -213,7 +213,7 @@ Sandbox runs produce patch bundles, not direct commits to main. This keeps runs 
 - Story 1 stops at contract/snapshot/fallback vocabulary; Story 2 adds the dry-run CLI surface `joelclaw queue observe`; Story 3 adds the deterministic pause/resume control plane and the dedicated CLI surface `joelclaw queue control status`; Story 4 adds the durable host-worker `queue/observer` runtime with cron + manual trigger support
 - the Restate queue drainer now respects active deterministic pauses and only resumes dispatch after manual resume or TTL expiry
 - queue operator commands resolve Redis from the canonical CLI/system-bus config (`~/.config/system-bus.env`) so manual control and live queue observation hit the same queue the worker drains
-- current live posture is intentionally conservative: host dry-run observation is earned, but enforce-mode automatic mutation on `content/updated` has not yet earned a pass, so the worker sits back in `QUEUE_OBSERVER_MODE=dry-run`
+- current live posture is intentionally conservative: a supervised enforce canary has now earned one real observer-applied `pause_family` on `content/updated`, but the worker still sits back in `QUEUE_OBSERVER_MODE=dry-run` outside those canary windows until broader soak evidence says otherwise
 
 **@joelclaw/vault-reader**
 - Obsidian Vault context injection
