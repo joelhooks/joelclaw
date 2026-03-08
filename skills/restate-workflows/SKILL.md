@@ -1,7 +1,7 @@
 ---
 name: restate-workflows
 displayName: Restate Workflows
-description: "Bridge external or isolated repos into joelclaw's ADR-0217 runtime using the `joelclaw` CLI boundary. Use when a repo needs to submit sandboxed/background work, emit queue jobs, define a workflow request payload, or hand work off to the Redis → Dkron → Restate stack without coupling to private internals. Triggers: 'send work to the queue', 'submit sandboxed work', 'isolated repo', 'restate workflow request', 'queue emit wrapper', 'background job bridge'."
+description: "Bridge external or isolated repos into joelclaw's ADR-0217 runtime using the `joelclaw` CLI boundary. This is a substrate-bridge skill, not the front door for normal coding/repo workload planning. Use when a repo needs to submit sandboxed/background work, emit queue jobs, define a workflow request payload, or hand work off to the Redis → Dkron → Restate stack without coupling to private internals. If the real ask is 'how should an agent run this coding task?', load `agent-workloads` first."
 version: 0.1.0
 author: Joel Hooks
 tags: [restate, workflows, queue, cli, sandbox, adr-0217, integration]
@@ -10,6 +10,8 @@ tags: [restate, workflows, queue, cli, sandbox, adr-0217, integration]
 # Restate Workflows
 
 Use this skill when another repo needs to hand work to joelclaw's runtime.
+
+If the real problem is **planning or steering coding/repo work**, stop and load `agent-workloads` first. This skill explains the runtime bridge, not the front-door workload model.
 
 The boundary is the `joelclaw` CLI.
 
