@@ -346,10 +346,10 @@ describe("queue observer contract", () => {
         latencyMs: { p50: null, p95: null },
       },
       drainer: {
-        state: "healthy",
-        recentDispatches: 0,
+        state: "degraded",
+        recentDispatches: 35,
         recentFailures: 0,
-        throughputPerMinute: 0,
+        throughputPerMinute: 0.58,
       },
       gateway: {
         sleepMode: true,
@@ -376,6 +376,11 @@ describe("queue observer contract", () => {
 
     expect(inferredPrompts).toHaveLength(0);
     expect(decision.fallbackReason).toBeUndefined();
+    expect(decision.findings).toEqual({
+      queuePressure: "healthy",
+      downstreamState: "healthy",
+      summary: "Queue depth 0; pressure healthy; downstream healthy; 0 active families; 1 active pauses",
+    });
     expect(decision.suggestedActions).toEqual([
       {
         kind: "noop",

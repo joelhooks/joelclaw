@@ -377,6 +377,15 @@ function deriveQueuePressure(snapshot: QueueObservationSnapshot): QueueObservati
 }
 
 function deriveDownstreamState(snapshot: QueueObservationSnapshot): QueueObservationFindings["downstreamState"] {
+  const idleWithoutRecentTrouble = snapshot.totals.depth === 0
+    && snapshot.drainer.recentFailures === 0
+    && snapshot.triage.failed === 0
+    && snapshot.triage.fallbacks === 0;
+
+  if (idleWithoutRecentTrouble) {
+    return "healthy";
+  }
+
   if (snapshot.drainer.state === "down") return "down";
   if (snapshot.drainer.state === "degraded" || snapshot.drainer.recentFailures > 0) {
     return "degraded";
