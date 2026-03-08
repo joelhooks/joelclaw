@@ -33,6 +33,7 @@ Create or update a skill when:
 Recent examples:
 - `skills/contributing-to-pi/` captures the upstream contribution discipline we should have applied before filing `badlogic/pi-mono` issue #1899.
 - `skills/joel-writing-style/` captures the public joelclaw.com prose constraints so site articles stop relying on fuzzy vibe-matching.
+- `skills/restate-workflows/` captures the cross-repo ADR-0217 handoff pattern so isolated repos submit workflow requests through `joelclaw queue emit` instead of coupling themselves to Redis or private joelclaw internals.
 
 ## Required Shape
 
