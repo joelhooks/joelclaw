@@ -2,7 +2,7 @@
 name: agent-workloads
 displayName: Agent Workloads
 description: "Plan and steer agent-first coding/repo workloads in joelclaw. Use when the task is development work and you need to choose serial, parallel, or chained execution; shape pi-session steering; decide whether work should stay inline, go durable, or run in a sandbox; or define the handoff contract between workers. Triggers on 'plan this workload', 'serial/parallel/chained', 'repo workflow', 'coding workflow', 'pi steering', 'agent-first workload', 'how should an agent run this task', or any request to make coding work legible before dispatching it."
-version: 0.2.0
+version: 0.3.0
 author: Joel Hooks
 tags:
   - agent-first
@@ -149,22 +149,29 @@ Substrate skills remain implementation details:
 
 Use them only after the workload shape is clear.
 
-## Future command surface
+## Command surface
 
-Design and think toward:
+Shipped now:
 
 ```bash
 joelclaw workload plan "<intent>"
+```
+
+Use it to get a canonical `request` + `plan` envelope.
+
+Still planned:
+
+```bash
 joelclaw workload run "<intent>"
 joelclaw workload status <id>
 joelclaw workload explain <id>
 joelclaw workload cancel <id>
 ```
 
-Until that exists, emulate the same discipline manually:
+Until the rest exists:
 
-1. classify the workload
-2. choose the shape
+1. run `joelclaw workload plan`
+2. classify or refine the workload
 3. define artifacts and gates
 4. dispatch through the appropriate existing surface
 5. keep the handoff explicit

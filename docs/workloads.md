@@ -1,16 +1,17 @@
 # Workloads
 
-Canonical design doc for **ADR-0217 Phase 4.1**.
+Canonical design doc for **ADR-0217 Phase 4.1–4.2**.
 
-This document defines the first stable vocabulary and schema for **agent-first coding/repo workloads** in joelclaw.
+This document defines the canonical vocabulary, schema, and planner surface for **agent-first coding/repo workloads** in joelclaw.
 
 ## Status
 
 - **Canonical for planning:** yes
-- **Implemented as CLI/runtime contract:** not yet
-- **Current use:** manual planning, skill guidance, and future `joelclaw workload ...` implementation
+- **Implemented as CLI/runtime contract:** planner-only `joelclaw workload plan`
+- **Still planned:** `joelclaw workload run|status|explain|cancel`
+- **Current use:** manual planning, skill guidance, and planner-driven CLI output
 
-Do not pretend the workload CLI already ships. This doc exists so agents stop inventing a different contract every session.
+Do not pretend the whole workload command family already ships. Only `joelclaw workload plan` is real right now.
 
 ## Why this exists
 
@@ -157,6 +158,32 @@ Use these values in workload specs and stage outputs:
 - `comparison`
 - `rollback-plan`
 
+## Shipped CLI surface
+
+Current shipped command:
+
+```bash
+joelclaw workload plan "<intent>" \
+  [--kind auto|repo.patch|repo.refactor|repo.docs|repo.review|research.spike|runtime.proof|cross-repo.integration] \
+  [--shape auto|serial|parallel|chained] \
+  [--autonomy inline|supervised|afk|blocked] \
+  [--proof none|dry-run|canary|soak|full] \
+  [--risk reversible-only,host-okay] \
+  [--artifacts patch,verification,summary] \
+  [--acceptance "criterion one|criterion two"] \
+  [--repo /abs/path/or/owner/repo] \
+  [--paths docs/workloads.md,docs/cli.md] \
+  [--requested-by Joel]
+```
+
+Semantics:
+
+- returns a canonical `request` + `plan` envelope using the vocabulary below
+- infers `kind`, `shape`, `mode`, and `backend` when the caller leaves them open
+- validates known `risk` and `artifacts` values and warns on unknown ones
+- treats a missing `--repo` as the current working directory and infers `branch` / `baseSha` when that target is a local git repo
+- **does not dispatch anything**
+
 ## Workload request schema
 
 This is the canonical request envelope.
@@ -230,66 +257,64 @@ This is what the planner should produce.
 
 ```json
 {
-  "workloadId": "WL_20260308_001",
+  "workloadId": "WL_20260308_165513",
   "version": "2026-03-08",
   "status": "planned",
-  "kind": "repo.refactor",
-  "shape": "chained",
+  "kind": "repo.docs",
+  "shape": "serial",
   "mode": "inline",
   "backend": "host",
-  "summary": "three-stage docs and skill closeout before CLI implementation",
+  "summary": "serial repo.docs planned for inline execution on host",
   "why": [
-    "the work is dependent, but stage-specialized",
-    "the artifact contract matters more than background durability",
-    "no sandbox or durable backend is justified yet"
+    "kind pinned by caller to repo.docs",
+    "repo.docs defaults to ordered gates because one stage depends on the previous one being correct",
+    "nothing about the workload justifies background durability or isolation yet",
+    "inline planning or execution defaults to the local host session"
   ],
-  "risks": [
-    "spec drift if skills and docs diverge",
-    "future CLI implementation may rename some fields if this schema is not kept canonical"
-  ],
-  "artifacts": ["docs", "summary", "handoff"],
+  "risks": ["risk posture: reversible-only", "risk posture: host-okay"],
+  "artifacts": ["docs", "summary", "adr"],
   "verification": [
-    "docs reviewed for shipped-vs-planned truthfulness",
-    "git diff scoped to workload docs/skills",
-    "knowledge sync after merge"
+    "request and plan use the canonical fields from docs/workloads.md",
+    "the chosen shape, mode, and backend are explained in plain language"
   ],
   "stages": [
     {
       "id": "stage-1",
-      "name": "define workload vocabulary",
+      "name": "scope and prepare",
       "owner": "planner",
       "mode": "inline",
-      "inputs": ["ADR-0217", "Phase 4 PRD", "agent-workloads skill"],
-      "outputs": ["docs/workloads.md"],
-      "verification": ["schema terms are explicit and enumerated"],
-      "stopConditions": ["cannot explain shape/mode/backend cleanly"]
+      "inputs": ["intent", "acceptance criteria"],
+      "outputs": ["workload plan"],
+      "verification": ["scope boundary and artifacts are explicit"],
+      "stopConditions": ["acceptance criteria are still mush"]
     },
     {
       "id": "stage-2",
-      "name": "align skills and references",
+      "name": "execute primary task",
       "owner": "planner",
       "mode": "inline",
-      "inputs": ["docs/workloads.md"],
-      "outputs": [
-        "skills/agent-workloads/SKILL.md",
-        "skills/agent-workloads/references/common-workloads.md"
-      ],
-      "verification": ["skills use the same vocabulary as the doc"]
+      "inputs": ["workload plan"],
+      "outputs": ["docs", "adr"],
+      "verification": ["primary artifact is produced"],
+      "stopConditions": ["execution drifts outside planned boundaries"],
+      "dependsOn": ["stage-1"]
     },
     {
       "id": "stage-3",
-      "name": "groom ADR and PRD truth",
+      "name": "verify and summarize",
       "owner": "planner",
       "mode": "inline",
-      "inputs": ["docs/workloads.md", "updated skills"],
-      "outputs": ["ADR-0217 updates", "Phase 4 PRD updates"],
-      "verification": ["Story 4.1 done criteria are explicit"]
+      "inputs": ["stage-2 outputs"],
+      "outputs": ["summary"],
+      "verification": ["result and next action are explicit"],
+      "stopConditions": ["closeout cannot explain done vs remaining work"],
+      "dependsOn": ["stage-2"]
     }
   ],
   "next_actions": [
     {
-      "command": "joelclaw workload run <workload-id>",
-      "description": "future dispatch surface; not implemented yet"
+      "command": "joelclaw workload plan \"groom ADR-0217 truth and docs\" --kind repo.docs --shape serial",
+      "description": "re-run the planner with the inferred kind/shape pinned explicitly"
     }
   ]
 }
@@ -422,12 +447,14 @@ Choose `chained` when:
 }
 ```
 
-## Manual use until the CLI exists
+## Manual use until the rest of the CLI exists
 
-Until `joelclaw workload ...` is real:
+Use `joelclaw workload plan` first whenever it fits.
+
+For everything beyond planning, stay manual until more of the command family ships:
 
 1. capture Joel steering in the request fields
-2. choose `shape`
+2. run `joelclaw workload plan` or mirror its request fields manually
 3. choose `mode` and `backend` only after the shape is clear
 4. define the artifacts and verification gates
 5. use `clawmail` for reservation and handoff
@@ -449,7 +476,7 @@ Avoid:
 - `Vault/Projects/09-joelclaw/0217-phase-4-agent-first-workload-ergonomics.md` — broader Phase 4 PRD
 - `skills/agent-workloads/` — agent-facing front door for this model
 - `skills/restate-workflows/` — substrate bridge after workload planning is already clear
-- `docs/cli.md` — the future CLI must honor this contract once implemented
+- `docs/cli.md` — shipped CLI semantics and the remaining planned workload surfaces
 
 ## Story 4.1 done criteria
 
@@ -459,3 +486,12 @@ Story 4.1 is earned when:
 - the `agent-workloads` skill uses the same contract
 - Phase 4 PRD and ADR-0217 point at the same model
 - future CLI implementation can start from this doc instead of rediscovering the shape from scratch
+
+## Story 4.2 done criteria
+
+Story 4.2 is earned when:
+
+- `joelclaw workload plan` returns the canonical `request` + `plan` envelope
+- the planner uses the shared vocabulary from this doc instead of inventing fresh field names
+- shipped behavior is explicit: planning only, no fake dispatch/status/explain/cancel path yet
+- docs, skill guidance, ADR truth, and CLI docs all describe the same planner-only reality

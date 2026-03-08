@@ -38,10 +38,13 @@ Current contract:
 Example:
 
 ```ts
-import { createJoelclawClient } from "@joelclaw/sdk"
+import { createJoelclawClient } from "@joelclaw/sdk";
 
-const client = createJoelclawClient({ timeoutMs: 15_000, transport: "inprocess" })
-const otel = await client.otelSearch("gateway", { hours: 1, limit: 20 })
+const client = createJoelclawClient({
+  timeoutMs: 15_000,
+  transport: "inprocess",
+});
+const otel = await client.otelSearch("gateway", { hours: 1, limit: 20 });
 ```
 
 ## Health endpoint fallback (ADR-0182)
@@ -122,7 +125,35 @@ Semantics:
 - `joelclaw knowledge`
 - `joelclaw capabilities`
 - `joelclaw queue`
+- `joelclaw workload`
 - `joelclaw jobs`
+
+## Workload command tree
+
+```bash
+joelclaw workload
+└── plan "<intent>"
+    [--kind auto|repo.patch|repo.refactor|repo.docs|repo.review|research.spike|runtime.proof|cross-repo.integration]
+    [--shape auto|serial|parallel|chained]
+    [--autonomy inline|supervised|afk|blocked]
+    [--proof none|dry-run|canary|soak|full]
+    [--risk reversible-only,host-okay]
+    [--artifacts patch,verification,summary]
+    [--acceptance "criterion one|criterion two"]
+    [--repo /abs/path/or/owner/repo]
+    [--paths docs/workloads.md,docs/cli.md]
+    [--requested-by Joel]
+```
+
+`joelclaw workload plan` semantics:
+
+- planner-only surface for ADR-0217 Phase 4.2
+- returns a canonical `request` + `plan` envelope using `docs/workloads.md`
+- infers `kind`, `shape`, `mode`, and `backend` when the caller leaves them open
+- validates known `risk` and `artifacts` values and emits warnings for unknown ones instead of silently inventing vocabulary
+- defaults `--repo` to the current working directory and infers `branch` / `baseSha` when that target is a local git repo
+- does **not** dispatch or mutate anything
+- `run|status|explain|cancel` remain planned, not shipped
 
 ## Restate command tree
 
@@ -305,12 +336,14 @@ Semantics:
   - if the message is already acked/expired, it now returns a structured `QUEUE_MESSAGE_MISSING` error envelope with queue-state next actions instead of crashing the CLI
 
 Queue configuration:
+
 - Stream key: `joelclaw:queue:events`
 - Priority index: `joelclaw:queue:priority`
 - Consumer group: `joelclaw:queue:cli`
 - Phase 1 pilot events: `discovery/noted`, `discovery/captured`, `content/updated`, `subscription/check-feeds.requested`, `github/workflow_run.completed`
 
 OTEL telemetry under `queue.*` namespace:
+
 - CLI queue commands forward queue package telemetry to OTEL with `source=cli` and `component=queue`
 - `queue.enqueue` — message enqueued
 - `queue.lease` — message leased for processing (includes wait time, priority, promotion metadata)

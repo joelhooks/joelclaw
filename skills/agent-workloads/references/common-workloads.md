@@ -45,6 +45,14 @@ Minimum shape for a sane plan:
 
 If your summary cannot fit that shape, the task is still mush.
 
+First move when possible:
+
+```bash
+joelclaw workload plan "<intent>"
+```
+
+Then inspect the canonical `request` + `plan` output before dispatching anything.
+
 ## Choosing the Shape
 
 ### Serial
@@ -249,12 +257,17 @@ Avoid:
 - “just use Restate” as a user-facing answer
 - dispatching before acceptance / artifacts / risk posture are clear
 
-## Future `joelclaw workload` Surface
+## `joelclaw workload` Surface
 
-Design toward:
+Shipped now:
 
 ```bash
 joelclaw workload plan "<intent>"
+```
+
+Still planned:
+
+```bash
 joelclaw workload run "<intent>"
 joelclaw workload status <id>
 joelclaw workload explain <id>
