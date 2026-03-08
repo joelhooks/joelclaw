@@ -232,6 +232,26 @@ describe("queue observer contract", () => {
     }
   });
 
+  test("trims overlong summary output instead of falling back on schema length alone", async () => {
+    const { __queueObserveTestUtils } = await import("./queue-observe");
+    const snapshot = await buildSnapshot();
+    const longSummary = "x".repeat(700);
+
+    const parsed = __queueObserveTestUtils.parseQueueObservationOutput(JSON.stringify({
+      findings: {
+        queuePressure: "healthy",
+        downstreamState: "healthy",
+        summary: longSummary,
+      },
+      actions: [{ kind: "noop", reason: "Nothing to do." }],
+    }), snapshot);
+
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value.findings.summary).toHaveLength(500);
+    }
+  });
+
   test("dry-run records suggested actions but does not produce final auto-apply actions", async () => {
     const { observeQueueSnapshot } = await import("./queue-observe");
     const snapshot = await buildSnapshot();

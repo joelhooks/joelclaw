@@ -73,7 +73,13 @@ Respond with ONLY valid JSON:
   ]
 }`;
 
-const BaseReasonSchema = z.string().trim().min(1).max(280);
+function boundedString(maxLength: number) {
+  return z.string().trim().min(1).transform((value) =>
+    value.length <= maxLength ? value : value.slice(0, maxLength).trim()
+  );
+}
+
+const BaseReasonSchema = boundedString(280);
 const FamilySchema = z.string().trim().min(1).max(160);
 
 const QueueObserverActionSchema = z.discriminatedUnion("kind", [
@@ -113,7 +119,7 @@ const QueueObserverActionSchema = z.discriminatedUnion("kind", [
     kind: z.literal("escalate"),
     channel: z.literal("telegram"),
     severity: z.enum(["info", "warn", "error"]),
-    message: z.string().trim().min(1).max(500),
+    message: boundedString(500),
   }).strict(),
 ]);
 
@@ -121,7 +127,7 @@ const QueueObserveOutputSchema = z.object({
   findings: z.object({
     queuePressure: z.enum(["healthy", "degraded", "backlogged"]),
     downstreamState: z.enum(["healthy", "degraded", "down"]),
-    summary: z.string().trim().min(1).max(500),
+    summary: boundedString(500),
   }).strict(),
   actions: z.array(QueueObserverActionSchema).max(8),
 }).strict();
