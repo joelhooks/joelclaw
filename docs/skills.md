@@ -30,7 +30,9 @@ Create or update a skill when:
 - a domain has enough moving parts that a generic agent will otherwise relearn it badly
 - a session produced a clear "don't do that again" lesson
 
-Recent example: `skills/contributing-to-pi/` captures the upstream contribution discipline we should have applied before filing `badlogic/pi-mono` issue #1899.
+Recent examples:
+- `skills/contributing-to-pi/` captures the upstream contribution discipline we should have applied before filing `badlogic/pi-mono` issue #1899.
+- `skills/joel-writing-style/` captures the public joelclaw.com prose constraints so site articles stop relying on fuzzy vibe-matching.
 
 ## Required Shape
 

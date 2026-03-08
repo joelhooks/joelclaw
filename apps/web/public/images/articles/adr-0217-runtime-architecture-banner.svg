@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#09090b"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+    <marker id="arrowHead" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 z" fill="#E5E7EB"/>
+    </marker>
+    <style>
+      .title { font: 700 36px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #FAFAFA; }
+      .subtitle { font: 500 18px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #A1A1AA; }
+      .callout { font: 600 18px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #F472B6; }
+      .boxTitle { font: 700 28px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #FAFAFA; }
+      .boxMeta { font: 500 18px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #D4D4D8; }
+      .footer { font: 600 20px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; fill: #E5E7EB; }
+    </style>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect x="24" y="24" width="1152" height="582" rx="28" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.08)"/>
+
+  <text x="70" y="72" class="title">ADR-0217 runtime architecture</text>
+  <text x="70" y="106" class="subtitle">Redis queue core • Dkron schedule • Restate DAGs • sandboxed execution</text>
+  <text x="1130" y="70" text-anchor="end" class="callout">operator-first, model-aware, still boring underneath</text>
+
+  <g filter="url(#shadow)">
+    <rect x="70" y="210" width="220" height="120" rx="24" fill="#0F172A" stroke="#60A5FA" stroke-width="2.5"/>
+    <rect x="350" y="210" width="230" height="120" rx="24" fill="#052E2B" stroke="#2DD4BF" stroke-width="2.5"/>
+    <rect x="640" y="210" width="240" height="120" rx="24" fill="#3B0764" stroke="#C084FC" stroke-width="2.5"/>
+    <rect x="930" y="210" width="200" height="120" rx="24" fill="#3F1D0D" stroke="#FB923C" stroke-width="2.5"/>
+    <rect x="650" y="118" width="220" height="56" rx="18" fill="#111827" stroke="#F472B6" stroke-width="2.5"/>
+    <rect x="260" y="420" width="690" height="110" rx="24" fill="#18181B" stroke="#F5F5F5" stroke-width="2.5"/>
+  </g>
+
+  <text x="180" y="255" text-anchor="middle" class="boxTitle">Ingress</text>
+  <text x="180" y="286" text-anchor="middle" class="boxMeta">Gateway • Webhooks • CLI</text>
+
+  <text x="465" y="255" text-anchor="middle" class="boxTitle">Redis queue core</text>
+  <text x="465" y="286" text-anchor="middle" class="boxMeta">priority • pause • replay</text>
+
+  <text x="760" y="255" text-anchor="middle" class="boxTitle">Restate DAG runtime</text>
+  <text x="760" y="286" text-anchor="middle" class="boxMeta">durable steps • waves</text>
+
+  <text x="1030" y="255" text-anchor="middle" class="boxTitle">Sandboxed runners</text>
+  <text x="1030" y="286" text-anchor="middle" class="boxMeta">local now • k8s next</text>
+
+  <text x="760" y="145" text-anchor="middle" class="boxTitle" style="font-size:22px">Dkron</text>
+  <text x="760" y="166" text-anchor="middle" class="boxMeta" style="font-size:16px">schedule starts</text>
+
+  <text x="605" y="462" text-anchor="middle" class="boxTitle">Observability + report-back</text>
+  <text x="605" y="494" text-anchor="middle" class="boxMeta">OTEL • joelclaw jobs status • runtime_jobs_monitor</text>
+
+  <line x1="290" y1="270" x2="350" y2="270" stroke="#93C5FD" stroke-width="3" marker-end="url(#arrowHead)"/>
+  <line x1="580" y1="270" x2="640" y2="270" stroke="#5EEAD4" stroke-width="3" marker-end="url(#arrowHead)"/>
+  <line x1="880" y1="270" x2="930" y2="270" stroke="#FDBA74" stroke-width="3" marker-end="url(#arrowHead)"/>
+  <line x1="760" y1="174" x2="760" y2="210" stroke="#F472B6" stroke-width="3" marker-end="url(#arrowHead)"/>
+
+  <line x1="465" y1="330" x2="465" y2="420" stroke="#A1A1AA" stroke-width="2.5" stroke-dasharray="8 8" marker-end="url(#arrowHead)"/>
+  <line x1="760" y1="330" x2="760" y2="420" stroke="#A1A1AA" stroke-width="2.5" stroke-dasharray="8 8" marker-end="url(#arrowHead)"/>
+  <line x1="1030" y1="330" x2="950" y2="420" stroke="#A1A1AA" stroke-width="2.5" stroke-dasharray="8 8" marker-end="url(#arrowHead)"/>
+
+  <text x="70" y="579" class="footer">correctness lives in Redis + Restate</text>
+  <text x="1130" y="579" text-anchor="end" class="footer">intelligence tunes the system, not the truth</text>
+</svg>

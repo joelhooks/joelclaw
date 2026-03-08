@@ -94,7 +94,7 @@ duration: "00:42:02"                # optional, for video-notes
 
 ## Writing Voice
 
-Use the `joel-writing-style` skill for prose. Key traits: direct, first-person, strategic profanity, short paragraphs, bold emphasis, conversational but technical. Never corporate-speak.
+Use the canonical `joel-writing-style` skill for prose. Key traits: direct, first-person when the claim is actually Joel's, strategic profanity, short paragraphs, bold emphasis, conversational but technical. Never corporate-speak and never fabricate Joel's beliefs or philosophy.
 
 ## Design System
 
