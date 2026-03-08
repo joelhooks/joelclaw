@@ -2,7 +2,7 @@
 name: agent-workloads
 displayName: Agent Workloads
 description: "Plan and steer agent-first coding/repo workloads in joelclaw. Use when the task is development work and you need to choose serial, parallel, or chained execution; shape pi-session steering; decide whether work should stay inline, go durable, or run in a sandbox; or define the handoff contract between workers. Triggers on 'plan this workload', 'serial/parallel/chained', 'repo workflow', 'coding workflow', 'pi steering', 'agent-first workload', 'how should an agent run this task', or any request to make coding work legible before dispatching it."
-version: 0.4.0
+version: 0.5.0
 author: Joel Hooks
 tags:
   - agent-first
@@ -160,9 +160,16 @@ joelclaw workload plan "<intent>" \
   [--paths a,b,c] \
   [--paths-from status|head|recent:<n>] \
   [--write-plan ~/.joelclaw/workloads/]
+
+joelclaw workload dispatch <plan-artifact> \
+  [--stage stage-2] \
+  [--to BlueFox] \
+  [--from MaroonReef] \
+  [--send-mail] \
+  [--write-dispatch ~/.joelclaw/workloads/]
 ```
 
-Use it to get a canonical `request` + `plan` envelope, seed scope from real repo activity, and emit a reusable plan artifact for handoff.
+Use `plan` to get the canonical `request` + `plan` envelope, seed scope from real repo activity, and emit a reusable plan artifact. Use `dispatch` to turn that saved plan into a real handoff contract instead of retyping the whole bloody thing.
 
 Still planned:
 
@@ -177,8 +184,8 @@ Until the rest exists:
 
 1. run `joelclaw workload plan`
 2. classify or refine the workload
-3. define artifacts and gates
-4. dispatch through the appropriate existing surface
+3. if another worker should take it, save the plan and run `joelclaw workload dispatch`
+4. deliver the dispatch contract through clawmail when appropriate
 5. keep the handoff explicit
 
 ## Reference
@@ -200,6 +207,8 @@ Read the detailed workload catalog here:
 - if you are not inside the target repo and `workload plan` warns about the cwd not being a git repo, rerun with `--repo`
 - use `--paths-from status|head|recent:<n>` when scope should come from actual repo activity instead of hand-typed path lists
 - use `--write-plan` when another agent should be able to pick up the workload without reading raw chat
+- use `joelclaw workload dispatch` when a saved plan should become a stage-specific handoff contract
+- `--write-dispatch` is for reusable dispatch artifacts; `--send-mail` is for actually delivering the contract through clawmail
 - never hand a coding agent substrate docs as the only answer to “how should I run this work?”
 - serial / parallel / chained are first-class planning choices, not afterthoughts
 - use `clawmail` for any delegated or shared-file workload

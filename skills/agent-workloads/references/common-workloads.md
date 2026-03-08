@@ -62,8 +62,11 @@ joelclaw workload plan "<intent>" --repo /abs/repo --paths-from recent:3
 # use a preset instead of restating the obvious shape every time
 joelclaw workload plan "<intent>" --preset refactor-handoff
 
-# write a reusable handoff artifact
+# write a reusable plan artifact
 joelclaw workload plan "<intent>" --write-plan ~/.joelclaw/workloads/
+
+# turn the saved plan into a stage-specific dispatch contract
+joelclaw workload dispatch ~/.joelclaw/workloads/WL_20260308_191410.json --write-dispatch ~/.joelclaw/workloads/
 ```
 
 ## Choosing the Shape
@@ -195,7 +198,8 @@ Expected outputs:
 - visible milestone stages instead of generic sludge
 - preserved scoped paths on implementation stages
 - optional `reflect and update plan` stage when the prompt asks for it
-- a reusable handoff artifact if requested
+- a reusable plan artifact if requested
+- a stage-specific dispatch contract via `joelclaw workload dispatch` when the work is ready to hand off
 
 ### Multi-step refactor
 
@@ -308,6 +312,12 @@ Shipped now:
 
 ```bash
 joelclaw workload plan "<intent>"
+```
+
+Shipped now in addition to planning:
+
+```bash
+joelclaw workload dispatch <plan-artifact>
 ```
 
 Still planned:

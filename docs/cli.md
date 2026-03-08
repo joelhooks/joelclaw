@@ -132,25 +132,31 @@ Semantics:
 
 ```bash
 joelclaw workload
-└── plan "<intent>"
-    [--preset docs-truth|research-compare|refactor-handoff]
-    [--kind auto|repo.patch|repo.refactor|repo.docs|repo.review|research.spike|runtime.proof|cross-repo.integration]
-    [--shape auto|serial|parallel|chained]
-    [--autonomy inline|supervised|afk|blocked]
-    [--proof none|dry-run|canary|soak|full]
-    [--risk reversible-only,host-okay]
-    [--artifacts patch,verification,summary]
-    [--acceptance "criterion one|criterion two"]
-    [--repo /abs/path/or/owner/repo]
-    [--paths docs/workloads.md,docs/cli.md]
-    [--paths-from status|head|recent:<n>]
-    [--write-plan ~/.joelclaw/workloads/]
-    [--requested-by Joel]
+├── plan "<intent>"
+│   [--preset docs-truth|research-compare|refactor-handoff]
+│   [--kind auto|repo.patch|repo.refactor|repo.docs|repo.review|research.spike|runtime.proof|cross-repo.integration]
+│   [--shape auto|serial|parallel|chained]
+│   [--autonomy inline|supervised|afk|blocked]
+│   [--proof none|dry-run|canary|soak|full]
+│   [--risk reversible-only,host-okay]
+│   [--artifacts patch,verification,summary]
+│   [--acceptance "criterion one|criterion two"]
+│   [--repo /abs/path/or/owner/repo]
+│   [--paths docs/workloads.md,docs/cli.md]
+│   [--paths-from status|head|recent:<n>]
+│   [--write-plan ~/.joelclaw/workloads/]
+│   [--requested-by Joel]
+└── dispatch <plan-artifact>
+    [--stage <stage-id>]
+    [--to <to>]
+    [--from <from>]
+    [--send-mail]
+    [--write-dispatch ~/.joelclaw/workloads/]
 ```
 
 `joelclaw workload plan` semantics:
 
-- planner-only surface for ADR-0217 Phase 4.3
+- planner surface for ADR-0217 Phase 4.3
 - returns a canonical `request` + `plan` envelope using `docs/workloads.md`
 - infers `kind`, `shape`, `mode`, and `backend` when the caller leaves them open
 - supports reusable planner presets for common docs/research/refactor shapes
@@ -163,7 +169,17 @@ joelclaw workload
 - `--paths-from` can seed file scope from local git activity, and `--write-plan` writes the full envelope to a reusable JSON artifact
 - chained repo.patch/refactor work can decompose a `Goal:` section into explicit milestones and add a reflection/update stage when the prompt asks for it
 - defaults `--repo` to the current working directory and infers `branch` / `baseSha` when that target is a local git repo; if the cwd is not a git repo, it warns and points the caller at `--repo`
-- does **not** dispatch or mutate anything
+- does **not** execute code or mutate repos
+
+`joelclaw workload dispatch` semantics:
+
+- reads a saved plan artifact from `joelclaw workload plan --write-plan ...`
+- turns it into a stage-specific dispatch/handoff contract with canonical `handoff` data plus a clawmail-ready subject/body
+- defaults to the first stage, but `--stage` can target a later stage explicitly
+- preserves scoped file boundaries through `selectedStage.reservedPaths` / `handoff.reservedPaths`
+- `--write-dispatch` writes the dispatch contract as a reusable JSON artifact
+- `--send-mail --to <to> --from <from>` sends that contract through `joelclaw mail`
+- does **not** execute code or mutate repos
 - `run|status|explain|cancel` remain planned, not shipped
 
 ## Restate command tree

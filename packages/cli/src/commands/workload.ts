@@ -1,9 +1,16 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Args, Command, Options } from "@effect/cli";
 import { Console, Effect } from "effect";
+import { executeCapabilityCommand } from "../capabilities/runtime";
 import {
   buildSuccessEnvelope,
   type JoelclawEnvelope,
@@ -182,6 +189,62 @@ type WorkloadPlanArtifact = {
   written: true;
   path: string;
   format: "joelclaw-envelope";
+};
+
+type WorkloadDispatchArtifact = {
+  written: true;
+  path: string;
+  format: "joelclaw-envelope";
+};
+
+type WorkloadHandoff = {
+  workloadId: string;
+  stageId: string;
+  goal: string;
+  currentState: string;
+  artifactsProduced: string[];
+  verificationDone: string[];
+  remainingGates: string[];
+  reservedPaths: string[];
+  releasedPaths: string[];
+  risks: string[];
+  nextAction: string;
+};
+
+type WorkloadDispatchDelivery = {
+  sent: boolean;
+  project: string;
+  from: string;
+  to: string;
+  result: unknown;
+};
+
+type WorkloadDispatchResult = {
+  version: string;
+  dispatchId: string;
+  sourcePlan: {
+    path: string;
+    workloadId: string;
+  };
+  selectedStage: WorkloadStage;
+  target: WorkloadTarget;
+  handoff: WorkloadHandoff;
+  mail: {
+    subject: string;
+    body: string;
+    from?: string;
+    to?: string;
+  };
+  artifact?: WorkloadDispatchArtifact;
+  delivery?: WorkloadDispatchDelivery;
+  shipped: {
+    plan: true;
+    dispatch: true;
+    run: false;
+    status: false;
+    explain: false;
+    cancel: false;
+  };
 };
 
 type WorkloadPlanningResult = {
@@ -643,6 +706,235 @@ const writePlanArtifact = (
     written: true,
     path,
     format: "joelclaw-envelope",
+  };
+};
+
+const defaultDispatchArtifactPath = (dispatchId: string) =>
+  `~/.joelclaw/workloads/${dispatchId}.json`;
+
+const writeDispatchArtifact = (
+  path: string,
+  envelope: JoelclawEnvelope,
+): WorkloadDispatchArtifact => {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(envelope, null, 2)}\n`, "utf8");
+  return {
+    written: true,
+    path,
+    format: "joelclaw-envelope",
+  };
+};
+
+const readJsonArtifact = (path: string): unknown => {
+  const absolute = resolve(expandHome(path));
+  if (!existsSync(absolute)) {
+    throw new Error(`Artifact path does not exist: ${absolute}`);
+  }
+
+  const raw = readFileSync(absolute, "utf8").trim();
+  if (raw.length === 0) {
+    throw new Error(`Artifact file is empty: ${absolute}`);
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Artifact file is not valid JSON: ${absolute} (${detail})`);
+  }
+};
+
+const asObject = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : undefined;
+
+const parseWorkloadPlanArtifact = (
+  path: string,
+): {
+  absolutePath: string;
+  envelope: JoelclawEnvelope;
+  result: WorkloadPlanningResult;
+} => {
+  const absolutePath = resolve(expandHome(path));
+  const parsed = readJsonArtifact(absolutePath);
+  const envelope = asObject(parsed);
+  if (!envelope) {
+    throw new Error(
+      `Artifact file does not contain a joelclaw envelope: ${absolutePath}`,
+    );
+  }
+
+  const command = typeof envelope.command === "string" ? envelope.command : "";
+  if (!/joelclaw\s+workload\s+plan$/u.test(command)) {
+    throw new Error(
+      `Artifact is not a joelclaw workload plan envelope: ${absolutePath}`,
+    );
+  }
+
+  if (envelope.ok !== true) {
+    throw new Error(
+      `Artifact is not a successful workload plan: ${absolutePath}`,
+    );
+  }
+
+  const result = asObject(envelope.result);
+  const request = asObject(result?.request);
+  const plan = asObject(result?.plan);
+  const stages = Array.isArray(plan?.stages) ? plan?.stages : undefined;
+
+  if (
+    !result ||
+    !request ||
+    !plan ||
+    typeof plan.workloadId !== "string" ||
+    !stages ||
+    stages.length === 0
+  ) {
+    throw new Error(
+      `Artifact is missing the canonical workload request/plan payload: ${absolutePath}`,
+    );
+  }
+
+  return {
+    absolutePath,
+    envelope: envelope as unknown as JoelclawEnvelope,
+    result: result as unknown as WorkloadPlanningResult,
+  };
+};
+
+const selectDispatchStage = (
+  result: WorkloadPlanningResult,
+  explicitStageId: string | undefined,
+): WorkloadStage => {
+  const stages = result.plan.stages;
+  if (stages.length === 0) {
+    throw new Error(
+      `Workload ${result.plan.workloadId} has no stages to dispatch`,
+    );
+  }
+
+  if (!explicitStageId) {
+    return stages[0]!;
+  }
+
+  const stage = stages.find((candidate) => candidate.id === explicitStageId);
+  if (!stage) {
+    throw new Error(
+      `Stage ${explicitStageId} does not exist in workload ${result.plan.workloadId}`,
+    );
+  }
+
+  return stage;
+};
+
+const buildDispatchId = (now = new Date()): string => {
+  const yyyy = now.getUTCFullYear();
+  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(now.getUTCDate()).padStart(2, "0");
+  const hh = String(now.getUTCHours()).padStart(2, "0");
+  const min = String(now.getUTCMinutes()).padStart(2, "0");
+  const ss = String(now.getUTCSeconds()).padStart(2, "0");
+  return `WD_${yyyy}${mm}${dd}_${hh}${min}${ss}`;
+};
+
+const buildDispatchMailSubject = (
+  workloadId: string,
+  stage: WorkloadStage,
+): string =>
+  `Task: ${workloadId} ${stage.id} ${toStageName(stage.name, stage.id)}`;
+
+const buildDispatchMailBody = (options: {
+  sourcePlanPath: string;
+  target: WorkloadTarget;
+  handoff: WorkloadHandoff;
+}): string => {
+  const targetPaths = options.target.paths?.length
+    ? options.target.paths.join(", ")
+    : "repo-wide";
+  const branchDetail = options.target.branch
+    ? `${options.target.branch}${options.target.baseSha ? ` @ ${options.target.baseSha}` : ""}`
+    : (options.target.baseSha ?? "unknown");
+
+  return [
+    `Dispatch contract for ${options.handoff.workloadId}`,
+    "",
+    `- source plan: ${options.sourcePlanPath}`,
+    `- stage: ${options.handoff.stageId} — ${options.handoff.goal}`,
+    `- repo: ${options.target.repo}`,
+    `- branch/base: ${branchDetail}`,
+    `- scoped paths: ${targetPaths}`,
+    `- next action: ${options.handoff.nextAction}`,
+    "",
+    "Remaining gates:",
+    ...options.handoff.remainingGates.map((gate) => `- ${gate}`),
+    "",
+    "Handoff JSON:",
+    "```json",
+    JSON.stringify(options.handoff, null, 2),
+    "```",
+  ].join("\n");
+};
+
+const buildDispatchContract = (options: {
+  sourcePlanPath: string;
+  result: WorkloadPlanningResult;
+  stageId?: string;
+  from?: string;
+  to?: string;
+  now?: Date;
+}): WorkloadDispatchResult => {
+  const stage = selectDispatchStage(options.result, options.stageId);
+  const stageIndex = options.result.plan.stages.findIndex(
+    (candidate) => candidate.id === stage.id,
+  );
+  const target = options.result.request.targets[0]!;
+  const reservedPaths = dedupe(stage.reservedPaths ?? target.paths ?? []);
+  const remainingGates = options.result.plan.stages
+    .slice(stageIndex)
+    .map((candidate) => `${candidate.id}: ${candidate.name}`);
+  const handoff: WorkloadHandoff = {
+    workloadId: options.result.plan.workloadId,
+    stageId: stage.id,
+    goal: stage.name,
+    currentState: `planned from ${options.sourcePlanPath}; ${stage.id} is the next executable stage`,
+    artifactsProduced: [options.sourcePlanPath],
+    verificationDone: options.result.plan.verification,
+    remainingGates,
+    reservedPaths,
+    releasedPaths: [],
+    risks: options.result.plan.risks,
+    nextAction: `execute ${stage.id}: ${stage.name}`,
+  };
+
+  return {
+    version: WORKLOAD_VERSION,
+    dispatchId: buildDispatchId(options.now),
+    sourcePlan: {
+      path: options.sourcePlanPath,
+      workloadId: options.result.plan.workloadId,
+    },
+    selectedStage: stage,
+    target,
+    handoff,
+    mail: {
+      subject: buildDispatchMailSubject(options.result.plan.workloadId, stage),
+      body: buildDispatchMailBody({
+        sourcePlanPath: options.sourcePlanPath,
+        target,
+        handoff,
+      }),
+      ...(options.from ? { from: options.from } : {}),
+      ...(options.to ? { to: options.to } : {}),
+    },
+    shipped: {
+      plan: true,
+      dispatch: true,
+      run: false,
+      status: false,
+      explain: false,
+      cancel: false,
+    },
   };
 };
 
@@ -1872,6 +2164,44 @@ const requestedByOption = Options.text("requested-by").pipe(
   Options.withDefault("Joel"),
 );
 
+const dispatchPlanArtifactArg = Args.text({ name: "plan-artifact" }).pipe(
+  Args.withDescription("Path to a saved workload plan envelope"),
+);
+
+const dispatchStageOption = Options.text("stage").pipe(
+  Options.withDescription(
+    "Which stage id to dispatch (defaults to the first stage)",
+  ),
+  Options.optional,
+);
+
+const dispatchProjectOption = Options.text("project").pipe(
+  Options.withDescription("Mail project key for optional task dispatch"),
+  Options.withDefault("/Users/joel/Code/joelhooks/joelclaw"),
+);
+
+const dispatchFromOption = Options.text("from").pipe(
+  Options.withDescription("Sender agent name for optional mail dispatch"),
+  Options.withDefault("MaroonReef"),
+);
+
+const dispatchToOption = Options.text("to").pipe(
+  Options.withDescription("Recipient agent name for optional mail dispatch"),
+  Options.optional,
+);
+
+const sendMailOption = Options.boolean("send-mail").pipe(
+  Options.withDescription("Send the dispatch contract through joelclaw mail"),
+  Options.withDefault(false),
+);
+
+const writeDispatchOption = Options.text("write-dispatch").pipe(
+  Options.withDescription(
+    "Write the dispatch contract to a reusable JSON artifact",
+  ),
+  Options.optional,
+);
+
 const buildPlanNextActions = (
   input: NormalizedPlannerInput,
   result: WorkloadPlanningResult,
@@ -2033,6 +2363,30 @@ const buildPlanNextActions = (
         },
       },
     });
+  } else {
+    actions.push({
+      command:
+        "workload dispatch <plan-artifact> [--stage <stage-id>] [--write-dispatch <path>]",
+      description:
+        "Turn the saved plan artifact into a reusable dispatch contract",
+      params: {
+        "plan-artifact": {
+          description: "Path to the workload plan envelope",
+          value: result.artifact.path,
+          required: true,
+        },
+        "stage-id": {
+          description: "Which stage to dispatch",
+          value: result.plan.stages[0]?.id ?? "stage-1",
+        },
+        path: {
+          description: "Where to write the dispatch JSON",
+          value: defaultDispatchArtifactPath(
+            result.plan.workloadId.replace(/^WL_/u, "WD_"),
+          ),
+        },
+      },
+    });
   }
 
   if (
@@ -2044,6 +2398,115 @@ const buildPlanNextActions = (
       command: "status",
       description:
         "Check system health before dispatching work beyond planning",
+    });
+  }
+
+  return actions;
+};
+
+const buildDispatchNextActions = (
+  planArtifactPath: string,
+  result: WorkloadDispatchResult,
+  project: string,
+): NextAction[] => {
+  const actions: NextAction[] = [
+    {
+      command:
+        "workload dispatch <plan-artifact> [--stage <stage-id>] [--to <to>] [--from <from>] [--send-mail] [--write-dispatch <path>]",
+      description: "Refine the dispatch contract or target a different stage",
+      params: {
+        "plan-artifact": {
+          description: "Path to the saved workload plan envelope",
+          value: planArtifactPath,
+          required: true,
+        },
+        "stage-id": {
+          description: "Which stage to dispatch",
+          value: result.selectedStage.id,
+        },
+        to: {
+          description: "Recipient agent for optional mail dispatch",
+          value: result.mail.to ?? "AGENT_NAME",
+        },
+        from: {
+          description: "Sender agent name",
+          value: result.mail.from ?? "MaroonReef",
+        },
+        path: {
+          description: "Where to write the dispatch JSON",
+          value:
+            result.artifact?.path ??
+            defaultDispatchArtifactPath(result.dispatchId),
+        },
+      },
+    },
+    {
+      command: "mail reserve --paths <paths> --agent <agent>",
+      description: "Reserve the dispatched file scope before the worker starts",
+      params: {
+        paths: {
+          description: "Comma-separated file paths",
+          value: result.handoff.reservedPaths.join(","),
+          required: true,
+        },
+        agent: {
+          description: "Agent taking the dispatched stage",
+          value: result.mail.to ?? "AGENT_NAME",
+          required: true,
+        },
+      },
+    },
+  ];
+
+  if (!result.delivery) {
+    actions.push({
+      command:
+        "mail send --project <project> --from <from> --to <to> --subject <subject> <body>",
+      description: "Send the dispatch contract through clawmail",
+      params: {
+        project: {
+          description: "Mail project key",
+          value: project,
+          required: true,
+        },
+        to: {
+          description: "Recipient agent",
+          value: result.mail.to ?? "AGENT_NAME",
+          required: true,
+        },
+        from: {
+          description: "Sender agent",
+          value: result.mail.from ?? "MaroonReef",
+          required: true,
+        },
+        subject: {
+          description: "Mail subject",
+          value: result.mail.subject,
+          required: true,
+        },
+        body: {
+          description: "Mail body",
+          value: result.mail.body,
+          required: true,
+        },
+      },
+    });
+  } else {
+    actions.push({
+      command: "mail inbox --project <project> --agent <agent>",
+      description: "Check the recipient inbox after dispatch",
+      params: {
+        project: {
+          description: "Mail project key",
+          value: project,
+          required: true,
+        },
+        agent: {
+          description: "Recipient agent",
+          value: result.delivery.to,
+          required: true,
+        },
+      },
     });
   }
 
@@ -2229,14 +2692,268 @@ const planCmd = Command.make(
   ),
 );
 
+const dispatchCmd = Command.make(
+  "dispatch",
+  {
+    planArtifact: dispatchPlanArtifactArg,
+    stage: dispatchStageOption,
+    project: dispatchProjectOption,
+    from: dispatchFromOption,
+    to: dispatchToOption,
+    sendMail: sendMailOption,
+    writeDispatch: writeDispatchOption,
+  },
+  ({ planArtifact, stage, project, from, to, sendMail, writeDispatch }) =>
+    Effect.gen(function* () {
+      const stageId = stage._tag === "Some" ? stage.value.trim() : undefined;
+      const toAgent = to._tag === "Some" ? to.value.trim() : undefined;
+      const writeDispatchText =
+        writeDispatch._tag === "Some" ? writeDispatch.value : undefined;
+
+      const parsedEither = yield* Effect.try({
+        try: () => parseWorkloadPlanArtifact(planArtifact),
+        catch: (error) =>
+          error instanceof Error ? error : new Error(String(error)),
+      }).pipe(Effect.either);
+
+      if (parsedEither._tag === "Left") {
+        yield* Console.log(
+          respondError(
+            "workload dispatch",
+            parsedEither.left.message,
+            "WORKLOAD_DISPATCH_INVALID_PLAN_ARTIFACT",
+            "Pass a valid plan artifact created by `joelclaw workload plan --write-plan ...`",
+            [
+              {
+                command:
+                  "workload dispatch <plan-artifact> [--stage <stage-id>] [--write-dispatch <path>]",
+                description: "Retry with a valid plan artifact",
+                params: {
+                  "plan-artifact": {
+                    description: "Path to a workload plan envelope",
+                    value: planArtifact,
+                    required: true,
+                  },
+                  "stage-id": {
+                    description: "Optional stage id",
+                    value: stageId ?? "stage-1",
+                  },
+                  path: {
+                    description: "Where to write the dispatch JSON",
+                    value: defaultDispatchArtifactPath("WD_YYYYMMDD_HHMMSS"),
+                  },
+                },
+              },
+            ],
+          ),
+        );
+        return;
+      }
+
+      if (sendMail && !toAgent) {
+        yield* Console.log(
+          respondError(
+            "workload dispatch",
+            "--send-mail requires --to <agent>",
+            "WORKLOAD_DISPATCH_MISSING_RECIPIENT",
+            "Provide a recipient agent with --to before sending the dispatch contract",
+            [
+              {
+                command:
+                  "workload dispatch <plan-artifact> --to <to> --from <from> --send-mail",
+                description: "Retry with an explicit mail recipient",
+                params: {
+                  "plan-artifact": {
+                    description: "Path to a workload plan envelope",
+                    value: planArtifact,
+                    required: true,
+                  },
+                  to: {
+                    description: "Recipient agent",
+                    value: "AGENT_NAME",
+                    required: true,
+                  },
+                  from: {
+                    description: "Sender agent",
+                    value: from,
+                    required: true,
+                  },
+                },
+              },
+            ],
+          ),
+        );
+        return;
+      }
+
+      const parsed = parsedEither.right;
+      const dispatchBaseEither = yield* Effect.try({
+        try: () =>
+          buildDispatchContract({
+            sourcePlanPath: parsed.absolutePath,
+            result: parsed.result,
+            stageId,
+            from,
+            to: toAgent,
+            now: new Date(),
+          }),
+        catch: (error) =>
+          error instanceof Error ? error : new Error(String(error)),
+      }).pipe(Effect.either);
+
+      if (dispatchBaseEither._tag === "Left") {
+        yield* Console.log(
+          respondError(
+            "workload dispatch",
+            dispatchBaseEither.left.message,
+            "WORKLOAD_DISPATCH_INVALID_STAGE",
+            "Choose a valid stage id from the saved plan and retry",
+            [
+              {
+                command:
+                  "workload dispatch <plan-artifact> [--stage <stage-id>]",
+                description: "Retry with a valid stage id",
+                params: {
+                  "plan-artifact": {
+                    description: "Path to a workload plan envelope",
+                    value: parsed.absolutePath,
+                    required: true,
+                  },
+                  "stage-id": {
+                    description: "Stage id to dispatch",
+                    value: parsed.result.plan.stages[0]?.id ?? "stage-1",
+                  },
+                },
+              },
+            ],
+          ),
+        );
+        return;
+      }
+
+      const dispatchArtifactPath = writeDispatchText
+        ? resolvePlanArtifactPath(
+            writeDispatchText,
+            dispatchBaseEither.right.dispatchId,
+          )
+        : undefined;
+
+      let result: WorkloadDispatchResult = dispatchArtifactPath
+        ? {
+            ...dispatchBaseEither.right,
+            artifact: {
+              written: true,
+              path: dispatchArtifactPath,
+              format: "joelclaw-envelope",
+            },
+          }
+        : dispatchBaseEither.right;
+
+      if (sendMail && toAgent) {
+        const deliveryEither = yield* executeCapabilityCommand<
+          Record<string, unknown>
+        >({
+          capability: "mail",
+          subcommand: "send",
+          args: {
+            project,
+            from,
+            to: toAgent,
+            subject: result.mail.subject,
+            body: result.mail.body,
+          },
+        }).pipe(Effect.either);
+
+        if (deliveryEither._tag === "Left") {
+          yield* Console.log(
+            respondError(
+              "workload dispatch",
+              deliveryEither.left.message,
+              deliveryEither.left.code || "WORKLOAD_DISPATCH_MAIL_FAILED",
+              deliveryEither.left.fix ??
+                "Retry the dispatch without --send-mail or fix joelclaw mail first",
+              [
+                {
+                  command:
+                    "mail send --project <project> --from <from> --to <to> --subject <subject> <body>",
+                  description: "Retry the mail dispatch directly",
+                  params: {
+                    project: {
+                      description: "Mail project key",
+                      value: project,
+                      required: true,
+                    },
+                    from: {
+                      description: "Sender agent",
+                      value: from,
+                      required: true,
+                    },
+                    to: {
+                      description: "Recipient agent",
+                      value: toAgent,
+                      required: true,
+                    },
+                    subject: {
+                      description: "Mail subject",
+                      value: result.mail.subject,
+                      required: true,
+                    },
+                    body: {
+                      description: "Mail body",
+                      value: result.mail.body,
+                      required: true,
+                    },
+                  },
+                },
+              ],
+            ),
+          );
+          return;
+        }
+
+        result = {
+          ...result,
+          delivery: {
+            sent: true,
+            project,
+            from,
+            to: toAgent,
+            result: deliveryEither.right,
+          },
+        };
+      }
+
+      const nextActions = buildDispatchNextActions(
+        parsed.absolutePath,
+        result,
+        project,
+      );
+
+      if (dispatchArtifactPath) {
+        writeDispatchArtifact(
+          dispatchArtifactPath,
+          buildSuccessEnvelope("workload dispatch", result, nextActions),
+        );
+      }
+
+      yield* Console.log(respond("workload dispatch", result, nextActions));
+    }),
+).pipe(
+  Command.withDescription(
+    "Turn a saved workload plan artifact into a dispatch/handoff contract",
+  ),
+);
+
 export const workloadCmd = Command.make("workload", {}, () =>
   Console.log(
     respond(
       "workload",
       {
-        description: "Agent-first workload planning surfaces",
+        description: "Agent-first workload planning and dispatch surfaces",
         shipped: {
           plan: "joelclaw workload plan <intent> [--preset docs-truth|research-compare|refactor-handoff] [--kind auto|repo.patch|repo.refactor|repo.docs|repo.review|research.spike|runtime.proof|cross-repo.integration] [--shape auto|serial|parallel|chained] [--paths-from status|head|recent:<n>] [--write-plan <path>]",
+          dispatch:
+            "joelclaw workload dispatch <plan-artifact> [--stage <stage-id>] [--to <to>] [--from <from>] [--send-mail] [--write-dispatch <path>]",
         },
         planned: {
           run: "planned, not yet shipped",
@@ -2247,19 +2964,19 @@ export const workloadCmd = Command.make("workload", {}, () =>
       },
       [
         {
-          command: `joelclaw workload plan ${shellQuote("shape active gremlin refactor work")} --preset refactor-handoff --repo ${shellQuote("/Users/joel/Code/badass-courses/gremlin")} --paths-from recent:3`,
+          command: `joelclaw workload plan ${shellQuote("shape active gremlin refactor work")} --preset refactor-handoff --repo ${shellQuote("/Users/joel/Code/badass-courses/gremlin")} --paths-from recent:3 --write-plan ${shellQuote("~/.joelclaw/workloads/")}`,
           description:
-            "Plan active repo work with a preset and git-derived path scope",
+            "Plan active repo work with a preset, git-derived path scope, and a saved plan artifact",
         },
         {
-          command: `joelclaw workload plan ${shellQuote("compare two sandbox approaches")} --preset research-compare --write-plan ${shellQuote("~/.joelclaw/workloads/")}`,
+          command: `joelclaw workload dispatch ${shellQuote("~/.joelclaw/workloads/WL_YYYYMMDD_HHMMSS.json")} --write-dispatch ${shellQuote("~/.joelclaw/workloads/")}`,
           description:
-            "Write a reusable research plan artifact for later handoff",
+            "Turn a saved plan artifact into a reusable dispatch contract",
         },
       ],
     ),
   ),
-).pipe(Command.withSubcommands([planCmd]));
+).pipe(Command.withSubcommands([planCmd, dispatchCmd]));
 
 export const __workloadTestUtils = {
   splitCsv,
@@ -2275,9 +2992,16 @@ export const __workloadTestUtils = {
   buildVerification,
   buildStages,
   buildWorkloadId,
+  buildDispatchId,
   defaultPlanArtifactPath,
+  defaultDispatchArtifactPath,
   resolvePlanArtifactPath,
   writePlanArtifact,
+  writeDispatchArtifact,
+  readJsonArtifact,
+  parseWorkloadPlanArtifact,
+  selectDispatchStage,
+  buildDispatchContract,
   resolvePresetDefaults,
   resolveTarget,
   planWorkload,

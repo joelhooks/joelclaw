@@ -7,11 +7,11 @@ This document defines the canonical vocabulary, schema, and planner surface for 
 ## Status
 
 - **Canonical for planning:** yes
-- **Implemented as CLI/runtime contract:** planner-only `joelclaw workload plan` with presets, git-derived path seeding, and reusable plan artifacts
+- **Implemented as CLI/runtime contract:** `joelclaw workload plan` plus `joelclaw workload dispatch`
 - **Still planned:** `joelclaw workload run|status|explain|cancel`
-- **Current use:** manual planning, skill guidance, and planner-driven CLI output
+- **Current use:** planning, saved plan artifacts, dispatch/handoff contracts, and planner-driven CLI output
 
-Do not pretend the whole workload command family already ships. Only `joelclaw workload plan` is real right now.
+Do not pretend the whole workload command family already ships. `plan` and `dispatch` are real right now; `run|status|explain|cancel` are still not.
 
 ## Why this exists
 
@@ -160,7 +160,7 @@ Use these values in workload specs and stage outputs:
 
 ## Shipped CLI surface
 
-Current shipped command:
+Current shipped commands:
 
 ```bash
 joelclaw workload plan "<intent>" \
@@ -177,6 +177,13 @@ joelclaw workload plan "<intent>" \
   [--paths-from status|head|recent:<n>] \
   [--write-plan ~/.joelclaw/workloads/] \
   [--requested-by Joel]
+
+joelclaw workload dispatch <plan-artifact> \
+  [--stage stage-2] \
+  [--to BlueFox] \
+  [--from MaroonReef] \
+  [--send-mail] \
+  [--write-dispatch ~/.joelclaw/workloads/]
 ```
 
 Semantics:
@@ -194,7 +201,17 @@ Semantics:
 - chained `repo.patch` / `repo.refactor` plans can decompose a `Goal:` section into explicit milestones and add a `reflect and update plan` stage when the prompt asks for it
 - `--write-plan <path>` writes the full CLI envelope to a reusable JSON artifact for handoff or later dispatch prep
 - treats a missing `--repo` as the current working directory and infers `branch` / `baseSha` when that target is a local git repo; if the cwd is not a git repo, the planner warns and tells the caller to pass `--repo`
-- **does not dispatch anything**
+- **does not execute code or mutate repos**
+
+`joelclaw workload dispatch` semantics:
+
+- reads a saved `joelclaw workload plan --write-plan ...` envelope and turns it into a machine-usable dispatch/handoff contract
+- chooses the first stage by default, or a caller-selected stage via `--stage`
+- carries forward scoped file boundaries via `reservedPaths`
+- turns the saved plan into a canonical `handoff` object instead of forcing another agent to reconstruct the task from chat
+- can optionally emit a second saved artifact with `--write-dispatch`
+- can optionally send the dispatch contract through `joelclaw mail` with `--to ... --from ... --send-mail`
+- still **does not execute code or mutate repos**
 
 ## Workload request schema
 
@@ -383,6 +400,65 @@ Use this when one worker hands off to another.
 
 If the next worker has to reconstruct the task from raw chat, the handoff is bad.
 
+## Dispatch contract schema
+
+`joelclaw workload dispatch` wraps the selected stage plus the canonical handoff into a reusable dispatch envelope.
+
+```json
+{
+  "version": "2026-03-08",
+  "dispatchId": "WD_20260308_191500",
+  "sourcePlan": {
+    "path": "/Users/joel/.joelclaw/workloads/WL_20260308_191410.json",
+    "workloadId": "WL_20260308_191410"
+  },
+  "selectedStage": {
+    "id": "stage-2",
+    "name": "verify independently",
+    "owner": "reviewer",
+    "mode": "inline",
+    "inputs": ["stage-1 outputs"],
+    "outputs": ["verification"],
+    "reservedPaths": ["packages/cli/src/commands/workload.ts"],
+    "verification": ["verification is recorded separately from implementation"],
+    "stopConditions": [
+      "verification cannot explain what changed or what remains"
+    ],
+    "dependsOn": ["stage-1"]
+  },
+  "target": {
+    "repo": "/Users/joel/Code/joelhooks/joelclaw",
+    "branch": "main",
+    "baseSha": "abc1234",
+    "paths": ["packages/cli/src/commands/workload.ts"]
+  },
+  "handoff": {
+    "workloadId": "WL_20260308_191410",
+    "stageId": "stage-2",
+    "goal": "verify independently",
+    "currentState": "planned from /Users/joel/.joelclaw/workloads/WL_20260308_191410.json; stage-2 is the next executable stage",
+    "artifactsProduced": [
+      "/Users/joel/.joelclaw/workloads/WL_20260308_191410.json"
+    ],
+    "verificationDone": [
+      "request and plan use the canonical fields from docs/workloads.md"
+    ],
+    "remainingGates": [
+      "stage-2: verify independently",
+      "stage-3: handoff and closeout"
+    ],
+    "reservedPaths": ["packages/cli/src/commands/workload.ts"],
+    "releasedPaths": [],
+    "risks": ["risk posture: reversible-only", "risk posture: host-okay"],
+    "nextAction": "execute stage-2: verify independently"
+  },
+  "mail": {
+    "subject": "Task: WL_20260308_191410 stage-2 verify independently",
+    "body": "...markdown dispatch summary..."
+  }
+}
+```
+
 ## Selection rules
 
 ### When to choose `serial`
@@ -463,16 +539,17 @@ Choose `chained` when:
 
 ## Manual use until the rest of the CLI exists
 
-Use `joelclaw workload plan` first whenever it fits.
+Use `joelclaw workload plan` first whenever it fits, then use `joelclaw workload dispatch` when a saved plan should become an explicit handoff contract.
 
-For everything beyond planning, stay manual until more of the command family ships:
+For everything beyond planning/dispatch, stay manual until more of the command family ships:
 
 1. capture Joel steering in the request fields
 2. run `joelclaw workload plan` or mirror its request fields manually
-3. choose `mode` and `backend` only after the shape is clear
-4. define the artifacts and verification gates
-5. use `clawmail` for reservation and handoff
-6. keep the final summary in the same vocabulary
+3. if the plan should be handed to another worker, save it with `--write-plan` and turn it into a dispatch contract with `joelclaw workload dispatch`
+4. choose `mode` and `backend` only after the shape is clear
+5. define the artifacts and verification gates
+6. use `clawmail` for reservation and handoff
+7. keep the final summary in the same vocabulary
 
 ## Phase 4.3 scheduling helpers
 
@@ -481,6 +558,8 @@ These are the first real ergonomics features aimed at making scheduling actual r
 - `--preset` seeds common kind/shape/artifact/acceptance bundles without inventing a fake dispatch surface
 - `--paths-from status|head|recent:<n>` pulls scope from real git activity when the operator does not want to hand-type a long path list
 - `--write-plan <path>` emits the full workload envelope as a reusable JSON artifact
+- `joelclaw workload dispatch <plan-artifact>` turns that saved plan into a stage-specific dispatch/handoff contract
+- `--write-dispatch <path>` emits the dispatch contract as a second reusable JSON artifact
 - `result.inference.target.scope` records whether the scope came from explicit paths, repo-wide planning, or git-derived seeding
 - `result.artifact` records the written plan artifact path when `--write-plan` is used
 
@@ -525,6 +604,7 @@ Story 4.2 is earned when:
 Story 4.3 is earned when:
 
 - scheduling real repo work no longer requires retyping scope and handoff context every bloody time
-- presets, git-derived path seeding, and plan artifacts are real shipped planner features
+- presets, git-derived path seeding, plan artifacts, and dispatch contracts are real shipped features
 - chained repo work can preserve explicit milestones, reflection/update stages, and scoped paths when the prompt supplies them
 - supervised repo work is not shoved into `durable` just because the prompt mentions `canary` or `soak`
+- a saved plan artifact can become a machine-usable handoff contract without inventing `workload run` or `workload status`

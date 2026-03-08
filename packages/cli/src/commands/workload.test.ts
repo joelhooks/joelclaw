@@ -108,7 +108,7 @@ describe("workload CLI command", () => {
       );
     });
 
-    expect(subcommandNames).toEqual(["plan"]);
+    expect(subcommandNames).toEqual(["plan", "dispatch"]);
   });
 
   it("plans docs/truth work as serial inline host work by default", () => {
@@ -350,5 +350,78 @@ describe("workload CLI command", () => {
     expect(artifact.path).toBe(join(outputDir, "WL_20260308_185500.json"));
     expect(existsSync(artifact.path)).toBe(true);
     expect(readFileSync(artifact.path, "utf8")).toContain('"hello": "world"');
+  });
+
+  it("turns a saved plan artifact into a dispatch contract", () => {
+    const artifactDir = rememberTempDir(
+      mkdtempSync(join(tmpdir(), "workload-dispatch-")),
+    );
+    const plan = __workloadTestUtils.planWorkload(
+      {
+        intent:
+          "Clean up the ADR-037 TanStack Intent rollout in gremlin. Goal: do the docs truth pass; wire package/db skill publishing; wire package/sdk skill publishing; verify intent validation; clean up remaining vitest fallout; and leave the Better Auth tail explicit for follow-up. Acceptance: the plan keeps these stages separate; file scope stays bounded to the active rollout paths; and the result is reusable as a handoff artifact.",
+        kind: "repo.patch",
+        shape: "chained",
+        autonomy: "supervised",
+        proof: "none",
+        requestedBy: "Joel",
+        repoText: "/Users/joel/Code/badass-courses/gremlin",
+        pathsText: "README.md,packages/db,packages/sdk,vitest.config.ts",
+      },
+      new Date("2026-03-08T19:00:00Z"),
+    );
+
+    const planPath = __workloadTestUtils.resolvePlanArtifactPath(
+      `${artifactDir}/`,
+      plan.plan.workloadId,
+    );
+    __workloadTestUtils.writePlanArtifact(
+      planPath,
+      buildSuccessEnvelope("workload plan", plan, []),
+    );
+
+    const parsed = __workloadTestUtils.parseWorkloadPlanArtifact(planPath);
+    const dispatch = __workloadTestUtils.buildDispatchContract({
+      sourcePlanPath: parsed.absolutePath,
+      result: parsed.result,
+      stageId: "stage-2",
+      from: "MaroonReef",
+      to: "BlueFox",
+      now: new Date("2026-03-08T19:00:30Z"),
+    });
+
+    expect(dispatch.dispatchId).toBe("WD_20260308_190030");
+    expect(dispatch.selectedStage.id).toBe("stage-2");
+    expect(dispatch.mail.subject).toContain(plan.plan.workloadId);
+    expect(dispatch.mail.to).toBe("BlueFox");
+    expect(dispatch.handoff.goal).toBe("wire package/db skill publishing");
+    expect(dispatch.handoff.remainingGates[0]).toBe(
+      "stage-2: wire package/db skill publishing",
+    );
+    expect(dispatch.handoff.reservedPaths).toEqual([
+      "README.md",
+      "packages/db",
+      "packages/sdk",
+      "vitest.config.ts",
+    ]);
+  });
+
+  it("writes a reusable dispatch artifact", () => {
+    const outputDir = rememberTempDir(
+      mkdtempSync(join(tmpdir(), "workload-dispatch-artifact-")),
+    );
+
+    const targetPath = __workloadTestUtils.resolvePlanArtifactPath(
+      `${outputDir}/`,
+      "WD_20260308_190500",
+    );
+    const artifact = __workloadTestUtils.writeDispatchArtifact(
+      targetPath,
+      buildSuccessEnvelope("workload dispatch", { dispatched: true }, []),
+    );
+
+    expect(artifact.path).toBe(join(outputDir, "WD_20260308_190500.json"));
+    expect(existsSync(artifact.path)).toBe(true);
+    expect(readFileSync(artifact.path, "utf8")).toContain('"dispatched": true');
   });
 });
