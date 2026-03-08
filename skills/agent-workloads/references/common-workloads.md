@@ -53,6 +53,19 @@ joelclaw workload plan "<intent>"
 
 Then inspect the canonical `request` + `plan` output before dispatching anything.
 
+Helpful ergonomics that are now real:
+
+```bash
+# seed scope from active repo work
+joelclaw workload plan "<intent>" --repo /abs/repo --paths-from recent:3
+
+# use a preset instead of restating the obvious shape every time
+joelclaw workload plan "<intent>" --preset refactor-handoff
+
+# write a reusable handoff artifact
+joelclaw workload plan "<intent>" --write-plan ~/.joelclaw/workloads/
+```
+
 ## Choosing the Shape
 
 ### Serial
@@ -109,6 +122,8 @@ Rules:
 
 - downstream stage consumes artifacts, not vague conversation memory
 - every stage has an explicit pass/fail contract
+- if the prompt includes a `Goal:` section, keep those milestones visible instead of collapsing everything into `execute primary work`
+- if the prompt includes `Acceptance:`, preserve it unless the caller explicitly overrides with `--acceptance`
 - handoff text must say what changed, what remains, and what must not be re-litigated
 
 ## Handoff Contract
@@ -151,6 +166,36 @@ Expected outputs:
 - verification output
 - commit
 - minimal summary
+
+### Scoped cleanup chain
+
+Use when the work is still basically repo.patch, but the prompt carries multiple cleanup milestones and you need them to stay visible.
+
+Suggested schema:
+
+```json
+{
+  "kind": "repo.patch",
+  "shape": "chained",
+  "mode": "inline",
+  "backend": "host",
+  "artifacts": ["patch", "verification", "summary", "handoff"]
+}
+```
+
+Prompt pattern that works well:
+
+- `Goal:` with semicolon-separated milestones
+- `Acceptance:` with explicit completion criteria
+- `--paths-from recent:<n>` or explicit `--paths`
+- optional `--write-plan` when another agent will pick it up
+
+Expected outputs:
+
+- visible milestone stages instead of generic sludge
+- preserved scoped paths on implementation stages
+- optional `reflect and update plan` stage when the prompt asks for it
+- a reusable handoff artifact if requested
 
 ### Multi-step refactor
 

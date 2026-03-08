@@ -1,13 +1,13 @@
 # Workloads
 
-Canonical design doc for **ADR-0217 Phase 4.1–4.2**.
+Canonical design doc for **ADR-0217 Phase 4.1–4.3**.
 
 This document defines the canonical vocabulary, schema, and planner surface for **agent-first coding/repo workloads** in joelclaw.
 
 ## Status
 
 - **Canonical for planning:** yes
-- **Implemented as CLI/runtime contract:** planner-only `joelclaw workload plan`
+- **Implemented as CLI/runtime contract:** planner-only `joelclaw workload plan` with presets, git-derived path seeding, and reusable plan artifacts
 - **Still planned:** `joelclaw workload run|status|explain|cancel`
 - **Current use:** manual planning, skill guidance, and planner-driven CLI output
 
@@ -164,6 +164,7 @@ Current shipped command:
 
 ```bash
 joelclaw workload plan "<intent>" \
+  [--preset docs-truth|research-compare|refactor-handoff] \
   [--kind auto|repo.patch|repo.refactor|repo.docs|repo.review|research.spike|runtime.proof|cross-repo.integration] \
   [--shape auto|serial|parallel|chained] \
   [--autonomy inline|supervised|afk|blocked] \
@@ -173,6 +174,8 @@ joelclaw workload plan "<intent>" \
   [--acceptance "criterion one|criterion two"] \
   [--repo /abs/path/or/owner/repo] \
   [--paths docs/workloads.md,docs/cli.md] \
+  [--paths-from status|head|recent:<n>] \
+  [--write-plan ~/.joelclaw/workloads/] \
   [--requested-by Joel]
 ```
 
@@ -180,10 +183,16 @@ Semantics:
 
 - returns a canonical `request` + `plan` envelope using the vocabulary below
 - infers `kind`, `shape`, `mode`, and `backend` when the caller leaves them open
+- supports reusable presets via `--preset docs-truth|research-compare|refactor-handoff`
+- preserves explicit acceptance embedded in the intent when the prompt includes an `Acceptance:` section and `--acceptance` is omitted
 - implementation signals like `refactor` or `extend` outrank docs follow-through, so `refactor ... then update docs` stays implementation-shaped instead of collapsing into `repo.docs`
 - validates known `risk` and `artifacts` values and warns on unknown ones
 - mentions of sandboxes as the _subject_ of research do not by themselves force `sandbox-required`; isolation has to be explicit or implied by AFK autonomy
 - `deploy-allowed` is inferred only from explicit release/deploy intent; nouns like `published skills` do not count as a deploy request
+- supervised repo work can use `proof=canary|soak` without being forced into `durable` / `restate`; proof posture alone is not a runtime decision
+- `--paths-from status|head|recent:<n>` can seed path scope from local git activity when explicit `--paths` would be tedious
+- chained `repo.patch` / `repo.refactor` plans can decompose a `Goal:` section into explicit milestones and add a `reflect and update plan` stage when the prompt asks for it
+- `--write-plan <path>` writes the full CLI envelope to a reusable JSON artifact for handoff or later dispatch prep
 - treats a missing `--repo` as the current working directory and infers `branch` / `baseSha` when that target is a local git repo; if the cwd is not a git repo, the planner warns and tells the caller to pass `--repo`
 - **does not dispatch anything**
 
@@ -343,6 +352,8 @@ Recommended optional fields:
 - `handoffTo`
 - `estimatedBlastRadius` (small/medium/large if useful)
 
+The shipped planner now uses `reservedPaths` on scoped implementation stages so the file boundary survives handoff instead of disappearing into prose.
+
 ## Handoff schema
 
 Use this when one worker hands off to another.
@@ -463,6 +474,16 @@ For everything beyond planning, stay manual until more of the command family shi
 5. use `clawmail` for reservation and handoff
 6. keep the final summary in the same vocabulary
 
+## Phase 4.3 scheduling helpers
+
+These are the first real ergonomics features aimed at making scheduling actual repo work less of a pain:
+
+- `--preset` seeds common kind/shape/artifact/acceptance bundles without inventing a fake dispatch surface
+- `--paths-from status|head|recent:<n>` pulls scope from real git activity when the operator does not want to hand-type a long path list
+- `--write-plan <path>` emits the full workload envelope as a reusable JSON artifact
+- `result.inference.target.scope` records whether the scope came from explicit paths, repo-wide planning, or git-derived seeding
+- `result.artifact` records the written plan artifact path when `--write-plan` is used
+
 ## Anti-patterns
 
 Avoid:
@@ -498,3 +519,12 @@ Story 4.2 is earned when:
 - the planner uses the shared vocabulary from this doc instead of inventing fresh field names
 - shipped behavior is explicit: planning only, no fake dispatch/status/explain/cancel path yet
 - docs, skill guidance, ADR truth, and CLI docs all describe the same planner-only reality
+
+## Story 4.3 done criteria
+
+Story 4.3 is earned when:
+
+- scheduling real repo work no longer requires retyping scope and handoff context every bloody time
+- presets, git-derived path seeding, and plan artifacts are real shipped planner features
+- chained repo work can preserve explicit milestones, reflection/update stages, and scoped paths when the prompt supplies them
+- supervised repo work is not shoved into `durable` just because the prompt mentions `canary` or `soak`

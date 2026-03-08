@@ -1,10 +1,16 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Args, Command, Options } from "@effect/cli";
 import { Console, Effect } from "effect";
-import { type NextAction, respond, respondError } from "../response";
+import {
+  buildSuccessEnvelope,
+  type JoelclawEnvelope,
+  type NextAction,
+  respond,
+  respondError,
+} from "../response";
 
 const WORKLOAD_VERSION = "2026-03-08";
 
@@ -85,6 +91,21 @@ const ARTIFACT_NAMES = [
 
 type ArtifactName = (typeof ARTIFACT_NAMES)[number];
 
+const WORKLOAD_PRESETS = [
+  "docs-truth",
+  "research-compare",
+  "refactor-handoff",
+] as const;
+
+type WorkloadPreset = (typeof WORKLOAD_PRESETS)[number];
+
+type PathScopeSource =
+  | "repo-wide"
+  | "explicit-paths"
+  | "git-status"
+  | "git-head"
+  | "git-recent";
+
 type WorkloadTarget = {
   repo: string;
   branch?: string;
@@ -122,6 +143,7 @@ type WorkloadStage = {
   mode: ExecutionMode;
   inputs: string[];
   outputs: string[];
+  reservedPaths?: string[];
   verification: string[];
   stopConditions: string[];
   dependsOn?: string[];
@@ -144,6 +166,24 @@ type WorkloadPlan = {
   next_actions: Array<{ command: string; description: string }>;
 };
 
+type PathScopeSeed = {
+  source: PathScopeSource;
+  detail?: string;
+  pathCount: number;
+};
+
+type AppliedPreset = {
+  name: WorkloadPreset;
+  description: string;
+  appliedDefaults: string[];
+};
+
+type WorkloadPlanArtifact = {
+  written: true;
+  path: string;
+  format: "joelclaw-envelope";
+};
+
 type WorkloadPlanningResult = {
   request: WorkloadRequest;
   plan: WorkloadPlan;
@@ -154,9 +194,16 @@ type WorkloadPlanningResult = {
     backend: { value: BackendClass; inferred: boolean; reason: string };
     risks: { value: RiskPosture[]; inferred: boolean };
     artifacts: { value: ArtifactName[]; inferred: boolean };
-    target: { value: WorkloadTarget; inferred: boolean; localRepo: boolean };
+    target: {
+      value: WorkloadTarget;
+      inferred: boolean;
+      localRepo: boolean;
+      scope: PathScopeSeed;
+    };
   };
   warnings: string[];
+  preset?: AppliedPreset;
+  artifact?: WorkloadPlanArtifact;
   shipped: {
     plan: true;
     run: false;
@@ -183,15 +230,22 @@ type Resolution<T extends string> = {
   reason: string;
 };
 
+type PathsFromDirective =
+  | { raw: string; source: "status" }
+  | { raw: string; source: "head" }
+  | { raw: string; source: "recent"; count: number };
+
 type TargetResolution = {
   value: WorkloadTarget;
   inferred: boolean;
   localRepo: boolean;
   warnings: string[];
+  scope: PathScopeSeed;
 };
 
 type PlannerInput = {
   intent: string;
+  preset?: WorkloadPreset;
   kind: WorkloadKindChoice;
   shape: WorkloadShapeChoice;
   autonomy: AutonomyLevel;
@@ -201,7 +255,66 @@ type PlannerInput = {
   acceptanceText?: string;
   repoText?: string;
   pathsText?: string;
+  pathsFromText?: string;
   requestedBy: string;
+};
+
+type NormalizedPlannerInput = PlannerInput & {
+  kind: WorkloadKindChoice;
+  shape: WorkloadShapeChoice;
+};
+
+type PlannerInputResolution = {
+  normalized: NormalizedPlannerInput;
+  preset?: AppliedPreset;
+};
+
+type WorkloadPresetDefinition = {
+  description: string;
+  kind?: WorkloadKind;
+  shape?: WorkloadShape;
+  risk?: readonly RiskPosture[];
+  artifacts?: readonly ArtifactName[];
+  acceptance?: readonly string[];
+};
+
+const WORKLOAD_PRESET_DEFINITIONS: Record<
+  WorkloadPreset,
+  WorkloadPresetDefinition
+> = {
+  "docs-truth": {
+    description: "Serial docs/ADR truth grooming with explicit closeout",
+    kind: "repo.docs",
+    shape: "serial",
+    artifacts: ["docs", "summary", "adr"],
+    acceptance: [
+      "shipped docs and ADR truth match the current code reality",
+      "scope is explicit before edits start",
+      "closeout leaves a concise reusable summary",
+    ],
+  },
+  "research-compare": {
+    description: "Parallel comparison work with one synthesis owner",
+    kind: "research.spike",
+    shape: "parallel",
+    artifacts: ["research-note", "comparison", "summary"],
+    acceptance: [
+      "each branch produces a scoped finding without overlapping edits",
+      "one synthesis step makes a clear recommendation",
+      "the chosen path is explicit enough to schedule next",
+    ],
+  },
+  "refactor-handoff": {
+    description: "Chained implementation → verification → handoff planning",
+    kind: "repo.refactor",
+    shape: "chained",
+    artifacts: ["patch", "tests", "verification", "docs", "summary", "handoff"],
+    acceptance: [
+      "implementation scope is path-bounded before mutation starts",
+      "verification is recorded separately from implementation",
+      "the final handoff is reusable without raw chat history",
+    ],
+  },
 };
 
 const lower = (value: string) => value.toLowerCase();
@@ -209,6 +322,8 @@ const lower = (value: string) => value.toLowerCase();
 const dedupe = <T extends string>(values: readonly T[]): T[] => [
   ...new Set(values),
 ];
+
+const shellQuote = (value: string) => JSON.stringify(value);
 
 const splitCsv = (value: string | undefined): string[] => {
   if (!value) return [];
@@ -225,6 +340,112 @@ const splitDelimited = (value: string | undefined): string[] => {
     .split(separator)
     .map((item) => item.trim())
     .filter(Boolean);
+};
+
+const splitLines = (value: string | undefined): string[] => {
+  if (!value) return [];
+  return value
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+};
+
+const trimClause = (value: string) =>
+  value
+    .trim()
+    .replace(/^[\s;,.:-]+/u, "")
+    .replace(/[\s;,.:-]+$/u, "");
+
+const splitClauses = (value: string): string[] => {
+  const source = value.trim();
+  if (source.length === 0) return [];
+
+  if (source.includes(";")) {
+    return source.split(/;+/u).map(trimClause).filter(Boolean);
+  }
+
+  const lineClauses = splitLines(source).map(trimClause).filter(Boolean);
+  if (lineClauses.length > 1) {
+    return lineClauses;
+  }
+
+  return source.split(/\.\s+/u).map(trimClause).filter(Boolean);
+};
+
+const extractIntentSection = (
+  intent: string,
+  label: string,
+  stopMarkers: readonly string[],
+): string | undefined => {
+  const lowered = lower(intent);
+  const labelNeedle = `${lower(label)}:`;
+  const start = lowered.indexOf(labelNeedle);
+  if (start === -1) return undefined;
+
+  const contentStart = start + labelNeedle.length;
+  let end = intent.length;
+
+  for (const marker of stopMarkers) {
+    const index = lowered.indexOf(lower(marker), contentStart);
+    if (index !== -1 && index < end) {
+      end = index;
+    }
+  }
+
+  const section = intent.slice(contentStart, end).trim();
+  return section.length > 0 ? section : undefined;
+};
+
+const extractAcceptanceFromIntent = (intent: string): string[] => {
+  const section = extractIntentSection(intent, "acceptance", [
+    " goal:",
+    " context:",
+    " constraints:",
+    " if these changes",
+    " if this changes",
+    " stop and",
+  ]);
+
+  return section ? splitClauses(section) : [];
+};
+
+const extractGoalMilestones = (intent: string): string[] => {
+  const section =
+    extractIntentSection(intent, "goal", [
+      " acceptance:",
+      " context:",
+      " constraints:",
+      " if these changes",
+      " if this changes",
+      " stop and",
+    ]) ?? intent;
+
+  return splitClauses(section).filter(
+    (clause) => !/^acceptance\b/iu.test(clause),
+  );
+};
+
+const shouldInsertReflectionStage = (
+  intent: string,
+  acceptance: readonly string[],
+): boolean => {
+  const combined = lower([intent, ...acceptance].join(" "));
+  return hasAny(combined, [
+    "reflect",
+    "reflection",
+    "plan-update",
+    "update plan",
+    "re-plan",
+    "replan",
+    "update the plan",
+  ]);
+};
+
+const toStageName = (value: string, fallback: string): string => {
+  const clause = trimClause(value);
+  if (clause.length === 0) return fallback;
+  if (clause.length <= 88) return clause;
+  return `${clause.slice(0, 85).trimEnd()}…`;
 };
 
 const parseEnumList = <T extends string>(
@@ -278,13 +499,228 @@ const hasExplicitDeployIntent = (value: string) =>
 const expandHome = (value: string) =>
   value.startsWith("~/") ? `${homedir()}/${value.slice(2)}` : value;
 
-const runGit = (repoPath: string, args: string[]): string | undefined => {
+const runGitRaw = (repoPath: string, args: string[]): string | undefined => {
   const result = spawnSync("git", ["-C", repoPath, ...args], {
     encoding: "utf8",
   });
   if (result.status !== 0) return undefined;
-  const output = result.stdout.trim();
-  return output.length > 0 ? output : undefined;
+  return result.stdout;
+};
+
+const runGit = (repoPath: string, args: string[]): string | undefined => {
+  const output = runGitRaw(repoPath, args)?.trim();
+  return output && output.length > 0 ? output : undefined;
+};
+
+const normalizeGitPath = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed.includes(" -> ")) return trimmed;
+  return trimmed.split(" -> ").at(-1)?.trim() ?? trimmed;
+};
+
+const parsePathsFrom = (
+  value: string | undefined,
+): PathsFromDirective | undefined => {
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  const lowered = lower(trimmed);
+
+  if (lowered === "status") {
+    return { raw: trimmed, source: "status" };
+  }
+
+  if (lowered === "head") {
+    return { raw: trimmed, source: "head" };
+  }
+
+  const recentMatch = lowered.match(/^recent:(\d+)$/u);
+  if (recentMatch) {
+    const count = Number.parseInt(recentMatch[1] ?? "0", 10);
+    if (!Number.isFinite(count) || count < 1) {
+      throw new Error(`Invalid --paths-from value: ${trimmed}`);
+    }
+    return { raw: trimmed, source: "recent", count };
+  }
+
+  throw new Error(
+    `Invalid --paths-from value: ${trimmed}. Use status, head, or recent:<n>`,
+  );
+};
+
+const collectGitStatusPaths = (repoPath: string): string[] => {
+  const output = runGitRaw(repoPath, [
+    "status",
+    "--short",
+    "--untracked-files=all",
+    "--porcelain=v1",
+  ]);
+
+  return dedupe(
+    splitLines(output)
+      .map((line) => normalizeGitPath(line.slice(3)))
+      .filter(Boolean),
+  ).sort((left, right) => left.localeCompare(right));
+};
+
+const collectGitNamedPaths = (repoPath: string, args: string[]): string[] =>
+  dedupe(
+    splitLines(runGitRaw(repoPath, args))
+      .map((line) => normalizeGitPath(line))
+      .filter(Boolean),
+  ).sort((left, right) => left.localeCompare(right));
+
+const collectPathsFromDirective = (
+  repoPath: string,
+  directive: PathsFromDirective,
+): { paths: string[]; scope: PathScopeSeed } => {
+  switch (directive.source) {
+    case "status": {
+      const paths = collectGitStatusPaths(repoPath);
+      return {
+        paths,
+        scope: {
+          source: "git-status",
+          detail: directive.raw,
+          pathCount: paths.length,
+        },
+      };
+    }
+    case "head": {
+      const paths = collectGitNamedPaths(repoPath, [
+        "show",
+        "--pretty=format:",
+        "--name-only",
+        "HEAD",
+      ]);
+      return {
+        paths,
+        scope: {
+          source: "git-head",
+          detail: directive.raw,
+          pathCount: paths.length,
+        },
+      };
+    }
+    case "recent": {
+      const paths = collectGitNamedPaths(repoPath, [
+        "log",
+        `-n${directive.count}`,
+        "--name-only",
+        "--pretty=format:",
+      ]);
+      return {
+        paths,
+        scope: {
+          source: "git-recent",
+          detail: directive.raw,
+          pathCount: paths.length,
+        },
+      };
+    }
+  }
+};
+
+const defaultPlanArtifactPath = (workloadId: string) =>
+  `~/.joelclaw/workloads/${workloadId}.json`;
+
+const resolvePlanArtifactPath = (value: string, workloadId: string): string => {
+  const expanded = expandHome(value);
+  const absolute = resolve(expanded);
+  const looksLikeDirectory =
+    value.endsWith("/") ||
+    (existsSync(absolute) && statSync(absolute).isDirectory());
+
+  return looksLikeDirectory ? join(absolute, `${workloadId}.json`) : absolute;
+};
+
+const writePlanArtifact = (
+  path: string,
+  envelope: JoelclawEnvelope,
+): WorkloadPlanArtifact => {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(envelope, null, 2)}\n`, "utf8");
+  return {
+    written: true,
+    path,
+    format: "joelclaw-envelope",
+  };
+};
+
+const resolvePresetDefaults = (input: PlannerInput): PlannerInputResolution => {
+  if (!input.preset) {
+    return {
+      normalized: { ...input },
+    };
+  }
+
+  const definition = WORKLOAD_PRESET_DEFINITIONS[input.preset];
+  const appliedDefaults: string[] = [];
+
+  const kind =
+    input.kind === "auto" && definition.kind ? definition.kind : input.kind;
+  if (input.kind === "auto" && definition.kind) {
+    appliedDefaults.push(`kind=${definition.kind}`);
+  }
+
+  const shape =
+    input.shape === "auto" && definition.shape ? definition.shape : input.shape;
+  if (input.shape === "auto" && definition.shape) {
+    appliedDefaults.push(`shape=${definition.shape}`);
+  }
+
+  const riskText =
+    input.riskText ??
+    (definition.risk && definition.risk.length > 0
+      ? definition.risk.join(",")
+      : undefined);
+  if (!input.riskText && definition.risk && definition.risk.length > 0) {
+    appliedDefaults.push(`risk=${definition.risk.join(",")}`);
+  }
+
+  const artifactsText =
+    input.artifactsText ??
+    (definition.artifacts && definition.artifacts.length > 0
+      ? definition.artifacts.join(",")
+      : undefined);
+  if (
+    !input.artifactsText &&
+    definition.artifacts &&
+    definition.artifacts.length > 0
+  ) {
+    appliedDefaults.push(`artifacts=${definition.artifacts.join(",")}`);
+  }
+
+  const acceptanceText =
+    input.acceptanceText ??
+    (definition.acceptance && definition.acceptance.length > 0
+      ? definition.acceptance.join("|")
+      : undefined);
+  if (
+    !input.acceptanceText &&
+    definition.acceptance &&
+    definition.acceptance.length > 0
+  ) {
+    appliedDefaults.push("acceptance=from-preset");
+  }
+
+  return {
+    normalized: {
+      ...input,
+      kind,
+      shape,
+      riskText,
+      artifactsText,
+      acceptanceText,
+    },
+    preset:
+      appliedDefaults.length > 0
+        ? {
+            name: input.preset,
+            description: definition.description,
+            appliedDefaults,
+          }
+        : undefined,
+  };
 };
 
 const inferKind = (
@@ -578,15 +1014,6 @@ const chooseMode = (
     };
   }
 
-  if (kind === "runtime.proof" || proof === "canary" || proof === "soak") {
-    return {
-      value: "durable",
-      inferred: true,
-      reason:
-        "runtime proof work wants a tracked durable path instead of an ad-hoc inline session",
-    };
-  }
-
   if (autonomy === "afk") {
     return {
       value: "loop",
@@ -596,12 +1023,30 @@ const chooseMode = (
     };
   }
 
+  if (kind === "runtime.proof") {
+    return {
+      value: "durable",
+      inferred: true,
+      reason:
+        "runtime proof work wants a tracked durable path instead of an ad-hoc inline session",
+    };
+  }
+
   if (kind === "cross-repo.integration") {
     return {
       value: "durable",
       inferred: true,
       reason:
         "cross-repo integration work usually benefits from an explicit bridgeable durable path",
+    };
+  }
+
+  if (proof === "canary" || proof === "soak") {
+    return {
+      value: "inline",
+      inferred: true,
+      reason:
+        "proof posture alone does not force durable execution for supervised repo work",
     };
   }
 
@@ -703,22 +1148,28 @@ const inferArtifacts = (
   if (
     hasAny(value, ["docs", "documentation", "readme"]) &&
     !values.includes("docs")
-  )
+  ) {
     values.push("docs");
-  if (hasAny(value, ["test", "tests"]) && !values.includes("tests"))
+  }
+  if (hasAny(value, ["test", "tests"]) && !values.includes("tests")) {
     values.push("tests");
-  if (shape === "chained" && !values.includes("handoff"))
+  }
+  if (shape === "chained" && !values.includes("handoff")) {
     values.push("handoff");
+  }
   if (
     shape === "parallel" &&
     kind === "research.spike" &&
     !values.includes("comparison")
-  )
+  ) {
     values.push("comparison");
-  if (kind === "runtime.proof" && !values.includes("telemetry-proof"))
+  }
+  if (kind === "runtime.proof" && !values.includes("telemetry-proof")) {
     values.push("telemetry-proof");
-  if (kind === "runtime.proof" && !values.includes("rollback-plan"))
+  }
+  if (kind === "runtime.proof" && !values.includes("rollback-plan")) {
     values.push("rollback-plan");
+  }
 
   return {
     values: dedupe(values),
@@ -791,12 +1242,30 @@ const buildVerification = (
   return dedupe(checks);
 };
 
-const buildStages = (
-  kind: WorkloadKind,
-  shape: WorkloadShape,
-  mode: ExecutionMode,
-  artifacts: readonly ArtifactName[],
-): WorkloadStage[] => {
+const buildStages = ({
+  kind,
+  shape,
+  mode,
+  artifacts,
+  intent,
+  acceptance,
+  targetPaths,
+}: {
+  kind: WorkloadKind;
+  shape: WorkloadShape;
+  mode: ExecutionMode;
+  artifacts: readonly ArtifactName[];
+  intent: string;
+  acceptance: readonly string[];
+  targetPaths?: readonly string[];
+}): WorkloadStage[] => {
+  const reservedPaths =
+    targetPaths && targetPaths.length > 0 ? dedupe(targetPaths) : undefined;
+  const executionOwner = mode === "inline" ? "planner" : "worker";
+  const implementationOutputs = artifacts.filter(
+    (artifact) => artifact !== "handoff" && artifact !== "summary",
+  );
+
   if (shape === "parallel") {
     return [
       {
@@ -808,6 +1277,7 @@ const buildStages = (
         outputs: artifacts.includes("research-note")
           ? ["research-note"]
           : [artifacts[0] ?? "summary"],
+        reservedPaths,
         verification: ["branch scope stays independent"],
         stopConditions: ["file overlap or branch scope ambiguity appears"],
       },
@@ -820,6 +1290,7 @@ const buildStages = (
         outputs: artifacts.includes("comparison")
           ? ["comparison"]
           : [artifacts[0] ?? "summary"],
+        reservedPaths,
         verification: ["branch scope stays independent"],
         stopConditions: ["file overlap or branch scope ambiguity appears"],
       },
@@ -841,60 +1312,124 @@ const buildStages = (
   }
 
   if (shape === "chained") {
-    return [
-      {
+    const goalMilestones =
+      kind === "repo.patch" || kind === "repo.refactor"
+        ? extractGoalMilestones(intent).slice(0, 6)
+        : [];
+    const stages: WorkloadStage[] = [];
+
+    if (goalMilestones.length > 1) {
+      for (const [index, milestone] of goalMilestones.entries()) {
+        const stageId = `stage-${index + 1}`;
+        const previousStageId = index > 0 ? `stage-${index}` : undefined;
+        const isLastMilestone = index === goalMilestones.length - 1;
+
+        stages.push({
+          id: stageId,
+          name: toStageName(milestone, `execute milestone ${index + 1}`),
+          owner: executionOwner,
+          mode,
+          inputs:
+            index === 0
+              ? ["workload request", "acceptance criteria"]
+              : [`${previousStageId} outputs`, "remaining scoped goals"],
+          outputs: isLastMilestone
+            ? implementationOutputs
+            : [`milestone-${index + 1}-complete`],
+          reservedPaths,
+          verification: [
+            `milestone ${index + 1} is explicit before the next stage starts`,
+          ],
+          stopConditions: ["scope expands beyond the planned boundary"],
+          ...(previousStageId ? { dependsOn: [previousStageId] } : {}),
+        });
+      }
+    } else {
+      stages.push({
         id: "stage-1",
         name:
           kind === "repo.docs"
             ? "produce canonical docs change"
             : "execute primary work",
-        owner: mode === "inline" ? "planner" : "worker",
+        owner: executionOwner,
         mode,
         inputs: ["workload request", "acceptance criteria"],
-        outputs: artifacts.filter(
-          (artifact) => artifact !== "handoff" && artifact !== "summary",
-        ),
+        outputs: implementationOutputs,
+        reservedPaths,
         verification: [
           "primary artifact lands before verification stage starts",
         ],
         stopConditions: ["scope expands beyond the planned boundary"],
-      },
-      {
-        id: "stage-2",
-        name: "verify independently",
-        owner: "reviewer",
-        mode: "inline",
-        inputs: ["stage-1 outputs"],
-        outputs: artifacts.includes("verification")
-          ? ["verification"]
-          : ["summary"],
-        verification: [
-          "verification is recorded separately from implementation",
-        ],
-        stopConditions: [
-          "verification cannot explain what changed or what remains",
-        ],
-        dependsOn: ["stage-1"],
-      },
-      {
-        id: "stage-3",
-        name: "handoff and closeout",
+      });
+    }
+
+    const verificationStageId = `stage-${stages.length + 1}`;
+    const implementationStageId = stages.at(-1)?.id ?? "stage-1";
+
+    stages.push({
+      id: verificationStageId,
+      name: "verify independently",
+      owner: "reviewer",
+      mode: "inline",
+      inputs: [`${implementationStageId} outputs`],
+      outputs: artifacts.includes("verification")
+        ? ["verification"]
+        : ["summary"],
+      verification: ["verification is recorded separately from implementation"],
+      stopConditions: [
+        "verification cannot explain what changed or what remains",
+      ],
+      dependsOn: [implementationStageId],
+    });
+
+    let priorStageId = verificationStageId;
+
+    if (shouldInsertReflectionStage(intent, acceptance)) {
+      const reflectionStageId = `stage-${stages.length + 1}`;
+      stages.push({
+        id: reflectionStageId,
+        name: "reflect and update plan",
         owner: "planner",
         mode: "inline",
-        inputs: ["stage-1 outputs", "stage-2 verification"],
-        outputs: dedupe([
-          ...(artifacts.includes("handoff") ? ["handoff"] : []),
-          "summary",
-        ]),
+        inputs: [`${verificationStageId} outputs`, "acceptance criteria"],
+        outputs: ["reflection-note", "plan-update"],
         verification: [
-          "handoff and closeout use the same workload vocabulary as the plan",
+          "reflection changes the plan or explains why the plan still holds",
         ],
         stopConditions: [
-          "the next worker would need raw chat instead of structured artifacts",
+          "reflection only restates the current plan without updating anything",
         ],
-        dependsOn: ["stage-2"],
-      },
-    ];
+        dependsOn: [verificationStageId],
+      });
+      priorStageId = reflectionStageId;
+    }
+
+    stages.push({
+      id: `stage-${stages.length + 1}`,
+      name: "handoff and closeout",
+      owner: "planner",
+      mode: "inline",
+      inputs: [
+        `${implementationStageId} outputs`,
+        `${verificationStageId} outputs`,
+        ...(priorStageId !== verificationStageId
+          ? [`${priorStageId} outputs`]
+          : []),
+      ],
+      outputs: dedupe([
+        ...(artifacts.includes("handoff") ? ["handoff"] : []),
+        "summary",
+      ]),
+      verification: [
+        "handoff and closeout use the same workload vocabulary as the plan",
+      ],
+      stopConditions: [
+        "the next worker would need raw chat instead of structured artifacts",
+      ],
+      dependsOn: [priorStageId],
+    });
+
+    return stages;
   }
 
   return [
@@ -912,10 +1447,11 @@ const buildStages = (
       id: "stage-2",
       name:
         kind === "runtime.proof" ? "run proof window" : "execute primary task",
-      owner: mode === "inline" ? "planner" : "worker",
+      owner: executionOwner,
       mode,
       inputs: ["workload plan"],
       outputs: artifacts.filter((artifact) => artifact !== "summary"),
+      reservedPaths,
       verification: [
         kind === "runtime.proof"
           ? "proof evidence is anchored"
@@ -954,9 +1490,11 @@ const buildWorkloadId = (now = new Date()): string => {
 const resolveTarget = (
   repoText: string | undefined,
   pathsText: string | undefined,
+  pathsFromText: string | undefined,
 ): TargetResolution => {
   const warnings: string[] = [];
-  const paths = splitCsv(pathsText);
+  const explicitPaths = splitCsv(pathsText);
+  const directive = parsePathsFrom(pathsFromText);
   const candidate = repoText ? expandHome(repoText) : process.cwd();
   const looksLikeLocalPath =
     !repoText ||
@@ -981,17 +1519,60 @@ const resolveTarget = (
       );
     }
 
+    let resolvedPaths: string[] | undefined;
+    let scope: PathScopeSeed = {
+      source: "repo-wide",
+      pathCount: 0,
+    };
+
+    if (explicitPaths.length > 0) {
+      resolvedPaths = explicitPaths;
+      scope = {
+        source: "explicit-paths",
+        pathCount: explicitPaths.length,
+      };
+
+      if (directive) {
+        warnings.push(
+          `ignored --paths-from ${directive.raw} because explicit --paths was provided`,
+        );
+      }
+    } else if (directive) {
+      if (!branch || !baseSha) {
+        throw new Error(
+          `Target ${absolute} is not a git repo; --paths-from ${directive.raw} requires local git history`,
+        );
+      }
+
+      const derived = collectPathsFromDirective(absolute, directive);
+      scope = derived.scope;
+      if (derived.paths.length > 0) {
+        resolvedPaths = derived.paths;
+      } else {
+        warnings.push(
+          `path scope helper ${directive.raw} produced no files; pass --paths explicitly if you want a scoped plan`,
+        );
+      }
+    }
+
     return {
       value: {
         repo: absolute,
         branch: branch ?? undefined,
         baseSha: baseSha ?? undefined,
-        paths: paths.length > 0 ? paths : undefined,
+        paths: resolvedPaths,
       },
       inferred: !repoText,
       localRepo: true,
       warnings,
+      scope,
     };
+  }
+
+  if (directive) {
+    throw new Error(
+      `Non-local repo target ${candidate} cannot use --paths-from ${directive.raw}; pass explicit --paths instead`,
+    );
   }
 
   warnings.push(
@@ -1001,18 +1582,78 @@ const resolveTarget = (
   return {
     value: {
       repo: candidate,
-      paths: paths.length > 0 ? paths : undefined,
+      paths: explicitPaths.length > 0 ? explicitPaths : undefined,
     },
     inferred: false,
     localRepo: false,
     warnings,
+    scope:
+      explicitPaths.length > 0
+        ? {
+            source: "explicit-paths",
+            pathCount: explicitPaths.length,
+          }
+        : {
+            source: "repo-wide",
+            pathCount: 0,
+          },
   };
 };
 
+const buildPlanLevelActions = (
+  input: NormalizedPlannerInput,
+  workloadId: string,
+  target: TargetResolution,
+  kind: Resolution<WorkloadKind>,
+  shape: ShapeResolution,
+  mode: Resolution<ExecutionMode>,
+  artifactWritten: boolean,
+): Array<{ command: string; description: string }> => {
+  const actions: Array<{ command: string; description: string }> = [
+    {
+      command: `joelclaw workload plan ${shellQuote(input.intent)} --kind ${kind.value} --shape ${shape.value}`,
+      description:
+        "Re-run the planner with the inferred kind/shape pinned explicitly",
+    },
+  ];
+
+  if (target.localRepo && !target.value.paths?.length) {
+    actions.push({
+      command: `joelclaw workload plan ${shellQuote(input.intent)} --repo ${shellQuote(target.value.repo)} --paths-from recent:3`,
+      description:
+        "Seed path scope from recent repo activity before trying to schedule repo-wide work",
+    });
+  }
+
+  if (!artifactWritten) {
+    actions.push({
+      command: `joelclaw workload plan ${shellQuote(input.intent)} --repo ${shellQuote(target.value.repo)}${target.value.paths?.length ? ` --paths ${shellQuote(target.value.paths.join(","))}` : target.scope.source !== "repo-wide" && target.scope.detail ? ` --paths-from ${target.scope.detail}` : ""} --write-plan ${shellQuote(defaultPlanArtifactPath(workloadId))}`,
+      description:
+        "Write the full workload envelope to a reusable handoff artifact",
+    });
+  }
+
+  if (
+    mode.value === "durable" ||
+    mode.value === "loop" ||
+    mode.value === "sandbox"
+  ) {
+    actions.push({
+      command: "joelclaw status",
+      description: "Check runtime health before dispatching beyond planning",
+    });
+  }
+
+  return actions;
+};
+
 const planWorkload = (
-  input: PlannerInput,
+  rawInput: PlannerInput,
   now = new Date(),
 ): WorkloadPlanningResult => {
+  const workloadId = buildWorkloadId(now);
+  const inputResolution = resolvePresetDefaults(rawInput);
+  const input = inputResolution.normalized;
   const kind = inferKind(input.intent, input.kind);
   const shape = chooseShape(input.intent, kind.value, input.shape);
   const risks = inferRisks(
@@ -1034,8 +1675,16 @@ const planWorkload = (
     shape.value,
     input.artifactsText,
   );
-  const target = resolveTarget(input.repoText, input.pathsText);
-  const acceptance = splitDelimited(input.acceptanceText);
+  const target = resolveTarget(
+    input.repoText,
+    input.pathsText,
+    input.pathsFromText,
+  );
+  const acceptance =
+    splitDelimited(input.acceptanceText).length > 0
+      ? splitDelimited(input.acceptanceText)
+      : extractAcceptanceFromIntent(input.intent);
+
   const request: WorkloadRequest = {
     version: WORKLOAD_VERSION,
     kind: kind.value,
@@ -1066,7 +1715,7 @@ const planWorkload = (
   };
 
   const plan: WorkloadPlan = {
-    workloadId: buildWorkloadId(now),
+    workloadId,
     version: WORKLOAD_VERSION,
     status: "planned",
     kind: kind.value,
@@ -1083,25 +1732,24 @@ const planWorkload = (
       mode.value,
       artifacts.values,
     ),
-    stages: buildStages(kind.value, shape.value, mode.value, artifacts.values),
-    next_actions: [
-      {
-        command: `joelclaw workload plan \"${input.intent}\" --kind ${kind.value} --shape ${shape.value}`,
-        description:
-          "Re-run the planner with the inferred kind/shape pinned explicitly",
-      },
-      ...(mode.value === "durable" ||
-      mode.value === "loop" ||
-      mode.value === "sandbox"
-        ? [
-            {
-              command: "joelclaw status",
-              description:
-                "Check runtime health before dispatching beyond planning",
-            },
-          ]
-        : []),
-    ],
+    stages: buildStages({
+      kind: kind.value,
+      shape: shape.value,
+      mode: mode.value,
+      artifacts: artifacts.values,
+      intent: input.intent,
+      acceptance,
+      targetPaths: target.value.paths,
+    }),
+    next_actions: buildPlanLevelActions(
+      input,
+      workloadId,
+      target,
+      kind,
+      shape,
+      mode,
+      false,
+    ),
   };
 
   return {
@@ -1118,6 +1766,7 @@ const planWorkload = (
         value: target.value,
         inferred: target.inferred,
         localRepo: target.localRepo,
+        scope: target.scope,
       },
     },
     warnings: dedupe([
@@ -1135,6 +1784,7 @@ const planWorkload = (
           ]
         : []),
     ]),
+    ...(inputResolution.preset ? { preset: inputResolution.preset } : {}),
     shipped: {
       plan: true,
       run: false,
@@ -1147,6 +1797,13 @@ const planWorkload = (
 
 const planIntentArg = Args.text({ name: "intent" }).pipe(
   Args.withDescription("Natural-language workload intent"),
+);
+
+const presetOption = Options.choice("preset", WORKLOAD_PRESETS).pipe(
+  Options.withDescription(
+    "Reusable planning preset for common workload shapes",
+  ),
+  Options.optional,
 );
 
 const kindOption = Options.choice("kind", WORKLOAD_KIND_CHOICES).pipe(
@@ -1196,26 +1853,49 @@ const pathsOption = Options.text("paths").pipe(
   Options.optional,
 );
 
+const pathsFromOption = Options.text("paths-from").pipe(
+  Options.withDescription(
+    "Seed path scope from repo activity: status, head, or recent:<n>",
+  ),
+  Options.optional,
+);
+
+const writePlanOption = Options.text("write-plan").pipe(
+  Options.withDescription(
+    "Write the full workload envelope to a reusable JSON artifact",
+  ),
+  Options.optional,
+);
+
 const requestedByOption = Options.text("requested-by").pipe(
   Options.withDescription("Who requested the workload"),
   Options.withDefault("Joel"),
 );
 
 const buildPlanNextActions = (
-  intent: string,
+  input: NormalizedPlannerInput,
   result: WorkloadPlanningResult,
 ): NextAction[] => {
   const actions: NextAction[] = [
     {
       command:
-        "workload plan <intent> [--kind <kind>] [--shape <shape>] [--autonomy <autonomy>] [--proof <proof>] [--repo <repo>] [--paths <paths>]",
+        "workload plan <intent> [--preset <preset>] [--kind <kind>] [--shape <shape>] [--autonomy <autonomy>] [--proof <proof>] [--repo <repo>] [--paths <paths>] [--paths-from <paths-from>] [--write-plan <path>]",
       description: "Refine the plan with explicit overrides",
       params: {
         intent: {
           description: "Natural-language workload intent",
-          value: intent,
+          value: input.intent,
           required: true,
         },
+        ...(result.preset
+          ? {
+              preset: {
+                description: "Planning preset",
+                value: result.preset.name,
+                enum: WORKLOAD_PRESETS,
+              },
+            }
+          : {}),
         kind: {
           description: "Workload kind override",
           value: result.plan.kind,
@@ -1237,9 +1917,65 @@ const buildPlanNextActions = (
           description: "Comma-separated path scope",
           value: result.inference.target.value.paths?.join(",") ?? "",
         },
+        ...(result.inference.target.scope.source !== "repo-wide"
+          ? {
+              "paths-from": {
+                description: "Path scope helper",
+                value:
+                  result.inference.target.scope.detail ??
+                  (result.inference.target.scope.source === "git-status"
+                    ? "status"
+                    : result.inference.target.scope.source === "git-head"
+                      ? "head"
+                      : "recent:3"),
+              },
+            }
+          : {}),
+        ...(result.artifact
+          ? {
+              "write-plan": {
+                description: "Existing plan artifact path",
+                value: result.artifact.path,
+              },
+            }
+          : {
+              "write-plan": {
+                description: "Where to write the plan JSON",
+                value: defaultPlanArtifactPath(result.plan.workloadId),
+              },
+            }),
       },
     },
   ];
+
+  if (
+    result.inference.target.localRepo &&
+    (!result.inference.target.value.paths ||
+      result.inference.target.value.paths.length === 0)
+  ) {
+    actions.push({
+      command: "workload plan <intent> --repo <repo> --paths-from <paths-from>",
+      description:
+        "Seed the path scope from recent repo activity before scheduling repo-wide work",
+      params: {
+        intent: {
+          description: "Natural-language workload intent",
+          value: input.intent,
+          required: true,
+        },
+        repo: {
+          description: "Local repo path",
+          value: result.inference.target.value.repo,
+          required: true,
+        },
+        "paths-from": {
+          description: "Path scope helper",
+          value: "recent:3",
+          required: true,
+        },
+      },
+    });
+  }
 
   if (
     result.inference.target.value.paths &&
@@ -1258,6 +1994,41 @@ const buildPlanNextActions = (
         agent: {
           description: "Agent name reserving the work",
           value: "AGENT_NAME",
+          required: true,
+        },
+      },
+    });
+  }
+
+  if (!result.artifact) {
+    actions.push({
+      command:
+        "workload plan <intent> [--repo <repo>] [--paths <paths>] [--paths-from <paths-from>] --write-plan <path>",
+      description:
+        "Write the plan to a reusable artifact for handoff instead of retyping it later",
+      params: {
+        intent: {
+          description: "Natural-language workload intent",
+          value: input.intent,
+          required: true,
+        },
+        repo: {
+          description: "Repo path or repo identifier",
+          value: result.inference.target.value.repo,
+        },
+        paths: {
+          description: "Comma-separated path scope",
+          value: result.inference.target.value.paths?.join(",") ?? "",
+        },
+        "paths-from": {
+          description: "Path scope helper",
+          value:
+            result.inference.target.scope.detail ??
+            (result.inference.target.localRepo ? "recent:3" : ""),
+        },
+        path: {
+          description: "Where to write the plan JSON",
+          value: defaultPlanArtifactPath(result.plan.workloadId),
           required: true,
         },
       },
@@ -1283,6 +2054,7 @@ const planCmd = Command.make(
   "plan",
   {
     intent: planIntentArg,
+    preset: presetOption,
     kind: kindOption,
     shape: shapeOption,
     autonomy: autonomyOption,
@@ -1292,10 +2064,13 @@ const planCmd = Command.make(
     acceptance: acceptanceOption,
     repo: repoOption,
     paths: pathsOption,
+    pathsFrom: pathsFromOption,
+    writePlan: writePlanOption,
     requestedBy: requestedByOption,
   },
   ({
     intent,
+    preset,
     kind,
     shape,
     autonomy,
@@ -1305,6 +2080,8 @@ const planCmd = Command.make(
     acceptance,
     repo,
     paths,
+    pathsFrom,
+    writePlan,
     requestedBy,
   }) =>
     Effect.gen(function* () {
@@ -1315,22 +2092,32 @@ const planCmd = Command.make(
       const acceptanceText =
         acceptance._tag === "Some" ? acceptance.value : undefined;
       const pathsText = paths._tag === "Some" ? paths.value : undefined;
+      const pathsFromText =
+        pathsFrom._tag === "Some" ? pathsFrom.value : undefined;
+      const writePlanText =
+        writePlan._tag === "Some" ? writePlan.value : undefined;
+      const presetValue = preset._tag === "Some" ? preset.value : undefined;
 
       const planResultEither = yield* Effect.try({
         try: () =>
-          planWorkload({
-            intent,
-            kind,
-            shape,
-            autonomy,
-            proof,
-            riskText,
-            artifactsText,
-            acceptanceText,
-            repoText,
-            pathsText,
-            requestedBy,
-          }),
+          planWorkload(
+            {
+              intent,
+              preset: presetValue,
+              kind,
+              shape,
+              autonomy,
+              proof,
+              riskText,
+              artifactsText,
+              acceptanceText,
+              repoText,
+              pathsText,
+              pathsFromText,
+              requestedBy,
+            },
+            new Date(),
+          ),
         catch: (error) =>
           error instanceof Error ? error : new Error(String(error)),
       }).pipe(Effect.either);
@@ -1340,13 +2127,13 @@ const planCmd = Command.make(
           respondError(
             "workload plan",
             planResultEither.left.message,
-            "WORKLOAD_PLAN_INVALID_TARGET",
-            "Provide a valid local repo path or a repo identifier, then retry",
+            "WORKLOAD_PLAN_INVALID_INPUT",
+            "Provide a valid repo target or path-scope helper, then retry",
             [
               {
                 command:
-                  "workload plan <intent> [--repo <repo>] [--paths <paths>]",
-                description: "Retry with a valid repo target",
+                  "workload plan <intent> [--repo <repo>] [--paths <paths>] [--paths-from <paths-from>]",
+                description: "Retry with a valid repo target and scope helper",
                 params: {
                   intent: {
                     description: "Natural-language workload intent",
@@ -1361,6 +2148,10 @@ const planCmd = Command.make(
                     description: "Comma-separated path scope",
                     value: pathsText ?? "docs/,skills/",
                   },
+                  "paths-from": {
+                    description: "Path scope helper",
+                    value: pathsFromText ?? "recent:3",
+                  },
                 },
               },
             ],
@@ -1369,11 +2160,68 @@ const planCmd = Command.make(
         return;
       }
 
-      const result = planResultEither.right;
+      const baseResult = planResultEither.right;
+      const normalizedInput = resolvePresetDefaults({
+        intent,
+        preset: presetValue,
+        kind,
+        shape,
+        autonomy,
+        proof,
+        riskText,
+        artifactsText,
+        acceptanceText,
+        repoText,
+        pathsText,
+        pathsFromText,
+        requestedBy,
+      }).normalized;
 
-      yield* Console.log(
-        respond("workload plan", result, buildPlanNextActions(intent, result)),
-      );
+      const artifactPath = writePlanText
+        ? resolvePlanArtifactPath(writePlanText, baseResult.plan.workloadId)
+        : undefined;
+
+      const result: WorkloadPlanningResult = artifactPath
+        ? {
+            ...baseResult,
+            artifact: {
+              written: true,
+              path: artifactPath,
+              format: "joelclaw-envelope",
+            },
+            plan: {
+              ...baseResult.plan,
+              next_actions: buildPlanLevelActions(
+                normalizedInput,
+                baseResult.plan.workloadId,
+                {
+                  value: baseResult.inference.target.value,
+                  inferred: baseResult.inference.target.inferred,
+                  localRepo: baseResult.inference.target.localRepo,
+                  warnings: [],
+                  scope: baseResult.inference.target.scope,
+                },
+                baseResult.inference.kind,
+                baseResult.inference.shape,
+                baseResult.inference.mode,
+                true,
+              ),
+            },
+          }
+        : baseResult;
+
+      const nextActions = buildPlanNextActions(normalizedInput, result);
+
+      if (artifactPath) {
+        const artifactEnvelope = buildSuccessEnvelope(
+          "workload plan",
+          result,
+          nextActions,
+        );
+        writePlanArtifact(artifactPath, artifactEnvelope);
+      }
+
+      yield* Console.log(respond("workload plan", result, nextActions));
     }),
 ).pipe(
   Command.withDescription(
@@ -1388,7 +2236,7 @@ export const workloadCmd = Command.make("workload", {}, () =>
       {
         description: "Agent-first workload planning surfaces",
         shipped: {
-          plan: "joelclaw workload plan <intent> [--kind auto|repo.patch|repo.refactor|repo.docs|repo.review|research.spike|runtime.proof|cross-repo.integration] [--shape auto|serial|parallel|chained]",
+          plan: "joelclaw workload plan <intent> [--preset docs-truth|research-compare|refactor-handoff] [--kind auto|repo.patch|repo.refactor|repo.docs|repo.review|research.spike|runtime.proof|cross-repo.integration] [--shape auto|serial|parallel|chained] [--paths-from status|head|recent:<n>] [--write-plan <path>]",
         },
         planned: {
           run: "planned, not yet shipped",
@@ -1399,14 +2247,14 @@ export const workloadCmd = Command.make("workload", {}, () =>
       },
       [
         {
-          command:
-            'joelclaw workload plan "groom ADR-0217 truth and docs" --kind repo.docs',
-          description: "Plan a docs/truth workload explicitly",
+          command: `joelclaw workload plan ${shellQuote("shape active gremlin refactor work")} --preset refactor-handoff --repo ${shellQuote("/Users/joel/Code/badass-courses/gremlin")} --paths-from recent:3`,
+          description:
+            "Plan active repo work with a preset and git-derived path scope",
         },
         {
-          command: 'joelclaw workload plan "compare two sandbox approaches"',
+          command: `joelclaw workload plan ${shellQuote("compare two sandbox approaches")} --preset research-compare --write-plan ${shellQuote("~/.joelclaw/workloads/")}`,
           description:
-            "Let the planner infer a research/parallelizable workload",
+            "Write a reusable research plan artifact for later handoff",
         },
       ],
     ),
@@ -1416,6 +2264,8 @@ export const workloadCmd = Command.make("workload", {}, () =>
 export const __workloadTestUtils = {
   splitCsv,
   splitDelimited,
+  splitLines,
+  parsePathsFrom,
   inferKind,
   chooseShape,
   inferRisks,
@@ -1425,5 +2275,10 @@ export const __workloadTestUtils = {
   buildVerification,
   buildStages,
   buildWorkloadId,
+  defaultPlanArtifactPath,
+  resolvePlanArtifactPath,
+  writePlanArtifact,
+  resolvePresetDefaults,
+  resolveTarget,
   planWorkload,
 };

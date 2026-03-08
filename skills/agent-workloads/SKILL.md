@@ -2,7 +2,7 @@
 name: agent-workloads
 displayName: Agent Workloads
 description: "Plan and steer agent-first coding/repo workloads in joelclaw. Use when the task is development work and you need to choose serial, parallel, or chained execution; shape pi-session steering; decide whether work should stay inline, go durable, or run in a sandbox; or define the handoff contract between workers. Triggers on 'plan this workload', 'serial/parallel/chained', 'repo workflow', 'coding workflow', 'pi steering', 'agent-first workload', 'how should an agent run this task', or any request to make coding work legible before dispatching it."
-version: 0.3.2
+version: 0.4.0
 author: Joel Hooks
 tags:
   - agent-first
@@ -154,10 +154,15 @@ Use them only after the workload shape is clear.
 Shipped now:
 
 ```bash
-joelclaw workload plan "<intent>"
+joelclaw workload plan "<intent>" \
+  [--preset docs-truth|research-compare|refactor-handoff] \
+  [--repo /abs/path/or/owner/repo] \
+  [--paths a,b,c] \
+  [--paths-from status|head|recent:<n>] \
+  [--write-plan ~/.joelclaw/workloads/]
 ```
 
-Use it to get a canonical `request` + `plan` envelope.
+Use it to get a canonical `request` + `plan` envelope, seed scope from real repo activity, and emit a reusable plan artifact for handoff.
 
 Still planned:
 
@@ -187,9 +192,14 @@ Read the detailed workload catalog here:
 - start with workload shape, not runtime mechanism
 - use the canonical vocabulary from `docs/workloads.md`; don't invent fresh field names unless the doc changes too
 - implementation intent beats docs follow-through: `refactor ... then update docs` or `extend ... then update README` should still plan as implementation work
+- preserve explicit `Acceptance:` clauses from the prompt when they exist; don't throw them away and replace them with mush
 - mentioning a sandbox as the topic of research does not automatically mean the work must execute in a sandbox
 - `deploy-allowed` should come from explicit release/deploy intent, not from nouns like `published skills`
+- supervised repo work mentioning `canary` or `soak` does not automatically mean `durable` / `restate`
+- use `Goal:` milestones and `reflect/update plan` cues to keep chained plans from collapsing into generic sludge
 - if you are not inside the target repo and `workload plan` warns about the cwd not being a git repo, rerun with `--repo`
+- use `--paths-from status|head|recent:<n>` when scope should come from actual repo activity instead of hand-typed path lists
+- use `--write-plan` when another agent should be able to pick up the workload without reading raw chat
 - never hand a coding agent substrate docs as the only answer to “how should I run this work?”
 - serial / parallel / chained are first-class planning choices, not afterthoughts
 - use `clawmail` for any delegated or shared-file workload
