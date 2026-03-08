@@ -27,6 +27,7 @@ const QUEUE_OBSERVE_COMPONENT = "queue-observe";
 const QUEUE_CONTROL_COMPONENT = "queue-control";
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MANUAL_PAUSE_HOLD_MAX_AGE_MS = 15 * 60_000;
+const OBSERVER_PAUSE_RESUME_MIN_AGE_MS = 60_000;
 const AUTO_APPLY_ACTION_KINDS = new Set<QueueObserverAction["kind"]>([
   "pause_family",
   "resume_family",
@@ -325,8 +326,9 @@ export function buildQueueObservationSnapshot(input: BuildQueueObservationSnapsh
 
   const triageLatency = input.triage?.latencyMs;
   const triageFallbackByReason = input.triage?.fallbackByReason ?? {};
+  const activePauses = normalizeActivePauses(input.control?.activePauses, now);
 
-  return {
+  const snapshot: QueueObservationSnapshot = {
     snapshotId: input.snapshotId?.trim() || randomUUID(),
     capturedAt: input.capturedAt ?? new Date(now).toISOString(),
     totals: {
@@ -364,9 +366,67 @@ export function buildQueueObservationSnapshot(input: BuildQueueObservationSnapsh
       mutedChannels: [...new Set((input.gateway?.mutedChannels ?? []).map((value) => value.trim()).filter(Boolean))].sort(),
     },
     control: {
-      activePauses: normalizeActivePauses(input.control?.activePauses, now),
+      activePauses,
     },
   };
+
+  if (!shouldTreatObserverHeldBacklogAsHealthy(snapshot) || snapshot.drainer.state === "healthy") {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    drainer: {
+      ...snapshot.drainer,
+      state: "healthy",
+    },
+  };
+}
+
+function pauseAgeMs(snapshot: Pick<QueueObservationSnapshot, "capturedAt">, pause: QueueObservationPauseSummary): number | null {
+  const capturedAtMs = Date.parse(snapshot.capturedAt);
+  const appliedAtMs = Date.parse(pause.appliedAt);
+
+  if (!Number.isFinite(capturedAtMs) || !Number.isFinite(appliedAtMs)) {
+    return null;
+  }
+
+  return Math.max(0, capturedAtMs - appliedAtMs);
+}
+
+function observerPauseFamilies(snapshot: QueueObservationSnapshot) {
+  return new Map(
+    snapshot.control.activePauses
+      .filter((pause) => pause.source === "observer")
+      .map((pause) => [pause.family, pause] as const),
+  );
+}
+
+function queuedObserverPauses(snapshot: QueueObservationSnapshot): QueueObservationPauseSummary[] {
+  const pausedFamilies = observerPauseFamilies(snapshot);
+  return snapshot.families
+    .map((family) => pausedFamilies.get(family.family))
+    .filter((pause): pause is QueueObservationPauseSummary => pause != null)
+    .sort((a, b) => a.expiresInMs - b.expiresInMs || a.family.localeCompare(b.family));
+}
+
+function isBacklogFullyHeldBehindObserverPauses(snapshot: QueueObservationSnapshot): boolean {
+  if (snapshot.totals.depth === 0 || snapshot.families.length === 0) return false;
+
+  const pausedFamilies = observerPauseFamilies(snapshot);
+  return snapshot.families.every((family) => pausedFamilies.has(family.family));
+}
+
+function shouldTreatObserverHeldBacklogAsHealthy(snapshot: QueueObservationSnapshot): boolean {
+  if (!isBacklogFullyHeldBehindObserverPauses(snapshot)) return false;
+  if (snapshot.drainer.recentFailures > 0) return false;
+  if (snapshot.triage.failed > 0 || snapshot.triage.fallbacks > 0) return false;
+
+  const pausedFamilies = queuedObserverPauses(snapshot);
+  return pausedFamilies.length > 0 && pausedFamilies.every((pause) => {
+    const ageMs = pauseAgeMs(snapshot, pause);
+    return ageMs != null && ageMs >= OBSERVER_PAUSE_RESUME_MIN_AGE_MS;
+  });
 }
 
 function deriveQueuePressure(snapshot: QueueObservationSnapshot): QueueObservationPressure {
@@ -386,7 +446,7 @@ function deriveDownstreamState(snapshot: QueueObservationSnapshot): QueueObserva
     && snapshot.triage.failed === 0
     && snapshot.triage.fallbacks === 0;
 
-  if (idleWithoutRecentTrouble) {
+  if (idleWithoutRecentTrouble || shouldTreatObserverHeldBacklogAsHealthy(snapshot)) {
     return "healthy";
   }
 
@@ -734,6 +794,55 @@ function buildDeterministicManualPauseHoldDecision(input: {
   };
 }
 
+function shouldUseDeterministicObserverPauseResume(snapshot: QueueObservationSnapshot): boolean {
+  return shouldTreatObserverHeldBacklogAsHealthy(snapshot);
+}
+
+function buildDeterministicObserverPauseResumeDecision(input: {
+  mode: QueueObservationMode;
+  snapshot: QueueObservationSnapshot;
+  model?: string;
+  latencyMs: number;
+  autoApplyFamilies: Set<string>;
+}): QueueObservationDecision {
+  const pausedFamilies = queuedObserverPauses(input.snapshot);
+  const families = pausedFamilies.map((pause) => pause.family);
+  const youngestPauseAgeMs = pausedFamilies
+    .map((pause) => pauseAgeMs(input.snapshot, pause))
+    .filter((age): age is number => age != null)
+    .sort((a, b) => a - b)[0] ?? null;
+  const suggestedActions: Extract<QueueObserverAction, { kind: "resume_family" }>[] = pausedFamilies.map((pause) => ({
+    kind: "resume_family",
+    family: pause.family,
+    reason: "Queued work is held behind an observer pause and no current failures suggest downstream trouble.",
+  }));
+  const summary = [
+    `Queue backlog is entirely held behind active observer pause${families.length === 1 ? "" : "s"} on ${families.join(", ")}.`,
+    `The youngest observer pause is ~${formatDurationCompact(youngestPauseAgeMs)} old,`,
+    "and no recent drainer failures or triage fallbacks suggest downstream trouble.",
+    "Release the hold and let the queued work drain.",
+  ].join(" ");
+
+  return {
+    mode: input.mode,
+    model: input.model,
+    snapshotId: input.snapshot.snapshotId,
+    findings: {
+      queuePressure: deriveQueuePressure(input.snapshot),
+      downstreamState: "healthy",
+      summary,
+    },
+    suggestedActions,
+    finalActions: selectFinalActions({
+      mode: input.mode,
+      actions: suggestedActions,
+      autoApplyFamilies: input.autoApplyFamilies,
+    }),
+    appliedCount: 0,
+    latencyMs: input.latencyMs,
+  };
+}
+
 function buildUserPrompt(input: {
   snapshot: QueueObservationSnapshot;
   mode: QueueObservationMode;
@@ -985,6 +1094,18 @@ export async function observeQueueSnapshotDetailed(
         mode: input.mode,
         snapshot: input.snapshot,
         latencyMs: Date.now() - startedAt,
+      }),
+    };
+  }
+
+  if (shouldUseDeterministicObserverPauseResume(input.snapshot)) {
+    return {
+      autoApplyFamilies,
+      decision: buildDeterministicObserverPauseResumeDecision({
+        mode: input.mode,
+        snapshot: input.snapshot,
+        latencyMs: Date.now() - startedAt,
+        autoApplyFamilies,
       }),
     };
   }

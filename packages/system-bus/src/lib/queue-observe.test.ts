@@ -508,6 +508,160 @@ describe("queue observer contract", () => {
     expect(actions).toEqual(["queue.observe.started", "queue.observe.completed"]);
   });
 
+  test("skips model inference and deterministically resumes queued work held behind a settled observer pause", async () => {
+    const { buildQueueObservationSnapshot, observeQueueSnapshot } = await import("./queue-observe");
+    const snapshot = buildQueueObservationSnapshot({
+      snapshotId: "snap-observer-pause-resume",
+      now: 1_000_000,
+      stats: {
+        total: 2,
+        byPriority: { P0: 0, P1: 0, P2: 2, P3: 0 },
+        oldestTimestamp: 930_000,
+        newestTimestamp: 940_000,
+      },
+      messages: [
+        { payload: { name: "content/updated" }, priority: Priority.P2, timestamp: 930_000 },
+        { payload: { name: "content/updated" }, priority: Priority.P2, timestamp: 940_000 },
+      ],
+      triage: {
+        attempts: 0,
+        completed: 0,
+        failed: 0,
+        fallbacks: 0,
+        fallbackByReason: {},
+        routeMismatches: 0,
+        latencyMs: { p50: null, p95: null },
+      },
+      drainer: {
+        state: "down",
+        recentDispatches: 0,
+        recentFailures: 0,
+        throughputPerMinute: 0,
+      },
+      gateway: {
+        sleepMode: false,
+        quietHours: false,
+        mutedChannels: [],
+      },
+      control: {
+        activePauses: [{
+          family: "content/updated",
+          reason: "Observer paused content while the drainer was crook.",
+          source: "observer",
+          mode: "enforce",
+          appliedAt: new Date(920_000).toISOString(),
+          expiresAt: new Date(1_220_000).toISOString(),
+          expiresAtMs: 1_220_000,
+        }],
+      },
+    });
+
+    expect(snapshot.drainer.state).toBe("healthy");
+
+    const decision = await observeQueueSnapshot({
+      mode: "enforce",
+      snapshot,
+      autoApplyFamilies: ["content/updated"],
+    });
+
+    expect(inferredPrompts).toHaveLength(0);
+    expect(decision.fallbackReason).toBeUndefined();
+    expect(decision.findings.downstreamState).toBe("healthy");
+    expect(decision.findings.summary).toContain("active observer pause");
+    expect(decision.suggestedActions).toEqual([
+      {
+        kind: "resume_family",
+        family: "content/updated",
+        reason: "Queued work is held behind an observer pause and no current failures suggest downstream trouble.",
+      },
+    ]);
+    expect(decision.finalActions).toEqual([
+      {
+        kind: "resume_family",
+        family: "content/updated",
+        reason: "Queued work is held behind an observer pause and no current failures suggest downstream trouble.",
+      },
+    ]);
+
+    const actions = emittedEvents.map((event) => event.action);
+    expect(actions).toEqual(["queue.observe.started", "queue.observe.completed"]);
+  });
+
+  test("does not deterministically resume observer-held work before the pause has settled", async () => {
+    inferResponse = {
+      model: "anthropic/claude-sonnet-4-6",
+      text: JSON.stringify({
+        findings: {
+          queuePressure: "healthy",
+          downstreamState: "degraded",
+          summary: "The observer pause is still fresh; hold off on changing anything just yet.",
+        },
+        actions: [{ kind: "noop", reason: "The observer pause is still too fresh to release." }],
+      }),
+    };
+
+    const { buildQueueObservationSnapshot, observeQueueSnapshot } = await import("./queue-observe");
+    const snapshot = buildQueueObservationSnapshot({
+      snapshotId: "snap-observer-pause-too-fresh",
+      now: 1_000_000,
+      stats: {
+        total: 2,
+        byPriority: { P0: 0, P1: 0, P2: 2, P3: 0 },
+        oldestTimestamp: 970_000,
+        newestTimestamp: 980_000,
+      },
+      messages: [
+        { payload: { name: "content/updated" }, priority: Priority.P2, timestamp: 970_000 },
+        { payload: { name: "content/updated" }, priority: Priority.P2, timestamp: 980_000 },
+      ],
+      triage: {
+        attempts: 0,
+        completed: 0,
+        failed: 0,
+        fallbacks: 0,
+        fallbackByReason: {},
+        routeMismatches: 0,
+        latencyMs: { p50: null, p95: null },
+      },
+      drainer: {
+        state: "down",
+        recentDispatches: 0,
+        recentFailures: 0,
+        throughputPerMinute: 0,
+      },
+      gateway: {
+        sleepMode: false,
+        quietHours: false,
+        mutedChannels: [],
+      },
+      control: {
+        activePauses: [{
+          family: "content/updated",
+          reason: "Observer paused content while the drainer was crook.",
+          source: "observer",
+          mode: "enforce",
+          appliedAt: new Date(970_000).toISOString(),
+          expiresAt: new Date(1_270_000).toISOString(),
+          expiresAtMs: 1_270_000,
+        }],
+      },
+    });
+
+    expect(snapshot.drainer.state).toBe("down");
+
+    const decision = await observeQueueSnapshot({
+      mode: "dry-run",
+      snapshot,
+      autoApplyFamilies: ["content/updated"],
+    });
+
+    expect(inferredPrompts).toHaveLength(1);
+    expect(decision.fallbackReason).toBeUndefined();
+    expect(decision.suggestedActions).toEqual([
+      { kind: "noop", reason: "The observer pause is still too fresh to release." },
+    ]);
+  });
+
   test("enforce mode narrows final actions to the bounded auto-apply subset", async () => {
     const { observeQueueSnapshot } = await import("./queue-observe");
     const snapshot = await buildSnapshot();
