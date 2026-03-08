@@ -5,6 +5,7 @@
  * - joelclaw queue emit <event> [-d <json>] — Emit an event to the queue
  * - joelclaw queue depth — Get queue depth and stats
  * - joelclaw queue stats [--hours <n>] [--limit <n>] — Summarize recent drainer success/failure + latency
+ * - joelclaw queue observe [--hours <n>] [--limit <n>] [--since <iso|ms>] — Run the dry-run Sonnet operator surface
  * - joelclaw queue list [--limit <n>] — List recent messages
  * - joelclaw queue inspect <stream-id> — Inspect a message by ID
  */
@@ -23,6 +24,10 @@ import Redis from "ioredis";
 import { loadConfig } from "../config";
 import { createOtelEventPayload, ingestOtelPayload } from "../lib/otel-ingest";
 import { enqueueQueueEventViaWorker } from "../lib/queue-admission";
+import {
+  __queueObserveCliTestUtils,
+  runQueueObserveOperatorView,
+} from "../lib/queue-observe";
 import { type NextAction, respond, respondError } from "../response";
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth";
 
@@ -1018,6 +1023,138 @@ const statsCmd = Command.make(
 );
 
 /**
+ * joelclaw queue observe [--hours <n>] [--limit <n>] [--since <iso|ms>] — Run the dry-run Sonnet operator surface.
+ */
+const observeCmd = Command.make(
+  "observe",
+  {
+    hours: Options.integer("hours").pipe(
+      Options.withAlias("h"),
+      Options.withDefault(24),
+      Options.withDescription("Lookback window in hours for related OTEL history"),
+    ),
+    limit: Options.integer("limit").pipe(
+      Options.withAlias("n"),
+      Options.withDefault(DEFAULT_QUEUE_STATS_LIMIT),
+      Options.withDescription("Max OTEL events to sample per history surface"),
+    ),
+    since: Options.optional(
+      Options.text("since").pipe(
+        Options.withDescription("Override the lower bound with an ISO timestamp or epoch milliseconds"),
+      ),
+    ),
+  },
+  ({ hours, limit, since }) =>
+    withRedisCleanup(Effect.gen(function* () {
+      const observeResult = yield* Effect.tryPromise({
+        try: async () => {
+          await ensureQueueInitialized();
+          const depth = await getQueueStats();
+          const normalizedLimit = Math.min(Math.max(1, limit), DEFAULT_QUEUE_STATS_LIMIT);
+          const sinceText = parseOptionalText(since);
+          const parsedSince = sinceText ? parseSinceTimestamp(sinceText) : undefined;
+          const messages = await listMessages(Math.max(1, depth.total));
+
+          return runQueueObserveOperatorView({
+            redis: getRedisClient(),
+            depth: {
+              total: depth.total,
+              byPriority: depth.byPriority,
+              oldestTimestamp: depth.oldestTimestamp,
+              newestTimestamp: depth.newestTimestamp,
+            },
+            messages,
+            hours,
+            limit: normalizedLimit,
+            sinceTimestamp: parsedSince,
+          });
+        },
+        catch: (error) => error,
+      }).pipe(Effect.either);
+
+      if (observeResult._tag === "Left") {
+        const error = observeResult.left;
+        const next: NextAction[] = [
+          {
+            command: "joelclaw queue stats",
+            description: "Check queue drainer and triage history",
+            params: {},
+          },
+          {
+            command: "joelclaw queue depth",
+            description: "Check live queue depth",
+            params: {},
+          },
+        ];
+
+        if (isTypesenseApiKeyError(error) || __queueObserveCliTestUtils.isTypesenseApiKeyError(error)) {
+          yield* Console.log(
+            respondError("queue observe", error.message, error.code, error.fix, next),
+          );
+          return;
+        }
+
+        yield* Console.log(
+          respondError(
+            "queue observe",
+            error instanceof Error ? error.message : String(error),
+            "QUEUE_OBSERVE_FAILED",
+            "Check Typesense reachability, queue OTEL history, and Sonnet inference health, then retry.",
+            next,
+          ),
+        );
+        return;
+      }
+
+      const summary = observeResult.right;
+      const next: NextAction[] = [
+        {
+          command: "joelclaw queue stats [--hours <hours>] [--since <since>]",
+          description: "Compare the dry-run observation with queue drainer + triage history",
+          params: {
+            hours: {
+              value: hours,
+              default: hours,
+              description: "Lookback window in hours",
+            },
+            since: {
+              value: summary.observeHistory.window.sinceIso ?? undefined,
+              description: "Optional lower bound for anchored windows",
+            },
+          },
+        },
+        {
+          command: `joelclaw otel search "queue-observe" --hours ${hours}`,
+          description: "Inspect raw queue-observe OTEL for the same window",
+          params: {},
+        },
+        {
+          command: "joelclaw queue list --limit <n>",
+          description: "Inspect the queued messages Sonnet just observed",
+          params: {
+            n: {
+              value: 20,
+              default: 20,
+              description: "Number of queued messages to list",
+            },
+          },
+        },
+      ];
+
+      yield* Console.log(
+        respond("queue observe", {
+          ok: true,
+          mode: "dry-run",
+          snapshot: summary.snapshot,
+          decision: summary.decision,
+          history: summary.observeHistory,
+          control: summary.control,
+        }, next),
+      );
+    })),
+);
+
+/**
  * joelclaw queue list [--limit <n>] — List recent messages.
  */
 const listCmd = Command.make(
@@ -1158,12 +1295,13 @@ const inspectCmd = Command.make(
  */
 export const queueCmd = Command.make("queue", {}).pipe(
   Command.withDescription("Queue operator surface for @joelclaw/queue"),
-  Command.withSubcommands([emitCmd, depthCmd, statsCmd, listCmd, inspectCmd])
+  Command.withSubcommands([emitCmd, depthCmd, statsCmd, observeCmd, listCmd, inspectCmd])
 );
 
 export const __queueTestUtils = {
   parseSinceTimestamp,
   percentile,
+  summarizeQueueObserveHistory: __queueObserveCliTestUtils.summarizeQueueObserveHistory,
   summarizeQueueStats,
   summarizeQueueTriageStats,
 };

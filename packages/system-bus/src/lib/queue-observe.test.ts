@@ -196,6 +196,56 @@ describe("queue observer contract", () => {
     expect(actions).toEqual(["queue.observe.started", "queue.observe.completed"]);
   });
 
+  test("skips model inference and returns deterministic noop when the queue snapshot is empty", async () => {
+    const { buildQueueObservationSnapshot, observeQueueSnapshot } = await import("./queue-observe");
+    const snapshot = buildQueueObservationSnapshot({
+      snapshotId: "snap-empty-queue-observe",
+      now: 1_000_000,
+      stats: {
+        total: 0,
+        byPriority: { P0: 0, P1: 0, P2: 0, P3: 0 },
+        oldestTimestamp: null,
+        newestTimestamp: null,
+      },
+      messages: [],
+      triage: {
+        attempts: 0,
+        completed: 0,
+        failed: 0,
+        fallbacks: 0,
+        fallbackByReason: {},
+        routeMismatches: 0,
+        latencyMs: { p50: null, p95: null },
+      },
+      drainer: {
+        state: "healthy",
+        recentDispatches: 0,
+        recentFailures: 0,
+        throughputPerMinute: 0,
+      },
+      gateway: {
+        sleepMode: false,
+        quietHours: false,
+        mutedChannels: [],
+      },
+    });
+
+    const decision = await observeQueueSnapshot({
+      mode: "dry-run",
+      snapshot,
+    });
+
+    expect(inferredPrompts).toHaveLength(0);
+    expect(decision.fallbackReason).toBeUndefined();
+    expect(decision.suggestedActions).toEqual([
+      { kind: "noop", reason: "Queue is empty; no queue control action is warranted." },
+    ]);
+    expect(decision.finalActions).toEqual([]);
+
+    const actions = emittedEvents.map((event) => event.action);
+    expect(actions).toEqual(["queue.observe.started", "queue.observe.completed"]);
+  });
+
   test("enforce mode narrows final actions to the bounded auto-apply subset", async () => {
     const { observeQueueSnapshot } = await import("./queue-observe");
     const snapshot = await buildSnapshot();
@@ -226,6 +276,7 @@ describe("queue observer contract", () => {
     const completed = emittedEvents.find((event) => event.action === "queue.observe.completed");
     expect(completed?.metadata).toMatchObject({
       snapshotId: "snap-queue-observe",
+      summary: "content/updated is stacking up while the drainer is a bit crook.",
       suggestedCount: 3,
       finalCount: 2,
       appliedCount: 0,
@@ -259,6 +310,12 @@ describe("queue observer contract", () => {
 
     const actions = emittedEvents.map((event) => event.action);
     expect(actions).toEqual(["queue.observe.started", "queue.observe.failed", "queue.observe.fallback"]);
+
+    const fallback = emittedEvents.find((event) => event.action === "queue.observe.fallback");
+    expect(fallback?.metadata).toMatchObject({
+      fallbackReason: "schema_error",
+      summary: "Queue depth 3; pressure degraded; downstream degraded; 2 active families; observer fallback schema_error",
+    });
   });
 
   test("maps timeout-looking errors to timeout fallback and exposes queue.control OTEL helpers", async () => {

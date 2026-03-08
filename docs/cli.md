@@ -217,6 +217,7 @@ joelclaw queue
 ├── emit <event> [-d <json>] [-p P0|P1|P2|P3]
 ├── depth
 ├── stats [--hours <n>] [--limit <n>]
+├── observe [--hours <n>] [--limit <n>] [--since <iso|ms>]
 ├── list [--limit <n>]
 └── inspect <stream-id>
 ```
@@ -238,6 +239,12 @@ Semantics:
   - uses `queue.triage.*` OTEL metadata as the Story 3 source of truth for queue-admission disagreements and fallback behavior
   - `--since <iso|ms>` overrides the lower bound so operators can anchor soak evidence to a known clean point (for example the supervised `queue.drainer.started` after a rollout) instead of mixing fresh traffic with a dirty pre-fix window
   - keeps the operator in CLI-land; no raw Redis keys or manual OTEL spelunking required for the first sanity pass
+- `observe` is the Phase 3 Story 2 dry-run Sonnet operator surface.
+  - builds a canonical live snapshot from current queue depth + queued messages + recent drainer OTEL + recent triage OTEL + gateway sleep/muted-channel state
+  - runs the bounded Sonnet observer in `dry-run` mode only and returns the current `snapshot` plus the current `decision`
+  - `history` summarizes recent `queue.observe.*` OTEL for the same window so operators can compare the latest dry-run against raw history without spelunking Typesense by hand
+  - `control` stays explicit and honest: Story 3 deterministic queue-control state is not shipped yet, so active pauses are empty and the surface reports that the control plane is unavailable rather than pretending otherwise
+  - `--since <iso|ms>` anchors the related OTEL history window the same way `queue stats` does
 - `list` lists recent messages in priority order (highest priority first), does not ack/remove
 - `inspect` loads a message by Redis stream ID and returns full payload + metadata
   - if the message is already acked/expired, it now returns a structured `QUEUE_MESSAGE_MISSING` error envelope with queue-state next actions instead of crashing the CLI

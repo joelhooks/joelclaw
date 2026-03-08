@@ -198,13 +198,14 @@ Sandbox runs produce patch bundles, not direct commits to main. This keeps runs 
 - canonical OTEL vocabulary for this layer is `queue.triage.started|completed|failed|fallback`
 - canonical operator view for this layer is the `triage` block inside `joelclaw queue stats`
 
-**Queue observation contract boundary (ADR-0217 Phase 3 Story 1)**
+**Queue observation contract boundary (ADR-0217 Phase 3 Story 1-2)**
 - bounded Sonnet observation now lives in `packages/system-bus/src/lib/queue-observe.ts`
 - canonical queue-observation contracts (`QueueObservationSnapshot`, `QueueObservationDecision`, `QueueObserverAction`) live in `@joelclaw/queue`
 - the observer consumes a deterministic server-built snapshot and may only return bounded action suggestions from the shared enum
 - canonical model is Sonnet via the shared `infer()` path
 - canonical OTEL vocabulary for this layer is `queue.observe.started|completed|failed|fallback` plus `queue.control.applied|expired|rejected`
-- Story 1 stops at contract/snapshot/fallback vocabulary; the deterministic queue-control plane still ships in later Phase 3 stories
+- Story 1 stops at contract/snapshot/fallback vocabulary; Story 2 adds the dry-run CLI surface `joelclaw queue observe`
+- canonical operator view for the current Phase 3 layer is `joelclaw queue observe`; the deterministic queue-control plane still ships in later Phase 3 stories
 
 **@joelclaw/vault-reader**
 - Obsidian Vault context injection

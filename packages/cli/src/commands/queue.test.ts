@@ -8,7 +8,7 @@ describe("Queue CLI Command", () => {
     expect(queueCmd.descriptor._tag).toBe("Subcommands");
 
     const subcommandNames = queueCmd.descriptor.children.map((child) => child.command.command.name);
-    expect(subcommandNames).toEqual(["emit", "depth", "stats", "list", "inspect"]);
+    expect(subcommandNames).toEqual(["emit", "depth", "stats", "observe", "list", "inspect"]);
   });
 
   it("summarizes dispatch latency, failures, and depth for Story 5 soak output", () => {
@@ -222,6 +222,112 @@ describe("Queue CLI Command", () => {
         finalDedupKey: null,
         routeCheck: "mismatch",
         applied: false,
+      },
+    ]);
+  });
+
+  it("summarizes queue.observe history for the Story 2 dry-run operator surface", () => {
+    const summary = __queueTestUtils.summarizeQueueObserveHistory(
+      [
+        {
+          id: "observe-started-1",
+          timestamp: 12_000,
+          action: "queue.observe.started",
+          success: true,
+          metadata: {
+            snapshotId: "snap-1",
+            mode: "dry-run",
+          },
+        },
+        {
+          id: "observe-completed-1",
+          timestamp: 12_080,
+          action: "queue.observe.completed",
+          success: true,
+          metadata: {
+            snapshotId: "snap-1",
+            mode: "dry-run",
+            queuePressure: "degraded",
+            downstreamState: "healthy",
+            summary: "Content is stacking a bit but not on fire.",
+            suggestedCount: 2,
+            finalCount: 0,
+            appliedCount: 0,
+            suggestedActionKinds: ["pause_family", "escalate"],
+            finalActionKinds: [],
+            latencyMs: 80,
+          },
+        },
+        {
+          id: "observe-started-2",
+          timestamp: 13_000,
+          action: "queue.observe.started",
+          success: true,
+          metadata: {
+            snapshotId: "snap-2",
+            mode: "dry-run",
+          },
+        },
+        {
+          id: "observe-failed-2",
+          timestamp: 13_025,
+          action: "queue.observe.failed",
+          success: false,
+          error: "schema busted",
+          metadata: {
+            snapshotId: "snap-2",
+            mode: "dry-run",
+            latencyMs: 25,
+          },
+        },
+        {
+          id: "observe-fallback-2",
+          timestamp: 13_026,
+          action: "queue.observe.fallback",
+          success: false,
+          error: "schema_error",
+          metadata: {
+            snapshotId: "snap-2",
+            mode: "dry-run",
+            fallbackReason: "schema_error",
+            queuePressure: "healthy",
+            downstreamState: "healthy",
+            summary: "Observer fell back to deterministic findings.",
+            latencyMs: 26,
+          },
+        },
+      ],
+      {
+        hours: 24,
+        found: 5,
+        sampled: 5,
+        truncated: false,
+        filterBy: "timestamp:>=123 && action:=[queue.observe.started,queue.observe.completed,queue.observe.failed,queue.observe.fallback]",
+        sinceTimestamp: null,
+        sinceIso: null,
+      },
+    );
+
+    expect(summary.attempts).toBe(2);
+    expect(summary.completed).toBe(1);
+    expect(summary.failed).toBe(1);
+    expect(summary.fallbacks).toBe(1);
+    expect(summary.fallbackByReason).toEqual([{ reason: "schema_error", count: 1 }]);
+    expect(summary.latencyMs.p95).toBe(80);
+    expect(summary.recentDecisions).toEqual([
+      {
+        at: new Date(12_080).toISOString(),
+        snapshotId: "snap-1",
+        mode: "dry-run",
+        queuePressure: "degraded",
+        downstreamState: "healthy",
+        summary: "Content is stacking a bit but not on fire.",
+        suggestedCount: 2,
+        finalCount: 0,
+        appliedCount: 0,
+        suggestedActionKinds: ["pause_family", "escalate"],
+        finalActionKinds: [],
+        latencyMs: 80,
       },
     ]);
   });

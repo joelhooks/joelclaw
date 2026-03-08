@@ -490,6 +490,29 @@ function buildFallbackDecision(input: {
   };
 }
 
+function shouldUseDeterministicNoop(snapshot: QueueObservationSnapshot): boolean {
+  return snapshot.totals.depth === 0 && snapshot.families.length === 0;
+}
+
+function buildDeterministicNoopDecision(input: {
+  mode: QueueObservationMode;
+  snapshot: QueueObservationSnapshot;
+  model?: string;
+  latencyMs: number;
+  reason: string;
+}): QueueObservationDecision {
+  return {
+    mode: input.mode,
+    model: input.model,
+    snapshotId: input.snapshot.snapshotId,
+    findings: deriveDefaultFindings(input.snapshot),
+    suggestedActions: [{ kind: "noop", reason: input.reason }],
+    finalActions: [],
+    appliedCount: 0,
+    latencyMs: input.latencyMs,
+  };
+}
+
 function buildUserPrompt(input: {
   snapshot: QueueObservationSnapshot;
   mode: QueueObservationMode;
@@ -565,6 +588,7 @@ async function emitQueueObserveCompleted(input: {
       model: input.decision.model ?? null,
       queuePressure: input.decision.findings.queuePressure,
       downstreamState: input.decision.findings.downstreamState,
+      summary: input.decision.findings.summary,
       suggestedCount: input.decision.suggestedActions.length,
       finalCount: input.decision.finalActions.length,
       appliedCount: input.decision.appliedCount,
@@ -622,6 +646,7 @@ async function emitQueueObserveFallback(input: {
       fallbackReason: input.decision.fallbackReason ?? null,
       queuePressure: input.decision.findings.queuePressure,
       downstreamState: input.decision.findings.downstreamState,
+      summary: input.decision.findings.summary,
       latencyMs: input.decision.latencyMs,
     },
   });
@@ -717,6 +742,21 @@ export async function observeQueueSnapshot(input: ObserveQueueSnapshotInput): Pr
     model,
     autoApplyFamilies,
   });
+
+  if (shouldUseDeterministicNoop(input.snapshot)) {
+    const decision = buildDeterministicNoopDecision({
+      mode: input.mode,
+      snapshot: input.snapshot,
+      latencyMs: Date.now() - startedAt,
+      reason: "Queue is empty; no queue control action is warranted.",
+    });
+
+    await emitQueueObserveCompleted({
+      decision,
+      autoApplyFamilies,
+    });
+    return decision;
+  }
 
   try {
     const result = await infer(buildUserPrompt({

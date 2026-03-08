@@ -103,6 +103,10 @@ Operational boundary for Phase 1:
   - canonical fallback reasons are `disabled|timeout|model_error|invalid_json|schema_error|unsafe_action`.
   - canonical OTEL vocabulary is `queue.observe.started|completed|failed|fallback` plus `queue.control.applied|expired|rejected`.
   - Story 1 stops short of the deterministic pause/resume control plane: `finalActions` are safety-filtered, but no automatic queue mutation exists yet.
+- Phase 3 Story 2 adds the dry-run operator surface on the installed CLI:
+  - `joelclaw queue observe` builds the live snapshot from current queue state, recent drainer OTEL, recent triage OTEL, and gateway sleep/muted-channel state before calling the bounded Sonnet observer.
+  - the command returns the current `snapshot`, the current dry-run `decision`, `history` from `queue.observe.*` OTEL, and an explicit `control` block that says the deterministic queue-control plane is not shipped yet.
+  - Story 2 keeps all queue control mutations absent; `appliedCount` remains zero and the CLI must say so plainly.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 
 ### System health
