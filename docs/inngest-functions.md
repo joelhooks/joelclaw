@@ -119,6 +119,7 @@ Operational boundary for Phase 1:
   - runtime flags are `QUEUE_OBSERVER_MODE=off|dry-run|enforce`, `QUEUE_OBSERVER_FAMILIES=discovery,content,subscriptions,github`, `QUEUE_OBSERVER_AUTO_FAMILIES=content`, and `QUEUE_OBSERVER_INTERVAL_SECONDS` (currently clamped to 60s minimum on the durable cron path).
   - both paths build the same bounded snapshot and call Sonnet through `infer()`, but only the cron controller may auto-apply `pause_family`, `resume_family`, and `escalate`; manual probes are read-only even if the configured mode is `enforce`.
   - the shared observer short-circuits deterministic noops for both truly empty queues and empty queues that only still have active pauses hanging around, so the cron path does not waste a full model call on obvious nothing-to-do snapshots.
+  - idle empty snapshots with no recent drainer failures or triage trouble now report `downstreamState=healthy` instead of inheriting a noisy degraded label from stale throughput/latency history.
   - manual probes use singleton-skip semantics so repeated operator requests do not pile up stale queued runs.
   - operator reports flow through `gateway/send.message`, while real queue mutations still emit `queue.control.applied|rejected`.
   - current live truth: dry-run is earned on host, but the first supervised enforce canary on `content/updated` returned `noop`, so autonomous mutation is **not** yet considered earned and the worker was rolled back to `QUEUE_OBSERVER_MODE=dry-run`.
