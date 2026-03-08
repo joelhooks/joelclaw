@@ -49,11 +49,13 @@ Do **not** deploy AIStor objectstore into `joelclaw` unless intentionally cuttin
 
 Legacy MinIO remains on `minio/minio:latest` for rollback because source-only-era release tag `RELEASE.2025-10-15T17-29-55Z` is not pullable from Docker Hub in this cluster.
 
+Legacy rollback storage mounts the exported NAS root (`/volume1/joelclaw`) via NFSv3 and uses `subPath: s3` inside the pod. The NAS export itself does not expose `/volume1/joelclaw/s3` directly.
+
 If that happens:
 
 ```bash
 helm uninstall aistor-primary -n joelclaw
-kubectl apply -f k8s/minio.yaml
+kubectl apply -f k8s/minio-pv.yaml -f k8s/minio.yaml
 ./k8s/reconcile-aistor.sh
 ```
 
