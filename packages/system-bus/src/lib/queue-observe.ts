@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   Priority,
+  type QueueControlMode,
   type QueueObservationDecision,
   type QueueObservationDrainerSummary,
   type QueueObservationFallbackReason,
@@ -22,6 +23,7 @@ import { infer } from "./inference";
 import { MODEL } from "./models";
 
 const QUEUE_OBSERVE_COMPONENT = "queue-observe";
+const QUEUE_CONTROL_COMPONENT = "queue-control";
 const DEFAULT_TIMEOUT_MS = 60_000;
 const AUTO_APPLY_ACTION_KINDS = new Set<QueueObserverAction["kind"]>([
   "pause_family",
@@ -654,7 +656,7 @@ async function emitQueueObserveFallback(input: {
 
 export async function emitQueueControlApplied(input: {
   snapshotId: string;
-  mode: QueueObservationMode;
+  mode: QueueControlMode;
   action: QueueObserverAction;
   model?: string;
   expiresAt?: string | null;
@@ -662,7 +664,7 @@ export async function emitQueueControlApplied(input: {
   await emitOtelEvent({
     level: "info",
     source: "worker",
-    component: QUEUE_OBSERVE_COMPONENT,
+    component: QUEUE_CONTROL_COMPONENT,
     action: "queue.control.applied",
     success: true,
     metadata: {
@@ -683,7 +685,7 @@ export async function emitQueueControlExpired(input: {
   await emitOtelEvent({
     level: "info",
     source: "worker",
-    component: QUEUE_OBSERVE_COMPONENT,
+    component: QUEUE_CONTROL_COMPONENT,
     action: "queue.control.expired",
     success: true,
     metadata: {
@@ -696,7 +698,7 @@ export async function emitQueueControlExpired(input: {
 
 export async function emitQueueControlRejected(input: {
   snapshotId: string;
-  mode: QueueObservationMode;
+  mode: QueueControlMode;
   action: QueueObserverAction;
   reason: string;
   model?: string;
@@ -704,7 +706,7 @@ export async function emitQueueControlRejected(input: {
   await emitOtelEvent({
     level: "warn",
     source: "worker",
-    component: QUEUE_OBSERVE_COMPONENT,
+    component: QUEUE_CONTROL_COMPONENT,
     action: "queue.control.rejected",
     success: false,
     error: input.reason,

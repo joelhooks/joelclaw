@@ -1,4 +1,9 @@
 import {
+  DEFAULT_QUEUE_CONTROL_CONFIG,
+  expireQueueFamilyPauses,
+  listActiveQueueFamilyPauses,
+  pauseStateToControlAction,
+  type QueueFamilyPauseState,
   type QueueObservationDecision,
   type QueueObservationDownstreamState,
   type QueueObservationSnapshot,
@@ -10,6 +15,7 @@ import {
 } from "@joelclaw/system-bus/src/lib/queue-observe.ts";
 import type Redis from "ioredis";
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth";
+import { createOtelEventPayload, ingestOtelPayload } from "./otel-ingest";
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL ?? "http://localhost:8108";
 const OTEL_COLLECTION = "otel_events";
@@ -292,7 +298,7 @@ function parseQueueControlHit(hit: unknown): QueueControlEvent | null {
 
 async function loadOtelWindow<T>(input: {
   component: string;
-  source: string;
+  source?: string;
   actions: readonly string[];
   hours: number;
   limit: number;
@@ -303,7 +309,7 @@ async function loadOtelWindow<T>(input: {
   const lowerBound = input.sinceTimestamp ?? Math.floor(Date.now() - input.hours * 60 * 60 * 1000);
   const filterBy = [
     `timestamp:>=${lowerBound}`,
-    `source:=${input.source}`,
+    ...(input.source ? [`source:=${input.source}`] : []),
     `component:=${input.component}`,
     `action:=[${input.actions.join(",")}]`,
   ].join(" && ");
@@ -538,12 +544,26 @@ export function summarizeQueueObserveHistory(events: readonly QueueObserveEvent[
   };
 }
 
-export function summarizeQueueControlHistory(events: readonly QueueControlEvent[], window: QueueStatsWindow) {
+export function summarizeQueueControlHistory(
+  events: readonly QueueControlEvent[],
+  window: QueueStatsWindow,
+  activePauses: readonly QueueFamilyPauseState[],
+) {
   return {
     window,
-    available: false,
-    reason: "Phase 3 Story 3 deterministic queue-control state is not shipped yet",
-    activePauses: [] as Array<{ family: string; expiresAt: string | null }>,
+    available: true,
+    activePauses: activePauses.map((pause) => ({
+      family: pause.family,
+      ttlMs: pause.ttlMs,
+      reason: pause.reason,
+      sourceType: pause.source,
+      mode: pause.mode,
+      appliedAt: pause.appliedAt,
+      expiresAt: pause.expiresAt,
+      expiresInMs: Math.max(0, pause.expiresAtMs - Date.now()),
+      snapshotId: pause.snapshotId ?? null,
+      actor: pause.actor ?? null,
+    })),
     counts: {
       applied: events.filter((event) => event.action === "queue.control.applied").length,
       expired: events.filter((event) => event.action === "queue.control.expired").length,
@@ -553,6 +573,12 @@ export function summarizeQueueControlHistory(events: readonly QueueControlEvent[
       at: new Date(event.timestamp).toISOString(),
       action: event.action,
       snapshotId: asNonEmptyString(event.metadata.snapshotId) ?? null,
+      mode: asNonEmptyString(event.metadata.mode) ?? null,
+      family: asNonEmptyString(event.metadata.family)
+        ?? asNonEmptyString((event.metadata.action as { family?: unknown } | null | undefined)?.family)
+        ?? null,
+      sourceType: asNonEmptyString(event.metadata.sourceType) ?? null,
+      actor: asNonEmptyString(event.metadata.actor) ?? null,
       expiresAt: asNonEmptyString(event.metadata.expiresAt) ?? null,
       expiredAt: asNonEmptyString(event.metadata.expiredAt) ?? null,
       reason: asNonEmptyString(event.metadata.reason) ?? event.error ?? null,
@@ -561,8 +587,77 @@ export function summarizeQueueControlHistory(events: readonly QueueControlEvent[
   };
 }
 
+async function emitExpiredQueueControlTelemetry(
+  pauses: Awaited<ReturnType<typeof expireQueueFamilyPauses>>,
+): Promise<void> {
+  await Promise.all(pauses.map((pause) => ingestOtelPayload(createOtelEventPayload({
+    level: "info",
+    source: "cli",
+    component: "queue-control",
+    action: "queue.control.expired",
+    success: true,
+    metadata: {
+      snapshotId: pause.snapshotId ?? null,
+      mode: pause.mode,
+      model: pause.model ?? null,
+      family: pause.family,
+      sourceType: pause.source,
+      actor: pause.actor ?? null,
+      appliedAt: pause.appliedAt,
+      expiresAt: pause.expiresAt,
+      expiredAt: pause.expiredAt,
+      reason: pause.reason,
+      action: pauseStateToControlAction(pause),
+    },
+  }))));
+}
+
+async function refreshQueueControlState(redis: Pick<Redis, "hdel" | "hget" | "hgetall" | "hset" | "mget" | "zadd" | "zrangebyscore" | "zrem">) {
+  const expiredPauses = await expireQueueFamilyPauses(redis, {
+    config: DEFAULT_QUEUE_CONTROL_CONFIG,
+  });
+  if (expiredPauses.length > 0) {
+    await emitExpiredQueueControlTelemetry(expiredPauses);
+  }
+
+  const activePauses = await listActiveQueueFamilyPauses(redis, {
+    config: DEFAULT_QUEUE_CONTROL_CONFIG,
+  });
+
+  return {
+    expiredPauses,
+    activePauses,
+  };
+}
+
+export async function runQueueControlOperatorView(input: {
+  redis: Pick<Redis, "hdel" | "hget" | "hgetall" | "hset" | "mget" | "zadd" | "zrangebyscore" | "zrem">;
+  hours: number;
+  limit: number;
+  sinceTimestamp?: number;
+}): Promise<ReturnType<typeof summarizeQueueControlHistory>> {
+  const normalizedLimit = Math.min(Math.max(1, input.limit), DEFAULT_LIMIT);
+  const [{ activePauses }, controlWindow] = await Promise.all([
+    refreshQueueControlState(input.redis),
+    loadOtelWindow({
+      component: "queue-control",
+      actions: QUEUE_CONTROL_ACTIONS,
+      hours: input.hours,
+      limit: normalizedLimit,
+      sinceTimestamp: input.sinceTimestamp,
+      parser: parseQueueControlHit,
+    }),
+  ]);
+
+  return summarizeQueueControlHistory(
+    controlWindow.events,
+    windowFor(input.hours, controlWindow.found, controlWindow.events.length, controlWindow.filterBy, input.sinceTimestamp),
+    activePauses,
+  );
+}
+
 export async function runQueueObserveOperatorView(input: {
-  redis: Pick<Redis, "mget">;
+  redis: Pick<Redis, "hdel" | "hget" | "hgetall" | "hset" | "mget" | "zadd" | "zrangebyscore" | "zrem">;
   depth: QueueDepthSnapshot;
   messages: ReadonlyArray<StoredMessage>;
   hours: number;
@@ -575,7 +670,7 @@ export async function runQueueObserveOperatorView(input: {
   control: ReturnType<typeof summarizeQueueControlHistory>;
 }> {
   const normalizedLimit = Math.min(Math.max(1, input.limit), DEFAULT_LIMIT);
-  const [dispatchWindow, triageWindow, gateway] = await Promise.all([
+  const [dispatchWindow, triageWindow, gateway, control] = await Promise.all([
     loadOtelWindow({
       component: "queue-drainer",
       source: "restate",
@@ -595,6 +690,12 @@ export async function runQueueObserveOperatorView(input: {
       parser: parseQueueTriageHit,
     }),
     loadGatewaySummary(input.redis),
+    runQueueControlOperatorView({
+      redis: input.redis,
+      hours: input.hours,
+      limit: normalizedLimit,
+      sinceTimestamp: input.sinceTimestamp,
+    }),
   ]);
 
   const dispatchSummary = summarizeQueueStats(
@@ -622,26 +723,15 @@ export async function runQueueObserveOperatorView(input: {
     snapshot,
   });
 
-  const [observeWindow, controlWindow] = await Promise.all([
-    loadOtelWindow({
-      component: "queue-observe",
-      source: "worker",
-      actions: QUEUE_OBSERVE_ACTIONS,
-      hours: input.hours,
-      limit: normalizedLimit,
-      sinceTimestamp: input.sinceTimestamp,
-      parser: parseQueueObserveHit,
-    }),
-    loadOtelWindow({
-      component: "queue-observe",
-      source: "worker",
-      actions: QUEUE_CONTROL_ACTIONS,
-      hours: input.hours,
-      limit: normalizedLimit,
-      sinceTimestamp: input.sinceTimestamp,
-      parser: parseQueueControlHit,
-    }),
-  ]);
+  const observeWindow = await loadOtelWindow({
+    component: "queue-observe",
+    source: "worker",
+    actions: QUEUE_OBSERVE_ACTIONS,
+    hours: input.hours,
+    limit: normalizedLimit,
+    sinceTimestamp: input.sinceTimestamp,
+    parser: parseQueueObserveHit,
+  });
 
   return {
     snapshot,
@@ -650,10 +740,7 @@ export async function runQueueObserveOperatorView(input: {
       observeWindow.events,
       windowFor(input.hours, observeWindow.found, observeWindow.events.length, observeWindow.filterBy, input.sinceTimestamp),
     ),
-    control: summarizeQueueControlHistory(
-      controlWindow.events,
-      windowFor(input.hours, controlWindow.found, controlWindow.events.length, controlWindow.filterBy, input.sinceTimestamp),
-    ),
+    control,
   };
 }
 

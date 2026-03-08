@@ -8,6 +8,7 @@ export interface Config {
   readonly signingKey: string
   readonly inngestUrl: string
   readonly workerUrl: string
+  readonly redisUrl: string
 }
 
 let _cached: Config | null = null
@@ -34,6 +35,7 @@ export function loadConfig(): Config {
     signingKey: process.env.INNGEST_SIGNING_KEY ?? env.INNGEST_SIGNING_KEY ?? "",
     inngestUrl: process.env.INNGEST_URL ?? env.INNGEST_URL ?? "http://localhost:8288",
     workerUrl: process.env.INNGEST_WORKER_URL ?? env.INNGEST_WORKER_URL ?? "http://localhost:3111",
+    redisUrl: env.REDIS_URL ?? process.env.REDIS_URL ?? "redis://localhost:6379",
   }
 
   if (!_cached.eventKey) {

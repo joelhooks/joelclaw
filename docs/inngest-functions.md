@@ -105,8 +105,13 @@ Operational boundary for Phase 1:
   - Story 1 stops short of the deterministic pause/resume control plane: `finalActions` are safety-filtered, but no automatic queue mutation exists yet.
 - Phase 3 Story 2 adds the dry-run operator surface on the installed CLI:
   - `joelclaw queue observe` builds the live snapshot from current queue state, recent drainer OTEL, recent triage OTEL, and gateway sleep/muted-channel state before calling the bounded Sonnet observer.
-  - the command returns the current `snapshot`, the current dry-run `decision`, `history` from `queue.observe.*` OTEL, and an explicit `control` block that says the deterministic queue-control plane is not shipped yet.
-  - Story 2 keeps all queue control mutations absent; `appliedCount` remains zero and the CLI must say so plainly.
+  - the command returns the current `snapshot`, the current dry-run `decision`, `history` from `queue.observe.*` OTEL, and the current deterministic `control` block.
+  - Story 2 keeps all automatic queue control mutations absent; `appliedCount` remains zero and the CLI must say so plainly.
+- Phase 3 Story 3 adds the deterministic queue-control plane before any automatic Sonnet mutation:
+  - `@joelclaw/queue` now owns Redis-backed family pause state plus deterministic `pauseQueueFamily`, `resumeQueueFamily`, `expireQueueFamilyPauses`, and `listActiveQueueFamilyPauses` helpers.
+  - `packages/restate/src/queue-drainer.ts` reaps expired pauses, emits `queue.control.expired`, and filters paused families out of dispatch candidates without dropping queued work.
+  - the installed CLI now exposes `joelclaw queue pause`, `joelclaw queue resume`, and `joelclaw queue control status`.
+  - queue operator commands resolve Redis from the canonical CLI config (`~/.config/system-bus.env` → `REDIS_URL`) before ambient shell env so manual controls target the same localhost queue as the worker and drainer.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 
 ### System health

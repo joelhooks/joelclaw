@@ -4,11 +4,16 @@ import { join } from "node:path";
 import {
   ack,
   type CandidateMessage,
+  DEFAULT_QUEUE_CONTROL_CONFIG,
   drainByPriority,
+  expireQueueFamilyPauses,
+  getQueueStats,
   getUnacked,
   indexMessagesByPriority,
   init,
+  listActiveQueueFamilyPauses,
   lookupQueueEvent,
+  pauseStateToControlAction,
   type QueueConfig,
   type QueueEventEnvelope,
   type QueueEventRegistryEntry,
@@ -27,6 +32,7 @@ const QUEUE_DRAINER_CONCURRENCY = parseNumberEnv(process.env.QUEUE_DRAINER_CONCU
 const QUEUE_DRAIN_FAILURE_BACKOFF_MS = parseNumberEnv(process.env.QUEUE_DRAIN_FAILURE_BACKOFF_MS, 30_000);
 const DISPATCH_SEND_TIMEOUT_MS = parseNumberEnv(process.env.QUEUE_DRAIN_SEND_TIMEOUT_MS, 10_000);
 const QUEUE_DRAIN_STALL_AFTER_MS = parseNumberEnv(process.env.QUEUE_DRAIN_STALL_AFTER_MS, 45_000);
+const QUEUE_DRAIN_CANDIDATE_SCAN_LIMIT = 256;
 const QUEUE_DRAIN_WATCHDOG_INTERVAL_MS = Math.min(
   QUEUE_DRAIN_STALL_AFTER_MS,
   Math.max(5_000, QUEUE_DRAIN_INTERVAL_MS),
@@ -37,6 +43,7 @@ const QUEUE_CONFIG: QueueConfig = {
   consumerGroup: "joelclaw:queue:restate",
   consumerName: `restate-${hostname()}-${process.pid}`,
 };
+const QUEUE_CONTROL_CONFIG = DEFAULT_QUEUE_CONTROL_CONFIG;
 
 function parseBooleanEnv(value: string | undefined, defaultValue: boolean): boolean {
   if (!value) return defaultValue;
@@ -185,6 +192,13 @@ function buildDispatchWorkflowId(message: StoredMessage, envelope: QueueEventEnv
   return `queue-dispatch-${sanitizeWorkflowKey(envelope.id || message.id)}`;
 }
 
+function candidateFamily(candidate: CandidateMessage): string | null {
+  const raw = candidate.message.payload?.name;
+  if (typeof raw !== "string") return null;
+  const normalized = raw.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
 function buildInngestDispatchNode(
   registry: QueueEventRegistryEntry,
   envelope: QueueEventEnvelope<Record<string, unknown>>,
@@ -325,6 +339,26 @@ const queueTelemetry: TelemetryEmitter = {
     });
   },
 };
+
+async function emitExpiredQueueControls(pauses: Awaited<ReturnType<typeof expireQueueFamilyPauses>>): Promise<void> {
+  await Promise.all(pauses.map((pause) => emitOtel({
+    action: "queue.control.expired",
+    component: "queue-control",
+    metadata: {
+      snapshotId: pause.snapshotId ?? null,
+      mode: pause.mode,
+      model: pause.model ?? null,
+      family: pause.family,
+      sourceType: pause.source,
+      actor: pause.actor ?? null,
+      appliedAt: pause.appliedAt,
+      expiresAt: pause.expiresAt,
+      expiredAt: pause.expiredAt,
+      reason: pause.reason,
+      action: pauseStateToControlAction(pause),
+    },
+  })));
+}
 
 export async function startQueueDrainer(): Promise<() => Promise<void>> {
   if (!QUEUE_DRAINER_ENABLED) {
@@ -491,12 +525,30 @@ export async function startQueueDrainer(): Promise<() => Promise<void>> {
       const availableSlots = Math.max(0, QUEUE_DRAINER_CONCURRENCY - activeDispatches.size);
       if (availableSlots === 0) return;
 
+      const now = Date.now();
+      const expiredPauses = await expireQueueFamilyPauses(redis, {
+        config: QUEUE_CONTROL_CONFIG,
+        now,
+      });
+      if (expiredPauses.length > 0) {
+        await emitExpiredQueueControls(expiredPauses);
+      }
+
+      const activePauses = await listActiveQueueFamilyPauses(redis, {
+        config: QUEUE_CONTROL_CONFIG,
+        now,
+      });
+      const pausedFamilies = new Set(activePauses.map((pause) => pause.family));
+
       const candidates = await drainByPriority({
-        limit: Math.max(availableSlots * 4, 4),
+        limit: QUEUE_DRAIN_CANDIDATE_SCAN_LIMIT,
         excludeIds: activeDispatches.keys(),
+        filter: (candidate) => {
+          const family = candidateFamily(candidate);
+          return family == null || !pausedFamilies.has(family);
+        },
       });
 
-      const now = Date.now();
       const ready = candidates
         .filter((candidate) => (retryNotBefore.get(candidate.message.id) ?? 0) <= now)
         .slice(0, availableSlots);

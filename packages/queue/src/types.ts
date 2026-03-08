@@ -201,6 +201,59 @@ export interface QueueObservationDecision {
 }
 
 /**
+ * Queue-control mode used for deterministic manual state and future observer enforcement.
+ */
+export type QueueControlMode = QueueObservationMode | "manual";
+
+/**
+ * Where a queue-control action originated.
+ */
+export type QueueControlSource = "manual" | "observer";
+
+/**
+ * Redis-backed deterministic pause state for one queue family.
+ */
+export interface QueueFamilyPauseState {
+  kind: "pause_family";
+  family: string;
+  ttlMs: number;
+  reason: string;
+  source: QueueControlSource;
+  mode: QueueControlMode;
+  appliedAt: string;
+  appliedAtMs: number;
+  expiresAt: string;
+  expiresAtMs: number;
+  snapshotId?: string;
+  model?: string;
+  actor?: string;
+}
+
+/**
+ * Queue family pause state that has been deterministically expired.
+ */
+export interface QueueExpiredFamilyPauseState extends QueueFamilyPauseState {
+  expiredAt: string;
+  expiredAtMs: number;
+}
+
+/**
+ * Result of a deterministic resume/clear operation.
+ */
+export interface QueueResumeFamilyResult {
+  removed: boolean;
+  pause?: QueueFamilyPauseState;
+}
+
+/**
+ * Redis keys for deterministic queue-control state.
+ */
+export interface QueueControlConfig {
+  pauseStateKey: string;
+  pauseExpiryKey: string;
+}
+
+/**
  * Trace metadata carried on queue envelopes.
  */
 export interface QueueTraceMetadata {
@@ -331,6 +384,13 @@ export type DrainByPriorityOptions = {
    * Stream IDs to exclude from draining.
    */
   excludeIds?: Iterable<string>;
+
+  /**
+   * Optional deterministic filter applied after priority ordering.
+   *
+   * Used by the drainer to defer paused families without changing the stored queue order.
+   */
+  filter?: (candidate: CandidateMessage) => boolean;
 };
 
 /**

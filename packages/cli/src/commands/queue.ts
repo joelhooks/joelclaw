@@ -6,6 +6,9 @@
  * - joelclaw queue depth — Get queue depth and stats
  * - joelclaw queue stats [--hours <n>] [--limit <n>] — Summarize recent drainer success/failure + latency
  * - joelclaw queue observe [--hours <n>] [--limit <n>] [--since <iso|ms>] — Run the dry-run Sonnet operator surface
+ * - joelclaw queue pause <family> [--ttl <duration>] [--reason <text>] — Pause one family deterministically
+ * - joelclaw queue resume <family> [--reason <text>] — Resume one family deterministically
+ * - joelclaw queue control status [--hours <n>] [--limit <n>] [--since <iso|ms>] — Inspect deterministic queue-control state
  * - joelclaw queue list [--limit <n>] — List recent messages
  * - joelclaw queue inspect <stream-id> — Inspect a message by ID
  */
@@ -15,8 +18,13 @@ import {
   getQueueStats,
   init,
   inspectById,
+  listActiveQueueFamilyPauses,
   listMessages,
+  pauseQueueFamily,
+  pauseStateToControlAction,
   type QueueConfig,
+  type QueueFamilyPauseState,
+  resumeQueueFamily,
   type TelemetryEmitter,
 } from "@joelclaw/queue";
 import { Console, Effect } from "effect";
@@ -26,13 +34,14 @@ import { createOtelEventPayload, ingestOtelPayload } from "../lib/otel-ingest";
 import { enqueueQueueEventViaWorker } from "../lib/queue-admission";
 import {
   __queueObserveCliTestUtils,
+  runQueueControlOperatorView,
   runQueueObserveOperatorView,
 } from "../lib/queue-observe";
 import { type NextAction, respond, respondError } from "../response";
 import { isTypesenseApiKeyError, resolveTypesenseApiKey } from "../typesense-auth";
 
 const cfg = loadConfig();
-const REDIS_URL = process.env.REDIS_URL ?? cfg.redisUrl ?? "redis://localhost:6379";
+const REDIS_URL = cfg.redisUrl ?? process.env.REDIS_URL ?? "redis://localhost:6379";
 
 // Queue configuration
 const QUEUE_CONFIG: QueueConfig = {
@@ -223,6 +232,64 @@ function parseSinceTimestamp(value: string): number {
   }
 
   return parsed;
+}
+
+function parseDurationToMs(input: string): number | null {
+  const trimmed = input.trim().toLowerCase();
+  if (!trimmed) return null;
+
+  const direct = Number.parseInt(trimmed, 10);
+  if (Number.isFinite(direct) && direct > 0 && /^\d+$/u.test(trimmed)) {
+    return direct * 1000;
+  }
+
+  const match = /^(\d+)(s|m|h|d)$/u.exec(trimmed);
+  if (!match) return null;
+
+  const value = Number.parseInt(match[1] ?? "", 10);
+  if (!Number.isFinite(value) || value <= 0) return null;
+
+  const unit = match[2];
+  if (unit === "s") return value * 1000;
+  if (unit === "m") return value * 60 * 1000;
+  if (unit === "h") return value * 60 * 60 * 1000;
+  if (unit === "d") return value * 24 * 60 * 60 * 1000;
+  return null;
+}
+
+async function emitQueueControlTelemetry(input: {
+  level: "info" | "warn";
+  action: "queue.control.applied" | "queue.control.expired" | "queue.control.rejected";
+  success: boolean;
+  error?: string;
+  metadata: Record<string, unknown>;
+}): Promise<void> {
+  await ingestOtelPayload(
+    createOtelEventPayload({
+      level: input.level,
+      source: "cli",
+      component: "queue-control",
+      action: input.action,
+      success: input.success,
+      error: input.error,
+      metadata: input.metadata,
+    }),
+  );
+}
+
+function compactPauseState(pause: QueueFamilyPauseState) {
+  return {
+    family: pause.family,
+    ttlMs: pause.ttlMs,
+    reason: pause.reason,
+    sourceType: pause.source,
+    mode: pause.mode,
+    appliedAt: pause.appliedAt,
+    expiresAt: pause.expiresAt,
+    expiresInMs: Math.max(0, pause.expiresAtMs - Date.now()),
+    snapshotId: pause.snapshotId ?? null,
+    actor: pause.actor ?? null,
+  };
 }
 
 function parseMetadataJson(raw: unknown): Record<string, unknown> {
@@ -1109,6 +1176,21 @@ const observeCmd = Command.make(
       const summary = observeResult.right;
       const next: NextAction[] = [
         {
+          command: "joelclaw queue control status [--hours <hours>] [--since <since>]",
+          description: "Inspect active pauses, expirations, and recent deterministic control actions",
+          params: {
+            hours: {
+              value: hours,
+              default: hours,
+              description: "Lookback window in hours",
+            },
+            since: {
+              value: summary.observeHistory.window.sinceIso ?? undefined,
+              description: "Optional lower bound for anchored windows",
+            },
+          },
+        },
+        {
           command: "joelclaw queue stats [--hours <hours>] [--since <since>]",
           description: "Compare the dry-run observation with queue drainer + triage history",
           params: {
@@ -1124,20 +1206,9 @@ const observeCmd = Command.make(
           },
         },
         {
-          command: `joelclaw otel search "queue-observe" --hours ${hours}`,
-          description: "Inspect raw queue-observe OTEL for the same window",
+          command: `joelclaw otel search "queue-control" --hours ${hours}`,
+          description: "Inspect raw queue-control OTEL for the same window",
           params: {},
-        },
-        {
-          command: "joelclaw queue list --limit <n>",
-          description: "Inspect the queued messages Sonnet just observed",
-          params: {
-            n: {
-              value: 20,
-              default: 20,
-              description: "Number of queued messages to list",
-            },
-          },
         },
       ];
 
@@ -1152,6 +1223,324 @@ const observeCmd = Command.make(
         }, next),
       );
     })),
+);
+
+/**
+ * joelclaw queue pause <family> [--ttl <duration>] [--reason <text>] — Pause one family deterministically.
+ */
+const pauseCmd = Command.make(
+  "pause",
+  {
+    family: Args.text({ name: "family" }).pipe(
+      Args.withDescription("Exact queue family to pause (e.g., content/updated)"),
+    ),
+    ttl: Options.text("ttl").pipe(
+      Options.withDefault("15m"),
+      Options.withDescription("Pause TTL as <n>s|m|h|d (minimum 60s, maximum 1d)"),
+    ),
+    reason: Options.optional(
+      Options.text("reason").pipe(
+        Options.withDescription("Operator-visible reason for the pause"),
+      ),
+    ),
+  },
+  ({ family, ttl, reason }) =>
+    withRedisCleanup(Effect.gen(function* () {
+      const ttlMs = parseDurationToMs(ttl);
+      if (ttlMs == null || ttlMs < 60_000 || ttlMs > 86_400_000) {
+        yield* Console.log(
+          respondError(
+            "queue pause",
+            `Invalid --ttl value: ${ttl}`,
+            "QUEUE_CONTROL_INVALID_TTL",
+            "Use a positive duration between 60s and 1d, for example --ttl 10m.",
+            [{ command: "joelclaw queue pause <family> --ttl 10m --reason <text>", description: "Retry with a valid TTL" }],
+          ),
+        );
+        return;
+      }
+
+      const pause = yield* Effect.tryPromise({
+        try: () => pauseQueueFamily(getRedisClient(), {
+          family,
+          ttlMs,
+          reason: parseOptionalText(reason) ?? `Manual pause from joelclaw queue pause for ${family}`,
+          actor: "joelclaw queue pause",
+        }),
+        catch: (error) => new Error(`Failed to pause queue family: ${error}`),
+      });
+
+      yield* Effect.tryPromise({
+        try: () => emitQueueControlTelemetry({
+          level: "info",
+          action: "queue.control.applied",
+          success: true,
+          metadata: {
+            snapshotId: pause.snapshotId ?? null,
+            mode: pause.mode,
+            model: pause.model ?? null,
+            family: pause.family,
+            sourceType: pause.source,
+            actor: pause.actor ?? null,
+            appliedAt: pause.appliedAt,
+            expiresAt: pause.expiresAt,
+            reason: pause.reason,
+            action: pauseStateToControlAction(pause),
+          },
+        }),
+        catch: (error) => new Error(`Failed to emit queue-control telemetry: ${error}`),
+      });
+
+      yield* Console.log(
+        respond("queue pause", {
+          ok: true,
+          pause: compactPauseState(pause),
+        }, [
+          {
+            command: "joelclaw queue control status [--hours <hours>]",
+            description: "Inspect active pause state and recent control actions",
+            params: {
+              hours: { value: 1, default: 24, description: "Lookback window in hours" },
+            },
+          },
+          {
+            command: "joelclaw queue observe [--hours <hours>]",
+            description: "See how the dry-run observer now reports the active pause",
+            params: {
+              hours: { value: 1, default: 24, description: "Lookback window in hours" },
+            },
+          },
+          {
+            command: `joelclaw queue resume ${family}`,
+            description: "Clear the pause deterministically",
+            params: {},
+          },
+        ]),
+      );
+    })),
+);
+
+/**
+ * joelclaw queue resume <family> [--reason <text>] — Resume one family deterministically.
+ */
+const resumeCmd = Command.make(
+  "resume",
+  {
+    family: Args.text({ name: "family" }).pipe(
+      Args.withDescription("Exact queue family to resume (e.g., content/updated)"),
+    ),
+    reason: Options.optional(
+      Options.text("reason").pipe(
+        Options.withDescription("Operator-visible reason for the resume"),
+      ),
+    ),
+  },
+  ({ family, reason }) =>
+    withRedisCleanup(Effect.gen(function* () {
+      const resumeReason = parseOptionalText(reason) ?? `Manual resume from joelclaw queue resume for ${family}`;
+      const result = yield* Effect.tryPromise({
+        try: () => resumeQueueFamily(getRedisClient(), { family }),
+        catch: (error) => new Error(`Failed to resume queue family: ${error}`),
+      });
+
+      if (!result.removed) {
+        const action = { kind: "resume_family", family, reason: resumeReason };
+        yield* Effect.tryPromise({
+          try: () => emitQueueControlTelemetry({
+            level: "warn",
+            action: "queue.control.rejected",
+            success: false,
+            error: `queue family ${family} is not paused`,
+            metadata: {
+              snapshotId: result.pause?.snapshotId ?? null,
+              mode: "manual",
+              model: null,
+              family,
+              sourceType: "manual",
+              actor: "joelclaw queue resume",
+              reason: `queue family ${family} is not paused`,
+              action,
+            },
+          }),
+          catch: (error) => new Error(`Failed to emit queue-control telemetry: ${error}`),
+        });
+
+        yield* Console.log(
+          respondError(
+            "queue resume",
+            `Queue family ${family} is not paused`,
+            "QUEUE_FAMILY_NOT_PAUSED",
+            "Check queue control status for currently active pauses, then retry with one of those families.",
+            [
+              {
+                command: "joelclaw queue control status [--hours <hours>]",
+                description: "Inspect active deterministic pause state",
+                params: {
+                  hours: { value: 1, default: 24, description: "Lookback window in hours" },
+                },
+              },
+            ],
+          ),
+        );
+        return;
+      }
+
+      const action = {
+        kind: "resume_family",
+        family,
+        reason: resumeReason,
+      };
+      yield* Effect.tryPromise({
+        try: () => emitQueueControlTelemetry({
+          level: "info",
+          action: "queue.control.applied",
+          success: true,
+          metadata: {
+            snapshotId: result.pause?.snapshotId ?? null,
+            mode: "manual",
+            model: result.pause?.model ?? null,
+            family,
+            sourceType: result.pause?.source ?? "manual",
+            actor: "joelclaw queue resume",
+            appliedAt: result.pause?.appliedAt ?? null,
+            expiresAt: result.pause?.expiresAt ?? null,
+            reason: resumeReason,
+            action,
+          },
+        }),
+        catch: (error) => new Error(`Failed to emit queue-control telemetry: ${error}`),
+      });
+
+      yield* Console.log(
+        respond("queue resume", {
+          ok: true,
+          family,
+          resumed: true,
+          previousPause: result.pause ? compactPauseState(result.pause) : null,
+        }, [
+          {
+            command: "joelclaw queue control status [--hours <hours>]",
+            description: "Confirm the family is no longer paused",
+            params: {
+              hours: { value: 1, default: 24, description: "Lookback window in hours" },
+            },
+          },
+          {
+            command: "joelclaw queue depth",
+            description: "Check whether deferred work has started draining",
+            params: {},
+          },
+        ]),
+      );
+    })),
+);
+
+/**
+ * joelclaw queue control status [--hours <n>] [--limit <n>] [--since <iso|ms>] — Inspect deterministic queue-control state.
+ */
+const controlStatusCmd = Command.make(
+  "status",
+  {
+    hours: Options.integer("hours").pipe(
+      Options.withAlias("h"),
+      Options.withDefault(24),
+      Options.withDescription("Lookback window in hours for queue-control telemetry"),
+    ),
+    limit: Options.integer("limit").pipe(
+      Options.withAlias("n"),
+      Options.withDefault(DEFAULT_QUEUE_STATS_LIMIT),
+      Options.withDescription("Max queue-control OTEL events to sample"),
+    ),
+    since: Options.optional(
+      Options.text("since").pipe(
+        Options.withDescription("Override the lower bound with an ISO timestamp or epoch milliseconds"),
+      ),
+    ),
+  },
+  ({ hours, limit, since }) =>
+    withRedisCleanup(Effect.gen(function* () {
+      const sinceText = parseOptionalText(since);
+      const parsedSince = sinceText ? parseSinceTimestamp(sinceText) : undefined;
+      const statusResult = yield* Effect.tryPromise({
+        try: async () => runQueueControlOperatorView({
+          redis: getRedisClient(),
+          hours,
+          limit: Math.min(Math.max(1, limit), DEFAULT_QUEUE_STATS_LIMIT),
+          sinceTimestamp: parsedSince,
+        }),
+        catch: (error) => error,
+      }).pipe(Effect.either);
+
+      if (statusResult._tag === "Left") {
+        const error = statusResult.left;
+        const next: NextAction[] = [
+          {
+            command: "joelclaw queue observe [--hours <hours>]",
+            description: "Compare the observer surface against control history",
+            params: {
+              hours: { value: hours, default: 24, description: "Lookback window in hours" },
+            },
+          },
+          {
+            command: "joelclaw queue depth",
+            description: "Check whether deferred work is still queued",
+            params: {},
+          },
+        ];
+
+        if (isTypesenseApiKeyError(error) || __queueObserveCliTestUtils.isTypesenseApiKeyError(error)) {
+          yield* Console.log(
+            respondError("queue control status", error.message, error.code, error.fix, next),
+          );
+          return;
+        }
+
+        yield* Console.log(
+          respondError(
+            "queue control status",
+            error instanceof Error ? error.message : String(error),
+            "QUEUE_CONTROL_STATUS_FAILED",
+            "Check Typesense reachability and queue-control OTEL history, then retry.",
+            next,
+          ),
+        );
+        return;
+      }
+
+      const summary = statusResult.right;
+      yield* Console.log(
+        respond("queue control status", {
+          ok: true,
+          control: summary,
+        }, [
+          {
+            command: "joelclaw queue observe [--hours <hours>] [--since <since>]",
+            description: "Compare active control state with the latest dry-run observer decision",
+            params: {
+              hours: { value: hours, default: 24, description: "Lookback window in hours" },
+              since: { value: summary.window.sinceIso ?? undefined, description: "Optional lower bound for anchored windows" },
+            },
+          },
+          {
+            command: `joelclaw otel search "queue-control" --hours ${hours}`,
+            description: "Inspect raw queue-control OTEL for the same window",
+            params: {},
+          },
+          {
+            command: "joelclaw queue list --limit <n>",
+            description: "Inspect currently deferred queue items",
+            params: {
+              n: { value: 20, default: 20, description: "Number of messages to list" },
+            },
+          },
+        ]),
+      );
+    })),
+);
+
+const controlCmd = Command.make("control", {}).pipe(
+  Command.withDescription("Deterministic queue-control operator surface"),
+  Command.withSubcommands([controlStatusCmd]),
 );
 
 /**
@@ -1295,12 +1684,14 @@ const inspectCmd = Command.make(
  */
 export const queueCmd = Command.make("queue", {}).pipe(
   Command.withDescription("Queue operator surface for @joelclaw/queue"),
-  Command.withSubcommands([emitCmd, depthCmd, statsCmd, observeCmd, listCmd, inspectCmd])
+  Command.withSubcommands([emitCmd, depthCmd, statsCmd, observeCmd, pauseCmd, resumeCmd, controlCmd, listCmd, inspectCmd])
 );
 
 export const __queueTestUtils = {
+  parseDurationToMs,
   parseSinceTimestamp,
   percentile,
+  summarizeQueueControlHistory: __queueObserveCliTestUtils.summarizeQueueControlHistory,
   summarizeQueueObserveHistory: __queueObserveCliTestUtils.summarizeQueueObserveHistory,
   summarizeQueueStats,
   summarizeQueueTriageStats,

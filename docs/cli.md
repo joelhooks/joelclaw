@@ -218,6 +218,10 @@ joelclaw queue
 ├── depth
 ├── stats [--hours <n>] [--limit <n>]
 ├── observe [--hours <n>] [--limit <n>] [--since <iso|ms>]
+├── pause <family> [--ttl <duration>] [--reason <text>]
+├── resume <family> [--reason <text>]
+├── control
+│   └── status [--hours <n>] [--limit <n>] [--since <iso|ms>]
 ├── list [--limit <n>]
 └── inspect <stream-id>
 ```
@@ -225,6 +229,7 @@ joelclaw queue
 Semantics:
 
 - all queue subcommands return a clean JSON envelope; read-oriented subcommands close their Redis client before exit and `emit` stays a thin worker client instead of writing Redis directly
+- queue state/control commands resolve Redis from the canonical joelclaw CLI config (`~/.config/system-bus.env` → `REDIS_URL`) before considering ambient shell env so the installed operator surface stays pointed at the same localhost queue as the worker and Restate drainer
 - `emit` posts queue admission intent to the worker endpoint (`POST /internal/queue/enqueue`).
   - accepts event name (e.g., `discovery/noted`, `content/updated`)
   - accepts optional JSON payload via `-d`
@@ -239,12 +244,18 @@ Semantics:
   - uses `queue.triage.*` OTEL metadata as the Story 3 source of truth for queue-admission disagreements and fallback behavior
   - `--since <iso|ms>` overrides the lower bound so operators can anchor soak evidence to a known clean point (for example the supervised `queue.drainer.started` after a rollout) instead of mixing fresh traffic with a dirty pre-fix window
   - keeps the operator in CLI-land; no raw Redis keys or manual OTEL spelunking required for the first sanity pass
-- `observe` is the Phase 3 Story 2 dry-run Sonnet operator surface.
+- `observe` is now the Phase 3 Story 2-3 dry-run Sonnet operator surface.
   - builds a canonical live snapshot from current queue depth + queued messages + recent drainer OTEL + recent triage OTEL + gateway sleep/muted-channel state
   - runs the bounded Sonnet observer in `dry-run` mode only and returns the current `snapshot` plus the current `decision`
   - `history` summarizes recent `queue.observe.*` OTEL for the same window so operators can compare the latest dry-run against raw history without spelunking Typesense by hand
-  - `control` stays explicit and honest: Story 3 deterministic queue-control state is not shipped yet, so active pauses are empty and the surface reports that the control plane is unavailable rather than pretending otherwise
+  - `control` now reflects the shipped deterministic queue-control plane: active manual pauses, `queue.control.applied|expired|rejected` counts, and recent control events come from the same Redis + OTEL truth the drainer uses
   - `--since <iso|ms>` anchors the related OTEL history window the same way `queue stats` does
+- `pause` applies a deterministic manual family pause with bounded TTL and emits `queue.control.applied` telemetry
+- `resume` clears a deterministic family pause and emits either `queue.control.applied` or `queue.control.rejected` when the family was not paused
+- `control status` is the dedicated deterministic control-plane operator surface.
+  - reports active pauses (family, reason, TTL, applied/expiry timestamps, actor)
+  - summarizes `queue.control.applied|expired|rejected` OTEL for the same window
+  - is the first CLI answer to “what queue controls are active right now?” before any automatic Sonnet mutation ships
 - `list` lists recent messages in priority order (highest priority first), does not ack/remove
 - `inspect` loads a message by Redis stream ID and returns full payload + metadata
   - if the message is already acked/expired, it now returns a structured `QUEUE_MESSAGE_MISSING` error envelope with queue-state next actions instead of crashing the CLI

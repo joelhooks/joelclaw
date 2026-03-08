@@ -7,8 +7,15 @@ describe("Queue CLI Command", () => {
     expect(queueCmd).toBeDefined();
     expect(queueCmd.descriptor._tag).toBe("Subcommands");
 
-    const subcommandNames = queueCmd.descriptor.children.map((child) => child.command.command.name);
-    expect(subcommandNames).toEqual(["emit", "depth", "stats", "observe", "list", "inspect"]);
+    const subcommandNames = queueCmd.descriptor.children.map((child) => {
+      const command = child.command as {
+        command?: { name?: string };
+        name?: string;
+        parent?: { command?: { name?: string } };
+      };
+      return command.command?.name ?? command.name ?? command.parent?.command?.name;
+    });
+    expect(subcommandNames).toEqual(["emit", "depth", "stats", "observe", "pause", "resume", "control", "list", "inspect"]);
   });
 
   it("summarizes dispatch latency, failures, and depth for Story 5 soak output", () => {
@@ -332,10 +339,137 @@ describe("Queue CLI Command", () => {
     ]);
   });
 
+  it("summarizes deterministic queue-control history and active pauses for Story 3", () => {
+    const summary = __queueTestUtils.summarizeQueueControlHistory(
+      [
+        {
+          id: "control-applied-1",
+          timestamp: 20_000,
+          action: "queue.control.applied",
+          success: true,
+          metadata: {
+            snapshotId: null,
+            mode: "manual",
+            family: "content/updated",
+            sourceType: "manual",
+            actor: "joelclaw queue pause",
+            expiresAt: "2026-03-08T01:00:00.000Z",
+            reason: "Hold content while the backlog is inspected.",
+            action: {
+              kind: "pause_family",
+              family: "content/updated",
+              ttlMs: 600_000,
+              reason: "Hold content while the backlog is inspected.",
+            },
+          },
+        },
+        {
+          id: "control-rejected-1",
+          timestamp: 21_000,
+          action: "queue.control.rejected",
+          success: false,
+          error: "queue family github/workflow_run.completed is not paused",
+          metadata: {
+            snapshotId: null,
+            mode: "manual",
+            family: "github/workflow_run.completed",
+            sourceType: "manual",
+            actor: "joelclaw queue resume",
+            reason: "queue family github/workflow_run.completed is not paused",
+            action: {
+              kind: "resume_family",
+              family: "github/workflow_run.completed",
+              reason: "Manual resume from joelclaw queue resume for github/workflow_run.completed",
+            },
+          },
+        },
+      ],
+      {
+        hours: 24,
+        found: 2,
+        sampled: 2,
+        truncated: false,
+        filterBy: "timestamp:>=123 && component:=queue-control",
+        sinceTimestamp: null,
+        sinceIso: null,
+      },
+      [
+        {
+          kind: "pause_family",
+          family: "content/updated",
+          ttlMs: 600_000,
+          reason: "Hold content while the backlog is inspected.",
+          source: "manual",
+          mode: "manual",
+          appliedAt: "2026-03-08T00:50:00.000Z",
+          appliedAtMs: 1_000,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          expiresAtMs: Date.now() + 60_000,
+          actor: "joelclaw queue pause",
+        },
+      ],
+    );
+
+    expect(summary.available).toBe(true);
+    expect(summary.counts).toEqual({ applied: 1, expired: 0, rejected: 1 });
+    expect(summary.activePauses).toHaveLength(1);
+    expect(summary.activePauses[0]).toMatchObject({
+      family: "content/updated",
+      sourceType: "manual",
+      mode: "manual",
+      actor: "joelclaw queue pause",
+    });
+    expect(summary.recentEvents).toEqual([
+      {
+        at: new Date(20_000).toISOString(),
+        action: "queue.control.applied",
+        snapshotId: null,
+        mode: "manual",
+        family: "content/updated",
+        sourceType: "manual",
+        actor: "joelclaw queue pause",
+        expiresAt: "2026-03-08T01:00:00.000Z",
+        expiredAt: null,
+        reason: "Hold content while the backlog is inspected.",
+        actionMetadata: {
+          kind: "pause_family",
+          family: "content/updated",
+          ttlMs: 600_000,
+          reason: "Hold content while the backlog is inspected.",
+        },
+      },
+      {
+        at: new Date(21_000).toISOString(),
+        action: "queue.control.rejected",
+        snapshotId: null,
+        mode: "manual",
+        family: "github/workflow_run.completed",
+        sourceType: "manual",
+        actor: "joelclaw queue resume",
+        expiresAt: null,
+        expiredAt: null,
+        reason: "queue family github/workflow_run.completed is not paused",
+        actionMetadata: {
+          kind: "resume_family",
+          family: "github/workflow_run.completed",
+          reason: "Manual resume from joelclaw queue resume for github/workflow_run.completed",
+        },
+      },
+    ]);
+  });
+
   it("computes nearest-rank percentiles for queue latency output", () => {
     expect(__queueTestUtils.percentile([100, 200, 300, 400], 0.5)).toBe(200);
     expect(__queueTestUtils.percentile([100, 200, 300, 400], 0.95)).toBe(400);
     expect(__queueTestUtils.percentile([], 0.95)).toBeNull();
+  });
+
+  it("parses manual queue-control TTLs into milliseconds", () => {
+    expect(__queueTestUtils.parseDurationToMs("60s")).toBe(60_000);
+    expect(__queueTestUtils.parseDurationToMs("10m")).toBe(600_000);
+    expect(__queueTestUtils.parseDurationToMs("2h")).toBe(7_200_000);
+    expect(__queueTestUtils.parseDurationToMs("45")).toBe(45_000);
+    expect(__queueTestUtils.parseDurationToMs("bogus")).toBeNull();
   });
 
   it("parses --since values as ISO or epoch timestamps", () => {

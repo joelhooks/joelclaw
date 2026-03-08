@@ -307,10 +307,13 @@ export async function drainByPriority(
   const now = Date.now();
   const candidates = await loadPriorityCandidates(excludeIds, now, agingPromotionMs);
   const orderedCandidates = [...candidates].sort(candidateComparator);
+  const filteredCandidates = typeof options?.filter === "function"
+    ? orderedCandidates.filter((candidate) => options.filter?.(candidate) !== false)
+    : orderedCandidates;
   const drained: CandidateMessage[] = [];
 
-  for (let i = 0; i < Math.min(limit, orderedCandidates.length); i++) {
-    const selected = orderedCandidates[i];
+  for (let i = 0; i < Math.min(limit, filteredCandidates.length); i++) {
+    const selected = filteredCandidates[i];
     if (!selected) break;
     drained.push(selected);
     

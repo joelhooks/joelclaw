@@ -1,14 +1,18 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   drainByPriority,
+  expireQueueFamilyPauses,
   getQueueStats,
   init,
   inspectById,
+  listActiveQueueFamilyPauses,
   listMessages,
   Priority,
+  pauseQueueFamily,
   persist,
   type QueueEventEnvelope,
   type QueueTriageDecision,
+  resumeQueueFamily,
   type StoredMessage,
 } from "../src";
 import { __queueTestUtils } from "../src/store";
@@ -18,6 +22,7 @@ const { toPriority, priorityName } = __queueTestUtils;
 class MockRedis {
   private readonly streams = new Map<string, Map<string, [string, string[]]>>();
   private readonly sortedSets = new Map<string, Map<string, number>>();
+  private readonly hashes = new Map<string, Map<string, string>>();
   private sequence = 0;
 
   async xgroup(..._args: unknown[]): Promise<"OK"> {
@@ -55,6 +60,31 @@ class MockRedis {
   async zcard(key: string): Promise<number> {
     const bucket = this.sortedSets.get(key) ?? new Map<string, number>();
     return bucket.size;
+  }
+
+  async hset(key: string, field: string, value: string): Promise<number> {
+    const bucket = this.hashes.get(key) ?? new Map<string, string>();
+    const existed = bucket.has(field);
+    bucket.set(field, value);
+    this.hashes.set(key, bucket);
+    return existed ? 0 : 1;
+  }
+
+  async hget(key: string, field: string): Promise<string | null> {
+    const bucket = this.hashes.get(key) ?? new Map<string, string>();
+    return bucket.get(field) ?? null;
+  }
+
+  async hgetall(key: string): Promise<Record<string, string>> {
+    const bucket = this.hashes.get(key) ?? new Map<string, string>();
+    return Object.fromEntries(bucket.entries());
+  }
+
+  async hdel(key: string, field: string): Promise<number> {
+    const bucket = this.hashes.get(key) ?? new Map<string, string>();
+    const removed = bucket.delete(field);
+    this.hashes.set(key, bucket);
+    return removed ? 1 : 0;
   }
 
   async zrange(key: string, start: number, stop: number, ...args: Array<string>): Promise<string[]> {
@@ -115,6 +145,17 @@ class MockRedis {
 
     this.sortedSets.set(key, bucket);
     return removed;
+  }
+
+  async zrangebyscore(key: string, min: string, max: string): Promise<string[]> {
+    const bucket = this.sortedSets.get(key) ?? new Map<string, number>();
+    const minValue = min === "-inf" ? Number.NEGATIVE_INFINITY : Number(min);
+    const maxValue = max === "+inf" ? Number.POSITIVE_INFINITY : Number(max);
+
+    return [...bucket.entries()]
+      .filter(([, score]) => score >= minValue && score <= maxValue)
+      .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
+      .map(([member]) => member);
   }
 
   async xpending(..._args: unknown[]): Promise<[number]> {
@@ -280,6 +321,91 @@ describe("drainByPriority", () => {
     expect(drained[1]).toMatchObject({
       effectivePriority: Priority.P1,
     });
+  });
+
+  test("applies a deterministic filter after ordering so paused families defer without losing lower-priority work", async () => {
+    const redis = new MockRedis();
+
+    await init(redis as never, {
+      streamKey: "test:queue:messages",
+      priorityKey: "test:queue:priority",
+      consumerGroup: "test-group",
+      consumerName: "test-consumer",
+    });
+
+    const nowSpy = vi.spyOn(Date, "now");
+    nowSpy.mockReturnValue(2_000_000);
+    const paused = await persist({
+      payload: { name: "content/updated", label: "paused" },
+      priority: Priority.P0,
+    });
+    nowSpy.mockReturnValue(2_000_001);
+    const ready = await persist({
+      payload: { name: "discovery/noted", label: "ready" },
+      priority: Priority.P1,
+    });
+
+    expect(paused).not.toBeNull();
+    expect(ready).not.toBeNull();
+    if (!paused || !ready) throw new Error("queue persist unexpectedly returned null");
+
+    const drained = await drainByPriority({
+      limit: 1,
+      filter: (candidate) => candidate.message.payload.name !== "content/updated",
+    });
+
+    expect(drained).toHaveLength(1);
+    expect(drained[0]?.message.id).toBe(ready.streamId);
+  });
+});
+
+describe("queue control state", () => {
+  test("stores active family pauses with TTL metadata and clears them on resume", async () => {
+    const redis = new MockRedis();
+
+    const pause = await pauseQueueFamily(redis as never, {
+      family: "content/updated",
+      ttlMs: 300_000,
+      reason: "Pause content during supervised drain testing.",
+      actor: "queue-control-test",
+      now: 1_000,
+    });
+
+    expect(pause).toMatchObject({
+      family: "content/updated",
+      ttlMs: 300_000,
+      mode: "manual",
+      source: "manual",
+      actor: "queue-control-test",
+    });
+
+    const active = await listActiveQueueFamilyPauses(redis as never, { now: 2_000 });
+    expect(active).toEqual([pause]);
+
+    const resumed = await resumeQueueFamily(redis as never, { family: "content/updated" });
+    expect(resumed).toEqual({ removed: true, pause });
+    expect(await listActiveQueueFamilyPauses(redis as never, { now: 2_000 })).toEqual([]);
+  });
+
+  test("expires pause state deterministically once TTL passes", async () => {
+    const redis = new MockRedis();
+
+    await pauseQueueFamily(redis as never, {
+      family: "content/updated",
+      ttlMs: 60_000,
+      reason: "Short TTL proof.",
+      now: 10_000,
+    });
+
+    expect(await listActiveQueueFamilyPauses(redis as never, { now: 69_999 })).toHaveLength(1);
+
+    const expired = await expireQueueFamilyPauses(redis as never, { now: 70_000 });
+    expect(expired).toHaveLength(1);
+    expect(expired[0]).toMatchObject({
+      family: "content/updated",
+      expiredAtMs: 70_000,
+    });
+    expect(await listActiveQueueFamilyPauses(redis as never, { now: 70_001 })).toEqual([]);
   });
 });
 
