@@ -231,6 +231,7 @@ Sandbox runs produce patch bundles, not direct commits to main. This keeps runs 
 - Pi agent extensions
 - Session lifecycle hooks
 - Langfuse cost tracking
+- Async runtime jobs monitor widget/report-back extension (transitional Restate + queue + Dkron + Inngest view)
 
 **@joelclaw/email**
 - Email processing

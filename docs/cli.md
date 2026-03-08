@@ -122,6 +122,7 @@ Semantics:
 - `joelclaw knowledge`
 - `joelclaw capabilities`
 - `joelclaw queue`
+- `joelclaw jobs`
 
 ## Restate command tree
 
@@ -210,6 +211,46 @@ Semantics:
   - points next actions at `joelclaw queue inspect` / `joelclaw queue depth`
   - relies on the Restate queue drainer to forward the **actual** `subscription/check-feeds.requested` event name onward
 
+## Jobs command tree (ADR-0217 runtime monitor)
+
+```bash
+joelclaw jobs
+└── status [--hours <n>] [--count <n>] [--namespace <namespace>] [--restate-admin-url <url>] [--dkron-service-name <service>] [--dkron-base-url <url>]
+```
+
+Semantics:
+
+- `jobs status` is the **first operator glance** for real workloads during the ADR-0217 transition. It aggregates the queue/Redis substrate, Restate runtime, Dkron scheduler, and still-live Inngest surfaces into one JSON snapshot.
+- `overall.status` is a bounded truth surface (`healthy|degraded|down`) derived from those four components, not a raw dump of every underlying health probe.
+- queue section:
+  - reads the canonical Redis queue directly through `@joelclaw/queue`
+  - reports depth, priority buckets, oldest age, and active deterministic pauses
+- Restate section:
+  - mirrors `joelclaw restate status` in-place so the operator can see statefulset readiness + admin health without command hopping
+- Dkron section:
+  - mirrors `joelclaw restate cron status` in-place and includes the count of Restate-tagged scheduler jobs when the API is reachable
+- Inngest section:
+  - stays visible during migration, but its status is scoped to the transitional job path that still matters here: server/worker health plus recent run outcomes
+  - broad informational checks (for example unrelated k8s pod drift) stay in the payload without poisoning the top-level job monitor status
+- next actions point directly at the management surfaces that actually move workload state: `queue control status`, `queue observe`, `queue resume`, `restate status`, `restate cron status`, and `runs`
+
+## Pi async jobs monitor (`runtime_jobs_monitor`)
+
+The loaded pi extension at `packages/pi-extensions/inngest-monitor/index.ts` now does two jobs:
+
+1. tracks followed Inngest runs (`inngest_send`, `inngest_runs`)
+2. exposes `runtime_jobs_monitor` for the ADR-0217 runtime substrate
+
+`runtime_jobs_monitor` semantics:
+
+- `action=start|status|stop` (default `start`)
+- on `start`, it polls `joelclaw jobs status` in the background, paints a persistent widget, emits OTEL on state changes, and sends hidden follow-up messages for async report-back
+- on `status`, it returns the latest runtime snapshot (overall status, queue depth, active pause count, Restate/Dkron/Inngest state)
+- on `stop`, it stops the poller and sends a final follow-up summary
+- widget posture is intentionally operator-first: current runtime state on top, active followed runs underneath
+
+This is the canonical async monitoring path when you want a pi session to keep an eye on real workloads while you do other things.
+
 ## Queue command tree (ADR-0217 Phase 1)
 
 ```bash
@@ -244,6 +285,7 @@ Semantics:
   - uses `queue.triage.*` OTEL metadata as the Story 3 source of truth for queue-admission disagreements and fallback behavior
   - `--since <iso|ms>` overrides the lower bound so operators can anchor soak evidence to a known clean point (for example the supervised `queue.drainer.started` after a rollout) instead of mixing fresh traffic with a dirty pre-fix window
   - keeps the operator in CLI-land; no raw Redis keys or manual OTEL spelunking required for the first sanity pass
+- `jobs status` is the first unified runtime view; drop to `queue` subcommands when the aggregated surface says the queue itself needs attention.
 - `observe` is now the Phase 3 Story 2-4 dry-run Sonnet operator surface.
   - builds a canonical live snapshot from current queue depth + queued messages + recent drainer OTEL + recent triage OTEL + gateway sleep/muted-channel state + active deterministic pauses
   - runs the bounded Sonnet observer in `dry-run` mode only and returns the current `snapshot` plus the current `decision`

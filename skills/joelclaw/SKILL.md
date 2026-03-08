@@ -50,6 +50,7 @@ Vault ~/Vault (Obsidian, PARA method — ADRs, system log, contacts)
 
 ```bash
 joelclaw status                            # Health: server + worker + k8s pods
+joelclaw jobs status                       # Unified runtime workload snapshot (queue + Restate + Dkron + Inngest)
 joelclaw inngest status                    # Inngest server details
 joelclaw functions                         # List all 110+ registered functions
 joelclaw refresh                           # Force re-register with Inngest server
@@ -146,6 +147,18 @@ joelclaw gateway test                      # Send test message through gateway
 joelclaw gateway restart                   # Restart gateway daemon
 joelclaw gateway stream                    # Live stream gateway events
 ```
+
+### Async runtime monitoring in pi
+
+The loaded pi extension at `packages/pi-extensions/inngest-monitor/index.ts` now exposes `runtime_jobs_monitor` alongside `inngest_send` / `inngest_runs`.
+
+Use it when you want a pi session to keep watch on the ADR-0217 runtime substrate while you do other work:
+
+- `runtime_jobs_monitor {"action":"start","interval":5,"report":true}` — start background polling of `joelclaw jobs status`
+- `runtime_jobs_monitor {"action":"status"}` — inspect the latest runtime snapshot
+- `runtime_jobs_monitor {"action":"stop"}` — stop the poller and send a final follow-up summary
+
+The widget shows runtime health first (queue / Restate / Dkron / Inngest), then any followed Inngest runs underneath. State changes emit OTEL and hidden follow-up messages for asynchronous report-back.
 
 ### Observability (OTEL)
 

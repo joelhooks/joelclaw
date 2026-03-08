@@ -1,166 +1,127 @@
-# inngest-monitor — Pi Extension Design
+# job-monitor — Pi Extension Design
 
 ## Purpose
 
-Pi extension that sends Inngest events and monitors their run lifecycle in a persistent widget via GQL polling. No Redis dependency.
+Pi extension that monitors **two asynchronous job surfaces** inside one persistent widget:
+
+1. followed Inngest runs (`inngest_send`, `inngest_runs`)
+2. the ADR-0217 runtime substrate (`runtime_jobs_monitor`) backed by `joelclaw jobs status`
+
+The runtime monitor is transitional by design: it centres the real workload layer (`Redis queue` + `Restate` + `Dkron`) while still showing live Inngest truth until migration is finished.
+
+## Design goals
+
+- **Operator-first**: one glance should answer “is the runtime healthy enough to take work right now?”
+- **Asynchronous**: monitor in the background without blocking the session
+- **Report back**: emit OTEL on state changes and send follow-up summaries when runtime state changes or the monitor stops/times out
+- **TUI-native**: widget stays visible in pi sessions and uses pi-tui-friendly compact summaries
 
 ## Config
 
-```typescript
-const INNGEST_URL = process.env.INNGEST_URL ?? "http://localhost:8288";
-const INNGEST_EVENT_KEY = process.env.INNGEST_EVENT_KEY ?? "37aa349b89692d657d276a40e0e47a15";
-const GQL_URL = `${INNGEST_URL}/v0/gql`;
-const EVENT_API = `${INNGEST_URL}/e/${INNGEST_EVENT_KEY}`;
-const POLL_INTERVAL_MS = 3000;
+```ts
+const POLL_INTERVAL_MS = 5000;
 const DEFAULT_TIMEOUT_S = 300;
+const DEFAULT_RUNTIME_MONITOR_INTERVAL_S = 5;
+const DEFAULT_RUNTIME_MONITOR_TIMEOUT_S = 0; // until stopped
+const DEFAULT_JOBS_LOOKBACK_HOURS = 1;
+const DEFAULT_JOBS_RUN_COUNT = 10;
 const COMPLETED_LINGER_MS = 15_000;
+const WIDGET_KEY = "job-monitor";
 ```
 
 ## Tools
 
-### inngest_send
+### `inngest_send`
+
+Unchanged purpose: send an Inngest event and optionally follow its runs.
+
+### `inngest_runs`
+
+Unchanged purpose: inspect tracked run state for followed Inngest work.
+
+### `runtime_jobs_monitor`
 
 Parameters:
-- `event` (string, required) — event name e.g. "video/download"
-- `data` (string, optional) — JSON payload, default "{}"
-- `follow` (boolean, optional) — monitor runs, default true
-- `timeout` (number, optional) — follow timeout seconds, default 300
+- `action` — `start|status|stop` (default `start`)
+- `interval` — poll interval in seconds (default `5`)
+- `timeout` — stop after N seconds, `0` means run until stopped
+- `report` — send follow-up summaries on state changes / stop (default `true`)
 
 Flow:
-1. POST to EVENT_API with `{ name: event, data: parsed_data }`
-2. Response: `{ ids: ["01J..."], status: 200 }` — ids are run IDs
-3. If follow: start background polling loop for each run ID
-4. Return immediately with event info
+1. `start` spins up a background poller
+2. each poll runs `joelclaw jobs status --hours 1 --count 10`
+3. widget updates from the latest runtime snapshot
+4. on state change, emit OTEL `runtime.monitor.*`
+5. if `report=true`, send `runtime-jobs-monitor-update` follow-up messages
+6. `stop` clears the poller and sends a final summary
 
-### inngest_runs
+## CLI dependency
 
-Parameters:
-- `run_id` (string, optional) — specific run ID for detail view
+The runtime monitor depends on:
 
-## Send Event API
-
-```
-POST http://localhost:8288/e/37aa349b89692d657d276a40e0e47a15
-Content-Type: application/json
-{ "name": "video/download", "data": { "url": "..." } }
-→ { "ids": ["01J..."], "status": 200 }
+```bash
+joelclaw jobs status [--hours <n>] [--count <n>]
 ```
 
-## GQL Queries
-
-### Run status
-```graphql
-{ run(runID: "${id}") { id status functionID startedAt endedAt output } }
-```
-Status: RUNNING, COMPLETED, FAILED, CANCELLED, QUEUED
-
-### Step trace (live progress)
-```graphql
-{
-  runTrace(runID: "${id}") {
-    name status attempts duration isRoot startedAt endedAt
-    stepOp stepID outputID
-    childrenSpans {
-      name status attempts duration startedAt endedAt
-      stepOp stepID outputID
-      childrenSpans {
-        name status attempts duration startedAt endedAt
-        stepOp stepID outputID
-      }
-    }
-  }
-}
-```
-Flatten childrenSpans recursively. Skip isRoot=true entries. Each non-root span is a step.
-
-### Function names (cache once)
-```graphql
-{ functions { id name } }
-```
-
-### Error details (for failed steps)
-```graphql
-{ runTraceSpanOutputByID(outputID: "${id}") { data error { message name stack } } }
-```
-
-## Tracked Run State
-
-```typescript
-interface TrackedRun {
-  eventId: string;
-  eventName: string;
-  eventData: any;
-  runId: string;
-  functionName: string;
-  status: "polling" | "running" | "completed" | "failed" | "cancelled" | "timeout";
-  startedAt: number;
-  finishedAt: number | null;
-  steps: { name: string; status: string }[];
-  currentStep: string | null;
-  output: string | null;
-  error: string | null;
-  pollTimer: ReturnType<typeof setInterval> | null;
-}
-```
-
-## Polling
-
-After sending event with follow=true:
-1. For each runId, create a TrackedRun
-2. Start setInterval at POLL_INTERVAL_MS (3s)
-3. Each tick: GQL query for run status + runTrace
-4. Update TrackedRun.status, steps, currentStep
-5. refreshWidget()
-6. If terminal (COMPLETED/FAILED/CANCELLED): stop polling, set finishedAt, send message
-7. If timeout exceeded: stop polling, set status="timeout"
+That command is the canonical JSON operator snapshot for:
+- queue / Redis
+- Restate runtime
+- Dkron scheduler
+- transitional Inngest health + recent runs
 
 ## Widget
 
-Same pattern as codex-exec. One line per visible run:
-```
-◆ video-ingest-pipeline 12s  step: download-video
-✓ email-cleanup 45s  3 steps
-✗ system-health 12s  FAILED: Redis unreachable
-```
+The widget is split into two stacked regions:
 
-Running: icon + functionName + elapsed + "step: " + currentStep
-Completed: icon + functionName + elapsed + stepCount + "steps"
-Failed: icon + functionName + elapsed + "FAILED: " + errorSnippet
-Auto-hide when no visible runs (returns []).
-Timer managed by polling intervals (no separate status timer needed — polling does the refresh).
+1. **runtime monitor header**
+   - overall status icon (`healthy|degraded|down|starting|stopped|timeout`)
+   - elapsed time + poll cadence
+   - queue depth / active pause count / Restate / Dkron / Inngest status line
+   - compact overall summary line
+2. **active run list**
+   - followed Inngest runs below the runtime block
+   - keeps the existing icons for running/completed/failed/cancelled runs
 
-## Messages
+If neither region has anything visible, the widget returns `[]` and disappears.
 
-- On completion: `pi.sendMessage({ customType: "inngest-run-complete", display: false, ... }, { triggerTurn, deliverAs: "followUp" })`
-- triggerTurn: true if error OR no other runs still polling; false otherwise
-- Content: function name, status, elapsed, step summary, output/error
-- Register message renderer for "inngest-run-complete"
+## OTEL contract
 
-## Renderers
+The extension emits these actions through `joelclaw otel emit`:
 
-renderCall for inngest_send: `inngest_send video/download {"url":"..."}`
-renderResult for inngest_send: `◆ video-ingest-pipeline running · 01JX...`
+- `runtime.monitor.started`
+- `runtime.monitor.state_changed`
+- `runtime.monitor.stopped`
+- `runtime.monitor.timeout`
 
-renderCall for inngest_runs: `inngest_runs` or `inngest_runs 01JX...`
-renderResult for inngest_runs: collapsed summary with expandable step trace
+Component/source:
+- `source=gateway`
+- `component=job-monitor`
 
-## Extension Structure
+## Follow-up messages
 
-Standard pi extension pattern:
-```typescript
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Text, Container, Spacer } from "@mariozechner/pi-tui";
-import { Type } from "@sinclair/typebox";
+Custom type:
+- `runtime-jobs-monitor-update`
 
-export default function (pi: ExtensionAPI) {
-  // Widget setup in session_start
-  // inngest_send tool
-  // inngest_runs tool
-  // Message renderer for inngest-run-complete
-  // Cleanup in session_shutdown
-}
-```
+Message payload includes:
+- monitor id
+- status
+- elapsed time
+- checkedAt
+- summary
+- queue depth
+- active pause count
+- Restate / Dkron / Inngest status
+- optional error
+- reason (`started|state_changed|stopped|timeout`)
+
+Delivery:
+- `deliverAs: "followUp"`
+- trigger on state changes and final stop/timeout summaries
+
+## Race handling
+
+The runtime poller uses a `monitorId` guard so an in-flight poll cannot overwrite a newer monitor instance or emit stale follow-up messages after a stop/timeout.
 
 ## Dependency contract
 
-`@mariozechner/pi-coding-agent` and `@mariozechner/pi-tui` are **runtime dependencies** of this package (not peer deps). The loader imports this extension by absolute file path, so missing local runtime deps causes extension startup failure (`Cannot find module '@mariozechner/pi-tui'`).
+`@mariozechner/pi-coding-agent` and `@mariozechner/pi-tui` remain runtime dependencies. The loader imports this extension by absolute file path, so missing local runtime deps still break extension startup.

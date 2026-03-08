@@ -18,6 +18,7 @@ import { eventsCmd } from "./commands/events"
 import { gatewayCmd } from "./commands/gateway"
 import { healCmd } from "./commands/heal"
 import { inngestCmd } from "./commands/inngest"
+import { jobsCmd } from "./commands/jobs"
 import { knowledgeCmd } from "./commands/knowledge"
 import { langfuseCmd } from "./commands/langfuse"
 import { logCmd } from "./commands/log"
@@ -160,6 +161,7 @@ const root = Command.make("joelclaw", {}, () =>
           mail: "joelclaw mail {status|register|send|inbox|read|reserve|release|locks|search}",
           models: "joelclaw models --list [--plain]",
           queue: "joelclaw queue {emit|depth|list|inspect}",
+          jobs: "joelclaw jobs status [--hours N] [--count N]",
           nas: "joelclaw nas {status|runs|review}",
           restate: "joelclaw restate {status|deployments|smoke}",
           otel: "joelclaw otel {list|search|stats}",
@@ -174,6 +176,7 @@ const root = Command.make("joelclaw", {}, () =>
       },
       [
         { command: "joelclaw status", description: "Health check all components" },
+        { command: "joelclaw jobs status", description: "Unified runtime workload snapshot across queue, Restate, Dkron, and Inngest" },
         { command: "joelclaw capabilities", description: "Discover goal-oriented command flows" },
         { command: "joelclaw recover list", description: "List deterministic recovery runbooks" },
         { command: "joelclaw deploy worker", description: "Preview worker deploy sync (dry-run)" },
@@ -191,7 +194,7 @@ const root = Command.make("joelclaw", {}, () =>
     ))
   })
 ).pipe(
-  Command.withSubcommands([agentCmd, contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, summaryCmd, capabilitiesCmd, recoverCmd, deployCmd, healCmd, logsCmd, logCmd, secretsCmd, notifyCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, memoryCmd, vaultCmd, skillsCmd, docsCmd, emailCmd, mailCmd, callCmd, search, modelsCmd, queueCmd, nasCmd, restateCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd, webhookCmd, knowledgeCmd])
+  Command.withSubcommands([agentCmd, contentCmd, discoverCmd, noteCmd, sendCmd, runsCmd, runCmd, eventCmd, eventsCmd, functionsCmd, statusCmd, summaryCmd, capabilitiesCmd, recoverCmd, deployCmd, healCmd, logsCmd, logCmd, secretsCmd, notifyCmd, schemaCmd, loopCmd, watchCmd, refresh, gatewayCmd, sleepCmd, wakeCmd, tuiCmd, reviewCmd, approvalsCmd, recallCmd, memoryCmd, vaultCmd, skillsCmd, docsCmd, emailCmd, mailCmd, callCmd, search, modelsCmd, queueCmd, jobsCmd, nasCmd, restateCmd, otelCmd, langfuseCmd, inngestCmd, subscribeCmd, webhookCmd, knowledgeCmd])
 )
 
 const cli = Command.run(root, {
