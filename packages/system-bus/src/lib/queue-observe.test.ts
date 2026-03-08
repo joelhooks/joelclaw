@@ -68,6 +68,19 @@ async function buildSnapshot(): Promise<QueueObservationSnapshot> {
       quietHours: null,
       mutedChannels: ["telegram", "telegram"],
     },
+    control: {
+      activePauses: [
+        {
+          family: "subscription/check-feeds.requested",
+          reason: "Let subscription checks cool off for a tick.",
+          source: "manual",
+          mode: "manual",
+          appliedAt: "2026-03-07T11:55:00.000Z",
+          expiresAt: "2026-03-07T12:05:00.000Z",
+          expiresAtMs: 1_300_000,
+        },
+      ],
+    },
   });
 }
 
@@ -136,6 +149,17 @@ describe("queue observer contract", () => {
     ]);
     expect(snapshot.triage.fallbackByReason).toEqual({ timeout: 1 });
     expect(snapshot.gateway.mutedChannels).toEqual(["telegram"]);
+    expect(snapshot.control.activePauses).toEqual([
+      {
+        family: "subscription/check-feeds.requested",
+        reason: "Let subscription checks cool off for a tick.",
+        source: "manual",
+        mode: "manual",
+        appliedAt: "2026-03-07T11:55:00.000Z",
+        expiresAt: "2026-03-07T12:05:00.000Z",
+        expiresInMs: 300_000,
+      },
+    ]);
   });
 
   test("parses valid bounded observer output and rejects non-snapshot families", async () => {
@@ -152,6 +176,21 @@ describe("queue observer contract", () => {
     }), snapshot);
 
     expect(parsed.ok).toBe(true);
+
+    const validResume = __queueObserveTestUtils.parseQueueObservationOutput(JSON.stringify({
+      findings: {
+        queuePressure: "degraded",
+        downstreamState: "healthy",
+        summary: "Resume the paused subscriptions family now that nothing is queued there.",
+      },
+      actions: [{
+        kind: "resume_family",
+        family: "subscription/check-feeds.requested",
+        reason: "The manual pause can come off.",
+      }],
+    }), snapshot);
+
+    expect(validResume.ok).toBe(true);
 
     const invalid = __queueObserveTestUtils.parseQueueObservationOutput(JSON.stringify({
       findings: {
@@ -171,6 +210,25 @@ describe("queue observer contract", () => {
     if (!invalid.ok) {
       expect(invalid.reason).toBe("unsafe_action");
       expect(invalid.error).toContain("discovery/noted");
+    }
+
+    const invalidResume = __queueObserveTestUtils.parseQueueObservationOutput(JSON.stringify({
+      findings: {
+        queuePressure: "healthy",
+        downstreamState: "healthy",
+        summary: "Try to resume a family that is not paused.",
+      },
+      actions: [{
+        kind: "resume_family",
+        family: "github/workflow_run.completed",
+        reason: "This family was never paused.",
+      }],
+    }), snapshot);
+
+    expect(invalidResume.ok).toBe(false);
+    if (!invalidResume.ok) {
+      expect(invalidResume.reason).toBe("unsafe_action");
+      expect(invalidResume.error).toContain("github/workflow_run.completed");
     }
   });
 
@@ -314,7 +372,7 @@ describe("queue observer contract", () => {
     const fallback = emittedEvents.find((event) => event.action === "queue.observe.fallback");
     expect(fallback?.metadata).toMatchObject({
       fallbackReason: "schema_error",
-      summary: "Queue depth 3; pressure degraded; downstream degraded; 2 active families; observer fallback schema_error",
+      summary: "Queue depth 3; pressure degraded; downstream degraded; 2 active families; 1 active pauses; observer fallback schema_error",
     });
   });
 

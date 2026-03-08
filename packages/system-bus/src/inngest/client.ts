@@ -1723,6 +1723,14 @@ export type Events = {
       requestedBy?: string;
     };
   };
+  "queue/observer.requested": {
+    data: {
+      reason?: string;
+      requestedBy?: string;
+      hours?: number;
+      limit?: number;
+    };
+  };
   "nas/soak.review.requested": {
     data: {
       reason?: string;

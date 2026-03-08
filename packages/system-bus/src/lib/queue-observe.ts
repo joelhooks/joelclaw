@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   Priority,
   type QueueControlMode,
+  type QueueControlSource,
   type QueueObservationDecision,
   type QueueObservationDrainerSummary,
   type QueueObservationFallbackReason,
@@ -51,7 +52,8 @@ You may only return:
   - escalate
 
 Hard rules:
-- Never invent a family that is not present in the supplied snapshot.
+- Never invent a family that is not present in the supplied snapshot queue families or active pause state.
+- resume_family is only valid for a family that is currently paused in snapshot.control.activePauses.
 - Never invent a new action kind.
 - Never describe direct Redis writes, route overrides, or handler overrides.
 - Keep reasons concise and concrete.
@@ -144,6 +146,17 @@ export type BuildQueueObservationSnapshotInput = {
   triage?: Partial<QueueObservationTriageSummary>;
   drainer?: Partial<QueueObservationDrainerSummary>;
   gateway?: Partial<QueueObservationGatewaySummary>;
+  control?: {
+    activePauses?: ReadonlyArray<{
+      family: string;
+      reason: string;
+      source: QueueControlSource;
+      mode: QueueControlMode;
+      appliedAt: string;
+      expiresAt: string;
+      expiresAtMs?: number;
+    }>;
+  };
 };
 
 export type ObserveQueueSnapshotInput = {
@@ -220,6 +233,42 @@ function percentile(values: readonly number[], target: number): number | null {
   const ordered = [...values].sort((a, b) => a - b);
   const index = Math.min(ordered.length - 1, Math.max(0, Math.ceil((target / 100) * ordered.length) - 1));
   return ordered[index] ?? null;
+}
+
+type QueueObservationPauseInput = NonNullable<BuildQueueObservationSnapshotInput["control"]>["activePauses"] extends ReadonlyArray<infer T>
+  ? T
+  : never;
+
+type QueueObservationPauseSummary = QueueObservationSnapshot["control"]["activePauses"][number];
+
+function normalizeActivePauses(
+  values: ReadonlyArray<QueueObservationPauseInput> | undefined,
+  now: number,
+): QueueObservationPauseSummary[] {
+  return [...(values ?? [])]
+    .map((pause) => {
+      const family = normalizeFamilyName(pause.family);
+      const reason = typeof pause.reason === "string" ? pause.reason.trim() : "";
+      const source = pause.source === "observer" ? "observer" : "manual";
+      const mode = pause.mode;
+      const appliedAt = typeof pause.appliedAt === "string" ? pause.appliedAt.trim() : "";
+      const expiresAt = typeof pause.expiresAt === "string" ? pause.expiresAt.trim() : "";
+      const expiresAtMs = normalizeTimestamp(pause.expiresAtMs) ?? normalizeTimestamp(Date.parse(expiresAt));
+
+      if (!family || !reason || !appliedAt || !expiresAt || expiresAtMs == null) return null;
+
+      return {
+        family,
+        reason,
+        source,
+        mode,
+        appliedAt,
+        expiresAt,
+        expiresInMs: Math.max(0, expiresAtMs - now),
+      } satisfies QueueObservationPauseSummary;
+    })
+    .filter((pause): pause is QueueObservationPauseSummary => pause !== null)
+    .sort((a, b) => a.expiresInMs - b.expiresInMs || a.family.localeCompare(b.family));
 }
 
 export function buildQueueObservationSnapshot(input: BuildQueueObservationSnapshotInput): QueueObservationSnapshot {
@@ -303,6 +352,9 @@ export function buildQueueObservationSnapshot(input: BuildQueueObservationSnapsh
       quietHours: input.gateway?.quietHours ?? null,
       mutedChannels: [...new Set((input.gateway?.mutedChannels ?? []).map((value) => value.trim()).filter(Boolean))].sort(),
     },
+    control: {
+      activePauses: normalizeActivePauses(input.control?.activePauses, now),
+    },
   };
 }
 
@@ -336,6 +388,7 @@ function deriveDefaultFindings(
     `pressure ${queuePressure}`,
     `downstream ${downstreamState}`,
     `${snapshot.families.length} active families`,
+    `${snapshot.control.activePauses.length} active pauses`,
   ];
 
   if (fallbackReason) {
@@ -382,15 +435,33 @@ function actionFamily(action: QueueObserverAction): string | null {
   }
 }
 
+function snapshotAllowedFamilies(snapshot: QueueObservationSnapshot): Set<string> {
+  return new Set([
+    ...snapshot.families.map((family) => family.family),
+    ...snapshot.control.activePauses.map((pause) => pause.family),
+  ]);
+}
+
 function validateActionFamilies(
   actions: readonly QueueObserverAction[],
   snapshot: QueueObservationSnapshot,
 ): string[] {
-  const allowedFamilies = new Set(snapshot.families.map((family) => family.family));
+  const allowedFamilies = snapshotAllowedFamilies(snapshot);
   return actions
     .map(actionFamily)
     .filter((family): family is string => typeof family === "string")
     .filter((family) => !allowedFamilies.has(family));
+}
+
+function validateResumeActions(
+  actions: readonly QueueObserverAction[],
+  snapshot: QueueObservationSnapshot,
+): string[] {
+  const pausedFamilies = new Set(snapshot.control.activePauses.map((pause) => pause.family));
+  return actions
+    .filter((action): action is Extract<QueueObserverAction, { kind: "resume_family" }> => action.kind === "resume_family")
+    .map((action) => action.family)
+    .filter((family) => !pausedFamilies.has(family));
 }
 
 export function parseQueueObservationOutput(
@@ -422,6 +493,15 @@ export function parseQueueObservationOutput(
       ok: false,
       reason: "unsafe_action",
       error: `Queue observer referenced non-snapshot families: ${invalidFamilies.join(", ")}`,
+    };
+  }
+
+  const invalidResumes = validateResumeActions(actions, snapshot);
+  if (invalidResumes.length > 0) {
+    return {
+      ok: false,
+      reason: "unsafe_action",
+      error: `Queue observer tried to resume families without active pauses: ${invalidResumes.join(", ")}`,
     };
   }
 
@@ -493,7 +573,9 @@ function buildFallbackDecision(input: {
 }
 
 function shouldUseDeterministicNoop(snapshot: QueueObservationSnapshot): boolean {
-  return snapshot.totals.depth === 0 && snapshot.families.length === 0;
+  return snapshot.totals.depth === 0
+    && snapshot.families.length === 0
+    && snapshot.control.activePauses.length === 0;
 }
 
 function buildDeterministicNoopDecision(input: {
@@ -550,7 +632,7 @@ function serializeActionMetadata(action: QueueObserverAction): Record<string, un
   }
 }
 
-async function emitQueueObserveStarted(input: {
+export async function emitQueueObserveStarted(input: {
   snapshot: QueueObservationSnapshot;
   mode: QueueObservationMode;
   model: string;
@@ -568,12 +650,13 @@ async function emitQueueObserveStarted(input: {
       model: input.model,
       depth: input.snapshot.totals.depth,
       familyCount: input.snapshot.families.length,
+      activePauseCount: input.snapshot.control.activePauses.length,
       autoApplyFamilies: [...input.autoApplyFamilies].sort(),
     },
   });
 }
 
-async function emitQueueObserveCompleted(input: {
+export async function emitQueueObserveCompleted(input: {
   decision: QueueObservationDecision;
   autoApplyFamilies: Set<string>;
 }): Promise<void> {
@@ -603,7 +686,7 @@ async function emitQueueObserveCompleted(input: {
   });
 }
 
-async function emitQueueObserveFailed(input: {
+export async function emitQueueObserveFailed(input: {
   snapshot: QueueObservationSnapshot;
   mode: QueueObservationMode;
   model: string;
@@ -629,7 +712,7 @@ async function emitQueueObserveFailed(input: {
   });
 }
 
-async function emitQueueObserveFallback(input: {
+export async function emitQueueObserveFallback(input: {
   decision: QueueObservationDecision;
 }): Promise<void> {
   const degraded = input.decision.fallbackReason && input.decision.fallbackReason !== "disabled";
@@ -720,44 +803,42 @@ export async function emitQueueControlRejected(input: {
   });
 }
 
-export async function observeQueueSnapshot(input: ObserveQueueSnapshotInput): Promise<QueueObservationDecision> {
+export type ObserveQueueSnapshotDetailedResult = {
+  decision: QueueObservationDecision;
+  autoApplyFamilies: Set<string>;
+  failedError?: string;
+};
+
+export async function observeQueueSnapshotDetailed(
+  input: ObserveQueueSnapshotInput,
+): Promise<ObserveQueueSnapshotDetailedResult> {
   const startedAt = Date.now();
   const model = input.model ?? QUEUE_OBSERVE_MODEL;
   const autoApplyFamilies = normalizeFamilies(input.autoApplyFamilies);
 
   if (input.mode === "off") {
-    const decision = buildFallbackDecision({
-      mode: input.mode,
-      snapshot: input.snapshot,
-      model,
-      latencyMs: 0,
-      fallbackReason: "disabled",
-    });
-
-    await emitQueueObserveFallback({ decision });
-    return decision;
+    return {
+      autoApplyFamilies,
+      decision: buildFallbackDecision({
+        mode: input.mode,
+        snapshot: input.snapshot,
+        model,
+        latencyMs: 0,
+        fallbackReason: "disabled",
+      }),
+    };
   }
 
-  await emitQueueObserveStarted({
-    snapshot: input.snapshot,
-    mode: input.mode,
-    model,
-    autoApplyFamilies,
-  });
-
   if (shouldUseDeterministicNoop(input.snapshot)) {
-    const decision = buildDeterministicNoopDecision({
-      mode: input.mode,
-      snapshot: input.snapshot,
-      latencyMs: Date.now() - startedAt,
-      reason: "Queue is empty; no queue control action is warranted.",
-    });
-
-    await emitQueueObserveCompleted({
-      decision,
+    return {
       autoApplyFamilies,
-    });
-    return decision;
+      decision: buildDeterministicNoopDecision({
+        mode: input.mode,
+        snapshot: input.snapshot,
+        latencyMs: Date.now() - startedAt,
+        reason: "Queue is empty; no queue control action is warranted.",
+      }),
+    };
   }
 
   try {
@@ -784,23 +865,17 @@ export async function observeQueueSnapshot(input: ObserveQueueSnapshotInput): Pr
     const latencyMs = Date.now() - startedAt;
 
     if (!parsed.ok) {
-      await emitQueueObserveFailed({
-        snapshot: input.snapshot,
-        mode: input.mode,
-        model: result.model ?? model,
-        error: parsed.error,
-        latencyMs,
-      });
-
-      const decision = buildFallbackDecision({
-        mode: input.mode,
-        snapshot: input.snapshot,
-        model: result.model ?? model,
-        latencyMs,
-        fallbackReason: parsed.reason,
-      });
-      await emitQueueObserveFallback({ decision });
-      return decision;
+      return {
+        autoApplyFamilies,
+        failedError: parsed.error,
+        decision: buildFallbackDecision({
+          mode: input.mode,
+          snapshot: input.snapshot,
+          model: result.model ?? model,
+          latencyMs,
+          fallbackReason: parsed.reason,
+        }),
+      };
     }
 
     const finalActions = selectFinalActions({
@@ -809,45 +884,73 @@ export async function observeQueueSnapshot(input: ObserveQueueSnapshotInput): Pr
       autoApplyFamilies,
     });
 
-    const decision: QueueObservationDecision = {
-      mode: input.mode,
-      model: result.model ?? model,
-      snapshotId: input.snapshot.snapshotId,
-      findings: parsed.value.findings,
-      suggestedActions: parsed.value.actions as QueueObserverAction[],
-      finalActions,
-      appliedCount: 0,
-      latencyMs,
-    };
-
-    await emitQueueObserveCompleted({
-      decision,
+    return {
       autoApplyFamilies,
-    });
-    return decision;
+      decision: {
+        mode: input.mode,
+        model: result.model ?? model,
+        snapshotId: input.snapshot.snapshotId,
+        findings: parsed.value.findings,
+        suggestedActions: parsed.value.actions as QueueObserverAction[],
+        finalActions,
+        appliedCount: 0,
+        latencyMs,
+      },
+    };
   } catch (error) {
     const latencyMs = Date.now() - startedAt;
     const fallbackReason = fallbackReasonFromError(error);
     const errorMessage = error instanceof Error ? error.message : String(error);
 
+    return {
+      autoApplyFamilies,
+      failedError: errorMessage,
+      decision: buildFallbackDecision({
+        mode: input.mode,
+        snapshot: input.snapshot,
+        model,
+        latencyMs,
+        fallbackReason,
+      }),
+    };
+  }
+}
+
+export async function observeQueueSnapshot(input: ObserveQueueSnapshotInput): Promise<QueueObservationDecision> {
+  const model = input.model ?? QUEUE_OBSERVE_MODEL;
+  const configuredAutoApplyFamilies = normalizeFamilies(input.autoApplyFamilies);
+
+  if (input.mode !== "off") {
+    await emitQueueObserveStarted({
+      snapshot: input.snapshot,
+      mode: input.mode,
+      model,
+      autoApplyFamilies: configuredAutoApplyFamilies,
+    });
+  }
+
+  const { decision, autoApplyFamilies, failedError } = await observeQueueSnapshotDetailed(input);
+
+  if (failedError) {
     await emitQueueObserveFailed({
       snapshot: input.snapshot,
       mode: input.mode,
-      model,
-      error: errorMessage,
-      latencyMs,
+      model: decision.model ?? model,
+      error: failedError,
+      latencyMs: decision.latencyMs,
     });
+  }
 
-    const decision = buildFallbackDecision({
-      mode: input.mode,
-      snapshot: input.snapshot,
-      model,
-      latencyMs,
-      fallbackReason,
-    });
+  if (decision.fallbackReason) {
     await emitQueueObserveFallback({ decision });
     return decision;
   }
+
+  await emitQueueObserveCompleted({
+    decision,
+    autoApplyFamilies,
+  });
+  return decision;
 }
 
 export const __queueObserveTestUtils = {

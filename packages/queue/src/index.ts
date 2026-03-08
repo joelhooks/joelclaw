@@ -37,6 +37,8 @@ export type {
   QueueEventEnvelope,
   QueueExpiredFamilyPauseState,
   QueueFamilyPauseState,
+  QueueObservationActivePauseSummary,
+  QueueObservationControlSummary,
   QueueObservationDecision,
   QueueObservationDownstreamState,
   QueueObservationDrainerSummary,

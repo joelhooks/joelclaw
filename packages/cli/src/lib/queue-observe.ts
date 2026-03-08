@@ -670,7 +670,7 @@ export async function runQueueObserveOperatorView(input: {
   control: ReturnType<typeof summarizeQueueControlHistory>;
 }> {
   const normalizedLimit = Math.min(Math.max(1, input.limit), DEFAULT_LIMIT);
-  const [dispatchWindow, triageWindow, gateway, control] = await Promise.all([
+  const [dispatchWindow, triageWindow, gateway, { activePauses }, controlWindow] = await Promise.all([
     loadOtelWindow({
       component: "queue-drainer",
       source: "restate",
@@ -690,13 +690,22 @@ export async function runQueueObserveOperatorView(input: {
       parser: parseQueueTriageHit,
     }),
     loadGatewaySummary(input.redis),
-    runQueueControlOperatorView({
-      redis: input.redis,
+    refreshQueueControlState(input.redis),
+    loadOtelWindow({
+      component: "queue-control",
+      actions: QUEUE_CONTROL_ACTIONS,
       hours: input.hours,
       limit: normalizedLimit,
       sinceTimestamp: input.sinceTimestamp,
+      parser: parseQueueControlHit,
     }),
   ]);
+
+  const control = summarizeQueueControlHistory(
+    controlWindow.events,
+    windowFor(input.hours, controlWindow.found, controlWindow.events.length, controlWindow.filterBy, input.sinceTimestamp),
+    activePauses,
+  );
 
   const dispatchSummary = summarizeQueueStats(
     dispatchWindow.events,
@@ -716,6 +725,17 @@ export async function runQueueObserveOperatorView(input: {
       throughputPerMinute: Number((dispatchSummary.dispatches.started / minutesInWindow(input.hours, input.sinceTimestamp)).toFixed(2)),
     },
     gateway,
+    control: {
+      activePauses: activePauses.map((pause) => ({
+        family: pause.family,
+        reason: pause.reason,
+        source: pause.source,
+        mode: pause.mode,
+        appliedAt: pause.appliedAt,
+        expiresAt: pause.expiresAt,
+        expiresAtMs: pause.expiresAtMs,
+      })),
+    },
   });
 
   const decision = await observeQueueSnapshot({

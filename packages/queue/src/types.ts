@@ -147,6 +147,26 @@ export interface QueueObservationGatewaySummary {
 }
 
 /**
+ * Active deterministic pause state exposed to the Sonnet observer.
+ */
+export interface QueueObservationActivePauseSummary {
+  family: string;
+  reason: string;
+  source: QueueControlSource;
+  mode: QueueControlMode;
+  appliedAt: string;
+  expiresAt: string;
+  expiresInMs: number;
+}
+
+/**
+ * Deterministic queue-control state exposed to the Sonnet observer.
+ */
+export interface QueueObservationControlSummary {
+  activePauses: QueueObservationActivePauseSummary[];
+}
+
+/**
  * Canonical queue observation snapshot consumed by the Sonnet observer.
  */
 export interface QueueObservationSnapshot {
@@ -162,6 +182,7 @@ export interface QueueObservationSnapshot {
   triage: QueueObservationTriageSummary;
   drainer: QueueObservationDrainerSummary;
   gateway: QueueObservationGatewaySummary;
+  control: QueueObservationControlSummary;
 }
 
 /**
