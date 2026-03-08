@@ -581,8 +581,17 @@ function buildFallbackDecision(input: {
 
 function shouldUseDeterministicNoop(snapshot: QueueObservationSnapshot): boolean {
   return snapshot.totals.depth === 0
-    && snapshot.families.length === 0
-    && snapshot.control.activePauses.length === 0;
+    && snapshot.families.length === 0;
+}
+
+function buildDeterministicEmptyQueueReason(snapshot: QueueObservationSnapshot): string {
+  if (snapshot.control.activePauses.length === 0) {
+    return "Queue is empty; no queue control action is warranted.";
+  }
+
+  return snapshot.control.activePauses.length === 1
+    ? "Queue is empty; the remaining active pause can expire naturally and no queue control action is warranted."
+    : "Queue is empty; the remaining active pauses can expire naturally and no queue control action is warranted.";
 }
 
 function buildDeterministicNoopDecision(input: {
@@ -906,7 +915,7 @@ export async function observeQueueSnapshotDetailed(
         mode: input.mode,
         snapshot: input.snapshot,
         latencyMs: Date.now() - startedAt,
-        reason: "Queue is empty; no queue control action is warranted.",
+        reason: buildDeterministicEmptyQueueReason(input.snapshot),
       }),
     };
   }

@@ -324,6 +324,70 @@ describe("queue observer contract", () => {
     expect(actions).toEqual(["queue.observe.started", "queue.observe.completed"]);
   });
 
+  test("skips model inference and returns deterministic noop when the queue is empty but a manual pause is still active", async () => {
+    const { buildQueueObservationSnapshot, observeQueueSnapshot } = await import("./queue-observe");
+    const snapshot = buildQueueObservationSnapshot({
+      snapshotId: "snap-empty-queue-active-pause",
+      now: 1_000_000,
+      stats: {
+        total: 0,
+        byPriority: { P0: 0, P1: 0, P2: 0, P3: 0 },
+        oldestTimestamp: null,
+        newestTimestamp: null,
+      },
+      messages: [],
+      triage: {
+        attempts: 0,
+        completed: 0,
+        failed: 0,
+        fallbacks: 0,
+        fallbackByReason: {},
+        routeMismatches: 0,
+        latencyMs: { p50: null, p95: null },
+      },
+      drainer: {
+        state: "healthy",
+        recentDispatches: 0,
+        recentFailures: 0,
+        throughputPerMinute: 0,
+      },
+      gateway: {
+        sleepMode: true,
+        quietHours: false,
+        mutedChannels: ["imessage"],
+      },
+      control: {
+        activePauses: [{
+          family: "content/updated",
+          reason: "Manual pause from joelclaw queue pause for content/updated",
+          source: "manual",
+          mode: "manual",
+          appliedAt: "2026-03-08T03:30:00.425Z",
+          expiresAt: "2026-03-08T03:32:00.425Z",
+          expiresAtMs: 1_120_000,
+        }],
+      },
+    });
+
+    const decision = await observeQueueSnapshot({
+      mode: "dry-run",
+      snapshot,
+    });
+
+    expect(inferredPrompts).toHaveLength(0);
+    expect(decision.fallbackReason).toBeUndefined();
+    expect(decision.suggestedActions).toEqual([
+      {
+        kind: "noop",
+        reason: "Queue is empty; the remaining active pause can expire naturally and no queue control action is warranted.",
+      },
+    ]);
+    expect(decision.finalActions).toEqual([]);
+
+    const actions = emittedEvents.map((event) => event.action);
+    expect(actions).toEqual(["queue.observe.started", "queue.observe.completed"]);
+  });
+
   test("skips model inference when all queued work is intentionally held behind fresh manual pauses", async () => {
     const { buildQueueObservationSnapshot, observeQueueSnapshot } = await import("./queue-observe");
     const snapshot = buildQueueObservationSnapshot({
