@@ -579,8 +579,8 @@ export async function getQueueStats(): Promise<{
   const cfg = getConfig();
 
   const total = await redis.zcard(cfg.priorityKey);
-  
-  // Get priority distribution
+  const messages = total > 0 ? await listMessages(total) : [];
+
   const byPriority: Record<string, number> = {
     P0: 0,
     P1: 0,
@@ -588,28 +588,14 @@ export async function getQueueStats(): Promise<{
     P3: 0,
   };
 
-  const members = await redis.zrange(cfg.priorityKey, 0, -1, "WITHSCORES");
-  for (let i = 1; i < members.length; i += 2) {
-    const score = Number.parseFloat(members[i] ?? "0");
-    const priority = Math.floor(score / PRIORITY_FACTOR);
-    const priorityLabel = priorityName(toPriority(priority));
-    byPriority[priorityLabel] = (byPriority[priorityLabel] ?? 0) + 1;
-  }
-
-  // Get oldest and newest timestamps
   let oldestTimestamp: number | null = null;
   let newestTimestamp: number | null = null;
 
-  const oldest = await redis.zrange(cfg.priorityKey, 0, 0, "WITHSCORES");
-  if (oldest.length >= 2) {
-    const score = Number.parseFloat(oldest[1] ?? "0");
-    oldestTimestamp = Math.floor(score % PRIORITY_FACTOR);
-  }
-
-  const newest = await redis.zrange(cfg.priorityKey, -1, -1, "WITHSCORES");
-  if (newest.length >= 2) {
-    const score = Number.parseFloat(newest[1] ?? "0");
-    newestTimestamp = Math.floor(score % PRIORITY_FACTOR);
+  for (const message of messages) {
+    const priorityLabel = priorityName(message.priority);
+    byPriority[priorityLabel] = (byPriority[priorityLabel] ?? 0) + 1;
+    oldestTimestamp = oldestTimestamp == null ? message.timestamp : Math.min(oldestTimestamp, message.timestamp);
+    newestTimestamp = newestTimestamp == null ? message.timestamp : Math.max(newestTimestamp, message.timestamp);
   }
 
   return {

@@ -460,6 +460,33 @@ describe("getQueueStats", () => {
     expect(stats.oldestTimestamp).toBeNull();
     expect(stats.newestTimestamp).toBeNull();
   });
+
+  test("derives priority and timestamps from stored messages when epoch millis exceed the score factor", async () => {
+    const redis = new MockRedis();
+
+    await init(redis as never, {
+      streamKey: "test:queue:messages",
+      priorityKey: "test:queue:priority",
+      consumerGroup: "test-group",
+      consumerName: "test-consumer",
+    });
+
+    const nowSpy = vi.spyOn(Date, "now");
+    nowSpy.mockReturnValue(1_772_939_336_503);
+
+    await persist({ payload: { id: 1 }, priority: Priority.P1 });
+    nowSpy.mockReturnValue(1_772_939_336_663);
+    await persist({ payload: { id: 2 }, priority: Priority.P1 });
+    nowSpy.mockReturnValue(1_772_939_336_828);
+    await persist({ payload: { id: 3 }, priority: Priority.P1 });
+
+    const stats = await getQueueStats();
+
+    expect(stats.total).toBe(3);
+    expect(stats.byPriority).toEqual({ P0: 0, P1: 3, P2: 0, P3: 0 });
+    expect(stats.oldestTimestamp).toBe(1_772_939_336_503);
+    expect(stats.newestTimestamp).toBe(1_772_939_336_828);
+  });
 });
 
 describe("inspectById", () => {
