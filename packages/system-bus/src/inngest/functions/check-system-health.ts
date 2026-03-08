@@ -820,8 +820,8 @@ export const checkSystemHealth = inngest.createFunction(
       )
       : [];
 
-    if (runCoreChecks) {
-      await withTiming(stepDurationsMs, "core.slog-agent-secrets-health", async () =>
+    const agentSecretsLogPlan = runCoreChecks
+      ? await withTiming(stepDurationsMs, "core.slog-agent-secrets-health", async () =>
         step.run("slog-agent-secrets-health", async () => {
           const service = services.find((item) => item.name === "Agent Secrets");
           if (!service) return { skipped: true, reason: "service-missing" };
@@ -845,17 +845,22 @@ export const checkSystemHealth = inngest.createFunction(
               );
               if (!shouldLog) return { logged: false, reason: "cooldown" };
 
-              await step.sendEvent("slog-agent-secrets-down", {
-                name: "system/log.written",
-                data: {
-                  action: "degraded",
-                  tool: "agent-secrets",
-                  detail: `Agent Secrets daemon unavailable: ${service.detail ?? "unknown"}`,
-                  reason: "check/system-health",
+              return {
+                logged: true,
+                state: "down",
+                logEvent: {
+                  id: "slog-agent-secrets-down",
+                  payload: {
+                    name: "system/log.written",
+                    data: {
+                      action: "degraded",
+                      tool: "agent-secrets",
+                      detail: `Agent Secrets daemon unavailable: ${service.detail ?? "unknown"}`,
+                      reason: "check/system-health",
+                    },
+                  },
                 },
-              });
-
-              return { logged: true, state: "down" };
+              };
             }
 
             const shouldLogRecovery = await redis.set(
@@ -868,22 +873,34 @@ export const checkSystemHealth = inngest.createFunction(
             await redis.del("health:agent-secrets:down:logged");
             if (!shouldLogRecovery) return { logged: false, state: "up", reason: "cooldown" };
 
-            await step.sendEvent("slog-agent-secrets-up", {
-              name: "system/log.written",
-              data: {
-                action: "recovered",
-                tool: "agent-secrets",
-                detail: "Agent Secrets daemon healthy",
-                reason: "check/system-health",
+            return {
+              logged: true,
+              state: "up",
+              logEvent: {
+                id: "slog-agent-secrets-up",
+                payload: {
+                  name: "system/log.written",
+                  data: {
+                    action: "recovered",
+                    tool: "agent-secrets",
+                    detail: "Agent Secrets daemon healthy",
+                    reason: "check/system-health",
+                  },
+                },
               },
-            });
-            return { logged: true, state: "up" };
+            };
           } catch (error) {
             return { logged: false, error: String(error) };
           } finally {
             redis.disconnect();
           }
         })
+      )
+      : null;
+
+    if (agentSecretsLogPlan && "logEvent" in agentSecretsLogPlan && agentSecretsLogPlan.logEvent) {
+      await withTiming(stepDurationsMs, "core.slog-agent-secrets-health-dispatch", async () =>
+        step.sendEvent(agentSecretsLogPlan.logEvent.id, agentSecretsLogPlan.logEvent.payload)
       );
     }
 
@@ -1000,7 +1017,7 @@ export const checkSystemHealth = inngest.createFunction(
     );
 
     if (gatewayCriticalDegrade.length > 0) {
-      await withTiming(stepDurationsMs, "core.dispatch-gateway-bridge-self-heal", async () =>
+      const gatewayBridgeSelfHealPlan = await withTiming(stepDurationsMs, "core.dispatch-gateway-bridge-self-heal", async () =>
         step.run("dispatch-gateway-bridge-self-heal", async () => {
           const evidence = gatewayCriticalDegrade.map((service) => ({
             type: "service-health",
@@ -1020,59 +1037,62 @@ export const checkSystemHealth = inngest.createFunction(
             evidenceCount: evidence.length,
           });
 
-          await step.sendEvent("emit-gateway-bridge-self-healing-request", {
-            name: SELF_HEALING_GATEWAY_REQUEST_EVENT,
-            data: {
-              sourceFunction: "system/check-system-health",
-              targetComponent: "gateway-bridge",
-              targetEventName: GATEWAY_BRIDGE_HEALTH_REQUEST_EVENT,
-              problemSummary: `Gateway bridge degradation detected: ${summaryLine}`,
-              domain: "gateway-bridge",
-              attempt: 0,
-              retryPolicy: GATEWAY_HEALING_RETRY_POLICY,
-              evidence,
-              context: {
-                checkMode: mode,
-                services: gatewayCriticalDegrade.map((service) => ({
-                  name: service.name,
-                  detail: service.detail ?? "",
-                })),
-                runContextKey: dispatchFlowContext.runContextKey,
-                flowTrace: dispatchFlowContext.flowTrace,
-                summaryLine,
-                sourceEventName: dispatchFlowContext.sourceEventName,
-                sourceEventId: dispatchFlowContext.sourceEventId,
-                evidenceSummary: summarizeEvidenceForOtel(evidence),
-                flowContext: dispatchFlowContext,
-                serviceDetails: gatewayCriticalDegrade.map((service) => ({
-                  name: service.name,
-                  detail: service.detail ?? "",
-                })),
+          const requestEvent = {
+            id: "emit-gateway-bridge-self-healing-request",
+            payload: {
+              name: SELF_HEALING_GATEWAY_REQUEST_EVENT,
+              data: {
+                sourceFunction: "system/check-system-health",
+                targetComponent: "gateway-bridge",
+                targetEventName: GATEWAY_BRIDGE_HEALTH_REQUEST_EVENT,
+                problemSummary: `Gateway bridge degradation detected: ${summaryLine}`,
+                domain: "gateway-bridge",
+                attempt: 0,
+                retryPolicy: GATEWAY_HEALING_RETRY_POLICY,
+                evidence,
+                context: {
+                  checkMode: mode,
+                  services: gatewayCriticalDegrade.map((service) => ({
+                    name: service.name,
+                    detail: service.detail ?? "",
+                  })),
+                  runContextKey: dispatchFlowContext.runContextKey,
+                  flowTrace: dispatchFlowContext.flowTrace,
+                  summaryLine,
+                  sourceEventName: dispatchFlowContext.sourceEventName,
+                  sourceEventId: dispatchFlowContext.sourceEventId,
+                  evidenceSummary: summarizeEvidenceForOtel(evidence),
+                  flowContext: dispatchFlowContext,
+                  serviceDetails: gatewayCriticalDegrade.map((service) => ({
+                    name: service.name,
+                    detail: service.detail ?? "",
+                  })),
+                },
+                playbook: {
+                  actions: [
+                    "Reconcile pending stream entries",
+                    "Prune orphaned priority queue indexes",
+                    "Purge malformed gateway event queue entries",
+                  ],
+                  restart: [
+                    "joelclaw gateway restart",
+                    "joelclaw inngest restart-worker --register",
+                  ],
+                  kill: ["pkill -f joelclaw-gateway"],
+                  defer: ["joelclaw status", "joelclaw gateway status", "joelclaw runs --count 10 --hours 1"],
+                  notify: ["joelclaw gateway events"],
+                  links: [
+                    "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/self-healing-gateway-bridge.ts",
+                    "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/check-system-health.ts",
+                  ],
+                },
+                owner: "system",
+                fallbackAction: "manual",
+                requestedBy: "system/check-system-health",
+                dryRun: false,
               },
-              playbook: {
-                actions: [
-                  "Reconcile pending stream entries",
-                  "Prune orphaned priority queue indexes",
-                  "Purge malformed gateway event queue entries",
-                ],
-                restart: [
-                  "joelclaw gateway restart",
-                  "joelclaw inngest restart-worker --register",
-                ],
-                kill: ["pkill -f joelclaw-gateway"],
-                defer: ["joelclaw status", "joelclaw gateway status", "joelclaw runs --count 10 --hours 1"],
-                notify: ["joelclaw gateway events"],
-                links: [
-                  "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/self-healing-gateway-bridge.ts",
-                  "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/check-system-health.ts",
-                ],
-              },
-              owner: "system",
-              fallbackAction: "manual",
-              requestedBy: "system/check-system-health",
-              dryRun: false,
             },
-          });
+          };
           await emitOtelEvent({
             level: "info",
             source: "worker",
@@ -1088,8 +1108,19 @@ export const checkSystemHealth = inngest.createFunction(
               evidenceSummary: summarizeEvidenceForOtel(evidence),
             },
           });
+
+          return { requestEvent };
         })
       );
+
+      if (gatewayBridgeSelfHealPlan.requestEvent) {
+        await withTiming(stepDurationsMs, "core.dispatch-gateway-bridge-self-heal-send", async () =>
+          step.sendEvent(
+            gatewayBridgeSelfHealPlan.requestEvent.id,
+            gatewayBridgeSelfHealPlan.requestEvent.payload,
+          )
+        );
+      }
     }
 
     const inngestRuntimeDegrade = degraded.filter((service) =>
@@ -1097,7 +1128,7 @@ export const checkSystemHealth = inngest.createFunction(
     );
 
     if (inngestRuntimeDegrade.length > 0) {
-      await withTiming(stepDurationsMs, "core.dispatch-inngest-runtime-self-heal", async () =>
+      const inngestRuntimeSelfHealPlan = await withTiming(stepDurationsMs, "core.dispatch-inngest-runtime-self-heal", async () =>
         step.run("dispatch-inngest-runtime-self-heal", async () => {
           const evidence = inngestRuntimeDegrade.map((service) => ({
             type: "service-health",
@@ -1117,56 +1148,59 @@ export const checkSystemHealth = inngest.createFunction(
             evidenceCount: evidence.length,
           });
 
-          await step.sendEvent("emit-inngest-runtime-self-healing-request", {
-            name: SELF_HEALING_GATEWAY_REQUEST_EVENT,
-            data: {
-              sourceFunction: "system/check-system-health",
-              targetComponent: "inngest-runtime",
-              targetEventName: INNGEST_RUNTIME_HEALTH_REQUEST_EVENT,
-              problemSummary: `Inngest runtime degradation detected: ${summaryLine}`,
-              domain: INNGEST_RUNTIME_HEALING_DOMAIN,
-              attempt: 0,
-              evidence,
-              context: {
-                checkMode: mode,
-                services: inngestRuntimeDegrade.map((service) => ({
-                  name: service.name,
-                  detail: service.detail ?? "",
-                })),
-                runContextKey: dispatchFlowContext.runContextKey,
-                flowTrace: dispatchFlowContext.flowTrace,
-                summaryLine,
-                sourceEventName: dispatchFlowContext.sourceEventName,
-                sourceEventId: dispatchFlowContext.sourceEventId,
-                evidenceSummary: summarizeEvidenceForOtel(evidence),
-                flowContext: dispatchFlowContext,
-                serviceDetails: inngestRuntimeDegrade.map((service) => ({
-                  name: service.name,
-                  detail: service.detail ?? "",
-                })),
+          const requestEvent = {
+            id: "emit-inngest-runtime-self-healing-request",
+            payload: {
+              name: SELF_HEALING_GATEWAY_REQUEST_EVENT,
+              data: {
+                sourceFunction: "system/check-system-health",
+                targetComponent: "inngest-runtime",
+                targetEventName: INNGEST_RUNTIME_HEALTH_REQUEST_EVENT,
+                problemSummary: `Inngest runtime degradation detected: ${summaryLine}`,
+                domain: INNGEST_RUNTIME_HEALING_DOMAIN,
+                attempt: 0,
+                evidence,
+                context: {
+                  checkMode: mode,
+                  services: inngestRuntimeDegrade.map((service) => ({
+                    name: service.name,
+                    detail: service.detail ?? "",
+                  })),
+                  runContextKey: dispatchFlowContext.runContextKey,
+                  flowTrace: dispatchFlowContext.flowTrace,
+                  summaryLine,
+                  sourceEventName: dispatchFlowContext.sourceEventName,
+                  sourceEventId: dispatchFlowContext.sourceEventId,
+                  evidenceSummary: summarizeEvidenceForOtel(evidence),
+                  flowContext: dispatchFlowContext,
+                  serviceDetails: inngestRuntimeDegrade.map((service) => ({
+                    name: service.name,
+                    detail: service.detail ?? "",
+                  })),
+                },
+                playbook: {
+                  actions: [
+                    "Run runtime health probe",
+                    "Capture current Inngest + worker state",
+                  ],
+                  restart: [
+                    "joelclaw inngest restart-worker --register",
+                  ],
+                  kill: [],
+                  defer: ["joelclaw inngest status"],
+                  notify: ["joelclaw otel search \"system.self-healing.inngest-runtime\" --hours 1"],
+                  links: [
+                    "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/self-healing-inngest-runtime.ts",
+                    "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/check-system-health.ts",
+                  ],
+                },
+                owner: "system",
+                fallbackAction: "manual",
+                requestedBy: "system/check-system-health",
+                dryRun: false,
               },
-              playbook: {
-                actions: [
-                  "Run runtime health probe",
-                  "Capture current Inngest + worker state",
-                ],
-                restart: [
-                  "joelclaw inngest restart-worker --register",
-                ],
-                kill: [],
-                defer: ["joelclaw inngest status"],
-                notify: ["joelclaw otel search \"system.self-healing.inngest-runtime\" --hours 1"],
-                links: [
-                  "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/self-healing-inngest-runtime.ts",
-                  "/Users/joel/Code/joelhooks/joelclaw/packages/system-bus/src/inngest/functions/check-system-health.ts",
-                ],
-              },
-              owner: "system",
-              fallbackAction: "manual",
-              requestedBy: "system/check-system-health",
-              dryRun: false,
             },
-          });
+          };
           await emitOtelEvent({
             level: "info",
             source: "worker",
@@ -1186,8 +1220,19 @@ export const checkSystemHealth = inngest.createFunction(
               ],
             },
           });
+
+          return { requestEvent };
         })
       );
+
+      if (inngestRuntimeSelfHealPlan.requestEvent) {
+        await withTiming(stepDurationsMs, "core.dispatch-inngest-runtime-self-heal-send", async () =>
+          step.sendEvent(
+            inngestRuntimeSelfHealPlan.requestEvent.id,
+            inngestRuntimeSelfHealPlan.requestEvent.payload,
+          )
+        );
+      }
     }
 
     if (otelErrorRate && otelErrorRate.shouldEscalate) {
