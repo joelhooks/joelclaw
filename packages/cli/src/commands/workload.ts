@@ -250,6 +250,19 @@ const parseEnumList = <T extends string>(
 const hasAny = (value: string, needles: readonly string[]) =>
   needles.some((needle) => value.includes(needle));
 
+const hasExplicitIsolationIntent = (value: string) =>
+  hasAny(value, [
+    "sandbox required",
+    "require sandbox",
+    "run in sandbox",
+    "use a sandbox",
+    "sandbox this",
+    "isolated execution",
+    "isolation required",
+    "inside sandbox",
+    "sandboxed execution",
+  ]);
+
 const expandHome = (value: string) =>
   value.startsWith("~/") ? `${homedir()}/${value.slice(2)}` : value;
 
@@ -333,19 +346,20 @@ const inferKind = (
 
   if (
     hasAny(value, [
-      "adr",
-      "docs",
-      "documentation",
-      "readme",
-      "truth",
-      "groom",
-      "writeup",
+      "refactor",
+      "migrate",
+      "rename",
+      "extract",
+      "reshape",
+      "restructure",
+      "cleanup",
     ])
   ) {
     return {
-      value: "repo.docs",
+      value: "repo.refactor",
       inferred: true,
-      reason: "intent emphasizes docs, ADRs, or truth-grooming work",
+      reason:
+        "intent describes structural code change with likely regression risk, even if docs follow-up is part of the work",
     };
   }
 
@@ -370,20 +384,19 @@ const inferKind = (
 
   if (
     hasAny(value, [
-      "refactor",
-      "migrate",
-      "rename",
-      "extract",
-      "reshape",
-      "restructure",
-      "cleanup",
+      "adr",
+      "docs",
+      "documentation",
+      "readme",
+      "truth",
+      "groom",
+      "writeup",
     ])
   ) {
     return {
-      value: "repo.refactor",
+      value: "repo.docs",
       inferred: true,
-      reason:
-        "intent describes structural code change with likely regression risk",
+      reason: "intent emphasizes docs, ADRs, or truth-grooming work",
     };
   }
 
@@ -497,7 +510,7 @@ const inferRisks = (
   }
 
   if (
-    (autonomy === "afk" || hasAny(value, ["sandbox"])) &&
+    (autonomy === "afk" || hasExplicitIsolationIntent(value)) &&
     !values.includes("sandbox-required") &&
     kind !== "runtime.proof"
   ) {
@@ -944,7 +957,9 @@ const resolveTarget = (
 
     if (!branch || !baseSha) {
       warnings.push(
-        `could not infer git branch/baseSha for local target ${absolute}`,
+        repoText
+          ? `could not infer git branch/baseSha for local target ${absolute}`
+          : `current working directory ${absolute} is not a git repo; pass --repo to pin the intended workload target`,
       );
     }
 
@@ -1175,7 +1190,7 @@ const buildPlanNextActions = (
   const actions: NextAction[] = [
     {
       command:
-        "workload plan <intent> [--kind <kind>] [--shape <shape>] [--autonomy <autonomy>] [--proof <proof>]",
+        "workload plan <intent> [--kind <kind>] [--shape <shape>] [--autonomy <autonomy>] [--proof <proof>] [--repo <repo>] [--paths <paths>]",
       description: "Refine the plan with explicit overrides",
       params: {
         intent: {
@@ -1196,6 +1211,14 @@ const buildPlanNextActions = (
           value: result.request.autonomy,
         },
         proof: { description: "Proof posture", value: result.request.proof },
+        repo: {
+          description: "Repo path or repo identifier",
+          value: result.inference.target.value.repo,
+        },
+        paths: {
+          description: "Comma-separated path scope",
+          value: result.inference.target.value.paths?.join(",") ?? "",
+        },
       },
     },
   ];

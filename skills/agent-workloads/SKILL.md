@@ -2,7 +2,7 @@
 name: agent-workloads
 displayName: Agent Workloads
 description: "Plan and steer agent-first coding/repo workloads in joelclaw. Use when the task is development work and you need to choose serial, parallel, or chained execution; shape pi-session steering; decide whether work should stay inline, go durable, or run in a sandbox; or define the handoff contract between workers. Triggers on 'plan this workload', 'serial/parallel/chained', 'repo workflow', 'coding workflow', 'pi steering', 'agent-first workload', 'how should an agent run this task', or any request to make coding work legible before dispatching it."
-version: 0.3.0
+version: 0.3.1
 author: Joel Hooks
 tags:
   - agent-first
@@ -186,6 +186,9 @@ Read the detailed workload catalog here:
 
 - start with workload shape, not runtime mechanism
 - use the canonical vocabulary from `docs/workloads.md`; don't invent fresh field names unless the doc changes too
+- implementation intent beats docs follow-through: `refactor ... then update docs` should still plan as implementation work
+- mentioning a sandbox as the topic of research does not automatically mean the work must execute in a sandbox
+- if you are not inside the target repo and `workload plan` warns about the cwd not being a git repo, rerun with `--repo`
 - never hand a coding agent substrate docs as the only answer to “how should I run this work?”
 - serial / parallel / chained are first-class planning choices, not afterthoughts
 - use `clawmail` for any delegated or shared-file workload

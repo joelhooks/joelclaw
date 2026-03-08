@@ -89,6 +89,47 @@ describe("workload CLI command", () => {
     expect(plan.request.artifacts).toContain("comparison");
   });
 
+  it("does not force sandbox mode when sandbox is only the subject of research", () => {
+    const plan = __workloadTestUtils.planWorkload(
+      {
+        intent:
+          "compare local sandbox vs k8s sandbox vs loop ergonomics for agent coding work",
+        kind: "auto",
+        shape: "auto",
+        autonomy: "supervised",
+        proof: "none",
+        requestedBy: "Joel",
+      },
+      new Date("2026-03-08T16:42:30Z"),
+    );
+
+    expect(plan.request.kind).toBe("research.spike");
+    expect(plan.request.risk).not.toContain("sandbox-required");
+    expect(plan.plan.mode).toBe("inline");
+    expect(plan.plan.backend).toBe("host");
+  });
+
+  it("prefers repo.refactor over repo.docs when implementation work includes docs follow-through", () => {
+    const plan = __workloadTestUtils.planWorkload(
+      {
+        intent:
+          "refactor workload planner heuristics, verify with tests, then update docs",
+        kind: "auto",
+        shape: "auto",
+        autonomy: "supervised",
+        proof: "none",
+        requestedBy: "Joel",
+      },
+      new Date("2026-03-08T16:42:45Z"),
+    );
+
+    expect(plan.request.kind).toBe("repo.refactor");
+    expect(plan.request.shape).toBe("chained");
+    expect(plan.request.artifacts).toEqual(
+      expect.arrayContaining(["patch", "tests", "docs", "handoff"]),
+    );
+  });
+
   it("honors explicit shape overrides while preserving the chosen kind", () => {
     const plan = __workloadTestUtils.planWorkload(
       {
