@@ -121,8 +121,9 @@ Operational boundary for Phase 1:
   - the shared observer short-circuits deterministic noops for both truly empty queues and empty queues that only still have active pauses hanging around, so the cron path does not waste a full model call on obvious nothing-to-do snapshots.
   - idle empty snapshots with no recent drainer failures or triage trouble now report `downstreamState=healthy` instead of inheriting a noisy degraded label from stale throughput/latency history.
   - manual probes use singleton-skip semantics so repeated operator requests do not pile up stale queued runs.
+  - the prompt contract is now hardened for live canaries: `content/updated` explicitly prefers `pause_family`/`resume_family` over `batch_family`, and legacy model output that still sends `escalate.reason` is normalized to the required `{ severity, message }` shape instead of forcing a full schema fallback.
   - operator reports flow through `gateway/send.message`, while real queue mutations still emit `queue.control.applied|rejected`.
-  - current live truth: dry-run is earned on host, but the first supervised enforce canary on `content/updated` returned `noop`, so autonomous mutation is **not** yet considered earned and the worker was rolled back to `QUEUE_OBSERVER_MODE=dry-run`.
+  - current live truth: dry-run is earned on host, and the next enforce canary should use the hardened prompt/parser path rather than the earlier schema-fallback-prone contract.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 
 ### System health

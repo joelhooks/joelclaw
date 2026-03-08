@@ -207,7 +207,7 @@ Sandbox runs produce patch bundles, not direct commits to main. This keeps runs 
 - bounded Sonnet observation now lives in `packages/system-bus/src/lib/queue-observe.ts`
 - canonical queue-observation contracts (`QueueObservationSnapshot`, `QueueObservationDecision`, `QueueObserverAction`) plus deterministic queue-control state (`QueueFamilyPauseState`, `QueueControlMode`) live in `@joelclaw/queue`
 - the observer consumes a deterministic server-built snapshot and may only return bounded action suggestions from the shared enum
-- the snapshot now carries active deterministic pauses so resume suggestions are grounded in real control state, and overlong Sonnet summaries are trimmed instead of causing bogus schema fallbacks during live probes
+- the snapshot now carries active deterministic pauses so resume suggestions are grounded in real control state, overlong Sonnet summaries are trimmed instead of causing bogus schema fallbacks during live probes, and legacy `escalate.reason` output is normalized into the canonical `{ severity, message }` report shape
 - canonical model is Sonnet via the shared `infer()` path
 - canonical OTEL vocabulary for this layer is `queue.observe.started|completed|failed|fallback` plus `queue.control.applied|expired|rejected`
 - Story 1 stops at contract/snapshot/fallback vocabulary; Story 2 adds the dry-run CLI surface `joelclaw queue observe`; Story 3 adds the deterministic pause/resume control plane and the dedicated CLI surface `joelclaw queue control status`; Story 4 adds the durable host-worker `queue/observer` runtime with cron + manual trigger support

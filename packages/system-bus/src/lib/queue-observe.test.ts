@@ -252,6 +252,50 @@ describe("queue observer contract", () => {
     }
   });
 
+  test("normalizes legacy escalate actions that use reason instead of severity plus message", async () => {
+    const { __queueObserveTestUtils } = await import("./queue-observe");
+    const snapshot = await buildSnapshot();
+
+    const parsed = __queueObserveTestUtils.parseQueueObservationOutput(JSON.stringify({
+      findings: {
+        queuePressure: "degraded",
+        downstreamState: "down",
+        summary: "content/updated is stalled and needs operator visibility.",
+      },
+      actions: [
+        {
+          kind: "pause_family",
+          family: "content/updated",
+          ttlMs: 300_000,
+          reason: "Pause content while the drainer recovers.",
+        },
+        {
+          kind: "escalate",
+          channel: "telegram",
+          reason: "The drainer is down and content backlog is building.",
+        },
+      ],
+    }), snapshot);
+
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value.actions).toEqual([
+        {
+          kind: "pause_family",
+          family: "content/updated",
+          ttlMs: 300_000,
+          reason: "Pause content while the drainer recovers.",
+        },
+        {
+          kind: "escalate",
+          channel: "telegram",
+          severity: "warn",
+          message: "The drainer is down and content backlog is building.",
+        },
+      ]);
+    }
+  });
+
   test("dry-run records suggested actions but does not produce final auto-apply actions", async () => {
     const { observeQueueSnapshot } = await import("./queue-observe");
     const snapshot = await buildSnapshot();

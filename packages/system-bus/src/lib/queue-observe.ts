@@ -60,7 +60,11 @@ Hard rules:
 - Keep reasons concise and concrete.
 - Use noop when no action is warranted.
 - pause_family and batch_family ttlMs must stay between 60000 and 86400000.
-- escalate is reporting only; use channel=telegram.
+- During the current pilot, if content/updated is queued, downstream is degraded or down, and content/updated is not already paused, prefer pause_family over batch_family, reprioritize_family, or shed_family.
+- Use resume_family when a currently paused family is healthy again and the pause is no longer warranted.
+- Only use batch_family, reprioritize_family, or shed_family when pause_family or resume_family would be clearly wrong.
+- escalate is reporting only and MUST be exactly { "kind": "escalate", "channel": "telegram", "severity": "info|warn|error", "message": "..." }.
+- Never use a reason field on escalate.
 
 Respond with ONLY valid JSON:
 {
@@ -438,6 +442,51 @@ function parseJsonCandidate(raw: string): unknown | null {
   return null;
 }
 
+function asTrimmedString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeQueueObserverActionCandidate(action: unknown): unknown {
+  if (!action || typeof action !== "object" || Array.isArray(action)) {
+    return action;
+  }
+
+  const candidate = action as Record<string, unknown>;
+  if (candidate.kind !== "escalate") {
+    return action;
+  }
+
+  const message = asTrimmedString(candidate.message) ?? asTrimmedString(candidate.reason);
+  if (!message) {
+    return action;
+  }
+
+  const severity = asTrimmedString(candidate.severity)?.toLowerCase();
+
+  return {
+    kind: "escalate",
+    channel: asTrimmedString(candidate.channel) ?? "telegram",
+    severity: severity === "info" || severity === "warn" || severity === "error" ? severity : "warn",
+    message,
+  };
+}
+
+function normalizeQueueObservationCandidate(parsed: unknown): unknown {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return parsed;
+  }
+
+  const candidate = parsed as Record<string, unknown>;
+  return {
+    ...candidate,
+    actions: Array.isArray(candidate.actions)
+      ? candidate.actions.map((action) => normalizeQueueObserverActionCandidate(action))
+      : candidate.actions,
+  };
+}
+
 function actionFamily(action: QueueObserverAction): string | null {
   switch (action.kind) {
     case "pause_family":
@@ -493,7 +542,7 @@ export function parseQueueObservationOutput(
     };
   }
 
-  const result = QueueObserveOutputSchema.safeParse(parsed);
+  const result = QueueObserveOutputSchema.safeParse(normalizeQueueObservationCandidate(parsed));
   if (!result.success) {
     return {
       ok: false,
