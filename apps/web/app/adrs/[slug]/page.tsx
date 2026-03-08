@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import { Suspense } from "react";
 import { ContentLive } from "@/components/content-live";
 import { ConvexReaderProvider } from "@/components/convex-reader-provider";
 import { LazyReviewGate } from "@/components/review/lazy-review-gate";
-import { getAdr, getAdrSlugs } from "@/lib/adrs";
+import { getAdr, getAdrRouteSlug, getAdrRouteSlugs } from "@/lib/adrs";
 import { SITE_NAME, SITE_URL } from "@/lib/constants";
 import { toDateString } from "@/lib/date";
 import { mdxComponents } from "@/lib/mdx";
@@ -17,7 +17,7 @@ import { PriorityRubric } from "./priority-rubric";
 type Props = { params: Promise<{ slug: string }> };
 
 export async function generateStaticParams() {
-  const slugs = await getAdrSlugs();
+  const slugs = await getAdrRouteSlugs();
   return slugs.map((slug) => ({ slug }));
 }
 
@@ -28,13 +28,17 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
   const number = adr.meta.number.padStart(4, "0");
   const title = `ADR-${number}: ${adr.meta.title}`;
+  const routeSlug = getAdrRouteSlug(adr.meta.number);
 
   return {
     title,
+    alternates: {
+      canonical: `${SITE_URL}/adrs/${routeSlug}`,
+    },
     openGraph: {
       type: "article",
       title,
-      url: `${SITE_URL}/adrs/${slug}`,
+      url: `${SITE_URL}/adrs/${routeSlug}`,
       siteName: SITE_NAME,
     },
   };
@@ -62,6 +66,13 @@ export default async function AdrPage({ params }: Props) {
 
   const { meta, content } = adr;
   const number = meta.number.padStart(4, "0");
+  const routeSlug = getAdrRouteSlug(meta.number);
+  const sourceSlug = meta.slug;
+
+  if (slug !== routeSlug) {
+    permanentRedirect(`/adrs/${routeSlug}`);
+  }
+
   const statusClass =
     STATUS_COLORS[meta.status] ?? "text-neutral-500 border-neutral-700";
 
@@ -74,7 +85,7 @@ export default async function AdrPage({ params }: Props) {
       {/* Realtime: refresh page when content changes in Convex */}
       <Suspense fallback={null}>
         <ConvexReaderProvider>
-          <ContentLive resourceId={`adr:${slug}`} />
+          <ContentLive resourceId={`adr:${sourceSlug}`} />
         </ConvexReaderProvider>
       </Suspense>
 
@@ -105,9 +116,9 @@ export default async function AdrPage({ params }: Props) {
       </header>
 
       <LazyReviewGate
-        contentId={`adr:${slug}`}
+        contentId={`adr:${sourceSlug}`}
         contentType="adr"
-        contentSlug={slug}
+        contentSlug={sourceSlug}
       >
         <AdrContent content={content} />
       </LazyReviewGate>

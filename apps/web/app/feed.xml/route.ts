@@ -1,4 +1,4 @@
-import { getAllAdrs } from "@/lib/adrs";
+import { getAdrRouteSlug, getAllAdrs } from "@/lib/adrs";
 import { AUTHOR, SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "@/lib/constants";
 import { formatRssPubDate } from "@/lib/date";
 import { getAllDiscoveries } from "@/lib/discoveries";
@@ -19,7 +19,7 @@ export async function GET() {
 
   const adrItems = adrs.map((adr) => ({
     title: `ADR-${adr.number}: ${adr.title}`,
-    link: `${SITE_URL}/adrs/${adr.slug}`,
+    link: `${SITE_URL}/adrs/${getAdrRouteSlug(adr.number)}`,
     description: `[${adr.status}] ${adr.description ?? adr.title}`,
     date: adr.date,
     category: "adr",

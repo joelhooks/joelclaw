@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { getAllAdrs } from "@/lib/adrs";
+import { getAdrRouteSlug, getAllAdrs } from "@/lib/adrs";
 import { SITE_URL } from "@/lib/constants";
 import { toDateString } from "@/lib/date";
 import { getAllPosts } from "@/lib/posts";
@@ -31,7 +31,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   }));
 
   const adrEntries = adrs.map((adr) => ({
-    url: `${SITE_URL}/adrs/${adr.slug}`,
+    url: `${SITE_URL}/adrs/${getAdrRouteSlug(adr.number)}`,
     lastModified: getLastModified(adr.date),
     changeFrequency: "monthly" as const,
     priority: 0.5,

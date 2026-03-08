@@ -24,6 +24,13 @@ Next.js 16 App Router site for `joelclaw.com`.
 - If no tutorial exists for that slug, the route falls back to the legacy `discovery:<slug>` record.
 - This keeps `/cool/...` tutorial URLs working even when an older discovery stub still exists for the same topic.
 
+## ADR route aliases
+
+- Vault and Convex keep the canonical ADR source slug from the filename, e.g. `0217-event-routing-queue-discipline`.
+- Public web routes use the short alias form `/adrs/adr-0217`, derived from the ADR number.
+- `apps/web/lib/adrs.ts` resolves `adr-####` (and bare `####`) back to the canonical Convex resource ID, so content sync does **not** need duplicate ADR records.
+- `apps/web/app/adrs/[slug]/page.tsx` permanently redirects legacy full-slug ADR URLs to the short alias route while keeping review/live-update lookups pinned to the canonical Convex resource ID.
+
 ## Post display rules
 
 - `apps/web/app/[slug]/page.tsx` renders the post title in the page header from Convex metadata.

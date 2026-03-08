@@ -1,4 +1,4 @@
-import { getAllAdrs } from "@/lib/adrs";
+import { getAdrRouteSlug, getAllAdrs } from "@/lib/adrs";
 import { AUTHOR, SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "@/lib/constants";
 import { getAllPosts } from "@/lib/posts";
 
@@ -23,7 +23,7 @@ export async function GET() {
     "",
     ...adrs.map(
       (a) =>
-        `- [ADR-${a.number}: ${a.title}](${SITE_URL}/adrs/${a.slug}) (${a.status})${a.description ? ` — ${a.description}` : ""}`
+        `- [ADR-${a.number}: ${a.title}](${SITE_URL}/adrs/${getAdrRouteSlug(a.number)}) (${a.status})${a.description ? ` — ${a.description}` : ""}`
     ),
     "",
     "## Feeds",

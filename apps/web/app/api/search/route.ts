@@ -10,7 +10,7 @@
 import { type Duration, Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 import { NextRequest, NextResponse } from "next/server";
-import { getAllAdrs } from "@/lib/adrs";
+import { getAdrRouteSlug, getAllAdrs } from "@/lib/adrs";
 
 const TYPESENSE_URL = process.env.TYPESENSE_URL || "http://localhost:8108";
 const TYPESENSE_API_KEY = process.env.TYPESENSE_API_KEY || "";
@@ -231,7 +231,7 @@ async function searchAdrs(query: string, limit: number): Promise<SearchHit[]> {
       collection: "adrs",
       title,
       snippet: adr.description || `${adr.status} decision record`,
-      url: `/adrs/${adr.slug}`,
+      url: `/adrs/${getAdrRouteSlug(adr.number)}`,
       type: "adr",
       score: title.toLowerCase().includes(q) ? 100 : 10,
     });

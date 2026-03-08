@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo } from "react";
+import { toAdrRouteSlug } from "@/lib/adr-route";
 import type { AdrMeta } from "@/lib/adrs";
 import { formatDateStatic } from "@/lib/date";
 import { AdrFilterBar, filterAndSortAdrs, useAdrFilters } from "./adr-filters";
@@ -45,12 +46,13 @@ function formatDate(dateStr: string) {
 
 function AdrRow({ adr }: { adr: AdrMeta }) {
   const isSuperseded = adr.status === "superseded";
+  const routeSlug = toAdrRouteSlug(adr.number);
 
   return (
     <li
       className={`group border-b border-neutral-800/50 last:border-0 ${isSuperseded ? "opacity-50" : ""}`}
     >
-      <Link href={`/adrs/${adr.slug}`} className="block py-4 sm:py-5">
+      <Link href={`/adrs/${routeSlug}`} className="block py-4 sm:py-5">
         <div className="flex items-start gap-4">
           <span className="shrink-0 font-mono text-xs text-neutral-600 pt-1 tabular-nums">
             {adr.number.padStart(4, "0")}

@@ -1,6 +1,11 @@
 import { ConvexHttpClient } from "convex/browser";
 import { cacheLife, cacheTag } from "next/cache";
 import { api } from "@/convex/_generated/api";
+import {
+  buildAdrRouteSlugs,
+  resolveAdrSourceSlug,
+  toAdrRouteSlug,
+} from "@/lib/adr-route";
 import { toDateString } from "./date";
 
 /**
@@ -297,6 +302,11 @@ function normalizeAdrList(docs: unknown[]): AdrMeta[] {
   return dedupeByNumber(parsed).sort(sortByAdrNumberDesc);
 }
 
+async function resolveCanonicalAdrSlug(slug: string): Promise<string> {
+  const canonicalSlug = resolveAdrSourceSlug(slug, await getAllAdrs());
+  return canonicalSlug ?? slug;
+}
+
 export async function getAllAdrs(): Promise<AdrMeta[]> {
   "use cache";
   cacheLife("days");
@@ -321,9 +331,11 @@ export async function getAdr(slug: string) {
   cacheTag("adrs");
   cacheTag(`adr:${slug}`);
 
+  const canonicalSlug = await resolveCanonicalAdrSlug(slug);
+
   const convex = getConvexClient();
   const doc = await convex.query(api.contentResources.getByResourceId, {
-    resourceId: `adr:${slug}`,
+    resourceId: `adr:${canonicalSlug}`,
   });
 
   if (!doc || typeof doc !== "object") return null;
@@ -357,4 +369,16 @@ export async function getAdrSlugs(): Promise<string[]> {
   }
 
   return normalizeAdrList(docs).map((adr) => adr.slug);
+}
+
+export async function getAdrRouteSlugs(): Promise<string[]> {
+  "use cache";
+  cacheLife("days");
+  cacheTag("adrs");
+
+  return buildAdrRouteSlugs(await getAllAdrs());
+}
+
+export function getAdrRouteSlug(number: string): string {
+  return toAdrRouteSlug(number);
 }
