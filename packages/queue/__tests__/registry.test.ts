@@ -12,6 +12,7 @@ describe("Queue Event Registry", () => {
     expect(eventNames).toContain("content/updated");
     expect(eventNames).toContain("subscription/check-feeds.requested");
     expect(eventNames).toContain("github/workflow_run.completed");
+    expect(eventNames).toContain("workload/requested");
   });
 
   it("should look up event by name", () => {
@@ -47,12 +48,16 @@ describe("Queue Event Registry", () => {
   it("should use concrete Inngest event names for Inngest-backed pilots", () => {
     const subscriptionChecks = lookupQueueEvent("subscription/check-feeds.requested");
     const githubWorkflowCompleted = lookupQueueEvent("github/workflow_run.completed");
+    const workloadRequested = lookupQueueEvent("workload/requested");
 
     expect(subscriptionChecks?.handler?.type).toBe("inngest");
     expect(subscriptionChecks?.handler?.target).toBe("subscription/check-feeds.requested");
 
     expect(githubWorkflowCompleted?.handler?.type).toBe("inngest");
     expect(githubWorkflowCompleted?.handler?.target).toBe("github/workflow_run.completed");
+
+    expect(workloadRequested?.handler?.type).toBe("inngest");
+    expect(workloadRequested?.handler?.target).toBe("system/agent.requested");
   });
 
   it("should have unique event names", () => {

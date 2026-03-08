@@ -11,6 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import { Args, Command, Options } from "@effect/cli";
 import { Console, Effect } from "effect";
 import { executeCapabilityCommand } from "../capabilities/runtime";
+import { enqueueQueueEventViaWorker } from "../lib/queue-admission";
 import {
   buildSuccessEnvelope,
   type JoelclawEnvelope,
@@ -266,7 +267,58 @@ type WorkloadDispatchResult = {
   shipped: {
     plan: true;
     dispatch: true;
-    run: false;
+    run: true;
+    status: false;
+    explain: false;
+    cancel: false;
+  };
+};
+
+type WorkloadRuntimeRequest = {
+  requestId: string;
+  workflowId: string;
+  storyId: string;
+  task: string;
+  tool: "pi" | "codex" | "claude";
+  cwd?: string;
+  repoUrl?: string;
+  branch?: string;
+  baseSha?: string;
+  timeout?: number;
+  model?: string;
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  executionMode?: "host" | "sandbox";
+  sandboxBackend?: "local" | "k8s";
+  readFiles?: boolean;
+};
+
+type WorkloadRunResult = {
+  version: string;
+  runId: string;
+  sourcePlan: {
+    path: string;
+    workloadId: string;
+  };
+  selectedStage: WorkloadStage;
+  target: WorkloadTarget;
+  guidance: WorkloadDispatchGuidance;
+  event: {
+    family: "workload/requested";
+    target: "system/agent.requested";
+  };
+  runtimeRequest: WorkloadRuntimeRequest;
+  queue?: {
+    streamId: string;
+    eventId: string;
+    priority: number;
+    triageMode: string;
+    triage?: unknown;
+  };
+  dryRun: boolean;
+  shipped: {
+    plan: true;
+    dispatch: true;
+    run: true;
     status: false;
     explain: false;
     cancel: false;
@@ -336,7 +388,7 @@ type WorkloadPlanningResult = {
   artifact?: WorkloadPlanArtifact;
   shipped: {
     plan: true;
-    run: false;
+    run: true;
     status: false;
     explain: false;
     cancel: false;
@@ -1542,12 +1594,231 @@ const buildDispatchContract = (options: {
     shipped: {
       plan: true,
       dispatch: true,
-      run: false,
+      run: true,
       status: false,
       explain: false,
       cancel: false,
     },
   };
+};
+
+const buildRunId = (now = new Date()): string => {
+  const yyyy = now.getUTCFullYear();
+  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(now.getUTCDate()).padStart(2, "0");
+  const hh = String(now.getUTCHours()).padStart(2, "0");
+  const min = String(now.getUTCMinutes()).padStart(2, "0");
+  const ss = String(now.getUTCSeconds()).padStart(2, "0");
+  return `WR_${yyyy}${mm}${dd}_${hh}${min}${ss}`;
+};
+
+const resolveRepoUrlForRun = (
+  target: WorkloadTarget,
+  explicitRepoUrl?: string,
+): string | undefined => {
+  if (explicitRepoUrl?.trim()) {
+    return explicitRepoUrl.trim();
+  }
+
+  if (!target.repo.startsWith("/")) {
+    return undefined;
+  }
+
+  return runGit(target.repo, ["config", "--get", "remote.origin.url"]);
+};
+
+const buildWorkloadRunTask = (options: {
+  dispatch: WorkloadDispatchResult;
+  request: WorkloadRequest;
+}): string => {
+  const targetPaths = options.dispatch.handoff.reservedPaths.length > 0
+    ? options.dispatch.handoff.reservedPaths.join(", ")
+    : "repo-wide";
+
+  return [
+    `Execute workload ${options.dispatch.sourcePlan.workloadId} ${options.dispatch.selectedStage.id}.`,
+    "",
+    `Goal: ${options.dispatch.selectedStage.name}`,
+    `Repo: ${options.dispatch.target.repo}`,
+    `Branch/base: ${options.dispatch.target.branch ?? "unknown"}${options.dispatch.target.baseSha ? ` @ ${options.dispatch.target.baseSha}` : ""}`,
+    `Scoped paths: ${targetPaths}`,
+    "",
+    "Acceptance:",
+    ...options.request.acceptance.map((criterion) => `- ${criterion}`),
+    "",
+    "Verification required:",
+    ...options.dispatch.selectedStage.verification.map((criterion) => `- ${criterion}`),
+    "",
+    "Remaining gates:",
+    ...options.dispatch.handoff.remainingGates.map((gate) => `- ${gate}`),
+    "",
+    "Guidance:",
+    `- ${options.dispatch.guidance.summary}`,
+    `- ${options.dispatch.guidance.executionLoop.progressUpdateExpectation}`,
+    `- ${options.dispatch.guidance.executionLoop.completionExpectation}`,
+    "",
+    "Closeout:",
+    "- Keep the work inside the scoped paths unless the plan is updated explicitly.",
+    "- Report what changed, what was verified, what remains, and whether the next move is push, handoff, or stop.",
+  ].join("\n");
+};
+
+const buildWorkloadRunResult = (options: {
+  sourcePlanPath: string;
+  result: WorkloadPlanningResult;
+  stageId?: string;
+  tool: "pi" | "codex" | "claude";
+  timeout?: number;
+  model?: string;
+  executionMode?: "auto" | "host" | "sandbox";
+  sandboxBackend?: "local" | "k8s";
+  repoUrl?: string;
+  now?: Date;
+}): WorkloadRunResult => {
+  const dispatch = buildDispatchContract({
+    sourcePlanPath: options.sourcePlanPath,
+    result: options.result,
+    stageId: options.stageId,
+    now: options.now,
+  });
+  const runId = buildRunId(options.now);
+  const inferredExecutionMode =
+    options.executionMode && options.executionMode !== "auto"
+      ? options.executionMode
+      : options.result.plan.mode === "sandbox" ||
+          options.result.request.risk.includes("sandbox-required")
+        ? "sandbox"
+        : "host";
+  const repoUrl = resolveRepoUrlForRun(dispatch.target, options.repoUrl);
+  const cwd = dispatch.target.repo.startsWith("/") ? dispatch.target.repo : undefined;
+
+  if (!cwd && !repoUrl) {
+    throw new Error(
+      "workload run needs either a local repo target or --repo-url so the runtime knows what checkout to execute",
+    );
+  }
+
+  const runtimeRequest: WorkloadRuntimeRequest = {
+    requestId: runId,
+    workflowId: dispatch.sourcePlan.workloadId,
+    storyId: dispatch.selectedStage.id,
+    task: buildWorkloadRunTask({
+      dispatch,
+      request: options.result.request,
+    }),
+    tool: options.tool,
+    ...(cwd ? { cwd } : {}),
+    ...(repoUrl ? { repoUrl } : {}),
+    ...(dispatch.target.branch ? { branch: dispatch.target.branch } : {}),
+    ...(dispatch.target.baseSha ? { baseSha: dispatch.target.baseSha } : {}),
+    ...(options.timeout ? { timeout: options.timeout } : {}),
+    ...(options.model ? { model: options.model } : {}),
+    executionMode: inferredExecutionMode,
+    ...(inferredExecutionMode === "sandbox"
+      ? {
+          sandbox: "workspace-write",
+          sandboxBackend: options.sandboxBackend ?? "local",
+        }
+      : {}),
+    readFiles: true,
+  };
+
+  return {
+    version: WORKLOAD_VERSION,
+    runId,
+    sourcePlan: dispatch.sourcePlan,
+    selectedStage: dispatch.selectedStage,
+    target: dispatch.target,
+    guidance: dispatch.guidance,
+    event: {
+      family: "workload/requested",
+      target: "system/agent.requested",
+    },
+    runtimeRequest,
+    dryRun: false,
+    shipped: {
+      plan: true,
+      dispatch: true,
+      run: true,
+      status: false,
+      explain: false,
+      cancel: false,
+    },
+  };
+};
+
+const buildRunNextActions = (
+  planArtifactPath: string,
+  result: WorkloadRunResult,
+): NextAction[] => {
+  const actions: NextAction[] = [];
+
+  if (result.queue) {
+    actions.push({
+      command: "queue inspect <stream-id>",
+      description: "Inspect the queued workload request",
+      params: {
+        "stream-id": {
+          description: "Redis stream id",
+          value: result.queue.streamId,
+          required: true,
+        },
+      },
+    });
+    actions.push({
+      command: "queue depth",
+      description: "Check current queue depth after enqueueing the workload",
+    });
+    actions.push({
+      command: "queue stats [--hours <hours>]",
+      description: "Inspect recent queue dispatch health",
+      params: {
+        hours: {
+          description: "Recent queue stats window",
+          value: 1,
+        },
+      },
+    });
+    return actions;
+  }
+
+  actions.push({
+    command:
+      "workload run <plan-artifact> [--stage <stage-id>] [--tool <tool>] [--execution-mode <mode>] [--sandbox-backend <backend>] [--repo-url <repo-url>]",
+    description: "Enqueue the normalized workload request through the canonical workload/runtime bridge",
+    params: {
+      "plan-artifact": {
+        description: "Path to a workload plan envelope",
+        value: planArtifactPath,
+        required: true,
+      },
+      "stage-id": {
+        description: "Stage to enqueue",
+        value: result.selectedStage.id,
+      },
+      tool: {
+        description: "Background agent tool",
+        value: result.runtimeRequest.tool,
+        enum: ["pi", "codex", "claude"],
+      },
+      mode: {
+        description: "Runtime execution mode",
+        value: result.runtimeRequest.executionMode ?? "host",
+        enum: ["auto", "host", "sandbox"],
+      },
+      backend: {
+        description: "Sandbox backend when sandbox mode is selected",
+        value: result.runtimeRequest.sandboxBackend ?? "local",
+        enum: ["local", "k8s"],
+      },
+      "repo-url": {
+        description: "Explicit repo URL when the target is not a local checkout",
+        value: result.runtimeRequest.repoUrl ?? "git@github.com:owner/repo.git",
+      },
+    },
+  });
+
+  return actions;
 };
 
 const resolvePresetDefaults = (input: PlannerInput): PlannerInputResolution => {
@@ -2694,7 +2965,7 @@ const planWorkload = (
     ...(inputResolution.preset ? { preset: inputResolution.preset } : {}),
     shipped: {
       plan: true,
-      run: false,
+      run: true,
       status: false,
       explain: false,
       cancel: false,
@@ -2815,6 +3086,50 @@ const writeDispatchOption = Options.text("write-dispatch").pipe(
     "Write the dispatch contract to a reusable JSON artifact",
   ),
   Options.optional,
+);
+
+const runPlanArtifactArg = Args.text({ name: "plan-artifact" }).pipe(
+  Args.withDescription("Path to a saved workload plan envelope"),
+);
+
+const runStageOption = Options.text("stage").pipe(
+  Options.withDescription("Which stage id to enqueue (defaults to the first stage)"),
+  Options.optional,
+);
+
+const runToolOption = Options.text("tool").pipe(
+  Options.withDescription("Background agent tool for the runtime request"),
+  Options.withDefault("pi"),
+);
+
+const runTimeoutOption = Options.integer("timeout").pipe(
+  Options.withDescription("Runtime timeout in seconds"),
+  Options.optional,
+);
+
+const runModelOption = Options.text("model").pipe(
+  Options.withDescription("Optional model override for the runtime worker"),
+  Options.optional,
+);
+
+const runExecutionModeOption = Options.text("execution-mode").pipe(
+  Options.withDescription("Execution mode override: auto, host, or sandbox"),
+  Options.withDefault("auto"),
+);
+
+const runSandboxBackendOption = Options.text("sandbox-backend").pipe(
+  Options.withDescription("Sandbox backend override when sandbox mode is selected"),
+  Options.withDefault("local"),
+);
+
+const runRepoUrlOption = Options.text("repo-url").pipe(
+  Options.withDescription("Explicit repo URL when the workload target is not a local checkout"),
+  Options.optional,
+);
+
+const runDryRunOption = Options.boolean("dry-run").pipe(
+  Options.withDescription("Print the canonical runtime request without enqueueing it"),
+  Options.withDefault(false),
 );
 
 const buildPlanNextActions = (
@@ -3060,6 +3375,35 @@ const buildPlanNextActions = (
         },
       },
     });
+    actions.push({
+      command:
+        "workload run <plan-artifact> [--stage <stage-id>] [--tool <tool>] [--execution-mode <mode>] [--dry-run]",
+      description:
+        result.guidance.recommendedExecution === "execute-inline-now"
+          ? "If approval already exists, enqueue the saved plan only when you deliberately want managed runtime tracking instead of keeping the slice inline"
+          : "Normalize the saved plan into the canonical runtime request and enqueue it",
+      params: {
+        "plan-artifact": {
+          description: "Path to the workload plan envelope",
+          value: result.artifact.path,
+          required: true,
+        },
+        "stage-id": {
+          description: "Which stage to enqueue",
+          value: result.plan.stages[0]?.id ?? "stage-1",
+        },
+        tool: {
+          description: "Background worker tool",
+          value: "pi",
+          enum: ["pi", "codex", "claude"],
+        },
+        mode: {
+          description: "Execution mode override",
+          value: result.plan.mode === "sandbox" ? "sandbox" : "auto",
+          enum: ["auto", "host", "sandbox"],
+        },
+      },
+    });
   }
 
   return actions;
@@ -3142,6 +3486,37 @@ const buildDispatchNextActions = (
         description: "Where to write the dispatch JSON",
         value:
           result.artifact?.path ?? defaultDispatchArtifactPath(result.dispatchId),
+      },
+    },
+  });
+
+  actions.push({
+    command:
+      "workload run <plan-artifact> [--stage <stage-id>] [--tool <tool>] [--execution-mode <mode>] [--dry-run]",
+    description:
+      result.guidance.recommendation === "dispatch-is-overkill-keep-it-inline"
+        ? "If you still need the managed runtime despite the overkill warning, enqueue the selected stage through the canonical workload bridge"
+        : "Enqueue the selected stage through the canonical workload/runtime bridge",
+    params: {
+      "plan-artifact": {
+        description: "Path to the saved workload plan envelope",
+        value: planArtifactPath,
+        required: true,
+      },
+      "stage-id": {
+        description: "Which stage to enqueue",
+        value: result.selectedStage.id,
+      },
+      tool: {
+        description: "Background worker tool",
+        value: "pi",
+        enum: ["pi", "codex", "claude"],
+      },
+      mode: {
+        description: "Execution mode override",
+        value:
+          result.selectedStage.mode === "sandbox" ? "sandbox" : "auto",
+        enum: ["auto", "host", "sandbox"],
       },
     },
   });
@@ -3682,19 +4057,224 @@ const dispatchCmd = Command.make(
   ),
 );
 
+const runCmd = Command.make(
+  "run",
+  {
+    planArtifact: runPlanArtifactArg,
+    stage: runStageOption,
+    tool: runToolOption,
+    timeout: runTimeoutOption,
+    model: runModelOption,
+    executionMode: runExecutionModeOption,
+    sandboxBackend: runSandboxBackendOption,
+    repoUrl: runRepoUrlOption,
+    dryRun: runDryRunOption,
+  },
+  ({
+    planArtifact,
+    stage,
+    tool,
+    timeout,
+    model,
+    executionMode,
+    sandboxBackend,
+    repoUrl,
+    dryRun,
+  }) =>
+    Effect.gen(function* () {
+      const stageId = stage._tag === "Some" ? stage.value.trim() : undefined;
+      const modelText = model._tag === "Some" ? model.value.trim() : undefined;
+      const repoUrlText =
+        repoUrl._tag === "Some" ? repoUrl.value.trim() : undefined;
+      const timeoutSeconds = timeout._tag === "Some" ? timeout.value : undefined;
+      const normalizedTool = tool.trim().toLowerCase();
+      const normalizedExecutionMode = executionMode.trim().toLowerCase();
+      const normalizedSandboxBackend = sandboxBackend.trim().toLowerCase();
+
+      if (!["pi", "codex", "claude"].includes(normalizedTool)) {
+        yield* Console.log(
+          respondError(
+            "workload run",
+            `Invalid --tool ${tool}`,
+            "WORKLOAD_RUN_INVALID_TOOL",
+            "Choose pi, codex, or claude for the runtime worker",
+            [],
+          ),
+        );
+        return;
+      }
+
+      if (!["auto", "host", "sandbox"].includes(normalizedExecutionMode)) {
+        yield* Console.log(
+          respondError(
+            "workload run",
+            `Invalid --execution-mode ${executionMode}`,
+            "WORKLOAD_RUN_INVALID_EXECUTION_MODE",
+            "Choose auto, host, or sandbox for workload run",
+            [],
+          ),
+        );
+        return;
+      }
+
+      if (!["local", "k8s"].includes(normalizedSandboxBackend)) {
+        yield* Console.log(
+          respondError(
+            "workload run",
+            `Invalid --sandbox-backend ${sandboxBackend}`,
+            "WORKLOAD_RUN_INVALID_SANDBOX_BACKEND",
+            "Choose local or k8s for the sandbox backend",
+            [],
+          ),
+        );
+        return;
+      }
+
+      const parsedEither = yield* Effect.try({
+        try: () => parseWorkloadPlanArtifact(planArtifact),
+        catch: (error) =>
+          error instanceof Error ? error : new Error(String(error)),
+      }).pipe(Effect.either);
+
+      if (parsedEither._tag === "Left") {
+        yield* Console.log(
+          respondError(
+            "workload run",
+            parsedEither.left.message,
+            "WORKLOAD_RUN_INVALID_PLAN_ARTIFACT",
+            "Pass a valid plan artifact created by `joelclaw workload plan --write-plan ...`",
+            [
+              {
+                command:
+                  "workload run <plan-artifact> [--stage <stage-id>] [--tool <tool>] [--execution-mode <mode>] [--dry-run]",
+                description: "Retry with a valid plan artifact",
+                params: {
+                  "plan-artifact": {
+                    description: "Path to a workload plan envelope",
+                    value: planArtifact,
+                    required: true,
+                  },
+                  "stage-id": {
+                    description: "Optional stage id",
+                    value: stageId ?? "stage-1",
+                  },
+                  tool: {
+                    description: "Background worker tool",
+                    value: normalizedTool,
+                    enum: ["pi", "codex", "claude"],
+                  },
+                  mode: {
+                    description: "Execution mode",
+                    value: normalizedExecutionMode,
+                    enum: ["auto", "host", "sandbox"],
+                  },
+                },
+              },
+            ],
+          ),
+        );
+        return;
+      }
+
+      const parsed = parsedEither.right;
+      const runBaseEither = yield* Effect.try({
+        try: () =>
+          buildWorkloadRunResult({
+            sourcePlanPath: parsed.absolutePath,
+            result: parsed.result,
+            stageId,
+            tool: normalizedTool as "pi" | "codex" | "claude",
+            timeout: timeoutSeconds,
+            model: modelText,
+            executionMode: normalizedExecutionMode as "auto" | "host" | "sandbox",
+            sandboxBackend: normalizedSandboxBackend as "local" | "k8s",
+            repoUrl: repoUrlText,
+            now: new Date(),
+          }),
+        catch: (error) =>
+          error instanceof Error ? error : new Error(String(error)),
+      }).pipe(Effect.either);
+
+      if (runBaseEither._tag === "Left") {
+        yield* Console.log(
+          respondError(
+            "workload run",
+            runBaseEither.left.message,
+            "WORKLOAD_RUN_INVALID_RUNTIME_REQUEST",
+            "Use a local repo target or pass --repo-url so the runtime request has a real checkout source",
+            [],
+          ),
+        );
+        return;
+      }
+
+      let result: WorkloadRunResult = {
+        ...runBaseEither.right,
+        dryRun,
+      };
+
+      if (!dryRun) {
+        const queueEither = yield* Effect.tryPromise({
+          try: () =>
+            enqueueQueueEventViaWorker({
+              name: result.event.family,
+              data: result.runtimeRequest as unknown as Record<string, unknown>,
+              source: "workload",
+            }),
+          catch: (error) =>
+            error instanceof Error
+              ? error
+              : new Error(String(error)),
+        }).pipe(Effect.either);
+
+        if (queueEither._tag === "Left") {
+          yield* Console.log(
+            respondError(
+              "workload run",
+              queueEither.left.message,
+              "WORKLOAD_RUN_QUEUE_ADMISSION_FAILED",
+              "Check the queue registry/worker admission surface, or retry with --dry-run to inspect the normalized runtime request",
+              [],
+            ),
+          );
+          return;
+        }
+
+        result = {
+          ...result,
+          queue: {
+            streamId: queueEither.right.streamId,
+            eventId: queueEither.right.eventId,
+            priority: queueEither.right.priority,
+            triageMode: queueEither.right.triageMode,
+            triage: queueEither.right.triage,
+          },
+        };
+      }
+
+      const nextActions = buildRunNextActions(parsed.absolutePath, result);
+      yield* Console.log(respond("workload run", result, nextActions));
+    }),
+).pipe(
+  Command.withDescription(
+    "Normalize a saved workload plan into a canonical runtime request and enqueue it",
+  ),
+);
+
 export const workloadCmd = Command.make("workload", {}, () =>
   Console.log(
     respond(
       "workload",
       {
-        description: "Agent-first workload planning and dispatch surfaces",
+        description: "Agent-first workload planning, dispatch, and runtime bridge surfaces",
         shipped: {
           plan: "joelclaw workload plan <intent> [--preset docs-truth|research-compare|refactor-handoff] [--kind auto|repo.patch|repo.refactor|repo.docs|repo.review|research.spike|runtime.proof|cross-repo.integration] [--shape auto|serial|parallel|chained] [--paths-from status|head|recent:<n>] [--write-plan <path>]",
           dispatch:
             "joelclaw workload dispatch <plan-artifact> [--stage <stage-id>] [--to <to>] [--from <from>] [--send-mail] [--write-dispatch <path>]",
+          run:
+            "joelclaw workload run <plan-artifact> [--stage <stage-id>] [--tool pi|codex|claude] [--execution-mode auto|host|sandbox] [--sandbox-backend local|k8s] [--dry-run]",
         },
         planned: {
-          run: "planned, not yet shipped",
           status: "planned, not yet shipped",
           explain: "planned, not yet shipped",
           cancel: "planned, not yet shipped",
@@ -3711,10 +4291,15 @@ export const workloadCmd = Command.make("workload", {}, () =>
           description:
             "Turn a saved plan artifact into a reusable dispatch contract",
         },
+        {
+          command: `joelclaw workload run ${shellQuote("~/.joelclaw/workloads/WL_YYYYMMDD_HHMMSS.json")} --tool pi --dry-run`,
+          description:
+            "Normalize a saved plan into the canonical runtime request before enqueueing it",
+        },
       ],
     ),
   ),
-).pipe(Command.withSubcommands([planCmd, dispatchCmd]));
+).pipe(Command.withSubcommands([planCmd, dispatchCmd, runCmd]));
 
 export const __workloadTestUtils = {
   splitCsv,
@@ -3731,6 +4316,7 @@ export const __workloadTestUtils = {
   buildStages,
   buildWorkloadId,
   buildDispatchId,
+  buildRunId,
   defaultPlanArtifactPath,
   defaultDispatchArtifactPath,
   resolvePlanArtifactPath,
@@ -3740,6 +4326,8 @@ export const __workloadTestUtils = {
   parseWorkloadPlanArtifact,
   selectDispatchStage,
   buildDispatchContract,
+  buildWorkloadRunResult,
+  buildRunNextActions,
   resolvePresetDefaults,
   resolveTarget,
   buildExecutionExamples,

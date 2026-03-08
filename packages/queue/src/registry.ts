@@ -95,6 +95,16 @@ export const QUEUE_EVENT_REGISTRY: QueueEventRegistryEntry[] = [
     },
     description: "GitHub workflow run completed webhook",
   },
+  {
+    name: "workload/requested",
+    priority: Priority.P1,
+    handler: {
+      type: "inngest",
+      target: "system/agent.requested",
+    },
+    description:
+      "Canonical workload runtime bridge that normalizes saved workload artifacts into background agent requests",
+  },
 ];
 
 /**

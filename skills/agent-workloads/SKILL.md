@@ -2,7 +2,7 @@
 name: agent-workloads
 displayName: Agent Workloads
 description: "Plan and steer agent-first coding/repo workloads in joelclaw. Use when the task is development work and you need to choose serial, parallel, or chained execution; shape pi-session steering; decide whether work should stay inline, go durable, or run in a sandbox; or define the handoff contract between workers. Triggers on 'plan this workload', 'serial/parallel/chained', 'repo workflow', 'coding workflow', 'pi steering', 'agent-first workload', 'how should an agent run this task', or any request to make coding work legible before dispatching it."
-version: 0.7.2
+version: 0.8.0
 author: Joel Hooks
 tags:
   - agent-first
@@ -194,6 +194,13 @@ joelclaw workload dispatch <plan-artifact> \
   [--from MaroonReef] \
   [--send-mail] \
   [--write-dispatch ~/.joelclaw/workloads/]
+
+joelclaw workload run <plan-artifact> \
+  [--stage stage-2] \
+  [--tool pi|codex|claude] \
+  [--execution-mode auto|host|sandbox] \
+  [--sandbox-backend local|k8s] \
+  [--dry-run]
 ```
 
 Use `plan` to get the canonical `request` + `plan` envelope, seed scope from real repo activity, and emit a reusable plan artifact. The CLI now also returns `guidance` so the agent gets:
@@ -207,10 +214,11 @@ Use `plan` to get the canonical `request` + `plan` envelope, seed scope from rea
 
 Use `dispatch` to turn a saved plan into a real handoff contract instead of retyping the whole bloody thing. The CLI now also returns dispatch guidance so it can say when dispatch is overkill for a bounded inline slice, when to health-check before handing off, when the recipient still needs to be made explicit, and what the approval/progress/closeout loop should look like.
 
+Use `run` when the plan is approved and should enter the queue-backed runtime through one canonical bridge. It normalizes the saved plan into `workload/requested` → `system/agent.requested` instead of forcing the operator to hand-roll `joelclaw queue emit` payloads.
+
 Still planned:
 
 ```bash
-joelclaw workload run "<intent>"
 joelclaw workload status <id>
 joelclaw workload explain <id>
 joelclaw workload cancel <id>
@@ -224,9 +232,10 @@ Until the rest exists:
 4. once approved, follow `guidance.executionLoop.approvedNextStep`
 5. if `recommendedExecution=execute-inline-now`, reserve the scoped files and just do the work
 6. if `recommendedExecution=tighten-scope-first`, rerun the planner with explicit `--paths` or `--paths-from ...`
-7. if another worker should take it, save the plan and run `joelclaw workload dispatch`
-8. deliver the dispatch contract through clawmail when appropriate
-9. keep the handoff explicit and report the final outcome tersely
+7. if the approved plan should enter the queue-backed runtime, run `joelclaw workload run` instead of hand-rolling `queue emit`
+8. if another worker should take it first, save the plan and run `joelclaw workload dispatch`
+9. deliver the dispatch contract through clawmail when appropriate
+10. keep the handoff explicit and report the final outcome tersely
 
 ## Reference
 

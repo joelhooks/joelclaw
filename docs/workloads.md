@@ -7,11 +7,11 @@ This document defines the canonical vocabulary, schema, and planner surface for 
 ## Status
 
 - **Canonical for planning:** yes
-- **Implemented as CLI/runtime contract:** `joelclaw workload plan` plus `joelclaw workload dispatch`
-- **Still planned:** `joelclaw workload run|status|explain|cancel`
-- **Current use:** planning, saved plan artifacts, dispatch/handoff contracts, and planner-driven CLI output
+- **Implemented as CLI/runtime contract:** `joelclaw workload plan`, `joelclaw workload dispatch`, and `joelclaw workload run`
+- **Still planned:** `joelclaw workload status|explain|cancel`
+- **Current use:** planning, saved plan artifacts, dispatch/handoff contracts, canonical runtime normalization, and queue-backed workload admission
 
-Do not pretend the whole workload command family already ships. `plan` and `dispatch` are real right now; `run|status|explain|cancel` are still not.
+Do not pretend the whole workload command family already ships. `plan`, `dispatch`, and `run` are real right now; `status|explain|cancel` are still not.
 
 ## Why this exists
 
@@ -184,6 +184,14 @@ joelclaw workload dispatch <plan-artifact> \
   [--from MaroonReef] \
   [--send-mail] \
   [--write-dispatch ~/.joelclaw/workloads/]
+
+joelclaw workload run <plan-artifact> \
+  [--stage stage-2] \
+  [--tool pi|codex|claude] \
+  [--execution-mode auto|host|sandbox] \
+  [--sandbox-backend local|k8s] \
+  [--repo-url git@github.com:owner/repo.git] \
+  [--dry-run]
 ```
 
 Semantics:
@@ -227,6 +235,18 @@ Semantics:
 - can optionally emit a second saved artifact with `--write-dispatch`
 - can optionally send the dispatch contract through `joelclaw mail` with `--to ... --from ... --send-mail`
 - still **does not execute code or mutate repos**
+
+`joelclaw workload run` semantics:
+
+- reads a saved `joelclaw workload plan --write-plan ...` envelope and normalizes it into one canonical runtime request
+- uses the queue family `workload/requested`, which is registry-routed to the real runtime event `system/agent.requested`
+- chooses the first stage by default, or a caller-selected stage via `--stage`
+- reuses the dispatch/handoff contract so the runtime payload carries explicit scope, acceptance, remaining gates, and closeout expectations instead of vague chat sludge
+- defaults to `--tool pi`; `--tool codex|claude` is opt-in
+- infers `executionMode=host|sandbox` from the planned workload unless the operator overrides it
+- supports `--dry-run` so the operator can inspect the normalized runtime request before enqueueing it
+- returns queue admission details (`streamId`, `eventId`, priority, triage mode) once enqueued
+- **does not pretend queue emit is the only front door anymore** — raw `joelclaw queue emit` remains the substrate escape hatch, while `workload run` is the canonical bridge from workload artifacts to runtime admission
 
 ## Workload request schema
 
@@ -677,8 +697,8 @@ Story 4.2 is earned when:
 
 - `joelclaw workload plan` returns the canonical `request` + `plan` envelope
 - the planner uses the shared vocabulary from this doc instead of inventing fresh field names
-- shipped behavior is explicit: planning only, no fake dispatch/status/explain/cancel path yet
-- docs, skill guidance, ADR truth, and CLI docs all describe the same planner-only reality
+- shipped behavior is explicit: `plan`, `dispatch`, and `run` are real; `status|explain|cancel` are still not
+- docs, skill guidance, ADR truth, and CLI docs all describe the same workload-front-door reality
 
 ## Story 4.3 done criteria
 
@@ -688,4 +708,4 @@ Story 4.3 is earned when:
 - presets, git-derived path seeding, plan artifacts, and dispatch contracts are real shipped features
 - chained repo work can preserve explicit milestones, reflection/update stages, and scoped paths when the prompt supplies them
 - supervised repo work is not shoved into `durable` just because the prompt mentions `canary` or `soak`
-- a saved plan artifact can become a machine-usable handoff contract without inventing `workload run` or `workload status`
+- a saved plan artifact can become a machine-usable handoff contract and a canonical queue-backed runtime request without inventing fake `workload status` or `workload explain` surfaces

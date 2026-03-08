@@ -88,7 +88,8 @@ Operational boundary for Phase 1:
   - the queue envelope can now carry optional `trace.correlationId|causationId` plus optional `triage` metadata without making the deterministic queue core depend on model output for correctness.
 - Phase 2 Story 2 now routes queue admission through one canonical server-side surface in `packages/system-bus/src/lib/queue.ts`:
   - worker-local ingress paths (`discovery-capture`, direct subscription discovery publish, GitHub webhook queueing) call `enqueueRegisteredQueueEvent()` directly.
-  - edge clients (`joelclaw queue emit`, `joelclaw discover`, queue-mode `joelclaw subscribe check`) post raw event intent to `POST /internal/queue/enqueue` so they stay thin and stop writing Redis directly.
+  - edge clients (`joelclaw queue emit`, `joelclaw workload run`, `joelclaw discover`, queue-mode `joelclaw subscribe check`) post raw event intent to `POST /internal/queue/enqueue` so they stay thin and stop writing Redis directly.
+- `joelclaw workload run` is now the canonical workload-to-runtime bridge: it normalizes a saved workload artifact into queue family `workload/requested`, and the static queue registry routes that family to the real runtime event `system/agent.requested`.
   - base triage remains opt-in via `QUEUE_TRIAGE_MODE=shadow|enforce` plus `QUEUE_TRIAGE_FAMILIES=discovery,content,subscriptions,github` (or exact event names).
   - `QUEUE_TRIAGE_ENFORCE_FAMILIES=discovery,github` is the narrow Story 4 override that upgrades only `discovery/noted` and `github/workflow_run.completed` into enforce while leaving other enabled families in shadow.
   - handler routing stays registry-derived even in enforce mode; triage only shapes bounded admission fields.

@@ -108,7 +108,7 @@ describe("workload CLI command", () => {
       );
     });
 
-    expect(subcommandNames).toEqual(["plan", "dispatch"]);
+    expect(subcommandNames).toEqual(["plan", "dispatch", "run"]);
   });
 
   it("plans docs/truth work as serial inline host work by default", () => {
@@ -532,6 +532,81 @@ describe("workload CLI command", () => {
     expect(dispatch.guidance.executionLoop.approvedNextStep).toContain(
       "reserve the scoped files",
     );
+  });
+
+  it("builds a canonical workload runtime request for queue-backed execution", () => {
+    const artifactDir = rememberTempDir(
+      mkdtempSync(join(tmpdir(), "workload-run-")),
+    );
+    const plan = __workloadTestUtils.planWorkload(
+      {
+        intent:
+          "implement the operator knowledge plane MCP adapter with budget guards and streamable HTTP discovery",
+        kind: "repo.refactor",
+        shape: "chained",
+        autonomy: "supervised",
+        proof: "none",
+        requestedBy: "Joel",
+        repoText: "/Users/joel/Code/badass-courses/gremlin",
+        pathsText:
+          "apps/gremlin-cms/app/api/gremlin/knowledge/route.ts,apps/gremlin-cms/app/api/gremlin/mcp/route.ts,packages/gremlin/src/rate-limit.ts",
+      },
+      new Date("2026-03-08T19:20:00Z"),
+    );
+
+    const planPath = __workloadTestUtils.resolvePlanArtifactPath(
+      `${artifactDir}/`,
+      plan.plan.workloadId,
+    );
+    __workloadTestUtils.writePlanArtifact(
+      planPath,
+      buildSuccessEnvelope("workload plan", plan, []),
+    );
+
+    const parsed = __workloadTestUtils.parseWorkloadPlanArtifact(planPath);
+    const run = __workloadTestUtils.buildWorkloadRunResult({
+      sourcePlanPath: parsed.absolutePath,
+      result: parsed.result,
+      tool: "pi",
+      executionMode: "sandbox",
+      sandboxBackend: "local",
+      now: new Date("2026-03-08T19:21:00Z"),
+    });
+
+    expect(run.runId).toBe("WR_20260308_192100");
+    expect(run.event.family).toBe("workload/requested");
+    expect(run.event.target).toBe("system/agent.requested");
+    expect(run.runtimeRequest.workflowId).toBe(plan.plan.workloadId);
+    expect(run.runtimeRequest.storyId).toBe("stage-1");
+    expect(run.runtimeRequest.executionMode).toBe("sandbox");
+    expect(run.runtimeRequest.sandboxBackend).toBe("local");
+    expect(run.runtimeRequest.sandbox).toBe("workspace-write");
+    expect(run.runtimeRequest.cwd).toBe(
+      "/Users/joel/Code/badass-courses/gremlin",
+    );
+    expect(run.runtimeRequest.readFiles).toBe(true);
+    expect(run.runtimeRequest.task).toContain(plan.request.acceptance[0]!);
+    expect(run.guidance.adrCoverage.records).toEqual(
+      expect.arrayContaining([
+        "ADR-0038",
+        "ADR-0039",
+        "ADR-0042",
+        "ADR-0043",
+        "ADR-0044",
+      ]),
+    );
+
+    const nextActions = __workloadTestUtils.buildRunNextActions(
+      parsed.absolutePath,
+      {
+        ...run,
+        dryRun: true,
+      },
+    );
+
+    expect(
+      nextActions.some((action) => action.command.includes("workload run")),
+    ).toBe(true);
   });
 
   it("warns that dispatch is overkill for bounded inline stage-1 work", () => {

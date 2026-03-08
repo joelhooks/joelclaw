@@ -2,7 +2,7 @@
 name: restate-workflows
 displayName: Restate Workflows
 description: "Bridge external or isolated repos into joelclaw's ADR-0217 runtime using the `joelclaw` CLI boundary. This is a substrate-bridge skill, not the front door for normal coding/repo workload planning. Use when a repo needs to submit sandboxed/background work, emit queue jobs, define a workflow request payload, or hand work off to the Redis → Dkron → Restate stack without coupling to private internals. If the real ask is 'how should an agent run this coding task?', load `agent-workloads` first."
-version: 0.1.0
+version: 0.2.0
 author: Joel Hooks
 tags: [restate, workflows, queue, cli, sandbox, adr-0217, integration]
 ---
@@ -29,7 +29,9 @@ ADR-0217 currently reads best as:
 An external repo should integrate at the edge, not by coupling itself to the middle.
 
 That means:
-- submit work through `joelclaw queue emit`
+
+- submit saved workload artifacts through `joelclaw workload run` when the work has already been shaped at the workload layer
+- use `joelclaw queue emit` only as the low-level escape hatch for verified raw queue families
 - carry enough metadata for idempotency and tracing
 - let joelclaw decide how that request reaches Restate or a sandbox runner
 
@@ -47,7 +49,7 @@ Use this skill when a user asks for any of these:
 
 ## Non-negotiable rules
 
-- **CLI boundary only.** Use `joelclaw queue emit` unless the user explicitly wants a different joelclaw command surface.
+- **CLI boundary only.** Prefer `joelclaw workload run` for approved workload artifacts; use `joelclaw queue emit` only when you are intentionally working at the raw queue-family layer.
 - **Never talk to Redis directly** from the external repo.
 - **Never depend on private joelclaw internals** (`@joelclaw/*`, Redis keys, internal TypeScript types, worker-only contracts) unless the repo itself is the joelclaw monorepo.
 - **Keep changes inside the calling repo.** Build a wrapper in that repo; do not assume you can edit joelclaw at the same time.
@@ -61,6 +63,7 @@ Use this skill when a user asks for any of these:
 Run these before designing the bridge:
 
 ```bash
+joelclaw workload run --help
 joelclaw queue --help
 joelclaw queue emit --help
 ```
@@ -76,15 +79,17 @@ If you are unsure whether a workflow family already exists, search docs or ask i
 
 ## What to build in the external repo
 
-The default deliverable is a thin wrapper command/module/script around `joelclaw queue emit`.
+The default deliverable is a thin wrapper command/module/script around `joelclaw workload run` when the repo can produce a saved workload artifact. Fall back to `joelclaw queue emit` only when you have a verified low-level family and there is no workload artifact to bridge.
 
 Good shapes:
+
 - `scripts/request-work.ts`
 - `bin/request-background-work`
 - `src/lib/joelclaw/requestWorkflow.ts`
 - `src/cli/restate-workflow.ts`
 
 Bad shape:
+
 - raw shell one-liners scattered across the repo with no contract doc or tests
 
 ## Minimum request payload
@@ -146,7 +151,11 @@ Example Node/Bun sketch:
 ```ts
 import { spawn } from "node:child_process";
 
-export async function requestWorkflow(event: string, payload: unknown, dryRun = false) {
+export async function requestWorkflow(
+  event: string,
+  payload: unknown,
+  dryRun = false,
+) {
   const data = JSON.stringify(payload);
 
   if (dryRun) {
@@ -179,7 +188,9 @@ export async function requestWorkflow(event: string, payload: unknown, dryRun = 
         resolve({ ok: true, mode: "live", event, payload, stdout });
         return;
       }
-      reject(new Error(`joelclaw queue emit failed (${code}): ${stderr || stdout}`));
+      reject(
+        new Error(`joelclaw queue emit failed (${code}): ${stderr || stdout}`),
+      );
     });
   });
 }
@@ -190,6 +201,7 @@ export async function requestWorkflow(event: string, payload: unknown, dryRun = 
 Do not hijack an unrelated proof family just because it exists.
 
 Rules:
+
 - `content/updated` is a dogfood family, not a generic bucket for outside repos
 - if a verified workflow request family already exists, use it
 - if no family exists, document the proposed name and payload contract in the repo instead of guessing
@@ -220,6 +232,7 @@ Dry-run output should be parseable JSON, for example:
 ### 2. Clear errors
 
 Handle these explicitly:
+
 - `joelclaw` binary missing
 - invalid JSON/payload serialization
 - command non-zero exit
@@ -244,6 +257,7 @@ At minimum:
 ### 4. Local tests
 
 Tests should verify:
+
 - payload construction
 - idempotency key stability
 - dry-run behavior
@@ -273,6 +287,7 @@ If there is a known workflow ID or downstream surface, include it.
 ## Anti-patterns
 
 Do not do this:
+
 - writing directly to Redis
 - importing joelclaw monorepo code into the external repo
 - hiding event-family uncertainty behind vague names like `task/run`

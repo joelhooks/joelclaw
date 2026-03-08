@@ -165,12 +165,19 @@ joelclaw workload
 │   [--paths-from status|head|recent:<n>]
 │   [--write-plan ~/.joelclaw/workloads/]
 │   [--requested-by Joel]
-└── dispatch <plan-artifact>
+├── dispatch <plan-artifact>
+│   [--stage <stage-id>]
+│   [--to <to>]
+│   [--from <from>]
+│   [--send-mail]
+│   [--write-dispatch ~/.joelclaw/workloads/]
+└── run <plan-artifact>
     [--stage <stage-id>]
-    [--to <to>]
-    [--from <from>]
-    [--send-mail]
-    [--write-dispatch ~/.joelclaw/workloads/]
+    [--tool pi|codex|claude]
+    [--execution-mode auto|host|sandbox]
+    [--sandbox-backend local|k8s]
+    [--repo-url <repo-url>]
+    [--dry-run]
 ```
 
 `joelclaw workload plan` semantics:
@@ -209,7 +216,15 @@ joelclaw workload
 - `--write-dispatch` writes the dispatch contract as a reusable JSON artifact
 - `--send-mail --to <to> --from <from>` sends that contract through `joelclaw mail`
 - does **not** execute code or mutate repos
-- `run|status|explain|cancel` remain planned, not shipped
+
+`joelclaw workload run` semantics:
+
+- reads a saved plan artifact and normalizes it into the canonical queue-backed runtime request
+- emits the queue family `workload/requested`, which the registry maps to `system/agent.requested`
+- defaults to `--tool pi`, with `codex|claude` as explicit opt-ins
+- supports `--dry-run` for request inspection before queue admission
+- returns queue admission details once the request is enqueued
+- `status|explain|cancel` remain planned, not shipped
 
 ## Restate command tree
 
