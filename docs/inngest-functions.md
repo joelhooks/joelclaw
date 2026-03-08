@@ -178,6 +178,7 @@ Observed failure mode during worker/runtime blips:
 - Inngest server logs show `Unable to reach SDK URL` / `EOF writing request to SDK`.
 - Historical runs can remain listed as `RUNNING` even when there is no live cancellable execution.
 - `cancelRun` can return `not found` for those stale IDs.
+- `Unable to reach SDK URL` is not always a raw reachability outage. A real example from `check/o11y-triage` on 2026-03-08: nested `step.sendEvent(...)` calls inside `step.run(...)` produced `NESTING_STEPS` warnings, left a run stuck in `RUNNING` after early steps completed, and blocked newer runs behind the concurrency partition. If worker stderr shows `NESTING_STEPS`, fix the function shape before assuming the server/runtime is broken.
 
 Operational contract:
 

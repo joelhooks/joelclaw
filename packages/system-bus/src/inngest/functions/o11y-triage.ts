@@ -51,6 +51,52 @@ type CommandResult = {
   error?: string;
 };
 
+type ObservationNote = {
+  category: string;
+  summary: string;
+  metadata: Record<string, unknown>;
+};
+
+type CodexDispatchPlan = {
+  stepId: string;
+  dedupKey: string;
+  taskId: string;
+  preliminaryDescription: string;
+  data: {
+    requestId: string;
+    task: string;
+    tool: "codex";
+    cwd: string;
+    model: string;
+    sandbox: "workspace-write";
+  };
+};
+
+type Tier3EscalationResult = {
+  event: {
+    id: string;
+    component: string;
+    action: string;
+    error: string | null;
+    level: OtelEvent["level"];
+  };
+  llmReasoning: string | null;
+  taskId: string | null;
+  taskUrl: string | null;
+  runbookCode: string | null;
+  runbookPhase: string | null;
+  recoverCommand: string | null;
+  runbookCommands: string[];
+  candidateFiles: string[];
+  gitLogSample: string[];
+  dedupKey: string;
+  telegramSent: boolean;
+  telegramRateLimited: boolean;
+  telegramButtons: boolean;
+  codexDispatchPlan: CodexDispatchPlan | null;
+  codexDispatchError: string | null;
+};
+
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
@@ -529,31 +575,34 @@ export const o11yTriage = inngest.createFunction(
       };
     });
 
-    await step.run("emit-pattern-proposals", async () => {
+    const patternProposalResult = await step.run("prepare-pattern-proposals", async () => {
       const proposed = reclassifiedUnknowns.filter((item) => item.proposed_pattern != null);
-      if (proposed.length === 0) {
-        return { queued: false, count: 0 };
-      }
+      const observations: ObservationNote[] = proposed.map((item) => ({
+        category: TRIAGE_PATTERN_PROPOSAL_CATEGORY,
+        summary: `Pattern proposal for ${item.event.component}.${item.event.action} -> tier ${item.proposed_pattern?.tier ?? item.tier}`,
+        metadata: {
+          eventId: item.event.id,
+          dedupKey: dedupKey(item.event),
+          reasoning: item.reasoning,
+          proposedPattern: item.proposed_pattern,
+          error: item.event.error ?? null,
+        },
+      }));
 
+      return {
+        count: observations.length,
+        observations,
+      };
+    });
+
+    if (patternProposalResult.observations.length > 0) {
       await step.sendEvent("emit-pattern-observations", {
         name: "session/observation.noted",
         data: {
-          observations: proposed.map((item) => ({
-            category: TRIAGE_PATTERN_PROPOSAL_CATEGORY,
-            summary: `Pattern proposal for ${item.event.component}.${item.event.action} -> tier ${item.proposed_pattern?.tier ?? item.tier}`,
-            metadata: {
-              eventId: item.event.id,
-              dedupKey: dedupKey(item.event),
-              reasoning: item.reasoning,
-              proposedPattern: item.proposed_pattern,
-              error: item.event.error ?? null,
-            },
-          })),
+          observations: patternProposalResult.observations,
         },
       });
-
-      return { queued: true, count: proposed.length };
-    });
+    }
 
     const tier1Result = await step.run("handle-tier1", async () => {
       const promoted: OtelEvent[] = [];
@@ -637,52 +686,57 @@ export const o11yTriage = inngest.createFunction(
       }
     }
 
-    await step.run("handle-tier2", async () => {
-      if (tier2Events.length === 0) {
-        return { handled: 0, queuedObservation: false };
-      }
+    const tier2Result = await step.run("prepare-tier2-observations", async () => {
+      const observations: ObservationNote[] = tier2Events.map((event) => {
+        const llm = reclassifiedByDedupKey.get(dedupKey(event));
+        const tier2Classification = classifyEvent(event);
+        const tier2HandlerName = resolveAutoFixHandlerName(tier2Classification.pattern?.handler);
+        const tier2HandlerDef = tier2HandlerName ? AUTO_FIX_HANDLERS[tier2HandlerName] : undefined;
+        const runbookPlan = resolveRunbookForEvent(
+          event,
+          "diagnose",
+          tier2HandlerDef?.runbookCode
+        );
 
+        return {
+          category: TRIAGE_CATEGORY,
+          summary: summarizeIssue(event),
+          metadata: {
+            eventId: event.id,
+            timestamp: event.timestamp,
+            source: event.source,
+            component: event.component,
+            action: event.action,
+            error: event.error ?? null,
+            dedupKey: dedupKey(event),
+            llmReasoning: llm?.reasoning ?? null,
+            runbookCode: runbookPlan?.code ?? null,
+            runbookPhase: runbookPlan?.phase ?? null,
+            recoverCommand: runbookRecoverCommand(runbookPlan),
+            runbookCommands: runbookPlan?.commands ?? [],
+          },
+        };
+      });
+
+      return {
+        handled: tier2Events.length,
+        observations,
+      };
+    });
+
+    if (tier2Result.observations.length > 0) {
       await step.sendEvent("emit-tier2-observations", {
         name: "session/observation.noted",
         data: {
-          observations: tier2Events.map((event) => {
-            const llm = reclassifiedByDedupKey.get(dedupKey(event));
-            const tier2Classification = classifyEvent(event);
-            const tier2HandlerName = resolveAutoFixHandlerName(tier2Classification.pattern?.handler);
-            const tier2HandlerDef = tier2HandlerName ? AUTO_FIX_HANDLERS[tier2HandlerName] : undefined;
-            const runbookPlan = resolveRunbookForEvent(
-              event,
-              "diagnose",
-              tier2HandlerDef?.runbookCode
-            );
-
-            return {
-              category: TRIAGE_CATEGORY,
-              summary: summarizeIssue(event),
-              metadata: {
-                eventId: event.id,
-                timestamp: event.timestamp,
-                source: event.source,
-                component: event.component,
-                action: event.action,
-                error: event.error ?? null,
-                dedupKey: dedupKey(event),
-                llmReasoning: llm?.reasoning ?? null,
-                runbookCode: runbookPlan?.code ?? null,
-                runbookPhase: runbookPlan?.phase ?? null,
-                recoverCommand: runbookRecoverCommand(runbookPlan),
-                runbookCommands: runbookPlan?.commands ?? [],
-              },
-            };
-          }),
+          observations: tier2Result.observations,
         },
       });
+    }
 
-      return { handled: tier2Events.length, queuedObservation: true };
-    });
-
-    await step.run("handle-tier3", async () => {
+    const tier3Result = await step.run("handle-tier3", async () => {
       let sentTelegramInWindow = await countRecentTelegramEscalations();
+      const codexDispatchPlans: CodexDispatchPlan[] = [];
+      const escalations: Tier3EscalationResult[] = [];
 
       for (const event of finalBuckets.tier3) {
         const eventDedupKey = dedupKey(event);
@@ -734,12 +788,11 @@ export const o11yTriage = inngest.createFunction(
         const taskId = task.id;
         const taskUrl = task.url;
 
-        let codexDispatched = false;
-        let codexRequestId: string | undefined;
-        let codexDispatchError: string | undefined;
+        let codexDispatchPlan: CodexDispatchPlan | null = null;
+        let codexDispatchError: string | null = null;
 
         if (taskId) {
-          codexRequestId = buildCodexRequestId(event, taskId);
+          const codexRequestId = buildCodexRequestId(event, taskId);
           const codexTask = buildCodexInvestigationTask(
             event,
             taskId,
@@ -749,30 +802,21 @@ export const o11yTriage = inngest.createFunction(
             runbookPlan
           );
 
-          try {
-            await step.sendEvent(`dispatch-codex-${eventDedupKey}`, {
-              name: "system/agent.requested",
-              data: {
-                requestId: codexRequestId,
-                task: codexTask,
-                tool: "codex",
-                cwd: ESCALATION_CODEX_CWD,
-                model: ESCALATION_CODEX_MODEL,
-                sandbox: "workspace-write",
-              },
-            });
-            codexDispatched = true;
-          } catch (error) {
-            codexDispatchError = error instanceof Error ? error.message : String(error);
-            const failureDescription = [
-              preliminaryDescription,
-              "",
-              "Dispatch status",
-              `- Codex dispatch failed: ${compact(codexDispatchError, 220)}`,
-              "- Re-dispatch manually after system/agent.requested is healthy.",
-            ].join("\n");
-            updateTodoistTaskDescription(taskId, failureDescription);
-          }
+          codexDispatchPlan = {
+            stepId: `dispatch-codex-${eventDedupKey}`,
+            dedupKey: eventDedupKey,
+            taskId,
+            preliminaryDescription,
+            data: {
+              requestId: codexRequestId,
+              task: codexTask,
+              tool: "codex",
+              cwd: ESCALATION_CODEX_CWD,
+              model: ESCALATION_CODEX_MODEL,
+              sandbox: "workspace-write",
+            },
+          };
+          codexDispatchPlans.push(codexDispatchPlan);
         } else {
           codexDispatchError = "Todoist task creation failed to return a task ID; codex dispatch skipped.";
         }
@@ -857,6 +901,81 @@ export const o11yTriage = inngest.createFunction(
           });
         }
 
+        escalations.push({
+          event: {
+            id: event.id,
+            component: event.component,
+            action: event.action,
+            error: event.error ?? null,
+            level: event.level,
+          },
+          llmReasoning: llmReasoning ?? null,
+          taskId: taskId ?? null,
+          taskUrl: taskUrl ?? null,
+          runbookCode: runbookPlan?.code ?? null,
+          runbookPhase: runbookPlan?.phase ?? null,
+          recoverCommand: runbookRecoverCommand(runbookPlan),
+          runbookCommands: runbookPlan?.commands ?? [],
+          candidateFiles,
+          gitLogSample: gitLog.trim().length > 0
+            ? gitLog.split("\n").slice(0, 3)
+            : [],
+          dedupKey: eventDedupKey,
+          telegramSent,
+          telegramRateLimited,
+          telegramButtons: buttons.length > 0,
+          codexDispatchPlan,
+          codexDispatchError,
+        });
+      }
+
+      return {
+        handled: finalBuckets.tier3.length,
+        escalations,
+        codexDispatchPlans,
+      };
+    });
+
+    const codexDispatchResults = new Map<string, { dispatched: boolean; requestId: string | null; error: string | null }>();
+
+    for (const plan of tier3Result.codexDispatchPlans) {
+      try {
+        await step.sendEvent(plan.stepId, {
+          name: "system/agent.requested",
+          data: plan.data,
+        });
+        codexDispatchResults.set(plan.dedupKey, {
+          dispatched: true,
+          requestId: plan.data.requestId,
+          error: null,
+        });
+      } catch (error) {
+        const codexDispatchError = error instanceof Error ? error.message : String(error);
+        const failureDescription = [
+          plan.preliminaryDescription,
+          "",
+          "Dispatch status",
+          `- Codex dispatch failed: ${compact(codexDispatchError, 220)}`,
+          "- Re-dispatch manually after system/agent.requested is healthy.",
+        ].join("\n");
+        updateTodoistTaskDescription(plan.taskId, failureDescription);
+        codexDispatchResults.set(plan.dedupKey, {
+          dispatched: false,
+          requestId: plan.data.requestId,
+          error: codexDispatchError,
+        });
+      }
+    }
+
+    await step.run("emit-tier3-escalations", async () => {
+      for (const escalation of tier3Result.escalations) {
+        const dispatchResult = codexDispatchResults.get(escalation.dedupKey);
+        const codexRequestId = dispatchResult?.requestId
+          ?? escalation.codexDispatchPlan?.data.requestId
+          ?? null;
+        const codexDispatched = dispatchResult?.dispatched ?? false;
+        const codexDispatchError = dispatchResult?.error ?? escalation.codexDispatchError ?? null;
+
         await emitOtelEvent({
           level: "error",
           source: "worker",
@@ -864,35 +983,28 @@ export const o11yTriage = inngest.createFunction(
           action: "triage.escalated",
           success: true,
           metadata: {
-            event: {
-              id: event.id,
-              component: event.component,
-              action: event.action,
-              error: event.error ?? null,
-              level: event.level,
-            },
-            llmReasoning: llmReasoning ?? null,
-            taskId: taskId ?? null,
-            taskUrl: taskUrl ?? null,
-            runbookCode: runbookPlan?.code ?? null,
-            runbookPhase: runbookPlan?.phase ?? null,
-            recoverCommand: runbookRecoverCommand(runbookPlan),
-            runbookCommands: runbookPlan?.commands ?? [],
-            candidateFiles,
-            gitLogSample: gitLog.trim().length > 0
-              ? gitLog.split("\n").slice(0, 3)
-              : [],
+            event: escalation.event,
+            llmReasoning: escalation.llmReasoning,
+            taskId: escalation.taskId,
+            taskUrl: escalation.taskUrl,
+            runbookCode: escalation.runbookCode,
+            runbookPhase: escalation.runbookPhase,
+            recoverCommand: escalation.recoverCommand,
+            runbookCommands: escalation.runbookCommands,
+            candidateFiles: escalation.candidateFiles,
+            gitLogSample: escalation.gitLogSample,
             codexDispatched,
-            codexRequestId: codexRequestId ?? null,
-            codexDispatchError: codexDispatchError ?? null,
-            dedupKey: eventDedupKey,
-            telegramSent,
-            telegramRateLimited,
-            telegramButtons: buttons.length > 0,
+            codexRequestId,
+            codexDispatchError,
+            dedupKey: escalation.dedupKey,
+            telegramSent: escalation.telegramSent,
+            telegramRateLimited: escalation.telegramRateLimited,
+            telegramButtons: escalation.telegramButtons,
           },
         });
       }
-      return { handled: finalBuckets.tier3.length };
+
+      return { handled: tier3Result.escalations.length };
     });
 
     return {
