@@ -2,7 +2,7 @@
 name: agent-workloads
 displayName: Agent Workloads
 description: "Plan and steer agent-first coding/repo workloads in joelclaw. Use when the task is development work and you need to choose serial, parallel, or chained execution; shape pi-session steering; decide whether work should stay inline, go durable, or run in a sandbox; or define the handoff contract between workers. Triggers on 'plan this workload', 'serial/parallel/chained', 'repo workflow', 'coding workflow', 'pi steering', 'agent-first workload', 'how should an agent run this task', or any request to make coding work legible before dispatching it."
-version: 0.7.1
+version: 0.7.2
 author: Joel Hooks
 tags:
   - agent-first
@@ -200,7 +200,7 @@ Use `plan` to get the canonical `request` + `plan` envelope, seed scope from rea
 
 - `recommendedExecution` — execute inline now vs tighten scope first vs dispatch after health check
 - `operatorSummary` — plain-spoken next-step recommendation
-- `adrCoverage` — which ADRs already govern the slice
+- `adrCoverage` — which ADRs likely govern the slice already; on fresh repo-local ADR clusters, reconcile nearby follow-on ADRs before declaring coverage complete
 - `recommendedSkills` — including `joelclaw skills ensure <name>` for local repo skills or `npx skills add -y -g <source>` for external ones
 - `executionExamples` — serial / parallel / chained coding-task few-shot setup + execution examples
 - `executionLoop` — the honest plan → approve → execute/watch → summarize contract, including what to do immediately after approval

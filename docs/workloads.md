@@ -193,7 +193,7 @@ Semantics:
 - `guidance` includes:
   - `recommendedExecution` — whether to execute inline now, tighten scope first, or dispatch only after health checks
   - `operatorSummary` — plain-spoken recommendation for the operator/agent
-  - `adrCoverage` — which ADRs already govern the slice so the planner does not send the agent on a pointless ADR hunt
+  - `adrCoverage` — which ADRs appear to govern the slice so the planner does not send the agent on a pointless ADR hunt; on fast-moving repo-local ADR clusters this is still high-signal guidance, not infallible closure
   - `recommendedSkills` — skill readiness, including `joelclaw skills ensure <name>` for local repo skills and `npx skills add -y -g <source>` for external skills
   - `executionExamples` — serial / parallel / chained setup + execution few-shot examples for coding tasks
   - `executionLoop` — approval prompt, approved-next-step, progress reporting expectation, and closeout expectation so the agent knows what to do after the operator says yes
@@ -278,6 +278,8 @@ This is the canonical request envelope.
 `joelclaw workload plan` also returns a guidance block aimed at getting the next step right, not just technically available.
 
 Treat `guidance.executionLoop` as the operator contract: **plan → approve → execute/watch → summarize**. The CLI is supposed to steer the next move, not shrug and dump affordances.
+
+Treat `guidance.adrCoverage` as a best-effort guardrail, not divine revelation. On a live repo-local ADR cluster — like fresh Gremlin follow-on ADRs — reconcile the suggested records against nearby related ADRs before declaring coverage complete.
 
 ```json
 {

@@ -333,6 +333,37 @@ describe("workload CLI command", () => {
     ]);
   });
 
+  it("pulls the fresh Gremlin MCP ADR cluster into adrCoverage when the slice materially points at it", () => {
+    const plan = __workloadTestUtils.planWorkload(
+      {
+        intent:
+          "add a gremlin MCP adapter over the operator knowledge plane with budget guards and streamable HTTP discovery",
+        kind: "repo.refactor",
+        shape: "chained",
+        autonomy: "supervised",
+        proof: "none",
+        requestedBy: "Joel",
+        repoText: "/Users/joel/Code/badass-courses/gremlin",
+        pathsText:
+          "apps/gremlin-cms/app/api/gremlin/knowledge/route.ts,apps/gremlin-cms/app/api/gremlin/mcp/route.ts,packages/gremlin/src/rate-limit.ts,docs/adr/0044-pluggable-mcp-adapters-over-canonical-gremlin-contracts.md",
+      },
+      new Date("2026-03-08T18:51:00Z"),
+    );
+
+    expect(plan.guidance.adrCoverage.records).toEqual(
+      expect.arrayContaining([
+        "ADR-0038",
+        "ADR-0039",
+        "ADR-0042",
+        "ADR-0043",
+        "ADR-0044",
+      ]),
+    );
+    expect(plan.guidance.adrCoverage.note).toContain(
+      "live repo-local ADR cluster",
+    );
+  });
+
   it("returns operator guidance and coding workload examples for bounded inline work", () => {
     const plan = __workloadTestUtils.planWorkload(
       {

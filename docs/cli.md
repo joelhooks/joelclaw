@@ -180,7 +180,7 @@ joelclaw workload
 - also returns `guidance` with:
   - `recommendedExecution` (`execute-inline-now`, `tighten-scope-first`, `dispatch-after-health-check`, etc.)
   - `operatorSummary` so the CLI says what to do next instead of shrugging
-  - `adrCoverage` to show whether the slice is already covered by existing ADRs
+  - `adrCoverage` to show which ADRs likely govern the slice already; on fresh repo-local ADR clusters it remains best-effort guidance and may still need human reconciliation
   - `recommendedSkills` with install/read readiness, including `joelclaw skills ensure <name>` for local repo skills and `npx skills add -y -g <source>` for external skills
   - `executionExamples` for serial / parallel / chained coding workloads, including setup + execution few-shot patterns
   - `executionLoop` so the agent gets the honest plan → approve → execute/watch → summarize posture after the operator says yes

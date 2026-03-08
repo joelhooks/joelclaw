@@ -906,6 +906,9 @@ const inferWorkloadSkillRecommendations = (
   });
 };
 
+const matchAnyPattern = (value: string, patterns: RegExp[]): boolean =>
+  patterns.some((pattern) => pattern.test(value));
+
 const inferAdrCoverage = (
   input: NormalizedPlannerInput,
   request: WorkloadRequest,
@@ -915,38 +918,106 @@ const inferAdrCoverage = (
 
   if (repo.includes("/badass-courses/gremlin")) {
     const records = new Set<string>();
-    if (
-      paths.some(
-        (path) =>
-          path.startsWith(".pi/") ||
-          path.startsWith("plugins/") ||
-          path === "README.md" ||
-          path === "docs/dev-log.md",
-      )
-    ) {
+    const combinedText = `${input.intent}\n${paths.join("\n")}`;
+    const harnessPatterns = [
+      /(^|\n)README\.md($|\n)/u,
+      /(^|\n)docs\/dev-log\.md($|\n)/u,
+      /(^|\n)docs\/adr\//u,
+      /(^|\n)\.pi\//u,
+      /(^|\n)plugins\//u,
+      /repo[- ]honesty/iu,
+      /\bharness\b/iu,
+      /\boperator discovery\b/iu,
+      /\bagent-first\b/iu,
+    ];
+    const authPatterns = [
+      /\bauth\b/iu,
+      /\/api\/gremlin\/(session|rpc)/iu,
+      /gremlin-operator-plane/iu,
+      /docs\/setup-new-project\.md/iu,
+      /handler\.ts$/iu,
+    ];
+    const rateLimitPatterns = [
+      /\brate[- ]limit/iu,
+      /\bbudget\b/iu,
+      /\bmetered\b/iu,
+      /\bpublic[- ]read\b/iu,
+      /\b429\b/iu,
+      /retry-after/iu,
+      /\/api\/(search|content)/iu,
+      /\/path\.md/iu,
+    ];
+    const knowledgePatterns = [
+      /\/api\/gremlin\/knowledge/iu,
+      /\bknowledge plane\b/iu,
+      /\bdevelopment guide\b/iu,
+      /\bguide and memory\b/iu,
+      /\boperator knowledge\b/iu,
+      /\bdev[- ]log\b/iu,
+      /\bknowledge routes?\b/iu,
+      /gremlin-cms/iu,
+    ];
+    const mcpPatterns = [
+      /\bmcp\b/iu,
+      /\/api\/gremlin\/mcp/iu,
+      /\btool(s|ing)?\b/iu,
+      /\bresource(s)?\b/iu,
+      /\bprompt(s)?\b/iu,
+      /\bstreamable http\b/iu,
+      /\badapter(s)?\b/iu,
+    ];
+
+    if (matchAnyPattern(combinedText, harnessPatterns)) {
       records.add("ADR-0038");
       records.add("ADR-0039");
     }
 
-    if (
-      /\bauth\b|\/api\/gremlin\/session|\/api\/gremlin\/rpc/iu.test(input.intent) ||
-      paths.some(
-        (path) =>
-          path.includes("gremlin-operator-plane") ||
-          path.includes("handler.ts") ||
-          path === "docs/setup-new-project.md",
-      )
-    ) {
+    if (matchAnyPattern(combinedText, authPatterns)) {
       records.add("ADR-0040");
     }
 
-    const resolvedRecords = [...records];
+    const touchesRateLimits = matchAnyPattern(combinedText, rateLimitPatterns);
+    const touchesKnowledge = matchAnyPattern(combinedText, knowledgePatterns);
+    const touchesMcp = matchAnyPattern(combinedText, mcpPatterns);
+
+    if (touchesRateLimits) {
+      records.add("ADR-0042");
+    }
+
+    if (touchesKnowledge) {
+      records.add("ADR-0038");
+      records.add("ADR-0039");
+      records.add("ADR-0043");
+    }
+
+    if (touchesMcp) {
+      records.add("ADR-0038");
+      records.add("ADR-0042");
+      records.add("ADR-0044");
+    }
+
+    if (touchesMcp && touchesKnowledge) {
+      records.add("ADR-0043");
+      records.add("ADR-0044");
+      records.add("ADR-0042");
+    }
+
+    const resolvedRecords = [...records].sort();
+    const repoLocalClusterDetected =
+      resolvedRecords.some((record) => /^ADR-004[2-4]$/u.test(record)) &&
+      resolvedRecords.some((record) => /^ADR-003[89]$/u.test(record));
+
     return {
-      records: resolvedRecords.length > 0 ? resolvedRecords : ["ADR-0038", "ADR-0039"],
-      note:
+      records:
         resolvedRecords.length > 0
-          ? "This Gremlin slice is already covered by existing repo ADRs; only add a new ADR if the scope expands into new repo policy."
-          : "This Gremlin slice looks like harness/repo-truth work already covered by the existing repo ADRs.",
+          ? resolvedRecords
+          : ["ADR-0038", "ADR-0039"],
+      note:
+        repoLocalClusterDetected
+          ? "This Gremlin slice appears to touch a live repo-local ADR cluster. Treat the listed ADRs as high-signal coverage, then reconcile against nearby fresh ADRs before claiming the slice is fully covered."
+          : resolvedRecords.length > 0
+            ? "This Gremlin slice is already covered by existing repo ADRs; only add a new ADR if the scope expands into new repo policy."
+            : "This Gremlin slice looks like harness/repo-truth work already covered by the existing repo ADRs.",
     };
   }
 
