@@ -106,6 +106,7 @@ Operational boundary for Phase 1:
   - Story 1 stops short of the deterministic pause/resume control plane: `finalActions` are safety-filtered, but no automatic queue mutation exists yet.
 - Phase 3 Story 2 adds the dry-run operator surface on the installed CLI:
   - `joelclaw queue observe` builds the live snapshot from current queue state, recent drainer OTEL, recent triage OTEL, and gateway sleep/muted-channel state before calling the bounded Sonnet observer.
+  - when the backlog is entirely explained by fresh active **manual** pauses and there are no recent drainer/triage failures, the shared observer contract now short-circuits to a deterministic `noop` instead of burning the full Sonnet timeout on an obvious operator hold state.
   - the command returns the current `snapshot`, the current dry-run `decision`, `history` from `queue.observe.*` OTEL, and the current deterministic `control` block.
   - Story 2 keeps all automatic queue control mutations absent; `appliedCount` remains zero and the CLI must say so plainly.
 - Phase 3 Story 3 adds the deterministic queue-control plane before any automatic Sonnet mutation:
@@ -216,6 +217,15 @@ Do **not** mutate `main.db` without a point-in-time backup.
   3. returns `status: degraded` (not success) when classification remains invalid/null
   4. sets cooldown only when a gateway notification is actually pushed
   5. emits telemetry with `classificationValid`, `triageItemsCount`, `actionableCount`, and `outputFailureReason`
+
+### O11y triage singleton contract
+
+- function: `check/o11y-triage`
+- file: `packages/system-bus/src/inngest/functions/o11y-triage.ts`
+- behavior:
+  1. uses `singleton: { key: '"global"', mode: "skip" }` in addition to concurrency so duplicate cron/manual scans do not pile up stale queued runs behind one long active triage pass
+  2. manual triggers may therefore be skipped while another triage run is already active; that is intentional because this function scans current state rather than processing an irreplaceable payload
+  3. if operators see queued build-up again, treat it as a regression in singleton or runtime truth rather than expected behavior
 
 ### Email triage + nag contract
 

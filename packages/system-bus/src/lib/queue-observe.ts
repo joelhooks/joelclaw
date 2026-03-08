@@ -26,6 +26,7 @@ import { MODEL } from "./models";
 const QUEUE_OBSERVE_COMPONENT = "queue-observe";
 const QUEUE_CONTROL_COMPONENT = "queue-control";
 const DEFAULT_TIMEOUT_MS = 60_000;
+const MANUAL_PAUSE_HOLD_MAX_AGE_MS = 15 * 60_000;
 const AUTO_APPLY_ACTION_KINDS = new Set<QueueObserverAction["kind"]>([
   "pause_family",
   "resume_family",
@@ -603,6 +604,69 @@ function buildDeterministicNoopDecision(input: {
   };
 }
 
+function formatDurationCompact(ms: number | null | undefined): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms <= 0) return "0s";
+  if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}s`;
+  if (ms < 60 * 60_000) return `${Math.max(1, Math.round(ms / 60_000))}m`;
+  return `${Math.max(1, Math.round(ms / 3_600_000))}h`;
+}
+
+function manualPauseFamilies(snapshot: QueueObservationSnapshot) {
+  return new Map(
+    snapshot.control.activePauses
+      .filter((pause) => pause.source === "manual")
+      .map((pause) => [pause.family, pause] as const),
+  );
+}
+
+function shouldUseDeterministicManualPauseHold(snapshot: QueueObservationSnapshot): boolean {
+  if (snapshot.totals.depth === 0 || snapshot.families.length === 0) return false;
+  if ((snapshot.totals.oldestAgeMs ?? 0) > MANUAL_PAUSE_HOLD_MAX_AGE_MS) return false;
+  if (snapshot.drainer.recentFailures > 0) return false;
+  if (snapshot.triage.failed > 0 || snapshot.triage.fallbacks > 0) return false;
+
+  const pausedFamilies = manualPauseFamilies(snapshot);
+  return snapshot.families.every((family) => pausedFamilies.has(family.family));
+}
+
+function buildDeterministicManualPauseHoldDecision(input: {
+  mode: QueueObservationMode;
+  snapshot: QueueObservationSnapshot;
+  model?: string;
+  latencyMs: number;
+}): QueueObservationDecision {
+  const pausedFamilies = [...manualPauseFamilies(input.snapshot).values()]
+    .filter((pause) => input.snapshot.families.some((family) => family.family === pause.family))
+    .sort((a, b) => a.expiresInMs - b.expiresInMs || a.family.localeCompare(b.family));
+
+  const families = pausedFamilies.map((pause) => pause.family);
+  const nextExpiryMs = pausedFamilies[0]?.expiresInMs ?? null;
+  const summary = [
+    `Queue backlog is entirely held behind active manual pause${families.length === 1 ? "" : "s"} on ${families.join(", ")}.`,
+    `Oldest queued work is ~${formatDurationCompact(input.snapshot.totals.oldestAgeMs)} old`,
+    `and the next pause expires in ~${formatDurationCompact(nextExpiryMs)}.`,
+    "No recent drainer failures or triage fallbacks suggest downstream trouble, so no queue control action is warranted.",
+  ].join(" ");
+
+  return {
+    mode: input.mode,
+    model: input.model,
+    snapshotId: input.snapshot.snapshotId,
+    findings: {
+      queuePressure: deriveQueuePressure(input.snapshot),
+      downstreamState: "healthy",
+      summary,
+    },
+    suggestedActions: [{
+      kind: "noop",
+      reason: "Queued work is intentionally held behind an active manual pause; leave that operator control in place.",
+    }],
+    finalActions: [],
+    appliedCount: 0,
+    latencyMs: input.latencyMs,
+  };
+}
+
 function buildUserPrompt(input: {
   snapshot: QueueObservationSnapshot;
   mode: QueueObservationMode;
@@ -843,6 +907,17 @@ export async function observeQueueSnapshotDetailed(
         snapshot: input.snapshot,
         latencyMs: Date.now() - startedAt,
         reason: "Queue is empty; no queue control action is warranted.",
+      }),
+    };
+  }
+
+  if (shouldUseDeterministicManualPauseHold(input.snapshot)) {
+    return {
+      autoApplyFamilies,
+      decision: buildDeterministicManualPauseHoldDecision({
+        mode: input.mode,
+        snapshot: input.snapshot,
+        latencyMs: Date.now() - startedAt,
       }),
     };
   }

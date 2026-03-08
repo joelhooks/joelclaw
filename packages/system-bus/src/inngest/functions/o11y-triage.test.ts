@@ -83,6 +83,13 @@ describe("o11y triage runbook metadata", () => {
     mockTier3 = [];
   });
 
+  test("registers singleton skip so duplicate scans do not pile up queued runs", async () => {
+    const { o11yTriage } = await import("./o11y-triage");
+    const opts = (o11yTriage as any).opts;
+
+    expect(opts?.singleton).toEqual({ key: '"global"', mode: "skip" });
+  });
+
   test("emits auto_fix.applied with runbookCode and recoverCommand metadata", async () => {
     const { o11yTriage } = await import("./o11y-triage");
 

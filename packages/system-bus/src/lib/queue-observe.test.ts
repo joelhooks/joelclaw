@@ -324,6 +324,77 @@ describe("queue observer contract", () => {
     expect(actions).toEqual(["queue.observe.started", "queue.observe.completed"]);
   });
 
+  test("skips model inference when all queued work is intentionally held behind fresh manual pauses", async () => {
+    const { buildQueueObservationSnapshot, observeQueueSnapshot } = await import("./queue-observe");
+    const snapshot = buildQueueObservationSnapshot({
+      snapshotId: "snap-manual-pause-hold",
+      now: 1_000_000,
+      stats: {
+        total: 3,
+        byPriority: { P0: 0, P1: 3, P2: 0, P3: 0 },
+        oldestTimestamp: 994_000,
+        newestTimestamp: 999_000,
+      },
+      messages: [
+        { payload: { name: "content/updated" }, priority: Priority.P1, timestamp: 994_000 },
+        { payload: { name: "content/updated" }, priority: Priority.P1, timestamp: 997_000 },
+        { payload: { name: "content/updated" }, priority: Priority.P1, timestamp: 999_000 },
+      ],
+      triage: {
+        attempts: 0,
+        completed: 0,
+        failed: 0,
+        fallbacks: 0,
+        fallbackByReason: {},
+        routeMismatches: 0,
+        latencyMs: { p50: null, p95: null },
+      },
+      drainer: {
+        state: "down",
+        recentDispatches: 0,
+        recentFailures: 0,
+        throughputPerMinute: 0,
+      },
+      gateway: {
+        sleepMode: true,
+        quietHours: false,
+        mutedChannels: ["imessage"],
+      },
+      control: {
+        activePauses: [{
+          family: "content/updated",
+          reason: "Manual pause from joelclaw queue pause for content/updated",
+          source: "manual",
+          mode: "manual",
+          appliedAt: "2026-03-08T02:53:24.841Z",
+          expiresAt: "2026-03-08T02:55:24.841Z",
+          expiresAtMs: 1_120_000,
+        }],
+      },
+    });
+
+    const decision = await observeQueueSnapshot({
+      mode: "dry-run",
+      snapshot,
+      autoApplyFamilies: ["content/updated"],
+    });
+
+    expect(inferredPrompts).toHaveLength(0);
+    expect(decision.fallbackReason).toBeUndefined();
+    expect(decision.findings.downstreamState).toBe("healthy");
+    expect(decision.findings.summary).toContain("active manual pause");
+    expect(decision.suggestedActions).toEqual([
+      {
+        kind: "noop",
+        reason: "Queued work is intentionally held behind an active manual pause; leave that operator control in place.",
+      },
+    ]);
+    expect(decision.finalActions).toEqual([]);
+
+    const actions = emittedEvents.map((event) => event.action);
+    expect(actions).toEqual(["queue.observe.started", "queue.observe.completed"]);
+  });
+
   test("enforce mode narrows final actions to the bounded auto-apply subset", async () => {
     const { observeQueueSnapshot } = await import("./queue-observe");
     const snapshot = await buildSnapshot();
