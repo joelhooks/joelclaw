@@ -1,8 +1,8 @@
 ---
 name: agent-workloads
 displayName: Agent Workloads
-description: "Plan and steer agent-first coding/repo workloads in joelclaw. Use when the task is development work and you need to choose serial, parallel, or chained execution; shape pi-session steering; decide whether work should stay inline, go durable, or run in a sandbox; or define the handoff contract between workers. Triggers on 'plan this workload', 'serial/parallel/chained', 'repo workflow', 'coding workflow', 'pi steering', 'agent-first workload', 'how should an agent run this task', or any request to make coding work legible before dispatching it." 
-version: 0.1.0
+description: "Plan and steer agent-first coding/repo workloads in joelclaw. Use when the task is development work and you need to choose serial, parallel, or chained execution; shape pi-session steering; decide whether work should stay inline, go durable, or run in a sandbox; or define the handoff contract between workers. Triggers on 'plan this workload', 'serial/parallel/chained', 'repo workflow', 'coding workflow', 'pi steering', 'agent-first workload', 'how should an agent run this task', or any request to make coding work legible before dispatching it."
+version: 0.2.0
 author: Joel Hooks
 tags:
   - agent-first
@@ -26,7 +26,7 @@ If the real question is:
 
 load this skill before touching substrate-specific docs.
 
-If the work is really about external repo bridging or low-level runtime submission mechanics, *then* the `restate-workflows` skill may matter. For normal coding/repo work, this skill comes first.
+If the work is really about external repo bridging or low-level runtime submission mechanics, _then_ the `restate-workflows` skill may matter. For normal coding/repo work, this skill comes first.
 
 ## What this skill is for
 
@@ -39,11 +39,16 @@ If the work is really about external repo bridging or low-level runtime submissi
 ## Load Order
 
 For serious workload design, also load:
+
 - `cli-design` — future `joelclaw workload` surface and JSON contract
 - `clawmail` — reservations, ownership, and handoffs
 - `system-architecture` — real runtime topology
 - `docker-sandbox` — isolation/backends when execution mode matters
 - `codex-prompting` — if the workload will dispatch coding agents downstream
+
+Canonical repo doc:
+
+- `docs/workloads.md` — source of truth for workload vocabulary, request/plan/handoff schema, and shipped-vs-planned boundaries
 
 ## Core rule
 
@@ -53,20 +58,25 @@ The caller should describe intent.
 The planner should decide execution.
 
 Bad:
+
 - “Should I use Restate or queue or sandbox or a loop?”
 
 Good:
+
 - “This is a chained repo workload with sandboxed implementation, inline verification, and docs closeout.”
 
 ## First pass: classify the workload
 
 Ask or infer these inputs:
+
+- workload kind (`repo.patch`, `repo.refactor`, `repo.docs`, `repo.review`, `research.spike`, `runtime.proof`, `cross-repo.integration`)
 - objective
 - acceptance criteria
 - repo / file scope
+- shape (`auto`, `serial`, `parallel`, `chained`)
 - autonomy level
-- proof posture (dry-run, canary, soak, full implementation)
-- risk posture (reversible only, sandbox required, deploy allowed)
+- proof posture (`none`, `dry-run`, `canary`, `soak`, `full`)
+- risk posture (`reversible-only`, `sandbox-required`, `host-okay`, `deploy-allowed`, `human-signoff`)
 - sequence constraints
 - required artifacts
 
@@ -79,6 +89,7 @@ If those are fuzzy, shape the workload before dispatch.
 Use when steps depend on each other or risk is high.
 
 Examples:
+
 - fix → verify → commit
 - canary → cleanup → truth update
 - refactor → deploy check → docs
@@ -88,6 +99,7 @@ Examples:
 Use when branches are independent and comparison helps.
 
 Examples:
+
 - spike multiple approaches
 - inspect multiple codepaths in parallel
 - gather evidence from several repos/surfaces before synthesis
@@ -97,6 +109,7 @@ Examples:
 Use when specialist stages add value and artifacts should flow forward.
 
 Examples:
+
 - implement → verify → docs
 - research → planner → implementor → reviewer
 - patch → canary → ADR truth
@@ -112,6 +125,7 @@ Examples:
 ## Handoff rule
 
 Every downstream worker should receive:
+
 - goal
 - current state
 - artifacts produced
@@ -128,6 +142,7 @@ If the next worker has to reconstruct everything from chat history, the workload
 This skill is the **product layer**.
 
 Substrate skills remain implementation details:
+
 - `restate-workflows` — external repo/runtime bridge details
 - `docker-sandbox` — isolation/backends
 - `agent-loop` — durable coding loop mechanics
@@ -147,6 +162,7 @@ joelclaw workload cancel <id>
 ```
 
 Until that exists, emulate the same discipline manually:
+
 1. classify the workload
 2. choose the shape
 3. define artifacts and gates
@@ -156,11 +172,13 @@ Until that exists, emulate the same discipline manually:
 ## Reference
 
 Read the detailed workload catalog here:
+
 - [references/common-workloads.md](./references/common-workloads.md)
 
 ## Rules
 
 - start with workload shape, not runtime mechanism
+- use the canonical vocabulary from `docs/workloads.md`; don't invent fresh field names unless the doc changes too
 - never hand a coding agent substrate docs as the only answer to “how should I run this work?”
 - serial / parallel / chained are first-class planning choices, not afterthoughts
 - use `clawmail` for any delegated or shared-file workload
