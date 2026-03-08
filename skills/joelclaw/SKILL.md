@@ -158,7 +158,7 @@ Use it when you want a pi session to keep watch on the ADR-0217 runtime substrat
 - `runtime_jobs_monitor {"action":"status"}` — inspect the latest runtime snapshot
 - `runtime_jobs_monitor {"action":"stop"}` — stop the poller and send a final follow-up summary
 
-The widget shows runtime health first (queue / Restate / Dkron / Inngest), then any followed Inngest runs underneath. State changes emit OTEL and hidden follow-up messages for asynchronous report-back.
+The widget shows runtime health first (queue / Restate / Dkron / Inngest), then any followed Inngest runs underneath. Severity changes and meaningful workload-state changes emit OTEL and hidden follow-up messages for asynchronous report-back, so a healthy-but-now-held backlog does not stay silent.
 
 ### Observability (OTEL)
 

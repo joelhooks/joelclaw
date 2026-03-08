@@ -30,9 +30,22 @@ describe("jobs command helpers", () => {
     })
 
     expect(summary).toContain("Runtime healthy")
-    expect(summary).toContain("queue healthy")
+    expect(summary).toContain("queue idle")
     expect(summary).toContain("restate healthy")
     expect(summary).toContain("dkron healthy")
     expect(summary).toContain("inngest healthy")
+  })
+
+  test("describeQueueOverall reports held backlog when work is paused intentionally", () => {
+    expect(__jobsTestUtils.describeQueueOverall({
+      status: "healthy",
+      depth: 4,
+      activePauses: [{ family: "content/updated", reason: "pause", source: "manual", mode: "manual", appliedAt: "", expiresAt: "", expiresInMs: 10_000 }],
+      summary: "",
+      byPriority: {},
+      oldestAgeMs: 500,
+      redisUrl: "redis://localhost:6379",
+      error: null,
+    })).toBe("queue held (depth 4, 1 pause)")
   })
 })

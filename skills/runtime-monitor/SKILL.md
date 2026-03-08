@@ -81,8 +81,8 @@ The loaded pi extension at `packages/pi-extensions/inngest-monitor/index.ts` exp
 Effects:
 - polls `joelclaw jobs status` in the background
 - paints a persistent TUI widget
-- emits OTEL on runtime state changes
-- sends hidden follow-up summaries when the runtime state changes or the monitor stops/times out
+- emits OTEL on runtime severity changes and meaningful workload-state changes
+- sends hidden follow-up summaries when the runtime meaningfully changes or the monitor stops/times out
 
 ### Status
 

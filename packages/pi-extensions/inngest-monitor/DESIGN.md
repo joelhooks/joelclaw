@@ -51,7 +51,7 @@ Flow:
 1. `start` spins up a background poller
 2. each poll runs `joelclaw jobs status --hours 1 --count 10`
 3. widget updates from the latest runtime snapshot
-4. on state change, emit OTEL `runtime.monitor.*`
+4. on severity change or meaningful workload-state change, emit OTEL `runtime.monitor.*`
 5. if `report=true`, send `runtime-jobs-monitor-update` follow-up messages
 6. `stop` clears the poller and sends a final summary
 
@@ -90,6 +90,8 @@ The extension emits these actions through `joelclaw otel emit`:
 
 - `runtime.monitor.started`
 - `runtime.monitor.state_changed`
+
+`state_changed` is not severity-only. It also fires when the runtime meaningfully changes shape while staying in the same severity band — for example idle → paused backlog held, paused backlog released back to idle, or component sub-status drift that changes operator actionability.
 - `runtime.monitor.stopped`
 - `runtime.monitor.timeout`
 

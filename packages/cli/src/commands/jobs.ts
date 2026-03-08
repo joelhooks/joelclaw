@@ -323,6 +323,26 @@ function summarizeRunStatuses(runs: Array<{ status: string }>): Record<string, n
   }, {})
 }
 
+function describeQueueOverall(queue: QueueStatusSnapshot): string {
+  const pauseSuffix = queue.activePauses.length > 0
+    ? `, ${queue.activePauses.length} pause${queue.activePauses.length === 1 ? "" : "s"}`
+    : ""
+
+  if (queue.status === "down") {
+    return "queue down"
+  }
+
+  if (queue.depth === 0) {
+    return pauseSuffix ? `queue idle (depth 0${pauseSuffix})` : "queue idle"
+  }
+
+  if (queue.activePauses.length > 0) {
+    return `queue held (depth ${queue.depth}${pauseSuffix})`
+  }
+
+  return `queue ${queue.status} (depth ${queue.depth})`
+}
+
 function buildOverallSummary(input: {
   queue: QueueStatusSnapshot
   restate: RestateStatusSnapshot
@@ -331,7 +351,7 @@ function buildOverallSummary(input: {
 }): string {
   const status = worstSeverity(input.queue.status, input.restate.status, input.dkron.status, input.inngest.status)
   const summaryBits = [
-    `queue ${input.queue.status} (depth ${input.queue.depth}${input.queue.activePauses.length > 0 ? `, ${input.queue.activePauses.length} pause${input.queue.activePauses.length === 1 ? "" : "s"}` : ""})`,
+    describeQueueOverall(input.queue),
     `restate ${input.restate.status}`,
     `dkron ${input.dkron.status}`,
     `inngest ${input.inngest.status}`,
@@ -362,7 +382,9 @@ async function inspectQueue(redisUrl: string): Promise<QueueStatusSnapshot> {
     const status = stats.total >= 25 || (oldestAgeMs ?? 0) >= 15 * 60_000 ? "degraded" : "healthy"
     const summary = stats.total === 0
       ? `Queue idle${activePauses.length > 0 ? ` with ${activePauses.length} active pause${activePauses.length === 1 ? "" : "s"}` : ""}.`
-      : `Queue depth ${stats.total}; oldest age ${oldestAgeMs ?? 0}ms; ${activePauses.length} active pause${activePauses.length === 1 ? "" : "s"}.`
+      : activePauses.length > 0
+        ? `Queue holding ${stats.total} queued entr${stats.total === 1 ? "y" : "ies"} behind ${activePauses.length} active pause${activePauses.length === 1 ? "" : "s"}; oldest age ${oldestAgeMs ?? 0}ms.`
+        : `Queue depth ${stats.total}; oldest age ${oldestAgeMs ?? 0}ms.`
 
     return {
       status,
@@ -797,5 +819,6 @@ export const __jobsTestUtils = {
   severityRank,
   worstSeverity,
   summarizeRunStatuses,
+  describeQueueOverall,
   buildOverallSummary,
 }

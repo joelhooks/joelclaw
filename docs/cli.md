@@ -244,7 +244,7 @@ The loaded pi extension at `packages/pi-extensions/inngest-monitor/index.ts` now
 `runtime_jobs_monitor` semantics:
 
 - `action=start|status|stop` (default `start`)
-- on `start`, it polls `joelclaw jobs status` in the background, paints a persistent widget, emits OTEL on state changes, and sends hidden follow-up messages for async report-back
+- on `start`, it polls `joelclaw jobs status` in the background, paints a persistent widget, emits OTEL on severity changes and meaningful workload-state changes, and sends hidden follow-up messages for async report-back
 - on `status`, it returns the latest runtime snapshot (overall status, queue depth, active pause count, Restate/Dkron/Inngest state)
 - on `stop`, it stops the poller and sends a final follow-up summary
 - widget posture is intentionally operator-first: current runtime state on top, active followed runs underneath

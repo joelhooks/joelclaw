@@ -89,6 +89,7 @@ interface RuntimeMonitorState {
   snapshot: RuntimeJobsSnapshot | null;
   error: string | null;
   lastReportedStatus: RuntimeMonitorStatus | null;
+  lastReportedFingerprint: string | null;
 }
 
 interface RuntimeMonitorSnapshot {
@@ -199,6 +200,33 @@ function snapshot(run: TrackedRun): RunSnapshot {
 
 function normalizeMonitorSeverity(value: unknown): MonitorSeverity {
   return value === "down" || value === "degraded" ? value : "healthy";
+}
+
+function queueDepthBand(depth: number): "idle" | "active" | "elevated" | "backlogged" {
+  if (depth <= 0) return "idle";
+  if (depth >= 25) return "backlogged";
+  if (depth >= 10) return "elevated";
+  return "active";
+}
+
+function runtimeReportFingerprint(snapshot: RuntimeJobsSnapshot | null, status: RuntimeMonitorStatus, error: string | null): string {
+  const queue = snapshot?.queue;
+  const pauses = Array.isArray(queue?.activePauses)
+    ? queue.activePauses
+      .map((pause) => (typeof pause?.family === "string" ? pause.family : "unknown"))
+      .sort()
+    : [];
+
+  return JSON.stringify({
+    status,
+    error: error ?? null,
+    queueStatus: typeof queue?.status === "string" ? queue.status : null,
+    queueDepthBand: queueDepthBand(typeof queue?.depth === "number" ? queue.depth : 0),
+    activePauseFamilies: pauses,
+    restateStatus: typeof snapshot?.restate?.status === "string" ? snapshot.restate.status : null,
+    dkronStatus: typeof snapshot?.dkron?.status === "string" ? snapshot.dkron.status : null,
+    inngestStatus: typeof snapshot?.inngest?.status === "string" ? snapshot.inngest.status : null,
+  });
 }
 
 function runtimeStatusIcon(status: RuntimeMonitorStatus): string {
@@ -466,8 +494,11 @@ export default function jobMonitor(pi: ExtensionAPI) {
       const previous = runtimeMonitor.status;
       runtimeMonitor.status = "down";
       runtimeMonitor.error = stderr || stdout || "joelclaw jobs status failed";
+      const fingerprint = runtimeReportFingerprint(runtimeMonitor.snapshot, runtimeMonitor.status, runtimeMonitor.error);
       refreshWidget();
-      if (previous !== runtimeMonitor.status) {
+      if (previous !== runtimeMonitor.status || runtimeMonitor.lastReportedFingerprint !== fingerprint) {
+        runtimeMonitor.lastReportedStatus = runtimeMonitor.status;
+        runtimeMonitor.lastReportedFingerprint = fingerprint;
         await emitOtel("runtime.monitor.state_changed", runtimeMonitorSnapshot(runtimeMonitor), {
           level: "error",
           success: false,
@@ -487,8 +518,11 @@ export default function jobMonitor(pi: ExtensionAPI) {
       const previous = runtimeMonitor.status;
       runtimeMonitor.status = "down";
       runtimeMonitor.error = "jobs status returned no overall payload";
+      const fingerprint = runtimeReportFingerprint(runtimeMonitor.snapshot, runtimeMonitor.status, runtimeMonitor.error);
       refreshWidget();
-      if (previous !== runtimeMonitor.status) {
+      if (previous !== runtimeMonitor.status || runtimeMonitor.lastReportedFingerprint !== fingerprint) {
+        runtimeMonitor.lastReportedStatus = runtimeMonitor.status;
+        runtimeMonitor.lastReportedFingerprint = fingerprint;
         await emitOtel("runtime.monitor.state_changed", runtimeMonitorSnapshot(runtimeMonitor), {
           level: "error",
           success: false,
@@ -504,10 +538,12 @@ export default function jobMonitor(pi: ExtensionAPI) {
     runtimeMonitor.snapshot = data;
     runtimeMonitor.status = nextStatus;
     runtimeMonitor.error = null;
+    const fingerprint = runtimeReportFingerprint(runtimeMonitor.snapshot, runtimeMonitor.status, runtimeMonitor.error);
     refreshWidget();
 
     if (runtimeMonitor.lastReportedStatus === null) {
       runtimeMonitor.lastReportedStatus = nextStatus;
+      runtimeMonitor.lastReportedFingerprint = fingerprint;
       await emitOtel("runtime.monitor.started", runtimeMonitorSnapshot(runtimeMonitor), {
         level: nextStatus === "healthy" ? "info" : nextStatus === "degraded" ? "warn" : "error",
         success: nextStatus === "healthy",
@@ -518,8 +554,9 @@ export default function jobMonitor(pi: ExtensionAPI) {
       return;
     }
 
-    if (previous !== nextStatus) {
+    if (previous !== nextStatus || runtimeMonitor.lastReportedFingerprint !== fingerprint) {
       runtimeMonitor.lastReportedStatus = nextStatus;
+      runtimeMonitor.lastReportedFingerprint = fingerprint;
       await emitOtel("runtime.monitor.state_changed", runtimeMonitorSnapshot(runtimeMonitor), {
         level: nextStatus === "healthy" ? "info" : nextStatus === "degraded" ? "warn" : "error",
         success: nextStatus === "healthy",
@@ -549,6 +586,7 @@ export default function jobMonitor(pi: ExtensionAPI) {
       snapshot: null,
       error: null,
       lastReportedStatus: null,
+      lastReportedFingerprint: null,
     };
 
     runtimeTimer = setInterval(() => void pollRuntimeMonitor(), runtimeMonitor.intervalMs);
@@ -942,3 +980,8 @@ export default function jobMonitor(pi: ExtensionAPI) {
     return root;
   });
 }
+
+export const __jobMonitorTestUtils = {
+  queueDepthBand,
+  runtimeReportFingerprint,
+};
