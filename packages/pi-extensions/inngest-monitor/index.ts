@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Container, Spacer, Text } from "@mariozechner/pi-tui";
+import { Container, Spacer, Text, truncateToWidth } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
 
@@ -184,6 +184,11 @@ function snipSummary(summary: string | null | undefined, max = 120): string {
   return compact.length > max ? `${compact.slice(0, max - 1)}…` : compact;
 }
 
+function clampWidgetLines(lines: string[], width: number): string[] {
+  const safeWidth = Math.max(1, Math.floor(width));
+  return lines.map((line) => truncateToWidth(line, safeWidth, "…"));
+}
+
 function snapshot(run: TrackedRun): RunSnapshot {
   return {
     runId: run.runId,
@@ -332,15 +337,15 @@ export default function jobMonitor(pi: ExtensionAPI) {
     });
   };
 
-  const renderWidget = (theme: any): string[] => {
+  const renderWidget = (theme: any, width: number): string[] => {
     const now = Date.now();
     const runtimeLines = renderRuntimeWidget(theme, now);
     const runLines = renderRunLines(theme, now);
     if (runtimeLines.length === 0 && runLines.length === 0) return [];
-    if (runtimeLines.length > 0 && runLines.length > 0) {
-      return [...runtimeLines, theme.fg("dim", ""), ...runLines];
-    }
-    return [...runtimeLines, ...runLines];
+    const lines = runtimeLines.length > 0 && runLines.length > 0
+      ? [...runtimeLines, theme.fg("dim", ""), ...runLines]
+      : [...runtimeLines, ...runLines];
+    return clampWidgetLines(lines, width);
   };
 
   // ── Inngest run polling ──────────────────────────────
@@ -657,7 +662,7 @@ export default function jobMonitor(pi: ExtensionAPI) {
       ctx.ui.setWidget(WIDGET_KEY, (tui, theme) => {
         widgetTui = tui;
         return {
-          render: () => renderWidget(theme),
+          render: (width) => renderWidget(theme, width),
           invalidate: () => {},
           dispose: () => { widgetTui = null; },
         };
@@ -982,6 +987,7 @@ export default function jobMonitor(pi: ExtensionAPI) {
 }
 
 export const __jobMonitorTestUtils = {
+  clampWidgetLines,
   queueDepthBand,
   runtimeReportFingerprint,
 };

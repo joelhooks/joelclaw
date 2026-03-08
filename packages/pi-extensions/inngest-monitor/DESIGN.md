@@ -78,6 +78,7 @@ The widget is split into two stacked regions:
    - elapsed time + poll cadence
    - queue depth / active pause count / Restate / Dkron / Inngest status line
    - compact overall summary line
+   - every rendered widget line is clamped to the active terminal width with pi-tui truncation so narrow terminals cannot crash the session
 2. **active run list**
    - followed Inngest runs below the runtime block
    - keeps the existing icons for running/completed/failed/cancelled runs

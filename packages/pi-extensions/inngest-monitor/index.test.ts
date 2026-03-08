@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { visibleWidth } from "@mariozechner/pi-tui"
 import { __jobMonitorTestUtils } from "./index"
 
 describe("job monitor runtime change detection", () => {
@@ -39,5 +40,15 @@ describe("job monitor runtime change detection", () => {
 
     expect(idle).toBe(idleLater)
     expect(held).not.toBe(idle)
+  })
+
+  test("clampWidgetLines truncates long runtime summary lines to the active widget width", () => {
+    const lines = __jobMonitorTestUtils.clampWidgetLines([
+      "│ Runtime healthy: queue idle; restate healthy; dkron healthy; inngest healthy.",
+    ], 73)
+
+    expect(lines).toHaveLength(1)
+    expect(visibleWidth(lines[0]!)).toBeLessThanOrEqual(73)
+    expect(lines[0]).toContain("Runtime healthy:")
   })
 })
