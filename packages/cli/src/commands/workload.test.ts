@@ -366,6 +366,16 @@ describe("workload CLI command", () => {
     expect(plan.guidance.executionExamples[2]?.exampleCommand).toContain(
       "--shape chained",
     );
+    expect(plan.guidance.executionLoop.approvalPrompt).toContain("approved?");
+    expect(plan.guidance.executionLoop.approvedNextStep).toContain(
+      "reserve the scoped files and execute the bounded slice directly",
+    );
+    expect(plan.guidance.executionLoop.progressUpdateExpectation).toContain(
+      "pi extension/TUI",
+    );
+    expect(plan.guidance.executionLoop.completionExpectation).toContain(
+      "commit pushed",
+    );
 
     const nextActions = __workloadTestUtils.buildPlanNextActions(
       {
@@ -480,6 +490,68 @@ describe("workload CLI command", () => {
       "packages/sdk",
       "vitest.config.ts",
     ]);
+    expect(dispatch.guidance.recommendation).toBe(
+      "execute-dispatched-stage-now",
+    );
+    expect(dispatch.guidance.stageReason).toContain("explicitly chose stage-2");
+    expect(dispatch.guidance.adrCoverage.records).toContain("ADR-0038");
+    expect(dispatch.guidance.executionLoop.approvalPrompt).toContain(
+      "approved?",
+    );
+    expect(dispatch.guidance.executionLoop.approvedNextStep).toContain(
+      "reserve the scoped files",
+    );
+  });
+
+  it("warns that dispatch is overkill for bounded inline stage-1 work", () => {
+    const artifactDir = rememberTempDir(
+      mkdtempSync(join(tmpdir(), "workload-dispatch-inline-")),
+    );
+    const plan = __workloadTestUtils.planWorkload(
+      {
+        intent:
+          "truth-groom the existing repo-honesty agent tooling in gremlin and prove the moved tests and docs are honest",
+        kind: "repo.patch",
+        shape: "serial",
+        autonomy: "supervised",
+        proof: "none",
+        requestedBy: "Joel",
+        repoText: "/Users/joel/Code/badass-courses/gremlin",
+        pathsText:
+          ".pi/extensions/repo-honesty.test.ts,.pi/tests/repo-honesty.test.ts,README.md,vitest.config.ts,docs/adr/README.md",
+      },
+      new Date("2026-03-08T19:42:31Z"),
+    );
+
+    const planPath = __workloadTestUtils.resolvePlanArtifactPath(
+      `${artifactDir}/`,
+      plan.plan.workloadId,
+    );
+    __workloadTestUtils.writePlanArtifact(
+      planPath,
+      buildSuccessEnvelope("workload plan", plan, []),
+    );
+
+    const parsed = __workloadTestUtils.parseWorkloadPlanArtifact(planPath);
+    const dispatch = __workloadTestUtils.buildDispatchContract({
+      sourcePlanPath: parsed.absolutePath,
+      result: parsed.result,
+      to: "MaroonReef",
+      from: "MaroonReef",
+      now: new Date("2026-03-08T19:44:25Z"),
+    });
+
+    expect(dispatch.selectedStage.id).toBe("stage-1");
+    expect(dispatch.guidance.recommendation).toBe(
+      "dispatch-is-overkill-keep-it-inline",
+    );
+    expect(dispatch.guidance.summary).toContain("bounded inline slice");
+    expect(dispatch.guidance.executionLoop.approvedNextStep).toContain(
+      "stop bouncing the slice around",
+    );
+    expect(dispatch.guidance.executionLoop.progressUpdateExpectation).toContain(
+      "pi extension/TUI",
+    );
   });
 
   it("writes a reusable dispatch artifact", () => {

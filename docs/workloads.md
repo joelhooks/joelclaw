@@ -196,6 +196,7 @@ Semantics:
   - `adrCoverage` — which ADRs already govern the slice so the planner does not send the agent on a pointless ADR hunt
   - `recommendedSkills` — skill readiness, including `joelclaw skills ensure <name>` for local repo skills and `npx skills add -y -g <source>` for external skills
   - `executionExamples` — serial / parallel / chained setup + execution few-shot examples for coding tasks
+  - `executionLoop` — approval prompt, approved-next-step, progress reporting expectation, and closeout expectation so the agent knows what to do after the operator says yes
 - infers `kind`, `shape`, `mode`, and `backend` when the caller leaves them open
 - supports reusable presets via `--preset docs-truth|research-compare|refactor-handoff`
 - preserves explicit acceptance embedded in the intent when the prompt includes an `Acceptance:` section and `--acceptance` is omitted
@@ -215,6 +216,13 @@ Semantics:
 - reads a saved `joelclaw workload plan --write-plan ...` envelope and turns it into a machine-usable dispatch/handoff contract
 - chooses the first stage by default, or a caller-selected stage via `--stage`
 - carries forward scoped file boundaries via `reservedPaths`
+- also returns `guidance` so dispatch can say whether handing this off is actually smart:
+  - `execute-dispatched-stage-now`
+  - `dispatch-is-overkill-keep-it-inline`
+  - `dispatch-after-health-check`
+  - `clarify-recipient-before-sending`
+  - plus `executionLoop` so the agent gets the honest plan → approve → execute/watch → summarize posture instead of cargo-cult orchestration
+- carries forward ADR coverage + recommended skill setup so the receiving agent does not start half-blind
 - turns the saved plan into a canonical `handoff` object instead of forcing another agent to reconstruct the task from chat
 - can optionally emit a second saved artifact with `--write-dispatch`
 - can optionally send the dispatch contract through `joelclaw mail` with `--to ... --from ... --send-mail`
@@ -269,6 +277,8 @@ This is the canonical request envelope.
 
 `joelclaw workload plan` also returns a guidance block aimed at getting the next step right, not just technically available.
 
+Treat `guidance.executionLoop` as the operator contract: **plan → approve → execute/watch → summarize**. The CLI is supposed to steer the next move, not shrug and dump affordances.
+
 ```json
 {
   "recommendedExecution": "execute-inline-now",
@@ -288,6 +298,12 @@ This is the canonical request envelope.
       "readPath": "/Users/joel/Code/joelhooks/joelclaw/skills/agent-workloads/SKILL.md"
     }
   ],
+  "executionLoop": {
+    "approvalPrompt": "Present the shaped workload, confirm the scoped paths and acceptance criteria, then ask 'approved?' before mutating code or dispatching another agent.",
+    "approvedNextStep": "If approved, reserve the scoped files and execute the bounded slice directly. Do not widen it into dispatch, queue, or adjacent ops theatre.",
+    "progressUpdateExpectation": "While the work is running, let the pi extension/TUI show real stage status and only interrupt the operator for blockers, changed scope, or a decision that actually needs human input.",
+    "completionExpectation": "When the slice lands, report what changed, what was verified, what remains, and whether the operator wants the commit pushed."
+  },
   "executionExamples": [
     {
       "shape": "serial",
@@ -478,6 +494,22 @@ If the next worker has to reconstruct the task from raw chat, the handoff is bad
     "branch": "main",
     "baseSha": "abc1234",
     "paths": ["packages/cli/src/commands/workload.ts"]
+  },
+  "guidance": {
+    "recommendation": "execute-dispatched-stage-now",
+    "summary": "The dispatch contract is ready. Reserve the scoped paths and execute the selected stage instead of re-planning it from scratch.",
+    "stageReason": "Caller explicitly chose stage-2; dispatch is honoring that pinned stage instead of guessing.",
+    "adrCoverage": {
+      "records": ["ADR-0217"],
+      "note": "Workload planning and dispatch posture are covered by ADR-0217; only open another ADR if this changes the workload model itself."
+    },
+    "recommendedSkills": [],
+    "executionLoop": {
+      "approvalPrompt": "Present the stage-specific dispatch contract, confirm the recipient/stage, then ask 'approved?' before sending the baton.",
+      "approvedNextStep": "If approved, reserve the scoped files, send the contract if another agent owns the stage, and execute without re-planning it from scratch.",
+      "progressUpdateExpectation": "While the stage is running, let the pi extension/TUI show handoff and execution status. Only interrupt the operator for blockers, changed scope, or a genuine decision point.",
+      "completionExpectation": "Finish with the selected stage outcome, verification, remaining gates, and whether another handoff, a push, or a stop is warranted."
+    }
   },
   "handoff": {
     "workloadId": "WL_20260308_191410",

@@ -219,6 +219,31 @@ type WorkloadDispatchDelivery = {
   result: unknown;
 };
 
+type WorkloadDispatchRecommendation =
+  | "execute-dispatched-stage-now"
+  | "dispatch-is-overkill-keep-it-inline"
+  | "dispatch-after-health-check"
+  | "clarify-recipient-before-sending";
+
+type WorkloadExecutionLoop = {
+  approvalPrompt: string;
+  approvedNextStep: string;
+  progressUpdateExpectation: string;
+  completionExpectation: string;
+};
+
+type WorkloadDispatchGuidance = {
+  recommendation: WorkloadDispatchRecommendation;
+  summary: string;
+  stageReason: string;
+  adrCoverage: {
+    records: string[];
+    note: string;
+  };
+  recommendedSkills: WorkloadSkillRecommendation[];
+  executionLoop: WorkloadExecutionLoop;
+};
+
 type WorkloadDispatchResult = {
   version: string;
   dispatchId: string;
@@ -228,6 +253,7 @@ type WorkloadDispatchResult = {
   };
   selectedStage: WorkloadStage;
   target: WorkloadTarget;
+  guidance: WorkloadDispatchGuidance;
   handoff: WorkloadHandoff;
   mail: {
     subject: string;
@@ -284,6 +310,7 @@ type WorkloadGuidance = {
   };
   recommendedSkills: WorkloadSkillRecommendation[];
   executionExamples: WorkloadExecutionExample[];
+  executionLoop: WorkloadExecutionLoop;
 };
 
 type WorkloadPlanningResult = {
@@ -1003,6 +1030,53 @@ const buildExecutionExamples = (
   ];
 };
 
+const buildPlanExecutionLoop = (options: {
+  recommendation: WorkloadRecommendedExecution;
+  scopedPaths: string[];
+}): WorkloadExecutionLoop => {
+  const approvalPrompt =
+    "Present the shaped workload, confirm the scoped paths and acceptance criteria, then ask 'approved?' before mutating code or dispatching another agent.";
+
+  let approvedNextStep: string;
+
+  switch (options.recommendation) {
+    case "blocked-clarify-first":
+      approvedNextStep =
+        "Do not execute yet. Resolve the missing blocker questions, tighten the contract, and rerun the planner.";
+      break;
+    case "execute-inline-now":
+      approvedNextStep =
+        options.scopedPaths.length > 0
+          ? "If approved, reserve the scoped files and execute the bounded slice directly. Do not widen it into dispatch, queue, or adjacent ops theatre."
+          : "If approved, execute the bounded slice directly and keep the blast radius tight.";
+      break;
+    case "tighten-scope-first":
+      approvedNextStep =
+        "If approved in principle, tighten the path scope first, rerun the planner, then come back with the narrower slice instead of guessing in-repo.";
+      break;
+    case "dispatch-after-health-check":
+      approvedNextStep =
+        "If approved, check runtime health first, then dispatch through the managed path instead of pretending inline execution will stay tidy.";
+      break;
+    case "write-plan-then-dispatch":
+    default:
+      approvedNextStep =
+        "If approved, write the plan artifact and dispatch the right stage/owner explicitly so the next worker does not reconstruct the task from chat.";
+      break;
+  }
+
+  return {
+    approvalPrompt,
+    approvedNextStep,
+    progressUpdateExpectation:
+      "While the work is running, let the pi extension/TUI show real stage status and only interrupt the operator for blockers, changed scope, or a decision that actually needs human input.",
+    completionExpectation:
+      options.recommendation === "execute-inline-now"
+        ? "When the slice lands, report what changed, what was verified, what remains, and whether the operator wants the commit pushed."
+        : "When the workload lands, report the outcome, verification, remaining gates, and whether the next move is dispatch, push, or stop.",
+  };
+};
+
 const buildWorkloadGuidance = (
   input: NormalizedPlannerInput,
   request: WorkloadRequest,
@@ -1051,12 +1125,18 @@ const buildWorkloadGuidance = (
     operatorSummary = `${operatorSummary} Install or repair the recommended skills first so the agent is not operating half-blind.`;
   }
 
+  const scopedPaths = request.targets[0]?.paths ?? [];
+
   return {
     recommendedExecution,
     operatorSummary,
     adrCoverage: inferAdrCoverage(input, request),
     recommendedSkills,
     executionExamples: buildExecutionExamples(input, request),
+    executionLoop: buildPlanExecutionLoop({
+      recommendation: recommendedExecution,
+      scopedPaths,
+    }),
   };
 };
 
@@ -1224,6 +1304,108 @@ const buildDispatchMailBody = (options: {
   ].join("\n");
 };
 
+const buildDispatchExecutionLoop = (options: {
+  recommendation: WorkloadDispatchRecommendation;
+  reservedPaths: string[];
+  hasRecipient: boolean;
+}): WorkloadExecutionLoop => {
+  const approvalPrompt = options.hasRecipient
+    ? "Present the stage-specific dispatch contract, confirm the recipient/stage, then ask 'approved?' before sending the baton."
+    : "Present the dispatch contract, make the recipient explicit, then ask 'approved?' before sending anything.";
+
+  let approvedNextStep: string;
+
+  switch (options.recommendation) {
+    case "clarify-recipient-before-sending":
+      approvedNextStep =
+        "Do not send yet. Name the receiving agent explicitly or keep the stage local; a dispatch contract without an owner is just paperwork.";
+      break;
+    case "dispatch-is-overkill-keep-it-inline":
+      approvedNextStep =
+        options.reservedPaths.length > 0
+          ? "If approval already exists, stop bouncing the slice around: reserve the scoped files and execute the selected stage now."
+          : "If approval already exists, keep the stage inline and execute it now instead of inventing handoff theatre.";
+      break;
+    case "dispatch-after-health-check":
+      approvedNextStep =
+        "If approved, check runtime health first, then send or execute the selected stage through the managed path.";
+      break;
+    case "execute-dispatched-stage-now":
+    default:
+      approvedNextStep =
+        "If approved, reserve the scoped files, send the contract if another agent owns the stage, and execute without re-planning it from scratch.";
+      break;
+  }
+
+  return {
+    approvalPrompt,
+    approvedNextStep,
+    progressUpdateExpectation:
+      "While the stage is running, let the pi extension/TUI show handoff and execution status. Only interrupt the operator for blockers, changed scope, or a genuine decision point.",
+    completionExpectation:
+      "Finish with the selected stage outcome, verification, remaining gates, and whether another handoff, a push, or a stop is warranted.",
+  };
+};
+
+const buildDispatchGuidance = (options: {
+  result: WorkloadPlanningResult;
+  stage: WorkloadStage;
+  reservedPaths: string[];
+  to?: string;
+  explicitStageId?: string;
+}): WorkloadDispatchGuidance => {
+  const stageIsFirst = options.result.plan.stages[0]?.id === options.stage.id;
+  const stageReason = options.explicitStageId
+    ? `Caller explicitly chose ${options.stage.id}; dispatch is honoring that pinned stage instead of guessing.`
+    : stageIsFirst
+      ? `${options.stage.id} is the first executable stage in the saved plan, so dispatch defaults to it.`
+      : `${options.stage.id} is the next stage selected from the saved plan.`;
+
+  let recommendation: WorkloadDispatchRecommendation;
+  let summary: string;
+
+  if (!options.to) {
+    recommendation = "clarify-recipient-before-sending";
+    summary =
+      "The dispatch contract is valid, but sending it is pointless until you name the receiving agent. Keep it local or set --to explicitly.";
+  } else if (
+    options.result.guidance.recommendedExecution === "execute-inline-now" &&
+    stageIsFirst
+  ) {
+    recommendation = "dispatch-is-overkill-keep-it-inline";
+    summary =
+      "This workload was already a bounded inline slice. Dispatch exists if you want a formal baton pass, but the honest default is to execute the stage now instead of bouncing it around.";
+  } else if (
+    options.result.guidance.recommendedExecution ===
+    "dispatch-after-health-check"
+  ) {
+    recommendation = "dispatch-after-health-check";
+    summary =
+      "This stage wants managed runtime posture. Check system health before you send the baton so the handoff does not land on a sick runtime.";
+  } else {
+    recommendation = "execute-dispatched-stage-now";
+    summary =
+      "The dispatch contract is ready. Reserve the scoped paths and execute the selected stage instead of re-planning it from scratch.";
+  }
+
+  if (options.reservedPaths.length === 0) {
+    summary = `${summary} Path scope is still repo-wide, so tighten ownership before editing if the stage starts to sprawl.`;
+  }
+
+  return {
+    recommendation,
+    summary,
+    stageReason,
+    adrCoverage: options.result.guidance.adrCoverage,
+    recommendedSkills: options.result.guidance.recommendedSkills,
+    executionLoop: buildDispatchExecutionLoop({
+      recommendation,
+      reservedPaths: options.reservedPaths,
+      hasRecipient: Boolean(options.to),
+    }),
+  };
+};
+
 const buildDispatchContract = (options: {
   sourcePlanPath: string;
   result: WorkloadPlanningResult;
@@ -1241,6 +1423,13 @@ const buildDispatchContract = (options: {
   const remainingGates = options.result.plan.stages
     .slice(stageIndex)
     .map((candidate) => `${candidate.id}: ${candidate.name}`);
+  const guidance = buildDispatchGuidance({
+    result: options.result,
+    stage,
+    reservedPaths,
+    to: options.to,
+    explicitStageId: options.stageId,
+  });
   const handoff: WorkloadHandoff = {
     workloadId: options.result.plan.workloadId,
     stageId: stage.id,
@@ -1252,7 +1441,10 @@ const buildDispatchContract = (options: {
     reservedPaths,
     releasedPaths: [],
     risks: options.result.plan.risks,
-    nextAction: `execute ${stage.id}: ${stage.name}`,
+    nextAction:
+      guidance.recommendation === "dispatch-after-health-check"
+        ? `check system health, then execute ${stage.id}: ${stage.name}`
+        : `execute ${stage.id}: ${stage.name}`,
   };
 
   return {
@@ -1264,6 +1456,7 @@ const buildDispatchContract = (options: {
     },
     selectedStage: stage,
     target,
+    guidance,
     handoff,
     mail: {
       subject: buildDispatchMailSubject(options.result.plan.workloadId, stage),
@@ -2639,7 +2832,7 @@ const buildPlanNextActions = (
     actions.push({
       command: "mail reserve --paths <paths> --agent <agent>",
       description:
-        "Reserve the scoped files and execute inline now instead of over-dispatching the slice",
+        "If approved, reserve the scoped files and execute inline now instead of over-dispatching the slice",
       params: {
         paths: {
           description: "Comma-separated file paths",
@@ -2741,7 +2934,7 @@ const buildPlanNextActions = (
         "workload plan <intent> [--repo <repo>] [--paths <paths>] [--paths-from <paths-from>] --write-plan <path>",
       description:
         result.guidance.recommendedExecution === "execute-inline-now"
-          ? "Write the plan artifact only if you want a reusable handoff instead of keeping the slice inline"
+          ? "If approval already exists, write the plan artifact only when you deliberately want a reusable handoff instead of keeping the slice inline"
           : "Write the plan to a reusable artifact for handoff instead of retyping it later",
       params: {
         intent: {
@@ -2776,7 +2969,7 @@ const buildPlanNextActions = (
         "workload dispatch <plan-artifact> [--stage <stage-id>] [--write-dispatch <path>]",
       description:
         result.guidance.recommendedExecution === "execute-inline-now"
-          ? "Dispatch only if you deliberately want another agent to own the next stage"
+          ? "If approval already exists, dispatch only when you deliberately want another agent to own the next stage"
           : "Turn the saved plan artifact into a reusable dispatch contract",
       params: {
         "plan-artifact": {
@@ -2806,40 +2999,89 @@ const buildDispatchNextActions = (
   result: WorkloadDispatchResult,
   project: string,
 ): NextAction[] => {
-  const actions: NextAction[] = [
-    {
-      command:
-        "workload dispatch <plan-artifact> [--stage <stage-id>] [--to <to>] [--from <from>] [--send-mail] [--write-dispatch <path>]",
-      description: "Refine the dispatch contract or target a different stage",
-      params: {
-        "plan-artifact": {
-          description: "Path to the saved workload plan envelope",
-          value: planArtifactPath,
-          required: true,
+  const actions: NextAction[] = [];
+
+  for (const skill of result.guidance.recommendedSkills) {
+    if (skill.missingConsumers.length > 0) {
+      actions.push({
+        command:
+          "skills ensure <skill> [--source-root <repo>] [--consumer <consumer>]",
+        description: `Install or repair the ${skill.name} skill before executing the dispatched stage`,
+        params: {
+          skill: {
+            description: "Skill name",
+            value: skill.name,
+            required: true,
+          },
+          ...(skill.sourceRoot
+            ? {
+                repo: {
+                  description: "Repo root containing skills/<name>/SKILL.md",
+                  value: skill.sourceRoot,
+                },
+              }
+            : {}),
+          consumer: {
+            description: "Which agent consumer dirs to maintain",
+            value: "all",
+            enum: ["all", "agents", "pi", "claude"],
+          },
         },
-        "stage-id": {
-          description: "Which stage to dispatch",
-          value: result.selectedStage.id,
+      });
+    }
+
+    if (skill.readPath) {
+      actions.push({
+        command: "read <path>",
+        description: `Load ${skill.name} before acting on the dispatched stage`,
+        params: {
+          path: {
+            description: "Skill file path",
+            value: skill.readPath,
+            required: true,
+          },
         },
-        to: {
-          description: "Recipient agent for optional mail dispatch",
-          value: result.mail.to ?? "AGENT_NAME",
-        },
-        from: {
-          description: "Sender agent name",
-          value: result.mail.from ?? "MaroonReef",
-        },
-        path: {
-          description: "Where to write the dispatch JSON",
-          value:
-            result.artifact?.path ??
-            defaultDispatchArtifactPath(result.dispatchId),
-        },
+      });
+    }
+  }
+
+  actions.push({
+    command:
+      "workload dispatch <plan-artifact> [--stage <stage-id>] [--to <to>] [--from <from>] [--send-mail] [--write-dispatch <path>]",
+    description: "Refine the dispatch contract or target a different stage",
+    params: {
+      "plan-artifact": {
+        description: "Path to the saved workload plan envelope",
+        value: planArtifactPath,
+        required: true,
+      },
+      "stage-id": {
+        description: "Which stage to dispatch",
+        value: result.selectedStage.id,
+      },
+      to: {
+        description: "Recipient agent for optional mail dispatch",
+        value: result.mail.to ?? "AGENT_NAME",
+      },
+      from: {
+        description: "Sender agent name",
+        value: result.mail.from ?? "MaroonReef",
+      },
+      path: {
+        description: "Where to write the dispatch JSON",
+        value:
+          result.artifact?.path ?? defaultDispatchArtifactPath(result.dispatchId),
       },
     },
-    {
+  });
+
+  if (
+    result.guidance.recommendation === "dispatch-is-overkill-keep-it-inline"
+  ) {
+    actions.push({
       command: "mail reserve --paths <paths> --agent <agent>",
-      description: "Reserve the dispatched file scope before the worker starts",
+      description:
+        "If approval already exists, reserve the scoped files and execute the selected stage now instead of bouncing the slice between agents",
       params: {
         paths: {
           description: "Comma-separated file paths",
@@ -2852,14 +3094,42 @@ const buildDispatchNextActions = (
           required: true,
         },
       },
-    },
-  ];
+    });
+  } else {
+    actions.push({
+      command: "mail reserve --paths <paths> --agent <agent>",
+      description: "If approval already exists, reserve the dispatched file scope before the worker starts",
+      params: {
+        paths: {
+          description: "Comma-separated file paths",
+          value: result.handoff.reservedPaths.join(","),
+          required: true,
+        },
+        agent: {
+          description: "Agent taking the dispatched stage",
+          value: result.mail.to ?? "AGENT_NAME",
+          required: true,
+        },
+      },
+    });
+  }
+
+  if (result.guidance.recommendation === "dispatch-after-health-check") {
+    actions.push({
+      command: "status",
+      description:
+        "Check runtime health before sending or executing this dispatched stage",
+    });
+  }
 
   if (!result.delivery) {
     actions.push({
       command:
         "mail send --project <project> --from <from> --to <to> --subject <subject> <body>",
-      description: "Send the dispatch contract through clawmail",
+      description:
+        result.guidance.recommendation === "clarify-recipient-before-sending"
+          ? "Send the dispatch contract only after naming the receiving agent explicitly"
+          : "Send the dispatch contract through clawmail",
       params: {
         project: {
           description: "Mail project key",

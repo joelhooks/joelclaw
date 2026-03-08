@@ -51,7 +51,7 @@ First move when possible:
 joelclaw workload plan "<intent>"
 ```
 
-Then inspect the canonical `request` + `plan` output before dispatching anything. Read the `guidance` block too — that is where the planner now says whether to execute inline, tighten scope, or dispatch, and which skills should be loaded/installed first.
+Then inspect the canonical `request` + `plan` output before dispatching anything. Read the `guidance` block too — that is where the planner now says whether to execute inline, tighten scope, or dispatch, which skills should be loaded/installed first, and what the approval → execute/watch → summarize loop should be.
 
 Helpful ergonomics that are now real:
 
@@ -151,6 +151,18 @@ Few-shot setup/execution pattern:
 3. reserve the scoped files for the executing stage
 4. execute the stage, validate narrowly, then either close out or dispatch the next stage
 
+## Bounded local slice posture
+
+If the problem is **one repo, one failing surface, and local verification is cheap**, default to direct execution.
+
+- shape it
+- ask **approved?**
+- reserve scope
+- inspect → patch → verify → commit
+- summarize outcome and ask whether to push
+
+Do **not** widen that into dispatch, queue submission, or adjacent ops churn unless the operator explicitly asked for a wider blast radius.
+
 ## Handoff Contract
 
 Every handoff should include:
@@ -222,6 +234,7 @@ Expected outputs:
 - optional `reflect and update plan` stage when the prompt asks for it
 - a reusable plan artifact if requested
 - a stage-specific dispatch contract via `joelclaw workload dispatch` when the work is ready to hand off
+- dispatch guidance that says whether handing it off is actually smart, or whether the agent should just execute the selected stage now
 
 ### Multi-step refactor
 

@@ -183,6 +183,7 @@ joelclaw workload
   - `adrCoverage` to show whether the slice is already covered by existing ADRs
   - `recommendedSkills` with install/read readiness, including `joelclaw skills ensure <name>` for local repo skills and `npx skills add -y -g <source>` for external skills
   - `executionExamples` for serial / parallel / chained coding workloads, including setup + execution few-shot patterns
+  - `executionLoop` so the agent gets the honest plan → approve → execute/watch → summarize posture after the operator says yes
 - infers `kind`, `shape`, `mode`, and `backend` when the caller leaves them open
 - supports reusable planner presets for common docs/research/refactor shapes
 - preserves `Acceptance:` clauses embedded in the prompt when `--acceptance` is omitted
@@ -200,8 +201,11 @@ joelclaw workload
 
 - reads a saved plan artifact from `joelclaw workload plan --write-plan ...`
 - turns it into a stage-specific dispatch/handoff contract with canonical `handoff` data plus a clawmail-ready subject/body
+- also returns dispatch `guidance` so the CLI can say whether the right move is to execute the stage now, keep the slice inline, or pause for a health check/recipient clarification
+- dispatch guidance also carries `executionLoop` so the receiving agent knows the approval, progress-reporting, and closeout posture instead of inventing workflow theatre
 - defaults to the first stage, but `--stage` can target a later stage explicitly
 - preserves scoped file boundaries through `selectedStage.reservedPaths` / `handoff.reservedPaths`
+- carries forward ADR coverage + recommended skill setup/readiness for the receiving agent
 - `--write-dispatch` writes the dispatch contract as a reusable JSON artifact
 - `--send-mail --to <to> --from <from>` sends that contract through `joelclaw mail`
 - does **not** execute code or mutate repos
