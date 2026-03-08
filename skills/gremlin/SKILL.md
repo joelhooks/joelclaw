@@ -46,12 +46,30 @@ Triggers: `gremlin`, `gremlincms`, `wizardshit`, `course platform`, `badass-cour
 | `@gremlincms/core` | `packages/core` | Router, schemas, types |
 | `@gremlincms/db` | `packages/db` | ContentResourceAdapter interface |
 
+| `@gremlincms/ui` | `packages/ui` | Design system, shells, layouts |
+
 ### Planned packages (from ADRs, not yet created)
 
 - `@gremlincms/convex-adapter` → `packages/convex-adapter/`
 - `@gremlincms/drizzle-adapter` → `packages/drizzle-adapter/`
 - `@gremlincms/next` → `packages/next/`
 - `@gremlincms/tanstack` → `packages/tanstack/`
+
+## Design System (ADR-017)
+
+`@gremlincms/ui` follows a three-layer architecture:
+
+- **Primitives** (`src/components/ui/`): shadcn-style (Button, Card, Badge, Separator, Tooltip, Toaster)
+- **Layouts** (`src/shells/*-layout.tsx`): Framework-agnostic page structure. Pure React, no Next.js imports.
+- **Shells** (`src/shells/*-shell.tsx`): Next.js `'use cache'` + `cacheTag` wrappers around layouts.
+
+**Shell types:** `CourseShell/Layout`, `LessonShell/Layout`, `WorkshopShell/Layout`, `ArticleShell/Layout`
+
+**Import rule:**
+- Next.js apps → import `*Shell` (gets caching)
+- TanStack Start apps → import `*Layout` directly (caching via Nitro/CDN)
+
+**CSS architecture:** Three token layers (primitives → domain → brand), layout grids (`page-layout` with `:has()` slots, `content-grid` breakout grid). Each app imports its own `brand.css`. See `docs/artifacts/course-builder-page-patterns.md` for the legacy pattern catalog.
 
 ## Architecture Decisions
 
@@ -60,6 +78,7 @@ Read these before making structural changes:
 - **ADR-010**: Convex-first provider/adapter pattern — Convex is primary DB, adapters are separate packages
 - **ADR-011**: Multi-framework frontend support — Next.js + TanStack Start priority, framework-agnostic core
 - **ADR-012**: Reference site architecture — wizardshit-ai (Next.js 16) + gremlin-cms (TanStack Start)
+- **ADR-017**: Design system — token architecture, shell tiers, layout system, CSS organization (Accepted)
 
 Legacy ADRs (001–009) cover auth, router, content model, tooling, monorepo structure, testing, CI/CD.
 
