@@ -7,12 +7,15 @@ import {
   isExecutionArtifacts,
   isExecutionState,
   isPrdExecutionPlan,
+  isSandboxBackend,
   isSandboxExecutionRequest,
   isSandboxExecutionResult,
+  isSandboxJobRef,
   isSandboxProfile,
   isStoryPlan,
   isWavePlan,
   type PrdExecutionPlan,
+  SANDBOX_BACKENDS,
   SANDBOX_PROFILES,
   type SandboxExecutionRequest,
   type SandboxExecutionResult,
@@ -37,6 +40,22 @@ describe("@joelclaw/agent-execution contracts", () => {
 
     test("exports expected profiles", () => {
       expect(SANDBOX_PROFILES).toEqual(["workspace-write", "danger-full-access"]);
+    });
+  });
+
+  describe("SandboxBackend", () => {
+    test("validates known sandbox backends", () => {
+      expect(isSandboxBackend("local")).toBe(true);
+      expect(isSandboxBackend("k8s")).toBe(true);
+    });
+
+    test("rejects invalid sandbox backends", () => {
+      expect(isSandboxBackend("host")).toBe(false);
+      expect(isSandboxBackend(null)).toBe(false);
+    });
+
+    test("exports expected backends", () => {
+      expect(SANDBOX_BACKENDS).toEqual(["local", "k8s"]);
     });
   });
 
@@ -69,17 +88,16 @@ describe("@joelclaw/agent-execution contracts", () => {
   describe("AgentIdentity", () => {
     test("validates well-formed agent identity", () => {
       const valid: AgentIdentity = {
-        name: "codex",
-        variant: "cli",
-        model: "gpt-5.4",
-        program: "codex-cli",
+        name: "story-executor",
+        variant: "sandbox",
+        model: "claude-3-7-sonnet",
+        program: "claude",
       };
       expect(isAgentIdentity(valid)).toBe(true);
     });
 
     test("validates minimal agent identity", () => {
-      const minimal: AgentIdentity = { name: "pi" };
-      expect(isAgentIdentity(minimal)).toBe(true);
+      expect(isAgentIdentity({ name: "pi" })).toBe(true);
     });
 
     test("rejects invalid agent identity", () => {
@@ -90,15 +108,30 @@ describe("@joelclaw/agent-execution contracts", () => {
     });
   });
 
+  describe("SandboxJobRef", () => {
+    test("validates a job ref", () => {
+      expect(isSandboxJobRef({ name: "req-123", namespace: "joelclaw" })).toBe(true);
+      expect(isSandboxJobRef({ name: "req-123", namespace: "joelclaw", podName: "req-123-abc" })).toBe(true);
+    });
+
+    test("rejects invalid job refs", () => {
+      expect(isSandboxJobRef({ name: "", namespace: "joelclaw" })).toBe(false);
+      expect(isSandboxJobRef({ name: "req-123" })).toBe(false);
+    });
+  });
+
   describe("SandboxExecutionRequest", () => {
     const validRequest: SandboxExecutionRequest = {
       workflowId: "wf-123",
       requestId: "req-456",
       storyId: "story-1",
       task: "implement feature X",
-      agent: { name: "codex", model: "gpt-5.4" },
+      agent: { name: "story-executor", program: "claude", model: "claude-3-7-sonnet" },
       sandbox: "workspace-write",
       baseSha: "abc123def456",
+      backend: "k8s",
+      repoUrl: "https://github.com/joelhooks/joelclaw.git",
+      branch: "main",
     };
 
     test("validates well-formed request", () => {
@@ -108,7 +141,7 @@ describe("@joelclaw/agent-execution contracts", () => {
     test("validates request with optional fields", () => {
       const withOptionals: SandboxExecutionRequest = {
         ...validRequest,
-        cwd: "/Users/joel/Code/project",
+        cwd: "/Users/joel/Code/joelhooks/joelclaw",
         timeoutSeconds: 600,
         verificationCommands: ["pnpm test", "bunx tsc --noEmit"],
         sessionId: "session-789",
@@ -117,19 +150,21 @@ describe("@joelclaw/agent-execution contracts", () => {
     });
 
     test("rejects request with missing required fields", () => {
-      const missing = { ...validRequest };
-      delete (missing as any).workflowId;
+      const missing = { ...validRequest } as Record<string, unknown>;
+      delete missing.workflowId;
       expect(isSandboxExecutionRequest(missing)).toBe(false);
     });
 
+    test("rejects request with invalid backend", () => {
+      expect(isSandboxExecutionRequest({ ...validRequest, backend: "bogus" })).toBe(false);
+    });
+
     test("rejects request with invalid agent", () => {
-      const invalid = { ...validRequest, agent: { name: "" } };
-      expect(isSandboxExecutionRequest(invalid)).toBe(false);
+      expect(isSandboxExecutionRequest({ ...validRequest, agent: { name: "" } })).toBe(false);
     });
 
     test("rejects request with invalid sandbox profile", () => {
-      const invalid = { ...validRequest, sandbox: "unknown" };
-      expect(isSandboxExecutionRequest(invalid)).toBe(false);
+      expect(isSandboxExecutionRequest({ ...validRequest, sandbox: "unknown" })).toBe(false);
     });
   });
 
@@ -156,19 +191,20 @@ describe("@joelclaw/agent-execution contracts", () => {
     });
 
     test("rejects artifacts with invalid verification", () => {
-      const invalid = {
-        ...validArtifacts,
-        verification: {
-          commands: "not an array",
-          success: true,
-        },
-      };
-      expect(isExecutionArtifacts(invalid)).toBe(false);
+      expect(
+        isExecutionArtifacts({
+          ...validArtifacts,
+          verification: {
+            commands: "not an array",
+            success: true,
+          },
+        }),
+      ).toBe(false);
     });
 
     test("rejects artifacts with missing headSha", () => {
-      const missing = { ...validArtifacts };
-      delete (missing as any).headSha;
+      const missing = { ...validArtifacts } as Record<string, unknown>;
+      delete missing.headSha;
       expect(isExecutionArtifacts(missing)).toBe(false);
     });
   });
@@ -184,9 +220,15 @@ describe("@joelclaw/agent-execution contracts", () => {
       expect(isSandboxExecutionResult(validResult)).toBe(true);
     });
 
-    test("validates completed result with artifacts", () => {
+    test("validates completed result with backend and job ref", () => {
       const completed: SandboxExecutionResult = {
         ...validResult,
+        backend: "k8s",
+        job: {
+          name: "req-456",
+          namespace: "joelclaw",
+          podName: "req-456-abc",
+        },
         completedAt: "2026-03-07T00:10:00Z",
         durationMs: 600000,
         artifacts: {
@@ -201,6 +243,7 @@ describe("@joelclaw/agent-execution contracts", () => {
       const failed: SandboxExecutionResult = {
         ...validResult,
         state: "failed",
+        backend: "local",
         error: "Compilation failed",
         output: "Error: type mismatch",
       };
@@ -208,8 +251,16 @@ describe("@joelclaw/agent-execution contracts", () => {
     });
 
     test("rejects result with invalid state", () => {
-      const invalid = { ...validResult, state: "unknown" };
-      expect(isSandboxExecutionResult(invalid)).toBe(false);
+      expect(isSandboxExecutionResult({ ...validResult, state: "unknown" })).toBe(false);
+    });
+
+    test("rejects result with invalid job ref", () => {
+      expect(
+        isSandboxExecutionResult({
+          ...validResult,
+          job: { name: "", namespace: "joelclaw" },
+        }),
+      ).toBe(false);
     });
   });
 
@@ -237,8 +288,8 @@ describe("@joelclaw/agent-execution contracts", () => {
     });
 
     test("rejects story with missing required fields", () => {
-      const missing = { ...validStory };
-      delete (missing as any).prompt;
+      const missing = { ...validStory } as Record<string, unknown>;
+      delete missing.prompt;
       expect(isStoryPlan(missing)).toBe(false);
     });
   });
@@ -267,11 +318,12 @@ describe("@joelclaw/agent-execution contracts", () => {
     });
 
     test("rejects wave with invalid stories", () => {
-      const invalid = {
-        ...validWave,
-        stories: [{ id: "bad", title: "", summary: "", prompt: "" }],
-      };
-      expect(isWavePlan(invalid)).toBe(false);
+      expect(
+        isWavePlan({
+          ...validWave,
+          stories: [{ id: "bad", title: "", summary: "", prompt: "" }],
+        }),
+      ).toBe(false);
     });
   });
 
@@ -298,8 +350,7 @@ describe("@joelclaw/agent-execution contracts", () => {
     });
 
     test("rejects plan with invalid waves", () => {
-      const invalid = { ...validPlan, waves: [{ id: "bad" }] };
-      expect(isPrdExecutionPlan(invalid)).toBe(false);
+      expect(isPrdExecutionPlan({ ...validPlan, waves: [{ id: "bad" }] })).toBe(false);
     });
   });
 
@@ -310,9 +361,12 @@ describe("@joelclaw/agent-execution contracts", () => {
         requestId: "req-456",
         storyId: "story-1",
         task: "test task",
-        agent: { name: "codex" },
+        agent: { name: "story-executor", program: "claude" },
         sandbox: "workspace-write",
         baseSha: "abc123",
+        backend: "k8s",
+        repoUrl: "https://github.com/joelhooks/joelclaw.git",
+        branch: "main",
       };
 
       const serialized = JSON.stringify(request);
@@ -325,6 +379,8 @@ describe("@joelclaw/agent-execution contracts", () => {
         requestId: "req-456",
         state: "completed",
         startedAt: "2026-03-07T00:00:00Z",
+        backend: "k8s",
+        job: { name: "req-456", namespace: "joelclaw" },
         artifacts: {
           headSha: "def789",
           touchedFiles: ["src/index.ts"],

@@ -1,14 +1,11 @@
 /**
  * @joelclaw/agent-execution
- * 
+ *
  * Canonical contract package for sandboxed story execution.
  * Shared between Restate workflows and system-bus Inngest functions.
  */
 
-// Export artifact generation utilities
-export type {
-  GeneratePatchOptions,
-} from "./artifacts.js";
+export type { GeneratePatchOptions } from "./artifacts.js";
 export {
   ArtifactGenerationError,
   generatePatchArtifact,
@@ -21,7 +18,6 @@ export type {
   JobSpecOptions,
   RuntimeImageContract,
 } from "./job-spec.js";
-// Export k8s Job spec builder and utilities
 export {
   DEFAULT_ACTIVE_DEADLINE_SECONDS,
   DEFAULT_JOB_RESOURCES,
@@ -32,11 +28,24 @@ export {
   isJobForRequest,
 } from "./job-spec.js";
 
-// Export repo materialization utilities
 export type {
-  MaterializeRepoOptions,
-  MaterializeRepoResult,
-} from "./repo.js";
+  LaunchSandboxJobOptions,
+  SandboxJobLaunchResult,
+  SandboxJobPhase,
+  SandboxJobStatus,
+} from "./k8s.js";
+export {
+  cancelSandboxJob,
+  extractSandboxResultFromLogs,
+  launchSandboxJob,
+  RESULT_END_MARKER,
+  RESULT_START_MARKER,
+  readSandboxJobLogs,
+  readSandboxJobPodName,
+  readSandboxJobStatus,
+} from "./k8s.js";
+
+export type { MaterializeRepoOptions, MaterializeRepoResult } from "./repo.js";
 export {
   getTouchedFiles,
   materializeRepo,
@@ -44,7 +53,6 @@ export {
   verifyRepoState,
 } from "./repo.js";
 
-// Export all schema validators and constants
 export {
   EXECUTION_MODES,
   EXECUTION_STATES,
@@ -53,14 +61,16 @@ export {
   isExecutionMode,
   isExecutionState,
   isPrdExecutionPlan,
+  isSandboxBackend,
   isSandboxExecutionRequest,
   isSandboxExecutionResult,
+  isSandboxJobRef,
   isSandboxProfile,
   isStoryPlan,
   isWavePlan,
+  SANDBOX_BACKENDS,
   SANDBOX_PROFILES,
 } from "./schema.js";
-// Export all types
 export type {
   AgentIdentity,
   ExecutionArtifacts,
@@ -68,8 +78,10 @@ export type {
   ExecutionState,
   InboxResult,
   PrdExecutionPlan,
+  SandboxBackend,
   SandboxExecutionRequest,
   SandboxExecutionResult,
+  SandboxJobRef,
   SandboxProfile,
   StoryPlan,
   WavePlan,

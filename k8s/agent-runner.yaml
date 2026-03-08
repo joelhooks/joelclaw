@@ -4,55 +4,75 @@
 # Actual Jobs are generated dynamically via @joelclaw/agent-execution/job-spec.
 #
 # Runtime Image Contract:
-# 
+#
 # All agent runner images MUST provide:
 # - Git (for checkout, diff generation, commit)
-# - Bun runtime (for script execution)
-# - Required agent tooling (codex, pi, or equivalent)
+# - Bun runtime
+# - Required agent tooling (currently claude and/or other installed CLIs)
 # - Workspace directory at /workspace
+# - Runtime entrypoint at /app/packages/agent-execution/src/job-runner.ts
 # - Ability to read configuration from environment variables
 # - Exit codes: 0 = success, non-zero = failure
 #
 # Environment Variables (injected by Job spec):
 #
 # Request Metadata:
-#   WORKFLOW_ID             - Restate workflow identifier
-#   REQUEST_ID              - Unique request identifier (for idempotency)
-#   STORY_ID                - Story identifier from the PRD
-#   SANDBOX_PROFILE         - Sandbox isolation level (workspace-write | danger-full-access)
-#   BASE_SHA                - Git SHA to start from
+#   WORKFLOW_ID               - Restate workflow identifier
+#   REQUEST_ID                - Unique request identifier (for idempotency)
+#   STORY_ID                  - Story identifier from the PRD
+#   SANDBOX_PROFILE           - Sandbox isolation level (workspace-write | danger-full-access)
+#   BASE_SHA                  - Git SHA to start from
+#   EXECUTION_BACKEND         - Expected backend value (k8s)
+#   JOB_NAME                  - Deterministic Job name
+#   JOB_NAMESPACE             - k8s namespace
+#
+# Repo Materialization:
+#   REPO_URL                  - Remote git URL for isolated materialization
+#   REPO_BRANCH               - Branch/ref to fetch before checkout
+#   HOST_REQUESTED_CWD        - Original host cwd for operator context only
 #
 # Agent Identity:
-#   AGENT_NAME              - Agent program name (e.g., "codex", "pi")
-#   AGENT_VARIANT           - Optional agent variant/instance identifier
-#   AGENT_MODEL             - Model identifier (e.g., "gpt-5.4")
-#   AGENT_PROGRAM           - Program/CLI executing the agent
+#   AGENT_NAME                - Logical agent name (e.g. story-executor)
+#   AGENT_VARIANT             - Optional agent variant/instance identifier
+#   AGENT_MODEL               - Model identifier
+#   AGENT_PROGRAM             - Program/CLI to execute (e.g. claude, codex)
 #
 # Execution Config:
-#   WORKING_DIR             - Working directory for execution (optional)
-#   SESSION_ID              - Session identifier for tracking (optional)
-#   TIMEOUT_SECONDS         - Timeout for execution (optional)
-#   TASK_PROMPT_B64         - Story prompt/task (base64-encoded)
+#   SESSION_ID                - Session identifier for tracking (optional)
+#   TIMEOUT_SECONDS           - Timeout for execution (optional)
+#   TASK_PROMPT_B64           - Story prompt/task (base64-encoded)
 #   VERIFICATION_COMMANDS_B64 - Verification commands JSON array (base64-encoded, optional)
+#
+# Callback Path:
+#   RESULT_CALLBACK_URL       - Host-worker callback URL for SandboxExecutionResult
+#   RESULT_CALLBACK_TOKEN     - Internal auth token for callback
 #
 # Expected Behavior:
 #
 # 1. Decode TASK_PROMPT_B64 from base64 to get the story task
-# 2. Check out the repo at BASE_SHA
-# 3. Execute the agent with the decoded task prompt
+# 2. Materialize the repo from REPO_URL / REPO_BRANCH at BASE_SHA into /workspace/repo
+# 3. Execute the requested AGENT_PROGRAM with the decoded task prompt
 # 4. Run verification commands if VERIFICATION_COMMANDS_B64 is set
-# 5. Generate execution result with:
+# 5. Generate ExecutionArtifacts:
 #    - Final git SHA (headSha)
 #    - List of touched files
-#    - Verification status
-#    - Any error messages
-# 6. Emit result event or write to output location
-# 7. Exit 0 for success, non-zero for failure
+#    - Patch bundle / diff
+#    - Verification status + output
+# 6. Print SandboxExecutionResult between log markers:
+#    - ---RESULT_START---
+#    - {json}
+#    - ---RESULT_END---
+# 7. POST the same SandboxExecutionResult to RESULT_CALLBACK_URL
+# 8. Exit 0 for success, non-zero for failure
+#
+# Current truthful limitation:
+# - `pi` remains local-backend only for now.
+# - The k8s runner is for runner-installed CLIs until host-routed pi-in-pod execution is designed.
 #
 # Cancellation:
 # - Jobs can be cancelled by deleting the Job resource
 # - The container MUST handle SIGTERM gracefully
-# - Cleanup partial state before exit
+# - Emit a cancelled SandboxExecutionResult when possible before exit
 #
 # Resource Defaults (can be overridden in JobSpecOptions):
 #   CPU Request:    500m
@@ -82,18 +102,24 @@
 #   requestId: "req-xyz",
 #   storyId: "story-1",
 #   task: "Implement feature X with tests",
-#   agent: { name: "codex", model: "gpt-5.4" },
+#   agent: { name: "story-executor", program: "claude", model: "claude-3-7-sonnet" },
 #   sandbox: "workspace-write",
+#   backend: "k8s",
 #   baseSha: "abc123",
+#   repoUrl: "git@github.com:joelhooks/joelclaw.git",
+#   branch: "main",
 # };
 #
 # const options: JobSpecOptions = {
 #   runtime: {
 #     image: "ghcr.io/joelhooks/agent-runner:latest",
 #     imagePullPolicy: "Always",
+#     command: ["bun", "run", "/app/packages/agent-execution/src/job-runner.ts"],
 #   },
 #   namespace: "joelclaw",
 #   imagePullSecret: "ghcr-pull",
+#   resultCallbackUrl: "http://host.docker.internal:3111/internal/agent-result",
+#   resultCallbackToken: process.env.OTEL_EMIT_TOKEN,
 # };
 #
 # const jobManifest = generateJobSpec(request, options);
@@ -102,6 +128,9 @@
 #
 # Related:
 # - packages/agent-execution/src/job-spec.ts (Job spec generator)
-# - packages/agent-execution/src/types.ts (Execution contracts)
-# - docs/architecture.md (System overview)
-# - docs/deploy.md (Deployment procedures)
+# - packages/agent-execution/src/k8s.ts (Job lifecycle helpers)
+# - packages/agent-execution/src/job-runner.ts (runtime entrypoint)
+# - packages/agent-execution/src/types.ts (execution contracts)
+# - packages/agent-execution/docker/agent-runner/Dockerfile (runtime image)
+# - docs/architecture.md (system overview)
+# - docs/deploy.md (deployment procedures)

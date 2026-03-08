@@ -1,6 +1,6 @@
 /**
  * Kubernetes Job specification builder for cold sandboxed story execution.
- * 
+ *
  * Generates deterministic Job manifests for isolated story runs with:
  * - Deterministic naming keyed by requestId
  * - Runtime image contract enforcement
@@ -12,11 +12,11 @@ import type { SandboxExecutionRequest } from "./types.js";
 
 /**
  * Runtime image contract for sandboxed execution.
- * 
+ *
  * All agent runner images MUST provide:
  * - Git (for checkout and diff generation)
  * - Bun runtime
- * - Required agent tooling (codex, pi, etc.)
+ * - Required agent tooling (codex, claude, etc.)
  * - Workspace directory at /workspace
  * - Ability to read env vars for config
  */
@@ -25,19 +25,19 @@ export interface RuntimeImageContract {
   image: string;
   /** Image pull policy */
   imagePullPolicy?: "Always" | "IfNotPresent" | "Never";
+  /** Optional command override */
+  command?: string[];
+  /** Optional args override */
+  args?: string[];
 }
 
 /**
  * Resource limits for Job execution.
  */
 export interface JobResourceLimits {
-  /** CPU request (e.g., "500m", "1") */
   cpuRequest?: string;
-  /** CPU limit (e.g., "2", "4") */
   cpuLimit?: string;
-  /** Memory request (e.g., "512Mi", "1Gi") */
   memoryRequest?: string;
-  /** Memory limit (e.g., "2Gi", "4Gi") */
   memoryLimit?: string;
 }
 
@@ -45,29 +45,21 @@ export interface JobResourceLimits {
  * Options for Job spec generation.
  */
 export interface JobSpecOptions {
-  /** Runtime image contract */
   runtime: RuntimeImageContract;
-  /** k8s namespace */
   namespace?: string;
-  /** Resource limits */
   resources?: JobResourceLimits;
-  /** TTL seconds after completion (k8s will delete the Job) */
   ttlSecondsAfterFinished?: number;
-  /** Backoff limit for retries (0 = no retries) */
   backoffLimit?: number;
-  /** Active deadline seconds (timeout for the entire Job) */
   activeDeadlineSeconds?: number;
-  /** Service account name */
   serviceAccountName?: string;
-  /** Additional env vars to inject */
   env?: Record<string, string>;
-  /** Image pull secret name */
   imagePullSecret?: string;
+  /** Optional callback URL that the runner should POST SandboxExecutionResult to */
+  resultCallbackUrl?: string;
+  /** Optional token/header value for the callback route */
+  resultCallbackToken?: string;
 }
 
-/**
- * Default resource limits for sandbox Jobs.
- */
 export const DEFAULT_JOB_RESOURCES: JobResourceLimits = {
   cpuRequest: "500m",
   cpuLimit: "2",
@@ -75,116 +67,73 @@ export const DEFAULT_JOB_RESOURCES: JobResourceLimits = {
   memoryLimit: "4Gi",
 };
 
-/**
- * Default TTL for completed Jobs (5 minutes).
- * After this, k8s garbage collects the Job and Pod.
- */
 export const DEFAULT_TTL_SECONDS = 300;
-
-/**
- * Default active deadline (1 hour).
- * Jobs that run longer than this are terminated.
- */
 export const DEFAULT_ACTIVE_DEADLINE_SECONDS = 3600;
 
-/**
- * Generate a deterministic Job name from a requestId.
- * 
- * k8s Job names must be DNS-1123 compliant:
- * - lowercase alphanumeric + hyphens
- * - max 63 characters
- * - start/end with alphanumeric
- * 
- * @param requestId - Unique request identifier
- * @returns DNS-1123 compliant Job name
- */
 export function generateJobName(requestId: string): string {
-  // Sanitize: lowercase, replace non-alphanumeric with hyphens, dedupe hyphens
   const sanitized = requestId
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
-  
-  // Truncate to 63 chars (k8s limit)
+
   const truncated = sanitized.slice(0, 63);
-  
-  // Ensure it ends with alphanumeric (not hyphen)
   return truncated.replace(/-+$/, "");
 }
 
-/**
- * Build environment variables for the Job container.
- * 
- * @param request - Sandbox execution request
- * @param additionalEnv - Additional env vars from options
- * @returns Array of k8s EnvVar objects
- */
 function buildEnvVars(
   request: SandboxExecutionRequest,
-  additionalEnv?: Record<string, string>,
-): Array<{ name: string; value: string }> {
-  const env: Array<{ name: string; value: string }> = [
-    // Request metadata
+  options: {
+    additionalEnv?: Record<string, string>;
+    callbackUrl?: string;
+    callbackToken?: string;
+    jobName: string;
+    namespace: string;
+  },
+): Array<Record<string, unknown>> {
+  const env: Array<Record<string, unknown>> = [
     { name: "WORKFLOW_ID", value: request.workflowId },
     { name: "REQUEST_ID", value: request.requestId },
     { name: "STORY_ID", value: request.storyId },
     { name: "SANDBOX_PROFILE", value: request.sandbox },
     { name: "BASE_SHA", value: request.baseSha },
-    
-    // Agent identity
+    { name: "JOB_NAME", value: options.jobName },
+    { name: "JOB_NAMESPACE", value: options.namespace },
+    { name: "EXECUTION_BACKEND", value: request.backend ?? "k8s" },
+
     { name: "AGENT_NAME", value: request.agent.name },
     ...(request.agent.variant ? [{ name: "AGENT_VARIANT", value: request.agent.variant }] : []),
     ...(request.agent.model ? [{ name: "AGENT_MODEL", value: request.agent.model }] : []),
     ...(request.agent.program ? [{ name: "AGENT_PROGRAM", value: request.agent.program }] : []),
-    
-    // Execution config
-    ...(request.cwd ? [{ name: "WORKING_DIR", value: request.cwd }] : []),
+
+    ...(request.cwd ? [{ name: "HOST_REQUESTED_CWD", value: request.cwd }] : []),
+    ...(request.repoUrl ? [{ name: "REPO_URL", value: request.repoUrl }] : []),
+    ...(request.branch ? [{ name: "REPO_BRANCH", value: request.branch }] : []),
     ...(request.sessionId ? [{ name: "SESSION_ID", value: request.sessionId }] : []),
-    
-    // Timeout (convert to string)
-    ...(request.timeoutSeconds
-      ? [{ name: "TIMEOUT_SECONDS", value: String(request.timeoutSeconds) }]
-      : []),
-    
-    // Task prompt (base64-encoded to avoid shell escaping issues)
+    ...(request.timeoutSeconds ? [{ name: "TIMEOUT_SECONDS", value: String(request.timeoutSeconds) }] : []),
     {
       name: "TASK_PROMPT_B64",
-      value: Buffer.from(request.task, "utf-8").toString("base64"),
+      value: Buffer.from(request.task, "utf8").toString("base64"),
     },
-    
-    // Verification commands (JSON array, base64-encoded)
     ...(request.verificationCommands
       ? [{
           name: "VERIFICATION_COMMANDS_B64",
-          value: Buffer.from(JSON.stringify(request.verificationCommands), "utf-8").toString("base64"),
+          value: Buffer.from(JSON.stringify(request.verificationCommands), "utf8").toString("base64"),
         }]
       : []),
+    ...(options.callbackUrl ? [{ name: "RESULT_CALLBACK_URL", value: options.callbackUrl }] : []),
+    ...(options.callbackToken ? [{ name: "RESULT_CALLBACK_TOKEN", value: options.callbackToken }] : []),
   ];
-  
-  // Add any additional env vars
-  if (additionalEnv) {
-    for (const [key, value] of Object.entries(additionalEnv)) {
+
+  if (options.additionalEnv) {
+    for (const [key, value] of Object.entries(options.additionalEnv)) {
       env.push({ name: key, value });
     }
   }
-  
+
   return env;
 }
 
-/**
- * Generate a k8s Job manifest for cold sandboxed execution.
- * 
- * The Job will:
- * - Run in an isolated Pod
- * - Execute the agent runner image with the story task
- * - Write result artifacts to a shared volume or emit events
- * - Self-cleanup after TTL
- * 
- * @param request - Sandbox execution request
- * @param options - Job spec options
- * @returns k8s Job manifest (JSON-serializable object)
- */
 export function generateJobSpec(
   request: SandboxExecutionRequest,
   options: JobSpecOptions,
@@ -193,13 +142,20 @@ export function generateJobSpec(
   const namespace = options.namespace ?? "joelclaw";
   const resources = options.resources ?? DEFAULT_JOB_RESOURCES;
   const ttl = options.ttlSecondsAfterFinished ?? DEFAULT_TTL_SECONDS;
-  const backoffLimit = options.backoffLimit ?? 0; // No retries by default
-  const activeDeadline = options.activeDeadlineSeconds ?? 
+  const backoffLimit = options.backoffLimit ?? 0;
+  const activeDeadlineSeconds =
+    options.activeDeadlineSeconds ??
     (request.timeoutSeconds ? request.timeoutSeconds + 60 : DEFAULT_ACTIVE_DEADLINE_SECONDS);
-  
-  const envVars = buildEnvVars(request, options.env);
-  
-  const jobSpec: Record<string, unknown> = {
+
+  const envVars = buildEnvVars(request, {
+    additionalEnv: options.env,
+    callbackUrl: options.resultCallbackUrl,
+    callbackToken: options.resultCallbackToken,
+    jobName,
+    namespace,
+  });
+
+  return {
     apiVersion: "batch/v1",
     kind: "Job",
     metadata: {
@@ -211,18 +167,20 @@ export function generateJobSpec(
         "joelclaw.dev/workflow-id": request.workflowId,
         "joelclaw.dev/story-id": request.storyId,
         "joelclaw.dev/sandbox": request.sandbox,
+        "joelclaw.dev/backend": request.backend ?? "k8s",
       },
       annotations: {
         "joelclaw.dev/request-id": request.requestId,
         "joelclaw.dev/story-title": request.task.slice(0, 200),
         "joelclaw.dev/agent": request.agent.name,
         ...(request.agent.model ? { "joelclaw.dev/model": request.agent.model } : {}),
+        ...(request.repoUrl ? { "joelclaw.dev/repo-url": request.repoUrl } : {}),
       },
     },
     spec: {
       ttlSecondsAfterFinished: ttl,
       backoffLimit,
-      activeDeadlineSeconds: activeDeadline,
+      activeDeadlineSeconds,
       template: {
         metadata: {
           labels: {
@@ -235,14 +193,14 @@ export function generateJobSpec(
         spec: {
           restartPolicy: "Never",
           ...(options.serviceAccountName ? { serviceAccountName: options.serviceAccountName } : {}),
-          ...(options.imagePullSecret ? {
-            imagePullSecrets: [{ name: options.imagePullSecret }],
-          } : {}),
+          ...(options.imagePullSecret ? { imagePullSecrets: [{ name: options.imagePullSecret }] } : {}),
           containers: [
             {
               name: "agent-runner",
               image: options.runtime.image,
               imagePullPolicy: options.runtime.imagePullPolicy ?? "Always",
+              ...(options.runtime.command ? { command: options.runtime.command } : {}),
+              ...(options.runtime.args ? { args: options.runtime.args } : {}),
               env: envVars,
               resources: {
                 requests: {
@@ -280,17 +238,8 @@ export function generateJobSpec(
       },
     },
   };
-  
-  return jobSpec;
 }
 
-/**
- * Generate a Job deletion request for cleanup/cancellation.
- * 
- * @param requestId - Request ID of the Job to cancel
- * @param namespace - k8s namespace
- * @returns Deletion metadata
- */
 export function generateJobDeletion(
   requestId: string,
   namespace = "joelclaw",
@@ -298,19 +247,10 @@ export function generateJobDeletion(
   return {
     name: generateJobName(requestId),
     namespace,
-    propagationPolicy: "Background", // Delete Job and cascade to Pod
+    propagationPolicy: "Background",
   };
 }
 
-/**
- * Check if a Job name is valid for the given requestId.
- * 
- * Used to verify Job identity during status checks.
- * 
- * @param jobName - k8s Job name
- * @param requestId - Expected request ID
- * @returns True if the Job name matches the request ID
- */
 export function isJobForRequest(jobName: string, requestId: string): boolean {
   return jobName === generateJobName(requestId);
 }

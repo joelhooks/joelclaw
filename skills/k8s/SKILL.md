@@ -66,7 +66,7 @@ joelclaw restate cron status                           # Dkron scheduler → hea
 
 ## Agent Runner (Cold k8s Jobs)
 
-**Status**: Code and contracts landed (Story 2), no live infrastructure yet.
+**Status**: local sandbox remains the default/live path; the k8s backend is now code-landed and opt-in, but still needs supervised rollout before calling it earned runtime.
 
 The agent runner executes sandboxed story runs as isolated k8s Jobs. Jobs are created dynamically via `@joelclaw/agent-execution/job-spec` — no static manifests.
 
@@ -77,23 +77,29 @@ See `k8s/agent-runner.yaml` for the full specification.
 Required components:
 - Git (checkout, diff, commit)
 - Bun runtime
-- Agent tooling (codex, pi, etc.)
+- runner-installed agent tooling (currently `claude` and/or other installed CLIs)
 - `/workspace` working directory
+- runtime entrypoint at `/app/packages/agent-execution/src/job-runner.ts`
 
 Configuration via environment variables:
-- Request metadata: `WORKFLOW_ID`, `REQUEST_ID`, `STORY_ID`, `SANDBOX_PROFILE`, `BASE_SHA`
+- Request metadata: `WORKFLOW_ID`, `REQUEST_ID`, `STORY_ID`, `SANDBOX_PROFILE`, `BASE_SHA`, `EXECUTION_BACKEND`, `JOB_NAME`, `JOB_NAMESPACE`
+- Repo materialization: `REPO_URL`, `REPO_BRANCH`, optional `HOST_REQUESTED_CWD`
 - Agent identity: `AGENT_NAME`, `AGENT_MODEL`, `AGENT_VARIANT`, `AGENT_PROGRAM`
-- Execution config: `WORKING_DIR`, `SESSION_ID`, `TIMEOUT_SECONDS`
+- Execution config: `SESSION_ID`, `TIMEOUT_SECONDS`
 - Task prompt: `TASK_PROMPT_B64` (base64-encoded)
 - Verification: `VERIFICATION_COMMANDS_B64` (base64-encoded JSON array)
+- Callback path: `RESULT_CALLBACK_URL`, `RESULT_CALLBACK_TOKEN`
 
 Expected behavior:
 1. Decode task from `TASK_PROMPT_B64`
-2. Checkout repo at `BASE_SHA`
-3. Execute agent with task
+2. Materialize repo from `REPO_URL` / `REPO_BRANCH` at `BASE_SHA`
+3. Execute the requested `AGENT_PROGRAM`
 4. Run verification commands (if set)
-5. Emit `SandboxExecutionResult` event
+5. Print `SandboxExecutionResult` markers to stdout and POST the same result to `/internal/agent-result`
 6. Exit 0 (success) or non-zero (failure)
+
+Current truthful limit:
+- `pi` remains local-backend only for now; do not pretend the pod runner can execute pi story runs yet.
 
 ### Job Lifecycle
 
@@ -105,14 +111,17 @@ const spec = generateJobSpec(request, {
   runtime: {
     image: "ghcr.io/joelhooks/agent-runner:latest",
     imagePullPolicy: "Always",
+    command: ["bun", "run", "/app/packages/agent-execution/src/job-runner.ts"],
   },
   namespace: "joelclaw",
   imagePullSecret: "ghcr-pull",
+  resultCallbackUrl: "http://host.docker.internal:3111/internal/agent-result",
+  resultCallbackToken: process.env.OTEL_EMIT_TOKEN,
 });
 
 // 2. Apply to cluster (via kubectl or k8s client library)
-// 3. Job runs → Pod executes agent
-// 4. Agent emits SandboxExecutionResult event
+// 3. Job runs → Pod materializes repo, executes agent, posts SandboxExecutionResult callback
+// 4. Host worker can recover the same terminal result from log markers if callback delivery fails
 // 5. Job auto-deletes after TTL (default: 5 minutes)
 
 // Cancel a running Job

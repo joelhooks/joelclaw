@@ -4,11 +4,20 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  cancelSandboxJob,
   type ExecutionArtifacts,
+  extractSandboxResultFromLogs,
   generatePatchArtifact,
   getTouchedFiles,
   type InboxResult,
+  launchSandboxJob,
   materializeRepo,
+  readSandboxJobLogs,
+  readSandboxJobStatus,
+  type SandboxBackend,
+  type SandboxExecutionRequest,
+  type SandboxExecutionResult,
+  type SandboxJobRef,
 } from "@joelclaw/agent-execution";
 import { NonRetriableError } from "inngest";
 import { infer } from "../../lib/inference";
@@ -38,6 +47,15 @@ const CODEX_DEFAULT_MODEL = "gpt-5.4";
 const CODEX_ALLOWED_MODELS = new Set([
   "gpt-5.4",
 ]);
+const SANDBOX_BACKEND_DEFAULT = (
+  process.env.SANDBOX_RUNNER_BACKEND?.trim().toLowerCase() === "k8s" ? "k8s" : "local"
+) as SandboxBackend;
+const SANDBOX_K8S_NAMESPACE = process.env.SANDBOX_K8S_NAMESPACE?.trim() || "joelclaw";
+const SANDBOX_K8S_IMAGE = process.env.SANDBOX_K8S_IMAGE?.trim() || "ghcr.io/joelhooks/agent-runner:latest";
+const SANDBOX_K8S_IMAGE_PULL_SECRET = process.env.SANDBOX_K8S_IMAGE_PULL_SECRET?.trim() || "ghcr-pull";
+const SANDBOX_K8S_SERVICE_ACCOUNT = process.env.SANDBOX_K8S_SERVICE_ACCOUNT?.trim() || "default";
+const SANDBOX_RESULT_CALLBACK_URL = process.env.SANDBOX_RESULT_CALLBACK_URL?.trim() || "http://host.docker.internal:3111/internal/agent-result";
+const INTERNAL_RESULT_TOKEN = process.env.OTEL_EMIT_TOKEN?.trim();
 
 function taskRequiresFileAccess(task: string): boolean {
   const normalizedTask = task.toLowerCase();
@@ -127,12 +145,14 @@ async function runAgentCommand(
 }
 
 type AgentExecutionResult = {
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "cancelled";
   output: string;
   stdout: string;
   stderr: string;
   error?: string;
   artifacts?: ExecutionArtifacts;
+  sandboxBackend?: SandboxBackend;
+  job?: SandboxJobRef;
 };
 
 type AgentExecutionInput = {
@@ -157,6 +177,7 @@ async function resolveSandboxRepoContext(workDir: string, providedBaseSha?: stri
   repoRoot: string;
   baseSha: string;
   branch: string;
+  repoUrl?: string;
 }> {
   const repoRoot = (await Bun.$`git -C ${workDir} rev-parse --show-toplevel`.text()).trim();
   if (!repoRoot) {
@@ -171,7 +192,12 @@ async function resolveSandboxRepoContext(workDir: string, providedBaseSha?: stri
   const branchRaw = (await Bun.$`git -C ${repoRoot} rev-parse --abbrev-ref HEAD`.text()).trim();
   const branch = branchRaw && branchRaw !== "HEAD" ? branchRaw : "main";
 
-  return { repoRoot, baseSha, branch };
+  const repoUrl = await Bun.$`git -C ${repoRoot} remote get-url origin`
+    .text()
+    .then((value) => value.trim())
+    .catch(() => undefined);
+
+  return { repoRoot, baseSha, branch, repoUrl };
 }
 
 function buildSandboxTask(
@@ -386,6 +412,7 @@ async function executeSandboxAgent(input: AgentExecutionInput & {
 
       return {
         ...execution,
+        sandboxBackend: "local",
         artifacts: {
           ...artifacts,
           touchedFiles,
@@ -394,7 +421,7 @@ async function executeSandboxAgent(input: AgentExecutionInput & {
       };
     } catch (artifactError) {
       if (execution.status === "failed") {
-        return execution;
+        return { ...execution, sandboxBackend: "local" };
       }
 
       const message = artifactError instanceof Error ? artifactError.message : String(artifactError);
@@ -406,10 +433,217 @@ async function executeSandboxAgent(input: AgentExecutionInput & {
           .filter(Boolean)
           .join("\n"),
         error: `sandbox artifact generation failed: ${message}`,
+        sandboxBackend: "local",
       };
     }
   } finally {
     await rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function leaseSecretValue(secretName: string, ttl = "1h"): Promise<string | undefined> {
+  const proc = Bun.spawn(["secrets", "lease", secretName, "--ttl", ttl], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  if (exitCode !== 0) {
+    console.warn(`[agent-dispatch] failed to lease ${secretName}: ${stderr.trim() || stdout.trim()}`);
+    return undefined;
+  }
+
+  const value = stdout.trim();
+  return value.length > 0 ? value : undefined;
+}
+
+async function readInboxResultSnapshot(requestId: string): Promise<InboxResult | null> {
+  const filePath = join(INBOX_DIR, `${requestId}.json`);
+  try {
+    const raw = await Bun.file(filePath).text();
+    return JSON.parse(raw) as InboxResult;
+  } catch {
+    return null;
+  }
+}
+
+function inboxResultToExecution(result: InboxResult): AgentExecutionResult | null {
+  if (result.status === "running") return null;
+
+  return {
+    status:
+      result.status === "completed"
+        ? "completed"
+        : result.status === "cancelled"
+          ? "cancelled"
+          : "failed",
+    output: (result.result || result.logs?.stdout || "").slice(-50_000),
+    stdout: (result.logs?.stdout || result.result || "").slice(-10_000),
+    stderr: (result.logs?.stderr || result.error || "").slice(-10_000),
+    ...(result.error ? { error: result.error } : {}),
+    ...(result.artifacts ? { artifacts: result.artifacts } : {}),
+    ...(result.sandboxBackend ? { sandboxBackend: result.sandboxBackend } : {}),
+    ...(result.job ? { job: result.job } : {}),
+  };
+}
+
+function sandboxResultToExecution(
+  result: SandboxExecutionResult,
+  logsText?: string,
+): AgentExecutionResult {
+  return {
+    status:
+      result.state === "completed"
+        ? "completed"
+        : result.state === "cancelled"
+          ? "cancelled"
+          : "failed",
+    output: (result.output || result.artifacts?.logs?.stdout || logsText || "").slice(-50_000),
+    stdout: (result.artifacts?.logs?.stdout || result.output || "").slice(-10_000),
+    stderr: (result.artifacts?.logs?.stderr || logsText || result.error || "").slice(-10_000),
+    ...(result.error ? { error: result.error } : {}),
+    ...(result.artifacts ? { artifacts: result.artifacts } : {}),
+    ...(result.backend ? { sandboxBackend: result.backend } : {}),
+    ...(result.job ? { job: result.job } : {}),
+  };
+}
+
+async function executeK8sSandboxAgent(input: AgentExecutionInput & {
+  requestedCwd: string;
+  baseSha?: string;
+  workflowId?: string;
+  storyId?: string;
+}): Promise<AgentExecutionResult> {
+  const { repoRoot, baseSha, branch, repoUrl } = await resolveSandboxRepoContext(
+    input.requestedCwd,
+    input.baseSha,
+  );
+
+  if (!repoUrl) {
+    return {
+      status: "failed",
+      output: "",
+      stdout: "",
+      stderr: "sandbox k8s runner requires a git remote URL for repo materialization",
+      error: `sandbox k8s runner requires an origin remote for ${repoRoot}`,
+      sandboxBackend: "k8s",
+    };
+  }
+
+  const k8sRequest: SandboxExecutionRequest = {
+    workflowId: input.workflowId ?? `sandbox-${input.requestId}`,
+    requestId: input.requestId,
+    storyId: input.storyId ?? input.requestId,
+    task: input.task,
+    agent: {
+      name: (typeof input.agent === "string" && input.agent.trim()) || input.tool,
+      ...(input.model ? { model: input.model } : {}),
+      program: input.tool,
+    },
+    sandbox: toSandboxProfile(input.sandbox),
+    baseSha,
+    backend: "k8s",
+    cwd: input.requestedCwd,
+    repoUrl,
+    branch,
+    timeoutSeconds: input.timeoutSeconds,
+  };
+
+  const env: Record<string, string> = {};
+  if (input.tool === "claude") {
+    const token = await leaseSecretValue("claude_oauth_token", "1h");
+    if (token) {
+      env.CLAUDE_CODE_OAUTH_TOKEN = token;
+    }
+  }
+
+  const launch = await launchSandboxJob(k8sRequest, {
+    runtime: {
+      image: SANDBOX_K8S_IMAGE,
+      imagePullPolicy: "Always",
+      command: ["bun", "run", "/app/packages/agent-execution/src/job-runner.ts"],
+    },
+    namespace: SANDBOX_K8S_NAMESPACE,
+    imagePullSecret: SANDBOX_K8S_IMAGE_PULL_SECRET || undefined,
+    serviceAccountName: SANDBOX_K8S_SERVICE_ACCOUNT || undefined,
+    resultCallbackUrl: SANDBOX_RESULT_CALLBACK_URL,
+    resultCallbackToken: INTERNAL_RESULT_TOKEN,
+    ...(Object.keys(env).length > 0 ? { env } : {}),
+  });
+
+  activeProcesses.set(input.requestId, {
+    kill: () => {
+      void cancelSandboxJob(launch.job).catch((error) => {
+        console.warn(
+          `[agent-dispatch] failed to cancel sandbox Job ${launch.job.name}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+    },
+  });
+
+  const deadline = Date.now() + Math.max(60, input.timeoutSeconds) * 1000;
+
+  try {
+    while (Date.now() < deadline) {
+      const inboxResult = await readInboxResultSnapshot(input.requestId);
+      const executionFromInbox = inboxResult ? inboxResultToExecution(inboxResult) : null;
+      if (executionFromInbox) {
+        return {
+          ...executionFromInbox,
+          sandboxBackend: executionFromInbox.sandboxBackend ?? "k8s",
+          job: executionFromInbox.job ?? launch.job,
+        };
+      }
+
+      const status = await readSandboxJobStatus(launch.job).catch(() => null);
+      if (status && (status.phase === "completed" || status.phase === "failed")) {
+        const logsText = await readSandboxJobLogs(status.job).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          return `[agent-dispatch] failed to read Job logs: ${message}`;
+        });
+        const parsed = extractSandboxResultFromLogs(logsText);
+        if (parsed) {
+          return {
+            ...sandboxResultToExecution(parsed, logsText),
+            sandboxBackend: parsed.backend ?? "k8s",
+            job: parsed.job ?? status.job,
+          };
+        }
+
+        return {
+          status: "failed",
+          output: logsText.slice(-50_000),
+          stdout: "",
+          stderr: logsText.slice(-10_000),
+          error:
+            status.phase === "completed"
+              ? "sandbox Job completed without reporting a terminal result"
+              : status.message || status.reason || "sandbox Job failed",
+          sandboxBackend: "k8s",
+          job: status.job,
+        };
+      }
+
+      await Bun.sleep(5_000);
+    }
+
+    await cancelSandboxJob(launch.job).catch(() => {});
+    return {
+      status: "failed",
+      output: "",
+      stdout: "",
+      stderr: "sandbox k8s runner timed out waiting for terminal result",
+      error: `sandbox k8s runner timed out after ${input.timeoutSeconds}s`,
+      sandboxBackend: "k8s",
+      job: launch.job,
+    };
+  } finally {
+    activeProcesses.delete(input.requestId);
   }
 }
 
@@ -441,6 +675,7 @@ export const agentDispatch = inngest.createFunction(
         tool,
         agent,
         executionMode = "host",
+        sandboxBackend = SANDBOX_BACKEND_DEFAULT,
       } = event.data.event.data;
 
       // Kill any active process for this requestId
@@ -476,6 +711,7 @@ export const agentDispatch = inngest.createFunction(
             completedAt,
             durationMs: Date.now() - new Date(startedAt).getTime(),
             executionMode,
+            ...(executionMode === "sandbox" ? { sandboxBackend } : {}),
           };
 
           writeInboxSnapshot(result);
@@ -499,6 +735,7 @@ export const agentDispatch = inngest.createFunction(
       model,
       sandbox,
       executionMode = "host",
+      sandboxBackend = SANDBOX_BACKEND_DEFAULT,
       readFiles = false,
     } = event.data;
 
@@ -560,6 +797,7 @@ export const agentDispatch = inngest.createFunction(
         startedAt,
         updatedAt: startedAt,
         executionMode,
+        ...(executionMode === "sandbox" ? { sandboxBackend } : {}),
       };
 
       const filePath = writeInboxSnapshot(runningResult);
@@ -581,6 +819,16 @@ export const agentDispatch = inngest.createFunction(
       } as const;
 
       if (executionMode === "sandbox") {
+        if (sandboxBackend === "k8s") {
+          return executeK8sSandboxAgent({
+            ...executionInput,
+            requestedCwd,
+            baseSha,
+            workflowId,
+            storyId,
+          });
+        }
+
         return executeSandboxAgent({
           ...executionInput,
           requestedCwd,
@@ -609,12 +857,18 @@ export const agentDispatch = inngest.createFunction(
         ...(typeof agent === "string" && agent.trim() ? { agent: agent.trim() } : {}),
         ...(execution.status === "completed"
           ? { result: execution.output }
-          : { error: execution.error }),
+          : {
+              error:
+                execution.error ??
+                (execution.status === "cancelled" ? "Execution cancelled" : "Execution failed"),
+            }),
         startedAt: effectiveStartedAt,
         updatedAt: completedAt,
         completedAt,
         durationMs,
         executionMode,
+        ...(execution.sandboxBackend ? { sandboxBackend: execution.sandboxBackend } : {}),
+        ...(execution.job ? { job: execution.job } : {}),
         ...(execution.artifacts ? { artifacts: execution.artifacts } : {}),
         ...(execution.stdout || execution.stderr
           ? {

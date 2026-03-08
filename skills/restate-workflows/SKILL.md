@@ -291,6 +291,6 @@ When asked to implement this integration in another repo, deliver:
 
 ## Short prompt for another agent
 
-If you need to hand this off, use:
+Paste this:
 
-> Use `/skill:restate-workflows`. Build a thin wrapper in this repo around `joelclaw queue emit` so the repo can request sandboxed/background work from joelclaw without talking to Redis or private joelclaw internals. Inspect `joelclaw queue --help` and `joelclaw queue emit --help` first. Include idempotency key, repo/base SHA, task prompt, requested artifacts, caller metadata, dry-run mode, machine-readable output, README usage, and tests. If no canonical event family is verified, stop and document the proposed family/contract instead of guessing.
+> Use `/skill:restate-workflows`. Add a thin wrapper in this repo around `joelclaw queue emit` so it can submit work into joelclaw without talking to Redis or private joelclaw internals. Check `joelclaw queue emit --help` first. Emit machine-readable JSON with `requestId`, `idempotencyKey`, repo `url`/`branch`/`baseSha`, task prompt, expected artifacts, and caller metadata. Support `--dry-run`, add a README example and tests, and if the canonical event family is not verified, stop and document the proposed family instead of guessing.

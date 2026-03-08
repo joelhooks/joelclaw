@@ -122,18 +122,24 @@ const request: SandboxExecutionRequest = {
   requestId: "req-xyz",
   storyId: "story-1",
   task: "Implement feature X with tests",
-  agent: { name: "codex", model: "gpt-5.4" },
+  agent: { name: "story-executor", program: "claude", model: "claude-3-7-sonnet" },
   sandbox: "workspace-write",
+  backend: "k8s",
   baseSha: "abc123",
+  repoUrl: "git@github.com:joelhooks/joelclaw.git",
+  branch: "main",
 };
 
 const options: JobSpecOptions = {
   runtime: {
     image: "ghcr.io/joelhooks/agent-runner:latest",
     imagePullPolicy: "Always",
+    command: ["bun", "run", "/app/packages/agent-execution/src/job-runner.ts"],
   },
   namespace: "joelclaw",
   imagePullSecret: "ghcr-pull",
+  resultCallbackUrl: "http://host.docker.internal:3111/internal/agent-result",
+  resultCallbackToken: process.env.OTEL_EMIT_TOKEN,
 };
 
 const jobManifest = generateJobSpec(request, options);
@@ -143,9 +149,10 @@ const jobManifest = generateJobSpec(request, options);
 ### Job Lifecycle
 
 1. **Creation**: Restate workflow or system-bus function generates Job spec
-2. **Execution**: k8s schedules Pod, runs agent runner image
-3. **Completion**: Agent emits `SandboxExecutionResult` event
-4. **Cleanup**: Job auto-deletes after TTL (default: 5 minutes)
+2. **Execution**: k8s schedules Pod and runs the agent runner image
+3. **Completion**: runner prints `SandboxExecutionResult` markers to logs and POSTs the same result to `http://host.docker.internal:3111/internal/agent-result`
+4. **Fallback truth**: host worker can recover terminal state from Job status + log markers if callback delivery fails
+5. **Cleanup**: Job auto-deletes after TTL (default: 5 minutes)
 
 ### Resource Defaults
 
@@ -276,7 +283,7 @@ This keeps sandbox runs isolated and reversible.
 
 ### Current State
 
-As of 2026-03-07:
+As of 2026-03-08:
 
 - ✅ Local sandbox runner is live on the host worker via `system/agent-dispatch`
 - ✅ Repo materialization helpers implemented and consumed by the live sandbox path
@@ -284,9 +291,11 @@ As of 2026-03-07:
 - ✅ Touched-file inventory capture
 - ✅ Verification summary and log references in artifacts
 - ✅ Gate A (non-coding) and Gate B (minimal coding) proven
-- ✅ Real ADR-0217 Story 2 acceptance run completed on the sandbox path and was promoted after host-truth review
-- ⏳ Cold k8s Job launcher remains the next execution gate
-- ⏳ Job-level cancellation/timeouts still need the k8s runner path
-- ⏳ Runtime image build, hot-image CronJob, and warm-pool scheduler remain follow-on work
+- ✅ Real ADR-0217 Story 2 acceptance run completed on the local sandbox path and was promoted after host-truth review
+- ✅ Cold k8s Job **control plane** landed in repo: `SandboxExecutionRequest.backend`, Job lifecycle helpers, runner image Dockerfile, `job-runner.ts`, `/internal/agent-result` callback path, and log-marker fallback recovery
+- ✅ `system/agent-dispatch` now understands `sandboxBackend: "local" | "k8s"` with local as the default safe path
+- ⏳ Broad enablement and live proof for the k8s backend still need supervised rollout
+- ⏳ `pi` remains local-backend only; k8s runner support is currently for runner-installed CLIs until host-routed pi-in-pod execution is designed
+- ⏳ Hot-image CronJob and warm-pool scheduler remain follow-on work
 
-The current live isolation surface is the host-worker local sandbox runner. The k8s Job contract, manifests, and resource model remain the next step rather than shipped runtime reality.
+Current earned truth: the host-worker local sandbox runner is still the default/live isolation surface. The k8s Job runner is now an opt-in code path with a real control plane, but it should be rolled out and proved under supervision before we call it fully earned runtime reality.

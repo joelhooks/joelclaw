@@ -9,8 +9,10 @@ const RESTATE_INGRESS = process.env.RESTATE_INGRESS_URL ?? "http://localhost:808
 const PRD_PLANNER_MODEL = process.env.PRD_PLANNER_MODEL ?? "gpt-5.4";
 const PRD_EXEC_AGENT = process.env.PRD_EXEC_AGENT ?? "story-executor";
 const PRD_EXEC_MODEL = process.env.PRD_EXEC_MODEL?.trim() || undefined;
+const PRD_EXEC_TOOL = (process.env.PRD_EXEC_TOOL?.trim() || "pi") as "codex" | "claude" | "pi";
 const PRD_AGENT_WORKER_URL = process.env.PRD_AGENT_WORKER_URL ?? "http://127.0.0.1:3111";
 const PRD_EXECUTION_MODE = (process.env.PRD_EXECUTION_MODE?.trim() || "host") as "host" | "sandbox";
+const PRD_SANDBOX_BACKEND = (process.env.PRD_SANDBOX_BACKEND?.trim() || "") as "local" | "k8s" | "";
 const PI_PATH_DIRS = [
   `${process.env.HOME}/.local/bin`,
   `${process.env.HOME}/.bun/bin`,
@@ -177,6 +179,26 @@ async function readRepoBaseSha(repoCwd: string): Promise<string> {
   return baseSha;
 }
 
+async function readRepoRemoteUrl(repoCwd: string): Promise<string | undefined> {
+  try {
+    const result = await Bun.$`git -C ${repoCwd} remote get-url origin`.text();
+    const remoteUrl = result.trim();
+    return remoteUrl.length > 0 ? remoteUrl : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readRepoBranch(repoCwd: string): Promise<string> {
+  try {
+    const result = await Bun.$`git -C ${repoCwd} rev-parse --abbrev-ref HEAD`.text();
+    const branch = result.trim();
+    return branch && branch !== "HEAD" ? branch : "main";
+  } catch {
+    return "main";
+  }
+}
+
 function withCoordinationContract(story: PrdStoryPlan): string {
   const files = Array.isArray(story.files) && story.files.length > 0
     ? story.files.join(", ")
@@ -208,6 +230,8 @@ function buildAgentStoryNode(
   token: string | undefined,
   inheritedDependsOn: string[],
   baseSha: string,
+  repoUrl?: string,
+  repoBranch = "main",
 ): DagNodeInput {
   const requestId = `${workflowId}-${story.id}-${randomUUID().slice(0, 8)}`;
   const timeoutSeconds = Number.isFinite(story.timeoutSeconds)
@@ -220,13 +244,18 @@ function buildAgentStoryNode(
     storyId: story.id,
     baseSha,
     task: withCoordinationContract(story),
-    tool: "pi",
+    tool: PRD_EXEC_TOOL,
     agent: PRD_EXEC_AGENT,
     cwd,
+    ...(repoUrl ? { repoUrl } : {}),
+    branch: repoBranch,
     timeout: timeoutSeconds,
     ...(PRD_EXEC_MODEL ? { model: PRD_EXEC_MODEL } : {}),
     sandbox: story.sandbox ?? "workspace-write",
     executionMode: PRD_EXECUTION_MODE,
+    ...(PRD_EXECUTION_MODE === "sandbox" && PRD_SANDBOX_BACKEND
+      ? { sandboxBackend: PRD_SANDBOX_BACKEND }
+      : {}),
     readFiles: true,
   };
 
@@ -275,6 +304,8 @@ function buildDagNodes(
   plan: PrdExecutionPlan,
   token: string | undefined,
   baseSha: string,
+  repoUrl?: string,
+  repoBranch = "main",
 ): DagNodeInput[] {
   const nodes: DagNodeInput[] = [];
   const priorWaveIds: string[] = [];
@@ -282,7 +313,7 @@ function buildDagNodes(
   for (const wave of plan.waves) {
     const waveIds: string[] = [];
     for (const story of wave.stories ?? []) {
-      nodes.push(buildAgentStoryNode(story, token, priorWaveIds, baseSha));
+      nodes.push(buildAgentStoryNode(story, token, priorWaveIds, baseSha, repoUrl, repoBranch));
       waveIds.push(story.id);
     }
     priorWaveIds.push(...waveIds);
@@ -293,6 +324,8 @@ function buildDagNodes(
 
 const internalToken = await readEnvValue("OTEL_EMIT_TOKEN");
 const baseSha = await readRepoBaseSha(cwd);
+const repoUrl = await readRepoRemoteUrl(cwd);
+const repoBranch = await readRepoBranch(cwd);
 
 let plan: PrdExecutionPlan;
 let planSourceLabel: string;
@@ -310,7 +343,7 @@ if (planPath) {
   planSourceLabel = prdPath!;
 }
 
-const nodes = buildDagNodes(plan, internalToken, baseSha);
+const nodes = buildDagNodes(plan, internalToken, baseSha, repoUrl, repoBranch);
 const request = {
   requestId: workflowId,
   pipeline: `prd:${planSourceLabel.split("/").at(-1) ?? "unknown"}`,
@@ -327,7 +360,10 @@ console.log(`   worker bridge: ${PRD_AGENT_WORKER_URL}`);
 console.log(`   bridge auth: ${internalToken ? "OTEL_EMIT_TOKEN" : "none"}`);
 console.log(`   base sha: ${baseSha}`);
 console.log(`   execution mode: ${PRD_EXECUTION_MODE}`);
-console.log(`   agent tool: pi`);
+console.log(`   sandbox backend: ${PRD_EXECUTION_MODE === "sandbox" ? (PRD_SANDBOX_BACKEND || "local") : "n/a"}`);
+console.log(`   repo remote: ${repoUrl ?? "none"}`);
+console.log(`   repo branch: ${repoBranch}`);
+console.log(`   agent tool: ${PRD_EXEC_TOOL}`);
 console.log(`   agent role: ${PRD_EXEC_AGENT}`);
 console.log(`   agent model override: ${PRD_EXEC_MODEL ?? "from agent role"}`);
 console.log("");

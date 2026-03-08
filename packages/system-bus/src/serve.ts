@@ -1,6 +1,8 @@
 import { execSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { type InboxResult, isSandboxExecutionResult } from "@joelclaw/agent-execution";
 import { Hono } from "hono";
 import { serve as inngestServe } from "inngest/hono";
 import { type Events, inngest } from "./inngest/client";
@@ -151,6 +153,17 @@ async function readAgentResult(requestId: string): Promise<Record<string, unknow
   }
 
   return null;
+}
+
+function writeAgentResultSnapshot(result: InboxResult): string {
+  mkdirSync(INTERNAL_AGENT_INBOX_DIR, { recursive: true });
+  const filePath = join(INTERNAL_AGENT_INBOX_DIR, `${result.requestId}.json`);
+  writeFileSync(filePath, JSON.stringify(result, null, 2));
+  return filePath;
+}
+
+function normalizeInboxStatusFromExecutionState(state: string): InboxResult["status"] {
+  return state === "completed" ? "completed" : state === "cancelled" ? "cancelled" : state === "running" ? "running" : "failed";
 }
 
 function readAgentResultStatus(result: Record<string, unknown> | null): string | undefined {
@@ -360,9 +373,12 @@ app.post("/internal/agent-dispatch", async (c) => {
         model: requestPayload.model,
         sandbox: requestPayload.sandbox,
         executionMode: requestPayload.executionMode,
+        sandboxBackend: requestPayload.sandboxBackend,
         workflowId: requestPayload.workflowId,
         storyId: requestPayload.storyId,
         baseSha: requestPayload.baseSha,
+        repoUrl: requestPayload.repoUrl,
+        branch: requestPayload.branch,
       },
     }).catch(() => {});
 
@@ -393,13 +409,73 @@ app.post("/internal/agent-dispatch", async (c) => {
       model: requestPayload.model,
       sandbox: requestPayload.sandbox,
       executionMode: requestPayload.executionMode,
+      sandboxBackend: requestPayload.sandboxBackend,
       workflowId: requestPayload.workflowId,
       storyId: requestPayload.storyId,
       baseSha: requestPayload.baseSha,
+      repoUrl: requestPayload.repoUrl,
+      branch: requestPayload.branch,
     },
   }).catch(() => {});
 
   return c.json({ ok: true, requestId, sendResult });
+});
+
+app.post("/internal/agent-result", async (c) => {
+  const authError = verifyInternalToken(c);
+  if (authError) return authError;
+
+  const payload = await c.req.json().catch(() => null);
+  if (!isSandboxExecutionResult(payload)) {
+    return c.json({ ok: false, error: "Invalid SandboxExecutionResult payload" }, 400);
+  }
+
+  const existing = (await readAgentResult(payload.requestId)) as InboxResult | null;
+  const now = new Date().toISOString();
+  const status = normalizeInboxStatusFromExecutionState(payload.state);
+  const startedAt = existing?.startedAt ?? payload.startedAt;
+  const completedAt = status === "running" ? undefined : (payload.completedAt ?? now);
+
+  const merged: InboxResult = {
+    requestId: payload.requestId,
+    sessionId: existing?.sessionId,
+    status,
+    task: existing?.task ?? "sandbox execution",
+    tool: existing?.tool ?? existing?.agent ?? payload.job?.name ?? "sandbox-runner",
+    ...(existing?.agent ? { agent: existing.agent } : {}),
+    ...(status === "completed"
+      ? { result: payload.output ?? existing?.result }
+      : payload.error
+        ? { error: payload.error }
+        : existing?.error
+          ? { error: existing.error }
+          : {}),
+    startedAt,
+    updatedAt: now,
+    ...(completedAt ? { completedAt } : {}),
+    ...(payload.durationMs !== undefined
+      ? { durationMs: payload.durationMs }
+      : completedAt
+        ? { durationMs: new Date(completedAt).getTime() - new Date(startedAt).getTime() }
+        : {}),
+    executionMode: existing?.executionMode ?? "sandbox",
+    sandboxBackend: payload.backend ?? existing?.sandboxBackend ?? "k8s",
+    ...(payload.job ?? existing?.job ? { job: payload.job ?? existing?.job } : {}),
+    ...(payload.artifacts ?? existing?.artifacts ? { artifacts: payload.artifacts ?? existing?.artifacts } : {}),
+    ...(payload.artifacts?.logs || existing?.logs || payload.output || payload.error
+      ? {
+          logs: {
+            ...(existing?.logs ?? {}),
+            ...(payload.artifacts?.logs ?? {}),
+            ...(payload.output ? { stdout: payload.output.slice(-10_000) } : {}),
+            ...(payload.error ? { stderr: payload.error.slice(-10_000) } : {}),
+          },
+        }
+      : {}),
+  };
+
+  const filePath = writeAgentResultSnapshot(merged);
+  return c.json({ ok: true, requestId: payload.requestId, status, filePath });
 });
 
 app.get("/internal/agent-result/:requestId", async (c) => {

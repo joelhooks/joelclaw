@@ -1,17 +1,25 @@
 /**
  * Canonical sandbox execution contract types.
- * 
+ *
  * Shared between Restate workflows and system-bus Inngest functions.
  * All sandboxed story execution must use these types.
  */
 
 /**
  * Execution mode for story execution.
- * 
- * - "host": Execute on shared host checkout (legacy path)
- * - "sandbox": Execute in isolated k8s Job runners
+ *
+ * - "host": Execute on the shared host checkout (legacy path)
+ * - "sandbox": Execute in an isolated runner (currently local sandbox, k8s Job runner next/optional)
  */
 export type ExecutionMode = "host" | "sandbox";
+
+/**
+ * Concrete sandbox backend.
+ *
+ * - "local": Host-worker isolated temp checkout
+ * - "k8s": Kubernetes Job runner
+ */
+export type SandboxBackend = "local" | "k8s";
 
 /**
  * Sandbox profile defining isolation level and permissions.
@@ -27,7 +35,7 @@ export type ExecutionState = "pending" | "running" | "completed" | "failed" | "c
  * Agent identity for tracking and observability.
  */
 export interface AgentIdentity {
-  /** Agent name (e.g. "codex", "claude", "pi") */
+  /** Logical agent name (e.g. "story-executor", "codex", "claude", "pi") */
   name: string;
   /** Optional agent variant/instance identifier */
   variant?: string;
@@ -38,9 +46,21 @@ export interface AgentIdentity {
 }
 
 /**
+ * Optional k8s Job reference for an isolated execution.
+ */
+export interface SandboxJobRef {
+  /** k8s Job name */
+  name: string;
+  /** k8s namespace */
+  namespace: string;
+  /** Optional Pod name once scheduled */
+  podName?: string;
+}
+
+/**
  * Request for sandboxed story execution.
- * 
- * Sent by Restate to system-bus or k8s Job launcher.
+ *
+ * Sent by Restate to system-bus or a k8s Job launcher.
  */
 export interface SandboxExecutionRequest {
   /** Unique workflow identifier */
@@ -57,8 +77,14 @@ export interface SandboxExecutionRequest {
   sandbox: SandboxProfile;
   /** Base git SHA before execution */
   baseSha: string;
-  /** Working directory for execution */
+  /** Sandbox backend (defaults to local when omitted) */
+  backend?: SandboxBackend;
+  /** Working directory for execution (host/local path when available) */
   cwd?: string;
+  /** Remote git URL for isolated runners that cannot access the host worktree directly */
+  repoUrl?: string;
+  /** Branch or ref used when materializing the repo */
+  branch?: string;
   /** Timeout in seconds */
   timeoutSeconds?: number;
   /** Verification commands to run after completion */
@@ -101,8 +127,8 @@ export interface ExecutionArtifacts {
 
 /**
  * Result of a sandboxed execution.
- * 
- * Returned to Restate by system-bus or k8s Job.
+ *
+ * Returned to Restate by system-bus or a k8s Job runner.
  */
 export interface SandboxExecutionResult {
   /** Request identifier (for correlation) */
@@ -115,17 +141,21 @@ export interface SandboxExecutionResult {
   completedAt?: string;
   /** Duration in milliseconds */
   durationMs?: number;
+  /** Backend that produced this result */
+  backend?: SandboxBackend;
+  /** Optional k8s Job reference */
+  job?: SandboxJobRef;
   /** Artifacts produced (only for completed state) */
   artifacts?: ExecutionArtifacts;
-  /** Error message (only for failed state) */
+  /** Error message (only for failed/cancelled state) */
   error?: string;
-  /** Optional stdout/stderr output */
+  /** Optional stdout/stderr output or result text */
   output?: string;
 }
 
 /**
  * Story plan from a PRD.
- * 
+ *
  * This is the input format for Restate workflows.
  */
 export interface StoryPlan {
@@ -169,10 +199,10 @@ export interface PrdExecutionPlan {
 
 /**
  * Legacy inbox result format (for backward compatibility).
- * 
+ *
  * This is the format used by agent-dispatch and written to ~/.joelclaw/workspace/inbox.
  * New code should use SandboxExecutionResult instead.
- * 
+ *
  * @deprecated Use SandboxExecutionResult for new code
  */
 export interface InboxResult {
@@ -190,6 +220,10 @@ export interface InboxResult {
   durationMs?: number;
   /** Execution mode used (host or sandbox) */
   executionMode?: ExecutionMode;
+  /** Concrete sandbox backend when executionMode === sandbox */
+  sandboxBackend?: SandboxBackend;
+  /** Optional job reference for k8s-backed runs */
+  job?: SandboxJobRef;
   /** Optional artifact bundle for sandboxed runs */
   artifacts?: ExecutionArtifacts;
   /** Optional execution and verification logs */

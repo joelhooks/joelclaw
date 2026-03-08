@@ -17,16 +17,22 @@ describe("k8s Job spec builder", () => {
     requestId: "req-test-456",
     storyId: "story-1",
     task: "Implement feature X with tests and documentation",
-    agent: { name: "codex", model: "gpt-5.4" },
+    agent: { name: "story-executor", program: "claude", model: "claude-3-7-sonnet" },
     sandbox: "workspace-write",
     baseSha: "abc123def456",
+    backend: "k8s",
+    repoUrl: "https://github.com/joelhooks/joelclaw.git",
+    branch: "main",
   };
 
   const minimalOptions: JobSpecOptions = {
     runtime: {
       image: "ghcr.io/joelhooks/agent-runner:latest",
       imagePullPolicy: "Always",
+      command: ["bun", "run", "/app/packages/agent-execution/src/job-runner.ts"],
     },
+    resultCallbackUrl: "http://host.docker.internal:3111/internal/agent-result",
+    resultCallbackToken: "test-token",
   };
 
   describe("generateJobName", () => {
@@ -117,6 +123,7 @@ describe("k8s Job spec builder", () => {
       expect(labels["joelclaw.dev/workflow-id"]).toBe("wf-test-123");
       expect(labels["joelclaw.dev/story-id"]).toBe("story-1");
       expect(labels["joelclaw.dev/sandbox"]).toBe("workspace-write");
+      expect(labels["joelclaw.dev/backend"]).toBe("k8s");
     });
 
     test("includes request metadata in annotations", () => {
@@ -124,8 +131,9 @@ describe("k8s Job spec builder", () => {
       const annotations = (spec.metadata as any).annotations;
 
       expect(annotations["joelclaw.dev/request-id"]).toBe("req-test-456");
-      expect(annotations["joelclaw.dev/agent"]).toBe("codex");
-      expect(annotations["joelclaw.dev/model"]).toBe("gpt-5.4");
+      expect(annotations["joelclaw.dev/agent"]).toBe("story-executor");
+      expect(annotations["joelclaw.dev/model"]).toBe("claude-3-7-sonnet");
+      expect(annotations["joelclaw.dev/repo-url"]).toBe("https://github.com/joelhooks/joelclaw.git");
       expect(annotations["joelclaw.dev/story-title"]).toContain("Implement feature X");
     });
 
@@ -141,8 +149,16 @@ describe("k8s Job spec builder", () => {
       expect(envMap.STORY_ID).toBe("story-1");
       expect(envMap.SANDBOX_PROFILE).toBe("workspace-write");
       expect(envMap.BASE_SHA).toBe("abc123def456");
-      expect(envMap.AGENT_NAME).toBe("codex");
-      expect(envMap.AGENT_MODEL).toBe("gpt-5.4");
+      expect(envMap.JOB_NAME).toBe("req-test-456");
+      expect(envMap.JOB_NAMESPACE).toBe("joelclaw");
+      expect(envMap.EXECUTION_BACKEND).toBe("k8s");
+      expect(envMap.AGENT_NAME).toBe("story-executor");
+      expect(envMap.AGENT_PROGRAM).toBe("claude");
+      expect(envMap.AGENT_MODEL).toBe("claude-3-7-sonnet");
+      expect(envMap.REPO_URL).toBe("https://github.com/joelhooks/joelclaw.git");
+      expect(envMap.REPO_BRANCH).toBe("main");
+      expect(envMap.RESULT_CALLBACK_URL).toBe("http://host.docker.internal:3111/internal/agent-result");
+      expect(envMap.RESULT_CALLBACK_TOKEN).toBe("test-token");
     });
 
     test("base64-encodes task prompt", () => {
@@ -276,6 +292,7 @@ describe("k8s Job spec builder", () => {
 
       expect(container.image).toBe("ghcr.io/joelhooks/agent-runner:latest");
       expect(container.imagePullPolicy).toBe("Always");
+      expect(container.command).toEqual(["bun", "run", "/app/packages/agent-execution/src/job-runner.ts"]);
     });
 
     test("produces JSON-serializable output", () => {

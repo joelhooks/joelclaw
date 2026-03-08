@@ -1145,10 +1145,13 @@ export type Events = {
       tool: "codex" | "claude" | "pi";
       agent?: string;
       cwd?: string;
+      repoUrl?: string;
+      branch?: string;
       timeout?: number; // seconds, default 600 (10min)
       model?: string;
       sandbox?: "read-only" | "workspace-write" | "danger-full-access";
       executionMode?: "host" | "sandbox";
+      sandboxBackend?: "local" | "k8s";
       readFiles?: boolean;
     };
   };

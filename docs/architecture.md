@@ -102,44 +102,49 @@ This package eliminates ad-hoc type duplication between Restate and system-bus. 
 
 **Current live path: local sandbox runner on the host worker**
 - `executionMode: "sandbox"` is live in `system/agent-dispatch`
+- Default `sandboxBackend` is still `"local"`
 - Each run materializes a clean temp repo at `baseSha`, executes inside that isolated checkout, exports patch/touched-file artifacts, and tears the workspace down
 - Gate A (non-coding) and Gate B (minimal coding) are proven, and a real ADR-0217 acceptance run completed on this path without dirtying the operator checkout
-- This is the current working isolation surface for autonomous story execution
+- This remains the current working isolation surface for autonomous story execution
 
-**Next gate: cold k8s Jobs**
+**Opt-in next gate now landed in code: cold k8s Jobs**
+- `sandboxBackend: "k8s"` is now a real control-plane path in repo, but it is still meant for supervised rollout rather than broad default enablement
 - Deterministic Job naming keyed by `requestId`
 - Runtime image contract: Git, Bun, agent tooling, `/workspace` directory
-- Environment-driven config: WORKFLOW_ID, REQUEST_ID, STORY_ID, TASK_PROMPT_B64, etc.
+- Environment-driven config: `WORKFLOW_ID`, `REQUEST_ID`, `STORY_ID`, `BASE_SHA`, `REPO_URL`, `REPO_BRANCH`, `TASK_PROMPT_B64`, optional verification commands, and callback settings
+- Result callback path: runner posts `SandboxExecutionResult` to `/internal/agent-result`; the worker preserves `InboxResult.sandboxBackend` and optional Job metadata for operator visibility
+- Log fallback path: Job logs include result markers so the host worker can still recover terminal truth if callback delivery fails
 - Resource limits: 500m-2 CPU, 1-4Gi memory (configurable)
 - TTL cleanup: auto-delete after 5 minutes (default)
 - Active deadline: 1 hour max runtime (default)
 - No automatic retries (`backoffLimit: 0`)
 - Security: non-root (UID 1000), no privilege escalation, capabilities dropped
-- Cancellation: delete Job resource (SIGTERM to container)
-- Job spec generation via `@joelclaw/agent-execution/job-spec`
+- Cancellation: delete Job resource (SIGTERM to container) plus host-worker cancellation cleanup
+- Job spec generation via `@joelclaw/agent-execution/job-spec`, Job lifecycle helpers via `@joelclaw/agent-execution/k8s`, and runtime entrypoint in `packages/agent-execution/src/job-runner.ts`
 
 **Runtime Image Contract**:
 ```
 Required tools:
 - Git (checkout, diff, commit)
 - Bun runtime
-- Agent programs (codex, pi, etc.)
+- Runner-installed agent programs (currently `claude` and/or other installed CLIs; `pi` remains local-backend only for now)
 
 Expected paths:
-- /workspace (working directory)
+- `/workspace` (working directory)
+- `/app/packages/agent-execution/src/job-runner.ts` (default runtime entrypoint in the current image contract)
 
 Expected behavior:
-1. Decode TASK_PROMPT_B64 from env
-2. Materialize repo at BASE_SHA in sandbox-local workspace
+1. Decode `TASK_PROMPT_B64` from env
+2. Materialize repo at `BASE_SHA` from `REPO_URL`/`REPO_BRANCH` in sandbox-local workspace
 3. Execute agent with task
-4. Run verification commands (if VERIFICATION_COMMANDS_B64 set)
+4. Run verification commands (if `VERIFICATION_COMMANDS_B64` set)
 5. Export patch artifact with touched files and verification results
-6. Emit SandboxExecutionResult event with ExecutionArtifacts
-7. Exit 0 (success) or non-zero (failure)
+6. Print terminal `SandboxExecutionResult` markers to stdout and POST the same result to `/internal/agent-result`
+7. Exit `0` (success) or non-zero (failure)
 
 Cancellation handling:
 - Gracefully handle SIGTERM
-- Cleanup partial state
+- Emit a cancelled terminal result when possible
 - Exit promptly
 ```
 
