@@ -3,9 +3,64 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 const controlAppliedEvents: Array<Record<string, unknown>> = [];
 const controlRejectedEvents: Array<Record<string, unknown>> = [];
 
+function buildObservedDecisionMock() {
+  return {
+    autoApplyFamilies: new Set<string>(),
+    decision: {
+      mode: "dry-run" as const,
+      snapshotId: "snap-test",
+      findings: {
+        queuePressure: "healthy" as const,
+        downstreamState: "healthy" as const,
+        summary: "stubbed",
+      },
+      suggestedActions: [],
+      finalActions: [],
+      appliedCount: 0,
+      latencyMs: 1,
+    },
+    failedError: undefined,
+  };
+}
+
+let mockObservedDecision = buildObservedDecisionMock();
+
 mock.module(new URL("../../lib/queue-observe.ts", import.meta.url).pathname, () => ({
   QUEUE_OBSERVE_MODEL: "anthropic/claude-sonnet-4-6",
-  buildQueueObservationSnapshot: () => ({ snapshotId: "snap-test" }),
+  buildQueueObservationSnapshot: () => ({
+    snapshotId: "snap-test",
+    capturedAt: "2026-03-08T00:00:00.000Z",
+    totals: {
+      depth: 0,
+      byPriority: { P0: 0, P1: 0, P2: 0, P3: 0 },
+      oldestAgeMs: null,
+      newestAgeMs: null,
+    },
+    families: [],
+    triage: {
+      attempts: 0,
+      completed: 0,
+      failed: 0,
+      fallbacks: 0,
+      fallbackByReason: {},
+      routeMismatches: 0,
+      latencyMs: { p50: null, p95: null },
+    },
+    drainer: {
+      state: "healthy",
+      recentDispatches: 0,
+      recentFailures: 0,
+      throughputPerMinute: null,
+    },
+    gateway: {
+      sleepMode: false,
+      quietHours: false,
+      mutedChannels: [],
+    },
+    control: {
+      activePauses: [],
+    },
+  }),
   emitQueueControlApplied: async (event: Record<string, unknown>) => {
     controlAppliedEvents.push(event);
   },
@@ -16,22 +71,7 @@ mock.module(new URL("../../lib/queue-observe.ts", import.meta.url).pathname, () 
   emitQueueObserveFailed: async () => {},
   emitQueueObserveFallback: async () => {},
   emitQueueObserveStarted: async () => {},
-  observeQueueSnapshotDetailed: async () => ({
-    autoApplyFamilies: new Set<string>(),
-    decision: {
-      mode: "dry-run",
-      snapshotId: "snap-test",
-      findings: {
-        queuePressure: "healthy",
-        downstreamState: "healthy",
-        summary: "stubbed",
-      },
-      suggestedActions: [],
-      finalActions: [],
-      appliedCount: 0,
-      latencyMs: 1,
-    },
-  }),
+  observeQueueSnapshotDetailed: async () => mockObservedDecision,
 }));
 
 describe("queue observer config and control adapter", () => {
@@ -45,6 +85,7 @@ describe("queue observer config and control adapter", () => {
     delete process.env.QUEUE_OBSERVER_INTERVAL_SECONDS;
     controlAppliedEvents.length = 0;
     controlRejectedEvents.length = 0;
+    mockObservedDecision = buildObservedDecisionMock();
 
     ({ __queueObserverTestUtils: testUtils } = await import("./queue-observer"));
     originalDeps = { ...testUtils.deps };
@@ -99,6 +140,104 @@ describe("queue observer config and control adapter", () => {
     const allowed = await testUtils.gateQueueObserverCadence(redis as never, 120, 122_000);
     expect(allowed.shouldRun).toBe(true);
     expect(writes).toEqual(["122000"]);
+  });
+
+  test("registers cron controller and manual probe as separate functions", async () => {
+    const { queueObserver, queueObserverRequested } = await import("./queue-observer");
+
+    expect((queueObserver as any).opts?.triggers).toEqual([{ cron: "TZ=America/Los_Angeles */1 * * * *" }]);
+    expect((queueObserverRequested as any).opts?.triggers).toEqual([{ event: "queue/observer.requested" }]);
+    expect((queueObserverRequested as any).opts?.singleton).toEqual({ key: '"manual"', mode: "skip" });
+  });
+
+  test("manual probe stays read-only even when enforce mode would auto-apply", async () => {
+    process.env.QUEUE_OBSERVER_MODE = "enforce";
+    process.env.QUEUE_OBSERVER_FAMILIES = "content";
+    process.env.QUEUE_OBSERVER_AUTO_FAMILIES = "content";
+
+    let pauseCalls = 0;
+
+    testUtils.deps.getRedisClient = (() => ({
+      get: async () => null,
+      set: async () => "OK",
+      mget: async () => [null, null],
+    })) as typeof testUtils.deps.getRedisClient;
+    testUtils.deps.ensureQueueInitialized = (async () => {}) as typeof testUtils.deps.ensureQueueInitialized;
+    testUtils.deps.getQueueStats = (async () => ({
+      total: 0,
+      byPriority: { P0: 0, P1: 0, P2: 0, P3: 0 },
+      oldestTimestamp: null,
+      newestTimestamp: null,
+    })) as typeof testUtils.deps.getQueueStats;
+    testUtils.deps.listMessages = (async () => []) as typeof testUtils.deps.listMessages;
+    testUtils.deps.listActiveQueueFamilyPauses = (async () => []) as typeof testUtils.deps.listActiveQueueFamilyPauses;
+    testUtils.deps.pauseQueueFamily = (async () => {
+      pauseCalls += 1;
+      throw new Error("manual probe must not mutate queue control state");
+    }) as typeof testUtils.deps.pauseQueueFamily;
+
+    mockObservedDecision = {
+      autoApplyFamilies: new Set(["content/updated"]),
+      decision: {
+        mode: "enforce",
+        model: "anthropic/claude-sonnet-4-6",
+        snapshotId: "snap-test",
+        findings: {
+          queuePressure: "backlogged",
+          downstreamState: "degraded",
+          summary: "content/updated would normally be paused here.",
+        },
+        suggestedActions: [
+          {
+            kind: "pause_family",
+            family: "content/updated",
+            ttlMs: 300_000,
+            reason: "Pause content while the drainer catches up.",
+          },
+        ],
+        finalActions: [
+          {
+            kind: "pause_family",
+            family: "content/updated",
+            ttlMs: 300_000,
+            reason: "Pause content while the drainer catches up.",
+          },
+        ],
+        appliedCount: 0,
+        latencyMs: 1,
+      },
+      failedError: undefined,
+    };
+
+    const sendEvents: Array<Record<string, unknown>> = [];
+    const result = await testUtils.runQueueObserverPass({
+      step: {
+        run: async (_id, fn) => await fn(),
+        sendEvent: async (_id, payload) => {
+          sendEvents.push(payload);
+          return { ids: ["mock-event-id"] };
+        },
+      },
+      eventName: "queue/observer.requested",
+      eventData: {},
+      allowAutoApply: false,
+    });
+
+    expect(result.trigger).toBe("manual");
+    expect(result.mode).toBe("enforce");
+    expect(result.autoApplyEnabled).toBe(false);
+    expect(result.finalActions).toEqual([
+      {
+        kind: "pause_family",
+        family: "content/updated",
+        ttlMs: 300_000,
+        reason: "Pause content while the drainer catches up.",
+      },
+    ]);
+    expect(result.appliedCount).toBe(0);
+    expect(result.reportQueued).toBe(false);
+    expect(pauseCalls).toBe(0);
+    expect(sendEvents).toEqual([]);
   });
 
   test("applies bounded pause and resume actions and builds one operator report", async () => {

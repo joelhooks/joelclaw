@@ -81,7 +81,7 @@ export { o11yTriage } from "./o11y-triage";
 export { observeSessionFunction } from "./observe";
 export { observeSessionNoted } from "./observe-session-noted";
 export { promote } from "./promote";
-export { queueObserver } from "./queue-observer";
+export { queueObserver, queueObserverRequested } from "./queue-observer";
 export { reflect } from "./reflect";
 export { selfHealingInngestRuntime } from "./self-healing-inngest-runtime";
 export { slackBackfillBatch, slackChannelBackfill } from "./slack-backfill";

@@ -78,7 +78,7 @@ import { o11yTriage } from "./o11y-triage";
 import { observeSessionFunction } from "./observe";
 import { observeSessionNoted } from "./observe-session-noted";
 import { promote } from "./promote";
-import { queueObserver } from "./queue-observer";
+import { queueObserver, queueObserverRequested } from "./queue-observer";
 import { reflect } from "./reflect";
 import { selfHealingGatewayBridge } from "./self-healing-gateway-bridge";
 import { selfHealingInngestRuntime } from "./self-healing-inngest-runtime";
@@ -198,6 +198,7 @@ export const hostFunctionDefinitions = [
   subscriptionCheckSingle,
   o11yTriage,
   queueObserver,
+  queueObserverRequested,
   selfHealingInvestigator,
   selfHealingRouter,
   selfHealingGatewayBridge,

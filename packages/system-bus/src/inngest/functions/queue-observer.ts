@@ -735,145 +735,188 @@ async function applyQueueObserverActions(input: {
   };
 }
 
+type QueueObserverStep = {
+  run<T>(id: string, fn: () => Promise<T> | T): Promise<T>;
+  sendEvent(
+    id: string,
+    payload: { name: string; data: Record<string, unknown> },
+  ): Promise<unknown>;
+};
+
+async function runQueueObserverPass(input: {
+  step: QueueObserverStep;
+  eventName: string;
+  eventData?: { hours?: unknown; limit?: unknown } | null;
+  allowAutoApply: boolean;
+}) {
+  const config = resolveQueueObserverConfig();
+  const redis = queueObserverDeps.getRedisClient();
+  const eventData = (input.eventData ?? {}) as { hours?: unknown; limit?: unknown };
+  const hours = Math.max(1, parsePositiveInt(eventData.hours, DEFAULT_WINDOW_HOURS));
+  const limit = Math.min(DEFAULT_LIMIT, Math.max(1, parsePositiveInt(eventData.limit, DEFAULT_LIMIT)));
+  const manualRequest = input.eventName === "queue/observer.requested";
+  const trigger = manualRequest ? "manual" : "cron";
+  const autoApplyEnabled = input.allowAutoApply && config.mode === "enforce";
+
+  if (config.mode === "off") {
+    return {
+      status: "disabled",
+      trigger,
+      mode: config.mode,
+      autoApplyEnabled,
+      observeFamilies: [...config.observeFamilies].sort(),
+      autoApplyFamilies: [...config.autoApplyFamilies].sort(),
+    };
+  }
+
+  if (!manualRequest) {
+    const cadence = await input.step.run("gate-cadence", async () =>
+      gateQueueObserverCadence(redis, config.intervalSeconds)
+    );
+    if (!cadence.shouldRun) {
+      return {
+        status: "skipped",
+        reason: "cadence",
+        trigger,
+        mode: config.mode,
+        autoApplyEnabled,
+        intervalSeconds: config.intervalSeconds,
+        lastRunAt: cadence.lastRunAt,
+        nextRunAt: cadence.nextRunAt,
+      };
+    }
+  }
+
+  const live = await input.step.run("build-live-snapshot", async () =>
+    buildLiveQueueObservation({
+      redis,
+      observeFamilies: config.observeFamilies,
+      hours,
+      limit,
+    })
+  );
+
+  await emitQueueObserveStarted({
+    snapshot: live.snapshot,
+    mode: config.mode,
+    model: QUEUE_OBSERVE_MODEL,
+    autoApplyFamilies: config.autoApplyFamilies,
+  });
+
+  const observed = await observeQueueSnapshotDetailed({
+    mode: config.mode,
+    snapshot: live.snapshot,
+    autoApplyFamilies: config.autoApplyFamilies,
+  });
+
+  let decision = observed.decision;
+  let applyResult: QueueObserverApplyResult = {
+    appliedActions: [],
+    rejectedActions: [],
+    report: null,
+  };
+
+  if (autoApplyEnabled && !decision.fallbackReason && decision.finalActions.length > 0) {
+    applyResult = await input.step.run("apply-final-actions", async () =>
+      applyQueueObserverActions({
+        redis,
+        decision,
+        actor: "queue-observer",
+        config,
+      })
+    );
+    decision = {
+      ...decision,
+      appliedCount: applyResult.appliedActions.length,
+    };
+  }
+
+  if (applyResult.report) {
+    await input.step.sendEvent("send-queue-observer-report", {
+      name: "gateway/send.message",
+      data: {
+        channel: "telegram",
+        text: applyResult.report.text,
+      },
+    });
+    if (applyResult.report.escalationCount > 0) {
+      decision = {
+        ...decision,
+        appliedCount: decision.appliedCount + applyResult.report.escalationCount,
+      };
+    }
+  }
+
+  if (observed.failedError) {
+    await emitQueueObserveFailed({
+      snapshot: live.snapshot,
+      mode: config.mode,
+      model: decision.model ?? QUEUE_OBSERVE_MODEL,
+      error: observed.failedError,
+      latencyMs: decision.latencyMs,
+    });
+  }
+
+  if (decision.fallbackReason) {
+    await emitQueueObserveFallback({ decision });
+  } else {
+    await emitQueueObserveCompleted({
+      decision,
+      autoApplyFamilies: observed.autoApplyFamilies,
+    });
+  }
+
+  return {
+    status: decision.fallbackReason ? "fallback" : config.mode,
+    trigger,
+    mode: config.mode,
+    autoApplyEnabled,
+    intervalSeconds: config.intervalSeconds,
+    observeFamilies: [...config.observeFamilies].sort(),
+    autoApplyFamilies: [...config.autoApplyFamilies].sort(),
+    snapshotId: live.snapshot.snapshotId,
+    findings: decision.findings,
+    suggestedActions: decision.suggestedActions,
+    finalActions: decision.finalActions,
+    appliedCount: decision.appliedCount,
+    fallbackReason: decision.fallbackReason ?? null,
+    reportQueued: applyResult.report != null,
+    queuedDepth: live.snapshot.totals.depth,
+    activePauses: live.snapshot.control.activePauses,
+  };
+}
+
 export const queueObserver = inngest.createFunction(
   {
     id: "queue/observer",
     retries: 1,
     concurrency: { limit: 1 },
   },
-  [
-    { cron: QUEUE_OBSERVER_CRON },
-    { event: "queue/observer.requested" },
-  ],
-  async ({ event, step }) => {
-    const config = resolveQueueObserverConfig();
-    const redis = queueObserverDeps.getRedisClient();
-    const eventData = (event.data ?? {}) as { hours?: unknown; limit?: unknown };
-    const hours = Math.max(1, parsePositiveInt(eventData.hours, DEFAULT_WINDOW_HOURS));
-    const limit = Math.min(DEFAULT_LIMIT, Math.max(1, parsePositiveInt(eventData.limit, DEFAULT_LIMIT)));
-    const manualRequest = event.name === "queue/observer.requested";
+  { cron: QUEUE_OBSERVER_CRON },
+  async ({ event, step }) =>
+    runQueueObserverPass({
+      step,
+      eventName: event.name,
+      eventData: (event.data ?? {}) as { hours?: unknown; limit?: unknown },
+      allowAutoApply: true,
+    }),
+);
 
-    if (config.mode === "off") {
-      return {
-        status: "disabled",
-        mode: config.mode,
-        observeFamilies: [...config.observeFamilies].sort(),
-        autoApplyFamilies: [...config.autoApplyFamilies].sort(),
-      };
-    }
-
-    if (!manualRequest) {
-      const cadence = await step.run("gate-cadence", async () =>
-        gateQueueObserverCadence(redis, config.intervalSeconds)
-      );
-      if (!cadence.shouldRun) {
-        return {
-          status: "skipped",
-          reason: "cadence",
-          mode: config.mode,
-          intervalSeconds: config.intervalSeconds,
-          lastRunAt: cadence.lastRunAt,
-          nextRunAt: cadence.nextRunAt,
-        };
-      }
-    }
-
-    const live = await step.run("build-live-snapshot", async () =>
-      buildLiveQueueObservation({
-        redis,
-        observeFamilies: config.observeFamilies,
-        hours,
-        limit,
-      })
-    );
-
-    await emitQueueObserveStarted({
-      snapshot: live.snapshot,
-      mode: config.mode,
-      model: QUEUE_OBSERVE_MODEL,
-      autoApplyFamilies: config.autoApplyFamilies,
-    });
-
-    const observed = await observeQueueSnapshotDetailed({
-      mode: config.mode,
-      snapshot: live.snapshot,
-      autoApplyFamilies: config.autoApplyFamilies,
-    });
-
-    let decision = observed.decision;
-    let applyResult: QueueObserverApplyResult = {
-      appliedActions: [],
-      rejectedActions: [],
-      report: null,
-    };
-
-    if (!decision.fallbackReason && decision.finalActions.length > 0) {
-      applyResult = await step.run("apply-final-actions", async () =>
-        applyQueueObserverActions({
-          redis,
-          decision,
-          actor: "queue-observer",
-          config,
-        })
-      );
-      decision = {
-        ...decision,
-        appliedCount: applyResult.appliedActions.length,
-      };
-    }
-
-    if (applyResult.report) {
-      await step.sendEvent("send-queue-observer-report", {
-        name: "gateway/send.message",
-        data: {
-          channel: "telegram",
-          text: applyResult.report.text,
-        },
-      });
-      if (applyResult.report.escalationCount > 0) {
-        decision = {
-          ...decision,
-          appliedCount: decision.appliedCount + applyResult.report.escalationCount,
-        };
-      }
-    }
-
-    if (observed.failedError) {
-      await emitQueueObserveFailed({
-        snapshot: live.snapshot,
-        mode: config.mode,
-        model: decision.model ?? QUEUE_OBSERVE_MODEL,
-        error: observed.failedError,
-        latencyMs: decision.latencyMs,
-      });
-    }
-
-    if (decision.fallbackReason) {
-      await emitQueueObserveFallback({ decision });
-    } else {
-      await emitQueueObserveCompleted({
-        decision,
-        autoApplyFamilies: observed.autoApplyFamilies,
-      });
-    }
-
-    return {
-      status: decision.fallbackReason ? "fallback" : config.mode,
-      mode: config.mode,
-      intervalSeconds: config.intervalSeconds,
-      observeFamilies: [...config.observeFamilies].sort(),
-      autoApplyFamilies: [...config.autoApplyFamilies].sort(),
-      snapshotId: live.snapshot.snapshotId,
-      findings: decision.findings,
-      suggestedActions: decision.suggestedActions,
-      finalActions: decision.finalActions,
-      appliedCount: decision.appliedCount,
-      fallbackReason: decision.fallbackReason ?? null,
-      reportQueued: applyResult.report != null,
-      queuedDepth: live.snapshot.totals.depth,
-      activePauses: live.snapshot.control.activePauses,
-    };
+export const queueObserverRequested = inngest.createFunction(
+  {
+    id: "queue/observer-requested",
+    retries: 1,
+    concurrency: { limit: 1 },
+    singleton: { key: '"manual"', mode: "skip" },
   },
+  { event: "queue/observer.requested" },
+  async ({ event, step }) =>
+    runQueueObserverPass({
+      step,
+      eventName: event.name,
+      eventData: (event.data ?? {}) as { hours?: unknown; limit?: unknown },
+      allowAutoApply: false,
+    }),
 );
 
 export const __queueObserverTestUtils = {
@@ -884,5 +927,6 @@ export const __queueObserverTestUtils = {
   expandQueueObserverFamilies,
   gateQueueObserverCadence,
   resolveQueueObserverConfig,
+  runQueueObserverPass,
   deps: queueObserverDeps,
 };

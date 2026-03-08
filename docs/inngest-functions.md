@@ -115,9 +115,10 @@ Operational boundary for Phase 1:
   - the installed CLI now exposes `joelclaw queue pause`, `joelclaw queue resume`, and `joelclaw queue control status`.
   - queue operator commands resolve Redis from the canonical CLI config (`~/.config/system-bus.env` → `REDIS_URL`) before ambient shell env so manual controls target the same localhost queue as the worker and drainer.
 - Phase 3 Story 4 now has a live host-worker runtime path in `packages/system-bus/src/inngest/functions/queue-observer.ts`:
-  - trigger surfaces are cron (`TZ=America/Los_Angeles */1 * * * *`) plus manual `queue/observer.requested`.
+  - the durable cron controller stays on `queue/observer` (`TZ=America/Los_Angeles */1 * * * *`), while manual `queue/observer.requested` probes now run through a separate `queue/observer-requested` function so operator requests do not queue behind the cron pass.
   - runtime flags are `QUEUE_OBSERVER_MODE=off|dry-run|enforce`, `QUEUE_OBSERVER_FAMILIES=discovery,content,subscriptions,github`, `QUEUE_OBSERVER_AUTO_FAMILIES=content`, and `QUEUE_OBSERVER_INTERVAL_SECONDS` (currently clamped to 60s minimum on the durable cron path).
-  - the observer builds the same bounded snapshot, calls Sonnet through `infer()`, and only auto-applies `pause_family`, `resume_family`, and `escalate`; non-whitelisted families stay report-only.
+  - both paths build the same bounded snapshot and call Sonnet through `infer()`, but only the cron controller may auto-apply `pause_family`, `resume_family`, and `escalate`; manual probes are read-only even if the configured mode is `enforce`.
+  - manual probes use singleton-skip semantics so repeated operator requests do not pile up stale queued runs.
   - operator reports flow through `gateway/send.message`, while real queue mutations still emit `queue.control.applied|rejected`.
   - current live truth: dry-run is earned on host, but the first supervised enforce canary on `content/updated` returned `noop`, so autonomous mutation is **not** yet considered earned and the worker was rolled back to `QUEUE_OBSERVER_MODE=dry-run`.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
