@@ -1,146 +1,42 @@
 ---
 name: gremlin
-displayName: Gremlin Course Platform
-description: Work on gremlin — the Convex-powered next-gen course platform. Use when any task mentions gremlin, gremlincms, wizardshit, course platform, badass-courses, or working on the gremlin monorepo. Loads project context, points to config files, ADRs, and related skills.
-version: 0.1.0
+displayName: Gremlin Bootstrap
+description: Bootstrap Gremlin work from the joelclaw side. Use when a task mentions gremlin from outside the repo and you need to locate the repo, load its shipped repo-local skill, or understand which guidance belongs to gremlin versus joelclaw.
+version: 0.2.1
 author: joel
 tags:
   - gremlin
-  - course-platform
-  - convex
-  - tanstack
-  - nextjs
+  - joelclaw
+  - bootstrap
+  - repo-local-skills
 ---
 
-# Gremlin — Course Platform
+# Gremlin Bootstrap
 
-Gremlin is the next-gen course platform built on Convex, with a provider/adapter pattern supporting multiple frameworks. Namespace: `@gremlincms`.
+This is **not** the canonical Gremlin repo skill.
 
-Accounting and payouts are being developed in `skillrecordings/payout` as a reusable financial core that is a piece of Gremlin’s future platform architecture.
+Gremlin-specific skills should ship with the Gremlin repo unless they are specifically about how Gremlin plugs into the joelclaw system.
 
-## When to Use
+## Canonical repo-local skill
 
-Triggers: `gremlin`, `gremlincms`, `wizardshit`, `course platform`, `badass-courses`, `work on gremlin`, `gremlin repo`, or any task involving the gremlin monorepo.
+Load this first for normal Gremlin work:
 
-## Key Paths
+- `/Users/joel/Code/badass-courses/gremlin/skills/gremlin/SKILL.md`
 
-| What | Path |
-|------|------|
-| **Repo root** | `/Users/joel/Code/badass-courses/gremlin` |
-| **AGENTS.md** | `/Users/joel/Code/badass-courses/gremlin/AGENTS.md` |
-| **ADRs** | `/Users/joel/Code/badass-courses/gremlin/docs/adr/` |
-| **ADR index** | `/Users/joel/Code/badass-courses/gremlin/docs/adr/README.md` |
-| **GitHub** | `github.com/badass-courses/gremlin` |
+Then load narrower repo-local skills as needed:
 
-### Apps
+- `/Users/joel/Code/badass-courses/gremlin/skills/gremlin-package-release/SKILL.md`
+- `/Users/joel/Code/badass-courses/gremlin/skills/gremlin-project-setup/SKILL.md`
+- `/Users/joel/Code/badass-courses/gremlin/skills/gremlin-tanstack-start/SKILL.md`
 
-| App | Path | Framework | Domain |
-|-----|------|-----------|--------|
-| **wizardshit-ai** | `apps/wizardshit-ai` | Next.js 16 | wizardshit.ai |
-| **gremlin-cms** | `apps/gremlin-cms` | TanStack Start | gremlincms.com |
+## Use this joelclaw-side skill only when
 
-### Packages
-
-| Package | Path | Purpose |
-|---------|------|---------|
-| `@gremlincms/core` | `packages/core` | Router, schemas, types |
-| `@gremlincms/db` | `packages/db` | ContentResourceAdapter interface |
-
-| `@gremlincms/ui` | `packages/ui` | Design system, shells, layouts |
-
-### Planned packages (from ADRs, not yet created)
-
-- `@gremlincms/convex-adapter` → `packages/convex-adapter/`
-- `@gremlincms/drizzle-adapter` → `packages/drizzle-adapter/`
-- `@gremlincms/next` → `packages/next/`
-- `@gremlincms/tanstack` → `packages/tanstack/`
-
-## Design System (ADR-017)
-
-`@gremlincms/ui` follows a three-layer architecture:
-
-- **Primitives** (`src/components/ui/`): shadcn-style (Button, Card, Badge, Separator, Tooltip, Toaster)
-- **Layouts** (`src/shells/*-layout.tsx`): Framework-agnostic page structure. Pure React, no Next.js imports.
-- **Shells** (`src/shells/*-shell.tsx`): Next.js `'use cache'` + `cacheTag` wrappers around layouts.
-
-**Shell types:** `CourseShell/Layout`, `LessonShell/Layout`, `WorkshopShell/Layout`, `ArticleShell/Layout`
-
-**Import rule:**
-- Next.js apps → import `*Shell` (gets caching)
-- TanStack Start apps → import `*Layout` directly (caching via Nitro/CDN)
-
-**CSS architecture:** Three token layers (primitives → domain → brand), layout grids (`page-layout` with `:has()` slots, `content-grid` breakout grid). Each app imports its own `brand.css`. See `docs/artifacts/course-builder-page-patterns.md` for the legacy pattern catalog.
-
-## Architecture Decisions
-
-Read these before making structural changes:
-
-- **ADR-010**: Convex-first provider/adapter pattern — Convex is primary DB, adapters are separate packages
-- **ADR-011**: Multi-framework frontend support — Next.js + TanStack Start priority, framework-agnostic core
-- **ADR-012**: Reference site architecture — wizardshit-ai (Next.js 16) + gremlin-cms (TanStack Start)
-- **ADR-017**: Design system — token architecture, shell tiers, layout system, CSS organization (Accepted)
-
-Legacy ADRs (001–009) cover auth, router, content model, tooling, monorepo structure, testing, CI/CD.
-
-## Vercel Deploys
-
-Both sites deploy via **git push** to `main` on `badass-courses/gremlin`. No CLI deploys needed.
-
-- Vercel org: `skillrecordings` (team `team_QwoK7Pe6T0HIuFjig2Pm4qH8`)
-- wizardshit-ai: root dir `apps/wizardshit-ai`
-- gremlin-cms: root dir `apps/gremlin-cms`
-
-## Related Skills
-
-Load these when working on specific areas:
-
-- **tanstack-start**: TanStack Start patterns, server functions, deployment quirks
-- **next-best-practices**: Next.js App Router conventions
-- **nextjs-static-shells**: Static-first rendering with dynamic slots
-- **next-cache-components**: `'use cache'`, `cacheLife`, `cacheTag`
-- **convex**: Convex development patterns (umbrella)
-- **convex-schema-validator**: Schema design with Convex
-- **favicon**: Emoji favicon generation with emojico
-- **frontend-design**: UI/design quality standards
-- **skillrecordings-payout**: financial core + payout rules used as Gremlin/platform accounting substrate
-
-## SEO Standards
-
-All gremlin sites follow these SEO practices:
-- **Static-first content** — no client-side data fetching for content
-- **Full JSON-LD** — `WebSite` schema at minimum, `Course`/`Organization` per page type
-- **Dynamic OG images** — `/og` (Next.js) or `/og-image` (TanStack Start) endpoints
-- **Canonical URLs**, robots directives, Twitter cards, Open Graph tags
-- **Semantic HTML** — proper heading hierarchy, lang attribute, structured content
+- you are outside the Gremlin repo and need to jump into it
+- you need to distinguish repo-local Gremlin guidance from joelclaw-specific automation/integration guidance
+- you are updating joelclaw prompts, routing, or memory surfaces that refer to Gremlin
 
 ## Rules
 
-1. **Always read `AGENTS.md`** at `/Users/joel/Code/badass-courses/gremlin/AGENTS.md` before making changes — it has project-specific constraints.
-2. **Use pnpm** — never edit `package.json` by hand for deps. Use `pnpm add`.
-3. **Namespace is `@gremlincms`** — not `@badass` (legacy packages still use `@badass`, rename deferred).
-4. **Adapter packages are separate** — never co-locate Convex and Drizzle adapters.
-5. **Check ADRs before structural changes** — if there's no ADR, write one first.
-6. **No CLI deploys** — push to git, let Vercel auto-deploy.
-7. **TanStack Start needs `nitro()` plugin** — without it, Vercel deploys 404. Already configured in `vite.config.ts`.
-
-## Quick Start
-
-```bash
-cd /Users/joel/Code/badass-courses/gremlin
-
-# Install deps
-pnpm install
-
-# Dev (both apps)
-pnpm dev
-
-# Dev (single app)
-pnpm --filter @wizardshit/web dev
-pnpm --filter @gremlin/gremlin-cms dev
-
-# Test
-pnpm test
-
-# Build
-pnpm build
-```
+1. Prefer the repo-local Gremlin skill for Gremlin truth.
+2. Do not let joelclaw-owned prompts drift into owning Gremlin repo policy.
+3. If a Gremlin skill is generally useful to Gremlin contributors, move it into the Gremlin repo instead of expanding this file.
