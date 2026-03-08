@@ -207,13 +207,13 @@ Sandbox runs produce patch bundles, not direct commits to main. This keeps runs 
 - bounded Sonnet observation now lives in `packages/system-bus/src/lib/queue-observe.ts`
 - canonical queue-observation contracts (`QueueObservationSnapshot`, `QueueObservationDecision`, `QueueObserverAction`) plus deterministic queue-control state (`QueueFamilyPauseState`, `QueueControlMode`) live in `@joelclaw/queue`
 - the observer consumes a deterministic server-built snapshot and may only return bounded action suggestions from the shared enum
-- the snapshot now carries active deterministic pauses so resume suggestions are grounded in real control state, overlong Sonnet summaries are trimmed instead of causing bogus schema fallbacks during live probes, and legacy `escalate.reason` output is normalized into the canonical `{ severity, message }` report shape
+- the snapshot now carries active deterministic pauses so resume suggestions are grounded in real control state, overlong Sonnet summaries are trimmed instead of causing bogus schema fallbacks during live probes, legacy `escalate.reason` output is normalized into the canonical `{ severity, message }` report shape, and settled observer-held backlog is normalized back to healthy so the observer can deterministically `resume_family` instead of poisoning its own downstream health signal
 - canonical model is Sonnet via the shared `infer()` path
 - canonical OTEL vocabulary for this layer is `queue.observe.started|completed|failed|fallback` plus `queue.control.applied|expired|rejected`
 - Story 1 stops at contract/snapshot/fallback vocabulary; Story 2 adds the dry-run CLI surface `joelclaw queue observe`; Story 3 adds the deterministic pause/resume control plane and the dedicated CLI surface `joelclaw queue control status`; Story 4 adds the durable host-worker `queue/observer` runtime with cron + manual trigger support
 - the Restate queue drainer now respects active deterministic pauses and only resumes dispatch after manual resume or TTL expiry
 - queue operator commands resolve Redis from the canonical CLI/system-bus config (`~/.config/system-bus.env`) so manual control and live queue observation hit the same queue the worker drains
-- current live posture is intentionally conservative: a supervised enforce canary has now earned one real observer-applied `pause_family` on `content/updated`, but the worker still sits back in `QUEUE_OBSERVER_MODE=dry-run` outside those canary windows until broader soak evidence says otherwise
+- current live posture is intentionally conservative: supervised enforce canaries have now earned one full observer-applied `pause_family` → `resume_family` cycle on `content/updated`, but the worker still sits back in `QUEUE_OBSERVER_MODE=dry-run` outside those canary windows until broader soak evidence says otherwise
 
 **@joelclaw/vault-reader**
 - Obsidian Vault context injection
