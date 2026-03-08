@@ -17,6 +17,11 @@ export enum Priority {
 export type QueuePriorityLabel = "P0" | "P1" | "P2" | "P3";
 
 /**
+ * Fixed priority bucket map used by queue operator surfaces.
+ */
+export type QueuePriorityCounts = Record<QueuePriorityLabel, number>;
+
+/**
  * Queue triage mode for bounded model-assisted admission.
  */
 export type QueueTriageMode = "off" | "shadow" | "enforce";
@@ -61,6 +66,137 @@ export interface QueueTriageDecision {
   final: QueueTriageOutcome;
   applied: boolean;
   fallbackReason?: QueueTriageFallbackReason;
+  latencyMs: number;
+}
+
+/**
+ * Queue observation mode for the Sonnet observer layer.
+ */
+export type QueueObservationMode = "off" | "dry-run" | "enforce";
+
+/**
+ * Canonical queue-pressure labels derived from the queue snapshot.
+ */
+export type QueueObservationPressure = "healthy" | "degraded" | "backlogged";
+
+/**
+ * Canonical downstream-health labels derived from drainer/runtime state.
+ */
+export type QueueObservationDownstreamState = "healthy" | "degraded" | "down";
+
+/**
+ * Canonical fallback reasons when queue observation cannot be applied safely.
+ */
+export type QueueObservationFallbackReason =
+  | "disabled"
+  | "timeout"
+  | "model_error"
+  | "invalid_json"
+  | "schema_error"
+  | "unsafe_action";
+
+/**
+ * Latency percentile summary used in queue observation snapshots.
+ */
+export interface QueueObservationLatencySummary {
+  p50: number | null;
+  p95: number | null;
+}
+
+/**
+ * Per-family summary included in a canonical queue observation snapshot.
+ */
+export interface QueueObservationFamilySummary {
+  family: string;
+  total: number;
+  byPriority: QueuePriorityCounts;
+  oldestAgeMs: number | null;
+  newestAgeMs: number | null;
+}
+
+/**
+ * Recent queue-triage summary included in the observation snapshot.
+ */
+export interface QueueObservationTriageSummary {
+  attempts: number;
+  completed: number;
+  failed: number;
+  fallbacks: number;
+  fallbackByReason: Partial<Record<QueueTriageFallbackReason, number>>;
+  routeMismatches: number;
+  latencyMs: QueueObservationLatencySummary;
+}
+
+/**
+ * Recent drainer/runtime summary included in the observation snapshot.
+ */
+export interface QueueObservationDrainerSummary {
+  state: QueueObservationDownstreamState;
+  recentDispatches: number;
+  recentFailures: number;
+  throughputPerMinute: number | null;
+}
+
+/**
+ * Gateway state that affects operator reporting semantics.
+ */
+export interface QueueObservationGatewaySummary {
+  sleepMode: boolean;
+  quietHours: boolean | null;
+  mutedChannels: string[];
+}
+
+/**
+ * Canonical queue observation snapshot consumed by the Sonnet observer.
+ */
+export interface QueueObservationSnapshot {
+  snapshotId: string;
+  capturedAt: string;
+  totals: {
+    depth: number;
+    byPriority: QueuePriorityCounts;
+    oldestAgeMs: number | null;
+    newestAgeMs: number | null;
+  };
+  families: QueueObservationFamilySummary[];
+  triage: QueueObservationTriageSummary;
+  drainer: QueueObservationDrainerSummary;
+  gateway: QueueObservationGatewaySummary;
+}
+
+/**
+ * Canonical findings returned by the Sonnet observer.
+ */
+export interface QueueObservationFindings {
+  queuePressure: QueueObservationPressure;
+  downstreamState: QueueObservationDownstreamState;
+  summary: string;
+}
+
+/**
+ * Bounded queue observer action contract.
+ */
+export type QueueObserverAction =
+  | { kind: "noop"; reason: string }
+  | { kind: "pause_family"; family: string; ttlMs: number; reason: string }
+  | { kind: "resume_family"; family: string; reason: string }
+  | { kind: "reprioritize_family"; family: string; priority: QueuePriorityLabel; reason: string }
+  | { kind: "batch_family"; family: string; ttlMs: number; reason: string }
+  | { kind: "shed_family"; family: string; reason: string }
+  | { kind: "escalate"; channel: "telegram"; severity: "info" | "warn" | "error"; message: string };
+
+/**
+ * Canonical queue observer decision contract.
+ */
+export interface QueueObservationDecision {
+  mode: QueueObservationMode;
+  model?: string;
+  snapshotId: string;
+  findings: QueueObservationFindings;
+  suggestedActions: QueueObserverAction[];
+  finalActions: QueueObserverAction[];
+  appliedCount: number;
+  fallbackReason?: QueueObservationFallbackReason;
   latencyMs: number;
 }
 

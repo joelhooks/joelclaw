@@ -96,6 +96,13 @@ Operational boundary for Phase 1:
   - the command now reads both Restate drainer OTEL and `queue.triage.*` OTEL in one window.
   - the triage block summarizes attempts, fallback counts by reason, disagreement counts, applied-vs-suggested deltas, route mismatches, latency percentiles, per-family rollups, and recent mismatch/fallback samples.
   - if Story 3 cannot explain queue-admission behavior from this one command, the operator surface is still unfinished.
+- Phase 3 Story 1 now defines the bounded Sonnet observation contract in `packages/system-bus/src/lib/queue-observe.ts`:
+  - the canonical queue snapshot builder produces `QueueObservationSnapshot` with totals, per-family rollups, triage summary, drainer summary, and gateway reporting state.
+  - Sonnet is the canonical observation model (`MODEL.SONNET`) for this layer and still goes through the shared `infer()` path.
+  - the observer may only return the bounded action enum (`noop|pause_family|resume_family|reprioritize_family|batch_family|shed_family|escalate`), and families must already exist in the supplied snapshot.
+  - canonical fallback reasons are `disabled|timeout|model_error|invalid_json|schema_error|unsafe_action`.
+  - canonical OTEL vocabulary is `queue.observe.started|completed|failed|fallback` plus `queue.control.applied|expired|rejected`.
+  - Story 1 stops short of the deterministic pause/resume control plane: `finalActions` are safety-filtered, but no automatic queue mutation exists yet.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 
 ### System health
