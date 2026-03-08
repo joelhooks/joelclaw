@@ -97,11 +97,12 @@ Operational boundary for Phase 1:
   - the triage block summarizes attempts, fallback counts by reason, disagreement counts, applied-vs-suggested deltas, route mismatches, latency percentiles, per-family rollups, and recent mismatch/fallback samples.
   - if Story 3 cannot explain queue-admission behavior from this one command, the operator surface is still unfinished.
 - Phase 3 Story 1 now defines the bounded Sonnet observation contract in `packages/system-bus/src/lib/queue-observe.ts`:
-  - the canonical queue snapshot builder produces `QueueObservationSnapshot` with totals, per-family rollups, triage summary, drainer summary, and gateway reporting state.
+  - the canonical queue snapshot builder produces `QueueObservationSnapshot` with totals, per-family rollups, triage summary, drainer summary, gateway reporting state, and current active deterministic pauses so resume suggestions are grounded in real control state.
   - Sonnet is the canonical observation model (`MODEL.SONNET`) for this layer and still goes through the shared `infer()` path.
-  - the observer may only return the bounded action enum (`noop|pause_family|resume_family|reprioritize_family|batch_family|shed_family|escalate`), and families must already exist in the supplied snapshot.
+  - the observer may only return the bounded action enum (`noop|pause_family|resume_family|reprioritize_family|batch_family|shed_family|escalate`), and families must already exist in the supplied snapshot queue families or active pause state.
   - canonical fallback reasons are `disabled|timeout|model_error|invalid_json|schema_error|unsafe_action`.
   - canonical OTEL vocabulary is `queue.observe.started|completed|failed|fallback` plus `queue.control.applied|expired|rejected`.
+  - overly long Sonnet summaries are now trimmed instead of causing bogus schema fallbacks during live canaries.
   - Story 1 stops short of the deterministic pause/resume control plane: `finalActions` are safety-filtered, but no automatic queue mutation exists yet.
 - Phase 3 Story 2 adds the dry-run operator surface on the installed CLI:
   - `joelclaw queue observe` builds the live snapshot from current queue state, recent drainer OTEL, recent triage OTEL, and gateway sleep/muted-channel state before calling the bounded Sonnet observer.
@@ -112,6 +113,12 @@ Operational boundary for Phase 1:
   - `packages/restate/src/queue-drainer.ts` reaps expired pauses, emits `queue.control.expired`, and filters paused families out of dispatch candidates without dropping queued work.
   - the installed CLI now exposes `joelclaw queue pause`, `joelclaw queue resume`, and `joelclaw queue control status`.
   - queue operator commands resolve Redis from the canonical CLI config (`~/.config/system-bus.env` → `REDIS_URL`) before ambient shell env so manual controls target the same localhost queue as the worker and drainer.
+- Phase 3 Story 4 now has a live host-worker runtime path in `packages/system-bus/src/inngest/functions/queue-observer.ts`:
+  - trigger surfaces are cron (`TZ=America/Los_Angeles */1 * * * *`) plus manual `queue/observer.requested`.
+  - runtime flags are `QUEUE_OBSERVER_MODE=off|dry-run|enforce`, `QUEUE_OBSERVER_FAMILIES=discovery,content,subscriptions,github`, `QUEUE_OBSERVER_AUTO_FAMILIES=content`, and `QUEUE_OBSERVER_INTERVAL_SECONDS` (currently clamped to 60s minimum on the durable cron path).
+  - the observer builds the same bounded snapshot, calls Sonnet through `infer()`, and only auto-applies `pause_family`, `resume_family`, and `escalate`; non-whitelisted families stay report-only.
+  - operator reports flow through `gateway/send.message`, while real queue mutations still emit `queue.control.applied|rejected`.
+  - current live truth: dry-run is earned on host, but the first supervised enforce canary on `content/updated` returned `noop`, so autonomous mutation is **not** yet considered earned and the worker was rolled back to `QUEUE_OBSERVER_MODE=dry-run`.
 - Do not migrate tier-2 cron candidates until the Dkron/Restate tier-1 soak shows clean execution and observable failure behavior.
 
 ### System health

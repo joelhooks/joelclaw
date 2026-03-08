@@ -244,9 +244,10 @@ Semantics:
   - uses `queue.triage.*` OTEL metadata as the Story 3 source of truth for queue-admission disagreements and fallback behavior
   - `--since <iso|ms>` overrides the lower bound so operators can anchor soak evidence to a known clean point (for example the supervised `queue.drainer.started` after a rollout) instead of mixing fresh traffic with a dirty pre-fix window
   - keeps the operator in CLI-land; no raw Redis keys or manual OTEL spelunking required for the first sanity pass
-- `observe` is now the Phase 3 Story 2-3 dry-run Sonnet operator surface.
-  - builds a canonical live snapshot from current queue depth + queued messages + recent drainer OTEL + recent triage OTEL + gateway sleep/muted-channel state
+- `observe` is now the Phase 3 Story 2-4 dry-run Sonnet operator surface.
+  - builds a canonical live snapshot from current queue depth + queued messages + recent drainer OTEL + recent triage OTEL + gateway sleep/muted-channel state + active deterministic pauses
   - runs the bounded Sonnet observer in `dry-run` mode only and returns the current `snapshot` plus the current `decision`
+  - long Sonnet summaries are trimmed instead of turning otherwise-useful observations into schema-only fallbacks
   - `history` summarizes recent `queue.observe.*` OTEL for the same window so operators can compare the latest dry-run against raw history without spelunking Typesense by hand
   - `control` now reflects the shipped deterministic queue-control plane: active manual pauses, `queue.control.applied|expired|rejected` counts, and recent control events come from the same Redis + OTEL truth the drainer uses
   - `--since <iso|ms>` anchors the related OTEL history window the same way `queue stats` does

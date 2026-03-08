@@ -198,15 +198,17 @@ Sandbox runs produce patch bundles, not direct commits to main. This keeps runs 
 - canonical OTEL vocabulary for this layer is `queue.triage.started|completed|failed|fallback`
 - canonical operator view for this layer is the `triage` block inside `joelclaw queue stats`
 
-**Queue observation contract boundary (ADR-0217 Phase 3 Story 1-3)**
+**Queue observation contract boundary (ADR-0217 Phase 3 Story 1-4)**
 - bounded Sonnet observation now lives in `packages/system-bus/src/lib/queue-observe.ts`
 - canonical queue-observation contracts (`QueueObservationSnapshot`, `QueueObservationDecision`, `QueueObserverAction`) plus deterministic queue-control state (`QueueFamilyPauseState`, `QueueControlMode`) live in `@joelclaw/queue`
 - the observer consumes a deterministic server-built snapshot and may only return bounded action suggestions from the shared enum
+- the snapshot now carries active deterministic pauses so resume suggestions are grounded in real control state, and overlong Sonnet summaries are trimmed instead of causing bogus schema fallbacks during live probes
 - canonical model is Sonnet via the shared `infer()` path
 - canonical OTEL vocabulary for this layer is `queue.observe.started|completed|failed|fallback` plus `queue.control.applied|expired|rejected`
-- Story 1 stops at contract/snapshot/fallback vocabulary; Story 2 adds the dry-run CLI surface `joelclaw queue observe`; Story 3 adds the deterministic pause/resume control plane and the dedicated CLI surface `joelclaw queue control status`
+- Story 1 stops at contract/snapshot/fallback vocabulary; Story 2 adds the dry-run CLI surface `joelclaw queue observe`; Story 3 adds the deterministic pause/resume control plane and the dedicated CLI surface `joelclaw queue control status`; Story 4 adds the durable host-worker `queue/observer` runtime with cron + manual trigger support
 - the Restate queue drainer now respects active deterministic pauses and only resumes dispatch after manual resume or TTL expiry
 - queue operator commands resolve Redis from the canonical CLI/system-bus config (`~/.config/system-bus.env`) so manual control and live queue observation hit the same queue the worker drains
+- current live posture is intentionally conservative: host dry-run observation is earned, but enforce-mode automatic mutation on `content/updated` has not yet earned a pass, so the worker sits back in `QUEUE_OBSERVER_MODE=dry-run`
 
 **@joelclaw/vault-reader**
 - Obsidian Vault context injection
