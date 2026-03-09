@@ -94,9 +94,10 @@ The monorepo follows pnpm workspaces with strict package boundaries:
 - **Artifact export**: `generatePatchArtifact()` for auditable patch bundles
 - **Touched-file inventory**: `getTouchedFiles()` captures modified/untracked files
 - **Verification helpers**: `verifyRepoState()` for SHA validation
+- **Local sandbox primitives**: deterministic sandbox identity, path resolution, per-sandbox env materialization, minimal/full mode contract, and JSON registry helpers for local host-worker isolation
 - **Consumed by**: Restate workflows, system-bus functions, k8s Job launcher, runtime images
 
-This package eliminates ad-hoc type duplication between Restate and system-bus. All sandboxed story execution must use these types to ensure contract stability. Story 3 added repo materialization and artifact export helpers for isolated sandbox runs.
+This package eliminates ad-hoc type duplication between Restate and system-bus. All sandboxed story execution must use these types to ensure contract stability. Story 3 added repo materialization and artifact export helpers for isolated sandbox runs. ADR-0221 phase 1 adds the first explicit local-isolation primitives so host-worker sandboxes stop relying on git worktrees alone as the entire collision boundary.
 
 ### Sandboxed Story Execution
 
@@ -104,6 +105,8 @@ This package eliminates ad-hoc type duplication between Restate and system-bus. 
 - `executionMode: "sandbox"` is live in `system/agent-dispatch`
 - Default `sandboxBackend` is still `"local"`
 - Each run materializes a clean temp repo at `baseSha`, executes inside that isolated checkout, exports patch/touched-file artifacts, and tears the workspace down
+- ADR-0221 phase 1 now defines the missing local-isolation primitives in `@joelclaw/agent-execution`: deterministic sandbox identity, deterministic sandbox paths, per-sandbox env materialization, minimal/full mode vocabulary, and a lightweight local registry surface
+- Those helpers are the correctness substrate for future host-worker runtime isolation work; they do not yet mean every live local sandbox run is automatically using the registry/env helpers end-to-end
 - Gate A (non-coding) and Gate B (minimal coding) are proven, and a real ADR-0217 acceptance run completed on this path without dirtying the operator checkout
 - This remains the current working isolation surface for autonomous story execution
 

@@ -45,6 +45,36 @@ export {
   readSandboxJobStatus,
 } from "./k8s.js";
 
+export type {
+  GenerateLocalSandboxIdentityInput,
+  LocalSandboxIdentity,
+  LocalSandboxMode,
+  LocalSandboxPaths,
+  LocalSandboxRegistry,
+  LocalSandboxRegistryEntry,
+  MaterializedSandboxEnv,
+  MaterializeLocalSandboxEnvOptions,
+  ResolveLocalSandboxPathsOptions,
+} from "./local.js";
+export {
+  defaultLocalSandboxRegistryPath,
+  defaultLocalSandboxRoot,
+  emptyLocalSandboxRegistry,
+  ensureLocalSandboxLayout,
+  generateLocalSandboxIdentity,
+  isLocalSandboxIdentity,
+  isLocalSandboxMode,
+  isLocalSandboxRegistryEntry,
+  LOCAL_SANDBOX_MODES,
+  materializeLocalSandboxEnv,
+  readLocalSandboxRegistry,
+  removeLocalSandboxLayout,
+  removeLocalSandboxRegistryEntry,
+  resolveLocalSandboxPaths,
+  upsertLocalSandboxRegistryEntry,
+  writeLocalSandboxRegistry,
+} from "./local.js";
+
 export type { MaterializeRepoOptions, MaterializeRepoResult } from "./repo.js";
 export {
   getTouchedFiles,
