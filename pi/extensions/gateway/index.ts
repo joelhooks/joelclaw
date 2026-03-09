@@ -1105,15 +1105,41 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
+  function extractGatewayTopic(content: string): string | null {
+    const stripped = content
+      .replace(/\n\[thread: [^\]]+\]\s*$/u, "")
+      .trim();
+    if (stripped.length < 20) return null;
+
+    const automatedPrefixes = [
+      "## 📋 Batch Digest",
+      "## 🔔 Gateway",
+      "> ⚡ **Automated gateway event**",
+      "> ⚡ **Automated gateway digest summary**",
+      "# Context Recovery",
+      "## Context Refresh",
+      "## Gateway Recovery",
+      "HEARTBEAT",
+      "HEARTBEAT_OK",
+      "Recovered. Standing by.",
+    ];
+    if (automatedPrefixes.some((prefix) => stripped.startsWith(prefix))) return null;
+    if (/^Noted[.,!\s-]/u.test(stripped)) return null;
+
+    return stripped.slice(0, 100);
+  }
+
   /** Inject a rolling context refresh into the gateway session. */
   async function refreshGatewayContext(): Promise<void> {
     if (gwRecallInFlight) return;
+
+    const topicSeed = gwRecentTopics.slice(-3).join(" ").trim();
+    if (!topicSeed) return;
+
     gwRecallInFlight = true;
 
     try {
-      const query = gwRecentTopics.length > 0
-        ? gwRecentTopics.slice(-3).join(" ").slice(0, 120)
-        : "recent decisions, active work, system state";
+      const query = `gateway ${topicSeed}`.slice(0, 140);
 
       const result = await gwRunRecall(query, 5);
       gwRecallInFlight = false;
@@ -1235,7 +1261,9 @@ export default function (pi: ExtensionAPI) {
       if (!usage?.percent) return;
       const pct = usage.percent;
 
-      // Track conversation topics from the turn
+      // Track only real conversational topics; skip automated gateway envelopes
+      // and terse acknowledgements so rolling recall does not poison the session
+      // with unrelated global memory hits.
       if (_event.message?.content) {
         const content = Array.isArray(_event.message.content)
           ? (_event.message.content as Array<Record<string, unknown>>)
@@ -1243,8 +1271,9 @@ export default function (pi: ExtensionAPI) {
               .map((b) => b.text as string)
               .join(" ")
           : typeof _event.message.content === "string" ? _event.message.content : "";
-        if (content.length > 20) {
-          gwRecentTopics.push(content.slice(0, 100));
+        const topic = extractGatewayTopic(content);
+        if (topic) {
+          gwRecentTopics.push(topic);
           if (gwRecentTopics.length > 5) gwRecentTopics.shift();
         }
       }

@@ -33,6 +33,23 @@ joelclaw gateway unmute imessage
 
 Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 
+## Gateway context refresh scoping (2026-03-09)
+
+ADR-0204 rolling context refresh in `pi/extensions/gateway/index.ts` must stay scoped to **real conversational topics**, not automated gateway envelopes.
+
+Observed failure mode:
+- hidden `context-refresh` custom messages injected unrelated memory into the live gateway session
+- session transcripts showed garbage from unrelated voice/livekit work inside the gateway session
+- root cause was the refresh path harvesting topic seeds from automated digests (`## 📋 Batch Digest`, `## 🔔 Gateway`, `> ⚡ Automated gateway event`, recovery messages, terse `Noted.` replies) and then running broad global recall queries
+
+Current contract:
+- only seed `gwRecentTopics` from non-automated message content
+- skip terse acknowledgements and gateway-generated recovery/context blocks
+- if there is no scoped topic seed, skip rolling recall instead of querying generic global memory
+- compaction recovery may reuse cached scoped recall, but must not invent fresh generic recall context
+
+This is a safety fix: better to inject no extra memory than poison the gateway session with unrelated context.
+
 ## Embedded pi dependency skew + prompt-budget guard (2026-03-09)
 
 Two real gateway failures were fixed together:

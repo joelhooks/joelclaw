@@ -68,6 +68,20 @@ When `mode=redis_degraded`:
 
 Do not report `redis_degraded` as “gateway down” unless process/session health is also failing.
 
+## Gateway context refresh scoping (ADR-0204)
+
+Gateway rolling context refresh is useful only when it stays scoped.
+
+Hard rule:
+- do **not** treat automated digests, gateway event wrappers, recovery summaries, or terse acknowledgements as recall seeds
+- if there is no real conversational topic, skip refresh rather than querying generic global memory
+
+Why:
+- a bad hidden `context-refresh` injection poisons the live gateway session even when `joelclaw gateway status` still reports healthy
+- this showed up as unrelated voice/livekit notes bleeding into the gateway transcript
+
+If Joel says the gateway session feels "fucked" while health checks look green, inspect the gateway session transcript for hidden `context-refresh` / `gateway-recovery` messages before trusting the CLI summary.
+
 ## Session pressure visibility (ADR-0218 rank 3 slice)
 
 `joelclaw gateway status` / `joelclaw gateway diagnose` now expose session-pressure specifics instead of just a coarse health word:
