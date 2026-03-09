@@ -6,6 +6,7 @@ import {
   getActiveRequestMetadata,
   getConsecutiveFailures,
   getSupersessionState,
+  onBeforePromptDispatch,
   onSupersession,
   setIdleWaiter,
   setSession,
@@ -179,6 +180,28 @@ describe("command queue supersession", () => {
 
     expect(prompts).toEqual(["needs prompt"]);
     expect(getConsecutiveFailures()).toBe(0);
+  });
+
+  test("runs before-prompt maintenance hook before dispatch", async () => {
+    const order: string[] = [];
+
+    setSession({
+      prompt: async () => {
+        order.push("prompt");
+      },
+      reload: async () => {},
+      compact: async () => {},
+      newSession: async () => {},
+    });
+    setIdleWaiter(async () => {});
+    onBeforePromptDispatch(async ({ source, prompt }) => {
+      order.push(`before:${source}:${prompt}`);
+    });
+
+    await enqueue("telegram:1", "budget-check");
+    await drain();
+
+    expect(order).toEqual(["before:telegram:1:budget-check", "prompt"]);
   });
 
   test("preserves active request metadata during downstream execution", async () => {

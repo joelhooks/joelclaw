@@ -268,6 +268,12 @@ kubectl exec -n joelclaw redis-0 -- redis-cli XRANGE gateway:messages - + COUNT 
 **Cause:** Anthropic OAuth token expired or missing in pi auth state.
 **Fix:** Re-auth with `pi` (`/login anthropic`), restart gateway, then re-run `joelclaw gateway test`. If failures continue, verify provider quota/plan limits.
 
+### 2b. Embedded pi dependency skew breaks configured model recovery
+
+**Symptoms:** fallback or recovery probes emit `model_fallback.probe_failed` / `fallback.model_not_found` with `pi model not found: openai-codex/gpt-5.4`, even though `pi --version` on the machine already supports GPT-5.4.
+**Cause:** the gateway daemon imports `@mariozechner/pi-ai` / `@mariozechner/pi-coding-agent` from `packages/gateway/package.json`, and that package can lag behind the machine `pi` binary. Machine CLI truth and embedded daemon runtime truth are not the same thing.
+**Fix:** check both `pi --version` and the versions pinned in `packages/gateway/package.json`. If the package is stale, upgrade the embedded gateway deps and reinstall workspace packages. Also verify the daemon tracks fallback primary state from the live `session.model`, not only the requested gateway config.
+
 ### 3. Stuck Tool Call
 
 **Symptoms:** Watchdog fires after 10 min, session stuck.

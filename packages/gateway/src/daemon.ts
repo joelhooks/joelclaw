@@ -44,6 +44,7 @@ import {
   getQueueDepth,
   getSupersessionState,
   isActiveRequestSuperseded,
+  onBeforePromptDispatch,
   onContextOverflowRecovery,
   onPrompt,
   onError as onQueueError,
@@ -1007,6 +1008,26 @@ void emitGatewayOtel({
   },
 });
 
+const DEFAULT_MODEL_CONTEXT_WINDOW = 200_000;
+
+function getLiveSessionModelRef(): { provider: string; id: string } {
+  const liveModel = session.model as { provider?: string; id?: string } | undefined;
+  const provider = typeof liveModel?.provider === "string" && liveModel.provider.trim().length > 0
+    ? liveModel.provider
+    : providerForModel(startupGatewayConfig.model);
+  const id = typeof liveModel?.id === "string" && liveModel.id.trim().length > 0
+    ? liveModel.id
+    : startupGatewayConfig.model;
+  return { provider, id };
+}
+
+function getCurrentModelContextWindow(): number {
+  const liveModel = session.model as { contextWindow?: number } | undefined;
+  return typeof liveModel?.contextWindow === "number" && Number.isFinite(liveModel.contextWindow) && liveModel.contextWindow > 0
+    ? liveModel.contextWindow
+    : DEFAULT_MODEL_CONTEXT_WINDOW;
+}
+
 // ── Session lifecycle guards (ADR-0211) ────────────────
 // Track compaction freshness and session age to prevent context bloat.
 // The overnight thrash of 2026-03-05 was caused by 12h without compaction:
@@ -1214,8 +1235,60 @@ onContextOverflowRecovery(async () => {
   return summary;
 });
 
+onBeforePromptDispatch(async ({ source, prompt }) => {
+  await ensurePromptFitsBudget(source, prompt);
+});
+
 // ── Model fallback controller (ADR-0091) ───────────────
-const primaryProvider = providerForModel(startupGatewayConfig.model);
+const requestedPrimaryModel = `${providerForModel(startupGatewayConfig.model)}/${startupGatewayConfig.model}`;
+const resolvedPrimaryModel = getLiveSessionModelRef();
+const actualPrimaryModel = `${resolvedPrimaryModel.provider}/${resolvedPrimaryModel.id}`;
+if (actualPrimaryModel !== requestedPrimaryModel) {
+  console.warn("[gateway] requested primary model resolved to active session model", {
+    requested: requestedPrimaryModel,
+    actual: actualPrimaryModel,
+  });
+  void emitGatewayOtel({
+    level: "warn",
+    component: "daemon.inference",
+    action: "model.resolved_to_active_session",
+    success: true,
+    metadata: {
+      requested: requestedPrimaryModel,
+      actual: actualPrimaryModel,
+    },
+  });
+}
+
+const configuredFallbackModel = `${startupGatewayConfig.fallbackProvider}/${startupGatewayConfig.fallbackModel}`;
+const secondaryFallback = {
+  provider: "anthropic",
+  model: "claude-sonnet-4-5",
+} as const;
+const secondaryFallbackModel = `${secondaryFallback.provider}/${secondaryFallback.model}`;
+if (configuredFallbackModel === actualPrimaryModel && actualPrimaryModel !== secondaryFallbackModel) {
+  const hasSecondaryFallback = Boolean(getModel(secondaryFallback.provider as any, secondaryFallback.model as any));
+  if (hasSecondaryFallback) {
+    startupGatewayConfig.fallbackProvider = secondaryFallback.provider;
+    startupGatewayConfig.fallbackModel = secondaryFallback.model;
+    console.warn("[gateway:fallback] remapped identical fallback model", {
+      from: configuredFallbackModel,
+      to: secondaryFallbackModel,
+      reason: "configured fallback must differ from active primary model",
+    });
+    void emitGatewayOtel({
+      level: "warn",
+      component: "daemon.fallback",
+      action: "fallback.model.remapped",
+      success: true,
+      metadata: {
+        from: configuredFallbackModel,
+        to: secondaryFallbackModel,
+        reason: "configured fallback matched active primary model",
+      },
+    });
+  }
+}
 const fallbackTelemetryAdapter: TelemetryEmitter = {
   emit(action: string, detail: string, extra?: Record<string, unknown>) {
     const metadata = extra ?? {};
@@ -1236,8 +1309,8 @@ const fallbackTelemetryAdapter: TelemetryEmitter = {
 
 const fallbackController = new ModelFallbackController(
   startupGatewayConfig,
-  primaryProvider,
-  startupGatewayConfig.model,
+  resolvedPrimaryModel.provider,
+  resolvedPrimaryModel.id,
   fallbackTelemetryAdapter,
 );
 
@@ -1806,7 +1879,9 @@ function captureResponseSource(): string | undefined {
   return responseSource;
 }
 
-const MODEL_CONTEXT_WINDOW = 200_000;
+const PROMPT_TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
+const PROMPT_BUDGET_COMPACT_HEADROOM_TOKENS = 32_000;
+const PROMPT_BUDGET_ROTATE_HEADROOM_TOKENS = 12_000;
 const CONTEXT_COMPACT_THRESHOLD_PERCENT = 65;
 const CONTEXT_ROTATE_THRESHOLD_PERCENT = 75;
 
@@ -1850,13 +1925,14 @@ function getSessionPressure(): ReturnType<typeof buildSessionPressureSnapshot> &
   const entries = sessionManager.getEntries();
   const lastUsage = getLastAssistantUsage(entries);
   const contextTokens = lastUsage ? calculateContextTokens(lastUsage) : 0;
+  const modelContextWindow = getCurrentModelContextWindow();
   const threadIndex = buildThreadIndex();
 
   return {
     ...buildSessionPressureSnapshot({
       entries: entries.length,
       estimatedTokens: contextTokens,
-      maxTokens: MODEL_CONTEXT_WINDOW,
+      maxTokens: modelContextWindow,
       lastCompactionAtMs: lastCompactionAt,
       sessionCreatedAtMs: sessionCreatedAt,
       compactAtPercent: CONTEXT_COMPACT_THRESHOLD_PERCENT,
@@ -1903,6 +1979,127 @@ function formatPressureDuration(ms: number): string {
   const minutes = Math.max(1, Math.round(ms / 60_000));
   if (minutes < 120) return `${minutes}m`;
   return `${Math.round((minutes / 60) * 10) / 10}h`;
+}
+
+function estimatePromptTokens(text: string): number {
+  return Math.max(1, Math.ceil(text.length / PROMPT_TOKEN_ESTIMATE_CHARS_PER_TOKEN));
+}
+
+let promptBudgetMaintenance: Promise<void> | null = null;
+
+async function compactSessionForPromptBudget(source: string, promptTokens: number, projectedTokens: number, modelContextWindow: number): Promise<void> {
+  if (session.isCompacting) return;
+
+  console.warn("[gateway:budget] projected prompt would push session near context ceiling — compacting first", {
+    source,
+    promptTokens,
+    projectedTokens,
+    modelContextWindow,
+  });
+  void emitGatewayOtel({
+    level: "warn",
+    component: "daemon",
+    action: "daemon.prompt_budget.preemptive_compact",
+    success: true,
+    metadata: {
+      source,
+      promptTokens,
+      projectedTokens,
+      modelContextWindow,
+    },
+  });
+
+  fallbackController.pauseTimeoutWatch();
+  try {
+    await session.compact(
+      `Incoming prompt budget check projected ${projectedTokens}/${modelContextWindow} tokens. `
+      + "Aggressively summarize stale context before dispatch. Keep only essential recent context and active thread state.",
+    );
+    lastCompactionAt = Date.now();
+  } finally {
+    fallbackController.resumeTimeoutWatch();
+  }
+}
+
+async function rotateSessionForPromptBudget(
+  source: string,
+  promptTokens: number,
+  projectedTokens: number,
+  modelContextWindow: number,
+  reason: "projected_overflow" | "session_age",
+): Promise<void> {
+  console.warn("[gateway:budget] projected prompt budget requires fresh session", {
+    source,
+    promptTokens,
+    projectedTokens,
+    modelContextWindow,
+    reason,
+  });
+  void emitGatewayOtel({
+    level: "warn",
+    component: "daemon",
+    action: "daemon.prompt_budget.preemptive_rotate",
+    success: true,
+    metadata: {
+      source,
+      promptTokens,
+      projectedTokens,
+      modelContextWindow,
+      reason,
+    },
+  });
+
+  const summary = buildCompressionSummary();
+  fallbackController.pauseTimeoutWatch();
+  sessionCreatedAt = Date.now();
+  lastCompactionAt = Date.now();
+  try {
+    await session.newSession();
+    if (summary) {
+      await session.prompt(summary, { streamingBehavior: "followUp" });
+    }
+  } finally {
+    fallbackController.resumeTimeoutWatch();
+  }
+}
+
+async function ensurePromptFitsBudget(source: string, prompt: string): Promise<void> {
+  if (promptBudgetMaintenance) {
+    await promptBudgetMaintenance;
+  }
+
+  let maintenancePromise: Promise<void> | null = null;
+  maintenancePromise = (async () => {
+    const snapshot = getSessionPressure();
+    const modelContextWindow = getCurrentModelContextWindow();
+    const promptTokens = estimatePromptTokens(prompt);
+    const projectedTokens = snapshot.estimatedTokens + promptTokens;
+    const shouldRotateForAge = snapshot.sessionAgeMs > MAX_SESSION_AGE_MS;
+    const shouldRotateForProjectedOverflow = projectedTokens >= modelContextWindow - PROMPT_BUDGET_ROTATE_HEADROOM_TOKENS;
+    const shouldCompact = projectedTokens >= modelContextWindow - PROMPT_BUDGET_COMPACT_HEADROOM_TOKENS;
+
+    if (shouldRotateForAge || shouldRotateForProjectedOverflow) {
+      await rotateSessionForPromptBudget(
+        source,
+        promptTokens,
+        projectedTokens,
+        modelContextWindow,
+        shouldRotateForAge ? "session_age" : "projected_overflow",
+      );
+      return;
+    }
+
+    if (shouldCompact) {
+      await compactSessionForPromptBudget(source, promptTokens, projectedTokens, modelContextWindow);
+    }
+  })().finally(() => {
+    if (promptBudgetMaintenance === maintenancePromise) {
+      promptBudgetMaintenance = null;
+    }
+  });
+
+  promptBudgetMaintenance = maintenancePromise;
+  await maintenancePromise;
 }
 
 function buildSessionPressureAlertMessage(
@@ -3515,9 +3712,8 @@ session.subscribe((event: any) => {
         if (!lastUsage) return;
 
         const contextTokens = calculateContextTokens(lastUsage);
-        // Claude Opus context window is 200k (API rejects at ~180-190k)
-        const MODEL_CONTEXT_WINDOW = 200_000;
-        const usageRatio = contextTokens / MODEL_CONTEXT_WINDOW;
+        const modelContextWindow = getCurrentModelContextWindow();
+        const usageRatio = contextTokens / modelContextWindow;
 
         // ── Two-tier context management (ADR-0211 amendment, 2026-03-05) ──
         // Tier 2: 75% → session rotation (compaction can't recover enough).

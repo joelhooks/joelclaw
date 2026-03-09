@@ -33,6 +33,25 @@ joelclaw gateway unmute imessage
 
 Use `diagnose` first; it runs process/Redis/log/e2e/model checks in one pass.
 
+## Embedded pi dependency skew + prompt-budget guard (2026-03-09)
+
+Two real gateway failures were fixed together:
+
+1. **Embedded pi deps were stale inside `packages/gateway/`**
+   - The gateway package was still pinned to `@mariozechner/pi-ai` / `@mariozechner/pi-coding-agent` `0.52.12`.
+   - `pi --version` on the machine can say `0.57.x` and still not reflect what the gateway daemon imports at runtime.
+   - Symptom: fallback recovery probes spam `model_fallback.probe_failed` with `pi model not found: openai-codex/gpt-5.4` even though upstream pi already supports GPT-5.4.
+   - Fix: keep `packages/gateway/package.json` aligned with the actual pi-mono model catalog when gateway model/fallback policy changes.
+   - Guardrail: if the active primary model already equals the configured fallback, the daemon now remaps fallback to a distinct compatible model instead of silently running with a no-op fallback.
+
+2. **Prompt budget now gets checked before dispatch, not only after provider rejection**
+   - The command queue now runs a pre-dispatch maintenance hook before `session.prompt()`.
+   - If the projected prompt budget would land near the model ceiling, the gateway compacts first.
+   - If the session age already crossed the rotation limit or the projected prompt would still be too close to the ceiling, the gateway rotates to a fresh session first and seeds it with the compression summary.
+   - This is meant to stop repeated `prompt is too long` poison-loop failures before the provider has to say it.
+
+Operator note: when diagnosing fallback weirdness, check both the machine `pi --version` **and** the versions pinned in `packages/gateway/package.json`. If those drift, the daemon can lie about model availability.
+
 ## Redis-degraded mode (ADR-0214, 2026-03-06)
 
 Gateway runtime now distinguishes **availability** from **Redis health**.

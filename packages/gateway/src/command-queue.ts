@@ -111,6 +111,11 @@ export type QueueErrorEvent = {
   error: string;
   metadata?: Record<string, unknown>;
 };
+export type BeforePromptDispatchEvent = {
+  source: string;
+  prompt: string;
+  metadata?: Record<string, unknown>;
+};
 export type EnqueueResult = {
   streamId?: string;
   priority?: Priority;
@@ -123,6 +128,7 @@ export type EnqueueResult = {
   };
 };
 type ErrorCallback = (event: QueueErrorEvent) => void | Promise<void> | Promise<boolean>;
+type BeforePromptDispatchCallback = (event: BeforePromptDispatchEvent) => void | Promise<void>;
 type SupersessionCallback = (event: SupersessionEvent) => void | Promise<void>;
 /** Called before new session creation. Returns a compression summary to seed the fresh session. */
 type ContextOverflowCallback = () => Promise<string>;
@@ -146,6 +152,7 @@ let sessionRef: PromptSession | undefined;
 let drainPromise: Promise<void> | undefined;
 let onPromptSent: PromptCallback | undefined;
 let onPromptError: ErrorCallback | undefined;
+let beforePromptDispatchHandler: BeforePromptDispatchCallback | undefined;
 let onSupersessionRequested: SupersessionCallback | undefined;
 let onContextOverflow: ContextOverflowCallback | undefined;
 let idleWaiter: IdleWaiter | undefined;
@@ -311,6 +318,11 @@ export function onPrompt(cb: PromptCallback): void {
 /** Register a callback fired when a prompt fails. Receives source, error text, and consecutive failure count. */
 export function onError(cb: ErrorCallback): void {
   onPromptError = cb;
+}
+
+/** Register a callback fired immediately before a queued prompt is dispatched to the session. */
+export function onBeforePromptDispatch(cb: BeforePromptDispatchCallback): void {
+  beforePromptDispatchHandler = cb;
 }
 
 /** Register a callback fired when a newer human message supersedes the active turn. */
@@ -985,6 +997,27 @@ export async function drain(): Promise<void> {
           continue;
         }
 
+        try {
+          await beforePromptDispatchHandler?.({
+            source: entry.source,
+            prompt: entry.prompt,
+            metadata: entry.metadata,
+          });
+        } catch (preflightError) {
+          console.error("command-queue: before-prompt dispatch hook failed", {
+            source: entry.source,
+            error: String(preflightError),
+          });
+          void emitGatewayOtel({
+            level: "warn",
+            component: "command-queue",
+            action: "queue.before_prompt.failed",
+            success: false,
+            error: String(preflightError),
+            metadata: { source: entry.source },
+          });
+        }
+
         // Set up idle waiter BEFORE prompt() so turn_end can resolve it
         // regardless of when prompt() returns. If prompt() blocks until
         // turn_end, the idle promise is already resolved by the time we
@@ -1230,6 +1263,7 @@ export const __commandQueueTestUtils = {
     drainPromise = undefined;
     onPromptSent = undefined;
     onPromptError = undefined;
+    beforePromptDispatchHandler = undefined;
     onSupersessionRequested = undefined;
     onContextOverflow = undefined;
     idleWaiter = undefined;
