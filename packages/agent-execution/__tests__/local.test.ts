@@ -69,6 +69,23 @@ describe("local sandbox primitives", () => {
     expect(isLocalSandboxIdentity(first)).toBe(true);
   });
 
+  test("preserves unique sandbox identity when request IDs share the same prefix", () => {
+    const first = generateLocalSandboxIdentity({
+      workflowId: "adr0221-phase3-dogfood",
+      requestId: "adr0221-p3-proof-a",
+      storyId: "compose-collision-proof",
+    });
+    const second = generateLocalSandboxIdentity({
+      workflowId: "adr0221-phase3-dogfood",
+      requestId: "adr0221-p3-proof-b",
+      storyId: "compose-collision-proof",
+    });
+
+    expect(first.sandboxId).not.toBe(second.sandboxId);
+    expect(first.slug).not.toBe(second.slug);
+    expect(first.composeProjectName).not.toBe(second.composeProjectName);
+  });
+
   test("resolves deterministic sandbox paths under provided root", () => {
     const identity = generateLocalSandboxIdentity({
       workflowId: "workflow-123",
@@ -221,14 +238,14 @@ describe("local sandbox primitives", () => {
     await writeFile(join(sourceRepoDir, ".devcontainer", "devcontainer.json"), '{"name":"shared"}\n', "utf8");
 
     const firstIdentity = generateLocalSandboxIdentity({
-      workflowId: "workflow-concurrent",
-      requestId: "req-first-12345678",
-      storyId: "story-same",
+      workflowId: "adr0221-phase3-dogfood",
+      requestId: "adr0221-p3-proof-a",
+      storyId: "compose-collision-proof",
     });
     const secondIdentity = generateLocalSandboxIdentity({
-      workflowId: "workflow-concurrent",
-      requestId: "req-second-1234567",
-      storyId: "story-same",
+      workflowId: "adr0221-phase3-dogfood",
+      requestId: "adr0221-p3-proof-b",
+      storyId: "compose-collision-proof",
     });
 
     const firstPaths = resolveLocalSandboxPaths(firstIdentity, { rootDir: testDir });

@@ -177,9 +177,9 @@ export function generateLocalSandboxIdentity(
   const storySlug = slugify(input.storyId);
   const hash = shortHash(`${input.workflowId}:${input.storyId}:${input.requestId}`);
   const prefix = slugify(input.prefix || DEFAULT_SANDBOX_PREFIX);
-  const slug = compactSlug([prefix, workflowSlug, storySlug, hash], 48);
-  const sandboxId = `${slug}-${input.requestId.slice(0, 8).toLowerCase()}`;
-  const composeProjectName = compactSlug([prefix, workflowSlug, hash], 40, "_");
+  const slug = compactSlugWithHash([prefix, workflowSlug, storySlug], 48, hash);
+  const sandboxId = slug;
+  const composeProjectName = compactSlugWithHash([prefix, workflowSlug], 40, hash, "_");
 
   return {
     sandboxId,
@@ -500,6 +500,18 @@ function compactSlug(parts: string[], maxLength: number, separator = "-"): strin
   const slug = parts.filter(Boolean).join(separator).replace(new RegExp(`${separator}+`, "g"), separator);
   if (slug.length <= maxLength) return slug;
   return slug.slice(0, maxLength).replace(new RegExp(`${separator}+$`), "");
+}
+
+function compactSlugWithHash(
+  parts: string[],
+  maxLength: number,
+  hash: string,
+  separator = "-",
+): string {
+  const suffix = `${separator}${hash}`;
+  const baseMaxLength = Math.max(1, maxLength - suffix.length);
+  const base = compactSlug(parts, baseMaxLength, separator);
+  return `${base}${suffix}`;
 }
 
 function slugify(value: string): string {
