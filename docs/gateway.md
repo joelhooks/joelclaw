@@ -50,7 +50,12 @@ Two real gateway failures were fixed together:
    - If the session age already crossed the rotation limit or the projected prompt would still be too close to the ceiling, the gateway rotates to a fresh session first and seeds it with the compression summary.
    - This is meant to stop repeated `prompt is too long` poison-loop failures before the provider has to say it.
 
-Operator note: when diagnosing fallback weirdness, check both the machine `pi --version` **and** the versions pinned in `packages/gateway/package.json`. If those drift, the daemon can lie about model availability.
+3. **Resumed sessions can carry stale model state across daemon restarts**
+   - Redis config is the operator contract, but a resumed pi session can still come back on the last fallback/manual model if startup does not explicitly reconcile it.
+   - Symptom: gateway looks healthy but keeps behaving like the wrong model, fallback decisions stop matching Redis config, and session-pressure context windows can be computed against stale/default values.
+   - Fix: daemon startup now reconciles the resumed session back to the requested primary model before fallback control initializes, and context-window checks resolve from the active model registry when the live session object omits that field.
+
+Operator note: when diagnosing fallback weirdness, check both the machine `pi --version` **and** the versions pinned in `packages/gateway/package.json`. If those drift, the daemon can lie about model availability. Also compare Redis gateway config to the actual live session model after restart — a resumed session can otherwise preserve stale model state and make the daemon look sane while running the wrong thing.
 
 ## Redis-degraded mode (ADR-0214, 2026-03-06)
 

@@ -997,6 +997,47 @@ await session.bindExtensions({}).catch((err) => {
   console.error("[gateway] bindExtensions error (non-fatal):", err?.message ?? err);
 });
 
+const requestedPrimaryModelRef = getRequestedPrimaryModelRef();
+const requestedPrimaryModelObject = resolveModel(startupGatewayConfig.model);
+const resumedModelBeforeReconcile = describeModel(session.model);
+const liveModelBeforeReconcile = getLiveSessionModelRef();
+if (requestedPrimaryModelObject && !modelRefsEqual(liveModelBeforeReconcile, requestedPrimaryModelRef)) {
+  console.warn("[gateway] restored requested primary model onto resumed session", {
+    requested: modelRefToString(requestedPrimaryModelRef),
+    resumed: modelRefToString(liveModelBeforeReconcile),
+  });
+  void emitGatewayOtel({
+    level: "warn",
+    component: "daemon.inference",
+    action: "model.reconciled_on_startup",
+    success: true,
+    metadata: {
+      requested: modelRefToString(requestedPrimaryModelRef),
+      resumed: modelRefToString(liveModelBeforeReconcile),
+    },
+  });
+  try {
+    await session.setModel(requestedPrimaryModelObject as any);
+  } catch (error) {
+    console.error("[gateway] failed to restore requested primary model onto resumed session", {
+      requested: modelRefToString(requestedPrimaryModelRef),
+      resumed: modelRefToString(liveModelBeforeReconcile),
+      error: error instanceof Error ? error.message : String(error),
+    });
+    void emitGatewayOtel({
+      level: "error",
+      component: "daemon.inference",
+      action: "model.reconcile_on_startup.failed",
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+      metadata: {
+        requested: modelRefToString(requestedPrimaryModelRef),
+        resumed: modelRefToString(liveModelBeforeReconcile),
+      },
+    });
+  }
+}
+
 void emitGatewayOtel({
   level: "info",
   component: "daemon",
@@ -1005,26 +1046,73 @@ void emitGatewayOtel({
   metadata: {
     sessionId: session.sessionId,
     model: describeModel(session.model),
+    requestedModel: modelRefToString(requestedPrimaryModelRef),
+    resumedModelBeforeReconcile,
   },
 });
 
 const DEFAULT_MODEL_CONTEXT_WINDOW = 200_000;
 
-function getLiveSessionModelRef(): { provider: string; id: string } {
-  const liveModel = session.model as { provider?: string; id?: string } | undefined;
+type GatewayModelRef = { provider: string; id: string };
+
+function normalizeModelRef(provider: string, rawId: string): GatewayModelRef {
+  const normalizedProvider = provider.trim();
+  const trimmedId = rawId.trim();
+  if (trimmedId.includes("/")) {
+    const [providerFromId, ...rest] = trimmedId.split("/");
+    const normalizedId = rest.join("/").trim();
+    if (providerFromId && normalizedId) {
+      return {
+        provider: providerFromId.trim(),
+        id: normalizedId,
+      };
+    }
+  }
+
+  return {
+    provider: normalizedProvider,
+    id: trimmedId,
+  };
+}
+
+function modelRefToString(model: GatewayModelRef): string {
+  return `${model.provider}/${model.id}`;
+}
+
+function modelRefsEqual(left: GatewayModelRef, right: GatewayModelRef): boolean {
+  return left.provider.trim().toLowerCase() === right.provider.trim().toLowerCase()
+    && left.id.trim().toLowerCase() === right.id.trim().toLowerCase();
+}
+
+function getRequestedPrimaryModelRef(): GatewayModelRef {
+  return normalizeModelRef(providerForModel(startupGatewayConfig.model), startupGatewayConfig.model);
+}
+
+function getLiveSessionModelRef(): GatewayModelRef {
+  const liveModel = session.model as { provider?: string; id?: string; name?: string } | undefined;
+  const requested = getRequestedPrimaryModelRef();
   const provider = typeof liveModel?.provider === "string" && liveModel.provider.trim().length > 0
     ? liveModel.provider
-    : providerForModel(startupGatewayConfig.model);
-  const id = typeof liveModel?.id === "string" && liveModel.id.trim().length > 0
+    : requested.provider;
+  const rawId = typeof liveModel?.id === "string" && liveModel.id.trim().length > 0
     ? liveModel.id
-    : startupGatewayConfig.model;
-  return { provider, id };
+    : typeof liveModel?.name === "string" && liveModel.name.trim().length > 0
+      ? liveModel.name
+      : requested.id;
+  return normalizeModelRef(provider, rawId);
 }
 
 function getCurrentModelContextWindow(): number {
   const liveModel = session.model as { contextWindow?: number } | undefined;
-  return typeof liveModel?.contextWindow === "number" && Number.isFinite(liveModel.contextWindow) && liveModel.contextWindow > 0
-    ? liveModel.contextWindow
+  if (typeof liveModel?.contextWindow === "number" && Number.isFinite(liveModel.contextWindow) && liveModel.contextWindow > 0) {
+    return liveModel.contextWindow;
+  }
+
+  const liveRef = getLiveSessionModelRef();
+  const resolvedModel = getModel(liveRef.provider as any, liveRef.id as any);
+  const contextWindow = (resolvedModel as { contextWindow?: number } | undefined)?.contextWindow;
+  return typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0
+    ? contextWindow
     : DEFAULT_MODEL_CONTEXT_WINDOW;
 }
 
@@ -1240,10 +1328,10 @@ onBeforePromptDispatch(async ({ source, prompt }) => {
 });
 
 // ── Model fallback controller (ADR-0091) ───────────────
-const requestedPrimaryModel = `${providerForModel(startupGatewayConfig.model)}/${startupGatewayConfig.model}`;
+const requestedPrimaryModel = modelRefToString(requestedPrimaryModelRef);
 const resolvedPrimaryModel = getLiveSessionModelRef();
-const actualPrimaryModel = `${resolvedPrimaryModel.provider}/${resolvedPrimaryModel.id}`;
-if (actualPrimaryModel !== requestedPrimaryModel) {
+const actualPrimaryModel = modelRefToString(resolvedPrimaryModel);
+if (!modelRefsEqual(resolvedPrimaryModel, requestedPrimaryModelRef)) {
   console.warn("[gateway] requested primary model resolved to active session model", {
     requested: requestedPrimaryModel,
     actual: actualPrimaryModel,

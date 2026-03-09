@@ -274,6 +274,12 @@ kubectl exec -n joelclaw redis-0 -- redis-cli XRANGE gateway:messages - + COUNT 
 **Cause:** the gateway daemon imports `@mariozechner/pi-ai` / `@mariozechner/pi-coding-agent` from `packages/gateway/package.json`, and that package can lag behind the machine `pi` binary. Machine CLI truth and embedded daemon runtime truth are not the same thing.
 **Fix:** check both `pi --version` and the versions pinned in `packages/gateway/package.json`. If the package is stale, upgrade the embedded gateway deps and reinstall workspace packages. Also verify the daemon tracks fallback primary state from the live `session.model`, not only the requested gateway config.
 
+### 2c. Resumed session model drift keeps the gateway on the wrong model after restart
+
+**Symptoms:** `joelclaw gateway status` looks healthy, but behavior/latency does not match the Redis-configured gateway model; recent logs show fallback swaps against an unexpected model; the daemon may restart and still come back on the last fallback/manual model.
+**Cause:** pi session resume preserves `session.model` state. If daemon startup blindly trusts the resumed session model, a previous fallback/manual switch can override Redis config on the next boot and silently skew fallback logic plus session-pressure context-window math.
+**Fix:** compare Redis gateway config (`joelclaw:gateway:config`) to the live session model after restart. Startup should reconcile the resumed session back to the requested primary model before fallback control initializes. If diagnostics show `requested` vs `actual` drift or `model.reconciled_on_startup`, treat that as a real runtime issue, not a cosmetic mismatch.
+
 ### 3. Stuck Tool Call
 
 **Symptoms:** Watchdog fires after 10 min, session stuck.
