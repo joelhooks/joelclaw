@@ -96,6 +96,21 @@ If you cannot answer "which provider/model triggered this?", you are not ready t
 
 `CONTRIBUTING.md` is explicit. New contributors start with an issue. A PR opened before approval is churn and will be closed.
 
+### 5. Repeated AI slop after maintainer feedback can get you banned
+
+Mario made this explicit on X on 2026-03-09 while linking issue #1993:
+
+> you will be banned from the pi-mono repo if:
+> 1. you are a dick
+> 2. you keep submitting clanker slop repeatedly for the same "issue" to which you got a reply and workaround from yours truely
+> there is no way to appeal my decision.
+
+Source: <https://x.com/badlogicgames/status/2031085220221563021>
+
+Treat that as policy, not vibes.
+
+If a maintainer already gave a workaround, explanation, or boundary call, do not re-litigate the same thing with a slightly reworded agent-generated issue. Either bring a new repro with stronger evidence, or shut up and go debug more.
+
 ## Workflow
 
 ### Step 1: confirm this belongs upstream

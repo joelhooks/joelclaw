@@ -1,7 +1,7 @@
 ---
 name: x-api
 displayName: X/Twitter API
-description: Read and post to X/Twitter via API. Check mentions, post tweets, search. Uses OAuth 2.0 user context with token refresh.
+description: Read and post to X/Twitter via API. Check mentions, post tweets, search. Use app bearer tokens for read-only fetches and OAuth 1.0a user context for account actions.
 version: 0.1.0
 author: joel
 tags:
@@ -17,7 +17,56 @@ Basic X (Twitter) API access for the @joelclaw account until a proper CLI is bui
 
 ## Authentication
 
-OAuth 1.0a User Context. **Tokens do not expire** — no refresh dance needed.
+**Recommended for read-only access: app bearer token**
+
+There is no stored `x_bot_bearer_token` secret right now. Derive the app bearer token from the X app consumer key + secret, then use that bearer token for read-only endpoints like tweet lookup.
+
+```bash
+python3 <<'PY'
+import base64, json, subprocess
+from urllib import request, parse
+
+
+def lease(name: str) -> str:
+    raw = subprocess.check_output(['secrets', 'lease', name], text=True)
+    data = json.loads(raw)
+    return data.get('secret') or data.get('result') or raw.strip()
+
+ck = lease('x_consumer_key')
+cs = lease('x_consumer_secret')
+cred = base64.b64encode(f'{ck}:{cs}'.encode()).decode()
+
+req = request.Request(
+    'https://api.twitter.com/oauth2/token',
+    data=parse.urlencode({'grant_type': 'client_credentials'}).encode(),
+    headers={
+        'Authorization': f'Basic {cred}',
+        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+    },
+    method='POST',
+)
+with request.urlopen(req) as r:
+    bearer = json.loads(r.read().decode())['access_token']
+
+req2 = request.Request(
+    'https://api.twitter.com/2/tweets/TWEET_ID',
+    headers={'Authorization': f'Bearer {bearer}'},
+)
+with request.urlopen(req2) as r:
+    print(r.read().decode())
+PY
+
+secrets revoke --all
+```
+
+Use this for:
+- reading a specific tweet/post
+- fetching public user metadata
+- other public read-only X v2 endpoints
+
+**Alternative: OAuth 1.0a User Context** (for posting and account actions)
+
+Tokens do not expire — no refresh dance needed.
 
 ### Secrets (in agent-secrets)
 
@@ -66,7 +115,9 @@ secrets revoke --all
 
 ## Common Operations
 
-All operations require OAuth 1.0a signing. Use the Python pattern from Authentication section above, then:
+Read-only lookups can use the app bearer-token flow above.
+
+Posting, replying, following, deleting, and account-scoped actions require OAuth 1.0a signing. Use the Python pattern from Authentication section above, then:
 
 ### Common API calls (inside OAuth1Session)
 
