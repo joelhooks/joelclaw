@@ -12,7 +12,7 @@ import {
   setSession,
 } from "./command-queue";
 
-const { contentHash, resetState, stripInjectedChannelContext } = __commandQueueTestUtils;
+const { contentHash, isEntrySuperseded, resetState, stripInjectedChannelContext } = __commandQueueTestUtils;
 
 const telegramHeader = `---
 Channel: telegram
@@ -54,6 +54,36 @@ describe("command queue dedup hashing", () => {
 });
 
 describe("command queue supersession", () => {
+  test("does not treat the latest persisted entry as superseded when stream ids match", () => {
+    expect(isEntrySuperseded(
+      {
+        enqueuedAt: 1_773_098_763_291,
+        enqueueOrder: 7,
+        streamId: "1773098763291-0",
+      },
+      {
+        enqueuedAt: 1_773_098_763_291,
+        enqueueOrder: 7,
+        streamId: "1773098763291-0",
+      },
+    )).toBe(false);
+  });
+
+  test("still drops a genuinely older persisted entry when a newer one exists", () => {
+    expect(isEntrySuperseded(
+      {
+        enqueuedAt: 1_773_098_763_291,
+        enqueueOrder: 7,
+        streamId: "1773098763291-0",
+      },
+      {
+        enqueuedAt: 1_773_099_184_498,
+        enqueueOrder: 8,
+        streamId: "1773099184498-0",
+      },
+    )).toBe(true);
+  });
+
   test("drops older queued message from the same supersession key", async () => {
     const prompts: string[] = [];
 

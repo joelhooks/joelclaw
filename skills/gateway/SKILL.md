@@ -106,6 +106,7 @@ Runtime contract:
 - batching is per source, so rapid follow-ups collapse into one queued prompt
 - if that source is already active, gateway supersedes immediately instead of waiting on the timer
 - stale queued prompts from that source are dropped
+- durable queue replay must not self-drop the freshest human message; supersession only applies when a genuinely newer same-source message exists
 - daemon requests `session.abort()` on the stale turn
 - stale response text is suppressed instead of being delivered late
 - `joelclaw gateway status` exposes `supersession` plus `supersession.batching`

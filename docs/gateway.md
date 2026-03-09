@@ -121,6 +121,7 @@ Current runtime contract:
 - batching is keyed per source (`telegram:<chat>`, `discord:<thread|dm>`, `imessage:<chat>`, `slack:<channel[:thread]>`)
 - if the source is already active, the gateway does **not** wait on the batch timer — it supersedes immediately
 - queued stale prompts for that source are dropped
+- durable queue replay must not self-drop the freshest human message; only genuinely newer same-source messages may supersede it
 - the daemon requests `session.abort()` on the stale active turn
 - stale response output is suppressed instead of being delivered after the newer ask
 - Telegram, Discord, Slack, and iMessage get a short supersession acknowledgement when possible

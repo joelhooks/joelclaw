@@ -61,6 +61,12 @@ export type BatchFlushEvent = {
   windowMs: number;
 };
 
+type LatestSupersessionMarker = {
+  enqueuedAt: number;
+  enqueueOrder: number;
+  streamId?: string;
+};
+
 export type SupersessionState = {
   activeRequest: {
     id: string;
@@ -161,7 +167,7 @@ let contextOverflowCount = 0;
 let activeRequest: ActiveRequest | undefined;
 let lastSupersessionEvent: SupersessionEvent | undefined;
 let lastBatchFlushEvent: BatchFlushEvent | undefined;
-const latestSupersessionByKey = new Map<string, { enqueuedAt: number; enqueueOrder: number }>();
+const latestSupersessionByKey = new Map<string, LatestSupersessionMarker>();
 const pendingBatches = new Map<string, PendingBatch>();
 let enqueueOrderCounter = 0;
 
@@ -204,6 +210,16 @@ function getSupersessionKey(source: string, metadata?: Record<string, unknown>):
 function getPersistedEnqueueOrder(metadata: Record<string, unknown> | undefined, fallbackOrder: number): number {
   const value = metadata?.gatewayEnqueueOrder;
   return typeof value === "number" && Number.isFinite(value) ? value : fallbackOrder;
+}
+
+function isEntrySuperseded(entry: Pick<QueueEntry, "enqueuedAt" | "enqueueOrder" | "streamId">, latest: LatestSupersessionMarker | undefined): boolean {
+  if (!latest) return false;
+  if (entry.streamId && latest.streamId && entry.streamId === latest.streamId) {
+    return false;
+  }
+
+  return entry.enqueuedAt < latest.enqueuedAt
+    || (entry.enqueuedAt === latest.enqueuedAt && entry.enqueueOrder < latest.enqueueOrder);
 }
 
 function getBatchWindowMs(metadata?: Record<string, unknown>): number | undefined {
@@ -560,7 +576,7 @@ async function enqueueResolved(
 
   if (supersessionKey) {
     const droppedQueued = await dropQueuedEntriesForSupersession(supersessionKey, enqueueOrder);
-    latestSupersessionByKey.set(supersessionKey, { enqueuedAt, enqueueOrder });
+    latestSupersessionByKey.set(supersessionKey, { enqueuedAt, enqueueOrder, streamId });
 
     const activeMatches = activeRequest?.supersessionKey === supersessionKey
       && activeRequest.enqueueOrder < enqueueOrder;
@@ -883,10 +899,7 @@ export async function drain(): Promise<void> {
 
       if (entry.supersessionKey) {
         const latestSupersession = latestSupersessionByKey.get(entry.supersessionKey);
-        const superseded = latestSupersession && (
-          entry.enqueuedAt < latestSupersession.enqueuedAt
-          || (entry.enqueuedAt === latestSupersession.enqueuedAt && entry.enqueueOrder < latestSupersession.enqueueOrder)
-        );
+        const superseded = isEntrySuperseded(entry, latestSupersession);
         if (superseded && latestSupersession) {
           console.log("[command-queue] dropped superseded entry", {
             source: entry.source,
@@ -1257,6 +1270,7 @@ export async function replayUnacked(): Promise<void> {
 export const __commandQueueTestUtils = {
   stripInjectedChannelContext,
   contentHash,
+  isEntrySuperseded,
   resetState(): void {
     queue.length = 0;
     sessionRef = undefined;
