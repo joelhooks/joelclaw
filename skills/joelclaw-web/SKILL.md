@@ -85,8 +85,8 @@ duration: "00:42:02"                # optional, for video-notes
 2. Patch/upsert with `fields.draft = false` and `fields.updated = now`.
 3. Revalidate all affected surfaces via `POST /api/revalidate` with:
    - tags: `post:<slug>`, `article:<slug>`, `articles`
-   - paths: `/`, `/<slug>`, `/feed.xml`
-4. Verify `/`, `/<slug>`, and `/feed.xml` include the published post.
+   - paths: `/`, `/<slug>`, `/<slug>.md`, `/<slug>/md`, `/feed.xml`, `/sitemap.md`
+4. Verify `/`, `/<slug>`, `/<slug>.md`, and `/feed.xml` include the published post.
 
 ## Media Embeds
 
@@ -142,8 +142,8 @@ Use the canonical `joel-writing-style` skill for prose. Key traits: direct, firs
 1. Draft in Convex (`contentResources.upsert`, `resourceId = article:<slug>`, `draft: true`).
 2. Use ISO datetime in `date` field.
 3. Add images to `apps/web/public/images/<slug>/` if needed and reference `/images/<slug>/...` in MDX.
-4. Publish by setting `draft: false`, then revalidate tags + paths (`post:<slug>`, `article:<slug>`, `articles`, `/`, `/<slug>`, `/feed.xml`).
-5. Verify route + homepage + feed consistency.
+4. Publish by setting `draft: false`, then revalidate tags + paths (`post:<slug>`, `article:<slug>`, `articles`, `/`, `/<slug>`, `/<slug>.md`, `/<slug>/md`, `/feed.xml`, `/sitemap.md`).
+5. Verify route + markdown twin + homepage + feed consistency.
 
 Backfill scripts:
 - `scripts/seed-articles.ts` for article resources

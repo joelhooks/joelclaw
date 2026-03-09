@@ -8,6 +8,23 @@ Next.js 16 App Router site for `joelclaw.com`.
 - Markdown exports: `https://joelclaw.com/{slug}.md` (rewritten to `app/[slug]/md/route.ts`) and `https://joelclaw.com/sitemap.md`
 - API discovery + machine endpoints: `https://joelclaw.com/api`, `https://joelclaw.com/api/search`, `https://joelclaw.com/api/pi-mono`, `https://joelclaw.com/api/docs`, `https://joelclaw.com/feed.xml`, `https://joelclaw.com/llms.txt`
 
+## Post-content revalidation contract
+
+Post-like Convex content updates (`article`, `tutorial`, `essay`, `note`) must invalidate **both** the human page and the markdown projection. Revalidating only `/${slug}` is insufficient because the public markdown twin is served from a separate route handler and can stay stale at the edge.
+
+Required tags:
+- `post:<slug>`
+- `article:<slug>`
+- `articles`
+
+Required paths:
+- `/`
+- `/${slug}`
+- `/${slug}.md`
+- `/${slug}/md`
+- `/feed.xml`
+- `/sitemap.md`
+
 ## Public pi-mono corpus surface
 
 - `apps/web/app/api/pi-mono/route.ts` is the discovery endpoint for the public `pi_mono_artifacts` corpus.

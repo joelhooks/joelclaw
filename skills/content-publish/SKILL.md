@@ -122,7 +122,7 @@ curl -s -X POST "https://joelclaw.com/api/revalidate" \
   -d "{
     \"secret\": \"$SECRET\",
     \"tags\": [\"post:<slug>\", \"article:<slug>\", \"articles\"],
-    \"paths\": [\"/\", \"/<slug>\", \"/feed.xml\"]
+    \"paths\": [\"/\", \"/<slug>\", \"/<slug>.md\", \"/<slug>/md\", \"/feed.xml\", \"/sitemap.md\"]
   }"
 ```
 
@@ -132,13 +132,16 @@ Expected response: `{"revalidated": true, ...}`
 - `post:<slug>` — individual post cache
 - `article:<slug>` — content resource cache
 - `articles` — list page cache
-- Always include all three tags + the three paths
+- Always include all three tags + the markdown/feed/sitemap paths
 
 ### 6. Verify
 
 ```bash
 # Must return 200
 curl -s -o /dev/null -w "%{http_code}" "https://joelclaw.com/<slug>"
+
+# Markdown twin must return 200 and current content
+curl -s -o /dev/null -w "%{http_code}" "https://joelclaw.com/<slug>.md"
 
 # Must appear on homepage
 curl -s "https://joelclaw.com" | grep -c "<slug>"
@@ -147,7 +150,7 @@ curl -s "https://joelclaw.com" | grep -c "<slug>"
 curl -s "https://joelclaw.com/feed.xml" | grep -c "<slug>"
 ```
 
-All three checks must pass. If the slug page returns 404 after revalidation, the Convex document is likely still `draft: true` or content is missing.
+All four checks must pass. If the slug page returns 404 after revalidation, the Convex document is likely still `draft: true` or content is missing.
 
 ## Updating existing content
 

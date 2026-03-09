@@ -190,9 +190,16 @@ export const revalidateCache = internalAction({
     const slug = resourceId.includes(":")
       ? (resourceId.split(":").pop() ?? resourceId)
       : resourceId;
-    const normalizedType = type === "article" ? "post" : type;
-    const tags = [`${normalizedType}:${slug}`];
-    const paths = slug ? [`/${slug}`] : [];
+
+    const isPostLike = ["article", "tutorial", "essay", "note"].includes(type);
+    const tags = isPostLike
+      ? [`post:${slug}`, `article:${slug}`, "articles"]
+      : [`${type}:${slug}`];
+    const paths = !slug
+      ? []
+      : isPostLike
+        ? ["/", `/${slug}`, `/${slug}.md`, `/${slug}/md`, "/feed.xml", "/sitemap.md"]
+        : [`/${slug}`];
 
     try {
       const response = await fetch(`${siteUrl}/api/revalidate`, {

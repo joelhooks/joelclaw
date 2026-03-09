@@ -264,7 +264,7 @@ function toCacheTags(contentType: SupportedContentType, contentSlug: string): st
 
 function toRevalidationPaths(contentType: SupportedContentType, contentSlug: string): string[] {
   if (contentType === "post") {
-    return ["/", `/${contentSlug}`, "/feed.xml"];
+    return ["/", `/${contentSlug}`, `/${contentSlug}.md`, `/${contentSlug}/md`, "/feed.xml", "/sitemap.md"];
   }
   if (contentType === "adr") {
     return ["/adrs", `/adrs/${contentSlug}`, "/feed.xml"];
