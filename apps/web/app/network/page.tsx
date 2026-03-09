@@ -53,22 +53,34 @@ type ContentResourceDoc = {
   fields: Record<string, unknown>;
 };
 
-const CONVEX_URL =
-  process.env.CONVEX_URL?.trim() ??
-  process.env.NEXT_PUBLIC_CONVEX_URL?.trim() ??
-  "";
+function normalizeEnv(value: string | undefined): string {
+  return value?.replace(/\\n/g, "").trim() ?? "";
+}
 
-const HAS_CONVEX_CLIENT = CONVEX_URL.length > 0;
+function readConvexUrl(): string {
+  return normalizeEnv(process.env.CONVEX_URL) || normalizeEnv(process.env.NEXT_PUBLIC_CONVEX_URL);
+}
+
+function readConvexDeployKey(): string {
+  return normalizeEnv(process.env.CONVEX_DEPLOY_KEY);
+}
+
+const HAS_CONVEX_CLIENT = readConvexUrl().length > 0;
 
 let convex: ConvexHttpClient | undefined;
 
 function getConvexClient(): ConvexHttpClient | null {
-  if (!CONVEX_URL) {
+  const convexUrl = readConvexUrl();
+  if (!convexUrl) {
     console.warn("[network] CONVEX_URL not set; returning null client");
     return null;
   }
   if (convex === undefined) {
-    convex = new ConvexHttpClient(CONVEX_URL);
+    convex = new ConvexHttpClient(convexUrl);
+    const deployKey = readConvexDeployKey();
+    if (deployKey) {
+      convex.setAdminAuth(deployKey);
+    }
   }
   return convex;
 }

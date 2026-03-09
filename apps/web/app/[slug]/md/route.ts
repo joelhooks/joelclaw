@@ -2,14 +2,9 @@ import { remark } from "remark";
 import remarkGfm from "remark-gfm";
 import remarkMdx from "remark-mdx";
 import { SITE_NAME, SITE_URL } from "@/lib/constants";
-import { getAllPosts, getPost, getPostSlugs, type PostMeta } from "@/lib/posts";
+import { getAllPosts, getPost, type PostMeta } from "@/lib/posts";
 import { remarkMdLinks } from "@/lib/remark-md-links";
 import { remarkStripMdxComments } from "@/lib/remark-strip-mdx-comments";
-
-export async function generateStaticParams() {
-  const slugs = await getPostSlugs();
-  return slugs.map((slug) => ({ slug }));
-}
 
 /** Process MDX content through remark pipeline for agent markdown output */
 async function toAgentMarkdown(mdxContent: string): Promise<string> {

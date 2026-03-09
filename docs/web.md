@@ -54,6 +54,9 @@ Required paths:
 - The markdown/MDX body must not render a second top-level H1 below that header.
 - The post renderer strips a markdown H1 before passing content into `MDXRemote`.
 - Regex: `content.replace(/^#\s+.*$/m, "").trim()`
+- `apps/web/app/[slug]/opengraph-image.tsx`, `apps/web/app/[slug]/agent-md/route.ts`, and `apps/web/app/[slug]/md/route.ts` must **not** export `generateStaticParams()`. Let those dynamic-slug routes resolve per-request; build-time slug enumeration was crashing Vercel during page-data collection on Convex-backed reads.
+- `apps/web/app/[slug]/opengraph-image.tsx` must also degrade gracefully if `getPost()` throws, rendering a slug-based generic OG image instead of taking the whole deploy down.
+- Server-side Convex readers (`apps/web/lib/posts.ts`, `apps/web/lib/adrs.ts`, `apps/web/lib/discoveries.ts`, and `apps/web/app/network/page.tsx`) must resolve the Convex URL lazily inside `getConvexClient()`, strip literal `\\n` suffix pollution from env values, and call `setAdminAuth(process.env.CONVEX_DEPLOY_KEY)` when that key is present. Production build-time reads are not reliably public.
 
 ## CLAWMAIL view-source convention
 

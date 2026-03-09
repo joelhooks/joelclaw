@@ -41,21 +41,37 @@ export type Post = {
   diagnostics: PostDiagnostics;
 };
 
-const CONVEX_URL =
-  process.env.CONVEX_URL?.trim() ??
-  process.env.NEXT_PUBLIC_CONVEX_URL?.trim() ??
-  "";
-
 let convexClient: ConvexHttpClient | null | undefined;
+
+function normalizeEnv(value: string | undefined): string {
+  return value?.replace(/\\n/g, "").trim() ?? "";
+}
+
+function readConvexUrl(): string {
+  return normalizeEnv(process.env.CONVEX_URL) || normalizeEnv(process.env.NEXT_PUBLIC_CONVEX_URL);
+}
+
+function readConvexDeployKey(): string {
+  return normalizeEnv(process.env.CONVEX_DEPLOY_KEY);
+}
 
 function getConvexClient(): ConvexHttpClient {
   if (convexClient) return convexClient;
-  if (!CONVEX_URL) {
+
+  const convexUrl = readConvexUrl();
+  if (!convexUrl) {
     throw new Error(
       "CONVEX_URL or NEXT_PUBLIC_CONVEX_URL is required for article reads (ADR-0168: Convex is canonical)",
     );
   }
-  convexClient = new ConvexHttpClient(CONVEX_URL);
+
+  convexClient = new ConvexHttpClient(convexUrl);
+
+  const deployKey = readConvexDeployKey();
+  if (deployKey) {
+    convexClient.setAdminAuth(deployKey);
+  }
+
   return convexClient;
 }
 
