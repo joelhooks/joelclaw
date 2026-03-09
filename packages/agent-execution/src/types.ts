@@ -75,8 +75,14 @@ export interface LocalSandboxRuntimeInfo {
   repoPath: string;
   /** Materialized sandbox env path */
   envPath: string;
+  /** Sandbox metadata file path */
+  metadataPath?: string;
+  /** Materialized devcontainer path when present */
+  devcontainerPath?: string;
   /** Registry path tracking this sandbox */
   registryPath: string;
+  /** Scheduled cleanup deadline for retained terminal sandboxes */
+  cleanupAfter?: string;
 }
 
 /**

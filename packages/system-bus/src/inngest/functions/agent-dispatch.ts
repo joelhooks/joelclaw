@@ -17,9 +17,11 @@ import {
   launchSandboxJob,
   materializeLocalSandboxEnv,
   materializeRepo,
+  pruneExpiredLocalSandboxes,
   readSandboxJobLogs,
   readSandboxJobStatus,
   resolveLocalSandboxPaths,
+  resolveLocalSandboxRetention,
   type SandboxBackend,
   type SandboxExecutionRequest,
   type SandboxExecutionResult,
@@ -174,6 +176,7 @@ type AgentExecutionInput = {
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   readFiles?: boolean;
+  extraEnv?: Record<string, string | undefined>;
 };
 
 type PreparedLocalSandboxContext = {
@@ -247,6 +250,8 @@ async function prepareLocalSandboxContext(options: {
       path: paths.sandboxDir,
       repoPath: paths.repoDir,
       envPath: paths.envPath,
+      metadataPath: paths.metadataPath,
+      devcontainerPath: paths.devcontainerPath,
       registryPath: paths.registryPath,
     },
     requestedCwd: options.requestedCwd,
@@ -264,7 +269,12 @@ async function syncLocalSandboxState(options: {
   startedAt: string;
   updatedAt: string;
   teardownState?: "active" | "tearing-down" | "removed";
-}): Promise<void> {
+}): Promise<{ cleanupAfter?: string }> {
+  const retention = resolveLocalSandboxRetention({
+    state: options.state,
+    updatedAt: options.updatedAt,
+  });
+
   await upsertLocalSandboxRegistryEntry(
     {
       sandboxId: options.context.identity.sandboxId,
@@ -276,12 +286,18 @@ async function syncLocalSandboxState(options: {
       mode: options.context.mode,
       baseSha: options.context.baseSha,
       path: options.context.paths.sandboxDir,
+      repoPath: options.context.paths.repoDir,
       envPath: options.context.paths.envPath,
+      metadataPath: options.context.paths.metadataPath,
       state: options.state,
       backend: "local",
       createdAt: options.startedAt,
       updatedAt: options.updatedAt,
       teardownState: options.teardownState ?? "active",
+      retentionPolicy: retention.policy,
+      cleanupAfter: retention.cleanupAfter,
+      cleanupReason: retention.reason,
+      devcontainerStrategy: "copy",
     },
     options.context.paths.registryPath,
   );
@@ -290,7 +306,10 @@ async function syncLocalSandboxState(options: {
     options.context.paths.metadataPath,
     `${JSON.stringify(
       {
-        sandbox: options.context.runtimeInfo,
+        sandbox: {
+          ...options.context.runtimeInfo,
+          cleanupAfter: retention.cleanupAfter,
+        },
         repoRoot: options.context.repoRoot,
         baseSha: options.context.baseSha,
         branch: options.context.branch,
@@ -298,11 +317,16 @@ async function syncLocalSandboxState(options: {
         startedAt: options.startedAt,
         updatedAt: options.updatedAt,
         teardownState: options.teardownState ?? "active",
+        retention,
       },
       null,
       2,
     )}\n`,
   );
+
+  return {
+    cleanupAfter: retention.cleanupAfter,
+  };
 }
 
 function buildSandboxTask(
@@ -365,6 +389,7 @@ async function executeAgentTask(input: AgentExecutionInput): Promise<AgentExecut
     model,
     sandbox,
     readFiles = false,
+    extraEnv,
   } = input;
 
   if (tool === "claude") {
@@ -386,6 +411,7 @@ async function executeAgentTask(input: AgentExecutionInput): Promise<AgentExecut
   );
   const sharedEnv = {
     ...process.env,
+    ...(extraEnv ?? {}),
     CI: "true",
     TERM: "dumb",
     JOELCLAW_SANDBOX_EXECUTION:
@@ -494,6 +520,18 @@ async function executeSandboxAgent(input: AgentExecutionInput & {
       storyId: input.storyId,
     }),
     workDir: repoPath,
+    extraEnv: {
+      JOELCLAW_SANDBOX_ID: localSandbox.identity.sandboxId,
+      JOELCLAW_SANDBOX_SLUG: localSandbox.identity.slug,
+      JOELCLAW_SANDBOX_MODE: localSandbox.mode,
+      JOELCLAW_SANDBOX_REQUEST_ID: localSandbox.identity.requestId,
+      JOELCLAW_SANDBOX_WORKFLOW_ID: localSandbox.identity.workflowId,
+      JOELCLAW_SANDBOX_STORY_ID: localSandbox.identity.storyId,
+      JOELCLAW_SANDBOX_BASE_SHA: localSandbox.baseSha,
+      JOELCLAW_SANDBOX_REQUESTED_CWD: input.requestedCwd,
+      JOELCLAW_SANDBOX_REPO_ROOT: localSandbox.repoRoot,
+      COMPOSE_PROJECT_NAME: localSandbox.identity.composeProjectName,
+    },
   });
 
   try {
@@ -808,6 +846,11 @@ export const agentDispatch = inngest.createFunction(
           const existing = await readInboxResultSnapshot(requestId);
           const startedAt = existing?.startedAt ?? new Date(Date.now() - 1000).toISOString();
 
+          const localSandboxRetention = resolveLocalSandboxRetention({
+            state: "cancelled",
+            updatedAt: completedAt,
+          });
+
           if (
             executionMode === "sandbox" &&
             sandboxBackend === "local" &&
@@ -825,12 +868,18 @@ export const agentDispatch = inngest.createFunction(
                 mode: localSandbox.mode,
                 baseSha: event.data.event.data.baseSha ?? "unknown",
                 path: localSandbox.path,
+                repoPath: localSandbox.repoPath,
                 envPath: localSandbox.envPath,
+                metadataPath: localSandbox.metadataPath,
                 state: "cancelled",
                 backend: "local",
                 createdAt: startedAt,
                 updatedAt: completedAt,
                 teardownState: "active",
+                retentionPolicy: localSandboxRetention.policy,
+                cleanupAfter: localSandboxRetention.cleanupAfter,
+                cleanupReason: localSandboxRetention.reason,
+                devcontainerStrategy: "copy",
               },
               localSandbox.registryPath,
             );
@@ -850,7 +899,14 @@ export const agentDispatch = inngest.createFunction(
             durationMs: Date.now() - new Date(startedAt).getTime(),
             executionMode,
             ...(executionMode === "sandbox" ? { sandboxBackend } : {}),
-            ...(existing?.localSandbox ? { localSandbox: existing.localSandbox } : {}),
+            ...(existing?.localSandbox
+              ? {
+                  localSandbox: {
+                    ...existing.localSandbox,
+                    cleanupAfter: localSandboxRetention.cleanupAfter,
+                  },
+                }
+              : {}),
             ...(existing?.artifacts ? { artifacts: existing.artifacts } : {}),
             ...(existing?.logs ? { logs: existing.logs } : {}),
           };
@@ -943,6 +999,9 @@ export const agentDispatch = inngest.createFunction(
 
     const runningSnapshot = await step.run("write-running-inbox", async () => {
       if (localSandboxContext) {
+        await pruneExpiredLocalSandboxes({
+          registryPath: localSandboxContext.paths.registryPath,
+        });
         await ensureLocalSandboxLayout(localSandboxContext.paths);
         await materializeLocalSandboxEnv({
           path: localSandboxContext.paths.envPath,
@@ -1034,15 +1093,19 @@ export const agentDispatch = inngest.createFunction(
       const effectiveStartedAt = runningSnapshot.startedAt ?? startedAt;
       const durationMs =
         new Date(completedAt).getTime() - new Date(effectiveStartedAt).getTime();
-      const localSandbox = execution.localSandbox ?? runningSnapshot.localSandbox;
+      let localSandbox = execution.localSandbox ?? runningSnapshot.localSandbox;
 
       if (localSandboxContext) {
-        await syncLocalSandboxState({
+        const synced = await syncLocalSandboxState({
           context: localSandboxContext,
           state: execution.status,
           startedAt: effectiveStartedAt,
           updatedAt: completedAt,
         });
+        localSandbox = {
+          ...localSandboxContext.runtimeInfo,
+          cleanupAfter: synced.cleanupAfter,
+        };
       }
 
       const result: InboxResult = {

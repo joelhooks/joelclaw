@@ -585,9 +585,10 @@ See `k8s/agent-runner.yaml` for full runtime contract specification.
 - **Story 3**: Added repo materialization and artifact export helpers
 - **ADR-0221 phase 1**: added explicit local sandbox isolation primitives — deterministic sandbox identity, deterministic local sandbox paths, per-sandbox env materialization, minimal/full mode vocabulary, and a JSON registry helper for host-worker sandboxes
 - **ADR-0221 phase 2**: wired those local helpers into the real host-worker `system/agent-dispatch` local backend so sandbox runs now allocate deterministic paths under `~/.joelclaw/sandboxes/`, materialize `.sandbox.env`, persist registry state, and carry `localSandbox` metadata in inbox snapshots
+- **ADR-0221 phase 3**: added terminal retention/cleanup policy (`cleanupAfter` + registry metadata), opportunistic pruning of expired local sandboxes on new-run startup, copy-first `.devcontainer` materialization helpers with exclusion rules for env/secret junk, and live sandbox env injection so the agent process actually sees the reserved runtime identity
 - **Future**: Runtime image build, hot-image CronJob, warm-pool scheduler, Restate integration
 
-**Current state**: the host-worker local sandbox path is now using the local-isolation helpers in production code, but it remains a minimal-mode-first substrate. Full-mode devcontainer/compose lifecycle and broader cleanup policy are still follow-on work.
+**Current state**: the host-worker local sandbox path is now using the local-isolation helpers in production code, and the package has a concurrent proof that two local sandboxes keep distinct compose identity plus copied devcontainer state. It still remains a minimal-mode-first substrate: full-mode devcontainer/compose lifecycle and broader cleanup policy automation are follow-on work.
 
 ---
 

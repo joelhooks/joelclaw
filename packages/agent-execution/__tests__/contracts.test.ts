@@ -410,7 +410,10 @@ describe("@joelclaw/agent-execution contracts", () => {
           path: "/Users/joel/.joelclaw/sandboxes/workflow/story/jc-workflow-story-1234abcd-req-loca",
           repoPath: "/Users/joel/.joelclaw/sandboxes/workflow/story/jc-workflow-story-1234abcd-req-loca/repo",
           envPath: "/Users/joel/.joelclaw/sandboxes/workflow/story/jc-workflow-story-1234abcd-req-loca/.sandbox.env",
+          metadataPath: "/Users/joel/.joelclaw/sandboxes/workflow/story/jc-workflow-story-1234abcd-req-loca/sandbox.json",
+          devcontainerPath: "/Users/joel/.joelclaw/sandboxes/workflow/story/jc-workflow-story-1234abcd-req-loca/repo/.devcontainer",
           registryPath: "/Users/joel/.joelclaw/sandboxes/registry.json",
+          cleanupAfter: "2026-03-10T00:00:00.000Z",
         },
       };
 
@@ -418,6 +421,7 @@ describe("@joelclaw/agent-execution contracts", () => {
       const deserialized = JSON.parse(serialized);
       expect(deserialized.localSandbox.composeProjectName).toBe("jc_workflow_1234abcd");
       expect(deserialized.localSandbox.mode).toBe("minimal");
+      expect(deserialized.localSandbox.cleanupAfter).toBe("2026-03-10T00:00:00.000Z");
     });
   });
 });

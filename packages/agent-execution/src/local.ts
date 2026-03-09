@@ -1,11 +1,24 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { ExecutionState } from "./types.js";
 
 export type LocalSandboxMode = "minimal" | "full";
+export type LocalSandboxTeardownState = "active" | "tearing-down" | "removed";
+export type LocalSandboxRetentionPolicy = "active" | "ttl";
+export type LocalSandboxDevcontainerStrategy = "copy" | "symlink";
 
 export interface LocalSandboxIdentity {
   sandboxId: string;
@@ -25,6 +38,7 @@ export interface LocalSandboxPaths {
   artifactsDir: string;
   metadataPath: string;
   registryPath: string;
+  devcontainerPath: string;
 }
 
 export interface GenerateLocalSandboxIdentityInput {
@@ -53,6 +67,31 @@ export interface MaterializedSandboxEnv {
   content: string;
 }
 
+export interface ResolveLocalSandboxRetentionOptions {
+  state: ExecutionState;
+  updatedAt?: string;
+}
+
+export interface LocalSandboxRetentionDecision {
+  policy: LocalSandboxRetentionPolicy;
+  cleanupAfter?: string;
+  reason: string;
+}
+
+export interface MaterializeLocalSandboxDevcontainerOptions {
+  sourceRepoDir: string;
+  targetRepoDir: string;
+  strategy?: LocalSandboxDevcontainerStrategy;
+}
+
+export interface MaterializedLocalSandboxDevcontainer {
+  sourcePath: string;
+  targetPath: string;
+  strategy: LocalSandboxDevcontainerStrategy;
+  materialized: boolean;
+  excludedPaths: string[];
+}
+
 export interface LocalSandboxRegistryEntry {
   sandboxId: string;
   requestId: string;
@@ -63,12 +102,18 @@ export interface LocalSandboxRegistryEntry {
   mode: LocalSandboxMode;
   baseSha: string;
   path: string;
+  repoPath?: string;
   envPath: string;
+  metadataPath?: string;
   state: ExecutionState;
   backend: "local";
   createdAt: string;
   updatedAt: string;
-  teardownState: "active" | "tearing-down" | "removed";
+  teardownState: LocalSandboxTeardownState;
+  retentionPolicy?: LocalSandboxRetentionPolicy;
+  cleanupAfter?: string;
+  cleanupReason?: string;
+  devcontainerStrategy?: LocalSandboxDevcontainerStrategy;
 }
 
 export interface LocalSandboxRegistry {
@@ -76,15 +121,45 @@ export interface LocalSandboxRegistry {
   entries: LocalSandboxRegistryEntry[];
 }
 
+export interface PruneExpiredLocalSandboxesOptions {
+  registryPath?: string;
+  now?: Date;
+}
+
+export interface PruneExpiredLocalSandboxesResult {
+  registry: LocalSandboxRegistry;
+  removedSandboxIds: string[];
+  retainedSandboxIds: string[];
+}
+
 export const LOCAL_SANDBOX_MODES: readonly LocalSandboxMode[] = ["minimal", "full"] as const;
+export const LOCAL_SANDBOX_DEVCONTAINER_STRATEGIES: readonly LocalSandboxDevcontainerStrategy[] = [
+  "copy",
+  "symlink",
+] as const;
 export const LOCAL_SANDBOX_REGISTRY_VERSION = "2026-03-09" as const;
+export const LOCAL_SANDBOX_RETENTION_HOURS = {
+  completed: 24,
+  cancelled: 24,
+  failed: 72,
+} as const;
 
 const DEFAULT_SANDBOX_PREFIX = "jc";
 const DEFAULT_REPO_DIR_NAME = "repo";
 const DEFAULT_ROOT_DIR = join(homedir(), ".joelclaw", "sandboxes");
+const DEVCONTAINER_DIR_NAME = ".devcontainer";
 
 export function isLocalSandboxMode(value: unknown): value is LocalSandboxMode {
   return typeof value === "string" && (LOCAL_SANDBOX_MODES as readonly string[]).includes(value);
+}
+
+export function isLocalSandboxDevcontainerStrategy(
+  value: unknown,
+): value is LocalSandboxDevcontainerStrategy {
+  return (
+    typeof value === "string" &&
+    (LOCAL_SANDBOX_DEVCONTAINER_STRATEGIES as readonly string[]).includes(value)
+  );
 }
 
 export function defaultLocalSandboxRoot(): string {
@@ -130,6 +205,7 @@ export function resolveLocalSandboxPaths(
   const artifactsDir = join(sandboxDir, "artifacts");
   const metadataPath = join(sandboxDir, "sandbox.json");
   const registryPath = defaultLocalSandboxRegistryPath(rootDir);
+  const devcontainerPath = join(repoDir, DEVCONTAINER_DIR_NAME);
 
   return {
     rootDir,
@@ -140,6 +216,7 @@ export function resolveLocalSandboxPaths(
     artifactsDir,
     metadataPath,
     registryPath,
+    devcontainerPath,
   };
 }
 
@@ -174,6 +251,93 @@ export async function materializeLocalSandboxEnv(
     path: options.path,
     values,
     content: `${content}\n`,
+  };
+}
+
+export function resolveLocalSandboxRetention(
+  options: ResolveLocalSandboxRetentionOptions,
+): LocalSandboxRetentionDecision {
+  const updatedAt = options.updatedAt ? new Date(options.updatedAt) : new Date();
+
+  if (options.state === "completed") {
+    return {
+      policy: "ttl",
+      cleanupAfter: addHours(updatedAt, LOCAL_SANDBOX_RETENTION_HOURS.completed).toISOString(),
+      reason: "retain completed local sandboxes for 24 hours so operators can inspect artifacts before cleanup",
+    };
+  }
+
+  if (options.state === "cancelled") {
+    return {
+      policy: "ttl",
+      cleanupAfter: addHours(updatedAt, LOCAL_SANDBOX_RETENTION_HOURS.cancelled).toISOString(),
+      reason: "retain cancelled local sandboxes for 24 hours so operators can inspect partial state before cleanup",
+    };
+  }
+
+  if (options.state === "failed") {
+    return {
+      policy: "ttl",
+      cleanupAfter: addHours(updatedAt, LOCAL_SANDBOX_RETENTION_HOURS.failed).toISOString(),
+      reason: "retain failed local sandboxes for 72 hours so operators can debug the failure before cleanup",
+    };
+  }
+
+  return {
+    policy: "active",
+    reason: "active local sandboxes stay resident until they reach a terminal state",
+  };
+}
+
+export async function materializeLocalSandboxDevcontainer(
+  options: MaterializeLocalSandboxDevcontainerOptions,
+): Promise<MaterializedLocalSandboxDevcontainer> {
+  const strategy = options.strategy ?? "copy";
+  const sourcePath = join(options.sourceRepoDir, DEVCONTAINER_DIR_NAME);
+  const targetPath = join(options.targetRepoDir, DEVCONTAINER_DIR_NAME);
+
+  try {
+    const stat = await lstat(sourcePath);
+    if (!stat.isDirectory()) {
+      throw new Error(`${sourcePath} exists but is not a directory`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return {
+        sourcePath,
+        targetPath,
+        strategy,
+        materialized: false,
+        excludedPaths: [],
+      };
+    }
+
+    throw error;
+  }
+
+  await mkdir(options.targetRepoDir, { recursive: true });
+  await rm(targetPath, { recursive: true, force: true });
+
+  if (strategy === "symlink") {
+    await symlink(sourcePath, targetPath, "dir");
+    return {
+      sourcePath,
+      targetPath,
+      strategy,
+      materialized: true,
+      excludedPaths: [],
+    };
+  }
+
+  const excludedPaths: string[] = [];
+  await copyDevcontainerDirectory(sourcePath, targetPath, excludedPaths);
+
+  return {
+    sourcePath,
+    targetPath,
+    strategy,
+    materialized: true,
+    excludedPaths: excludedPaths.sort(),
   };
 }
 
@@ -250,6 +414,39 @@ export async function removeLocalSandboxRegistryEntry(
   return nextRegistry;
 }
 
+export async function pruneExpiredLocalSandboxes(
+  options: PruneExpiredLocalSandboxesOptions = {},
+): Promise<PruneExpiredLocalSandboxesResult> {
+  const registryPath = options.registryPath ?? defaultLocalSandboxRegistryPath();
+  const now = options.now ?? new Date();
+  const registry = await readLocalSandboxRegistry(registryPath);
+  const removedSandboxIds: string[] = [];
+  const retainedEntries: LocalSandboxRegistryEntry[] = [];
+
+  for (const entry of registry.entries) {
+    if (!shouldPruneSandboxEntry(entry, now)) {
+      retainedEntries.push(entry);
+      continue;
+    }
+
+    await rm(resolveSandboxDirFromEntry(entry), { recursive: true, force: true });
+    removedSandboxIds.push(entry.sandboxId);
+  }
+
+  const nextRegistry: LocalSandboxRegistry = {
+    version: LOCAL_SANDBOX_REGISTRY_VERSION,
+    entries: retainedEntries,
+  };
+
+  await writeLocalSandboxRegistry(nextRegistry, registryPath);
+
+  return {
+    registry: nextRegistry,
+    removedSandboxIds,
+    retainedSandboxIds: retainedEntries.map((entry) => entry.sandboxId),
+  };
+}
+
 export async function ensureLocalSandboxLayout(paths: LocalSandboxPaths): Promise<void> {
   await mkdir(paths.logsDir, { recursive: true });
   await mkdir(paths.artifactsDir, { recursive: true });
@@ -289,6 +486,12 @@ export function isLocalSandboxRegistryEntry(value: unknown): value is LocalSandb
     obj.backend === "local" &&
     typeof obj.createdAt === "string" &&
     typeof obj.updatedAt === "string" &&
+    (obj.repoPath === undefined || typeof obj.repoPath === "string") &&
+    (obj.metadataPath === undefined || typeof obj.metadataPath === "string") &&
+    (obj.retentionPolicy === undefined || obj.retentionPolicy === "active" || obj.retentionPolicy === "ttl") &&
+    (obj.cleanupAfter === undefined || typeof obj.cleanupAfter === "string") &&
+    (obj.cleanupReason === undefined || typeof obj.cleanupReason === "string") &&
+    (obj.devcontainerStrategy === undefined || isLocalSandboxDevcontainerStrategy(obj.devcontainerStrategy)) &&
     (obj.teardownState === "active" || obj.teardownState === "tearing-down" || obj.teardownState === "removed")
   );
 }
@@ -300,10 +503,12 @@ function compactSlug(parts: string[], maxLength: number, separator = "-"): strin
 }
 
 function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "sandbox";
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "sandbox"
+  );
 }
 
 function shortHash(value: string): string {
@@ -318,4 +523,76 @@ function quoteEnvValue(value: string): string {
   if (value === "") return '""';
   if (/^[A-Za-z0-9_./:-]+$/.test(value)) return value;
   return JSON.stringify(value);
+}
+
+function addHours(date: Date, hours: number): Date {
+  return new Date(date.getTime() + hours * 60 * 60 * 1000);
+}
+
+function shouldPruneSandboxEntry(entry: LocalSandboxRegistryEntry, now: Date): boolean {
+  if (!isTerminalExecutionState(entry.state)) {
+    return false;
+  }
+
+  if (entry.retentionPolicy !== "ttl" || !entry.cleanupAfter) {
+    return false;
+  }
+
+  return new Date(entry.cleanupAfter).getTime() <= now.getTime();
+}
+
+function isTerminalExecutionState(state: ExecutionState): state is "completed" | "failed" | "cancelled" {
+  return state === "completed" || state === "failed" || state === "cancelled";
+}
+
+function resolveSandboxDirFromEntry(entry: LocalSandboxRegistryEntry): string {
+  return entry.metadataPath ? dirname(entry.metadataPath) : dirname(entry.envPath);
+}
+
+async function copyDevcontainerDirectory(
+  sourceDir: string,
+  targetDir: string,
+  excludedPaths: string[],
+  relativeDir = DEVCONTAINER_DIR_NAME,
+): Promise<void> {
+  await mkdir(targetDir, { recursive: true });
+  const entries = await readdir(sourceDir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const sourcePath = join(sourceDir, entry.name);
+    const targetPath = join(targetDir, entry.name);
+    const relativePath = join(relativeDir, entry.name);
+
+    if (shouldExcludeDevcontainerPath(relativePath)) {
+      excludedPaths.push(relativePath);
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      await copyDevcontainerDirectory(sourcePath, targetPath, excludedPaths, relativePath);
+      continue;
+    }
+
+    if (entry.isSymbolicLink()) {
+      const linkTarget = await readlink(sourcePath);
+      await symlink(linkTarget, targetPath);
+      continue;
+    }
+
+    await copyFile(sourcePath, targetPath);
+  }
+}
+
+function shouldExcludeDevcontainerPath(relativePath: string): boolean {
+  const normalized = relativePath.replace(/\\/g, "/");
+  const basename = normalized.split("/").pop()?.toLowerCase() || "";
+
+  return (
+    basename === ".sandbox.env" ||
+    basename === ".env" ||
+    basename.startsWith(".env.") ||
+    basename.endsWith(".local") ||
+    basename.includes("secret") ||
+    /\.(pem|key|crt)$/i.test(basename)
+  );
 }

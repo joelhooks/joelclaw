@@ -94,7 +94,7 @@ The monorepo follows pnpm workspaces with strict package boundaries:
 - **Artifact export**: `generatePatchArtifact()` for auditable patch bundles
 - **Touched-file inventory**: `getTouchedFiles()` captures modified/untracked files
 - **Verification helpers**: `verifyRepoState()` for SHA validation
-- **Local sandbox primitives**: deterministic sandbox identity, path resolution, per-sandbox env materialization, minimal/full mode contract, and JSON registry helpers for local host-worker isolation
+- **Local sandbox primitives**: deterministic sandbox identity, path resolution, per-sandbox env materialization, terminal retention/cleanup policy, copy-first devcontainer materialization helpers, minimal/full mode contract, and JSON registry helpers for local host-worker isolation
 - **Consumed by**: Restate workflows, system-bus functions, k8s Job launcher, runtime images
 
 This package eliminates ad-hoc type duplication between Restate and system-bus. All sandboxed story execution must use these types to ensure contract stability. Story 3 added repo materialization and artifact export helpers for isolated sandbox runs. ADR-0221 phase 1 added the first explicit local-isolation primitives, and phase 2 now feeds those helpers into the real host-worker local sandbox path.
@@ -104,10 +104,11 @@ This package eliminates ad-hoc type duplication between Restate and system-bus. 
 **Current live path: local sandbox runner on the host worker**
 - `executionMode: "sandbox"` is live in `system/agent-dispatch`
 - Default `sandboxBackend` is still `"local"`
-- Each local run now resolves a deterministic sandbox identity/path under `~/.joelclaw/sandboxes/`, materializes a per-sandbox `.sandbox.env`, writes sandbox state to the JSON registry, and persists artifact bundles into the sandbox directory
-- The actual code-changing repo checkout still starts at `baseSha`, executes in isolation, and preserves the patch/artifact promotion boundary
+- Each local run now resolves a deterministic sandbox identity/path under `~/.joelclaw/sandboxes/`, materializes a per-sandbox `.sandbox.env`, injects that sandbox identity into the live agent process environment, writes sandbox state to the JSON registry, and persists artifact bundles into the sandbox directory
+- Terminal local sandboxes now carry a retention decision (`cleanupAfter`) and the local backend opportunistically prunes expired retained sandboxes before starting a new run
+- `@joelclaw/agent-execution` now includes copy-first `.devcontainer` materialization helpers with exclusion rules for env/secret junk, plus a concurrent package-level proof that two local sandboxes keep distinct `COMPOSE_PROJECT_NAME` values and isolated copied devcontainer state
 - `InboxResult` snapshots for local sandbox runs now carry `localSandbox` metadata so cancellation and operator follow-up can see the sandbox identity/path/env/registry surface
-- This means the host-worker path is no longer just a throwaway temp checkout, but it is still intentionally **minimal-mode-first**: no automatic devcontainer copy-first wiring, compose/network cleanup, or broader full-mode runtime yet
+- This means the host-worker path is no longer just a throwaway temp checkout, but it is still intentionally **minimal-mode-first**: full compose/network lifecycle and automatic full-mode runtime provisioning remain follow-on work
 - Gate A (non-coding) and Gate B (minimal coding) are proven, and a real ADR-0217 acceptance run completed on this path without dirtying the operator checkout
 - This remains the current working isolation surface for autonomous story execution
 
