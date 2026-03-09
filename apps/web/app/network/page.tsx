@@ -53,7 +53,25 @@ type ContentResourceDoc = {
   fields: Record<string, unknown>;
 };
 
-const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
+const CONVEX_URL =
+  process.env.CONVEX_URL?.trim() ??
+  process.env.NEXT_PUBLIC_CONVEX_URL?.trim() ??
+  "";
+
+const HAS_CONVEX_CLIENT = CONVEX_URL.length > 0;
+
+let convex: ConvexHttpClient | undefined;
+
+function getConvexClient(): ConvexHttpClient | null {
+  if (!CONVEX_URL) {
+    console.warn("[network] CONVEX_URL not set; returning null client");
+    return null;
+  }
+  if (convex === undefined) {
+    convex = new ConvexHttpClient(CONVEX_URL);
+  }
+  return convex;
+}
 
 // ADR-0085: Network page becomes data-driven from Convex contentResources.
 export const metadata: Metadata = {
@@ -63,8 +81,11 @@ export const metadata: Metadata = {
 };
 
 async function listByType(type: string): Promise<ContentResourceDoc[]> {
+  const client = getConvexClient();
+  if (!client) return [];
+
   try {
-    const docs = await convex.query(api.contentResources.listByType, { type, limit: 500 });
+    const docs = await client.query(api.contentResources.listByType, { type, limit: 500 });
     return Array.isArray(docs) ? (docs as ContentResourceDoc[]) : [];
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
@@ -115,9 +136,13 @@ export default function NetworkPage() {
         </p>
       </header>
 
-      <Suspense fallback={<NetworkSectionsFallback />}>
-        <NetworkSections />
-      </Suspense>
+      {HAS_CONVEX_CLIENT ? (
+        <Suspense fallback={<NetworkSectionsFallback />}>
+          <NetworkSections />
+        </Suspense>
+      ) : (
+        <NetworkUnavailableFallback />
+      )}
     </div>
   );
 }
@@ -127,6 +152,18 @@ function NetworkSectionsFallback() {
     <section className="space-y-3">
       <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">Loading network state</h2>
       <div className="border border-neutral-800/40 rounded-lg p-5 text-sm text-neutral-500">Resolving live topology…</div>
+    </section>
+  );
+}
+
+function NetworkUnavailableFallback() {
+  return (
+    <section className="space-y-3">
+      <h2 className="text-xs uppercase tracking-widest text-neutral-500 font-medium">Network state unavailable</h2>
+      <div className="border border-neutral-800/40 rounded-lg p-5 text-sm text-neutral-500 space-y-2">
+        <p>Live topology is disabled for this build because Convex is not configured.</p>
+        <p className="text-neutral-600">Set CONVEX_URL or NEXT_PUBLIC_CONVEX_URL to render the full network dashboard.</p>
+      </div>
     </section>
   );
 }
