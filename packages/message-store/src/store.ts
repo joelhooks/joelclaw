@@ -372,12 +372,21 @@ async function coalesceP3Message(
   selected: QueueCandidateMessage,
   candidates: QueueCandidateMessage[],
   now: number,
-): Promise<{ id: string; source: string; prompt: string; metadata?: Record<string, unknown> }> {
+): Promise<{
+  id: string;
+  source: string;
+  prompt: string;
+  metadata?: Record<string, unknown>;
+  timestamp: number;
+  acked: boolean;
+}> {
   const selectedMsg = {
     id: selected.message.id,
     source: selected.message.payload.source as string,
     prompt: selected.message.payload.prompt as string,
     metadata: selected.message.metadata,
+    timestamp: selected.message.timestamp,
+    acked: selected.message.acked,
   };
 
   if (selected.message.priority !== Priority.P3) return selectedMsg;
@@ -409,6 +418,8 @@ async function coalesceP3Message(
       coalescedCount,
       coalescedIds: coalescible.map((candidate) => candidate.message.id),
     },
+    timestamp: keeper.message.timestamp,
+    acked: keeper.message.acked,
   };
 
   emitMessageStoreTelemetry("message.coalesced", "info", {

@@ -135,7 +135,8 @@ describe("operator trace", () => {
     const snapshot = getOperatorTraceSnapshot();
     expect(snapshot.activeCount).toBe(0);
     expect(snapshot.lastTimedOut?.status).toBe("timed_out");
-    expect(timedOut).toEqual([snapshot.lastTimedOut?.traceId]);
+    expect(snapshot.lastTimedOut?.traceId).toBeDefined();
+    expect(timedOut).toEqual([snapshot.lastTimedOut!.traceId]);
   });
 
   test("does not overwrite a timed out trace with a late completion", async () => {

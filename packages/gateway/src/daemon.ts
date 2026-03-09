@@ -1969,7 +1969,11 @@ async function maybeNotifySessionPressure(snapshot: ReturnType<typeof getSession
     consecutivePromptFailures: snapshot.consecutivePromptFailures,
   };
 
-  const alertKind = kind === "recovered" ? "recovered" : kind;
+  const alertKind = kind === "recovered"
+    ? "recovered"
+    : kind === "critical"
+      ? "critical"
+      : "elevated";
   const message = buildSessionPressureAlertMessage(alertKind, snapshot);
   const silent = alertKind !== "critical";
 
@@ -2068,8 +2072,8 @@ async function maybeRefreshChannelHealthMuteState(force = false): Promise<void> 
       );
 
       channelHealthMuteState = {
-        mutedChannels: parseMutedChannelIds(mutedRaw),
-        muteReasons: parseMutedChannelReasons(reasonsRaw),
+        mutedChannels: parseMutedChannelIds(mutedRaw ?? null),
+        muteReasons: parseMutedChannelReasons(reasonsRaw ?? null),
         lastCheckedAt: now,
       };
     } catch (error) {

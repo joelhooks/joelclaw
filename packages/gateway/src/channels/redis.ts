@@ -42,7 +42,7 @@ const redisOpts = {
   lazyConnect: true,
   // Long-lived daemon clients should not flush command queues into
   // MaxRetriesPerRequestError floods during transient reconnect churn.
-  maxRetriesPerRequest: null as const,
+  maxRetriesPerRequest: null,
   retryStrategy: (times: number) => Math.min(times * 500, 30_000),
 };
 

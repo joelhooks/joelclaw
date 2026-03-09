@@ -276,6 +276,8 @@ The launchd start script now derives Slack routing env vars at boot from existin
 
 This removes dependency on non-existent `slack_allowed_user_id` / `slack_default_channel_id` secrets and restores passive firehose routing after restarts.
 
+Slack passive intel entries are now acknowledged in the command queue without calling `session.prompt()`. The queue logs the skip and emits OTEL action `queue.passive_intel.logged`, so monitored channel traffic stays in the intel lane instead of generating conversational gateway turns.
+
 If either derivation fails, startup logs explicit warnings in `/tmp/joelclaw/gateway.log` so degraded Slack behavior is visible immediately.
 
 Gateway now exposes `GET /health/slack` on port `3018` (same Bun server as the WS bridge). It returns:

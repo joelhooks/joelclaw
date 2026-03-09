@@ -1,3 +1,5 @@
+import type { TelemetryEmitter } from "@joelclaw/telemetry";
+
 export type { TelemetryEmitter } from "@joelclaw/telemetry";
 
 /**

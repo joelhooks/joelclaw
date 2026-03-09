@@ -931,6 +931,31 @@ export async function drain(): Promise<void> {
         continue;
       }
 
+      // Skip session prompt for passive intel — log and ack only
+      if (entry.metadata?.passiveIntel === true) {
+        console.log("[command-queue] passive intel — stored but not prompting session", {
+          source: entry.source,
+          joelSignal: entry.metadata.joelSignal === true,
+        });
+        void emitGatewayOtel({
+          level: "debug",
+          component: "command-queue",
+          action: "queue.passive_intel.logged",
+          success: true,
+          metadata: {
+            source: entry.source,
+            joelSignal: entry.metadata.joelSignal === true,
+          },
+        });
+
+        if (entry.streamId) {
+          await ack(entry.streamId);
+        }
+
+        consecutiveFailures = 0;
+        continue;
+      }
+
       activeRequest = {
         id: crypto.randomUUID(),
         source: entry.source,

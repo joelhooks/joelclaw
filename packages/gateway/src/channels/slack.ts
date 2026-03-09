@@ -1,10 +1,13 @@
 import { execSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import type { EnqueueFn } from "./redis";
 import type {
   Channel,
   ChannelPlatform,
   MessageHandler,
+  SendMediaPayload,
   SendOptions,
 } from "./types";
 
@@ -658,11 +661,12 @@ export class SlackChannel implements Channel {
 
   async sendMedia(
     channelOrThread: string,
-    text: string,
-    mediaUrl: string,
-    options?: SlackSendMediaOptions,
+    media: SendMediaPayload,
+    options?: SendOptions,
   ): Promise<void> {
-    await sendSlackMedia(channelOrThread, text, mediaUrl, options);
+    await sendSlackMedia(channelOrThread, media, {
+      threadTs: options?.threadId,
+    });
   }
 }
 
@@ -927,8 +931,7 @@ export async function send(channelOrThread: string, text: string, options?: Slac
 
 async function sendSlackMedia(
   channelOrThread: string,
-  text: string,
-  mediaUrl: string,
+  media: SendMediaPayload,
   options?: SlackSendMediaOptions,
 ): Promise<void> {
   if (!app || !started) {
@@ -957,22 +960,32 @@ async function sendSlackMedia(
   }
 
   const startedAt = Date.now();
-  const filename = options?.filename ?? parseFilenameFromUrl(mediaUrl);
+  const filename = options?.filename
+    ?? (media.url ? parseFilenameFromUrl(media.url) : media.path ? basename(media.path) : "upload");
+  const caption = media.caption?.trim() ?? "";
 
   try {
-    const response = await fetch(mediaUrl, {
-      signal: AbortSignal.timeout(MEDIA_FETCH_TIMEOUT_MS),
-    });
+    let fileBuffer: Buffer;
+    if (media.url) {
+      const response = await fetch(media.url, {
+        signal: AbortSignal.timeout(MEDIA_FETCH_TIMEOUT_MS),
+      });
 
-    if (!response.ok) {
-      throw new Error(`media fetch failed with ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`media fetch failed with ${response.status}`);
+      }
+
+      fileBuffer = Buffer.from(await response.arrayBuffer());
+    } else if (media.path) {
+      fileBuffer = await readFile(media.path);
+    } else {
+      throw new Error("media payload missing url/path");
     }
 
-    const fileBuffer = Buffer.from(await response.arrayBuffer());
     await app.client.files.uploadV2({
       channel_id: target.channelId,
       ...(target.threadTs ? { thread_ts: target.threadTs } : {}),
-      ...(text.trim() ? { initial_comment: text.trim() } : {}),
+      ...(caption ? { initial_comment: caption } : {}),
       file: fileBuffer,
       filename,
       title: options?.title ?? filename,
@@ -987,7 +1000,8 @@ async function sendSlackMedia(
       metadata: {
         channelId: target.channelId,
         threadTs: target.threadTs,
-        mediaUrl,
+        mediaUrl: media.url,
+        mediaPath: media.path,
         filename,
       },
     });
@@ -995,7 +1009,8 @@ async function sendSlackMedia(
     console.error("[gateway:slack] sendMedia failed, falling back to link", {
       channelId: target.channelId,
       threadTs: target.threadTs,
-      mediaUrl,
+      mediaUrl: media.url,
+      mediaPath: media.path,
       error: String(error),
     });
     void emitGatewayOtel({
@@ -1007,23 +1022,24 @@ async function sendSlackMedia(
       metadata: {
         channelId: target.channelId,
         threadTs: target.threadTs,
-        mediaUrl,
+        mediaUrl: media.url,
+        mediaPath: media.path,
       },
     });
 
-    const fallbackText = text.trim() ? `${text.trim()}\n${mediaUrl}` : mediaUrl;
+    const mediaRef = media.url ?? media.path ?? "[media]";
+    const fallbackText = caption ? `${caption}\n${mediaRef}` : mediaRef;
     await send(`slack:${target.channelId}${target.threadTs ? `:${target.threadTs}` : ""}`, fallbackText);
   }
 }
 
 export async function sendMedia(
   channelOrThread: string,
-  text: string,
-  mediaUrl: string,
-  options?: SlackSendMediaOptions,
+  media: SendMediaPayload,
+  options?: SendOptions,
 ): Promise<void> {
   const instance = getDefaultSlackChannel();
-  await instance.sendMedia(channelOrThread, text, mediaUrl, options);
+  await instance.sendMedia(channelOrThread, media, options);
 }
 
 async function shutdownSlackChannel(): Promise<void> {

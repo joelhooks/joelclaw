@@ -4,6 +4,7 @@ import {
   drain,
   enqueue,
   getActiveRequestMetadata,
+  getConsecutiveFailures,
   getSupersessionState,
   onSupersession,
   setIdleWaiter,
@@ -112,12 +113,72 @@ describe("command queue supersession", () => {
     await new Promise((resolve) => setTimeout(resolve, 60));
 
     expect(prompts).toHaveLength(1);
-    expect(prompts[0]).toContain("first");
-    expect(prompts[0]).toContain("--- Follow-up ---\nsecond");
-    expect(prompts[0].match(/Channel: telegram/g)?.length ?? 0).toBe(1);
+    const [batchedPrompt] = prompts;
+    expect(batchedPrompt).toBeDefined();
+    expect(batchedPrompt!).toContain("first");
+    expect(batchedPrompt!).toContain("--- Follow-up ---\nsecond");
+    expect(batchedPrompt?.match(/Channel: telegram/g)?.length ?? 0).toBe(1);
     expect(second.batching?.messageCount).toBe(2);
     expect(getSupersessionState().batching.pendingCount).toBe(0);
     expect(getSupersessionState().batching.lastFlush?.messageCount).toBe(2);
+  });
+
+  test("skips passive intel prompts and resets the failure counter", async () => {
+    setSession({
+      prompt: async () => {
+        throw new Error("boom");
+      },
+      reload: async () => {},
+      compact: async () => {},
+      newSession: async () => {},
+    });
+    setIdleWaiter(async () => {});
+
+    await enqueue("slack:C123", "normal message");
+    await drain();
+
+    expect(getConsecutiveFailures()).toBe(1);
+
+    const prompts: string[] = [];
+    setSession({
+      prompt: async (text: string) => {
+        prompts.push(text);
+      },
+      reload: async () => {},
+      compact: async () => {},
+      newSession: async () => {},
+    });
+
+    await enqueue("slack:C123", "passive intel", {
+      passiveIntel: true,
+      joelSignal: true,
+    });
+    await drain();
+
+    expect(prompts).toEqual([]);
+    expect(getConsecutiveFailures()).toBe(0);
+  });
+
+  test("still prompts when passive intel is explicitly false", async () => {
+    const prompts: string[] = [];
+
+    setSession({
+      prompt: async (text: string) => {
+        prompts.push(text);
+      },
+      reload: async () => {},
+      compact: async () => {},
+      newSession: async () => {},
+    });
+    setIdleWaiter(async () => {});
+
+    await enqueue("slack:C123", "needs prompt", {
+      passiveIntel: false,
+    });
+    await drain();
+
+    expect(prompts).toEqual(["needs prompt"]);
+    expect(getConsecutiveFailures()).toBe(0);
   });
 
   test("preserves active request metadata during downstream execution", async () => {
