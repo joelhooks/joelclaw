@@ -58,6 +58,28 @@ export interface SandboxJobRef {
 }
 
 /**
+ * Local sandbox runtime metadata for host-worker isolation.
+ */
+export interface LocalSandboxRuntimeInfo {
+  /** Deterministic sandbox identifier */
+  sandboxId: string;
+  /** Human-readable slug for the sandbox */
+  slug: string;
+  /** Compose identity reserved for this sandbox */
+  composeProjectName: string;
+  /** Local sandbox mode */
+  mode: "minimal" | "full";
+  /** Root sandbox path on disk */
+  path: string;
+  /** Repo checkout path on disk */
+  repoPath: string;
+  /** Materialized sandbox env path */
+  envPath: string;
+  /** Registry path tracking this sandbox */
+  registryPath: string;
+}
+
+/**
  * Request for sandboxed story execution.
  *
  * Sent by Restate to system-bus or a k8s Job launcher.
@@ -224,6 +246,8 @@ export interface InboxResult {
   sandboxBackend?: SandboxBackend;
   /** Optional job reference for k8s-backed runs */
   job?: SandboxJobRef;
+  /** Optional local sandbox metadata for host-worker runs */
+  localSandbox?: LocalSandboxRuntimeInfo;
   /** Optional artifact bundle for sandboxed runs */
   artifacts?: ExecutionArtifacts;
   /** Optional execution and verification logs */

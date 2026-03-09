@@ -107,6 +107,7 @@ export type {
   ExecutionMode,
   ExecutionState,
   InboxResult,
+  LocalSandboxRuntimeInfo,
   PrdExecutionPlan,
   SandboxBackend,
   SandboxExecutionRequest,

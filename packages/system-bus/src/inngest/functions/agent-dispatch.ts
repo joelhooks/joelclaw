@@ -1,23 +1,31 @@
 import { execSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   cancelSandboxJob,
   type ExecutionArtifacts,
+  ensureLocalSandboxLayout,
   extractSandboxResultFromLogs,
+  generateLocalSandboxIdentity,
   generatePatchArtifact,
   getTouchedFiles,
   type InboxResult,
+  type LocalSandboxIdentity,
+  type LocalSandboxPaths,
+  type LocalSandboxRuntimeInfo,
   launchSandboxJob,
+  materializeLocalSandboxEnv,
   materializeRepo,
   readSandboxJobLogs,
   readSandboxJobStatus,
+  resolveLocalSandboxPaths,
   type SandboxBackend,
   type SandboxExecutionRequest,
   type SandboxExecutionResult,
   type SandboxJobRef,
+  upsertLocalSandboxRegistryEntry,
+  writeArtifactBundle,
 } from "@joelclaw/agent-execution";
 import { NonRetriableError } from "inngest";
 import { infer } from "../../lib/inference";
@@ -153,6 +161,7 @@ type AgentExecutionResult = {
   artifacts?: ExecutionArtifacts;
   sandboxBackend?: SandboxBackend;
   job?: SandboxJobRef;
+  localSandbox?: LocalSandboxRuntimeInfo;
 };
 
 type AgentExecutionInput = {
@@ -165,6 +174,18 @@ type AgentExecutionInput = {
   model?: string;
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   readFiles?: boolean;
+};
+
+type PreparedLocalSandboxContext = {
+  identity: LocalSandboxIdentity;
+  paths: LocalSandboxPaths;
+  runtimeInfo: LocalSandboxRuntimeInfo;
+  requestedCwd: string;
+  repoRoot: string;
+  baseSha: string;
+  branch: string;
+  repoUrl?: string;
+  mode: "minimal";
 };
 
 function toSandboxProfile(
@@ -198,6 +219,90 @@ async function resolveSandboxRepoContext(workDir: string, providedBaseSha?: stri
     .catch(() => undefined);
 
   return { repoRoot, baseSha, branch, repoUrl };
+}
+
+async function prepareLocalSandboxContext(options: {
+  requestId: string;
+  workflowId?: string;
+  storyId?: string;
+  requestedCwd: string;
+  baseSha?: string;
+}): Promise<PreparedLocalSandboxContext> {
+  const repoContext = await resolveSandboxRepoContext(options.requestedCwd, options.baseSha);
+  const identity = generateLocalSandboxIdentity({
+    workflowId: options.workflowId ?? `sandbox-${options.requestId}`,
+    requestId: options.requestId,
+    storyId: options.storyId ?? options.requestId,
+  });
+  const paths = resolveLocalSandboxPaths(identity);
+
+  return {
+    identity,
+    paths,
+    runtimeInfo: {
+      sandboxId: identity.sandboxId,
+      slug: identity.slug,
+      composeProjectName: identity.composeProjectName,
+      mode: "minimal",
+      path: paths.sandboxDir,
+      repoPath: paths.repoDir,
+      envPath: paths.envPath,
+      registryPath: paths.registryPath,
+    },
+    requestedCwd: options.requestedCwd,
+    repoRoot: repoContext.repoRoot,
+    baseSha: repoContext.baseSha,
+    branch: repoContext.branch,
+    repoUrl: repoContext.repoUrl,
+    mode: "minimal",
+  };
+}
+
+async function syncLocalSandboxState(options: {
+  context: PreparedLocalSandboxContext;
+  state: "running" | "completed" | "failed" | "cancelled";
+  startedAt: string;
+  updatedAt: string;
+  teardownState?: "active" | "tearing-down" | "removed";
+}): Promise<void> {
+  await upsertLocalSandboxRegistryEntry(
+    {
+      sandboxId: options.context.identity.sandboxId,
+      requestId: options.context.identity.requestId,
+      workflowId: options.context.identity.workflowId,
+      storyId: options.context.identity.storyId,
+      slug: options.context.identity.slug,
+      composeProjectName: options.context.identity.composeProjectName,
+      mode: options.context.mode,
+      baseSha: options.context.baseSha,
+      path: options.context.paths.sandboxDir,
+      envPath: options.context.paths.envPath,
+      state: options.state,
+      backend: "local",
+      createdAt: options.startedAt,
+      updatedAt: options.updatedAt,
+      teardownState: options.teardownState ?? "active",
+    },
+    options.context.paths.registryPath,
+  );
+
+  await Bun.write(
+    options.context.paths.metadataPath,
+    `${JSON.stringify(
+      {
+        sandbox: options.context.runtimeInfo,
+        repoRoot: options.context.repoRoot,
+        baseSha: options.context.baseSha,
+        branch: options.context.branch,
+        state: options.state,
+        startedAt: options.startedAt,
+        updatedAt: options.updatedAt,
+        teardownState: options.teardownState ?? "active",
+      },
+      null,
+      2,
+    )}\n`,
+  );
 }
 
 function buildSandboxTask(
@@ -283,7 +388,10 @@ async function executeAgentTask(input: AgentExecutionInput): Promise<AgentExecut
     ...process.env,
     CI: "true",
     TERM: "dumb",
-    JOELCLAW_SANDBOX_EXECUTION: workDir.includes(`${tmpdir()}/`) ? "true" : "false",
+    JOELCLAW_SANDBOX_EXECUTION:
+      workDir.includes(`${tmpdir()}/`) || workDir.includes(`${join(process.env.HOME || "/Users/joel", ".joelclaw", "sandboxes")}/`)
+        ? "true"
+        : "false",
   };
 
   try {
@@ -361,83 +469,83 @@ async function executeAgentTask(input: AgentExecutionInput): Promise<AgentExecut
 
 async function executeSandboxAgent(input: AgentExecutionInput & {
   requestedCwd: string;
-  baseSha?: string;
   workflowId?: string;
   storyId?: string;
+  localSandbox: PreparedLocalSandboxContext;
 }): Promise<AgentExecutionResult> {
-  const workspaceDir = await mkdtemp(join(tmpdir(), `joelclaw-sandbox-${input.requestId}-`));
-  const repoPath = join(workspaceDir, "repo");
+  const { localSandbox } = input;
+  const repoPath = localSandbox.paths.repoDir;
+
+  await materializeRepo(repoPath, localSandbox.baseSha, {
+    remoteUrl: localSandbox.repoRoot,
+    branch: localSandbox.branch,
+    depth: 50,
+    timeoutSeconds: Math.max(60, Math.min(input.timeoutSeconds, 300)),
+  });
+
+  const execution = await executeAgentTask({
+    ...input,
+    sandbox: toSandboxProfile(input.sandbox),
+    task: buildSandboxTask(input.task, {
+      repoPath,
+      requestedCwd: input.requestedCwd,
+      baseSha: localSandbox.baseSha,
+      workflowId: input.workflowId,
+      storyId: input.storyId,
+    }),
+    workDir: repoPath,
+  });
 
   try {
-    const { repoRoot, baseSha, branch } = await resolveSandboxRepoContext(
-      input.requestedCwd,
-      input.baseSha,
-    );
-
-    await materializeRepo(repoPath, baseSha, {
-      remoteUrl: repoRoot,
-      branch,
-      depth: 50,
-      timeoutSeconds: Math.max(60, Math.min(input.timeoutSeconds, 300)),
+    const artifacts = await generatePatchArtifact({
+      repoPath,
+      baseSha: localSandbox.baseSha,
+      includeUntracked: true,
+      timeoutSeconds: Math.max(30, Math.min(input.timeoutSeconds, 120)),
     });
+    const touchedFiles = await getSandboxTouchedFiles(repoPath, localSandbox.baseSha);
+    const logs = execution.stdout || execution.stderr
+      ? {
+          ...(artifacts.logs ?? {}),
+          stdout: execution.stdout || "",
+          stderr: execution.stderr || "",
+        }
+      : artifacts.logs;
+    const nextArtifacts = {
+      ...artifacts,
+      touchedFiles,
+      ...(logs ? { logs } : {}),
+    };
 
-    const execution = await executeAgentTask({
-      ...input,
-      sandbox: toSandboxProfile(input.sandbox),
-      task: buildSandboxTask(input.task, {
-        repoPath,
-        requestedCwd: input.requestedCwd,
-        baseSha,
-        workflowId: input.workflowId,
-        storyId: input.storyId,
-      }),
-      workDir: repoPath,
-    });
+    await writeArtifactBundle(nextArtifacts, join(localSandbox.paths.artifactsDir, "artifacts.json"));
 
-    try {
-      const artifacts = await generatePatchArtifact({
-        repoPath,
-        baseSha,
-        includeUntracked: true,
-        timeoutSeconds: Math.max(30, Math.min(input.timeoutSeconds, 120)),
-      });
-      const touchedFiles = await getSandboxTouchedFiles(repoPath, baseSha);
-      const logs = execution.stdout || execution.stderr
-        ? {
-            ...(artifacts.logs ?? {}),
-            stdout: execution.stdout || "",
-            stderr: execution.stderr || "",
-          }
-        : artifacts.logs;
-
+    return {
+      ...execution,
+      sandboxBackend: "local",
+      localSandbox: localSandbox.runtimeInfo,
+      artifacts: nextArtifacts,
+    };
+  } catch (artifactError) {
+    if (execution.status === "failed") {
       return {
         ...execution,
         sandboxBackend: "local",
-        artifacts: {
-          ...artifacts,
-          touchedFiles,
-          ...(logs ? { logs } : {}),
-        },
-      };
-    } catch (artifactError) {
-      if (execution.status === "failed") {
-        return { ...execution, sandboxBackend: "local" };
-      }
-
-      const message = artifactError instanceof Error ? artifactError.message : String(artifactError);
-      return {
-        status: "failed",
-        output: execution.output,
-        stdout: execution.stdout,
-        stderr: [execution.stderr, `sandbox artifact generation failed: ${message}`]
-          .filter(Boolean)
-          .join("\n"),
-        error: `sandbox artifact generation failed: ${message}`,
-        sandboxBackend: "local",
+        localSandbox: localSandbox.runtimeInfo,
       };
     }
-  } finally {
-    await rm(workspaceDir, { recursive: true, force: true }).catch(() => {});
+
+    const message = artifactError instanceof Error ? artifactError.message : String(artifactError);
+    return {
+      status: "failed",
+      output: execution.output,
+      stdout: execution.stdout,
+      stderr: [execution.stderr, `sandbox artifact generation failed: ${message}`]
+        .filter(Boolean)
+        .join("\n"),
+      error: `sandbox artifact generation failed: ${message}`,
+      sandboxBackend: "local",
+      localSandbox: localSandbox.runtimeInfo,
+    };
   }
 }
 
@@ -489,6 +597,7 @@ function inboxResultToExecution(result: InboxResult): AgentExecutionResult | nul
     ...(result.artifacts ? { artifacts: result.artifacts } : {}),
     ...(result.sandboxBackend ? { sandboxBackend: result.sandboxBackend } : {}),
     ...(result.job ? { job: result.job } : {}),
+    ...(result.localSandbox ? { localSandbox: result.localSandbox } : {}),
   };
 }
 
@@ -696,7 +805,36 @@ export const agentDispatch = inngest.createFunction(
         // Write cancelled snapshot
         await step.run("write-cancelled-inbox", async () => {
           const completedAt = new Date().toISOString();
-          const startedAt = new Date(Date.now() - 1000).toISOString(); // Approximate start
+          const existing = await readInboxResultSnapshot(requestId);
+          const startedAt = existing?.startedAt ?? new Date(Date.now() - 1000).toISOString();
+
+          if (
+            executionMode === "sandbox" &&
+            sandboxBackend === "local" &&
+            existing?.localSandbox
+          ) {
+            const localSandbox = existing.localSandbox;
+            await upsertLocalSandboxRegistryEntry(
+              {
+                sandboxId: localSandbox.sandboxId,
+                requestId,
+                workflowId: event.data.event.data.workflowId ?? `sandbox-${requestId}`,
+                storyId: event.data.event.data.storyId ?? requestId,
+                slug: localSandbox.slug,
+                composeProjectName: localSandbox.composeProjectName,
+                mode: localSandbox.mode,
+                baseSha: event.data.event.data.baseSha ?? "unknown",
+                path: localSandbox.path,
+                envPath: localSandbox.envPath,
+                state: "cancelled",
+                backend: "local",
+                createdAt: startedAt,
+                updatedAt: completedAt,
+                teardownState: "active",
+              },
+              localSandbox.registryPath,
+            );
+          }
 
           const result: InboxResult = {
             requestId,
@@ -712,6 +850,9 @@ export const agentDispatch = inngest.createFunction(
             durationMs: Date.now() - new Date(startedAt).getTime(),
             executionMode,
             ...(executionMode === "sandbox" ? { sandboxBackend } : {}),
+            ...(existing?.localSandbox ? { localSandbox: existing.localSandbox } : {}),
+            ...(existing?.artifacts ? { artifacts: existing.artifacts } : {}),
+            ...(existing?.logs ? { logs: existing.logs } : {}),
           };
 
           writeInboxSnapshot(result);
@@ -752,6 +893,7 @@ export const agentDispatch = inngest.createFunction(
     }
 
     const startedAt = new Date().toISOString();
+    const requestedCwd = cwd || process.env.HOME || "/Users/joel";
 
     // Deduplication: check if we already have a terminal result for this requestId
     const dedupe = await step.run("check-existing-result", async () => {
@@ -786,7 +928,40 @@ export const agentDispatch = inngest.createFunction(
       };
     }
 
+    const localSandboxContext =
+      executionMode === "sandbox" && sandboxBackend === "local"
+        ? await step.run("resolve-local-sandbox-context", async () => {
+            return prepareLocalSandboxContext({
+              requestId,
+              workflowId,
+              storyId,
+              requestedCwd,
+              baseSha,
+            });
+          })
+        : null;
+
     const runningSnapshot = await step.run("write-running-inbox", async () => {
+      if (localSandboxContext) {
+        await ensureLocalSandboxLayout(localSandboxContext.paths);
+        await materializeLocalSandboxEnv({
+          path: localSandboxContext.paths.envPath,
+          identity: localSandboxContext.identity,
+          mode: localSandboxContext.mode,
+          baseSha: localSandboxContext.baseSha,
+          extra: {
+            JOELCLAW_SANDBOX_REQUESTED_CWD: requestedCwd,
+            JOELCLAW_SANDBOX_REPO_ROOT: localSandboxContext.repoRoot,
+          },
+        });
+        await syncLocalSandboxState({
+          context: localSandboxContext,
+          state: "running",
+          startedAt,
+          updatedAt: startedAt,
+        });
+      }
+
       const runningResult: InboxResult = {
         requestId,
         sessionId,
@@ -798,14 +973,19 @@ export const agentDispatch = inngest.createFunction(
         updatedAt: startedAt,
         executionMode,
         ...(executionMode === "sandbox" ? { sandboxBackend } : {}),
+        ...(localSandboxContext ? { localSandbox: localSandboxContext.runtimeInfo } : {}),
       };
 
       const filePath = writeInboxSnapshot(runningResult);
-      return { filePath, status: runningResult.status, startedAt: runningResult.startedAt };
+      return {
+        filePath,
+        status: runningResult.status,
+        startedAt: runningResult.startedAt,
+        localSandbox: runningResult.localSandbox,
+      };
     });
 
     const execution = await step.run("execute-agent", async () => {
-      const requestedCwd = cwd || process.env.HOME || "/Users/joel";
       const executionInput = {
         requestId,
         task,
@@ -832,9 +1012,16 @@ export const agentDispatch = inngest.createFunction(
         return executeSandboxAgent({
           ...executionInput,
           requestedCwd,
-          baseSha,
           workflowId,
           storyId,
+          localSandbox: localSandboxContext ??
+            (await prepareLocalSandboxContext({
+              requestId,
+              workflowId,
+              storyId,
+              requestedCwd,
+              baseSha,
+            })),
         });
       }
 
@@ -847,6 +1034,16 @@ export const agentDispatch = inngest.createFunction(
       const effectiveStartedAt = runningSnapshot.startedAt ?? startedAt;
       const durationMs =
         new Date(completedAt).getTime() - new Date(effectiveStartedAt).getTime();
+      const localSandbox = execution.localSandbox ?? runningSnapshot.localSandbox;
+
+      if (localSandboxContext) {
+        await syncLocalSandboxState({
+          context: localSandboxContext,
+          state: execution.status,
+          startedAt: effectiveStartedAt,
+          updatedAt: completedAt,
+        });
+      }
 
       const result: InboxResult = {
         requestId,
@@ -869,6 +1066,7 @@ export const agentDispatch = inngest.createFunction(
         executionMode,
         ...(execution.sandboxBackend ? { sandboxBackend: execution.sandboxBackend } : {}),
         ...(execution.job ? { job: execution.job } : {}),
+        ...(localSandbox ? { localSandbox } : {}),
         ...(execution.artifacts ? { artifacts: execution.artifacts } : {}),
         ...(execution.stdout || execution.stderr
           ? {
@@ -886,7 +1084,7 @@ export const agentDispatch = inngest.createFunction(
       const filePath = writeInboxSnapshot(result);
       const completionStatus = execution.status;
 
-      return { filePath, status: completionStatus, durationMs };
+      return { filePath, status: completionStatus, durationMs, localSandbox };
     });
 
     // Emit completion event for chaining

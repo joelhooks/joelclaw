@@ -251,7 +251,6 @@ export async function removeLocalSandboxRegistryEntry(
 }
 
 export async function ensureLocalSandboxLayout(paths: LocalSandboxPaths): Promise<void> {
-  await mkdir(paths.repoDir, { recursive: true });
   await mkdir(paths.logsDir, { recursive: true });
   await mkdir(paths.artifactsDir, { recursive: true });
 }

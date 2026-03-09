@@ -584,9 +584,10 @@ See `k8s/agent-runner.yaml` for full runtime contract specification.
 - **Story 2**: Added contract types and Job spec generation
 - **Story 3**: Added repo materialization and artifact export helpers
 - **ADR-0221 phase 1**: added explicit local sandbox isolation primitives — deterministic sandbox identity, deterministic local sandbox paths, per-sandbox env materialization, minimal/full mode vocabulary, and a JSON registry helper for host-worker sandboxes
+- **ADR-0221 phase 2**: wired those local helpers into the real host-worker `system/agent-dispatch` local backend so sandbox runs now allocate deterministic paths under `~/.joelclaw/sandboxes/`, materialize `.sandbox.env`, persist registry state, and carry `localSandbox` metadata in inbox snapshots
 - **Future**: Runtime image build, hot-image CronJob, warm-pool scheduler, Restate integration
 
-**Current state**: Code and contracts only; no live infrastructure deployed yet. The local-isolation helpers exist in `@joelclaw/agent-execution`, but end-to-end runtime consumption is still a follow-on step rather than a fully wired deployed path.
+**Current state**: the host-worker local sandbox path is now using the local-isolation helpers in production code, but it remains a minimal-mode-first substrate. Full-mode devcontainer/compose lifecycle and broader cleanup policy are still follow-on work.
 
 ---
 

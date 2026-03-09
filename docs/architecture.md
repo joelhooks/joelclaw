@@ -97,16 +97,17 @@ The monorepo follows pnpm workspaces with strict package boundaries:
 - **Local sandbox primitives**: deterministic sandbox identity, path resolution, per-sandbox env materialization, minimal/full mode contract, and JSON registry helpers for local host-worker isolation
 - **Consumed by**: Restate workflows, system-bus functions, k8s Job launcher, runtime images
 
-This package eliminates ad-hoc type duplication between Restate and system-bus. All sandboxed story execution must use these types to ensure contract stability. Story 3 added repo materialization and artifact export helpers for isolated sandbox runs. ADR-0221 phase 1 adds the first explicit local-isolation primitives so host-worker sandboxes stop relying on git worktrees alone as the entire collision boundary.
+This package eliminates ad-hoc type duplication between Restate and system-bus. All sandboxed story execution must use these types to ensure contract stability. Story 3 added repo materialization and artifact export helpers for isolated sandbox runs. ADR-0221 phase 1 added the first explicit local-isolation primitives, and phase 2 now feeds those helpers into the real host-worker local sandbox path.
 
 ### Sandboxed Story Execution
 
 **Current live path: local sandbox runner on the host worker**
 - `executionMode: "sandbox"` is live in `system/agent-dispatch`
 - Default `sandboxBackend` is still `"local"`
-- Each run materializes a clean temp repo at `baseSha`, executes inside that isolated checkout, exports patch/touched-file artifacts, and tears the workspace down
-- ADR-0221 phase 1 now defines the missing local-isolation primitives in `@joelclaw/agent-execution`: deterministic sandbox identity, deterministic sandbox paths, per-sandbox env materialization, minimal/full mode vocabulary, and a lightweight local registry surface
-- Those helpers are the correctness substrate for future host-worker runtime isolation work; they do not yet mean every live local sandbox run is automatically using the registry/env helpers end-to-end
+- Each local run now resolves a deterministic sandbox identity/path under `~/.joelclaw/sandboxes/`, materializes a per-sandbox `.sandbox.env`, writes sandbox state to the JSON registry, and persists artifact bundles into the sandbox directory
+- The actual code-changing repo checkout still starts at `baseSha`, executes in isolation, and preserves the patch/artifact promotion boundary
+- `InboxResult` snapshots for local sandbox runs now carry `localSandbox` metadata so cancellation and operator follow-up can see the sandbox identity/path/env/registry surface
+- This means the host-worker path is no longer just a throwaway temp checkout, but it is still intentionally **minimal-mode-first**: no automatic devcontainer copy-first wiring, compose/network cleanup, or broader full-mode runtime yet
 - Gate A (non-coding) and Gate B (minimal coding) are proven, and a real ADR-0217 acceptance run completed on this path without dirtying the operator checkout
 - This remains the current working isolation surface for autonomous story execution
 

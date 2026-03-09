@@ -391,5 +391,33 @@ describe("@joelclaw/agent-execution contracts", () => {
       const deserialized = JSON.parse(serialized);
       expect(isSandboxExecutionResult(deserialized)).toBe(true);
     });
+
+    test("InboxResult supports local sandbox metadata", () => {
+      const inbox = {
+        requestId: "req-local",
+        status: "running",
+        task: "test task",
+        tool: "pi",
+        startedAt: "2026-03-09T00:00:00Z",
+        updatedAt: "2026-03-09T00:00:00Z",
+        executionMode: "sandbox",
+        sandboxBackend: "local",
+        localSandbox: {
+          sandboxId: "jc-workflow-story-1234abcd-req-loca",
+          slug: "jc-workflow-story-1234abcd",
+          composeProjectName: "jc_workflow_1234abcd",
+          mode: "minimal",
+          path: "/Users/joel/.joelclaw/sandboxes/workflow/story/jc-workflow-story-1234abcd-req-loca",
+          repoPath: "/Users/joel/.joelclaw/sandboxes/workflow/story/jc-workflow-story-1234abcd-req-loca/repo",
+          envPath: "/Users/joel/.joelclaw/sandboxes/workflow/story/jc-workflow-story-1234abcd-req-loca/.sandbox.env",
+          registryPath: "/Users/joel/.joelclaw/sandboxes/registry.json",
+        },
+      };
+
+      const serialized = JSON.stringify(inbox);
+      const deserialized = JSON.parse(serialized);
+      expect(deserialized.localSandbox.composeProjectName).toBe("jc_workflow_1234abcd");
+      expect(deserialized.localSandbox.mode).toBe("minimal");
+    });
   });
 });
