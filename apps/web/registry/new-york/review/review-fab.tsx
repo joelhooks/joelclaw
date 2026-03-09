@@ -41,6 +41,7 @@ export function ReviewFab({ contentId, contentType, contentSlug }: ReviewFabProp
         contentId={contentId}
         contentType={contentType}
         contentSlug={contentSlug}
+        resourceId={contentId}
       />
     </>
   );

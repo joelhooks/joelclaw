@@ -446,6 +446,7 @@ export async function GET(request: NextRequest) {
       .slice(0, limit);
 
     const origin = request.nextUrl.origin;
+    const topHit = hits[0];
     const searchResult: SearchResult = {
       query: q,
       hits,
@@ -457,11 +458,11 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(
       envelope(command, searchResult, [
-        ...(hits.length > 0 ? [{
-          command: hits[0].url.startsWith("http")
-            ? `curl -sS "${hits[0].url}"`
-            : `curl -sS "${origin}${hits[0].url}"`,
-          description: `Read top result: ${hits[0].title}`,
+        ...(topHit ? [{
+          command: topHit.url.startsWith("http")
+            ? `curl -sS "${topHit.url}"`
+            : `curl -sS "${origin}${topHit.url}"`,
+          description: `Read top result: ${topHit.title}`,
         }] : []),
         {
           command: `curl -sS "${origin}/api/search?q=${encodeURIComponent(q)}&limit=${Math.min(limit + 10, 50)}${requestedCollection ? `&collection=${encodeURIComponent(requestedCollection)}` : ""}"`,
