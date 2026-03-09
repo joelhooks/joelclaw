@@ -172,6 +172,8 @@ const { text } = await infer("Your prompt", {
 
 This shells to `pi -p --no-session --no-extensions`. Zero config, zero API cost. **NEVER** use OpenRouter, read auth.json, or use paid API keys directly.
 
+If the function is doing long-form editorial or other large-context LLM work, set an explicit `timeout` on `infer()` instead of inheriting the shared 120s default. Current earned example: `content/review.submitted` rewrite/retry/verify runs use a 300s budget because long posts can blow past 120s after all preflight bookkeeping already succeeded.
+
 ### Gateway Context
 
 All functions receive `gateway` context via middleware (ADR-0144). Use it for notifications:

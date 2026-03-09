@@ -74,6 +74,7 @@ type FailureEventData = {
 };
 
 const REVIEW_MODEL = "openai-codex/gpt-5.4";
+const REVIEW_INFERENCE_TIMEOUT_MS = 300_000;
 const MAX_FEEDBACK_VERIFICATION_RETRIES = 2;
 
 function parseContentType(value: string): ContentType {
@@ -643,6 +644,7 @@ async function rewriteContent(args: {
     system: systemPromptForContentType(args.contentType),
     component: "content-review",
     action: "content.review.apply",
+    timeout: REVIEW_INFERENCE_TIMEOUT_MS,
   });
 
   const rewritten = stripMarkdownFence(result.text).trim();
@@ -729,6 +731,7 @@ async function rewriteContentWithMissedFeedback(args: {
     system: systemPromptForContentType(args.contentType),
     component: "content-review",
     action: "content.review.retry",
+    timeout: REVIEW_INFERENCE_TIMEOUT_MS,
   });
 
   const rewritten = stripMarkdownFence(result.text).trim();
@@ -883,6 +886,7 @@ async function verifyFeedbackApplication(args: {
         "You are a strict editor QA verifier. Return only JSON. Do not include markdown fences.",
       component: "content-review",
       action: "content.review.verify",
+      timeout: REVIEW_INFERENCE_TIMEOUT_MS,
     });
 
     const parsed = parseJsonArrayFromText(result.text);
