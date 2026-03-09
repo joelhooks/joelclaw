@@ -104,7 +104,7 @@ This package eliminates ad-hoc type duplication between Restate and system-bus. 
 **Current live path: local sandbox runner on the host worker**
 - `executionMode: "sandbox"` is live in `system/agent-dispatch`
 - Default `sandboxBackend` is still `"local"`
-- Each local run now resolves a deterministic sandbox identity/path under `~/.joelclaw/sandboxes/`, materializes a per-sandbox `.sandbox.env`, injects that sandbox identity into the live agent process environment, writes sandbox state to the JSON registry, and persists artifact bundles into the sandbox directory
+- Each local run now resolves a deterministic sandbox identity/path under `~/.joelclaw/sandboxes/`, preserves a request-derived hash in both `sandboxId` and `COMPOSE_PROJECT_NAME` so long shared request prefixes still diverge cleanly, materializes a per-sandbox `.sandbox.env`, injects that sandbox identity into the live agent process environment, writes sandbox state to the JSON registry, and persists artifact bundles into the sandbox directory
 - Terminal local sandboxes now carry a retention decision (`cleanupAfter`) and the local backend opportunistically prunes expired retained sandboxes before starting a new run
 - `@joelclaw/agent-execution` now includes copy-first `.devcontainer` materialization helpers with exclusion rules for env/secret junk, plus a concurrent package-level proof that two local sandboxes keep distinct `COMPOSE_PROJECT_NAME` values and isolated copied devcontainer state
 - `InboxResult` snapshots for local sandbox runs now carry `localSandbox` metadata so cancellation and operator follow-up can see the sandbox identity/path/env/registry surface
