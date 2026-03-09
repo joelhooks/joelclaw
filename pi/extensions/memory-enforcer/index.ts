@@ -16,9 +16,15 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
 
 const RECALL_TIMEOUT_MS = parsePositiveInt(process.env.JOELCLAW_MEMORY_RECALL_TIMEOUT_MS, 15_000);
 const RECALL_LIMIT = parsePositiveInt(process.env.JOELCLAW_MEMORY_RECALL_LIMIT, 5);
-const RECALL_QUERY =
-  process.env.JOELCLAW_MEMORY_RECALL_QUERY ||
-  "recent decisions, active work, unresolved failures, and operational context";
+const DEFAULT_RECALL_QUERY = "recent decisions, active work, unresolved failures, and operational context";
+const GATEWAY_RECALL_QUERY = "gateway daemon telegram redis session routing compaction";
+
+function getRecallQuery(): string {
+  const override = process.env.JOELCLAW_MEMORY_RECALL_QUERY?.trim();
+  if (override) return override;
+  if (CHANNEL === "central" || CHANNEL === "gateway") return GATEWAY_RECALL_QUERY;
+  return DEFAULT_RECALL_QUERY;
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
@@ -71,6 +77,19 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
+function isUsefulRecallObservation(observation: string): boolean {
+  const trimmed = observation.trim();
+  if (!trimmed) return false;
+
+  const junkPatterns = [
+    /^Acknowledged\. Let me pause and summarize/iu,
+    /## Plan Summary/iu,
+    /\bShould I:\b/iu,
+  ];
+
+  return !junkPatterns.some((pattern) => pattern.test(trimmed));
+}
+
 function emitOtel(
   action: string,
   metadata: Record<string, unknown>,
@@ -106,7 +125,8 @@ function emitOtel(
 
 function runRecallCommand(): Promise<string> {
   return new Promise((resolve, reject) => {
-    const args = ["recall", RECALL_QUERY, "--limit", String(RECALL_LIMIT), "--json"];
+    const recallQuery = getRecallQuery();
+    const args = ["recall", recallQuery, "--limit", String(RECALL_LIMIT), "--json"];
     const child = spawn(JOELCLAW_BIN, args, {
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
@@ -204,19 +224,22 @@ async function seedSystemKnowledge(
   trigger: "before_agent_start" | "session_start" = "before_agent_start",
 ): Promise<void> {
   const startedAt = Date.now();
+  const recallQuery = getRecallQuery();
 
   emitOtel("system_knowledge.retrieval.started", {
     session_id: sessionId,
     channel: CHANNEL,
     trigger,
+    query: recallQuery,
   });
 
   try {
-    const result = await querySystemKnowledge(RECALL_QUERY);
+    const result = await querySystemKnowledge(recallQuery);
     emitOtel("system_knowledge.retrieval.completed", {
       session_id: sessionId,
       channel: CHANNEL,
       trigger,
+      query: recallQuery,
       result_length: result.length,
       has_results: result.length > 0,
       latency_ms: Date.now() - startedAt,
@@ -244,6 +267,7 @@ async function seedSystemKnowledge(
         session_id: sessionId,
         channel: CHANNEL,
         trigger,
+        query: recallQuery,
         error: errorMessage(error),
         latency_ms: Date.now() - startedAt,
       },
@@ -265,7 +289,7 @@ function formatRecallHits(rawOutput: string, maxHits = 5): string[] {
       if (!hit || typeof hit !== "object") continue;
       const h = hit as Record<string, unknown>;
       const obs = typeof h.observation === "string" ? h.observation.trim() : "";
-      if (!obs) continue;
+      if (!obs || !isUsefulRecallObservation(obs)) continue;
       const catId = typeof h.categoryId === "string" ? h.categoryId.replace("jc:", "") : "memory";
       const cat = catId.split(":").pop() ?? "memory";
       lines.push(`- [${cat}] ${obs.slice(0, 250)}`);
@@ -302,11 +326,12 @@ function formatKnowledgeHits(rawOutput: string, maxHits = 3): string[] {
 
 function seedRecall(sessionId: string | null, pi: ExtensionAPI): void {
   const startedAt = Date.now();
+  const recallQuery = getRecallQuery();
 
   emitOtel("memory.recall.started", {
     session_id: sessionId,
     channel: CHANNEL,
-    query: RECALL_QUERY,
+    query: recallQuery,
     timeout_ms: RECALL_TIMEOUT_MS,
   });
 
@@ -318,7 +343,7 @@ function seedRecall(sessionId: string | null, pi: ExtensionAPI): void {
       emitOtel("memory.recall.completed", {
         session_id: sessionId,
         channel: CHANNEL,
-        query: RECALL_QUERY,
+        query: recallQuery,
         result_count: resultCount,
         injected_count: hitLines.length,
         latency_ms: Date.now() - startedAt,
@@ -349,7 +374,7 @@ function seedRecall(sessionId: string | null, pi: ExtensionAPI): void {
         {
           session_id: sessionId,
           channel: CHANNEL,
-          query: RECALL_QUERY,
+          query: recallQuery,
           latency_ms: Date.now() - startedAt,
           error: errorMessage(error),
         },

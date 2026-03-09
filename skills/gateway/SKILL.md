@@ -80,7 +80,7 @@ Why:
 - a bad hidden `context-refresh` injection poisons the live gateway session even when `joelclaw gateway status` still reports healthy
 - this showed up as unrelated voice/livekit notes bleeding into the gateway transcript
 
-If Joel says the gateway session feels "fucked" while health checks look green, inspect the gateway session transcript for hidden `context-refresh` / `gateway-recovery` messages before trusting the CLI summary.
+If Joel says the gateway session feels "fucked" while health checks look green, inspect the gateway session transcript for hidden `context-refresh` / `gateway-recovery` / `memory-recall` messages before trusting the CLI summary.
 
 ## Session pressure visibility (ADR-0218 rank 3 slice)
 

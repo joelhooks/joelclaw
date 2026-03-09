@@ -47,6 +47,8 @@ Current contract:
 - skip terse acknowledgements and gateway-generated recovery/context blocks
 - if there is no scoped topic seed, skip rolling recall instead of querying generic global memory
 - compaction recovery may reuse cached scoped recall, but must not invent fresh generic recall context
+- boot-time `memory-enforcer` retrieval for the gateway session must also use a gateway-scoped recall query (`gateway daemon telegram redis session routing compaction`) instead of the generic interactive recall query
+- hidden startup recall should filter obvious meta-junk (`## Plan Summary`, "Should I:", etc.) so the gateway does not inject procedural transcript sludge as memory
 
 This is a safety fix: better to inject no extra memory than poison the gateway session with unrelated context.
 
