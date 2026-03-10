@@ -8,7 +8,7 @@ services:
     healthcheck:
       test:
         - CMD
-        - true
+        - "true"
       interval: 2s
       timeout: 2s
       retries: 10
