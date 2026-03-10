@@ -426,6 +426,9 @@ function buildSandboxTask(
     `Sandbox base SHA: ${options.baseSha}`,
     "Do not reference or mutate the host checkout path directly. Work only inside the sandbox checkout path above.",
     `Use ${options.workDir} as the effective working directory unless the task explicitly says otherwise.`,
+    "Do not trigger nested workflow-rig execution from inside this sandbox.",
+    "Specifically: do not run `joelclaw workload run`, do not run `scripts/verify-workload-full-mode.ts`, and do not spawn another workload canary from inside this stage.",
+    "If proof is required, use direct local commands in this sandbox and return the evidence directly instead of starting another workload.",
   ];
 
   if (options.workflowId) {

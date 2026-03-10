@@ -871,6 +871,16 @@ const buildExternalSkillInstallCommand = (name: string): string =>
 const buildReadSkillCommand = (path: string): string =>
   `read ${shellQuote(path)}`;
 
+const isNestedWorkflowRigSandboxExecution = (
+  env: NodeJS.ProcessEnv = process.env,
+): boolean => {
+  const sandboxExecution = env.JOELCLAW_SANDBOX_EXECUTION?.trim().toLowerCase() === "true";
+  const workflowId = env.JOELCLAW_SANDBOX_WORKFLOW_ID?.trim();
+  const allowNested = env.JOELCLAW_ALLOW_NESTED_WORKFLOW_RIG?.trim().toLowerCase() === "true";
+
+  return sandboxExecution && Boolean(workflowId) && !allowNested;
+};
+
 const inferWorkloadSkillRecommendations = (
   input: NormalizedPlannerInput,
   request: WorkloadRequest,
@@ -4159,6 +4169,19 @@ const runCmd = Command.make(
         return;
       }
 
+      if (!dryRun && isNestedWorkflowRigSandboxExecution()) {
+        yield* Console.log(
+          respondError(
+            "workload run",
+            "Nested workflow-rig execution is blocked inside sandboxed stage runs",
+            "WORKLOAD_RUN_NESTED_SANDBOX_RECURSION_BLOCKED",
+            "Run direct proof commands inside the sandbox, or set JOELCLAW_ALLOW_NESTED_WORKFLOW_RIG=true only for deliberate recursion debugging",
+            [],
+          ),
+        );
+        return;
+      }
+
       const parsedEither = yield* Effect.try({
         try: () => parseWorkloadPlanArtifact(planArtifact),
         catch: (error) =>
@@ -4363,4 +4386,5 @@ export const __workloadTestUtils = {
   buildExecutionExamples,
   buildPlanNextActions,
   planWorkload,
+  isNestedWorkflowRigSandboxExecution,
 };

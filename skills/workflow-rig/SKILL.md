@@ -101,6 +101,7 @@ When proving runtime work:
 - use the real front door (`joelclaw workload run`), not hand-rolled `system/agent.requested` unless you are debugging below the rig
 - capture honest runtime truth: queue health, drainer health, worker state, inbox state, cleanup state
 - if the rig is broken, say the rig is broken; don’t pretend the sandbox failed when the queue bridge is the real dog
+- inside a sandboxed stage run, do **not** start another workflow-rig canary. Nested `joelclaw workload run` is blocked by default, and repo-local verifier scripts that call it are the wrong move for stage execution
 
 ## Rules
 

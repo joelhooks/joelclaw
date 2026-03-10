@@ -611,6 +611,30 @@ describe("workload CLI command", () => {
     ).toBe(true);
   });
 
+  it("blocks nested workflow-rig execution inside sandboxed stage runs unless explicitly overridden", () => {
+    expect(
+      __workloadTestUtils.isNestedWorkflowRigSandboxExecution({
+        JOELCLAW_SANDBOX_EXECUTION: "true",
+        JOELCLAW_SANDBOX_WORKFLOW_ID: "WL_20260310_010702",
+      } as NodeJS.ProcessEnv),
+    ).toBe(true);
+
+    expect(
+      __workloadTestUtils.isNestedWorkflowRigSandboxExecution({
+        JOELCLAW_SANDBOX_EXECUTION: "true",
+        JOELCLAW_SANDBOX_WORKFLOW_ID: "WL_20260310_010702",
+        JOELCLAW_ALLOW_NESTED_WORKFLOW_RIG: "true",
+      } as NodeJS.ProcessEnv),
+    ).toBe(false);
+
+    expect(
+      __workloadTestUtils.isNestedWorkflowRigSandboxExecution({
+        JOELCLAW_SANDBOX_EXECUTION: "false",
+        JOELCLAW_SANDBOX_WORKFLOW_ID: "WL_20260310_010702",
+      } as NodeJS.ProcessEnv),
+    ).toBe(false);
+  });
+
   it("warns that dispatch is overkill for bounded inline stage-1 work", () => {
     const artifactDir = rememberTempDir(
       mkdtempSync(join(tmpdir(), "workload-dispatch-inline-")),

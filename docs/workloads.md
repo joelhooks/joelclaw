@@ -245,6 +245,7 @@ Semantics:
 - defaults to `--tool pi`; `--tool codex|claude` is opt-in
 - infers `executionMode=host|sandbox` from the planned workload unless the operator overrides it
 - when sandbox execution is selected, the canonical front door can also carry `--sandbox-backend local|k8s` and `--sandbox-mode minimal|full`
+- nested workflow-rig execution from inside a sandboxed stage is blocked by default; stage work should use direct local proof commands inside the current sandbox instead of launching another `joelclaw workload run`
 - supports `--dry-run` so the operator can inspect the normalized runtime request before enqueueing it
 - returns queue admission details (`streamId`, `eventId`, priority, triage mode) once enqueued
 - **does not pretend queue emit is the only front door anymore** — raw `joelclaw queue emit` remains the substrate escape hatch, while `workload run` is the canonical bridge from workload artifacts to runtime admission

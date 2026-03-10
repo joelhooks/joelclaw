@@ -10,7 +10,7 @@ const repoRoot = dirname(scriptDir)
 const fixtureDir = join(repoRoot, "packages/agent-execution/__fixtures__/full-mode-runtime")
 const inboxDir = join(process.env.HOME || "/Users/joel", ".joelclaw", "workspace", "inbox")
 const artifactDir = mkdtempSync(join(tmpdir(), "workload-full-mode-"))
-const pollTimeoutMs = 240_000
+const pollTimeoutMs = 600_000
 const pollIntervalMs = 2_000
 
 type CliEnvelope<T> = {
@@ -88,9 +88,20 @@ async function waitForTerminalResult(requestId: string): Promise<InboxResult> {
   throw new Error(`Timed out waiting for terminal inbox result: ${requestId}`)
 }
 
+if (
+  process.env.JOELCLAW_SANDBOX_EXECUTION?.trim().toLowerCase() === "true" &&
+  process.env.JOELCLAW_ALLOW_NESTED_WORKFLOW_RIG?.trim().toLowerCase() !== "true"
+) {
+  throw new Error(
+    "scripts/verify-workload-full-mode.ts must not run from inside a sandboxed workflow-rig stage; use direct local proof commands in the current sandbox instead",
+  )
+}
+
 const planIntent = [
   "Dogfood ADR-0221 full local sandbox mode through the workflow rig.",
   "For stage-2, run inside the fixture repo only.",
+  "Use direct local commands in the current sandbox.",
+  "Do not run joelclaw workload run, do not run joelclaw workload dispatch, and do not run scripts/verify-workload-full-mode.ts from inside the sandbox.",
   "Use bash to print a single line in the format full-mode-ok|$JOELCLAW_SANDBOX_MODE|$COMPOSE_PROJECT_NAME|$(pwd).",
   "Return that exact line and do not touch files outside the fixture.",
 ].join(" ")
