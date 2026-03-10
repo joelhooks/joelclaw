@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { Command, Options } from "@effect/cli"
 import { Console, Effect } from "effect"
@@ -50,6 +50,27 @@ type AgentDispatchCanaryStatus = {
   error?: string
 }
 
+type AgentDispatchCanaryLatestSummary = {
+  requestId: string
+  mode: "on-demand" | "scheduled"
+  status: "running" | "completed" | "failed" | "cancelled"
+  updatedAt: string
+  completedAt?: string
+  error?: string
+  sandboxId?: string
+}
+
+const AGENT_DISPATCH_CANARY_INBOX_PREFIXES = [
+  "agent-dispatch-timeout-",
+  "health-agent-dispatch-timeout-",
+] as const
+const AGENT_DISPATCH_CANARY_INBOX_DIR = join(
+  process.env.HOME || "/Users/joel",
+  ".joelclaw",
+  "workspace",
+  "inbox",
+)
+
 const agentDispatchCanaryOption = Options.boolean("agent-dispatch-canary").pipe(
   Options.withDefault(false),
   Options.withDescription("Run the deterministic non-LLM agent-dispatch timeout canary as part of status"),
@@ -81,6 +102,52 @@ function resolveAgentDispatchCanaryScriptPath(): string {
   const cwdCandidate = resolve(process.cwd(), script)
   if (existsSync(cwdCandidate)) return cwdCandidate
   return join(resolveJoelclawRepoRoot(), script)
+}
+
+function resolveAgentDispatchCanaryMode(requestId: string): "on-demand" | "scheduled" {
+  return requestId.startsWith("health-agent-dispatch-timeout-") ? "scheduled" : "on-demand"
+}
+
+function readLatestAgentDispatchCanarySummary(
+  inboxDir = AGENT_DISPATCH_CANARY_INBOX_DIR,
+): AgentDispatchCanaryLatestSummary | null {
+  if (!existsSync(inboxDir)) {
+    return null
+  }
+
+  const candidates = readdirSync(inboxDir)
+    .filter((name) => name.endsWith(".json"))
+    .filter((name) => AGENT_DISPATCH_CANARY_INBOX_PREFIXES.some((prefix) => name.startsWith(prefix)))
+    .map((name) => join(inboxDir, name))
+
+  const parsed = candidates.flatMap((filePath) => {
+    try {
+      const raw = JSON.parse(readFileSync(filePath, "utf8")) as {
+        requestId?: string
+        status?: "running" | "completed" | "failed" | "cancelled"
+        updatedAt?: string
+        completedAt?: string
+        error?: string
+        localSandbox?: { sandboxId?: string }
+      }
+      if (!raw.requestId || !raw.status || !raw.updatedAt) {
+        return []
+      }
+      return [{
+        requestId: raw.requestId,
+        mode: resolveAgentDispatchCanaryMode(raw.requestId),
+        status: raw.status,
+        updatedAt: raw.updatedAt,
+        ...(raw.completedAt ? { completedAt: raw.completedAt } : {}),
+        ...(raw.error ? { error: raw.error } : {}),
+        ...(raw.localSandbox?.sandboxId ? { sandboxId: raw.localSandbox.sandboxId } : {}),
+      } satisfies AgentDispatchCanaryLatestSummary]
+    } catch {
+      return []
+    }
+  })
+
+  return parsed.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ?? null
 }
 
 async function runAgentDispatchCanaryProbe(): Promise<AgentDispatchCanaryStatus> {
@@ -175,6 +242,7 @@ export const statusCmd = Command.make(
     Effect.gen(function* () {
       const inngestClient = yield* Inngest
       const checks = yield* inngestClient.health()
+      const latestAgentDispatchCanary = readLatestAgentDispatchCanarySummary()
       const canary = agentDispatchCanary
         ? yield* Effect.tryPromise({
             try: () => runAgentDispatchCanaryProbe(),
@@ -188,6 +256,7 @@ export const statusCmd = Command.make(
 
       const result = {
         ...checks,
+        latestAgentDispatchCanary,
         agentDispatchCanary: canary,
       }
       const allOk = Object.values(checks).every((c) => c.ok) && canary.ok
@@ -201,6 +270,19 @@ export const statusCmd = Command.make(
       }
       if (!agentDispatchCanary) {
         next.push({ command: "joelclaw status --agent-dispatch-canary", description: "Run the deterministic non-LLM agent-dispatch timeout canary" })
+      }
+      if (latestAgentDispatchCanary) {
+        next.push({
+          command: "python3 -m json.tool <inbox-file>",
+          description: "Inspect the latest persisted agent-dispatch canary snapshot",
+          params: {
+            "inbox-file": {
+              description: "Latest agent-dispatch canary inbox file",
+              value: join(AGENT_DISPATCH_CANARY_INBOX_DIR, `${latestAgentDispatchCanary.requestId}.json`),
+              required: true,
+            },
+          },
+        })
       }
       next.push(
         { command: `joelclaw functions`, description: "View registered functions" },
@@ -249,5 +331,6 @@ export const functionsCmd = Command.make(
 )
 
 export const __statusTestables = {
+  readLatestAgentDispatchCanarySummary,
   resolveAgentDispatchCanaryScriptPath,
 }

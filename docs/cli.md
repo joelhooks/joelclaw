@@ -226,6 +226,7 @@ joelclaw workload
 - supports `--sandbox-backend local|k8s` plus `--sandbox-mode minimal|full` when sandbox execution is the point
 - supports `--dry-run` for request inspection before queue admission
 - returns queue admission details once the request is enqueued
+- if queue admission fails before the runtime request is accepted, `workload run` now writes a terminal inbox snapshot for that `requestId` immediately instead of leaving operators with no truth artifact to inspect
 - `status|explain|cancel` remain planned, not shipped
 - `joelclaw workload sandboxes` is now the operator surface for ADR-0221 local sandbox state:
   - `list` reconciles the registry against per-sandbox `sandbox.json` metadata before reporting retention + filesystem truth, so operator output stops lying about terminal state after older partial writeback failures
@@ -767,6 +768,7 @@ joelclaw status [--agent-dispatch-canary]
 Semantics:
 
 - default `joelclaw status` remains the fast base worker/server health surface
+- default output now also includes `latestAgentDispatchCanary` when a persisted deterministic canary snapshot exists, so operators can see the last proof result without spelunking runs or inbox files
 - `--agent-dispatch-canary` runs `scripts/verify-agent-dispatch-timeout.ts` and folds the deterministic non-LLM `system/agent-dispatch` timeout proof into the returned envelope
 - when requested, the command only reports healthy if both the base health probes and the canary pass
 - this is the canonical on-demand proof surface for the live outer-timeout closeout path; it exists so operators do not have to run the verifier script manually

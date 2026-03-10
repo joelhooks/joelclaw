@@ -12,6 +12,7 @@ import { Args, Command, Options } from "@effect/cli";
 import {
   cleanupLocalSandboxes,
   defaultLocalSandboxRegistryPath,
+  type InboxResult,
   isLocalSandboxEntryExpired,
   type LocalSandboxRegistryEntry,
   pruneExpiredLocalSandboxes,
@@ -29,6 +30,7 @@ import {
 } from "../response";
 
 const WORKLOAD_VERSION = "2026-03-08";
+const WORKLOAD_INBOX_DIR = join(homedir(), ".joelclaw", "workspace", "inbox");
 
 const WORKLOAD_KINDS = [
   "repo.patch",
@@ -343,6 +345,35 @@ type WorkloadRunResult = {
     cancel: false;
   };
 };
+
+function writeQueueAdmissionFailureInbox(
+  runtimeRequest: WorkloadRuntimeRequest,
+  errorMessage: string,
+  now = new Date(),
+): string {
+  mkdirSync(WORKLOAD_INBOX_DIR, { recursive: true });
+  const timestamp = now.toISOString();
+  const result: InboxResult = {
+    requestId: runtimeRequest.requestId,
+    status: "failed",
+    task: runtimeRequest.task,
+    tool: runtimeRequest.tool,
+    error: errorMessage,
+    startedAt: timestamp,
+    updatedAt: timestamp,
+    completedAt: timestamp,
+    durationMs: 0,
+    ...(runtimeRequest.executionMode ? { executionMode: runtimeRequest.executionMode } : {}),
+    ...(runtimeRequest.sandboxBackend ? { sandboxBackend: runtimeRequest.sandboxBackend } : {}),
+    logs: {
+      stdout: "",
+      stderr: errorMessage,
+    },
+  };
+  const inboxPath = join(WORKLOAD_INBOX_DIR, `${runtimeRequest.requestId}.json`);
+  writeFileSync(inboxPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  return inboxPath;
+}
 
 type WorkloadRecommendedExecution =
   | "execute-inline-now"
@@ -4410,13 +4441,42 @@ const runCmd = Command.make(
         }).pipe(Effect.either);
 
         if (queueEither._tag === "Left") {
+          const failureInboxPath = writeQueueAdmissionFailureInbox(
+            result.runtimeRequest,
+            queueEither.left.message,
+          );
           yield* Console.log(
             respondError(
               "workload run",
               queueEither.left.message,
               "WORKLOAD_RUN_QUEUE_ADMISSION_FAILED",
-              "Check the queue registry/worker admission surface, or retry with --dry-run to inspect the normalized runtime request",
-              [],
+              `Check the queue registry/worker admission surface, or retry with --dry-run to inspect the normalized runtime request. Terminal inbox snapshot written to ${failureInboxPath}.`,
+              [
+                {
+                  command: "joelclaw status [--agent-dispatch-canary]",
+                  description: "Check worker health and the latest agent-dispatch proof surface",
+                },
+                {
+                  command: "joelclaw queue stats [--hours <hours>]",
+                  description: "Inspect recent queue dispatch and admission health",
+                  params: {
+                    hours: {
+                      description: "Recent queue stats window",
+                      value: 1,
+                    },
+                  },
+                },
+                {
+                  command: "joelclaw workload sandboxes list --state <state>",
+                  description: "Confirm no local sandbox residue was left behind",
+                  params: {
+                    state: {
+                      description: "Sandbox state filter",
+                      value: "running",
+                    },
+                  },
+                },
+              ],
             ),
           );
           return;
