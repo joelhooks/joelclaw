@@ -151,7 +151,7 @@ const root = Command.make("joelclaw", {}, () =>
             event: "joelclaw event <event-id>",
             events: "joelclaw events [--prefix P] [--hours H] [--count N]",
             functions: "joelclaw functions",
-            status: "joelclaw status",
+            status: "joelclaw status [--agent-dispatch-canary]",
             summary: "joelclaw summary [--hours N] [--format json|text]",
             capabilities: "joelclaw capabilities",
             recover: "joelclaw recover <error-code> [--phase fix] [--execute]",
@@ -208,8 +208,8 @@ const root = Command.make("joelclaw", {}, () =>
         },
         [
           {
-            command: "joelclaw status",
-            description: "Health check all components",
+            command: "joelclaw status [--agent-dispatch-canary]",
+            description: "Health check all components, optionally including the deterministic agent-dispatch timeout canary",
           },
           {
             command: "joelclaw jobs status",

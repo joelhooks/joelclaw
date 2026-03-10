@@ -102,6 +102,7 @@ Semantics:
 ## Command roots
 
 - `joelclaw status`
+  - `--agent-dispatch-canary` runs the deterministic non-LLM timeout canary and folds its terminal truth into the status envelope
 - `joelclaw summary [--hours N] [--format json|text]`
 - `joelclaw runs`
 - `joelclaw run`
@@ -756,6 +757,19 @@ Semantics:
   3. set `trace_runs.status = 500` + terminal `ended_at`
 
 This command exists for cases where Inngest API cancellation returns `not found` for stale RUNNING ghosts after SDK reachability failures.
+
+## Status command
+
+```bash
+joelclaw status [--agent-dispatch-canary]
+```
+
+Semantics:
+
+- default `joelclaw status` remains the fast base worker/server health surface
+- `--agent-dispatch-canary` runs `scripts/verify-agent-dispatch-timeout.ts` and folds the deterministic non-LLM `system/agent-dispatch` timeout proof into the returned envelope
+- when requested, the command only reports healthy if both the base health probes and the canary pass
+- this is the canonical on-demand proof surface for the live outer-timeout closeout path; it exists so operators do not have to run the verifier script manually
 
 ## Build and verify
 

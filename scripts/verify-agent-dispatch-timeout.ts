@@ -11,6 +11,7 @@ const registryPath = join(process.env.HOME || "/Users/joel", ".joelclaw", "sandb
 const pollTimeoutMs = 180_000
 const pollIntervalMs = 2_000
 
+const jsonOnly = process.argv.includes("--json-only")
 const requestSuffix = `${Date.now()}`
 const workflowId = `agent-dispatch-timeout-verify-${requestSuffix}`
 const storyId = "timeout-canary"
@@ -136,7 +137,9 @@ const payload = {
   readFiles: false,
 } as const
 
-console.log(`Dispatching timeout canary: ${requestId}`)
+if (!jsonOnly) {
+  console.log(`Dispatching timeout canary: ${requestId}`)
+}
 sendRequest(payload)
 
 const terminal = await waitForTerminalResult(requestId)
