@@ -244,6 +244,7 @@ Semantics:
 - reuses the dispatch/handoff contract so the runtime payload carries explicit scope, acceptance, remaining gates, and closeout expectations instead of vague chat sludge
 - defaults to `--tool pi`; `--tool codex|claude` is opt-in
 - infers `executionMode=host|sandbox` from the planned workload unless the operator overrides it
+- when sandbox execution is selected, the canonical front door can also carry `--sandbox-backend local|k8s` and `--sandbox-mode minimal|full`
 - supports `--dry-run` so the operator can inspect the normalized runtime request before enqueueing it
 - returns queue admission details (`streamId`, `eventId`, priority, triage mode) once enqueued
 - **does not pretend queue emit is the only front door anymore** — raw `joelclaw queue emit` remains the substrate escape hatch, while `workload run` is the canonical bridge from workload artifacts to runtime admission
@@ -311,13 +312,13 @@ Treat `guidance.adrCoverage` as a best-effort guardrail, not divine revelation. 
   },
   "recommendedSkills": [
     {
-      "name": "agent-workloads",
-      "reason": "Canonical front door for workload planning, dispatch posture, and handoff contracts",
-      "canonicalPath": "/Users/joel/Code/joelhooks/joelclaw/skills/agent-workloads/SKILL.md",
+      "name": "workflow-rig",
+      "reason": "Canonical front door for workload planning, dispatch posture, runtime mode selection, and handoff contracts",
+      "canonicalPath": "/Users/joel/Code/joelhooks/joelclaw/skills/workflow-rig/SKILL.md",
       "installedConsumers": ["agents", "pi"],
       "missingConsumers": ["claude"],
-      "ensureCommand": "joelclaw skills ensure agent-workloads",
-      "readPath": "/Users/joel/Code/joelhooks/joelclaw/skills/agent-workloads/SKILL.md"
+      "ensureCommand": "joelclaw skills ensure workflow-rig",
+      "readPath": "/Users/joel/Code/joelhooks/joelclaw/skills/workflow-rig/SKILL.md"
     }
   ],
   "executionLoop": {
@@ -678,8 +679,9 @@ Avoid:
 
 - `Vault/docs/decisions/0217-event-routing-queue-discipline.md` — why Phase 4 exists
 - `Vault/Projects/09-joelclaw/0217-phase-4-agent-first-workload-ergonomics.md` — broader Phase 4 PRD
-- `skills/agent-workloads/` — agent-facing front door for this model
-- `skills/restate-workflows/` — substrate bridge after workload planning is already clear
+- `skills/workflow-rig/` — canonical agent-facing front door for this model
+- `skills/agent-workloads/` — compatibility alias for older prompts that still name the legacy front door
+- `skills/restate-workflows/` — substrate bridge compatibility alias after workload planning is already clear
 - `docs/cli.md` — shipped CLI semantics and the remaining planned workload surfaces
 
 ## Story 4.1 done criteria
@@ -687,7 +689,7 @@ Avoid:
 Story 4.1 is earned when:
 
 - this vocabulary is canonical in the repo
-- the `agent-workloads` skill uses the same contract
+- the `workflow-rig` skill uses the same contract, with `agent-workloads` retained only as a compatibility alias
 - Phase 4 PRD and ADR-0217 point at the same model
 - future CLI implementation can start from this doc instead of rediscovering the shape from scratch
 

@@ -222,6 +222,7 @@ joelclaw workload
 - reads a saved plan artifact and normalizes it into the canonical queue-backed runtime request
 - emits the queue family `workload/requested`, which the registry maps to `system/agent.requested`
 - defaults to `--tool pi`, with `codex|claude` as explicit opt-ins
+- supports `--sandbox-backend local|k8s` plus `--sandbox-mode minimal|full` when sandbox execution is the point
 - supports `--dry-run` for request inspection before queue admission
 - returns queue admission details once the request is enqueued
 - `status|explain|cancel` remain planned, not shipped

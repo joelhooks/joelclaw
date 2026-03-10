@@ -34,8 +34,9 @@ Recent examples:
 
 - `skills/contributing-to-pi/` captures the upstream contribution discipline we should have applied before filing `badlogic/pi-mono` issue #1899.
 - `skills/joel-writing-style/` captures the public joelclaw.com prose constraints so site articles stop relying on fuzzy vibe-matching.
-- `skills/agent-workloads/` is now the front door for ADR-0217 Phase 4 coding/repo workload planning so agents classify serial / parallel / chained work before worrying about substrate details, and so bounded local slices keep the honest plan → approve → execute/watch posture instead of drifting into queue theatre.
-- `skills/restate-workflows/` remains the substrate bridge for cross-repo ADR-0217 handoff patterns after workload planning is already clear.
+- `skills/workflow-rig/` is now the canonical front door for ADR-0217 workload planning, runtime mode selection, workflow-rig dogfood, and `joelclaw workload run` invocation.
+- `skills/agent-workloads/` remains as a compatibility alias for older prompts that still name the legacy front door.
+- `skills/restate-workflows/` remains the substrate bridge compatibility alias for cross-repo ADR-0217 handoff patterns after workload planning is already clear.
 
 ## Required Shape
 

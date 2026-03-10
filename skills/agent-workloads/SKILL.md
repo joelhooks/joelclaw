@@ -1,7 +1,7 @@
 ---
 name: agent-workloads
 displayName: Agent Workloads
-description: "Plan and steer agent-first coding/repo workloads in joelclaw. Use when the task is development work and you need to choose serial, parallel, or chained execution; shape pi-session steering; decide whether work should stay inline, go durable, or run in a sandbox; or define the handoff contract between workers. Triggers on 'plan this workload', 'serial/parallel/chained', 'repo workflow', 'coding workflow', 'pi steering', 'agent-first workload', 'how should an agent run this task', or any request to make coding work legible before dispatching it."
+description: "Compatibility alias for the canonical `workflow-rig` front door. Use when older prompts mention `agent-workloads` or when you need the legacy workload-planning guidance; for new work, load `workflow-rig` first."
 version: 0.8.0
 author: Joel Hooks
 tags:
@@ -18,13 +18,11 @@ tags:
 
 # Agent Workloads
 
-Use this skill as the **front door** for coding and repo work in joelclaw.
+This skill is now a **compatibility alias**.
 
-If the real question is:
+For new work, load **`workflow-rig`** first. That is the canonical front door for workload planning, runtime mode selection, and workflow-rig dogfood.
 
-> what is this work, how should it run, and what should happen next?
-
-load this skill before touching substrate-specific docs.
+Keep using this skill only when an older prompt already names `agent-workloads` or when you need the historical workload-planning guidance below.
 
 If the work is really about external repo bridging or low-level runtime submission mechanics, _then_ the `restate-workflows` skill may matter. For normal coding/repo work, this skill comes first.
 

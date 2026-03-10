@@ -886,8 +886,8 @@ const inferWorkloadSkillRecommendations = (
   };
 
   addSkill(
-    "agent-workloads",
-    "Canonical front door for workload planning, dispatch posture, and handoff contracts",
+    "workflow-rig",
+    "Canonical front door for workload planning, dispatch posture, runtime mode selection, and handoff contracts",
   );
 
   if (repo.includes("/joelclaw")) {

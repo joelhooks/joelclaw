@@ -386,7 +386,7 @@ describe("workload CLI command", () => {
     expect(plan.guidance.adrCoverage.records).toContain("ADR-0217");
     expect(plan.guidance.recommendedSkills.map((skill) => skill.name)).toEqual(
       expect.arrayContaining([
-        "agent-workloads",
+        "workflow-rig",
         "cli-design",
         "skill-review",
       ]),
