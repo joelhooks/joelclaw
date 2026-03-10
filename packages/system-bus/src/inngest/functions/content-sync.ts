@@ -2,7 +2,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join } from "node:path";
 import matter from "gray-matter";
 import { removeContentResources } from "../../lib/convex";
-import { upsertAdr, upsertDiscovery, upsertPost } from "../../lib/convex-content-sync";
+import { upsertAdr, upsertDiscovery } from "../../lib/convex-content-sync";
+import { discoveryPublishesToJoelclaw, resolveDiscoveryRouting } from "../../lib/discovery-routing";
 import { revalidateContentCache } from "../../lib/revalidate";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
@@ -59,16 +60,41 @@ function listSourceFiles(
   }
 }
 
-function readDiscoverySlug(filePath: string): string {
+type DiscoverySyncState = {
+  slug: string;
+  resourceId: string;
+  eligibleForJoelclaw: boolean;
+};
+
+function readDiscoverySyncState(filePath: string): DiscoverySyncState {
   const fallback = basename(filePath, ".md");
   try {
     const raw = readFileSync(filePath, "utf-8");
     const { data } = matter(raw);
-    return typeof data.slug === "string" && data.slug.trim().length > 0
+    const slug = typeof data.slug === "string" && data.slug.trim().length > 0
       ? data.slug.trim()
       : fallback;
+    const routing = resolveDiscoveryRouting({
+      slug,
+      privateFlag: data.private === true,
+      site: data.site,
+      visibility: data.visibility,
+      canonicalSite: data.canonicalSite,
+      publishTargets: data.publishTargets,
+      routePolicy: data.routePolicy,
+    });
+
+    return {
+      slug,
+      resourceId: `discovery:${slug}`,
+      eligibleForJoelclaw: discoveryPublishesToJoelclaw(routing),
+    };
   } catch {
-    return fallback;
+    return {
+      slug: fallback,
+      resourceId: `discovery:${fallback}`,
+      eligibleForJoelclaw: true,
+    };
   }
 }
 
@@ -158,7 +184,10 @@ async function collectContentGaps(): Promise<ContentGapResult[]> {
     discoverySource.extension,
     discoverySource.skipFiles,
     discoverySource.filePattern,
-  ).map(readDiscoverySlug);
+  )
+    .map(readDiscoverySyncState)
+    .filter((entry) => entry.eligibleForJoelclaw)
+    .map((entry) => entry.slug);
   const discoveryFileSet = new Set(discoveryFiles);
 
   const discoveryDocs = await client.query(listRef, { type: "discovery", limit: 5000 });
@@ -267,17 +296,15 @@ export const contentSync = inngest.createFunction(
               action = await upsertAdr(filePath);
             } else if (source.name === "discoveries") {
               action = await upsertDiscovery(filePath);
-            } else if (source.extension === ".mdx") {
-              action = await upsertPost(filePath);
             } else {
               continue;
             }
-            if (action === "skipped" || action === "draft" || action === "private") {
+            if (action === "skipped" || action === "draft" || action === "private" || action === "offsite") {
               result.skipped++;
             } else {
               result.upserted++;
               if (source.name === "discoveries") {
-                result.writtenSlugs.push(readDiscoverySlug(filePath));
+                result.writtenSlugs.push(readDiscoverySyncState(filePath).slug);
               } else {
                 result.writtenSlugs.push(basename(filePath, extname(filePath)));
               }
@@ -293,8 +320,8 @@ export const contentSync = inngest.createFunction(
       return out;
     });
 
-    // Remove private discoveries from Convex (prevents republishing)
-    const privateRemoved = await step.run("remove-private-discoveries", async () => {
+    // Remove discoveries that should not project to joelclaw (private/off-site/archived)
+    const ineligibleRemoved = await step.run("remove-ineligible-discoveries", async () => {
       const discoverySource = CONTENT_SOURCES.find((s) => s.name === "discoveries");
       if (!discoverySource) return 0;
       const files = listSourceFiles(
@@ -303,24 +330,16 @@ export const contentSync = inngest.createFunction(
         discoverySource.skipFiles,
         discoverySource.filePattern,
       );
-      const privateResourceIds: string[] = [];
-      for (const filePath of files) {
-        try {
-          const raw = readFileSync(filePath, "utf-8");
-          const { data } = matter(raw);
-          if (data.private === true) {
-            const slug = typeof data.slug === "string" && data.slug.trim().length > 0
-              ? data.slug.trim()
-              : basename(filePath, ".md");
-            privateResourceIds.push(`discovery:${slug}`);
-          }
-        } catch {}
+      const ineligibleResourceIds = files
+        .map(readDiscoverySyncState)
+        .filter((entry) => !entry.eligibleForJoelclaw)
+        .map((entry) => entry.resourceId);
+
+      if (ineligibleResourceIds.length > 0) {
+        await removeContentResources(ineligibleResourceIds);
+        console.log(`[content-sync] removed ${ineligibleResourceIds.length} ineligible discoveries from Convex`);
       }
-      if (privateResourceIds.length > 0) {
-        await removeContentResources(privateResourceIds);
-        console.log(`[content-sync] removed ${privateResourceIds.length} private discoveries from Convex`);
-      }
-      return privateResourceIds.length;
+      return ineligibleResourceIds.length;
     });
 
     const totalUpserted = results.reduce((sum, r) => sum + r.upserted, 0);
@@ -393,6 +412,7 @@ export const contentSync = inngest.createFunction(
           totalUpserted,
           totalSkipped,
           totalErrors,
+          ineligibleRemoved,
           content: results.map((r) => ({
             name: r.name,
             sourceCount: r.sourceCount,
@@ -410,6 +430,7 @@ export const contentSync = inngest.createFunction(
       totalUpserted,
       totalSkipped,
       totalErrors,
+      ineligibleRemoved,
       content: results.map((r) => ({
         name: r.name,
         sourceCount: r.sourceCount,

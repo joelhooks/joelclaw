@@ -24,15 +24,42 @@ Signal words/patterns (case-insensitive):
 
 ## Workflow
 
-### 1. Fire `joelclaw discover`
+### 1. Resolve site + visibility first
+
+Preferred explicit fields:
+- `site`: `joelclaw` | `wizardshit` | `shared`
+- `visibility`: `public` | `private` | `archived` | `migration-only`
+
+**Sensible default when not specified**:
+- `site = joelclaw`
+- `visibility = public`
+
+### 2. Canonical operator path when you need the final link back
+
+Use the event surface directly and follow the run to completion:
 
 ```bash
-joelclaw discover <url>
-# or with context if Joel said something specific:
-joelclaw discover <url> -c "what Joel said about it"
+joelclaw send discovery/noted --data '{"url":"<url>","context":"<optional context>","site":"joelclaw","visibility":"public"}' --follow
 ```
 
-That's it. The pipeline handles investigation, titling, tagging, writing, and slogging.
+The terminal run result now includes the final link for the created piece:
+- public joelclaw discoveries → `https://joelclaw.com/cool/<slug>`
+- non-public or off-site captures → `vault:Resources/discoveries/<Title>.md`
+
+**Always return that `finalLink` to Joel**.
+
+If Joel explicitly wants the piece published somewhere other than joelclaw and that venue has its own durable publish surface, route to that venue-specific workflow instead of pretending the joelclaw discovery pipeline published it there. The joelclaw discovery pipeline can carry site/visibility metadata, but it only gives you a public joelclaw URL when the capture is actually eligible for joelclaw publication.
+
+### 3. Compatibility shortcut
+
+`joelclaw discover` still works as the thin fire-and-forget shortcut and now accepts explicit site/visibility too:
+
+```bash
+joelclaw discover <url> --site joelclaw --visibility public
+joelclaw discover <url> -c "what Joel said about it" --site wizardshit --visibility private
+```
+
+But if Joel needs the final link in the same turn, prefer `joelclaw send discovery/noted --follow`.
 
 ### 2. Assess for Monitoring (before moving on)
 

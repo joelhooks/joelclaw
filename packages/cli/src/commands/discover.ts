@@ -4,6 +4,9 @@ import { Inngest } from "../inngest"
 import { enqueueQueueEventViaWorker } from "../lib/queue-admission"
 import { respond } from "../response"
 
+const DISCOVERY_SITES = ["joelclaw", "wizardshit", "shared"] as const
+const DISCOVERY_VISIBILITIES = ["public", "private", "archived", "migration-only"] as const
+
 function isQueuePilotEnabled(name: string): boolean {
   return new Set(
     (process.env.QUEUE_PILOTS ?? "")
@@ -24,13 +27,23 @@ export const discoverCmd = Command.make(
       Options.withDescription("What's interesting about it"),
       Options.optional,
     ),
+    site: Options.choice("site", DISCOVERY_SITES).pipe(
+      Options.withDescription("Canonical site for the captured piece"),
+      Options.withDefault("joelclaw"),
+    ),
+    visibility: Options.choice("visibility", DISCOVERY_VISIBILITIES).pipe(
+      Options.withDescription("Visibility for the captured piece"),
+      Options.withDefault("public"),
+    ),
   },
-  ({ url, context }) =>
+  ({ url, context, site, visibility }) =>
     Effect.gen(function* () {
-      const data: Record<string, unknown> = { url }
+      const data: Record<string, unknown> = { url, site, visibility }
       if (context._tag === "Some") {
         data.context = context.value
       }
+
+      const followPayload = JSON.stringify(data)
 
       if (isQueuePilotEnabled("discovery")) {
         const queued = yield* Effect.tryPromise({
@@ -49,6 +62,8 @@ export const discoverCmd = Command.make(
             {
               url,
               context: context._tag === "Some" ? context.value : undefined,
+              site,
+              visibility,
               event: "discovery/noted",
               mode: "queue",
               streamId: queued.streamId,
@@ -63,6 +78,14 @@ export const discoverCmd = Command.make(
                 description: "Inspect the queued discovery event",
                 params: {
                   "stream-id": { description: "Redis stream ID", value: queued.streamId, required: true },
+                },
+              },
+              {
+                command: "joelclaw send <event> --data <data> --follow",
+                description: "Run the canonical follow path when you need the final link back from discovery-capture",
+                params: {
+                  event: { description: "Event name", value: "discovery/noted", required: true },
+                  data: { description: "JSON payload", value: followPayload, required: true },
                 },
               },
               {
@@ -88,11 +111,21 @@ export const discoverCmd = Command.make(
           {
             url,
             context: context._tag === "Some" ? context.value : undefined,
+            site,
+            visibility,
             event: "discovery/noted",
             mode: "inngest",
             response: result,
           },
           [
+            {
+              command: "joelclaw send <event> --data <data> --follow",
+              description: "Canonical discovery path when you need the final link returned in the terminal result",
+              params: {
+                event: { description: "Event name", value: "discovery/noted", required: true },
+                data: { description: "JSON payload", value: followPayload, required: true },
+              },
+            },
             {
               command: "joelclaw runs [--count <count>]",
               description: "Check discovery-capture progress",

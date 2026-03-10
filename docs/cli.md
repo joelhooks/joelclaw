@@ -292,11 +292,14 @@ joelclaw restate
 ## Discover command
 
 ```bash
-joelclaw discover <url> [-c <context>]
+joelclaw discover <url> [-c <context>] [--site <site>] [--visibility <visibility>]
 ```
 
 Semantics:
 
+- `--site` choices: `joelclaw`, `wizardshit`, `shared`
+- `--visibility` choices: `public`, `private`, `archived`, `migration-only`
+- sensible defaults when omitted: `site=joelclaw`, `visibility=public`
 - default path still emits `discovery/noted` directly to Inngest.
 - when `QUEUE_PILOTS=discovery`, `joelclaw discover` now posts raw event intent to the worker admission endpoint (`POST /internal/queue/enqueue`) instead of writing Redis directly:
   - the worker owns queue admission, static registry lookup, and bounded triage mode resolution
@@ -304,6 +307,13 @@ Semantics:
   - includes `triageMode` + `triage` metadata whenever the family is enabled for shadow or enforce
   - relies on the Restate queue drainer to forward the event onward
 - this keeps discovery pilot clients thin while the server remains the only queue policy surface.
+- `joelclaw discover` is the thin fire-and-forget shortcut. If you need the final link for the created piece in the same turn, use the canonical follow path instead:
+
+```bash
+joelclaw send discovery/noted --data '{"url":"<url>","context":"<optional>","site":"joelclaw","visibility":"public"}' --follow
+```
+
+The terminal result from `discovery-capture` now includes `finalLink`.
 
 ## Subscribe check queue pilot
 

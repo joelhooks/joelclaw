@@ -679,6 +679,8 @@ export type Events = {
     data: {
       url?: string;
       context?: string;
+      site?: "joelclaw" | "wizardshit" | "shared";
+      visibility?: "public" | "private" | "archived" | "migration-only";
     };
   };
   "discovery/captured": {
@@ -686,6 +688,9 @@ export type Events = {
       vaultPath: string;
       topic: string;
       slug: string;
+      site: string;
+      visibility: string;
+      finalLink: string;
       url?: string;
       title?: string;
       tags?: string[];

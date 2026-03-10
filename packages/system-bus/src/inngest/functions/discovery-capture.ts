@@ -1,5 +1,7 @@
 import { $ } from "bun";
+import matter from "gray-matter";
 import { infer } from "../../lib/inference";
+import { buildDiscoveryFinalLink, resolveDiscoveryRouting } from "../../lib/discovery-routing";
 import { enqueueRegisteredQueueEvent, isQueuePilotEnabled } from "../../lib/queue";
 import { emitMeasuredOtelEvent, emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
@@ -11,6 +13,9 @@ type DiscoveryCapturedEventData = {
   vaultPath: string;
   topic: string;
   slug: string;
+  site: string;
+  visibility: string;
+  finalLink: string;
   url?: string;
   title?: string;
 };
@@ -24,6 +29,9 @@ function buildDiscoveryCapturedEventData(input: DiscoveryCapturedEventData): Dis
     vaultPath: input.vaultPath,
     topic: input.topic,
     slug: input.slug,
+    site: input.site.trim(),
+    visibility: input.visibility.trim(),
+    finalLink: input.finalLink.trim(),
   };
 
   if (input.url?.trim()) {
@@ -58,8 +66,13 @@ export const discoveryCapture = inngest.createFunction(
   { event: "discovery/noted" },
   async ({ event, step, ...rest }) => {
     const gateway = (rest as any).gateway as import("../middleware/gateway").GatewayContext | undefined;
-    const { url, context } = event.data;
+    const { url, context, site, visibility } = event.data;
     const today = new Date().toISOString().split("T")[0];
+    const requestedRouting = resolveDiscoveryRouting({
+      slug: "pending-slug",
+      site,
+      visibility,
+    });
 
     return emitMeasuredOtelEvent(
       {
@@ -133,6 +146,8 @@ export const discoveryCapture = inngest.createFunction(
               sourceContent: material.content ?? "",
               today: today as string,
               vaultDir: VAULT_DISCOVERIES,
+              site: requestedRouting.site,
+              visibility: requestedRouting.visibility,
             });
             const output = await infer(prompt, {
               task: "summary",
@@ -143,6 +158,8 @@ export const discoveryCapture = inngest.createFunction(
                 sourceType: material.sourceType ?? "unknown",
                 hasContext: Boolean(context),
                 hasUrl: Boolean(url),
+                site: requestedRouting.site,
+                visibility: requestedRouting.visibility,
               },
             });
             const textOutput = output.text;
@@ -154,20 +171,56 @@ export const discoveryCapture = inngest.createFunction(
           });
 
           // Step 3: Verify + slog
-          const title = await step.run("slog-result", async () => {
+          const resolved = await step.run("resolve-note", async () => {
             const exists = await Bun.file(result.vaultPath).exists();
             if (!exists) {
               console.error(`Discovery note not written: ${result.vaultPath}`);
-              return result.noteName;
+              const finalLink = buildDiscoveryFinalLink({
+                slug: result.noteName,
+                noteName: result.noteName,
+                routing: requestedRouting,
+              });
+              return {
+                title: result.noteName,
+                slug: result.noteName,
+                site: requestedRouting.site,
+                visibility: requestedRouting.visibility,
+                finalLink,
+                publicLink: requestedRouting.joelclawUrl,
+              };
             }
 
-            // Read title from the written file
-            const content = await Bun.file(result.vaultPath).text();
+            const raw = await Bun.file(result.vaultPath).text();
+            const { data, content } = matter(raw);
             const titleMatch = content.match(/^# (.+)$/m);
             const resolvedTitle = titleMatch?.[1] ?? result.noteName;
+            const slug = typeof data.slug === "string" && data.slug.trim().length > 0
+              ? data.slug.trim()
+              : result.noteName;
+            const routing = resolveDiscoveryRouting({
+              slug,
+              privateFlag: data.private === true,
+              site: data.site,
+              visibility: data.visibility,
+              canonicalSite: data.canonicalSite,
+              publishTargets: data.publishTargets,
+              routePolicy: data.routePolicy,
+            });
+            const finalLink = buildDiscoveryFinalLink({
+              slug,
+              noteName: result.noteName,
+              routing,
+            });
 
             await $`slog write --action noted --tool discovery --detail "${resolvedTitle}" --reason "vault:Resources/discoveries/${result.noteName}.md"`.quiet();
-            return resolvedTitle;
+            return {
+              title: resolvedTitle,
+              slug,
+              site: routing.site,
+              visibility: routing.visibility,
+              finalLink,
+              publicLink: routing.joelclawUrl,
+            };
           });
 
           await step.run("otel-discovery-investigate-completed", async () => {
@@ -179,8 +232,11 @@ export const discoveryCapture = inngest.createFunction(
               success: true,
               metadata: {
                 url: url ?? null,
-                slug: result.noteName,
-                title,
+                slug: resolved.slug,
+                title: resolved.title,
+                site: resolved.site,
+                visibility: resolved.visibility,
+                finalLink: resolved.finalLink,
               },
             });
           });
@@ -189,21 +245,24 @@ export const discoveryCapture = inngest.createFunction(
           try {
             const { ensureKnowledge } = await import("../../lib/typesense");
             await ensureKnowledge({
-              id: `discovery:${result.noteName}`,
+              id: `discovery:${resolved.slug}`,
               type: "insight",
-              title: title || result.noteName,
-              content: `Discovery: ${url ?? result.noteName}. ${result.noteName}`,
+              title: resolved.title,
+              content: `Discovery: ${url ?? resolved.slug}. ${resolved.title}`,
               source: `vault:Resources/discoveries/${result.noteName}.md`,
-              tags: ["discovery"],
+              tags: ["discovery", resolved.site, resolved.visibility],
             });
           } catch { /* graceful */ }
 
           const discoveryCapturedData = buildDiscoveryCapturedEventData({
             vaultPath: result.vaultPath,
-            topic: result.noteName,
-            slug: result.noteName,
+            topic: resolved.title,
+            slug: resolved.slug,
+            site: resolved.site,
+            visibility: resolved.visibility,
+            finalLink: resolved.finalLink,
             url,
-            title,
+            title: resolved.title,
           });
 
           const discoveryCapturedMode = shouldQueueDiscoveryCaptured() ? "queue" : "inngest";
@@ -234,7 +293,10 @@ export const discoveryCapture = inngest.createFunction(
               success: true,
               metadata: {
                 mode: discoveryCapturedMode,
-                slug: result.noteName,
+                slug: resolved.slug,
+                site: resolved.site,
+                visibility: resolved.visibility,
+                finalLink: resolved.finalLink,
                 url: url ?? null,
                 queueStreamId: queueResult?.streamId ?? null,
                 eventId: queueResult?.eventId ?? null,
@@ -246,13 +308,16 @@ export const discoveryCapture = inngest.createFunction(
           if (gateway) {
             try {
               await gateway.notify("discovery.captured", {
-                topic: result.noteName,
+                topic: resolved.title,
                 url: url ?? null,
+                finalLink: resolved.finalLink,
+                site: resolved.site,
+                visibility: resolved.visibility,
               });
             } catch {}
           }
 
-          return { status: "captured", ...result };
+          return { status: "captured", ...result, ...resolved };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           await emitOtelEvent({

@@ -64,8 +64,10 @@ Operational boundary for Phase 1:
 - The same host-runner pattern now powers `pi-mono-sync`: a Restate DAG that calls `--task pi-mono-artifacts-sync` to materialize repo docs/issues/PRs/comments/commits/releases into Typesense collection `pi_mono_artifacts`, plus `maintainer_profile` and `sync_state` documents.
 - Discovery-family pilot cutover has started behind two reversible flags:
   - `QUEUE_PILOTS=discovery` makes `joelclaw discover` enqueue `discovery/noted` into the shared queue instead of sending directly to Inngest.
+  - `discovery/noted` now accepts routing metadata: `site` (`joelclaw|wizardshit|shared`) and `visibility` (`public|private|archived|migration-only`). The current default when omitted is `site=joelclaw`, `visibility=public`.
   - `runSubscriptionCheckSingleDirect()` now does the same for feed-published discovery items on the direct Restate/Dkron path, and this has been proved live with `publishMode: queue` on a real subscription check.
   - `QUEUE_PILOTS=discovery-captured` makes the `discovery-capture` function enqueue its follow-up `discovery/captured` event into the shared queue instead of using `step.sendEvent` directly.
+  - `discovery-capture` now resolves routing metadata from the written note, computes a `finalLink`, and returns/forwards `site`, `visibility`, and `finalLink` in its completion payload.
   - the legacy Inngest `subscription/check-single` path still uses `step.sendEvent` for now, so pilot cutover remains incremental and reversible.
 - Subscription-request pilot cutover has now started behind `QUEUE_PILOTS=subscriptions`:
   - unscoped `joelclaw subscribe check` enqueues `subscription/check-feeds.requested` into the shared queue instead of posting directly to Inngest.

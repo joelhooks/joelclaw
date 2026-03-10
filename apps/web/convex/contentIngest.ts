@@ -44,6 +44,13 @@ const discoveryFieldsValidator = v.object({
   tags: v.array(v.string()),
   relevance: v.string(),
   content: v.string(),
+  site: v.optional(v.string()),
+  visibility: v.optional(v.string()),
+  canonicalSite: v.optional(v.string()),
+  publishTargets: v.optional(v.array(v.string())),
+  routePolicy: v.optional(v.string()),
+  joelclawPath: v.optional(v.string()),
+  joelclawUrl: v.optional(v.string()),
 });
 
 type ContentType = "adr" | "post" | "discovery";

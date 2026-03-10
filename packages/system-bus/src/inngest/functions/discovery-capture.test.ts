@@ -32,6 +32,9 @@ describe("discovery capture queue pilot helpers", () => {
         vaultPath: "/tmp/discovery.md",
         topic: "Example",
         slug: "example",
+        site: " joelclaw ",
+        visibility: " public ",
+        finalLink: " https://joelclaw.com/cool/example ",
         url: " https://example.com ",
         title: " Example Title ",
       }),
@@ -39,6 +42,9 @@ describe("discovery capture queue pilot helpers", () => {
       vaultPath: "/tmp/discovery.md",
       topic: "Example",
       slug: "example",
+      site: "joelclaw",
+      visibility: "public",
+      finalLink: "https://joelclaw.com/cool/example",
       url: "https://example.com",
       title: "Example Title",
     });
@@ -50,6 +56,9 @@ describe("discovery capture queue pilot helpers", () => {
         vaultPath: "/tmp/discovery.md",
         topic: "Example",
         slug: "example",
+        site: "joelclaw",
+        visibility: "public",
+        finalLink: "https://joelclaw.com/cool/example",
         url: "  ",
         title: "",
       }),
@@ -57,6 +66,9 @@ describe("discovery capture queue pilot helpers", () => {
       vaultPath: "/tmp/discovery.md",
       topic: "Example",
       slug: "example",
+      site: "joelclaw",
+      visibility: "public",
+      finalLink: "https://joelclaw.com/cool/example",
     });
   });
 });

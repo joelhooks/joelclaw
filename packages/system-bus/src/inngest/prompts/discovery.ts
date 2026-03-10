@@ -12,6 +12,8 @@ export const DISCOVERY_PROMPT = (opts: {
   sourceContent: string;
   today: string;
   vaultDir: string;
+  site: string;
+  visibility: string;
 }) => `Read the joel-writing-style skill at ~/.pi/agent/skills/joel-writing-style/SKILL.md first.
 
 You are writing a discovery note for Joel's Obsidian Vault. This is a note about something Joel found interesting — a repo, tool, article, idea, or pattern worth remembering.
@@ -21,6 +23,8 @@ You are writing a discovery note for Joel's Obsidian Vault. This is a note about
 - URL: ${opts.url ?? "none (conversation)"}
 - Joel said: ${opts.context ?? "(just flagged it as interesting)"}
 - Source type: ${opts.sourceType}
+- Target site: ${opts.site}
+- Visibility: ${opts.visibility}
 - Date: ${opts.today}
 
 ## Source Material
@@ -100,6 +104,8 @@ type: discovery
 slug: {kebab-case-slug}
 source: "${opts.url ?? "conversation"}"
 discovered: "${opts.today}"
+site: "${opts.site}"
+visibility: "${opts.visibility}"
 tags: [your-chosen-tags]
 relevance: "your specific one-liner"
 ---
@@ -122,4 +128,6 @@ If the source is a YouTube/video URL, insert this line immediately after the tit
 After writing the file, print ONLY: DISCOVERY_WRITTEN:{exact filename without .md extension}
 Do NOT print anything else after that line.
 
-IMPORTANT: Write the file with the write tool. Do not ask questions. Just do it.`;
+IMPORTANT:
+- Keep the site and visibility frontmatter values exactly as provided above. Do not improvise them.
+- Write the file with the write tool. Do not ask questions. Just do it.`;

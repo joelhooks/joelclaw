@@ -11,6 +11,7 @@ import { basename, extname } from "node:path";
 import { ConvexHttpClient } from "convex/browser";
 import { anyApi, type FunctionReference } from "convex/server";
 import matter from "gray-matter";
+import { discoveryPublishesToJoelclaw, resolveDiscoveryRouting } from "./discovery-routing";
 
 const CONVEX_URL = process.env.CONVEX_URL?.trim()
   || process.env.NEXT_PUBLIC_CONVEX_URL?.trim()
@@ -61,6 +62,13 @@ type DiscoveryFields = {
   tags: string[];
   relevance: string;
   content: string;
+  site: string;
+  visibility: string;
+  canonicalSite: string;
+  publishTargets: string[];
+  routePolicy: string;
+  joelclawPath?: string;
+  joelclawUrl?: string;
 };
 
 const VALID_STATUSES = [
@@ -200,7 +208,14 @@ function buildDiscoverySearchText(fields: DiscoveryFields): string {
     fields.discovered,
     fields.relevance,
     fields.content,
+    fields.site,
+    fields.visibility,
+    fields.canonicalSite,
+    fields.routePolicy,
+    fields.joelclawPath,
+    fields.joelclawUrl,
     ...fields.tags,
+    ...fields.publishTargets,
   ].filter((p): p is string => typeof p === "string" && p.length > 0).join(" ");
 }
 
@@ -317,8 +332,8 @@ export async function upsertPost(filePath: string): Promise<string> {
 }
 
 /**
- * Upsert a single discovery (MD) file into Convex. Skips private discoveries.
- * Returns "inserted" | "updated" | "skipped" | "private" (skipped because private).
+ * Upsert a single discovery (MD) file into Convex for the joelclaw site.
+ * Returns "inserted" | "updated" | "skipped" | "private" | "offsite".
  */
 export async function upsertDiscovery(filePath: string): Promise<string> {
   if (!existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
@@ -328,12 +343,22 @@ export async function upsertDiscovery(filePath: string): Promise<string> {
   const { data, content } = matter(raw);
   const meta = data as Record<string, unknown>;
 
-  if (meta.private === true) return "private";
-
   const tags = Array.isArray(meta.tags)
     ? meta.tags.filter((t: unknown): t is string => typeof t === "string")
     : [];
   const slug = asString(meta.slug) ?? fallbackSlug;
+  const routing = resolveDiscoveryRouting({
+    slug,
+    privateFlag: meta.private === true,
+    site: meta.site,
+    visibility: meta.visibility,
+    canonicalSite: meta.canonicalSite,
+    publishTargets: meta.publishTargets,
+    routePolicy: meta.routePolicy,
+  });
+
+  if (routing.visibility !== "public") return "private";
+  if (!discoveryPublishesToJoelclaw(routing)) return "offsite";
 
   const fields: DiscoveryFields = {
     title: extractHeadingTitle(content) ?? slug,
@@ -343,6 +368,13 @@ export async function upsertDiscovery(filePath: string): Promise<string> {
     tags,
     relevance: asString(meta.relevance) ?? "",
     content,
+    site: routing.site,
+    visibility: routing.visibility,
+    canonicalSite: routing.canonicalSite,
+    publishTargets: routing.publishTargets,
+    routePolicy: routing.routePolicy,
+    ...(routing.joelclawPath ? { joelclawPath: routing.joelclawPath } : {}),
+    ...(routing.joelclawUrl ? { joelclawUrl: routing.joelclawUrl } : {}),
   };
 
   const result = await getClient().mutation(upsertRef, {
