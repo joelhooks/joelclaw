@@ -155,6 +155,7 @@ describe("MEM-2 client event schema acceptance tests", () => {
     const healthData: Events["system/health.requested"]["data"] = {
       mode: "signals",
       source: "system-health-signals-hourly",
+      agentDispatchCanary: true,
     };
 
     const result = await captureEvent({
@@ -167,6 +168,7 @@ describe("MEM-2 client event schema acceptance tests", () => {
       data: {
         mode: "signals",
         source: "system-health-signals-hourly",
+        agentDispatchCanary: true,
       },
     });
   });

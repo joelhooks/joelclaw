@@ -706,6 +706,7 @@ export type Events = {
       component?: string;
       mode?: "core" | "signals" | "full";
       source?: string;
+      agentDispatchCanary?: boolean;
     };
   };
   "system/health.signals.requested": {
@@ -1583,6 +1584,7 @@ export type Events = {
       component?: string;
       mode?: "core" | "signals" | "full";
       source?: string;
+      agentDispatchCanary?: boolean;
     };
   };
   "memory/friction.requested": {

@@ -6,7 +6,9 @@ import { getRedisClient, getRedisPort } from "../../lib/redis";
  */
 
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   buildServiceHealthCandidates,
   type EndpointCandidateFailure,
@@ -32,6 +34,7 @@ type ServiceStatus = {
   skippedCandidates?: EndpointCandidateFailure[];
 };
 type HealthCheckMode = "core" | "signals" | "full";
+type HealthCanaryScheduleMode = "off" | "signals";
 type HealthSlicePolicy = {
   cadenceMinutes: number;
   importance: "critical" | "high" | "medium";
@@ -44,6 +47,10 @@ const VALID_HEALTH_CHECK_MODES = new Set<HealthCheckMode>([
   "core",
   "signals",
   "full",
+]);
+const VALID_HEALTH_CANARY_SCHEDULE_MODES = new Set<HealthCanaryScheduleMode>([
+  "off",
+  "signals",
 ]);
 
 const HEALTH_SLICE_POLICIES: Record<HealthCheckMode, HealthSlicePolicy> = {
@@ -89,6 +96,23 @@ const INNGEST_RUNTIME_HEALING_DOMAIN = "inngest-runtime";
 const INNGEST_RUNTIME_HEALTH_REQUEST_EVENT = "system/inngest.runtime.health.requested";
 const HEALTH_OTEL_GAP_LAST_NOTIFIED_KEY = "memory:health:otel_gap:last_notified";
 const HEALTH_OTEL_GAP_NOTIFY_COOLDOWN_SECONDS = 10 * 60;
+const HEALTH_AGENT_DISPATCH_CANARY_SCHEDULE_MODE_ENV = "HEALTH_AGENT_DISPATCH_CANARY_SCHEDULE";
+const HEALTH_AGENT_DISPATCH_CANARY_INBOX_DIR = join(
+  process.env.HOME || "/Users/joel",
+  ".joelclaw",
+  "workspace",
+  "inbox",
+);
+const HEALTH_AGENT_DISPATCH_CANARY_REGISTRY_PATH = join(
+  process.env.HOME || "/Users/joel",
+  ".joelclaw",
+  "sandboxes",
+  "registry.json",
+);
+const HEALTH_AGENT_DISPATCH_CANARY_TIMEOUT_SECONDS = 5;
+const HEALTH_AGENT_DISPATCH_CANARY_SLEEP_SECONDS = 120;
+const HEALTH_AGENT_DISPATCH_CANARY_WAIT_TIMEOUT_MS = 90_000;
+const HEALTH_AGENT_DISPATCH_CANARY_POLL_INTERVAL_MS = 1_000;
 const GATEWAY_HEALING_RETRY_POLICY = {
   maxRetries: 10,
   sleepMinMs: 90_000,
@@ -182,6 +206,162 @@ export function resolveHealthCheckMode(
   }
 
   return eventName === "system/health.check" ? "full" : "core";
+}
+
+export function resolveHealthCanaryScheduleMode(rawMode: unknown): HealthCanaryScheduleMode {
+  if (typeof rawMode === "string") {
+    const normalized = rawMode.trim().toLowerCase();
+    if (VALID_HEALTH_CANARY_SCHEDULE_MODES.has(normalized as HealthCanaryScheduleMode)) {
+      return normalized as HealthCanaryScheduleMode;
+    }
+  }
+
+  return "off";
+}
+
+type AgentDispatchCanaryRegistryEntry = {
+  requestId: string;
+  sandboxId: string;
+  state: "running" | "completed" | "failed" | "cancelled";
+  updatedAt: string;
+  cleanupAfter?: string;
+};
+
+type AgentDispatchCanaryHealthResult = {
+  enabled: boolean;
+  ok: boolean;
+  summary: string;
+  requestId?: string;
+  workflowId?: string;
+  baseSha?: string;
+  terminalStatus?: "running" | "completed" | "failed" | "cancelled";
+  terminalError?: string;
+  registryState?: string | null;
+  stillRunning?: { requestId?: string; sandboxId?: string; state?: string } | null;
+  logs?: {
+    stdout?: string;
+    stderr?: string;
+  };
+  error?: string;
+};
+
+type AgentDispatchCanaryInboxResult = {
+  requestId: string;
+  status: "running" | "completed" | "failed" | "cancelled";
+  error?: string;
+  result?: string;
+  logs?: {
+    stdout?: string;
+    stderr?: string;
+  };
+};
+
+async function resolveHealthCanaryRepoRootAndSha(): Promise<{ repoRoot: string; baseSha: string }> {
+  const cwd = process.cwd();
+  const repoRoot = (await Bun.$`git -C ${cwd} rev-parse --show-toplevel`.text()).trim() || cwd;
+  const baseSha = (await Bun.$`git -C ${repoRoot} rev-parse --short=8 HEAD`.text()).trim();
+  if (!baseSha) {
+    throw new Error("failed to resolve base SHA for health canary");
+  }
+  return { repoRoot, baseSha };
+}
+
+async function waitForAgentDispatchCanaryTerminalResult(
+  requestId: string,
+): Promise<AgentDispatchCanaryInboxResult> {
+  const inboxPath = join(HEALTH_AGENT_DISPATCH_CANARY_INBOX_DIR, `${requestId}.json`);
+  const deadline = Date.now() + HEALTH_AGENT_DISPATCH_CANARY_WAIT_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    const file = Bun.file(inboxPath);
+    if (await file.exists()) {
+      const parsed = (await file.json()) as AgentDispatchCanaryInboxResult;
+      if (parsed.status !== "running") {
+        return parsed;
+      }
+    }
+
+    await Bun.sleep(HEALTH_AGENT_DISPATCH_CANARY_POLL_INTERVAL_MS);
+  }
+
+  throw new Error(`Timed out waiting for terminal inbox result: ${requestId}`);
+}
+
+async function readAgentDispatchCanaryRegistryEntry(
+  requestId: string,
+): Promise<AgentDispatchCanaryRegistryEntry | null> {
+  const file = Bun.file(HEALTH_AGENT_DISPATCH_CANARY_REGISTRY_PATH);
+  if (!(await file.exists())) return null;
+
+  const registry = (await file.json()) as { entries?: AgentDispatchCanaryRegistryEntry[] };
+  return registry.entries?.find((entry) => entry.requestId === requestId) ?? null;
+}
+
+async function runAgentDispatchTimeoutCanaryHealthProbe(): Promise<AgentDispatchCanaryHealthResult> {
+  const requestSuffix = `${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const requestId = `health-agent-dispatch-timeout-${requestSuffix}`;
+  const workflowId = `health-agent-dispatch-timeout-${requestSuffix}`;
+  const storyId = "health-timeout-canary";
+  const { repoRoot, baseSha } = await resolveHealthCanaryRepoRootAndSha();
+
+  await inngest.send({
+    name: "system/agent.requested",
+    data: {
+      requestId,
+      workflowId,
+      storyId,
+      baseSha,
+      task: "Scheduled health timeout canary for system/agent-dispatch.",
+      tool: "canary",
+      canary: {
+        scenario: "sleep-timeout",
+        sleepSeconds: HEALTH_AGENT_DISPATCH_CANARY_SLEEP_SECONDS,
+      },
+      cwd: repoRoot,
+      timeout: HEALTH_AGENT_DISPATCH_CANARY_TIMEOUT_SECONDS,
+      executionMode: "sandbox",
+      sandboxBackend: "local",
+      sandbox: "read-only",
+      readFiles: false,
+    },
+  });
+
+  const terminal = await waitForAgentDispatchCanaryTerminalResult(requestId);
+  const registryEntry = await readAgentDispatchCanaryRegistryEntry(requestId);
+  const stillRunning = registryEntry?.state === "running"
+    ? {
+        requestId: registryEntry.requestId,
+        sandboxId: registryEntry.sandboxId,
+        state: registryEntry.state,
+      }
+    : null;
+  const ok =
+    terminal.status === "failed" &&
+    Boolean(terminal.error?.includes("timed out")) &&
+    registryEntry?.state === "failed" &&
+    !stillRunning;
+
+  return {
+    enabled: true,
+    ok,
+    summary: ok
+      ? `agent-dispatch timeout canary passed (${requestId})`
+      : `agent-dispatch timeout canary returned unexpected truth (${requestId})`,
+    requestId,
+    workflowId,
+    baseSha,
+    terminalStatus: terminal.status,
+    terminalError: terminal.error,
+    registryState: registryEntry?.state ?? null,
+    stillRunning,
+    logs: terminal.logs,
+    ...(ok
+      ? {}
+      : {
+          error:
+            terminal.error || `terminal=${terminal.status} registry=${registryEntry?.state ?? "missing"}`,
+        }),
+  };
 }
 
 function getNumericEnv(name: string, fallback: number): number {
@@ -786,6 +966,9 @@ export const checkSystemHealth = inngest.createFunction(
       eventName,
       (event.data as { mode?: unknown } | undefined)?.mode,
     );
+    const agentDispatchCanaryRequested = Boolean(
+      (event.data as { agentDispatchCanary?: unknown } | undefined)?.agentDispatchCanary,
+    );
     const slicePolicy = HEALTH_SLICE_POLICIES[mode];
     const flowContext = buildSelfHealingFlowContext({
       sourceFunction: "system/check-system-health",
@@ -906,6 +1089,7 @@ export const checkSystemHealth = inngest.createFunction(
 
     let otelErrorRate: OtelErrorRateSummary | null = null;
     let writeGateDrift: WriteGateDriftSummary | null = null;
+    let agentDispatchCanary: AgentDispatchCanaryHealthResult | null = null;
 
     if (runSignalChecks) {
       otelErrorRate = await withTiming(stepDurationsMs, "signals.check-otel-error-rate", async () =>
@@ -919,15 +1103,24 @@ export const checkSystemHealth = inngest.createFunction(
       );
     }
 
+    if (agentDispatchCanaryRequested) {
+      agentDispatchCanary = await withTiming(
+        stepDurationsMs,
+        "signals.check-agent-dispatch-timeout-canary",
+        async () => step.run("check-agent-dispatch-timeout-canary", async () => runAgentDispatchTimeoutCanaryHealthProbe()),
+      );
+    }
+
     const otelHealthResult = await withTiming(stepDurationsMs, "summary.emit-otel-health", async () =>
       step.run("emit-otel-health-summary", async () => {
         const degradedCount = services.filter((service) => !service.ok).length;
+        const canaryOk = agentDispatchCanary?.ok ?? true;
         return emitOtelEvent({
-          level: degradedCount === 0 ? "info" : "warn",
+          level: degradedCount === 0 && canaryOk ? "info" : "warn",
           source: "worker",
           component: "check-system-health",
           action: "system.health.checked",
-          success: degradedCount === 0,
+          success: degradedCount === 0 && canaryOk,
           metadata: {
             runContext: flowContext,
             mode,
@@ -948,6 +1141,7 @@ export const checkSystemHealth = inngest.createFunction(
             })),
             otelErrorRate,
             writeGateDrift,
+            agentDispatchCanary,
           },
         });
       })
@@ -985,12 +1179,13 @@ export const checkSystemHealth = inngest.createFunction(
 
     if (!runCoreChecks) {
       return {
-        status: "signals",
+        status: agentDispatchCanary?.ok === false ? "degraded" : "signals",
         mode,
         slicePolicy,
         services,
         otelErrorRate,
         writeGateDrift,
+        agentDispatchCanary,
         stepDurationsMs,
       };
     }
@@ -1010,7 +1205,18 @@ export const checkSystemHealth = inngest.createFunction(
       })
     );
 
-    const degraded = services.filter((s) => !s.ok);
+    const degraded = [
+      ...services.filter((s) => !s.ok),
+      ...(agentDispatchCanary?.ok === false
+        ? [
+            {
+              name: "Agent Dispatch Canary",
+              ok: false,
+              detail: agentDispatchCanary.error ?? agentDispatchCanary.summary,
+            } satisfies ServiceStatus,
+          ]
+        : []),
+    ];
 
     const gatewayCriticalDegrade = degraded.filter((service) =>
       service.name === "Gateway" || service.name === "Redis"
@@ -1376,7 +1582,7 @@ export const checkSystemHealth = inngest.createFunction(
           recordHealthCheckResult("healthy", Date.now())
         )
       );
-      return { status: "noop", mode, slicePolicy, services, stepDurationsMs };
+      return { status: "noop", mode, slicePolicy, services, agentDispatchCanary, stepDurationsMs };
     }
 
     // Filter: don't re-alert about things that already have tasks
@@ -1409,6 +1615,7 @@ export const checkSystemHealth = inngest.createFunction(
         slicePolicy,
         reason: "degraded but already tracked in tasks",
         services,
+        agentDispatchCanary,
         stepDurationsMs,
       };
     }
@@ -1524,6 +1731,7 @@ export const checkSystemHealth = inngest.createFunction(
       degraded: degraded.map((s) => s.name),
       services,
       otelErrorRate,
+      agentDispatchCanary,
       stepDurationsMs,
     };
   }
@@ -1533,12 +1741,17 @@ export const __checkSystemHealthTestUtils = {
   checkInngest,
   checkWorker,
   checkTypesense,
+  resolveHealthCanaryScheduleMode,
 };
 
 export const checkSystemHealthSignalsSchedule = inngest.createFunction(
   { id: "check/system-health-signals-schedule" },
   [{ event: "system/health.signals.requested" }],
   async ({ step, event }) => {
+    const canaryScheduleMode = resolveHealthCanaryScheduleMode(
+      process.env[HEALTH_AGENT_DISPATCH_CANARY_SCHEDULE_MODE_ENV],
+    );
+    const runAgentDispatchCanary = canaryScheduleMode === "signals";
     const gate = await step.run("check-gate", async () => {
       const redis = getRedisClient();
       const now = Date.now();
@@ -1579,6 +1792,8 @@ export const checkSystemHealthSignalsSchedule = inngest.createFunction(
         gateIntervalMs: HEALTH_CHECK_GATE_INTERVAL_MS,
         lastCheckTimestamp: gate.lastCheckTimestamp,
         lastResult: gate.lastResult,
+        agentDispatchCanaryScheduled: runAgentDispatchCanary,
+        agentDispatchCanaryScheduleMode: canaryScheduleMode,
       };
     }
 
@@ -1587,6 +1802,7 @@ export const checkSystemHealthSignalsSchedule = inngest.createFunction(
       data: {
         mode: "signals",
         source: event.name,
+        ...(runAgentDispatchCanary ? { agentDispatchCanary: true } : {}),
       },
     });
 
@@ -1601,6 +1817,8 @@ export const checkSystemHealthSignalsSchedule = inngest.createFunction(
           mode: "signals",
           slicePolicy: HEALTH_SLICE_POLICIES.signals,
           trigger: event.name,
+          agentDispatchCanaryScheduled: runAgentDispatchCanary,
+          agentDispatchCanaryScheduleMode: canaryScheduleMode,
         },
       });
     });
@@ -1611,6 +1829,8 @@ export const checkSystemHealthSignalsSchedule = inngest.createFunction(
       gateIntervalMs: HEALTH_CHECK_GATE_INTERVAL_MS,
       lastCheckTimestamp: gate.lastCheckTimestamp,
       lastResult: gate.lastResult,
+      agentDispatchCanaryScheduled: runAgentDispatchCanary,
+      agentDispatchCanaryScheduleMode: canaryScheduleMode,
     };
   }
 );

@@ -40,6 +40,15 @@ describe("check/system-health mode resolution", () => {
 });
 
 describe("check/system-health schedule gate", () => {
+  test("defaults scheduled canary mode to off", () => {
+    expect(__checkSystemHealthTestUtils.resolveHealthCanaryScheduleMode(undefined)).toBe("off");
+    expect(__checkSystemHealthTestUtils.resolveHealthCanaryScheduleMode("garbage")).toBe("off");
+  });
+
+  test("accepts scheduled canary signals mode", () => {
+    expect(__checkSystemHealthTestUtils.resolveHealthCanaryScheduleMode("signals")).toBe("signals");
+  });
+
   test("skips when last run was healthy within 45 minutes", () => {
     const now = Date.now();
     const shouldSkip = shouldSkipHealthCheckSchedule({
