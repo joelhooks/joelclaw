@@ -16,6 +16,7 @@ Current canonical examples include:
 - `infra/launchd/com.joel.system-bus-worker.plist`
 - `infra/launchd/com.joel.restate-worker.plist`
 - `infra/launchd/com.joel.content-sync-watcher.plist`
+- `infra/launchd/com.joel.local-sandbox-janitor.plist`
 
 When installing or repairing one of these services, prefer a symlink from `~/Library/LaunchAgents/<label>.plist` back to the repo source so launchd follows the git-tracked file.
 
@@ -38,6 +39,18 @@ ln -sfn ~/Code/joelhooks/joelclaw/infra/launchd/com.joel.content-sync-watcher.pl
 launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.joel.content-sync-watcher.plist 2>/dev/null || true
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.joel.content-sync-watcher.plist
 ```
+
+Example for the local sandbox janitor:
+
+```bash
+ln -sfn ~/Code/joelhooks/joelclaw/infra/launchd/com.joel.local-sandbox-janitor.plist \
+  ~/Library/LaunchAgents/com.joel.local-sandbox-janitor.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.joel.local-sandbox-janitor.plist 2>/dev/null || true
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.joel.local-sandbox-janitor.plist
+launchctl print gui/$(id -u)/com.joel.local-sandbox-janitor
+```
+
+This service runs `scripts/local-sandbox-janitor.sh`, which calls `joelclaw workload sandboxes janitor` at load and every 30 minutes. It is the scheduled cleanup layer for ADR-0221 retained local sandboxes; bounded manual cleanup still goes through `joelclaw workload sandboxes cleanup ...`.
 
 ## Dkron phase-1 scheduler (ADR-0216)
 

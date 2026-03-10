@@ -230,6 +230,7 @@ joelclaw workload
   - `list` reconciles the registry against per-sandbox `sandbox.json` metadata before reporting retention + filesystem truth, so operator output stops lying about terminal state after older partial writeback failures
   - `cleanup` is the bounded manual deletion path with `--dry-run` and `--force`, and it performs the same reconciliation before deciding whether a sandbox is still active
   - `janitor` is the dedicated expired-sandbox cleanup path instead of waiting for startup-time opportunistic pruning, and it also reconciles registry drift before computing candidates
+  - scheduled janitoring now lives in the repo-managed launchd service `com.joel.local-sandbox-janitor`, which runs `joelclaw workload sandboxes janitor` at load and every 30 minutes
 
 ## Restate command tree
 

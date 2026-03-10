@@ -265,6 +265,7 @@ Semantics:
   - no longer waits for the next sandbox startup to prune TTL-expired entries
   - reconciles registry drift before computing expired candidates
   - `--dry-run` previews candidates; the live path removes expired sandbox directories and trims the registry
+  - the repo-managed launchd service `com.joel.local-sandbox-janitor` now runs this path automatically at load and every 30 minutes so ADR-0221 cleanup is not purely on-demand
 
 ## Workload request schema
 

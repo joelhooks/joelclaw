@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.joel.local-sandbox-janitor</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/joel/Code/joelhooks/joelclaw/scripts/local-sandbox-janitor.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/joel/Code/joelhooks/joelclaw</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/joel</string>
+        <key>PATH</key>
+        <string>/Users/joel/.bun/bin:/Users/joel/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StartInterval</key>
+    <integer>1800</integer>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/joelclaw/local-sandbox-janitor.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/joelclaw/local-sandbox-janitor.err</string>
+</dict>
+</plist>

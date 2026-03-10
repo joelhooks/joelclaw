@@ -78,6 +78,7 @@ The monorepo follows pnpm workspaces with strict package boundaries:
 - If Redis backlog remains but the drainer stops making progress for `QUEUE_DRAIN_STALL_AFTER_MS`, it emits `queue.drainer.stalled` and exits non-zero so launchd can restart the worker and replay the backlog instead of silently wedging pilot traffic behind a still-listening Bun process
 - The canonical long-running host runtime is launchd service `com.joel.restate-worker` via `scripts/restate/start.sh`; ad-hoc `nohup bun run ...` launches are for short debugging only because opaque restarts contaminate queue soak evidence
 - Provides the current operator-facing sandbox orchestration surface
+- The repo-managed launchd service `com.joel.local-sandbox-janitor` now runs `joelclaw workload sandboxes janitor` at load and every 30 minutes so ADR-0221 retained local sandbox cleanup is scheduled instead of purely manual
 - Hosts the pi-mono research/indexing sync that materializes GitHub docs/issues/PRs/comments/commits/releases into Typesense collection `pi_mono_artifacts` via a Restate DAG + host runner
 
 #### Contract Packages
