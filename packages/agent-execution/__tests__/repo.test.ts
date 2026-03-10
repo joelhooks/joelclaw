@@ -52,6 +52,24 @@ describe("repo materialization", () => {
     expect(actualSha.trim()).toBe(baseSha);
   });
 
+  test("materializeRepo accepts abbreviated SHAs that resolve to the checked-out commit", async () => {
+    const repoPath = join(testDir, "test-repo");
+    const remoteUrl = "https://github.com/joelhooks/joelclaw.git";
+
+    const shaResult = await $`git ls-remote ${remoteUrl} HEAD`.text();
+    const fullSha = shaResult.split("\t")[0].trim();
+    const shortSha = fullSha.slice(0, 8);
+
+    const result = await materializeRepo(repoPath, shortSha, {
+      remoteUrl,
+      branch: "main",
+      depth: 1,
+      timeoutSeconds: 120,
+    });
+
+    expect(result.sha).toBe(fullSha);
+  });
+
   test("materializeRepo fails without remoteUrl for fresh clone", async () => {
     const repoPath = join(testDir, "test-repo");
     const baseSha = "abc123";
@@ -123,6 +141,21 @@ describe("repo materialization", () => {
     const expectedSha = sha.trim();
 
     const isValid = await verifyRepoState(repoPath, expectedSha);
+    expect(isValid).toBe(true);
+  });
+
+  test("verifyRepoState accepts abbreviated SHA prefixes", async () => {
+    const repoPath = join(testDir, "test-repo");
+    await $`git init ${repoPath}`.quiet();
+    await $`git -C ${repoPath} config user.email "test@example.com"`.quiet();
+    await $`git -C ${repoPath} config user.name "Test User"`.quiet();
+    await $`echo "test" > ${repoPath}/test.txt`.quiet();
+    await $`git -C ${repoPath} add test.txt`.quiet();
+    await $`git -C ${repoPath} commit -m "Initial commit"`.quiet();
+
+    const sha = (await $`git -C ${repoPath} rev-parse HEAD`.text()).trim();
+
+    const isValid = await verifyRepoState(repoPath, sha.slice(0, 8));
     expect(isValid).toBe(true);
   });
 

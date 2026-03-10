@@ -913,7 +913,82 @@ export const agentDispatch = inngest.createFunction(
 
           writeInboxSnapshot(result);
         });
+        return;
       }
+
+      await step.run("write-failed-inbox", async () => {
+        const completedAt = new Date().toISOString();
+        const existing = await readInboxResultSnapshot(requestId);
+        const startedAt = existing?.startedAt ?? new Date(Date.now() - 1000).toISOString();
+        const failureMessage = error instanceof Error ? error.message : String(error);
+
+        const localSandboxRetention = resolveLocalSandboxRetention({
+          state: "failed",
+          updatedAt: completedAt,
+        });
+
+        if (
+          executionMode === "sandbox" &&
+          sandboxBackend === "local" &&
+          existing?.localSandbox
+        ) {
+          const localSandbox = existing.localSandbox;
+          await upsertLocalSandboxRegistryEntry(
+            {
+              sandboxId: localSandbox.sandboxId,
+              requestId,
+              workflowId: event.data.event.data.workflowId ?? `sandbox-${requestId}`,
+              storyId: event.data.event.data.storyId ?? requestId,
+              slug: localSandbox.slug,
+              composeProjectName: localSandbox.composeProjectName,
+              mode: localSandbox.mode,
+              baseSha: event.data.event.data.baseSha ?? "unknown",
+              path: localSandbox.path,
+              repoPath: localSandbox.repoPath,
+              envPath: localSandbox.envPath,
+              metadataPath: localSandbox.metadataPath,
+              state: "failed",
+              backend: "local",
+              createdAt: startedAt,
+              updatedAt: completedAt,
+              teardownState: "active",
+              retentionPolicy: localSandboxRetention.policy,
+              cleanupAfter: localSandboxRetention.cleanupAfter,
+              cleanupReason: localSandboxRetention.reason,
+              devcontainerStrategy: "copy",
+            },
+            localSandbox.registryPath,
+          );
+        }
+
+        const result: InboxResult = {
+          requestId,
+          sessionId,
+          status: "failed",
+          task,
+          tool,
+          ...(typeof agent === "string" && agent.trim() ? { agent: agent.trim() } : {}),
+          error: failureMessage,
+          startedAt,
+          updatedAt: completedAt,
+          completedAt,
+          durationMs: Date.now() - new Date(startedAt).getTime(),
+          executionMode,
+          ...(executionMode === "sandbox" ? { sandboxBackend } : {}),
+          ...(existing?.localSandbox
+            ? {
+                localSandbox: {
+                  ...existing.localSandbox,
+                  cleanupAfter: localSandboxRetention.cleanupAfter,
+                },
+              }
+            : {}),
+          ...(existing?.artifacts ? { artifacts: existing.artifacts } : {}),
+          ...(existing?.logs ? { logs: existing.logs } : {}),
+        };
+
+        writeInboxSnapshot(result);
+      });
     },
   },
   { event: "system/agent.requested" },

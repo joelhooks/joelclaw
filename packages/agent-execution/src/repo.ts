@@ -111,7 +111,7 @@ export async function materializeRepo(
 
     // Verify checkout
     const actualSha = await getCurrentSha(targetPath, timeoutSeconds);
-    if (actualSha !== baseSha) {
+    if (!shaMatchesRef(actualSha, baseSha)) {
       throw new RepoMaterializationError(
         `SHA mismatch after checkout: expected ${baseSha}, got ${actualSha}`,
         { path: targetPath, sha: baseSha }
@@ -345,5 +345,15 @@ export async function verifyRepoState(
   timeoutSeconds = 30
 ): Promise<boolean> {
   const actualSha = await getCurrentSha(repoPath, timeoutSeconds);
-  return actualSha === expectedSha;
+  return shaMatchesRef(actualSha, expectedSha);
+}
+
+function shaMatchesRef(actualSha: string, expectedSha: string): boolean {
+  const normalizedActual = actualSha.trim();
+  const normalizedExpected = expectedSha.trim();
+
+  return (
+    normalizedActual === normalizedExpected ||
+    normalizedActual.startsWith(normalizedExpected)
+  );
 }
