@@ -466,6 +466,17 @@ Identity files are reloaded on each `session_start`, so role changes apply on th
 
 Startup logs include `rolePath=...` in the `[identity-inject]` line so role selection is explicit.
 
+## System-session relay packets
+
+System sessions should treat the gateway as the operator relay, not as another mailbox.
+
+- use `joelclaw notify send ...` for operator-facing progress, status, and reports
+- use `joelclaw mail ...` for agent coordination, file reservations, and handoffs
+- relay packets from `system` sessions should include: session handle (when present), current objective, touched surfaces, interesting memory/slog references, desired improvements, blockers, and next move
+- gateway applies ADR-0189 routing policy before anything reaches Joel; low-signal packets may be summarized or suppressed
+
+This keeps the transport split clean: mail for agents, notify for operator relay.
+
 ## Telegram reply routing guard
 
 The daemon now uses a three-layer source resolution strategy for `message_end` routing:

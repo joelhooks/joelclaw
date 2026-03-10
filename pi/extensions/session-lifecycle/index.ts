@@ -471,7 +471,7 @@ const TURN_REMINDER_LINES = [
   "🪵 BEFORE your final response: Did you install, configure, fix, remove, or change any tool/service/infra this turn? If yes → `slog write` NOW, not later. The user should never have to remind you. If NOTHING changed (no installs, no config, no fixes, no infra) → do NOT mention slog at all. No \"no slog needed\" or \"no infra changed\" filler.",
   "📐 joelclaw work should be backed by an ADR. If there isn't one, ask why. Keep ADRs groomed — update status, mark superseded, close what's done.",
   "📋 For non-trivial tasks: ack and summarize your plan BEFORE starting work, then pause ~10 seconds for a possible course-correction. This is NOT a permission gate — proceed after the pause. It's just a window for Joel to intervene if the direction is wrong. Trivial tasks (quick lookups, small edits) don't need this.",
-  "📬 Clawmail protocol is mandatory: use `joelclaw mail` (or `mail_*` wrappers) to announce (`Starting:`/`Task:`/`Status:`/`Done:`), check inbox, reserve edit paths (`joelclaw mail reserve --paths \"...\"`), optionally renew leases when supported by your `joelclaw` build (`joelclaw mail renew ...`), and always release after commit/handoff. Do not call MCP mail endpoints directly.",
+  "📬 Clawmail protocol is mandatory: use `joelclaw mail` (or `mail_*` wrappers) to announce (`Starting:`/`Task:`/`Status:`/`Done:`), check inbox, reserve edit paths (`joelclaw mail reserve --paths \"...\"`), optionally renew leases when supported by your `joelclaw` build (`joelclaw mail renew ...`), and always release after commit/handoff. Use the session handle as the `agent` when one is present. Do not call MCP mail endpoints directly.",
   "📡 Daily monitor+steer loop runs once/day using agent mail traffic + OTEL + prompt-hash effectiveness. Apply any steering hint shown below.",
   "If this turn has no coordination risk or file edits, do NOT mention agent mail at all. No filler. No need to reply to this reminder.",
 ] as const;
@@ -729,11 +729,77 @@ function currentTimestamp(): string {
   });
 }
 
+function currentRoleName(): string {
+  if (process.env.GATEWAY_ROLE === "central") return "gateway";
+  const role = process.env.JOELCLAW_ROLE?.trim();
+  if (role) return role;
+  return "system";
+}
+
+function shouldGenerateSessionHandle(roleName: string): boolean {
+  return roleName === "system" || roleName === "interactive";
+}
+
+const SESSION_HANDLE_STOP_WORDS = new Set([
+  "the", "this", "that", "with", "from", "about", "into", "need", "want", "have", "make", "please", "agent", "session", "system", "role", "prompt", "joelclaw", "joel", "clarify", "update", "fix", "work",
+]);
+
+function simpleHash(value: string): number {
+  let hash = 0;
+  for (const ch of value) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return hash;
+}
+
+function extractSessionKeyword(prompt: string): string {
+  const tokens = prompt
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 4 && !SESSION_HANDLE_STOP_WORDS.has(token));
+
+  return tokens[0] || "session";
+}
+
+function sessionHandleNouns(keyword: string): string[] {
+  if (/(gateway|relay|notify|telegram|operator)/.test(keyword)) return ["Courier", "Router", "Beacon", "Pigeon"];
+  if (/(deploy|build|release|vercel)/.test(keyword)) return ["Wrench", "Fuse", "Anvil", "Beacon"];
+  if (/(memory|recall|vault|slog|notes?)/.test(keyword)) return ["Ledger", "Magpie", "Archive", "Ferret"];
+  if (/(role|prompt|identity|agent)/.test(keyword)) return ["Daemon", "Gremlin", "Sprocket", "Matrix"];
+  if (/(redis|queue|inngest|worker|runtime|cluster|k8s)/.test(keyword)) return ["Pod", "Daemon", "Router", "Wombat"];
+  return ["Gremlin", "Sprocket", "Ferret", "Wombat", "Badger", "Pigeon"];
+}
+
+function generateSessionHandle(prompt: string, roleName: string): string {
+  const adjectives = ["Wry", "Dusty", "Rusty", "Cheeky", "Stubborn", "Minty", "Crooked", "Lucky", "Sleepy", "Nimble", "Polite", "Feral"];
+  const keyword = extractSessionKeyword(prompt);
+  const nouns = sessionHandleNouns(keyword);
+  const hash = simpleHash(`${roleName}:${keyword}:${prompt.slice(0, 120)}`);
+  const adjective = adjectives[hash % adjectives.length] ?? "Wry";
+  const noun = nouns[Math.floor(hash / adjectives.length) % nouns.length] ?? "Gremlin";
+  return `${adjective}${noun}`;
+}
+
+function buildSessionIdentityBlock(roleName: string, sessionHandle: string | null): string {
+  const lines = [
+    "## Session Identity",
+    `- role: \`${roleName}\``,
+  ];
+
+  if (sessionHandle) {
+    lines.push(`- session handle: \`${sessionHandle}\``);
+    lines.push("- use this handle for `joelclaw mail ... --agent <handle>` and `mail_*` wrappers in this session");
+  }
+
+  lines.push("- session handles identify the current session; they do not change your core identity or role");
+  return lines.join("\n");
+}
+
 const LIFECYCLE_AWARENESS = `
 ## Session Lifecycle (auto-managed)
 
 This session is managed by the session-lifecycle extension. What's automated:
 - **Session briefing**: MEMORY.md, today's daily log, recent slog entries, and active Vault projects were auto-injected at session start as a custom message.
+- **Session handle**: system sessions can get a generated per-session handle for coordination/logging.
 - **Pre-compaction flush**: Before compaction, file operations and session metadata are auto-flushed to the daily log (~/.joelclaw/workspace/memory/YYYY-MM-DD.md).
 - **Shutdown handoff**: On session end, a handoff note is auto-written to the daily log and the session is auto-named.
 
@@ -755,6 +821,8 @@ export default function (pi: ExtensionAPI) {
   let sessionStartTime = Date.now();
   let userMessageCount = 0;
   let firstUserMessage = "";
+  const roleName = currentRoleName();
+  let sessionHandle: string | null = null;
   let steeringSnapshotCache: AgentMailSteeringSnapshot | null = null;
   let steeringSnapshotPromise: Promise<AgentMailSteeringSnapshot | null> | null = null;
 
@@ -911,11 +979,12 @@ export default function (pi: ExtensionAPI) {
         };
       }
       pi.setSessionName(name);
+      const suffix = sessionHandle ? ` (handle: ${sessionHandle})` : "";
       return {
         content: [
           {
             type: "text" as const,
-            text: `Session named: "${name}"`,
+            text: `Session named: "${name}"${suffix}`,
           },
         ],
         details: null,
@@ -959,6 +1028,7 @@ export default function (pi: ExtensionAPI) {
     sessionStartTime = Date.now();
     userMessageCount = 0;
     firstUserMessage = "";
+    sessionHandle = null;
     networkErrorSeen.clear();
     steeringSnapshotPromise = null;
     if (steeringSnapshotCache && steeringSnapshotCache.date !== todayStr()) {
@@ -997,11 +1067,23 @@ export default function (pi: ExtensionAPI) {
       if (recentUserMessages.length > 3) recentUserMessages.shift();
     }
 
+    if (!sessionHandle && shouldGenerateSessionHandle(roleName) && typeof event.prompt === "string" && event.prompt.trim().length > 0) {
+      sessionHandle = generateSessionHandle(event.prompt, roleName);
+      emitOtel("session.handle.generated", {
+        roleName,
+        sessionHandle,
+        promptPreview: event.prompt.slice(0, 120),
+      });
+    }
+
+    const sessionIdentityBlock = buildSessionIdentityBlock(roleName, sessionHandle);
+
     // Every turn: lifecycle awareness + timestamp.
     // Slog reference lives in AGENTS.md (shared across all agents).
     // Slog nudge is injected as a message below (recency-biased, pi-only).
     const systemPrompt =
       event.systemPrompt +
+      "\n\n" + sessionIdentityBlock +
       "\n\n" + LIFECYCLE_AWARENESS +
       "\n\nCurrent date and time: " + currentTimestamp();
 
@@ -1025,7 +1107,7 @@ export default function (pi: ExtensionAPI) {
     void ensureDailySteeringSnapshot();
 
     // Build briefing from live system state
-    const sections: string[] = [];
+    const sections: string[] = [buildSessionIdentityBlock(roleName, sessionHandle)];
 
     const memory = readSafe(MEMORY_MD);
     if (memory) {
@@ -1344,9 +1426,10 @@ export default function (pi: ExtensionAPI) {
     const sessionName =
       pi.getSessionName() || firstUserMessage.slice(0, 60) || "unnamed session";
 
+    const sessionLabel = sessionHandle ? `${sessionName} [${sessionHandle}]` : sessionName;
     const handoff = [
       `\n### 📋 Session ended (${timeStamp()})`,
-      `**${sessionName}** — ${duration}min, ${userMessageCount} messages`,
+      `**${sessionLabel}** — ${duration}min, ${userMessageCount} messages`,
     ];
 
     appendToDaily(handoff.join("\n") + "\n");
@@ -1375,6 +1458,7 @@ export default function (pi: ExtensionAPI) {
         userMessageCount,
         duration: duration * 60,
         sessionName,
+        sessionHandle,
         filesRead: [],
         filesModified: [],
         capturedAt: new Date().toISOString(),
