@@ -361,6 +361,8 @@ All subsystems emit structured telemetry:
 - **Gateway Logs** → Pi session transcripts, Redis queue depth
 - **pi-mono Corpus** → Typesense `pi_mono_artifacts` collection (repo docs, issues, PRs, comments, commits, releases, materialized maintainer profile)
 
+ADR-0224 adds the first repo-managed ClickHouse substrate at `k8s/clickhouse.yaml`. Current runtime truth is still Typesense + slog, but the migration target is explicit now: ClickHouse will become the canonical observability store on a local-path PVC with NAS reserved for explicit backup/export, not live pod mounts.
+
 Access via:
 ```bash
 joelclaw otel list --hours 24

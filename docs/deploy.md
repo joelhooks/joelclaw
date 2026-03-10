@@ -8,6 +8,35 @@ Canonical deployment notes for joelclaw runtime services.
 kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/
 ```
 
+## ClickHouse phase-1 substrate (ADR-0224)
+
+Repo-managed manifest: `k8s/clickhouse.yaml`
+
+Phase-1 rules:
+- single-node `StatefulSet`
+- `local-path` PVC (`5Gi`) for hot runtime data
+- **no NAS mount in the live pod**
+- NAS is backup/export only in this phase
+- replace the placeholder password in `clickhouse-secret` before applying for real
+
+Deploy + verify:
+
+```bash
+kubectl apply -f ~/Code/joelhooks/joelclaw/k8s/clickhouse.yaml
+kubectl rollout status statefulset/clickhouse -n joelclaw
+kubectl get svc,pvc -n joelclaw | rg clickhouse
+kubectl logs -n joelclaw clickhouse-0 --tail=100
+kubectl exec -n joelclaw clickhouse-0 -- clickhouse-client --query "SELECT version(), currentDatabase()"
+```
+
+Fast smoke checks:
+
+```bash
+kubectl exec -n joelclaw clickhouse-0 -- clickhouse-client --query "SELECT 1"
+kubectl exec -n joelclaw clickhouse-0 -- clickhouse-client --query "CREATE DATABASE IF NOT EXISTS joelclaw"
+kubectl exec -n joelclaw clickhouse-0 -- clickhouse-client --query "SHOW DATABASES"
+```
+
 ## Canonical launchd sources
 
 Host launchd assets that are part of joelclaw runtime behavior belong in `infra/launchd/`, not as hand-edited one-offs under `~/Library/LaunchAgents`.
