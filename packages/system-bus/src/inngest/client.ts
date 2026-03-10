@@ -1142,7 +1142,17 @@ export type Events = {
       baseSha?: string;
       sessionId?: string;
       task: string;
-      tool: "codex" | "claude" | "pi";
+      tool: "codex" | "claude" | "pi" | "canary";
+      canary?:
+        | {
+            scenario: "sleep-timeout";
+            sleepSeconds?: number;
+          }
+        | {
+            scenario: "orphan-stderr";
+            orphanDelaySeconds?: number;
+            exitCode?: number;
+          };
       agent?: string;
       cwd?: string;
       repoUrl?: string;

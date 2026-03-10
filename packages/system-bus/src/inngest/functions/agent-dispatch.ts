@@ -69,6 +69,19 @@ const SANDBOX_K8S_SERVICE_ACCOUNT = process.env.SANDBOX_K8S_SERVICE_ACCOUNT?.tri
 const SANDBOX_RESULT_CALLBACK_URL = process.env.SANDBOX_RESULT_CALLBACK_URL?.trim() || "http://host.docker.internal:3111/internal/agent-result";
 const INTERNAL_RESULT_TOKEN = process.env.OTEL_EMIT_TOKEN?.trim();
 
+type AgentDispatchTool = "codex" | "claude" | "pi" | "canary";
+
+type AgentDispatchCanary =
+  | {
+      scenario: "sleep-timeout";
+      sleepSeconds?: number;
+    }
+  | {
+      scenario: "orphan-stderr";
+      orphanDelaySeconds?: number;
+      exitCode?: number;
+    };
+
 function taskRequiresFileAccess(task: string): boolean {
   const normalizedTask = task.toLowerCase();
 
@@ -193,6 +206,33 @@ async function runAgentCommand(
   return runCommandWithCapturedOutput(["bash", "-lc", `exec ${command}`], options);
 }
 
+function buildAgentDispatchCanaryCommand(canary: AgentDispatchCanary): string {
+  switch (canary.scenario) {
+    case "sleep-timeout": {
+      const sleepSeconds = Math.max(5, Math.min(600, Math.floor(canary.sleepSeconds ?? 120)));
+      return `sleep ${sleepSeconds}`;
+    }
+
+    case "orphan-stderr": {
+      const orphanDelaySeconds = Math.max(1, Math.min(30, Math.floor(canary.orphanDelaySeconds ?? 2)));
+      const exitCode = Math.max(1, Math.min(255, Math.floor(canary.exitCode ?? 7)));
+      return `bash -lc '(sleep ${orphanDelaySeconds}; echo canary-orphan-stderr >&2) & echo canary-parent-stderr >&2; exit ${exitCode}'`;
+    }
+  }
+}
+
+async function runAgentDispatchCanary(
+  canary: AgentDispatchCanary,
+  options: {
+    cwd: string;
+    timeoutSeconds: number;
+    env: Record<string, string | undefined>;
+    requestId: string;
+  },
+): Promise<CapturedCommandResult> {
+  return runAgentCommand(buildAgentDispatchCanaryCommand(canary), options);
+}
+
 type AgentExecutionResult = {
   status: "completed" | "failed" | "cancelled";
   output: string;
@@ -208,7 +248,8 @@ type AgentExecutionResult = {
 type AgentExecutionInput = {
   requestId: string;
   task: string;
-  tool: "codex" | "claude" | "pi";
+  tool: AgentDispatchTool;
+  canary?: AgentDispatchCanary;
   agent?: string;
   workDir: string;
   timeoutSeconds: number;
@@ -505,6 +546,7 @@ async function executeAgentTask(input: AgentExecutionInput): Promise<AgentExecut
     requestId,
     task,
     tool,
+    canary,
     agent,
     workDir,
     timeoutSeconds,
@@ -573,22 +615,35 @@ async function executeAgentTask(input: AgentExecutionInput): Promise<AgentExecut
       };
     }
 
-    const cmd = buildCommand(tool, task, {
-      model,
-      sandbox,
-      timeout: timeoutSeconds,
-      allowPiTools: piNeedsTools,
-    });
-    const commandResult = await runAgentCommand(cmd, {
-      cwd: workDir,
-      timeoutSeconds,
-      env: sharedEnv,
-      requestId,
-    });
+    const commandResult = tool === "canary"
+      ? await runAgentDispatchCanary(
+          canary ?? { scenario: "sleep-timeout" },
+          {
+            cwd: workDir,
+            timeoutSeconds,
+            env: sharedEnv,
+            requestId,
+          },
+        )
+      : await runAgentCommand(
+          buildCommand(tool, task, {
+            model,
+            sandbox,
+            timeout: timeoutSeconds,
+            allowPiTools: piNeedsTools,
+          }),
+          {
+            cwd: workDir,
+            timeoutSeconds,
+            env: sharedEnv,
+            requestId,
+          },
+        );
 
     if (commandResult.exitCode !== 0) {
+      const failureLabel = tool === "canary" ? "canary command" : "agent command";
       const failureDetail = commandResult.timedOut
-        ? `agent command timed out after ${timeoutSeconds}s`
+        ? `${failureLabel} timed out after ${timeoutSeconds}s`
         : `Exit ${commandResult.exitCode}: ${commandResult.stderr.slice(-5_000) || commandResult.stdout.slice(-5_000) || "command failed"}`;
 
       return {
@@ -1259,6 +1314,7 @@ export const agentDispatch = inngest.createFunction(
       sessionId,
       task,
       tool,
+      canary,
       agent,
       cwd,
       timeout = 600,
@@ -1276,9 +1332,9 @@ export const agentDispatch = inngest.createFunction(
       );
     }
 
-    if (!["codex", "claude", "pi"].includes(tool)) {
+    if (!["codex", "claude", "pi", "canary"].includes(tool)) {
       throw new NonRetriableError(
-        `Unknown tool: ${tool}. Must be codex, claude, or pi.`
+        `Unknown tool: ${tool}. Must be codex, claude, pi, or canary.`
       );
     }
 
@@ -1384,6 +1440,7 @@ export const agentDispatch = inngest.createFunction(
         requestId,
         task,
         tool,
+        canary,
         agent,
         workDir: requestedCwd,
         timeoutSeconds: timeout,
@@ -1571,6 +1628,8 @@ function buildCommand(
 }
 
 export const __testables = {
+  buildAgentDispatchCanaryCommand,
   runAgentCommand,
+  runAgentDispatchCanary,
   runSandboxInfraCommand,
 };
