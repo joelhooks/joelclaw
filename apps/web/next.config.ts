@@ -32,7 +32,12 @@ const nextConfig: NextConfig = {
       },
       {
         source: "/cool/ai-job-scheduling-mac-local-first-video",
-        destination: "/ai-job-scheduling-macos-launchd",
+        destination: "https://wizardshit.ai/local-ai-jobs-launchd",
+        permanent: true,
+      },
+      {
+        source: "/ai-job-scheduling-macos-launchd",
+        destination: "https://wizardshit.ai/local-ai-jobs-launchd",
         permanent: true,
       },
     ];
