@@ -253,14 +253,17 @@ Semantics:
 `joelclaw workload sandboxes` semantics:
 
 - `list` is the operator-facing registry surface for local ADR-0221 sandboxes
+  - reconciles the registry against each sandbox’s `sandbox.json` metadata before reporting state
   - shows state, mode, retention/cleanup posture, teardown state, and whether the sandbox still exists on disk
   - supports `--state`, `--mode`, `--expired`, and `--limit`
 - `cleanup` is the bounded manual cleanup path
   - target by `--request-id`, `--sandbox-id`, `--expired`, or `--all-terminal`
+  - reconciles registry drift before deciding whether a sandbox is still active, so terminal metadata can unblock cleanup without `--force`
   - non-terminal sandboxes are protected unless `--force` is explicit
   - `--dry-run` previews deletions without mutating disk or registry
 - `janitor` is the dedicated expired-sandbox cleanup path
   - no longer waits for the next sandbox startup to prune TTL-expired entries
+  - reconciles registry drift before computing expired candidates
   - `--dry-run` previews candidates; the live path removes expired sandbox directories and trims the registry
 
 ## Workload request schema

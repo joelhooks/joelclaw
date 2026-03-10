@@ -64,6 +64,8 @@ export type {
   MaterializeLocalSandboxEnvOptions,
   PruneExpiredLocalSandboxesOptions,
   PruneExpiredLocalSandboxesResult,
+  ReconcileLocalSandboxRegistryOptions,
+  ReconcileLocalSandboxRegistryResult,
   ResolveLocalSandboxPathsOptions,
   ResolveLocalSandboxRetentionOptions,
 } from "./local.js";
@@ -86,6 +88,7 @@ export {
   materializeLocalSandboxEnv,
   pruneExpiredLocalSandboxes,
   readLocalSandboxRegistry,
+  reconcileLocalSandboxRegistry,
   removeLocalSandboxLayout,
   removeLocalSandboxRegistryEntry,
   resolveLocalSandboxPaths,

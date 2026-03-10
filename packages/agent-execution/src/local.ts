@@ -130,6 +130,7 @@ export interface PruneExpiredLocalSandboxesResult {
   registry: LocalSandboxRegistry;
   removedSandboxIds: string[];
   retainedSandboxIds: string[];
+  reconciledSandboxIds: string[];
 }
 
 export interface CleanupLocalSandboxesOptions {
@@ -152,7 +153,17 @@ export interface CleanupLocalSandboxesResult {
     requestId: string;
     reason: string;
   }>;
+  reconciledSandboxIds: string[];
   dryRun: boolean;
+}
+
+export interface ReconcileLocalSandboxRegistryOptions {
+  registryPath?: string;
+}
+
+export interface ReconcileLocalSandboxRegistryResult {
+  registry: LocalSandboxRegistry;
+  reconciledSandboxIds: string[];
 }
 
 export const LOCAL_SANDBOX_MODES: readonly LocalSandboxMode[] = ["minimal", "full"] as const;
@@ -437,12 +448,49 @@ export async function removeLocalSandboxRegistryEntry(
   return nextRegistry;
 }
 
+export async function reconcileLocalSandboxRegistry(
+  options: ReconcileLocalSandboxRegistryOptions = {},
+): Promise<ReconcileLocalSandboxRegistryResult> {
+  const registryPath = options.registryPath ?? defaultLocalSandboxRegistryPath();
+  const registry = await readLocalSandboxRegistry(registryPath);
+  const reconciledSandboxIds: string[] = [];
+  const nextEntries = await Promise.all(
+    registry.entries.map(async (entry) => {
+      const reconciled = await reconcileLocalSandboxRegistryEntry(entry);
+      if (hasLocalSandboxRegistryDrift(entry, reconciled)) {
+        reconciledSandboxIds.push(entry.sandboxId);
+      }
+      return reconciled;
+    }),
+  );
+
+  if (reconciledSandboxIds.length === 0) {
+    return {
+      registry,
+      reconciledSandboxIds,
+    };
+  }
+
+  const nextRegistry: LocalSandboxRegistry = {
+    version: LOCAL_SANDBOX_REGISTRY_VERSION,
+    entries: nextEntries.sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+  };
+
+  await writeLocalSandboxRegistry(nextRegistry, registryPath);
+
+  return {
+    registry: nextRegistry,
+    reconciledSandboxIds: reconciledSandboxIds.sort((left, right) => left.localeCompare(right)),
+  };
+}
+
 export async function pruneExpiredLocalSandboxes(
   options: PruneExpiredLocalSandboxesOptions = {},
 ): Promise<PruneExpiredLocalSandboxesResult> {
   const registryPath = options.registryPath ?? defaultLocalSandboxRegistryPath();
   const now = options.now ?? new Date();
-  const registry = await readLocalSandboxRegistry(registryPath);
+  const reconciled = await reconcileLocalSandboxRegistry({ registryPath });
+  const registry = reconciled.registry;
   const removedSandboxIds: string[] = [];
   const retainedEntries: LocalSandboxRegistryEntry[] = [];
 
@@ -467,6 +515,7 @@ export async function pruneExpiredLocalSandboxes(
     registry: nextRegistry,
     removedSandboxIds,
     retainedSandboxIds: retainedEntries.map((entry) => entry.sandboxId),
+    reconciledSandboxIds: reconciled.reconciledSandboxIds,
   };
 }
 
@@ -475,7 +524,8 @@ export async function cleanupLocalSandboxes(
 ): Promise<CleanupLocalSandboxesResult> {
   const registryPath = options.registryPath ?? defaultLocalSandboxRegistryPath();
   const now = options.now ?? new Date();
-  const registry = await readLocalSandboxRegistry(registryPath);
+  const reconciled = await reconcileLocalSandboxRegistry({ registryPath });
+  const registry = reconciled.registry;
   const requestIds = new Set((options.requestIds ?? []).map((value) => value.trim()).filter(Boolean));
   const sandboxIds = new Set((options.sandboxIds ?? []).map((value) => value.trim()).filter(Boolean));
   const removedRequestIds = new Set<string>();
@@ -529,6 +579,7 @@ export async function cleanupLocalSandboxes(
     matchedSandboxIds,
     removedSandboxIds,
     skipped,
+    reconciledSandboxIds: reconciled.reconciledSandboxIds,
     dryRun: options.dryRun ?? false,
   };
 }
@@ -587,6 +638,142 @@ export function isLocalSandboxEntryExpired(
   now = new Date(),
 ): boolean {
   return shouldPruneSandboxEntry(entry, now);
+}
+
+type LocalSandboxMetadataRecord = {
+  state?: unknown;
+  updatedAt?: unknown;
+  teardownState?: unknown;
+  baseSha?: unknown;
+  sandbox?: {
+    mode?: unknown;
+    path?: unknown;
+    repoPath?: unknown;
+    envPath?: unknown;
+    metadataPath?: unknown;
+    cleanupAfter?: unknown;
+  };
+  retention?: {
+    policy?: unknown;
+    cleanupAfter?: unknown;
+    reason?: unknown;
+  };
+};
+
+async function reconcileLocalSandboxRegistryEntry(
+  entry: LocalSandboxRegistryEntry,
+): Promise<LocalSandboxRegistryEntry> {
+  const metadata = await readLocalSandboxMetadata(entry.metadataPath);
+  if (!metadata) {
+    return entry;
+  }
+
+  const nextEntry: LocalSandboxRegistryEntry = {
+    ...entry,
+  };
+
+  if (isExecutionStateValue(metadata.state)) {
+    nextEntry.state = metadata.state;
+  }
+
+  if (typeof metadata.updatedAt === "string" && metadata.updatedAt.trim().length > 0) {
+    nextEntry.updatedAt = metadata.updatedAt;
+  }
+
+  if (isLocalSandboxTeardownStateValue(metadata.teardownState)) {
+    nextEntry.teardownState = metadata.teardownState;
+  }
+
+  if (typeof metadata.baseSha === "string" && metadata.baseSha.trim().length > 0) {
+    nextEntry.baseSha = metadata.baseSha;
+  }
+
+  if (metadata.sandbox) {
+    if (isLocalSandboxMode(metadata.sandbox.mode)) {
+      nextEntry.mode = metadata.sandbox.mode;
+    }
+    if (typeof metadata.sandbox.path === "string" && metadata.sandbox.path.trim().length > 0) {
+      nextEntry.path = metadata.sandbox.path;
+    }
+    if (typeof metadata.sandbox.repoPath === "string" && metadata.sandbox.repoPath.trim().length > 0) {
+      nextEntry.repoPath = metadata.sandbox.repoPath;
+    }
+    if (typeof metadata.sandbox.envPath === "string" && metadata.sandbox.envPath.trim().length > 0) {
+      nextEntry.envPath = metadata.sandbox.envPath;
+    }
+    if (typeof metadata.sandbox.metadataPath === "string" && metadata.sandbox.metadataPath.trim().length > 0) {
+      nextEntry.metadataPath = metadata.sandbox.metadataPath;
+    }
+  }
+
+  if (metadata.retention) {
+    if (isLocalSandboxRetentionPolicyValue(metadata.retention.policy)) {
+      nextEntry.retentionPolicy = metadata.retention.policy;
+    }
+    if (typeof metadata.retention.cleanupAfter === "string" && metadata.retention.cleanupAfter.trim().length > 0) {
+      nextEntry.cleanupAfter = metadata.retention.cleanupAfter;
+    }
+    if (typeof metadata.retention.reason === "string" && metadata.retention.reason.trim().length > 0) {
+      nextEntry.cleanupReason = metadata.retention.reason;
+    }
+  }
+
+  if (isTerminalExecutionState(nextEntry.state)) {
+    if (
+      nextEntry.cleanupAfter === undefined &&
+      typeof metadata.sandbox?.cleanupAfter === "string" &&
+      metadata.sandbox.cleanupAfter.trim().length > 0
+    ) {
+      nextEntry.cleanupAfter = metadata.sandbox.cleanupAfter;
+    }
+  } else {
+    nextEntry.retentionPolicy = "active";
+    delete nextEntry.cleanupAfter;
+    delete nextEntry.cleanupReason;
+  }
+
+  return nextEntry;
+}
+
+async function readLocalSandboxMetadata(
+  metadataPath?: string,
+): Promise<LocalSandboxMetadataRecord | null> {
+  if (!metadataPath) {
+    return null;
+  }
+
+  try {
+    const raw = await readFile(metadataPath, "utf8");
+    const parsed = JSON.parse(raw) as LocalSandboxMetadataRecord;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function hasLocalSandboxRegistryDrift(
+  entry: LocalSandboxRegistryEntry,
+  nextEntry: LocalSandboxRegistryEntry,
+): boolean {
+  return JSON.stringify(entry) !== JSON.stringify(nextEntry);
+}
+
+function isExecutionStateValue(value: unknown): value is ExecutionState {
+  return (
+    value === "pending" ||
+    value === "running" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "cancelled"
+  );
+}
+
+function isLocalSandboxTeardownStateValue(value: unknown): value is LocalSandboxTeardownState {
+  return value === "active" || value === "tearing-down" || value === "removed";
+}
+
+function isLocalSandboxRetentionPolicyValue(value: unknown): value is LocalSandboxRetentionPolicy {
+  return value === "active" || value === "ttl";
 }
 
 function compactSlug(parts: string[], maxLength: number, separator = "-"): string {

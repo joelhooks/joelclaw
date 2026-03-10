@@ -20,6 +20,7 @@ import {
   materializeLocalSandboxEnv,
   pruneExpiredLocalSandboxes,
   readLocalSandboxRegistry,
+  reconcileLocalSandboxRegistry,
   removeLocalSandboxLayout,
   removeLocalSandboxRegistryEntry,
   resolveLocalSandboxPaths,
@@ -225,6 +226,152 @@ describe("local sandbox primitives", () => {
 
     const removed = await removeLocalSandboxRegistryEntry(entry.requestId, paths.registryPath);
     expect(removed.entries).toHaveLength(0);
+  });
+
+  test("reconciles registry state from sandbox metadata before reporting terminal truth", async () => {
+    const identity = generateLocalSandboxIdentity({
+      workflowId: "workflow-reconcile",
+      requestId: "req-reconcile-123",
+      storyId: "story-reconcile",
+    });
+    const paths = resolveLocalSandboxPaths(identity, { rootDir: testDir });
+
+    await ensureLocalSandboxLayout(paths);
+    await writeFile(paths.envPath, "COMPOSE_PROJECT_NAME=test\n", "utf8");
+
+    await upsertLocalSandboxRegistryEntry(
+      {
+        ...identity,
+        mode: "full",
+        baseSha: "abc123def456",
+        path: paths.sandboxDir,
+        repoPath: paths.repoDir,
+        envPath: paths.envPath,
+        metadataPath: paths.metadataPath,
+        state: "running",
+        backend: "local",
+        createdAt: "2026-03-09T00:00:00.000Z",
+        updatedAt: "2026-03-09T00:05:00.000Z",
+        teardownState: "active",
+        retentionPolicy: "active",
+        cleanupReason: "sandbox still running",
+        devcontainerStrategy: "copy",
+      },
+      paths.registryPath,
+    );
+
+    await writeFile(
+      paths.metadataPath,
+      `${JSON.stringify(
+        {
+          sandbox: {
+            mode: "full",
+            path: paths.sandboxDir,
+            repoPath: paths.repoDir,
+            envPath: paths.envPath,
+            metadataPath: paths.metadataPath,
+            cleanupAfter: "2026-03-10T00:10:00.000Z",
+          },
+          state: "completed",
+          updatedAt: "2026-03-09T00:10:00.000Z",
+          teardownState: "removed",
+          retention: {
+            policy: "ttl",
+            cleanupAfter: "2026-03-10T00:10:00.000Z",
+            reason: "retain completed sandbox for operator inspection",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const reconciled = await reconcileLocalSandboxRegistry({
+      registryPath: paths.registryPath,
+    });
+
+    expect(reconciled.reconciledSandboxIds).toEqual([identity.sandboxId]);
+    expect(reconciled.registry.entries).toHaveLength(1);
+    expect(reconciled.registry.entries[0]).toMatchObject({
+      requestId: identity.requestId,
+      state: "completed",
+      teardownState: "removed",
+      retentionPolicy: "ttl",
+      cleanupAfter: "2026-03-10T00:10:00.000Z",
+      cleanupReason: "retain completed sandbox for operator inspection",
+      updatedAt: "2026-03-09T00:10:00.000Z",
+    });
+  });
+
+  test("cleanup reconciles terminal metadata before enforcing active-sandbox guards", async () => {
+    const identity = generateLocalSandboxIdentity({
+      workflowId: "workflow-cleanup-reconcile",
+      requestId: "req-cleanup-reconcile-123",
+      storyId: "story-cleanup-reconcile",
+    });
+    const paths = resolveLocalSandboxPaths(identity, { rootDir: testDir });
+
+    await ensureLocalSandboxLayout(paths);
+    await writeFile(paths.envPath, "COMPOSE_PROJECT_NAME=test\n", "utf8");
+
+    await upsertLocalSandboxRegistryEntry(
+      {
+        ...identity,
+        mode: "full",
+        baseSha: "abc123def456",
+        path: paths.sandboxDir,
+        repoPath: paths.repoDir,
+        envPath: paths.envPath,
+        metadataPath: paths.metadataPath,
+        state: "running",
+        backend: "local",
+        createdAt: "2026-03-09T00:00:00.000Z",
+        updatedAt: "2026-03-09T00:05:00.000Z",
+        teardownState: "active",
+        retentionPolicy: "active",
+        cleanupReason: "sandbox still running",
+        devcontainerStrategy: "copy",
+      },
+      paths.registryPath,
+    );
+
+    await writeFile(
+      paths.metadataPath,
+      `${JSON.stringify(
+        {
+          sandbox: {
+            mode: "full",
+            path: paths.sandboxDir,
+            repoPath: paths.repoDir,
+            envPath: paths.envPath,
+            metadataPath: paths.metadataPath,
+            cleanupAfter: "2026-03-10T00:10:00.000Z",
+          },
+          state: "completed",
+          updatedAt: "2026-03-09T00:10:00.000Z",
+          teardownState: "removed",
+          retention: {
+            policy: "ttl",
+            cleanupAfter: "2026-03-10T00:10:00.000Z",
+            reason: "retain completed sandbox for operator inspection",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const cleaned = await cleanupLocalSandboxes({
+      registryPath: paths.registryPath,
+      requestIds: [identity.requestId],
+    });
+
+    expect(cleaned.reconciledSandboxIds).toEqual([identity.sandboxId]);
+    expect(cleaned.removedSandboxIds).toEqual([identity.sandboxId]);
+    expect(cleaned.skipped).toEqual([]);
+    expect(cleaned.registry.entries).toHaveLength(0);
   });
 
   test("cleanup skips active sandboxes unless forced", async () => {

@@ -15,7 +15,7 @@ import {
   isLocalSandboxEntryExpired,
   type LocalSandboxRegistryEntry,
   pruneExpiredLocalSandboxes,
-  readLocalSandboxRegistry,
+  reconcileLocalSandboxRegistry,
 } from "@joelclaw/agent-execution";
 import { Console, Effect } from "effect";
 import { executeCapabilityCommand } from "../capabilities/runtime";
@@ -4483,10 +4483,11 @@ const sandboxesListCmd = Command.make(
       }
 
       const now = new Date();
-      const registry = yield* Effect.tryPromise({
-        try: () => readLocalSandboxRegistry(),
+      const reconciled = yield* Effect.tryPromise({
+        try: () => reconcileLocalSandboxRegistry(),
         catch: (error) => error instanceof Error ? error : new Error(String(error)),
       });
+      const registry = reconciled.registry;
 
       const filtered = registry.entries
         .filter((entry) => !normalizedState || entry.state === normalizedState)
@@ -4499,6 +4500,8 @@ const sandboxesListCmd = Command.make(
         registryPath: defaultLocalSandboxRegistryPath(),
         totalEntries: registry.entries.length,
         filteredEntries: filtered.length,
+        reconciledSandboxIds: reconciled.reconciledSandboxIds,
+        reconciledCount: reconciled.reconciledSandboxIds.length,
         summary: summarizeLocalSandboxEntries(registry.entries, now),
         entries: filtered.slice(0, Math.max(1, limit)).map((entry) => toLocalSandboxListEntry(entry, now)),
       };
@@ -4579,6 +4582,8 @@ const sandboxesCleanupCmd = Command.make(
           matchedSandboxIds: result.matchedSandboxIds,
           removedSandboxIds: result.removedSandboxIds,
           skipped: result.skipped,
+          reconciledSandboxIds: result.reconciledSandboxIds,
+          reconciledCount: result.reconciledSandboxIds.length,
           remainingEntries: result.registry.entries.length,
         }, [
           {
@@ -4601,10 +4606,11 @@ const sandboxesJanitorCmd = Command.make(
   ({ dryRun }) =>
     Effect.gen(function* () {
       const now = new Date();
-      const registry = yield* Effect.tryPromise({
-        try: () => readLocalSandboxRegistry(),
+      const reconciled = yield* Effect.tryPromise({
+        try: () => reconcileLocalSandboxRegistry(),
         catch: (error) => error instanceof Error ? error : new Error(String(error)),
       });
+      const registry = reconciled.registry;
       const candidates = registry.entries.filter((entry) => isLocalSandboxEntryExpired(entry, now));
 
       if (dryRun) {
@@ -4613,6 +4619,8 @@ const sandboxesJanitorCmd = Command.make(
             checkedAt: now.toISOString(),
             registryPath: defaultLocalSandboxRegistryPath(),
             dryRun: true,
+            reconciledSandboxIds: reconciled.reconciledSandboxIds,
+            reconciledCount: reconciled.reconciledSandboxIds.length,
             candidateCount: candidates.length,
             truncated: candidates.length > 25,
             candidates: candidates.slice(0, 25).map((entry) => ({
@@ -4642,6 +4650,8 @@ const sandboxesJanitorCmd = Command.make(
           checkedAt: now.toISOString(),
           registryPath: defaultLocalSandboxRegistryPath(),
           dryRun: false,
+          reconciledSandboxIds: pruned.reconciledSandboxIds,
+          reconciledCount: pruned.reconciledSandboxIds.length,
           removedSandboxIds: pruned.removedSandboxIds,
           removedCount: pruned.removedSandboxIds.length,
           retainedCount: pruned.retainedSandboxIds.length,
