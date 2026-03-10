@@ -3,6 +3,12 @@ import { ConvexHttpClient } from "convex/browser";
 import matter from "gray-matter";
 import { cacheLife, cacheTag } from "next/cache";
 import { api } from "@/convex/_generated/api";
+import {
+  readConvexDeployKey,
+  readConvexUrl,
+  shouldDegradeStaticGenerationWithoutConvex,
+  warnMissingConvexDuringBuild,
+} from "./convex-env";
 import { compareDateDesc, toDateString } from "./date";
 
 /**
@@ -43,23 +49,17 @@ export type Post = {
 
 let convexClient: ConvexHttpClient | null | undefined;
 
-function normalizeEnv(value: string | undefined): string {
-  return value?.replace(/\\n/g, "").trim() ?? "";
-}
-
-function readConvexUrl(): string {
-  return normalizeEnv(process.env.CONVEX_URL) || normalizeEnv(process.env.NEXT_PUBLIC_CONVEX_URL);
-}
-
-function readConvexDeployKey(): string {
-  return normalizeEnv(process.env.CONVEX_DEPLOY_KEY);
-}
-
-function getConvexClient(): ConvexHttpClient {
-  if (convexClient) return convexClient;
+function getConvexClient(): ConvexHttpClient | null {
+  if (convexClient !== undefined) return convexClient;
 
   const convexUrl = readConvexUrl();
   if (!convexUrl) {
+    if (shouldDegradeStaticGenerationWithoutConvex()) {
+      warnMissingConvexDuringBuild("post reads");
+      convexClient = null;
+      return convexClient;
+    }
+
     throw new Error(
       "CONVEX_URL or NEXT_PUBLIC_CONVEX_URL is required for article reads (ADR-0168: Convex is canonical)",
     );
@@ -184,6 +184,8 @@ export async function getAllPosts(): Promise<PostMeta[]> {
   cacheTag("articles");
 
   const convex = getConvexClient();
+  if (!convex) return [];
+
   const [articleDocs, tutorialDocs, essayDocs, noteDocs] = await Promise.all([
     convex.query(api.contentResources.listByType, { type: "article", limit: 2000 }),
     convex.query(api.contentResources.listByType, { type: "tutorial", limit: 2000 }),
@@ -220,6 +222,8 @@ export async function getPost(slug: string): Promise<Post | null> {
   cacheTag(`post:${slug}`);
 
   const convex = getConvexClient();
+  if (!convex) return null;
+
   let docRecord: Record<string, unknown> | null = null;
   let matchedResourceId: string | null = null;
   for (const type of ["article", "tutorial", "essay", "note"] as const) {
@@ -256,6 +260,8 @@ export async function getPostSlugs(): Promise<string[]> {
   cacheTag("articles");
 
   const convex = getConvexClient();
+  if (!convex) return [];
+
   const [articleDocs, tutorialDocs, essayDocs, noteDocs] = await Promise.all([
     convex.query(api.contentResources.listByType, { type: "article", limit: 2000 }),
     convex.query(api.contentResources.listByType, { type: "tutorial", limit: 2000 }),

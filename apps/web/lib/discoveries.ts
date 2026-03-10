@@ -4,6 +4,12 @@ import matter from "gray-matter";
 import { cacheLife, cacheTag } from "next/cache";
 import path from "path";
 import { api } from "@/convex/_generated/api";
+import {
+  readConvexDeployKey,
+  readConvexUrl,
+  shouldDegradeStaticGenerationWithoutConvex,
+  warnMissingConvexDuringBuild,
+} from "./convex-env";
 
 export type DiscoveryMeta = {
   title: string;
@@ -27,18 +33,6 @@ type ParsedDiscoveryFields = {
 };
 
 const discoveriesDir = path.join(process.cwd(), "content", "discoveries");
-
-function normalizeEnv(value: string | undefined): string {
-  return value?.replace(/\\n/g, "").trim() ?? "";
-}
-
-function readConvexUrl(): string {
-  return normalizeEnv(process.env.CONVEX_URL) || normalizeEnv(process.env.NEXT_PUBLIC_CONVEX_URL);
-}
-
-function readConvexDeployKey(): string {
-  return normalizeEnv(process.env.CONVEX_DEPLOY_KEY);
-}
 
 let convexClient: ConvexHttpClient | null | undefined;
 
@@ -272,6 +266,11 @@ export async function getAllDiscoveries(): Promise<DiscoveryMeta[]> {
 
   const convex = getConvexClient();
   if (!convex) {
+    if (shouldDegradeStaticGenerationWithoutConvex()) {
+      warnMissingConvexDuringBuild("discovery listing");
+      return [];
+    }
+
     return fallbackOrThrow({
       message:
         "CONVEX_URL or NEXT_PUBLIC_CONVEX_URL is required for discovery reads (runtime filesystem fallback disabled)",
@@ -330,6 +329,11 @@ export async function getDiscovery(slug: string) {
 
   const convex = getConvexClient();
   if (!convex) {
+    if (shouldDegradeStaticGenerationWithoutConvex()) {
+      warnMissingConvexDuringBuild(`discovery:${slug} read`);
+      return null;
+    }
+
     return fallbackOrThrow({
       message:
         `CONVEX_URL or NEXT_PUBLIC_CONVEX_URL is required for discovery:${slug} reads (runtime filesystem fallback disabled)`,
@@ -376,6 +380,11 @@ export async function getDiscoverySlugs(): Promise<string[]> {
 
   const convex = getConvexClient();
   if (!convex) {
+    if (shouldDegradeStaticGenerationWithoutConvex()) {
+      warnMissingConvexDuringBuild("discovery slug reads");
+      return [];
+    }
+
     return fallbackOrThrow({
       message:
         "CONVEX_URL or NEXT_PUBLIC_CONVEX_URL is required for discovery slug reads (runtime filesystem fallback disabled)",

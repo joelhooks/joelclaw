@@ -3,6 +3,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import { SITE_NAME, SITE_URL } from "@/lib/constants";
+import {
+  isStaticGenerationPlaceholderSlug,
+  mapSlugsToStaticParams,
+} from "@/lib/convex-env";
 import { getDiscovery, getDiscoverySlugs } from "@/lib/discoveries";
 import { mdxComponents } from "@/lib/mdx";
 import { rehypePlugins, remarkPlugins } from "@/lib/mdx-plugins";
@@ -20,13 +24,13 @@ export async function generateStaticParams() {
     .filter((slug) => slug.startsWith("cool/"))
     .map((slug) => slug.slice("cool/".length));
 
-  return Array.from(new Set([...discoverySlugs, ...tutorialSlugs])).map((slug) => ({
-    slug,
-  }));
+  return mapSlugsToStaticParams(Array.from(new Set([...discoverySlugs, ...tutorialSlugs])));
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
+  if (isStaticGenerationPlaceholderSlug(slug)) return {};
+
   const tutorial = await getCoolTutorial(slug);
   if (tutorial) {
     const { meta } = tutorial;
@@ -90,6 +94,8 @@ function tagColor(tag: string): string {
 
 export default async function DiscoveryPage({ params }: Props) {
   const { slug } = await params;
+  if (isStaticGenerationPlaceholderSlug(slug)) notFound();
+
   const tutorial = await getCoolTutorial(slug);
   if (tutorial) return <TutorialPage post={tutorial} />;
 

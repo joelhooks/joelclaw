@@ -7,6 +7,10 @@ import { ConvexReaderProvider } from "@/components/convex-reader-provider";
 import { LazyReviewGate } from "@/components/review/lazy-review-gate";
 import { getAdr, getAdrRouteSlug, getAdrRouteSlugs } from "@/lib/adrs";
 import { SITE_NAME, SITE_URL } from "@/lib/constants";
+import {
+  isStaticGenerationPlaceholderSlug,
+  mapSlugsToStaticParams,
+} from "@/lib/convex-env";
 import { toDateString } from "@/lib/date";
 import { mdxComponents } from "@/lib/mdx";
 import { escapeMdxAngleBrackets } from "@/lib/mdx-escape";
@@ -18,11 +22,13 @@ type Props = { params: Promise<{ slug: string }> };
 
 export async function generateStaticParams() {
   const slugs = await getAdrRouteSlugs();
-  return slugs.map((slug) => ({ slug }));
+  return mapSlugsToStaticParams(slugs);
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
+  if (isStaticGenerationPlaceholderSlug(slug)) return {};
+
   const adr = await getAdr(slug);
   if (!adr) return {};
 
@@ -61,6 +67,8 @@ const STATUS_COLORS: Record<string, string> = {
 /** Entry: request-aware, prepares static header + dynamic MDX/review holes. */
 export default async function AdrPage({ params }: Props) {
   const { slug } = await params;
+  if (isStaticGenerationPlaceholderSlug(slug)) notFound();
+
   const adr = await getAdr(slug);
   if (!adr) notFound();
 

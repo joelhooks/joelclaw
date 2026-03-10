@@ -15,8 +15,11 @@ import { authClient } from "@/lib/auth-client";
 
 function useConvexClient() {
   const ref = useRef<ConvexReactClient | null>(null);
+  const url = process.env.NEXT_PUBLIC_CONVEX_URL?.trim();
+  if (!url) return null;
+
   if (!ref.current) {
-    ref.current = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
+    ref.current = new ConvexReactClient(url);
   }
   return ref.current;
 }
@@ -35,6 +38,7 @@ export function ConvexReviewGate({
   children,
 }: ConvexReviewGateProps) {
   const convex = useConvexClient();
+  if (!convex) return <>{children}</>;
 
   return (
     <ConvexBetterAuthProvider client={convex} authClient={authClient}>

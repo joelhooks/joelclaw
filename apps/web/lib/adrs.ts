@@ -6,6 +6,12 @@ import {
   resolveAdrSourceSlug,
   toAdrRouteSlug,
 } from "@/lib/adr-route";
+import {
+  readConvexDeployKey,
+  readConvexUrl,
+  shouldDegradeStaticGenerationWithoutConvex,
+  warnMissingConvexDuringBuild,
+} from "./convex-env";
 import { toDateString } from "./date";
 
 /**
@@ -46,18 +52,6 @@ type ParsedAdrFields = {
   priority?: AdrPriority;
 };
 
-function normalizeEnv(value: string | undefined): string {
-  return value?.replace(/\\n/g, "").trim() ?? "";
-}
-
-function readConvexUrl(): string {
-  return normalizeEnv(process.env.CONVEX_URL) || normalizeEnv(process.env.NEXT_PUBLIC_CONVEX_URL);
-}
-
-function readConvexDeployKey(): string {
-  return normalizeEnv(process.env.CONVEX_DEPLOY_KEY);
-}
-
 let convexClient: ConvexHttpClient | null | undefined;
 
 const VALID_STATUSES = [
@@ -78,11 +72,17 @@ const VALID_STATUSES = [
 const ADR_NUMBER_PATTERN = /^\d{4}$/;
 const REVIEW_PATTERN = /\breview\b/i;
 
-function getConvexClient(): ConvexHttpClient {
-  if (convexClient) return convexClient;
+function getConvexClient(): ConvexHttpClient | null {
+  if (convexClient !== undefined) return convexClient;
 
   const convexUrl = readConvexUrl();
   if (!convexUrl) {
+    if (shouldDegradeStaticGenerationWithoutConvex()) {
+      warnMissingConvexDuringBuild("ADR reads");
+      convexClient = null;
+      return convexClient;
+    }
+
     throw new Error(
       "CONVEX_URL or NEXT_PUBLIC_CONVEX_URL is required for ADR reads (ADR-0168: Convex is canonical)",
     );
@@ -329,6 +329,8 @@ export async function getAllAdrs(): Promise<AdrMeta[]> {
   cacheTag("adrs");
 
   const convex = getConvexClient();
+  if (!convex) return [];
+
   const docs = await convex.query(api.contentResources.listByType, {
     type: "adr",
     limit: 5000,
@@ -350,6 +352,8 @@ export async function getAdr(slug: string) {
   const canonicalSlug = await resolveCanonicalAdrSlug(slug);
 
   const convex = getConvexClient();
+  if (!convex) return null;
+
   const doc = await convex.query(api.contentResources.getByResourceId, {
     resourceId: `adr:${canonicalSlug}`,
   });
@@ -375,6 +379,8 @@ export async function getAdrSlugs(): Promise<string[]> {
   cacheTag("adrs");
 
   const convex = getConvexClient();
+  if (!convex) return [];
+
   const docs = await convex.query(api.contentResources.listByType, {
     type: "adr",
     limit: 5000,

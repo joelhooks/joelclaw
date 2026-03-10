@@ -9,8 +9,11 @@ import { type ReactNode, useRef } from "react";
  */
 export function ConvexReaderProvider({ children }: { children: ReactNode }) {
   const ref = useRef<ConvexReactClient | null>(null);
+  const url = process.env.NEXT_PUBLIC_CONVEX_URL?.trim();
+  if (!url) return null;
+
   if (!ref.current) {
-    ref.current = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
+    ref.current = new ConvexReactClient(url);
   }
 
   return <ConvexProvider client={ref.current}>{children}</ConvexProvider>;

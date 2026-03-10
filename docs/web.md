@@ -57,6 +57,9 @@ Required paths:
 - `apps/web/app/[slug]/opengraph-image.tsx`, `apps/web/app/[slug]/agent-md/route.ts`, and `apps/web/app/[slug]/md/route.ts` must **not** export `generateStaticParams()`. Let those dynamic-slug routes resolve per-request; build-time slug enumeration was crashing Vercel during page-data collection on Convex-backed reads.
 - `apps/web/app/[slug]/opengraph-image.tsx` must also degrade gracefully if `getPost()` throws, rendering a slug-based generic OG image instead of taking the whole deploy down.
 - Server-side Convex readers (`apps/web/lib/posts.ts`, `apps/web/lib/adrs.ts`, `apps/web/lib/discoveries.ts`, and `apps/web/app/network/page.tsx`) must resolve the Convex URL lazily inside `getConvexClient()`, strip literal `\\n` suffix pollution from env values, and call `setAdminAuth(process.env.CONVEX_DEPLOY_KEY)` when that key is present. Production build-time reads are not reliably public.
+- During `phase-production-build`, if `CONVEX_URL`/`NEXT_PUBLIC_CONVEX_URL` is missing, Convex-backed static generation must degrade to empty lists / `null` lookups instead of throwing. This keeps Vercel deploys alive without restoring filesystem content as a canonical read path. Runtime requests should still fail loudly when Convex env is missing.
+- Cache Components route validation rejects empty `generateStaticParams()` results, so slug routes use a build-only placeholder param when Convex-backed slug lists are empty. The placeholder must immediately resolve to `notFound()` and must never become a real content slug.
+- Client-side Convex providers used by `(convex)` owner routes or realtime islands must no-op or render a fallback shell when `NEXT_PUBLIC_CONVEX_URL` is absent during prerender; never instantiate `ConvexReactClient` with an empty address.
 
 ## CLAWMAIL view-source convention
 

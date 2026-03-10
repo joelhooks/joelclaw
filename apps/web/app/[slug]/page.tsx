@@ -10,6 +10,10 @@ import { CopyAsPrompt } from "@/components/copy-as-prompt";
 import { LazyFeedbackStatusIsland } from "@/components/review/lazy-feedback-status-island";
 import { LazyReviewGate } from "@/components/review/lazy-review-gate";
 import { SITE_NAME, SITE_URL } from "@/lib/constants";
+import {
+  isStaticGenerationPlaceholderSlug,
+  mapSlugsToStaticParams,
+} from "@/lib/convex-env";
 import { blogPostingJsonLd, breadcrumbJsonLd } from "@/lib/jsonld";
 import { mdxComponents } from "@/lib/mdx";
 import { rehypePlugins, remarkPlugins } from "@/lib/mdx-plugins";
@@ -20,11 +24,13 @@ type Props = { params: Promise<{ slug: string }> };
 
 export async function generateStaticParams() {
   const slugs = await getPostSlugs();
-  return slugs.map((slug) => ({ slug }));
+  return mapSlugsToStaticParams(slugs);
 }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
+  if (isStaticGenerationPlaceholderSlug(slug)) return {};
+
   const post = await getPost(slug);
   if (!post) return {};
 
@@ -61,6 +67,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function PostPage({ params }: Props) {
   const { slug } = await params;
+  if (isStaticGenerationPlaceholderSlug(slug)) notFound();
   return <StaticArticleShell slug={slug} />;
 }
 
