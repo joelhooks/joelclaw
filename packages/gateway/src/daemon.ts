@@ -1402,6 +1402,35 @@ const fallbackController = new ModelFallbackController(
   fallbackTelemetryAdapter,
 );
 
+const FALLBACK_OPERATOR_NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
+let lastFallbackOperatorAlertAt = 0;
+
+function isGatewayQuietHours(): boolean {
+  const pstString = new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" });
+  const pstHour = new Date(pstString).getHours();
+  return pstHour >= 23 || pstHour < 7;
+}
+
+function shouldSendFallbackTelegramNotice(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+
+  const isActivation = trimmed.startsWith("⚠️ Gateway falling back to ");
+  const isRecovery = trimmed.startsWith("✅ Gateway recovered to primary model:");
+
+  if (!isActivation && !isRecovery) return false;
+  if (isGatewayQuietHours()) return false;
+  if (isRecovery) return false;
+
+  const now = Date.now();
+  if (now - lastFallbackOperatorAlertAt < FALLBACK_OPERATOR_NOTIFY_COOLDOWN_MS) {
+    return false;
+  }
+
+  lastFallbackOperatorAlertAt = now;
+  return true;
+}
+
 // Track prompt dispatch timing for stuck-session detection.
 // If a turn is stuck for >10m, abort once, then restart daemon if no recovery
 // signal (turn_end or next model turn start) arrives within grace window.
@@ -4298,7 +4327,7 @@ fallbackController.init(
   },
   (text: string) => {
     console.log("[gateway:fallback]", text);
-    if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
+    if (TELEGRAM_TOKEN && TELEGRAM_USER_ID && shouldSendFallbackTelegramNotice(text)) {
       sendTelegram(TELEGRAM_USER_ID, text, { silent: false }).catch(() => {});
     }
   },

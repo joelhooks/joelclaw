@@ -144,6 +144,12 @@ Current rank-6 behavior also sends immediate degrade/recover alerts from the dae
 
 Telegram retrying `getUpdates` conflicts no longer read as healthy fallback: when polling is down and only retrying, the ownership contract degrades visibly in `/health`, `gateway status`, and `gateway diagnose`.
 
+Low-signal operator-spam guardrails now also apply:
+- treat `restate` / `restate/*` sources as automation for batching, so successful queue-dispatch DAG completions don’t hit the live gateway session immediately
+- suppress `test.gateway-e2e` from operator delivery by default
+- drop low-signal-only digests (heartbeat-only / queue-dispatch-complete-only) instead of prompting the model for a pointless `HEARTBEAT_OK`
+- routine fallback swap/recovery notices are not operator-facing during quiet hours, and recovery notices are log/OTEL-only unless some higher-signal path escalates them
+
 Muted degraded channels now also flip to `manual` with the known-issue reason surfaced as repair guidance, instead of falsely advertising a restart policy that the watchdog will skip while muted.
 
 Still not done: stricter cross-channel ownership enforcement and richer/native repair automation beyond CLI-guided manual steps.

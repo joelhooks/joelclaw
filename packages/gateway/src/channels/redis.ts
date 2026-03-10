@@ -448,7 +448,24 @@ function isDegradationOrErrorEvent(event: SystemEvent): boolean {
 }
 
 function isAutomationEvent(event: SystemEvent): boolean {
-  return event.source.startsWith("inngest/");
+  const source = event.source.trim().toLowerCase();
+  return source.startsWith("inngest/")
+    || source === "restate"
+    || source.startsWith("restate/");
+}
+
+function isLowSignalDigestEvent(event: SystemEvent): boolean {
+  if (event.type === "cron.heartbeat" || event.type === "test.gateway-e2e") {
+    return true;
+  }
+
+  if (event.type === "notify.message" && event.source.trim().toLowerCase().startsWith("restate/")) {
+    const payload = event.payload as Record<string, unknown>;
+    const prompt = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
+    return prompt.startsWith("✅ DAG \"queue-dispatch:");
+  }
+
+  return false;
 }
 
 /**
@@ -589,6 +606,7 @@ async function drainEvents(): Promise<void> {
       "content.synced",          // vault sync confirmation
       "media/received",          // media pipeline progress - fires 5+ times per image, no agent action needed
       "progress",                // inngest step progress events — noisy, not actionable
+      "test.gateway-e2e",        // internal probe, never operator-facing by default
     ]);
 
     const BATCHED_TYPES = new Set([
@@ -1021,6 +1039,14 @@ export async function flushBatchDigest(): Promise<number> {
   }
 
   if (events.length === 0) return 0;
+
+  if (events.every(isLowSignalDigestEvent)) {
+    console.log("[redis] batch digest suppressed (low-signal only)", {
+      count: events.length,
+      eventTypes: events.map((event) => event.type),
+    });
+    return 0;
+  }
 
   // Group by type for a compact summary
   const counts = new Map<string, number>();
