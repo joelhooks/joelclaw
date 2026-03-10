@@ -157,11 +157,14 @@ const runningContainers = composeProjectName
     ]).split("\n").map((line) => line.trim()).filter(Boolean)
   : []
 
+const proofLine = terminal.result?.match(/full-mode-ok\|full\|[^\n`]+/)?.[0]
+
 const report = {
   planArtifactPath,
   requestId: terminal.requestId,
   status: terminal.status,
   result: terminal.result,
+  proofLine,
   error: terminal.error,
   localSandbox: terminal.localSandbox,
   runningContainers,
@@ -173,8 +176,8 @@ if (terminal.status !== "completed") {
   throw new Error(`Expected completed full-mode workload run, got ${terminal.status}: ${terminal.error || "no error"}`)
 }
 
-if (!terminal.result?.startsWith("full-mode-ok|full|")) {
-  throw new Error(`Unexpected result payload: ${terminal.result || "missing result"}`)
+if (!proofLine?.startsWith("full-mode-ok|full|")) {
+  throw new Error(`Unexpected proof line: ${proofLine || terminal.result || "missing result"}`)
 }
 
 if (terminal.localSandbox?.mode !== "full") {
