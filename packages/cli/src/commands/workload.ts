@@ -289,6 +289,7 @@ type WorkloadRuntimeRequest = {
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   executionMode?: "host" | "sandbox";
   sandboxBackend?: "local" | "k8s";
+  sandboxMode?: "minimal" | "full";
   readFiles?: boolean;
 };
 
@@ -1672,6 +1673,7 @@ const buildWorkloadRunResult = (options: {
   model?: string;
   executionMode?: "auto" | "host" | "sandbox";
   sandboxBackend?: "local" | "k8s";
+  sandboxMode?: "minimal" | "full";
   repoUrl?: string;
   now?: Date;
 }): WorkloadRunResult => {
@@ -1718,6 +1720,7 @@ const buildWorkloadRunResult = (options: {
       ? {
           sandbox: "workspace-write",
           sandboxBackend: options.sandboxBackend ?? "local",
+          sandboxMode: options.sandboxMode ?? "minimal",
         }
       : {}),
     readFiles: true,
@@ -1784,7 +1787,7 @@ const buildRunNextActions = (
 
   actions.push({
     command:
-      "workload run <plan-artifact> [--stage <stage-id>] [--tool <tool>] [--execution-mode <mode>] [--sandbox-backend <backend>] [--repo-url <repo-url>]",
+      "workload run <plan-artifact> [--stage <stage-id>] [--tool <tool>] [--execution-mode <mode>] [--sandbox-backend <backend>] [--sandbox-mode <mode>] [--repo-url <repo-url>]",
     description: "Enqueue the normalized workload request through the canonical workload/runtime bridge",
     params: {
       "plan-artifact": {
@@ -1810,6 +1813,11 @@ const buildRunNextActions = (
         description: "Sandbox backend when sandbox mode is selected",
         value: result.runtimeRequest.sandboxBackend ?? "local",
         enum: ["local", "k8s"],
+      },
+      "sandbox-mode": {
+        description: "Local sandbox mode when sandbox execution is selected",
+        value: result.runtimeRequest.sandboxMode ?? "minimal",
+        enum: ["minimal", "full"],
       },
       "repo-url": {
         description: "Explicit repo URL when the target is not a local checkout",
@@ -3122,6 +3130,11 @@ const runSandboxBackendOption = Options.text("sandbox-backend").pipe(
   Options.withDefault("local"),
 );
 
+const runSandboxModeOption = Options.text("sandbox-mode").pipe(
+  Options.withDescription("Local sandbox mode override when sandbox mode is selected: minimal or full"),
+  Options.withDefault("minimal"),
+);
+
 const runRepoUrlOption = Options.text("repo-url").pipe(
   Options.withDescription("Explicit repo URL when the workload target is not a local checkout"),
   Options.optional,
@@ -4067,6 +4080,7 @@ const runCmd = Command.make(
     model: runModelOption,
     executionMode: runExecutionModeOption,
     sandboxBackend: runSandboxBackendOption,
+    sandboxMode: runSandboxModeOption,
     repoUrl: runRepoUrlOption,
     dryRun: runDryRunOption,
   },
@@ -4078,6 +4092,7 @@ const runCmd = Command.make(
     model,
     executionMode,
     sandboxBackend,
+    sandboxMode,
     repoUrl,
     dryRun,
   }) =>
@@ -4090,6 +4105,7 @@ const runCmd = Command.make(
       const normalizedTool = tool.trim().toLowerCase();
       const normalizedExecutionMode = executionMode.trim().toLowerCase();
       const normalizedSandboxBackend = sandboxBackend.trim().toLowerCase();
+      const normalizedSandboxMode = sandboxMode.trim().toLowerCase();
 
       if (!["pi", "codex", "claude"].includes(normalizedTool)) {
         yield* Console.log(
@@ -4124,6 +4140,19 @@ const runCmd = Command.make(
             `Invalid --sandbox-backend ${sandboxBackend}`,
             "WORKLOAD_RUN_INVALID_SANDBOX_BACKEND",
             "Choose local or k8s for the sandbox backend",
+            [],
+          ),
+        );
+        return;
+      }
+
+      if (!["minimal", "full"].includes(normalizedSandboxMode)) {
+        yield* Console.log(
+          respondError(
+            "workload run",
+            `Invalid --sandbox-mode ${sandboxMode}`,
+            "WORKLOAD_RUN_INVALID_SANDBOX_MODE",
+            "Choose minimal or full for the local sandbox mode",
             [],
           ),
         );
@@ -4188,6 +4217,7 @@ const runCmd = Command.make(
             model: modelText,
             executionMode: normalizedExecutionMode as "auto" | "host" | "sandbox",
             sandboxBackend: normalizedSandboxBackend as "local" | "k8s",
+            sandboxMode: normalizedSandboxMode as "minimal" | "full",
             repoUrl: repoUrlText,
             now: new Date(),
           }),

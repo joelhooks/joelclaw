@@ -1,0 +1,14 @@
+services:
+  sandbox-probe:
+    image: alpine:3.20
+    command:
+      - sh
+      - -lc
+      - trap 'exit 0' TERM INT; while true; do sleep 5; done
+    healthcheck:
+      test:
+        - CMD
+        - true
+      interval: 2s
+      timeout: 2s
+      retries: 10

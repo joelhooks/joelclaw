@@ -4,6 +4,7 @@
  * Provides type guards and validation functions for the canonical types.
  */
 
+import { isLocalSandboxMode } from "./local.js";
 import type {
   AgentIdentity,
   ExecutionArtifacts,
@@ -118,6 +119,7 @@ export function isSandboxExecutionRequest(value: unknown): value is SandboxExecu
   if (typeof obj.task !== "string" || obj.task.trim().length === 0) return false;
   if (!isAgentIdentity(obj.agent)) return false;
   if (!isSandboxProfile(obj.sandbox)) return false;
+  if (obj.sandboxMode !== undefined && !isLocalSandboxMode(obj.sandboxMode)) return false;
   if (typeof obj.baseSha !== "string" || obj.baseSha.trim().length === 0) return false;
 
   if (obj.backend !== undefined && !isSandboxBackend(obj.backend)) return false;

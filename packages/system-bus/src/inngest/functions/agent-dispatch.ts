@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import {
   cancelSandboxJob,
   type ExecutionArtifacts,
@@ -12,6 +12,7 @@ import {
   getTouchedFiles,
   type InboxResult,
   type LocalSandboxIdentity,
+  type LocalSandboxMode,
   type LocalSandboxPaths,
   type LocalSandboxRuntimeInfo,
   launchSandboxJob,
@@ -184,12 +185,21 @@ type PreparedLocalSandboxContext = {
   paths: LocalSandboxPaths;
   runtimeInfo: LocalSandboxRuntimeInfo;
   requestedCwd: string;
+  workDir: string;
+  composeFiles: string[];
   repoRoot: string;
   baseSha: string;
   branch: string;
   repoUrl?: string;
-  mode: "minimal";
+  mode: LocalSandboxMode;
 };
+
+const LOCAL_SANDBOX_COMPOSE_FILE_NAMES = [
+  "compose.yaml",
+  "compose.yml",
+  "docker-compose.yaml",
+  "docker-compose.yml",
+] as const;
 
 function toSandboxProfile(
   sandbox?: "read-only" | "workspace-write" | "danger-full-access",
@@ -224,12 +234,71 @@ async function resolveSandboxRepoContext(workDir: string, providedBaseSha?: stri
   return { repoRoot, baseSha, branch, repoUrl };
 }
 
+function resolveLocalSandboxWorkDir(
+  repoRoot: string,
+  requestedCwd: string,
+  sandboxRepoDir: string,
+): string {
+  const relativeRequested = relative(repoRoot, requestedCwd);
+
+  if (
+    relativeRequested === "" ||
+    relativeRequested === "."
+  ) {
+    return sandboxRepoDir;
+  }
+
+  if (relativeRequested.startsWith("..") || relativeRequested.split(/[\\/]/).includes("..")) {
+    throw new Error(`requested cwd ${requestedCwd} is outside repo root ${repoRoot}`);
+  }
+
+  return join(sandboxRepoDir, relativeRequested);
+}
+
+async function discoverLocalSandboxComposeFiles(
+  requestedCwd: string,
+  repoRoot: string,
+  sandboxRepoDir: string,
+): Promise<string[]> {
+  let currentDir = requestedCwd;
+
+  while (currentDir.startsWith(repoRoot)) {
+    const discovered: string[] = [];
+    const relativeDir = relative(repoRoot, currentDir);
+    const sandboxDir = relativeDir === "" ? sandboxRepoDir : join(sandboxRepoDir, relativeDir);
+
+    for (const fileName of LOCAL_SANDBOX_COMPOSE_FILE_NAMES) {
+      const candidate = join(currentDir, fileName);
+      if (await Bun.file(candidate).exists()) {
+        discovered.push(join(sandboxDir, fileName));
+      }
+    }
+
+    if (discovered.length > 0) {
+      return discovered.sort();
+    }
+
+    if (currentDir === repoRoot) {
+      break;
+    }
+
+    const parent = dirname(currentDir);
+    if (parent === currentDir) {
+      break;
+    }
+    currentDir = parent;
+  }
+
+  return [];
+}
+
 async function prepareLocalSandboxContext(options: {
   requestId: string;
   workflowId?: string;
   storyId?: string;
   requestedCwd: string;
   baseSha?: string;
+  mode?: LocalSandboxMode;
 }): Promise<PreparedLocalSandboxContext> {
   const repoContext = await resolveSandboxRepoContext(options.requestedCwd, options.baseSha);
   const identity = generateLocalSandboxIdentity({
@@ -238,6 +307,11 @@ async function prepareLocalSandboxContext(options: {
     storyId: options.storyId ?? options.requestId,
   });
   const paths = resolveLocalSandboxPaths(identity);
+  const mode = options.mode ?? "minimal";
+  const workDir = resolveLocalSandboxWorkDir(repoContext.repoRoot, options.requestedCwd, paths.repoDir);
+  const composeFiles = mode === "full"
+    ? await discoverLocalSandboxComposeFiles(options.requestedCwd, repoContext.repoRoot, paths.repoDir)
+    : [];
 
   return {
     identity,
@@ -246,20 +320,24 @@ async function prepareLocalSandboxContext(options: {
       sandboxId: identity.sandboxId,
       slug: identity.slug,
       composeProjectName: identity.composeProjectName,
-      mode: "minimal",
+      mode,
       path: paths.sandboxDir,
       repoPath: paths.repoDir,
+      workDir,
       envPath: paths.envPath,
       metadataPath: paths.metadataPath,
-      devcontainerPath: paths.devcontainerPath,
+      devcontainerPath: join(workDir, ".devcontainer"),
+      ...(composeFiles.length > 0 ? { composeFiles } : {}),
       registryPath: paths.registryPath,
     },
     requestedCwd: options.requestedCwd,
+    workDir,
+    composeFiles,
     repoRoot: repoContext.repoRoot,
     baseSha: repoContext.baseSha,
     branch: repoContext.branch,
     repoUrl: repoContext.repoUrl,
-    mode: "minimal",
+    mode,
   };
 }
 
@@ -333,6 +411,7 @@ function buildSandboxTask(
   task: string,
   options: {
     repoPath: string;
+    workDir: string;
     requestedCwd: string;
     baseSha: string;
     workflowId?: string;
@@ -342,9 +421,11 @@ function buildSandboxTask(
   const lines = [
     "You are executing inside an isolated sandbox checkout.",
     `Sandbox checkout path: ${options.repoPath}`,
+    `Sandbox execution cwd: ${options.workDir}`,
     `Original requested cwd: ${options.requestedCwd}`,
     `Sandbox base SHA: ${options.baseSha}`,
     "Do not reference or mutate the host checkout path directly. Work only inside the sandbox checkout path above.",
+    `Use ${options.workDir} as the effective working directory unless the task explicitly says otherwise.`,
   ];
 
   if (options.workflowId) {
@@ -493,6 +574,121 @@ async function executeAgentTask(input: AgentExecutionInput): Promise<AgentExecut
   }
 }
 
+async function runSandboxInfraCommand(options: {
+  command: string;
+  cwd: string;
+  timeoutSeconds: number;
+  env: Record<string, string | undefined>;
+}): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const proc = Bun.spawn(["bash", "-lc", `exec ${options.command}`], {
+    cwd: options.cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: Object.fromEntries(
+      Object.entries(options.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    ),
+  });
+
+  const timer = setTimeout(() => {
+    try {
+      proc.kill();
+    } catch {
+      // ignore
+    }
+  }, Math.max(1, options.timeoutSeconds) * 1000);
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+
+  clearTimeout(timer);
+
+  return {
+    exitCode,
+    stdout: stdout.trim(),
+    stderr: stderr.trim(),
+  };
+}
+
+function buildDockerComposeCommand(composeFiles: string[], composeProjectName: string, subcommand: string): string {
+  const args = composeFiles.map((file) => `-f '${file.replace(/'/g, `'\\''`)}'`).join(" ");
+  return `docker compose ${args} -p '${composeProjectName.replace(/'/g, `'\\''`)}' ${subcommand}`;
+}
+
+async function ensureLocalSandboxFullModeRuntime(
+  context: PreparedLocalSandboxContext,
+  timeoutSeconds: number,
+): Promise<void> {
+  if (context.mode !== "full") {
+    return;
+  }
+
+  if (context.composeFiles.length === 0) {
+    throw new Error(
+      `local full sandbox mode requires a compose file under ${context.workDir} or its repo ancestors`,
+    );
+  }
+
+  const composeEnv = {
+    ...process.env,
+    COMPOSE_PROJECT_NAME: context.identity.composeProjectName,
+    JOELCLAW_SANDBOX_ID: context.identity.sandboxId,
+    JOELCLAW_SANDBOX_MODE: context.mode,
+  };
+
+  const commandResult = await runSandboxInfraCommand({
+    command: buildDockerComposeCommand(
+      context.composeFiles,
+      context.identity.composeProjectName,
+      "up -d --wait --remove-orphans",
+    ),
+    cwd: context.workDir,
+    timeoutSeconds: Math.max(60, Math.min(timeoutSeconds, 180)),
+    env: composeEnv,
+  });
+
+  if (commandResult.exitCode !== 0) {
+    throw new Error(
+      `failed to start full local sandbox runtime: ${commandResult.stderr || commandResult.stdout || "docker compose up failed"}`,
+    );
+  }
+}
+
+async function teardownLocalSandboxFullModeRuntime(
+  context: PreparedLocalSandboxContext,
+  timeoutSeconds: number,
+): Promise<string | undefined> {
+  if (context.mode !== "full" || context.composeFiles.length === 0) {
+    return undefined;
+  }
+
+  const composeEnv = {
+    ...process.env,
+    COMPOSE_PROJECT_NAME: context.identity.composeProjectName,
+    JOELCLAW_SANDBOX_ID: context.identity.sandboxId,
+    JOELCLAW_SANDBOX_MODE: context.mode,
+  };
+
+  const commandResult = await runSandboxInfraCommand({
+    command: buildDockerComposeCommand(
+      context.composeFiles,
+      context.identity.composeProjectName,
+      "down --remove-orphans --volumes",
+    ),
+    cwd: context.workDir,
+    timeoutSeconds: Math.max(60, Math.min(timeoutSeconds, 180)),
+    env: composeEnv,
+  });
+
+  if (commandResult.exitCode === 0) {
+    return undefined;
+  }
+
+  return commandResult.stderr || commandResult.stdout || "docker compose down failed";
+}
+
 async function executeSandboxAgent(input: AgentExecutionInput & {
   requestedCwd: string;
   workflowId?: string;
@@ -509,30 +705,44 @@ async function executeSandboxAgent(input: AgentExecutionInput & {
     timeoutSeconds: Math.max(60, Math.min(input.timeoutSeconds, 300)),
   });
 
-  const execution = await executeAgentTask({
-    ...input,
-    sandbox: toSandboxProfile(input.sandbox),
-    task: buildSandboxTask(input.task, {
-      repoPath,
-      requestedCwd: input.requestedCwd,
-      baseSha: localSandbox.baseSha,
-      workflowId: input.workflowId,
-      storyId: input.storyId,
-    }),
-    workDir: repoPath,
-    extraEnv: {
-      JOELCLAW_SANDBOX_ID: localSandbox.identity.sandboxId,
-      JOELCLAW_SANDBOX_SLUG: localSandbox.identity.slug,
-      JOELCLAW_SANDBOX_MODE: localSandbox.mode,
-      JOELCLAW_SANDBOX_REQUEST_ID: localSandbox.identity.requestId,
-      JOELCLAW_SANDBOX_WORKFLOW_ID: localSandbox.identity.workflowId,
-      JOELCLAW_SANDBOX_STORY_ID: localSandbox.identity.storyId,
-      JOELCLAW_SANDBOX_BASE_SHA: localSandbox.baseSha,
-      JOELCLAW_SANDBOX_REQUESTED_CWD: input.requestedCwd,
-      JOELCLAW_SANDBOX_REPO_ROOT: localSandbox.repoRoot,
-      COMPOSE_PROJECT_NAME: localSandbox.identity.composeProjectName,
-    },
-  });
+  let runtimeTeardownError: string | undefined;
+
+  const execution = await (async () => {
+    try {
+      await ensureLocalSandboxFullModeRuntime(localSandbox, input.timeoutSeconds);
+
+      return await executeAgentTask({
+        ...input,
+        sandbox: toSandboxProfile(input.sandbox),
+        task: buildSandboxTask(input.task, {
+          repoPath,
+          workDir: localSandbox.workDir,
+          requestedCwd: input.requestedCwd,
+          baseSha: localSandbox.baseSha,
+          workflowId: input.workflowId,
+          storyId: input.storyId,
+        }),
+        workDir: localSandbox.workDir,
+        extraEnv: {
+          JOELCLAW_SANDBOX_ID: localSandbox.identity.sandboxId,
+          JOELCLAW_SANDBOX_SLUG: localSandbox.identity.slug,
+          JOELCLAW_SANDBOX_MODE: localSandbox.mode,
+          JOELCLAW_SANDBOX_REQUEST_ID: localSandbox.identity.requestId,
+          JOELCLAW_SANDBOX_WORKFLOW_ID: localSandbox.identity.workflowId,
+          JOELCLAW_SANDBOX_STORY_ID: localSandbox.identity.storyId,
+          JOELCLAW_SANDBOX_BASE_SHA: localSandbox.baseSha,
+          JOELCLAW_SANDBOX_REQUESTED_CWD: input.requestedCwd,
+          JOELCLAW_SANDBOX_REPO_ROOT: localSandbox.repoRoot,
+          COMPOSE_PROJECT_NAME: localSandbox.identity.composeProjectName,
+        },
+      });
+    } finally {
+      runtimeTeardownError = await teardownLocalSandboxFullModeRuntime(
+        localSandbox,
+        input.timeoutSeconds,
+      );
+    }
+  })();
 
   try {
     const artifacts = await generatePatchArtifact({
@@ -542,11 +752,17 @@ async function executeSandboxAgent(input: AgentExecutionInput & {
       timeoutSeconds: Math.max(30, Math.min(input.timeoutSeconds, 120)),
     });
     const touchedFiles = await getSandboxTouchedFiles(repoPath, localSandbox.baseSha);
-    const logs = execution.stdout || execution.stderr
+    const stderrOutput = [
+      execution.stderr || "",
+      runtimeTeardownError ? `sandbox full-mode teardown failed: ${runtimeTeardownError}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const logs = execution.stdout || stderrOutput
       ? {
           ...(artifacts.logs ?? {}),
           stdout: execution.stdout || "",
-          stderr: execution.stderr || "",
+          stderr: stderrOutput,
         }
       : artifacts.logs;
     const nextArtifacts = {
@@ -559,6 +775,12 @@ async function executeSandboxAgent(input: AgentExecutionInput & {
 
     return {
       ...execution,
+      stderr: stderrOutput,
+      ...(runtimeTeardownError && execution.error
+        ? {
+            error: `${execution.error}\nsandbox full-mode teardown failed: ${runtimeTeardownError}`,
+          }
+        : {}),
       sandboxBackend: "local",
       localSandbox: localSandbox.runtimeInfo,
       artifacts: nextArtifacts,
@@ -567,6 +789,16 @@ async function executeSandboxAgent(input: AgentExecutionInput & {
     if (execution.status === "failed") {
       return {
         ...execution,
+        stderr: [
+          execution.stderr,
+          runtimeTeardownError ? `sandbox full-mode teardown failed: ${runtimeTeardownError}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        error:
+          runtimeTeardownError && execution.error
+            ? `${execution.error}\nsandbox full-mode teardown failed: ${runtimeTeardownError}`
+            : execution.error,
         sandboxBackend: "local",
         localSandbox: localSandbox.runtimeInfo,
       };
@@ -577,7 +809,11 @@ async function executeSandboxAgent(input: AgentExecutionInput & {
       status: "failed",
       output: execution.output,
       stdout: execution.stdout,
-      stderr: [execution.stderr, `sandbox artifact generation failed: ${message}`]
+      stderr: [
+        execution.stderr,
+        `sandbox artifact generation failed: ${message}`,
+        runtimeTeardownError ? `sandbox full-mode teardown failed: ${runtimeTeardownError}` : "",
+      ]
         .filter(Boolean)
         .join("\n"),
       error: `sandbox artifact generation failed: ${message}`,
@@ -875,7 +1111,7 @@ export const agentDispatch = inngest.createFunction(
                 backend: "local",
                 createdAt: startedAt,
                 updatedAt: completedAt,
-                teardownState: "active",
+                teardownState: localSandbox.mode === "full" ? "removed" : "active",
                 retentionPolicy: localSandboxRetention.policy,
                 cleanupAfter: localSandboxRetention.cleanupAfter,
                 cleanupReason: localSandboxRetention.reason,
@@ -951,7 +1187,7 @@ export const agentDispatch = inngest.createFunction(
               backend: "local",
               createdAt: startedAt,
               updatedAt: completedAt,
-              teardownState: "active",
+              teardownState: localSandbox.mode === "full" ? "removed" : "active",
               retentionPolicy: localSandboxRetention.policy,
               cleanupAfter: localSandboxRetention.cleanupAfter,
               cleanupReason: localSandboxRetention.reason,
@@ -1008,6 +1244,7 @@ export const agentDispatch = inngest.createFunction(
       sandbox,
       executionMode = "host",
       sandboxBackend = SANDBOX_BACKEND_DEFAULT,
+      sandboxMode = "minimal",
       readFiles = false,
     } = event.data;
 
@@ -1068,6 +1305,7 @@ export const agentDispatch = inngest.createFunction(
               storyId,
               requestedCwd,
               baseSha,
+              mode: sandboxMode,
             });
           })
         : null;
@@ -1155,6 +1393,7 @@ export const agentDispatch = inngest.createFunction(
               storyId,
               requestedCwd,
               baseSha,
+              mode: sandboxMode,
             })),
         });
       }
@@ -1176,6 +1415,7 @@ export const agentDispatch = inngest.createFunction(
           state: execution.status,
           startedAt: effectiveStartedAt,
           updatedAt: completedAt,
+          teardownState: localSandboxContext.mode === "full" ? "removed" : "active",
         });
         localSandbox = {
           ...localSandboxContext.runtimeInfo,

@@ -570,6 +570,7 @@ describe("workload CLI command", () => {
       tool: "pi",
       executionMode: "sandbox",
       sandboxBackend: "local",
+      sandboxMode: "full",
       now: new Date("2026-03-08T19:21:00Z"),
     });
 
@@ -580,6 +581,7 @@ describe("workload CLI command", () => {
     expect(run.runtimeRequest.storyId).toBe("stage-1");
     expect(run.runtimeRequest.executionMode).toBe("sandbox");
     expect(run.runtimeRequest.sandboxBackend).toBe("local");
+    expect(run.runtimeRequest.sandboxMode).toBe("full");
     expect(run.runtimeRequest.sandbox).toBe("workspace-write");
     expect(run.runtimeRequest.cwd).toBe(
       "/Users/joel/Code/badass-courses/gremlin",

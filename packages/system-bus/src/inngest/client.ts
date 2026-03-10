@@ -1152,6 +1152,7 @@ export type Events = {
       sandbox?: "read-only" | "workspace-write" | "danger-full-access";
       executionMode?: "host" | "sandbox";
       sandboxBackend?: "local" | "k8s";
+      sandboxMode?: "minimal" | "full";
       readFiles?: boolean;
     };
   };

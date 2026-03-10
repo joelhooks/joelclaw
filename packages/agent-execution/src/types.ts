@@ -73,12 +73,16 @@ export interface LocalSandboxRuntimeInfo {
   path: string;
   /** Repo checkout path on disk */
   repoPath: string;
+  /** Effective execution working directory inside the sandbox checkout */
+  workDir?: string;
   /** Materialized sandbox env path */
   envPath: string;
   /** Sandbox metadata file path */
   metadataPath?: string;
   /** Materialized devcontainer path when present */
   devcontainerPath?: string;
+  /** Compose file paths used by full-mode runtime when present */
+  composeFiles?: string[];
   /** Registry path tracking this sandbox */
   registryPath: string;
   /** Scheduled cleanup deadline for retained terminal sandboxes */
@@ -103,6 +107,8 @@ export interface SandboxExecutionRequest {
   agent: AgentIdentity;
   /** Sandbox profile */
   sandbox: SandboxProfile;
+  /** Requested local sandbox mode */
+  sandboxMode?: "minimal" | "full";
   /** Base git SHA before execution */
   baseSha: string;
   /** Sandbox backend (defaults to local when omitted) */

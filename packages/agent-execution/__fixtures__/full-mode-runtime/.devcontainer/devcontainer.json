@@ -1,0 +1,7 @@
+{
+  "name": "agent-execution-full-mode-runtime",
+  "dockerComposeFile": ["../compose.yaml"],
+  "service": "sandbox-probe",
+  "runServices": ["sandbox-probe"],
+  "workspaceFolder": "/workspace"
+}

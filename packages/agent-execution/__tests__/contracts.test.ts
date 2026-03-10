@@ -141,6 +141,7 @@ describe("@joelclaw/agent-execution contracts", () => {
     test("validates request with optional fields", () => {
       const withOptionals: SandboxExecutionRequest = {
         ...validRequest,
+        sandboxMode: "full",
         cwd: "/Users/joel/Code/joelhooks/joelclaw",
         timeoutSeconds: 600,
         verificationCommands: ["pnpm test", "bunx tsc --noEmit"],
@@ -409,9 +410,13 @@ describe("@joelclaw/agent-execution contracts", () => {
           mode: "minimal",
           path: "/Users/joel/.joelclaw/sandboxes/workflow/story/jc-workflow-story-1234abcd-req-loca",
           repoPath: "/Users/joel/.joelclaw/sandboxes/workflow/story/jc-workflow-story-1234abcd-req-loca/repo",
+          workDir: "/Users/joel/.joelclaw/sandboxes/workflow/story/jc-workflow-story-1234abcd-req-loca/repo/packages/system-bus",
           envPath: "/Users/joel/.joelclaw/sandboxes/workflow/story/jc-workflow-story-1234abcd-req-loca/.sandbox.env",
           metadataPath: "/Users/joel/.joelclaw/sandboxes/workflow/story/jc-workflow-story-1234abcd-req-loca/sandbox.json",
           devcontainerPath: "/Users/joel/.joelclaw/sandboxes/workflow/story/jc-workflow-story-1234abcd-req-loca/repo/.devcontainer",
+          composeFiles: [
+            "/Users/joel/.joelclaw/sandboxes/workflow/story/jc-workflow-story-1234abcd-req-loca/repo/packages/system-bus/compose.yaml",
+          ],
           registryPath: "/Users/joel/.joelclaw/sandboxes/registry.json",
           cleanupAfter: "2026-03-10T00:00:00.000Z",
         },
@@ -421,6 +426,8 @@ describe("@joelclaw/agent-execution contracts", () => {
       const deserialized = JSON.parse(serialized);
       expect(deserialized.localSandbox.composeProjectName).toBe("jc_workflow_1234abcd");
       expect(deserialized.localSandbox.mode).toBe("minimal");
+      expect(deserialized.localSandbox.workDir).toContain("packages/system-bus");
+      expect(deserialized.localSandbox.composeFiles).toHaveLength(1);
       expect(deserialized.localSandbox.cleanupAfter).toBe("2026-03-10T00:00:00.000Z");
     });
   });
