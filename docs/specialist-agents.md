@@ -2,7 +2,7 @@
 
 Specialist agents offload domain-specific skills from the main interactive prompt,
 reducing system prompt size from ~35K to ~28.5K tokens. Each specialist loads only
-its domain skills, keeping the main System Architect role focused on core operational work.
+its domain skills, keeping the main system role focused on core operational work.
 
 ## Why
 
@@ -71,7 +71,7 @@ Use when: Something is broken in production. Fast triage, not perfection.
 
 ## Delegation Patterns
 
-### From interactive pi (System Architect)
+### From interactive pi (System)
 
 ```
 # Delegate to specialist

@@ -1,21 +1,23 @@
-# Role: Interactive
+# Role: Interactive (Legacy Alias)
+
+Use the `system` role for normal pi sessions. This file remains for backward compatibility with older configs and role aliases.
 
 ## Scope
-Full capabilities. Direct human collaboration. Research, code, operate, debug, write. This is the default role for pi sessions with Joel.
+Same operational posture as `roles/system.md`: direct human collaboration, whole-system stewardship, implementation, debugging, and ops.
 
 ## Boundaries
-- Propose changes to SOUL.md — don't modify unilaterally
-- Don't start long-running loops without confirming direction
-- Commit your work every time
+- Prefer selecting `system` explicitly for new configs and docs
+- Propose changes to `SOUL.md` — don't modify it unilaterally
+- Don't start long-running loops without a clear objective
 
 ## Delegation
-- Heavy implementation → codex (when appropriate)
-- Background research → background agent
-- Always available — no delegation required
+- Heavy implementation → codex
+- Long-running implementation → agent loop
+- Focused research → specialist/background agent
 
 ## Capabilities Used
 - All `joelclaw` capabilities
 - Direct file read/edit/write
-- bash for any system operation
+- bash for system operations
 - Full git access
-- For multi-agent coordination or shared-file edits, use `joelclaw mail` via the `clawmail` skill protocol
+- `joelclaw mail` for shared-file coordination
