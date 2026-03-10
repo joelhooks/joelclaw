@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import {
@@ -110,6 +111,76 @@ function writeInboxSnapshot(result: InboxResult): string {
   return filePath;
 }
 
+type CapturedCommandResult = {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  timedOut?: boolean;
+};
+
+async function runCommandWithCapturedOutput(
+  args: string[],
+  options: {
+    cwd: string;
+    timeoutSeconds: number;
+    env: Record<string, string | undefined>;
+    requestId?: string;
+  },
+): Promise<CapturedCommandResult> {
+  const captureDir = await mkdtemp(join(tmpdir(), "agent-dispatch-cmd-"));
+  const stdoutPath = join(captureDir, "stdout.txt");
+  const stderrPath = join(captureDir, "stderr.txt");
+
+  try {
+    const proc = Bun.spawn(args, {
+      cwd: options.cwd,
+      stdout: Bun.file(stdoutPath),
+      stderr: Bun.file(stderrPath),
+      env: Object.fromEntries(
+        Object.entries(options.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+      ),
+    });
+
+    if (options.requestId) {
+      activeProcesses.set(options.requestId, { kill: () => proc.kill() });
+    }
+
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        proc.kill();
+      } catch {
+        // ignore
+      }
+    }, Math.max(1, options.timeoutSeconds) * 1000);
+
+    const exitCode = await proc.exited;
+    clearTimeout(timer);
+
+    if (options.requestId) {
+      activeProcesses.delete(options.requestId);
+    }
+
+    // Pipe EOF capture can hang forever when descendants inherit stdout/stderr.
+    // Redirect to temp files and read them after the parent exits so terminal
+    // inbox writeback doesn't wait on orphan subprocesses.
+    const [stdout, stderr] = await Promise.all([
+      readFile(stdoutPath, "utf8").catch(() => ""),
+      readFile(stderrPath, "utf8").catch(() => ""),
+    ]);
+
+    return {
+      exitCode,
+      stdout: stdout.trim(),
+      stderr: stderr.trim(),
+      ...(timedOut ? { timedOut: true } : {}),
+    };
+  } finally {
+    await rm(captureDir, { recursive: true, force: true });
+  }
+}
+
 async function runAgentCommand(
   command: string,
   options: {
@@ -118,41 +189,8 @@ async function runAgentCommand(
     env: Record<string, string | undefined>;
     requestId: string;
   }
-): Promise<{ exitCode: number; stdout: string; stderr: string; cancelled?: boolean }> {
-  const proc = Bun.spawn(["bash", "-lc", `exec ${command}`], {
-    cwd: options.cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: Object.fromEntries(
-      Object.entries(options.env).filter((entry): entry is [string, string] => typeof entry[1] === "string")
-    ),
-  });
-
-  // Register for cancellation
-  activeProcesses.set(options.requestId, { kill: () => proc.kill() });
-
-  const timer = setTimeout(() => {
-    try {
-      proc.kill();
-    } catch {
-      // ignore
-    }
-  }, Math.max(1, options.timeoutSeconds) * 1000);
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-
-  clearTimeout(timer);
-  activeProcesses.delete(options.requestId);
-
-  return {
-    exitCode,
-    stdout: stdout.trim(),
-    stderr: stderr.trim(),
-  };
+): Promise<CapturedCommandResult> {
+  return runCommandWithCapturedOutput(["bash", "-lc", `exec ${command}`], options);
 }
 
 type AgentExecutionResult = {
@@ -549,12 +587,16 @@ async function executeAgentTask(input: AgentExecutionInput): Promise<AgentExecut
     });
 
     if (commandResult.exitCode !== 0) {
+      const failureDetail = commandResult.timedOut
+        ? `agent command timed out after ${timeoutSeconds}s`
+        : `Exit ${commandResult.exitCode}: ${commandResult.stderr.slice(-5_000) || commandResult.stdout.slice(-5_000) || "command failed"}`;
+
       return {
         status: "failed",
         output: commandResult.stdout.slice(-10_000),
         stdout: commandResult.stdout.slice(-10_000),
         stderr: commandResult.stderr.slice(-10_000),
-        error: `Exit ${commandResult.exitCode}: ${commandResult.stderr.slice(-5_000) || commandResult.stdout.slice(-5_000) || "command failed"}`,
+        error: failureDetail,
       };
     }
 
@@ -582,37 +624,8 @@ async function runSandboxInfraCommand(options: {
   cwd: string;
   timeoutSeconds: number;
   env: Record<string, string | undefined>;
-}): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const proc = Bun.spawn(["bash", "-lc", `exec ${options.command}`], {
-    cwd: options.cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-    env: Object.fromEntries(
-      Object.entries(options.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
-    ),
-  });
-
-  const timer = setTimeout(() => {
-    try {
-      proc.kill();
-    } catch {
-      // ignore
-    }
-  }, Math.max(1, options.timeoutSeconds) * 1000);
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-
-  clearTimeout(timer);
-
-  return {
-    exitCode,
-    stdout: stdout.trim(),
-    stderr: stderr.trim(),
-  };
+}): Promise<CapturedCommandResult> {
+  return runCommandWithCapturedOutput(["bash", "-lc", `exec ${options.command}`], options);
 }
 
 function buildDockerComposeCommand(composeFiles: string[], composeProjectName: string, subcommand: string): string {
@@ -654,7 +667,9 @@ async function ensureLocalSandboxFullModeRuntime(
 
   if (commandResult.exitCode !== 0) {
     throw new Error(
-      `failed to start full local sandbox runtime: ${commandResult.stderr || commandResult.stdout || "docker compose up failed"}`,
+      commandResult.timedOut
+        ? `timed out starting full local sandbox runtime after ${Math.max(60, Math.min(timeoutSeconds, 180))}s`
+        : `failed to start full local sandbox runtime: ${commandResult.stderr || commandResult.stdout || "docker compose up failed"}`,
     );
   }
 }
@@ -687,6 +702,10 @@ async function teardownLocalSandboxFullModeRuntime(
 
   if (commandResult.exitCode === 0) {
     return undefined;
+  }
+
+  if (commandResult.timedOut) {
+    return `timed out tearing down full local sandbox runtime after ${Math.max(60, Math.min(timeoutSeconds, 180))}s`;
   }
 
   return commandResult.stderr || commandResult.stdout || "docker compose down failed";
@@ -1550,3 +1569,8 @@ function buildCommand(
       throw new Error(`Unknown tool: ${tool}`);
   }
 }
+
+export const __testables = {
+  runAgentCommand,
+  runSandboxInfraCommand,
+};
