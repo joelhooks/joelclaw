@@ -4,11 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  cleanupLocalSandboxes,
   defaultLocalSandboxRegistryPath,
   emptyLocalSandboxRegistry,
   ensureLocalSandboxLayout,
   generateLocalSandboxIdentity,
   isLocalSandboxDevcontainerStrategy,
+  isLocalSandboxEntryExpired,
   isLocalSandboxIdentity,
   isLocalSandboxMode,
   isLocalSandboxRegistryEntry,
@@ -155,7 +157,7 @@ describe("local sandbox primitives", () => {
     expect(running.cleanupAfter).toBeUndefined();
   });
 
-  test("registry supports read, upsert, remove, and TTL pruning", async () => {
+  test("registry supports read, upsert, targeted cleanup, remove, and TTL pruning", async () => {
     const identity = generateLocalSandboxIdentity({
       workflowId: "workflow-123",
       requestId: "req-abcdef123456",
@@ -191,6 +193,27 @@ describe("local sandbox primitives", () => {
     const registry = await upsertLocalSandboxRegistryEntry(entry, paths.registryPath);
     expect(registry.entries).toHaveLength(1);
     expect(isLocalSandboxRegistryEntry(registry.entries[0])).toBe(true);
+    expect(isLocalSandboxEntryExpired(entry, new Date("2026-03-09T02:00:00.000Z"))).toBe(true);
+
+    const cleanupDryRun = await cleanupLocalSandboxes({
+      registryPath: paths.registryPath,
+      requestIds: [entry.requestId],
+      dryRun: true,
+    });
+    expect(cleanupDryRun.removedSandboxIds).toEqual([identity.sandboxId]);
+    expect(cleanupDryRun.registry.entries).toHaveLength(1);
+
+    const cleaned = await cleanupLocalSandboxes({
+      registryPath: paths.registryPath,
+      requestIds: [entry.requestId],
+    });
+    expect(cleaned.removedSandboxIds).toEqual([identity.sandboxId]);
+    expect(cleaned.registry.entries).toHaveLength(0);
+    await expect(readFile(paths.envPath, "utf8")).rejects.toThrow();
+
+    await ensureLocalSandboxLayout(paths);
+    await writeFile(paths.envPath, "COMPOSE_PROJECT_NAME=test\n", "utf8");
+    await upsertLocalSandboxRegistryEntry(entry, paths.registryPath);
 
     const pruned = await pruneExpiredLocalSandboxes({
       registryPath: paths.registryPath,
@@ -202,6 +225,55 @@ describe("local sandbox primitives", () => {
 
     const removed = await removeLocalSandboxRegistryEntry(entry.requestId, paths.registryPath);
     expect(removed.entries).toHaveLength(0);
+  });
+
+  test("cleanup skips active sandboxes unless forced", async () => {
+    const identity = generateLocalSandboxIdentity({
+      workflowId: "workflow-active",
+      requestId: "req-active-123",
+      storyId: "story-active",
+    });
+    const paths = resolveLocalSandboxPaths(identity, { rootDir: testDir });
+
+    await ensureLocalSandboxLayout(paths);
+    await writeFile(paths.envPath, "COMPOSE_PROJECT_NAME=test\n", "utf8");
+
+    await upsertLocalSandboxRegistryEntry(
+      {
+        ...identity,
+        mode: "full",
+        baseSha: "abc123def456",
+        path: paths.sandboxDir,
+        repoPath: paths.repoDir,
+        envPath: paths.envPath,
+        metadataPath: paths.metadataPath,
+        state: "running",
+        backend: "local",
+        createdAt: new Date("2026-03-09T00:00:00.000Z").toISOString(),
+        updatedAt: new Date("2026-03-09T00:10:00.000Z").toISOString(),
+        teardownState: "active",
+        retentionPolicy: "active",
+        cleanupReason: "test active sandbox",
+        devcontainerStrategy: "copy",
+      },
+      paths.registryPath,
+    );
+
+    const skipped = await cleanupLocalSandboxes({
+      registryPath: paths.registryPath,
+      requestIds: [identity.requestId],
+    });
+    expect(skipped.removedSandboxIds).toEqual([]);
+    expect(skipped.skipped).toHaveLength(1);
+    expect(skipped.registry.entries).toHaveLength(1);
+
+    const forced = await cleanupLocalSandboxes({
+      registryPath: paths.registryPath,
+      requestIds: [identity.requestId],
+      force: true,
+    });
+    expect(forced.removedSandboxIds).toEqual([identity.sandboxId]);
+    expect(forced.registry.entries).toHaveLength(0);
   });
 
   test("copy-first devcontainer materialization excludes env and secret junk", async () => {

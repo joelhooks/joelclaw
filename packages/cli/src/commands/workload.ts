@@ -9,6 +9,14 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Args, Command, Options } from "@effect/cli";
+import {
+  cleanupLocalSandboxes,
+  defaultLocalSandboxRegistryPath,
+  isLocalSandboxEntryExpired,
+  type LocalSandboxRegistryEntry,
+  pruneExpiredLocalSandboxes,
+  readLocalSandboxRegistry,
+} from "@joelclaw/agent-execution";
 import { Console, Effect } from "effect";
 import { executeCapabilityCommand } from "../capabilities/runtime";
 import { enqueueQueueEventViaWorker } from "../lib/queue-admission";
@@ -106,6 +114,16 @@ const WORKLOAD_PRESETS = [
 ] as const;
 
 type WorkloadPreset = (typeof WORKLOAD_PRESETS)[number];
+
+const LOCAL_SANDBOX_STATES = [
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
+
+type LocalSandboxState = (typeof LOCAL_SANDBOX_STATES)[number];
 
 type PathScopeSource =
   | "repo-wide"
@@ -880,6 +898,72 @@ const isNestedWorkflowRigSandboxExecution = (
 
   return sandboxExecution && Boolean(workflowId) && !allowNested;
 };
+
+function isLocalSandboxState(value: string): value is LocalSandboxState {
+  return (LOCAL_SANDBOX_STATES as readonly string[]).includes(value);
+}
+
+function normalizeOptionalFlagText(value: OptionalText): string | undefined {
+  if (value._tag !== "Some") return undefined;
+  const normalized = value.value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function splitCsvValues(value?: string): string[] {
+  return value
+    ? value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
+}
+
+function summarizeLocalSandboxEntries(entries: LocalSandboxRegistryEntry[], now: Date) {
+  const byState: Record<string, number> = {};
+  const byMode: Record<string, number> = {};
+  let expiredCount = 0;
+  let missingOnDiskCount = 0;
+
+  for (const entry of entries) {
+    byState[entry.state] = (byState[entry.state] ?? 0) + 1;
+    byMode[entry.mode] = (byMode[entry.mode] ?? 0) + 1;
+    if (isLocalSandboxEntryExpired(entry, now)) expiredCount += 1;
+    if (!existsSync(entry.path)) missingOnDiskCount += 1;
+  }
+
+  return {
+    byState,
+    byMode,
+    expiredCount,
+    missingOnDiskCount,
+  };
+}
+
+function toLocalSandboxListEntry(entry: LocalSandboxRegistryEntry, now: Date) {
+  const cleanupAt = entry.cleanupAfter ? Date.parse(entry.cleanupAfter) : Number.NaN;
+  const cleanupDue = isLocalSandboxEntryExpired(entry, now);
+  const cleanupInMs = Number.isFinite(cleanupAt) ? cleanupAt - now.getTime() : null;
+
+  return {
+    sandboxId: entry.sandboxId,
+    requestId: entry.requestId,
+    workflowId: entry.workflowId,
+    storyId: entry.storyId,
+    state: entry.state,
+    mode: entry.mode,
+    teardownState: entry.teardownState,
+    retentionPolicy: entry.retentionPolicy ?? "active",
+    cleanupAfter: entry.cleanupAfter,
+    cleanupDue,
+    cleanupInMs,
+    existsOnDisk: existsSync(entry.path),
+    path: entry.path,
+    repoPath: entry.repoPath,
+    updatedAt: entry.updatedAt,
+    createdAt: entry.createdAt,
+    composeProjectName: entry.composeProjectName,
+  };
+}
 
 const inferWorkloadSkillRecommendations = (
   input: NormalizedPlannerInput,
@@ -3155,6 +3239,51 @@ const runDryRunOption = Options.boolean("dry-run").pipe(
   Options.withDefault(false),
 );
 
+const sandboxesStateOption = Options.text("state").pipe(
+  Options.withDescription("Filter local sandboxes by state"),
+  Options.optional,
+);
+
+const sandboxesModeOption = Options.text("mode").pipe(
+  Options.withDescription("Filter local sandboxes by mode: minimal or full"),
+  Options.optional,
+);
+
+const sandboxesLimitOption = Options.integer("limit").pipe(
+  Options.withDescription("Maximum number of sandbox entries to return"),
+  Options.withDefault(25),
+);
+
+const sandboxesExpiredOption = Options.boolean("expired").pipe(
+  Options.withDescription("Only include or clean up sandboxes whose TTL has expired"),
+  Options.withDefault(false),
+);
+
+const sandboxesRequestIdOption = Options.text("request-id").pipe(
+  Options.withDescription("Comma-separated request ids to target for cleanup"),
+  Options.optional,
+);
+
+const sandboxesSandboxIdOption = Options.text("sandbox-id").pipe(
+  Options.withDescription("Comma-separated sandbox ids to target for cleanup"),
+  Options.optional,
+);
+
+const sandboxesAllTerminalOption = Options.boolean("all-terminal").pipe(
+  Options.withDescription("Target every terminal local sandbox for cleanup"),
+  Options.withDefault(false),
+);
+
+const sandboxesForceOption = Options.boolean("force").pipe(
+  Options.withDescription("Allow cleanup of non-terminal sandboxes"),
+  Options.withDefault(false),
+);
+
+const sandboxesDryRunOption = Options.boolean("dry-run").pipe(
+  Options.withDescription("Describe the cleanup/janitor action without deleting anything"),
+  Options.withDefault(false),
+);
+
 const buildPlanNextActions = (
   input: NormalizedPlannerInput,
   result: WorkloadPlanningResult,
@@ -4314,6 +4443,259 @@ const runCmd = Command.make(
   ),
 );
 
+const sandboxesListCmd = Command.make(
+  "list",
+  {
+    state: sandboxesStateOption,
+    mode: sandboxesModeOption,
+    limit: sandboxesLimitOption,
+    expired: sandboxesExpiredOption,
+  },
+  ({ state, mode, limit, expired }) =>
+    Effect.gen(function* () {
+      const normalizedState = normalizeOptionalFlagText(state);
+      const normalizedMode = normalizeOptionalFlagText(mode);
+
+      if (normalizedState && !isLocalSandboxState(normalizedState)) {
+        yield* Console.log(
+          respondError(
+            "workload sandboxes list",
+            `Invalid --state ${state.value}`,
+            "WORKLOAD_SANDBOXES_INVALID_STATE",
+            "Choose pending, running, completed, failed, or cancelled",
+            [],
+          ),
+        );
+        return;
+      }
+
+      if (normalizedMode && !["minimal", "full"].includes(normalizedMode)) {
+        yield* Console.log(
+          respondError(
+            "workload sandboxes list",
+            `Invalid --mode ${mode.value}`,
+            "WORKLOAD_SANDBOXES_INVALID_MODE",
+            "Choose minimal or full",
+            [],
+          ),
+        );
+        return;
+      }
+
+      const now = new Date();
+      const registry = yield* Effect.tryPromise({
+        try: () => readLocalSandboxRegistry(),
+        catch: (error) => error instanceof Error ? error : new Error(String(error)),
+      });
+
+      const filtered = registry.entries
+        .filter((entry) => !normalizedState || entry.state === normalizedState)
+        .filter((entry) => !normalizedMode || entry.mode === normalizedMode)
+        .filter((entry) => !expired || isLocalSandboxEntryExpired(entry, now))
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+
+      const result = {
+        checkedAt: now.toISOString(),
+        registryPath: defaultLocalSandboxRegistryPath(),
+        totalEntries: registry.entries.length,
+        filteredEntries: filtered.length,
+        summary: summarizeLocalSandboxEntries(registry.entries, now),
+        entries: filtered.slice(0, Math.max(1, limit)).map((entry) => toLocalSandboxListEntry(entry, now)),
+      };
+
+      yield* Console.log(
+        respond("workload sandboxes list", result, [
+          {
+            command: "joelclaw workload sandboxes janitor [--dry-run]",
+            description: "Run the dedicated expired-sandbox janitor path",
+            params: {
+              "dry-run": { default: true, description: "Preview janitor removals before deleting anything" },
+            },
+          },
+          {
+            command: "joelclaw workload sandboxes cleanup [--request-id <ids>] [--sandbox-id <ids>] [--expired] [--all-terminal] [--force] [--dry-run]",
+            description: "Remove specific or terminal local sandboxes from the registry and filesystem",
+          },
+        ]));
+    }),
+).pipe(Command.withDescription("List local sandbox registry entries with retention and filesystem state"));
+
+const sandboxesCleanupCmd = Command.make(
+  "cleanup",
+  {
+    requestId: sandboxesRequestIdOption,
+    sandboxId: sandboxesSandboxIdOption,
+    expired: sandboxesExpiredOption,
+    allTerminal: sandboxesAllTerminalOption,
+    force: sandboxesForceOption,
+    dryRun: sandboxesDryRunOption,
+  },
+  ({ requestId, sandboxId, expired, allTerminal, force, dryRun }) =>
+    Effect.gen(function* () {
+      const requestIds = splitCsvValues(
+        requestId._tag === "Some" ? requestId.value.trim() : undefined,
+      );
+      const sandboxIds = splitCsvValues(
+        sandboxId._tag === "Some" ? sandboxId.value.trim() : undefined,
+      );
+
+      if (requestIds.length === 0 && sandboxIds.length === 0 && !expired && !allTerminal) {
+        yield* Console.log(
+          respondError(
+            "workload sandboxes cleanup",
+            "Cleanup requires --request-id, --sandbox-id, --expired, or --all-terminal",
+            "WORKLOAD_SANDBOXES_CLEANUP_SELECTOR_REQUIRED",
+            "Choose a bounded selector before deleting sandbox state",
+            [],
+          ),
+        );
+        return;
+      }
+
+      const result = yield* Effect.tryPromise({
+        try: () => cleanupLocalSandboxes({
+          requestIds,
+          sandboxIds,
+          expiredOnly: expired,
+          allTerminal,
+          force,
+          dryRun,
+        }),
+        catch: (error) => error instanceof Error ? error : new Error(String(error)),
+      });
+
+      yield* Console.log(
+        respond("workload sandboxes cleanup", {
+          checkedAt: new Date().toISOString(),
+          registryPath: defaultLocalSandboxRegistryPath(),
+          dryRun: result.dryRun,
+          selectors: {
+            requestIds,
+            sandboxIds,
+            expired,
+            allTerminal,
+            force,
+          },
+          matchedSandboxIds: result.matchedSandboxIds,
+          removedSandboxIds: result.removedSandboxIds,
+          skipped: result.skipped,
+          remainingEntries: result.registry.entries.length,
+        }, [
+          {
+            command: "joelclaw workload sandboxes list [--limit <limit>]",
+            description: "Inspect registry state after cleanup",
+            params: {
+              limit: { default: 25, description: "Maximum number of sandboxes to return" },
+            },
+          },
+        ]),
+      );
+    }),
+).pipe(Command.withDescription("Clean up local sandbox registry entries and their filesystem state"));
+
+const sandboxesJanitorCmd = Command.make(
+  "janitor",
+  {
+    dryRun: sandboxesDryRunOption,
+  },
+  ({ dryRun }) =>
+    Effect.gen(function* () {
+      const now = new Date();
+      const registry = yield* Effect.tryPromise({
+        try: () => readLocalSandboxRegistry(),
+        catch: (error) => error instanceof Error ? error : new Error(String(error)),
+      });
+      const candidates = registry.entries.filter((entry) => isLocalSandboxEntryExpired(entry, now));
+
+      if (dryRun) {
+        yield* Console.log(
+          respond("workload sandboxes janitor", {
+            checkedAt: now.toISOString(),
+            registryPath: defaultLocalSandboxRegistryPath(),
+            dryRun: true,
+            candidateCount: candidates.length,
+            truncated: candidates.length > 25,
+            candidates: candidates.slice(0, 25).map((entry) => ({
+              sandboxId: entry.sandboxId,
+              requestId: entry.requestId,
+              state: entry.state,
+              cleanupAfter: entry.cleanupAfter,
+              path: entry.path,
+            })),
+          }, [
+            {
+              command: "joelclaw workload sandboxes janitor",
+              description: "Remove expired sandbox directories and trim the registry",
+            },
+          ]),
+        );
+        return;
+      }
+
+      const pruned = yield* Effect.tryPromise({
+        try: () => pruneExpiredLocalSandboxes({ now }),
+        catch: (error) => error instanceof Error ? error : new Error(String(error)),
+      });
+
+      yield* Console.log(
+        respond("workload sandboxes janitor", {
+          checkedAt: now.toISOString(),
+          registryPath: defaultLocalSandboxRegistryPath(),
+          dryRun: false,
+          removedSandboxIds: pruned.removedSandboxIds,
+          removedCount: pruned.removedSandboxIds.length,
+          retainedCount: pruned.retainedSandboxIds.length,
+          retainedSample: pruned.retainedSandboxIds.slice(0, 10),
+          truncated: pruned.retainedSandboxIds.length > 10,
+        }, [
+          {
+            command: "joelclaw workload sandboxes list [--limit <limit>]",
+            description: "Inspect sandbox registry state after janitor cleanup",
+            params: {
+              limit: { default: 25, description: "Maximum number of sandboxes to return" },
+            },
+          },
+        ]),
+      );
+    }),
+).pipe(Command.withDescription("Run the dedicated expired-sandbox janitor path"));
+
+const sandboxesCmd = Command.make("sandboxes", {}, () =>
+  Console.log(
+    respond(
+      "workload sandboxes",
+      {
+        description: "Operator surfaces for local sandbox registry inspection and cleanup",
+        subcommands: {
+          list: "joelclaw workload sandboxes list [--state <state>] [--mode <mode>] [--limit <limit>] [--expired]",
+          cleanup:
+            "joelclaw workload sandboxes cleanup [--request-id <ids>] [--sandbox-id <ids>] [--expired] [--all-terminal] [--force] [--dry-run]",
+          janitor: "joelclaw workload sandboxes janitor [--dry-run]",
+        },
+      },
+      [
+        {
+          command: "joelclaw workload sandboxes list [--limit <limit>]",
+          description: "Inspect local sandbox registry state and filesystem truth",
+          params: {
+            limit: { default: 25, description: "Maximum number of sandboxes to return" },
+          },
+        },
+        {
+          command: "joelclaw workload sandboxes janitor [--dry-run]",
+          description: "Preview or execute the dedicated expired-sandbox janitor path",
+          params: {
+            "dry-run": { default: true, description: "Preview janitor removals before deleting anything" },
+          },
+        },
+      ],
+    ),
+  ),
+).pipe(
+  Command.withDescription("Inspect and clean up local sandbox state under ADR-0221"),
+  Command.withSubcommands([sandboxesListCmd, sandboxesCleanupCmd, sandboxesJanitorCmd]),
+);
+
 export const workloadCmd = Command.make("workload", {}, () =>
   Console.log(
     respond(
@@ -4326,6 +4708,8 @@ export const workloadCmd = Command.make("workload", {}, () =>
             "joelclaw workload dispatch <plan-artifact> [--stage <stage-id>] [--to <to>] [--from <from>] [--send-mail] [--write-dispatch <path>]",
           run:
             "joelclaw workload run <plan-artifact> [--stage <stage-id>] [--tool pi|codex|claude] [--execution-mode auto|host|sandbox] [--sandbox-backend local|k8s] [--dry-run]",
+          sandboxes:
+            "joelclaw workload sandboxes list|cleanup|janitor",
         },
         planned: {
           status: "planned, not yet shipped",
@@ -4349,10 +4733,15 @@ export const workloadCmd = Command.make("workload", {}, () =>
           description:
             "Normalize a saved plan into the canonical runtime request before enqueueing it",
         },
+        {
+          command: "joelclaw workload sandboxes list --limit 10",
+          description:
+            "Inspect live local sandbox registry state and cleanup posture",
+        },
       ],
     ),
   ),
-).pipe(Command.withSubcommands([planCmd, dispatchCmd, runCmd]));
+).pipe(Command.withSubcommands([planCmd, dispatchCmd, runCmd, sandboxesCmd]));
 
 export const __workloadTestUtils = {
   splitCsv,

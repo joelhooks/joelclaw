@@ -46,6 +46,8 @@ export {
 } from "./k8s.js";
 
 export type {
+  CleanupLocalSandboxesOptions,
+  CleanupLocalSandboxesResult,
   GenerateLocalSandboxIdentityInput,
   LocalSandboxDevcontainerStrategy,
   LocalSandboxIdentity,
@@ -66,12 +68,14 @@ export type {
   ResolveLocalSandboxRetentionOptions,
 } from "./local.js";
 export {
+  cleanupLocalSandboxes,
   defaultLocalSandboxRegistryPath,
   defaultLocalSandboxRoot,
   emptyLocalSandboxRegistry,
   ensureLocalSandboxLayout,
   generateLocalSandboxIdentity,
   isLocalSandboxDevcontainerStrategy,
+  isLocalSandboxEntryExpired,
   isLocalSandboxIdentity,
   isLocalSandboxMode,
   isLocalSandboxRegistryEntry,

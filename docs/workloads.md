@@ -250,6 +250,19 @@ Semantics:
 - returns queue admission details (`streamId`, `eventId`, priority, triage mode) once enqueued
 - **does not pretend queue emit is the only front door anymore** — raw `joelclaw queue emit` remains the substrate escape hatch, while `workload run` is the canonical bridge from workload artifacts to runtime admission
 
+`joelclaw workload sandboxes` semantics:
+
+- `list` is the operator-facing registry surface for local ADR-0221 sandboxes
+  - shows state, mode, retention/cleanup posture, teardown state, and whether the sandbox still exists on disk
+  - supports `--state`, `--mode`, `--expired`, and `--limit`
+- `cleanup` is the bounded manual cleanup path
+  - target by `--request-id`, `--sandbox-id`, `--expired`, or `--all-terminal`
+  - non-terminal sandboxes are protected unless `--force` is explicit
+  - `--dry-run` previews deletions without mutating disk or registry
+- `janitor` is the dedicated expired-sandbox cleanup path
+  - no longer waits for the next sandbox startup to prune TTL-expired entries
+  - `--dry-run` previews candidates; the live path removes expired sandbox directories and trims the registry
+
 ## Workload request schema
 
 This is the canonical request envelope.

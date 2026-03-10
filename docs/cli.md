@@ -226,6 +226,10 @@ joelclaw workload
 - supports `--dry-run` for request inspection before queue admission
 - returns queue admission details once the request is enqueued
 - `status|explain|cancel` remain planned, not shipped
+- `joelclaw workload sandboxes` is now the operator surface for ADR-0221 local sandbox state:
+  - `list` shows registry + filesystem truth with retention posture
+  - `cleanup` is the bounded manual deletion path with `--dry-run` and `--force`
+  - `janitor` is the dedicated expired-sandbox cleanup path instead of waiting for startup-time opportunistic pruning
 
 ## Restate command tree
 

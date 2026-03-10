@@ -108,7 +108,7 @@ describe("workload CLI command", () => {
       );
     });
 
-    expect(subcommandNames).toEqual(["plan", "dispatch", "run"]);
+    expect(subcommandNames).toEqual(["plan", "dispatch", "run", "sandboxes"]);
   });
 
   it("plans docs/truth work as serial inline host work by default", () => {

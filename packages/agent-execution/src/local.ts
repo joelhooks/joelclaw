@@ -132,6 +132,29 @@ export interface PruneExpiredLocalSandboxesResult {
   retainedSandboxIds: string[];
 }
 
+export interface CleanupLocalSandboxesOptions {
+  registryPath?: string;
+  requestIds?: string[];
+  sandboxIds?: string[];
+  allTerminal?: boolean;
+  expiredOnly?: boolean;
+  force?: boolean;
+  dryRun?: boolean;
+  now?: Date;
+}
+
+export interface CleanupLocalSandboxesResult {
+  registry: LocalSandboxRegistry;
+  matchedSandboxIds: string[];
+  removedSandboxIds: string[];
+  skipped: Array<{
+    sandboxId: string;
+    requestId: string;
+    reason: string;
+  }>;
+  dryRun: boolean;
+}
+
 export const LOCAL_SANDBOX_MODES: readonly LocalSandboxMode[] = ["minimal", "full"] as const;
 export const LOCAL_SANDBOX_DEVCONTAINER_STRATEGIES: readonly LocalSandboxDevcontainerStrategy[] = [
   "copy",
@@ -424,7 +447,7 @@ export async function pruneExpiredLocalSandboxes(
   const retainedEntries: LocalSandboxRegistryEntry[] = [];
 
   for (const entry of registry.entries) {
-    if (!shouldPruneSandboxEntry(entry, now)) {
+    if (!isLocalSandboxEntryExpired(entry, now)) {
       retainedEntries.push(entry);
       continue;
     }
@@ -444,6 +467,69 @@ export async function pruneExpiredLocalSandboxes(
     registry: nextRegistry,
     removedSandboxIds,
     retainedSandboxIds: retainedEntries.map((entry) => entry.sandboxId),
+  };
+}
+
+export async function cleanupLocalSandboxes(
+  options: CleanupLocalSandboxesOptions = {},
+): Promise<CleanupLocalSandboxesResult> {
+  const registryPath = options.registryPath ?? defaultLocalSandboxRegistryPath();
+  const now = options.now ?? new Date();
+  const registry = await readLocalSandboxRegistry(registryPath);
+  const requestIds = new Set((options.requestIds ?? []).map((value) => value.trim()).filter(Boolean));
+  const sandboxIds = new Set((options.sandboxIds ?? []).map((value) => value.trim()).filter(Boolean));
+  const removedRequestIds = new Set<string>();
+  const removedSandboxIds: string[] = [];
+  const matchedSandboxIds: string[] = [];
+  const skipped: CleanupLocalSandboxesResult["skipped"] = [];
+
+  const shouldMatchEntry = (entry: LocalSandboxRegistryEntry): boolean => {
+    if (requestIds.size > 0 && requestIds.has(entry.requestId)) return true;
+    if (sandboxIds.size > 0 && sandboxIds.has(entry.sandboxId)) return true;
+    if (options.expiredOnly && isLocalSandboxEntryExpired(entry, now)) return true;
+    if (options.allTerminal && isTerminalExecutionState(entry.state)) return true;
+    return false;
+  };
+
+  for (const entry of registry.entries) {
+    if (!shouldMatchEntry(entry)) {
+      continue;
+    }
+
+    matchedSandboxIds.push(entry.sandboxId);
+
+    if (!options.force && !isTerminalExecutionState(entry.state)) {
+      skipped.push({
+        sandboxId: entry.sandboxId,
+        requestId: entry.requestId,
+        reason: `sandbox is ${entry.state}; pass --force to remove active sandboxes`,
+      });
+      continue;
+    }
+
+    removedRequestIds.add(entry.requestId);
+    removedSandboxIds.push(entry.sandboxId);
+
+    if (!options.dryRun) {
+      await rm(resolveSandboxDirFromEntry(entry), { recursive: true, force: true });
+    }
+  }
+
+  const nextRegistry: LocalSandboxRegistry = {
+    version: LOCAL_SANDBOX_REGISTRY_VERSION,
+    entries: registry.entries.filter((entry) => !removedRequestIds.has(entry.requestId)),
+  };
+
+  if (!options.dryRun) {
+    await writeLocalSandboxRegistry(nextRegistry, registryPath);
+  }
+
+  return {
+    registry: options.dryRun ? registry : nextRegistry,
+    matchedSandboxIds,
+    removedSandboxIds,
+    skipped,
+    dryRun: options.dryRun ?? false,
   };
 }
 
@@ -494,6 +580,13 @@ export function isLocalSandboxRegistryEntry(value: unknown): value is LocalSandb
     (obj.devcontainerStrategy === undefined || isLocalSandboxDevcontainerStrategy(obj.devcontainerStrategy)) &&
     (obj.teardownState === "active" || obj.teardownState === "tearing-down" || obj.teardownState === "removed")
   );
+}
+
+export function isLocalSandboxEntryExpired(
+  entry: LocalSandboxRegistryEntry,
+  now = new Date(),
+): boolean {
+  return shouldPruneSandboxEntry(entry, now);
 }
 
 function compactSlug(parts: string[], maxLength: number, separator = "-"): string {
