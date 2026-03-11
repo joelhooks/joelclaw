@@ -171,7 +171,8 @@ export type Events = {
   // --- Docs pipeline ---
   "docs/ingest.requested": {
     data: {
-      nasPath: string;
+      nasPath?: string;
+      filePath?: string;
       title?: string;
       tags?: string[];
       storageCategory?: string;

@@ -757,7 +757,7 @@ async function validateFile(input: {
 }): Promise<ValidatedFile> {
   const nasPath = input.nasPath.trim();
   if (!nasPath) {
-    throw new NonRetriableError("docs-ingest requires a non-empty nasPath");
+    throw new NonRetriableError("docs-ingest requires a non-empty nasPath or filePath");
   }
 
   await access(nasPath);
@@ -1289,7 +1289,8 @@ export const docsIngest = inngest.createFunction(
       key: '"docs-ingest"',
     },
     retries: 4,
-    idempotency: 'event.data.nasPath + "::" + event.data.idempotencyKey',
+    idempotency:
+      '((event.data.nasPath ? event.data.nasPath : (event.data.filePath ? event.data.filePath : "")) + "::" + event.data.idempotencyKey)',
   },
   { event: "docs/ingest.requested" },
   async ({ event, step }) => {
@@ -1301,11 +1302,15 @@ export const docsIngest = inngest.createFunction(
     const sourceHost = typeof event.data.sourceHost === "string" ? event.data.sourceHost.trim() : undefined;
     const explicitStorageCategory =
       typeof event.data.storageCategory === "string" ? event.data.storageCategory.trim() : undefined;
+    const requestedNasPath =
+      [event.data.nasPath, event.data.filePath].find(
+        (path): path is string => typeof path === "string" && path.trim().length > 0
+      ) ?? "";
     const addedAt = Date.now();
 
     const validated = await step.run("validate-file", async () => {
       const metadata: Record<string, unknown> = {
-        nasPath: event.data.nasPath,
+        nasPath: requestedNasPath,
       };
       return emitMeasuredOtelEvent(
         {
@@ -1317,7 +1322,7 @@ export const docsIngest = inngest.createFunction(
         },
         async () => {
           const result = await validateFile({
-            nasPath: event.data.nasPath,
+            nasPath: requestedNasPath,
             title: event.data.title,
           });
           metadata.docId = result.docId;

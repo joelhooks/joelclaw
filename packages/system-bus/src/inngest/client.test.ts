@@ -74,6 +74,30 @@ describe("MEM-2 client event schema acceptance tests", () => {
     });
   });
 
+  test("supports docs/ingest.requested with filePath fallback", async () => {
+    const ingestData: Events["docs/ingest.requested"]["data"] = {
+      filePath: "/Volumes/three-body/books/programming/example.pdf",
+      title: "Example Document",
+      tags: ["programming", "ai"],
+      storageCategory: "programming",
+      sourceHost: "three-body",
+      idempotencyKey: "docs-ingest:example:file-path",
+    };
+
+    const result = await captureEvent({
+      name: "docs/ingest.requested",
+      data: ingestData,
+    });
+
+    expect(result).toMatchObject({
+      name: "docs/ingest.requested",
+      data: {
+        filePath: "/Volumes/three-body/books/programming/example.pdf",
+        title: "Example Document",
+      },
+    });
+  });
+
   test("supports pipeline/book.download with inference controls", async () => {
     const bookRequest: Events["pipeline/book.download"]["data"] = {
       query: "designing data-intensive applications",
