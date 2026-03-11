@@ -27,11 +27,13 @@ WORKDIR /app
 
 # Copy everything from deps stage (source + resolved node_modules)
 COPY --from=deps /app/node_modules /app/node_modules
-COPY --from=deps /app/packages/system-bus /app/packages/system-bus
+COPY --from=deps /app/packages/agent-execution /app/packages/agent-execution
 COPY --from=deps /app/packages/email /app/packages/email
 COPY --from=deps /app/packages/endpoint-resolver /app/packages/endpoint-resolver
 COPY --from=deps /app/packages/inference-router /app/packages/inference-router
 COPY --from=deps /app/packages/mdx-pipeline /app/packages/mdx-pipeline
+COPY --from=deps /app/packages/queue /app/packages/queue
+COPY --from=deps /app/packages/system-bus /app/packages/system-bus
 COPY --from=deps /app/package.json /app/package.json
 
 WORKDIR /app/packages/system-bus
