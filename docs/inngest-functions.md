@@ -219,6 +219,18 @@ Preferred operator path: `joelclaw inngest sweep-stale-runs` (preview by default
 
 Do **not** mutate `main.db` without a point-in-time backup.
 
+### Conversation annotation pipeline (ADR-0225)
+
+- function: `conversation/annotate`
+- file: `packages/system-bus/src/inngest/functions/conversation-annotate.ts`
+- trigger event: `conversation/annotate.requested`
+- host-only runtime reason: shells to `joelclaw email read`, uses `infer()` for structured JSON summarization, pushes gateway notifications, and persists markdown notes under `~/Vault/Resources/conversations/`
+- contract:
+  1. fetches the Front conversation via CLI and emits `conversation.annotate.triggered|fetched` OTEL
+  2. skips unchanged threads via Redis key `conversation:annotate:{conversationId}:last_count` with 4h TTL and emits `conversation.annotate.dedup_skip` when unchanged
+  3. summarizes into strict JSON (participants, decisions, action items, links, urgency, Joel input) and emits `conversation.annotate.summarized`
+  4. pushes summary + Joel-action notifications through the gateway and persists a Vault markdown note, with OTEL at every step and `conversation.annotate.failed` on failure
+
 ### Task triage classification contract
 
 - function: `tasks/triage`

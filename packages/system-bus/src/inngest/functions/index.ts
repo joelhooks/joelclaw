@@ -37,6 +37,7 @@ export { checkVaultSync } from "./check-vault-sync";
 export { contactEnrich } from "./contact-enrich";
 export { contentReviewApply } from "./content-review";
 export { contentPrune, contentSync, contentVerify } from "./content-sync";
+export { conversationAnnotate } from "./conversation-annotate";
 export { dailyDigest } from "./daily-digest";
 export { discoveryCapture } from "./discovery-capture";
 export { docsIngest } from "./docs-ingest";

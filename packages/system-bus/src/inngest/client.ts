@@ -1424,6 +1424,14 @@ export type Events = {
       assigneeName: string;
     };
   };
+  "conversation/annotate.requested": {
+    data: {
+      conversationId: string;
+      source: "webhook" | "pattern" | "explicit";
+      sourceContext?: string;
+      threadId?: string;
+    };
+  };
 
   // --- Vercel ---
   "vercel/deploy.succeeded": {
