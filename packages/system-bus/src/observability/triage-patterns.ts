@@ -81,6 +81,32 @@ export const TRIAGE_PATTERNS: TriagePattern[] = [
     dedup_hours: 2,
     escalate_after: 5,
   },
+  {
+    match: {
+      component: "task-triage",
+      action: "model_router.fallback",
+      error: /pi timed out/i,
+    },
+    tier: 2,
+    dedup_hours: 8,
+  },
+  {
+    match: {
+      component: "task-triage",
+      action: "model_router.fail",
+      error: /pi timed out/i,
+    },
+    tier: 2,
+    dedup_hours: 8,
+  },
+  {
+    match: {
+      component: "task-triage",
+      action: "tasks.triage.degraded",
+    },
+    tier: 2,
+    dedup_hours: 8,
+  },
 
   // Tier 3: immediate escalation
   {
