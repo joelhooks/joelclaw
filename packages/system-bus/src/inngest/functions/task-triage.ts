@@ -244,6 +244,7 @@ export const taskTriage = inngest.createFunction(
             system: TRIAGE_SYSTEM_PROMPT,
             component: "task-triage",
             action: "tasks.triage.classify",
+            timeout: 300_000,
             json: true,
             requireJson: true,
             requireTextOutput: true,
