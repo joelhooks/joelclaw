@@ -30,7 +30,29 @@ type ModelFallbackTelemetryEvent = {
 
 type ModelRef = { provider: string; id: string };
 
+type FallbackDecision =
+  | "fallback_activated"
+  | "recovery_probe.skipped_dwell"
+  | "recovery_probe.skipped_backoff"
+  | "recovery_probe.started"
+  | "recovery_probe.failed"
+  | "recovery_probe.restored_primary";
+
+type FallbackReasonKind =
+  | "auth"
+  | "consecutive_failures"
+  | "missing_api_key"
+  | "model_not_found"
+  | "network"
+  | "provider_overloaded"
+  | "rate_limit"
+  | "session_expired"
+  | "timeout"
+  | "unknown";
+
 const MIN_FALLBACK_RECOVERY_DWELL_MS = 2 * 60 * 1000;
+const PROBE_BACKOFF_TRANSIENT_MULTIPLIER = 2;
+const PROBE_BACKOFF_PERSISTENT_MULTIPLIER = 6;
 
 function resolveCatalogModel(provider: string | undefined, model: string): ModelRef | undefined {
   if (!provider) return undefined;
@@ -47,6 +69,41 @@ function resolveCatalogModel(provider: string | undefined, model: string): Model
   return { provider: catalogModel.provider, id: modelId };
 }
 
+function classifyFallbackReason(value: string | undefined): FallbackReasonKind {
+  const lower = (value ?? "").toLowerCase();
+  if (lower.includes("consecutive prompt failures")) return "consecutive_failures";
+  if (lower.includes("no streaming tokens") || lower.includes("timed out") || lower.includes("timeout")) {
+    return "timeout";
+  }
+  if (lower.includes("authentication failed")) return "auth";
+  if (lower.includes("no api key found")) return "missing_api_key";
+  if (lower.includes("rate_limit") || lower.includes("429")) return "rate_limit";
+  if (lower.includes("overloaded") || lower.includes("529")) return "provider_overloaded";
+  if (lower.includes("session expired")) return "session_expired";
+  if (lower.includes("model not found")) return "model_not_found";
+  if (lower.includes("network is unavailable") || lower.includes("econnrefused") || lower.includes("enotfound")) {
+    return "network";
+  }
+  return "unknown";
+}
+
+function resolveProbeBackoffMs(kind: FallbackReasonKind, intervalMs: number): number {
+  switch (kind) {
+    case "rate_limit":
+    case "provider_overloaded":
+    case "network":
+    case "timeout":
+      return Math.max(intervalMs * PROBE_BACKOFF_TRANSIENT_MULTIPLIER, MIN_FALLBACK_RECOVERY_DWELL_MS);
+    case "auth":
+    case "missing_api_key":
+    case "model_not_found":
+    case "session_expired":
+      return Math.max(intervalMs * PROBE_BACKOFF_PERSISTENT_MULTIPLIER, MIN_FALLBACK_RECOVERY_DWELL_MS);
+    default:
+      return 0;
+  }
+}
+
 export class ModelFallbackController {
   private session: FallbackSession | undefined;
   private notify: FallbackNotifier = () => {};
@@ -59,6 +116,8 @@ export class ModelFallbackController {
   private _activationCount = 0;
   private _lastRecoveryProbe = 0;
   private _probesSinceFallback = 0;
+  private _nextRecoveryProbeAllowedAt = 0;
+  private _lastRecoveryProbeReason: FallbackReasonKind = "unknown";
 
   // Streaming timeout tracking
   private _promptDispatchedAt = 0;
@@ -354,6 +413,7 @@ export class ModelFallbackController {
       this._firstTokenAt > this._promptDispatchedAt && this._promptDispatchedAt > 0
         ? this._firstTokenAt - this._promptDispatchedAt
         : undefined;
+    const reasonKind = classifyFallbackReason(reason);
 
     try {
       await this.session.setModel(fallbackModelObj);
@@ -361,6 +421,8 @@ export class ModelFallbackController {
       this._activeSince = Date.now();
       this._activationCount += 1;
       this._probesSinceFallback = 0;
+      this._nextRecoveryProbeAllowedAt = 0;
+      this._lastRecoveryProbeReason = "unknown";
 
       const msg = `⚠️ Gateway falling back to ${this.config.fallbackProvider}/${this.config.fallbackModel}\nReason: ${reason}\nWill probe primary every ${Math.round(this.config.recoveryProbeIntervalMs / 60_000)}min`;
       console.warn("[gateway:fallback] activated", {
@@ -379,12 +441,22 @@ export class ModelFallbackController {
           from: fromModel,
           to: toModel,
           reason,
+          reason_kind: reasonKind,
           consecutiveFailures: consecutiveFailures ?? 0,
           prompt_elapsed_ms: promptElapsedMs,
           threshold_timeout_ms: this.config.fallbackTimeoutMs,
           threshold_failures: this.config.fallbackAfterFailures,
           ...(ttftMs !== undefined ? { ttft_ms: ttftMs } : {}),
         },
+      });
+      this._emitDecision("fallback_activated", {
+        from: fromModel,
+        to: toModel,
+        reason,
+        reason_kind: reasonKind,
+        consecutiveFailures: consecutiveFailures ?? 0,
+        prompt_elapsed_ms: promptElapsedMs,
+        ...(ttftMs !== undefined ? { ttft_ms: ttftMs } : {}),
       });
 
       return true;
@@ -405,15 +477,32 @@ export class ModelFallbackController {
     if (!this._fallbackDistinct) return;
     if (!this._active || !this.session) return;
 
-    const downtimeMs = this._activeSince > 0 ? Date.now() - this._activeSince : 0;
+    const now = Date.now();
+    const downtimeMs = this._activeSince > 0 ? now - this._activeSince : 0;
+    const primary = `${this.primaryModel.provider}/${this.primaryModel.id}`;
+
     if (downtimeMs < MIN_FALLBACK_RECOVERY_DWELL_MS) {
+      this._emitDecision("recovery_probe.skipped_dwell", {
+        primary,
+        downtime_ms: downtimeMs,
+        dwell_ms: MIN_FALLBACK_RECOVERY_DWELL_MS,
+      });
       return;
     }
 
-    this._lastRecoveryProbe = Date.now();
+    if (this._nextRecoveryProbeAllowedAt > now) {
+      this._emitDecision("recovery_probe.skipped_backoff", {
+        primary,
+        downtime_ms: downtimeMs,
+        next_probe_in_ms: this._nextRecoveryProbeAllowedAt - now,
+        last_probe_reason_kind: this._lastRecoveryProbeReason,
+      });
+      return;
+    }
+
+    this._lastRecoveryProbe = now;
     this._probesSinceFallback += 1;
     const probeCount = this._probesSinceFallback;
-    const primary = `${this.primaryModel.provider}/${this.primaryModel.id}`;
 
     const primaryModelObj = resolveCatalogModel(
       this.primaryModel.provider,
@@ -421,11 +510,19 @@ export class ModelFallbackController {
     );
     if (!primaryModelObj) return;
 
+    this._emitDecision("recovery_probe.started", {
+      primary,
+      downtime_ms: downtimeMs,
+      probeCount,
+    });
+
     try {
       await this.session.setModel(primaryModelObj);
       this._active = false;
       this._activeSince = 0;
       this._probesSinceFallback = 0;
+      this._nextRecoveryProbeAllowedAt = 0;
+      this._lastRecoveryProbeReason = "unknown";
 
       const msg = `✅ Gateway recovered to primary model: ${this.primaryModel.provider}/${this.primaryModel.id}`;
       console.log("[gateway:fallback] recovered to primary", {
@@ -442,27 +539,65 @@ export class ModelFallbackController {
           primary,
           downtime_ms: downtimeMs,
           activationCount: this._activationCount,
+          probeCount,
         },
+      });
+      this._emitDecision("recovery_probe.restored_primary", {
+        primary,
+        downtime_ms: downtimeMs,
+        activationCount: this._activationCount,
+        probeCount,
       });
     } catch (error) {
       // Primary still broken — stay on fallback
+      const errorText = String(error);
+      const errorKind = classifyFallbackReason(errorText);
+      const backoffMs = resolveProbeBackoffMs(errorKind, this.config.recoveryProbeIntervalMs);
+      this._lastRecoveryProbeReason = errorKind;
+      this._nextRecoveryProbeAllowedAt = backoffMs > 0 ? now + backoffMs : 0;
+
       console.warn("[gateway:fallback] recovery probe failed — staying on fallback", {
-        error: String(error),
+        error: errorText,
+        errorKind,
+        backoffMs,
       });
       this._emit({
         level: "info",
         component: "daemon.fallback",
         action: "model_fallback.probe_failed",
         success: false,
-        error: String(error),
+        error: errorText,
         metadata: {
           primary,
           downtime_ms: downtimeMs,
           probeCount,
-          error: String(error),
+          error: errorText,
+          error_kind: errorKind,
+          backoff_ms: backoffMs,
         },
       });
+      this._emitDecision("recovery_probe.failed", {
+        primary,
+        downtime_ms: downtimeMs,
+        probeCount,
+        error: errorText,
+        error_kind: errorKind,
+        backoff_ms: backoffMs,
+      });
     }
+  }
+
+  private _emitDecision(decision: FallbackDecision, metadata: Record<string, unknown>): void {
+    this._emit({
+      level: decision === "recovery_probe.failed" ? "warn" : "debug",
+      component: "daemon.fallback",
+      action: "model_fallback.decision",
+      success: decision !== "recovery_probe.failed",
+      metadata: {
+        decision,
+        ...metadata,
+      },
+    });
   }
 
   private _emit(event: ModelFallbackTelemetryEvent): void {

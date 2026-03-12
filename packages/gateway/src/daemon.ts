@@ -1757,17 +1757,51 @@ const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 min safety valve
 setIdleWaiter(() => {
   return new Promise<void>((resolve) => {
     _idleResolve = resolve;
-    // Safety timeout — if turn_end never fires (e.g. API hang),
-    // don't block the drain loop forever. Clear stuck-recovery state so
-    // watchdog doesn't keep restarting on stale prompt markers.
-    const timer = setTimeout(() => {
-      if (_idleResolve === resolve) {
+    const idleWaitStartedAt = Date.now();
+
+    const scheduleIdleTimeout = (delayMs: number) => {
+      const timer = setTimeout(() => {
+        if (_idleResolve !== resolve) {
+          return;
+        }
+
         const now = Date.now();
         const promptAgeMs = _lastPromptAt > 0 ? now - _lastPromptAt : 0;
+        const waitElapsedMs = now - idleWaitStartedAt;
+        const maintenance = activeGatewayMaintenance;
+        const maintenanceActive = isGatewayMaintenanceActive();
+
+        if (maintenanceActive && waitElapsedMs < IDLE_TIMEOUT_MAINTENANCE_MAX_MS) {
+          console.warn("[gateway] idle waiter extended for active maintenance", {
+            nextDelayMs: IDLE_TIMEOUT_MAINTENANCE_EXTENSION_MS,
+            waitElapsedMs,
+            promptAgeMs,
+            maintenanceKind: maintenance?.kind ?? (session.isCompacting ? "compact" : "unknown"),
+            maintenanceReason: maintenance?.reason ?? (session.isCompacting ? "session_compacting" : "unknown"),
+          });
+          void emitGatewayOtel({
+            level: "info",
+            component: "daemon.watchdog",
+            action: "watchdog.idle_waiter.extended_for_maintenance",
+            success: true,
+            metadata: {
+              nextDelayMs: IDLE_TIMEOUT_MAINTENANCE_EXTENSION_MS,
+              waitElapsedMs,
+              promptAgeMs,
+              queueDepth: getQueueDepth(),
+              maintenanceKind: maintenance?.kind ?? (session.isCompacting ? "compact" : "unknown"),
+              maintenanceReason: maintenance?.reason ?? (session.isCompacting ? "session_compacting" : "unknown"),
+            },
+          });
+          scheduleIdleTimeout(IDLE_TIMEOUT_MAINTENANCE_EXTENSION_MS);
+          return;
+        }
 
         console.warn("[gateway] idle waiter timed out — releasing drain lock", {
-          timeoutMs: IDLE_TIMEOUT_MS,
+          timeoutMs: delayMs,
           promptAgeMs,
+          waitElapsedMs,
+          maintenanceActive,
         });
         void emitGatewayOtel({
           level: "warn",
@@ -1775,9 +1809,13 @@ setIdleWaiter(() => {
           action: "watchdog.idle_waiter.timeout",
           success: false,
           metadata: {
-            timeoutMs: IDLE_TIMEOUT_MS,
+            timeoutMs: delayMs,
+            waitElapsedMs,
             promptAgeMs,
             queueDepth: getQueueDepth(),
+            maintenanceActive,
+            maintenanceKind: maintenance?.kind ?? (session.isCompacting ? "compact" : undefined),
+            maintenanceReason: maintenance?.reason ?? (session.isCompacting ? "session_compacting" : undefined),
           },
         });
 
@@ -1803,12 +1841,16 @@ setIdleWaiter(() => {
 
         _idleResolve = undefined;
         resolve();
+      }, delayMs);
+      if (timer && typeof timer === "object" && "unref" in timer) {
+        (timer as NodeJS.Timeout).unref();
       }
-    }, IDLE_TIMEOUT_MS);
-    // Don't keep the process alive for the timer
-    if (timer && typeof timer === "object" && "unref" in timer) {
-      (timer as NodeJS.Timeout).unref();
-    }
+    };
+
+    // Safety timeout — if turn_end never fires (e.g. API hang),
+    // don't block the drain loop forever. Active maintenance gets bounded
+    // extensions so real compaction/rotation work is treated as busy, not dead.
+    scheduleIdleTimeout(IDLE_TIMEOUT_MS);
   });
 });
 
@@ -2133,6 +2175,108 @@ function estimatePromptTokens(text: string): number {
 }
 
 let promptBudgetMaintenance: Promise<void> | null = null;
+const IDLE_TIMEOUT_MAINTENANCE_EXTENSION_MS = 60_000;
+const IDLE_TIMEOUT_MAINTENANCE_MAX_MS = 15 * 60 * 1000;
+
+type GatewayMaintenanceKind = "compact" | "rotate";
+type GatewayMaintenanceReason =
+  | "prompt_budget"
+  | "context_ceiling"
+  | "context_elevated"
+  | "compaction_gap";
+
+type GatewayMaintenanceState = {
+  kind: GatewayMaintenanceKind;
+  reason: GatewayMaintenanceReason;
+  startedAt: number;
+  source?: string;
+  promptTokens?: number;
+  projectedTokens?: number;
+  modelContextWindow?: number;
+  contextTokens?: number;
+  usagePercent?: number;
+};
+
+let activeGatewayMaintenance: GatewayMaintenanceState | undefined;
+
+function isGatewayMaintenanceActive(): boolean {
+  return Boolean(activeGatewayMaintenance) || session.isCompacting;
+}
+
+async function runGatewayMaintenance<T>(
+  state: Omit<GatewayMaintenanceState, "startedAt">,
+  run: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  const previousMaintenance = activeGatewayMaintenance;
+  activeGatewayMaintenance = {
+    ...state,
+    startedAt,
+  };
+
+  void emitGatewayOtel({
+    level: "info",
+    component: "daemon",
+    action: "daemon.maintenance.started",
+    success: true,
+    metadata: {
+      kind: state.kind,
+      reason: state.reason,
+      source: state.source,
+      promptTokens: state.promptTokens,
+      projectedTokens: state.projectedTokens,
+      modelContextWindow: state.modelContextWindow,
+      contextTokens: state.contextTokens,
+      usagePercent: state.usagePercent,
+    },
+  });
+
+  fallbackController.pauseTimeoutWatch();
+  try {
+    const result = await run();
+    void emitGatewayOtel({
+      level: "info",
+      component: "daemon",
+      action: "daemon.maintenance.completed",
+      success: true,
+      duration_ms: Date.now() - startedAt,
+      metadata: {
+        kind: state.kind,
+        reason: state.reason,
+        source: state.source,
+        promptTokens: state.promptTokens,
+        projectedTokens: state.projectedTokens,
+        modelContextWindow: state.modelContextWindow,
+        contextTokens: state.contextTokens,
+        usagePercent: state.usagePercent,
+      },
+    });
+    return result;
+  } catch (error) {
+    void emitGatewayOtel({
+      level: "warn",
+      component: "daemon",
+      action: "daemon.maintenance.failed",
+      success: false,
+      error: String(error),
+      duration_ms: Date.now() - startedAt,
+      metadata: {
+        kind: state.kind,
+        reason: state.reason,
+        source: state.source,
+        promptTokens: state.promptTokens,
+        projectedTokens: state.projectedTokens,
+        modelContextWindow: state.modelContextWindow,
+        contextTokens: state.contextTokens,
+        usagePercent: state.usagePercent,
+      },
+    });
+    throw error;
+  } finally {
+    activeGatewayMaintenance = previousMaintenance;
+    fallbackController.resumeTimeoutWatch();
+  }
+}
 
 async function compactSessionForPromptBudget(source: string, promptTokens: number, projectedTokens: number, modelContextWindow: number): Promise<void> {
   if (session.isCompacting) return;
@@ -2156,16 +2300,23 @@ async function compactSessionForPromptBudget(source: string, promptTokens: numbe
     },
   });
 
-  fallbackController.pauseTimeoutWatch();
-  try {
-    await session.compact(
-      `Incoming prompt budget check projected ${projectedTokens}/${modelContextWindow} tokens. `
-      + "Aggressively summarize stale context before dispatch. Keep only essential recent context and active thread state.",
-    );
-    lastCompactionAt = Date.now();
-  } finally {
-    fallbackController.resumeTimeoutWatch();
-  }
+  await runGatewayMaintenance(
+    {
+      kind: "compact",
+      reason: "prompt_budget",
+      source,
+      promptTokens,
+      projectedTokens,
+      modelContextWindow,
+    },
+    async () => {
+      await session.compact(
+        `Incoming prompt budget check projected ${projectedTokens}/${modelContextWindow} tokens. `
+        + "Aggressively summarize stale context before dispatch. Keep only essential recent context and active thread state.",
+      );
+      lastCompactionAt = Date.now();
+    },
+  );
 }
 
 async function rotateSessionForPromptBudget(
@@ -2197,17 +2348,24 @@ async function rotateSessionForPromptBudget(
   });
 
   const summary = buildCompressionSummary();
-  fallbackController.pauseTimeoutWatch();
-  sessionCreatedAt = Date.now();
-  lastCompactionAt = Date.now();
-  try {
-    await session.newSession();
-    if (summary) {
-      await session.prompt(summary, { streamingBehavior: "followUp" });
-    }
-  } finally {
-    fallbackController.resumeTimeoutWatch();
-  }
+  await runGatewayMaintenance(
+    {
+      kind: "rotate",
+      reason: "prompt_budget",
+      source,
+      promptTokens,
+      projectedTokens,
+      modelContextWindow,
+    },
+    async () => {
+      sessionCreatedAt = Date.now();
+      lastCompactionAt = Date.now();
+      await session.newSession();
+      if (summary) {
+        await session.prompt(summary, { streamingBehavior: "followUp" });
+      }
+    },
+  );
 }
 
 async function ensurePromptFitsBudget(source: string, prompt: string): Promise<void> {
@@ -3874,18 +4032,25 @@ session.subscribe((event: any) => {
             },
           });
           try {
-            fallbackController.pauseTimeoutWatch();
-            await session.compact(
-              `Compaction overdue (${gapHours}h since last). Aggressively summarize. `
-              + "Keep only essential recent context and active thread state.",
+            await runGatewayMaintenance(
+              {
+                kind: "compact",
+                reason: "compaction_gap",
+                contextTokens: undefined,
+                usagePercent: CONTEXT_COMPACT_THRESHOLD_PERCENT,
+              },
+              async () => {
+                await session.compact(
+                  `Compaction overdue (${gapHours}h since last). Aggressively summarize. `
+                  + "Keep only essential recent context and active thread state.",
+                );
+                lastCompactionAt = Date.now();
+                lastProactiveCompactionAt = lastCompactionAt;
+                lastProactiveCompactionUsagePercent = CONTEXT_COMPACT_THRESHOLD_PERCENT;
+              },
             );
-            lastCompactionAt = Date.now();
-            lastProactiveCompactionAt = lastCompactionAt;
-            lastProactiveCompactionUsagePercent = CONTEXT_COMPACT_THRESHOLD_PERCENT;
-            fallbackController.resumeTimeoutWatch();
             console.log("[gateway:health] circuit-breaker compaction complete");
           } catch (err) {
-            fallbackController.resumeTimeoutWatch();
             console.error("[gateway:health] circuit-breaker compaction failed", { err });
           }
           // Continue to token check — compaction may not have reduced enough
@@ -3927,21 +4092,30 @@ session.subscribe((event: any) => {
           }
 
           const summary = buildCompressionSummary();
-          fallbackController.pauseTimeoutWatch();
-          sessionCreatedAt = Date.now();
-          lastCompactionAt = Date.now();
           try {
-            await session.newSession();
-            lastProactiveCompactionAt = 0;
-            lastProactiveCompactionUsagePercent = 0;
-            if (summary) {
-              await session.prompt(summary, { streamingBehavior: "followUp" });
-            }
+            await runGatewayMaintenance(
+              {
+                kind: "rotate",
+                reason: "context_ceiling",
+                contextTokens,
+                usagePercent: pct,
+                modelContextWindow,
+              },
+              async () => {
+                sessionCreatedAt = Date.now();
+                lastCompactionAt = Date.now();
+                await session.newSession();
+                lastProactiveCompactionAt = 0;
+                lastProactiveCompactionUsagePercent = 0;
+                if (summary) {
+                  await session.prompt(summary, { streamingBehavior: "followUp" });
+                }
+              },
+            );
             console.log("[gateway:health] context-ceiling rotation complete");
           } catch (err) {
             console.error("[gateway:health] context-ceiling rotation failed", { err });
           }
-          fallbackController.resumeTimeoutWatch();
           return;
         }
 
@@ -3973,19 +4147,27 @@ session.subscribe((event: any) => {
               metadata: { contextTokens, usageRatio: usagePercent, entries: sessionManager.getEntries().length },
             });
             try {
-              fallbackController.pauseTimeoutWatch();
-              await session.compact(
-                "Context is at " + usagePercent
-                + "% capacity. Aggressively summarize to prevent overflow. "
-                + "Keep only essential recent context and active thread state.",
+              await runGatewayMaintenance(
+                {
+                  kind: "compact",
+                  reason: "context_elevated",
+                  contextTokens,
+                  usagePercent,
+                  modelContextWindow,
+                },
+                async () => {
+                  await session.compact(
+                    "Context is at " + usagePercent
+                    + "% capacity. Aggressively summarize to prevent overflow. "
+                    + "Keep only essential recent context and active thread state.",
+                  );
+                  lastCompactionAt = Date.now();
+                  lastProactiveCompactionAt = lastCompactionAt;
+                  lastProactiveCompactionUsagePercent = usagePercent;
+                },
               );
-              lastCompactionAt = Date.now();
-              lastProactiveCompactionAt = lastCompactionAt;
-              lastProactiveCompactionUsagePercent = usagePercent;
-              fallbackController.resumeTimeoutWatch();
               console.log("[gateway:health] proactive compaction complete");
             } catch (err) {
-              fallbackController.resumeTimeoutWatch();
               console.error("[gateway:health] proactive compaction failed", { err });
             }
           }
@@ -4680,7 +4862,8 @@ const watchdogTimer = setInterval(() => {
   const redisOk = isRedisHealthy();
   const telegramOk = channelInfo.telegram; // grammy self-heals via long-polling retry
   const waitingForTurnEnd = Boolean(_idleResolve);
-  const stuckMs = waitingForTurnEnd && _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
+  const maintenanceActive = isGatewayMaintenanceActive();
+  const stuckMs = waitingForTurnEnd && !maintenanceActive && _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
   const isStuck = stuckMs > STUCK_THRESHOLD_MS;
   const failures = getConsecutiveFailures();
   const isDead = failures >= 3;
@@ -4719,6 +4902,14 @@ const watchdogTimer = setInterval(() => {
       uptimeMs,
       consecutiveFailures: failures,
       waitingForTurnEnd,
+      maintenanceActive,
+      ...(maintenanceActive
+        ? {
+            maintenanceKind: activeGatewayMaintenance?.kind ?? (session.isCompacting ? "compact" : undefined),
+            maintenanceReason: activeGatewayMaintenance?.reason ?? (session.isCompacting ? "session_compacting" : undefined),
+            maintenanceElapsedMs: activeGatewayMaintenance ? now - activeGatewayMaintenance.startedAt : undefined,
+          }
+        : {}),
       ...(isStuck ? { stuckForMs: stuckMs, lastPromptAt: new Date(_lastPromptAt).toISOString() } : {}),
       ...(stuckRecovery
         ? {
@@ -4809,7 +5000,8 @@ function getHealthStatus(): {
   const redisOk = isRedisHealthy();
   const redisState = getRedisRuntimeState();
   const waitingForTurnEnd = Boolean(_idleResolve);
-  const stuckMs = waitingForTurnEnd && _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
+  const maintenanceActive = isGatewayMaintenanceActive();
+  const stuckMs = waitingForTurnEnd && !maintenanceActive && _lastPromptAt > _lastTurnEndAt ? now - _lastPromptAt : 0;
   const failures = getConsecutiveFailures();
   const isDead = failures >= 3;
   const recoveryPending = Boolean(stuckRecovery);
@@ -4855,11 +5047,17 @@ function getHealthStatus(): {
         ? `dead (${failures} consecutive failures)`
         : recoveryPending
           ? `recovering (${Math.round(recoveryDeadlineInMs / 1000)}s)`
-          : stuckMs > STUCK_THRESHOLD_MS
-            ? `stuck (${Math.round(stuckMs / 1000)}s)`
-            : "ok",
+          : maintenanceActive
+            ? `maintenance (${activeGatewayMaintenance?.kind ?? (session.isCompacting ? "compact" : "active")})`
+            : stuckMs > STUCK_THRESHOLD_MS
+              ? `stuck (${Math.round(stuckMs / 1000)}s)`
+              : "ok",
       consecutivePromptFailures: failures,
       waitingForTurnEnd,
+      maintenanceActive,
+      maintenanceKind: activeGatewayMaintenance?.kind ?? (session.isCompacting ? "compact" : undefined),
+      maintenanceReason: activeGatewayMaintenance?.reason ?? (session.isCompacting ? "session_compacting" : undefined),
+      maintenanceElapsedMs: activeGatewayMaintenance ? now - activeGatewayMaintenance.startedAt : undefined,
       stuckRecoveryPending: recoveryPending,
       stuckRecoveryDeadlineMs: recoveryDeadlineInMs,
     },

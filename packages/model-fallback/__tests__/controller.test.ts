@@ -173,7 +173,7 @@ describe("ModelFallbackController", () => {
     expect(await fallbackController.onPromptError(1)).toBe(true);
     expect(fallbackController.state.active).toBe(true);
 
-    vi.advanceTimersByTime(250);
+    vi.advanceTimersByTime(2 * 60_000 + 250);
     await Promise.resolve();
     expect(setModel).toHaveBeenCalledTimes(2);
     expect(setModel).toHaveBeenLastCalledWith({ provider: "anthropic", id: "claude-opus-4-6" });
@@ -233,6 +233,50 @@ describe("ModelFallbackController", () => {
     expect(setModel).toHaveBeenCalledTimes(1);
   });
 
+  test("backs off recovery probes after transient probe failure", async () => {
+    vi.useFakeTimers();
+
+    const { currentModel } = createSession();
+    let current = { provider: "anthropic", id: currentModel.id };
+    const setModel = vi.fn(async (model: unknown) => {
+      const value = model as { provider: string; id: string };
+      if (value.id === "claude-opus-4-6" && current.id !== "claude-opus-4-6") {
+        throw new Error("429 rate_limit from primary probe");
+      }
+      current = { provider: value.provider, id: value.id };
+    });
+    const session: FallbackSession = {
+      setModel,
+      get model() {
+        return current;
+      },
+    };
+
+    const fallbackController = new ModelFallbackController(
+      { ...BASE_CONFIG, fallbackAfterFailures: 1, recoveryProbeIntervalMs: 250 },
+      "anthropic",
+      currentModel.id,
+    );
+    fallbackController.init(session, () => {});
+
+    expect(await fallbackController.onPromptError(1)).toBe(true);
+    expect(fallbackController.state.active).toBe(true);
+    expect(setModel).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(2 * 60_000 + 250);
+    await Promise.resolve();
+    expect(setModel).toHaveBeenCalledTimes(2);
+    expect(fallbackController.state.active).toBe(true);
+
+    vi.advanceTimersByTime(250);
+    await Promise.resolve();
+    expect(setModel).toHaveBeenCalledTimes(2);
+
+    vi.advanceTimersByTime(2 * 60_000);
+    await Promise.resolve();
+    expect(setModel).toHaveBeenCalledTimes(3);
+  });
+
   test("emits telemetry events", async () => {
     const events: TelemetryEvent[] = [];
     const telemetry: TelemetryEmitter = {
@@ -262,6 +306,7 @@ describe("ModelFallbackController", () => {
 
     const actions = events.map((event) => event[0]);
     expect(actions).toContain("model_fallback.swapped");
+    expect(actions).toContain("model_fallback.decision");
     expect(actions).toContain("prompt.latency");
   });
 });

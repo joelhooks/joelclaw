@@ -361,6 +361,10 @@ Opus timeout floor guard: when the primary model is `claude-opus-4-6`, gateway c
 
 Aborted-turn monitor guard: `message_end` with no text (especially `stopReason: aborted`) now clears the fallback timeout watch immediately instead of waiting on a later `turn_end` that may never arrive. Without this, aborted turns could poison `_promptDispatchedAt` and make the next successful turn inherit absurd fake `prompt.latency` / fallback timing.
 
+Fallback decision telemetry guard: fallback control now emits structured `model_fallback.decision` events alongside the coarse swap/probe actions. Activation reasons are bucketed (`timeout`, `consecutive_failures`, `rate_limit`, `provider_overloaded`, etc.), recovery probes record `probeCount`, and probe failures include `error_kind` plus `backoff_ms` so OTEL can tell the difference between a legitimately sick provider and a noisy control loop.
+
+Recovery probe backoff guard: when the primary model recovery probe fails for transient/persistent reasons, the gateway now backs off future probes instead of mindlessly retrying every interval. This borrows the OpenClaw pattern of “don’t keep probing the same sick provider in the same failure window” and cuts swap↔probe churn without disabling recovery entirely.
+
 No-op fallback guard: if primary and fallback resolve to the same model ID/provider, fallback swapping is disabled for that session (no `swapped`/`primary_restored` churn). The daemon emits `daemon.fallback:fallback.disabled.same_model` once at startup so operators can spot misconfiguration without alert spam.
 
 Model-failure ping guard: queue-level model failures (auth, missing API key, rate-limit/overload, model-not-found, network unavailable) now send an immediate operator alert to the default channel (Telegram currently). Generic failures also alert when consecutive prompt failures reach 3. Alerts are cooldown-limited per reason/source (2 minutes) and emit OTEL events under `daemon.alerting` (`model_failure.alert.sent|suppressed|failed`).
@@ -432,6 +436,8 @@ Additional low-signal guards now apply:
 - direct operator-only `Knowledge Watchdog Alert` messages are suppressed during quiet hours so degraded turn-write accounting doesn’t page overnight unless some higher-signal path escalates it
 - proactive compaction now has hysteresis: after a successful proactive compact, the gateway waits for either a 30m cooldown or a meaningful usage jump before compacting again
 - fallback recovery now requires a minimum dwell on the fallback model before probing primary again, which prevents immediate swap→restore chatter when a recovery probe tick lands right on top of a fresh fallback activation
+- maintenance windows (compact/rotate) are now first-class runtime state: the daemon emits `daemon.maintenance.started|completed|failed`, surfaces maintenance activity in gateway status, and watchdog/idle-wait logic treats active compaction/rotation as busy work instead of a dead turn
+- idle waiter now uses bounded maintenance extensions: if compaction/rotation is genuinely in flight when the normal `turn_end` safety valve would fire, the drain lock extends in 60s slices up to a 15m aggregate ceiling before giving up
 
 `subscription.updated` events are rendered as dedicated "📡 Feed Update" automated messages instead of being folded into batch digests, so feed changes stay visible even when digest-only pressure controls are active.
 

@@ -154,6 +154,9 @@ Low-signal operator-spam guardrails now also apply:
 - require a minimum dwell on fallback before probing primary again, so fallback swap→restore chatter doesn’t flap immediately
 - when the primary model is `claude-opus-4-6`, floor `fallbackTimeoutMs` to `240000`; `120000` is now treated as stale and too aggressive for real Opus TTFT
 - clear fallback timeout state immediately on empty/aborted `message_end` events so aborted turns cannot poison the next turn's latency/fallback monitoring
+- emit structured fallback decision telemetry (`model_fallback.decision`) with reason buckets / probe counts / probe backoff so OTEL can separate real provider sickness from a noisy control loop
+- back off primary recovery probes after transient/persistent probe failures instead of hammering the same sick provider every interval
+- treat compaction/rotation as explicit maintenance windows: surface them in gateway status, emit maintenance lifecycle telemetry, and let idle-wait/watchdog logic extend for genuine maintenance work before declaring the turn dead
 
 Muted degraded channels now also flip to `manual` with the known-issue reason surfaced as repair guidance, instead of falsely advertising a restart policy that the watchdog will skip while muted.
 
