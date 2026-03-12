@@ -3417,6 +3417,9 @@ session.subscribe((event: any) => {
   if (event.type === "message_end") {
     const fullText = responseChunks.join("");
     responseChunks = [];
+    const stopReason = typeof event.message?.stopReason === "string"
+      ? event.message.stopReason
+      : undefined;
 
     if (isActiveRequestSuperseded()) {
       console.log("[gateway:supersession] dropped stale response after newer human turn", {
@@ -3444,6 +3447,7 @@ session.subscribe((event: any) => {
       const is429 = errorMsg.includes("rate_limit") || errorMsg.includes("429");
       const isOverload = errorMsg.includes("overloaded") || errorMsg.includes("529");
       if (is429 || isOverload) {
+        fallbackController.cancelTimeoutWatch();
         const reason = is429 ? "Anthropic rate limit (429)" : "Anthropic overloaded (529)";
         const activeMetadata = getActiveRequestMetadata();
         const operatorTraceId = getOperatorTraceIdFromMetadata(activeMetadata);
@@ -3478,6 +3482,7 @@ session.subscribe((event: any) => {
         return;
       }
       // Other errors — log but don't route
+      fallbackController.cancelTimeoutWatch();
       const activeMetadata = getActiveRequestMetadata();
       const operatorTraceId = getOperatorTraceIdFromMetadata(activeMetadata);
       console.error("[gateway] message_end with error", { errorMsg: errorMsg.slice(0, 200) });
@@ -3492,7 +3497,22 @@ session.subscribe((event: any) => {
       return;
     }
 
-    if (!fullText.trim()) return;
+    if (!fullText.trim()) {
+      fallbackController.cancelTimeoutWatch();
+      if (stopReason === "aborted") {
+        console.warn("[gateway:fallback] cleared timeout watch after aborted message_end with no text");
+        void emitGatewayOtel({
+          level: "info",
+          component: "daemon.fallback",
+          action: "fallback.monitor_reset.aborted_message_end",
+          success: true,
+          metadata: {
+            stopReason,
+          },
+        });
+      }
+      return;
+    }
     const normalizedTurnText = fullText.trim();
     if (!turnKnowledgeText) {
       turnKnowledgeText = normalizedTurnText;
