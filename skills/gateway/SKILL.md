@@ -94,7 +94,7 @@ If Joel says the gateway session feels "fucked" while health checks look green, 
 - pressure reasons (`context_usage`, `context_ceiling`, `compaction_gap`, `session_age`)
 - last alert health/time + cooldown state
 
-The daemon also pushes direct Telegram alerts when session pressure escalates or recovers, and emits OTEL under `daemon.session-pressure` (`session_pressure.alert.sent|failed`).
+The daemon emits OTEL under `daemon.session-pressure` (`session_pressure.alert.sent|suppressed|failed`). Operator paging is stricter now: only `critical` pressure states page Telegram, while `elevated` / `recovered` transitions stay in status/diagnose/OTEL.
 
 ## Interruptibility and supersession (ADR-0196 / ADR-0218 rank 4 slice)
 
@@ -149,6 +149,9 @@ Low-signal operator-spam guardrails now also apply:
 - suppress `test.gateway-e2e` from operator delivery by default
 - drop low-signal-only digests (heartbeat-only / queue-dispatch-complete-only) instead of prompting the model for a pointless `HEARTBEAT_OK`
 - routine fallback swap/recovery notices are not operator-facing during quiet hours, and recovery notices are log/OTEL-only unless some higher-signal path escalates them
+- suppress direct operator-only `Knowledge Watchdog Alert` messages during quiet hours
+- add proactive-compaction hysteresis (30m cooldown unless context meaningfully worsens)
+- require a minimum dwell on fallback before probing primary again, so fallback swap→restore chatter doesn’t flap immediately
 
 Muted degraded channels now also flip to `manual` with the known-issue reason surfaced as repair guidance, instead of falsely advertising a restart policy that the watchdog will skip while muted.
 

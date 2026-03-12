@@ -1123,6 +1123,8 @@ function getCurrentModelContextWindow(): number {
 const MAX_COMPACTION_GAP_MS = 4 * 60 * 60 * 1000; // 4 hours — force compact if overdue
 const MAX_SESSION_AGE_MS = 8 * 60 * 60 * 1000; // 8 hours — fresh session if exceeded (was 24h, hit 85% at 7h)
 const SESSION_PRESSURE_ALERT_COOLDOWN_MS = 30 * 60 * 1000;
+const PROACTIVE_COMPACTION_COOLDOWN_MS = 30 * 60 * 1000;
+const PROACTIVE_COMPACTION_USAGE_DELTA_PERCENT = 5;
 const GATEWAY_HEALTH_MUTED_CHANNELS_KEY = "gateway:health:muted-channels";
 const GATEWAY_HEALTH_MUTE_REASONS_KEY = "gateway:health:mute-reasons";
 const CHANNEL_HEALTH_IDS: GatewayChannelId[] = ["telegram", "discord", "imessage", "slack"];
@@ -1130,6 +1132,8 @@ const CHANNEL_HEALTH_MUTE_REFRESH_MS = 60 * 1000;
 const CHANNEL_HEAL_RESTART_THRESHOLD = 2;
 const CHANNEL_HEAL_COOLDOWN_MS = 10 * 60 * 1000;
 let lastCompactionAt = Date.now();
+let lastProactiveCompactionAt = 0;
+let lastProactiveCompactionUsagePercent = 0;
 let sessionPressureAlertState = getInitialSessionPressureAlertState();
 let channelHealthAlertState = getInitialChannelHealthAlertState();
 let channelHealState: ChannelHealState = getInitialChannelHealState();
@@ -1429,6 +1433,23 @@ function shouldSendFallbackTelegramNotice(text: string): boolean {
 
   lastFallbackOperatorAlertAt = now;
   return true;
+}
+
+function shouldSendSessionPressureTelegramNotice(kind: "elevated" | "critical" | "recovered"): boolean {
+  return kind === "critical";
+}
+
+function shouldSendSessionLifecycleTelegramNotice(kind: "recycled" | "rotated"): boolean {
+  if (kind === "rotated") return !isGatewayQuietHours();
+  return false;
+}
+
+function shouldSuppressDirectOperatorTelegramMessage(text: string, source: string | undefined): boolean {
+  if (source) return false;
+  if (!isGatewayQuietHours()) return false;
+
+  const trimmed = text.trim();
+  return trimmed.includes("Knowledge Watchdog Alert");
 }
 
 // Track prompt dispatch timing for stuck-session detection.
@@ -1947,6 +1968,15 @@ if (TELEGRAM_TOKEN && TELEGRAM_USER_ID) {
       });
       if (!chatId) return;
 
+      if (shouldSuppressDirectOperatorTelegramMessage(envelope.text, context?.source)) {
+        console.log("[gateway:telegram] outbound operator message suppressed by policy", {
+          chatId,
+          source: context?.source,
+          preview: envelope.text.trim().slice(0, 80),
+        });
+        return;
+      }
+
       try {
         await sendTelegram(chatId, envelope.text, {
           buttons: envelope.buttons,
@@ -2290,19 +2320,31 @@ async function maybeNotifySessionPressure(snapshot: ReturnType<typeof getSession
       : "elevated";
   const message = buildSessionPressureAlertMessage(alertKind, snapshot);
   const silent = alertKind !== "critical";
+  const shouldSendTelegram = Boolean(TELEGRAM_USER_ID) && shouldSendSessionPressureTelegramNotice(alertKind);
 
-  void emitGatewayOtel({
-    level: kind === "critical" ? "warn" : "info",
-    component: "daemon.session-pressure",
-    action: "session_pressure.alert.sent",
-    success: true,
-    metadata,
-  });
-
-  if (!TELEGRAM_USER_ID) return;
+  if (!shouldSendTelegram) {
+    void emitGatewayOtel({
+      level: kind === "critical" ? "warn" : "info",
+      component: "daemon.session-pressure",
+      action: "session_pressure.alert.suppressed",
+      success: true,
+      metadata: {
+        ...metadata,
+        reason: TELEGRAM_USER_ID ? "policy" : "no_telegram_user",
+      },
+    });
+    return;
+  }
 
   try {
     await sendTelegram(TELEGRAM_USER_ID, message, { silent });
+    void emitGatewayOtel({
+      level: kind === "critical" ? "warn" : "info",
+      component: "daemon.session-pressure",
+      action: "session_pressure.alert.sent",
+      success: true,
+      metadata,
+    });
   } catch (error) {
     console.error("[gateway:session-pressure] alert send failed", { error: String(error), kind });
     void emitGatewayOtel({
@@ -3755,8 +3797,8 @@ session.subscribe((event: any) => {
             },
           });
 
-          // Alert via Telegram
-          if (TELEGRAM_USER_ID) {
+          // Keep recycled-session notices out of the operator relay by default.
+          if (TELEGRAM_USER_ID && shouldSendSessionLifecycleTelegramNotice("recycled")) {
             sendTelegram(TELEGRAM_USER_ID, [
               "🔄 <b>Gateway session recycled</b>",
               "",
@@ -3774,6 +3816,8 @@ session.subscribe((event: any) => {
           lastCompactionAt = now;
           try {
             await session.newSession();
+            lastProactiveCompactionAt = 0;
+            lastProactiveCompactionUsagePercent = 0;
             if (summary) {
               await session.prompt(summary, { streamingBehavior: "followUp" });
             }
@@ -3816,6 +3860,8 @@ session.subscribe((event: any) => {
               + "Keep only essential recent context and active thread state.",
             );
             lastCompactionAt = Date.now();
+            lastProactiveCompactionAt = lastCompactionAt;
+            lastProactiveCompactionUsagePercent = CONTEXT_COMPACT_THRESHOLD_PERCENT;
             fallbackController.resumeTimeoutWatch();
             console.log("[gateway:health] circuit-breaker compaction complete");
           } catch (err) {
@@ -3851,7 +3897,7 @@ session.subscribe((event: any) => {
             metadata: { contextTokens, usageRatio: pct, entries: sessionManager.getEntries().length },
           });
 
-          if (TELEGRAM_USER_ID) {
+          if (TELEGRAM_USER_ID && shouldSendSessionLifecycleTelegramNotice("rotated")) {
             sendTelegram(TELEGRAM_USER_ID, [
               "🔄 <b>Gateway session rotated</b>",
               "",
@@ -3866,6 +3912,8 @@ session.subscribe((event: any) => {
           lastCompactionAt = Date.now();
           try {
             await session.newSession();
+            lastProactiveCompactionAt = 0;
+            lastProactiveCompactionUsagePercent = 0;
             if (summary) {
               await session.prompt(summary, { streamingBehavior: "followUp" });
             }
@@ -3879,31 +3927,47 @@ session.subscribe((event: any) => {
 
         // Tier 1: 65% → proactive compaction (buys time before we hit 75%).
         if (usageRatio > 0.65 && !session.isCompacting) {
-          console.warn("[gateway:health] context elevated — proactive compaction", {
-            contextTokens,
-            usagePercent: Math.round(usageRatio * 100),
-            entries: sessionManager.getEntries().length,
-          });
-          void emitGatewayOtel({
-            level: "warn",
-            component: "daemon",
-            action: "daemon.context.proactive_compact",
-            success: true,
-            metadata: { contextTokens, usageRatio: Math.round(usageRatio * 100), entries: sessionManager.getEntries().length },
-          });
-          try {
-            fallbackController.pauseTimeoutWatch();
-            await session.compact(
-              "Context is at " + Math.round(usageRatio * 100)
-              + "% capacity. Aggressively summarize to prevent overflow. "
-              + "Keep only essential recent context and active thread state.",
-            );
-            lastCompactionAt = Date.now();
-            fallbackController.resumeTimeoutWatch();
-            console.log("[gateway:health] proactive compaction complete");
-          } catch (err) {
-            fallbackController.resumeTimeoutWatch();
-            console.error("[gateway:health] proactive compaction failed", { err });
+          const usagePercent = Math.round(usageRatio * 100);
+          const recentProactiveCompaction = lastProactiveCompactionAt > 0
+            && now - lastProactiveCompactionAt < PROACTIVE_COMPACTION_COOLDOWN_MS;
+          const usageJumped = usagePercent >= lastProactiveCompactionUsagePercent + PROACTIVE_COMPACTION_USAGE_DELTA_PERCENT;
+
+          if (recentProactiveCompaction && !usageJumped) {
+            console.log("[gateway:health] proactive compaction skipped (cooldown active)", {
+              usagePercent,
+              lastProactiveCompactionAt: new Date(lastProactiveCompactionAt).toISOString(),
+              cooldownRemainingMs: PROACTIVE_COMPACTION_COOLDOWN_MS - (now - lastProactiveCompactionAt),
+              lastProactiveCompactionUsagePercent,
+            });
+          } else {
+            console.warn("[gateway:health] context elevated — proactive compaction", {
+              contextTokens,
+              usagePercent,
+              entries: sessionManager.getEntries().length,
+            });
+            void emitGatewayOtel({
+              level: "warn",
+              component: "daemon",
+              action: "daemon.context.proactive_compact",
+              success: true,
+              metadata: { contextTokens, usageRatio: usagePercent, entries: sessionManager.getEntries().length },
+            });
+            try {
+              fallbackController.pauseTimeoutWatch();
+              await session.compact(
+                "Context is at " + usagePercent
+                + "% capacity. Aggressively summarize to prevent overflow. "
+                + "Keep only essential recent context and active thread state.",
+              );
+              lastCompactionAt = Date.now();
+              lastProactiveCompactionAt = lastCompactionAt;
+              lastProactiveCompactionUsagePercent = usagePercent;
+              fallbackController.resumeTimeoutWatch();
+              console.log("[gateway:health] proactive compaction complete");
+            } catch (err) {
+              fallbackController.resumeTimeoutWatch();
+              console.error("[gateway:health] proactive compaction failed", { err });
+            }
           }
         } else if (usageRatio > 0.5) {
           // Early warning — just log

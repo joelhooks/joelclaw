@@ -107,7 +107,7 @@ Session pressure is now surfaced in status payloads as first-class data:
 
 `joelclaw gateway diagnose` now includes a dedicated `session-pressure` layer instead of burying pressure state inside generic status findings.
 
-The daemon also sends direct Telegram pressure alerts on escalation/recovery and emits OTEL under `daemon.session-pressure` (`session_pressure.alert.sent|failed`). That makes compaction/rotation risk visible before fallback thrash becomes the first obvious symptom.
+The daemon emits OTEL under `daemon.session-pressure` (`session_pressure.alert.sent|suppressed|failed`). Operator paging is now stricter: only `critical` pressure states page Telegram, while `elevated` / `recovered` transitions stay in status/diagnose/OTEL so the control loop can be noisy without becoming human spam.
 
 Operator rule: if status says `redis_degraded`, do **not** treat that as a full gateway outage. Diagnose substrate/Redis separately while using direct conversation paths if needed.
 
@@ -415,7 +415,7 @@ Three guards prevent context bloat and overnight fallback thrash:
 After every `turn_end`, if >4 hours since last compaction, force `session.compact()` regardless of token count. Prevents the scenario where context grows unchecked when pi's auto-compaction misses (e.g. model_change entries disrupting threshold calculation).
 
 ### Session age limit (8h max)
-After every `turn_end`, if session is >8 hours old, create a fresh session with compression summary. Prevents multi-day JSONL growth before fallback thrash starts. Alerts via Telegram (silent).
+After every `turn_end`, if session is >8 hours old, create a fresh session with compression summary. Prevents multi-day JSONL growth before fallback thrash starts. Session recycle is no longer an operator-facing Telegram notice by default; it stays in logs/OTEL/status unless a higher-signal failure path escalates it.
 
 ### Quiet hours auto-batching (11 PM – 7 AM PST)
 During quiet hours, all non-interactive events are batched (not immediate). Batch digest flush is deferred until wake hours. Human messages (telegram, imessage, etc.) and error events always process immediately.
@@ -425,6 +425,9 @@ Additional low-signal guards now apply:
 - `test.gateway-e2e` is suppressed from operator delivery by default (internal probe, not a human-facing notification)
 - low-signal-only digests (for example heartbeat-only or queue-dispatch-complete-only batches) are dropped instead of prompting the model just to say `HEARTBEAT_OK`
 - fallback swap/recovery notices no longer page Telegram during quiet hours, and routine recovery notices are log/OTEL-only instead of operator spam
+- direct operator-only `Knowledge Watchdog Alert` messages are suppressed during quiet hours so degraded turn-write accounting doesn’t page overnight unless some higher-signal path escalates it
+- proactive compaction now has hysteresis: after a successful proactive compact, the gateway waits for either a 30m cooldown or a meaningful usage jump before compacting again
+- fallback recovery now requires a minimum dwell on the fallback model before probing primary again, which prevents immediate swap→restore chatter when a recovery probe tick lands right on top of a fresh fallback activation
 
 `subscription.updated` events are rendered as dedicated "📡 Feed Update" automated messages instead of being folded into batch digests, so feed changes stay visible even when digest-only pressure controls are active.
 

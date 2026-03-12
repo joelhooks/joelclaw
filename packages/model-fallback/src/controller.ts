@@ -30,6 +30,8 @@ type ModelFallbackTelemetryEvent = {
 
 type ModelRef = { provider: string; id: string };
 
+const MIN_FALLBACK_RECOVERY_DWELL_MS = 2 * 60 * 1000;
+
 function resolveCatalogModel(provider: string | undefined, model: string): ModelRef | undefined {
   if (!provider) return undefined;
   const normalizedModel = normalizeCatalogModel(model, true)
@@ -403,11 +405,15 @@ export class ModelFallbackController {
     if (!this._fallbackDistinct) return;
     if (!this._active || !this.session) return;
 
+    const downtimeMs = this._activeSince > 0 ? Date.now() - this._activeSince : 0;
+    if (downtimeMs < MIN_FALLBACK_RECOVERY_DWELL_MS) {
+      return;
+    }
+
     this._lastRecoveryProbe = Date.now();
     this._probesSinceFallback += 1;
     const probeCount = this._probesSinceFallback;
     const primary = `${this.primaryModel.provider}/${this.primaryModel.id}`;
-    const downtimeMs = this._activeSince > 0 ? Date.now() - this._activeSince : 0;
 
     const primaryModelObj = resolveCatalogModel(
       this.primaryModel.provider,
