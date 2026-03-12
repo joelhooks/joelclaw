@@ -1,5 +1,4 @@
 {
-
   "settings": {
     "toolPrefix": "server",
     "idleTimeout": 10
@@ -9,7 +8,19 @@
       "url": "https://mcp.granola.ai/mcp",
       "auth": "oauth",
       "lifecycle": "lazy",
-      "directTools": ["query_granola_meetings", "list_meetings", "get_meetings", "get_meeting_transcript"]
+      "directTools": [
+        "query_granola_meetings",
+        "list_meetings",
+        "get_meetings",
+        "get_meeting_transcript"
+      ]
+    },
+    "ahrefs": {
+      "url": "https://api.ahrefs.com/mcp/mcp",
+      "headers": {
+        "Authorization": "Bearer GhGO.MbAOsd7LEWgStWIpQOSh6To1OFllTTRUYmpSK1J1VzY1Q2lsdUsrUHAyYVBpYloxRUxOVEdYL254K0M4KytpK0g5L2pJRzRPZk5uTldtQWFsa2hxbVA2QUhXRVFVMGgwL0V4MUtoRWVvOGNhSnMzbXVVNkphVmhOQWQ0UkJNUTY4YWZtL3VsK2JHdU0.6SEN"
+      },
+      "lifecycle": "lazy"
     }
   }
 }
