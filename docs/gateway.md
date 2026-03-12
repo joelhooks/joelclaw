@@ -109,6 +109,13 @@ Session pressure is now surfaced in status payloads as first-class data:
 
 The daemon emits OTEL under `daemon.session-pressure` (`session_pressure.alert.sent|suppressed|failed`). Operator paging is now stricter: only `critical` pressure states page Telegram, while `elevated` / `recovered` transitions stay in status/diagnose/OTEL so the control loop can be noisy without becoming human spam.
 
+Idle maintenance is now autonomous for time-based pressure too:
+
+- watchdog evaluates session pressure even when no turn is active
+- if the idle session crosses `compaction_gap`, the daemon runs compaction without waiting for another message
+- if the idle session crosses `session_age` and rotation is the next action, the daemon rotates to a fresh session with the compression summary before the next inbound turn arrives
+- those idle maintenance runs emit the same `daemon.maintenance.started|completed|failed` lifecycle telemetry with `source: watchdog`
+
 Operator rule: if status says `redis_degraded`, do **not** treat that as a full gateway outage. Diagnose substrate/Redis separately while using direct conversation paths if needed.
 
 ## Interruptibility and supersession (ADR-0196 / ADR-0218 rank 4)

@@ -96,6 +96,12 @@ If Joel says the gateway session feels "fucked" while health checks look green, 
 
 The daemon emits OTEL under `daemon.session-pressure` (`session_pressure.alert.sent|suppressed|failed`). Operator paging is stricter now: only `critical` pressure states page Telegram, while `elevated` / `recovered` transitions stay in status/diagnose/OTEL.
 
+Idle maintenance is autonomous for time-based pressure:
+- watchdog evaluates idle session pressure even when no turn is active
+- overdue compaction gaps trigger autonomous compaction instead of waiting for the next human/event turn
+- age-triggered rotation can also happen from the watchdog path, seeding the fresh session with the compression summary before the next inbound turn
+- those watchdog-triggered runs emit the same `daemon.maintenance.started|completed|failed` telemetry as turn-bound maintenance
+
 ## Interruptibility and supersession (ADR-0196 / ADR-0218 rank 4 slice)
 
 For direct human turns across Telegram, Discord, iMessage, and Slack invoke paths, the latest message now wins.

@@ -71,6 +71,7 @@ import {
 } from "./guardrails";
 import { startHeartbeatRunner, TRIPWIRE_PATH } from "./heartbeat";
 import { buildGatewayTurnKnowledgeWrite, sendGatewayTurnKnowledgeWrite } from "./knowledge-turn";
+import { decideIdleGatewayMaintenance } from "./maintenance-policy";
 import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
 import { type OutboundAttribution, registerChannel, routeResponse } from "./outbound/router";
 import {
@@ -2183,7 +2184,8 @@ type GatewayMaintenanceReason =
   | "prompt_budget"
   | "context_ceiling"
   | "context_elevated"
-  | "compaction_gap";
+  | "compaction_gap"
+  | "session_age";
 
 type GatewayMaintenanceState = {
   kind: GatewayMaintenanceKind;
@@ -2405,6 +2407,84 @@ async function ensurePromptFitsBudget(source: string, prompt: string): Promise<v
 
   promptBudgetMaintenance = maintenancePromise;
   await maintenancePromise;
+}
+
+async function maybeRunIdleGatewayMaintenance(): Promise<void> {
+  const waitingForTurnEnd = Boolean(_idleResolve);
+  const maintenanceActive = isGatewayMaintenanceActive();
+  const queueDepth = getQueueDepth();
+  const snapshot = getSessionPressure();
+  const decision = decideIdleGatewayMaintenance({
+    waitingForTurnEnd,
+    maintenanceActive,
+    queueDepth,
+    promptBudgetMaintenanceActive: Boolean(promptBudgetMaintenance),
+    sessionPressure: {
+      nextAction: snapshot.nextAction,
+      reasons: snapshot.reasons,
+    },
+  });
+
+  if (!decision) return;
+
+  if (decision.kind === "rotate") {
+    console.warn("[gateway:watchdog] idle session pressure triggered autonomous rotation", {
+      reasons: snapshot.reasons,
+      sessionAgeMs: snapshot.sessionAgeMs,
+      lastCompactionAgeMs: snapshot.lastCompactionAgeMs,
+      queueDepth,
+    });
+
+    const summary = buildCompressionSummary();
+    await runGatewayMaintenance(
+      {
+        kind: "rotate",
+        reason: decision.reason,
+        source: "watchdog",
+        contextTokens: snapshot.estimatedTokens,
+        usagePercent: snapshot.usagePercent,
+        modelContextWindow: snapshot.maxTokens,
+      },
+      async () => {
+        sessionCreatedAt = Date.now();
+        lastCompactionAt = Date.now();
+        await session.newSession();
+        lastProactiveCompactionAt = 0;
+        lastProactiveCompactionUsagePercent = 0;
+        if (summary) {
+          await session.prompt(summary, { streamingBehavior: "followUp" });
+        }
+      },
+    );
+    return;
+  }
+
+  console.warn("[gateway:watchdog] idle session pressure triggered autonomous compaction", {
+    reasons: snapshot.reasons,
+    sessionAgeMs: snapshot.sessionAgeMs,
+    lastCompactionAgeMs: snapshot.lastCompactionAgeMs,
+    queueDepth,
+  });
+
+  await runGatewayMaintenance(
+    {
+      kind: "compact",
+      reason: decision.reason,
+      source: "watchdog",
+      contextTokens: snapshot.estimatedTokens,
+      usagePercent: snapshot.usagePercent,
+      modelContextWindow: snapshot.maxTokens,
+    },
+    async () => {
+      await session.compact(
+        "Idle gateway session crossed the compaction gap threshold with no turns in flight. "
+        + "Aggressively summarize stale context, preserve only essential recent context and active thread state, and keep the session ready for the next inbound turn.",
+      );
+      lastCompactionAt = Date.now();
+      lastProactiveCompactionAt = lastCompactionAt;
+      lastProactiveCompactionUsagePercent = snapshot.usagePercent;
+    },
+  );
 }
 
 function buildSessionPressureAlertMessage(
@@ -4856,6 +4936,11 @@ const queueDrainTimer = setInterval(() => {
 const watchdogTimer = setInterval(() => {
   void maybeNotifyChannelHealth();
   void maybeHealChannels();
+  void maybeRunIdleGatewayMaintenance().catch((error) => {
+    console.error("[gateway:watchdog] idle maintenance failed", {
+      error: String(error),
+    });
+  });
 
   const now = Date.now();
   const uptimeMs = now - startedAt;
