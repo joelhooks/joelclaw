@@ -72,6 +72,7 @@ import {
 import { startHeartbeatRunner, TRIPWIRE_PATH } from "./heartbeat";
 import { buildGatewayTurnKnowledgeWrite, sendGatewayTurnKnowledgeWrite } from "./knowledge-turn";
 import { decideIdleGatewayMaintenance } from "./maintenance-policy";
+import { normalizeOperatorRelayText } from "./operator-relay";
 import { createEnvelope, type OutboundEnvelope } from "./outbound/envelope";
 import { type OutboundAttribution, registerChannel, routeResponse } from "./outbound/router";
 import {
@@ -1880,6 +1881,14 @@ registerChannel("console", {
     const source = context?.source;
     const sourceKind = getSourceKind(source);
     const attribution = context?.attribution;
+    const relayText = normalizeOperatorRelayText(source, envelope.text);
+    if (!relayText) return;
+    const relayEnvelope = relayText === envelope.text
+      ? envelope
+      : {
+          ...envelope,
+          text: relayText,
+        };
 
     if (!TELEGRAM_TOKEN || !TELEGRAM_USER_ID) {
       void emitGatewayOtel({
@@ -1891,7 +1900,7 @@ registerChannel("console", {
           reason: "no-telegram-config",
           source,
           sourceKind,
-          textLength: envelope.text.length,
+          textLength: relayEnvelope.text.length,
         },
       });
       return;
@@ -1907,7 +1916,7 @@ registerChannel("console", {
           reason: "source-is-telegram",
           source,
           sourceKind,
-          textLength: envelope.text.length,
+          textLength: relayEnvelope.text.length,
         },
       });
       return;
@@ -1923,7 +1932,7 @@ registerChannel("console", {
           reason: "background-internal-no-source-context",
           source,
           sourceKind,
-          textLength: envelope.text.length,
+          textLength: relayEnvelope.text.length,
           backgroundSource: attribution?.backgroundSource,
           hasActiveSource: attribution?.hasActiveSource,
           hasCapturedSource: attribution?.hasCapturedSource,
@@ -1934,7 +1943,7 @@ registerChannel("console", {
       return;
     }
 
-    if (!shouldForwardToTelegram(envelope.text)) {
+    if (!shouldForwardToTelegram(relayEnvelope.text)) {
       void emitGatewayOtel({
         level: "debug",
         component: "daemon.outbound",
@@ -1944,7 +1953,7 @@ registerChannel("console", {
           reason: "filtered-by-forward-rule",
           source,
           sourceKind,
-          textLength: envelope.text.length,
+          textLength: relayEnvelope.text.length,
         },
       });
       return;
@@ -1958,15 +1967,15 @@ registerChannel("console", {
       metadata: {
         source,
         sourceKind,
-        textLength: envelope.text.length,
+        textLength: relayEnvelope.text.length,
       },
     });
 
     try {
-      await sendTelegram(TELEGRAM_USER_ID, envelope.text, {
-        buttons: envelope.buttons,
-        silent: envelope.silent,
-        replyTo: typeof envelope.replyTo === "string" ? Number.parseInt(envelope.replyTo, 10) : envelope.replyTo,
+      await sendTelegram(TELEGRAM_USER_ID, relayEnvelope.text, {
+        buttons: relayEnvelope.buttons,
+        silent: relayEnvelope.silent,
+        replyTo: typeof relayEnvelope.replyTo === "string" ? Number.parseInt(relayEnvelope.replyTo, 10) : relayEnvelope.replyTo,
       });
       void emitGatewayOtel({
         level: "info",
@@ -1976,7 +1985,7 @@ registerChannel("console", {
         metadata: {
           source,
           sourceKind,
-          textLength: envelope.text.length,
+          textLength: relayEnvelope.text.length,
         },
       });
     } catch (error) {
@@ -1991,7 +2000,7 @@ registerChannel("console", {
         metadata: {
           source,
           sourceKind,
-          textLength: envelope.text.length,
+          textLength: relayEnvelope.text.length,
         },
       });
     }

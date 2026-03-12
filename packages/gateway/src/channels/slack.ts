@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
-import type { EnqueueFn } from "./redis";
+import { type EnqueueFn, pushGatewayEvent } from "./redis";
 import type {
   Channel,
   ChannelPlatform,
@@ -522,8 +522,8 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
     return;
   } else if (isAllowedUser) {
     const intelPrompt = `${context.prefix} ${userLabel}: ${text}`;
-
-    await enqueuePrompt(`slack-intel:${message.channel}`, intelPrompt, {
+    const payload = {
+      prompt: intelPrompt,
       slackChannelId: message.channel,
       slackThreadTs: threadTs,
       slackUserId: message.user,
@@ -531,7 +531,17 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
       slackEventKind: kind,
       passiveIntel: true,
       joelSignal: true,
+    };
+
+    const queuedEvent = await pushGatewayEvent({
+      type: "slack.signal.received",
+      source: `slack-intel:${message.channel}`,
+      payload,
     });
+
+    if (!queuedEvent) {
+      await enqueuePrompt(`slack-intel:${message.channel}`, intelPrompt, payload);
+    }
 
     void emitGatewayOtel({
       level: "debug",
@@ -542,6 +552,7 @@ async function handleIncomingMessage(rawMessage: unknown, kind: "message" | "men
         channelId: message.channel,
         threadTs,
         userId: message.user,
+        routedVia: queuedEvent ? "redis-event" : "direct-enqueue-fallback",
       },
     });
     return;

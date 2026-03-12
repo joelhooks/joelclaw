@@ -4,6 +4,11 @@ import { homedir } from "node:os";
 import { emitGatewayOtel } from "@joelclaw/telemetry";
 import { enrichPromptWithVaultContext } from "@joelclaw/vault-reader";
 import Redis from "ioredis";
+import {
+  buildSignalDigestPrompt,
+  buildSignalRelayGuidance,
+  classifyOperatorSignal,
+} from "../operator-relay";
 import type { OutboundEnvelope } from "../outbound/envelope";
 import { type InlineButton, send as sendTelegram } from "./telegram";
 
@@ -327,7 +332,6 @@ function buildRecallSectionFromMessage(message: string): string {
 }
 
 async function buildPrompt(events: SystemEvent[]): Promise<string> {
-  const footer = "Take action on anything that needs it, otherwise acknowledge briefly.";
   const ts = new Date().toLocaleString("sv-SE", { timeZone: "America/Los_Angeles" }).replace(" ", "T") + " PST";
 
   // cron.heartbeat no longer triggers HEARTBEAT.md checklist in the gateway.
@@ -335,6 +339,8 @@ async function buildPrompt(events: SystemEvent[]): Promise<string> {
   // Filter out stale cron.heartbeat events if they somehow arrive.
   events = events.filter((event) => event.type !== "cron.heartbeat");
   if (events.length === 0) return ""; // nothing actionable
+
+  const footer = buildSignalRelayGuidance(events);
 
   const promptEvents = events.filter(
     (event) => typeof event.payload?.prompt === "string" && event.payload.prompt
@@ -430,28 +436,6 @@ function isInteractiveEvent(event: SystemEvent): boolean {
     || event.type === "approval.resolved"
     || event.type === "gateway/sleep"
     || event.type === "gateway/wake";
-}
-
-function isDegradationOrErrorEvent(event: SystemEvent): boolean {
-  const payload = event.payload as Record<string, unknown>;
-  const level = typeof payload.level === "string" ? payload.level.toLowerCase() : "";
-  if (level === "error" || level === "fatal") return true;
-  if (payload.immediateTelegram === true) return true;
-
-  const type = event.type.toLowerCase();
-  return type.includes("degraded")
-    || type.includes("fatal")
-    || type.includes("error")
-    || type.includes("failed")
-    || type.includes("drift")
-    || type === "alert";
-}
-
-function isAutomationEvent(event: SystemEvent): boolean {
-  const source = event.source.trim().toLowerCase();
-  return source.startsWith("inngest/")
-    || source === "restate"
-    || source.startsWith("restate/");
 }
 
 function isLowSignalDigestEvent(event: SystemEvent): boolean {
@@ -597,32 +581,9 @@ async function drainEvents(): Promise<void> {
     // ── Three-tier event triage (bias-to-action triangle) ────────
     //
     // 🔺 IMMEDIATE — forward to agent now (actionable, needs response)
-    // 🔸 BATCHED   — accumulate in Redis, flush as hourly digest
+    // 🔸 BATCHED   — accumulate in Redis, flush as correlated signal digest
     // ⬛ SUPPRESSED — drop silently (echoes, telemetry, noise)
     //
-    const SUPPRESSED_TYPES = new Set([
-      "todoist.task.completed",  // echo from agent's own closes
-      "memory.observed",         // telemetry confirmation
-      "content.synced",          // vault sync confirmation
-      "media/received",          // media pipeline progress - fires 5+ times per image, no agent action needed
-      "progress",                // inngest step progress events — noisy, not actionable
-      "test.gateway-e2e",        // internal probe, never operator-facing by default
-    ]);
-
-    const BATCHED_TYPES = new Set([
-      "cron.heartbeat",           // quiet-mode heartbeat status (digest only)
-      "todoist.task.created",      // agent-created task echo
-      "todoist.task.deleted",      // no action needed
-      "front.message.received",    // inbound email — triage runs on schedule
-      "front.message.sent",        // outbound email echo
-      "front.assignee.changed",    // low signal assignment change
-      "vercel.deploy.succeeded",   // success is default
-      "vercel.deploy.created",     // deploy started, nothing to do
-      "vercel.deploy.canceled",    // rare, no action
-      "discovery.captured",        // captured for later
-      "meeting.analyzed",          // Granola meeting summaries
-    ]);
-
     const suppressed: SystemEvent[] = [];
     const batched: SystemEvent[] = [];
     const immediate: SystemEvent[] = [];
@@ -640,11 +601,6 @@ async function drainEvents(): Promise<void> {
     };
 
     for (const e of events) {
-      if (SUPPRESSED_TYPES.has(e.type)) {
-        assign("suppressed", e, "suppressed.type-listed");
-        continue;
-      }
-
       if (isHeartbeatOkEvent(e)) {
         if (Date.now() - lastUserVisibleHeartbeatAt < ONE_HOUR_MS) {
           assign("suppressed", e, "suppressed.heartbeat-ok-within-hour");
@@ -655,32 +611,8 @@ async function drainEvents(): Promise<void> {
         continue;
       }
 
-      if (BATCHED_TYPES.has(e.type)) {
-        assign("batched", e, "batched.type-listed");
-        continue;
-      }
-
-      if (isInteractiveEvent(e) || isDegradationOrErrorEvent(e) || isImmediateTelegramEvent(e)) {
-        assign("immediate", e, "immediate.interactive-or-error");
-        continue;
-      }
-
-      if (isAutomationEvent(e)) {
-        assign("batched", e, "batched.automation-source");
-        continue;
-      }
-
-      // ADR-0211: During quiet hours (11PM-7AM PST), batch everything
-      // that isn't interactive or degradation. Prevents token burn and
-      // fallback thrash overnight — the 2026-03-05 incident had 92
-      // fallback activations from non-interactive events hitting a
-      // bloated context window.
-      if (isQuietHours() && !isInteractiveEvent(e) && !isDegradationOrErrorEvent(e)) {
-        assign("batched", e, "batched.quiet-hours");
-        continue;
-      }
-
-      assign("immediate", e, "immediate.default-fallback");
+      const decision = classifyOperatorSignal(e, { quietHours: isQuietHours() });
+      assign(decision.bucket, e, decision.reason);
     }
 
     // Stash batched events in Redis for hourly digest
@@ -1048,25 +980,13 @@ export async function flushBatchDigest(): Promise<number> {
     return 0;
   }
 
-  // Group by type for a compact summary
   const counts = new Map<string, number>();
   for (const e of events) {
     counts.set(e.type, (counts.get(e.type) ?? 0) + 1);
   }
 
-  const lines = Array.from(counts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .map(([type, count]) => `- ${type}: ${count}`);
-
-  const ts = new Date().toLocaleString("sv-SE", { timeZone: "America/Los_Angeles" }).replace(" ", "T") + " PST";
-  const prompt = [
-    `## 📋 Batch Digest — ${ts}`,
-    "",
-    `${events.length} event(s) since last digest:`,
-    ...lines,
-    "",
-    "Acknowledge briefly. Only flag if something looks wrong.",
-  ].join("\n");
+  const prompt = buildSignalDigestPrompt(events);
+  if (!prompt) return 0;
 
   await enqueuePrompt(SESSION_ID, prompt, {
     eventCount: events.length,
@@ -1094,6 +1014,29 @@ export function isHealthy(): boolean {
 
 export function getRedisClient(): Redis | undefined {
   return cmd;
+}
+
+export async function pushGatewayEvent(input: {
+  type: string;
+  source: string;
+  payload: Record<string, unknown>;
+}): Promise<SystemEvent | null> {
+  if (!cmd) return null;
+
+  const event: SystemEvent = {
+    id: crypto.randomUUID(),
+    type: input.type,
+    source: input.source,
+    payload: input.payload,
+    ts: Date.now(),
+  };
+
+  const json = JSON.stringify(event);
+  const notification = JSON.stringify({ eventId: event.id, type: event.type });
+
+  await cmd.lpush(EVENT_LIST, json);
+  await cmd.publish(NOTIFY_CHANNEL, notification);
+  return event;
 }
 
 export async function shutdown(): Promise<void> {

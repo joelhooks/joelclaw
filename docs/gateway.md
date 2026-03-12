@@ -327,7 +327,21 @@ The launchd start script now derives Slack routing env vars at boot from existin
 
 This removes dependency on non-existent `slack_allowed_user_id` / `slack_default_channel_id` secrets and restores passive firehose routing after restarts.
 
-Slack passive intel entries are now acknowledged in the command queue without calling `session.prompt()`. The queue logs the skip and emits OTEL action `queue.passive_intel.logged`, so monitored channel traffic stays in the intel lane instead of generating conversational gateway turns.
+Joel-authored non-mention Slack channel messages now enter the canonical gateway signal pipeline as Redis events (`slack.signal.received`) instead of freelancing a direct gateway turn. That means Slack passive intel and email now share the same relay heuristics:
+
+- normalize into one signal shape
+- score with explicit rules (VIP sender, Joel signal, action/decision keywords, project cues, low-signal/noise patterns)
+- correlate by project/contact/conversation keys
+- route as `immediate`, `batched`, or `suppressed`
+
+Canonical implementation lives in `packages/gateway/src/operator-relay.ts`.
+
+Current contract:
+- `vip.email.received` is immediate by policy
+- lower-signal `front.message.received` / passive Slack intel can batch into a correlated signal digest instead of paging immediately
+- digest prompts must ask for an operator brief, not `HEARTBEAT_OK` sludge
+- outbound operator relay strips leaked `HEARTBEAT_OK` prefixes from non-heartbeat content before Telegram delivery
+- if Redis is unavailable, Slack passive intel falls back to direct enqueue rather than disappearing
 
 If either derivation fails, startup logs explicit warnings in `/tmp/joelclaw/gateway.log` so degraded Slack behavior is visible immediately.
 
