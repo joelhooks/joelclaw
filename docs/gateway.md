@@ -357,6 +357,8 @@ Prompt dispatch tracking now starts **after** `session.prompt()` successfully ac
 
 Fallback standardization guard: gateway fallback is now `openai-codex/gpt-5.4`. If Redis still has legacy Anthropic fallbacks (`claude-sonnet-4-6` or `claude-sonnet-4-5`), daemon startup remaps to codex and emits `daemon.fallback:fallback.model.remapped`.
 
+Opus timeout floor guard: when the primary model is `claude-opus-4-6`, gateway config now floors `fallbackTimeoutMs` to `240000` even if Redis still says `120000`. ADR-0091 already recorded real Opus first-token latency beyond 120s, so 120s had become a stale SLA that caused avoidable fallback churn.
+
 No-op fallback guard: if primary and fallback resolve to the same model ID/provider, fallback swapping is disabled for that session (no `swapped`/`primary_restored` churn). The daemon emits `daemon.fallback:fallback.disabled.same_model` once at startup so operators can spot misconfiguration without alert spam.
 
 Model-failure ping guard: queue-level model failures (auth, missing API key, rate-limit/overload, model-not-found, network unavailable) now send an immediate operator alert to the default channel (Telegram currently). Generic failures also alert when consecutive prompt failures reach 3. Alerts are cooldown-limited per reason/source (2 minutes) and emit OTEL events under `daemon.alerting` (`model_failure.alert.sent|suppressed|failed`).

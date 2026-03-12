@@ -152,6 +152,7 @@ Low-signal operator-spam guardrails now also apply:
 - suppress direct operator-only `Knowledge Watchdog Alert` messages during quiet hours
 - add proactive-compaction hysteresis (30m cooldown unless context meaningfully worsens)
 - require a minimum dwell on fallback before probing primary again, so fallback swap→restore chatter doesn’t flap immediately
+- when the primary model is `claude-opus-4-6`, floor `fallbackTimeoutMs` to `240000`; `120000` is now treated as stale and too aggressive for real Opus TTFT
 
 Muted degraded channels now also flip to `manual` with the known-issue reason surfaced as repair guidance, instead of falsely advertising a restart policy that the watchdog will skip while muted.
 

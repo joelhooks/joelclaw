@@ -26,6 +26,8 @@ const DEFAULT_MODEL: GatewayModel = "gpt-5.4";
 const DEFAULT_THINKING_LEVEL: GatewayThinkingLevel = "low";
 const DEFAULT_VERBOSE = false;
 
+const OPUS_PRIMARY_MIN_FALLBACK_TIMEOUT_MS = 240_000;
+
 const DEFAULT_FALLBACK: FallbackConfig = {
   fallbackProvider: "openai-codex",
   fallbackModel: "gpt-5.4",
@@ -93,6 +95,14 @@ function normalizePositiveInt(raw: unknown, fallback: number): number {
   return fallback;
 }
 
+function normalizeFallbackTimeoutMs(raw: unknown, fallback: number, model: GatewayModel): number {
+  const normalized = normalizePositiveInt(raw, fallback);
+  if (model === "claude-opus-4-6") {
+    return Math.max(normalized, OPUS_PRIMARY_MIN_FALLBACK_TIMEOUT_MS);
+  }
+  return normalized;
+}
+
 function normalizeFallbackModel(raw: unknown, provider: string): string {
   if (typeof raw !== "string") return DEFAULT_FALLBACK.fallbackModel;
   const value = raw.trim();
@@ -114,11 +124,13 @@ function normalizeFallbackModel(raw: unknown, provider: string): string {
 }
 
 export function defaultGatewayConfig(): GatewayConfig {
+  const model = normalizeModel(process.env.PI_MODEL ?? process.env.PI_MODEL_ID);
   return {
-    model: normalizeModel(process.env.PI_MODEL ?? process.env.PI_MODEL_ID),
+    model,
     thinkingLevel: DEFAULT_THINKING_LEVEL,
     verbose: DEFAULT_VERBOSE,
     ...DEFAULT_FALLBACK,
+    fallbackTimeoutMs: normalizeFallbackTimeoutMs(DEFAULT_FALLBACK.fallbackTimeoutMs, DEFAULT_FALLBACK.fallbackTimeoutMs, model),
   };
 }
 
@@ -131,17 +143,18 @@ export async function loadGatewayConfig(redis: Redis | undefined): Promise<Gatew
     if (!raw) return defaults;
 
     const parsed = JSON.parse(raw) as Partial<GatewayConfig>;
+    const model = normalizeModel(parsed.model);
     const fallbackProvider = typeof parsed.fallbackProvider === "string"
       ? parsed.fallbackProvider
       : defaults.fallbackProvider;
 
     return {
-      model: normalizeModel(parsed.model),
+      model,
       thinkingLevel: normalizeThinkingLevel(parsed.thinkingLevel),
       verbose: normalizeVerbose(parsed.verbose),
       fallbackProvider,
       fallbackModel: normalizeFallbackModel(parsed.fallbackModel, fallbackProvider),
-      fallbackTimeoutMs: normalizePositiveInt(parsed.fallbackTimeoutMs, defaults.fallbackTimeoutMs),
+      fallbackTimeoutMs: normalizeFallbackTimeoutMs(parsed.fallbackTimeoutMs, defaults.fallbackTimeoutMs, model),
       fallbackAfterFailures: normalizePositiveInt(parsed.fallbackAfterFailures, defaults.fallbackAfterFailures),
       recoveryProbeIntervalMs: normalizePositiveInt(parsed.recoveryProbeIntervalMs, defaults.recoveryProbeIntervalMs),
     };
@@ -153,13 +166,14 @@ export async function loadGatewayConfig(redis: Redis | undefined): Promise<Gatew
 export async function saveGatewayConfig(redis: Redis, config: GatewayConfig): Promise<void> {
   const fallbackProvider = config.fallbackProvider || DEFAULT_FALLBACK.fallbackProvider;
 
+  const model = normalizeModel(config.model);
   const normalized: GatewayConfig = {
-    model: normalizeModel(config.model),
+    model,
     thinkingLevel: normalizeThinkingLevel(config.thinkingLevel),
     verbose: normalizeVerbose(config.verbose),
     fallbackProvider,
     fallbackModel: normalizeFallbackModel(config.fallbackModel, fallbackProvider),
-    fallbackTimeoutMs: normalizePositiveInt(config.fallbackTimeoutMs, DEFAULT_FALLBACK.fallbackTimeoutMs),
+    fallbackTimeoutMs: normalizeFallbackTimeoutMs(config.fallbackTimeoutMs, DEFAULT_FALLBACK.fallbackTimeoutMs, model),
     fallbackAfterFailures: normalizePositiveInt(config.fallbackAfterFailures, DEFAULT_FALLBACK.fallbackAfterFailures),
     recoveryProbeIntervalMs: normalizePositiveInt(config.recoveryProbeIntervalMs, DEFAULT_FALLBACK.recoveryProbeIntervalMs),
   };
