@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { isAlertSuppressed } from "../../lib/redis";
 import * as typesense from "../../lib/typesense";
 import { prefetchMemoryContext } from "../../memory/context-prefetch";
 import { AUTO_FIX_HANDLERS, resolveAutoFixHandlerName } from "../../observability/auto-fixes";
@@ -829,10 +830,11 @@ export const o11yTriage = inngest.createFunction(
         const text = buildTelegramText(event, llmReasoning, runbookPlan);
         const buttons = buildTelegramButtons(taskUrl, eventDedupKey);
         const canSendTelegram = sentTelegramInWindow < TELEGRAM_ESCALATION_MAX_PER_HOUR;
+        const telegramSuppressed = await isAlertSuppressed("o11y-triage");
         let telegramSent = false;
         let telegramRateLimited = false;
 
-        if (canSendTelegram) {
+        if (canSendTelegram && !telegramSuppressed) {
           const telegramPayload = {
             immediateTelegram: true,
             telegramOnly: true,
@@ -884,7 +886,7 @@ export const o11yTriage = inngest.createFunction(
               hasButtons: buttons.length > 0,
             },
           });
-        } else {
+        } else if (!canSendTelegram) {
           telegramRateLimited = true;
           await emitOtelEvent({
             level: "warn",

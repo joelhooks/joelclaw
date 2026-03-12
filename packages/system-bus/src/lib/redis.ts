@@ -62,3 +62,9 @@ export function getRedisClient(): Redis {
 export function getRedis(): Redis {
   return getRedisClient();
 }
+
+export async function isAlertSuppressed(category: string): Promise<boolean> {
+  const redis = await getRedisClient();
+  const val = await redis.get(`alerts:suppress:${category}`);
+  return val === "1" || val === "true";
+}

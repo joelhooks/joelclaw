@@ -7,7 +7,7 @@ import Redis from "ioredis";
  * ADR-0062: Heartbeat fan-out check function.
  * ADR-0090: O11y triage alignment with streak-based suppression + escalation.
  */
-import { getRedisPort } from "../../lib/redis";
+import { getRedisPort, isAlertSuppressed } from "../../lib/redis";
 import * as typesense from "../../lib/typesense";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
@@ -655,8 +655,12 @@ export const checkGatewayHealth = inngest.createFunction(
       actionableChannels,
       mutedChannels,
     );
+    const alertSuppressed = await step.run("check-alert-suppression", () =>
+      isAlertSuppressed("check-gateway-health")
+    );
 
     const channelAlertSent = await step.run("maybe-alert-channel-degradation", async () => {
+      if (alertSuppressed) return false;
       if (alertableChannels.length === 0) return false;
 
       const shouldAlert = await claimCooldown(CHANNEL_ALERT_COOLDOWN_KEY, CHANNEL_ALERT_COOLDOWN_SECONDS);
@@ -680,6 +684,7 @@ export const checkGatewayHealth = inngest.createFunction(
     });
 
     const generalAlertSent = await step.run("maybe-alert-general-degradation", async () => {
+      if (alertSuppressed) return false;
       if (!generalFailure || generalStreak < GENERAL_ALERT_STREAK_THRESHOLD) return false;
 
       const shouldAlert = await claimCooldown(GENERAL_ALERT_COOLDOWN_KEY, GENERAL_ALERT_COOLDOWN_SECONDS);
@@ -709,6 +714,7 @@ export const checkGatewayHealth = inngest.createFunction(
     });
 
     const selfHealedSent = await step.run("maybe-notify-self-healed", async () => {
+      if (alertSuppressed) return false;
       if (!restartAttempt?.attempted || restartAttempt.postHealthy !== true) return false;
 
       await pushGatewayEvent({
