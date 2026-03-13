@@ -117,6 +117,7 @@ export {
 } from "./vercel-notify";
 export { videoDownload } from "./video-download";
 export { vipEmailReceived } from "./vip-email-received";
+export { vipMorningBrief } from "./vip-morning-brief";
 export { voiceCallCompleted } from "./voice-call-completed";
 export { webhookSubscriptionDispatchGithubWorkflowRunCompleted } from "./webhook-subscription-dispatch";
 export { xContentHook } from "./x-content-hook";
