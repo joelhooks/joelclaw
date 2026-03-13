@@ -263,17 +263,21 @@ Do **not** mutate `main.db` without a point-in-time backup.
   4. `email-nag` runs on cron `0 17,22 * * *` (9am/2pm PST), leases `front_api_token`, and only nags for inbound-last conversations waiting `>4h`
   5. nag digests are sorted oldest-first and delivered through `pushGatewayEvent`
 
-### VIP morning brief contract
+### VIP email brief contract
 
-- function: `vip/morning-brief`
+- function: `vip/email-brief`
 - file: `packages/system-bus/src/inngest/functions/vip-morning-brief.ts`
-- trigger:
-  - cron: `0 15 * * 1-5` (15:00 UTC weekdays; 8am PT standard time / 7am PT during DST)
+- triggers:
+  - cron: `30 13 * * 1-5` (13:30 UTC weekdays; ~6:30am PT during DST)
+  - cron: `0 17 * * 1-5` (17:00 UTC weekdays; ~10:00am PT during DST)
+  - cron: `0 22 * * 1-5` (22:00 UTC weekdays; ~3:00pm PT during DST)
+  - cron: `0 2 * * 2-6` (02:00 UTC Tue-Sat; ~7:00pm PT on the prior weekday during DST)
 - behavior:
   1. ensures the `email_threads` Typesense collection exists, queries non-archived VIP thread cache entries sorted by `last_message_at:desc`, and degrades to `noop` if Typesense is unavailable or the cache is empty
   2. classifies up to 20 cached VIP threads into priority buckets: `dangling` (Joel owes a reply), `new activity` (recently active but not dangling), and `stale` (open with 7+ days of inactivity)
-  3. generates a Telegram-ready morning brief through `infer()` with a deterministic fallback formatter if model generation fails
-  4. relays the final brief to the gateway as `vip.morning.brief` with operator instructions to deliver it to Joel unchanged
+  3. returns `{ status: "noop", reason: "no-signal" }` without notifying the gateway when all three buckets are empty
+  4. generates a Telegram-ready VIP email brief through `infer()` with a deterministic fallback formatter if model generation fails
+  5. relays the final brief to the gateway as `vip.email.brief` with operator instructions to deliver it to Joel unchanged
 
 ### VIP email contextual analysis contract
 

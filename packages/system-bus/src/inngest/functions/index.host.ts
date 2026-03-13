@@ -110,7 +110,7 @@ import {
 } from "./vercel-notify";
 import { videoDownload } from "./video-download";
 import { vipEmailReceived } from "./vip-email-received";
-import { vipMorningBrief } from "./vip-morning-brief";
+import { vipEmailBrief } from "./vip-morning-brief";
 import { voiceCallCompleted } from "./voice-call-completed";
 import { xContentHook } from "./x-content-hook";
 import { xDiscoveryHook } from "./x-discovery-hook";
@@ -195,7 +195,7 @@ export const hostFunctionDefinitions = [
   emailNag,
   checkGatewayHealth,
   vipEmailReceived,
-  vipMorningBrief,
+  vipEmailBrief,
   checkCalendar,
   checkLoops,
   subscriptionCheckFeeds,

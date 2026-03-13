@@ -7,7 +7,7 @@ import {
 import { inngest } from "../client";
 import { pushGatewayEvent } from "./agent-loop/utils";
 
-const COMPONENT = "vip-morning-brief";
+const COMPONENT = "vip-email-brief";
 const FRONT_CONVERSATION_URL = "https://app.frontapp.com/open";
 const LOS_ANGELES_TIME_ZONE = "America/Los_Angeles";
 const DAY_MS = 24 * 60 * 60_000;
@@ -16,7 +16,7 @@ const QUERY_LIMIT = 20;
 const QUERY_SCAN_LIMIT = 50;
 const EMPTY_BRIEF = "☀️ VIP inbox clear — nothing needs your attention.";
 
-const VIP_MORNING_BRIEF_SYSTEM_PROMPT = `You are Joel's morning email intelligence briefer. Produce a concise, scannable daily brief of VIP email threads that need attention.
+const VIP_EMAIL_BRIEF_SYSTEM_PROMPT = `You are Joel's VIP email intelligence briefer. Produce a concise, scannable brief of VIP email threads that need attention.
 
 Rules:
 - Lead with what needs action NOW
@@ -273,7 +273,7 @@ function buildBriefUserPrompt(classified: ClassifiedThreads): string {
   };
 
   return [
-    `Morning VIP brief for ${formatLocalDateTime(classified.generatedAt)} ${LOS_ANGELES_TIME_ZONE}.`,
+    `VIP email brief for ${formatLocalDateTime(classified.generatedAt)} ${LOS_ANGELES_TIME_ZONE}.`,
     "Summarize only the threads below.",
     "",
     buildSection("Dangling replies", classified.dangling),
@@ -289,7 +289,7 @@ function buildBriefUserPrompt(classified: ClassifiedThreads): string {
 function buildGatewayPrompt(briefText: string): string {
   return [
     "Operator relay rules:",
-    "- This is a morning VIP brief. Deliver to Joel on Telegram as-is.",
+    "- This is a VIP email brief. Deliver to Joel on Telegram as-is.",
     "- Do not summarize or reformat — the brief is already formatted for mobile.",
     `- If all sections are empty, send: "${EMPTY_BRIEF}"`,
     "",
@@ -297,14 +297,19 @@ function buildGatewayPrompt(briefText: string): string {
   ].join("\n");
 }
 
-export const vipMorningBrief = inngest.createFunction(
+export const vipEmailBrief = inngest.createFunction(
   {
-    id: "vip/morning-brief",
-    name: "Morning VIP Email Brief",
+    id: "vip/email-brief",
+    name: "VIP Email Brief",
     retries: 1,
     concurrency: { limit: 1 },
   },
-  { cron: "0 15 * * 1-5" },
+  [
+    { cron: "30 13 * * 1-5" },
+    { cron: "0 17 * * 1-5" },
+    { cron: "0 22 * * 1-5" },
+    { cron: "0 2 * * 2-6" },
+  ],
   async ({ step }) => {
     const queried = await step.run("query-vip-threads", async () => {
       try {
@@ -398,15 +403,31 @@ export const vipMorningBrief = inngest.createFunction(
       } satisfies ClassifiedThreads;
     });
 
+    if (
+      classified.dangling.length === 0 &&
+      classified.newActivity.length === 0 &&
+      classified.stale.length === 0
+    ) {
+      return {
+        status: "noop",
+        reason: "no-signal",
+        threadCount: queried.threads.length,
+        danglingCount: 0,
+        newActivityCount: 0,
+        staleCount: 0,
+        skippedCount: classified.skippedCount,
+      };
+    }
+
     const generated = await step.run("generate-brief", async () => {
       const fallback = buildFallbackBrief(classified);
 
       try {
         const result = await infer(buildBriefUserPrompt(classified), {
           task: "summary",
-          system: VIP_MORNING_BRIEF_SYSTEM_PROMPT,
+          system: VIP_EMAIL_BRIEF_SYSTEM_PROMPT,
           component: COMPONENT,
-          action: "vip.morning-brief.generate",
+          action: "vip.email-brief.generate",
           requireTextOutput: true,
           noTools: true,
           timeout: 120_000,
@@ -439,8 +460,8 @@ export const vipMorningBrief = inngest.createFunction(
 
     await step.run("notify-gateway", async () => {
       await pushGatewayEvent({
-        type: "vip.morning.brief",
-        source: "inngest/vip-morning-brief",
+        type: "vip.email.brief",
+        source: "inngest/vip-email-brief",
         payload: {
           prompt: buildGatewayPrompt(generated.briefText),
           threadCount: queried.threads.length,
