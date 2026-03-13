@@ -7,6 +7,11 @@
 import { spawnSync } from "node:child_process";
 import { infer } from "../../lib/inference";
 import { type LlmUsage } from "../../lib/langfuse";
+import {
+  sendTelegramDirect,
+  stripOperatorRelayRules,
+  toTelegramHtml,
+} from "../../lib/telegram";
 import * as typesense from "../../lib/typesense";
 import { TodoistTaskAdapter } from "../../tasks";
 import { inngest } from "../client";
@@ -1104,7 +1109,12 @@ export const vipEmailReceived = inngest.createFunction(
     const senderDisplay = fromName ? `${fromName} <${from}>` : from;
 
     if (!isVipSender(from, fromName)) {
-      return { status: "noop", reason: "not-vip-sender", from: senderDisplay };
+      return {
+        status: "noop",
+        reason: "not-vip-sender",
+        from: senderDisplay,
+        telegramDelivered: false,
+      };
     }
 
     const subject = String(event.data.subject ?? "");
@@ -1163,6 +1173,7 @@ export const vipEmailReceived = inngest.createFunction(
         archived: archived.ok,
         archiveError: archived.error,
         todosCreated: 0,
+        telegramDelivered: false,
       };
     }
 
@@ -1575,10 +1586,13 @@ export const vipEmailReceived = inngest.createFunction(
           followedLinks,
           accessGaps: allMissingInfo,
         });
+    const telegramBriefHtml = toTelegramHtml(
+      stripOperatorRelayRules(operatorBrief),
+    );
 
     const notifyResult = await step.run("notify-vip-summary", async () => {
       const t0 = Date.now();
-      await pushGatewayEvent({
+      const gatewayResultPromise = pushGatewayEvent({
         type: "vip.email.received",
         source: "inngest/vip-email-received",
         payload: {
@@ -1601,9 +1615,46 @@ export const vipEmailReceived = inngest.createFunction(
           briefModel: briefResult.model ?? BRIEF_MODEL,
           ranOpus: shouldRunOpus,
         },
+      })
+        .then(() => ({ ok: true as const }))
+        .catch((error) => ({
+          ok: false as const,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      const telegramResult = await sendTelegramDirect(telegramBriefHtml, {
+        disablePreview: false,
       });
+      const gatewayResult = await gatewayResultPromise;
 
-      return { durationMs: Date.now() - t0 };
+      if (!telegramResult.ok) {
+        console.error("[vip-email-received] failed to send direct telegram brief", {
+          from: senderDisplay,
+          subject,
+          conversationId,
+          error: telegramResult.error,
+        });
+      }
+
+      if (!gatewayResult.ok) {
+        console.error("[vip-email-received] failed to enqueue gateway brief", {
+          from: senderDisplay,
+          subject,
+          conversationId,
+          error: gatewayResult.error,
+        });
+      }
+
+      if (!telegramResult.ok && !gatewayResult.ok) {
+        throw new Error(
+          `VIP brief delivery failed: telegram=${telegramResult.error ?? "unknown"} gateway=${gatewayResult.error ?? "unknown"}`,
+        );
+      }
+
+      return {
+        durationMs: Date.now() - t0,
+        telegramDelivered: telegramResult.ok,
+        telegramError: telegramResult.error,
+      };
     });
 
     timings["notify-vip-summary"] = notifyResult.durationMs;
@@ -1661,6 +1712,8 @@ export const vipEmailReceived = inngest.createFunction(
       opusReason: opusDecision.reason,
       cacheStored: cacheResult.cached,
       cacheError: cacheResult.error,
+      telegramDelivered: notifyResult.telegramDelivered,
+      telegramError: notifyResult.telegramError,
       timings,
       granolaRangeDurations: granolaResult.rangeDurations,
       echoFizzleDispatch,

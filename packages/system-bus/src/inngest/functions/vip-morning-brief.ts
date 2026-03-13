@@ -1,5 +1,10 @@
 import { infer } from "../../lib/inference";
 import {
+  sendTelegramDirect,
+  stripOperatorRelayRules,
+  toTelegramHtml,
+} from "../../lib/telegram";
+import {
   EMAIL_THREADS_COLLECTION,
   ensureEmailThreadsCollection,
   search,
@@ -359,7 +364,7 @@ export const vipEmailBrief = inngest.createFunction(
     });
 
     if (queried.status !== "ok") {
-      return queried;
+      return { ...queried, telegramDelivered: false };
     }
 
     if (queried.threads.length === 0) {
@@ -367,6 +372,7 @@ export const vipEmailBrief = inngest.createFunction(
         status: "noop",
         reason: "no-open-vip-threads",
         found: queried.found,
+        telegramDelivered: false,
       };
     }
 
@@ -416,6 +422,7 @@ export const vipEmailBrief = inngest.createFunction(
         newActivityCount: 0,
         staleCount: 0,
         skippedCount: classified.skippedCount,
+        telegramDelivered: false,
       };
     }
 
@@ -458,18 +465,55 @@ export const vipEmailBrief = inngest.createFunction(
       }
     });
 
-    await step.run("notify-gateway", async () => {
-      await pushGatewayEvent({
+    const gatewayPrompt = buildGatewayPrompt(generated.briefText);
+    const telegramBriefHtml = toTelegramHtml(
+      stripOperatorRelayRules(gatewayPrompt) || generated.briefText || EMPTY_BRIEF,
+    );
+
+    const notifyResult = await step.run("notify-gateway", async () => {
+      const gatewayResultPromise = pushGatewayEvent({
         type: "vip.email.brief",
         source: "inngest/vip-email-brief",
         payload: {
-          prompt: buildGatewayPrompt(generated.briefText),
+          prompt: gatewayPrompt,
           threadCount: queried.threads.length,
           danglingCount: classified.dangling.length,
           newActivityCount: classified.newActivity.length,
           staleCount: classified.stale.length,
         },
+      })
+        .then(() => ({ ok: true as const }))
+        .catch((error) => ({
+          ok: false as const,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      const telegramResult = await sendTelegramDirect(telegramBriefHtml, {
+        disablePreview: false,
       });
+      const gatewayResult = await gatewayResultPromise;
+
+      if (!telegramResult.ok) {
+        console.error("[vip-email-brief] failed to send direct telegram brief", {
+          error: telegramResult.error,
+        });
+      }
+
+      if (!gatewayResult.ok) {
+        console.error("[vip-email-brief] failed to enqueue gateway brief", {
+          error: gatewayResult.error,
+        });
+      }
+
+      if (!telegramResult.ok && !gatewayResult.ok) {
+        throw new Error(
+          `VIP email brief delivery failed: telegram=${telegramResult.error ?? "unknown"} gateway=${gatewayResult.error ?? "unknown"}`,
+        );
+      }
+
+      return {
+        telegramDelivered: telegramResult.ok,
+        telegramError: telegramResult.error,
+      };
     });
 
     return {
@@ -480,6 +524,8 @@ export const vipEmailBrief = inngest.createFunction(
       staleCount: classified.stale.length,
       skippedCount: classified.skippedCount,
       mode: generated.mode,
+      telegramDelivered: notifyResult.telegramDelivered,
+      telegramError: notifyResult.telegramError,
       ...(generated.error ? { generationError: generated.error } : {}),
     };
   }
