@@ -20,17 +20,17 @@ const VIP_MODEL = process.env.JOELCLAW_VIP_EMAIL_MODEL ?? "anthropic/claude-opus
 const BRIEF_MODEL = process.env.JOELCLAW_VIP_TRIAGE_MODEL ?? "anthropic/claude-sonnet-4-6";
 const ENABLE_GITHUB_SEARCH = (process.env.JOELCLAW_VIP_ENABLE_GITHUB_SEARCH ?? "0") === "1";
 const ENABLE_OPUS_ESCALATION = (process.env.JOELCLAW_VIP_ENABLE_OPUS_ESCALATION ?? "1") === "1";
-const TOTAL_BUDGET_MS = Number(process.env.JOELCLAW_VIP_TOTAL_BUDGET_MS ?? "10000");
+const TOTAL_BUDGET_MS = Number(process.env.JOELCLAW_VIP_TOTAL_BUDGET_MS ?? "60000");
 const FRONT_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_FRONT_TIMEOUT_MS ?? "2000");
 const GRANOLA_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_GRANOLA_TIMEOUT_MS ?? "2500");
 const MEMORY_RECALL_TIMEOUT_MS = Number(
   process.env.JOELCLAW_VIP_MEMORY_RECALL_TIMEOUT_MS
-  ?? "7000"
+  ?? "15000"
 );
 const GITHUB_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_GITHUB_TIMEOUT_MS ?? "1500");
-const BRIEF_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_TRIAGE_TIMEOUT_MS ?? "4500");
-const OPUS_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_OPUS_TIMEOUT_MS ?? "7000");
-const MIN_OPUS_TIME_REMAINING_MS = Number(process.env.JOELCLAW_VIP_MIN_OPUS_REMAINING_MS ?? "7500");
+const BRIEF_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_TRIAGE_TIMEOUT_MS ?? "15000");
+const OPUS_TIMEOUT_MS = Number(process.env.JOELCLAW_VIP_OPUS_TIMEOUT_MS ?? "20000");
+const MIN_OPUS_TIME_REMAINING_MS = Number(process.env.JOELCLAW_VIP_MIN_OPUS_REMAINING_MS ?? "15000");
 const GRANOLA_RANGES = (process.env.JOELCLAW_VIP_GRANOLA_RANGES ?? "year")
   .split(",")
   .map((range) => range.trim())
@@ -109,8 +109,10 @@ Produce a concise operator brief in markdown for Telegram delivery.
 
 Rules:
 - Use the exact section order shown below.
-- The executive summary must be 2-3 sentences.
+- The executive summary must be 2-3 sentences that you derive from the raw thread/context in this prompt.
 - Mention why the thread matters now.
+- Write your own judgment from the full context; do not parrot any prior triage summary or default "no action required" phrasing when the thread clearly needs action.
+- If any prior suggestion conflicts with the raw thread/context, override it.
 - "Needs your attention" must start with yes or no, then a short why.
 - "Key links" should be "none" when there are no useful links.
 - Never invent facts. If context is missing, say so briefly.
@@ -955,9 +957,47 @@ function deriveNeedsAttention(input: {
   return { value: "no", reason: "the thread appears informational and already covered" };
 }
 
+function buildFallbackExecutiveSummary(input: {
+  preview: string;
+  analysis: VipAnalysis;
+  frontContext: FrontThreadContext;
+  followedLinks: FollowedLink[];
+  needsAttention: { value: "yes" | "no"; reason: string };
+  accessGaps: MissingInfo[];
+}): string {
+  const latestSnippetSource = normalizeWhitespace(
+    input.frontContext.latestMessage?.text
+    ?? input.preview
+    ?? ""
+  );
+  const latestSnippet = latestSnippetSource
+    ? latestSnippetSource.length > 180
+      ? `${latestSnippetSource.slice(0, 177)}...`
+      : latestSnippetSource
+    : "Latest message content was unavailable in the cached thread.";
+
+  const threadSentence = `${input.frontContext.messages.length} messages are in the cached thread, and Joel last replied ${formatRelativeTime(input.frontContext.lastJoelReplyAt)}.`;
+  const attentionLead = input.needsAttention.value === "yes"
+    ? "This needs attention now"
+    : "This does not appear urgent right now";
+
+  const supportReason = input.analysis.todos[0]?.title
+    ?? input.analysis.questions_for_human[0]
+    ?? input.needsAttention.reason;
+
+  const contextTail = input.followedLinks.length > 0
+    ? ` ${input.followedLinks.length} linked resource${input.followedLinks.length === 1 ? " was" : "s were"} pulled for extra context.`
+    : input.accessGaps.length > 0
+      ? ` Context gaps remain: ${input.accessGaps[0]?.item ?? "additional context"} could not be verified yet.`
+      : "";
+
+  return `${latestSnippet} ${threadSentence} ${attentionLead} because ${supportReason}.${contextTail}`.trim();
+}
+
 function buildFallbackOperatorBrief(input: {
   senderDisplay: string;
   subject: string;
+  preview: string;
   conversationId: string;
   analysis: VipAnalysis;
   frontContext: FrontThreadContext;
@@ -974,11 +1014,19 @@ function buildFallbackOperatorBrief(input: {
     frontContext: input.frontContext,
     accessGaps: input.accessGaps,
   });
+  const executiveSummary = buildFallbackExecutiveSummary({
+    preview: input.preview,
+    analysis: input.analysis,
+    frontContext: input.frontContext,
+    followedLinks: input.followedLinks,
+    needsAttention,
+    accessGaps: input.accessGaps,
+  });
 
   return [
     `## VIP: ${input.senderDisplay} — ${input.subject}`,
     "",
-    input.analysis.executive_summary || "VIP email received; additional context is limited, but the thread was cached for follow-up.",
+    executiveSummary,
     "",
     `**Thread**: ${input.frontContext.messages.length} messages, last activity ${formatRelativeTime(input.frontContext.latestMessage?.createdAt)}`,
     `**Your last reply**: ${formatRelativeTime(input.frontContext.lastJoelReplyAt)}`,
@@ -1520,6 +1568,7 @@ export const vipEmailReceived = inngest.createFunction(
       : buildFallbackOperatorBrief({
           senderDisplay,
           subject,
+          preview,
           conversationId,
           analysis,
           frontContext,

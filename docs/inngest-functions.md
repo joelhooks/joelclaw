@@ -287,9 +287,10 @@ Do **not** mutate `main.db` without a point-in-time backup.
   1. keeps newsletter detection + auto-archive unchanged for low-signal VIP senders
   2. fetches the full Front thread via pagination (up to 50 messages) with sender + timestamp + full text, then caches the thread in Typesense `email_threads`
   3. follows up to 5 interesting links from the latest email via `defuddle` and persists extracted content into `followed_links_json`
-  4. builds a context-rich analyst prompt from the full thread, followed links, Granola matches, recall hits, Front status/tags, and optional GitHub repo search
-  5. sends the gateway a concise operator brief with relative activity, reply state, key links, and a direct Front deep link; timing data stays in function output for observability only
-  6. preserves Todoist task extraction and memory `echo-fizzle` dispatch after analysis
+  4. uses quality-first default budgets (60s overall, 15s Sonnet/recall windows, 20s Opus window) while still honoring env-var overrides
+  5. builds context-rich analysis + brief prompts from the full thread, followed links, Granola matches, recall hits, Front status/tags, and optional GitHub repo search
+  6. sends the gateway a concise operator brief with its own executive summary derived from raw context (not blindly from prior triage output), plus relative activity, reply state, key links, and a direct Front deep link; timing data stays in function output for observability only
+  7. preserves Todoist task extraction and memory `echo-fizzle` dispatch after analysis
 
 ### Channel intelligence triage to Todoist
 
