@@ -13,20 +13,9 @@ function escapeTelegramAttribute(value: string): string {
 
 export function stripOperatorRelayRules(text: string): string {
   const marker = "Operator relay rules:";
-  const trimmed = text.trim();
-
-  if (!trimmed.startsWith(marker)) {
-    return trimmed;
-  }
-
-  const afterMarker = trimmed.slice(marker.length);
-  const separatorIndex = afterMarker.indexOf("\n\n");
-
-  if (separatorIndex < 0) {
-    return trimmed;
-  }
-
-  return afterMarker.slice(separatorIndex + 2).trim();
+  const idx = text.indexOf(marker);
+  if (idx < 0) return text.trim();
+  return text.slice(0, idx).trim();
 }
 
 export function toTelegramHtml(markdown: string): string {
