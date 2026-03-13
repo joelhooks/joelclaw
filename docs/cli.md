@@ -676,6 +676,9 @@ joelclaw vault
     ├── list [--status <status>] [--limit <limit>]
     ├── collisions
     ├── audit
+    ├── locate <query> [--limit <limit>]
+    ├── refs <query>
+    ├── prompt <text>
     └── rank [--band <band>] [--unscored] [--all]
 ```
 
@@ -687,7 +690,11 @@ joelclaw vault
   - missing/non-canonical status values
   - number collisions
   - missing `superseded-by` targets
+  - broken or ambiguous wiki links inside ADR bodies (skips custom directive tags like `[[tts:text]]`)
   - README index alignment against ADR files
+- `locate` — section/file lookup across the ADR corpus using ADR numbers, slugs, titles, and heading names
+- `refs` — backlink discovery for a resolved ADR file or section id
+- `prompt` — expand `[[ADR refs]]` in prompt text into canonical ids and append an `<adr-context>` block for agents
 - `rank` — score + rank ADRs by NRC+novelty rubric for daily prioritization:
   - default scope: open ADRs (`accepted` + `proposed`)
   - `--all` includes shipped/superseded/deprecated/rejected ADRs
@@ -793,6 +800,9 @@ bun build packages/cli/src/cli.ts --compile --outfile ~/.bun/bin/joelclaw
 joelclaw status
 joelclaw vault
 joelclaw vault adr audit
+joelclaw vault adr locate "gateway guardrails"
+joelclaw vault adr refs 0189-gateway-guardrails
+joelclaw vault adr prompt "compare [[0189-gateway-guardrails]] with [[0218-gateway-availability-lifecycle-qol-improvements]]"
 ```
 
 ## Add a command

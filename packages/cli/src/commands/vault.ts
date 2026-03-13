@@ -92,6 +92,82 @@ type AdrPriorityAssessment = {
   consistencyIssues: string[]
 }
 
+type AdrSection = {
+  id: string
+  fileId: string
+  filename: string
+  path: string
+  number: string
+  title: string
+  headings: string[]
+  heading: string
+  startLine: number
+  endLine: number
+  body: string
+  kind: "file" | "section"
+}
+
+type AdrSectionMatch = {
+  section: AdrSection
+  reason: string
+  score: number
+}
+
+type ParsedWikiLink = {
+  raw: string
+  target: string
+  pathTarget: string
+  headingPath: string[]
+  line: number
+  embed: boolean
+}
+
+type VaultPathIndex = {
+  byRelativePath: Map<string, string>
+  byRelativeStem: Map<string, string>
+  byBasenameStem: Map<string, string[]>
+  adrByNumber: Map<string, string>
+  adrByStem: Map<string, string>
+}
+
+type WikiLinkResolution =
+  | {
+      status: "resolved"
+      path: string
+      canonical: string
+      linkType: "adr" | "vault"
+      sectionId: string | null
+    }
+  | {
+      status: "ambiguous"
+      candidates: string[]
+    }
+  | {
+      status: "broken"
+      reason: string
+    }
+  | {
+      status: "skipped"
+      reason: string
+    }
+
+type AdrWikiLinkIssue = {
+  source: string
+  line: number
+  target: string
+  candidates?: string[]
+}
+
+type AdrBacklink = {
+  source_filename: string
+  source_title: string
+  source_path: string
+  line: number
+  target: string
+  target_canonical: string
+  context: string
+}
+
 const shq = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
 
 async function runProcess(cmd: string[], input?: string, env?: Record<string, string | undefined>): Promise<ProcessResult> {
@@ -531,6 +607,550 @@ function parseAdrReadmeRows(markdown: string): string[] {
     rows.push(match[1])
   }
   return rows
+}
+
+function stripMarkdownExtension(value: string): string {
+  return value.replace(/\.md$/i, "")
+}
+
+function stripWikiLinkSyntax(value: string): string {
+  const trimmed = value.trim()
+  const withoutBrackets = trimmed.startsWith("[[") && trimmed.endsWith("]]")
+    ? trimmed.slice(2, -2)
+    : trimmed
+  const aliasIndex = withoutBrackets.indexOf("|")
+  return (aliasIndex === -1 ? withoutBrackets : withoutBrackets.slice(0, aliasIndex)).trim()
+}
+
+function sanitizeHeadingText(value: string): string {
+  return value
+    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2")
+    .replace(/\[\[([^\]]+)\]\]/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/[*_]+/g, "")
+    .trim()
+}
+
+function extractSectionBody(lines: string[], startIndex: number): string {
+  const bodyLines: string[] = []
+  let started = false
+
+  for (let i = startIndex; i < lines.length; i += 1) {
+    const line = lines[i] ?? ""
+    const trimmed = line.trim()
+    if (!started) {
+      if (!trimmed) continue
+      if (/^#{1,6}\s+/.test(trimmed)) break
+      if (trimmed === "---") continue
+      started = true
+      bodyLines.push(trimmed)
+      continue
+    }
+
+    if (!trimmed) break
+    if (/^#{1,6}\s+/.test(trimmed)) break
+    bodyLines.push(trimmed)
+  }
+
+  return bodyLines.join(" ").trim()
+}
+
+function findFirstHeadingLine(lines: string[]): number {
+  let inFrontmatter = lines[0]?.trim() === "---"
+  let frontmatterClosed = !inFrontmatter
+  let inFence = false
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const trimmed = lines[i]?.trim() ?? ""
+    if (i === 0 && trimmed === "---") continue
+    if (inFrontmatter && !frontmatterClosed) {
+      if (trimmed === "---") {
+        frontmatterClosed = true
+        continue
+      }
+      continue
+    }
+
+    if (/^(```|~~~)/.test(trimmed)) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    if (/^#\s+/.test(trimmed)) return i + 1
+  }
+
+  return 1
+}
+
+function parseAdrSections(item: AdrCatalogItem, markdown: string): AdrSection[] {
+  const lines = markdown.split(/\r?\n/)
+  const fileId = stripMarkdownExtension(item.filename)
+  const sections: AdrSection[] = [{
+    id: fileId,
+    fileId,
+    filename: item.filename,
+    path: item.path,
+    number: item.number,
+    title: item.title,
+    headings: [],
+    heading: item.title,
+    startLine: 1,
+    endLine: lines.length,
+    body: extractSectionBody(lines, Math.max(0, findFirstHeadingLine(lines))),
+    kind: "file",
+  }]
+
+  let inFrontmatter = lines[0]?.trim() === "---"
+  let frontmatterClosed = !inFrontmatter
+  let inFence = false
+  const headingStack: Array<{ depth: number; text: string }> = []
+
+  for (let idx = 0; idx < lines.length; idx += 1) {
+    const raw = lines[idx] ?? ""
+    const trimmed = raw.trim()
+    if (idx === 0 && trimmed === "---") continue
+    if (inFrontmatter && !frontmatterClosed) {
+      if (trimmed === "---") {
+        frontmatterClosed = true
+      }
+      continue
+    }
+
+    if (/^(```|~~~)/.test(trimmed)) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+
+    const match = raw.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/)
+    if (!match?.[1] || !match[2]) continue
+    const depth = match[1].length
+    if (depth === 1) continue
+
+    const text = sanitizeHeadingText(match[2])
+    while (headingStack.length > 0 && headingStack[headingStack.length - 1]!.depth >= depth) {
+      headingStack.pop()
+    }
+    headingStack.push({ depth, text })
+
+    sections.push({
+      id: `${fileId}#${headingStack.map((entry) => entry.text).join("#")}`,
+      fileId,
+      filename: item.filename,
+      path: item.path,
+      number: item.number,
+      title: item.title,
+      headings: headingStack.map((entry) => entry.text),
+      heading: text,
+      startLine: idx + 1,
+      endLine: lines.length,
+      body: extractSectionBody(lines, idx + 1),
+      kind: "section",
+    })
+  }
+
+  for (let i = 1; i < sections.length; i += 1) {
+    const current = sections[i]!
+    for (let j = i + 1; j < sections.length; j += 1) {
+      const next = sections[j]!
+      if (next.kind === "section" && next.headings.length <= current.headings.length) {
+        current.endLine = next.startLine - 1
+        break
+      }
+    }
+  }
+
+  return sections
+}
+
+function parseWikiLinks(markdown: string): ParsedWikiLink[] {
+  const links: ParsedWikiLink[] = []
+  const lines = markdown.split(/\r?\n/)
+
+  for (let idx = 0; idx < lines.length; idx += 1) {
+    const line = lines[idx] ?? ""
+    for (const match of line.matchAll(/(!?)\[\[([^\]]+)\]\]/g)) {
+      const rawTarget = match[2]?.trim() ?? ""
+      if (!rawTarget) continue
+      const target = stripWikiLinkSyntax(rawTarget)
+      const [pathTargetRaw, ...headingPartsRaw] = target.split("#")
+      const pathTarget = pathTargetRaw?.trim() ?? ""
+      const headingPath = headingPartsRaw
+        .map((part) => sanitizeHeadingText(part))
+        .filter((part) => part.length > 0)
+
+      links.push({
+        raw: match[0] ?? `[[${rawTarget}]]`,
+        target,
+        pathTarget,
+        headingPath,
+        line: idx + 1,
+        embed: match[1] === "!",
+      })
+    }
+  }
+
+  return links
+}
+
+function normalizeVaultRelativePath(path: string): string {
+  return normalize(path).replace(/\\/g, "/")
+}
+
+function formatVaultDisplayPath(path: string): string {
+  return path.startsWith(`${VAULT_ROOT}/`)
+    ? `~/Vault/${path.slice(VAULT_ROOT.length + 1)}`
+    : path
+}
+
+function buildVaultPathIndex(paths: string[], catalog: ReadonlyArray<AdrCatalogItem>): VaultPathIndex {
+  const byRelativePath = new Map<string, string>()
+  const byRelativeStem = new Map<string, string>()
+  const byBasenameStem = new Map<string, string[]>()
+  const adrByNumber = new Map<string, string>()
+  const adrByStem = new Map<string, string>()
+
+  for (const item of catalog) {
+    adrByNumber.set(item.number, item.path)
+    adrByStem.set(stripMarkdownExtension(item.filename).toLowerCase(), item.path)
+  }
+
+  for (const path of paths) {
+    const relative = normalizeVaultRelativePath(path.slice(VAULT_ROOT.length + 1))
+    const relativeLower = relative.toLowerCase()
+    const relativeStem = stripMarkdownExtension(relativeLower)
+    const baseStem = stripMarkdownExtension(basename(relativeLower))
+
+    byRelativePath.set(relativeLower, path)
+    byRelativeStem.set(relativeStem, path)
+
+    const existing = byBasenameStem.get(baseStem) ?? []
+    existing.push(path)
+    byBasenameStem.set(baseStem, existing)
+  }
+
+  for (const entry of byBasenameStem.values()) {
+    entry.sort((a, b) => a.localeCompare(b))
+  }
+
+  return { byRelativePath, byRelativeStem, byBasenameStem, adrByNumber, adrByStem }
+}
+
+function levenshtein(a: string, b: string): number {
+  const rows = a.length + 1
+  const cols = b.length + 1
+  const dp = Array.from({ length: rows }, () => Array<number>(cols).fill(0))
+
+  for (let i = 0; i < rows; i += 1) dp[i]![0] = i
+  for (let j = 0; j < cols; j += 1) dp[0]![j] = j
+
+  for (let i = 1; i < rows; i += 1) {
+    for (let j = 1; j < cols; j += 1) {
+      dp[i]![j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1]![j - 1]!
+        : 1 + Math.min(dp[i - 1]![j - 1]!, dp[i - 1]![j]!, dp[i]![j - 1]!)
+    }
+  }
+
+  return dp[a.length]![b.length]!
+}
+
+function normalizeAdrLocateQuery(raw: string): string {
+  return stripWikiLinkSyntax(raw).replace(/^#/g, "").trim()
+}
+
+function resolveAdrFileQuery(query: string, catalog: ReadonlyArray<AdrCatalogItem>): string[] {
+  const normalized = query.trim().toLowerCase()
+  if (!normalized) return []
+
+  const numberMatch = normalized.match(/(?:adr-?)?(\d{4})/)
+  if (numberMatch?.[1]) {
+    const byNumber = catalog.find((item) => item.number === numberMatch[1])
+    if (byNumber) return [stripMarkdownExtension(byNumber.filename)]
+  }
+
+  const exactStem = catalog.find((item) => stripMarkdownExtension(item.filename).toLowerCase() === normalized)
+  if (exactStem) return [stripMarkdownExtension(exactStem.filename)]
+
+  const exactFilename = catalog.find((item) => item.filename.toLowerCase() === normalized)
+  if (exactFilename) return [stripMarkdownExtension(exactFilename.filename)]
+
+  const titleMatches = catalog
+    .filter((item) => item.title.toLowerCase() === normalized)
+    .map((item) => stripMarkdownExtension(item.filename))
+  if (titleMatches.length > 0) return Array.from(new Set(titleMatches))
+
+  return []
+}
+
+function findAdrSectionMatches(
+  catalog: ReadonlyArray<AdrCatalogItem>,
+  sections: ReadonlyArray<AdrSection>,
+  query: string,
+  limit = 10,
+): AdrSectionMatch[] {
+  const normalizedQuery = normalizeAdrLocateQuery(query)
+  if (!normalizedQuery) return []
+
+  const [filePartRaw, ...headingPartsRaw] = normalizedQuery.split("#")
+  const filePart = filePartRaw?.trim() ?? ""
+  const headingQuery = headingPartsRaw.map((part) => sanitizeHeadingText(part)).filter((part) => part.length > 0).join("#")
+  const matches = new Map<string, AdrSectionMatch>()
+
+  const push = (section: AdrSection, reason: string, score: number) => {
+    const existing = matches.get(section.id)
+    if (existing && existing.score >= score) return
+    matches.set(section.id, { section, reason, score })
+  }
+
+  const exactFileIds = resolveAdrFileQuery(filePart || normalizedQuery, catalog)
+  if (headingQuery && exactFileIds.length > 0) {
+    for (const fileId of exactFileIds) {
+      for (const section of sections) {
+        if (section.fileId !== fileId || section.kind !== "section") continue
+        if (section.headings.join("#").toLowerCase() === headingQuery.toLowerCase()) {
+          push(section, "exact section", 1000)
+        }
+      }
+    }
+  }
+
+  if (!headingQuery && exactFileIds.length > 0) {
+    for (const fileId of exactFileIds) {
+      const section = sections.find((candidate) => candidate.id === fileId)
+      if (section) push(section, "exact ADR", 980)
+    }
+  }
+
+  for (const section of sections) {
+    if (section.id.toLowerCase() === normalizedQuery.toLowerCase()) {
+      push(section, "exact id", 970)
+      continue
+    }
+
+    if (section.kind === "section") {
+      const pathLabel = section.headings.join("#")
+      if (pathLabel.toLowerCase() === normalizedQuery.toLowerCase()) {
+        push(section, "section path", 930)
+        continue
+      }
+
+      if (section.heading.toLowerCase() === normalizedQuery.toLowerCase()) {
+        push(section, "section heading", 920)
+        continue
+      }
+    }
+
+    const haystacks = [section.id, section.title, section.heading, section.headings.join("#")]
+      .map((value) => value.toLowerCase())
+
+    if (haystacks.some((value) => value.includes(normalizedQuery.toLowerCase()))) {
+      const exactPrefix = haystacks.some((value) => value.startsWith(normalizedQuery.toLowerCase()))
+      push(section, exactPrefix ? "prefix match" : "substring match", exactPrefix ? 860 : 820)
+      continue
+    }
+
+    const compare = section.kind === "file"
+      ? [section.fileId.toLowerCase(), section.title.toLowerCase()]
+      : [section.heading.toLowerCase(), section.headings.join("#").toLowerCase()]
+
+    const distances = compare
+      .map((value) => ({ value, distance: levenshtein(normalizedQuery.toLowerCase(), value) }))
+      .sort((a, b) => a.distance - b.distance)
+    const best = distances[0]
+    if (!best) continue
+    const threshold = Math.max(1, Math.floor(Math.min(best.value.length, normalizedQuery.length) * 0.35))
+    if (best.distance <= threshold) {
+      push(section, `fuzzy match (${best.distance})`, 760 - best.distance)
+    }
+  }
+
+  return Array.from(matches.values())
+    .sort((a, b) => b.score - a.score || a.section.id.localeCompare(b.section.id))
+    .slice(0, limit)
+}
+
+function findSectionById(sections: ReadonlyArray<AdrSection>, id: string): AdrSection | null {
+  return sections.find((section) => section.id.toLowerCase() === id.toLowerCase()) ?? null
+}
+
+function resolveFilePathCandidate(rawTarget: string, sourcePath: string): string[] {
+  const trimmed = rawTarget.trim()
+  if (!trimmed) return []
+  const candidates = new Set<string>()
+  const sourceDir = normalize(sourcePath).replace(/\\/g, "/").split("/").slice(0, -1).join("/")
+
+  const addCandidate = (value: string) => {
+    if (!value) return
+    candidates.add(normalize(value).replace(/\\/g, "/"))
+  }
+
+  if (trimmed.startsWith("../") || trimmed.startsWith("./")) {
+    addCandidate(join(sourceDir, trimmed))
+  } else if (trimmed.startsWith("~/")) {
+    addCandidate(expandPath(trimmed))
+  } else if (trimmed.startsWith("/")) {
+    addCandidate(join(VAULT_ROOT, trimmed.slice(1)))
+  } else if (trimmed.includes("/")) {
+    addCandidate(join(sourceDir, trimmed))
+    addCandidate(join(VAULT_ROOT, trimmed))
+  } else {
+    addCandidate(join(DECISIONS_DIR, trimmed))
+  }
+
+  return Array.from(candidates)
+}
+
+function resolveWikiLink(
+  link: ParsedWikiLink,
+  sourcePath: string,
+  sections: ReadonlyArray<AdrSection>,
+  index: VaultPathIndex,
+): WikiLinkResolution {
+  const target = link.pathTarget.trim()
+  if (!target) return { status: "broken", reason: "empty_target" }
+  if (target.includes(":")) return { status: "skipped", reason: "custom_directive" }
+  if (/^\/?tts(?:[:#].+)?$/i.test(target) || target.includes("...")) {
+    return { status: "skipped", reason: "example_or_directive" }
+  }
+
+  const headingPath = link.headingPath.length > 0 ? link.headingPath.join("#") : null
+  const resolvedCandidates = new Set<string>()
+
+  const addResolved = (path: string) => {
+    const normalizedPath = normalize(path).replace(/\\/g, "/")
+    if (!normalizedPath.startsWith(`${VAULT_ROOT}/`)) return
+    resolvedCandidates.add(normalizedPath)
+  }
+
+  const fileCandidates = resolveFilePathCandidate(target, sourcePath)
+  for (const candidate of fileCandidates) {
+    const relative = candidate.startsWith(`${VAULT_ROOT}/`)
+      ? normalizeVaultRelativePath(candidate.slice(VAULT_ROOT.length + 1)).toLowerCase()
+      : null
+    if (!relative) continue
+
+    const exact = index.byRelativePath.get(relative)
+    if (exact) addResolved(exact)
+
+    const stem = stripMarkdownExtension(relative)
+    const stemPath = index.byRelativeStem.get(stem)
+    if (stemPath) addResolved(stemPath)
+
+    if (!relative.endsWith('.md')) {
+      const mdPath = index.byRelativePath.get(`${relative}.md`)
+      if (mdPath) addResolved(mdPath)
+      const mdStem = index.byRelativeStem.get(`${relative}`)
+      if (mdStem) addResolved(mdStem)
+    }
+  }
+
+  const numberMatch = target.match(/(?:adr-?)?(\d{4})/i)
+  if (numberMatch?.[1]) {
+    const path = index.adrByNumber.get(numberMatch[1])
+    if (path) addResolved(path)
+  }
+
+  const byStem = index.adrByStem.get(target.toLowerCase())
+  if (byStem) addResolved(byStem)
+
+  const bareStem = stripMarkdownExtension(basename(target.toLowerCase()))
+  const baseMatches = index.byBasenameStem.get(bareStem) ?? []
+  if (resolvedCandidates.size === 0 && baseMatches.length === 1) {
+    addResolved(baseMatches[0]!)
+  }
+
+  if (resolvedCandidates.size === 0 && baseMatches.length > 1) {
+    return {
+      status: "ambiguous",
+      candidates: baseMatches.map((path) => formatVaultDisplayPath(path)),
+    }
+  }
+
+  if (resolvedCandidates.size === 0) {
+    return { status: "broken", reason: "missing_target" }
+  }
+
+  const resolvedPaths = Array.from(resolvedCandidates).sort((a, b) => a.localeCompare(b))
+  if (resolvedPaths.length > 1) {
+    return {
+      status: "ambiguous",
+      candidates: resolvedPaths.map((path) => formatVaultDisplayPath(path)),
+    }
+  }
+
+  const path = resolvedPaths[0]!
+  const fileId = stripMarkdownExtension(basename(path))
+  if (!headingPath) {
+    return {
+      status: "resolved",
+      path,
+      canonical: fileId,
+      linkType: path.startsWith(`${DECISIONS_DIR}/`) ? "adr" : "vault",
+      sectionId: path.startsWith(`${DECISIONS_DIR}/`) ? fileId : null,
+    }
+  }
+
+  const sectionId = `${fileId}#${headingPath}`
+  const section = findSectionById(sections, sectionId)
+  if (!section) {
+    return { status: "broken", reason: "missing_heading" }
+  }
+
+  return {
+    status: "resolved",
+    path,
+    canonical: section.id,
+    linkType: path.startsWith(`${DECISIONS_DIR}/`) ? "adr" : "vault",
+    sectionId: path.startsWith(`${DECISIONS_DIR}/`) ? section.id : null,
+  }
+}
+
+function formatAdrSectionMatch(match: AdrSectionMatch) {
+  return {
+    id: match.section.id,
+    kind: match.section.kind,
+    number: match.section.number,
+    title: match.section.title,
+    filename: match.section.filename,
+    path: formatVaultDisplayPath(match.section.path),
+    start_line: match.section.startLine,
+    end_line: match.section.endLine,
+    body: match.section.body,
+    reason: match.reason,
+    score: match.score,
+  }
+}
+
+function resolveAdrRefTarget(
+  catalog: ReadonlyArray<AdrCatalogItem>,
+  sections: ReadonlyArray<AdrSection>,
+  query: string,
+): { target: AdrSection | null; suggestions: AdrSectionMatch[] } {
+  const matches = findAdrSectionMatches(catalog, sections, query, 8)
+  if (matches.length === 0) return { target: null, suggestions: [] }
+
+  const exact = matches.find((match) => match.reason === "exact section" || match.reason === "exact ADR" || match.reason === "exact id")
+  if (exact) return { target: exact.section, suggestions: matches }
+
+  if (matches.length === 1) return { target: matches[0]!.section, suggestions: matches }
+
+  return { target: null, suggestions: matches }
+}
+
+function matchesBacklinkTarget(target: AdrSection, canonical: string): boolean {
+  const normalizedCanonical = canonical.toLowerCase()
+  if (target.kind === "file") {
+    return normalizedCanonical === target.id.toLowerCase() || normalizedCanonical.startsWith(`${target.id.toLowerCase()}#`)
+  }
+  return normalizedCanonical === target.id.toLowerCase()
+}
+
+function extractLineContext(markdown: string, line: number): string {
+  const lines = markdown.split(/\r?\n/)
+  return (lines[line - 1] ?? "").trim()
 }
 
 function parseStatusFilterList(raw: string): string[] {
@@ -1316,6 +1936,50 @@ const adrAuditCmd = Command.make("audit", {}, () =>
       )
       .filter((entry) => !supersededTargetExists(entry.target, filenameSet, numberSet))
 
+    const markdowns = yield* Effect.tryPromise(() =>
+      Promise.all(catalog.map(async (item) => ({ item, markdown: await readFile(item.path, "utf8") })))
+    )
+    const sections = markdowns.flatMap(({ item, markdown }) => parseAdrSections(item, markdown))
+    const vaultFilesOut = yield* Effect.tryPromise(() => runShell(
+      `find ${shq(VAULT_ROOT)} -type f ! -path "*/.git/*" ! -path "*/.obsidian/*" | sort`
+    ))
+    const vaultPaths = vaultFilesOut.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map((line) => normalize(line))
+    const pathIndex = buildVaultPathIndex(vaultPaths, catalog)
+
+    const brokenWikiLinks: AdrWikiLinkIssue[] = []
+    const ambiguousWikiLinks: AdrWikiLinkIssue[] = []
+    let skippedWikiLinks = 0
+
+    for (const { item, markdown } of markdowns) {
+      for (const link of parseWikiLinks(markdown)) {
+        const resolution = resolveWikiLink(link, item.path, sections, pathIndex)
+        if (resolution.status === "skipped") {
+          skippedWikiLinks += 1
+          continue
+        }
+        if (resolution.status === "broken") {
+          brokenWikiLinks.push({
+            source: item.filename,
+            line: link.line,
+            target: link.target,
+          })
+          continue
+        }
+        if (resolution.status === "ambiguous") {
+          ambiguousWikiLinks.push({
+            source: item.filename,
+            line: link.line,
+            target: link.target,
+            candidates: resolution.candidates,
+          })
+        }
+      }
+    }
+
     const hasIndex = yield* Effect.tryPromise(() => isReadableFile(ADR_INDEX_PATH))
     const indexRows = hasIndex
       ? parseAdrReadmeRows(yield* Effect.tryPromise(() => readFile(ADR_INDEX_PATH, "utf8")))
@@ -1330,6 +1994,8 @@ const adrAuditCmd = Command.make("audit", {}, () =>
       && nonCanonical.length === 0
       && collisions.length === 0
       && missingSupersededByTargets.length === 0
+      && brokenWikiLinks.length === 0
+      && ambiguousWikiLinks.length === 0
       && hasIndex
       && missingFromIndex.length === 0
       && extraInIndex.length === 0
@@ -1345,6 +2011,11 @@ const adrAuditCmd = Command.make("audit", {}, () =>
       non_canonical_status: nonCanonical,
       collisions,
       superseded_by_missing_targets: missingSupersededByTargets,
+      wiki_links: {
+        broken: brokenWikiLinks,
+        ambiguous: ambiguousWikiLinks,
+        skipped_custom: skippedWikiLinks,
+      },
       index: {
         exists: hasIndex,
         rows: indexRows.length,
@@ -1363,6 +2034,259 @@ const adrAuditCmd = Command.make("audit", {}, () =>
       },
     ], ok))
   })
+)
+
+const adrLocateCmd = Command.make(
+  "locate",
+  {
+    query: Args.text({ name: "query" }),
+    limit: Options.integer("limit").pipe(Options.withDefault(DEFAULT_LIMIT)),
+  },
+  ({ query, limit }) =>
+    Effect.gen(function* () {
+      const safeLimit = Math.max(1, Math.min(limit, 50))
+      const catalog = yield* Effect.tryPromise(() => loadAdrCatalog())
+      const markdowns = yield* Effect.tryPromise(() =>
+        Promise.all(catalog.map(async (item) => ({ item, markdown: await readFile(item.path, "utf8") })))
+      )
+      const sections = markdowns.flatMap(({ item, markdown }) => parseAdrSections(item, markdown))
+      const matches = findAdrSectionMatches(catalog, sections, query, safeLimit)
+
+      yield* Console.log(respond("vault adr locate", {
+        query,
+        limit: safeLimit,
+        total_matches: matches.length,
+        matches: matches.map((match) => formatAdrSectionMatch(match)),
+      }, [
+        {
+          command: "joelclaw vault adr refs <query>",
+          description: "Find ADR backlinks to the resolved section or record",
+          params: {
+            query: { description: "ADR/section query", value: query, required: true },
+          },
+        },
+        {
+          command: "joelclaw vault adr prompt <text>",
+          description: "Expand ADR wiki refs inside a prompt",
+          params: {
+            text: { description: "Quoted prompt text", required: true },
+          },
+        },
+        {
+          command: "joelclaw vault read <ref>",
+          description: "Read the matched ADR file",
+          params: {
+            ref: { description: "ADR reference or path", value: matches[0]?.section.filename ?? query, required: true },
+          },
+        },
+      ], matches.length > 0))
+    })
+)
+
+const adrRefsCmd = Command.make(
+  "refs",
+  {
+    query: Args.text({ name: "query" }),
+  },
+  ({ query }) =>
+    Effect.gen(function* () {
+      const catalog = yield* Effect.tryPromise(() => loadAdrCatalog())
+      const markdowns = yield* Effect.tryPromise(() =>
+        Promise.all(catalog.map(async (item) => ({ item, markdown: await readFile(item.path, "utf8") })))
+      )
+      const sections = markdowns.flatMap(({ item, markdown }) => parseAdrSections(item, markdown))
+      const { target, suggestions } = resolveAdrRefTarget(catalog, sections, query)
+
+      if (!target) {
+        yield* Console.log(respondError(
+          "vault adr refs",
+          `ADR query did not resolve uniquely: ${query}`,
+          "ADR_REF_AMBIGUOUS",
+          "Use `joelclaw vault adr locate <query>` to pick an exact ADR or section id.",
+          [
+            {
+              command: "joelclaw vault adr locate <query> [--limit <limit>]",
+              description: "Locate exact ADR ids and section ids",
+              params: {
+                query: { description: "ADR or section query", value: query, required: true },
+                limit: { description: "Maximum matches", value: 10, default: DEFAULT_LIMIT },
+              },
+            },
+          ]
+        ))
+        return
+      }
+
+      const vaultFilesOut = yield* Effect.tryPromise(() => runShell(
+        `find ${shq(VAULT_ROOT)} -type f ! -path "*/.git/*" ! -path "*/.obsidian/*" | sort`
+      ))
+      const vaultPaths = vaultFilesOut.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .map((line) => normalize(line))
+      const index = buildVaultPathIndex(vaultPaths, catalog)
+
+      const backlinks: AdrBacklink[] = []
+      for (const { item, markdown } of markdowns) {
+        for (const link of parseWikiLinks(markdown)) {
+          const resolution = resolveWikiLink(link, item.path, sections, index)
+          if (resolution.status !== "resolved" || resolution.linkType !== "adr") continue
+          if (!matchesBacklinkTarget(target, resolution.canonical)) continue
+
+          backlinks.push({
+            source_filename: item.filename,
+            source_title: item.title,
+            source_path: formatVaultDisplayPath(item.path),
+            line: link.line,
+            target: link.target,
+            target_canonical: resolution.canonical,
+            context: extractLineContext(markdown, link.line),
+          })
+        }
+      }
+
+      yield* Console.log(respond("vault adr refs", {
+        query,
+        target: {
+          id: target.id,
+          kind: target.kind,
+          filename: target.filename,
+          title: target.title,
+          path: formatVaultDisplayPath(target.path),
+        },
+        count: backlinks.length,
+        refs: backlinks,
+        suggestions: suggestions.slice(0, 5).map((match) => formatAdrSectionMatch(match)),
+      }, [
+        {
+          command: "joelclaw vault read <ref>",
+          description: "Read the resolved ADR file",
+          params: {
+            ref: { description: "ADR reference or path", value: target.filename, required: true },
+          },
+        },
+        {
+          command: "joelclaw vault adr locate <query>",
+          description: "Resolve another ADR or section",
+          params: {
+            query: { description: "ADR or section query", value: query, required: true },
+          },
+        },
+      ]))
+    })
+)
+
+const adrPromptCmd = Command.make(
+  "prompt",
+  {
+    text: Args.text({ name: "text" }),
+  },
+  ({ text }) =>
+    Effect.gen(function* () {
+      const catalog = yield* Effect.tryPromise(() => loadAdrCatalog())
+      const markdowns = yield* Effect.tryPromise(() =>
+        Promise.all(catalog.map(async (item) => ({ item, markdown: await readFile(item.path, "utf8") })))
+      )
+      const sections = markdowns.flatMap(({ item, markdown }) => parseAdrSections(item, markdown))
+      const refs = Array.from(text.matchAll(/\[\[([^\]]+)\]\]/g))
+
+      if (refs.length === 0) {
+        yield* Console.log(respond("vault adr prompt", {
+          text,
+          expanded_text: text,
+          refs: [],
+          context: "",
+        }, [
+          {
+            command: "joelclaw vault adr prompt <text>",
+            description: "Expand another prompt containing ADR refs",
+            params: {
+              text: { description: "Quoted prompt text", required: true },
+            },
+          },
+        ]))
+        return
+      }
+
+      const resolved = new Map<string, AdrSectionMatch[]>()
+      for (const match of refs) {
+        const raw = match[1]?.trim() ?? ""
+        if (!raw || resolved.has(raw)) continue
+        const matches = findAdrSectionMatches(catalog, sections, raw, 6)
+        if (matches.length === 0) {
+          yield* Console.log(respondError(
+            "vault adr prompt",
+            `No ADR section found for [[${raw}]]`,
+            "ADR_PROMPT_REF_MISSING",
+            "Use `joelclaw vault adr locate <query>` to find the canonical ADR or section id.",
+            [
+              {
+                command: "joelclaw vault adr locate <query>",
+                description: "Locate an ADR/section by name",
+                params: {
+                  query: { description: "ADR or section query", value: raw, required: true },
+                },
+              },
+            ]
+          ))
+          return
+        }
+        resolved.set(raw, matches)
+      }
+
+      const expanded = text.replace(/\[\[([^\]]+)\]\]/g, (_full, rawTarget: string) => {
+        const raw = rawTarget.trim()
+        const matches = resolved.get(raw)
+        if (!matches?.[0]) return `[[${raw}]]`
+        return `[[${matches[0]!.section.id}]]`
+      })
+
+      let context = "<adr-context>\n"
+      for (const [raw, matches] of resolved.entries()) {
+        const best = matches[0]!
+        const exact = best.reason === "exact ADR" || best.reason === "exact section" || best.reason === "exact id"
+        context += exact
+          ? `* \`[[${raw}]]\` resolves to:\n`
+          : `* \`[[${raw}]]\` might refer to:\n`
+
+        for (const match of matches) {
+          context += `  * [[${match.section.id}]] (${match.reason})\n`
+          context += `    * ${formatVaultDisplayPath(match.section.path)}:${match.section.startLine}-${match.section.endLine}\n`
+          if (match.section.body) {
+            context += `    * ${match.section.body}\n`
+          }
+          if (exact) break
+        }
+      }
+      context += "</adr-context>"
+
+      yield* Console.log(respond("vault adr prompt", {
+        text,
+        expanded_text: expanded,
+        refs: Array.from(resolved.entries()).map(([raw, matches]) => ({
+          raw,
+          resolved: matches[0]!.section.id,
+          matches: matches.map((match) => formatAdrSectionMatch(match)),
+        })),
+        context,
+      }, [
+        {
+          command: "joelclaw vault adr locate <query>",
+          description: "Inspect one of the resolved ADR ids",
+          params: {
+            query: { description: "ADR or section query", required: true },
+          },
+        },
+        {
+          command: "joelclaw vault adr refs <query>",
+          description: "Find backlinks for a resolved ADR",
+          params: {
+            query: { description: "ADR or section query", required: true },
+          },
+        },
+      ]))
+    })
 )
 
 const adrRankCmd = Command.make(
@@ -1662,25 +2586,30 @@ const adrNextCmd = Command.make(
 
 const adrCmd = Command.make("adr", {}, () =>
   Console.log(respond("vault adr", {
-    description: "ADR-focused command tree for inventory, collisions, ranking, and index integrity",
+    description: "ADR-focused command tree for inventory, graph lookup, backlinks, prompting, ranking, and index integrity",
     decisions_dir: DECISIONS_DIR,
     index_path: ADR_INDEX_PATH,
     subcommands: {
       list: "joelclaw vault adr list [--status <status>] [--limit <limit>]",
       collisions: "joelclaw vault adr collisions",
       audit: "joelclaw vault adr audit",
+      locate: "joelclaw vault adr locate <query> [--limit <limit>]",
+      refs: "joelclaw vault adr refs <query>",
+      prompt: "joelclaw vault adr prompt <text>",
       rank: "joelclaw vault adr rank [--band <band>] [--unscored] [--all]",
       next: "joelclaw vault adr next [--count <count>]",
     },
   }, [
     { command: "joelclaw vault adr list", description: "List ADR metadata" },
-    { command: "joelclaw vault adr collisions", description: "Show duplicate ADR numbers" },
     { command: "joelclaw vault adr audit", description: "Run full ADR health audit" },
+    { command: "joelclaw vault adr locate", description: "Locate ADR files and sections" },
+    { command: "joelclaw vault adr refs", description: "Show ADR backlinks" },
+    { command: "joelclaw vault adr prompt", description: "Expand ADR refs inside prompt text" },
     { command: "joelclaw vault adr rank", description: "Rank open ADRs by priority-score rubric" },
     { command: "joelclaw vault adr next", description: "Show top candidates to work on next" },
   ]))
 ).pipe(
-  Command.withSubcommands([adrListCmd, adrCollisionsCmd, adrAuditCmd, adrRankCmd, adrNextCmd])
+  Command.withSubcommands([adrListCmd, adrCollisionsCmd, adrAuditCmd, adrLocateCmd, adrRefsCmd, adrPromptCmd, adrRankCmd, adrNextCmd])
 )
 
 const treeCmd = Command.make("tree", {}, () =>
@@ -1728,7 +2657,7 @@ export const vaultCmd = Command.make("vault", {}, () =>
         search: "joelclaw vault search <query> [--semantic] [--limit <limit>]",
         ls: "joelclaw vault ls [section]",
         tree: "joelclaw vault tree",
-        adr: "joelclaw vault adr {list|collisions|audit|rank|next}",
+        adr: "joelclaw vault adr {list|collisions|audit|locate|refs|prompt|rank|next}",
       },
     }, [
       {
@@ -1748,6 +2677,7 @@ export const vaultCmd = Command.make("vault", {}, () =>
       { command: "joelclaw vault ls", description: "List vault sections" },
       { command: "joelclaw vault tree", description: "Show vault directory tree" },
       { command: "joelclaw vault adr audit", description: "Run ADR metadata/index audit" },
+      { command: "joelclaw vault adr locate", description: "Locate ADR files and sections" },
       { command: "joelclaw vault adr rank", description: "Rank open ADRs by priority-score rubric" },
     ]))
   })
@@ -1761,6 +2691,11 @@ export const __vaultTestUtils = {
   normalizeStatusValue,
   findAdrNumberCollisions,
   parseAdrReadmeRows,
+  parseAdrSections,
+  parseWikiLinks,
+  buildVaultPathIndex,
+  resolveWikiLink,
+  findAdrSectionMatches,
   parseStatusFilterList,
   parsePriorityBand,
   derivePriorityBand,

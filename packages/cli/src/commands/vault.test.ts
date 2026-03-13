@@ -7,6 +7,11 @@ const {
   normalizeStatusValue,
   findAdrNumberCollisions,
   parseAdrReadmeRows,
+  parseAdrSections,
+  parseWikiLinks,
+  buildVaultPathIndex,
+  resolveWikiLink,
+  findAdrSectionMatches,
   parseStatusFilterList,
   parsePriorityBand,
   derivePriorityBand,
@@ -86,6 +91,97 @@ describe("vault ADR README row parsing", () => {
       "0168-convex-canonical-content-lifecycle.md",
       "0173-adr-number-collision-remediation.md",
     ])
+  })
+})
+
+describe("vault ADR graph helpers", () => {
+  const adrItem = {
+    number: "0189",
+    slug: "gateway-guardrails",
+    filename: "0189-gateway-guardrails.md",
+    path: "/Users/joel/Vault/docs/decisions/0189-gateway-guardrails.md",
+    title: "Gateway Guardrails",
+    status: "accepted",
+    date: "2026-03-01",
+    supersededByRaw: null,
+    frontmatter: {},
+  }
+
+  test("parses ADR sections with file root plus nested heading ids", () => {
+    const markdown = [
+      "# ADR-0189: Gateway Guardrails",
+      "",
+      "Short summary.",
+      "",
+      "## Context",
+      "Why this exists.",
+      "",
+      "### Constraints",
+      "Be explicit.",
+    ].join("\n")
+
+    expect(parseAdrSections(adrItem, markdown)).toEqual([
+      expect.objectContaining({
+        id: "0189-gateway-guardrails",
+        kind: "file",
+      }),
+      expect.objectContaining({
+        id: "0189-gateway-guardrails#Context",
+        kind: "section",
+        body: "Why this exists.",
+      }),
+      expect.objectContaining({
+        id: "0189-gateway-guardrails#Context#Constraints",
+        kind: "section",
+        body: "Be explicit.",
+      }),
+    ])
+  })
+
+  test("locates ADR files and sections by number and heading text", () => {
+    const sections = parseAdrSections(adrItem, [
+      "# ADR-0189: Gateway Guardrails",
+      "",
+      "## Context",
+      "Why this exists.",
+      "",
+      "## Decision",
+      "Do the thing.",
+    ].join("\n"))
+
+    expect(findAdrSectionMatches([adrItem], sections, "ADR-0189")[0]?.section.id).toBe("0189-gateway-guardrails")
+    expect(findAdrSectionMatches([adrItem], sections, "Context")[0]?.section.id).toBe("0189-gateway-guardrails#Context")
+  })
+
+  test("parses and resolves wiki links against Vault paths", () => {
+    const links = parseWikiLinks([
+      "See [[0189-gateway-guardrails]].",
+      "Check [[../../Projects/09-joelclaw/index]].",
+      "[[tts:text]]ignore this[[/tts:text]]",
+    ].join("\n"))
+
+    const pathIndex = buildVaultPathIndex([
+      "/Users/joel/Vault/docs/decisions/0189-gateway-guardrails.md",
+      "/Users/joel/Vault/Projects/09-joelclaw/index.md",
+    ], [adrItem])
+
+    const sections = parseAdrSections(adrItem, "# ADR-0189: Gateway Guardrails\n")
+
+    expect(resolveWikiLink(links[0], adrItem.path, sections, pathIndex)).toEqual(expect.objectContaining({
+      status: "resolved",
+      canonical: "0189-gateway-guardrails",
+      linkType: "adr",
+    }))
+
+    expect(resolveWikiLink(links[1], adrItem.path, sections, pathIndex)).toEqual(expect.objectContaining({
+      status: "resolved",
+      linkType: "vault",
+    }))
+
+    expect(resolveWikiLink(links[2], adrItem.path, sections, pathIndex)).toEqual({
+      status: "skipped",
+      reason: "custom_directive",
+    })
   })
 })
 

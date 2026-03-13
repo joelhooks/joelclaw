@@ -33,6 +33,9 @@ joelclaw vault
     ├── list [--status <status>] [--limit <limit>]
     ├── collisions
     ├── audit
+    ├── locate <query> [--limit <limit>]
+    ├── refs <query>
+    ├── prompt <text>
     └── rank [--band <band>] [--unscored] [--all]
 ```
 
@@ -59,6 +62,9 @@ joelclaw vault search "content lifecycle" --semantic --limit 5
 joelclaw vault adr list --status proposed --limit 50
 joelclaw vault adr collisions
 joelclaw vault adr audit
+joelclaw vault adr locate "gateway guardrails"
+joelclaw vault adr refs 0189-gateway-guardrails
+joelclaw vault adr prompt "compare [[0189-gateway-guardrails]] with [[0218-gateway-availability-lifecycle-qol-improvements]]"
 joelclaw vault adr rank
 joelclaw vault adr rank --band do-now
 joelclaw vault adr rank --unscored
@@ -70,7 +76,14 @@ joelclaw vault adr rank --unscored
 - missing/non-canonical statuses
 - duplicate ADR number collisions
 - broken `superseded-by` targets
+- broken or ambiguous wiki links inside ADR bodies
 - ADR README index drift
+
+`vault adr locate` resolves ADR files and heading sections by ADR number, slug, title, or heading text.
+
+`vault adr refs` finds backlinks from ADRs to a resolved ADR file or section.
+
+`vault adr prompt` expands `[[ADR refs]]` into canonical ids and appends an `<adr-context>` block suitable for agents.
 
 `vault adr rank` is the daily prioritization pass. It enforces NRC scoring and applies a novelty/cool-factor facet (`priority-novelty`, alias `priority-interest`) with a neutral default of `3` when missing.
 
