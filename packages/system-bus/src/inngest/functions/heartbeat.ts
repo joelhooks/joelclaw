@@ -34,6 +34,8 @@ const HEARTBEAT_EVENTS = [
 
 const DAILY_DIGEST_FANOUT_KEY_PREFIX = "heartbeat:digest:fanout";
 const DAILY_DIGEST_TTL_SECONDS = 24 * 60 * 60;
+const ADR_PITCH_LAST_FIRED_KEY = "adr:pitch:last-fired";
+const ADR_PITCH_TTL_SECONDS = 20 * 60 * 60;
 const USER_VISIBLE_HEARTBEAT_INTERVAL_MS = 60 * 60 * 1000;
 const HEARTBEAT_LAST_RUN_KEY = "heartbeat:last_run";
 const HEARTBEAT_GATE_INTERVAL_MS = 10 * 60 * 1000;
@@ -58,7 +60,11 @@ function getHomeDirectory(): string {
   return process.env.HOME || process.env.USERPROFILE || "/Users/joel";
 }
 
-function losAngelesDateParts(now = new Date()): { date: string; hour: number; minute: number } {
+function losAngelesDateParts(now = new Date(Date.now())): {
+  date: string;
+  hour: number;
+  minute: number;
+} {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Los_Angeles",
     year: "numeric",
@@ -82,6 +88,10 @@ function losAngelesDateParts(now = new Date()): { date: string; hour: number; mi
 function isDailyDigestWindow(hour: number, minute: number): boolean {
   // Heartbeat runs every 15m; this window catches the 23:45 run.
   return hour === 23 && minute >= 45;
+}
+
+function isAdrPitchWindow(hour: number): boolean {
+  return hour >= 8 && hour < 10;
 }
 
 function listFilesRecursive(root: string): string[] {
@@ -182,6 +192,36 @@ export const heartbeatCron = inngest.createFunction(
     // Fan out all checks as independent events
     await step.sendEvent("fan-out-checks", HEARTBEAT_EVENTS);
 
+    const shouldRequestAdrPitch = await step.run("maybe-request-adr-pitch", async () => {
+      const { hour } = losAngelesDateParts();
+      if (!isAdrPitchWindow(hour)) return false;
+
+      const redis = getRedis();
+      const lastFired = await redis.get(ADR_PITCH_LAST_FIRED_KEY);
+      return !lastFired;
+    });
+
+    if (shouldRequestAdrPitch) {
+      await step.sendEvent("fan-out-adr-pitch", {
+        name: "adr/pitch.requested",
+        data: {},
+      });
+
+      await step.run("record-adr-pitch-fired", async () => {
+        const redis = getRedis();
+        await redis.set(
+          ADR_PITCH_LAST_FIRED_KEY,
+          new Date(Date.now()).toISOString(),
+          "EX",
+          ADR_PITCH_TTL_SECONDS
+        );
+        return {
+          key: ADR_PITCH_LAST_FIRED_KEY,
+          ttlSeconds: ADR_PITCH_TTL_SECONDS,
+        };
+      });
+    }
+
     // Daily-only fan-out: request digest if today's digest has not been generated yet.
     const shouldRequestDigest = await step.run("maybe-request-daily-digest", async () => {
       const { date, hour, minute } = losAngelesDateParts();
@@ -211,6 +251,7 @@ export const heartbeatCron = inngest.createFunction(
         success: true,
         metadata: {
           fanoutCount: HEARTBEAT_EVENTS.length,
+          adrPitchRequested: shouldRequestAdrPitch,
           digestRequested: shouldRequestDigest,
         },
       });

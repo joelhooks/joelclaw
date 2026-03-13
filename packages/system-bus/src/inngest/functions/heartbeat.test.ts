@@ -15,6 +15,7 @@ import { heartbeatCron } from "./heartbeat";
 
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
+const realDateNow = Date.now.bind(Date);
 const originalRedisMethods = {
   get: Redis.prototype.get,
   set: Redis.prototype.set,
@@ -26,6 +27,9 @@ const originalRedisMethods = {
 let tempHome = "";
 let heartbeatLastRunValue: string | null = null;
 const heartbeatLastRunSetValues: string[] = [];
+let adrPitchLastFiredValue: string | null = null;
+const adrPitchLastFiredSetValues: string[] = [];
+let mockedNowMs: number | null = null;
 
 function createFileDaysAgo(path: string, daysAgo: number): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -75,15 +79,27 @@ async function executeHeartbeatCronWithCapturedSendEvents() {
 }
 
 beforeAll(() => {
+  Date.now = () => mockedNowMs ?? realDateNow();
+
   (Redis.prototype as any).get = async function (key: string) {
     if (key === "heartbeat:last_run") return heartbeatLastRunValue;
+    if (key === "adr:pitch:last-fired") return adrPitchLastFiredValue;
     return null;
   };
 
   (Redis.prototype as any).set = async function (key: string, value: string) {
     if (key === "heartbeat:last_run") {
       heartbeatLastRunSetValues.push(value);
+      heartbeatLastRunValue = value;
+      return "OK";
     }
+
+    if (key === "adr:pitch:last-fired") {
+      adrPitchLastFiredSetValues.push(value);
+      adrPitchLastFiredValue = value;
+      return "OK";
+    }
+
     return "OK";
   };
 
@@ -101,6 +117,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  Date.now = realDateNow;
   Redis.prototype.get = originalRedisMethods.get;
   Redis.prototype.set = originalRedisMethods.set;
   Redis.prototype.smembers = originalRedisMethods.smembers;
@@ -114,6 +131,9 @@ beforeEach(() => {
   process.env.USERPROFILE = tempHome;
   heartbeatLastRunValue = null;
   heartbeatLastRunSetValues.length = 0;
+  adrPitchLastFiredValue = null;
+  adrPitchLastFiredSetValues.length = 0;
+  mockedNowMs = null;
 });
 
 afterEach(() => {
@@ -247,6 +267,36 @@ describe("FRIC-4 heartbeat pruning acceptance tests", () => {
     }).toMatchObject({
       heartbeatLastRunWrites: 1,
       timestampLooksNumeric: true,
+    });
+  });
+
+  test("requests adr/pitch once during the 8am-10am Los Angeles window", async () => {
+    mockedNowMs = Date.parse("2026-01-15T16:15:00.000Z");
+
+    const { sendEventCalls } = await executeHeartbeatCronWithCapturedSendEvents();
+    const adrPitchCall = sendEventCalls.find((call) => call[0] === "fan-out-adr-pitch");
+
+    expect({
+      adrPitchEventName: (adrPitchCall?.[1] as { name?: string } | undefined)?.name,
+      adrPitchLastFiredWrites: adrPitchLastFiredSetValues.length,
+    }).toMatchObject({
+      adrPitchEventName: "adr/pitch.requested",
+      adrPitchLastFiredWrites: 1,
+    });
+  });
+
+  test("skips adr/pitch fanout outside the morning Los Angeles window", async () => {
+    mockedNowMs = Date.parse("2026-01-15T19:15:00.000Z");
+
+    const { sendEventCalls } = await executeHeartbeatCronWithCapturedSendEvents();
+    const adrPitchCall = sendEventCalls.find((call) => call[0] === "fan-out-adr-pitch");
+
+    expect({
+      hasAdrPitchCall: Boolean(adrPitchCall),
+      adrPitchLastFiredWrites: adrPitchLastFiredSetValues.length,
+    }).toMatchObject({
+      hasAdrPitchCall: false,
+      adrPitchLastFiredWrites: 0,
     });
   });
 });

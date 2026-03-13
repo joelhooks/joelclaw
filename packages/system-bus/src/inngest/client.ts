@@ -953,11 +953,13 @@ export type Events = {
   "adr/pitch.approved": {
     data: {
       adr_number: string;
+      telegram_message_id?: number;
     };
   };
   "adr/pitch.rejected": {
     data: {
       adr_number: string;
+      telegram_message_id?: number;
     };
   };
   "gateway/send.message": {

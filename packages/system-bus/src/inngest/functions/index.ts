@@ -2,6 +2,7 @@ import { emitOtelEvent } from "../../observability/emit";
 
 export { echoFizzle } from "../../memory/echo-fizzle";
 export { adrDailyPitch, adrPitchApproved, adrPitchRejected } from "./adr-daily-pitch";
+export { adrPitchExecute } from "./adr-pitch-execute";
 export { agentChainRun } from "./agent-chain-run";
 export { agentDispatch } from "./agent-dispatch";
 export {

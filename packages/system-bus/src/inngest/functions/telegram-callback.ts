@@ -188,6 +188,7 @@ export const telegramCallbackReceived = inngest.createFunction(
         name: eventName,
         data: {
           adr_number: adrNumber,
+          ...(messageId !== null ? { telegram_message_id: messageId } : {}),
         },
       });
 
@@ -207,14 +208,16 @@ export const telegramCallbackReceived = inngest.createFunction(
       });
 
       await step.run("emit-pitch-callback-otel", async () => {
+        const responseType = pitchAction === "approve" ? "approved" : "rejected";
         await emitOtelEvent({
           level: "info",
           source: "worker",
           component: "adr-pitch",
-          action: `adr.pitch.${pitchAction}`,
+          action: "pitch.responded",
           success: true,
           metadata: {
             adr_number: adrNumber,
+            response_type: responseType,
             callbackData,
             chatId,
             messageId,

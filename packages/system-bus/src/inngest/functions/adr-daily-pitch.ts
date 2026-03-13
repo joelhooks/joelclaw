@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import Redis from "ioredis";
 import { getRedisPort } from "../../lib/redis";
-import { bulkImport, search, SYSTEM_KNOWLEDGE_COLLECTION } from "../../lib/typesense";
+import { bulkImport, SYSTEM_KNOWLEDGE_COLLECTION, search } from "../../lib/typesense";
 import { emitOtelEvent } from "../../observability/emit";
 import { inngest } from "../client";
 
@@ -395,7 +395,7 @@ export const adrDailyPitch = inngest.createFunction(
         level: "info",
         source: "worker",
         component: "adr-pitch",
-        action: "adr.pitch.sent",
+        action: "pitch.sent",
         success: true,
         metadata: {
           adr_number: candidate.number,
