@@ -263,6 +263,18 @@ Do **not** mutate `main.db` without a point-in-time backup.
   4. `email-nag` runs on cron `0 17,22 * * *` (9am/2pm PST), leases `front_api_token`, and only nags for inbound-last conversations waiting `>4h`
   5. nag digests are sorted oldest-first and delivered through `pushGatewayEvent`
 
+### VIP email contextual analysis contract
+
+- function: `vip/email-received`
+- file: `packages/system-bus/src/inngest/functions/vip-email-received.ts`
+- behavior:
+  1. keeps newsletter detection + auto-archive unchanged for low-signal VIP senders
+  2. fetches the full Front thread via pagination (up to 50 messages) with sender + timestamp + full text, then caches the thread in Typesense `email_threads`
+  3. follows up to 5 interesting links from the latest email via `defuddle` and persists extracted content into `followed_links_json`
+  4. builds a context-rich analyst prompt from the full thread, followed links, Granola matches, recall hits, Front status/tags, and optional GitHub repo search
+  5. sends the gateway a concise operator brief with relative activity, reply state, key links, and a direct Front deep link; timing data stays in function output for observability only
+  6. preserves Todoist task extraction and memory `echo-fizzle` dispatch after analysis
+
 ### Channel intelligence triage to Todoist
 
 - function: `channel-intelligence-todoist`

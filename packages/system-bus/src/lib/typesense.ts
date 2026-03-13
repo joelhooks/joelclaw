@@ -123,6 +123,7 @@ export interface TypesenseSearchResult {
 export const TRANSCRIPTS_COLLECTION = "transcripts";
 export const VOICE_TRANSCRIPTS_COLLECTION = "voice_transcripts";
 export const CHANNEL_MESSAGES_COLLECTION = "channel_messages";
+export const EMAIL_THREADS_COLLECTION = "email_threads";
 export const DEFAULT_VECTOR_FIELD = "embedding";
 
 type TypesenseCollectionField = {
@@ -211,6 +212,34 @@ export const CHANNEL_MESSAGES_COLLECTION_SCHEMA = {
     { name: "source_url", type: "string", optional: true },
   ],
   default_sorting_field: "timestamp",
+} satisfies Record<string, unknown>;
+
+export const EMAIL_THREADS_COLLECTION_SCHEMA = {
+  name: EMAIL_THREADS_COLLECTION,
+  fields: [
+    { name: "conversation_id", type: "string" },
+    { name: "subject", type: "string" },
+    { name: "participants", type: "string[]", facet: true },
+    { name: "vip_sender", type: "string", facet: true },
+    { name: "status", type: "string", facet: true },
+    { name: "last_message_at", type: "int64" },
+    { name: "last_joel_reply_at", type: "int64", optional: true },
+    { name: "message_count", type: "int32" },
+    { name: "messages_json", type: "string" },
+    { name: "followed_links_json", type: "string", optional: true },
+    { name: "tags", type: "string[]", facet: true, optional: true },
+    { name: "summary", type: "string", optional: true },
+    { name: "updated_at", type: "int64" },
+    {
+      name: "embedding",
+      type: "float[]",
+      embed: {
+        from: ["subject", "summary"],
+        model_config: MINI_LM_MODEL_CONFIG,
+      },
+    },
+  ],
+  default_sorting_field: "last_message_at",
 } satisfies Record<string, unknown>;
 
 export const SYSTEM_KNOWLEDGE_COLLECTION = "system_knowledge";
@@ -643,4 +672,8 @@ export async function ensureVoiceTranscriptsCollection(): Promise<void> {
 
 export async function ensureChannelMessagesCollection(): Promise<void> {
   await ensureCollection(CHANNEL_MESSAGES_COLLECTION, CHANNEL_MESSAGES_COLLECTION_SCHEMA);
+}
+
+export async function ensureEmailThreadsCollection(): Promise<void> {
+  await ensureCollection(EMAIL_THREADS_COLLECTION, EMAIL_THREADS_COLLECTION_SCHEMA);
 }
