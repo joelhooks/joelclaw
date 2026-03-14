@@ -108,6 +108,11 @@ export const frontMessageReceived = inngest.createFunction(
     });
 
     const result = await step.run("notify-gateway", async () => {
+      // VIP senders get a dedicated intelligence pipeline (vip-email-received.ts)
+      // that delivers a richer brief — skip the generic notification to avoid stutter.
+      if (isVipSender(from, fromName)) {
+        return { pushed: false, reason: "vip-sender-deferred-to-vip-pipeline" };
+      }
       if (!gateway) return { pushed: false, reason: "no gateway context" };
 
       return await gateway.notify("front.message.received", {

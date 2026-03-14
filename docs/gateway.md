@@ -337,7 +337,7 @@ Joel-authored non-mention Slack channel messages now enter the canonical gateway
 Canonical implementation lives in `packages/gateway/src/operator-relay.ts`.
 
 Current contract:
-- `vip.email.received` is immediate by policy
+- `vip.email.received` is suppressed by relay policy because the VIP pipeline already delivered the richer brief directly to Telegram
 - lower-signal `front.message.received` / passive Slack intel can batch into a correlated signal digest instead of paging immediately
 - digest prompts must ask for an operator brief, not `HEARTBEAT_OK` sludge
 - outbound operator relay strips leaked `HEARTBEAT_OK` prefixes from non-heartbeat content before Telegram delivery

@@ -35,7 +35,7 @@ describe("normalizeOperatorRelayText", () => {
 });
 
 describe("classifyOperatorSignal", () => {
-  test("promotes VIP email events out of digest batching", () => {
+  test("suppresses VIP email events that are delivered directly to Telegram", () => {
     const decision = classifyOperatorSignal(
       makeEvent({
         type: "vip.email.received",
@@ -50,8 +50,8 @@ describe("classifyOperatorSignal", () => {
       }),
     );
 
-    expect(decision.bucket).toBe("immediate");
-    expect(decision.reason).toBe("immediate.vip-email");
+    expect(decision.bucket).toBe("suppressed");
+    expect(decision.reason).toBe("suppressed.vip-delivered-direct");
     expect(decision.projectKeys).toContain("ai-hero");
     expect(decision.correlationKeys).toContain("conversation:cnv_123");
   });
@@ -101,12 +101,12 @@ describe("isImmediateOperatorPriorityEvent", () => {
           payload: { subject: "AI Hero launch" },
         }),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 
 describe("signal digest and guidance", () => {
-  test("builds a correlated digest across email and slack", () => {
+  test("omits directly delivered VIP email events from the digest", () => {
     const prompt = buildSignalDigestPrompt([
       makeEvent({
         type: "vip.email.received",
@@ -131,8 +131,7 @@ describe("signal digest and guidance", () => {
     ]);
 
     expect(prompt).toContain("## 🔔 Signal Digest");
-    expect(prompt).toContain("### ai-hero");
-    expect(prompt).toContain("VIP email from Alex Hillman — AI Hero membership");
+    expect(prompt).not.toContain("VIP email from Alex Hillman — AI Hero membership");
     expect(prompt).toContain("Slack C07CURG8YB1");
   });
 

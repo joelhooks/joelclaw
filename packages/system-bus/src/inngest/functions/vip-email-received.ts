@@ -1592,39 +1592,9 @@ export const vipEmailReceived = inngest.createFunction(
 
     const notifyResult = await step.run("notify-vip-summary", async () => {
       const t0 = Date.now();
-      const gatewayResultPromise = pushGatewayEvent({
-        type: "vip.email.received",
-        source: "inngest/vip-email-received",
-        payload: {
-          prompt: operatorBrief,
-          from,
-          fromName,
-          subject,
-          conversationId,
-          todosCreated: createdTodos.created.length,
-          missingInfoCount: allMissingInfo.length,
-          relatedMeetingCount: granolaMeetings.length,
-          memoryContextCount: memoryContext.length,
-          githubRepoCount: githubRepos.length,
-          followedLinkCount: followedLinks.length,
-          threadMessageCount: frontContext.messages.length,
-          lastJoelReplyAt: frontContext.lastJoelReplyAt ?? null,
-          cacheStored: cacheResult.cached,
-          cacheError: cacheResult.error,
-          analysisModel: finalAnalysis.model ?? (shouldRunOpus ? VIP_MODEL : BRIEF_MODEL),
-          briefModel: briefResult.model ?? BRIEF_MODEL,
-          ranOpus: shouldRunOpus,
-        },
-      })
-        .then(() => ({ ok: true as const }))
-        .catch((error) => ({
-          ok: false as const,
-          error: error instanceof Error ? error.message : String(error),
-        }));
       const telegramResult = await sendTelegramDirect(telegramBriefHtml, {
         disablePreview: false,
       });
-      const gatewayResult = await gatewayResultPromise;
 
       if (!telegramResult.ok) {
         console.error("[vip-email-received] failed to send direct telegram brief", {
@@ -1633,21 +1603,7 @@ export const vipEmailReceived = inngest.createFunction(
           conversationId,
           error: telegramResult.error,
         });
-      }
-
-      if (!gatewayResult.ok) {
-        console.error("[vip-email-received] failed to enqueue gateway brief", {
-          from: senderDisplay,
-          subject,
-          conversationId,
-          error: gatewayResult.error,
-        });
-      }
-
-      if (!telegramResult.ok && !gatewayResult.ok) {
-        throw new Error(
-          `VIP brief delivery failed: telegram=${telegramResult.error ?? "unknown"} gateway=${gatewayResult.error ?? "unknown"}`,
-        );
+        throw new Error(`VIP brief delivery failed: telegram=${telegramResult.error ?? "unknown"}`);
       }
 
       return {

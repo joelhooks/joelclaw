@@ -155,7 +155,7 @@ Low-signal operator-spam guardrails now also apply:
 - suppress `test.gateway-e2e` from operator delivery by default
 - route Joel Slack passive intel through the canonical Redis signal pipeline (`slack.signal.received`) instead of bypassing relay policy
 - use `packages/gateway/src/operator-relay.ts` as the single heuristics surface for normalize → score → correlate → route across Slack/email signals
-- force `vip.email.received` immediate, while allowing lower-signal email/Slack items to batch into a correlated digest by project/contact/conversation keys
+- suppress `vip.email.received` after the VIP pipeline delivers its direct Telegram brief, while allowing lower-signal email/Slack items to batch into a correlated digest by project/contact/conversation keys
 - drop low-signal-only digests (heartbeat-only / queue-dispatch-complete-only) instead of prompting the model for a pointless `HEARTBEAT_OK`
 - routine fallback swap/recovery notices are not operator-facing during quiet hours, and recovery notices are log/OTEL-only unless some higher-signal path escalates them
 - suppress direct operator-only `Knowledge Watchdog Alert` messages during quiet hours

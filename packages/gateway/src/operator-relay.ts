@@ -270,7 +270,7 @@ export function classifyOperatorSignal(
   }
 
   if (event.type === "vip.email.received") {
-    return { bucket: "immediate", reason: "immediate.vip-email", score: Math.max(score, 7), summary, projectKeys, contactKeys, correlationKeys };
+    return { bucket: "suppressed", reason: "suppressed.vip-delivered-direct", score, summary, projectKeys, contactKeys, correlationKeys };
   }
 
   if (score <= -2) {
